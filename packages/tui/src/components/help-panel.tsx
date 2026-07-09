@@ -26,7 +26,7 @@ const GLOBAL_KEYS: ReadonlyArray<{ binding: keyof Bindings; what: string }> = [
     what: "cycle permission mode (next run)",
   },
   { binding: "activity.open", what: "background tasks / activity drawer" },
-  { binding: "events.open", what: "event inspector" },
+  { binding: "events.open", what: "activity events tab" },
   { binding: "todo.toggle", what: "expand / collapse the todo band" },
   { binding: "cancel.run", what: "cancel the running goal" },
   { binding: "quit.app", what: "back out · press twice to quit" },
@@ -40,7 +40,9 @@ export function HelpPanel(props: {
   const { stdout } = useStdout();
   const [scroll, setScroll] = useState(0);
 
-  const cmds = props.registry.list().filter((cmd) => !cmd.hiddenByDefault);
+  const allCommands = props.registry.list();
+  const cmds = allCommands.filter((cmd) => !cmd.hiddenByDefault);
+  const hiddenCommands = allCommands.filter((cmd) => cmd.hiddenByDefault);
   const grouped = new Map<string, typeof cmds>();
   for (const command of cmds) {
     const group = grouped.get(command.category) ?? [];
@@ -72,6 +74,24 @@ export function HelpPanel(props: {
     for (const command of list) {
       rows.push(
         <Box key={`command-${command.name}`}>
+          <Text color="cyan">/{command.name}</Text>
+          <Text> </Text>
+          <Text>{command.title}</Text>
+          {command.hint ? <Text dimColor> [{command.hint}]</Text> : null}
+        </Box>,
+      );
+    }
+  }
+  if (hiddenCommands.length > 0) {
+    rows.push(<Text key="space-more-commands"> </Text>);
+    rows.push(
+      <Text key="more-commands-heading" bold>
+        more commands
+      </Text>,
+    );
+    for (const command of hiddenCommands) {
+      rows.push(
+        <Box key={`hidden-command-${command.name}`}>
           <Text color="cyan">/{command.name}</Text>
           <Text> </Text>
           <Text>{command.title}</Text>

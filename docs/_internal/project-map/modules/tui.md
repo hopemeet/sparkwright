@@ -11,11 +11,17 @@ See also [../maps/trace/export-diagnostics.md](../maps/trace/export-diagnostics.
 ## Main Files
 
 - `packages/tui/src/app.tsx`
+- `packages/tui/src/components/input-box.tsx`
+- `packages/tui/src/components/use-input-buffer.ts`
+- `packages/tui/src/components/use-input-history.ts`
+- `packages/tui/src/components/live-frame.tsx`
 - `packages/tui/src/components/activity-panel.tsx`
 - `packages/tui/src/components/event-stream.tsx`
+- `packages/tui/src/components/help-panel.tsx`
 - `packages/tui/src/components/status-bar.tsx`
 - `packages/tui/src/state/run-controller.ts`
 - `packages/tui/src/state/event-store.ts`
+- `packages/tui/src/lib/commands.ts`
 - `packages/tui/src/lib/task-activity.ts`
 - `packages/tui/src/lib/tool-display.ts`
 - `packages/tui/src/lib/event-type.ts`
@@ -95,10 +101,32 @@ Does not own:
   `tool.requested.payload.preview` produced by the tool definition; the local
   name-based formatter is fallback for older traces.
 - Ctrl+O uses the `activity.open` binding and opens the Activity Drawer on the
-  Tasks tab by default. `events.open` remains a configurable action for users
-  who want a direct event-inspector key, but it has no default binding; `/events`
-  opens the same drawer on the Events tab. In common PTYs Ctrl+I arrives as the
-  Tab control byte, so it is not used as a default.
+  Tasks tab by default. `events.open` remains a configurable action with no
+  default binding; `/events` and `events.open` both open the Activity Drawer on
+  the Events tab. There is no separate standalone events layer. In common PTYs
+  Ctrl+I arrives as the Tab control byte, so it is not used as a default.
+- App-level global hotkeys defer unmodified printable-character bindings to the
+  input editor while a prompt draft is non-empty. This keeps `?` available as
+  empty-prompt help while allowing normal questions ending in `?`; `/help`
+  remains the command path.
+- Prompt drafts are mirrored in App memory while `InputBox` is mounted, so
+  opening and closing layers preserves short and fast-typed drafts without
+  relying on the persisted stash debounce. The persisted stash remains the
+  process-restart recovery path.
+- `InputBox` keeps buffer/draft persistence in `use-input-buffer.ts` and
+  prompt history plus Ctrl+R reverse-search in `use-input-history.ts`; the
+  component body owns key routing and rendering, not stash/history storage.
+- Slash command suggestions use `CommandRegistry.search(query, frecencyScores)`.
+  Frecency only breaks ties within the same match class and uses
+  `command:<name>` keys so command picks do not collide with @file picks. Empty
+  slash suggestions still hide `hiddenByDefault` commands.
+- The help panel lists visible commands by category and then exposes
+  `hiddenByDefault` commands under a `more commands` section, so advanced
+  capability entrypoints remain discoverable without crowding the empty slash
+  picker.
+- Plain Esc run cancellation is owned by the input editor when `cancel.run`
+  includes an unmodified `esc`; App-level cancel handling covers non-Esc
+  configured chords so the default Esc path does not double-dispatch.
 - The Activity Drawer derives background task state from live TUI events and
   durable host snapshots via `RunController` `task.list` / `task.output`
   requests. `lib/task-activity.ts` merges those presentation inputs; canonical
@@ -196,6 +224,10 @@ Does not own:
   model/tool/subagent/validation lifecycle events. Streamed assistant text takes
   precedence over the phase hint; the phase projection is TUI state only and
   does not change transcript filtering or raw trace semantics.
+- `components/live-frame.tsx` owns the pinned live surface below committed
+  scrollback: status bar, streaming answer, modified-file sidebar, todo band,
+  usage/error/toast/config-error rows, and queued prompt display. `app.tsx`
+  keeps run/session/layer orchestration and input ownership.
 - Capability panels, Skill review metadata, and Skill learn toasts render host
   paths through the shared display-path projection: workspace paths become
   relative and external absolute paths collapse to non-host locators.
@@ -228,6 +260,37 @@ Does not own:
 - TUI display summaries are presentation-only; raw trace/session diagnostics remain the source of truth for complete payloads.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-09T10:08:47+0800
+- Scope: TUI input P0-P2 sequence: printable single-character global hotkeys
+  yield to non-empty prompt drafts, short drafts survive layer unmount/remount,
+  default Esc run cancellation no longer double-dispatches, the dead standalone
+  `events` layer is gone, InputBox buffer/history logic moved into focused
+  hooks, App live-frame rendering moved into `components/live-frame.tsx`, help
+  exposes hidden commands, and slash suggestions use command frecency
+  tie-breaking.
+- Read: `packages/tui/src/app.tsx`,
+  `packages/tui/src/components/input-box.tsx`,
+  `packages/tui/src/components/use-input-buffer.ts`,
+  `packages/tui/src/components/use-input-history.ts`,
+  `packages/tui/src/components/live-frame.tsx`,
+  `packages/tui/src/components/help-panel.tsx`,
+  `packages/tui/src/lib/commands.ts`,
+  `packages/tui/src/lib/keybindings.ts`,
+  `packages/tui/src/lib/event-inspector.ts`,
+  `packages/tui/src/components/activity-panel.tsx`,
+  `packages/tui/src/components/layer-renderer.tsx`,
+  `packages/tui/src/state/layer-stack.ts`,
+  `docs/_internal/project-map/maps/trace/export-diagnostics.md`,
+  `docs/_internal/project-map/maps/session/resume-replay.md`.
+- Tests: focused phase checks with `npm --workspace @sparkwright/tui test --
+  test/input-box.test.ts test/keybindings.test.ts`; P2 focused checks with
+  `npm --workspace @sparkwright/tui test -- test/input-box.test.ts
+  test/keybindings.test.ts test/commands.test.ts
+  test/help-panel-render.test.tsx test/frecency.test.ts
+  test/files-frecency.test.ts`; `npm --workspace @sparkwright/tui run
+  typecheck`; final `npm run release:check`.
 
 - Status: Read-only
 - Date: 2026-07-06T20:47:10+0800

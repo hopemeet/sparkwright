@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { CommandRegistry } from "../src/lib/commands.js";
+import { CommandRegistry, commandFrecencyKey } from "../src/lib/commands.js";
 
 describe("CommandRegistry", () => {
   it("resolves by name and alias", () => {
@@ -73,5 +73,26 @@ describe("CommandRegistry", () => {
     expect(reg.search("").map((cmd) => cmd.name)).toEqual(["capabilities"]);
     expect(reg.search("tool").map((cmd) => cmd.name)).toEqual(["tools"]);
     expect(reg.resolve("tools")?.name).toBe("tools");
+  });
+
+  it("uses frecency as a tie-breaker for slash suggestions", () => {
+    const reg = new CommandRegistry();
+    for (const name of ["model", "mcp", "messages"]) {
+      reg.register({
+        name,
+        title: name,
+        description: "test",
+        category: "view",
+        run: () => {},
+      });
+    }
+
+    const frecency = new Map([[commandFrecencyKey("messages"), 10]]);
+
+    expect(reg.search("m", frecency).map((cmd) => cmd.name)).toEqual([
+      "messages",
+      "model",
+      "mcp",
+    ]);
   });
 });

@@ -44,6 +44,10 @@ export interface Command {
   runRaw?: (rest: string) => void | Promise<void>;
 }
 
+export function commandFrecencyKey(commandName: string): string {
+  return `command:${commandName}`;
+}
+
 export class CommandRegistry {
   private byName = new Map<string, Command>();
 
@@ -76,9 +80,15 @@ export class CommandRegistry {
    * Fuzzy-ish filter — exact substring on name / title / description.
    * Returns commands ranked by where the match occurred.
    */
-  search(query: string): Command[] {
+  search(query: string, frecency?: ReadonlyMap<string, number>): Command[] {
+    const frecencyScore = (cmd: Command): number =>
+      frecency?.get(commandFrecencyKey(cmd.name)) ?? 0;
     const q = query.trim().toLowerCase();
-    if (!q) return this.list().filter((cmd) => !cmd.hiddenByDefault);
+    if (!q) {
+      return this.list()
+        .filter((cmd) => !cmd.hiddenByDefault)
+        .sort((a, b) => frecencyScore(b) - frecencyScore(a));
+    }
     const scored: Array<{ cmd: Command; score: number }> = [];
     for (const cmd of this.list()) {
       const name = cmd.name.toLowerCase();
@@ -91,7 +101,10 @@ export class CommandRegistry {
       else if (desc.includes(q)) score = 3;
       if (score >= 0) scored.push({ cmd, score });
     }
-    scored.sort((a, b) => a.score - b.score);
+    scored.sort(
+      (a, b) =>
+        a.score - b.score || frecencyScore(b.cmd) - frecencyScore(a.cmd),
+    );
     return scored.map((s) => s.cmd);
   }
 }

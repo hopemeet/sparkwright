@@ -1,16 +1,18 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Box, Text, useInput, useStdout } from "ink";
-import type { CommandRegistry, Command } from "../lib/commands.js";
-import { ctrlCPressCount } from "../lib/keybindings.js";
+import { Box, Text, useInput, useStdout, type Key } from "ink";
 import {
-  appendHistory,
-  loadHistory,
-  type HistoryEntry,
-} from "../lib/history.js";
+  commandFrecencyKey,
+  type CommandRegistry,
+  type Command,
+} from "../lib/commands.js";
+import { ctrlCPressCount } from "../lib/keybindings.js";
+import type { HistoryEntry } from "../lib/history.js";
 import { FileIndex, type IndexedFile } from "../lib/files.js";
 import { loadFrecency, type Frecency } from "../lib/frecency.js";
-import { clearDraftOnSubmit, saveDraft, type StashFile } from "../lib/stash.js";
+import { clearDraftOnSubmit, type StashFile } from "../lib/stash.js";
 import { resolveDialogColumns } from "./dialog-frame.js";
+import { useInputBuffer } from "./use-input-buffer.js";
+import { useInputHistory } from "./use-input-history.js";
 import {
   displayWidth,
   graphemeAt,
@@ -60,6 +62,8 @@ export function inputMaxVisibleLines(rows: number | undefined): number {
 export interface InputBoxHandle {
   /** Imperative: replace the current value (used by the stash picker). */
   setValue: (text: string) => void;
+  /** Imperative: synchronously read the current draft. */
+  getValue: () => string;
 }
 
 export function InputBox(props: {
@@ -73,11 +77,7 @@ export function InputBox(props: {
   onCommand: (cmd: Command, rest: string) => void;
   /**
    * Pressed Esc with nothing else to dismiss (no dropdown / overlay open).
-   * The parent uses this to cancel an in-flight run. Wired here — rather than
-   * in the App-level global hotkey loop — because that loop lives in an inline
-   * component that React remounts on every render, so its `useInput` churns
-   * and drops the lone Esc during streaming. InputBox is a stable component, so
-   * its handler reliably receives the key.
+   * The parent decides whether plain Esc is currently bound to run cancel.
    */
   onEscape?: () => void;
   onQuit?: (presses?: number) => void;
@@ -85,31 +85,51 @@ export function InputBox(props: {
   /** Stash snapshot bridge — parent owns the latest StashFile. */
   stashRef: { current: StashFile };
   onStashChange: (next: StashFile) => void;
+  initialDraft?: string;
+  onDraftChange?: (value: string) => void;
+  shouldIgnoreInput?: (input: string, key: Key, value: string) => boolean;
   /** Imperative handle for the parent (used to inject restored drafts). */
   handleRef?: React.MutableRefObject<InputBoxHandle | null>;
 }): React.ReactElement {
-  const [value, setValue] = useState("");
-  const [cursor, setCursor] = useState(0);
-  const valueRef = useRef(value);
-  const cursorRef = useRef(cursor);
-  const [history, setHistory] = useState<HistoryEntry[]>([]);
-  const [historyIdx, setHistoryIdx] = useState<number | null>(null);
-  const [draft, setDraft] = useState("");
   const { stdout } = useStdout();
   const inputWidth = inputBoxWidth(resolveDialogColumns(stdout?.columns));
   const inputTextWidth = Math.max(1, inputWidth - 7);
   const maxVisibleInputLines = inputMaxVisibleLines(stdout?.rows);
-  // ctrl+r reverse-search overlay state — when not null, captures input.
-  const [searchQuery, setSearchQuery] = useState<string | null>(null);
-  const [searchCursor, setSearchCursor] = useState(0);
   // Vim modal state (only consulted when props.vim). Starts in insert so a
   // fresh prompt types immediately; Esc drops to normal.
   const [vimMode, setVimMode] = useState<VimMode>("insert");
   const [vimPending, setVimPending] = useState<VimState["pending"]>(null);
   const pasteModeRef = useRef(false);
-
-  valueRef.current = value;
-  cursorRef.current = cursor;
+  const [sugCursor, setSugCursor] = useState(0);
+  const resetHistoryRecallRef = useRef<() => void>(() => {});
+  const {
+    value,
+    cursor,
+    setCursor,
+    valueRef,
+    setDraftValue,
+    update,
+    insertText,
+    moveCursorVertical,
+  } = useInputBuffer({
+    disabled: props.disabled,
+    workspaceRoot: props.workspaceRoot,
+    initialDraft: props.initialDraft,
+    stashRef: props.stashRef,
+    onStashChange: props.onStashChange,
+    onDraftChange: props.onDraftChange,
+    onEdited: () => {
+      resetHistoryRecallRef.current();
+      setSugCursor(0);
+    },
+    handleRef: props.handleRef,
+  });
+  const inputHistory = useInputHistory({
+    workspaceRoot: props.workspaceRoot,
+    currentValue: value,
+    setDraftValue,
+  });
+  resetHistoryRecallRef.current = inputHistory.resetRecall;
 
   // Lazy file index — only constructed when needed.
   const fileIndex = useMemo(
@@ -134,45 +154,6 @@ export function InputBox(props: {
     };
   }, [stdout]);
 
-  useEffect(() => {
-    void loadHistory(props.workspaceRoot).then(setHistory);
-    // On mount, if the stash has a current draft and the input is empty,
-    // restore it. We don't auto-restore over an existing user-typed value.
-    const current = props.stashRef.current.current;
-    if (current && current.text.length > 0 && value.length === 0) {
-      setValue(current.text);
-      setCursor(current.text.length);
-    }
-  }, [props.workspaceRoot]);
-
-  // Expose imperative setValue so parent flows (for example fork-and-edit)
-  // can inject text.
-  useEffect(() => {
-    if (!props.handleRef) return;
-    props.handleRef.current = {
-      setValue: (text: string) => {
-        setValue(text);
-        setCursor(text.length);
-        setHistoryIdx(null);
-        setSugCursor(0);
-      },
-    };
-    return () => {
-      if (props.handleRef) props.handleRef.current = null;
-    };
-  }, [props.handleRef]);
-
-  // Debounced stash persistence as the user types.
-  useEffect(() => {
-    if (props.disabled) return;
-    const id = setTimeout(() => {
-      void saveDraft(props.workspaceRoot, value, props.stashRef.current).then(
-        props.onStashChange,
-      );
-    }, 600);
-    return () => clearTimeout(id);
-  }, [value, props.workspaceRoot, props.disabled]);
-
   // Detect the three modes from the current value/cursor. Slash takes
   // precedence over mention because "/foo @bar" should still be a command.
   const slash = useMemo(() => detectSlash(value), [value]);
@@ -181,21 +162,25 @@ export function InputBox(props: {
     [value, cursor, slash],
   );
 
-  // Trigger file indexing + frecency load the first time mention activates.
+  // Trigger file indexing for mentions and frecency load for both mentions and
+  // slash commands. The same store ranks @file picks and slash command picks
+  // under separate keys.
   useEffect(() => {
-    if (!mention) return;
-    void fileIndex.ensure().then(() => setIndexTick((t) => t + 1));
+    if (!mention && !slash) return;
+    if (mention) {
+      void fileIndex.ensure().then(() => setIndexTick((t) => t + 1));
+    }
     if (!frecencyRef.current) {
       void loadFrecency(props.workspaceRoot).then((f) => {
         frecencyRef.current = f;
         setFrecencyScores(f.scores());
       });
     }
-  }, [mention !== null, fileIndex, props.workspaceRoot]);
+  }, [mention !== null, slash !== null, fileIndex, props.workspaceRoot]);
 
   const slashSuggestions = useMemo(
-    () => (slash ? props.registry.search(slash.query) : []),
-    [slash, props.registry],
+    () => (slash ? props.registry.search(slash.query, frecencyScores) : []),
+    [slash, props.registry, frecencyScores],
   );
   const mentionSuggestions = useMemo(
     () => (mention ? fileIndex.filter(mention.query, 10, frecencyScores) : []),
@@ -203,7 +188,6 @@ export function InputBox(props: {
     [mention, fileIndex.size(), indexTick, frecencyScores],
   );
 
-  const [sugCursor, setSugCursor] = useState(0);
   const activeList: ReadonlyArray<unknown> = slash
     ? slashSuggestions
     : mentionSuggestions;
@@ -228,78 +212,6 @@ export function InputBox(props: {
     return "";
   }, [slash, slashSuggestions, safeSugCursor, cursor, value]);
 
-  function update(next: string, nextCursor?: number): void {
-    valueRef.current = next;
-    cursorRef.current = nextCursor ?? next.length;
-    setValue(next);
-    setCursor(nextCursor ?? next.length);
-    setHistoryIdx(null);
-    setSugCursor(0);
-  }
-
-  function insertText(text: string): void {
-    if (!text) return;
-    const currentValue = valueRef.current;
-    const currentCursor = cursorRef.current;
-    const next =
-      currentValue.slice(0, currentCursor) +
-      text +
-      currentValue.slice(currentCursor);
-    update(next, currentCursor + text.length);
-  }
-
-  /**
-   * Move the caret up/down one visual line in a multi-line draft, preserving
-   * the column (clamped to the target line's length). No-op past the first /
-   * last line.
-   */
-  function moveCursorVertical(dir: -1 | 1): void {
-    const lineStart = value.lastIndexOf("\n", cursor - 1) + 1;
-    const col = cursor - lineStart;
-    if (dir === -1) {
-      if (lineStart === 0) return; // already on the first line
-      const prevLineEnd = lineStart - 1; // the '\n' before this line
-      const prevLineStart = value.lastIndexOf("\n", prevLineEnd - 1) + 1;
-      const prevLineLen = prevLineEnd - prevLineStart;
-      setCursor(prevLineStart + Math.min(col, prevLineLen));
-    } else {
-      const nlIdx = value.indexOf("\n", cursor);
-      if (nlIdx === -1) return; // already on the last line
-      const nextLineStart = nlIdx + 1;
-      let nextLineEnd = value.indexOf("\n", nextLineStart);
-      if (nextLineEnd === -1) nextLineEnd = value.length;
-      const nextLineLen = nextLineEnd - nextLineStart;
-      setCursor(nextLineStart + Math.min(col, nextLineLen));
-    }
-  }
-
-  function recallHistory(direction: -1 | 1): void {
-    if (history.length === 0) return;
-    if (historyIdx === null) {
-      if (direction === 1) return;
-      setDraft(value);
-      const idx = history.length - 1;
-      setHistoryIdx(idx);
-      setValue(history[idx].text);
-      setCursor(history[idx].text.length);
-      return;
-    }
-    const next = historyIdx + direction;
-    if (next < 0) {
-      setHistoryIdx(0);
-      return;
-    }
-    if (next >= history.length) {
-      setHistoryIdx(null);
-      setValue(draft);
-      setCursor(draft.length);
-      return;
-    }
-    setHistoryIdx(next);
-    setValue(history[next].text);
-    setCursor(history[next].text.length);
-  }
-
   function applySlashPick(cmd: Command): void {
     // Recover the rest-of-line (everything after the command name) so arg-aware
     // commands like `/commit fix the bug` can fill `$ARGUMENTS`. The query is
@@ -307,9 +219,9 @@ export function InputBox(props: {
     const query = detectSlash(value)?.query ?? "";
     const space = query.indexOf(" ");
     const rest = space === -1 ? "" : query.slice(space + 1).trim();
+    bumpFrecency(commandFrecencyKey(cmd.name));
     props.onCommand(cmd, rest);
-    setValue("");
-    setCursor(0);
+    setDraftValue("", 0);
   }
 
   function applyMentionPick(file: IndexedFile): void {
@@ -321,27 +233,23 @@ export function InputBox(props: {
     const inserted = "@" + token + " ";
     update(before + inserted + after, before.length + inserted.length);
     // Record the pick for frecency ranking next time.
-    void frecencyRef.current?.bump(file.path).then(() => {
-      if (frecencyRef.current) setFrecencyScores(frecencyRef.current.scores());
-    });
+    bumpFrecency(file.path);
   }
 
-  // History reverse-search: scan newest-first for entries containing the query.
-  const searchMatches = useMemo(() => {
-    if (searchQuery === null) return [];
-    const q = searchQuery.toLowerCase();
-    const out: HistoryEntry[] = [];
-    for (let i = history.length - 1; i >= 0; i--) {
-      const e = history[i];
-      if (!q || e.text.toLowerCase().includes(q)) out.push(e);
-      if (out.length >= 8) break;
+  function bumpFrecency(key: string): void {
+    const bumpLoaded = (frecency: Frecency): Promise<void> =>
+      frecency.bump(key).then(() => {
+        setFrecencyScores(frecency.scores());
+      });
+    if (frecencyRef.current) {
+      void bumpLoaded(frecencyRef.current);
+      return;
     }
-    return out;
-  }, [history, searchQuery]);
-  const safeSearchCursor = Math.min(
-    searchCursor,
-    Math.max(0, searchMatches.length - 1),
-  );
+    void loadFrecency(props.workspaceRoot).then((frecency) => {
+      frecencyRef.current = frecency;
+      return bumpLoaded(frecency);
+    });
+  }
 
   useInput((input, key) => {
     if (props.disabled) return;
@@ -352,6 +260,8 @@ export function InputBox(props: {
     // — which would otherwise be typed into the goal. Swallow them. (Switching
     // macOS spaces/apps is what makes the terminal fire these.)
     if (input === "[I" || input === "[O") return;
+
+    if (props.shouldIgnoreInput?.(input, key, valueRef.current)) return;
 
     // Bracketed paste can arrive split across several Ink events. Handle this
     // before Enter/submission logic so pasted newlines stay in the draft.
@@ -366,46 +276,7 @@ export function InputBox(props: {
       return;
     }
 
-    // --- ctrl+r reverse-search overlay owns input while active ------------
-    if (searchQuery !== null) {
-      if (key.escape) {
-        setSearchQuery(null);
-        return;
-      }
-      if (key.return) {
-        const pick = searchMatches[safeSearchCursor];
-        if (pick) {
-          setValue(pick.text);
-          setCursor(pick.text.length);
-        }
-        setSearchQuery(null);
-        return;
-      }
-      if (key.upArrow) {
-        setSearchCursor((c) => Math.min(searchMatches.length - 1, c + 1));
-        return;
-      }
-      if (key.downArrow) {
-        setSearchCursor((c) => Math.max(0, c - 1));
-        return;
-      }
-      if (key.backspace || key.delete) {
-        setSearchQuery((q) => (q ? q.slice(0, -1) : ""));
-        setSearchCursor(0);
-        return;
-      }
-      // Ctrl+r again advances to next match without dismissing.
-      if (key.ctrl && input === "r") {
-        setSearchCursor((c) => Math.min(searchMatches.length - 1, c + 1));
-        return;
-      }
-      if (key.ctrl || key.meta || key.tab) return;
-      if (input && input.length > 0) {
-        setSearchQuery((q) => (q ?? "") + input);
-        setSearchCursor(0);
-      }
-      return;
-    }
+    if (inputHistory.handleSearchInput(input, key)) return;
 
     // --- vim modal input (config input.vim) ------------------------------
     // INSERT mode behaves like the normal editor; Esc drops to NORMAL. In
@@ -444,11 +315,7 @@ export function InputBox(props: {
     }
 
     // Ctrl+r enters reverse-search mode.
-    if (key.ctrl && input === "r" && history.length > 0) {
-      setSearchQuery("");
-      setSearchCursor(0);
-      return;
-    }
+    if (key.ctrl && input === "r" && inputHistory.startSearch()) return;
     const quitPresses =
       ctrlCPressCount(input) || (key.ctrl && input === "c" ? 1 : 0);
     if (quitPresses > 0) {
@@ -456,7 +323,7 @@ export function InputBox(props: {
         pasteModeRef.current = false;
         props.onQuitClear?.();
         update("", 0);
-        setDraft("");
+        inputHistory.clearDraftSnapshot();
         return;
       }
       props.onQuit?.(quitPresses);
@@ -506,7 +373,7 @@ export function InputBox(props: {
           moveCursorVertical(-1);
           return;
         }
-        recallHistory(-1);
+        inputHistory.recall(-1);
         return;
       }
       if (key.downArrow) {
@@ -514,7 +381,7 @@ export function InputBox(props: {
           moveCursorVertical(1);
           return;
         }
-        recallHistory(1);
+        inputHistory.recall(1);
         return;
       }
     }
@@ -558,23 +425,20 @@ export function InputBox(props: {
         const parsed = parseSlashCommand(trimmed);
         const cmd = props.registry.resolve(parsed.name);
         if (cmd) {
+          bumpFrecency(commandFrecencyKey(cmd.name));
           props.onCommand(cmd, parsed.rest);
-          setValue("");
-          setCursor(0);
+          setDraftValue("", 0);
           return;
         }
       }
       props.onSubmit(trimmed);
-      void appendHistory(props.workspaceRoot, trimmed, history).then(
-        setHistory,
-      );
+      void inputHistory.append(trimmed);
       void clearDraftOnSubmit(props.workspaceRoot, props.stashRef.current).then(
         props.onStashChange,
       );
-      setValue("");
-      setCursor(0);
-      setHistoryIdx(null);
-      setDraft("");
+      setDraftValue("", 0);
+      inputHistory.resetRecall();
+      inputHistory.clearDraftSnapshot();
       // Next prompt starts fresh in insert mode so typing works immediately.
       if (props.vim) {
         setVimMode("insert");
@@ -696,14 +560,16 @@ export function InputBox(props: {
           {vimPending ? <Text dimColor> {vimPending}</Text> : null}
         </Box>
       ) : null}
-      {searchQuery !== null ? (
+      {inputHistory.searchQuery !== null ? (
         <ReverseSearchOverlay
-          query={searchQuery}
-          matches={searchMatches}
-          cursor={safeSearchCursor}
+          query={inputHistory.searchQuery}
+          matches={inputHistory.searchMatches}
+          cursor={inputHistory.safeSearchCursor}
         />
       ) : null}
-      {searchQuery === null && slash && slashSuggestions.length > 0 ? (
+      {inputHistory.searchQuery === null &&
+      slash &&
+      slashSuggestions.length > 0 ? (
         <SlashDropdown suggestions={slashSuggestions} cursor={safeSugCursor} />
       ) : null}
       {mention && mentionSuggestions.length > 0 ? (

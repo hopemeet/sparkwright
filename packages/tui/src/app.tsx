@@ -1,6 +1,5 @@
 import React, {
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -16,16 +15,11 @@ import { QueueStore } from "./state/queue-store.js";
 import { LayerStack } from "./state/layer-stack.js";
 import { EventStream } from "./components/event-stream.js";
 import { InputBox } from "./components/input-box.js";
-import { StreamingMessage } from "./components/streaming-message.js";
-import { ToastView } from "./components/toast.js";
 import { ThemeProvider } from "./lib/theme-context.js";
 import { resolveTheme, type Theme } from "./lib/theme.js";
 import { loadStash, type StashFile } from "./lib/stash.js";
 import type { InputBoxHandle } from "./components/input-box.js";
-import { Sidebar, UsageSummaryLine } from "./components/sidebar.js";
-import { TodoBand } from "./components/todo-band.js";
-import { StatusBar } from "./components/status-bar.js";
-import { QueuedMessages } from "./components/queued-messages.js";
+import { LiveFrame } from "./components/live-frame.js";
 import { LayerRenderer } from "./components/layer-renderer.js";
 import { resolveDialogColumns } from "./components/dialog-frame.js";
 import { AttentionManager } from "./lib/attention.js";
@@ -46,6 +40,9 @@ import {
   chordMatches,
   ctrlCPressCount,
   DEFAULTS as DEFAULT_BINDINGS,
+  isPlainEscapeChord,
+  isPlainPrintableChord,
+  shouldDeferPrintableChordToInput,
   type Bindings,
 } from "./lib/keybindings.js";
 import type { PermissionMode, TraceLevel } from "@sparkwright/protocol";
@@ -280,6 +277,7 @@ function AppReady(
   const [todoExpanded, setTodoExpanded] = useState(false);
   // Prompt stash bridge — the InputBox reads/writes through this ref.
   const stashRef = useRef<StashFile>({ current: null, list: [] });
+  const inputDraftRef = useRef("");
   const inputHandleRef = useRef<InputBoxHandle | null>(null);
   // Runtime model-ref override from /model; falls back to config.
   const [modelOverride, setModelOverride] = useState<{
@@ -382,19 +380,6 @@ function AppReady(
     lastClearGen.current = state.clearGeneration;
     writeToStdout("\x1b[2J\x1b[3J\x1b[H");
   }, [state.clearGeneration, writeToStdout]);
-
-  const writeToStdoutRef = useRef(writeToStdout);
-  useEffect(() => {
-    writeToStdoutRef.current = writeToStdout;
-  }, [writeToStdout]);
-
-  useLayoutEffect(() => {
-    if (topLayer?.name !== "events") return;
-    writeToStdoutRef.current("\x1b[?1049h\x1b[2J\x1b[H");
-    return () => {
-      writeToStdoutRef.current("\x1b[?1049l");
-    };
-  }, [topLayer?.name]);
 
   // Notify on approval requests and run failures.
   const lastApprovalId = useRef<string | null>(null);
@@ -716,56 +701,84 @@ function AppReady(
   // identity stable across renders is deliberate — a component defined inline
   // in App is a fresh type each render, so Ink unmounts/remounts it every time
   // and its `useInput` can drop a keystroke mid-stream.
+  function requestCancelRun(): void {
+    if (controller.cancel())
+      toasts.push({ variant: "info", message: "cancelling…" });
+  }
+
   function handleHotkey(input: string, key: Key): void {
     const b = resolved.bindings;
     const top = layers.top();
-    if (b["quit.app"].some((c) => chordMatches(c, key, input))) {
+    const matchesChords = (chords: Bindings[keyof Bindings]): boolean => {
+      const draft = inputHandleRef.current?.getValue() ?? "";
+      if (shouldDeferPrintableChordToInput(chords, key, input, draft)) {
+        return false;
+      }
+      return chords.some((c) => chordMatches(c, key, input));
+    };
+    const matchesGlobal = (name: keyof Bindings): boolean =>
+      matchesChords(b[name]);
+    if (matchesGlobal("quit.app")) {
       if (!top) return;
       requestQuit(Math.max(1, ctrlCPressCount(input)));
       return;
     }
-    if (
-      top?.name !== "approval" &&
-      b["activity.open"].some((c) => chordMatches(c, key, input))
-    ) {
+    if (top?.name !== "approval" && matchesGlobal("activity.open")) {
       taskActions.openActivity();
       return;
     }
-    if (!top && b["events.open"].some((c) => chordMatches(c, key, input))) {
+    if (!top && matchesGlobal("events.open")) {
       taskActions.openActivity("events");
       return;
     }
-    if (
-      !top &&
-      state.status !== "running" &&
-      b["help.open"].some((c) => chordMatches(c, key, input))
-    ) {
+    if (!top && state.status !== "running" && matchesGlobal("help.open")) {
       layers.toggle("help");
       return;
     }
-    if (
-      !top &&
-      b["cycle-permission-mode"].some((c) => chordMatches(c, key, input))
-    ) {
+    if (!top && matchesGlobal("cycle-permission-mode")) {
       cyclePermissionMode();
       return;
     }
-    if (
-      !top &&
-      state.todoItems.length > 0 &&
-      b["todo.toggle"].some((c) => chordMatches(c, key, input))
-    ) {
+    if (!top && state.todoItems.length > 0 && matchesGlobal("todo.toggle")) {
       setTodoExpanded((v) => !v);
       return;
     }
     if (
       !top &&
       state.status === "running" &&
-      b["cancel.run"].some((c) => chordMatches(c, key, input))
+      matchesChords(b["cancel.run"].filter((c) => !isPlainEscapeChord(c)))
     ) {
-      if (controller.cancel())
-        toasts.push({ variant: "info", message: "cancelling…" });
+      requestCancelRun();
     }
+  }
+
+  function shouldInputBoxIgnoreInput(
+    input: string,
+    key: Key,
+    draft: string,
+  ): boolean {
+    if (draft.length > 0 || input.length !== 1) return false;
+    const b = resolved.bindings;
+    const matchesPlainPrintable = (chords: Bindings[keyof Bindings]): boolean =>
+      chords.some(
+        (chord) =>
+          isPlainPrintableChord(chord) && chordMatches(chord, key, input),
+      );
+    if (matchesPlainPrintable(b["activity.open"])) return true;
+    if (matchesPlainPrintable(b["events.open"])) return true;
+    if (state.status !== "running" && matchesPlainPrintable(b["help.open"])) {
+      return true;
+    }
+    if (matchesPlainPrintable(b["cycle-permission-mode"])) return true;
+    if (state.todoItems.length > 0 && matchesPlainPrintable(b["todo.toggle"])) {
+      return true;
+    }
+    return (
+      state.status === "running" &&
+      matchesPlainPrintable(
+        b["cancel.run"].filter((chord) => !isPlainEscapeChord(chord)),
+      )
+    );
   }
 
   const modelLabel = effModel ?? "deterministic";
@@ -809,17 +822,11 @@ function AppReady(
   function closeTopLayer(): void {
     if (!topLayer) return;
     layers.pop(topLayer.name);
-    if (topLayer.name === "events") {
-      toasts.push({ variant: "info", message: "closed events" });
-    }
     if (topLayer.name === "session-rename")
       sessionActions.setRenameTarget(null);
   }
 
-  // Props shared by both LayerRenderer mount points — the full-screen `events`
-  // drawer (early return below) and the inline layer above the input. Assembled
-  // once so the two call sites can't drift apart. `entry` is supplied per call
-  // site (both currently pass `topLayer`).
+  // Props shared by layer renderers, assembled once so call sites do not drift.
   const layerProps = {
     registry,
     bindings: resolved.bindings,
@@ -861,16 +868,6 @@ function AppReady(
     onRejectSkillReviewProposal: skillActions.rejectSkillReviewProposal,
   } satisfies Omit<React.ComponentProps<typeof LayerRenderer>, "entry">;
 
-  if (topLayer?.name === "events") {
-    return (
-      <ThemeProvider theme={theme}>
-        <Box flexDirection="column">
-          <LayerRenderer entry={topLayer} {...layerProps} />
-        </Box>
-      </ThemeProvider>
-    );
-  }
-
   return (
     <ThemeProvider theme={theme}>
       <Box flexDirection="column">
@@ -889,105 +886,24 @@ function AppReady(
           }}
         />
 
-        {/* Live frame: pinned below the scrollback. The status line only shows
-          while there's active work to watch — idle/done/error leave just the
-          input (run completion/failure already surfaces as a toast, and a
-          /model switch leaves a scrollback line). */}
-        {state.status === "running" ||
-        state.status === "awaiting-approval" ||
-        taskActions.taskActivity.running > 0 ||
-        taskActions.unreadTaskCount > 0 ? (
-          <StatusBar
-            state={state}
-            modelLabel={modelLabel}
-            permissionMode={effTuiPermissionMode}
-            focused={focused}
-            unreadCompletedTasks={Math.max(
-              0,
-              taskActions.unreadTaskCount - taskActions.unreadFailedTaskCount,
-            )}
-            unreadFailedTasks={taskActions.unreadFailedTaskCount}
-          />
-        ) : null}
-
-        <Box flexDirection="row">
-          <Box flexDirection="column" flexGrow={1}>
-            {/* The streamed answer itself. The "what phase am I in" hint is not
-              a second spinner line here — it rides the StatusBar label above
-              (e.g. "thinking" / "running shell" / "agent reviewer") so there's
-              one spinner, not two competing ones. */}
-            {state.streamingText || state.reasoningText ? (
-              <StreamingMessage
-                text={state.streamingText}
-                reasoning={state.reasoningText}
-                maxLines={streamingMax}
-              />
-            ) : null}
-          </Box>
-          {sidebarWidth > 0 ? (
-            <Sidebar files={state.modifiedFiles} width={sidebarWidth} />
-          ) : null}
-        </Box>
-
-        {/* Todo ledger as a full-width band, pinned above the input. Shown
-          while a run is active, and also kept after it ends when items remain
-          unfinished — so a handoff's residual pending/in_progress stays visible
-          instead of vanishing the moment the run stops. Collapses to a single
-          line while the model streams a long answer so it does not dominate the
-          frame. */}
-        {state.todoItems.length > 0 &&
-        (state.status === "running" ||
-          state.status === "awaiting-approval" ||
-          state.todoItems.some((t) => t.status !== "completed")) ? (
-          <TodoBand
-            todos={state.todoItems}
-            width={cols}
-            compact={Boolean(state.streamingText)}
-            expanded={todoExpanded}
-          />
-        ) : null}
-
-        {state.status !== "running" &&
-        state.status !== "awaiting-approval" &&
-        state.usage ? (
-          <UsageSummaryLine usage={state.usage} />
-        ) : null}
-
-        {state.lastError ? (
-          <Box paddingX={1}>
-            <Text color={theme.error}>error: {state.lastError}</Text>
-          </Box>
-        ) : null}
-
-        <ToastView
+        <LiveFrame
+          state={state}
+          modelLabel={modelLabel}
+          permissionMode={effTuiPermissionMode}
+          focused={focused}
+          runningTaskCount={taskActions.taskActivity.running}
+          unreadTaskCount={taskActions.unreadTaskCount}
+          unreadFailedTaskCount={taskActions.unreadFailedTaskCount}
+          streamingMax={streamingMax}
+          sidebarWidth={sidebarWidth}
+          columns={cols}
+          todoExpanded={todoExpanded}
           toast={toastSnapshot.current}
-          queueDepth={toastSnapshot.queueDepth}
+          toastQueueDepth={toastSnapshot.queueDepth}
+          errors={resolved.errors}
+          queued={queued}
+          showQueued={!topLayer}
         />
-
-        {resolved.errors.length > 0 ? (
-          <Box
-            flexDirection="column"
-            borderStyle="single"
-            borderColor="red"
-            paddingX={1}
-          >
-            <Text color="red" bold>
-              config errors ({resolved.errors.length})
-            </Text>
-            {resolved.errors.map((e, i) => (
-              <Text key={`${e.file}:${e.field}:${i}`}>
-                <Text dimColor>{e.file}</Text>
-                <Text> </Text>
-                <Text color="red">{e.field}</Text>
-                <Text> </Text>
-                <Text>{e.message}</Text>
-              </Text>
-            ))}
-          </Box>
-        ) : null}
-
-        {/* Prompts queued during an in-flight run, shown above the input. */}
-        {!topLayer ? <QueuedMessages items={queued} /> : null}
 
         {/* Layer rendering — only the topmost layer owns input. */}
         {topLayer ? (
@@ -1011,13 +927,13 @@ function AppReady(
               void (cmd.runRaw ? cmd.runRaw(rest) : cmd.run())
             }
             onEscape={() => {
-              // Esc cancels an in-flight run (the placeholder promises this). The
-              // App-level hotkey loop also binds cancel.run→esc, but it lives in a
-              // remounted inline component whose useInput drops the key mid-stream;
-              // InputBox is stable, so this is the reliable path.
-              if (state.status === "running") {
-                if (controller.cancel())
-                  toasts.push({ variant: "info", message: "cancelling…" });
+              // Plain Esc is editor-owned; only treat it as run cancellation when
+              // the user has kept cancel.run bound to esc.
+              if (
+                state.status === "running" &&
+                resolved.bindings["cancel.run"].some(isPlainEscapeChord)
+              ) {
+                requestCancelRun();
               }
             }}
             onQuit={requestQuit}
@@ -1026,6 +942,11 @@ function AppReady(
             onStashChange={(next) => {
               stashRef.current = next;
             }}
+            initialDraft={inputDraftRef.current}
+            onDraftChange={(next) => {
+              inputDraftRef.current = next;
+            }}
+            shouldIgnoreInput={shouldInputBoxIgnoreInput}
             handleRef={inputHandleRef}
           />
         ) : (

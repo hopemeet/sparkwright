@@ -21,9 +21,9 @@ describe("LayerStack", () => {
 
   it("pop by name removes only that layer", () => {
     const s = new LayerStack();
-    s.push("events");
+    s.push("activity", { tab: "events" });
     s.push("help");
-    s.pop("events");
+    s.pop("activity");
     expect(s.getSnapshot().map((l) => l.name)).toEqual(["help"]);
   });
 
