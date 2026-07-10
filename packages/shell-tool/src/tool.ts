@@ -48,10 +48,11 @@ export const RECOMMENDED_FOREGROUND_TIMEOUT_MS = 5 * 60 * 1000;
 export const MAX_FOREGROUND_TIMEOUT_MS = 10 * 60 * 1000;
 
 /**
- * Payload passed to {@link ShellToolOptions.onPromote} when a foreground
- * shell exceeds {@link ShellToolOptions.foregroundTimeoutMs}. Hosts typically
- * adopt the live process by registering it with a TaskManager and returning
- * the resulting task id, letting the agent monitor completion out of band.
+ * Payload passed to the compatibility-named
+ * {@link ShellToolOptions.onPromote} handoff callback for either an explicit
+ * background launch or foreground timeout promotion. Hosts typically adopt the
+ * live process by registering it with a TaskManager and returning the resulting
+ * task id, letting the agent monitor completion out of band.
  *
  * The process is NOT killed before this callback runs. Returning a `taskId`
  * means the host has taken ownership; returning nothing (or throwing) tells
@@ -71,8 +72,10 @@ export interface ShellPromotionRequest {
   partialStderr: string;
   /** ISO-8601 timestamp of the original spawn. */
   startedAt: string;
-  /** Effective foreground deadline that just fired, in milliseconds. */
+  /** Effective foreground budget; it fired only when origin is `promoted`. */
   foregroundTimeoutMs: number;
+  /** Whether the handoff was explicitly requested or caused by timeout. */
+  origin: "explicit" | "promoted";
 }
 
 /**
@@ -87,8 +90,24 @@ export interface ShellPromotionResult {
   taskId: string;
 }
 
+export type ShellTaskLifetime = "job" | "service";
+
+export interface ActiveShellBackgroundTask {
+  taskId: string;
+}
+
+export type ActiveShellBackgroundTaskLookup = (input: {
+  command: string;
+  cwd?: string;
+  lifetime: ShellTaskLifetime;
+}) =>
+  | ActiveShellBackgroundTask
+  | undefined
+  | Promise<ActiveShellBackgroundTask | undefined>;
+
 /**
- * Callback signature for foreground→background promotion.
+ * Callback signature for live shell→background task handoff. The name remains
+ * promotion-oriented for API compatibility; inspect `request.origin`.
  *
  * @public
  * @stability experimental v0.1
@@ -124,11 +143,17 @@ export interface ShellToolOptions {
    */
   promotionAvailable?: boolean;
   /**
-   * Promotion callback invoked when {@link ShellToolOptions.foregroundTimeoutMs}
-   * fires. The host adopts the live process (typically by registering it with
+   * Background handoff callback invoked for explicit background execution or
+   * when {@link ShellToolOptions.foregroundTimeoutMs} fires. The host adopts the
+   * live process (typically by registering it with
    * `@sparkwright/agent-runtime`'s `TaskManager`) and returns a `taskId`.
    */
   onPromote: ShellPromotionHandler;
+  /**
+   * Optional host lookup used after policy/approval but before process spawn to
+   * collapse an explicit background request onto equivalent active work.
+   */
+  findActiveBackgroundTask?: ActiveShellBackgroundTaskLookup;
   /**
    * Override or extend the built-in safety classification rules.
    */
@@ -170,12 +195,17 @@ export interface ShellToolInput {
   cwd?: string;
   /**
    * Start the command directly as a background task instead of waiting for it
-   * inline. Equivalent to promoting at a zero foreground budget: the process is
-   * launched, immediately handed to a durable background task, and its taskId is
-   * returned so the run does not block. Requires promotion (background tasks) to
-   * be available; otherwise the call fails rather than silently running inline.
+   * inline. The process is launched only after the normal policy and approval
+   * gates, then handed directly to a durable background task. This is distinct
+   * from foreground timeout promotion. Requires background tasks to be
+   * available; otherwise the call fails rather than silently running inline.
    */
   background?: boolean;
+  /**
+   * `service` treats a successful spawn that survives a short grace window as
+   * the requested outcome. It does not imply a health probe. Defaults to job.
+   */
+  lifetime?: ShellTaskLifetime;
 }
 
 /**
@@ -240,8 +270,27 @@ export interface ShellToolOutput {
    * hold only the partial output captured up to the promotion point.
    */
   promoted?: boolean;
+  /** True when the command is owned by a background task. */
+  background?: boolean;
+  /** How the command entered background execution. */
+  backgroundOrigin?: "explicit" | "promoted";
+  /** Declared lifecycle of a background command. */
+  lifetime?: ShellTaskLifetime;
+  /** @reserved Model-visible flag indicating that an active background task was reused. */
+  deduplicated?: boolean;
   /** Host-assigned task id returned by the promotion callback. */
   taskId?: string;
+  /**
+   * @reserved Model-visible continuation guidance for a promoted shell task.
+   *
+   * Model-facing instruction, set only when `promoted` is true. The structured
+   * `promoted`/`taskId`/`exitCode: null` flags alone leave a weak model to
+   * *infer* that the command is still running; this spells it out so it does not
+   * misread the partial `stdout` as a failed run and re-issue the command.
+   */
+  promotionGuidance?: string;
+  /** @reserved Model-visible continuation guidance for an explicit background task. */
+  backgroundGuidance?: string;
   /** @reserved Public shell sandbox status consumed by trace and diagnostics UIs. */
   sandbox?: ShellToolSandboxOutput;
 }
@@ -317,6 +366,12 @@ export function createShellTool(
           description:
             "Start the command directly as a background task and return its taskId immediately instead of blocking; use for long-running or fire-and-forget processes.",
         },
+        lifetime: {
+          type: "string",
+          enum: ["job", "service"],
+          description:
+            "Use service for servers, watchers, and intentional long-running loops. A service is considered started after a short grace window without immediate exit; no health probe is performed. Defaults to job.",
+        },
       },
       required: ["command"],
       additionalProperties: false,
@@ -341,7 +396,16 @@ export function createShellTool(
         stderrArtifactId: { type: "string" },
         outputTruncated: { type: "boolean" },
         promoted: { type: "boolean" },
+        background: { type: "boolean" },
+        backgroundOrigin: {
+          type: "string",
+          enum: ["explicit", "promoted"],
+        },
+        lifetime: { type: "string", enum: ["job", "service"] },
+        deduplicated: { type: "boolean" },
         taskId: { type: "string" },
+        promotionGuidance: { type: "string" },
+        backgroundGuidance: { type: "string" },
         sandbox: {
           type: "object",
           properties: {
@@ -399,6 +463,13 @@ export function createShellTool(
         "stdoutArtifactId",
         "stderrArtifactId",
         "outputTruncated",
+        "background",
+        "backgroundOrigin",
+        "taskId",
+        "promotionGuidance",
+        "backgroundGuidance",
+        "lifetime",
+        "deduplicated",
       ],
       artifactPolicy: "when_large",
     },
@@ -436,8 +507,44 @@ export function createShellTool(
           foregroundTimeoutMs: input.foregroundTimeoutMs,
           promotionAvailable: options.promotionAvailable ?? true,
           timeoutMsAliasUsed: input.timeoutMsAliasUsed,
+          backgroundLifetime: input.lifetime,
         },
       };
+
+      if (input.background && options.findActiveBackgroundTask) {
+        const existing = await options.findActiveBackgroundTask({
+          command: input.command,
+          cwd: request.cwd,
+          lifetime: input.lifetime,
+        });
+        if (existing) {
+          return {
+            stdout: "",
+            stderr: "",
+            exitCode: null,
+            timedOut: false,
+            decision: verdict.decision,
+            reason: verdict.reason,
+            executed: false,
+            approvalStatus: approvalStatusFromDecision(verdict.decision),
+            foregroundTimeoutMs: input.foregroundTimeoutMs,
+            promotionAvailable: options.promotionAvailable ?? true,
+            timeoutMsAliasUsed: input.timeoutMsAliasUsed,
+            ...(input.timeoutAliasWarning
+              ? { timeoutAliasWarning: input.timeoutAliasWarning }
+              : {}),
+            background: true,
+            backgroundOrigin: "explicit",
+            lifetime: input.lifetime,
+            deduplicated: true,
+            taskId: existing.taskId,
+            backgroundGuidance:
+              `Equivalent background ${input.lifetime} is already running as ` +
+              `task ${existing.taskId}. No new process was started. Do NOT ` +
+              `re-run it; use this taskId to inspect, read output, wait, or stop it.`,
+          };
+        }
+      }
 
       const output = await runWithPromotion({
         environment: options.environment,
@@ -448,6 +555,8 @@ export function createShellTool(
         promotionAvailable: options.promotionAvailable ?? true,
         timeoutMsAliasUsed: input.timeoutMsAliasUsed,
         timeoutAliasWarning: input.timeoutAliasWarning,
+        background: input.background,
+        lifetime: input.lifetime,
       });
       return materializeLargeShellOutput(output, {
         command: input.command,
@@ -616,7 +725,11 @@ interface PromotionRunContext {
   promotionAvailable: boolean;
   timeoutMsAliasUsed: boolean;
   timeoutAliasWarning?: string;
+  background: boolean;
+  lifetime: ShellTaskLifetime;
 }
+
+const SERVICE_START_GRACE_MS = 1_000;
 
 /**
  * Reaching execution with a `require_approval` classification means approval was
@@ -665,6 +778,40 @@ async function runWithPromotion(
   collectStdout.catch(() => {});
   collectStderr.catch(() => {});
 
+  if (ctx.background) {
+    if (ctx.lifetime === "service") {
+      const startup = await Promise.race([
+        completed.then(
+          (result): { kind: "completed"; result: ShellExecutionResult } => ({
+            kind: "completed",
+            result,
+          }),
+        ),
+        new Promise<{ kind: "running" }>((resolve) => {
+          setTimeout(
+            () => resolve({ kind: "running" }),
+            SERVICE_START_GRACE_MS,
+          );
+        }),
+      ]);
+      if (startup.kind === "completed") {
+        await Promise.allSettled([collectStdout, collectStderr]);
+        return completedShellOutput(ctx, startup.result, stdout, stderr);
+      }
+    }
+    return handOffShellToBackground({
+      ctx,
+      origin: "explicit",
+      handle,
+      completed,
+      startedAt,
+      stdout: () => stdout,
+      stderr: () => stderr,
+      stdoutIter,
+      stderrIter,
+    });
+  }
+
   let timerId: ReturnType<typeof setTimeout> | undefined;
   const timeoutPromise = new Promise<"timeout">((resolve) => {
     timerId = setTimeout(() => resolve("timeout"), ctx.foregroundTimeoutMs);
@@ -683,53 +830,60 @@ async function runWithPromotion(
   if (race.kind === "completed") {
     if (timerId) clearTimeout(timerId);
     await Promise.allSettled([collectStdout, collectStderr]);
-    const timedOut =
-      typeof race.result.metadata?.timedOut === "boolean"
-        ? (race.result.metadata.timedOut as boolean)
-        : false;
-    return {
-      stdout: race.result.stdout || stdout,
-      stderr: race.result.stderr || stderr,
-      exitCode: race.result.exitCode,
-      timedOut,
-      decision: ctx.verdict.decision,
-      reason: ctx.verdict.reason,
-      executed: true,
-      approvalStatus: approvalStatusFromDecision(ctx.verdict.decision),
-      foregroundTimeoutMs: ctx.foregroundTimeoutMs,
-      promotionAvailable: ctx.promotionAvailable,
-      timeoutMsAliasUsed: ctx.timeoutMsAliasUsed,
-      ...(ctx.timeoutAliasWarning
-        ? { timeoutAliasWarning: ctx.timeoutAliasWarning }
-        : {}),
-      sandbox: shellSandboxOutput(race.result.metadata),
-    };
+    return completedShellOutput(ctx, race.result, stdout, stderr);
   }
 
   // Timeout fired first: hand the live process to the promotion callback.
+  return handOffShellToBackground({
+    ctx,
+    origin: "promoted",
+    handle,
+    completed,
+    startedAt,
+    stdout: () => stdout,
+    stderr: () => stderr,
+    stdoutIter,
+    stderrIter,
+  });
+}
+
+async function handOffShellToBackground(input: {
+  ctx: PromotionRunContext;
+  origin: "explicit" | "promoted";
+  handle: LiveShellHandle;
+  completed: Promise<ShellExecutionResult>;
+  startedAt: string;
+  stdout: () => string;
+  stderr: () => string;
+  stdoutIter: AsyncIterator<string>;
+  stderrIter: AsyncIterator<string>;
+}): Promise<ShellToolOutput> {
+  const { ctx } = input;
   try {
     const promotion = await ctx.onPromote({
-      handle,
-      completed,
+      handle: input.handle,
+      completed: input.completed,
       request: ctx.request,
-      partialStdout: stdout,
-      partialStderr: stderr,
-      startedAt,
+      partialStdout: input.stdout(),
+      partialStderr: input.stderr(),
+      startedAt: input.startedAt,
       foregroundTimeoutMs: ctx.foregroundTimeoutMs,
+      origin: input.origin,
     });
     // Ask our iterators to stop, but do not wait for their return hooks. Some
     // async iterator implementations cannot finish return() until the process
     // exits; waiting here would make "background" promotion block until the
     // task is already complete.
     void Promise.allSettled([
-      stdoutIter.return?.(undefined as never) ?? Promise.resolve(),
-      stderrIter.return?.(undefined as never) ?? Promise.resolve(),
+      input.stdoutIter.return?.(undefined as never) ?? Promise.resolve(),
+      input.stderrIter.return?.(undefined as never) ?? Promise.resolve(),
     ]);
     // Detach from completion — the host now owns lifecycle.
-    completed.catch(() => {});
+    input.completed.catch(() => {});
+    const explicitlyBackgrounded = input.origin === "explicit";
     return {
-      stdout,
-      stderr,
+      stdout: input.stdout(),
+      stderr: input.stderr(),
       exitCode: null,
       timedOut: false,
       decision: ctx.verdict.decision,
@@ -742,28 +896,49 @@ async function runWithPromotion(
       ...(ctx.timeoutAliasWarning
         ? { timeoutAliasWarning: ctx.timeoutAliasWarning }
         : {}),
-      promoted: true,
+      background: true,
+      backgroundOrigin: input.origin,
+      lifetime: ctx.lifetime,
+      ...(explicitlyBackgrounded ? {} : { promoted: true }),
       taskId: promotion.taskId,
-      sandbox: shellSandboxOutput(handle.metadata),
+      ...(explicitlyBackgrounded
+        ? {
+            backgroundGuidance:
+              `Command started directly as background task ${promotion.taskId}. ` +
+              `This successful start satisfies a background-launch request. Do ` +
+              `NOT re-run an equivalent command; use this taskId to inspect, ` +
+              `read output, wait, or stop it.`,
+          }
+        : {
+            promotionGuidance:
+              `The foreground budget was exceeded, so this command is still running ` +
+              `as background task ${promotion.taskId}; the stdout/stderr above is only ` +
+              `the partial output captured so far. Do NOT re-run the command — its ` +
+              `final result will arrive later as a task-completion observation. If you ` +
+              `need the result before continuing, call the task tool with ` +
+              `action="wait" and taskId="${promotion.taskId}".`,
+          }),
+      sandbox: shellSandboxOutput(input.handle.metadata),
     };
   } catch (cause) {
     // Promotion failed: fall back to abort + timedOut for safety.
     const promotionUnavailableReason =
       cause instanceof Error ? cause.message : String(cause);
-    handle.abort(
-      `foreground timeout reached; process killed because promotion unavailable: ${promotionUnavailableReason}`,
-    );
-    const final = await completed;
-    await Promise.allSettled([collectStdout, collectStderr]);
+    const handoffFailure =
+      input.origin === "explicit"
+        ? `background handoff failed; process killed: ${promotionUnavailableReason}`
+        : `foreground timeout reached; process killed because promotion unavailable: ${promotionUnavailableReason}`;
+    input.handle.abort(handoffFailure);
+    const final = await input.completed;
     const stderrWithReason = appendDiagnosticLine(
-      final.stderr || stderr,
-      `foreground timeout reached; process killed because promotion unavailable: ${promotionUnavailableReason}`,
+      final.stderr || input.stderr(),
+      handoffFailure,
     );
     return {
-      stdout: final.stdout || stdout,
+      stdout: final.stdout || input.stdout(),
       stderr: stderrWithReason,
       exitCode: final.exitCode,
-      timedOut: true,
+      timedOut: input.origin === "promoted",
       decision: ctx.verdict.decision,
       reason: ctx.verdict.reason,
       executed: true,
@@ -784,6 +959,35 @@ function appendDiagnosticLine(value: string, line: string): string {
   if (value.includes(line)) return value;
   if (value.length === 0) return `${line}\n`;
   return `${value.replace(/\s+$/u, "")}\n${line}\n`;
+}
+
+function completedShellOutput(
+  ctx: PromotionRunContext,
+  result: ShellExecutionResult,
+  stdout: string,
+  stderr: string,
+): ShellToolOutput {
+  const timedOut =
+    typeof result.metadata?.timedOut === "boolean"
+      ? (result.metadata.timedOut as boolean)
+      : false;
+  return {
+    stdout: result.stdout || stdout,
+    stderr: result.stderr || stderr,
+    exitCode: result.exitCode,
+    timedOut,
+    decision: ctx.verdict.decision,
+    reason: ctx.verdict.reason,
+    executed: true,
+    approvalStatus: approvalStatusFromDecision(ctx.verdict.decision),
+    foregroundTimeoutMs: ctx.foregroundTimeoutMs,
+    promotionAvailable: ctx.promotionAvailable,
+    timeoutMsAliasUsed: ctx.timeoutMsAliasUsed,
+    ...(ctx.timeoutAliasWarning
+      ? { timeoutAliasWarning: ctx.timeoutAliasWarning }
+      : {}),
+    sandbox: shellSandboxOutput(result.metadata),
+  };
 }
 
 function shellSandboxOutput(
@@ -845,22 +1049,21 @@ function normalizeShellInput(
     timeoutMsAliasUsed: boolean;
     timeoutAliasWarning?: string;
     background: boolean;
+    lifetime: ShellTaskLifetime;
   } {
   assertRecord(args, "shell input");
   const command = readString(args, "command");
   const cwd =
     typeof args.cwd === "string" && args.cwd.length > 0 ? args.cwd : undefined;
   const background = args.background === true;
+  const lifetime = readShellTaskLifetime(args.lifetime);
   const timeoutMs = readOptionalPositiveInteger(args, "timeoutMs");
   const explicitForegroundTimeoutMs = readOptionalPositiveInteger(
     args,
     "foregroundTimeoutMs",
   );
-  // background:true forces immediate promotion — the process is launched and
-  // handed straight to a durable task, so the foreground budget collapses to 0.
-  const foregroundTimeoutMs = background
-    ? 0
-    : (explicitForegroundTimeoutMs ?? timeoutMs ?? defaultForegroundTimeoutMs);
+  const foregroundTimeoutMs =
+    explicitForegroundTimeoutMs ?? timeoutMs ?? defaultForegroundTimeoutMs;
   if (foregroundTimeoutMs > MAX_FOREGROUND_TIMEOUT_MS) {
     throw new Error(
       `foregroundTimeoutMs must be <= ${MAX_FOREGROUND_TIMEOUT_MS}.`,
@@ -876,6 +1079,7 @@ function normalizeShellInput(
     foregroundTimeoutMs,
     timeoutMsAliasUsed,
     background,
+    lifetime,
     ...(timeoutMs !== undefined
       ? {
           timeoutAliasWarning:
@@ -883,6 +1087,12 @@ function normalizeShellInput(
         }
       : {}),
   };
+}
+
+function readShellTaskLifetime(value: unknown): ShellTaskLifetime {
+  if (value === undefined) return "job";
+  if (value === "job" || value === "service") return value;
+  throw new Error("lifetime must be job or service.");
 }
 
 async function assertShellPathScope(

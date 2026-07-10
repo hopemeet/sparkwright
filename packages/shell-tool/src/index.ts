@@ -25,6 +25,7 @@ export {
   type ShellPromotionHandler,
   type ShellPromotionRequest,
   type ShellPromotionResult,
+  type ShellTaskLifetime,
   type ShellToolInput,
   type ShellToolOptions,
   type ShellToolOutput,

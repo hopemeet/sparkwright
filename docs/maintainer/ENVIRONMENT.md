@@ -44,6 +44,14 @@ registering it with `@sparkwright/agent-runtime`'s `TaskManager`) and return a
 `taskId`. The tool resolves with `{ promoted: true, taskId }` so the agent
 can monitor completion via `task(action="get")` / `task(action="output")`.
 
+`background:true` does not use this timeout path. Core first resolves policy
+and approval, then shell-tool hands the process directly to the host with
+`origin:"explicit"`; timeout handoff uses `origin:"promoted"`. Hosts should
+persist that origin and set explicit background tasks detached
+(`awaited:false`) while keeping promoted foreground work awaited. The optional
+`lifetime:"service"` input only adds a short immediate-exit grace check; it is
+not a readiness or health-check protocol.
+
 Pair the promotion bridge with `TaskNotificationSink`
 (`@sparkwright/agent-runtime`) so the agent's next turn observes terminal
 state instead of polling — see [`examples/promote-shell-to-task`](../../examples/promote-shell-to-task).

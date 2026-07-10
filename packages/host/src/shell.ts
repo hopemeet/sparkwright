@@ -7,6 +7,7 @@ import {
   parseCommand,
   RECOMMENDED_FOREGROUND_TIMEOUT_MS,
   type ShellPromotionHandler,
+  type ShellTaskLifetime,
 } from "@sparkwright/shell-tool";
 import {
   ShellSandboxExecutor,
@@ -363,9 +364,20 @@ export function createHostShellTool(
                 getRunEvents: options.getRunEvents,
               })
             : createUnavailablePromotionHandler(),
+        findActiveBackgroundTask:
+          options.taskManager &&
+          (options.backgroundTasks ?? "enabled") === "enabled"
+            ? ({ command, cwd, lifetime }) =>
+                findActiveShellBackgroundTask(options.taskManager!, {
+                  parentRunId: ctx.run.id,
+                  command,
+                  cwd,
+                  lifetime,
+                })
+            : undefined,
       });
       const output = await shell.execute(args, ctx);
-      if (output.promoted || readOnlyFastPath) return output;
+      if (output.background || readOnlyFastPath) return output;
       if (!before) return output;
       const after = await snapshotWorkspace(workspaceRoot);
       const changes = diffWorkspaceSnapshots(before, after);
@@ -406,6 +418,46 @@ function createUnavailablePromotionHandler(): ShellPromotionHandler {
       "foreground timeout reached; process killed because promotion unavailable",
     );
   };
+}
+
+function findActiveShellBackgroundTask(
+  manager: TaskManager,
+  input: {
+    parentRunId: RunId;
+    command: string;
+    cwd?: string;
+    lifetime: ShellTaskLifetime;
+  },
+): { taskId: string } | undefined {
+  const command = normalizeShellTaskCommand(input.command);
+  const cwd = input.cwd ?? "";
+  const existing = manager.store
+    .list({ parentRunId: input.parentRunId, kind: PROMOTED_SHELL_KIND })
+    .find((task) => {
+      if (
+        task.status === "completed" ||
+        task.status === "failed" ||
+        task.status === "cancelled"
+      ) {
+        return false;
+      }
+      return (
+        task.metadata.backgroundOrigin === "explicit" &&
+        normalizeShellTaskCommand(String(task.metadata.command ?? "")) ===
+          command &&
+        String(task.metadata.cwd ?? "") === cwd &&
+        (task.metadata.lifetime ?? "job") === input.lifetime
+      );
+    });
+  return existing ? { taskId: String(existing.id) } : undefined;
+}
+
+function normalizeShellTaskCommand(command: string): string {
+  return command.trim().replace(/\r\n?/gu, "\n");
+}
+
+function shellTaskLifetime(request: ShellExecutionRequest): ShellTaskLifetime {
+  return request.metadata?.backgroundLifetime === "service" ? "service" : "job";
 }
 
 function failedStreamingResult(
@@ -495,6 +547,7 @@ function createTaskPromotionHandler(input: {
     partialStdout,
     partialStderr,
     startedAt,
+    origin,
   }) => {
     const rawCommand =
       typeof request.metadata?.rawCommand === "string"
@@ -504,10 +557,13 @@ function createTaskPromotionHandler(input: {
       parentRunId: input.parentRunId,
       kind: PROMOTED_SHELL_KIND,
       title: `shell: ${rawCommand}`,
+      awaited: origin === "promoted",
       metadata: {
         command: rawCommand,
         cwd: request.cwd,
         timeoutMs: request.timeoutMs,
+        backgroundOrigin: origin,
+        lifetime: shellTaskLifetime(request),
       },
       runner: async (ctrl) => {
         const emitter = input.getRunEvents?.() ?? createBufferedEmitter();
@@ -519,6 +575,8 @@ function createTaskPromotionHandler(input: {
           command: rawCommand,
           cwd: request.cwd,
           timeoutMs: request.timeoutMs,
+          backgroundOrigin: origin,
+          lifetime: shellTaskLifetime(request),
         };
         emitter.emit("task.created", taskPayload);
         const taskSpan = openSpan(emitter, {
