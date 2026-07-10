@@ -18,7 +18,6 @@ import type {
   CreateRunOptions,
   EventEmitter,
   ModelAdapter,
-  NotificationSource,
   Policy,
   PolicyDecision,
   PolicyDecisionKind,
@@ -30,7 +29,6 @@ import type {
   RunHook,
   RunResult,
   RuntimeContext,
-  TaskRevivalSource,
   InteractionChannel,
   ToolCall,
   ToolDefinition,
@@ -726,10 +724,6 @@ export interface SpawnSubAgentInput {
    * transcript under its own directory.
    */
   runStore?: CreateRunOptions["runStore"];
-  /** Notification sources drained at child run step-start. */
-  notificationSources?: NotificationSource[];
-  /** Awaited-task readiness source for child run revival. */
-  taskRevivalSource?: TaskRevivalSource;
   /**
    * External abort signal that owns the child's lifecycle. Defaults to
    * `parent.abortSignal`, which ties the child to the parent turn. Pass a
@@ -866,8 +860,6 @@ export function spawnSubAgent(input: SpawnSubAgentInput): SpawnedSubAgent {
     abortSignal: input.abortSignal ?? parent.abortSignal,
     metadata: childRunMetadata,
     runStore: input.runStore,
-    notificationSources: input.notificationSources,
-    taskRevivalSource: input.taskRevivalSource,
   };
 
   const child = createRunFn(createOptions);

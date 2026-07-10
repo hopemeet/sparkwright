@@ -15,8 +15,6 @@ import {
   FileSessionStore,
   LocalWorkspace,
   type ModelAdapter,
-  type PendingNotification,
-  type RunId,
   type ToolDefinition,
 } from "@sparkwright/core";
 import {
@@ -24,13 +22,11 @@ import {
   InMemoryTaskStore,
   TaskManager,
   type TaskId,
-  type TaskNotification,
 } from "@sparkwright/agent-runtime";
 import {
   assertReadOnlyChildCanSatisfyGoal,
   createDynamicSpawnAgentTool,
   detectReadOnlyChildIntent,
-  runHostAgentTask,
 } from "../src/runtime.js";
 import { createReadFileTool } from "../src/tools.js";
 import { createDynamicChildToolCatalog } from "../src/tool-catalog.js";
@@ -65,50 +61,6 @@ async function readFileWhenReady(
     }
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
-}
-
-function createTestTaskRevivalBridge(input: {
-  queue: InMemoryTaskNotificationQueue;
-  manager: TaskManager;
-  getRunId: () => RunId | undefined;
-}) {
-  const matchesRun = (notification: TaskNotification): boolean =>
-    input.getRunId() === notification.parentRunId;
-  const matchesAwaited = (notification: TaskNotification): boolean => {
-    if (!matchesRun(notification)) return false;
-    return input.manager.store.get(notification.taskId)?.awaited !== false;
-  };
-  const toPending = (notification: TaskNotification): PendingNotification => ({
-    content: `Task ${notification.taskId} ${notification.status}.\n${notification.summary}`,
-    source: { kind: "task", uri: `task:${notification.taskId}` },
-    metadata: {
-      taskId: notification.taskId,
-      parentRunId: notification.parentRunId,
-      status: notification.status,
-      kind: notification.kind,
-    },
-  });
-  return {
-    notificationSource: {
-      drain: () => input.queue.drain(matchesRun).map(toPending),
-    },
-    taskRevivalSource: {
-      hasAwaitedPending: () => {
-        const runId = input.getRunId();
-        if (!runId) return false;
-        return (
-          input.manager.store
-            .list({ parentRunId: runId, awaited: true })
-            .some(
-              (task) =>
-                !["completed", "failed", "cancelled"].includes(task.status),
-            ) || input.queue.peek().some(matchesAwaited)
-        );
-      },
-      waitUntilAvailable: ({ signal }: { signal?: AbortSignal } = {}) =>
-        input.queue.waitUntilAvailable({ signal, predicate: matchesAwaited }),
-    },
-  };
 }
 
 /**
@@ -1273,139 +1225,7 @@ describe("host spawn_agent wiring", () => {
     expect(taskManager.store.list()).toHaveLength(0);
   });
 
-  it("allows opt-in depth-bounded sub-agents to create awaited agent tasks", async () => {
-    const queue = new InMemoryTaskNotificationQueue();
-    const taskManager = new TaskManager({
-      store: new InMemoryTaskStore(),
-      notificationSink: queue,
-    });
-    const runById = new Map<RunId, ReturnType<typeof createRun>>();
-    const parentPolicy = createDefaultPolicy();
-    const globTool: ToolDefinition = defineTool({
-      name: "glob",
-      description: "Fake glob for the test.",
-      inputSchema: { type: "object", properties: {} },
-      async execute() {
-        return { paths: [] };
-      },
-    });
-    const grandchildModel: ModelAdapter = {
-      async complete() {
-        return { message: "grandchild nested result" };
-      },
-    };
-    taskManager.registerKind("agent", (controller, payload) => {
-      const task = taskManager.store.get(controller.taskId);
-      const parent = task ? runById.get(task.parentRunId) : undefined;
-      return runHostAgentTask(controller, payload, {
-        getParent: () => parent,
-        model: grandchildModel,
-        modelForSpawn: async () => grandchildModel,
-        childTools: [globTool],
-        parentRunPolicy: parentPolicy,
-        childRunStoreFactory: () => undefined as never,
-        maxDepth: 2,
-        taskManager,
-        backgroundTasks: "enabled",
-        foregroundTimeoutMs: 1,
-        allowNestedBackgroundTasks: true,
-        createTaskRevivalBridge: (getRunId) =>
-          createTestTaskRevivalBridge({
-            queue,
-            manager: taskManager,
-            getRunId,
-          }),
-        registerSubagentRun: (run) => {
-          runById.set(run.record.id, run);
-          return () => runById.delete(run.record.id);
-        },
-      });
-    });
-    let childCalls = 0;
-    const childModel: ModelAdapter = {
-      async complete(input) {
-        const taskNotification = input.context.find((item) =>
-          item.content.includes("Task "),
-        );
-        if (taskNotification) {
-          return { message: "child saw nested completion" };
-        }
-        childCalls += 1;
-        if (childCalls === 1) {
-          return {
-            toolCalls: [
-              {
-                toolName: "task_create",
-                arguments: {
-                  kind: "agent",
-                  mode: "awaited",
-                  payload: {
-                    goal: "answer from nested child",
-                    role: "nested",
-                    prompt: "Return the nested result.",
-                    allowedTools: ["glob"],
-                    maxSteps: 1,
-                  },
-                },
-              },
-            ],
-          };
-        }
-        return { message: "waiting for nested task" };
-      },
-    };
-    const parent = createRun({
-      goal: "ask a child to create a nested background task",
-      model: {
-        async complete() {
-          return { message: "parent done" };
-        },
-      },
-      maxSteps: 1,
-    });
-    const spawnTool = createDynamicSpawnAgentTool({
-      getParent: () => parent,
-      model: childModel,
-      childTools: [globTool],
-      parentRunPolicy: parentPolicy,
-      childRunStoreFactory: () => undefined as never,
-      taskManager,
-      backgroundTasks: "enabled",
-      foregroundTimeoutMs: 1_000,
-      allowNestedBackgroundTasks: true,
-      createTaskRevivalBridge: (getRunId) =>
-        createTestTaskRevivalBridge({ queue, manager: taskManager, getRunId }),
-      registerSubagentRun: (run) => {
-        runById.set(run.record.id, run);
-        return () => runById.delete(run.record.id);
-      },
-    });
-
-    const output = (await spawnTool.execute(
-      {
-        goal: "create a nested agent task and wait for it",
-        role: "nested coordinator",
-        prompt: "Use task_create and report when the nested task completes.",
-        allowedTools: ["task_create"],
-        maxSteps: 5,
-      },
-      { run: parent.record } as never,
-    )) as { message?: string; signal?: string };
-
-    const nestedTasks = taskManager.store.list({ kind: "agent" });
-    expect(output).toMatchObject({
-      signal: "completed",
-      message: "child saw nested completion",
-    });
-    expect(nestedTasks).toHaveLength(1);
-    expect(nestedTasks[0]).toMatchObject({
-      status: "completed",
-      awaited: false,
-    });
-    expect(nestedTasks[0]?.parentRunId).not.toBe(parent.record.id);
-  });
-
-  it("keeps nested background agent spawning bounded by maxDepth", async () => {
+  it("keeps dynamic spawn_agent lifecycle flat for sub-agent parents", async () => {
     const parent = createRun({
       goal: "nested parent",
       model: {
@@ -1413,10 +1233,7 @@ describe("host spawn_agent wiring", () => {
           return { message: "parent done" };
         },
       },
-      metadata: {
-        parentRunId: "run_top",
-        subagentDepth: 1,
-      },
+      metadata: { parentRunId: "run_top", subagentDepth: 1 },
       maxSteps: 1,
     });
     const spawnTool = createDynamicSpawnAgentTool({
@@ -1429,21 +1246,20 @@ describe("host spawn_agent wiring", () => {
       childTools: [createReadFileTool()],
       parentRunPolicy: createDefaultPolicy(),
       childRunStoreFactory: () => undefined as never,
-      maxDepth: 1,
-      allowNestedBackgroundTasks: true,
+      maxDepth: 2,
     });
 
     await expect(
       spawnTool.execute(
         {
-          goal: "exceed max depth",
-          role: "too deep",
+          goal: "attempt nested spawn",
+          role: "nested",
           prompt: "Return.",
           allowedTools: ["read"],
         },
         { run: parent.record } as never,
       ),
-    ).rejects.toThrow("capabilities.agents.maxDepth (1)");
+    ).rejects.toThrow("parent run is itself a sub-agent");
   });
 
   it("enforces maxDepth before spawning a dynamic child", async () => {

@@ -1067,53 +1067,23 @@ describe("loadHostConfig", () => {
     }
   });
 
-  it("parses nested background task opt-in for agents", async () => {
+  it("rejects the deferred nested background task opt-in", async () => {
     const xdg = await makeTempDir();
     const cwd = await makeTempDir();
     try {
       await writeUserConfig(xdg, {
         capabilities: {
-          agents: {
-            maxDepth: 2,
-            allowNestedBackgroundTasks: true,
-          },
+          agents: { allowNestedBackgroundTasks: true },
         },
       });
       const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
 
-      expect(loaded.errors).toEqual([]);
-      expect(
-        loaded.config.capabilities?.agents?.allowNestedBackgroundTasks,
-      ).toBe(true);
-      expect(loaded.config.capabilities?.agents?.maxDepth).toBe(2);
-    } finally {
-      await rm(xdg, { recursive: true, force: true });
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
-
-  it("rejects invalid nested background task opt-in values", async () => {
-    const xdg = await makeTempDir();
-    const cwd = await makeTempDir();
-    try {
-      await writeUserConfig(xdg, {
-        capabilities: {
-          agents: {
-            allowNestedBackgroundTasks: "yes",
-          },
-        },
-      });
-      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
-
-      expect(
-        loaded.config.capabilities?.agents?.allowNestedBackgroundTasks,
-      ).toBeUndefined();
-      expect(loaded.errors).toEqual([
+      expect(loaded.errors).toContainEqual(
         expect.objectContaining({
           field: "capabilities.agents.allowNestedBackgroundTasks",
-          message: "must be a boolean",
+          message: expect.stringContaining("unknown field"),
         }),
-      ]);
+      );
     } finally {
       await rm(xdg, { recursive: true, force: true });
       await rm(cwd, { recursive: true, force: true });

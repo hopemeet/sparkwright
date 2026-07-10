@@ -6374,7 +6374,6 @@ describe("runCli", () => {
               spawnModel: "openai/gpt-5.4-mini",
               delegateModel: "anthropic/claude-sonnet-4-6",
               maxDepth: 2,
-              allowNestedBackgroundTasks: true,
             },
           },
         },
@@ -6407,7 +6406,6 @@ describe("runCli", () => {
           spawnModel?: string;
           delegateModel?: string;
           maxDepth?: number;
-          allowNestedBackgroundTasks?: boolean;
           profiles?: Array<{ id?: string }>;
         };
       };
@@ -6416,7 +6414,6 @@ describe("runCli", () => {
       spawnModel: "openai/gpt-5.4-mini",
       delegateModel: "anthropic/claude-sonnet-4-6",
       maxDepth: 2,
-      allowNestedBackgroundTasks: true,
     });
     expect(parsed.capabilities?.agents?.profiles).toEqual([
       expect.objectContaining({ id: "reader" }),
