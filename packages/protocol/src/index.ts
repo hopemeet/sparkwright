@@ -752,9 +752,18 @@ export interface WorkflowRunSnapshot {
     metadata?: Record<string, unknown>;
   };
   resume: { verifyOnResume: boolean };
+  /**
+   * Presence + policy summary of the instantiation-time authorization, used to
+   * decide whether a resume can be pre-filled and under what access. The
+   * confidential path list and target path are deliberately NOT projected here:
+   * they can be sensitive and are re-applied server-side from the persisted
+   * record on resume, so listing every run over the wire does not need to carry
+   * them. `hasConfidentialPaths`/`hasTargetPath` expose the presence without the
+   * values.
+   */
   authorizationSnapshot?: {
-    targetPath?: string;
-    confidentialPaths: string[];
+    hasTargetPath: boolean;
+    hasConfidentialPaths: boolean;
     confidentialDefaults: boolean;
     shouldWrite: boolean;
     accessMode?: RunAccessMode;

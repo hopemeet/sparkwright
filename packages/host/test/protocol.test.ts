@@ -644,8 +644,8 @@ describe("host protocol", () => {
                 at: "2026-07-09T00:00:00.000Z",
               },
               authorizationSnapshot: {
-                targetPath: "README.md",
-                confidentialPaths: [".env"],
+                hasTargetPath: true,
+                hasConfidentialPaths: true,
                 confidentialDefaults: false,
                 shouldWrite: true,
                 accessMode: "ask",

@@ -8822,11 +8822,20 @@ function workflowRunSnapshot(record: WorkflowRunRecord): WorkflowRunSnapshot {
     resume: { ...record.resume },
     ...(record.authorizationSnapshot
       ? {
+          // Project only the presence + policy summary. The confidential path
+          // list and target path stay server-side (re-applied from the record
+          // on resume) so they are not broadcast in every list row.
           authorizationSnapshot: {
-            ...record.authorizationSnapshot,
-            confidentialPaths: [
-              ...record.authorizationSnapshot.confidentialPaths,
-            ],
+            hasTargetPath: Boolean(record.authorizationSnapshot.targetPath),
+            hasConfidentialPaths:
+              record.authorizationSnapshot.confidentialPaths.length > 0,
+            confidentialDefaults:
+              record.authorizationSnapshot.confidentialDefaults,
+            shouldWrite: record.authorizationSnapshot.shouldWrite,
+            ...(record.authorizationSnapshot.accessMode
+              ? { accessMode: record.authorizationSnapshot.accessMode }
+              : {}),
+            backgroundTasks: record.authorizationSnapshot.backgroundTasks,
           },
         }
       : {}),

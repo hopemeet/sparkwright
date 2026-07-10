@@ -5,6 +5,11 @@ import { DiffView } from "./diff-view.js";
 import { useTheme } from "../lib/theme-context.js";
 import type { Theme } from "../lib/theme.js";
 import {
+  approvalChoiceLabel,
+  approvalChoices,
+  type ApprovalChoice,
+} from "../lib/session-approval.js";
+import {
   DialogFrame,
   dialogFrameWidth,
   resolveDialogColumns,
@@ -17,21 +22,25 @@ import {
  *  - shell.execute    → command (one-line) + reason
  *  - other            → summary + raw details
  *
- * Keys: y/Enter approve · n/Esc deny · j/k or arrows scroll · g/G top/bottom.
+ * Keys: up/down or j/k choose · Enter confirm · y approve once · n/Esc deny.
+ * Long diffs use paging keys so vertical choice navigation stays intuitive.
  * Esc-to-deny is risk-averse on purpose: cancelling the *prompt* without
  * a decision would leave the run blocked forever, so we treat it as deny.
  */
 export function ApprovalPrompt(props: {
   pending: PendingApproval;
-  onDecision: (decision: "approved" | "denied") => void;
+  onDecision: (choice: ApprovalChoice) => void;
 }): React.ReactElement {
   const { stdout } = useStdout();
   const theme = useTheme();
   const [scroll, setScroll] = useState(0);
+  const [selected, setSelected] = useState(0);
+  const choices = approvalChoices(props.pending.subject);
   // Reset scroll when the approval target changes — we keep this component
   // mounted across approvals when possible.
   useEffect(() => {
     setScroll(0);
+    setSelected(0);
   }, [props.pending.id]);
 
   // Reserve some rows for header / footer / surrounding chrome. The remainder
@@ -43,18 +52,28 @@ export function ApprovalPrompt(props: {
   );
 
   useInput((input, key) => {
-    if (input === "y" || input === "Y" || key.return) {
-      props.onDecision("approved");
+    if (input === "y" || input === "Y") {
+      props.onDecision("allow-once");
       return;
     }
     if (input === "n" || input === "N" || key.escape) {
-      props.onDecision("denied");
+      props.onDecision("deny");
+      return;
+    }
+    if (key.upArrow || input === "k") {
+      setSelected((value) => (value - 1 + choices.length) % choices.length);
+      return;
+    }
+    if (key.downArrow || input === "j") {
+      setSelected((value) => (value + 1) % choices.length);
+      return;
+    }
+    if (key.return) {
+      props.onDecision(choices[selected] ?? "allow-once");
       return;
     }
     if (!props.pending.diff) return;
-    if (key.downArrow || input === "j") setScroll((s) => s + 1);
-    else if (key.upArrow || input === "k") setScroll((s) => Math.max(0, s - 1));
-    else if (key.pageDown || input === "d") setScroll((s) => s + viewportRows);
+    if (key.pageDown || input === "d") setScroll((s) => s + viewportRows);
     else if (key.pageUp || input === "u")
       setScroll((s) => Math.max(0, s - viewportRows));
     else if (input === "g") setScroll(0);
@@ -73,7 +92,13 @@ export function ApprovalPrompt(props: {
         viewportRows={viewportRows}
         viewportCols={viewportCols}
       />
-      <Footer hasDiff={!!props.pending.diff} theme={theme} />
+      <Footer
+        choices={choices}
+        selected={selected}
+        pending={props.pending}
+        hasDiff={!!props.pending.diff}
+        theme={theme}
+      />
     </DialogFrame>
   );
 }
@@ -169,15 +194,28 @@ function Body(props: {
   ) : null;
 }
 
-function Footer(props: { hasDiff: boolean; theme: Theme }): React.ReactElement {
+function Footer(props: {
+  choices: readonly ApprovalChoice[];
+  selected: number;
+  pending: PendingApproval;
+  hasDiff: boolean;
+  theme: Theme;
+}): React.ReactElement {
   return (
-    <Box marginTop={1}>
-      <Text color={props.theme.success}>y</Text>
-      <Text dimColor>/enter approve </Text>
-      <Text color={props.theme.error}>n</Text>
-      <Text dimColor>/esc deny</Text>
+    <Box flexDirection="column" marginTop={1}>
+      {props.choices.map((choice, index) => (
+        <Text
+          key={choice}
+          color={index === props.selected ? props.theme.accent : undefined}
+          bold={index === props.selected}
+        >
+          {index === props.selected ? "› " : "  "}
+          {approvalChoiceLabel(choice, props.pending.subject)}
+        </Text>
+      ))}
+      <Text dimColor>↑/↓ choose · enter confirm · y once · n/esc deny</Text>
       {props.hasDiff ? (
-        <Text dimColor> ↑/↓ j/k scroll · u/d page · g/G top/bottom</Text>
+        <Text dimColor>pgup/pgdn or u/d review diff · g/G top/bottom</Text>
       ) : null}
     </Box>
   );

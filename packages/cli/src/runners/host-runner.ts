@@ -418,7 +418,6 @@ async function runHostLifecycle(
       client,
       runId,
       sessionId,
-      workflowName,
       workflowRunId: "workflowRunId" in input ? input.workflowRunId : undefined,
     });
     if (waitingWorkflow) {
@@ -506,28 +505,28 @@ async function findWaitingWorkflowForRun(input: {
   client?: Client;
   runId?: string;
   sessionId?: string;
-  workflowName?: string;
   workflowRunId?: string;
 }): Promise<WorkflowRunSnapshot | undefined> {
   if (!input.client) return undefined;
-  if (!input.runId && !input.workflowRunId && !input.workflowName) {
-    return undefined;
-  }
+  if (!input.runId && !input.workflowRunId) return undefined;
   try {
     const result = await input.client.listWorkflowRuns({
       sessionId: input.sessionId,
       status: "waiting",
       limit: 50,
     });
-    return result.workflows.find((workflow) => {
-      if (input.workflowRunId && workflow.id === input.workflowRunId) {
-        return true;
-      }
-      if (input.runId && workflow.runIds.includes(input.runId)) return true;
-      return Boolean(
-        input.workflowName && workflow.assetName === input.workflowName,
-      );
-    });
+    // Match only on identifiers that pin *this* run: the resumed workflowRunId
+    // or the host runId carried by the run we just drove. The asset name is
+    // deliberately NOT a fallback — a stale, unrelated waiting run of the same
+    // workflow asset would otherwise shadow the real match and report the wrong
+    // id (or a false waiting exit for a run that actually finished).
+    const runId = input.runId;
+    const byWorkflowRunId = input.workflowRunId
+      ? result.workflows.find((workflow) => workflow.id === input.workflowRunId)
+      : undefined;
+    if (byWorkflowRunId) return byWorkflowRunId;
+    if (!runId) return undefined;
+    return result.workflows.find((workflow) => workflow.runIds.includes(runId));
   } catch {
     return undefined;
   }
