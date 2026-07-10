@@ -92,8 +92,10 @@ describe("WorkflowPanel", () => {
 
     await panel.input("j");
     await panel.input("\r");
-    const text = panel.text();
+    // Read the rendered frame after unmount: under CI, Ink defers writes to
+    // the final frame emitted on unmount, so reading before it yields "".
     panel.unmount();
+    const text = panel.text();
 
     expect(selected).toEqual(["workflow_beta"]);
     expect(text).toContain("beta");
