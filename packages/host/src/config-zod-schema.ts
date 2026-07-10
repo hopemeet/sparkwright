@@ -919,12 +919,6 @@ export const agentsConfigSchema = z
         "Global sub-agent depth ceiling. 0 disables sub-agent spawning.",
       )
       .optional(),
-    allowNestedBackgroundTasks: z
-      .boolean()
-      .describe(
-        "Opt-in: allow sub-agents to create awaited/background agent tasks, bounded by maxDepth.",
-      )
-      .optional(),
   })
   .strict()
   .describe("Agent profile run templates for host-created runs.");

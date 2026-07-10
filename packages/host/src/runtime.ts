@@ -88,7 +88,6 @@ import {
   TaskManager,
   createAgentTool,
   createAgentProfilePolicy,
-  createTaskCreate,
   deriveChildAgentProfile,
   findSimilarSuccessfulDelegation,
   notificationFromRecord,
@@ -206,7 +205,6 @@ import {
 } from "./model-factory.js";
 import { createModelSessionSummarizer } from "./session-summarizer.js";
 import {
-  AGENT_TASK_CREATE_PAYLOAD_SCHEMA,
   catalogEntryOrigin,
   catalogToolDefinitions,
   createConfiguredDelegateChildToolCatalog,
@@ -828,12 +826,6 @@ export interface HostAgentTaskRunnerDeps {
   taskManager?: TaskManager;
   backgroundTasks?: BackgroundTaskPolicy;
   foregroundTimeoutMs?: number;
-  allowNestedBackgroundTasks?: boolean;
-  createTaskRevivalBridge?: (getRunId: () => RunId | undefined) => {
-    notificationSource: NotificationSource;
-    taskRevivalSource: TaskRevivalSource;
-  };
-  registerSubagentRun?: (run: ReturnType<typeof createRun>) => () => void;
   childRunStoreFactory: (
     childAgentId: string,
   ) => ReturnType<typeof createSessionRunStoreFactory>;
@@ -882,9 +874,6 @@ export async function runHostAgentTask(
     taskManager: deps.taskManager,
     backgroundTasks: deps.backgroundTasks,
     foregroundTimeoutMs: deps.foregroundTimeoutMs,
-    allowNestedBackgroundTasks: deps.allowNestedBackgroundTasks,
-    createTaskRevivalBridge: deps.createTaskRevivalBridge,
-    registerSubagentRun: deps.registerSubagentRun,
     taskId: String(controller.taskId),
   });
   const ctx: RuntimeContext = {
@@ -909,10 +898,6 @@ export class HostRuntime {
   // Latest per-run spawn deps for the registered `agent` background task kind.
   // Overwritten each run; the runner reads it once at execution start.
   private agentSpawnDeps: HostAgentTaskRunnerDeps | null = null;
-  private readonly subagentRuns = new Map<
-    RunId,
-    ReturnType<typeof createRun>
-  >();
   private readonly taskNotifications: FileTaskNotificationOutbox;
   private readonly workflowNotifications: FileWorkflowNotificationOutbox;
   private readonly taskManager: TaskManager;
@@ -990,14 +975,7 @@ export class HostRuntime {
         { code: "AGENT_TASK_UNAVAILABLE" },
       );
     }
-    const task = this.taskManager.store.get(controller.taskId);
-    const parentRun =
-      task !== undefined ? this.subagentRuns.get(task.parentRunId) : undefined;
-    return runHostAgentTask(
-      controller,
-      payload,
-      parentRun ? { ...deps, getParent: () => parentRun } : deps,
-    );
+    return runHostAgentTask(controller, payload, deps);
   }
 
   private createTaskRevivalBridge(getRunId: () => RunId | undefined): {
@@ -1942,12 +1920,7 @@ export class HostRuntime {
       allowReadWriteWorkspaceAccess: input.shouldWrite,
       routingByProfileId: delegateRouting.routingByProfileId,
     });
-    const allowNestedBackgroundTasks =
-      agentConfig?.allowNestedBackgroundTasks === true;
-    const subagentMaxDepth =
-      allowNestedBackgroundTasks && agentConfig?.maxDepth === undefined
-        ? 2
-        : agentConfig?.maxDepth;
+    const subagentMaxDepth = agentConfig?.maxDepth;
     const dynamicSpawnTool = createDynamicSpawnAgentTool({
       getParent: () => parentRunRef.current,
       model: model.adapter,
@@ -1960,13 +1933,6 @@ export class HostRuntime {
         shellConfig?.foregroundTimeoutMs ?? RECOMMENDED_FOREGROUND_TIMEOUT_MS,
       taskManager: this.taskManager,
       backgroundTasks: input.backgroundTasks,
-      allowNestedBackgroundTasks,
-      createTaskRevivalBridge: (getRunId) =>
-        this.createTaskRevivalBridge(getRunId),
-      registerSubagentRun: (run) => {
-        this.subagentRuns.set(run.record.id, run);
-        return () => this.subagentRuns.delete(run.record.id);
-      },
     });
     // Publish spawn deps for the registered `agent` background task kind so a
     // `task_create(kind:"agent")` call can drive a child run that the task,
@@ -1984,13 +1950,6 @@ export class HostRuntime {
       backgroundTasks: input.backgroundTasks,
       foregroundTimeoutMs:
         shellConfig?.foregroundTimeoutMs ?? RECOMMENDED_FOREGROUND_TIMEOUT_MS,
-      allowNestedBackgroundTasks,
-      createTaskRevivalBridge: (getRunId) =>
-        this.createTaskRevivalBridge(getRunId),
-      registerSubagentRun: (run) => {
-        this.subagentRuns.set(run.record.id, run);
-        return () => this.subagentRuns.delete(run.record.id);
-      },
     };
     const toolCatalog = createMainHostToolCatalog({
       workspaceRoot,
@@ -6836,12 +6795,6 @@ export function createDynamicSpawnAgentTool(input: {
   foregroundTimeoutMs?: number;
   taskManager?: TaskManager;
   backgroundTasks?: BackgroundTaskPolicy;
-  allowNestedBackgroundTasks?: boolean;
-  createTaskRevivalBridge?: (getRunId: () => RunId | undefined) => {
-    notificationSource: NotificationSource;
-    taskRevivalSource: TaskRevivalSource;
-  };
-  registerSubagentRun?: (run: ReturnType<typeof createRun>) => () => void;
   /** Builds a session-scoped run store for the child, keyed by its agent id. */
   childRunStoreFactory: (
     childAgentId: string,
@@ -6849,9 +6802,8 @@ export function createDynamicSpawnAgentTool(input: {
 }): ToolDefinition {
   return defineTool({
     name: "spawn_agent",
-    description: input.allowNestedBackgroundTasks
-      ? "Spawn a bounded child agent for one focused sub-task. By default the child is read-only. With grant.workspaceWrite=true, or by requesting a managed write tool, the child may use managed workspace write tools after parent approval; it still cannot run shell commands. When explicitly granted task_create, it may create depth-bounded background agent tasks. Use this for temporary roles; if the same role becomes useful repeatedly, create a stable profile with create_agent and delegate to it through a delegate_* tool."
-      : "Spawn a bounded child agent for one focused sub-task. By default the child may inspect files but cannot write, run shell commands, or spawn further agents. With grant.workspaceWrite=true, or by requesting a managed write tool, the child may use managed workspace write tools after parent approval; it still cannot run shell commands. Use this for temporary roles; if the same role becomes useful repeatedly, create a stable profile with create_agent and delegate to it through a delegate_* tool.",
+    description:
+      "Spawn a bounded child agent for one focused sub-task. By default the child may inspect files but cannot write, run shell commands, or spawn further agents. With grant.workspaceWrite=true, or by requesting a managed write tool, the child may use managed workspace write tools after parent approval; it still cannot run shell commands. Use this for temporary roles; if the same role becomes useful repeatedly, create a stable profile with create_agent and delegate to it through a delegate_* tool.",
     inputSchema: {
       type: "object",
       properties: {
@@ -6877,7 +6829,6 @@ export function createDynamicSpawnAgentTool(input: {
             enum: [
               ...AGENT_READ_ONLY_CHILD_TOOLS,
               ...AGENT_WORKSPACE_WRITE_CHILD_TOOLS,
-              ...(input.allowNestedBackgroundTasks ? ["task_create"] : []),
             ],
           },
         },
@@ -6950,27 +6901,15 @@ export function createDynamicSpawnAgentTool(input: {
           'Tool "spawn_agent" was invoked but no parent RunHandle is available.',
         );
       }
-      if (
-        typeof parent.record.metadata?.parentRunId === "string" &&
-        input.allowNestedBackgroundTasks !== true
-      ) {
+      if (typeof parent.record.metadata?.parentRunId === "string") {
         throw new Error(
           'Tool "spawn_agent" refused to nest: parent run is itself a sub-agent.',
         );
       }
       const parsed = parseDynamicSpawnAgentArgs(args);
-      const nestedTaskCreateTool =
-        input.allowNestedBackgroundTasks === true && input.taskManager
-          ? createNestedAgentTaskCreateTool({
-              manager: input.taskManager,
-              foregroundTimeoutMs: input.foregroundTimeoutMs,
-              backgroundTasks: input.backgroundTasks,
-            })
-          : undefined;
-      const supportedTools = new Set([
+      const supportedTools = new Set<string>([
         ...AGENT_READ_ONLY_CHILD_TOOLS,
         ...AGENT_WORKSPACE_WRITE_CHILD_TOOLS,
-        ...(nestedTaskCreateTool ? ["task_create"] : []),
       ]);
       const toolRequest = resolveAgentSpawnToolRequest({
         allowedTools: parsed.allowedTools,
@@ -6979,10 +6918,7 @@ export function createDynamicSpawnAgentTool(input: {
       });
       const requestedTools = toolRequest.requestedTools.map(canonicalToolName);
       const availableTools = new Map(
-        [
-          ...input.childTools,
-          ...(nestedTaskCreateTool ? [nestedTaskCreateTool] : []),
-        ].map((tool) => [canonicalToolName(tool.name), tool]),
+        input.childTools.map((tool) => [canonicalToolName(tool.name), tool]),
       );
       const invalidTools = requestedTools.filter(
         (name) => !supportedTools.has(name) || !availableTools.has(name),
@@ -7065,11 +7001,6 @@ export function createDynamicSpawnAgentTool(input: {
         : input.model;
 
       const childAbort = createLinkedAbortController(input.abortSignal);
-      const childRunRef: { id?: RunId } = {};
-      const childBridge =
-        input.allowNestedBackgroundTasks === true
-          ? input.createTaskRevivalBridge?.(() => childRunRef.id)
-          : undefined;
       const spawned = spawnSubAgent({
         parent,
         goal: parsed.goal,
@@ -7092,10 +7023,6 @@ export function createDynamicSpawnAgentTool(input: {
         // `sessions/<id>/agents/<agentId>/` and register it in session.json,
         // instead of letting its steps disappear once the tool returns.
         runStore: input.childRunStoreFactory(agentId),
-        notificationSources: childBridge
-          ? [childBridge.notificationSource]
-          : [],
-        taskRevivalSource: childBridge?.taskRevivalSource,
         // Fold the child's tool/model usage into the parent run's tracker so
         // session usage totals (and the live `usage.updated` stream) reflect
         // sub-agent spend rather than under-reporting it.
@@ -7116,11 +7043,6 @@ export function createDynamicSpawnAgentTool(input: {
           },
         },
       });
-      childRunRef.id = spawned.childRunId as RunId;
-      const unregisterSubagentRun =
-        input.allowNestedBackgroundTasks === true
-          ? input.registerSubagentRun?.(spawned.run)
-          : undefined;
       const completion = completeDynamicSpawnAgent({
         spawned,
         parent,
@@ -7133,7 +7055,6 @@ export function createDynamicSpawnAgentTool(input: {
         childMaxSteps,
       }).finally(() => {
         childAbort.dispose();
-        unregisterSubagentRun?.();
       });
       if (
         input.taskManager &&
@@ -7452,85 +7373,6 @@ function taskErrorFromCause(cause: unknown): {
     };
   }
   return { code: "TASK_FAILED", message: String(cause) };
-}
-
-function createNestedAgentTaskCreateTool(input: {
-  manager: TaskManager;
-  foregroundTimeoutMs?: number;
-  backgroundTasks?: BackgroundTaskPolicy;
-}): ToolDefinition {
-  const tool = createTaskCreate({
-    manager: input.manager,
-    getParentRunId: (ctx) => {
-      if (!ctx) {
-        throw new Error("nested task_create requires runtime context.");
-      }
-      return ctx.run.id as RunId;
-    },
-    foregroundTimeoutMs: input.foregroundTimeoutMs,
-    backgroundTasks: input.backgroundTasks,
-    taskCreateKinds: [
-      {
-        kind: "agent",
-        description:
-          "start a bounded background child agent from this sub-agent",
-        payloadDescription:
-          "required object with goal, role, and prompt; optional read-only allowedTools, metadata, and maxSteps.",
-        payloadSchema: nestedAgentTaskCreatePayloadSchema(),
-        requiresPayload: true,
-      },
-    ],
-  });
-  return {
-    ...tool,
-    policy: { risk: "safe", requiresApproval: false },
-    async execute(args: unknown, ctx): Promise<unknown> {
-      const output = await tool.execute(args, ctx);
-      const record = previewRecord(output);
-      if (record.mode !== "awaited" || typeof record.taskId !== "string") {
-        return output;
-      }
-
-      const taskId = record.taskId as unknown as TaskId;
-      const task =
-        (await input.manager.handle(taskId)?.wait()) ??
-        input.manager.store.get(taskId);
-      if (!task) return output;
-      if (isTerminalTaskStatus(task.status)) {
-        input.manager.store.update(task.id, { awaited: false });
-      }
-      const latest = input.manager.store.get(task.id) ?? task;
-      return {
-        ...record,
-        task: latest,
-        status: latest.status,
-        complete: isTerminalTaskStatus(latest.status),
-        result: latest.result,
-        error: latest.error,
-      };
-    },
-  };
-}
-
-function nestedAgentTaskCreatePayloadSchema(): Record<string, unknown> {
-  const properties: Record<string, unknown> = {
-    ...AGENT_TASK_CREATE_PAYLOAD_SCHEMA.properties,
-  };
-  delete properties.grant;
-  properties.allowedTools = {
-    ...AGENT_TASK_CREATE_PAYLOAD_SCHEMA.properties.allowedTools,
-    type: "array",
-    description:
-      "Optional subset of read-only tools for the child. Supported: read, glob, grep, list_dir, task_create.",
-    items: {
-      type: "string",
-      enum: ["read", "glob", "grep", "list_dir", "task_create"],
-    },
-  };
-  return {
-    ...AGENT_TASK_CREATE_PAYLOAD_SCHEMA,
-    properties,
-  };
 }
 
 function parseDelegateParallelArgs(args: unknown): DelegateParallelTask[] {

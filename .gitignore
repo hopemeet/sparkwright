@@ -22,8 +22,26 @@ __pycache__/
 .cursor/
 *.swp
 
-# Internal docs and dashboards (local-only, not for public repo)
-docs/_internal/
+# Structured internal maintenance knowledge is versioned; ad-hoc reviews and
+# real-model run logs remain local-only.
+docs/_internal/*
+!docs/_internal/project-map/
+!docs/_internal/project-map/**
+!docs/_internal/proposals/
+!docs/_internal/proposals/**
+!docs/_internal/test-map/
+docs/_internal/test-map/*
+!docs/_internal/test-map/README.md
+!docs/_internal/test-map/coverage/
+!docs/_internal/test-map/coverage/**
+!docs/_internal/test-map/failures/
+!docs/_internal/test-map/failures/**
+!docs/_internal/test-map/matrices/
+!docs/_internal/test-map/matrices/**
+!docs/_internal/test-map/routes/
+!docs/_internal/test-map/routes/**
+!docs/_internal/test-map/scenarios/
+!docs/_internal/test-map/scenarios/**
 README.internal.md
 
 # SparkWright project/runtime state

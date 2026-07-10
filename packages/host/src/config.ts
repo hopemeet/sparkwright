@@ -339,8 +339,6 @@ export interface CapabilityAgentsConfig {
   enableParallelDelegates?: boolean;
   /** Maximum allowed sub-agent depth. 0 disables spawning; absent keeps legacy defaults. */
   maxDepth?: number;
-  /** Allow sub-agents to create background agent tasks, bounded by maxDepth. */
-  allowNestedBackgroundTasks?: boolean;
 }
 
 export type CapabilityMcpServerConfig =
@@ -3935,15 +3933,6 @@ function validateCapabilityAgents(
       filePath,
       errors,
     );
-  }
-  if (raw.allowNestedBackgroundTasks !== undefined) {
-    const parsed = validateOptionalBoolean(
-      raw.allowNestedBackgroundTasks,
-      "capabilities.agents.allowNestedBackgroundTasks",
-      filePath,
-      errors,
-    );
-    if (parsed !== undefined) out.allowNestedBackgroundTasks = parsed;
   }
   return out;
 }

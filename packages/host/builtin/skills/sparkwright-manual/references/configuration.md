@@ -423,9 +423,8 @@ without `.md`. Config-defined profiles live under
 profiles. `use` is the recommended capability axis; `allowedTools` (or the
 markdown alias `tools`) is an advanced concrete-name allowlist that only narrows
 selected tools. Set `capabilities.agents.maxDepth` to cap nested child/delegate
-spawning. Set `capabilities.agents.allowNestedBackgroundTasks: true` to let
-sub-agents create depth-bounded background agent tasks when they are explicitly
-granted `task_create`.
+spawning. Sub-agents cannot create background tasks; `task_create` remains a
+top-level run capability.
 Non-`main` profiles that omit `mode` default to child/delegate agents and are
 callable through `delegate_agent` by `agentId` unless they set
 `exposeAsDelegate: false`; `id: main` or `mode: primary` marks the primary

@@ -1309,10 +1309,6 @@
               "minimum": 0,
               "maximum": 9007199254740991,
               "description": "Global sub-agent depth ceiling. 0 disables sub-agent spawning."
-            },
-            "allowNestedBackgroundTasks": {
-              "type": "boolean",
-              "description": "Opt-in: allow sub-agents to create awaited/background agent tasks, bounded by maxDepth."
             }
           },
           "additionalProperties": false,

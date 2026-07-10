@@ -2626,9 +2626,10 @@ async function loadCapabilityInspectReport(
     },
     shell: {
       foregroundTimeoutMs:
+        runtime?.shell?.foregroundTimeoutMs ??
         loaded.config.shell?.foregroundTimeoutMs ??
         RECOMMENDED_FOREGROUND_TIMEOUT_MS,
-      promotionAvailable: true,
+      promotionAvailable: runtime?.shell?.promotionAvailable ?? true,
       sandbox: {
         mode: shellSandbox.mode,
         failIfUnavailable: shellSandbox.failIfUnavailable,
@@ -5489,7 +5490,6 @@ interface AgentsConfigShape {
   exposeChildrenAsDelegates?: boolean;
   enableParallelDelegates?: boolean;
   maxDepth?: number;
-  allowNestedBackgroundTasks?: boolean;
 }
 
 interface AgentValidationError {
@@ -5685,9 +5685,6 @@ function getAgentsConfig(config: Record<string, unknown>): AgentsConfigShape {
     ...(typeof agents.maxDepth === "number" && Number.isFinite(agents.maxDepth)
       ? { maxDepth: agents.maxDepth }
       : {}),
-    ...(typeof agents.allowNestedBackgroundTasks === "boolean"
-      ? { allowNestedBackgroundTasks: agents.allowNestedBackgroundTasks }
-      : {}),
   };
 }
 
@@ -5732,9 +5729,6 @@ function setAgentsConfig(
       ? { enableParallelDelegates: agents.enableParallelDelegates }
       : {}),
     ...(agents.maxDepth !== undefined ? { maxDepth: agents.maxDepth } : {}),
-    ...(agents.allowNestedBackgroundTasks !== undefined
-      ? { allowNestedBackgroundTasks: agents.allowNestedBackgroundTasks }
-      : {}),
   };
   config.capabilities = capabilities;
 }
