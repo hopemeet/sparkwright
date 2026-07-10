@@ -38,11 +38,20 @@ approval, sandboxing, and audit layers without changing the agent loop contract.
 `LiveShellHandle` (stdout/stderr async iterables, `abort()`) plus a
 `completed` promise. When a foreground command exceeds
 `ShellToolOptions.foregroundTimeoutMs`, the live process is **not killed** —
-the tool calls `ShellToolOptions.onPromote({ handle, partialStdout,
+the tool calls `ShellToolOptions.onBackground({ handle, partialStdout,
 partialStderr, ... })`, which is expected to adopt the process (typically by
 registering it with `@sparkwright/agent-runtime`'s `TaskManager`) and return a
 `taskId`. The tool resolves with `{ promoted: true, taskId }` so the agent
 can monitor completion via `task(action="get")` / `task(action="output")`.
+
+`background:true` does not use this timeout path. Core first resolves policy
+and approval, then shell-tool hands the process directly to the host with
+`origin:"explicit"`; timeout handoff uses `origin:"promoted"`. Hosts should
+persist that origin for diagnostics and execute the supplied
+`policy:{ awaited, lifetime }`. Explicit background tasks are detached
+(`awaited:false`) while keeping promoted foreground work awaited. The optional
+`lifetime:"service"` input only adds a short immediate-exit grace check; it is
+not a readiness or health-check protocol.
 
 Pair the promotion bridge with `TaskNotificationSink`
 (`@sparkwright/agent-runtime`) so the agent's next turn observes terminal
@@ -111,12 +120,12 @@ Design notes:
   When the budget fires, a host with a task manager promotes the live process;
   a host without promotion aborts and reports `timedOut: true`.
 - **Required options.** `environment` (with `executeShellStreaming`),
-  `foregroundTimeoutMs`, and `onPromote` are all required by
+  `foregroundTimeoutMs`, and `onBackground` are all required by
   `createShellTool`. Missing any of them throws at construction with a
   pointer to this section. The legacy batch-only `executeShell` path is no
   longer used by the tool — hosts that need one-shot batch execution should
   call `environment.executeShell` directly.
-- **Promotion failure ≠ leak.** If `onPromote` throws, the tool calls
+- **Background handoff failure ≠ leak.** If `onBackground` throws, the tool calls
   `handle.abort()` and reports `timedOut: true` so a flaky task queue can't
   orphan processes.
 - **Layer cleanly.** `@sparkwright/shell-tool` has no dependency on

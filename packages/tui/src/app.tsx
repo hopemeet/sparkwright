@@ -662,7 +662,7 @@ function AppReady(
     }
     if (topLayer?.name === "approval" && state.pendingApproval) {
       quitArmedUntilRef.current = now + 1500;
-      controller.resolveApproval("denied");
+      void controller.resolveApproval("deny");
       return;
     }
     if (topLayer) {
@@ -885,8 +885,7 @@ function AppReady(
     onPickSession: sessionActions.pickSession,
     onRequestRename: sessionActions.requestRename,
     onCommitRename: sessionActions.commitRename,
-    onApprovalDecision: (d: "approved" | "denied") =>
-      controller.resolveApproval(d),
+    onApprovalDecision: (choice) => void controller.resolveApproval(choice),
     onCreateCapability: capActions.handleCreateCapability,
     onCreateSkillProposal: skillActions.handleCreateSkillProposal,
     onUpdateSkillProposal: skillActions.handleUpdateSkillProposal,

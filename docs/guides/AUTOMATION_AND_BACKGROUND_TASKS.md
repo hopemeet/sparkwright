@@ -28,8 +28,22 @@ Use a background task when work may outlive the foreground turn:
 - jobs the agent should poll or observe later
 
 `@sparkwright/shell-tool` can promote a long-running command into a task when
-the host provides `foregroundTimeoutMs` and `onPromote`. The task can then be
+the host provides `foregroundTimeoutMs` and `onBackground`. The task can then be
 observed with `task(action="get")` and `task(action="output")`.
+
+An explicit `background:true` shell call is different from timeout promotion:
+it passes the normal policy and approval gate, then starts directly as a
+detached task. The result reports `backgroundOrigin:"explicit"` and does not
+claim that a foreground timeout occurred. Use `lifetime:"service"` for a
+server, watcher, or intentional long-running loop; v1 treats survival through a
+short startup grace window as a successful launch and performs no health probe.
+Equivalent active explicit shell commands in the same run reuse the existing
+task id instead of spawning another process.
+
+At the host boundary, shell-tool resolves one two-field execution policy:
+`{ awaited, lifetime }`. Explicit background calls use `awaited:false`; timeout
+promotion uses `awaited:true`. Hosts should execute this policy directly rather
+than infer keep-alive behavior from diagnostic fields such as `origin`.
 
 Read [Environment Notes](../maintainer/ENVIRONMENT.md) for the durable wiring example.
 
@@ -112,6 +126,7 @@ Implemented today:
 
 - foreground shell execution boundary
 - shell-tool foreground-to-background promotion
+- explicit shell background launch with job/service lifecycle hints
 - task manager primitives
 - in-memory and file-backed task state patterns
 - notification sources for injecting terminal task events into later turns

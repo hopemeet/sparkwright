@@ -18,7 +18,7 @@ import {
   isDestructive,
   parseCommand,
   stripHereDocBodies,
-  type ShellPromotionRequest,
+  type ShellBackgroundHandoffRequest,
 } from "../src/index.js";
 
 const DESTRUCTIVE_FIXTURES: Record<string, string[]> = {
@@ -295,7 +295,7 @@ describe("createShellTool", () => {
     expect(() => createShellTool(incomplete)).toThrow(/foregroundTimeoutMs/);
   });
 
-  it("rejects construction when onPromote is missing", () => {
+  it("rejects construction when no background handoff is configured", () => {
     const incomplete = {
       environment: streamingEnv({
         stdoutChunks: [],
@@ -305,7 +305,7 @@ describe("createShellTool", () => {
       }),
       foregroundTimeoutMs: 1000,
     } as unknown as Parameters<typeof createShellTool>[0];
-    expect(() => createShellTool(incomplete)).toThrow(/onPromote/);
+    expect(() => createShellTool(incomplete)).toThrow(/onBackground/);
   });
 
   it("dispatches allowed commands through the streaming environment", async () => {
@@ -596,7 +596,7 @@ describe("foreground→background promotion", () => {
       completeAfterMs: 5,
       exitCode: 0,
     });
-    const promotions: ShellPromotionRequest[] = [];
+    const promotions: ShellBackgroundHandoffRequest[] = [];
     const tool = createShellTool({
       environment,
       foregroundTimeoutMs: 1000,
@@ -641,18 +641,18 @@ describe("foreground→background promotion", () => {
     expect(result.timedOut).toBe(false);
   });
 
-  it("hands the live process to onPromote when the deadline fires first", async () => {
+  it("hands the live process to onBackground when the deadline fires first", async () => {
     const environment = streamingEnv({
       stdoutChunks: ["partial\n"],
       stderrChunks: ["warn\n"],
       completeAfterMs: 500,
       exitCode: 0,
     });
-    const promotions: ShellPromotionRequest[] = [];
+    const promotions: ShellBackgroundHandoffRequest[] = [];
     const tool = createShellTool({
       environment,
       foregroundTimeoutMs: 20,
-      onPromote: (req) => {
+      onBackground: (req) => {
         promotions.push(req);
         // Adopt the process so it isn't killed.
         return { taskId: "task_abc" };
@@ -663,8 +663,11 @@ describe("foreground→background promotion", () => {
     expect(result.taskId).toBe("task_abc");
     expect(result.exitCode).toBeNull();
     expect(result.timedOut).toBe(false);
+    expect(result.promotionGuidance).toContain("task_abc");
+    expect(result.promotionGuidance).toMatch(/do not re-run/i);
     expect(promotions).toHaveLength(1);
     expect(promotions[0]!.foregroundTimeoutMs).toBe(20);
+    expect(promotions[0]!.policy).toEqual({ awaited: true, lifetime: "job" });
     expect(typeof promotions[0]!.handle.abort).toBe("function");
     await expect(promotions[0]!.completed).resolves.toMatchObject({
       exitCode: 0,
@@ -830,11 +833,11 @@ describe("foreground→background promotion", () => {
       completeAfterMs: 500,
       exitCode: 0,
     });
-    const promotions: ShellPromotionRequest[] = [];
+    const promotions: ShellBackgroundHandoffRequest[] = [];
     const tool = createShellTool({
       environment,
-      // A generous foreground budget would normally keep this inline; background
-      // must promote immediately regardless.
+      // A generous foreground budget would normally keep this inline;
+      // background must hand off directly without pretending it timed out.
       foregroundTimeoutMs: 5 * 60 * 1000,
       onPromote: (req) => {
         promotions.push(req);
@@ -845,11 +848,20 @@ describe("foreground→background promotion", () => {
       { command: "sleep 1", background: true },
       runtimeContext(),
     );
-    expect(result.promoted).toBe(true);
+    expect(result.promoted).toBeUndefined();
+    expect(result.background).toBe(true);
+    expect(result.backgroundOrigin).toBe("explicit");
     expect(result.taskId).toBe("task_bg");
     expect(result.exitCode).toBeNull();
-    expect(result.foregroundTimeoutMs).toBe(0);
+    expect(result.foregroundTimeoutMs).toBe(5 * 60 * 1000);
+    expect(result.backgroundGuidance).toContain("successful start");
+    expect(result.promotionGuidance).toBeUndefined();
     expect(promotions).toHaveLength(1);
+    expect(promotions[0]!.origin).toBe("explicit");
+    expect(promotions[0]!.policy).toEqual({
+      awaited: false,
+      lifetime: "job",
+    });
   });
 
   it("background:true fails loud when promotion is unavailable (F1a)", async () => {
@@ -868,6 +880,106 @@ describe("foreground→background promotion", () => {
     await expect(
       tool.execute({ command: "sleep 1", background: true }, runtimeContext()),
     ).rejects.toThrow(/background tasks to be enabled/i);
+  });
+
+  it("reuses an equivalent active background task before spawning", async () => {
+    const environment = streamingEnv({
+      stdoutChunks: [],
+      stderrChunks: [],
+      completeAfterMs: 500,
+      exitCode: 0,
+    });
+    let promoted = false;
+    const tool = createShellTool({
+      environment,
+      foregroundTimeoutMs: 1000,
+      onPromote: () => {
+        promoted = true;
+        return { taskId: "new_task" };
+      },
+      findActiveBackgroundTask: () => ({ taskId: "existing_task" }),
+    });
+
+    const result = await tool.execute(
+      { command: "node server.js", background: true, lifetime: "service" },
+      runtimeContext(),
+    );
+
+    expect(result).toMatchObject({
+      background: true,
+      backgroundOrigin: "explicit",
+      lifetime: "service",
+      deduplicated: true,
+      taskId: "existing_task",
+      executed: false,
+    });
+    expect(promoted).toBe(false);
+  });
+
+  it("requires a service to survive the startup grace window", async () => {
+    const environment = streamingEnv({
+      stdoutChunks: [],
+      stderrChunks: ["startup failed\n"],
+      completeAfterMs: 5,
+      exitCode: 3,
+    });
+    let handedOff = false;
+    const tool = createShellTool({
+      environment,
+      foregroundTimeoutMs: 1000,
+      onPromote: () => {
+        handedOff = true;
+        return { taskId: "should_not_handoff" };
+      },
+    });
+
+    const result = await tool.execute(
+      {
+        command: "node broken-server.js",
+        background: true,
+        lifetime: "service",
+      },
+      runtimeContext(),
+    );
+
+    expect(handedOff).toBe(false);
+    expect(result.background).toBeUndefined();
+    expect(result.exitCode).toBe(3);
+    expect(result.stderr).toContain("startup failed");
+  });
+
+  it("hands off a service that survives the startup grace window", async () => {
+    const environment = streamingEnv({
+      stdoutChunks: ["readying\n"],
+      stderrChunks: [],
+      completeAfterMs: 1_500,
+      exitCode: 0,
+    });
+    let handoffPolicy: ShellBackgroundHandoffRequest["policy"] | undefined;
+    const tool = createShellTool({
+      environment,
+      foregroundTimeoutMs: 10_000,
+      onPromote: (request) => {
+        handoffPolicy = request.policy;
+        return {
+          taskId:
+            request.origin === "explicit" ? "service_task" : "unexpected_task",
+        };
+      },
+    });
+
+    const result = await tool.execute(
+      { command: "node server.js", background: true, lifetime: "service" },
+      runtimeContext(),
+    );
+
+    expect(result).toMatchObject({
+      background: true,
+      backgroundOrigin: "explicit",
+      lifetime: "service",
+      taskId: "service_task",
+    });
+    expect(handoffPolicy).toEqual({ awaited: false, lifetime: "service" });
   });
 });
 

@@ -51,6 +51,10 @@ major; breaking changes bump the major.
   non-terminal workflow run by single-writer lease and starts a new host run
   from the pinned workflow definition snapshot. Hosts advertise both in
   `host.ready.capabilities`.
+- Add the optional workflow-run `authorizationSnapshot` policy summary. It
+  exposes `hasTargetPath` / `hasConfidentialPaths` presence flags rather than
+  broadcasting sensitive target or confidential path values; the host reapplies
+  the persisted values when an omitted resume field needs its default.
 
 ## 1.3 (2026-06-14)
 

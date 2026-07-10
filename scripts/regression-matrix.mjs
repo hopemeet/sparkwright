@@ -637,7 +637,7 @@ async function shellPromotionCase() {
             toolCalls: [
               {
                 toolName: "task",
-                arguments: { action: "list", kind: "shell.promoted" },
+                arguments: { action: "list", kind: "shell.background" },
               },
             ],
           },
@@ -655,7 +655,7 @@ async function shellPromotionCase() {
     workspace,
     write: "yes, auto-approved bash",
     expectedTrace:
-      "bash result has promoted=true/taskId; tool_search -> task(action=list, kind=shell.promoted) returns a parent task",
+      "bash result has promoted=true/taskId; tool_search -> task(action=list, kind=shell.background) returns a parent task",
     failureRule:
       "Fails if the foreground timeout kills instead of promoting, or if promoted tasks are not visible to the main agent.",
     harness: true,

@@ -1,4 +1,5 @@
 import type { RunEvent } from "../lib/event-type.js";
+import type { ApprovalSubject } from "../lib/session-approval.js";
 
 export type Status =
   | "idle"
@@ -35,6 +36,8 @@ export interface PendingApproval {
   toolArgs?: unknown;
   /** Shell command, if shell.execute. */
   command?: string;
+  /** Stable, fail-closed projection used to offer and match session rules. */
+  subject: ApprovalSubject;
   /** Policy decision metadata (risk, reason). */
   policy?: {
     decision?: string;

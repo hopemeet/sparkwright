@@ -6,7 +6,8 @@ import {
   evaluateShellSafety,
   parseCommand,
   RECOMMENDED_FOREGROUND_TIMEOUT_MS,
-  type ShellPromotionHandler,
+  type ShellBackgroundHandoffHandler,
+  type ShellTaskLifetime,
 } from "@sparkwright/shell-tool";
 import {
   ShellSandboxExecutor,
@@ -40,7 +41,8 @@ import {
   type WorkspaceRollbackResult,
 } from "./workspace-snapshot.js";
 
-const PROMOTED_SHELL_KIND = "shell.promoted";
+const SHELL_BACKGROUND_KIND = "shell.background";
+const LEGACY_PROMOTED_SHELL_KIND = "shell.promoted";
 
 class LiveOutputBuffer {
   private readonly chunks: string[] = [];
@@ -330,7 +332,7 @@ export function createHostShellTool(
     promotionAvailable:
       Boolean(options.taskManager) &&
       (options.backgroundTasks ?? "enabled") === "enabled",
-    onPromote: createUnavailablePromotionHandler(),
+    onBackground: createUnavailableBackgroundHandoff(),
   });
 
   return {
@@ -352,20 +354,31 @@ export function createHostShellTool(
         promotionAvailable:
           Boolean(options.taskManager) &&
           (options.backgroundTasks ?? "enabled") === "enabled",
-        onPromote:
+        onBackground:
           options.taskManager &&
           (options.backgroundTasks ?? "enabled") === "enabled"
-            ? createTaskPromotionHandler({
+            ? createTaskBackgroundHandoff({
                 manager: options.taskManager,
                 parentRunId: ctx.run.id,
                 sandboxConfig,
                 sandboxRuntime,
                 getRunEvents: options.getRunEvents,
               })
-            : createUnavailablePromotionHandler(),
+            : createUnavailableBackgroundHandoff(),
+        findActiveBackgroundTask:
+          options.taskManager &&
+          (options.backgroundTasks ?? "enabled") === "enabled"
+            ? ({ command, cwd, lifetime }) =>
+                findActiveShellBackgroundTask(options.taskManager!, {
+                  parentRunId: ctx.run.id,
+                  command,
+                  cwd,
+                  lifetime,
+                })
+            : undefined,
       });
       const output = await shell.execute(args, ctx);
-      if (output.promoted || readOnlyFastPath) return output;
+      if (output.background || readOnlyFastPath) return output;
       if (!before) return output;
       const after = await snapshotWorkspace(workspaceRoot);
       const changes = diffWorkspaceSnapshots(before, after);
@@ -400,12 +413,54 @@ function isReadOnlyShellFastPath(args: unknown): boolean {
   return evaluateShellSafety(command).decision === "allow";
 }
 
-function createUnavailablePromotionHandler(): ShellPromotionHandler {
+function createUnavailableBackgroundHandoff(): ShellBackgroundHandoffHandler {
   return () => {
     throw new Error(
       "foreground timeout reached; process killed because promotion unavailable",
     );
   };
+}
+
+function findActiveShellBackgroundTask(
+  manager: TaskManager,
+  input: {
+    parentRunId: RunId;
+    command: string;
+    cwd?: string;
+    lifetime: ShellTaskLifetime;
+  },
+): { taskId: string } | undefined {
+  const command = normalizeShellTaskCommand(input.command);
+  const cwd = input.cwd ?? "";
+  const existing = manager.store
+    .list({ parentRunId: input.parentRunId })
+    .find((task) => {
+      if (
+        task.kind !== SHELL_BACKGROUND_KIND &&
+        task.kind !== LEGACY_PROMOTED_SHELL_KIND
+      ) {
+        return false;
+      }
+      if (
+        task.status === "completed" ||
+        task.status === "failed" ||
+        task.status === "cancelled"
+      ) {
+        return false;
+      }
+      return (
+        task.metadata.backgroundOrigin === "explicit" &&
+        normalizeShellTaskCommand(String(task.metadata.command ?? "")) ===
+          command &&
+        String(task.metadata.cwd ?? "") === cwd &&
+        (task.metadata.lifetime ?? "job") === input.lifetime
+      );
+    });
+  return existing ? { taskId: String(existing.id) } : undefined;
+}
+
+function normalizeShellTaskCommand(command: string): string {
+  return command.trim().replace(/\r\n?/gu, "\n");
 }
 
 function failedStreamingResult(
@@ -434,27 +489,28 @@ function failedStreamingResult(
 }
 
 /**
- * Emit the `untracked-write-capable` boundary marker for a promoted shell.
+ * Emit the `untracked-write-capable` boundary marker for a background shell.
  *
- * Promotion turns a foreground shell into a background task that runs
+ * Handoff turns a shell into a background task that runs
  * concurrently with the rest of the session, so the foreground snapshot/diff/
  * rollback audit no longer composes (its `before` snapshot goes stale and a
  * whole-tree diff would attribute — and roll back — concurrent writes by other
- * tools). We therefore do not roll back promoted-task writes; instead we
+ * tools). We therefore do not roll back background-task writes; instead we
  * disclose the boundary, mirroring the external-command delegate's
  * `workspace.write.untracked_access_granted` marker.
  *
- * The marker is emitted on every promotion: no sandbox mode prevents a shell
+ * The marker is emitted on every handoff: no sandbox mode prevents a shell
  * from writing ordinary workspace files (workspaceRoot is always in allowWrite),
  * so the untracked-write-capable boundary always exists. The sandbox status
  * rides in the payload so trace diagnostics can grade severity by the effective
  * filesystem isolation (bind-allowlist vs deny-list-guard) rather than guessing.
  */
-async function emitPromotedShellUntrackedMarker(input: {
+async function emitBackgroundShellUntrackedMarker(input: {
   emitter: EventEmitter;
   parentRunId: RunId;
   taskId: string;
   command: string;
+  backgroundOrigin: "explicit" | "promoted";
   sandboxConfig: ResolvedShellSandboxConfig;
   sandboxRuntime: ShellSandboxRuntime;
 }): Promise<void> {
@@ -467,27 +523,28 @@ async function emitPromotedShellUntrackedMarker(input: {
       taskId: input.taskId,
       parentRunId: input.parentRunId,
       toolName: "bash",
-      protocol: "promoted_shell",
+      protocol: "background_shell",
       marker: "untracked-write-capable",
       access: "granted",
       command: input.command,
+      backgroundOrigin: input.backgroundOrigin,
       sandboxMode: status.mode,
       filesystemIsolation: status.filesystemIsolation,
       sandboxAvailable: status.available,
     });
   } catch {
-    // Disclosure is best-effort: never fail the promoted task because the
+    // Disclosure is best-effort: never fail the background task because the
     // sandbox status probe threw.
   }
 }
 
-function createTaskPromotionHandler(input: {
+function createTaskBackgroundHandoff(input: {
   manager: TaskManager;
   parentRunId: RunId;
   sandboxConfig: ResolvedShellSandboxConfig;
   sandboxRuntime: ShellSandboxRuntime;
   getRunEvents?: () => EventEmitter | undefined;
-}): ShellPromotionHandler {
+}): ShellBackgroundHandoffHandler {
   return ({
     handle,
     completed,
@@ -495,6 +552,8 @@ function createTaskPromotionHandler(input: {
     partialStdout,
     partialStderr,
     startedAt,
+    origin,
+    policy,
   }) => {
     const rawCommand =
       typeof request.metadata?.rawCommand === "string"
@@ -502,34 +561,40 @@ function createTaskPromotionHandler(input: {
         : [request.command, ...(request.args ?? [])].join(" ");
     const task = input.manager.spawn({
       parentRunId: input.parentRunId,
-      kind: PROMOTED_SHELL_KIND,
+      kind: SHELL_BACKGROUND_KIND,
       title: `shell: ${rawCommand}`,
+      awaited: policy.awaited,
       metadata: {
         command: rawCommand,
         cwd: request.cwd,
         timeoutMs: request.timeoutMs,
+        backgroundOrigin: origin,
+        lifetime: policy.lifetime,
       },
       runner: async (ctrl) => {
         const emitter = input.getRunEvents?.() ?? createBufferedEmitter();
         const taskPayload = {
           taskId: ctrl.taskId,
           parentRunId: input.parentRunId,
-          kind: PROMOTED_SHELL_KIND,
+          kind: SHELL_BACKGROUND_KIND,
           title: `shell: ${rawCommand}`,
           command: rawCommand,
           cwd: request.cwd,
           timeoutMs: request.timeoutMs,
+          backgroundOrigin: origin,
+          lifetime: policy.lifetime,
         };
         emitter.emit("task.created", taskPayload);
         const taskSpan = openSpan(emitter, {
           startType: "task.started",
           payload: taskPayload,
         });
-        await emitPromotedShellUntrackedMarker({
+        await emitBackgroundShellUntrackedMarker({
           emitter,
           parentRunId: input.parentRunId,
           taskId: String(ctrl.taskId),
           command: rawCommand,
+          backgroundOrigin: origin,
           sandboxConfig: input.sandboxConfig,
           sandboxRuntime: input.sandboxRuntime,
         });
@@ -567,7 +632,7 @@ function createTaskPromotionHandler(input: {
           });
 
           if (ctrl.signal.aborted) {
-            const result = promotedShellTaskResult(
+            const result = backgroundShellTaskResult(
               rawCommand,
               observed.exitCode,
               observed.output,
@@ -584,7 +649,7 @@ function createTaskPromotionHandler(input: {
             throw new ShellTaskExitError(shellResultFromObserved(observed));
           }
 
-          const result = promotedShellTaskResult(
+          const result = backgroundShellTaskResult(
             rawCommand,
             observed.exitCode,
             observed.output,
@@ -624,7 +689,7 @@ class ShellTaskExitError extends Error {
 
   constructor(result: ShellExecutionResult) {
     super(
-      `Promoted shell command exited with ${
+      `Background shell command exited with ${
         result.exitCode === null
           ? result.status
           : `exit code ${result.exitCode}`
@@ -634,18 +699,18 @@ class ShellTaskExitError extends Error {
   }
 }
 
-interface PromotedShellTaskResult {
+interface BackgroundShellTaskResult {
   command: string;
   exitCode: number | null;
   completedAt: string;
   output: ProcessOutputSummary;
 }
 
-function promotedShellTaskResult(
+function backgroundShellTaskResult(
   command: string,
   exitCode: number | null,
   output: ProcessOutputSummary,
-): PromotedShellTaskResult {
+): BackgroundShellTaskResult {
   return {
     command,
     exitCode,

@@ -13,7 +13,7 @@ End-to-end demo wiring three SparkWright pieces:
 ## What it shows
 
 ```
-shell-tool ── onPromote ──▶ TaskManager.spawn (adopts LiveShellHandle)
+shell-tool ── onBackground ──▶ TaskManager.spawn (adopts LiveShellHandle)
                                           │
                                           ▼
                               terminal status reached
@@ -52,7 +52,7 @@ hermetic. To run real shells:
    stderr async iterables; `abort()` sends SIGTERM then SIGKILL).
 2. Pass that environment to `createShellTool` along with
    `foregroundTimeoutMs: RECOMMENDED_FOREGROUND_TIMEOUT_MS` and the
-   `onPromote` bridge shown in [`promote.ts`](./promote.ts).
+   `onBackground` bridge shown in [`promote.ts`](./promote.ts).
 3. Mount your `InMemoryTaskNotificationQueue` (or a custom
    `TaskNotificationSink`) into the agent loop so notifications are
    converted into the next turn's user-visible content.

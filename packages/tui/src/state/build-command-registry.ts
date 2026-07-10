@@ -293,6 +293,41 @@ export function buildCommandRegistry(
     category: "session",
     run: () => void sessionActions.openSessionList(),
   });
+  const showApprovalRules = (): void => {
+    const rules = controller.listSessionApprovalRules();
+    toasts.push({
+      variant: "info",
+      title: "session approvals",
+      message:
+        rules.length === 0
+          ? "no remembered approvals"
+          : rules
+              .map((rule, index) => `${index + 1}. ${rule.label}`)
+              .join(" · "),
+    });
+  };
+  reg.register({
+    name: "approvals",
+    title: "Show session approvals",
+    description: "List or clear approvals remembered for this session.",
+    category: "session",
+    run: showApprovalRules,
+    runRaw: (rest) => {
+      if (rest.trim().toLowerCase() !== "clear") {
+        showApprovalRules();
+        return;
+      }
+      const count = controller.clearSessionApprovalRules();
+      toasts.push({
+        variant: "info",
+        title: "session approvals",
+        message:
+          count === 0
+            ? "no remembered approvals"
+            : `cleared ${count} remembered approval${count === 1 ? "" : "s"}`,
+      });
+    },
+  });
   for (const spec of ACTIVITY_COMMANDS) {
     reg.register({
       name: spec.name,

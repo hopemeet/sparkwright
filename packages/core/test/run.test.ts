@@ -3226,6 +3226,40 @@ describe("SparkwrightRun", () => {
     expect(terminals).toEqual(["run.cancelled"]);
   });
 
+  it("does not enter waiting_tasks after cancellation wins the final-output race", async () => {
+    const source = new ManualTaskRevivalSource();
+    source.pending = true;
+    let runRef: { cancel: () => unknown } | null = null;
+    const run = createRun({
+      goal: "cancel before awaited-task suspension",
+      notificationSources: [source],
+      taskRevivalSource: source,
+      model: {
+        async complete() {
+          runRef?.cancel();
+          return { message: "final answer despite cancel" };
+        },
+      },
+    });
+    runRef = run;
+
+    const result = await run.start();
+
+    expect(result.signal).toBe("cancelled");
+    expect(run.record.state).toBe("cancelled");
+    expect(
+      run.events
+        .all()
+        .filter((event) => event.type === "run.state_transition.rejected"),
+    ).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          payload: expect.objectContaining({ to: "waiting_tasks" }),
+        }),
+      ]),
+    );
+  });
+
   it("does not restart after cancellation", async () => {
     const run = createRun({
       goal: "cancel then start",

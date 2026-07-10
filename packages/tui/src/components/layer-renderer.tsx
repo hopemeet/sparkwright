@@ -26,6 +26,7 @@ import type { CommandRegistry } from "../lib/commands.js";
 import type { Bindings } from "../lib/keybindings.js";
 import type { CreateCapabilityDraft } from "../lib/create-capability.js";
 import type { RunEvent } from "../lib/event-type.js";
+import type { ApprovalChoice } from "../lib/session-approval.js";
 import {
   capabilityViewFromPayload,
   createKindFromPayload,
@@ -82,7 +83,7 @@ export function LayerRenderer(props: {
     label: string,
     edit?: boolean,
   ) => void;
-  onApprovalDecision: (decision: "approved" | "denied") => void;
+  onApprovalDecision: (choice: ApprovalChoice) => void;
   onCreateCapability: (draft: CreateCapabilityDraft) => void;
   onCreateSkillProposal: (draft: TuiSkillProposalInput) => void;
   onUpdateSkillProposal: (draft: TuiSkillProposalInput) => void;

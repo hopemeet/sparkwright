@@ -3821,6 +3821,177 @@ describe("host tools", () => {
     });
   });
 
+  it("starts explicit background shells detached without reporting promotion", async () => {
+    const ctx = await createWorkspace({});
+    const manager = new TaskManager({ store: new InMemoryTaskStore() });
+    const tool = createHostShellTool(ctx.workspaceRoot, {
+      taskManager: manager,
+      foregroundTimeoutMs: 5 * 60 * 1000,
+      sandbox: { mode: "off" },
+    });
+
+    const result = await tool.execute(
+      {
+        command: 'node -e "setTimeout(() => process.exit(0), 200)"',
+        background: true,
+      },
+      ctx,
+    );
+
+    expect(result).toMatchObject({
+      background: true,
+      backgroundOrigin: "explicit",
+      exitCode: null,
+    });
+    expect(result.promoted).toBeUndefined();
+    expect(result.promotionGuidance).toBeUndefined();
+    expect(result.backgroundGuidance).toMatch(/successful start/i);
+    const record = manager.store.get(result.taskId as TaskId);
+    expect(record).toMatchObject({
+      kind: "shell.background",
+      awaited: false,
+      status: "running",
+      metadata: expect.objectContaining({ backgroundOrigin: "explicit" }),
+    });
+
+    const duplicate = await tool.execute(
+      {
+        command: 'node -e "setTimeout(() => process.exit(0), 200)"',
+        background: true,
+      },
+      ctx,
+    );
+    expect(duplicate).toMatchObject({
+      taskId: result.taskId,
+      background: true,
+      backgroundOrigin: "explicit",
+      deduplicated: true,
+      executed: false,
+    });
+    expect(manager.store.list({ parentRunId: ctx.run.id })).toHaveLength(1);
+    await manager.handle(result.taskId as TaskId)!.wait();
+  });
+
+  it("deduplicates against active legacy shell.promoted records", async () => {
+    const ctx = await createWorkspace({});
+    const canonicalWorkspaceRoot = await realpath(ctx.workspaceRoot);
+    const store = new InMemoryTaskStore();
+    const manager = new TaskManager({ store });
+    const legacyTaskId = "task_legacy_shell" as TaskId;
+    store.create({
+      id: legacyTaskId,
+      parentRunId: ctx.run.id,
+      kind: "shell.promoted",
+      awaited: false,
+      metadata: {
+        command: "node legacy-service.js",
+        cwd: canonicalWorkspaceRoot,
+        backgroundOrigin: "explicit",
+        lifetime: "service",
+      },
+    });
+    store.update(legacyTaskId, { status: "running" });
+    const tool = createHostShellTool(ctx.workspaceRoot, {
+      taskManager: manager,
+      sandbox: { mode: "off" },
+    });
+
+    const result = await tool.execute(
+      {
+        command: "node legacy-service.js",
+        background: true,
+        lifetime: "service",
+      },
+      ctx,
+    );
+
+    expect(result).toMatchObject({
+      taskId: legacyTaskId,
+      background: true,
+      backgroundOrigin: "explicit",
+      deduplicated: true,
+      executed: false,
+    });
+    expect(store.list({ parentRunId: ctx.run.id })).toHaveLength(1);
+  });
+
+  it("resolves shell approval before an explicit background process can detach", async () => {
+    const ctx = await createWorkspace({});
+    const manager = new TaskManager({ store: new InMemoryTaskStore() });
+    const shell = createHostShellTool(ctx.workspaceRoot, {
+      taskManager: manager,
+      sandbox: { mode: "off" },
+    });
+    let modelCalls = 0;
+    let approvalCalls = 0;
+    const run = createRun({
+      goal: "deny a background shell",
+      workspace: new LocalWorkspace(ctx.workspaceRoot),
+      tools: [shell],
+      approvalResolver(request) {
+        approvalCalls += 1;
+        expect(manager.store.list()).toHaveLength(0);
+        return {
+          approvalId: request.id,
+          decision: "denied",
+          message: "denied for test",
+        };
+      },
+      model: {
+        async complete() {
+          modelCalls += 1;
+          return modelCalls === 1
+            ? {
+                toolCalls: [
+                  {
+                    toolName: "shell",
+                    arguments: {
+                      command:
+                        'node -e "setTimeout(() => process.exit(0), 1000)"',
+                      background: true,
+                      lifetime: "service",
+                    },
+                  },
+                ],
+              }
+            : { message: "approval denied" };
+        },
+      },
+      maxSteps: 2,
+    });
+
+    await run.start();
+
+    expect(approvalCalls).toBe(1);
+    expect(manager.store.list()).toHaveLength(0);
+    expect(
+      run.events.all().some((event) => event.type === "task.created"),
+    ).toBe(false);
+  });
+
+  it("returns an immediate service exit inline instead of detaching it", async () => {
+    const ctx = await createWorkspace({});
+    const manager = new TaskManager({ store: new InMemoryTaskStore() });
+    const tool = createHostShellTool(ctx.workspaceRoot, {
+      taskManager: manager,
+      sandbox: { mode: "off" },
+    });
+
+    const result = await tool.execute(
+      {
+        command: "exit 3",
+        background: true,
+        lifetime: "service",
+      },
+      ctx,
+    );
+
+    expect(result.exitCode).toBe(3);
+    expect(result.background).toBeUndefined();
+    expect(result.taskId).toBeUndefined();
+    expect(manager.store.list({ parentRunId: ctx.run.id })).toHaveLength(0);
+  });
+
   it("kills a long-running shell at the foreground budget when task promotion is unavailable", async () => {
     const ctx = await createWorkspace({});
     const tool = createHostShellTool(ctx.workspaceRoot, {
@@ -3894,7 +4065,7 @@ describe("host tools", () => {
     ).resolves.toBe("x");
 
     // ...(c) the untracked-write-capable boundary is disclosed via the shared
-    // marker (with the promoted_shell protocol + sandbox status) rather than
+    // marker (with the background_shell protocol + sandbox status) rather than
     // audited away...
     const marker = events
       .all()
@@ -3903,7 +4074,8 @@ describe("host tools", () => {
       );
     expect(marker?.payload).toEqual(
       expect.objectContaining({
-        protocol: "promoted_shell",
+        protocol: "background_shell",
+        backgroundOrigin: "promoted",
         marker: "untracked-write-capable",
         taskId: result.taskId,
         sandboxMode: "off",

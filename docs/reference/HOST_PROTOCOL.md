@@ -312,8 +312,8 @@ workflow storage is available.
         "at": "2026-07-04T00:00:01.000Z"
       },
       "authorizationSnapshot": {
-        "targetPath": "README.md",
-        "confidentialPaths": [],
+        "hasTargetPath": true,
+        "hasConfidentialPaths": false,
         "confidentialDefaults": true,
         "shouldWrite": true,
         "accessMode": "ask",
@@ -338,10 +338,15 @@ workflow storage is available.
 workflow verdict log entry. Clients use it for job/session status views; the
 full verdict history remains in the workflow-run record.
 
-`authorizationSnapshot` records the resolved run-boundary authorization values
-used when the workflow was instantiated. Resume clients can prefill the next
-resume request from this snapshot while still sending explicit authorization
-fields for that new run boundary.
+`authorizationSnapshot` summarizes the resolved run-boundary authorization
+values used when the workflow was instantiated, so a client can decide whether a
+resume can be pre-filled and under what access. The confidential path list and
+target path are intentionally not projected here — they can be sensitive and are
+re-applied server-side from the persisted record on resume — so listing every
+run does not broadcast them; `hasTargetPath` / `hasConfidentialPaths` expose the
+presence without the values. Resume clients still send explicit authorization
+fields for the new run boundary; omitted fields fall back to the persisted
+snapshot.
 
 `waiting` is a terminal-resistant status value with an inline `wait` object
 whose `kind` is one of `input`, `task`, or `approval`. P3 human nodes are the

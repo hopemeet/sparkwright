@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { PassThrough } from "node:stream";
+import { describe, expect, it, vi } from "vitest";
 import React from "react";
 import { render } from "ink";
 import { ApprovalPrompt } from "../src/components/approval-prompt.js";
@@ -7,6 +8,7 @@ import type { PendingApproval } from "../src/state/event-store.js";
 async function renderToText(
   element: React.ReactElement,
   columns = 80,
+  inputs: string[] = [],
 ): Promise<string> {
   const writes: string[] = [];
   const fakeStdout = {
@@ -20,29 +22,29 @@ async function renderToText(
     off() {},
     removeListener() {},
   } as unknown as NodeJS.WriteStream;
-  const fakeStdin = {
-    isTTY: true,
-    setRawMode() {},
-    setEncoding() {},
-    addListener() {},
-    on() {},
-    off() {},
-    removeListener() {},
-    read() {
-      return null;
-    },
-    ref() {},
-    unref() {},
-    resume() {},
-    pause() {},
-  } as unknown as NodeJS.ReadStream;
+  const fakeStdin = new PassThrough() as NodeJS.ReadStream & {
+    isTTY: boolean;
+    setRawMode: () => void;
+    ref: () => void;
+    unref: () => void;
+  };
+  fakeStdin.isTTY = true;
+  fakeStdin.setRawMode = () => {};
+  fakeStdin.ref = () => {};
+  fakeStdin.unref = () => {};
   const { unmount } = render(element, {
     stdout: fakeStdout,
     stdin: fakeStdin,
     patchConsole: false,
   });
-  await new Promise((r) => setTimeout(r, 60));
+  await new Promise((r) => setTimeout(r, 30));
+  for (const input of inputs) {
+    fakeStdin.write(input);
+    await new Promise((r) => setTimeout(r, 30));
+  }
+  await new Promise((r) => setTimeout(r, 30));
   unmount();
+  fakeStdin.destroy();
   // eslint-disable-next-line no-control-regex
   return writes.join("").replace(/\[[0-9;?]*[a-zA-Z]/g, "");
 }
@@ -60,6 +62,13 @@ describe("ApprovalPrompt rendering", () => {
         timeoutMs: 120000,
         cwd: "/tmp/sparkwright-tui-coding.fixture",
       },
+      subject: {
+        kind: "shell",
+        command: "npm test",
+        cwd: "/tmp/sparkwright-tui-coding.fixture",
+        key: "shell:test",
+        rememberLabel: "Allow this exact command here for this session",
+      },
       policy: {
         risk: "risky",
         reason: "Tools with write side effects require approval for this run.",
@@ -75,5 +84,35 @@ describe("ApprovalPrompt rendering", () => {
       "reason: Tools with write side effects require approval for this run.",
     );
     expect(text).not.toContain('{"command"');
+    expect(text).toContain("Allow once");
+    expect(text).toContain("Allow this exact command here for this session");
+    expect(text).toContain("Deny");
+  });
+
+  it("uses up/down for vertical choices and Enter to confirm", async () => {
+    const onDecision = vi.fn();
+    const pending: PendingApproval = {
+      id: "approval_keys",
+      action: "tool.execute",
+      kind: "tool.execute",
+      summary: "Run tool shell",
+      toolName: "shell",
+      toolArgs: { command: "npm test" },
+      subject: {
+        kind: "shell",
+        command: "npm test",
+        cwd: "/tmp/project",
+        key: "shell:keys",
+        rememberLabel: "Allow this exact command here for this session",
+      },
+    };
+
+    await renderToText(
+      <ApprovalPrompt pending={pending} onDecision={onDecision} />,
+      80,
+      ["\u001b[B", "\r"],
+    );
+
+    expect(onDecision).toHaveBeenCalledWith("allow-session");
   });
 });

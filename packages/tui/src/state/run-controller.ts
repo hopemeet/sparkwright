@@ -17,6 +17,7 @@ import {
 import type {
   CapabilitySnapshot,
   CompactionWarning,
+  HostEvent,
   PermissionMode,
   RunInputPayload,
   RunInputPart,
@@ -29,7 +30,7 @@ import type {
   WorkflowRunSnapshot,
 } from "@sparkwright/protocol";
 import { runFailureMessage } from "@sparkwright/protocol";
-import type { EventStore } from "./event-store.js";
+import type { EventStore, PendingApproval } from "./event-store.js";
 import type { SessionDiagnostics } from "../lib/sessions.js";
 import { loadSessionEvents } from "../lib/session-events.js";
 import { renderTranscript, type TranscriptHeader } from "../lib/transcript.js";
@@ -39,6 +40,12 @@ import {
   type CoreRunPermissionFields,
   type TuiPermissionMode,
 } from "../lib/permission.js";
+import {
+  approvalSubject,
+  sessionApprovalRule,
+  type ApprovalChoice,
+  type SessionApprovalRule,
+} from "../lib/session-approval.js";
 
 export interface RunControllerOptions {
   workspaceRoot: string;
@@ -60,7 +67,11 @@ export interface WorkflowJobHandle {
   close: () => void;
 }
 
-type ApprovalDecision = "approved" | "denied";
+interface PendingApprovalContext {
+  client: Client;
+  sessionId: string;
+  pending: PendingApproval;
+}
 
 /**
  * Preamble of the synthetic goal a todo-supervisor continuation run carries
@@ -93,6 +104,13 @@ export class RunController {
   // Ctrl+C (or both the InputBox and global-hotkey paths firing) doesn't send a
   // duplicate cancelRun. Reset when the next run starts.
   private cancelRequested = false;
+  private sessionApprovalRules = new Map<
+    string,
+    Map<string, SessionApprovalRule>
+  >();
+  private activeApproval: PendingApprovalContext | null = null;
+  private approvalQueue: PendingApprovalContext[] = [];
+  private resolvingApproval = false;
   private currentSessionEvents: unknown[] = [];
   // The most recent user goal submitted via start(), kept so /retry can re-run
   // it. start() only ever receives real user goals (todo-continuation runs are
@@ -349,13 +367,44 @@ export class RunController {
     return true;
   }
 
-  resolveApproval(decision: ApprovalDecision): void {
-    const pending = this.store.getSnapshot().pendingApproval;
-    if (!pending || !this.client) return;
-    this.store.setPendingApproval(null);
-    void this.client
-      .resolveApproval({ approvalId: pending.id, decision })
-      .catch((err) => this.store.setError(formatError(err)));
+  async resolveApproval(choice: ApprovalChoice): Promise<void> {
+    const context = this.activeApproval;
+    if (!context || this.resolvingApproval) return;
+    this.resolvingApproval = true;
+    const rule =
+      choice === "allow-session"
+        ? sessionApprovalRule(context.pending.subject)
+        : undefined;
+    try {
+      await context.client.resolveApproval({
+        approvalId: context.pending.id,
+        decision: choice === "deny" ? "denied" : "approved",
+        ...(rule
+          ? { message: "Approved and remembered for this session." }
+          : {}),
+      });
+      if (rule) {
+        this.rulesForSession(context.sessionId).set(rule.key, rule);
+        this.store.appendNotice(`approval remembered: ${rule.label}`);
+      }
+      this.activeApproval = null;
+      this.store.setPendingApproval(null);
+      this.showNextApproval();
+    } catch (err) {
+      this.store.setError(formatError(err));
+    } finally {
+      this.resolvingApproval = false;
+    }
+  }
+
+  listSessionApprovalRules(): readonly SessionApprovalRule[] {
+    return [...(this.sessionApprovalRules.get(this.sessionId)?.values() ?? [])];
+  }
+
+  clearSessionApprovalRules(): number {
+    const count = this.sessionApprovalRules.get(this.sessionId)?.size ?? 0;
+    this.sessionApprovalRules.delete(this.sessionId);
+    return count;
   }
 
   async listSessions(): Promise<
@@ -491,13 +540,15 @@ export class RunController {
       }),
       client: { name: "sparkwright-tui-workflow", version: "0.1.0" },
     });
+    const workflowSessionId = this.sessionId;
+    this.wireWorkflowClientApprovals(client, workflowSessionId);
     try {
       const traceLevel = this.opts.traceLevel ?? "standard";
       const permissions = this.coreRunFields();
       const { runId } = await client.startRun(
         createHostStartRunRequest({
           goal: input.goal,
-          sessionId: this.sessionId,
+          sessionId: workflowSessionId,
           modelName: this.opts.modelName,
           modelNameSource: this.opts.modelNameSource,
           workflowName: input.workflowName,
@@ -541,6 +592,10 @@ export class RunController {
       }),
       client: { name: "sparkwright-tui-workflow", version: "0.1.0" },
     });
+    this.wireWorkflowClientApprovals(
+      client,
+      input.workflow.sessionId ?? this.sessionId,
+    );
     try {
       const traceLevel = this.opts.traceLevel ?? "standard";
       const { runId } = await client.resumeWorkflowRun(
@@ -552,8 +607,9 @@ export class RunController {
           accessMode: authorization.accessMode,
           backgroundTasks: authorization.backgroundTasks,
           traceLevel,
-          targetPath: authorization.targetPath,
-          confidentialPaths: authorization.confidentialPaths,
+          // targetPath / confidentialPaths are not projected in the list
+          // snapshot (see WorkflowRunSnapshot.authorizationSnapshot); the host
+          // re-applies them from the persisted record on resume.
           confidentialDefaults: authorization.confidentialDefaults,
           shouldWrite: authorization.shouldWrite,
           metadata: {
@@ -786,63 +842,9 @@ export class RunController {
       );
     });
 
-    client.on("approval.requested", (msg) => {
-      const details = (msg.payload.details ?? {}) as Record<string, unknown>;
-      const action = msg.payload.action;
-      const policyDecision = resolveHostClientApprovalByPolicy(
-        this.approvalPolicyInput(),
-        {
-          approvalId: msg.payload.approvalId,
-          runId: msg.payload.runId,
-          action,
-          summary: msg.payload.summary,
-          details,
-          createdAt: msg.timestamp,
-        },
-      );
-      if (policyDecision) {
-        void client
-          .resolveApproval(policyDecision)
-          .catch((err) => this.store.setError(formatError(err)));
-        return;
-      }
-      const kind:
-        | "workspace.write"
-        | "tool.execute"
-        | "shell.execute"
-        | "other" =
-        action === "workspace.write"
-          ? "workspace.write"
-          : action === "tool.execute"
-            ? "tool.execute"
-            : action === "shell.execute"
-              ? "shell.execute"
-              : "other";
-      const pickString = (k: string): string | undefined =>
-        typeof details[k] === "string" ? (details[k] as string) : undefined;
-      const policyRaw = details.policy as
-        | { decision?: string; reason?: string; metadata?: { risk?: string } }
-        | undefined;
-      this.store.setPendingApproval({
-        id: msg.payload.approvalId,
-        action,
-        kind,
-        summary: msg.payload.summary,
-        path: pickString("path"),
-        reason: pickString("reason"),
-        diff: pickString("diff"),
-        toolName: pickString("toolName") ?? pickString("name"),
-        toolArgs: details.arguments ?? details.args ?? details.toolArgs,
-        command: pickString("command"),
-        policy: policyRaw
-          ? {
-              decision: policyRaw.decision,
-              reason: policyRaw.reason,
-              risk: policyRaw.metadata?.risk,
-            }
-          : undefined,
-      });
-    });
+    client.on("approval.requested", (msg) =>
+      this.handleApprovalRequested(client, this.sessionId, msg),
+    );
 
     client.on("run.continuation", (msg) => {
       // The todo supervisor superseded the prior run with a fresh one because
@@ -902,6 +904,143 @@ export class RunController {
 
     // host.log events go unhandled in the TUI today — a future log panel
     // can subscribe via client.on('host.log', …).
+  }
+
+  /**
+   * Subscribe a workflow-job connection to approval requests. Job runs execute
+   * on their own host connection, so their approvals arrive on that client and
+   * must be handled there (policy auto-resolve, else surface to the shared
+   * prompt) — otherwise an "ask"-mode write inside a workflow episode would
+   * hang with no UI.
+   */
+  wireWorkflowClientApprovals(client: Client, sessionId: string): void {
+    client.on("approval.requested", (msg) =>
+      this.handleApprovalRequested(client, sessionId, msg),
+    );
+  }
+
+  private handleApprovalRequested(
+    client: Client,
+    sessionId: string,
+    msg: HostEvent & { kind: "approval.requested" },
+  ): void {
+    const details = (msg.payload.details ?? {}) as Record<string, unknown>;
+    const action = msg.payload.action;
+    const policyDecision = resolveHostClientApprovalByPolicy(
+      this.approvalPolicyInput(),
+      {
+        approvalId: msg.payload.approvalId,
+        runId: msg.payload.runId,
+        action,
+        summary: msg.payload.summary,
+        details,
+        createdAt: msg.timestamp,
+      },
+    );
+    if (policyDecision) {
+      void client
+        .resolveApproval(policyDecision)
+        .catch((err) => this.store.setError(formatError(err)));
+      return;
+    }
+    const subject = approvalSubject(
+      { action, details },
+      this.opts.workspaceRoot,
+    );
+    if (subject.kind !== "unknown") {
+      const rule = this.sessionApprovalRules.get(sessionId)?.get(subject.key);
+      if (rule) {
+        void client
+          .resolveApproval({
+            approvalId: msg.payload.approvalId,
+            decision: "approved",
+            message: "Auto-approved by a TUI session rule.",
+            autoApproved: true,
+          })
+          .then(() => this.store.appendNotice(`auto-approved: ${rule.label}`))
+          .catch((err) => this.store.setError(formatError(err)));
+        return;
+      }
+    }
+    const kind: "workspace.write" | "tool.execute" | "shell.execute" | "other" =
+      action === "workspace.write"
+        ? "workspace.write"
+        : action === "tool.execute"
+          ? "tool.execute"
+          : action === "shell.execute"
+            ? "shell.execute"
+            : "other";
+    const pickString = (k: string): string | undefined =>
+      typeof details[k] === "string" ? (details[k] as string) : undefined;
+    const policyRaw = details.policy as
+      | { decision?: string; reason?: string; metadata?: { risk?: string } }
+      | undefined;
+    const pending: PendingApproval = {
+      id: msg.payload.approvalId,
+      action,
+      kind,
+      summary: msg.payload.summary,
+      path: pickString("path"),
+      reason: pickString("reason"),
+      diff: pickString("diff"),
+      toolName: pickString("toolName") ?? pickString("name"),
+      toolArgs: details.arguments ?? details.args ?? details.toolArgs,
+      command: pickString("command"),
+      subject,
+      policy: policyRaw
+        ? {
+            decision: policyRaw.decision,
+            reason: policyRaw.reason,
+            risk: policyRaw.metadata?.risk,
+          }
+        : undefined,
+    };
+    const context = { client, sessionId, pending };
+    if (this.activeApproval) this.approvalQueue.push(context);
+    else {
+      this.activeApproval = context;
+      this.store.setPendingApproval(pending);
+    }
+  }
+
+  private rulesForSession(sessionId: string): Map<string, SessionApprovalRule> {
+    let rules = this.sessionApprovalRules.get(sessionId);
+    if (!rules) {
+      rules = new Map();
+      this.sessionApprovalRules.set(sessionId, rules);
+    }
+    return rules;
+  }
+
+  private showNextApproval(): void {
+    const next = this.approvalQueue.shift() ?? null;
+    this.activeApproval = next;
+    if (!next) return;
+    const subject = next.pending.subject;
+    const rule =
+      subject.kind === "unknown"
+        ? undefined
+        : this.sessionApprovalRules.get(next.sessionId)?.get(subject.key);
+    if (!rule) {
+      this.store.setPendingApproval(next.pending);
+      return;
+    }
+    void next.client
+      .resolveApproval({
+        approvalId: next.pending.id,
+        decision: "approved",
+        message: "Auto-approved by a TUI session rule.",
+        autoApproved: true,
+      })
+      .then(() => {
+        this.store.appendNotice(`auto-approved: ${rule.label}`);
+        this.activeApproval = null;
+        this.showNextApproval();
+      })
+      .catch((err) => {
+        this.store.setError(formatError(err));
+        this.store.setPendingApproval(next.pending);
+      });
   }
 
   private approvalPolicyInput() {

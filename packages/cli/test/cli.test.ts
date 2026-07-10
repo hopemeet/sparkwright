@@ -2672,6 +2672,28 @@ describe("runCli", () => {
 
   it("starts workflow runs through the workflow start alias", async () => {
     const workspace = await createWorkspace("# Demo\n");
+    const staleWorkflowRunId = "workflow_stale_same_asset" as WorkflowRunId;
+    const seededStore = new FileWorkflowStore({
+      rootDir: join(workspace, ".sparkwright", "workflow-runs"),
+    });
+    seededStore.create({
+      id: staleWorkflowRunId,
+      sessionId: "session_stale_same_asset",
+      assetName: "human-gate",
+      contentHash: "stale-human-gate",
+      activeRunId: "run_stale_same_asset" as RunId,
+      currentNodeId: "review",
+      definitionSnapshot: {
+        assetName: "human-gate",
+        contentHash: "stale-human-gate",
+        nodes: [{ id: "review", body: "Stale review." }],
+      },
+      metadata: { goal: "stale workflow with the same asset name" },
+    });
+    seededStore.update(staleWorkflowRunId, {
+      status: "waiting",
+      wait: { kind: "input", reason: "Stale human review." },
+    });
     await mkdir(join(workspace, ".sparkwright", "workflows", "human-gate"), {
       recursive: true,
     });
@@ -2723,20 +2745,23 @@ describe("runCli", () => {
       rootDir: join(workspace, ".sparkwright", "workflow-runs"),
       createRoot: false,
     });
-    expect(store.list().records).toEqual([
-      expect.objectContaining({
-        assetName: "human-gate",
-        status: "waiting",
-        currentNodeId: "review",
-        metadata: expect.objectContaining({
-          goal: "run human gated workflow",
-        }),
-        wait: expect.objectContaining({
-          kind: "input",
-          reason: "Need human review.",
-        }),
+    const current = store
+      .list()
+      .records.find((record) => record.id !== staleWorkflowRunId);
+    expect(current).toMatchObject({
+      assetName: "human-gate",
+      status: "waiting",
+      currentNodeId: "review",
+      metadata: expect.objectContaining({
+        goal: "run human gated workflow",
       }),
-    ]);
+      wait: expect.objectContaining({
+        kind: "input",
+        reason: "Need human review.",
+      }),
+    });
+    expect(output.stderrText()).toContain(current!.id);
+    expect(output.stderrText()).not.toContain(staleWorkflowRunId);
   });
 
   it("distills a session trace into a workflow draft", async () => {

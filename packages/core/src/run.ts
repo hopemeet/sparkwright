@@ -2248,6 +2248,10 @@ export class SparkwrightRun implements RunHandle {
   private async waitForAwaitedTasksBeforeTerminal(
     state: RunLoopState,
   ): Promise<RunLoopState | undefined> {
+    // A synchronous cancel can land while the model is returning its final
+    // output. Cancellation already owns the terminal result; never attempt to
+    // move that run into waiting_tasks even if awaited work is still pending.
+    if (isTerminalState(this.record.state)) return undefined;
     const source = this.taskRevivalSource;
     if (!source) return undefined;
     if (!this.forcedContinuationBudget.hasRemaining("revival")) {
@@ -2272,6 +2276,7 @@ export class SparkwrightRun implements RunHandle {
       return undefined;
     }
     if (!hasAwaitedPending) return undefined;
+    if (isTerminalState(this.record.state)) return undefined;
 
     const previousState = this.record.state;
     this.setState("waiting_tasks");
@@ -2311,6 +2316,7 @@ export class SparkwrightRun implements RunHandle {
       }
     }
 
+    if (isTerminalState(this.record.state)) return undefined;
     this.forcedContinuationBudget.consume("revival");
     return {
       ...state,

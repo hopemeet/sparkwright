@@ -665,7 +665,7 @@ describe("TUI ↔ host via sdk-node", () => {
         },
       });
 
-      controller.resolveApproval("approved");
+      void controller.resolveApproval("allow-once");
       await waitForDone(store);
 
       const snap = store.getSnapshot();
@@ -732,7 +732,7 @@ describe("TUI ↔ host via sdk-node", () => {
         toolName: "shell",
       });
 
-      controller.resolveApproval("approved");
+      void controller.resolveApproval("allow-once");
       await waitForDone(store);
     } finally {
       controller.shutdown();
@@ -837,7 +837,7 @@ describe("TUI ↔ host via sdk-node", () => {
         path: "README.md",
       });
 
-      controller.resolveApproval("approved");
+      void controller.resolveApproval("allow-once");
       await waitForDone(store);
 
       const snap = store.getSnapshot();
