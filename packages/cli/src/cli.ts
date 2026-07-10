@@ -2626,9 +2626,10 @@ async function loadCapabilityInspectReport(
     },
     shell: {
       foregroundTimeoutMs:
+        runtime?.shell?.foregroundTimeoutMs ??
         loaded.config.shell?.foregroundTimeoutMs ??
         RECOMMENDED_FOREGROUND_TIMEOUT_MS,
-      promotionAvailable: true,
+      promotionAvailable: runtime?.shell?.promotionAvailable ?? true,
       sandbox: {
         mode: shellSandbox.mode,
         failIfUnavailable: shellSandbox.failIfUnavailable,

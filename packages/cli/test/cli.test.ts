@@ -2215,6 +2215,9 @@ describe("runCli", () => {
         shell: {
           foregroundTimeoutMs: 123_000,
         },
+        run: {
+          backgroundTasks: "foreground-only",
+        },
         capabilities: {
           skills: { roots: ["skills"] },
           agents: {
@@ -2248,7 +2251,7 @@ describe("runCli", () => {
       "tools: use=(all); allowed=read, read_anchored_text; disabled=bash; defer=read_anchored_text",
     );
     expect(textOutput.stdoutText()).toContain(
-      "shell foreground: timeoutMs=123000; promotionAvailable=true",
+      "shell foreground: timeoutMs=123000; promotionAvailable=false",
     );
     expect(textOutput.stdoutText()).toContain(
       "shell sandbox: mode=warn; effective=",
@@ -2274,6 +2277,7 @@ describe("runCli", () => {
 
     expect(json.exitCode).toBe(0);
     const report = JSON.parse(jsonOutput.stdoutText()) as {
+      runtime?: { shell: { promotionAvailable: boolean } };
       tools: {
         use?: string[];
         allowed?: string[];
@@ -2308,8 +2312,11 @@ describe("runCli", () => {
     };
     expect(report.shell).toMatchObject({
       foregroundTimeoutMs: 123_000,
-      promotionAvailable: true,
+      promotionAvailable: false,
     });
+    expect(report.runtime?.shell.promotionAvailable).toBe(
+      report.shell.promotionAvailable,
+    );
     expect(report.shell.sandbox).toMatchObject({
       mode: "warn",
       runtimeId: expect.any(String),
