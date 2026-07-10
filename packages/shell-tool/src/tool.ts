@@ -47,6 +47,22 @@ export const RECOMMENDED_FOREGROUND_TIMEOUT_MS = 5 * 60 * 1000;
  */
 export const MAX_FOREGROUND_TIMEOUT_MS = 10 * 60 * 1000;
 
+export type ShellTaskLifetime = "job" | "service";
+
+/**
+ * Execution policy resolved by the shell tool before background handoff.
+ * `awaited` alone controls parent-run keep-alive; `lifetime` controls shell
+ * startup semantics. Hosts execute this policy instead of re-deriving it from
+ * diagnostic fields such as `origin`.
+ *
+ * @public
+ * @stability experimental v0.1
+ */
+export interface ShellBackgroundExecutionPolicy {
+  awaited: boolean;
+  lifetime: ShellTaskLifetime;
+}
+
 /**
  * Payload passed to the
  * {@link ShellToolOptions.onBackground} handoff callback for either an explicit
@@ -76,6 +92,8 @@ export interface ShellBackgroundHandoffRequest {
   foregroundTimeoutMs: number;
   /** Whether the handoff was explicitly requested or caused by timeout. */
   origin: "explicit" | "promoted";
+  /** Resolved keep-alive and shell-lifetime policy for the adopted task. */
+  policy: ShellBackgroundExecutionPolicy;
 }
 
 /**
@@ -89,8 +107,6 @@ export interface ShellBackgroundHandoffRequest {
 export interface ShellBackgroundHandoffResult {
   taskId: string;
 }
-
-export type ShellTaskLifetime = "job" | "service";
 
 export interface ActiveShellBackgroundTask {
   taskId: string;
@@ -881,6 +897,10 @@ async function handOffShellToBackground(input: {
       startedAt: input.startedAt,
       foregroundTimeoutMs: ctx.foregroundTimeoutMs,
       origin: input.origin,
+      policy: {
+        awaited: input.origin === "promoted",
+        lifetime: ctx.lifetime,
+      },
     });
     // Ask our iterators to stop, but do not wait for their return hooks. Some
     // async iterator implementations cannot finish return() until the process

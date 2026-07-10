@@ -40,6 +40,11 @@ short startup grace window as a successful launch and performs no health probe.
 Equivalent active explicit shell commands in the same run reuse the existing
 task id instead of spawning another process.
 
+At the host boundary, shell-tool resolves one two-field execution policy:
+`{ awaited, lifetime }`. Explicit background calls use `awaited:false`; timeout
+promotion uses `awaited:true`. Hosts should execute this policy directly rather
+than infer keep-alive behavior from diagnostic fields such as `origin`.
+
 Read [Environment Notes](../maintainer/ENVIRONMENT.md) for the durable wiring example.
 
 ## Durable Task Pattern

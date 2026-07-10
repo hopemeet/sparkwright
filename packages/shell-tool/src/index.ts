@@ -22,6 +22,7 @@ export {
   MAX_FOREGROUND_TIMEOUT_MS,
   RECOMMENDED_FOREGROUND_TIMEOUT_MS,
   ShellSafetyError,
+  type ShellBackgroundExecutionPolicy,
   type ShellBackgroundHandoffHandler,
   type ShellBackgroundHandoffRequest,
   type ShellBackgroundHandoffResult,

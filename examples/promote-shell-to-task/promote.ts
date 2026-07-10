@@ -126,12 +126,24 @@ function makeBackgroundHandoff(
   manager: TaskManager,
   parentRunId: ReturnType<typeof createRunId>,
 ): ShellBackgroundHandoffHandler {
-  return ({ handle, completed, request, partialStdout, partialStderr }) => {
+  return ({
+    handle,
+    completed,
+    request,
+    partialStdout,
+    partialStderr,
+    policy,
+  }) => {
     const taskHandle = manager.spawn({
       parentRunId,
       kind: "shell.background",
       title: `shell: ${request.command}`,
-      metadata: { command: request.command, args: request.args },
+      awaited: policy.awaited,
+      metadata: {
+        command: request.command,
+        args: request.args,
+        lifetime: policy.lifetime,
+      },
       runner: async (ctrl) => {
         if (partialStdout) {
           ctrl.emitOutput({ channel: "stdout", data: partialStdout });

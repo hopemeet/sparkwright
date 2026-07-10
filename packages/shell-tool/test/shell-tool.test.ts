@@ -667,6 +667,7 @@ describe("foreground→background promotion", () => {
     expect(result.promotionGuidance).toMatch(/do not re-run/i);
     expect(promotions).toHaveLength(1);
     expect(promotions[0]!.foregroundTimeoutMs).toBe(20);
+    expect(promotions[0]!.policy).toEqual({ awaited: true, lifetime: "job" });
     expect(typeof promotions[0]!.handle.abort).toBe("function");
     await expect(promotions[0]!.completed).resolves.toMatchObject({
       exitCode: 0,
@@ -857,6 +858,10 @@ describe("foreground→background promotion", () => {
     expect(result.promotionGuidance).toBeUndefined();
     expect(promotions).toHaveLength(1);
     expect(promotions[0]!.origin).toBe("explicit");
+    expect(promotions[0]!.policy).toEqual({
+      awaited: false,
+      lifetime: "job",
+    });
   });
 
   it("background:true fails loud when promotion is unavailable (F1a)", async () => {
@@ -950,13 +955,17 @@ describe("foreground→background promotion", () => {
       completeAfterMs: 1_500,
       exitCode: 0,
     });
+    let handoffPolicy: ShellBackgroundHandoffRequest["policy"] | undefined;
     const tool = createShellTool({
       environment,
       foregroundTimeoutMs: 10_000,
-      onPromote: (request) => ({
-        taskId:
-          request.origin === "explicit" ? "service_task" : "unexpected_task",
-      }),
+      onPromote: (request) => {
+        handoffPolicy = request.policy;
+        return {
+          taskId:
+            request.origin === "explicit" ? "service_task" : "unexpected_task",
+        };
+      },
     });
 
     const result = await tool.execute(
@@ -970,6 +979,7 @@ describe("foreground→background promotion", () => {
       lifetime: "service",
       taskId: "service_task",
     });
+    expect(handoffPolicy).toEqual({ awaited: false, lifetime: "service" });
   });
 });
 

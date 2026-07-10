@@ -463,10 +463,6 @@ function normalizeShellTaskCommand(command: string): string {
   return command.trim().replace(/\r\n?/gu, "\n");
 }
 
-function shellTaskLifetime(request: ShellExecutionRequest): ShellTaskLifetime {
-  return request.metadata?.backgroundLifetime === "service" ? "service" : "job";
-}
-
 function failedStreamingResult(
   stderr: string,
   metadata: Record<string, unknown>,
@@ -557,6 +553,7 @@ function createTaskBackgroundHandoff(input: {
     partialStderr,
     startedAt,
     origin,
+    policy,
   }) => {
     const rawCommand =
       typeof request.metadata?.rawCommand === "string"
@@ -566,13 +563,13 @@ function createTaskBackgroundHandoff(input: {
       parentRunId: input.parentRunId,
       kind: SHELL_BACKGROUND_KIND,
       title: `shell: ${rawCommand}`,
-      awaited: origin === "promoted",
+      awaited: policy.awaited,
       metadata: {
         command: rawCommand,
         cwd: request.cwd,
         timeoutMs: request.timeoutMs,
         backgroundOrigin: origin,
-        lifetime: shellTaskLifetime(request),
+        lifetime: policy.lifetime,
       },
       runner: async (ctrl) => {
         const emitter = input.getRunEvents?.() ?? createBufferedEmitter();
@@ -585,7 +582,7 @@ function createTaskBackgroundHandoff(input: {
           cwd: request.cwd,
           timeoutMs: request.timeoutMs,
           backgroundOrigin: origin,
-          lifetime: shellTaskLifetime(request),
+          lifetime: policy.lifetime,
         };
         emitter.emit("task.created", taskPayload);
         const taskSpan = openSpan(emitter, {
