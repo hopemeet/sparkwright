@@ -642,7 +642,13 @@ function EventCard(props: {
       const taskId = str(p.taskId);
       const protocol = str(p.protocol);
       const command = str(p.command);
-      if (protocol !== "promoted_shell" && !taskId) return null;
+      if (
+        protocol !== "background_shell" &&
+        protocol !== "promoted_shell" &&
+        !taskId
+      ) {
+        return null;
+      }
       return (
         <Box paddingLeft={childPad} paddingRight={1}>
           <Text color={theme.warning}>untracked writes possible</Text>

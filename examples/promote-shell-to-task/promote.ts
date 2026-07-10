@@ -4,7 +4,7 @@
 // The script wires three SparkWright pieces together so the model surface is
 // realistic:
 //
-//   shell-tool ── onPromote ──▶ TaskManager.spawn(handle adoption)
+//   shell-tool ── onBackground ──▶ TaskManager.spawn(handle adoption)
 //        ▲                              │
 //        │                              ▼
 //   short cmd: returns synchronously    long cmd: returns { promoted, taskId },
@@ -33,7 +33,7 @@ import {
 import {
   RECOMMENDED_FOREGROUND_TIMEOUT_MS,
   createShellTool,
-  type ShellPromotionHandler,
+  type ShellBackgroundHandoffHandler,
   type ShellToolOutput,
 } from "@sparkwright/shell-tool";
 
@@ -122,14 +122,14 @@ function scriptedEnvironment(
 //    stdout/stderr into the task store so `task_output` can stream it later.
 // ---------------------------------------------------------------------------
 
-function makePromotionHandler(
+function makeBackgroundHandoff(
   manager: TaskManager,
   parentRunId: ReturnType<typeof createRunId>,
-): ShellPromotionHandler {
+): ShellBackgroundHandoffHandler {
   return ({ handle, completed, request, partialStdout, partialStderr }) => {
     const taskHandle = manager.spawn({
       parentRunId,
-      kind: "shell.promoted",
+      kind: "shell.background",
       title: `shell: ${request.command}`,
       metadata: { command: request.command, args: request.args },
       runner: async (ctrl) => {
@@ -200,7 +200,7 @@ async function main(): Promise<void> {
     // Set a tiny ceiling so `sleep` deterministically promotes. Real hosts
     // pass RECOMMENDED_FOREGROUND_TIMEOUT_MS (10 min) or a configured value.
     foregroundTimeoutMs: 30,
-    onPromote: makePromotionHandler(manager, parentRunId),
+    onBackground: makeBackgroundHandoff(manager, parentRunId),
   });
   void RECOMMENDED_FOREGROUND_TIMEOUT_MS; // referenced for docs/lint visibility
 

@@ -18,7 +18,7 @@ import {
   isDestructive,
   parseCommand,
   stripHereDocBodies,
-  type ShellPromotionRequest,
+  type ShellBackgroundHandoffRequest,
 } from "../src/index.js";
 
 const DESTRUCTIVE_FIXTURES: Record<string, string[]> = {
@@ -295,7 +295,7 @@ describe("createShellTool", () => {
     expect(() => createShellTool(incomplete)).toThrow(/foregroundTimeoutMs/);
   });
 
-  it("rejects construction when onPromote is missing", () => {
+  it("rejects construction when no background handoff is configured", () => {
     const incomplete = {
       environment: streamingEnv({
         stdoutChunks: [],
@@ -305,7 +305,7 @@ describe("createShellTool", () => {
       }),
       foregroundTimeoutMs: 1000,
     } as unknown as Parameters<typeof createShellTool>[0];
-    expect(() => createShellTool(incomplete)).toThrow(/onPromote/);
+    expect(() => createShellTool(incomplete)).toThrow(/onBackground/);
   });
 
   it("dispatches allowed commands through the streaming environment", async () => {
@@ -596,7 +596,7 @@ describe("foreground→background promotion", () => {
       completeAfterMs: 5,
       exitCode: 0,
     });
-    const promotions: ShellPromotionRequest[] = [];
+    const promotions: ShellBackgroundHandoffRequest[] = [];
     const tool = createShellTool({
       environment,
       foregroundTimeoutMs: 1000,
@@ -641,18 +641,18 @@ describe("foreground→background promotion", () => {
     expect(result.timedOut).toBe(false);
   });
 
-  it("hands the live process to onPromote when the deadline fires first", async () => {
+  it("hands the live process to onBackground when the deadline fires first", async () => {
     const environment = streamingEnv({
       stdoutChunks: ["partial\n"],
       stderrChunks: ["warn\n"],
       completeAfterMs: 500,
       exitCode: 0,
     });
-    const promotions: ShellPromotionRequest[] = [];
+    const promotions: ShellBackgroundHandoffRequest[] = [];
     const tool = createShellTool({
       environment,
       foregroundTimeoutMs: 20,
-      onPromote: (req) => {
+      onBackground: (req) => {
         promotions.push(req);
         // Adopt the process so it isn't killed.
         return { taskId: "task_abc" };
@@ -832,7 +832,7 @@ describe("foreground→background promotion", () => {
       completeAfterMs: 500,
       exitCode: 0,
     });
-    const promotions: ShellPromotionRequest[] = [];
+    const promotions: ShellBackgroundHandoffRequest[] = [];
     const tool = createShellTool({
       environment,
       // A generous foreground budget would normally keep this inline;

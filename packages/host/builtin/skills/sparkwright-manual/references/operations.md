@@ -107,9 +107,10 @@ Use background tasks when a command may outlive the foreground turn:
 - subprocesses needing cancellation
 - work the agent should poll or observe later
 
-`@sparkwright/shell-tool` can promote a long-running foreground command when
-the host provides `foregroundTimeoutMs` and `onPromote`. The promoted task can
-be observed through `task(action="get")` and `task(action="output")`.
+`@sparkwright/shell-tool` can hand off an explicit background command or
+promote a long-running foreground command when the host provides
+`foregroundTimeoutMs` and `onBackground`. The resulting `shell.background`
+task can be observed through `task(action="get")` and `task(action="output")`.
 
 Durable hosts should wire:
 

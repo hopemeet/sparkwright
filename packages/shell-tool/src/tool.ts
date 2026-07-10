@@ -48,8 +48,8 @@ export const RECOMMENDED_FOREGROUND_TIMEOUT_MS = 5 * 60 * 1000;
 export const MAX_FOREGROUND_TIMEOUT_MS = 10 * 60 * 1000;
 
 /**
- * Payload passed to the compatibility-named
- * {@link ShellToolOptions.onPromote} handoff callback for either an explicit
+ * Payload passed to the
+ * {@link ShellToolOptions.onBackground} handoff callback for either an explicit
  * background launch or foreground timeout promotion. Hosts typically adopt the
  * live process by registering it with a TaskManager and returning the resulting
  * task id, letting the agent monitor completion out of band.
@@ -61,7 +61,7 @@ export const MAX_FOREGROUND_TIMEOUT_MS = 10 * 60 * 1000;
  * @public
  * @stability experimental v0.1
  */
-export interface ShellPromotionRequest {
+export interface ShellBackgroundHandoffRequest {
   handle: LiveShellHandle;
   /** Resolves with the process result once the adopted shell exits. */
   completed: Promise<ShellExecutionResult>;
@@ -79,14 +79,14 @@ export interface ShellPromotionRequest {
 }
 
 /**
- * Outcome of {@link ShellToolOptions.onPromote}. `taskId` is opaque to the
+ * Outcome of {@link ShellToolOptions.onBackground}. `taskId` is opaque to the
  * shell tool — the host is responsible for routing follow-up monitoring
  * (e.g. wiring it to a TaskManager so the agent can call `task_output`).
  *
  * @public
  * @stability experimental v0.1
  */
-export interface ShellPromotionResult {
+export interface ShellBackgroundHandoffResult {
   taskId: string;
 }
 
@@ -106,15 +106,21 @@ export type ActiveShellBackgroundTaskLookup = (input: {
   | Promise<ActiveShellBackgroundTask | undefined>;
 
 /**
- * Callback signature for live shell→background task handoff. The name remains
- * promotion-oriented for API compatibility; inspect `request.origin`.
+ * Callback signature for live shell→background task handoff.
  *
  * @public
  * @stability experimental v0.1
  */
-export type ShellPromotionHandler = (
-  request: ShellPromotionRequest,
-) => ShellPromotionResult | Promise<ShellPromotionResult>;
+export type ShellBackgroundHandoffHandler = (
+  request: ShellBackgroundHandoffRequest,
+) => ShellBackgroundHandoffResult | Promise<ShellBackgroundHandoffResult>;
+
+/** @deprecated Use {@link ShellBackgroundHandoffRequest}. */
+export type ShellPromotionRequest = ShellBackgroundHandoffRequest;
+/** @deprecated Use {@link ShellBackgroundHandoffResult}. */
+export type ShellPromotionResult = ShellBackgroundHandoffResult;
+/** @deprecated Use {@link ShellBackgroundHandoffHandler}. */
+export type ShellPromotionHandler = ShellBackgroundHandoffHandler;
 
 /**
  * Options accepted by {@link createShellTool}.
@@ -139,7 +145,7 @@ export interface ShellToolOptions {
   /**
    * Whether the host can promote a foreground shell to a background task when
    * the foreground budget expires. Defaults to true for embedders that provide
-   * a real `onPromote` handler.
+   * a real background handoff handler.
    */
   promotionAvailable?: boolean;
   /**
@@ -148,7 +154,9 @@ export interface ShellToolOptions {
    * live process (typically by registering it with
    * `@sparkwright/agent-runtime`'s `TaskManager`) and returns a `taskId`.
    */
-  onPromote: ShellPromotionHandler;
+  onBackground?: ShellBackgroundHandoffHandler;
+  /** @deprecated Use `onBackground`. */
+  onPromote?: ShellPromotionHandler;
   /**
    * Optional host lookup used after policy/approval but before process spawn to
    * collapse an explicit background request onto equivalent active work.
@@ -265,7 +273,7 @@ export interface ShellToolOutput {
   outputTruncated?: boolean;
   /**
    * True when the foreground deadline fired and the live process was handed
-   * to {@link ShellToolOptions.onPromote} instead of being killed. When set,
+   * to {@link ShellToolOptions.onBackground} instead of being killed. When set,
    * `taskId` carries the host-assigned identifier and `stdout` / `stderr`
    * hold only the partial output captured up to the promotion point.
    */
@@ -351,6 +359,7 @@ export function createShellTool(
   options: ShellToolOptions,
 ): ToolDefinition<ShellToolInput, ShellToolOutput> {
   validateShellToolOptions(options);
+  const onBackground = options.onBackground ?? options.onPromote!;
   return defineTool<ShellToolInput, ShellToolOutput>({
     name: options.name ?? DEFAULT_NAME,
     description: options.description ?? DEFAULT_DESCRIPTION,
@@ -551,7 +560,7 @@ export function createShellTool(
         request,
         verdict,
         foregroundTimeoutMs: input.foregroundTimeoutMs,
-        onPromote: options.onPromote,
+        onBackground,
         promotionAvailable: options.promotionAvailable ?? true,
         timeoutMsAliasUsed: input.timeoutMsAliasUsed,
         timeoutAliasWarning: input.timeoutAliasWarning,
@@ -709,19 +718,22 @@ function validateShellToolOptions(options: ShellToolOptions): void {
       `@sparkwright/shell-tool: \`foregroundTimeoutMs\` must be <= ${MAX_FOREGROUND_TIMEOUT_MS}.`,
     );
   }
-  if (typeof options.onPromote !== "function") {
+  if (
+    typeof options.onBackground !== "function" &&
+    typeof options.onPromote !== "function"
+  ) {
     throw new Error(
-      "@sparkwright/shell-tool: `onPromote` is required. Wire it to your TaskManager so timed-out shells can continue as background tasks.",
+      "@sparkwright/shell-tool: `onBackground` is required. Wire it to your TaskManager so background and timed-out shells can continue as tasks (`onPromote` remains a deprecated alias).",
     );
   }
 }
 
-interface PromotionRunContext {
+interface BackgroundRunContext {
   environment: ExecutionEnvironment;
   request: ShellExecutionRequest;
   verdict: ShellSafetyResult;
   foregroundTimeoutMs: number;
-  onPromote: ShellPromotionHandler;
+  onBackground: ShellBackgroundHandoffHandler;
   promotionAvailable: boolean;
   timeoutMsAliasUsed: boolean;
   timeoutAliasWarning?: string;
@@ -743,7 +755,7 @@ function approvalStatusFromDecision(
 }
 
 async function runWithPromotion(
-  ctx: PromotionRunContext,
+  ctx: BackgroundRunContext,
 ): Promise<ShellToolOutput> {
   const startedAt = new Date().toISOString();
   const streaming = await ctx.environment.executeShellStreaming!(ctx.request);
@@ -848,7 +860,7 @@ async function runWithPromotion(
 }
 
 async function handOffShellToBackground(input: {
-  ctx: PromotionRunContext;
+  ctx: BackgroundRunContext;
   origin: "explicit" | "promoted";
   handle: LiveShellHandle;
   completed: Promise<ShellExecutionResult>;
@@ -860,7 +872,7 @@ async function handOffShellToBackground(input: {
 }): Promise<ShellToolOutput> {
   const { ctx } = input;
   try {
-    const promotion = await ctx.onPromote({
+    const handoff = await ctx.onBackground({
       handle: input.handle,
       completed: input.completed,
       request: ctx.request,
@@ -900,11 +912,11 @@ async function handOffShellToBackground(input: {
       backgroundOrigin: input.origin,
       lifetime: ctx.lifetime,
       ...(explicitlyBackgrounded ? {} : { promoted: true }),
-      taskId: promotion.taskId,
+      taskId: handoff.taskId,
       ...(explicitlyBackgrounded
         ? {
             backgroundGuidance:
-              `Command started directly as background task ${promotion.taskId}. ` +
+              `Command started directly as background task ${handoff.taskId}. ` +
               `This successful start satisfies a background-launch request. Do ` +
               `NOT re-run an equivalent command; use this taskId to inspect, ` +
               `read output, wait, or stop it.`,
@@ -912,11 +924,11 @@ async function handOffShellToBackground(input: {
         : {
             promotionGuidance:
               `The foreground budget was exceeded, so this command is still running ` +
-              `as background task ${promotion.taskId}; the stdout/stderr above is only ` +
+              `as background task ${handoff.taskId}; the stdout/stderr above is only ` +
               `the partial output captured so far. Do NOT re-run the command — its ` +
               `final result will arrive later as a task-completion observation. If you ` +
               `need the result before continuing, call the task tool with ` +
-              `action="wait" and taskId="${promotion.taskId}".`,
+              `action="wait" and taskId="${handoff.taskId}".`,
           }),
       sandbox: shellSandboxOutput(input.handle.metadata),
     };
@@ -962,7 +974,7 @@ function appendDiagnosticLine(value: string, line: string): string {
 }
 
 function completedShellOutput(
-  ctx: PromotionRunContext,
+  ctx: BackgroundRunContext,
   result: ShellExecutionResult,
   stdout: string,
   stderr: string,

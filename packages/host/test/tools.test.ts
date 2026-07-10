@@ -3848,6 +3848,7 @@ describe("host tools", () => {
     expect(result.backgroundGuidance).toMatch(/successful start/i);
     const record = manager.store.get(result.taskId as TaskId);
     expect(record).toMatchObject({
+      kind: "shell.background",
       awaited: false,
       status: "running",
       metadata: expect.objectContaining({ backgroundOrigin: "explicit" }),
@@ -3869,6 +3870,49 @@ describe("host tools", () => {
     });
     expect(manager.store.list({ parentRunId: ctx.run.id })).toHaveLength(1);
     await manager.handle(result.taskId as TaskId)!.wait();
+  });
+
+  it("deduplicates against active legacy shell.promoted records", async () => {
+    const ctx = await createWorkspace({});
+    const canonicalWorkspaceRoot = await realpath(ctx.workspaceRoot);
+    const store = new InMemoryTaskStore();
+    const manager = new TaskManager({ store });
+    const legacyTaskId = "task_legacy_shell" as TaskId;
+    store.create({
+      id: legacyTaskId,
+      parentRunId: ctx.run.id,
+      kind: "shell.promoted",
+      awaited: false,
+      metadata: {
+        command: "node legacy-service.js",
+        cwd: canonicalWorkspaceRoot,
+        backgroundOrigin: "explicit",
+        lifetime: "service",
+      },
+    });
+    store.update(legacyTaskId, { status: "running" });
+    const tool = createHostShellTool(ctx.workspaceRoot, {
+      taskManager: manager,
+      sandbox: { mode: "off" },
+    });
+
+    const result = await tool.execute(
+      {
+        command: "node legacy-service.js",
+        background: true,
+        lifetime: "service",
+      },
+      ctx,
+    );
+
+    expect(result).toMatchObject({
+      taskId: legacyTaskId,
+      background: true,
+      backgroundOrigin: "explicit",
+      deduplicated: true,
+      executed: false,
+    });
+    expect(store.list({ parentRunId: ctx.run.id })).toHaveLength(1);
   });
 
   it("resolves shell approval before an explicit background process can detach", async () => {
@@ -4021,7 +4065,7 @@ describe("host tools", () => {
     ).resolves.toBe("x");
 
     // ...(c) the untracked-write-capable boundary is disclosed via the shared
-    // marker (with the promoted_shell protocol + sandbox status) rather than
+    // marker (with the background_shell protocol + sandbox status) rather than
     // audited away...
     const marker = events
       .all()
@@ -4030,7 +4074,8 @@ describe("host tools", () => {
       );
     expect(marker?.payload).toEqual(
       expect.objectContaining({
-        protocol: "promoted_shell",
+        protocol: "background_shell",
+        backgroundOrigin: "promoted",
         marker: "untracked-write-capable",
         taskId: result.taskId,
         sandboxMode: "off",

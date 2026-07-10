@@ -28,7 +28,7 @@ Use a background task when work may outlive the foreground turn:
 - jobs the agent should poll or observe later
 
 `@sparkwright/shell-tool` can promote a long-running command into a task when
-the host provides `foregroundTimeoutMs` and `onPromote`. The task can then be
+the host provides `foregroundTimeoutMs` and `onBackground`. The task can then be
 observed with `task(action="get")` and `task(action="output")`.
 
 An explicit `background:true` shell call is different from timeout promotion:
