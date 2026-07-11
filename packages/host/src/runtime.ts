@@ -83,7 +83,7 @@ import {
   FileWorkflowStore,
   advanceWorkflowState,
   assertSafeWorkflowRunId,
-  type FileDocumentLease,
+  type WorkflowLeaseBoundWriter,
   FileTaskStore,
   TaskManager,
   createAgentTool,
@@ -508,7 +508,7 @@ interface PreparedHostRunEnvironment {
   workflowProjection?: ReturnType<typeof createWorkflowProjectionHooks>;
   workflowStore?: FileWorkflowStore;
   workflowRecord?: WorkflowRunRecord;
-  workflowLease?: FileDocumentLease;
+  workflowLease?: WorkflowLeaseBoundWriter;
   eventHookConfig?: CapabilityEventHookConfig[];
   hookSandbox?: ShellConfig["sandbox"];
   hookHttp?: CapabilityHooksConfig["http"];
@@ -1023,9 +1023,8 @@ export class HostRuntime {
     runId: RunId,
     result: RunResult,
   ): Promise<void> {
-    if (!env.workflowStore || !env.workflowRecord) return;
-    const latest =
-      env.workflowStore.get(env.workflowRecord.id) ?? env.workflowRecord;
+    if (!env.workflowLease || !env.workflowRecord) return;
+    const latest = (await env.workflowLease.readFresh()) ?? env.workflowRecord;
     if (latest.status === "waiting") {
       this.deliverWorkflowNotification(latest);
       await env.workflowLease?.release();
@@ -1041,54 +1040,66 @@ export class HostRuntime {
       return;
     }
     if (result.state === "cancelled") {
-      env.workflowRecord = env.workflowStore.update(latest.id, {
-        status: "cancelled",
-        activeRunId: runId,
-        failure: {
-          kind: "cancelled",
-          code: "workflow.cancelled",
-          message: result.stopReason ?? "manual_cancelled",
+      env.workflowRecord = await mutateWorkflowRecord(
+        env.workflowLease,
+        latest,
+        {
+          status: "cancelled",
+          activeRunId: runId,
+          failure: {
+            kind: "cancelled",
+            code: "workflow.cancelled",
+            message: result.stopReason ?? "manual_cancelled",
+          },
+          metadata: { finalizedFromRunEnd: true },
         },
-        metadata: { finalizedFromRunEnd: true },
-      });
+      );
       this.deliverWorkflowNotification(env.workflowRecord);
       await env.workflowLease?.release();
       env.workflowLease = undefined;
       return;
     }
     if (result.state === "failed") {
-      env.workflowRecord = env.workflowStore.update(latest.id, {
-        status: "failed",
-        activeRunId: runId,
-        failure: {
-          kind: "runtime",
-          code: "workflow.runtime",
-          message: result.stopReason
-            ? `Run failed before workflow completed: ${result.stopReason}`
-            : "Run failed before workflow completed.",
-          metadata: {
-            stopReason: result.stopReason,
-            runFailure: result.failure,
+      env.workflowRecord = await mutateWorkflowRecord(
+        env.workflowLease,
+        latest,
+        {
+          status: "failed",
+          activeRunId: runId,
+          failure: {
+            kind: "runtime",
+            code: "workflow.runtime",
+            message: result.stopReason
+              ? `Run failed before workflow completed: ${result.stopReason}`
+              : "Run failed before workflow completed.",
+            metadata: {
+              stopReason: result.stopReason,
+              runFailure: result.failure,
+            },
           },
+          metadata: { finalizedFromRunEnd: true },
         },
-        metadata: { finalizedFromRunEnd: true },
-      });
+      );
       this.deliverWorkflowNotification(env.workflowRecord);
       await env.workflowLease?.release();
       env.workflowLease = undefined;
       return;
     }
     if (result.state === "completed") {
-      env.workflowRecord = env.workflowStore.update(latest.id, {
-        status: "failed",
-        activeRunId: runId,
-        failure: {
-          kind: "runtime",
-          code: "workflow.runtime",
-          message: "Run completed before workflow reached a terminal state.",
+      env.workflowRecord = await mutateWorkflowRecord(
+        env.workflowLease,
+        latest,
+        {
+          status: "failed",
+          activeRunId: runId,
+          failure: {
+            kind: "runtime",
+            code: "workflow.runtime",
+            message: "Run completed before workflow reached a terminal state.",
+          },
+          metadata: { finalizedFromRunEnd: true },
         },
-        metadata: { finalizedFromRunEnd: true },
-      });
+      );
       this.deliverWorkflowNotification(env.workflowRecord);
       await env.workflowLease?.release();
       env.workflowLease = undefined;
@@ -1100,9 +1111,8 @@ export class HostRuntime {
     runId: RunId | undefined,
     cause: unknown,
   ): Promise<void> {
-    if (!env.workflowStore || !env.workflowRecord) return;
-    const latest =
-      env.workflowStore.get(env.workflowRecord.id) ?? env.workflowRecord;
+    if (!env.workflowLease || !env.workflowRecord) return;
+    const latest = (await env.workflowLease.readFresh()) ?? env.workflowRecord;
     if (latest.status === "waiting") {
       this.deliverWorkflowNotification(latest);
       await env.workflowLease?.release();
@@ -1123,7 +1133,7 @@ export class HostRuntime {
         : cause
           ? String(cause)
           : "unknown";
-    env.workflowRecord = env.workflowStore.update(latest.id, {
+    env.workflowRecord = await mutateWorkflowRecord(env.workflowLease, latest, {
       status: "failed",
       ...(runId ? { activeRunId: runId } : {}),
       failure: {
@@ -1622,7 +1632,7 @@ export class HostRuntime {
     controlSessionId?: string;
     workflowStore?: FileWorkflowStore;
     workflowRecord?: WorkflowRunRecord;
-    workflowLease?: FileDocumentLease;
+    workflowLease?: WorkflowLeaseBoundWriter;
     workflowWaitingInputMetadata?: Record<string, unknown>;
     runMetadata?: Record<string, unknown>;
     runStoreMetadata?: Record<string, unknown>;
@@ -2041,19 +2051,20 @@ export class HostRuntime {
         input.workflowWaitingInputMetadata !== undefined
       ) {
         workflowRollbackRecord = workflowRecord;
-        workflowRecord = consumeWorkflowActorWaitingInput(
-          workflowStore,
+        workflowRecord = await consumeWorkflowActorWaitingInput(
+          workflowLease,
           workflowRecord,
           { metadata: input.workflowWaitingInputMetadata },
         );
         if (isTerminalWorkflowRunStatus(workflowRecord.status)) {
           const terminalStatus = workflowRecord.status;
           const rollbackWorkflowRunId = workflowRollbackRecord.id;
-          workflowRecord = workflowStore.restore(workflowRollbackRecord, {
-            metadata: {
-              rollbackReason: "workflow_resume_terminal_after_input",
-            },
-          });
+          workflowRecord = await compensateWorkflowRecord(
+            workflowLease,
+            workflowRecord,
+            workflowRollbackRecord,
+            "workflow_resume_terminal_after_input",
+          );
           workflowRollbackRecord = undefined;
           return {
             ok: false,
@@ -2079,12 +2090,11 @@ export class HostRuntime {
                   )
                 : [],
             onStateSnapshot: async (snapshot) => {
-              await workflowLease?.refresh(WORKFLOW_LEASE_TTL_MS);
-              if (!workflowStore || !workflowRecord) return;
+              if (!workflowLease || !workflowRecord) return;
               const latestRecord =
-                workflowStore.get(workflowRecord.id) ?? workflowRecord;
-              workflowRecord = persistWorkflowProjectionSnapshot(
-                workflowStore,
+                (await workflowLease.readFresh()) ?? workflowRecord;
+              workflowRecord = await persistWorkflowProjectionSnapshot(
+                workflowLease,
                 latestRecord,
                 snapshot,
               );
@@ -2121,7 +2131,7 @@ export class HostRuntime {
         if (!workflowRecord) {
           const workflowRunId =
             workflowProjection.workflowRunId as WorkflowRunId;
-          const acquiredLease = await workflowStore.acquireLease(
+          const acquiredLease = await workflowStore.acquireWriter(
             workflowRunId,
             {
               owner: workflowLeaseOwner(),
@@ -2139,7 +2149,7 @@ export class HostRuntime {
           }
           workflowLease = acquiredLease;
           acquiredWorkflowLease = true;
-          workflowRecord = workflowStore.create({
+          workflowRecord = await acquiredLease.create({
             id: workflowRunId,
             assetName: workflowDefinition.assetName,
             ...(workflowDefinition.version
@@ -2176,9 +2186,12 @@ export class HostRuntime {
       }
     } catch (error) {
       if (workflowRollbackRecord && workflowStore) {
-        workflowRecord = workflowStore.restore(workflowRollbackRecord, {
-          metadata: { rollbackReason: "workflow_resume_prepare_failed" },
-        });
+        workflowRecord = await compensateWorkflowRecord(
+          workflowLease,
+          workflowRecord ?? workflowRollbackRecord,
+          workflowRollbackRecord,
+          "workflow_resume_prepare_failed",
+        );
       }
       if (acquiredWorkflowLease) {
         await workflowLease?.release().catch(() => {});
@@ -2502,13 +2515,13 @@ export class HostRuntime {
     const stopWorkflowLeaseRefresh = startWorkflowLeaseRefresh(
       env.workflowLease,
     );
-    const registerActiveRun = (
+    const registerActiveRun = async (
       run: ReturnType<typeof createRun>,
       runId: string,
-    ): SparkwrightEvent[] => {
+    ): Promise<SparkwrightEvent[]> => {
       env.parentRunRef.current = run;
       env.runIdHolder.value = runId;
-      if (env.workflowStore && env.workflowRecord) {
+      if (env.workflowLease && env.workflowRecord) {
         const episodeAllowedTools = workflowEpisodeAllowedTools(
           env.workflowRecord,
         );
@@ -2517,25 +2530,29 @@ export class HostRuntime {
           workflowActorEpisodeMetadata(
             workflowActorEpisodePlan(env, { budgetScope: "main_agent" }),
           );
-        env.workflowRecord = env.workflowStore.update(env.workflowRecord.id, {
-          activeRunId: runId as RunId,
-          appendRunId: runId as RunId,
-          parentRunId: env.workflowRecord.parentRunId ?? (runId as RunId),
-          evidenceRefs: appendWorkflowEvidenceRef(
-            env.workflowRecord.evidenceRefs,
-            { kind: "run", ref: runId },
-          ),
-          metadata: {
-            activeRunId: runId,
-            resumeRun: env.workflowRecord.runIds.length > 0,
-            episodeDriver: "workflow_actor",
-            episodeKind: input.episodeKind,
-            workflowEpisode: episodeMetadata,
-            ...(episodeAllowedTools
-              ? { episodeAllowedTools: episodeAllowedTools.normalized }
-              : {}),
+        env.workflowRecord = await mutateWorkflowRecord(
+          env.workflowLease,
+          env.workflowRecord,
+          {
+            activeRunId: runId as RunId,
+            appendRunId: runId as RunId,
+            parentRunId: env.workflowRecord.parentRunId ?? (runId as RunId),
+            evidenceRefs: appendWorkflowEvidenceRef(
+              env.workflowRecord.evidenceRefs,
+              { kind: "run", ref: runId },
+            ),
+            metadata: {
+              activeRunId: runId,
+              resumeRun: env.workflowRecord.runIds.length > 0,
+              episodeDriver: "workflow_actor",
+              episodeKind: input.episodeKind,
+              workflowEpisode: episodeMetadata,
+              ...(episodeAllowedTools
+                ? { episodeAllowedTools: episodeAllowedTools.normalized }
+                : {}),
+            },
           },
-        });
+        );
       }
       const closeEventHooks = bindConfiguredEventHooks({
         hooks: env.eventHookConfig,
@@ -2598,7 +2615,7 @@ export class HostRuntime {
         const run = input.buildRun(supervisedInput);
         const runId = run.record.id;
         lastRunId = runId;
-        const collected = registerActiveRun(run, runId);
+        const collected = await registerActiveRun(run, runId);
         if (!firstRunStarted) {
           firstRunStarted = true;
           resolveFirstRunId(runId);
@@ -2728,12 +2745,12 @@ export class HostRuntime {
     run: ReturnType<typeof createRun>,
     result: RunResult,
   ): Promise<void> {
-    if (!env.workflowStore || !env.workflowRecord) return;
-    const latest = env.workflowStore.get(env.workflowRecord.id);
+    if (!env.workflowLease || !env.workflowRecord) return;
+    const latest = await env.workflowLease.readFresh();
     if (!latest) return;
     const episode = workflowEpisodeMetadataFromRun(run);
     const usage = run.usage();
-    env.workflowRecord = env.workflowStore.update(latest.id, {
+    env.workflowRecord = await mutateWorkflowRecord(env.workflowLease, latest, {
       metadata: appendWorkflowEpisodeUsage(latest.metadata, {
         runId: run.record.id,
         stopReason: result.stopReason,
@@ -3012,7 +3029,7 @@ export class HostRuntime {
       payload.sessionId,
     );
     if (!located.ok) return located;
-    const { record } = located;
+    let { record } = located;
     const { store, sessionId } = located;
     if (isTerminalWorkflowRunStatus(record.status)) {
       return {
@@ -3032,7 +3049,7 @@ export class HostRuntime {
         },
       };
     }
-    const lease = await store.acquireLease(record.id, {
+    const lease = await store.acquireWriter(record.id, {
       owner: workflowLeaseOwner(),
       ttlMs: WORKFLOW_LEASE_TTL_MS,
     });
@@ -3045,6 +3062,7 @@ export class HostRuntime {
         },
       };
     }
+    record = (await lease.readFresh()) ?? record;
     const authorizationSnapshot = record.authorizationSnapshot;
     const effectiveResumePayload: WorkflowResumeRequestPayload = {
       ...payload,
@@ -3198,9 +3216,13 @@ export class HostRuntime {
     });
     if (!started.ok) {
       if (record.status === "waiting") {
-        store.restore(record, {
-          metadata: { rollbackReason: "workflow_resume_start_failed" },
-        });
+        const current = (await lease.readFresh()) ?? record;
+        await compensateWorkflowRecord(
+          lease,
+          current,
+          record,
+          "workflow_resume_start_failed",
+        );
       }
       await lease.release();
       return started;
@@ -8484,11 +8506,13 @@ function workflowToolDescriptor(tool: ToolDefinition): ToolDescriptor {
 
 // Actor-owned resume boundary for P3 input waits. The actor consumes the
 // external input event before it starts the next transient worker run.
-function consumeWorkflowActorWaitingInput(
-  store: FileWorkflowStore,
+async function consumeWorkflowActorWaitingInput(
+  writer: WorkflowLeaseBoundWriter | undefined,
   record: WorkflowRunRecord,
   input: { metadata?: Record<string, unknown> },
-): WorkflowRunRecord {
+): Promise<WorkflowRunRecord> {
+  if (!writer)
+    throw new Error(`Workflow run ${record.id} has no lease-bound writer.`);
   if (record.status !== "waiting") return record;
   if (!record.wait) {
     throw new Error(`Workflow run ${record.id} is waiting without wait state.`);
@@ -8541,7 +8565,7 @@ function consumeWorkflowActorWaitingInput(
     },
   };
   const status = workflowStatusFromRuntimeState(advanced.state);
-  const updated = store.update(record.id, {
+  const patch = {
     status,
     clearWait: true,
     ...(advanced.state.currentNodeId
@@ -8580,21 +8604,24 @@ function consumeWorkflowActorWaitingInput(
           },
         }
       : {}),
-  });
-  store.appendEvent({
-    at,
-    type: "input",
-    workflowRunId: record.id,
-    parentRunId: record.parentRunId,
-    status: updated.status,
-    metadata: {
-      wait: record.wait,
-      nodeId: node.id,
-      decision: advanced.decision,
-      resumeMetadata: input.metadata ?? {},
+  };
+  return writer.mutate({
+    expectedRevision: record.recordRevision ?? 0,
+    patch,
+    event: {
+      at,
+      type: "input",
+      workflowRunId: record.id,
+      parentRunId: record.parentRunId,
+      status,
+      metadata: {
+        wait: record.wait,
+        nodeId: node.id,
+        decision: advanced.decision,
+        resumeMetadata: input.metadata ?? {},
+      },
     },
   });
-  return updated;
 }
 
 function workflowStatusFromRuntimeState(
@@ -8603,6 +8630,88 @@ function workflowStatusFromRuntimeState(
   if (state.status === "completed") return "completed";
   if (state.status === "failed") return "failed";
   return "running";
+}
+
+async function mutateWorkflowRecord(
+  writer: WorkflowLeaseBoundWriter | undefined,
+  record: WorkflowRunRecord,
+  patch: Parameters<WorkflowLeaseBoundWriter["mutate"]>[0]["patch"],
+  eventType?: Parameters<
+    WorkflowLeaseBoundWriter["mutate"]
+  >[0]["event"]["type"],
+): Promise<WorkflowRunRecord> {
+  if (!writer)
+    throw new Error(`Workflow run ${record.id} has no lease-bound writer.`);
+  const status = patch.status ?? record.status;
+  const type =
+    eventType ??
+    (status === "completed"
+      ? "completed"
+      : status === "failed"
+        ? "failed"
+        : status === "cancelled"
+          ? "cancelled"
+          : status === "waiting"
+            ? "waiting"
+            : "updated");
+  return writer.mutate({
+    expectedRevision: record.recordRevision ?? 0,
+    patch,
+    event: {
+      at: patch.now?.() ?? new Date().toISOString(),
+      type,
+      workflowRunId: record.id,
+      parentRunId: record.parentRunId,
+      status,
+      metadata: {
+        currentNodeId: patch.currentNodeId,
+        wait: patch.wait,
+        failure: patch.failure,
+      },
+    },
+  });
+}
+
+async function compensateWorkflowRecord(
+  writer: WorkflowLeaseBoundWriter | undefined,
+  current: WorkflowRunRecord,
+  prior: WorkflowRunRecord,
+  reason: string,
+): Promise<WorkflowRunRecord> {
+  if (!writer)
+    throw new Error(`Workflow run ${prior.id} has no lease-bound writer.`);
+  const at = new Date().toISOString();
+  return writer.compensate({
+    expectedRevision: current.recordRevision ?? 0,
+    patch: {
+      status: prior.status,
+      ...(prior.currentNodeId ? { currentNodeId: prior.currentNodeId } : {}),
+      ...(prior.wait ? { wait: prior.wait } : { clearWait: true }),
+      attempts: prior.attempts,
+      parallelBranches: prior.parallelBranches,
+      evidenceRefs: prior.evidenceRefs,
+      verdictLog: prior.verdictLog,
+      transitionLog: prior.transitionLog,
+      ...(prior.failure ? { failure: prior.failure } : { clearFailure: true }),
+      metadata: {
+        compensationReason: reason,
+        compensatesRevision: current.recordRevision,
+      },
+      now: () => at,
+    },
+    event: {
+      at,
+      type: prior.status === "waiting" ? "waiting" : "updated",
+      workflowRunId: prior.id,
+      parentRunId: prior.parentRunId,
+      status: prior.status,
+      metadata: {
+        compensation: true,
+        reason,
+        compensatesRevision: current.recordRevision,
+      },
+    },
+  });
 }
 
 function completedWorkflowNodeIds(
@@ -8742,11 +8851,11 @@ function accessModeFromResolvedFields(
   return "ask";
 }
 
-function persistWorkflowProjectionSnapshot(
-  store: FileWorkflowStore,
+async function persistWorkflowProjectionSnapshot(
+  writer: WorkflowLeaseBoundWriter,
   record: WorkflowRunRecord,
   snapshot: WorkflowProjectionStateSnapshot,
-): WorkflowRunRecord {
+): Promise<WorkflowRunRecord> {
   if (isTerminalWorkflowRunStatus(record.status)) return record;
   const state = snapshot.state;
   const verdictLog =
@@ -8795,7 +8904,7 @@ function persistWorkflowProjectionSnapshot(
     snapshot,
   );
   const projectionAllowedTools = workflowProjectionAllowedTools(snapshot);
-  return store.update(record.id, {
+  return mutateWorkflowRecord(writer, record, {
     status,
     currentNodeId: state.currentNodeId,
     ...(snapshot.phase === "waiting" && snapshot.wait
@@ -9047,7 +9156,7 @@ function mergeCapabilitySnapshots(
 }
 
 function startWorkflowLeaseRefresh(
-  lease: FileDocumentLease | undefined,
+  lease: WorkflowLeaseBoundWriter | undefined,
 ): () => void {
   if (!lease) return () => {};
   const refreshMs = Math.max(1_000, Math.floor(WORKFLOW_LEASE_TTL_MS / 2));

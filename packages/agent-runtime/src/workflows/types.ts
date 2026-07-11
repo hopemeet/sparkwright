@@ -75,6 +75,10 @@ export interface WorkflowRunAuthorizationSnapshot {
 export interface WorkflowRunRecord extends WorkflowAssetPin {
   schemaVersion: typeof WORKFLOW_RUN_RECORD_SCHEMA_VERSION;
   id: WorkflowRunId;
+  /** Canonical mutation revision. Legacy v1 snapshots are migrated from revision 0. */
+  recordRevision?: number;
+  /** Fencing generation of the writer that produced this projection. */
+  generation?: number;
   parentRunId?: RunId;
   sessionId?: string;
   activeRunId?: RunId;

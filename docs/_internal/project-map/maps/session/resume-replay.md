@@ -112,6 +112,15 @@ Future run in compacted session
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-11T10:40:00+0800
+- Scope: Package C workflow resume claims a higher journal generation, rereads
+  canonical state, consumes waiting input through a fenced mutation, and uses
+  an auditable compensating mutation on preparation/start failure.
+- Read: Host resume/runtime paths, workflow store/journal, Host workflow tests.
+- Tests: Host workflow/protocol 79 tests; agent-runtime workflow/doc-store 32
+  tests; CLI workflow slice 13 tests.
+
+- Status: Verified
 - Date: 2026-07-11T00:00:00+0800
 - Scope: Package B workflow resume preserves the original isolated job session
   and authorization snapshot.

@@ -757,6 +757,16 @@ Does not own:
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-11T10:40:00+0800
+- Scope: Package C migrates every Host live workflow writer—fresh create,
+  resume input, episode registration/projection/usage, terminal/supervisor
+  finalization, and rollback compensation—to `WorkflowLeaseBoundWriter`.
+- Read: `packages/host/src/runtime.ts`, Host workflow/protocol tests, agent
+  runtime workflow store and journal.
+- Tests: Host workflow/protocol 79 tests; Host typecheck/build; CLI workflow
+  slice 13 tests.
+
+- Status: Verified
 - Date: 2026-07-11T00:00:00+0800
 - Scope: Package B workflow job identity response, control-session validation
   and durable attribution, and resume session preservation.

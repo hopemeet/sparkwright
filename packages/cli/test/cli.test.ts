@@ -2657,8 +2657,12 @@ describe("runCli", () => {
         "workflow-runs",
       ),
     });
-    store.create({
-      id: "workflow_cli_list" as WorkflowRunId,
+    const workflowRunId = "workflow_cli_list" as WorkflowRunId;
+    const writer = await store.acquireWriter(workflowRunId, {
+      owner: "test-fixture",
+    });
+    await writer!.create({
+      id: workflowRunId,
       sessionId,
       assetName: "bugfix",
       version: "1.0.0",
@@ -2666,6 +2670,7 @@ describe("runCli", () => {
       currentNodeId: "main",
       attempts: { main: 1 },
     });
+    await writer!.release();
 
     const listOutput = createOutputCapture();
     const list = await runCli(
@@ -2735,7 +2740,10 @@ describe("runCli", () => {
     const seededStore = new FileWorkflowStore({
       rootDir: join(workspace, ".sparkwright", "workflow-runs"),
     });
-    seededStore.create({
+    const seededWriter = await seededStore.acquireWriter(staleWorkflowRunId, {
+      owner: "test-fixture",
+    });
+    const staleRecord = await seededWriter!.create({
       id: staleWorkflowRunId,
       sessionId: "session_stale_same_asset",
       assetName: "human-gate",
@@ -2749,10 +2757,20 @@ describe("runCli", () => {
       },
       metadata: { goal: "stale workflow with the same asset name" },
     });
-    seededStore.update(staleWorkflowRunId, {
-      status: "waiting",
-      wait: { kind: "input", reason: "Stale human review." },
+    await seededWriter!.mutate({
+      expectedRevision: staleRecord.recordRevision ?? 0,
+      patch: {
+        status: "waiting",
+        wait: { kind: "input", reason: "Stale human review." },
+      },
+      event: {
+        at: new Date().toISOString(),
+        type: "waiting",
+        workflowRunId: staleWorkflowRunId,
+        status: "waiting",
+      },
     });
+    await seededWriter!.release();
     await mkdir(join(workspace, ".sparkwright", "workflows", "human-gate"), {
       recursive: true,
     });
@@ -3128,7 +3146,10 @@ describe("runCli", () => {
         "workflow-runs",
       ),
     });
-    store.create({
+    const writer = await store.acquireWriter(workflowRunId, {
+      owner: "test-fixture",
+    });
+    await writer!.create({
       id: workflowRunId,
       sessionId,
       assetName: "cli-resume",
@@ -3142,6 +3163,7 @@ describe("runCli", () => {
       },
       metadata: { goal: "resume workflow from cli" },
     });
+    await writer!.release();
     const output = createOutputCapture();
 
     const resumed = await runCli(

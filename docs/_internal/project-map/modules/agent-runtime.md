@@ -312,6 +312,17 @@ Does not own:
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-07-11T10:40:00+0800
+- Scope: Package C workflow mutation fencing adds an immutable canonical
+  claim/mutation journal, lease-bound writer, generation-aware replay,
+  compensating mutations, and lazy v1 migration. Workflow snapshots and event
+  JSONL are rebuildable projections; legacy public mutation methods retired.
+- Read: `packages/agent-runtime/src/doc-store/index.ts`,
+  `packages/agent-runtime/src/workflows/store.ts`,
+  `packages/agent-runtime/src/workflows/journal.ts`, workflow types/tests.
+- Tests: agent-runtime workflow/doc-store 32 tests; typecheck; build.
+
 - Status: Read-only
 - Date: 2026-07-11T00:00:00+0800
 - Scope: workflow lease/write-fencing gap and its separation from the sealed,

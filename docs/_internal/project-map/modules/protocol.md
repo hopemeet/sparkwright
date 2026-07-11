@@ -194,6 +194,16 @@ Does not own:
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-11T10:41:00+0800
+- Scope: Package C adds internal workflow generation/revision fields and
+  fenced storage without changing Host request/response schemas or public
+  workflow snapshot payloads.
+- Read: protocol workflow types/schema, Host runtime projections, workflow
+  store/types and protocol tests.
+- Tests: Host protocol full 51 tests; CLI workflow slice 13 tests; protocol
+  behavior unchanged.
+
+- Status: Verified
 - Date: 2026-07-11T00:00:00+0800
 - Scope: Package B `run.start` workflow job/control session identity fields.
 - Read: `packages/protocol/src/index.ts`, `packages/host/src/server.ts`, SDK

@@ -59,10 +59,12 @@ export {
   type CreateWorkflowRunRecordInput,
   type FileWorkflowStoreOptions,
   type WorkflowRunRecordPatch,
+  type WorkflowLeaseBoundWriter,
   type WorkflowStore,
   type WorkflowStoreEventLogResult,
   type WorkflowStoreListResult,
 } from "./store.js";
+export { WorkflowStaleWriteError } from "./journal.js";
 export {
   FileWorkflowNotificationOutbox,
   type FileWorkflowNotificationEntry,

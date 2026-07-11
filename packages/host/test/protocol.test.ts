@@ -573,7 +573,10 @@ describe("host protocol", () => {
           "workflow-runs",
         ),
       });
-      const created = store.create({
+      const writer = await store.acquireWriter(workflowRunId, {
+        owner: "test-fixture",
+      });
+      const created = await writer!.create({
         id: workflowRunId,
         sessionId,
         assetName: "bugfix",
@@ -589,16 +592,26 @@ describe("host protocol", () => {
           backgroundTasks: "enabled",
         },
       });
-      store.update(created.id, {
-        verdictLog: [
-          {
-            at: "2026-07-09T00:00:00.000Z",
-            nodeId: "main",
-            attempt: 1,
-            verdict: { status: "passed", reason: "command_passed" },
-          },
-        ],
+      await writer!.mutate({
+        expectedRevision: created.recordRevision ?? 0,
+        patch: {
+          verdictLog: [
+            {
+              at: "2026-07-09T00:00:00.000Z",
+              nodeId: "main",
+              attempt: 1,
+              verdict: { status: "passed", reason: "command_passed" },
+            },
+          ],
+        },
+        event: {
+          at: "2026-07-09T00:00:00.000Z",
+          type: "updated",
+          workflowRunId,
+          status: "running",
+        },
       });
+      await writer!.release();
       serveConnection(pair.hostSide, {
         workspaceRoot: workspace,
         defaultModel: "deterministic",

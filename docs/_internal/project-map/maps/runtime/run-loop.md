@@ -249,6 +249,16 @@ createRun/resumeRunFromCheckpoint
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-11T10:41:00+0800
+- Scope: Package C keeps core run-loop semantics unchanged while binding Host
+  workflow episode registration, projection, usage, waiting, and finalization
+  to one generation-fenced writer.
+- Read: Host workflow actor episode path, workflow projection callbacks,
+  agent-runtime store/journal, Host workflow tests.
+- Tests: Host workflow/protocol 79 tests; agent-runtime workflow/doc-store 32
+  tests; affected typecheck/build.
+
+- Status: Verified
 - Date: 2026-07-11T00:00:00+0800
 - Scope: Package B workflow job session context isolation; core run-loop and
   tool orchestration semantics are otherwise unchanged.

@@ -525,7 +525,8 @@ workflow record、一个授权模型、一条 typed control plane 和一套 supe
 
 ### 8.12 Package C API 裁决与暂停点（2026-07-11）
 
-状态:**设计 gate 已完成源码枚举，但代码 gate 未开放。A/B 保持通过，不回退。**
+状态:**设计、代码、focused verification 与完整 release gate 均完成；等待
+Package C commit。A/B 保持通过，不回退。**
 
 #### 已验证事实与 mutation inventory
 
@@ -664,3 +665,21 @@ writer 无旁路。补偿记录保留 durable history 的产品语义已于 2026
 保持通过，且工作树清洁。满足这些条件后，可以在同一
 `feat/workflow-job-session` 分支 reopen Package C；不创建新分支。Package C 代码
 不得 amend 或混入 A/B commit，且 C 仍必须形成独立、可审查的 commit。**
+
+#### 实施结果（2026-07-11）
+
+- `FileWorkflowStore` 现以 immutable canonical journal 作为 generation/history
+  sequencer；claim 与 mutation 共用 physical sequence，mutation 同 entry 保存 record
+  与 event，snapshot/event log 仅作可重建投影。
+- runtime mutation 只能经 `WorkflowLeaseBoundWriter`；旧 public
+  `create/update/restore/appendEvent/acquireLease` 已删除。Host fresh/resume/waiting/
+  projection/usage/finalization/compensation 全部迁移。
+- generation-aware replay 隔离 stale、discontinuous、corrupt/torn entries；隔离项
+  不推进 revision、不进入 record/event projection。legacy v1 首次 claim 建立
+  revision-0 baseline，重复/并发 migration 单 winner。
+- focused evidence: agent-runtime 32 tests，Host workflow/protocol 79 tests，CLI
+  workflow slice 13 tests；相关 typecheck/build 均通过。首次 release gate 仅发现
+  7 个本次文件需 Prettier，格式化后完整 `npm run release:check` 重跑通过；最终
+  commit hash 在 Package C commit 后补记。
+- commit 前源码复核额外封闭 writer/record/event identity mismatch，新增
+  fail-closed test 后 focused gate 与完整 `npm run release:check` 均重跑通过。

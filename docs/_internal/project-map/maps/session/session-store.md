@@ -118,6 +118,15 @@ Manual compact
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-11T10:40:00+0800
+- Scope: Package C makes `.sparkwright/workflow-runs/<id>.journal/` the
+  canonical workflow mutation history. `<id>.json` and `<id>.events.jsonl`
+  remain compatibility/inspection projections rebuilt from the journal.
+- Read: workflow store/journal/doc-store implementation and focused tests.
+- Tests: agent-runtime workflow/doc-store 32 tests; Host workflow/protocol 79
+  tests; affected typecheck/build.
+
+- Status: Verified
 - Date: 2026-07-11T00:00:00+0800
 - Scope: Package B independent workflow job session layout and control-session
   attribution; no FileSessionStore locking rewrite.

@@ -4,7 +4,8 @@
 
 - Package A immutable execution/approval identity: `Verified`.
 - Package B independent workflow job session: `Verified`.
-- Package C mutation write fencing: `Untested` / design gate only.
+- Package C mutation write fencing: `Verified` at the store/Host focused gate;
+  full release gate recorded below.
 - Packages D–G: `Untested`; reopen gates closed by C.
 
 ## Current Evidence
@@ -33,3 +34,22 @@ Use a controllable clock and barriers, not sleep:
 
 Do not mark C partially verified from current lease acquire/release tests; they
 do not exercise workflow mutation fencing.
+
+## Package C Evidence (2026-07-11)
+
+- Canonical immutable journal separates physical sequence, record revision,
+  and fencing generation. Snapshot JSON and event JSONL are projections.
+- Deterministic tests cover TTL takeover, stale mutation and compensation,
+  revision races, stale-generation physical entries, torn publication slots,
+  corrupt projections, lazy-migration retry, and concurrent migration claim.
+- Host fresh start, resume input, episode projection/usage, finalization,
+  supervisor failure, and rollback use `WorkflowLeaseBoundWriter`; fixture and
+  production searches show no external `update/restore/appendEvent` bypass.
+- Focused commands: agent-runtime workflow/doc-store 32 tests; Host workflow
+  and protocol 79 tests; CLI workflow slice 13 tests; affected typecheck/build
+  commands passed.
+- Full gate: the first `npm run release:check` stopped only at Prettier for
+  seven changed TypeScript files; after formatting, the complete command was
+  rerun and passed, including all workspace tests and install smokes.
+- Final source audit added writer/record/event identity fail-closed validation;
+  its focused rerun passed before the final release rerun.

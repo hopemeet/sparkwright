@@ -7,6 +7,8 @@ import {
   type WorkflowDefinition,
   type WorkflowRunId,
   type WorkflowRunRecord,
+  type CreateWorkflowRunRecordInput,
+  type WorkflowRunRecordPatch,
 } from "@sparkwright/agent-runtime";
 import {
   loadLayeredWorkflowAssets,
@@ -97,6 +99,36 @@ async function waitForWorkflowRecord(
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
   throw new Error("Timed out waiting for workflow record.");
+}
+
+async function seedWorkflowRecord(
+  store: FileWorkflowStore,
+  input: CreateWorkflowRunRecordInput,
+  patch?: WorkflowRunRecordPatch,
+): Promise<WorkflowRunRecord> {
+  const writer = await store.acquireWriter(input.id, { owner: "test-fixture" });
+  if (!writer) throw new Error(`Could not claim ${input.id}`);
+  let record = await writer.create(input);
+  if (patch) {
+    const status = patch.status ?? record.status;
+    record = await writer.mutate({
+      expectedRevision: record.recordRevision ?? 0,
+      patch,
+      event: {
+        at: new Date().toISOString(),
+        type:
+          status === "completed"
+            ? "completed"
+            : status === "waiting"
+              ? "waiting"
+              : "updated",
+        workflowRunId: record.id,
+        status,
+      },
+    });
+  }
+  await writer.release();
+  return record;
 }
 
 describe("workflow assets", () => {
@@ -1341,20 +1373,23 @@ describe("workflow assets", () => {
       rootDir: workflowStoreRoot(workspace, sessionId),
     });
     const workflowRunId = "workflow_prepare_failure" as WorkflowRunId;
-    const created = store.create({
-      id: workflowRunId,
-      sessionId,
-      assetName: definition.assetName,
-      contentHash: definition.contentHash,
-      currentNodeId: "review",
-      attempts: { review: 1 },
-      definitionSnapshot: definition,
-      metadata: { goal: "resume human-gate" },
-    });
-    const waiting = store.update(created.id, {
-      status: "waiting",
-      wait: { kind: "input", reason: "Need human review." },
-    });
+    const waiting = await seedWorkflowRecord(
+      store,
+      {
+        id: workflowRunId,
+        sessionId,
+        assetName: definition.assetName,
+        contentHash: definition.contentHash,
+        currentNodeId: "review",
+        attempts: { review: 1 },
+        definitionSnapshot: definition,
+        metadata: { goal: "resume human-gate" },
+      },
+      {
+        status: "waiting",
+        wait: { kind: "input", reason: "Need human review." },
+      },
+    );
     const runtime = new HostRuntime({
       workspaceRoot: workspace,
       defaultModel: "deterministic",
@@ -1423,7 +1458,7 @@ describe("workflow assets", () => {
       rootDir: workflowStoreRoot(workspace, sessionId),
       createRoot: false,
     });
-    const competingLease = await store.acquireLease(record.id, {
+    const competingLease = await store.acquireWriter(record.id, {
       owner: "test-adopter",
       ttlMs: 60_000,
     });
@@ -1509,7 +1544,7 @@ describe("workflow assets", () => {
         }),
       }),
     ]);
-    const releasedLease = await store.acquireLease(record.id, {
+    const releasedLease = await store.acquireWriter(record.id, {
       owner: "test-after-failure",
       ttlMs: 60_000,
     });
@@ -1545,7 +1580,7 @@ describe("workflow assets", () => {
       rootDir: legacyWorkflowStoreRoot(workspace, sessionId),
     });
     const workflowRunId = "workflow_resume_pinned" as WorkflowRunId;
-    store.create({
+    await seedWorkflowRecord(store, {
       id: workflowRunId,
       sessionId,
       assetName: definition.assetName,
@@ -1632,7 +1667,7 @@ describe("workflow assets", () => {
       rootDir: workflowStoreRoot(workspace, sessionId),
     });
     const workflowRunId = "workflow_failed_history" as WorkflowRunId;
-    store.create({
+    await seedWorkflowRecord(store, {
       id: workflowRunId,
       sessionId,
       assetName: definition.assetName,
@@ -1693,7 +1728,7 @@ describe("workflow assets", () => {
     const workspaceStore = new FileWorkflowStore({
       rootDir: workflowStoreRoot(workspace, sessionId),
     });
-    workspaceStore.create({
+    await seedWorkflowRecord(workspaceStore, {
       id: workflowRunId,
       sessionId,
       assetName: definition.assetName,
@@ -1705,7 +1740,7 @@ describe("workflow assets", () => {
     const legacyStore = new FileWorkflowStore({
       rootDir: legacyWorkflowStoreRoot(workspace, sessionId),
     });
-    legacyStore.create({
+    await seedWorkflowRecord(legacyStore, {
       id: workflowRunId,
       sessionId,
       assetName: definition.assetName,
@@ -1754,15 +1789,16 @@ describe("workflow assets", () => {
       rootDir: workflowStoreRoot(workspace, sessionId),
     });
     const workflowRunId = "workflow_terminal" as WorkflowRunId;
-    store.update(
-      store.create({
+    await seedWorkflowRecord(
+      store,
+      {
         id: workflowRunId,
         sessionId,
         assetName: definition.assetName,
         contentHash: definition.contentHash,
         currentNodeId: "main",
         definitionSnapshot: definition,
-      }).id,
+      },
       { status: "completed" },
     );
     const runtime = new HostRuntime({
