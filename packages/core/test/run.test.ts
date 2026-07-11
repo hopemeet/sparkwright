@@ -1489,6 +1489,53 @@ describe("SparkwrightRun", () => {
     });
   });
 
+  it("renders tool-owned repeated state observation guidance as a completed skip", async () => {
+    let executed = 0;
+    const observe = defineTool({
+      name: "observe",
+      description: "Observe changing state.",
+      inputSchema: { type: "object" },
+      repeatedCallGuidanceForArgs: () =>
+        "Use the blocking wait action instead.",
+      execute() {
+        executed += 1;
+        return { status: "running" };
+      },
+    });
+    let modelCalls = 0;
+    const run = createRun({
+      goal: "observe once, then recover from a repeated snapshot",
+      tools: [observe],
+      maxSteps: 8,
+      model: {
+        async complete() {
+          modelCalls += 1;
+          if (modelCalls <= 2) {
+            return { toolCalls: [{ toolName: "observe", arguments: {} }] };
+          }
+          return { message: "done" };
+        },
+      },
+    });
+
+    const result = await run.start();
+
+    expect(executed).toBe(1);
+    expect(result.stopReason).toBe("final_answer");
+    expect(
+      run.events
+        .all()
+        .some(
+          (event) =>
+            event.type === "tool.completed" &&
+            (event.payload as { output?: { reason?: string; hint?: string } })
+              .output?.reason === "repeated_state_observation" &&
+            (event.payload as { output?: { hint?: string } }).output?.hint ===
+              "Use the blocking wait action instead.",
+        ),
+    ).toBe(true);
+  });
+
   it("nudges repeated idempotent no-op tool results without recording a tool failure", async () => {
     let executed = 0;
     const ledger = defineTool({

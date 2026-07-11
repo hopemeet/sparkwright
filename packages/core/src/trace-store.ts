@@ -118,10 +118,12 @@ export function createSessionFileRunStoreFactory(
 }
 
 /**
- * Running state for collapsing one stream's `model.stream.chunk` events into a
- * single `model.stream.text` timing marker. Identity (id/sequence/traceId/span)
- * is taken from the FIRST chunk so the merged event sorts in place of the chunk
- * run; timing spans first → last chunk. The streamed *text* itself is NOT
+ * Running state for collapsing a contiguous segment of one stream's
+ * `model.stream.chunk` events into a `model.stream.text` timing marker. A
+ * same-run interleaved event closes the segment, so one model stream may emit
+ * multiple markers. Identity (id/sequence/traceId/span) is taken from the FIRST
+ * chunk so each merged event sorts in place of that chunk run; timing spans
+ * first → last chunk in the segment. The streamed *text* itself is NOT
  * accumulated here — it is already carried by the terminal `model.completed`
  * event, so this marker holds only telemetry (chunk count + TTFT/duration) to
  * avoid serializing the full answer twice.
@@ -186,7 +188,8 @@ export class FileRunStore implements RunStore {
   private readonly seenSystemHashes = new Set<string>();
   // Per-run streaming-timing accumulation. At non-debug trace levels we
   // suppress the high-frequency `model.stream.chunk` events and emit one
-  // `model.stream.text` timing marker per stream instead (see writeEventToDisk).
+  // `model.stream.text` timing marker per contiguous segment instead (see
+  // writeEventToDisk).
   // Keyed by runId because a run's steps stream sequentially (started → chunks →
   // completed); a new `model.stream.started` resets the slot.
   private readonly streamAccumulators = new Map<
@@ -288,9 +291,28 @@ export class FileRunStore implements RunStore {
   }
 
   private writeEventToDisk(event: SparkwrightEvent): void {
+    const eventsToWrite = this.prepareEventsForPersistence(event);
+    if (eventsToWrite.length === 0) return;
+    const traceEvents = eventsToWrite.map((item) =>
+      this.prepareTraceEvent(item),
+    );
+    const serialized = traceEvents.map(serializeEventJsonl).join("");
+    appendFileSync(this.tracePath, serialized, "utf8");
+    if (this.agentTracePath) {
+      appendFileSync(this.agentTracePath, serialized, "utf8");
+    }
+    this.acknowledgePersistedStreamSegments(eventsToWrite);
+    for (const item of eventsToWrite) {
+      this.appendTranscriptEvent(this.prepareTranscriptEvent(item));
+    }
+  }
+
+  private prepareEventsForPersistence(
+    event: SparkwrightEvent,
+  ): SparkwrightEvent[] {
     let eventToWrite = event;
-    // Collapse high-frequency stream chunks into a single synthesized
-    // `model.stream.text` per stream at non-debug levels: buffer each
+    // Collapse high-frequency stream chunks into synthesized
+    // `model.stream.text` segment markers at non-debug levels: buffer each
     // text_delta, suppress the individual chunk, and flush the merged event
     // when the stream terminates. `debug` keeps raw chunks for token-level
     // analysis.
@@ -304,20 +326,17 @@ export class FileRunStore implements RunStore {
           break;
         case "model.stream.chunk":
           this.accumulateStreamChunk(event);
-          return; // not persisted individually
+          return []; // not persisted individually
         case "model.stream.completed":
         case "model.stream.failed":
         case "model.stream.timeout":
-          // Write the merged text event (if any) just before the terminal
-          // event so file order reads started → text → completed.
-          this.flushStreamText(event);
-          break;
+          return [...this.flushStreamSegment(event), event];
         case "extension.process.started":
           this.resetProcessProgress(event);
           break;
         case "extension.process.progress":
           this.accumulateProcessProgress(event);
-          return; // not persisted individually at standard level
+          return []; // not persisted individually at standard level
         case "extension.process.completed":
         case "extension.process.failed":
           eventToWrite = this.withProcessProgressSummary(event);
@@ -327,16 +346,16 @@ export class FileRunStore implements RunStore {
       }
     }
 
-    const traceEvent = this.prepareTraceEvent(eventToWrite);
-    appendFileSync(this.tracePath, serializeEventJsonl(traceEvent), "utf8");
-    if (this.agentTracePath) {
-      appendFileSync(
-        this.agentTracePath,
-        serializeEventJsonl(traceEvent),
-        "utf8",
-      );
+    if (this.traceLevel !== "debug") {
+      // A same-run event can interleave with model chunks (background task
+      // output is the common case). Flush the current contiguous chunk segment
+      // before that event. One marker cannot represent non-contiguous sequence
+      // ranges using only chunkCount, and delaying it until stream terminal
+      // would make the JSONL append order move backwards.
+      const segment = this.flushStreamSegment(eventToWrite);
+      if (segment.length > 0) return [...segment, eventToWrite];
     }
-    this.appendTranscriptEvent(this.prepareTranscriptEvent(eventToWrite));
+    return [eventToWrite];
   }
 
   private accumulateStreamChunk(event: SparkwrightEvent): void {
@@ -366,17 +385,16 @@ export class FileRunStore implements RunStore {
     existing.lastMonotonicUs = event.monotonicUs;
   }
 
-  private flushStreamText(terminal: SparkwrightEvent): void {
-    const acc = this.streamAccumulators.get(terminal.runId);
-    if (!acc) return;
-    // Clear before writing: if the append throws (disk outage) the terminal
-    // event is buffered and replayed, but the timing marker must not be emitted
-    // twice. The full output text still lands on `model.completed`, so the only
-    // loss in that rare path is the TTFT/duration telemetry.
-    this.streamAccumulators.delete(terminal.runId);
+  private flushStreamSegment(reference: SparkwrightEvent): SparkwrightEvent[] {
+    const acc = this.streamAccumulators.get(reference.runId);
+    if (!acc) return [];
+    // Keep the accumulator until the synthesized segment is durably appended.
+    // acknowledgePersistedStreamSegments removes the matching firstEventId
+    // after the write succeeds, preserving the marker across degraded-buffer
+    // replay without emitting it twice.
     const step =
-      isRecord(terminal.payload) && typeof terminal.payload.step === "number"
-        ? terminal.payload.step
+      isRecord(reference.payload) && typeof reference.payload.step === "number"
+        ? reference.payload.step
         : undefined;
     const streamDurationUs =
       acc.firstMonotonicUs !== undefined && acc.lastMonotonicUs !== undefined
@@ -384,7 +402,7 @@ export class FileRunStore implements RunStore {
         : undefined;
     const merged: SparkwrightEvent = {
       id: acc.firstEventId,
-      runId: terminal.runId,
+      runId: reference.runId,
       type: "model.stream.text",
       timestamp: acc.lastTimestamp,
       sequence: acc.firstSequence,
@@ -403,14 +421,18 @@ export class FileRunStore implements RunStore {
       },
       metadata: acc.metadata,
     };
-    const traceEvent = this.prepareTraceEvent(merged);
-    appendFileSync(this.tracePath, serializeEventJsonl(traceEvent), "utf8");
-    if (this.agentTracePath) {
-      appendFileSync(
-        this.agentTracePath,
-        serializeEventJsonl(traceEvent),
-        "utf8",
-      );
+    return [merged];
+  }
+
+  private acknowledgePersistedStreamSegments(
+    events: readonly SparkwrightEvent[],
+  ): void {
+    for (const event of events) {
+      if (event.type !== "model.stream.text") continue;
+      const current = this.streamAccumulators.get(event.runId);
+      if (current?.firstEventId === event.id) {
+        this.streamAccumulators.delete(event.runId);
+      }
     }
   }
 

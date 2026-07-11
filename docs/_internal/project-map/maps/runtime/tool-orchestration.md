@@ -44,6 +44,10 @@ model tool calls
   tool-name switches in the run loop.
 - Workspace writes must produce request, approval/policy evidence, artifact/write terminal events.
 - Repeated idempotent/no-op calls should not invent false failures.
+- State-observation tools may provide bounded repeated-call guidance. The
+  generic repeat guard then records a completed skipped observation and lets
+  the model choose a blocking or incremental control surface without core
+  hard-coding a tool name.
 - Repeated calls inherit enough prior same-target failure context to keep
   expected policy/approval denials non-failing. This rule is category-based,
   not tool-specific; do not special-case shell/bash when adding future guarded
@@ -85,6 +89,10 @@ true` records a mutation index for its target (`mutatedByTarget`). A
 mode:"any"|"all")` is the join surface. Detached/promoted create results
   include concrete `nextAction` guidance so the model has a task id and monitor
   action to reuse instead of issuing an equivalent `task_create`.
+- The model-facing `task` control schema stays a provider-compatible flat
+  object. The wrapper canonicalizes optional fields per action before
+  validation/execution, discards empty/action-irrelevant values, and rejects
+  conflicting `taskId`/`ids` wait forms.
 - Trace report derives a task-specific repeated-create advisory from
   `task_create` lifecycle events when a later same-run create has the same
   `kind` + stable payload fingerprint after an earlier same-payload task
@@ -179,8 +187,9 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
   snapshot. Shell duplicate-loop detection keys on command plus cwd, ignoring
   incidental execution fields such as `timeoutMs`.
 - Shell tool execution treats legacy `timeoutMs` as an observable alias for
-  `foregroundTimeoutMs`, not as an incidental hard-kill field. Result payloads
-  preserve timeout/promotion observability (`foregroundTimeoutMs`,
+  `foregroundTimeoutMs`, not as an incidental hard-kill field. The alias stays
+  runtime-compatible but is no longer advertised in the model-facing schema.
+  Result payloads preserve timeout/promotion observability (`foregroundTimeoutMs`,
   `promotionAvailable`, `timeoutMsAliasUsed`) for model observations and trace
   diagnostics. When a foreground shell is promoted, the shell tool returns the
   promoted `taskId` at the handoff point; the adopted task then owns ongoing
@@ -204,6 +213,9 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
   notifications still use the shared notification source. `lifetime:service`
   adds only an immediate-exit grace check, and active equivalent explicit shell
   work deduplicates before process spawn.
+- Direct-background results treat the task id, `task.started`, and captured
+  early output as sufficient launch confirmation. Guidance forbids a redundant
+  `task get` snapshot and points to wait only when the terminal result is needed.
 - Shell promotion, task foreground promotion, and dynamic `spawn_agent`
   promotion all honor the host-level `backgroundTasks` policy: disabled rejects
   new background work, foreground-only keeps foreground behavior without
@@ -303,6 +315,24 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
 - TUI live rendering and transcript export now share presentation summaries, but trace/model-context result compaction is still a separate backend concern.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-11T21:45:00+0800
+- Scope: task wrapper canonicalization, canonical shell timeout schema, and
+  direct-background launch-confirmation guidance.
+- Read: `packages/agent-runtime/src/tasks/tools.ts`,
+  `packages/shell-tool/src/tool.ts`.
+- Tests: `npm exec -- vitest run packages/agent-runtime/test/tasks.test.ts
+packages/shell-tool/test/shell-tool.test.ts`.
+
+- Status: Verified
+- Date: 2026-07-11T19:53:00+0800
+- Scope: added tool-owned repeated state-observation guidance and task control
+  guidance without changing task wait/output execution semantics.
+- Read: `packages/core/src/tools.ts`, `packages/core/src/run.ts`,
+  `packages/agent-runtime/src/tasks/tools.ts`.
+- Tests: `npm --workspace @sparkwright/core test -- test/run.test.ts`;
+  `npm --workspace @sparkwright/agent-runtime test -- test/tasks.test.ts`.
 
 - Status: Verified
 - Date: 2026-07-11T02:10:00+0800

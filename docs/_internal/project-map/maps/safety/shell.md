@@ -70,8 +70,9 @@ model calls shell tool
   loop guard by varying timeout-only arguments.
 - Long-running shell uses one foreground budget. `foregroundTimeoutMs` defaults
   to 300000 ms and is capped at 600000 ms. Per-call legacy `timeoutMs` is an
-  observable alias for `foregroundTimeoutMs`; it no longer configures process
-  hard-kill. Tool output reports `foregroundTimeoutMs`,
+  observable runtime alias for `foregroundTimeoutMs`, but is omitted from the
+  model-facing schema so new calls use the canonical field. It no longer
+  configures process hard-kill. Tool output reports `foregroundTimeoutMs`,
   `promotionAvailable`, and whether the alias was used.
 - Invalid shell execution arguments discovered during shell input
   normalization, including `timeoutMs: 0`, are surfaced through the normal
@@ -92,14 +93,16 @@ model calls shell tool
   Hosts execute it directly; `origin` remains diagnostic provenance rather than
   an independent keep-alive decision point.
 - Explicit background shell calls support `lifetime:"job"|"service"` (job
-  default). Service v1 only requires survival through an internal 1000ms startup
+  default). Every finite command remains a job even when it runs for minutes or
+  hours; service is reserved for indefinite servers, watchers, and endless
+  loops. Service v1 only requires survival through an internal 1000ms startup
   grace window; it has no port/output/health probe. Equivalent active explicit
   tasks deduplicate before process spawn by normalized command + canonical cwd
   - lifetime within the parent run.
-- Background handoff observations keep management guidance concise: they return
-  the concrete task id and available management operations, while the advanced
-  deferred `task` schema is loaded through the general discovery path only when
-  needed.
+- Background handoff observations return the concrete task id and early output
+  as launch confirmation. They explicitly discourage `task get` merely to
+  reconfirm launch; the advanced deferred `task` schema is loaded only when a
+  wait, incremental output read, or stop is actually needed.
 - Shell promotion is also governed by the resolved run `backgroundTasks`
   policy. `enabled` allows promotion, `foreground-only` keeps foreground shell
   behavior without promotion, and `disabled` reports promotion unavailable even
@@ -134,6 +137,14 @@ model calls shell tool
 - Shell is powerful and cross-cuts workspace, tasks, trace, and capability state.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-11T21:45:00+0800
+- Scope: hid the legacy timeout alias from model schema, strengthened finite
+  job vs indefinite service guidance, and removed redundant launch polling.
+- Read: `packages/shell-tool/src/tool.ts`,
+  `packages/shell-tool/test/shell-tool.test.ts`.
+- Tests: `npm exec -- vitest run packages/shell-tool/test/shell-tool.test.ts`.
 
 - Status: Verified
 - Date: 2026-07-11T00:19:00+0800

@@ -384,7 +384,6 @@ export function createShellTool(
       properties: {
         command: { type: "string" },
         foregroundTimeoutMs: { type: "integer" },
-        timeoutMs: { type: "integer" },
         cwd: { type: "string" },
         background: {
           type: "boolean",
@@ -395,7 +394,7 @@ export function createShellTool(
           type: "string",
           enum: ["job", "service"],
           description:
-            "Use service for servers, watchers, and intentional long-running loops. A service is considered started after a short grace window without immediate exit; no health probe is performed. Defaults to job.",
+            "Use job for every finite command expected to exit, even if it runs for minutes or hours. Use service only for indefinite servers, watchers, and intentional endless loops. A service is considered started after a short grace window without immediate exit; no health probe is performed. Defaults to job.",
         },
       },
       required: ["command"],
@@ -937,9 +936,12 @@ async function handOffShellToBackground(input: {
         ? {
             backgroundGuidance:
               `Command started directly as background task ${handoff.taskId}. ` +
-              `This successful start satisfies a background-launch request. Do ` +
-              `NOT re-run an equivalent command; use this taskId to inspect, ` +
-              `read output, wait, or stop it.`,
+              `This successful start satisfies a background-launch request. ` +
+              `The returned taskId, task.started event, and any early stdout/stderr ` +
+              `above already confirm launch. Do NOT re-run an equivalent command ` +
+              `or call task action="get" merely to reconfirm it. Use action="wait" ` +
+              `only when the final result is required before continuing, action="output" ` +
+              `for new buffered output, or action="stop" to cancel it.`,
           }
         : {
             promotionGuidance:

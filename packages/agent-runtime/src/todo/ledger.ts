@@ -264,11 +264,18 @@ export function auditTodoAfterTerminal(
     return { kind: "complete", summary, reason: "all_todos_finished" };
   }
 
+  const hasProgress =
+    options.hasProgress ?? hasExternalProgressEvidence(options.events ?? []);
+  const finalAnswerNeedsReconciliation =
+    options.result.stopReason === "final_answer" &&
+    summary.blocked === 0 &&
+    hasProgress;
   const resumable =
     options.result.stopReason !== undefined &&
-    (options.resumableStopReasons ?? DEFAULT_RESUMABLE_STOP_REASONS).has(
+    ((options.resumableStopReasons ?? DEFAULT_RESUMABLE_STOP_REASONS).has(
       options.result.stopReason,
-    );
+    ) ||
+      finalAnswerNeedsReconciliation);
   if (!resumable) {
     return {
       kind: "handoff",
@@ -290,8 +297,6 @@ export function auditTodoAfterTerminal(
     };
   }
 
-  const hasProgress =
-    options.hasProgress ?? hasExternalProgressEvidence(options.events ?? []);
   if (
     !hasProgress &&
     options.maxStalledContinuations !== undefined &&
@@ -350,7 +355,7 @@ export function buildTodoContinuationPrompt(
   // The variable "what next" branch, derived mechanically from the ledger.
   const directiveLine =
     directive.kind === "next_open_item"
-      ? `Next open item: ${directive.title}. Act on it, then give your final answer once the work is genuinely complete. If reconciling alone already finished the list — every item was done and you did no new work this turn — do not restate the prior answer; a one-line confirmation that all items are complete is enough.`
+      ? `Next open item: ${directive.title}. Act on it, then give your final answer once the work is genuinely complete. If reconciling alone already finished the list — every item was done and you did no new work this turn — do not restate the prior answer; say only that the Todo ledger is reconciled. Never say a background task or process is complete unless a task.completed observation is present in the conversation.`
       : `Every remaining item is blocked: ${directive.titles.join("; ")}. Resolve or surface the blockers — do not loop retrying them. If they cannot be cleared this turn, hand off with a one-line status.`;
   return [
     "<system-reminder>",
@@ -385,6 +390,7 @@ const EXTERNAL_PROGRESS_EVENTS: ReadonlySet<SparkwrightEvent["type"]> = new Set(
     "workspace.write.completed",
     "workspace.anchored_edit.verified",
     "artifact.created",
+    "task.started",
   ],
 );
 

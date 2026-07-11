@@ -249,6 +249,18 @@ createRun/resumeRunFromCheckpoint
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-11T20:32:00+0800
+- Scope: todo-supervised main run chains may reconcile an unfinished actionable
+  ledger after `final_answer` only when the just-finished run made external
+  progress. Existing continuation/stall limits remain authoritative; blocked
+  and no-progress ledgers hand back.
+- Read: `packages/agent-runtime/src/todo/ledger.ts`,
+  `packages/agent-runtime/src/todo/supervisor.ts`,
+  `packages/host/src/runtime.ts`, `packages/agent-runtime/test/todo.test.ts`.
+- Tests: `npm --workspace @sparkwright/agent-runtime test --
+test/todo.test.ts`; `npm run typecheck:test`.
+
+- Status: Verified
 - Date: 2026-07-11T10:41:00+0800
 - Scope: Package C keeps core run-loop semantics unchanged while binding Host
   workflow episode registration, projection, usage, waiting, and finalization

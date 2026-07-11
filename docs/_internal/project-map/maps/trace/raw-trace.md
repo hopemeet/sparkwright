@@ -193,12 +193,25 @@ EventLog emits full event
 
 - JSONL can grow without bound; retention/rotation remains an embedder concern.
 - `workspace.read` can create high-volume noise.
-- Stream chunk handling is collapsed at non-debug levels; consumers must not rely on individual chunks unless `debug`.
+- Stream chunk handling is collapsed at non-debug levels into contiguous
+  `model.stream.text` segments; same-run non-chunk events split segments so
+  persisted sequence order stays monotonic. Consumers must not rely on
+  individual chunks unless `debug`.
 - Large process output already materializes through shell/traced-process paths
   and `artifact.created`. A future generic large-result helper must avoid
   double-spilling tool-owned artifacts and honor `resultSize.neverPersist`.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-11T19:53:00+0800
+- Scope: fixed standard-level folded stream persistence when same-run
+  background `task.output` events interleave; session and per-agent traces use
+  the same ordered serialized batch.
+- Read: `packages/core/src/trace-store.ts`,
+  `packages/core/test/trace.test.ts`.
+- Tests: `npm --workspace @sparkwright/core test -- test/trace.test.ts`;
+  `npm --workspace @sparkwright/core run typecheck`.
 
 - Status: Verified
 - Date: 2026-07-07T16:15:00+0800

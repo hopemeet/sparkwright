@@ -261,6 +261,12 @@ export interface ToolDefinition<TArgs = unknown, TResult = unknown> {
     options: ToolRequestPreviewOptions,
   ): string | undefined;
   /**
+   * Optional corrective guidance when the generic repeat guard skips a
+   * verbatim state-observation call. Returning text makes the skip a completed
+   * no-op rather than a synthetic tool failure; the tool is still not executed.
+   */
+  repeatedCallGuidanceForArgs?(args: TArgs): string | undefined;
+  /**
    * When true, a tool loader may hide this tool from the initial provider
    * request and expose it through a discovery/search surface.
    */

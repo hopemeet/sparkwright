@@ -3218,7 +3218,11 @@ export class SparkwrightRun implements RunHandle {
     priorFailure?: RunLoopState["lastFailedToolTarget"],
     priorNoop?: RunLoopState["lastNoopToolTarget"],
   ): Promise<RunResult | undefined> {
-    if (priorNoop && !priorFailure) {
+    const repeatedCallGuidance = safelyRepeatedCallGuidance(
+      this.tools.get(requestedCall.toolName),
+      requestedCall.arguments,
+    );
+    if ((priorNoop && !priorFailure) || repeatedCallGuidance) {
       const nudged: ToolResult = {
         toolCallId: call.id,
         status: "completed",
@@ -3226,14 +3230,17 @@ export class SparkwrightRun implements RunHandle {
           saved: false,
           changed: false,
           skipped: true,
-          reason: "repeated_idempotent_noop",
+          reason: repeatedCallGuidance
+            ? "repeated_state_observation"
+            : "repeated_idempotent_noop",
           hint:
+            repeatedCallGuidance ??
             `Skipped: \`${requestedCall.toolName}\` already completed ` +
-            `without making progress on this target (${priorNoop.code}: ` +
-            `${priorNoop.message}). Repeating it cannot produce new ` +
-            `information. Choose a different concrete action, or answer the ` +
-            `user directly if the work is done. Repeating this exact call ` +
-            `again will end the run.`,
+              `without making progress on this target (${priorNoop!.code}: ` +
+              `${priorNoop!.message}). Repeating it cannot produce new ` +
+              `information. Choose a different concrete action, or answer the ` +
+              `user directly if the work is done. Repeating this exact call ` +
+              `again will end the run.`,
         },
         artifacts: [],
       };
@@ -5105,6 +5112,21 @@ function semanticToolTarget(toolName: string, args: unknown): string {
     serialized = String(args);
   }
   return `${toolName}::args::${serialized}`;
+}
+
+function safelyRepeatedCallGuidance(
+  tool: ToolDefinition | undefined,
+  args: unknown,
+): string | undefined {
+  if (!tool?.repeatedCallGuidanceForArgs) return undefined;
+  try {
+    const guidance = tool.repeatedCallGuidanceForArgs(args);
+    return typeof guidance === "string" && guidance.trim().length > 0
+      ? guidance.trim()
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function toolFailureContext(result: ToolResult): {

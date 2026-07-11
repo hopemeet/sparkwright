@@ -855,6 +855,13 @@ describe("foreground→background promotion", () => {
     expect(result.exitCode).toBeNull();
     expect(result.foregroundTimeoutMs).toBe(5 * 60 * 1000);
     expect(result.backgroundGuidance).toContain("successful start");
+    expect(result.backgroundGuidance).toContain('action="get" merely');
+    expect(result.backgroundGuidance).toContain('action="wait"');
+    const schema = tool.inputSchema as {
+      properties: Record<string, unknown>;
+    };
+    expect(schema.properties.timeoutMs).toBeUndefined();
+    expect(schema.properties.foregroundTimeoutMs).toBeDefined();
     expect(result.promotionGuidance).toBeUndefined();
     expect(promotions).toHaveLength(1);
     expect(promotions[0]!.origin).toBe("explicit");

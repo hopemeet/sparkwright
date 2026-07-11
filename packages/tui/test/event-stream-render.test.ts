@@ -241,8 +241,8 @@ describe("EventStream committed rendering", () => {
       }),
     ];
     const text = await renderToText(stream(events), 72);
-    expect(text).toContain("› apply_patch");
-    expect(text).not.toContain("›apply_patc");
+    expect(text).toContain("⚙ apply_patch");
+    expect(text).not.toContain("batch  1 tool");
   });
 
   it("renders shell tool requests as commands instead of raw JSON", async () => {
@@ -503,6 +503,59 @@ describe("EventStream committed rendering", () => {
     expect(text).toContain("approvals 1/1");
     expect(text).toContain("tools 1");
     expect(text).toContain("last command: npm test passed");
+  });
+
+  it("does not call a background handoff a completed command in run facts", async () => {
+    const text = await renderToText(
+      stream([
+        ev("run.started", 1, {}),
+        ev("tool.requested", 2, {
+          toolName: "bash",
+          arguments: { command: "python3 -u print_numbers.py" },
+        }),
+        ev("tool.completed", 3, {
+          toolName: "bash",
+          output: {
+            stdout: "",
+            stderr: "",
+            exitCode: null,
+            timedOut: false,
+            background: true,
+            taskId: "task_background",
+          },
+        }),
+        ev("run.completed", 4, { reason: "final_answer" }),
+      ]),
+    );
+
+    expect(text).toContain("run facts tools 1");
+    expect(text).not.toContain("last command:");
+    expect(text).not.toContain("print_numbers.py completed");
+  });
+
+  it("renders terminal task updates that arrive during final model generation", async () => {
+    const text = await renderToText(
+      stream([
+        ev("run.started", 1, {}),
+        ev("model.requested", 2, { step: 1 }),
+        ev(
+          "task.completed",
+          3,
+          {
+            taskId: "task_mqzd1c1b30yc24hj",
+            result: { exitCode: 0 },
+            progressCount: 10,
+          },
+          { durationMs: 10_000 },
+        ),
+        ev("model.completed", 4, { message: "Task is running." }),
+        ev("run.completed", 5, { reason: "final_answer" }),
+      ]),
+    );
+
+    expect(text).toContain("runtime update");
+    expect(text).toContain("task_mqzd...yc24hj · completed · exit 0");
+    expect(text).toContain("10 chunks · 10s");
   });
 
   it("renders failed run completion messages from canonical failure payloads", async () => {

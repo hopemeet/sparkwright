@@ -114,6 +114,13 @@ Does not own:
   writes `session.compaction.completed` / `session.compaction.skipped` events
   to the append-only session event stream for durable audit.
 - Trace levels are `standard` and `debug`; `minimal` is not a valid mode.
+- Standard trace stream folding emits one `model.stream.text` marker per
+  contiguous run-local chunk segment. A same-run non-chunk event flushes the
+  open segment first, so background task events cannot make persisted sequence
+  order move backwards while folded `chunkCount` remains contiguous evidence.
+- Trace reporting treats a naturally completed `lifetime:service` shell task
+  as an informational classification advisory, not a correctness failure;
+  finite commands should normally be classified as jobs.
 - `traceId`, `spanId`, and `parentSpanId` are correlation fields only.
 - `trace.ts` is the stable named facade used by `index.ts` and `internal.ts`;
   storage lives in `trace-store.ts`, diagnostics live in
@@ -328,6 +335,26 @@ Does not own:
   guard and trace diagnostics.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-11T21:45:00+0800
+- Scope: clarified contiguous stream-marker telemetry semantics and added an
+  informational finite-service classification advisory.
+- Read: `packages/core/src/trace-store.ts`,
+  `packages/core/src/trace-diagnostics.ts`, `packages/core/test/trace.test.ts`.
+- Tests: `npm exec -- vitest run packages/core/test/trace.test.ts`.
+
+- Status: Verified
+- Date: 2026-07-11T19:53:00+0800
+- Scope: standard trace stream folding now preserves physical run-local order
+  when background task events interleave; tools may provide bounded corrective
+  guidance for skipped repeated state observations without inventing a tool
+  failure.
+- Read: `packages/core/src/trace-store.ts`, `packages/core/src/run.ts`,
+  `packages/core/src/tools.ts`, `packages/core/test/trace.test.ts`,
+  `packages/core/test/run.test.ts`.
+- Tests: `npm --workspace @sparkwright/core test -- test/run.test.ts
+test/trace.test.ts`; `npm --workspace @sparkwright/core run typecheck`.
 
 - Status: Verified
 - Date: 2026-07-07T15:21:23+0800

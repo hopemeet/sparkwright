@@ -106,6 +106,17 @@ Does not own:
   summaries through `lib/tool-display.ts`. For tool requests they first consume
   `tool.requested.payload.preview` produced by the tool definition; the local
   name-based formatter is fallback for older traces.
+- Committed tool history hides one-tool batch headers and removes their batch
+  indentation/margin; multi-tool batches remain muted structural groups while
+  ordinary tool markers are muted and names use normal foreground emphasis.
+- Explicit background shell handoff results and `task.created` queue rows stay
+  out of committed history; `task.started` plus terminal `task.*` rows carry the
+  visible lifecycle. If a task becomes terminal after the final model request,
+  the run footer appends a structured runtime update so stale model prose does
+  not override the current task record.
+- Run facts do not label an explicit/promoted background shell handoff as a
+  completed command; task lifecycle rows remain the visible source for its
+  later terminal state.
 - Ctrl+O uses the `activity.open` binding and opens the Activity Drawer on the
   Tasks tab by default. `events.open` remains a configurable action with no
   default binding; `/events` and `events.open` both open the Activity Drawer on
@@ -296,6 +307,26 @@ Does not own:
   durable control inbox before adding daemon and multi-channel adapters.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-11T20:32:00+0800
+- Scope: background shell handoffs no longer produce the misleading run-facts
+  label `last command ... completed`.
+- Read: `packages/tui/src/components/event-stream.tsx`,
+  `packages/tui/test/event-stream-render.test.ts`.
+- Tests: `npm --workspace @sparkwright/tui test --
+test/event-stream-render.test.ts`; `npm --workspace @sparkwright/tui run
+typecheck`.
+
+- Status: Verified
+- Date: 2026-07-11T19:53:00+0800
+- Scope: reduced single-tool/background lifecycle noise, lowered tool-request
+  accent intensity, and added terminal task updates for final-generation races.
+- Read: `packages/tui/src/components/event-stream.tsx`,
+  `packages/tui/test/event-stream-render.test.ts`.
+- Tests: `npm --workspace @sparkwright/tui test --
+test/event-stream-render.test.ts`; `npm --workspace @sparkwright/tui run
+typecheck`.
 
 - Status: Verified
 - Date: 2026-07-11T15:30:00+0800

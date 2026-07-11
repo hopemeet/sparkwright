@@ -158,12 +158,12 @@ Does not own:
   `runTodoSupervised()` now expresses the todo-continuation chain as this
   degenerate workflow controller, preserving the existing todo audit decisions
   while moving the loop shape out of host.
-- `todo_write` tool schema text owns structural/status/evidence rules only:
-  whole-list replacement, canonical statuses, at most one `in_progress`, and
-  real evidence before `completed`. Prompt-level cadence ("when to open/update
-  the ledger, avoid rewrites, and fold bookkeeping into action turns") lives in
-  project-context's tool-gated `todo_planning` section, not in the tool schema
-  or todo continuation prompt.
+- `todo_write` tool schema text owns structural/status/evidence rules plus the
+  local admission threshold: use it for at least three substantive dependent
+  steps, multiple phases, or recovery, not one-file/one-command work or merely
+  long elapsed background time. General cadence (updates, rewrite avoidance,
+  and folding bookkeeping into action turns) remains in project-context's
+  tool-gated `todo_planning` section.
 - P3 Step 4a keeps that boundary: host's actor episode driver calls the
   existing todo/workflow chain driver and creates worker runs itself. Do not add
   model construction, host config loading, tool catalogs, or session protocol
@@ -252,6 +252,11 @@ Does not own:
   action, output retrieval hint, and duplicate-avoidance guidance. Keep this
   corrective enough that a parent can reuse the existing task id instead of
   spawning equivalent work.
+- Detached `task_create` next-action guidance recommends `task wait` when the
+  caller needs terminal completion and reserves `task get` for a one-time
+  snapshot. Repeated identical `task get` observations provide tool-owned
+  guidance toward `wait` or incremental `output` instead of becoming a
+  synthetic execution failure.
 - Foreground `task_create` waits race both the foreground budget timer and
   `TaskManager.requestPromotion(taskId)`, so host/TUI manual promote controls
   can return the same promoted task ticket without waiting for timeout.
@@ -259,9 +264,12 @@ Does not own:
   join-any/join-all barrier semantics without introducing `task_join`.
 - Model-facing `task` action schema is action-specific: `get`, `output`, and
   `stop` require a non-empty `taskId`; `wait` requires a non-empty `taskId` or
-  non-empty `ids`. Keep the matching `validateInput()` checks in
-  agent-runtime, because core's local schema validator intentionally does not
-  enforce all JSON Schema guidance keywords.
+  non-empty `ids`. It remains a provider-compatible flat object; execution
+  canonicalizes away empty and action-irrelevant optional fields, collapses an
+  identical one-id wait duplicate, and rejects conflicting `taskId`/`ids`.
+  Keep the matching `validateInput()` checks in agent-runtime, because core's
+  local schema validator intentionally does not enforce all JSON Schema
+  guidance keywords.
 - `task(action:"list")` and legacy `task_list` default to current-run scope for
   backward compatibility, but accept `scope:"all"` so resumed runs can discover
   durable tasks whose `parentRunId` belongs to an earlier run. Use `get`/`wait`
@@ -328,6 +336,39 @@ Does not own:
   not authorize a generic actor bus or nested background lifecycle.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-11T21:45:00+0800
+- Scope: simple-task Todo admission guidance, reconciliation wording, and
+  provider-compatible action-specific task argument normalization.
+- Read: `packages/agent-runtime/src/todo/tools.ts`,
+  `packages/agent-runtime/src/todo/ledger.ts`,
+  `packages/agent-runtime/src/tasks/tools.ts`.
+- Tests: `npm exec -- vitest run packages/agent-runtime/test/tasks.test.ts
+packages/agent-runtime/test/todo.test.ts`.
+
+- Status: Verified
+- Date: 2026-07-11T20:32:00+0800
+- Scope: todo terminal audit now permits a bounded reconciliation continuation
+  when `final_answer` leaves actionable todos open after external progress;
+  blocked or no-progress final answers still hand off. Background task start is
+  external progress evidence for this audit.
+- Read: `packages/agent-runtime/src/todo/ledger.ts`,
+  `packages/agent-runtime/src/todo/supervisor.ts`,
+  `packages/agent-runtime/test/todo.test.ts`.
+- Tests: `npm --workspace @sparkwright/agent-runtime test --
+test/todo.test.ts`; `npm --workspace @sparkwright/agent-runtime run
+typecheck`; `npm run typecheck:test`.
+
+- Status: Verified
+- Date: 2026-07-11T19:53:00+0800
+- Scope: background task next-action and repeated snapshot guidance now steer
+  models toward the existing wait/output control surfaces.
+- Read: `packages/agent-runtime/src/tasks/tools.ts`,
+  `packages/agent-runtime/test/tasks.test.ts`.
+- Tests: `npm --workspace @sparkwright/agent-runtime test --
+test/tasks.test.ts`; `npm --workspace @sparkwright/agent-runtime run
+typecheck`.
 
 - Status: Verified
 - Date: 2026-07-11T18:30:00+0800

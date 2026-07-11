@@ -1058,6 +1058,7 @@ describe("task tools", () => {
       nextAction: {
         action: string;
         taskId: string;
+        instruction: string;
         duplicateAvoidance: string;
       };
     }>(tools.taskCreate, {
@@ -1065,9 +1066,10 @@ describe("task tools", () => {
       awaited: false,
     });
     expect(created.nextAction).toMatchObject({
-      action: "get",
+      action: "wait",
       taskId: created.taskId,
     });
+    expect(created.nextAction.instruction).toContain('action="get"');
     expect(created.nextAction.duplicateAvoidance).toContain("task_create");
     await manager.handle(created.taskId as TaskId)?.wait();
     expect(manager.store.get(created.taskId as TaskId)?.awaited).toBe(false);
@@ -1390,6 +1392,24 @@ describe("task tools", () => {
     expect(schema.allOf).toBeUndefined();
   });
 
+  it("guides repeated task get snapshots toward wait or output", () => {
+    const manager = makeManager();
+    const tools = makeTools(manager);
+    const guidance = tools.task.repeatedCallGuidanceForArgs?.({
+      action: "get",
+      taskId: "task_running",
+    });
+
+    expect(guidance).toContain('action="wait"');
+    expect(guidance).toContain('action="output"');
+    expect(
+      tools.task.repeatedCallGuidanceForArgs?.({
+        action: "wait",
+        taskId: "task_running",
+      }),
+    ).toBeUndefined();
+  });
+
   it("task action wrapper rejects empty placeholder task ids", async () => {
     const manager = makeManager();
     manager.registerKind("emitter", async (controller) => {
@@ -1406,14 +1426,11 @@ describe("task tools", () => {
       exec(tools.task, { action: "wait", taskId: "" }),
     ).rejects.toMatchObject({
       code: "TASK_ARGUMENTS_INVALID",
-      message: "task wait taskId must be a non-empty string when provided.",
+      message: "task wait requires at least one task id.",
     });
     await expect(
       exec(tools.task, { action: "wait", taskId: "", ids: [taskId] }),
-    ).rejects.toMatchObject({
-      code: "TASK_ARGUMENTS_INVALID",
-      message: "task wait taskId must be a non-empty string when provided.",
-    });
+    ).resolves.toMatchObject({ mode: "any" });
     await expect(
       exec(tools.task, { action: "wait", ids: [] }),
     ).rejects.toMatchObject({
@@ -1428,19 +1445,54 @@ describe("task tools", () => {
     });
   });
 
+  it("normalizes irrelevant flat task fields before execution", async () => {
+    const manager = makeManager();
+    manager.registerKind("emitter", async (controller) => {
+      controller.emitOutput({ channel: "stdout", data: "ready" });
+      return "ok";
+    });
+    const tools = makeTools(manager);
+    const { taskId } = await exec<{ taskId: string }>(tools.taskCreate, {
+      kind: "emitter",
+    });
+
+    const got = await exec<{ id: string }>(tools.task, {
+      action: "get",
+      taskId,
+      ids: [taskId],
+      mode: "all",
+      status: "",
+      kind: "",
+      scope: "run",
+      fromSequence: 0,
+      maxChunks: 1,
+    });
+
+    expect(got.id).toBe(taskId);
+    await expect(
+      exec(tools.task, {
+        action: "wait",
+        taskId,
+        ids: ["task_different"],
+      }),
+    ).rejects.toMatchObject({
+      code: "TASK_ARGUMENTS_INVALID",
+      message: expect.stringContaining("must not combine taskId"),
+    });
+  });
+
   it("task action semantic validation rejects placeholders before policy", async () => {
     const manager = makeManager();
     const tools = makeTools(manager);
 
     await expect(
       Promise.resolve(
-        tools.task.validateInput?.({ action: "wait", taskId: "" }, fakeCtx),
+        tools.task.validateInput?.(
+          { action: "wait", taskId: "", ids: ["task_valid"] },
+          fakeCtx,
+        ),
       ),
-    ).resolves.toMatchObject({
-      ok: false,
-      code: "TASK_ARGUMENTS_INVALID",
-      message: "task wait taskId must be a non-empty string when provided.",
-    });
+    ).resolves.toEqual({ ok: true });
     await expect(
       Promise.resolve(
         tools.task.validateInput?.({ action: "wait", ids: [] }, fakeCtx),
