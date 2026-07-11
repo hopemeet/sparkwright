@@ -683,3 +683,111 @@ writer 无旁路。补偿记录保留 durable history 的产品语义已于 2026
   commit hash 在 Package C commit 后补记。
 - commit 前源码复核额外封闭 writer/record/event identity mismatch，新增
   fail-closed test 后 focused gate 与完整 `npm run release:check` 均重跑通过。
+
+### 8.13 Package D durable control inbox 裁决（2026-07-11）
+
+状态：**设计 gate 完成；代码 gate 可在 Package D 独立 commit 中打开。**
+
+#### Ownership 与非目标
+
+- `agent-runtime`/doc-store 拥有 typed durable command envelope、接受结果、终态
+  outcome、cursor 与 replay；它不拥有 transport identity verification 或调度。
+- `server-runtime` 拥有 command dispatch/consumer coordination；Host adapter 仍拥有
+  workflow episode、approval/input projection 和 Package C writer 组装。
+- gateway/CLI/TUI/API 只把已经认证的来源翻译成 command input，不能直接写
+  `WorkflowRunRecord`，也不能决定模型上下文注入。
+- lifecycle `ActorNotificationSink`/`ActorInbox` 只作类型风格和 durable-file 经验复用；
+  control inbox 是反向命令面，不加入 notification union，不新增 generic topic、任意
+  JSON payload、同步 RPC 或 workflow peer messaging。
+
+#### Typed envelope
+
+命令是封闭 discriminated union：
+
+```ts
+type WorkflowControlCommand =
+  | { kind: "cancel"; reason?: string }
+  | { kind: "provide_input"; waitId: string; value: string }
+  | { kind: "approval_response"; approvalId: string; decision: "approved" | "denied"; message?: string }
+  | { kind: "resume_request"; waitId?: string };
+
+interface WorkflowControlCommandEnvelope {
+  schemaVersion: "sparkwright-workflow-control.v1";
+  workflowRunId: WorkflowRunId;
+  commandId: string;
+  idempotencyKey: string;
+  source: {
+    kind: "tui" | "cli" | "sdk" | "api" | "im" | "system";
+    principalId: string;
+    authenticatedBy: string;
+    connectionId?: string;
+  };
+  authorization: {
+    workspaceId: string;
+    sessionId?: string;
+    workflowRunId: WorkflowRunId;
+    allowedCommandKinds: WorkflowControlCommand["kind"][];
+  };
+  expected: { generation: number; status?: WorkflowRunStatus; waitId?: string };
+  command: WorkflowControlCommand;
+  createdAt: string;
+  expiresAt: string;
+}
+```
+
+`system` source 只能由 Host/server-runtime 内部 mint；外部 adapter 不能自称 system。
+`idempotencyKey` 的 scope 固定为
+`workspace + workflowRunId + source(kind/principalId/authenticatedBy) + key`。同 scope
+同 key 同 payload 返回原 accepted/outcome；同 key 不同 payload 拒绝
+`idempotency_conflict`。
+
+#### Durable layout 与状态机
+
+每个 workflow 使用独立窄目录，不能复用普通 JSONL 作为 transaction journal：
+
+```text
+<workflowRunId>.control/
+  commands/<commandId>.json       # immutable accepted envelope, exclusive create
+  outcomes/<commandId>.json       # immutable terminal outcome, exclusive create
+  cursor.json                     # 可重建投影，不是 apply truth
+```
+
+outcome 为 `applied | rejected | dead_letter`。`accepted` 由 command entry 的存在表达，
+不是可变状态。排序使用 accepted entry 中的 createdAt + commandId 稳定 tie-break；cursor
+只跳过已有 terminal outcome 的前缀，不能让一个 gap 隐藏后续命令。corrupt/torn entry
+隔离并形成可诊断 dead-letter candidate；expiry、鉴权、expected generation/state/wait
+不匹配形成 immutable rejected outcome。
+
+#### Apply 与 crash consistency
+
+1. consumer 读取 accepted 且无 terminal outcome 的 command；
+2. 重新验证 source authentication projection、authorization scope、expiry；
+3. fresh read Package C canonical head，验证 generation/status/wait；
+4. 需要改变 workflow durable state 的命令用 lease-bound writer 写一次 mutation，event
+   metadata 固定 `controlCommandId`、idempotency scope/hash 与 source audit；
+5. 再 exclusive-create outcome，最后更新可重建 cursor。
+
+workflow journal event 是 record mutation 的 apply truth。若进程在第 4 步后、第 5 步前
+崩溃，replay 先按 `controlCommandId` 查 canonical event：存在则补写 applied outcome，
+不得再次 mutation。若 outcome 已存在而 projection/cursor 未完成，只重建投影。
+
+`cancel` 写 terminal cancelled mutation；不是 pause。`provide_input` 只匹配 durable
+`waiting/input` 的 waitId，值由 Host receiver policy 投影，producer 不提供 context role。
+`resume_request` 只形成调度请求/结果，不直接把 record 改为 running；实际 episode 仍由
+Host resume path claim writer 后启动。`approval_response` 只匹配 durable
+`waiting/approval` 的 approvalId 和 authorization snapshot；当前 live-only
+`ApprovalBroker` pending map 不是 durable truth，不能作为 crash-safe apply target。D 实现
+必须先将 workflow approval wait 的最小 request/decision linkage 持久化到 workflow
+record/journal；否则该命令只能明确 rejected，不能报告 applied。
+
+#### Reopen/验收 gate
+
+- deterministic tests 覆盖 duplicate accepted、payload conflict、expiry、越权、generation/
+  state/wait mismatch、双 consumer、mutation 后 outcome 前 crash、outcome 后 cursor 前
+  crash、corrupt entry、restart replay 和多端单 winner；不得主要依赖 sleep。
+- Host/server-runtime 接入后，断开 producer connection 不删除 accepted command；waiting
+  workflow 可在后来 consumer/connection 中处理。
+- 旧 `workflow.resume` 可暂作 adapter，但必须先 durable enqueue，再由同一 consumer
+  路径 apply/dispatch；不能保留直接 consume wait + start 的平行控制路径。
+- approval durable linkage 未完成前 D 不得宣称 approval_response gate 通过；Package E
+  与后续 D–G 均保持关闭直到上述 focused/full release、maps/test-map 和独立 commit 完成。

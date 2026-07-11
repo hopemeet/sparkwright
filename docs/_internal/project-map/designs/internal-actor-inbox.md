@@ -28,6 +28,12 @@
 > notification outbox/revival path. The main host still persists terminal task
 > notifications and injects them through core `NotificationSource`; Step 1 keeps
 > the host on the task-specific bridge while the generic abstraction incubates.
+>
+> Package D note (2026-07-11): durable workflow control is intentionally a
+> separate typed command inbox. It may reuse validation/storage patterns from
+> this design, but control commands must not enter the lifecycle notification
+> union or let producers choose model-context injection. Active adjudication is
+> in `docs/_internal/proposals/workflow-job-session-review-context.md` 8.13.
 
 ## 1. Problem Statement
 

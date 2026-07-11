@@ -6,7 +6,9 @@
 - Package B independent workflow job session: `Verified`.
 - Package C mutation write fencing: `Verified` at the store/Host focused gate;
   full release gate recorded below.
-- Packages D–G: `Untested`; reopen gates closed by C.
+- Package D durable control inbox: `Untested`; design gate adjudicated after C,
+  implementation/fault gate open.
+- Packages E–G: `Untested`; reopen gates closed by D.
 
 ## Current Evidence
 
@@ -53,3 +55,23 @@ do not exercise workflow mutation fencing.
   rerun and passed, including all workspace tests and install smokes.
 - Final source audit added writer/record/event identity fail-closed validation;
   its focused rerun passed before the final release rerun.
+
+## Required Package D Fault World
+
+Use exclusive publication hooks/barriers and restartable consumers:
+
+1. duplicate source/idempotency/payload returns one accepted command and one
+   terminal outcome; a different payload under the same scope conflicts;
+2. expired, unauthorized, stale-generation, wrong-status, wrong-waitId and
+   wrong-approvalId commands produce immutable rejected outcomes;
+3. two consumers race one command and only one workflow journal mutation is
+   canonical;
+4. crash after workflow mutation but before outcome is recovered through the
+   canonical event `controlCommandId` without applying twice;
+5. crash after outcome but before cursor rebuild does not replay the command;
+6. torn/corrupt command/outcome entries are isolated and do not wedge later
+   commands;
+7. producer disconnect does not delete accepted commands; a later consumer can
+   process them;
+8. duplicate/multi-channel approval or input response has one winner and all
+   losers receive already-resolved or state-mismatch outcomes.
