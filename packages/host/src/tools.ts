@@ -47,6 +47,7 @@ import {
   createSkillCreateProposal,
   createSkillUpdateProposal,
   listSkillProposals,
+  reviseSkillProposalDraft,
   type SkillProposalProvenance,
   type SkillProposalSummary,
 } from "./skill-evolution.js";
@@ -509,11 +510,23 @@ export function createSkillManagerTool(
       const existing = await findExistingRunSkillDraft(
         workspaceRoot,
         name,
-        provenance.runId,
+        provenance,
         "create",
       );
       if (existing) {
-        return skillDraftToolOutput(existing, false);
+        const revised = await reviseSkillProposalDraft({
+          workspaceRoot,
+          proposalId: existing.id,
+          description,
+          content,
+          provenance,
+          mutationReporter: ctx,
+        });
+        return skillDraftToolOutput(revised.proposal, {
+          changed: revised.changed,
+          existing: true,
+          revised: revised.changed,
+        });
       }
       const proposal = await createSkillCreateProposal({
         workspaceRoot,
@@ -523,7 +536,7 @@ export function createSkillManagerTool(
         provenance,
         mutationReporter: ctx,
       });
-      return skillDraftToolOutput(proposal, true);
+      return skillDraftToolOutput(proposal, { changed: true });
     },
   });
 }
@@ -602,10 +615,22 @@ export function createSkillUpdateTool(
       const existing = await findExistingRunSkillDraft(
         workspaceRoot,
         input.name,
-        provenance.runId,
+        provenance,
       );
       if (existing) {
-        return skillDraftToolOutput(existing, false);
+        const revised = await reviseSkillProposalDraft({
+          workspaceRoot,
+          proposalId: existing.id,
+          description: input.description,
+          ...(body ? { content: body } : {}),
+          provenance,
+          mutationReporter: ctx,
+        });
+        return skillDraftToolOutput(revised.proposal, {
+          changed: revised.changed,
+          existing: true,
+          revised: revised.changed,
+        });
       }
       const proposalInput = {
         workspaceRoot,
@@ -618,7 +643,7 @@ export function createSkillUpdateTool(
       };
       const proposal = await createSkillUpdateProposal(proposalInput);
 
-      return skillDraftToolOutput(proposal, true);
+      return skillDraftToolOutput(proposal, { changed: true });
     },
   });
 }
@@ -1185,27 +1210,32 @@ function skillProposalProvenanceFromContext(
 async function findExistingRunSkillDraft(
   workspaceRoot: string,
   skillName: string,
-  runId: string | undefined,
+  provenance: SkillProposalProvenance,
   kind: "create" | "update" = "update",
 ): Promise<SkillProposalSummary | undefined> {
-  if (!runId) return undefined;
+  const sessionId = provenance.sessionId?.trim();
+  const runId = provenance.runId?.trim();
+  if (!sessionId && !runId) return undefined;
   const proposals = await listSkillProposals(workspaceRoot);
   return proposals.find(
     (proposal) =>
       proposal.kind === kind &&
       proposal.state === "draft" &&
       proposal.skillName === skillName &&
-      proposal.provenance?.runId === runId,
+      (sessionId
+        ? proposal.provenance?.sessionId === sessionId
+        : proposal.provenance?.runId === runId),
   );
 }
 
 function skillDraftToolOutput(
   proposal: SkillProposalSummary,
-  changed: boolean,
+  options: { changed: boolean; existing?: boolean; revised?: boolean },
 ) {
+  const existing = options.existing === true;
   return {
     action: "draft",
-    changed,
+    changed: options.changed,
     proposalId: proposal.id,
     proposalPath: proposal.path,
     state: proposal.state,
@@ -1216,14 +1246,25 @@ function skillDraftToolOutput(
     targetPath: proposal.targetPath,
     basePackageHash: proposal.basePackageHash,
     afterPackageHash: proposal.afterPackageHash,
+    contentHash: proposal.afterPackageHash,
+    revision: proposal.revision ?? 1,
+    previousAfterPackageHash: proposal.previousAfterPackageHash,
     contentMode: proposal.contentMode,
     ...(proposal.guardFindings
       ? { guardFindings: proposal.guardFindings }
       : {}),
-    summary: changed
-      ? proposal.summary
-      : `${proposal.summary} This draft already exists for the current run; the same proposal was returned unchanged.`,
-    existing: !changed,
+    validation: {
+      status: "passed",
+      guardFindingCount: proposal.guardFindings?.length ?? 0,
+    },
+    summary: options.revised
+      ? `${proposal.summary} The existing draft was revised with the latest content.`
+      : existing
+        ? `${proposal.summary} This draft already exists for the current session; the same proposal was returned unchanged.`
+        : proposal.summary,
+    existing,
+    revised: options.revised === true,
+    reviewCommand: `/skill-review ${proposal.id}`,
     // Lifecycle contract, stated so the model stops here instead of retrying or
     // trying to load a skill that does not exist yet. A draft is a proposal,
     // not a live skill: it is not indexed and cannot be skill_load'ed until a

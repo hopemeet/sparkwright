@@ -69,6 +69,10 @@ export interface SkillProposalMetadata {
   updatedAt: string;
   basePackageHash: string | null;
   afterPackageHash: string;
+  /** Monotonic revision of a mutable draft. Applied/closed proposals freeze it. */
+  revision?: number;
+  /** Hash replaced by the latest draft revision, for reviewer-visible audit. */
+  previousAfterPackageHash?: string;
   summary: string;
   contentMode?: SkillProposalContentMode;
   sourceLayer?: SkillRoot["layer"];
@@ -93,6 +97,11 @@ export interface SkillProposalSummary extends SkillProposalMetadata {
 export interface SkillProposalDetail extends SkillProposalSummary {
   proposalMarkdown: string;
   patchDiff: string;
+}
+
+export interface ReviseSkillProposalDraftResult {
+  proposal: SkillProposalDetail;
+  changed: boolean;
 }
 
 export interface SkillHistoryMetadata {
@@ -263,6 +272,7 @@ export async function createSkillCreateProposal(
       updatedAt: now,
       basePackageHash: null,
       afterPackageHash: afterHash.packageHash,
+      revision: 1,
       summary: `Create project Skill ${input.name}`,
       contentMode: input.content ? "authored" : "template",
       ...(guardFindings.length > 0 ? { guardFindings } : {}),
@@ -368,6 +378,7 @@ export async function createSkillUpdateProposal(
       updatedAt: now,
       basePackageHash: baseHash.packageHash,
       afterPackageHash: afterHash.packageHash,
+      revision: 1,
       summary:
         skill.layer === "project"
           ? `Update project Skill ${input.name}`
@@ -413,6 +424,148 @@ export async function createSkillUpdateProposal(
     };
   } catch (error) {
     await rollbackPartialProposal(mutations, proposalPath, proposalId);
+    throw error;
+  }
+}
+
+/**
+ * Revise an existing draft in place. The proposal id remains stable, while
+ * revision/hash metadata makes a changed model-authored body visible to the
+ * human review gate. Closed proposals are immutable.
+ */
+export async function reviseSkillProposalDraft(input: {
+  workspaceRoot: string;
+  proposalId: string;
+  description: string;
+  content?: string;
+  revisedAt?: Date | string;
+  provenance?: SkillProposalProvenance;
+  mutationReporter?: CapabilityPackageMutationReporter;
+}): Promise<ReviseSkillProposalDraftResult> {
+  const proposal = await readSkillProposal(
+    input.workspaceRoot,
+    input.proposalId,
+  );
+  if (proposal.state !== "draft") {
+    throw new Error(`Skill proposal is not draft: ${proposal.id}`);
+  }
+  const mutations = createFileCapabilityPackageWriter(
+    input.workspaceRoot,
+    input.mutationReporter,
+  );
+  const afterSkillPath = join(
+    proposal.path,
+    "after",
+    proposal.skillName,
+    "SKILL.md",
+  );
+  const previousContent = await readFile(afterSkillPath, "utf8");
+  const beforeContent =
+    proposal.kind === "update"
+      ? await readFile(
+          join(proposal.path, "before", proposal.skillName, "SKILL.md"),
+          "utf8",
+        )
+      : undefined;
+  const nextContent =
+    input.content ??
+    (beforeContent
+      ? renderUpdatedSkillContent(beforeContent, input.description)
+      : renderSkillTemplate(proposal.skillName, input.description));
+  assertSkillMarkdownName(nextContent, proposal.skillName, afterSkillPath);
+  if (nextContent === previousContent) {
+    return { proposal, changed: false };
+  }
+
+  const previousMetadata =
+    JSON.stringify(proposalMetadataFromDetail(proposal), null, 2) + "\n";
+  const previousProposalMarkdown = proposal.proposalMarkdown;
+  const previousPatchDiff = proposal.patchDiff;
+  try {
+    await mutations.writeText(afterSkillPath, nextContent, {
+      reason: `Revise proposed Skill ${proposal.skillName}`,
+    });
+    const afterHash = await computeSkillPackageHash(
+      join(proposal.path, "after", proposal.skillName),
+    );
+    const guardFindings = inspectProposedSkillContent(
+      proposal.skillName,
+      nextContent,
+    );
+    const updatedAt = normalizeDateInput(input.revisedAt);
+    const metadata: SkillProposalMetadata = {
+      ...proposalMetadataFromDetail(proposal),
+      updatedAt,
+      afterPackageHash: afterHash.packageHash,
+      revision: (proposal.revision ?? 1) + 1,
+      previousAfterPackageHash: proposal.afterPackageHash,
+      contentMode: input.content ? "authored" : proposal.contentMode,
+      guardFindings: guardFindings.length > 0 ? guardFindings : undefined,
+      provenance: normalizeProvenance(input.provenance) ?? proposal.provenance,
+    };
+    const proposalMarkdown =
+      proposal.kind === "create"
+        ? renderCreateProposalMarkdown(
+            metadata,
+            input.description,
+            input.workspaceRoot,
+          )
+        : renderUpdateProposalMarkdown(
+            metadata,
+            input.description,
+            input.workspaceRoot,
+          );
+    const patchDiff =
+      proposal.kind === "create"
+        ? renderCreatePatch(proposal.skillName, nextContent)
+        : renderUpdatePatch(
+            proposal.skillName,
+            beforeContent ?? "",
+            nextContent,
+          );
+    await mutations.writeJson(join(proposal.path, "metadata.json"), metadata, {
+      reason: `Write revised proposal metadata ${proposal.id}`,
+    });
+    await mutations.writeText(
+      join(proposal.path, "proposal.md"),
+      proposalMarkdown,
+      { reason: `Write revised proposal markdown ${proposal.id}` },
+    );
+    await mutations.writeText(join(proposal.path, "patch.diff"), patchDiff, {
+      reason: `Write revised proposal patch ${proposal.id}`,
+    });
+    return {
+      proposal: {
+        ...metadata,
+        path: proposal.path,
+        proposalMarkdown,
+        patchDiff,
+      },
+      changed: true,
+    };
+  } catch (error) {
+    await Promise.allSettled([
+      mutations.writeText(afterSkillPath, previousContent, {
+        reason: `Roll back proposed Skill revision ${proposal.id}`,
+      }),
+      mutations.writeText(
+        join(proposal.path, "metadata.json"),
+        previousMetadata,
+        {
+          reason: `Roll back proposal metadata ${proposal.id}`,
+        },
+      ),
+      mutations.writeText(
+        join(proposal.path, "proposal.md"),
+        previousProposalMarkdown,
+        { reason: `Roll back proposal markdown ${proposal.id}` },
+      ),
+      mutations.writeText(
+        join(proposal.path, "patch.diff"),
+        previousPatchDiff,
+        { reason: `Roll back proposal patch ${proposal.id}` },
+      ),
+    ]);
     throw error;
   }
 }
@@ -935,6 +1088,18 @@ function proposalsRoot(workspaceRoot: string): string {
   return join(skillEvolutionRoot(workspaceRoot), "proposals");
 }
 
+function proposalMetadataFromDetail(
+  proposal: SkillProposalDetail,
+): SkillProposalMetadata {
+  const {
+    path: _path,
+    proposalMarkdown: _proposalMarkdown,
+    patchDiff: _patchDiff,
+    ...metadata
+  } = proposal;
+  return metadata;
+}
+
 function proposalDir(workspaceRoot: string, proposalId: string): string {
   return join(proposalsRoot(workspaceRoot), proposalId);
 }
@@ -967,6 +1132,8 @@ async function updateProposalState(
     updatedAt,
     basePackageHash: proposal.basePackageHash,
     afterPackageHash: proposal.afterPackageHash,
+    revision: proposal.revision,
+    previousAfterPackageHash: proposal.previousAfterPackageHash,
     summary: proposal.summary,
     sourceLayer: proposal.sourceLayer,
     sourcePath: proposal.sourcePath,

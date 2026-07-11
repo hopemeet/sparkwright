@@ -239,7 +239,9 @@ export class RunController {
         // trace), so on replay we detect the continuation by its goal preamble
         // and render a divider instead of a fake user bubble.
         if (payload.goal.startsWith(TODO_CONTINUATION_GOAL_PREFIX)) {
-          this.store.appendNotice("continuing — todos unfinished");
+          this.store.appendNotice(
+            "previous answer provisional · continuing — todos unfinished",
+          );
         } else {
           this.store.appendUserMessage(payload.goal);
         }
@@ -1037,7 +1039,7 @@ export class RunController {
       this.cancelRequested = false;
       this.store.setStatus("running");
       this.store.appendNotice(
-        `continuing (#${msg.payload.continuationCount}) — todos unfinished`,
+        `previous answer provisional · continuing (#${msg.payload.continuationCount}) — todos unfinished`,
       );
     });
 

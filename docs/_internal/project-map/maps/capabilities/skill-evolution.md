@@ -112,11 +112,15 @@ history kinds:   create | update | restore
   only conservative reuse-signal evidence plus the active session id. It does
   not infer a target Skill name from prompt text; named Skill updates are
   explicit `/skill-update` or caller-supplied `targetSkillName` paths.
-- **Run-scoped draft idempotency:** during a model run, repeated `create_skill`
-  or `update_skill` drafts for the same skill and run id return the existing
-  draft proposal (`changed:false`, `existing:true`) instead of creating another
-  proposal directory. Human CLI-authored proposals have no run provenance and
-  remain separate drafts.
+- **Session-scoped draft idempotency and revision:** model-authored
+  `create_skill` / `update_skill` calls reuse a draft for the same session,
+  proposal kind, and skill target across todo-supervisor continuation runs;
+  callers without session provenance fall back to run-scoped matching. Equal
+  content returns the existing proposal unchanged, while changed content
+  revises the same proposal id, increments its `revision`, records the replaced
+  package hash, and refreshes the after package, patch, guard findings, and
+  review metadata. Closed proposals are never revised. Human CLI-authored
+  proposals have no run/session provenance and remain separate drafts.
 - **Mutations are trace-visible:** every atomic write emits
   `capability.mutation.completed`; proposals/history themselves are file
   artifacts, not a separate trace event family. Draft proposal writes are
@@ -162,6 +166,18 @@ history kinds:   create | update | restore
   there is no persisted run→proposals index (a scan, not an index).
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-11T22:17:00+0800
+- Scope: session-scoped model draft reuse now spans todo-supervisor run-chain
+  episodes; changed create/update bodies revise the same draft id with
+  monotonic revision and prior-hash metadata, while equal bodies remain
+  no-write idempotent and missing session provenance falls back to run scope.
+- Read: `packages/host/src/tools.ts`, `packages/host/src/skill-evolution.ts`,
+  `packages/host/test/tools.test.ts`, this map, and `modules/skills.md`.
+- Tests: `npm --workspace @sparkwright/host test -- test/tools.test.ts
+test/skill-evolution.test.ts`; `npm --workspace @sparkwright/host run
+typecheck`.
 
 - Status: Verified
 - Date: 2026-07-07T13:18:00+0800

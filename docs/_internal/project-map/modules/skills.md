@@ -113,7 +113,12 @@ Does not own:
   metadata records whether content is authored, a generated create template, or
   an intent-only update stub. Apply, reject,
   supersede, prune, and restore are human-only CLI/TUI surfaces, never model
-  tools. Manual CLI `sparkwright skills create` remains a direct project Skill
+  tools. Model-authored drafts dedupe at session scope across supervised
+  continuation runs (with run-scope fallback when session provenance is
+  absent). Changed content revises the existing draft id with monotonic
+  revision and prior-hash metadata instead of creating a duplicate proposal or
+  silently discarding the later content; closed proposals remain immutable.
+  Manual CLI `sparkwright skills create` remains a direct project Skill
   management command. Applied proposal changes snapshot to history; `skills
 restore --to before` is the revert edge. See
   [../maps/capabilities/skill-evolution.md](../maps/capabilities/skill-evolution.md).
@@ -151,6 +156,18 @@ list --run/--session`); failed drafts self-clean. See
   [../maps/capabilities/skill-evolution.md](../maps/capabilities/skill-evolution.md#known-debts).
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-11T22:17:00+0800
+- Scope: model-facing create/update proposals now reuse session drafts across
+  continuation runs and visibly revise changed draft content instead of
+  creating duplicate directories or discarding later bodies.
+- Read: `packages/host/src/tools.ts`, `packages/host/src/skill-evolution.ts`,
+  `packages/host/test/tools.test.ts`, and
+  `maps/capabilities/skill-evolution.md`.
+- Tests: `npm --workspace @sparkwright/host test -- test/tools.test.ts
+test/skill-evolution.test.ts`; `npm --workspace @sparkwright/host run
+typecheck`.
 
 - Status: Verified
 - Date: 2026-07-07T13:18:00+0800

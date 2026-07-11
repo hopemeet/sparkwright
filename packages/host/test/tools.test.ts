@@ -2667,6 +2667,97 @@ describe("host tools", () => {
     ).resolves.toHaveLength(1);
   });
 
+  it("reuses and revises a create draft across runs in one session", async () => {
+    const ctx = await createWorkspace({});
+    ctx.run!.metadata = { sessionId: "session_skill_chain" };
+    const tool = createSkillManagerTool(ctx.workspaceRoot, undefined);
+    const firstBody = [
+      "---",
+      "name: repo-review",
+      "description: review repository changes",
+      "---",
+      "",
+      "Review the diff.",
+      "",
+    ].join("\n");
+    const revisedBody = firstBody.replace(
+      "Review the diff.",
+      "Review the diff and run focused tests.",
+    );
+
+    const first = await tool.execute(
+      {
+        action: "create",
+        name: "repo-review",
+        description: "review repository changes",
+        body: firstBody,
+      },
+      ctx,
+    );
+    ctx.run!.id = createRunId();
+    const revised = await tool.execute(
+      {
+        action: "create",
+        name: "repo-review",
+        description: "review repository changes",
+        body: revisedBody,
+      },
+      ctx,
+    );
+
+    expect(revised).toMatchObject({
+      changed: true,
+      existing: true,
+      revised: true,
+      revision: 2,
+      proposalId: (first as { proposalId: string }).proposalId,
+      reviewCommand: expect.stringContaining("/skill-review skillprop_"),
+    });
+    expect(
+      (revised as { previousAfterPackageHash?: string })
+        .previousAfterPackageHash,
+    ).toBe((first as { afterPackageHash: string }).afterPackageHash);
+    await expect(
+      readFile(
+        join(
+          (first as { proposalPath: string }).proposalPath,
+          "after",
+          "repo-review",
+          "SKILL.md",
+        ),
+        "utf8",
+      ),
+    ).resolves.toBe(revisedBody);
+    await expect(
+      readdir(
+        join(ctx.workspaceRoot, ".sparkwright", "skill-evolution", "proposals"),
+      ),
+    ).resolves.toHaveLength(1);
+  });
+
+  it("returns an unchanged create draft across runs in one session", async () => {
+    const ctx = await createWorkspace({});
+    ctx.run!.metadata = { sessionId: "session_skill_chain" };
+    const tool = createSkillManagerTool(ctx.workspaceRoot, undefined);
+    const input = {
+      action: "create",
+      name: "repo-review",
+      description: "review repository changes",
+    };
+
+    const first = await tool.execute(input, ctx);
+    ctx.run!.id = createRunId();
+    const duplicate = await tool.execute(input, ctx);
+
+    expect(duplicate).toMatchObject({
+      changed: false,
+      existing: true,
+      revised: false,
+      revision: 1,
+      proposalId: (first as { proposalId: string }).proposalId,
+    });
+  });
+
   it("drafts create_skill proposals with model-authored SKILL.md bodies", async () => {
     const ctx = await createWorkspace({});
     const tool = createSkillManagerTool(ctx.workspaceRoot, undefined);
@@ -3116,6 +3207,67 @@ describe("host tools", () => {
       proposalId: (first as { proposalId: string }).proposalId,
     });
     expect(proposals).toHaveLength(1);
+  });
+
+  it("revises an authored update draft instead of discarding later content", async () => {
+    const original = [
+      "---",
+      "name: repo-review",
+      "description: review repository changes",
+      "---",
+      "",
+      "Review changes.",
+      "",
+    ].join("\n");
+    const ctx = await createWorkspace({
+      ".sparkwright/skills/repo-review/SKILL.md": original,
+    });
+    ctx.run!.metadata = { sessionId: "session_skill_update_chain" };
+    const tool = createSkillUpdateTool(ctx.workspaceRoot, undefined);
+    const firstBody = original.replace("Review changes.", "Review tests.");
+    const secondBody = original.replace(
+      "Review changes.",
+      "Review tests and report failures.",
+    );
+
+    const first = await tool.execute(
+      {
+        action: "draft",
+        name: "repo-review",
+        description: "Add test review guidance",
+        body: firstBody,
+      },
+      ctx,
+    );
+    ctx.run!.id = createRunId();
+    const second = await tool.execute(
+      {
+        action: "draft",
+        name: "repo-review",
+        description: "Add stronger test review guidance",
+        body: secondBody,
+      },
+      ctx,
+    );
+
+    expect(second).toMatchObject({
+      changed: true,
+      existing: true,
+      revised: true,
+      revision: 2,
+      proposalId: (first as { proposalId: string }).proposalId,
+    });
+    await expect(
+      readFile(
+        join(
+          (first as { proposalPath: string }).proposalPath,
+          "after",
+          "repo-review",
+          "SKILL.md",
+        ),
+        "utf8",
+      ),
+    ).resolves.toBe(secondBody);
   });
 
   it("creates project agent profiles and delegate tools", async () => {

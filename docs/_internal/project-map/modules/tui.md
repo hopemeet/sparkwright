@@ -52,6 +52,9 @@ Does not own:
 ## Contracts
 
 - `RunController` sends `run.start` with the current `sessionId`.
+- Todo-supervisor continuation notices are scrollback-native and label the
+  preceding assistant answer as provisional before showing the continuation
+  count; committed assistant cards remain append-only and are not rewritten.
 - TUI presents one runtime permission axis (`read-only`, `ask`, `accept-edits`,
   `bypass`) but no longer owns a persisted `ui.tuiPermissionMode` config field.
   File config uses shared `run.accessMode`; project `run.accessMode` becomes an
@@ -307,6 +310,17 @@ Does not own:
   durable control inbox before adding daemon and multi-channel adapters.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-11T22:17:00+0800
+- Scope: todo-supervisor continuation dividers now mark the preceding assistant
+  answer provisional while preserving append-only, scrollback-native rendering.
+- Read: `packages/tui/src/state/run-controller.ts`,
+  `packages/tui/src/state/event-store.ts`, and
+  `packages/tui/src/components/event-stream.tsx`.
+- Tests: `npm --workspace @sparkwright/tui test --
+test/event-stream-render.test.ts`; `npm --workspace @sparkwright/tui run
+typecheck`.
 
 - Status: Verified
 - Date: 2026-07-11T20:32:00+0800
