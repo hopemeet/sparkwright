@@ -111,6 +111,10 @@ Does not own:
   `WorkflowControlCommandProcessor` validates durable preconditions and applies
   commands only through `WorkflowLeaseBoundWriter`. It is not a generic message
   bus and does not authenticate transports or choose model context roles.
+- `FileWorkflowWorkerRegistry` owns durable per-instance worker liveness and
+  drain state. Its token-bound heartbeat cannot revive expired/draining/stopped
+  instances. Registry records never grant workflow mutation authority; only a
+  canonical Package C journal claim does that.
 - Workflow P1 runtime state transitions are also portable and model/config
   free. `advanceWorkflowState()` evaluates `(state, verdict) -> transition`
   for linear model-node workflows with `retry`, `goto`, `fail`, and terminal
@@ -317,6 +321,15 @@ Does not own:
   not authorize a generic actor bus or nested background lifecycle.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-11T13:30:00+0800
+- Scope: Package E durable worker registry and its liveness-only boundary.
+- Read: `packages/agent-runtime/src/workflows/workers.ts`,
+  `packages/agent-runtime/src/workflows/store.ts`,
+  `packages/agent-runtime/test/workflow-workers.test.ts`.
+- Tests: agent-runtime workflow worker/store/control focused tests, typecheck,
+  build, and Package E release gate.
 
 - Status: Read-only
 - Date: 2026-07-11T13:10:00+0800

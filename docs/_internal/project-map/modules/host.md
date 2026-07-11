@@ -756,6 +756,16 @@ Does not own:
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-07-11T13:30:00+0800
+- Scope: Package E claimed-writer Host adapter reuses the ordinary workflow
+  resume environment and rejects writer/workflow identity mismatch without a
+  second claim.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/host/test/workflows.test.ts`,
+  `packages/server-runtime/src/workflow-supervisor.ts`.
+- Tests: Host workflow/protocol focused tests, typecheck/build, and E release gate.
+
 - Status: Read-only
 - Date: 2026-07-11T13:10:00+0800
 - Scope: Package E design keeps Host as claimed workflow episode assembler and

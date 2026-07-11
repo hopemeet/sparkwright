@@ -112,6 +112,16 @@ Future run in compacted session
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-11T13:30:00+0800
+- Scope: Package E supervisor restart rebuilds non-terminal candidates from
+  durable workflow records and resumes through an already claimed writer;
+  in-memory owner maps are not recovery truth.
+- Read: `packages/server-runtime/src/workflow-supervisor.ts`,
+  `packages/agent-runtime/src/workflows/store.ts`,
+  `packages/host/src/runtime.ts`, and focused tests.
+- Tests: agent-runtime/server-runtime/Host Package E focused and release gates.
+
+- Status: Verified
 - Date: 2026-07-11T13:00:00+0800
 - Scope: `workflow.resume` is now a compatibility adapter that durably enqueues
   `resume_request` before Host dispatch; applied controls recover from canonical

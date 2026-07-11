@@ -46,6 +46,10 @@ contracts, and focused checklists that no longer fit here.
   dispatch of the same durable command id. Agent-runtime storage and the
   workflow journal remain command/outcome/apply truth; Host remains the adapter
   that assembles a fenced writer and execution behavior.
+- `WorkflowSupervisor` coordinates bounded inventory scans, Package C claim
+  competition, claimed-adapter invocation, heartbeat, and drain reporting. It
+  has no process launcher and is not a daemon; F remains responsible for the
+  long-running service carrier.
 - Project commands and shell sandbox packages are edge helpers consumed by TUI,
   host, CLI, and MCP/shell paths. Route safety-sensitive changes through shell
   and workspace-write maps.
@@ -97,6 +101,15 @@ contracts, and focused checklists that no longer fit here.
   source exports. It should not be used as the sole authority for behavior.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-11T13:30:00+0800
+- Scope: Package E server-runtime workflow supervisor coordination and
+  deterministic claim/drain/restart behavior.
+- Read: `packages/server-runtime/src/workflow-supervisor.ts`,
+  `packages/server-runtime/test/index.test.ts`,
+  `packages/agent-runtime/src/workflows/workers.ts`.
+- Tests: server-runtime focused tests/typecheck/build and Package E release gate.
 
 - Status: Read-only
 - Date: 2026-07-11T13:10:00+0800

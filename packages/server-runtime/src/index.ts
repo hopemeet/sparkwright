@@ -23,6 +23,11 @@ import {
   type SparkwrightEvent,
   type ToolDefinition,
 } from "@sparkwright/core";
+export {
+  WorkflowSupervisor,
+  type WorkflowSupervisorRunReport,
+  type WorkflowSupervisorWorkerAdapter,
+} from "./workflow-supervisor.js";
 
 export type ServerRuntimeMessageType =
   | "runtime.ready"

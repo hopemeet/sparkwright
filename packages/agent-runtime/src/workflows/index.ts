@@ -83,6 +83,13 @@ export {
   type WorkflowControlProcessResult,
 } from "./control-processor.js";
 export {
+  FileWorkflowWorkerRegistry,
+  WORKFLOW_WORKER_SCHEMA_VERSION,
+  type WorkflowWorkerHandle,
+  type WorkflowWorkerRegistration,
+  type WorkflowWorkerState,
+} from "./workers.js";
+export {
   FileWorkflowNotificationOutbox,
   type FileWorkflowNotificationEntry,
   type FileWorkflowNotificationInvalidEntry,

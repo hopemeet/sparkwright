@@ -814,7 +814,7 @@ record/journal；否则该命令只能明确 rejected，不能报告 applied。
 
 ### 8.14 Package E durable supervisor / worker ownership 裁决（2026-07-11）
 
-状态：**设计 gate 完成；E 代码 gate 可在独立 commit 中打开，Package F 保持关闭。**
+状态：**设计与实现 gate 完成；E 独立 commit/release 证据见本节末尾，Package F 保持关闭。**
 
 #### 唯一 ownership truth
 
@@ -893,3 +893,17 @@ instance 使用新 instanceId/token。
   foreground connection 作为一种 worker adapter，而不是 durable truth。
 - focused tests、fault injection、affected typecheck/build、完整 `npm run release:check`、
   maps/test-map 和独立 E commit 全通过后，才可 reopen Package F。
+
+#### 实现结果
+
+- agent-runtime `FileWorkflowWorkerRegistry` 持久化 per-instance registration、heartbeat、
+  expiry、draining/stopped；过期或 draining instance 不能重新 heartbeat 成 active。
+- server-runtime `WorkflowSupervisor` 从 workflow store 重建候选，过滤 terminal/default
+  waiting，竞争现有 Package C writer，只把 claim winner 交给注入的 execution adapter。
+- drain durable 标记 worker 并停止新 claim，报告 remaining workflow；abort 只是 interruption，
+  不写 pause/completed。双 supervisor 竞争只调用一次 adapter。
+- Host `resumeClaimedWorkflowRun()` 接受 identity-matched writer，复用现有 pinned definition、
+  authorization snapshot、access clamp、hooks/tools 与 episode/finalization 路径，不二次 claim。
+- 本实现没有 service/daemon、CLI detach 或 orphan child；这些仍属于关闭的 Package F。
+- focused fault gate 与完整 `npm run release:check` 已通过；E 独立 commit 后可 reopen
+  Package F 设计 gate，Package G 仍保持关闭。

@@ -8,8 +8,10 @@
   full release gate recorded below.
 - Package D durable control inbox: `Verified` at the focused implementation and
   deterministic fault gate; full release result recorded below.
-- Package E: `Untested`; design gate may reopen after the independent D commit.
-- Packages F–G: `Untested`; reopen gates remain closed by E.
+- Package E durable supervisor/worker ownership: `Verified` at the focused
+  implementation/fault gate; full release result recorded below.
+- Package F: `Untested`; design gate may reopen after the independent E commit.
+- Package G: `Untested`; reopen gate remains closed by F.
 
 ## Current Evidence
 
@@ -119,3 +121,23 @@ and adapter start:
    inbox and notification cursors neither duplicate nor lose accepted work;
 9. adapter crash after claim but before episode start is recoverable after TTL;
 10. terminal workflows and live unexpired claims are never adopted.
+
+## Package E Evidence (2026-07-11)
+
+- Deterministic registry tests cover heartbeat, expiry, no revival, drain,
+  stop, restart read, and immutable worker instance identity.
+- Supervisor barriers cover two-worker single adapter winner, drain with active
+  claim reporting, restart inventory rebuild, waiting/terminal exclusion, and
+  expired worker refusal. Package C tests remain the stale writer/takeover
+  backstop for mutation, compensation, and old release fencing.
+- Host integration starts a pinned workflow with a supervisor-supplied claimed
+  writer and completes at the same generation, proving no second claim while
+  retaining the ordinary authorization/execution assembly path.
+- Focused gate: agent-runtime workflow worker/control/store 39 tests,
+  server-runtime 12, and Host workflow/protocol 81; affected typecheck/build
+  commands passed.
+- Full gate: the first release run found only the new serialized worker
+  `stoppedAt` audit field needed an explicit `@reserved` declaration. After the
+  declaration, strict reserved-field check and a complete `npm run release:check`
+  rerun passed through all workspace tests, regression matrix, and both install
+  smokes.

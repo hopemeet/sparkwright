@@ -1635,6 +1635,54 @@ describe("workflow assets", () => {
     expect(record?.runIds).toContain(resumed.ok ? resumed.runId : "");
   });
 
+  it("runs a supervisor-claimed workflow without acquiring a second writer", async () => {
+    const workspace = await tempWorkspace();
+    const sessionId = "sess_workflow_claimed_resume";
+    const workflowRunId = "workflow_claimed_resume" as WorkflowRunId;
+    const definition: WorkflowDefinition = {
+      assetName: "claimed",
+      contentHash: "hash-claimed",
+      nodes: [{ id: "main", body: "Claimed body." }],
+    };
+    const store = new FileWorkflowStore({
+      rootDir: legacyWorkflowStoreRoot(workspace, sessionId),
+    });
+    await seedWorkflowRecord(store, {
+      id: workflowRunId,
+      sessionId,
+      assetName: definition.assetName,
+      contentHash: definition.contentHash,
+      currentNodeId: "main",
+      attempts: { main: 1 },
+      definitionSnapshot: definition,
+      metadata: { goal: "resume claimed workflow" },
+    });
+    const writer = await store.acquireWriter(workflowRunId, {
+      owner: "worker:supervisor:instance",
+    });
+    expect(writer).not.toBeNull();
+    const events: HostEvent[] = [];
+    const runtime = new HostRuntime({
+      workspaceRoot: workspace,
+      defaultModel: "deterministic",
+      emit: (event) => events.push(event),
+    });
+
+    const resumed = await runtime.resumeClaimedWorkflowRun(
+      { workflowRunId, sessionId },
+      writer!,
+    );
+
+    expect(resumed).toMatchObject({ ok: true, workflowRunId, sessionId });
+    await waitForHostEvent(events, (event) => event.kind === "run.completed");
+    expect(
+      new FileWorkflowStore({
+        rootDir: legacyWorkflowStoreRoot(workspace, sessionId),
+        createRoot: false,
+      }).get(workflowRunId),
+    ).toMatchObject({ status: "completed", generation: writer!.generation });
+  });
+
   it("does not re-verify failed historical nodes on workflow resume", async () => {
     const workspace = await tempWorkspace();
     const sessionId = "sess_workflow_resume_failed_verdict";

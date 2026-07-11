@@ -1778,6 +1778,40 @@ export class HostRuntime {
     }
   }
 
+  async resumeClaimedWorkflowRun(
+    payload: WorkflowResumeRequestPayload,
+    writer: WorkflowLeaseBoundWriter,
+  ): Promise<
+    | { ok: true; runId: string; workflowRunId: string; sessionId?: string }
+    | { ok: false; error: ProtocolError }
+  > {
+    if (writer.workflowRunId !== payload.workflowRunId) {
+      return {
+        ok: false,
+        error: {
+          code: "invalid_payload",
+          message:
+            "Claimed workflow writer identity does not match the resume request.",
+        },
+      };
+    }
+    if (this.active || this.startingRun) {
+      return {
+        ok: false,
+        error: {
+          code: "internal_error",
+          message: "another run is already active on this connection",
+        },
+      };
+    }
+    this.startingRun = true;
+    try {
+      return await this.resumeWorkflowRunInner(payload, writer);
+    } finally {
+      this.startingRun = false;
+    }
+  }
+
   private async resumeWorkflowRunThroughControl(
     payload: WorkflowResumeRequestPayload,
   ): Promise<
@@ -3318,6 +3352,7 @@ export class HostRuntime {
 
   private async resumeWorkflowRunInner(
     payload: WorkflowResumeRequestPayload,
+    claimedWriter?: WorkflowLeaseBoundWriter,
   ): Promise<
     | { ok: true; runId: string; workflowRunId: string; sessionId?: string }
     | { ok: false; error: ProtocolError }
@@ -3347,10 +3382,12 @@ export class HostRuntime {
         },
       };
     }
-    const lease = await store.acquireWriter(record.id, {
-      owner: workflowLeaseOwner(),
-      ttlMs: WORKFLOW_LEASE_TTL_MS,
-    });
+    const lease =
+      claimedWriter ??
+      (await store.acquireWriter(record.id, {
+        owner: workflowLeaseOwner(),
+        ttlMs: WORKFLOW_LEASE_TTL_MS,
+      }));
     if (!lease) {
       return {
         ok: false,
