@@ -47,6 +47,8 @@
             "task.promote",
             "workflow.list",
             "workflow.resume",
+            "workflow.control",
+            "workflow.control.process",
             "capability.inspect"
           ]
         },
@@ -198,6 +200,28 @@
           "then": {
             "properties": {
               "payload": { "$ref": "#/$defs/WorkflowResumeRequestPayload" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "workflow.control" } } },
+          "then": {
+            "properties": {
+              "payload": { "$ref": "#/$defs/WorkflowControlRequestPayload" }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": { "const": "workflow.control.process" }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/WorkflowControlProcessRequestPayload"
+              }
             }
           }
         },
@@ -394,6 +418,11 @@
         "goal": { "type": "string", "minLength": 1 },
         "input": { "$ref": "#/$defs/RunInputPayload" },
         "sessionId": { "type": "string", "minLength": 1 },
+        "controlSessionId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Parent/control session attribution for a workflow job; it must not be used as the job session storage identity."
+        },
         "targetPath": {
           "type": "string",
           "minLength": 1,
@@ -821,6 +850,79 @@
           "enum": ["standard", "debug"]
         },
         "metadata": { "type": "object" }
+      },
+      "additionalProperties": false
+    },
+    "WorkflowControlRequestPayload": {
+      "type": "object",
+      "required": ["workflowRunId", "idempotencyKey", "command"],
+      "properties": {
+        "workflowRunId": { "type": "string", "minLength": 1 },
+        "sessionId": { "type": "string", "minLength": 1 },
+        "commandId": { "type": "string", "minLength": 1 },
+        "idempotencyKey": { "type": "string", "minLength": 1 },
+        "expected": {
+          "type": "object",
+          "properties": {
+            "generation": { "type": "integer", "minimum": 0 },
+            "status": { "$ref": "#/$defs/WorkflowRunStatus" },
+            "waitId": { "type": "string", "minLength": 1 }
+          },
+          "additionalProperties": false
+        },
+        "command": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": ["kind"],
+              "properties": {
+                "kind": { "const": "cancel" },
+                "reason": { "type": "string" }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": ["kind", "waitId", "value"],
+              "properties": {
+                "kind": { "const": "provide_input" },
+                "waitId": { "type": "string", "minLength": 1 },
+                "value": { "type": "string" }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": ["kind", "approvalId", "decision"],
+              "properties": {
+                "kind": { "const": "approval_response" },
+                "approvalId": { "type": "string", "minLength": 1 },
+                "decision": { "enum": ["approved", "denied"] },
+                "message": { "type": "string" }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": ["kind"],
+              "properties": {
+                "kind": { "const": "resume_request" },
+                "waitId": { "type": "string", "minLength": 1 }
+              },
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "WorkflowControlProcessRequestPayload": {
+      "type": "object",
+      "required": ["workflowRunId", "commandId"],
+      "properties": {
+        "workflowRunId": { "type": "string", "minLength": 1 },
+        "sessionId": { "type": "string", "minLength": 1 },
+        "commandId": { "type": "string", "minLength": 1 }
       },
       "additionalProperties": false
     },

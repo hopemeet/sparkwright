@@ -32,6 +32,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@sparkwright/agent-runtime": "0.1.0",
     "@sparkwright/cron": "0.1.0",
     "@sparkwright/host": "0.1.0",
     "@sparkwright/project-commands": "0.1.0",

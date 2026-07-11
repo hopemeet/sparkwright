@@ -7,6 +7,7 @@ import {
   appendJsonDocumentLog,
   atomicWriteText,
   atomicWriteTextSync,
+  publishExclusiveJsonDocument,
   readJsonDocumentDir,
   readJsonDocumentLog,
   writeJsonDocument,
@@ -17,6 +18,22 @@ async function tempDir(): Promise<string> {
 }
 
 describe("doc-store primitives", () => {
+  it("durably publishes an immutable JSON document exactly once", async () => {
+    const root = await tempDir();
+    const path = join(root, "journal", "000001.json");
+
+    const results = await Promise.all([
+      publishExclusiveJsonDocument(path, { writer: "a" }),
+      publishExclusiveJsonDocument(path, { writer: "b" }),
+    ]);
+
+    expect(results.filter(Boolean)).toHaveLength(1);
+    expect(["a", "b"]).toContain(
+      JSON.parse(await readFile(path, "utf8")).writer,
+    );
+    expect(await readdir(join(root, "journal"))).toEqual(["000001.json"]);
+  });
+
   it("atomically writes text documents and cleans up temporary siblings", async () => {
     const root = await tempDir();
     const path = join(root, "records", "one.json");

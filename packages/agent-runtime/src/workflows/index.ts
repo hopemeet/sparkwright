@@ -41,6 +41,16 @@ export type {
 } from "./types.js";
 export { WORKFLOW_RUN_RECORD_SCHEMA_VERSION } from "./types.js";
 export {
+  FileWorkflowChannelStore,
+  WORKFLOW_CHANNEL_SCHEMA_VERSION,
+  type WorkflowChannelBinding,
+  type WorkflowChannelDeliveryReceipt,
+  type WorkflowChannelDeliveryStatus,
+  type WorkflowChannelRevocation,
+  type WorkflowChannelSnapshot,
+  type WorkflowChannelSourceKind,
+} from "./channels.js";
+export {
   advanceWorkflowState,
   assertWorkflowRuntimeDefinition,
   createInitialWorkflowRuntimeState,
@@ -59,10 +69,36 @@ export {
   type CreateWorkflowRunRecordInput,
   type FileWorkflowStoreOptions,
   type WorkflowRunRecordPatch,
+  type WorkflowLeaseBoundWriter,
   type WorkflowStore,
   type WorkflowStoreEventLogResult,
   type WorkflowStoreListResult,
 } from "./store.js";
+export { WorkflowStaleWriteError } from "./journal.js";
+export {
+  FileWorkflowControlInbox,
+  WORKFLOW_CONTROL_SCHEMA_VERSION,
+  type WorkflowControlAcceptResult,
+  type WorkflowControlAuthorization,
+  type WorkflowControlCommand,
+  type WorkflowControlCommandEnvelope,
+  type WorkflowControlCommandKind,
+  type WorkflowControlInboxSnapshot,
+  type WorkflowControlOutcome,
+  type WorkflowControlOutcomeStatus,
+  type WorkflowControlSourceIdentity,
+} from "./control.js";
+export {
+  WorkflowControlCommandProcessor,
+  type WorkflowControlProcessResult,
+} from "./control-processor.js";
+export {
+  FileWorkflowWorkerRegistry,
+  WORKFLOW_WORKER_SCHEMA_VERSION,
+  type WorkflowWorkerHandle,
+  type WorkflowWorkerRegistration,
+  type WorkflowWorkerState,
+} from "./workers.js";
 export {
   FileWorkflowNotificationOutbox,
   type FileWorkflowNotificationEntry,

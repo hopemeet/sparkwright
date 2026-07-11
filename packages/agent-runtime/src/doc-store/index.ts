@@ -228,6 +228,34 @@ export async function atomicWriteText(
   await atomicWriteTextCore(path, content, options);
 }
 
+/**
+ * Durably publishes a new immutable document without replacing an existing
+ * entry. Returns false when another writer already published the path.
+ */
+export async function publishExclusiveJsonDocument(
+  path: string,
+  value: unknown,
+  options: Pick<AtomicDocumentWriteOptions, "mode" | "durable"> = {},
+): Promise<boolean> {
+  const target = resolve(path);
+  const dir = dirname(target);
+  await mkdir(dir, { recursive: true });
+  let handle;
+  try {
+    handle = await open(target, "wx", options.mode ?? 0o600);
+    await handle.writeFile(`${JSON.stringify(value, null, 2)}\n`, "utf8");
+    if (options.durable !== false) await handle.sync();
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException).code === "EEXIST") return false;
+    await rm(target, { force: true }).catch(() => undefined);
+    throw cause;
+  } finally {
+    await handle?.close();
+  }
+  if (options.durable !== false) await syncDirectoryBestEffort(dir);
+  return true;
+}
+
 export function atomicWriteTextSync(
   path: string,
   content: string,

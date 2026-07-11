@@ -315,6 +315,7 @@ export {
   createHostClientRunMetadata,
   createHostResumeRunRequest,
   createHostStartRunRequest,
+  createWorkflowJobSessionId,
   createHostWorkflowListRequest,
   createHostWorkflowResumeRequest,
   clampHostClientAccessMode,

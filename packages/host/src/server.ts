@@ -150,6 +150,8 @@ async function handleRequest(
             "task.promote",
             "workflow.list",
             "workflow.resume",
+            "workflow.control",
+            "workflow.control.process",
             "capability.inspect",
             "run.resume",
             "run.inject_message",
@@ -160,8 +162,13 @@ async function handleRequest(
     }
     case "run.start": {
       const r = await runtime.startRun(req.payload);
-      if (r.ok) respondOk(conn, req.id, { runId: r.runId });
-      else respondError(conn, req.id, r.error);
+      if (r.ok) {
+        respondOk(conn, req.id, {
+          runId: r.runId,
+          ...(r.sessionId ? { sessionId: r.sessionId } : {}),
+          ...(r.workflowRunId ? { workflowRunId: r.workflowRunId } : {}),
+        });
+      } else respondError(conn, req.id, r.error);
       return false;
     }
     case "run.resume": {
@@ -363,6 +370,42 @@ async function handleRequest(
       }
       return false;
     }
+    case "workflow.control": {
+      const r = await runtime.controlWorkflow({
+        ...req.payload,
+        source: {
+          kind: "api",
+          principalId: "host-protocol-client",
+          authenticatedBy: "host-handshake",
+          connectionId: req.id,
+        },
+      });
+      if (r.ok) {
+        respondOk(conn, req.id, {
+          status: r.status,
+          commandId: r.commandId,
+          ...(r.code ? { code: r.code } : {}),
+          ...(r.runId ? { runId: r.runId } : {}),
+        });
+      } else {
+        respondError(conn, req.id, r.error);
+      }
+      return false;
+    }
+    case "workflow.control.process": {
+      const r = await runtime.processWorkflowControlCommand(req.payload);
+      if (r.ok) {
+        respondOk(conn, req.id, {
+          status: r.status,
+          commandId: r.commandId,
+          ...(r.code ? { code: r.code } : {}),
+          ...(r.runId ? { runId: r.runId } : {}),
+        });
+      } else {
+        respondError(conn, req.id, r.error);
+      }
+      return false;
+    }
     case "capability.inspect": {
       const r = await runtime.inspectCapabilities(req.payload);
       if (r.ok)
@@ -408,6 +451,7 @@ function validateRequestPayload(req: HostRequest): string | undefined {
         requireOnly(req.payload, [
           "goal",
           "sessionId",
+          "controlSessionId",
           "targetPath",
           "confidentialPaths",
           "confidentialDefaults",
@@ -422,6 +466,7 @@ function validateRequestPayload(req: HostRequest): string | undefined {
         ]) ??
         requireString(req.payload, "goal") ??
         optionalString(req.payload, "sessionId") ??
+        optionalString(req.payload, "controlSessionId") ??
         optionalString(req.payload, "targetPath") ??
         optionalStringArray(req.payload, "confidentialPaths") ??
         optionalBoolean(req.payload, "confidentialDefaults") ??
@@ -601,6 +646,30 @@ function validateRequestPayload(req: HostRequest): string | undefined {
         optionalEnum(req.payload, "traceLevel", [...TRACE_LEVELS]) ??
         optionalRecord(req.payload, "metadata")
       );
+    case "workflow.control":
+      return (
+        requireOnly(req.payload, [
+          "workflowRunId",
+          "sessionId",
+          "commandId",
+          "idempotencyKey",
+          "expected",
+          "command",
+        ]) ??
+        requireString(req.payload, "workflowRunId") ??
+        optionalString(req.payload, "sessionId") ??
+        optionalString(req.payload, "commandId") ??
+        requireString(req.payload, "idempotencyKey") ??
+        optionalRecord(req.payload, "expected") ??
+        validateWorkflowControlCommand(req.payload.command)
+      );
+    case "workflow.control.process":
+      return (
+        requireOnly(req.payload, ["workflowRunId", "sessionId", "commandId"]) ??
+        requireString(req.payload, "workflowRunId") ??
+        optionalString(req.payload, "sessionId") ??
+        requireString(req.payload, "commandId")
+      );
     case "capability.inspect":
       return (
         requireOnly(req.payload, [
@@ -621,6 +690,26 @@ function validateRequestPayload(req: HostRequest): string | undefined {
         optionalEnum(req.payload, "permissionMode", [...PERMISSION_MODES])
       );
   }
+}
+
+function validateWorkflowControlCommand(value: unknown): string | undefined {
+  if (!isRecord(value)) return "workflow control command must be an object";
+  const kind = value.kind;
+  if (kind === "cancel") return optionalString(value, "reason");
+  if (kind === "resume_request") return optionalString(value, "waitId");
+  if (kind === "provide_input") {
+    return requireString(value, "waitId") ?? requireString(value, "value");
+  }
+  if (kind === "approval_response") {
+    return (
+      requireString(value, "approvalId") ??
+      (value.decision === "approved" || value.decision === "denied"
+        ? undefined
+        : "decision must be approved or denied") ??
+      optionalString(value, "message")
+    );
+  }
+  return "workflow control command kind is invalid";
 }
 
 function validateClientInfo(value: unknown): string | undefined {

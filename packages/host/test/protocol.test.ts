@@ -573,7 +573,10 @@ describe("host protocol", () => {
           "workflow-runs",
         ),
       });
-      const created = store.create({
+      const writer = await store.acquireWriter(workflowRunId, {
+        owner: "test-fixture",
+      });
+      const created = await writer!.create({
         id: workflowRunId,
         sessionId,
         assetName: "bugfix",
@@ -589,16 +592,26 @@ describe("host protocol", () => {
           backgroundTasks: "enabled",
         },
       });
-      store.update(created.id, {
-        verdictLog: [
-          {
-            at: "2026-07-09T00:00:00.000Z",
-            nodeId: "main",
-            attempt: 1,
-            verdict: { status: "passed", reason: "command_passed" },
-          },
-        ],
+      await writer!.mutate({
+        expectedRevision: created.recordRevision ?? 0,
+        patch: {
+          verdictLog: [
+            {
+              at: "2026-07-09T00:00:00.000Z",
+              nodeId: "main",
+              attempt: 1,
+              verdict: { status: "passed", reason: "command_passed" },
+            },
+          ],
+        },
+        event: {
+          at: "2026-07-09T00:00:00.000Z",
+          type: "updated",
+          workflowRunId,
+          status: "running",
+        },
       });
+      await writer!.release();
       serveConnection(pair.hostSide, {
         workspaceRoot: workspace,
         defaultModel: "deterministic",
@@ -655,6 +668,40 @@ describe("host protocol", () => {
           ],
         },
       });
+
+      pair.clientSend({
+        envelope: "request",
+        id: "workflow_control",
+        kind: "workflow.control",
+        timestamp: TIMESTAMP,
+        payload: {
+          workflowRunId,
+          sessionId,
+          idempotencyKey: "protocol-cancel-one",
+          expected: { status: "running" },
+          command: { kind: "cancel", reason: "protocol test" },
+        },
+      });
+      const controlResp = await pair.waitFor(
+        (m) => m.envelope === "response" && m.id === "workflow_control",
+      );
+      expect(controlResp).toMatchObject({
+        envelope: "response",
+        ok: true,
+        result: { status: "applied", code: "applied" },
+      });
+      expect(
+        new FileWorkflowStore({
+          rootDir: join(
+            workspace,
+            ".sparkwright",
+            "sessions",
+            sessionId,
+            "workflow-runs",
+          ),
+          createRoot: false,
+        }).get(workflowRunId),
+      ).toMatchObject({ status: "cancelled" });
     } finally {
       pair.close();
       await rmWhenReady(workspace);

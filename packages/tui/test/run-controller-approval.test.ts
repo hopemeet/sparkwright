@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Client } from "@sparkwright/sdk-node";
-import type { HostEvent } from "@sparkwright/protocol";
+import type { HostEvent, PermissionMode } from "@sparkwright/protocol";
 import { EventStore } from "../src/state/event-store.js";
 import { RunController } from "../src/state/run-controller.js";
 
@@ -26,15 +26,39 @@ function deliver(
   client: Client,
   sessionId: string,
   event: HostEvent & { kind: "approval.requested" },
+  permissionMode: PermissionMode = "default",
+  workflowRunId?: string,
 ): void {
   const internal = controller as unknown as {
     handleApprovalRequested(
-      client: Client,
-      sessionId: string,
+      execution: {
+        client: Client;
+        sessionId: string;
+        permissionMode: PermissionMode;
+        kind: "workflow";
+        workflowRunId?: string;
+        runId: string;
+      },
       event: HostEvent & { kind: "approval.requested" },
     ): void;
   };
-  internal.handleApprovalRequested(client, sessionId, event);
+  internal.handleApprovalRequested(
+    {
+      client,
+      sessionId,
+      permissionMode,
+      kind: "workflow",
+      ...(workflowRunId ? { workflowRunId } : {}),
+      runId: event.payload.runId,
+    },
+    event,
+  );
+}
+
+function cleanup(controller: RunController, client: Client): void {
+  (
+    controller as unknown as { cleanupExecution(client: Client): void }
+  ).cleanupExecution(client);
 }
 
 describe("RunController session approvals", () => {
@@ -61,7 +85,13 @@ describe("RunController session approvals", () => {
       resolveApproval,
     } as unknown as Client;
 
-    controller.wireWorkflowClientApprovals(client, "session_workflow");
+    controller.wireWorkflowClientApprovals(client, {
+      client,
+      sessionId: "session_workflow",
+      permissionMode: "default",
+      kind: "workflow",
+      workflowRunId: "workflow_1",
+    });
     expect(listener).toBeDefined();
     listener!(approvalEvent("approval_workflow"));
     expect(store.getSnapshot().pendingApproval?.id).toBe("approval_workflow");
@@ -158,5 +188,110 @@ describe("RunController session approvals", () => {
 
     expect(controller.listSessionApprovalRules()).toHaveLength(0);
     expect(store.getSnapshot().pendingApproval?.id).toBe("approval_1");
+  });
+
+  it("keeps concurrent workflow permission modes isolated", async () => {
+    const store = new EventStore();
+    const controller = new RunController({
+      workspaceRoot: "/workspace/project",
+      initialSessionId: "session_main",
+      store,
+    });
+    const askClient = {
+      resolveApproval: vi.fn().mockResolvedValue({}),
+    } as unknown as Client;
+    const bypassClient = {
+      resolveApproval: vi.fn().mockResolvedValue({}),
+    } as unknown as Client;
+
+    deliver(
+      controller,
+      askClient,
+      "session_workflow_ask",
+      approvalEvent("approval_ask"),
+      "default",
+      "workflow_ask",
+    );
+    deliver(
+      controller,
+      bypassClient,
+      "session_workflow_bypass",
+      approvalEvent("approval_bypass"),
+      "bypass_permissions",
+      "workflow_bypass",
+    );
+
+    expect(store.getSnapshot().pendingApproval?.id).toBe("approval_ask");
+    await vi.waitFor(() =>
+      expect(bypassClient.resolveApproval).toHaveBeenCalledWith(
+        expect.objectContaining({
+          approvalId: "approval_bypass",
+          decision: "approved",
+          autoApproved: true,
+        }),
+      ),
+    );
+    expect(askClient.resolveApproval).not.toHaveBeenCalled();
+  });
+
+  it("removes only approvals owned by a disconnected client and is idempotent", () => {
+    const store = new EventStore();
+    const controller = new RunController({
+      workspaceRoot: "/workspace/project",
+      initialSessionId: "session_main",
+      store,
+    });
+    const first = { resolveApproval: vi.fn() } as unknown as Client;
+    const second = { resolveApproval: vi.fn() } as unknown as Client;
+    const third = { resolveApproval: vi.fn() } as unknown as Client;
+
+    deliver(controller, first, "session_1", approvalEvent("approval_1"));
+    deliver(controller, second, "session_2", approvalEvent("approval_2"));
+    deliver(controller, third, "session_3", approvalEvent("approval_3"));
+
+    cleanup(controller, third);
+    expect(store.getSnapshot().pendingApproval?.id).toBe("approval_1");
+    cleanup(controller, first);
+    expect(store.getSnapshot().pendingApproval?.id).toBe("approval_2");
+    cleanup(controller, first);
+    expect(store.getSnapshot().pendingApproval?.id).toBe("approval_2");
+  });
+
+  it("binds a pending approval to its immutable execution identity", () => {
+    const store = new EventStore();
+    const controller = new RunController({
+      workspaceRoot: "/workspace/project",
+      initialSessionId: "session_main",
+      store,
+    });
+    const client = { resolveApproval: vi.fn() } as unknown as Client;
+    const event = approvalEvent("approval_identity");
+    event.payload.runId = "run_episode_2";
+
+    deliver(
+      controller,
+      client,
+      "session_job",
+      event,
+      "accept_edits",
+      "workflow_job",
+    );
+
+    const active = (
+      controller as unknown as {
+        activeApproval: {
+          execution: Record<string, unknown>;
+        };
+      }
+    ).activeApproval;
+    expect(active.execution).toMatchObject({
+      client,
+      sessionId: "session_job",
+      permissionMode: "accept_edits",
+      kind: "workflow",
+      workflowRunId: "workflow_job",
+      runId: "run_episode_2",
+    });
+    expect(Object.isFrozen(active.execution)).toBe(true);
   });
 });

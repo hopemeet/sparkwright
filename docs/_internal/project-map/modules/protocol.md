@@ -41,7 +41,8 @@ Does not own:
   `session.fork`, `session.compact`, `capability.inspect`, and durable
   background-task inspection requests `task.list`, `task.get`, `task.output`,
   `task.stop`, plus host-facing task controls `task.join` and `task.promote`,
-  and durable workflow requests `workflow.list` / `workflow.resume`.
+  and durable workflow requests `workflow.list`, `workflow.resume`, and
+  `workflow.control`.
 - Task inspection responses use snapshot/poll contracts: `TaskRecordSnapshot`
   for durable task records, `TaskOutputChunkSnapshot` for buffered stdout/stderr
   chunks, and `task_not_found` as the protocol error code for missing task ids.
@@ -79,12 +80,20 @@ Does not own:
 - `WorkflowRunSnapshot.authorizationSnapshot` exposes target/confidential path
   presence flags plus non-sensitive policy fields, never the path values. The
   values remain host-owned persisted resume defaults.
+- `workflow.control` accepts only the closed cancel/input/approval/resume command
+  union plus idempotency and expected-state fields. Source identity and
+  authorization scope are Host-derived, not producer-supplied; accepted/busy
+  commands remain durable for a later consumer.
 - `run.start` and `run.inject_message` keep their text fields (`goal` and
   `content`) as required user-turn summaries and may add `input.parts` for
   extensible text/image/file/audio content.
 - `run.start` may include optional `workflow`, the workflow asset name to
   instantiate for that run. The field is additive and ignored when absent; P1.5
   removes the former experimental host gate.
+- A workflow-job `run.start` may carry typed `controlSessionId` attribution.
+  Successful start responses may include the authoritative `sessionId` and
+  `workflowRunId`; ordinary non-workflow clients remain compatible with the
+  required `runId` field alone.
 - `run.start` and `run.resume` may include `backgroundTasks`
   (`disabled`, `foreground-only`, `enabled`). Host validates and clamps it; the
   protocol only carries the requested run policy.
@@ -188,6 +197,52 @@ Does not own:
 - Protocol and file trace contracts are related but separate; avoid documenting one as the other.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-11T15:30:00+0800
+- Scope: Package G additive `workflow.control.process` request dispatches an
+  existing durable command id without accepting arbitrary payload or widening
+  authorization.
+- Read: `packages/protocol/src/index.ts`, `packages/host/src/server.ts`,
+  `packages/sdk-core/src/client.ts`, `schemas/host-message.schema.json`.
+- Tests: protocol/SDK/Host focused tests, typecheck/build, and schema check.
+
+- Status: Read-only
+- Date: 2026-07-11T15:00:00+0800
+- Scope: Package G design keeps typed `workflow.control` as the response plane;
+  channel binding/delivery is a server-runtime/adapter contract and does not add
+  arbitrary protocol payloads or peer messaging.
+- Read: `packages/protocol/src/index.ts`,
+  `packages/agent-runtime/src/workflows/control.ts`,
+  `packages/im-gateway/src/gateway.ts`.
+- Tests: not run; design-only source reconciliation.
+
+- Status: Verified
+- Date: 2026-07-11T13:00:00+0800
+- Scope: Package D `workflow.control` request/result, schema validation,
+  capabilities, SDK adapter, and Host protocol dispatch.
+- Read: `packages/protocol/src/index.ts`, `schemas/host-message.schema.json`,
+  `packages/host/src/server.ts`, `packages/sdk-core/src/client.ts`,
+  `docs/reference/HOST_PROTOCOL.md`.
+- Tests: protocol/Host/SDK focused commands and schema check recorded in the D
+  test-map evidence.
+
+- Status: Verified
+- Date: 2026-07-11T10:41:00+0800
+- Scope: Package C adds internal workflow generation/revision fields and
+  fenced storage without changing Host request/response schemas or public
+  workflow snapshot payloads.
+- Read: protocol workflow types/schema, Host runtime projections, workflow
+  store/types and protocol tests.
+- Tests: Host protocol full 51 tests; CLI workflow slice 13 tests; protocol
+  behavior unchanged.
+
+- Status: Verified
+- Date: 2026-07-11T00:00:00+0800
+- Scope: Package B `run.start` workflow job/control session identity fields.
+- Read: `packages/protocol/src/index.ts`, `packages/host/src/server.ts`, SDK
+  client result typing and focused protocol tests.
+- Tests: protocol typecheck/build; host protocol tests; CLI/TUI SDK integration.
 
 - Status: Verified
 - Date: 2026-07-11T01:04:00+0800

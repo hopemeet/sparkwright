@@ -1,4 +1,13 @@
 import type { HostEvent } from "@sparkwright/sdk-node";
+import type {
+  AnyActorNotification,
+  FileWorkflowChannelStore,
+  FileWorkflowControlInbox,
+  FileWorkflowNotificationOutbox,
+  WorkflowChannelBinding,
+  WorkflowRunId,
+} from "@sparkwright/agent-runtime";
+import { WorkflowChannelCoordinator } from "@sparkwright/server-runtime";
 import {
   buildSessionKey,
   type SessionRoutingOptions,
@@ -13,6 +22,8 @@ import type {
   InboundMessage,
   OutboundTarget,
   PlatformAdapter,
+  WorkflowChannelResponse,
+  WorkflowNotificationPrompt,
 } from "./types.js";
 import { renderApprovalPrompt, renderHostEvent } from "./renderers.js";
 import { GatewayStore } from "./store.js";
@@ -25,6 +36,11 @@ export interface ImGatewayOptions {
   /** Model reference "provider/model" passed to the host on run.start. */
   model?: string;
   logger?: GatewayLogger;
+  workflowChannels?: FileWorkflowChannelStore;
+  workflowControls?: FileWorkflowControlInbox;
+  workspaceId?: string;
+  workflowNotifications?: FileWorkflowNotificationOutbox;
+  workflowPollIntervalMs?: number;
 }
 
 interface ActiveSession {
@@ -41,6 +57,8 @@ export class ImGateway {
   private readonly queuedMessages = new Map<string, InboundMessage[]>();
   private readonly responseBuffers = new Map<string, string[]>();
   private readonly logger: GatewayLogger;
+  private workflowCoordinator?: WorkflowChannelCoordinator;
+  private workflowTimer?: ReturnType<typeof setInterval>;
 
   constructor(private readonly options: ImGatewayOptions) {
     for (const adapter of options.adapters) {
@@ -56,6 +74,7 @@ export class ImGateway {
         adapter.start({
           onMessage: (message) => this.handleMessage(message),
           onApprovalDecision: (input) => this.handleApprovalDecision(input),
+          onWorkflowResponse: (input) => this.handleWorkflowResponse(input),
         }),
       ),
     );
@@ -63,13 +82,44 @@ export class ImGateway {
       "IM gateway started with %d adapter(s)",
       this.adapters.size,
     );
+    if (
+      this.options.workflowChannels &&
+      this.options.workflowNotifications &&
+      this.options.workflowControls &&
+      this.options.workspaceId
+    ) {
+      this.workflowCoordinator = new WorkflowChannelCoordinator({
+        outbox: this.options.workflowNotifications,
+        channels: this.options.workflowChannels,
+        adapter: {
+          deliver: (input) => this.deliverWorkflowNotification(input),
+        },
+      });
+      await this.deliverPendingWorkflowNotifications();
+      this.workflowTimer = setInterval(() => {
+        void this.deliverPendingWorkflowNotifications().catch(
+          (error: unknown) => {
+            this.logger.warn(
+              "durable workflow delivery failed: %s",
+              errorMessage(error),
+            );
+          },
+        );
+      }, this.options.workflowPollIntervalMs ?? 1_000);
+    }
   }
 
   async stop(): Promise<void> {
+    if (this.workflowTimer) clearInterval(this.workflowTimer);
+    this.workflowTimer = undefined;
     await Promise.all([...this.adapters.values()].map((a) => a.stop()));
     for (const active of this.activeRuns.values()) active.close();
     this.activeRuns.clear();
     this.activeSessions.clear();
+  }
+
+  async deliverPendingWorkflowNotifications(): Promise<void> {
+    await this.workflowCoordinator?.runOnce();
   }
 
   async handleMessage(message: InboundMessage): Promise<void> {
@@ -142,6 +192,61 @@ export class ImGateway {
       return;
     }
     await run.resolveApproval(input);
+  }
+
+  async handleWorkflowResponse(input: WorkflowChannelResponse): Promise<void> {
+    const channels = this.options.workflowChannels;
+    const controls = this.options.workflowControls;
+    if (!channels || !controls || !this.options.workspaceId) {
+      throw new Error("Durable workflow channel control is not configured.");
+    }
+    if (input.workspaceId !== this.options.workspaceId) {
+      throw new Error(
+        "Workflow channel workspace does not match this gateway.",
+      );
+    }
+    const workflowRunId = input.workflowRunId as WorkflowRunId;
+    const bound = channels.binding(workflowRunId, input.bindingId);
+    if (!bound || bound.source.kind !== "im") {
+      throw new Error("Durable IM workflow binding was not found.");
+    }
+    const source = imWorkflowSource(input);
+    await channels.acceptControl({
+      inbox: controls,
+      bindingId: input.bindingId,
+      workflowRunId,
+      workspaceId: input.workspaceId,
+      sessionId: input.sessionId,
+      source,
+      idempotencyKey: input.messageId,
+      expected: input.expected,
+      command: input.command,
+      expiresAt: input.expiresAt,
+    });
+  }
+
+  async deliverWorkflowNotification(input: {
+    binding: WorkflowChannelBinding;
+    notification: AnyActorNotification;
+    deliveryKey: string;
+  }): Promise<{ transportMessageId?: string }> {
+    if (input.binding.source.kind !== "im") {
+      throw new Error("IM gateway cannot deliver a non-IM workflow binding.");
+    }
+    const target = parseImWorkflowChannelId(input.binding.source.channelId);
+    const adapter = this.adapters.get(target.platform);
+    if (!adapter)
+      throw new Error(`IM adapter is unavailable: ${target.platform}`);
+    const prompt = workflowNotificationPrompt(input);
+    if (adapter.sendWorkflowNotification) {
+      await adapter.sendWorkflowNotification(target, prompt);
+    } else {
+      await adapter.sendMessage(target, {
+        text: prompt.summary,
+        deliveryKey: input.deliveryKey,
+      });
+    }
+    return {};
   }
 
   private async startMessageRun(
@@ -279,6 +384,85 @@ export class ImGateway {
     if (queue.length === 0) this.queuedMessages.delete(sessionKey);
     return next;
   }
+}
+
+export function createImWorkflowChannelId(input: {
+  platform: string;
+  chatId: string;
+  threadId?: string;
+}): string {
+  return [input.platform, input.chatId, input.threadId ?? ""]
+    .map((value) => encodeURIComponent(value))
+    .join("|");
+}
+
+function parseImWorkflowChannelId(channelId: string): OutboundTarget {
+  const [platform, chatId, threadId] = channelId
+    .split("|")
+    .map((value) => decodeURIComponent(value));
+  if (!platform || !chatId) throw new Error("Invalid durable IM channel id.");
+  return { platform, chatId, ...(threadId ? { threadId } : {}) };
+}
+
+function imWorkflowSource(
+  input: WorkflowChannelResponse,
+): WorkflowChannelBinding["source"] {
+  return {
+    kind: "im",
+    principalId: input.userId,
+    authenticatedBy: input.authenticatedBy,
+    channelId: createImWorkflowChannelId(input),
+  };
+}
+
+function renderWorkflowNotification(
+  notification: AnyActorNotification,
+): string {
+  if (notification.source.kind !== "workflow")
+    throw new Error("Expected a workflow notification.");
+  const payload = notification.payload as {
+    workflowId?: string;
+    name?: string;
+    summary?: string;
+    wait?: { kind?: string; reason?: string };
+  };
+  const title = payload.name ?? payload.workflowId ?? notification.source.id;
+  const detail = payload.summary ?? `Workflow ${notification.type}.`;
+  const wait = payload.wait
+    ? `\nWaiting for ${payload.wait.kind ?? "input"}${payload.wait.reason ? `: ${payload.wait.reason}` : ""}`
+    : "";
+  return `[Workflow ${title}] ${detail}${wait}`;
+}
+
+function workflowNotificationPrompt(input: {
+  binding: WorkflowChannelBinding;
+  notification: AnyActorNotification;
+  deliveryKey: string;
+}): WorkflowNotificationPrompt {
+  if (input.notification.source.kind !== "workflow")
+    throw new Error("Expected a workflow notification.");
+  const payload = input.notification.payload as {
+    wait?: WorkflowNotificationPrompt["wait"];
+    metadata?: {
+      generation?: number;
+      status?: WorkflowNotificationPrompt["expected"]["status"];
+    };
+  };
+  return {
+    bindingId: input.binding.bindingId,
+    workflowRunId: input.binding.workflowRunId,
+    workspaceId: input.binding.workspaceId,
+    ...(input.binding.sessionId ? { sessionId: input.binding.sessionId } : {}),
+    deliveryKey: input.deliveryKey,
+    summary: renderWorkflowNotification(input.notification),
+    expected: {
+      generation: payload.metadata?.generation ?? 0,
+      status: payload.metadata?.status ?? "waiting",
+      ...(payload.wait?.id ? { waitId: payload.wait.id } : {}),
+    },
+    ...(payload.wait ? { wait: payload.wait } : {}),
+    expiresAt: input.binding.expiresAt,
+  };
 }
 
 function truncate(text: string, max: number): string {

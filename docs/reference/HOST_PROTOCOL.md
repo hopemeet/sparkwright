@@ -180,6 +180,7 @@ Begin a new agent run.
 | `goal`                 | string                    | yes      | User goal text.                                                                                                                                                                                                               |
 | `input.parts`          | array                     | no       | Extensible content parts for the same user turn. Supported part types are `text`, `image`, `file`, and `audio`; image/file/audio parts carry `data` (base64) or `uri`, plus optional `mediaType`, `name`, and `metadata`.     |
 | `sessionId`            | string                    | no       | Existing session to write into; host creates a new one if omitted.                                                                                                                                                            |
+| `controlSessionId`     | string                    | no       | Workflow-job attribution only. Must accompany `workflow` and differ from the job `sessionId`; it is not used as workflow transcript storage.                                                                                  |
 | `targetPath`           | string                    | no       | Workspace-relative target path the run should focus on when applicable.                                                                                                                                                       |
 | `confidentialPaths`    | string[]                  | no       | Additional workspace-relative paths/globs whose contents this run must not read.                                                                                                                                              |
 | `confidentialDefaults` | boolean                   | no       | Whether built-in conservative confidential path defaults are included; defaults to `true`.                                                                                                                                    |
@@ -193,9 +194,11 @@ Begin a new agent run.
 
 **Response result**
 
-| Field   | Type   | Notes                                                                      |
-| ------- | ------ | -------------------------------------------------------------------------- |
-| `runId` | string | Use this in subsequent `run.cancel` requests and to correlate `run.event`. |
+| Field           | Type   | Notes                                                                                 |
+| --------------- | ------ | ------------------------------------------------------------------------------------- |
+| `runId`         | string | Use this in subsequent `run.cancel` requests and to correlate `run.event`.            |
+| `sessionId`     | string | Authoritative session used by the run. Returned by current hosts.                     |
+| `workflowRunId` | string | Durable workflow instance id when `workflow` was supplied; omitted for ordinary runs. |
 
 The run starts asynchronously. The host emits `run.event` events as
 they happen and one terminal event (`run.completed` or `run.failed`).
@@ -355,13 +358,52 @@ emits a reliable workflow actor notification, and releases the workflow lease.
 `workflow.resume` consumes `input` waits by recording an `input` store event,
 clearing `wait`, and continuing from the next node.
 
+### `workflow.control`
+
+Submit a durable, typed workflow control command. The Host derives the source
+identity from the authenticated connection, persists the accepted command, and
+applies state changes through the workflow's fenced writer. Producer disconnect
+does not remove an accepted command.
+
+Commands are a closed union: `cancel`, `provide_input`, `approval_response`,
+and `resume_request`. `provide_input` requires the current durable input
+`waitId`; `approval_response` requires the current durable `approvalId` and an
+authorization snapshot. Producers cannot choose how input is injected into
+model context.
+
+**Payload**
+
+| Field            | Type   | Required | Notes                                                                       |
+| ---------------- | ------ | -------- | --------------------------------------------------------------------------- |
+| `workflowRunId`  | string | yes      | Durable workflow id.                                                        |
+| `sessionId`      | string | no       | Narrows record lookup and authorization scope.                              |
+| `commandId`      | string | no       | Caller command identity; Host creates one when omitted.                     |
+| `idempotencyKey` | string | yes      | Scoped to workflow and authenticated source; a different payload conflicts. |
+| `expected`       | object | no       | Optional `generation`, `status`, and `waitId` preconditions.                |
+| `command`        | object | yes      | Typed command union described above.                                        |
+
+The result contains `status`, `commandId`, and optional `code` / `runId`.
+`accepted` means the command is durable but another consumer currently owns the
+workflow; `applied`, `rejected`, and `dead_letter` are terminal outcomes.
+
+### `workflow.control.process`
+
+Dispatch a command already durably accepted by a scoped workflow channel
+binding. The payload contains `workflowRunId`, optional `sessionId`, and
+`commandId`. This request cannot create a command or widen its authorization:
+Host reloads the immutable Package D envelope, revalidates workspace, session,
+generation, state, wait, and approval scope, and returns the existing or newly
+produced outcome. TUI/CLI/SDK channel adapters use this after binding-aware
+acceptance. Hosts advertise it in `host.ready.capabilities`.
+
 ### `workflow.resume`
 
 Adopt a non-terminal durable workflow run and start a new host run from its
 pinned workflow definition snapshot. The host does not reload the live asset
 for execution; it resumes from the record's pinned `{assetName, version,
 contentHash}` and `definitionSnapshot`, then appends the new `runId` to the
-record.
+record. This compatibility request first enqueues a durable `resume_request`
+and dispatches through the same workflow control consumer.
 
 Hosts advertise `workflow.resume` in `host.ready.capabilities` once durable
 workflow resume is available.

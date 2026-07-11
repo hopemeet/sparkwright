@@ -17,14 +17,17 @@ These are not promises of current behavior. They are risk flags to revisit when 
 - TUI `/export` is readable, but not a full diagnostic report.
 - Host runtime is a broad composition point where capability, session, trace, and policy changes meet.
 - From-trace resume is only best-effort and can be mistaken for full restore.
+- Durable workflow projection rewrites the complete compatibility event log on
+  each canonical mutation, and immutable journal files currently have no
+  compaction/retention policy.
 - Capability self-evolution design exists, but stable runtime behavior should remain explicit and reviewable.
 - Project-map package coverage is intentionally hot-path based. Packages without
   dedicated module pages are grouped under
   [../modules/edge-packages.md](../modules/edge-packages.md) and should graduate
   only when repeated changes need clearer ownership boundaries.
-- In this checkout `docs/_internal/` is ignored by git, so "update the map with
-  the change" cannot be enforced by normal PR diff review unless these files are
-  explicitly tracked in that branch.
+- The structured internal corpus was recently restored and versioned; some
+  historical pages can still describe it as local-only until touched and
+  re-verified.
 
 ## Consumers
 
@@ -40,8 +43,8 @@ These are not promises of current behavior. They are risk flags to revisit when 
 ## Last Verified
 
 - Status: Read-only
-- Date: 2026-06-27T18:53:34+0800
+- Date: 2026-07-11T00:00:00+0800
 - Read: `.gitignore`, `package.json`, `README.md`,
   `docs/_internal/project-map/README.md`,
   `docs/_internal/project-map/modules/edge-packages.md`.
-- Tests: not run; documentation-only debt pass.
+- Tests: not run; documentation-only governance correction.

@@ -6,6 +6,7 @@ import type {
   OutboundTarget,
   PlatformAdapter,
   PlatformHandlers,
+  WorkflowNotificationPrompt,
 } from "../types.js";
 import { renderApprovalPrompt } from "../renderers.js";
 
@@ -71,6 +72,10 @@ export class TelegramAdapter implements PlatformAdapter {
   private loop?: Promise<void>;
   private readonly fetchImpl: typeof fetch;
   private readonly approvalTokens = new Map<string, string>();
+  private readonly workflowTokens = new Map<
+    string,
+    WorkflowNotificationPrompt
+  >();
 
   constructor(private readonly options: TelegramAdapterOptions) {
     this.fetchImpl = options.fetch ?? fetch;
@@ -132,6 +137,35 @@ export class TelegramAdapter implements PlatformAdapter {
     });
   }
 
+  async sendWorkflowNotification(
+    target: OutboundTarget,
+    prompt: WorkflowNotificationPrompt,
+  ): Promise<void> {
+    if (prompt.wait?.kind !== "approval" || !prompt.wait.approvalId) {
+      await this.sendMessage(target, {
+        text: prompt.summary,
+        deliveryKey: prompt.deliveryKey,
+      });
+      return;
+    }
+    const token = randomUUID().slice(0, 12);
+    this.workflowTokens.set(token, prompt);
+    await this.api("sendMessage", {
+      chat_id: target.chatId,
+      text: prompt.summary,
+      message_thread_id: target.threadId,
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: "Approve", callback_data: `sww:${token}:approved` },
+            { text: "Deny", callback_data: `sww:${token}:denied` },
+          ],
+        ],
+      },
+      disable_web_page_preview: true,
+    });
+  }
+
   private async pollLoop(): Promise<void> {
     while (!this.stopped) {
       try {
@@ -169,6 +203,10 @@ export class TelegramAdapter implements PlatformAdapter {
   }
 
   private async handleCallback(query: TelegramCallbackQuery): Promise<void> {
+    if (query.data?.startsWith("sww:")) {
+      await this.handleWorkflowCallback(query);
+      return;
+    }
     if (!query.data?.startsWith("sw:")) return;
     const [, token, decision] = query.data.split(":");
     if (decision !== "approved" && decision !== "denied") return;
@@ -194,6 +232,56 @@ export class TelegramAdapter implements PlatformAdapter {
     }
     this.approvalTokens.delete(token);
     await this.handlers?.onApprovalDecision({ approvalId, decision });
+    await this.api("answerCallbackQuery", {
+      callback_query_id: query.id,
+      text: decision === "approved" ? "Approved" : "Denied",
+    });
+  }
+
+  private async handleWorkflowCallback(
+    query: TelegramCallbackQuery,
+  ): Promise<void> {
+    const [, token, decision] = query.data?.split(":") ?? [];
+    if (decision !== "approved" && decision !== "denied") return;
+    const prompt = this.workflowTokens.get(token);
+    if (!prompt || !prompt.wait?.approvalId || !query.message) {
+      await this.api("answerCallbackQuery", {
+        callback_query_id: query.id,
+        text: "Workflow decision expired or unavailable.",
+      });
+      return;
+    }
+    const inbound = this.toInbound(query.message);
+    if (
+      !inbound ||
+      !this.isAllowed({ ...inbound, userId: String(query.from.id) })
+    ) {
+      await this.api("answerCallbackQuery", {
+        callback_query_id: query.id,
+        text: "Not allowed.",
+        show_alert: true,
+      });
+      return;
+    }
+    await this.handlers?.onWorkflowResponse({
+      bindingId: prompt.bindingId,
+      workflowRunId: prompt.workflowRunId,
+      workspaceId: prompt.workspaceId,
+      sessionId: prompt.sessionId,
+      platform: this.platform,
+      chatId: inbound.chatId,
+      threadId: inbound.threadId,
+      userId: String(query.from.id),
+      authenticatedBy: "telegram:webhook",
+      messageId: `callback:${query.id}`,
+      expected: prompt.expected,
+      command: {
+        kind: "approval_response",
+        approvalId: prompt.wait.approvalId,
+        decision,
+      },
+      expiresAt: prompt.expiresAt,
+    });
     await this.api("answerCallbackQuery", {
       callback_query_id: query.id,
       text: decision === "approved" ? "Approved" : "Denied",

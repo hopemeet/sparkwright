@@ -1,4 +1,5 @@
 import { writeFile, mkdir, readFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { join, resolve } from "node:path";
 import { createClient, type Client } from "@sparkwright/sdk-node";
 import {
@@ -7,6 +8,7 @@ import {
   createHostClientRunMetadata,
   createHostStartRunRequest,
   createHostWorkflowResumeRequest,
+  createWorkflowJobSessionId,
   createRunInputPayloadFromParts,
   imageMediaTypeForPath,
   recordHostClientStartFailure,
@@ -30,6 +32,11 @@ import type {
   WorkflowRunSnapshot,
 } from "@sparkwright/protocol";
 import { runFailureMessage } from "@sparkwright/protocol";
+import {
+  FileWorkflowChannelStore,
+  FileWorkflowControlInbox,
+  type WorkflowRunId,
+} from "@sparkwright/agent-runtime";
 import type { EventStore, PendingApproval } from "./event-store.js";
 import type { SessionDiagnostics } from "../lib/sessions.js";
 import { loadSessionEvents } from "../lib/session-events.js";
@@ -61,15 +68,37 @@ export interface RunControllerOptions {
   initialSessionId?: string;
 }
 
-export interface WorkflowJobHandle {
-  runId: string;
-  client: Client;
+export interface WorkflowJobExecutionContext {
+  readonly kind: "workflow";
+  readonly sessionId: string;
+  readonly permissionMode: PermissionMode;
+  readonly runId: string;
+  readonly workflowRunId: string;
+}
+
+export interface WorkflowJobHandle extends WorkflowJobExecutionContext {
+  readonly execution: WorkflowJobExecutionContext;
+  readonly client: Client;
   close: () => void;
 }
 
-interface PendingApprovalContext {
+type ExecutionKind = "main" | "workflow";
+
+interface ExecutionOrigin {
   client: Client;
   sessionId: string;
+  permissionMode: PermissionMode;
+  kind: ExecutionKind;
+  workflowRunId?: string;
+}
+
+interface ExecutionContext extends ExecutionOrigin {
+  /** The exact episode/run that emitted the event. */
+  runId: string;
+}
+
+interface PendingApprovalContext {
+  execution: ExecutionContext;
   pending: PendingApproval;
 }
 
@@ -99,7 +128,8 @@ export class RunController {
   private client: Client | null = null;
   private clientPromise: Promise<Client> | null = null;
   private activeRunId: string | null = null;
-  private activeApprovalPermissionMode: PermissionMode | null = null;
+  private startingMainRun = false;
+  private executionOrigins = new Map<Client, ExecutionOrigin>();
   // Set once a cancel has been dispatched for the active run so a second Esc /
   // Ctrl+C (or both the InputBox and global-hotkey paths firing) doesn't send a
   // duplicate cancelRun. Reset when the next run starts.
@@ -137,7 +167,8 @@ export class RunController {
     return this.sessionRootDir();
   }
 
-  newSession(): string {
+  newSession(): string | null {
+    if (!this.allowSessionMutation("start a new session")) return null;
     this.sessionId = `session_tui_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
     this.currentSessionEvents = [];
     this.lastGoal = null;
@@ -146,12 +177,14 @@ export class RunController {
     return this.sessionId;
   }
 
-  setSession(id: string): void {
+  setSession(id: string): boolean {
+    if (!this.allowSessionMutation("switch sessions")) return false;
     this.sessionId = validateSessionId(id);
     this.currentSessionEvents = [];
     this.lastGoal = null;
     this.store.reset();
     this.store.setSessionId(this.sessionId);
+    return true;
   }
 
   /**
@@ -163,7 +196,8 @@ export class RunController {
    * `model.completed` card already carries the final text), and replay the
    * rest so the conversation reappears.
    */
-  async switchSession(id: string): Promise<void> {
+  async switchSession(id: string): Promise<boolean> {
+    if (!this.allowSessionMutation("switch sessions")) return false;
     const safe = validateSessionId(id);
     this.sessionId = safe;
     this.store.reset();
@@ -174,6 +208,7 @@ export class RunController {
     // Point /retry at the resumed session's most recent goal (not the goal
     // from whatever session we switched away from).
     this.lastGoal = lastGoalFromEvents(events);
+    return true;
   }
 
   /**
@@ -308,7 +343,8 @@ export class RunController {
   }
 
   async start(goal: string): Promise<void> {
-    if (this.activeRunId) return;
+    if (this.activeRunId || this.startingMainRun) return;
+    this.startingMainRun = true;
     this.lastGoal = goal;
     this.store.appendUserMessage(goal);
     this.store.setStatus("running");
@@ -321,6 +357,7 @@ export class RunController {
       const message = formatError(err);
       await this.recordHostStartFailure(goal, message);
       this.store.setError(message);
+      this.startingMainRun = false;
       return;
     }
 
@@ -328,7 +365,12 @@ export class RunController {
       const traceLevel = this.opts.traceLevel ?? "standard";
       const input = this.pendingRunInput();
       const permissions = this.coreRunFields();
-      this.activeApprovalPermissionMode = permissions.permissionMode;
+      this.executionOrigins.set(client, {
+        client,
+        sessionId: this.sessionId,
+        permissionMode: permissions.permissionMode,
+        kind: "main",
+      });
       const { runId } = await client.startRun(
         createHostStartRunRequest({
           goal,
@@ -353,7 +395,9 @@ export class RunController {
       }
       this.store.setError(message);
       this.activeRunId = null;
-      this.activeApprovalPermissionMode = null;
+      this.cleanupExecution(client);
+    } finally {
+      this.startingMainRun = false;
     }
   }
 
@@ -376,7 +420,7 @@ export class RunController {
         ? sessionApprovalRule(context.pending.subject)
         : undefined;
     try {
-      await context.client.resolveApproval({
+      await context.execution.client.resolveApproval({
         approvalId: context.pending.id,
         decision: choice === "deny" ? "denied" : "approved",
         ...(rule
@@ -384,12 +428,14 @@ export class RunController {
           : {}),
       });
       if (rule) {
-        this.rulesForSession(context.sessionId).set(rule.key, rule);
+        this.rulesForSession(context.execution.sessionId).set(rule.key, rule);
         this.store.appendNotice(`approval remembered: ${rule.label}`);
       }
-      this.activeApproval = null;
-      this.store.setPendingApproval(null);
-      this.showNextApproval();
+      if (this.activeApproval === context) {
+        this.activeApproval = null;
+        this.store.setPendingApproval(null);
+        this.showNextApproval();
+      }
     } catch (err) {
       this.store.setError(formatError(err));
     } finally {
@@ -433,6 +479,7 @@ export class RunController {
     copiedEventCount: number;
     truncatedAtSequence: number | null;
   } | null> {
+    if (!this.allowSessionMutation("fork and switch sessions")) return null;
     try {
       const client = await this.ensureClient();
       return await client.forkSession({ sourceSessionId, forkAtSequence });
@@ -532,23 +579,30 @@ export class RunController {
     workflowName: string;
     goal: string;
   }): Promise<WorkflowJobHandle | null> {
+    const permissions = this.coreRunFields();
     const client = await createClient({
       spawn: resolveHostStdioSpawn({
         workspaceRoot: this.opts.workspaceRoot,
         sessionRootDir: this.sessionRootDir(),
-        permissionMode: this.coreRunFields().permissionMode,
+        permissionMode: permissions.permissionMode,
       }),
       client: { name: "sparkwright-tui-workflow", version: "0.1.0" },
     });
-    const workflowSessionId = this.sessionId;
-    this.wireWorkflowClientApprovals(client, workflowSessionId);
+    const controlSessionId = this.sessionId;
+    const workflowSessionId = createWorkflowJobSessionId();
+    this.wireWorkflowClientApprovals(client, {
+      client,
+      sessionId: workflowSessionId,
+      permissionMode: permissions.permissionMode,
+      kind: "workflow",
+    });
     try {
       const traceLevel = this.opts.traceLevel ?? "standard";
-      const permissions = this.coreRunFields();
-      const { runId } = await client.startRun(
+      const started = await client.startRun(
         createHostStartRunRequest({
           goal: input.goal,
           sessionId: workflowSessionId,
+          controlSessionId,
           modelName: this.opts.modelName,
           modelNameSource: this.opts.modelNameSource,
           workflowName: input.workflowName,
@@ -562,12 +616,33 @@ export class RunController {
           },
         }),
       );
-      return {
-        runId,
+      if (!started.workflowRunId || started.sessionId !== workflowSessionId) {
+        throw new Error(
+          "workflow start did not return its durable workflow/job session identity",
+        );
+      }
+      const execution = Object.freeze({
+        kind: "workflow" as const,
+        sessionId: workflowSessionId,
+        permissionMode: permissions.permissionMode,
+        runId: started.runId,
+        workflowRunId: started.workflowRunId,
+      });
+      this.executionOrigins.set(
         client,
-        close: () => client.close(),
+        Object.freeze({ ...execution, client }),
+      );
+      return {
+        ...execution,
+        execution,
+        client,
+        close: () => {
+          this.cleanupExecution(client);
+          client.close();
+        },
       };
     } catch (err) {
+      this.cleanupExecution(client);
       client.close();
       this.store.setError(formatError(err));
       return null;
@@ -592,13 +667,24 @@ export class RunController {
       }),
       client: { name: "sparkwright-tui-workflow", version: "0.1.0" },
     });
-    this.wireWorkflowClientApprovals(
+    const workflowSessionId = input.workflow.sessionId;
+    if (!workflowSessionId) {
+      client.close();
+      this.store.setError(
+        `workflow ${input.workflow.id} cannot resume without its persisted job sessionId`,
+      );
+      return null;
+    }
+    this.wireWorkflowClientApprovals(client, {
       client,
-      input.workflow.sessionId ?? this.sessionId,
-    );
+      sessionId: workflowSessionId,
+      permissionMode: permissionModeFromWorkflowAuthorization(authorization),
+      kind: "workflow",
+      workflowRunId: input.workflow.id,
+    });
     try {
       const traceLevel = this.opts.traceLevel ?? "standard";
-      const { runId } = await client.resumeWorkflowRun(
+      const started = await client.resumeWorkflowRun(
         createHostWorkflowResumeRequest({
           workflowRunId: input.workflow.id,
           sessionId: input.workflow.sessionId,
@@ -618,15 +704,97 @@ export class RunController {
           },
         }),
       );
-      return {
-        runId,
+      if (
+        started.workflowRunId !== input.workflow.id ||
+        started.sessionId !== workflowSessionId
+      ) {
+        throw new Error(
+          "workflow resume returned an identity that does not match the durable record",
+        );
+      }
+      const execution = Object.freeze({
+        kind: "workflow" as const,
+        sessionId: workflowSessionId,
+        permissionMode: permissionModeFromWorkflowAuthorization(authorization),
+        runId: started.runId,
+        workflowRunId: input.workflow.id,
+      });
+      this.executionOrigins.set(
         client,
-        close: () => client.close(),
+        Object.freeze({ ...execution, client }),
+      );
+      return {
+        ...execution,
+        execution,
+        client,
+        close: () => {
+          this.cleanupExecution(client);
+          client.close();
+        },
       };
     } catch (err) {
+      this.cleanupExecution(client);
       client.close();
       this.store.setError(formatError(err));
       return null;
+    }
+  }
+
+  async cancelWorkflow(workflow: WorkflowRunSnapshot): Promise<boolean> {
+    try {
+      const rootDir = join(
+        this.opts.workspaceRoot,
+        ".sparkwright",
+        "workflow-runs",
+      );
+      const channels = new FileWorkflowChannelStore({ rootDir });
+      const controls = new FileWorkflowControlInbox({ rootDir });
+      const now = new Date();
+      const source = {
+        kind: "tui" as const,
+        principalId: process.env.USER ?? "local-user",
+        authenticatedBy: "local-stdio-client",
+        channelId: `tui-${process.pid}`,
+      };
+      const binding = await channels.bind({
+        bindingId: `workflow_binding_tui_${randomUUID().replaceAll("-", "")}`,
+        workspaceId: this.opts.workspaceRoot,
+        workflowRunId: workflow.id as WorkflowRunId,
+        ...(workflow.sessionId ? { sessionId: workflow.sessionId } : {}),
+        source,
+        allowedCommandKinds: ["cancel"],
+        createdAt: now.toISOString(),
+        expiresAt: new Date(now.getTime() + 60 * 60 * 1_000).toISOString(),
+      });
+      const accepted = await channels.acceptControl({
+        inbox: controls,
+        bindingId: binding.bindingId,
+        workflowRunId: workflow.id as WorkflowRunId,
+        workspaceId: this.opts.workspaceRoot,
+        sessionId: workflow.sessionId,
+        source,
+        idempotencyKey: `tui-cancel-${workflow.id}-${workflow.generation ?? 0}`,
+        expected: {
+          generation: workflow.generation ?? 0,
+          status: workflow.status,
+          ...(workflow.wait?.id ? { waitId: workflow.wait.id } : {}),
+        },
+        command: { kind: "cancel", reason: "workflow stop" },
+        expiresAt: new Date(now.getTime() + 24 * 60 * 60 * 1_000).toISOString(),
+      });
+      if (accepted.status === "conflict") {
+        throw new Error("durable cancel idempotency conflict");
+      }
+      const client = await this.ensureClient();
+      const result = await client.processWorkflowControl({
+        workflowRunId: workflow.id,
+        sessionId: workflow.sessionId,
+        commandId: accepted.envelope.commandId,
+      });
+      return result.status === "applied" || result.status === "accepted";
+    } catch (err) {
+      this.store.setError(formatError(err));
+      return false;
     }
   }
 
@@ -702,7 +870,10 @@ export class RunController {
 
   /** Close the underlying client. Called on app exit. */
   shutdown(): void {
-    this.client?.close();
+    if (this.client) {
+      this.cleanupExecution(this.client);
+      this.client.close();
+    }
     this.client = null;
     this.clientPromise = null;
   }
@@ -817,6 +988,14 @@ export class RunController {
     return toCoreRunFields(this.tuiPermissionMode());
   }
 
+  private allowSessionMutation(action: string): boolean {
+    if (!this.activeRunId && !this.startingMainRun) return true;
+    this.store.appendNotice(
+      `cannot ${action} while the main run is active; wait for it to finish or cancel it first`,
+    );
+    return false;
+  }
+
   private hasTerminalRunEvent(): boolean {
     return this.currentSessionEvents.some((event) => {
       if (typeof event !== "object" || event === null || !("type" in event)) {
@@ -843,7 +1022,10 @@ export class RunController {
     });
 
     client.on("approval.requested", (msg) =>
-      this.handleApprovalRequested(client, this.sessionId, msg),
+      this.handleApprovalRequested(
+        this.executionOrigin(client, msg.payload.runId),
+        msg,
+      ),
     );
 
     client.on("run.continuation", (msg) => {
@@ -861,7 +1043,7 @@ export class RunController {
 
     client.on("run.completed", (msg) => {
       this.activeRunId = null;
-      this.activeApprovalPermissionMode = null;
+      this.cleanupExecution(client);
       this.store.setStopReason(msg.payload.stopReason ?? null);
       const handoff = msg.payload.todoHandoff;
       if (handoff) {
@@ -890,13 +1072,13 @@ export class RunController {
 
     client.on("run.failed", (msg) => {
       this.activeRunId = null;
-      this.activeApprovalPermissionMode = null;
+      this.cleanupExecution(client);
       this.store.setError(runFailureMessage(msg.payload));
     });
 
     client.on("disconnect", (reason) => {
       this.activeRunId = null;
-      this.activeApprovalPermissionMode = null;
+      this.cleanupExecution(client);
       this.store.setError(`host disconnected${reason ? `: ${reason}` : ""}`);
       this.client = null;
       this.clientPromise = null;
@@ -913,21 +1095,29 @@ export class RunController {
    * prompt) — otherwise an "ask"-mode write inside a workflow episode would
    * hang with no UI.
    */
-  wireWorkflowClientApprovals(client: Client, sessionId: string): void {
+  wireWorkflowClientApprovals(client: Client, origin: ExecutionOrigin): void {
+    const immutableOrigin = Object.freeze({ ...origin, client });
+    this.executionOrigins.set(client, immutableOrigin);
     client.on("approval.requested", (msg) =>
-      this.handleApprovalRequested(client, sessionId, msg),
+      this.handleApprovalRequested(
+        this.executionOrigin(client, msg.payload.runId),
+        msg,
+      ),
     );
+    client.on("run.completed", () => this.cleanupExecution(client));
+    client.on("run.failed", () => this.cleanupExecution(client));
+    client.on("disconnect", () => this.cleanupExecution(client));
   }
 
   private handleApprovalRequested(
-    client: Client,
-    sessionId: string,
+    execution: ExecutionContext,
     msg: HostEvent & { kind: "approval.requested" },
   ): void {
+    execution = this.executionContext(execution, msg.payload.runId);
     const details = (msg.payload.details ?? {}) as Record<string, unknown>;
     const action = msg.payload.action;
     const policyDecision = resolveHostClientApprovalByPolicy(
-      this.approvalPolicyInput(),
+      { permissionMode: execution.permissionMode },
       {
         approvalId: msg.payload.approvalId,
         runId: msg.payload.runId,
@@ -938,7 +1128,7 @@ export class RunController {
       },
     );
     if (policyDecision) {
-      void client
+      void execution.client
         .resolveApproval(policyDecision)
         .catch((err) => this.store.setError(formatError(err)));
       return;
@@ -948,9 +1138,11 @@ export class RunController {
       this.opts.workspaceRoot,
     );
     if (subject.kind !== "unknown") {
-      const rule = this.sessionApprovalRules.get(sessionId)?.get(subject.key);
+      const rule = this.sessionApprovalRules
+        .get(execution.sessionId)
+        ?.get(subject.key);
       if (rule) {
-        void client
+        void execution.client
           .resolveApproval({
             approvalId: msg.payload.approvalId,
             decision: "approved",
@@ -995,7 +1187,7 @@ export class RunController {
           }
         : undefined,
     };
-    const context = { client, sessionId, pending };
+    const context = { execution, pending };
     if (this.activeApproval) this.approvalQueue.push(context);
     else {
       this.activeApproval = context;
@@ -1020,12 +1212,14 @@ export class RunController {
     const rule =
       subject.kind === "unknown"
         ? undefined
-        : this.sessionApprovalRules.get(next.sessionId)?.get(subject.key);
+        : this.sessionApprovalRules
+            .get(next.execution.sessionId)
+            ?.get(subject.key);
     if (!rule) {
       this.store.setPendingApproval(next.pending);
       return;
     }
-    void next.client
+    void next.execution.client
       .resolveApproval({
         approvalId: next.pending.id,
         decision: "approved",
@@ -1043,13 +1237,43 @@ export class RunController {
       });
   }
 
-  private approvalPolicyInput() {
-    return {
-      permissionMode:
-        this.activeApprovalPermissionMode ??
-        this.coreRunFields().permissionMode,
-    };
+  private executionOrigin(client: Client, runId: string): ExecutionContext {
+    const origin = this.executionOrigins.get(client);
+    if (!origin) {
+      throw new Error(
+        `approval for ${runId} arrived without an immutable execution origin`,
+      );
+    }
+    return this.executionContext(origin, runId);
   }
+
+  private executionContext(
+    origin: ExecutionOrigin,
+    runId: string,
+  ): ExecutionContext {
+    return Object.freeze({ ...origin, runId });
+  }
+
+  private cleanupExecution(client: Client): void {
+    this.executionOrigins.delete(client);
+    const removedActive = this.activeApproval?.execution.client === client;
+    if (removedActive) {
+      this.activeApproval = null;
+      this.store.setPendingApproval(null);
+    }
+    this.approvalQueue = this.approvalQueue.filter(
+      (context) => context.execution.client !== client,
+    );
+    if (removedActive) this.showNextApproval();
+  }
+}
+
+function permissionModeFromWorkflowAuthorization(
+  authorization: NonNullable<WorkflowRunSnapshot["authorizationSnapshot"]>,
+): PermissionMode {
+  if (authorization.accessMode === "bypass") return "bypass_permissions";
+  if (authorization.accessMode === "accept-edits") return "accept_edits";
+  return "default";
 }
 
 function validateSessionId(id: string): string {

@@ -9,9 +9,9 @@ Keep `docs/_internal/project-map/` useful as the codebase grows.
 - The project map is internal maintenance documentation.
 - It should be short, linked, and verified.
 - It should document boundaries and impact paths, not duplicate full reference docs.
-- In this checkout `docs/_internal/` is ignored by git. Treat "same commit/PR"
-  as "same local task and handoff" unless a branch explicitly tracks these
-  files; if tracked, keep map updates with the behavior change.
+- Structured project-map, proposal, and test-map files are versioned in this
+  checkout. Keep their updates with the behavior change; ephemeral run notes
+  and uncatalogued scratch material remain ignored.
 
 ## Consumers
 
@@ -53,14 +53,15 @@ Rules:
 
 - First pass is broad but shallow for some capability packages.
 - Some package-specific tests are listed only at package level, not per workflow.
-- Because `_internal` is local-only in this checkout, drift checks are advisory
-  unless the map is copied into a tracked review branch.
+- The recently restored/versioned internal corpus still contains historical
+  local-only wording; remove it when encountered and keep drift checks in review.
 
 ## Last Verified
 
 - Status: Read-only
-- Date: 2026-06-27T18:53:34+0800
+- Date: 2026-07-11T00:00:00+0800
 - Read: `.gitignore`, `docs/_internal/project-map/README.md`,
   `docs/_internal/project-map/maintenance/doc-maintenance.md`,
   `docs/_internal/project-map/maintenance/known-debts.md`.
-- Tests: not run; documentation-only maintenance pass.
+- Tests: not run; documentation-only governance correction after the structured
+  internal corpus was restored and versioned.

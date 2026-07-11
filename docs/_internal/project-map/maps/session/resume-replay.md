@@ -50,6 +50,12 @@ Future run in compacted session
 
 ## Contracts
 
+- Workflow-job resume uses the durable `WorkflowRunRecord.sessionId` as the
+  execution/session-store identity. TUI/CLI callers may not substitute their
+  current/control session, and records missing the required session or
+  authorization snapshot fail diagnostically rather than falling back to
+  mutable client defaults.
+
 - Checkpoint resume is the normal path.
 - From-trace resume is best-effort recovery; it restores counters/coarse step data, not full in-loop context.
 - Reconstructed checkpoints are marked not fully resumable and require explicit force.
@@ -104,6 +110,73 @@ Future run in compacted session
   run-loop integration.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-11T18:30:00+0800
+- Scope: claim publication fencing loss now releases and returns through the
+  documented null/busy acquisition path; resume layout is unchanged.
+- Read: workflow store and Host/control/supervisor acquisition call sites.
+- Tests: agent-runtime, Host, and server-runtime focused suites.
+
+- Status: Verified
+- Date: 2026-07-11T15:30:00+0800
+- Scope: Package G notification delivery receipts/cursors rebuild after restart;
+  adapter responses become Package D commands and Package E/F consumers resume
+  or terminate through canonical generation/state fencing.
+- Read: workflow channels/notification/control store, server-runtime channel
+  coordinator, Host process-existing-command path, TUI/CLI/IM adapters.
+- Tests: Package G focused fault matrix recorded in workflow durable-jobs.
+
+- Status: Verified
+- Date: 2026-07-11T14:30:00+0800
+- Scope: Package F service restart scans durable handoffs and existing workflow
+  records, recovers outcome by fixed handoff linkage, and delegates existing-run
+  takeover to Package E supervisor/Package C claim fencing.
+- Read: `packages/server-runtime/src/workflow-service.ts`,
+  `packages/server-runtime/src/workflow-supervisor.ts`,
+  `packages/host/src/runtime.ts`, `packages/cli/src/cli.ts`.
+- Tests: server-runtime service/supervisor tests, Host workflow tests, and CLI
+  detach focused tests.
+
+- Status: Verified
+- Date: 2026-07-11T13:30:00+0800
+- Scope: Package E supervisor restart rebuilds non-terminal candidates from
+  durable workflow records and resumes through an already claimed writer;
+  in-memory owner maps are not recovery truth.
+- Read: `packages/server-runtime/src/workflow-supervisor.ts`,
+  `packages/agent-runtime/src/workflows/store.ts`,
+  `packages/host/src/runtime.ts`, and focused tests.
+- Tests: agent-runtime/server-runtime/Host Package E focused and release gates.
+
+- Status: Verified
+- Date: 2026-07-11T13:00:00+0800
+- Scope: `workflow.resume` is now a compatibility adapter that durably enqueues
+  `resume_request` before Host dispatch; applied controls recover from canonical
+  workflow event metadata after mutation/outcome crash windows.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/agent-runtime/src/workflows/control-processor.ts`,
+  `packages/agent-runtime/test/workflow-control.test.ts`,
+  `packages/host/test/workflows.test.ts`.
+- Tests: Package D focused resume/control/recovery tests and release gate
+  recorded in the workflow durable-jobs test map.
+
+- Status: Verified
+- Date: 2026-07-11T10:40:00+0800
+- Scope: Package C workflow resume claims a higher journal generation, rereads
+  canonical state, consumes waiting input through a fenced mutation, and uses
+  an auditable compensating mutation on preparation/start failure.
+- Read: Host resume/runtime paths, workflow store/journal, Host workflow tests.
+- Tests: Host workflow/protocol 79 tests; agent-runtime workflow/doc-store 32
+  tests; CLI workflow slice 13 tests.
+
+- Status: Verified
+- Date: 2026-07-11T00:00:00+0800
+- Scope: Package B workflow resume preserves the original isolated job session
+  and authorization snapshot.
+- Read: Host workflow lookup/resume, TUI resume handle construction, CLI
+  workflow resume integration tests.
+- Tests: host workflow/protocol suites, CLI workflow slice, TUI full suite, and
+  full `npm run release:check`.
 
 - Status: Verified
 - Date: 2026-07-09T21:52:00+0800

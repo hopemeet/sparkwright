@@ -1,6 +1,7 @@
 # Workflow as Job Session — 调用/会话面 review 上下文
 
-状态:三轮 review 完成(2026-07-07),第 7 节问题全部拍板,裁决已回写本稿;
+状态:三轮 review 完成(2026-07-07),第 7 节问题全部拍板;
+2026-07-11 收敛审计完成,新增实施包见第 8 节,不另立 Actor/进程提案;
 inputs schema 已按 D27 候选写入 workflow-runtime-v1.md(待批);
 teacher-force replay 核实为 runtime-v1 设计节已有,无遗留写入动作。
 来源:2026-07-06 对齐讨论(产品抽象 → 奇思妙想盘点 → 调用面方案);
@@ -296,3 +297,919 @@ MVP 后第一件事:建议 chip(3.4,从 v1.5 提前)。
   裸杀 = 非终态可捡,是 v1 唯一"暂停"形态,将来加 SIGINT 优雅处理前
   须先裁决 pause vs kill;
 - inputs schema 升格为 runtime-v1 决策 27(已按候选写入,待批)。
+
+## 8. 2026-07-11 收敛审计与实施包
+
+### 8.1 新基线与范围修正
+
+本节吸收 `background-task-lifecycle.md` P0–P4 封板、P5 扁平化收尾和
+TUI session-scoped approvals 合入后的事实,不是重开第 7 节裁决。
+
+- background task 已形成单一、扁平的出生/晋升/恢复/通知策略。它让路线 2
+  的底座更成熟,但没有自动满足 durable detach、crash consistency、depth
+  control 或 authorization clamp,所以**不因此开放**模型侧 `workflow_start`。
+- P4+ 明确冻结 first-class `suspended`、durable barrier intent、崩溃原子
+  checkpoint/notification/context 事务和 CLI `--detach`;P5 已删除过早的嵌套。
+  本方案不得用 daemon、孤儿 Node 进程或第二套 Actor manager 绕过该裁决。
+- PR #56 已补齐 workflow client 的审批转发、session-scoped exact rules、审批
+  排队和 `/approvals`,但 `RunController` 仍用 controller-global permission mode
+  做自动审批判定,审批队列也未携带不可变执行权限上下文。
+- TUI 启动 workflow 时仍令 `workflowSessionId = this.sessionId`。独立 Host
+  connection 与 workspace workflow record 已落地,但底层 session storage 仍与
+  主对话共用 id;`FileSessionStore` 的 mutation queue 只在单实例内串行,不能
+  防住两个 Host 进程写同一 session。
+- workflow lease 已有随机 token、winner 校验及 token-aware refresh/release;
+  `WorkflowStore.update/restore/appendEvent` 的 mutation path 不验证 token。
+  因而缺口是 **write fencing**,不是“再加一个 lease”。
+
+### 8.2 Package A — TUI 不可变执行与审批上下文
+
+目标:执行事件和审批永远投影到其出生时的 client/session/policy,不依赖当前
+TUI 选择或 controller-global 可变字段。
+
+1. 引入窄类型 `ExecutionContext`/`ExecutionHandle`（最终命名以现有 TUI 词汇
+   为准,不得新增第二套 `ActorRecord`）,至少固定 `client`、`sessionId`、
+   `permissionMode`、`runId`;workflow handle 另带 `workflowRunId`。
+2. `PendingApprovalContext` 必须携带出生执行的 permission mode/handle;
+   `handleApprovalRequested` 不得回落到另一个 active run 或当前 TUI 配置。
+   删除 `activeApprovalPermissionMode` 这条并行真相源。
+3. client close/disconnect 时清理它拥有的 active/queued approvals,不得留下
+   无法回答或误发给下一执行的 prompt。
+4. 在完整的 handle-based event projection 落地前,主 run 活跃期间拒绝
+   `/new`、pick/fork-and-switch 等会改变 controller session 的动作。此阶段
+   退役“active execution 跟随可变 `this.sessionId`”的旧路径。
+
+验收:主 run 与 workflow 使用不同 permission mode 并发时互不污染;运行中修改
+默认 mode 只影响下一次出生;workflow client 断开会清掉 active/queued prompt;
+活跃 run 不能切 session;transcript、approval response 和 trace 不串线。
+
+### 8.3 Package B — TUI workflow job session 隔离
+
+目标:每个新 workflow job 拥有独立 session storage identity;主 session 只作
+控制面/来源归属,不作 job 的 transcript 容器。
+
+1. 新启动时生成独立 job session id,禁止复用 `this.sessionId`;将 parent/control
+   session id 写入现有可扩展 metadata 作为审计关联,不得用它继承 scrollback。
+2. `WorkflowJobHandle` 暴露固定的 job session id 和 Package A 的权限上下文。
+3. resume 使用 record 中已持久化的 workflow job session/授权快照,只能按既有
+   clamp 收紧;禁止裸 resume 静默降级。
+4. 不为此重写跨进程 `FileSessionStore`:独立 identity 本身应退役两个 Host
+   写同一 session 的已知 workflow 路径。
+
+验收:主 run 与多个 workflow job 各有不同 session 目录;workflow 不读取主
+scrollback;runId/workflowRunId/parent session 关联可追踪;list/attach/resume 正常;
+并发执行不再写同一 session 文件。
+
+Package A 与 B 可在同一实现窗口推进,但按 A→B 组织提交,方便确认权限上下文
+先稳定、session identity 再切换。
+
+### 8.4 Package C — S1 workflow mutation fencing（独立评审/独立 PR）
+
+该包归 `doc-store`/workflow store 的 S1 强化,不归新 Actor 内核。先裁决
+同步 `WorkflowStore` 与异步 lease 校验的 API 边界,再改代码;优先考虑只能从
+有效 lease 构造的 lease-bound writer,避免 optional token 继续保留旁路。
+
+硬约束:
+
+- live owner 对 record mutation 和与其成对的 event append 必须提交/绑定 token;
+- token 不是当前 winner、已过期或已被 successor 接管时,mutation 必须失败;
+- inspection/read-only、首次 create 与恢复前的 lease acquisition 保持可用;
+- 同一阶段迁移 Host start/resume/waiting/finalization 的全部 live write owner,
+  并删除无 fencing 的 runtime mutation path,不得只增加一套可选 API;
+- stale owner 失败必须可诊断,但不能覆盖 successor 的状态或释放其 lease。
+
+验收:lease 过期并被 B 接管后,A 的 update/event/release 均不能破坏 B;B 可继续;
+正常 start/resume/waiting/completion 全链路持 token;并发/故障注入测试覆盖旧 worker
+复活写入。若同步/异步边界无法在一个小 PR 内安全收敛,先提交设计裁决,不要把
+store 全面 async 化夹带进 Package A/B。
+
+### 8.5 Package D — typed durable workflow control inbox
+
+目标:补齐 outbox 的反方向,让主 agent/TUI/CLI/未来外部适配器可向一个 durable
+workflow instance 投递受治理的控制命令。D 是路线 2 的第一个 reopen 阶段,
+只有 A/B/C 验收通过后才能开始。
+
+协议必须是 discriminated union,初始命令面只允许由真实用例证明的窄集合,例如:
+
+- `cancel`（终结,不是 pause）;
+- `provide_input`（只投递给匹配的 waiting/human gate）;
+- `approval_response`（绑定 approval id、authorization snapshot 和 source）;
+- `resume_request`（请求调度,不直接篡改 record 状态）。
+
+每条 envelope 至少固定 workflowRunId、commandId/idempotencyKey、expected state 或
+generation、source identity、authorization scope、createdAt/expiry。接收端负责鉴权、
+状态匹配、幂等和上下文投影;producer 不能直接把任意 payload 注入模型上下文。
+durable store 必须有 accepted/applied/rejected/dead-letter（或等价）结果和 cursor,
+crash 后可重放但不能重复执行。D 应复用已有 ActorInbox/notification 的 typed style
+及 session coordinator 的 command queue 经验,但不把生命周期通知和控制命令混成
+一种消息。此阶段退役“只有拥有 live connection 才能控制 workflow”的路径。
+
+验收:重复投递只应用一次;过期、越权、状态不匹配命令可诊断地拒绝;waiting 输入
+在 crash/restart 后仍可消费;cancel 保持终态语义;命令应用与 record/checkpoint/cursor
+满足明确的 crash-consistency 边界;任意 JSON、通用 topic 和同步 RPC 均不存在。
+
+### 8.6 Package E — durable supervisor / worker ownership
+
+目标:把 workflow 的“逻辑实例”和“当前执行它的 worker”分离,使没有 TUI/CLI
+连接的实例也能被发现、领取、接管和恢复。E 复用 C 的 fencing token 与 D 的控制
+inbox,不得另建平行 Actor manager。
+
+1. 在既有 `server-runtime` coordinator 路线中定义 supervisor/worker ownership;
+   Host 保持 run/workflow 执行组装者,server-runtime 负责调度、连接与接管协调。
+2. worker registration/heartbeat/lease generation、claim/release、shutdown drain、
+   orphan detection 和 takeover 必须有单一状态机;workflow record 是 durable truth,
+   in-memory manager 只是投影。
+3. supervisor 只能通过 lease-bound writer 修改实例;旧 worker 恢复时由 C 拒绝写入。
+4. recovery 从 durable checkpoint、wait intent、inbox cursor、outbox cursor 重建;
+   不能靠“进程还在”推断状态。
+5. 一个实例同一时刻只能有一个有效 writer;多个 supervisor/worker 竞争要有确定性
+   winner。优雅升级须停止领取新任务、drain/交接或显式中断,不能静默丢任务。
+
+此阶段退役“TUI/CLI child Host connection 是 workflow 唯一 owner”的路径。
+
+验收:worker 被强杀后 successor 可接管;旧 worker 复活不能写;waiting/inbox/outbox
+cursor 无重复或丢失;supervisor 重启后可由 store 重建;双 supervisor 竞争只有一个
+writer;shutdown/upgrade 行为可观测且有故障注入测试。
+
+### 8.7 Package F — daemon/service 与诚实 detach
+
+目标:提供明确的长期运行进程载体,让 `sparkwright workflow ...` 可提交后退出,
+workflow 仍由外部 worker/supervisor 持续运行。F 是 P4+ 的显式实现,必须在 E 的
+外部 worker 接管与 crash recovery 验收后开放。
+
+- daemon/service 只是部署载体,不成为第二个事实源;状态仍在 workflow/session/
+  inbox/outbox stores,所有写入仍受 lease fencing。
+- CLI `--detach` 只有在任务已被 durable supervisor 接受并返回稳定 handle 后才能
+  成功;启动子进程后立即退出不算 detach 成功。
+- 引入 first-class `suspended` 前必须单独完成 pause vs kill 裁决。F 可以先支持
+  running/waiting/terminal + crash-recoverable ownership,不得拿 Ctrl-C 裸杀冒充 pause。
+- 定义 service start/stop/status、single-instance 或多 worker 策略、日志/健康检查、
+  版本升级、workspace 隔离和安全关机;运维启动不得依赖交互 TTY。
+- 无用户消息通道时,需要决策的 workflow 必须进入 durable waiting 并可由 list/
+  inspect 看见,不能自动扩大权限或猜测答案。
+
+此阶段退役“CLI 退出必然使 live workflow 停止”的路径。
+
+验收:CLI 提交并退出后 workflow 继续;daemon crash/restart 可恢复;service stop 不把
+非终态伪装成 running;无绑定 channel 的 approval/input 会稳定 waiting;升级/双启动/
+孤儿处理均可诊断;CLI foreground 与 detached 共用同一执行/授权/record 路径。
+
+### 8.8 Package G — 主 agent、IM 与受控 workflow 通信
+
+目标:把 D 的 typed commands 和现有 durable notifications 接到多个控制面,形成
+“workflow 请求决策 → 用户/主 agent 收到 → 经授权回复 → workflow 继续”的闭环。
+
+1. TUI/主 agent 是一个 adapter;IM/Web/API 也是 adapter,均不得成为 canonical
+   session/workflow owner。共享协调归 `server-runtime`,平台投递状态归 gateway。
+2. 复用 `session-agent-host-coordinator.md` 的 SourceIdentity、trusted gateway、
+   session link、ApprovalBroker、outbox/cursor 和 idempotency 裁决;IM 的 message
+   权限不自动包含 approve/cancel。
+3. workflow → channel 走 durable notification/outbox;channel → workflow 只能翻译成
+   D 的 typed command。绑定需明确 workspace/session/workflow scope,支持撤销、过期、
+   最小权限和审计。
+4. 多 channel 同时响应同一 approval/input 时用 command id + expected generation
+   裁决唯一 winner,其余返回 already-resolved,不得双重执行。
+5. workflow 间通信默认仍关闭;若出现真实用例,只能把发送方视作受鉴权 source,
+   复用同一 typed command,不得开放任意 peer message 或同步 request/response bus。
+
+此阶段退役“TUI-owned live client 是唯一通知/决策闭环”的路径。
+
+验收:TUI 和绑定 IM 均可收到同一 durable decision request;断线重连按 cursor 补发;
+重复 webhook/多端竞争只应用一次;未绑定或无权限来源被拒绝;无 channel 时保持 waiting;
+审计可串起 source → command → approval/input → resumed episode;gateway 重启不丢消息。
+
+### 8.9 仍然禁止的泛化
+
+- 不新增同名异义的 `packages/agent-runtime/src/actors/` 平行体系;现有
+  `startWorkflowActorEpisodeChain`、ActorNotificationSink/ActorInbox 语汇继续复用。
+- 不做任意 payload/topic 的通用 message bus、同步 RPC、任意 workflow peer
+  messaging,也不让 producer 决定模型上下文注入。
+- 模型侧 `workflow_start` 仍受 D11/D26 三条件约束;D27 inputs 未批准前不落地。
+- nesting 继续受 background-task P5 reopen 条件约束;D–G 不构成恢复嵌套的理由。
+
+### 8.10 实施顺序、reopen gate 与 rule zero
+
+总顺序为 A → B → C → D → E → F → G。不是要求一个 PR 完成七包,而是要求同一
+路线最终闭环;每包验收与裁决落盘后才能打开下一包。若某包暴露基础契约缺失,
+停在该 gate 修正,不得用后续层绕过。
+
+每包必须退役一条旧机制:A 删除全局审批权限真相源和活跃期可变 session 路由;
+B 删除 workflow 复用主 session;C 删除 live runtime 无 fencing 写路径;D 删除
+live-connection-only 控制;E 删除 client child process 唯一 owner;F 删除 CLI 生命周期
+绑定;G 删除 TUI 单通道决策闭环。所有包都回写 project-map/test-map,并保持一份
+workflow record、一个授权模型、一条 typed control plane 和一套 supervisor ownership。
+
+### 8.11 实施进度（2026-07-11）
+
+- Package A: **完成并通过 reopen gate**。`RunController` 删除
+  `activeApprovalPermissionMode`,审批出生时固定 client/session/permission/kind、
+  精确 episode runId 与可用的 workflowRunId。terminal/disconnect/close/shutdown
+  按 client 幂等清理 active/queued prompts。主 run starting/active 时 controller
+  拒绝 new/switch/fork-and-switch,只读 session 操作保持开放。
+- 退役路径:controller-global approval permission truth；active execution 跟随
+  可变 current session 的 session-mutation 路径。
+- 验证:`npm --workspace @sparkwright/tui test`（60 files / 398 tests）;
+  `npm --workspace @sparkwright/tui run typecheck`。
+- 下一 gate:Package B 独立 workflow job session。
+- Package B: **完成并通过 reopen gate**。TUI 与 CLI fresh workflow job 使用
+  `session_workflow_*` 强随机独立 storage identity；Host `run.start` 返回固定
+  run/workflow/session 三元组，校验 job/control session 不相同，并将
+  `controlSessionId` 仅作 WorkflowRunRecord attribution。resume 缺授权或 job
+  session 显式失败，存在时复用原 session。
+- 退役路径:`workflowSessionId = this.sessionId` 及 CLI `--workflow` 复用显式
+  主 session 的路径。
+- 验证:Host client-run/workflow/protocol 91 tests；TUI full 399 tests；CLI
+  workflow slice 13 tests；protocol/host/TUI/CLI typecheck 与受影响 build 全通过；
+  修复一次 test fixture 的 handle 类型回归后，完整 `npm run release:check` 重跑通过。
+- 下一 gate:Package C workflow mutation write fencing API 裁决。
+
+### 8.12 Package C API 裁决与暂停点（2026-07-11）
+
+状态:**设计、代码、focused verification 与完整 release gate 均完成；等待
+Package C commit。A/B 保持通过，不回退。**
+
+#### 已验证事实与 mutation inventory
+
+| 类别                  | 当前调用点                                                          | 当前事实                                                                                              |
+| --------------------- | ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| inspection/read-only  | `FileWorkflowStore.get/list/eventLog`; Host list/find/resume lookup | 不需要 writer，但 `get()` 当前读取构造时缓存，不是跨进程 fresh read                                   |
+| initial create        | `prepareHostRunEnvironment()` fresh workflow branch                 | Host 先 acquire lease，再调用无 token 的 `create()`；create 同步写 record 后另 append `created` event |
+| acquire-before-resume | `resumeWorkflowRunInner()`                                          | 先从 store 读 record，再 acquire；claim 后没有 authoritative reread/revision check                    |
+| resume prepare/input  | `consumeWorkflowActorWaitingInput()`                                | `update()` 后独立 `appendEvent(type:"input")`; prepare/start failure用 `restore()` 回滚               |
+| live projection       | `onStateSnapshot` → `persistWorkflowProjectionSnapshot()`           | refresh 结果被忽略，随后无 token `update()`                                                           |
+| episode start         | `startWorkflowActorEpisodeChain.registerActiveRun()`                | 写 activeRunId/runIds/evidence/episode metadata，无 fencing                                           |
+| episode usage         | `recordWorkflowActorEpisodeUsage()`                                 | 从可能陈旧的 `get()` 读后 update                                                                      |
+| waiting/terminal      | projection snapshot + `finalizeWorkflowRecordAfterRun()`            | waiting、cancel、failure、completion 均走无 token update                                              |
+| supervisor failure    | `finalizeWorkflowRecordAfterSupervisorError()`                      | 无 token update 后通知                                                                                |
+| rollback/recovery     | prepare catch、resume start failure                                 | 无 token restore，可覆盖 successor 完整 record                                                        |
+| terminal cleanup      | episode-chain finally/finalizer                                     | token-aware release，不会删除 successor token；这一项当前正确                                         |
+| maintenance/tests     | agent-runtime/host workflow fixtures                                | 直接 update/restore/appendEvent，说明当前公共 API 很容易成为 runtime 旁路                             |
+
+`packages/agent-runtime/src/doc-store/index.ts` 的 token lease已确认具有随机 token、
+acquire winner validation、token-aware refresh/release。它没有 mutation CAS、
+monotonic fencing generation 或跨 record/event transaction。TTL 为 Host 的 30 分钟，
+后台每半 TTL refresh；refresh failure 当前不会停止 owner，也不会阻止后续写入。
+
+#### 评估过的方案
+
+1. `update(id, patch, token?)`:拒绝。optional token 永久保留旁路。
+2. lease-bound writer + mutation 前 `refresh()`:拒绝作为最终正确性方案。进程可在
+   refresh 成功后冻结，TTL 过期并由 successor 接管，再恢复执行同步 write；旧 owner
+   仍能覆盖新状态。
+3. lease-bound writer + 临时 lock file/directory:暂不接受。需要先解决 lock holder
+   crash、stale lock 回收、Windows rename/unlink、旧 owner 恢复和 lock/lease 原子验证；
+   当前 doc-store 没有可复用且已证明的 primitive。把它夹进 WorkflowStore 会重新发明
+   一套未审查的文件锁。
+4. **推荐:monotonic fencing generation + revisioned append-only mutation journal。**
+   当前 `<workflowRunId>.lease` 是包含 per-token JSON entry 的目录；release/expiry 会
+   删除 token entry，因此 lease 只能回答临时 owner 存活性，不能保存跨 takeover 的
+   monotonic generation。现有 token lease winner 必须通过 canonical journal claim entry
+   分配并持久化下一 generation；claim entry 持久化成功是 ownership takeover 的线性化点，
+   journal 是 generation/history 的唯一 sequencer。writer 固定
+   `{workflowRunId, token, generation}`。每次 mutation 要求 expected record revision，
+   以 exclusive-create 发布一条同时包含 next record snapshot/patch 与 canonical event 的
+   revision entry。successor 使用更高 generation；旧 generation 后来产生的 physical entry
+   不得成为 canonical。`.json` snapshot 与 `.events.jsonl` 只是可重建投影，读取时必须从
+   canonical journal 校验 generation/revision，不能信任 stale snapshot pointer。
+
+#### generation、revision 与 replay 强制契约
+
+exclusive-create + expected revision 是写入时 CAS 主防线，但 generation-aware replay
+不是可选加固，而是强制 safety backstop。文件系统不能单独提供“验证当前最大 generation
+
+- create entry”的原子组合；损坏恢复、迁移、人工残留或未来 physical-entry allocation
+  都可能留下 stale physical entry。store 必须明确区分：
+
+* `physicalSequence` / `entryId`:存储层位置，允许空洞、损坏、隔离和 non-canonical entry；
+* `recordRevision`:只由成功应用的 canonical mutation 以 `N -> N + 1` 推进；
+* `generation`:只有合法 claim entry 才能单调提升，决定谁有权推进 record revision。
+
+writer mutation 必须：
+
+1. fresh read canonical head，先验证固定 token/generation，再验证
+   `expectedRecordRevision`；
+2. 只尝试发布 `expectedRecordRevision + 1` 对应的 canonical mutation，不得在
+   `EEXIST` 后扫描并重试更高 physical slot；
+3. 冲突后 fresh reread 并抛 typed fencing/stale-write error，绝不 last-write-wins；
+4. 发布后确认 entry 已成为 canonical；即使 stale entry 曾物理落盘，也不得向 stale
+   writer 返回成功。
+
+replay 不能简单只保留最大 generation，因为 takeover 前的旧 generation 历史仍然合法。
+它必须执行 generation state machine：合法历史是 `G1 mutations -> claim G2 -> G2
+mutations -> claim G3 -> G3 mutations`；claim `G2` 持久化后出现的 `G1` mutation、没有
+合法 claim transition 的更高 generation entry，以及 revision 不连续的 mutation 都必须
+隔离。隔离 entry 不得进入 record、canonical event history、cursor、successor 判断或
+任何用户可见投影。A 在 B claim 持久化前完成的合法 mutation 在线性顺序上先于 takeover；
+B claim 持久化后的 A mutation 必须被写入时拒绝或在 replay 中隔离，且 A 必须得到明确
+失败。
+
+推荐 API 方向:
+
+```ts
+interface WorkflowLeaseBoundWriter {
+  readonly workflowRunId: WorkflowRunId;
+  readonly token: string;
+  readonly generation: number;
+  readFresh(): Promise<WorkflowRunRecord | undefined>;
+  create(input: CreateWorkflowRunRecordInput): Promise<WorkflowRunRecord>;
+  mutate(input: {
+    expectedRevision: number;
+    patch: WorkflowRunRecordPatch;
+    event: WorkflowStoreEventInput;
+  }): Promise<WorkflowRunRecord>;
+  compensate(input: {
+    expectedRevision: number;
+    patch: WorkflowRunRecordPatch;
+    event: WorkflowStoreEventInput;
+  }): Promise<WorkflowRunRecord>;
+}
+```
+
+公开 `WorkflowStore.update/restore/appendEvent` 从 runtime surface 删除；inspection 保留，
+maintenance/recovery 也必须显式 claim writer，不能保留同名无 fencing API。fresh create
+属于 live mutation，必须由 writer 完成；“initial create 保持可用”只表示 claim 前无需
+已有 record，不表示 create 可绕过 writer。rollback/recovery 不再覆盖旧 record 或暴露
+通用 `restore()`；它写入一条 fenced compensating mutation。补偿事实保留在 canonical
+journal 中供审计，当前用户视图可以按需隐藏内部细节，但 durable history 不得抹除。
+
+v1 record/event 采用 lazy migration，不要求离线重写工具。第一次 fenced claim 建立
+revision-0 baseline/migration marker；该过程必须幂等、crash-safe，并在并发 claim 下只有
+一个 winner。旧 event log 的来源、摘要或迁移关联必须可诊断，不能静默丢弃已有审计事实。
+
+#### 阻塞原因
+
+这是**未裁决/未实现的基础存储契约问题**，不是测试环境或外部依赖问题。现有 S1
+primitive 无法证明 required stale-owner failure；直接迁移 Host 到仅做 refresh 的 handle
+会让 API 看似安全但仍违反故障验收 2–9。revision/generation journal 会改变 durable
+record/event 格式、恢复算法和 migration 语义，超出“小范围同步 API 加 token”的安全
+边界，必须作为 C 的独立 store design/implementation slice 评审。
+
+#### 下一步与 reopen 条件
+
+1. 在 agent-runtime/doc-store 层裁决 generation claim 与 exclusive revision entry 的
+   crash/recovery 原子发布格式，包括 torn/corrupt physical entry 隔离和 v1 record/event
+   幂等 migration。
+2. 先实现 deterministic store-level fault tests:refresh 后冻结、TTL 过期、B claim、
+   A 恢复写；record/event/compensation/release 全矩阵。额外覆盖旧 expected revision
+   `EEXIST -> typed failure`、强制注入 frozen-A fresh physical slot + stale generation 后
+   replay 隔离、隔离 entry 不推进 record revision/event projection、canonical entry
+   publication 中途 crash，以及 snapshot/event projection 半完成后从 journal 重建。
+3. writer primitive 通过后迁移 Host 全部上表 live/rollback/finalization callsites，并
+   删除公共无 fencing mutation API。
+4. agent-runtime + Host focused tests/typecheck/build 和 release gate 通过后，才能打开 D。
+
+未满足验收:stale update/event/restore 拒绝；双 writer deterministic winner；B 在 A
+复活后继续 waiting/resume/completion；record/event canonical consistency；Host 全 live
+writer 无旁路。补偿记录保留 durable history 的产品语义已于 2026-07-11 裁决接受。
+**Package D–G 保持关闭。A/B 必须先形成独立本地 commit，focused/release gate
+保持通过，且工作树清洁。满足这些条件后，可以在同一
+`feat/workflow-job-session` 分支 reopen Package C；不创建新分支。Package C 代码
+不得 amend 或混入 A/B commit，且 C 仍必须形成独立、可审查的 commit。**
+
+#### 实施结果（2026-07-11）
+
+- `FileWorkflowStore` 现以 immutable canonical journal 作为 generation/history
+  sequencer；claim 与 mutation 共用 physical sequence，mutation 同 entry 保存 record
+  与 event，snapshot/event log 仅作可重建投影。
+- runtime mutation 只能经 `WorkflowLeaseBoundWriter`；旧 public
+  `create/update/restore/appendEvent/acquireLease` 已删除。Host fresh/resume/waiting/
+  projection/usage/finalization/compensation 全部迁移。
+- generation-aware replay 隔离 stale、discontinuous、corrupt/torn entries；隔离项
+  不推进 revision、不进入 record/event projection。legacy v1 首次 claim 建立
+  revision-0 baseline，重复/并发 migration 单 winner。
+- focused evidence: agent-runtime 32 tests，Host workflow/protocol 79 tests，CLI
+  workflow slice 13 tests；相关 typecheck/build 均通过。首次 release gate 仅发现
+  7 个本次文件需 Prettier，格式化后完整 `npm run release:check` 重跑通过；最终
+  commit hash 在 Package C commit 后补记。
+- commit 前源码复核额外封闭 writer/record/event identity mismatch，新增
+  fail-closed test 后 focused gate 与完整 `npm run release:check` 均重跑通过。
+
+### 8.13 Package D durable control inbox 裁决（2026-07-11）
+
+状态：**设计 gate 与实现 gate 完成；Package D 独立 commit/release gate 证据见本节末尾。**
+
+#### Ownership 与非目标
+
+- `agent-runtime`/doc-store 拥有 typed durable command envelope、接受结果、终态
+  outcome、cursor 与 replay；它不拥有 transport identity verification 或调度。
+- `server-runtime` 拥有 command dispatch/consumer coordination；Host adapter 仍拥有
+  workflow episode、approval/input projection 和 Package C writer 组装。
+- gateway/CLI/TUI/API 只把已经认证的来源翻译成 command input，不能直接写
+  `WorkflowRunRecord`，也不能决定模型上下文注入。
+- lifecycle `ActorNotificationSink`/`ActorInbox` 只作类型风格和 durable-file 经验复用；
+  control inbox 是反向命令面，不加入 notification union，不新增 generic topic、任意
+  JSON payload、同步 RPC 或 workflow peer messaging。
+
+#### Typed envelope
+
+命令是封闭 discriminated union：
+
+```ts
+type WorkflowControlCommand =
+  | { kind: "cancel"; reason?: string }
+  | { kind: "provide_input"; waitId: string; value: string }
+  | {
+      kind: "approval_response";
+      approvalId: string;
+      decision: "approved" | "denied";
+      message?: string;
+    }
+  | { kind: "resume_request"; waitId?: string };
+
+interface WorkflowControlCommandEnvelope {
+  schemaVersion: "sparkwright-workflow-control.v1";
+  workflowRunId: WorkflowRunId;
+  commandId: string;
+  idempotencyKey: string;
+  source: {
+    kind: "tui" | "cli" | "sdk" | "api" | "im" | "system";
+    principalId: string;
+    authenticatedBy: string;
+    connectionId?: string;
+  };
+  authorization: {
+    workspaceId: string;
+    sessionId?: string;
+    workflowRunId: WorkflowRunId;
+    allowedCommandKinds: WorkflowControlCommand["kind"][];
+  };
+  expected: { generation: number; status?: WorkflowRunStatus; waitId?: string };
+  command: WorkflowControlCommand;
+  createdAt: string;
+  expiresAt: string;
+}
+```
+
+`system` source 只能由 Host/server-runtime 内部 mint；外部 adapter 不能自称 system。
+`idempotencyKey` 的 scope 固定为
+`workspace + workflowRunId + source(kind/principalId/authenticatedBy) + key`。同 scope
+同 key 同 payload 返回原 accepted/outcome；同 key 不同 payload 拒绝
+`idempotency_conflict`。
+
+#### Durable layout 与状态机
+
+每个 workflow 使用独立窄目录，不能复用普通 JSONL 作为 transaction journal：
+
+```text
+<workflowRunId>.control/
+  commands/<commandId>.json       # immutable accepted envelope, exclusive create
+  outcomes/<commandId>.json       # immutable terminal outcome, exclusive create
+  cursor.json                     # 可重建投影，不是 apply truth
+```
+
+outcome 为 `applied | rejected | dead_letter`。`accepted` 由 command entry 的存在表达，
+不是可变状态。排序使用 accepted entry 中的 createdAt + commandId 稳定 tie-break；cursor
+只跳过已有 terminal outcome 的前缀，不能让一个 gap 隐藏后续命令。corrupt/torn entry
+隔离并形成可诊断 dead-letter candidate；expiry、鉴权、expected generation/state/wait
+不匹配形成 immutable rejected outcome。
+
+#### Apply 与 crash consistency
+
+1. consumer 读取 accepted 且无 terminal outcome 的 command；
+2. 重新验证 source authentication projection、authorization scope、expiry；
+3. fresh read Package C canonical head，验证 generation/status/wait；
+4. 需要改变 workflow durable state 的命令用 lease-bound writer 写一次 mutation，event
+   metadata 固定 `controlCommandId`、idempotency scope/hash 与 source audit；
+5. 再 exclusive-create outcome，最后更新可重建 cursor。
+
+workflow journal event 是 record mutation 的 apply truth。若进程在第 4 步后、第 5 步前
+崩溃，replay 先按 `controlCommandId` 查 canonical event：存在则补写 applied outcome，
+不得再次 mutation。若 outcome 已存在而 projection/cursor 未完成，只重建投影。
+
+`cancel` 写 terminal cancelled mutation；不是 pause。`provide_input` 只匹配 durable
+`waiting/input` 的 waitId，值由 Host receiver policy 投影，producer 不提供 context role。
+`resume_request` 只形成调度请求/结果，不直接把 record 改为 running；实际 episode 仍由
+Host resume path claim writer 后启动。`approval_response` 只匹配 durable
+`waiting/approval` 的 approvalId 和 authorization snapshot；当前 live-only
+`ApprovalBroker` pending map 不是 durable truth，不能作为 crash-safe apply target。D 实现
+必须先将 workflow approval wait 的最小 request/decision linkage 持久化到 workflow
+record/journal；否则该命令只能明确 rejected，不能报告 applied。
+
+#### Reopen/验收 gate
+
+- deterministic tests 覆盖 duplicate accepted、payload conflict、expiry、越权、generation/
+  state/wait mismatch、双 consumer、mutation 后 outcome 前 crash、outcome 后 cursor 前
+  crash、corrupt entry、restart replay 和多端单 winner；不得主要依赖 sleep。
+- Host/server-runtime 接入后，断开 producer connection 不删除 accepted command；waiting
+  workflow 可在后来 consumer/connection 中处理。
+- 旧 `workflow.resume` 可暂作 adapter，但必须先 durable enqueue，再由同一 consumer
+  路径 apply/dispatch；不能保留直接 consume wait + start 的平行控制路径。
+- approval durable linkage 未完成前 D 不得宣称 approval_response gate 通过；Package E
+  与后续 D–G 均保持关闭直到上述 focused/full release、maps/test-map 和独立 commit 完成。
+
+#### 实现结果
+
+- `FileWorkflowControlInbox` 实现 immutable command/outcome、exclusive create、
+  scoped idempotency、可重建 cursor 和 corrupt entry 隔离。
+- `WorkflowControlCommandProcessor` 通过 Package C writer 应用 record/event，使用
+  canonical `controlCommandId` 恢复 mutation 已成功而 outcome 未发布的崩溃窗口。
+- Host/SDK/protocol/TUI 接入 `workflow.control`；`workflow.resume` 先 enqueue 再由同一
+  consumer dispatch；远端 owner busy 时 command 保持 durable accepted。
+- `provide_input` 只持久化 typed value/source，由 Host receiver 在 resume 边界投影并清除
+  staging marker；`approval_response` 要求 durable approval wait 与 authorization snapshot。
+- server-runtime 只提供同 command 的 in-flight dispatch 合并，不成为 workflow record、
+  authorization 或 lifecycle truth。
+- focused gate 与完整 `npm run release:check` 已通过；D 独立 commit 后可 reopen Package E
+  设计 gate，F/G 仍保持关闭。
+
+### 8.14 Package E durable supervisor / worker ownership 裁决（2026-07-11）
+
+状态：**设计与实现 gate 完成；E 独立 commit/release 证据见本节末尾，Package F 保持关闭。**
+
+#### 唯一 ownership truth
+
+- Package C canonical journal 的 `claim` entry 是 workflow ownership 唯一线性化点；
+  generation、token 与后续 mutation linkage 决定当前 writer。
+- `<workflowRunId>.lease/<token>.json` 只回答临时 liveness/互斥，不能成为 assignment、
+  generation 或 takeover history truth。
+- worker registry 只回答 worker 是否 registered/active/draining/expired/stopped；它是
+  durable discovery/liveness state，不分配 workflow，也不能授权写 record。
+- 不新增 workflow assignment record、ActorRecord、ProcessManager、SupervisorManager 或
+  第二套 ownership 状态机。supervisor 扫描现有非终态 `WorkflowRunRecord`，worker 通过
+  `FileWorkflowStore.acquireWriter()` 竞争；只有 claim canonical 后才拥有执行权。
+
+#### Ownership 与 API 边界
+
+- `agent-runtime` 拥有 file-backed worker registry 的 portable record/lease primitive，
+  以及从 workflow store 重建可领取候选的 read-only inventory；不启动 Host 或进程。
+- `server-runtime` 拥有 `WorkflowSupervisor` 协调循环：register/heartbeat/drain、扫描候选、
+  bounded claim、调用注入的 Host worker adapter、release/retry 和 shutdown report。
+- Host 保持 workflow definition/authorization/model/tools/run episode 组装，并接收已经
+  claim 成功的 `WorkflowLeaseBoundWriter`；server-runtime 不直接修改 workflow record。
+- F 才提供 daemon/service/CLI detach 载体。E 只交付可由 foreground host/service embedder
+  驱动的 durable coordinator，不启动 orphan child process，也不声称 detach。
+
+建议窄接口：
+
+```ts
+interface WorkflowWorkerRegistration {
+  workerId: string;
+  instanceId: string;
+  workspaceId: string;
+  state: "active" | "draining" | "stopped";
+  registeredAt: string;
+  heartbeatAt: string;
+  expiresAt: string;
+}
+
+interface WorkflowSupervisorWorkerAdapter {
+  runClaimed(input: {
+    record: WorkflowRunRecord;
+    writer: WorkflowLeaseBoundWriter;
+    signal: AbortSignal;
+  }): Promise<"waiting" | "terminal" | "interrupted">;
+}
+```
+
+registry publication 必须按 worker identity exclusive-create；heartbeat 只能由匹配的
+registration token 更新。drain 先 durable 标记 `draining`，停止新 claim，再等待 active
+claims；deadline 到达只能返回明确 interrupted/remaining claims，不能把 workflow 写成
+completed 或假装 pause。stopped/expired worker 的 registry entry 不删除审计身份；新的
+instance 使用新 instanceId/token。
+
+#### Recovery 与 takeover
+
+1. supervisor 启动时从 registry、workflow journal、D inbox/outbox 重建，不依赖旧进程内
+   active map；terminal workflow 不进入候选。
+2. running workflow 只有在 lease TTL 仍有效时不可领取；waiting workflow 默认不启动
+   episode，但其 D inbox 有 pending resume/control 时可由 control consumer 处理。
+3. worker SIGKILL 后 heartbeat 与 workflow lease 分别过期；successor 首先成功发布更高
+   generation claim，再调用 Host adapter。旧 worker 恢复后所有 mutate/compensate/release
+   均由 Package C fencing 拒绝或不影响 successor。
+4. 同一 supervisor 内 command/notification cursor 可重建；E 不复制 D command outcome、
+   ActorNotification outbox 或 workflow journal。
+5. 双 supervisor/worker 对同 workflow 竞争时允许 loser 观察 busy；不得换 physical slot
+   伪造第二 winner，也不得在未 claim 时调用 Host execution adapter。
+
+#### E 故障与完成 gate
+
+- deterministic clock/barrier tests：register/heartbeat/expiry、drain 禁止新 claim、双 worker
+  单 winner、SIGKILL/TTL/successor takeover、旧 worker revival fenced、旧 release 不影响
+  successor、supervisor restart inventory rebuild、waiting/control cursor 不丢不重、adapter
+  crash 后 lease expiry recovery、shutdown report 含 remaining claims。
+- Host integration 必须证明 claimed writer 注入现有 episode 路径且 authorization snapshot、
+  workflow hooks、tool policy、access clamp 均不被绕过。
+- 退役“创建 workflow 的 TUI/CLI child Host connection 是唯一 owner”的内部假设；保留
+  foreground connection 作为一种 worker adapter，而不是 durable truth。
+- focused tests、fault injection、affected typecheck/build、完整 `npm run release:check`、
+  maps/test-map 和独立 E commit 全通过后，才可 reopen Package F。
+
+#### 实现结果
+
+- agent-runtime `FileWorkflowWorkerRegistry` 持久化 per-instance registration、heartbeat、
+  expiry、draining/stopped；过期或 draining instance 不能重新 heartbeat 成 active。
+- server-runtime `WorkflowSupervisor` 从 workflow store 重建候选，过滤 terminal/default
+  waiting，竞争现有 Package C writer，只把 claim winner 交给注入的 execution adapter。
+- drain durable 标记 worker 并停止新 claim，报告 remaining workflow；abort 只是 interruption，
+  不写 pause/completed。双 supervisor 竞争只调用一次 adapter。
+- Host `resumeClaimedWorkflowRun()` 接受 identity-matched writer，复用现有 pinned definition、
+  authorization snapshot、access clamp、hooks/tools 与 episode/finalization 路径，不二次 claim。
+- 本实现没有 service/daemon、CLI detach 或 orphan child；这些仍属于关闭的 Package F。
+- focused fault gate 与完整 `npm run release:check` 已通过；E 独立 commit 后可 reopen
+  Package F 设计 gate，Package G 仍保持关闭。
+
+### 8.15 Package F foreground service 与 honest detach 裁决（2026-07-11）
+
+状态：**设计 gate 完成；实现、故障注入与 release gate 尚未完成，Package G 保持关闭。**
+
+#### 已核实的现状与边界
+
+- `WorkflowSupervisor` 已经拥有 inventory rebuild、Package C claim、heartbeat、drain 和
+  claimed Host adapter 调用，但没有 process launcher，也不是 daemon。
+- CLI 当前为每次 run spawn stdio Host；`serveConnection()` 在连接关闭时调用
+  `HostRuntime.cleanup()` 并取消 active run。因此“通过 WS/stdio `run.start` 后立即断连”不是
+  detach，不能作为 F 实现。
+- Package C journal 仍是 workflow ownership/mutation truth，Package D inbox 仍是 control
+  truth，Package E worker registry 仍只回答 worker liveness。F 不新增 workflow record、
+  assignment record、process substrate 或 authorization truth。
+
+#### Service carrier 与命令面
+
+F 提供显式前台 service carrier；推荐产品面为：
+
+```text
+sparkwright workflow service run [--workspace ...]
+sparkwright workflow service status [--workspace ...]
+sparkwright workflow service drain [--workspace ...]
+sparkwright workflow start <name> <goal...> --detach
+```
+
+`service run` 保持前台、输出结构化启动/健康日志并响应 SIGTERM/SIGINT 做 bounded drain。
+它可以由 systemd、launchd、容器或用户自己的进程管理器托管，但 SparkWright 不 double-fork、
+不 `unref()` orphan child，也不把 pid 文件存在称为 daemon。F 不提供隐式后台
+`service start`；没有健康 service 时 `--detach` fail closed，并提示先运行/托管
+`service run`。
+
+每个 workspace 使用独立 service root：
+
+```text
+<workspace>/.sparkwright/workflow-service/
+  instance.json                 # 当前 carrier readiness 投影，可重建/过期
+  handoffs/<handoffId>.json     # immutable durable request，exclusive create
+  outcomes/<handoffId>.json     # immutable accepted/rejected outcome
+  logs/service.jsonl            # bounded/rotatable operational diagnostics
+```
+
+`instance.json` 不是 ownership truth；它含 workspace identity、instance id、pid、startedAt、
+heartbeat/expiresAt、state (`starting|ready|draining|stopped`) 和版本。status 必须同时验证
+workspace、fresh heartbeat 与 instance identity，不能仅用 `kill(pid, 0)`。stale pid/instance
+投影允许 successor 以原子发布替换，但保留诊断；活跃不同 instance 必须阻止第二 carrier。
+
+#### Durable accept/handoff
+
+`--detach` 只允许 workflow fresh start，且必须先把完整、窄类型的 start intent durable
+publish 到 handoff store。intent 固定 workflow asset/name、goal/input、独立 job session id、
+control session attribution、model/access/background/trace/target/confidential snapshot、source
+identity、workspace id、idempotency key、createdAt/expiresAt；producer 不能传任意 JSON 执行器、
+tool policy override 或模型上下文角色。
+
+service 执行顺序：
+
+1. exclusive claim/accept handoff，验证 workspace、expiry、service state 与 authorization clamp；
+2. 通过现有 Host workflow start/claimed execution assembly 创建 durable
+   `WorkflowRunRecord`，不得绕过 workflow hooks、tool policy、approval 或 access mode；
+3. durable publish outcome，固定 workflowRunId/job session id；
+4. CLI 只有看到 accepted outcome 后才返回成功。CLI 退出、transport 丢失或 producer 崩溃
+   不删除 handoff，也不触发 `HostRuntime.cleanup()` 的 client-owned cancel；
+5. service crash 在 record 创建后/outcome 前，通过 handoff id 在 canonical workflow
+   metadata/journal 恢复 outcome，不能重复创建 workflow。
+
+handoff accepted 只表示 durable service ownership 已建立，不表示 workflow completed。没有
+service、handoff 未落盘、超时或被拒绝时 CLI 必须非零退出，不能打印 detached success。
+waiting workflow 在无 channel 时保持 durable waiting；cancel 仍走 Package D typed command，
+SIGTERM/drain 只报告 interrupted/remaining，不伪装 pause。
+
+#### Recovery、健康与隔离
+
+- service startup 从 handoff store、workflow journal、D inbox 和 E registry 重建，不依赖
+  内存 active map；terminal handoff/workflow 不重复执行。
+- readiness 仅在 worker registration 成功、Host adapter 可构造、handoff store 可写且首轮
+  recovery scan 完成后发布。health 区分 `starting|ready|draining|degraded|stopped`。
+- 同 workspace 双 service 只有一个 instance publication winner；不同 workspace 的 service
+  root、worker registry、workflow store、sessions 与 logs 必须隔离。
+- carrier loop 使用 bounded concurrency、controllable clock 和 abortable poll trigger；测试不以
+  sleep 为主要同步。日志不得记录 goal/input/confidential 内容或 auth token。
+- upgrade/drain 先停止接受新 handoff，再 drain supervisor；deadline 后明确返回 remaining，
+  successor 只能在旧 worker/service lease 过期后通过 Package C/E takeover。
+
+#### F 故障与完成 gate
+
+- deterministic tests：双 carrier 单 winner、stale pid/instance recovery、producer crash after
+  publish、service crash before/after accept、record-created/outcome-missing recovery、duplicate
+  handoff idempotency、expired/unauthorized request、SIGKILL + successor takeover、old carrier
+  revival fenced、drain 拒绝新 handoff、workspace isolation、bounded concurrency、waiting without
+  channel、projection/log write failure。
+- CLI integration 必须证明 `workflow start --detach` 在 durable accepted 后退出且 workflow
+  继续；service unavailable/accept timeout 明确失败；普通前台 workflow 行为不回归。
+- focused agent-runtime/server-runtime/Host/CLI tests、typecheck/build、完整
+  `npm run release:check`、maps/test-map、旧 client-owned lifecycle 假设退役和独立 F commit
+  全通过后才可 reopen Package G。
+
+#### 实现结果
+
+- `FileWorkflowServiceStore` 持久化 workspace-scoped service instance、immutable
+  handoff/outcome 与 instance-targeted drain request；live/readiness 同时校验 workspace、state、
+  heartbeat expiry 和 instance identity，不把 pid 存在当 ownership。
+- `WorkflowServiceCarrier` 只消费窄类型 handoff，expired/wrong-workspace 明确拒绝；旧 carrier
+  expiry/revival 被 instance fencing 跳过且不能替 successor 发布 rejection。crash 后先按
+  handoff metadata recovery，再决定是否启动。
+- Host `startDetachedWorkflowRun()` 仅供 service adapter 使用，不加入 Host protocol；handoff
+  派生固定 workflowRunId，canonical journal exclusive create 是重复/frozen carrier fresh-start
+  的最终 idempotency backstop。
+- CLI 新增 `workflow service run|status|drain` 和 `workflow start ... --detach`。`service run`
+  保持前台、维护 service/worker heartbeat、消费 handoff，并嵌入 Package E
+  `WorkflowSupervisor` 接管既有 durable workflow；SIGINT/SIGTERM/drain 只报告 interruption。
+- `--detach` 仅在 service ready 且 durable accepted outcome 已发布后返回成功；service 缺失、
+  stale 或 accept timeout 非零退出。普通 stdio foreground workflow 路径不变。
+- focused gate: server-runtime 18 tests，Host workflow/protocol 82 tests，CLI workflow slice
+  15 tests；server-runtime/Host/CLI typecheck/build 均通过。完整 release gate 待本节最终
+  verification 后记录。首次完整 gate 只发现本次 CLI 两处 lint（unused handler env、
+  prefer-const）；修复后 `npm run release:check` 从头重跑并通过全部 workspace tests、
+  regression matrix 与两种 install smoke。
+
+### 8.16 Package G 多端 durable 决策闭环裁决（2026-07-11）
+
+状态：**设计 gate 完成；实现、故障注入与 release gate 尚未完成。**
+
+#### 已核实的现状与唯一 truth
+
+- `FileWorkflowNotificationOutbox` 已持久化 workflow actor notification，但 Host 当前
+  `deliveredWorkflowNotifications` 只是 per-process 去重；它不是多端 cursor。
+- Package D `FileWorkflowControlInbox` + canonical workflow event 已经是 command accept/apply/
+  idempotency truth。G adapter 只能 mint scoped D command，不能直接写 WorkflowRunRecord。
+- IM gateway 当前 approval button 依赖 `approvalId -> active run` 和 live bridge pending map；该
+  路径继续服务普通 foreground run，但不能冒充 durable workflow approval truth。
+- server-runtime 是共享 delivery/competition coordinator；gateway 只拥有 transport cursor、
+  raw authenticated identity 与平台 message id。TUI/CLI/主 Agent/IM/Web/API 都是 adapter。
+
+#### Durable channel binding
+
+每个 binding 是 immutable grant + revoke audit，至少固定：
+
+```ts
+interface WorkflowChannelBinding {
+  bindingId: string;
+  workspaceId: string;
+  workflowRunId: string;
+  sessionId?: string;
+  source: {
+    kind: "tui" | "cli" | "agent" | "im" | "web" | "api";
+    principalId: string;
+    authenticatedBy: string;
+    channelId: string;
+  };
+  allowedCommandKinds: Array<
+    "cancel" | "provide_input" | "approval_response" | "resume_request"
+  >;
+  createdAt: string;
+  expiresAt: string;
+  revokedAt?: string;
+}
+```
+
+binding publication/revoke 由 agent-runtime durable store 持有，server-runtime 只协调读取与
+delivery。session/workflow/source/channel/command-kind/expiry/revoke 全部匹配才可 mint D
+authorization envelope。收到 message 权限不自动包含 approve/cancel；approval_response 还
+必须匹配 record 中 durable approvalId/authorization snapshot。外部 adapter 不能自称
+`system`，不能扩大 binding，不能决定 model context role。
+
+#### Notification delivery 与 cursor
+
+每个 `bindingId + notification entry id` 使用 immutable delivery receipt：
+
+```text
+<workflowRunId>.channels/
+  bindings/<bindingId>.json
+  revocations/<bindingId>.json
+  deliveries/<bindingId>/<notificationId>.json
+  cursors/<bindingId>.json              # 可重建投影
+```
+
+outbox notification 仍是消息事实；delivery receipt 只记录 adapter 的
+`delivered|failed|expired|revoked` transport outcome。cursor 可从 receipt 重建，gap 不能隐藏
+后续 notification。adapter disconnect 不删除 notification/binding；reconnect 从 durable
+cursor 补发。delivery 至少一次，平台 message id/delivery key 保证 duplicate webhook 或
+send retry 不产生第二 D command。
+
+#### 决策闭环与竞争
+
+```text
+workflow durable notification
+  -> server-runtime binding/cursor delivery
+  -> adapter authenticated response
+  -> binding authorization clamp
+  -> Package D typed command (scoped idempotency)
+  -> one canonical apply/outcome
+  -> Package E/F scheduling
+  -> workflow resume
+```
+
+多端可同时看到 notification，但 response 使用
+`workflowRunId + waitId/approvalId + expected generation + command kind`；Package D exclusive
+outcome/canonical event 决定唯一 winner。loser 得到 already-resolved/state-mismatch，不静默
+成功。无 binding/无在线 channel 时 workflow 保持 waiting；workflow peer messaging 默认关闭，
+不新增 generic topic/payload bus、任意 JSON command 或 request/response RPC。
+
+#### Adapter 边界与退役
+
+- TUI/CLI live actions 改为 binding-aware D command adapter；可以继续显示即时反馈，但
+  connection 不是 durable owner。
+- IM/Web/API 验证原始平台 identity 后映射 binding；gateway store 只保留 transport dedupe/
+  cursor，不保存 workflow authorization truth，也不调用 live `resolveApproval()` 处理 durable
+  workflow approval。
+- 主 Agent 只接收 receiver-policy 投影后的 notification；模型不能调用 workflow_start、
+  nested spawn 或选择任意 peer。其响应同样经 binding + D command。
+- 退役 Host per-process workflow delivery set 作为唯一去重、TUI live client 唯一闭环、
+  IM active-run approval map 处理 durable workflow approval 的假设。
+
+#### G 故障与完成 gate
+
+- deterministic tests：binding expiry/revoke/scope、消息权限不含 approve/cancel、双端同 wait
+  单 winner、duplicate webhook、send 后 receipt 前 crash、receipt 后 cursor 前 crash、disconnect/
+  reconnect gap replay、corrupt receipt/cursor、adapter restart、无 channel waiting、late revoked
+  response、generation takeover、workflow peer messaging 拒绝。
+- TUI/CLI/IM 至少各一条真实 adapter integration；Web/API 可共享 SDK adapter contract，但必须
+  验证 source authentication 与 idempotency。producer 不能直接 mutation 或控制 context role。
+- agent-runtime/server-runtime/Host/protocol/SDK/TUI/CLI/IM focused tests、typecheck/build、完整
+  `npm run release:check`、maps/test-map、旧机制退役与独立 G commit 全通过后，整个
+  Workflow as Durable Job Session 路线才可关闭。
+
+#### 实现结果
+
+- agent-runtime `FileWorkflowChannelStore` 持久化 immutable binding/revocation、per-attempt
+  delivery receipt 与可重建 cursor；binding 固定 workspace/session/workflow/source/channel/
+  command kinds/expiry，response command expiry 被 clamp 到 binding expiry。
+- server-runtime `WorkflowChannelCoordinator` 从现有 workflow notification outbox 投递，使用
+  stable delivery key 支持 send-before-receipt crash 重试；failed receipt 可重试，delivered/
+  expired/revoked receipt 抑制重复投递，不复制 notification truth。
+- Host workflow notification correlation 现包含 wait identity，generation/status 由 receiver
+  policy 投影；进程内 `deliveredWorkflowNotifications` 唯一去重已退役。新增
+  `workflow.control.process` 只 dispatch 已存在的 Package D envelope，不能创建或扩大授权。
+- TUI 与 CLI stop 先创建 local authenticated narrow binding，再 durable accept cancel 并经
+  `workflow.control.process` dispatch。SDK 暴露同一 process helper；generic coordinator adapter
+  覆盖 agent/Web/API delivery contract。
+- IM gateway 可绑定本地 workspace，自动轮询 durable outbox/cursor，按 binding source 投递；
+  response 从平台 user/chat identity 派生并进入 Package D。Telegram approval callback 使用
+  binding-scoped prompt/approvalId/generation/waitId，普通 foreground approval map 不再处理
+  durable workflow approval。
+- foreground workflow service 扫描并处理已 accepted channel commands；无 live adapter/service
+  时 command 与 workflow 均保持 durable，waiting 不被误写为 pause/completed。
+- deterministic fault/focused evidence：agent-runtime channel/control 19 tests，server-runtime
+  channel/supervisor 15，Host workflow/protocol 83，SDK 10，IM 13，TUI workflow/SDK 22，CLI
+  workflow 16；相关 typecheck/build/schema/reserved gate 通过。首次完整 release gate 仅因新
+  channel store 的未使用 `dirname` import 停在 ESLint；删除后从头重跑的
+  `npm run release:check` 退出码为 0，全部 workspace tests、regression matrix、source-install
+  smoke 与 release pack smoke 通过。Package G 以本 change set 的独立 commit 关闭，不混入
+  A-F。
+
+## 9. A–G 最终只读审查（2026-07-11）
+
+Verdict: **Ready**。在 `feat/workflow-job-session` 的 `37d1ba62` 上，对
+`main...HEAD` 完整 diff、逆序 commit gate、公开写面、调用方、fault tests、release 证据、
+project-map/test-map 和协议文档进行了独立复核；未发现 Critical、High、Medium 或 Low finding，
+也未发现未满足 gate。
+
+- A：active run/workflow execution context、approval client 和 cleanup identity 按实例固定；
+  controller 不再把可变全局 permission 当作已启动 execution 的授权真相。
+- B：workflow job storage session 与 main/control session 分离；显式 CLI session id 仅用于
+  attribution，不复用 main session trace/todo/checkpoint storage。
+- C：`WorkflowStore` 的公开 mutation 面由 `WorkflowLeaseBoundWriter` 约束；canonical journal
+  校验 generation/revision/token，snapshot/event log 只是 projection。Host start/resume/wait/
+  finalization/rollback/supervisor failure 未发现裸 `update/restore/appendEvent` 旁路。
+- D：控制面只有 typed durable command/inbox/outcome；authorization、expiry、generation、status、
+  wait/approval identity 均在 canonical apply 前验证，adapter 不能直接写 `WorkflowRunRecord`。
+- E/F：worker registry、supervisor 和 foreground service 复用 Package C claim、Package D inbox、
+  server-runtime 与现有 workflow record；pid/连接/进程内集合都不构成 ownership truth，detach
+  只在 durable accepted outcome 后成功，drain/stop/Ctrl-C 不伪装 pause/completion。
+- G：binding/receipt/cursor 是 durable delivery coordination，不是第二套 workflow/message bus；
+  response 被 clamp 后进入 Package D，message 权限不隐含 approve/cancel，peer messaging、任意
+  JSON RPC、producer-selected context 和 model `workflow_start`/nested spawn 仍关闭。
+
+最终 focused 复跑：`@sparkwright/agent-runtime` workflow store/control/worker/channel 45/45，
+`@sparkwright/server-runtime` supervisor/service/channel 21/21。没有重跑完整 release gate：Git
+中的每个 package closing record 已记载从头成功的 `npm run release:check`，本轮源码/测试证据
+未发现冲突或回归信号。
+
+`check_project_map_drift.py --base main` 的十个 warning 已逐页阅读并判定无需语义更新：
+capabilities agents/cron/index 与 MCP 没有新增 capability 或 MCP surface；trace summary/raw/export
+没有新增 trace schema/diagnostic contract；tool-orchestration/run-loop 仍通过现有 Host/core 路径；
+workspace-writes/approvals clamp 未被 durable adapter 绕过；core module 不拥有新增 durable
+workflow substrate。已修改的 agent-runtime/host/protocol/CLI/TUI/edge module pages、run-loop、
+approvals、session-store/resume-replay、actor inbox design 与 test-map 与源码一致。
+
+## 10. 最终审查纠偏与关闭（2026-07-11）
+
+后续组合复跑推翻了第 9 节“无 finding”的证据：Package D exclusive command publication
+存在 final-path 半写可见竞态；修复后的压力运行又暴露 Package C publisher read-back 未证明
+自身 physical entry canonical 的 false-success 窗口。两项均已修复：
+
+- command/outcome EEXIST loser 有界等待 winner 文档可读；
+- journal async/sync replay 共用一个 transition function；
+- journal head 记录 canonical record 的来源 physical sequence，publisher 必须验证自己的
+  sequence 被应用；
+- acquisition 阶段 fencing loss 释放 lease 并返回 null，匹配 busy/adopted 调用契约。
+
+修复后 workflow/control 38/38；四文件 46-test 组合连续 20 轮全绿；Host workflow/protocol
+83/83、server-runtime 21/21。第 9 节保留为审查历史，不再作为最终事实；当前 verdict 恢复为
+**Ready**。随后完整 `npm run release:check` 从头通过全部 workspace tests、regression matrix、
+source-install smoke 与 release-install smoke。

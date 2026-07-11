@@ -34,6 +34,8 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@sparkwright/agent-runtime": "0.1.0",
+    "@sparkwright/server-runtime": "0.1.0",
     "@sparkwright/sdk-node": "0.1.0"
   },
   "publishConfig": {

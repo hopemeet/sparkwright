@@ -10,6 +10,11 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SESSION_COMPACT_SCHEMA_VERSION } from "@sparkwright/core";
+import {
+  FileWorkflowChannelStore,
+  FileWorkflowStore,
+  type WorkflowRunId,
+} from "@sparkwright/agent-runtime";
 import { EventStore } from "../src/state/event-store.js";
 import { RunController } from "../src/state/run-controller.js";
 
@@ -69,6 +74,44 @@ async function waitForError(store: EventStore): Promise<void> {
   });
 }
 
+async function waitForWorkflowRecords(
+  workspace: string,
+  count: number,
+): Promise<Array<Record<string, unknown>>> {
+  const root = join(workspace, ".sparkwright", "workflow-runs");
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    try {
+      const files = (await readdir(root)).filter((file) =>
+        file.endsWith(".json"),
+      );
+      if (files.length >= count) {
+        return Promise.all(
+          files.map(async (file) =>
+            JSON.parse(await readFile(join(root, file), "utf8")),
+          ),
+        );
+      }
+    } catch {
+      // The workflow store is created lazily.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(`Timed out waiting for ${count} workflow records.`);
+}
+
+async function waitForFileText(path: string): Promise<string> {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    try {
+      return await readFile(path, "utf8");
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  }
+  throw new Error(`Timed out waiting for ${path}.`);
+}
+
 /**
  * End-to-end smoke for the SDK cutover: a RunController spawns a real
  * host child via @sparkwright/sdk-node, runs a deterministic goal, and
@@ -78,6 +121,146 @@ async function waitForError(store: EventStore): Promise<void> {
  * the TUI accidentally re-introduced @sparkwright/core as a dependency.
  */
 describe("TUI ↔ host via sdk-node", () => {
+  it("stops a workflow through a binding-authorized durable command", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-tui-channel-"));
+    const rootDir = join(workspace, ".sparkwright", "workflow-runs");
+    const workflowRunId = "workflow_tui_channel_stop" as WorkflowRunId;
+    const workflowStore = new FileWorkflowStore({ rootDir });
+    const writer = await workflowStore.acquireWriter(workflowRunId, {
+      owner: "tui-channel-test",
+    });
+    if (!writer) throw new Error("missing workflow writer");
+    await writer.create({
+      id: workflowRunId,
+      sessionId: "session_workflow_tui_channel",
+      assetName: "demo",
+      contentHash: "demo-hash",
+      currentNodeId: "main",
+      definitionSnapshot: {
+        assetName: "demo",
+        contentHash: "demo-hash",
+        nodes: [{ id: "main", body: "Finish." }],
+      },
+    });
+    await writer.release();
+    const controller = new RunController({
+      workspaceRoot: workspace,
+      modelName: "deterministic",
+      store: new EventStore(),
+    });
+    try {
+      const [workflow] = await controller.listWorkflowRuns();
+      expect(workflow?.id).toBe(workflowRunId);
+      if (!workflow) return;
+      expect(await controller.cancelWorkflow(workflow)).toBe(true);
+      expect(
+        new FileWorkflowStore({ rootDir, createRoot: false }).get(workflowRunId)
+          ?.status,
+      ).toBe("cancelled");
+      const channelSnapshot = new FileWorkflowChannelStore({
+        rootDir,
+        createRoot: false,
+      }).snapshot(workflowRunId);
+      expect(channelSnapshot.bindings).toHaveLength(1);
+      expect(channelSnapshot.bindings[0]).toMatchObject({
+        source: { kind: "tui", authenticatedBy: "local-stdio-client" },
+        allowedCommandKinds: ["cancel"],
+      });
+    } finally {
+      controller.shutdown();
+    }
+  }, 30_000);
+
+  it("gives each workflow job an independent durable session", async () => {
+    const workspace = await mkdtemp(
+      join(tmpdir(), "sparkwright-tui-workflow-"),
+    );
+    const workflowDir = join(
+      workspace,
+      ".sparkwright",
+      "workflows",
+      "isolated",
+    );
+    await mkdir(workflowDir, { recursive: true });
+    await writeFile(
+      join(workflowDir, "workflow.md"),
+      [
+        "---",
+        "nodes:",
+        "  - id: main",
+        "    execute: model",
+        "---",
+        "## main",
+        "Finish once.",
+      ].join("\n"),
+      "utf8",
+    );
+    const store = new EventStore();
+    const controller = new RunController({
+      workspaceRoot: workspace,
+      modelName: "deterministic",
+      initialSessionId: "session_main_control",
+      store,
+    });
+
+    try {
+      await controller.start("MAIN_CHAT_SENTINEL");
+      await waitForDone(store);
+      const first = await controller.startWorkflowJob({
+        workflowName: "isolated",
+        goal: "WORKFLOW_ONE_SENTINEL",
+      });
+      const second = await controller.startWorkflowJob({
+        workflowName: "isolated",
+        goal: "WORKFLOW_TWO_SENTINEL",
+      });
+      expect(first).not.toBeNull();
+      expect(second).not.toBeNull();
+      if (!first || !second) return;
+
+      expect(
+        new Set([controller.getSessionId(), first.sessionId, second.sessionId])
+          .size,
+      ).toBe(3);
+      expect(first.workflowRunId).not.toBe(second.workflowRunId);
+      expect(Object.isFrozen(first.execution)).toBe(true);
+
+      const records = await waitForWorkflowRecords(workspace, 2);
+      expect(records).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: first.workflowRunId,
+            sessionId: first.sessionId,
+            metadata: expect.objectContaining({
+              controlSessionId: "session_main_control",
+            }),
+          }),
+          expect.objectContaining({
+            id: second.workflowRunId,
+            sessionId: second.sessionId,
+            metadata: expect.objectContaining({
+              controlSessionId: "session_main_control",
+            }),
+          }),
+        ]),
+      );
+      expect(
+        await waitForFileText(
+          join(controller.getSessionRootDir(), first.sessionId, "trace.jsonl"),
+        ),
+      ).not.toContain("MAIN_CHAT_SENTINEL");
+      expect(
+        await waitForFileText(
+          join(controller.getSessionRootDir(), second.sessionId, "trace.jsonl"),
+        ),
+      ).not.toContain("MAIN_CHAT_SENTINEL");
+      first.close();
+      second.close();
+    } finally {
+      controller.shutdown();
+    }
+  }, 30_000);
+
   it("rejects unsafe session ids before using them in trace paths", () => {
     const store = new EventStore();
     expect(

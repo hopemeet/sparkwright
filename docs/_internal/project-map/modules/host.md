@@ -262,6 +262,11 @@ Does not own:
   stored position. Waiting-input resume does not consume the durable wait until
   host run preparation has succeeded; if a later pre-run failure occurs, host
   restores the prior waiting record before returning the error.
+- Fresh workflow-job starts return `{runId, workflowRunId, sessionId}` after
+  durable record creation. A typed `controlSessionId` is accepted only for a
+  workflow start, must differ from the job session, and is stored as record
+  attribution; it is never used to load conversation history. Resume returns
+  and executes against the record's original job session.
 - Host delivers completed/failed workflow terminal notifications and P3
   `waiting` notifications through the workflow actor inbox with
   `payload.workflowId === WorkflowRunRecord.id`; waiting notifications are
@@ -750,6 +755,94 @@ Does not own:
 - Capability snapshot fields are useful but can become stale if new tools bypass `tool-catalog.ts`; direct-core/cron should add tools by catalog profile, not local factories.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-11T15:30:00+0800
+- Scope: Package G durable notification wait identity/generation projection,
+  retirement of process-local delivery truth, and dispatch of already accepted
+  binding-authorized commands.
+- Read: `packages/host/src/runtime.ts`, `packages/host/src/server.ts`,
+  `packages/host/test/workflows.test.ts`, `packages/host/test/protocol.test.ts`.
+- Tests: Host workflow/protocol 83 focused tests plus typecheck/build.
+
+- Status: Read-only
+- Date: 2026-07-11T15:00:00+0800
+- Scope: Package G design retires per-process workflow delivery dedupe as the
+  only cursor and routes durable responses through binding-authorized Package D
+  commands; ordinary foreground approval remains connection-owned.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/agent-runtime/src/workflows/notifications.ts`,
+  `packages/agent-runtime/src/workflows/control.ts`.
+- Tests: not run; design-only source reconciliation.
+
+- Status: Verified
+- Date: 2026-07-11T14:30:00+0800
+- Scope: Package F service-only fixed workflow identity start and claimed
+  supervisor recovery reuse existing Host authorization/execution assembly;
+  protocol clients cannot select the durable workflow id.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/host/test/workflows.test.ts`,
+  `packages/cli/src/cli.ts`.
+- Tests: Host workflow/protocol 82 tests plus typecheck/build.
+
+- Status: Read-only
+- Date: 2026-07-11T14:00:00+0800
+- Scope: Package F design verified that connection-owned Host runtimes cancel
+  active work on disconnect, so detached workflow execution must be owned by a
+  durable service adapter rather than a disconnected protocol client.
+- Read: `packages/host/src/server.ts`, `packages/host/src/runtime.ts`,
+  `packages/host/src/main.ts`, `packages/cli/src/runners/host-runner.ts`.
+- Tests: not run; design-only source reconciliation.
+
+- Status: Verified
+- Date: 2026-07-11T13:30:00+0800
+- Scope: Package E claimed-writer Host adapter reuses the ordinary workflow
+  resume environment and rejects writer/workflow identity mismatch without a
+  second claim.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/host/test/workflows.test.ts`,
+  `packages/server-runtime/src/workflow-supervisor.ts`.
+- Tests: Host workflow/protocol focused tests, typecheck/build, and E release gate.
+
+- Status: Read-only
+- Date: 2026-07-11T13:10:00+0800
+- Scope: Package E design keeps Host as claimed workflow episode assembler and
+  preserves authorization/hooks/tool-policy boundaries; server-runtime does not
+  gain direct WorkflowRunRecord mutation authority.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/agent-runtime/src/workflows/store.ts`,
+  `packages/server-runtime/src/index.ts`, and review section 8.14.
+- Tests: not run; design-only source reconciliation.
+
+- Status: Verified
+- Date: 2026-07-11T13:00:00+0800
+- Scope: Package D Host control adapter derives authenticated source/scope,
+  dispatches typed durable commands, polls active workflow controls with the
+  existing writer, and routes compatibility `workflow.resume` through the inbox.
+- Read: `packages/host/src/runtime.ts`, `packages/host/src/server.ts`,
+  `packages/host/test/workflows.test.ts`, `packages/host/test/protocol.test.ts`,
+  `packages/agent-runtime/src/workflows/control-processor.ts`.
+- Tests: Host workflow/protocol focused suites, typecheck/build, and full D
+  release gate recorded in the workflow durable-jobs test map.
+
+- Status: Verified
+- Date: 2026-07-11T10:40:00+0800
+- Scope: Package C migrates every Host live workflow writer—fresh create,
+  resume input, episode registration/projection/usage, terminal/supervisor
+  finalization, and rollback compensation—to `WorkflowLeaseBoundWriter`.
+- Read: `packages/host/src/runtime.ts`, Host workflow/protocol tests, agent
+  runtime workflow store and journal.
+- Tests: Host workflow/protocol 79 tests; Host typecheck/build; CLI workflow
+  slice 13 tests.
+
+- Status: Verified
+- Date: 2026-07-11T00:00:00+0800
+- Scope: Package B workflow job identity response, control-session validation
+  and durable attribution, and resume session preservation.
+- Read: `packages/host/src/runtime.ts`, `packages/host/src/server.ts`,
+  `packages/host/src/client-run.ts`, focused host tests.
+- Tests: host client-run/workflow/protocol suites (91 tests), host typecheck and
+  build; affected CLI/TUI integration tests.
 
 - Status: Verified
 - Date: 2026-07-11T02:10:00+0800

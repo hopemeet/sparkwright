@@ -2,6 +2,7 @@ import {
   access,
   mkdir,
   mkdtemp,
+  readdir,
   readFile,
   realpath,
   rm,
@@ -16,6 +17,7 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   FileTaskStore,
+  FileWorkflowChannelStore,
   FileWorkflowStore,
   createTaskId,
   type WorkflowRunId,
@@ -31,6 +33,10 @@ import {
   skillUsagePath,
 } from "@sparkwright/host";
 import { FileSkillUsageRecorder } from "@sparkwright/skills";
+import {
+  FileWorkflowServiceStore,
+  WorkflowServiceCarrier,
+} from "@sparkwright/server-runtime";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runCli } from "../src/cli.js";
 import { createConfiguredCliTools } from "../src/runners/direct-core-runner.js";
@@ -770,6 +776,57 @@ describe("runCli", () => {
     );
     expect(result.tracePath).toBeDefined();
     expect(output.stdoutText()).not.toContain("run.started");
+  });
+
+  it("starts a workflow in an isolated job session and records the CLI control session", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    await writeWorkflowAsset(
+      workspace,
+      "isolated-job",
+      [
+        "---",
+        "nodes:",
+        "  - id: main",
+        "    execute: model",
+        "---",
+        "## main",
+        "Finish once.",
+      ].join("\n"),
+    );
+
+    const result = await runCli(
+      [
+        "run",
+        "isolated workflow",
+        "--workspace",
+        workspace,
+        "--session-id",
+        "session_cli_control",
+        "--model",
+        "deterministic",
+        "--workflow",
+        "isolated-job",
+      ],
+      { io: { stdinIsTTY: false } },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.sessionId).toMatch(/^session_workflow_/);
+    expect(result.sessionId).not.toBe("session_cli_control");
+    const recordFiles = (
+      await readdir(join(workspace, ".sparkwright", "workflow-runs"))
+    ).filter((file) => file.endsWith(".json"));
+    expect(recordFiles).toHaveLength(1);
+    const record = JSON.parse(
+      await readFile(
+        join(workspace, ".sparkwright", "workflow-runs", recordFiles[0]!),
+        "utf8",
+      ),
+    );
+    expect(record).toMatchObject({
+      sessionId: result.sessionId,
+      metadata: { controlSessionId: "session_cli_control" },
+    });
   });
 
   it("surfaces in-process delegate tools in capabilities inspect", async () => {
@@ -2605,8 +2662,12 @@ describe("runCli", () => {
         "workflow-runs",
       ),
     });
-    store.create({
-      id: "workflow_cli_list" as WorkflowRunId,
+    const workflowRunId = "workflow_cli_list" as WorkflowRunId;
+    const writer = await store.acquireWriter(workflowRunId, {
+      owner: "test-fixture",
+    });
+    await writer!.create({
+      id: workflowRunId,
       sessionId,
       assetName: "bugfix",
       version: "1.0.0",
@@ -2614,6 +2675,7 @@ describe("runCli", () => {
       currentNodeId: "main",
       attempts: { main: 1 },
     });
+    await writer!.release();
 
     const listOutput = createOutputCapture();
     const list = await runCli(
@@ -2683,7 +2745,10 @@ describe("runCli", () => {
     const seededStore = new FileWorkflowStore({
       rootDir: join(workspace, ".sparkwright", "workflow-runs"),
     });
-    seededStore.create({
+    const seededWriter = await seededStore.acquireWriter(staleWorkflowRunId, {
+      owner: "test-fixture",
+    });
+    const staleRecord = await seededWriter!.create({
       id: staleWorkflowRunId,
       sessionId: "session_stale_same_asset",
       assetName: "human-gate",
@@ -2697,10 +2762,20 @@ describe("runCli", () => {
       },
       metadata: { goal: "stale workflow with the same asset name" },
     });
-    seededStore.update(staleWorkflowRunId, {
-      status: "waiting",
-      wait: { kind: "input", reason: "Stale human review." },
+    await seededWriter!.mutate({
+      expectedRevision: staleRecord.recordRevision ?? 0,
+      patch: {
+        status: "waiting",
+        wait: { kind: "input", reason: "Stale human review." },
+      },
+      event: {
+        at: new Date().toISOString(),
+        type: "waiting",
+        workflowRunId: staleWorkflowRunId,
+        status: "waiting",
+      },
     });
+    await seededWriter!.release();
     await mkdir(join(workspace, ".sparkwright", "workflows", "human-gate"), {
       recursive: true,
     });
@@ -2769,6 +2844,128 @@ describe("runCli", () => {
     });
     expect(output.stderrText()).toContain(current!.id);
     expect(output.stderrText()).not.toContain(staleWorkflowRunId);
+  });
+
+  it("fails detached workflow start when no healthy service is available", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const output = createOutputCapture();
+    const result = await runCli(
+      [
+        "workflow",
+        "start",
+        "missing-service-workflow",
+        "do work",
+        "--workspace",
+        workspace,
+        "--detach",
+      ],
+      { io: { stdout: output.stdout, stderr: output.stderr } },
+    );
+    expect(result.exitCode).toBe(1);
+    expect(output.stderrText()).toContain("Workflow service is not ready");
+    expect(existsSync(join(workspace, ".sparkwright", "workflow-runs"))).toBe(
+      false,
+    );
+  });
+
+  it("reports workflow service readiness without treating a missing pid as live", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const output = createOutputCapture();
+    const result = await runCli(
+      ["workflow", "service", "status", "--workspace", workspace],
+      { io: { stdout: output.stdout, stderr: output.stderr } },
+    );
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(output.stdoutText())).toEqual({
+      live: false,
+      instance: null,
+    });
+  });
+
+  it("returns detached success only after the durable service accepts the handoff", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const store = new FileWorkflowServiceStore({
+      rootDir: join(workspace, ".sparkwright", "workflow-service"),
+    });
+    const instance = await store.acquireInstance({ workspaceId: workspace });
+    if (!instance) throw new Error("missing workflow service instance");
+    expect(await instance.ready()).toBe(true);
+    const carrier = new WorkflowServiceCarrier({
+      store,
+      instance,
+      adapter: {
+        accept: async (accepted) => ({
+          workflowRunId: "workflow_detached_1",
+          sessionId: accepted.jobSessionId,
+        }),
+      },
+    });
+    const output = createOutputCapture();
+    const cliResult = runCli(
+      [
+        "workflow",
+        "start",
+        "durable-demo",
+        "do work",
+        "--workspace",
+        workspace,
+        "--detach",
+      ],
+      { io: { stdout: output.stdout, stderr: output.stderr } },
+    );
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      if ((await store.pending()).length > 0) break;
+      await new Promise<void>((resolveTurn) => setImmediate(resolveTurn));
+    }
+    expect((await carrier.runOnce()).accepted).toHaveLength(1);
+    expect((await cliResult).exitCode).toBe(0);
+    expect(output.stdoutText()).toContain(
+      "Workflow detached: workflow_detached_1",
+    );
+  });
+
+  it("stops a workflow through a scoped durable CLI channel command", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const workflowRunId = "workflow_cli_channel_stop" as WorkflowRunId;
+    const rootDir = join(workspace, ".sparkwright", "workflow-runs");
+    const store = new FileWorkflowStore({ rootDir });
+    const writer = await store.acquireWriter(workflowRunId, {
+      owner: "cli-channel-test",
+    });
+    if (!writer) throw new Error("missing workflow writer");
+    await writer.create({
+      id: workflowRunId,
+      sessionId: "session_workflow_cli_channel",
+      assetName: "demo",
+      contentHash: "demo-hash",
+      currentNodeId: "main",
+      definitionSnapshot: {
+        assetName: "demo",
+        contentHash: "demo-hash",
+        nodes: [{ id: "main", body: "Finish." }],
+      },
+    });
+    await writer.release();
+    const output = createOutputCapture();
+    const result = await runCli(
+      ["workflow", "stop", workflowRunId, "--workspace", workspace],
+      { io: { stdout: output.stdout, stderr: output.stderr } },
+    );
+    expect(result.exitCode).toBe(0);
+    expect(output.stdoutText()).toContain("Workflow stop applied");
+    expect(
+      new FileWorkflowStore({ rootDir, createRoot: false }).get(workflowRunId)
+        ?.status,
+    ).toBe("cancelled");
+    const channels = new FileWorkflowChannelStore({
+      rootDir,
+      createRoot: false,
+    }).snapshot(workflowRunId);
+    expect(channels.bindings).toHaveLength(1);
+    expect(channels.bindings[0]).toMatchObject({
+      source: { kind: "cli", authenticatedBy: "local-cli" },
+      allowedCommandKinds: ["cancel"],
+    });
   });
 
   it("distills a session trace into a workflow draft", async () => {
@@ -3076,7 +3273,10 @@ describe("runCli", () => {
         "workflow-runs",
       ),
     });
-    store.create({
+    const writer = await store.acquireWriter(workflowRunId, {
+      owner: "test-fixture",
+    });
+    await writer!.create({
       id: workflowRunId,
       sessionId,
       assetName: "cli-resume",
@@ -3090,6 +3290,7 @@ describe("runCli", () => {
       },
       metadata: { goal: "resume workflow from cli" },
     });
+    await writer!.release();
     const output = createOutputCapture();
 
     const resumed = await runCli(

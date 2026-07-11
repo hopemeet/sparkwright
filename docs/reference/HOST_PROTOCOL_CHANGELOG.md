@@ -6,6 +6,11 @@ major; breaking changes bump the major.
 
 ## Unreleased
 
+- Add `workflow.control.process` so authenticated channel adapters can dispatch
+  an already-durable Package D command without recreating or widening its
+  authorization envelope. Add durable workflow binding/delivery coordination
+  for TUI, CLI, SDK/API, and IM adapters.
+
 - Add optional `accessMode` to `run.start` and `run.resume` payloads as the
   preferred high-level run autonomy field. Hosts compile it to legacy
   `permissionMode`/`shouldWrite` and record conflicts in metadata.
@@ -51,6 +56,9 @@ major; breaking changes bump the major.
   non-terminal workflow run by single-writer lease and starts a new host run
   from the pinned workflow definition snapshot. Hosts advertise both in
   `host.ready.capabilities`.
+- Add `workflow.control`, a durable typed command surface for cancel, input,
+  approval, and resume requests. `workflow.resume` now adapts through this
+  inbox instead of directly consuming a wait.
 - Add the optional workflow-run `authorizationSnapshot` policy summary. It
   exposes `hasTargetPath` / `hasConfidentialPaths` presence flags rather than
   broadcasting sensitive target or confidential path values; the host reapplies

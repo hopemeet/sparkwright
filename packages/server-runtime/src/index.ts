@@ -23,6 +23,27 @@ import {
   type SparkwrightEvent,
   type ToolDefinition,
 } from "@sparkwright/core";
+export {
+  WorkflowChannelCoordinator,
+  type WorkflowChannelDeliveryAdapter,
+  type WorkflowChannelDeliveryReport,
+} from "./workflow-channel-coordinator.js";
+export {
+  WorkflowSupervisor,
+  type WorkflowSupervisorRunReport,
+  type WorkflowSupervisorWorkerAdapter,
+} from "./workflow-supervisor.js";
+export {
+  FileWorkflowServiceStore,
+  WorkflowServiceCarrier,
+  WORKFLOW_SERVICE_SCHEMA_VERSION,
+  type WorkflowServiceAdapter,
+  type WorkflowServiceHandoff,
+  type WorkflowServiceInstance,
+  type WorkflowServiceInstanceHandle,
+  type WorkflowServiceOutcome,
+  type WorkflowServiceState,
+} from "./workflow-service.js";
 
 export type ServerRuntimeMessageType =
   | "runtime.ready"
@@ -61,6 +82,29 @@ export interface ServerRuntimeSubscription {
 export type ServerRuntimeSubscriber = (
   message: ServerRuntimeMessage,
 ) => void | Promise<void>;
+
+export class DurableCommandDispatcher {
+  private readonly inFlight = new Map<string, Promise<unknown>>();
+
+  dispatch<TResult>(
+    commandId: string,
+    consume: () => Promise<TResult>,
+  ): Promise<TResult> {
+    const existing = this.inFlight.get(commandId);
+    if (existing) return existing as Promise<TResult>;
+    const pending = consume().finally(() => {
+      if (this.inFlight.get(commandId) === pending) {
+        this.inFlight.delete(commandId);
+      }
+    });
+    this.inFlight.set(commandId, pending);
+    return pending;
+  }
+
+  isInFlight(commandId: string): boolean {
+    return this.inFlight.has(commandId);
+  }
+}
 
 export interface PublishMessageInput<TPayload = unknown> {
   type: ServerRuntimeMessageType;
@@ -863,6 +907,7 @@ export interface ServerRuntime {
   sessions: SessionManager;
   capabilities: ServerCapabilityRegistry;
   runs: RunManager;
+  commands: DurableCommandDispatcher;
 }
 
 export function createServerRuntime(
@@ -880,6 +925,7 @@ export function createServerRuntime(
     capabilities,
     defaults: options.runDefaults,
   });
+  const commands = new DurableCommandDispatcher();
 
   hub.publish({
     type: "runtime.ready",
@@ -895,6 +941,7 @@ export function createServerRuntime(
     sessions,
     capabilities,
     runs,
+    commands,
   };
 }
 

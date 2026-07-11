@@ -31,6 +31,11 @@ Fresh workflow run state
   -> <workspace>/.sparkwright/workflow-runs/<workflowRunId>.events.jsonl
   -> <workspace>/.sparkwright/workflow-runs/<workflowRunId>.lease/
 
+Fresh workflow job execution
+  -> unique <sessionRoot>/session_workflow_*/ session + run/trace/checkpoint files
+  -> WorkflowRunRecord.sessionId is the job storage identity
+  -> WorkflowRunRecord.metadata.controlSessionId is attribution only
+
 Legacy workflow run state
   -> <sessionRoot>/<sessionId>/workflow-runs/ remains list/resume compatible
 
@@ -55,6 +60,9 @@ Manual compact
   returning `compact.json.content`.
 - TUI `/sessions` inspect requests the same compaction audit report and renders
   it as diagnostics; it does not make TUI state canonical storage.
+- TUI keeps the selected session immutable while its main run is starting or
+  active. New-session, switch, and fork-and-switch entrypoints fail at the
+  controller boundary; read-only list/inspect/export flows remain available.
 - Session-scoped `FileRunStore` writes session `trace.jsonl` /
   `transcript.jsonl`, `agents/<agent-id>/trace.jsonl`, per-run `run.json` /
   `result.json`, and `trace-pointer.json` files that point from each run
@@ -69,6 +77,11 @@ Manual compact
   compatible. Each workflow run has a JSON record, a JSONL event log, and a
   token lease path; corrupt record/log entries are skipped with diagnostics by
   `FileWorkflowStore` rather than wedging workflow list/resume.
+- TUI and CLI fresh workflow-job entrypoints allocate a unique safe job session
+  instead of writing into a selected/control session. The job session does not
+  inherit control-session scrollback. Resume requires and reuses the persisted
+  `WorkflowRunRecord.sessionId`; missing identity is a diagnostic failure, not a
+  fallback to the caller's current session.
 - Manual session compact writes `compact.json` as a `session-compact.v2`
   artifact only when there is net savings. The artifact stores source run ids,
   `throughRunId`, original/summary char counts, top-level `freedChars`, and
@@ -103,6 +116,72 @@ Manual compact
 - Session metadata should make terminal run state easier to inspect.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-11T18:30:00+0800
+- Scope: async/sync journal replay now shares one transition function and each
+  publisher verifies its own physical sequence supplied the canonical record;
+  storage layout is unchanged.
+- Read: workflow journal/store implementation and concurrency tests.
+- Tests: focused tests and 20 combined stress runs.
+
+- Status: Verified
+- Date: 2026-07-11T15:30:00+0800
+- Scope: Package G adds sibling `<workflowRunId>.channels/` binding,
+  revocation, per-attempt delivery receipt, and rebuildable cursor projections;
+  workflow journal/outbox remain canonical state/message truth.
+- Read: `packages/agent-runtime/src/workflows/channels.ts`,
+  `packages/agent-runtime/src/workflows/notifications.ts`,
+  `packages/server-runtime/src/workflow-channel-coordinator.ts`.
+- Tests: Package G channel store/coordinator focused tests and affected builds.
+
+- Status: Verified
+- Date: 2026-07-11T14:30:00+0800
+- Scope: Package F stores service carrier state and handoff/outcome under
+  workspace `.sparkwright/workflow-service/`; detached workflow sessions remain
+  unique `session_workflow_*` roots and keep control-session attribution only.
+- Read: `packages/server-runtime/src/workflow-service.ts`,
+  `packages/cli/src/cli.ts`, `packages/host/src/runtime.ts`.
+- Tests: server-runtime service tests, Host fixed-id workflow test, CLI detach
+  focused tests.
+
+- Status: Verified
+- Date: 2026-07-11T13:00:00+0800
+- Scope: each workflow now has a sibling `<workflowRunId>.control/` durable
+  command directory with immutable commands/outcomes and a rebuildable cursor;
+  the Package C workflow journal remains canonical apply truth.
+- Read: `packages/agent-runtime/src/workflows/control.ts`,
+  `packages/agent-runtime/src/workflows/control-processor.ts`,
+  `packages/agent-runtime/src/workflows/store.ts`,
+  `packages/host/src/runtime.ts`.
+- Tests: Package D persistence/restart/corruption focused tests and release gate
+  recorded in the workflow durable-jobs test map.
+
+- Status: Verified
+- Date: 2026-07-11T10:40:00+0800
+- Scope: Package C makes `.sparkwright/workflow-runs/<id>.journal/` the
+  canonical workflow mutation history. `<id>.json` and `<id>.events.jsonl`
+  remain compatibility/inspection projections rebuilt from the journal.
+- Read: workflow store/journal/doc-store implementation and focused tests.
+- Tests: agent-runtime workflow/doc-store 32 tests; Host workflow/protocol 79
+  tests; affected typecheck/build.
+
+- Status: Verified
+- Date: 2026-07-11T00:00:00+0800
+- Scope: Package B independent workflow job session layout and control-session
+  attribution; no FileSessionStore locking rewrite.
+- Read: TUI/CLI job start paths, host workflow record creation/resume, session
+  integration tests.
+- Tests: TUI two-job isolation test, CLI explicit-control-session test, host
+  workflow/protocol suites, affected typechecks/builds.
+
+- Status: Verified
+- Date: 2026-07-11T00:00:00+0800
+- Scope: Package A TUI active-execution session mutation guard; session file
+  layout and persistence semantics are unchanged.
+- Read: `packages/tui/src/state/run-controller.ts`,
+  `packages/tui/src/state/use-session-actions.ts`, focused tests.
+- Tests: TUI session-mutation focused tests, full TUI suite, and TUI typecheck.
 
 - Status: Read-only
 - Date: 2026-07-07T00:55:52+0800

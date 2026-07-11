@@ -160,10 +160,24 @@ Does not own:
   live job connections and matches durable workflow ids, active run ids,
   historical run ids, and pre-adoption owned run ids. The workflow panel keeps a
   local keyboard cursor after attach/start focus so users can browse other jobs.
-- Workflow start/resume jobs own separate host-client connections; each
+- Workflow start/resume jobs own separate host-client connections and immutable
+  job execution handles. A fresh start uses a cryptographically random
+  `session_workflow_*` storage id distinct from the selected control session;
+  resume requires and reuses the record's persisted job session. Each
   connection forwards `approval.requested` into the same queued TUI approval
-  controller with the workflow session id, so ask-mode workflow writes cannot
-  hang behind an invisible prompt.
+  controller with that job session id, so ask-mode workflow writes cannot hang
+  behind an invisible prompt.
+- Every main/workflow approval is evaluated from an immutable execution origin
+  capturing its client, birth session, permission mode, execution kind, and
+  optional workflow id; the pending approval additionally captures the exact
+  emitting episode `runId`. Main/workflow concurrency and later permission-mode
+  changes therefore cannot change an already-born approval policy. Run end,
+  failure, disconnect, explicit handle close, and controller shutdown remove
+  only approvals owned by that client and advance the next surviving prompt.
+- While a main run is starting or active, `RunController` rejects new-session,
+  session-switch, and fork-and-switch mutations at the controller boundary.
+  Session list/inspect/export remain available. This guard remains until all
+  live event projection is execution-handle based.
 - Workflow job background refresh and TUI config watching only run when stdin
   supports raw mode. Non-TTY startup renders the initial frame and exits on the
   next tick, keeping startup smoke/regression probes finite without spawning
@@ -277,8 +291,58 @@ Does not own:
 - Human export is useful but not a full diagnostic report.
 - Session completion metadata is not as prominent as trace/session inspection output.
 - TUI display summaries are presentation-only; raw trace/session diagnostics remain the source of truth for complete payloads.
+- Workflow decision handling is still TUI/live-client centered. The staged
+  route in workflow job session review section 8 moves it through a typed
+  durable control inbox before adding daemon and multi-channel adapters.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-11T15:30:00+0800
+- Scope: Package G TUI workflow stop is a local authenticated, cancel-only
+  durable binding adapter followed by `workflow.control.process`.
+- Read: `packages/tui/src/state/run-controller.ts`,
+  `packages/tui/test/sdk-cutover.test.ts`.
+- Tests: TUI workflow/SDK 22 focused tests plus typecheck/build.
+
+- Status: Read-only
+- Date: 2026-07-11T15:00:00+0800
+- Scope: Package G design makes TUI one binding-aware notification/control
+  adapter; it may render live feedback but is no longer the unique durable
+  workflow decision channel.
+- Read: `packages/tui/src/state/use-workflow-actions.ts`,
+  `packages/tui/src/state/run-controller.ts`,
+  `packages/agent-runtime/src/workflows/control.ts`.
+- Tests: not run; design-only source reconciliation.
+
+- Status: Verified
+- Date: 2026-07-11T13:00:00+0800
+- Scope: workflow stop now submits durable `workflow.control cancel` through
+  the primary Host client and no longer requires a locally owned child Host.
+- Read: `packages/tui/src/state/run-controller.ts`,
+  `packages/tui/src/state/use-workflow-actions.ts`,
+  `packages/tui/test/workflow-actions.test.ts`, `packages/tui/test/sdk-cutover.test.ts`.
+- Tests: TUI focused/full tests and typecheck recorded in the Package D gate.
+
+- Status: Verified
+- Date: 2026-07-11T00:00:00+0800
+- Scope: Workflow Durable Job Session Package B. TUI fresh workflow jobs now
+  use unique session storage, handles expose immutable job/run/workflow
+  identity, and resume requires the persisted job session.
+- Read: `packages/tui/src/state/run-controller.ts`,
+  `packages/tui/src/state/use-workflow-actions.ts`, SDK integration tests.
+- Tests: full TUI suite (60 files / 399 tests), TUI typecheck and build.
+
+- Status: Verified
+- Date: 2026-07-11T00:00:00+0800
+- Scope: Workflow Durable Job Session Package A. Approval policy and pending
+  prompts now bind immutable execution identity, per-client cleanup is
+  idempotent, and active main execution blocks session mutation.
+- Read: `packages/tui/src/state/run-controller.ts`,
+  `packages/tui/src/state/build-command-registry.ts`,
+  `packages/tui/src/state/use-session-actions.ts`, and focused tests.
+- Tests: `npm --workspace @sparkwright/tui test` (60 files, 398 tests);
+  `npm --workspace @sparkwright/tui run typecheck`.
 
 - Status: Verified
 - Date: 2026-07-11T01:04:00+0800

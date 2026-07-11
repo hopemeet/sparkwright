@@ -430,6 +430,38 @@ describe("@sparkwright/sdk-core Client", () => {
       workflowRunId: "workflow_1",
       sessionId: "sess_1",
     });
+
+    const processed = client.processWorkflowControl({
+      workflowRunId: "workflow_1",
+      sessionId: "sess_1",
+      commandId: "workflow_command_1",
+    });
+    request = transport.sent[2];
+    expect(request).toMatchObject({
+      envelope: "request",
+      kind: "workflow.control.process",
+      payload: {
+        workflowRunId: "workflow_1",
+        sessionId: "sess_1",
+        commandId: "workflow_command_1",
+      },
+    });
+    transport.receive({
+      envelope: "response",
+      id: request.id,
+      timestamp: "2026-07-04T00:00:00.000Z",
+      ok: true,
+      result: {
+        status: "applied",
+        commandId: "workflow_command_1",
+        code: "applied",
+      },
+    });
+    await expect(processed).resolves.toEqual({
+      status: "applied",
+      commandId: "workflow_command_1",
+      code: "applied",
+    });
   });
 
   it("starts a run and collects stable lifecycle evidence", async () => {

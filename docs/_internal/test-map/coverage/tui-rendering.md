@@ -1,5 +1,15 @@
 # TUI Rendering Coverage
 
+- 2026-07-11 Package A deterministically verified immutable per-execution
+  approval policy, exact run/workflow attribution, two-workflow permission
+  isolation, active/queued client cleanup, idempotent cleanup, and controller-
+  level new/switch/fork guards. Full TUI suite (398 tests) and typecheck passed.
+- 2026-07-11 Package B integration verified one main session plus two concurrent
+  workflow jobs produce three distinct session ids, handles expose stable
+  run/workflow/session identity, records retain control-session attribution,
+  and job traces do not contain the main chat sentinel. Full TUI suite now
+  passes 399 tests.
+
 ## Current Confidence
 
 - Status: `Partially Verified`

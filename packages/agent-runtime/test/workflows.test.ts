@@ -8,6 +8,7 @@ import {
   FileWorkflowNotificationOutbox,
   createInitialWorkflowRuntimeState,
   FileWorkflowStore,
+  WorkflowStaleWriteError,
   runWorkflowRunChain,
   workspaceWorkflowRunsDir,
   WORKFLOW_RUN_RECORD_SCHEMA_VERSION,
@@ -16,6 +17,11 @@ import {
   type WorkflowRunId,
   type WorkflowDefinition,
 } from "../src/index.js";
+import {
+  publishWorkflowJournalEntry,
+  readWorkflowJournal,
+  readWorkflowJournalSync,
+} from "../src/workflows/journal.js";
 
 async function tempDir(): Promise<string> {
   return mkdtemp(join(tmpdir(), "sparkwright-workflows-"));
@@ -237,6 +243,274 @@ describe("workflow run-chain driver", () => {
 });
 
 describe("FileWorkflowStore", () => {
+  it("fences an expired writer after a higher-generation takeover", async () => {
+    const root = await tempDir();
+    const storeA = new FileWorkflowStore({ rootDir: root });
+    const id = "workflow_fenced" as WorkflowRunId;
+    let now = new Date("2026-07-11T00:00:00.000Z");
+    const writerA = await storeA.acquireWriter(id, {
+      owner: "worker-a",
+      ttlMs: 1_000,
+      now: () => now,
+    });
+    expect(writerA?.generation).toBe(1);
+    const created = await writerA?.create({
+      id,
+      assetName: "fenced",
+      contentHash: "hash",
+      now: () => now.toISOString(),
+    });
+    expect(created).toMatchObject({ generation: 1, recordRevision: 1 });
+
+    now = new Date("2026-07-11T00:00:02.000Z");
+    const storeB = new FileWorkflowStore({ rootDir: root });
+    const writerB = await storeB.acquireWriter(id, {
+      owner: "worker-b",
+      ttlMs: 1_000,
+      now: () => now,
+    });
+    expect(writerB?.generation).toBe(2);
+    const completed = await writerB?.mutate({
+      expectedRevision: 1,
+      patch: { status: "completed", now: () => now.toISOString() },
+      event: {
+        at: now.toISOString(),
+        type: "completed",
+        workflowRunId: id,
+        status: "completed",
+      },
+    });
+    expect(completed).toMatchObject({
+      generation: 2,
+      recordRevision: 2,
+      status: "completed",
+    });
+
+    await expect(
+      writerA?.mutate({
+        expectedRevision: 1,
+        patch: { status: "failed" },
+        event: {
+          at: now.toISOString(),
+          type: "failed",
+          workflowRunId: id,
+          status: "failed",
+        },
+      }),
+    ).rejects.toBeInstanceOf(WorkflowStaleWriteError);
+    await expect(
+      writerA?.compensate({
+        expectedRevision: 1,
+        patch: { status: "waiting", wait: { kind: "input" } },
+        event: {
+          at: now.toISOString(),
+          type: "waiting",
+          workflowRunId: id,
+          status: "waiting",
+        },
+      }),
+    ).rejects.toBeInstanceOf(WorkflowStaleWriteError);
+    expect(await writerA?.release()).toBe(false);
+    expect(await writerB?.readFresh()).toMatchObject({
+      status: "completed",
+      recordRevision: 2,
+    });
+    expect(storeB.eventLog(id).events.map((event) => event.type)).toEqual([
+      "created",
+      "completed",
+    ]);
+    await writeFile(join(root, `${id}.json`), "{torn", "utf8");
+    await writeFile(join(root, `${id}.events.jsonl`), "{torn\n", "utf8");
+    const recovered = new FileWorkflowStore({
+      rootDir: root,
+      createRoot: false,
+    });
+    expect(recovered.get(id)).toMatchObject({
+      status: "completed",
+      generation: 2,
+      recordRevision: 2,
+    });
+    expect(recovered.eventLog(id).events.map((event) => event.type)).toEqual([
+      "created",
+      "completed",
+    ]);
+    await writerB?.release();
+  });
+
+  it("allows only one canonical mutation for a shared expected revision", async () => {
+    const root = await tempDir();
+    const store = new FileWorkflowStore({ rootDir: root });
+    const id = "workflow_revision_race" as WorkflowRunId;
+    const writer = await store.acquireWriter(id, { owner: "worker" });
+    const created = await writer!.create({
+      id,
+      assetName: "race",
+      contentHash: "hash",
+    });
+    const event = (status: "waiting" | "completed") => ({
+      at: new Date().toISOString(),
+      type: status as "waiting" | "completed",
+      workflowRunId: id,
+      status,
+    });
+    const attempts = await Promise.allSettled([
+      writer!.mutate({
+        expectedRevision: created.recordRevision!,
+        patch: { status: "waiting", wait: { kind: "input" } },
+        event: event("waiting"),
+      }),
+      writer!.mutate({
+        expectedRevision: created.recordRevision!,
+        patch: { status: "completed" },
+        event: event("completed"),
+      }),
+    ]);
+    expect(
+      attempts.filter((result) => result.status === "fulfilled"),
+    ).toHaveLength(1);
+    expect(
+      attempts.filter((result) => result.status === "rejected"),
+    ).toHaveLength(1);
+    expect((await writer!.readFresh())?.recordRevision).toBe(2);
+    expect(store.eventLog(id).events).toHaveLength(2);
+    await writer!.release();
+  });
+
+  it("rejects record identity that does not match the claimed writer", async () => {
+    const root = await tempDir();
+    const store = new FileWorkflowStore({ rootDir: root });
+    const id = "workflow_identity" as WorkflowRunId;
+    const writer = await store.acquireWriter(id, { owner: "worker" });
+    await expect(
+      writer!.create({
+        id: "workflow_other" as WorkflowRunId,
+        assetName: "identity",
+        contentHash: "hash",
+      }),
+    ).rejects.toThrow(/cannot create record/);
+    expect(await writer!.readFresh()).toBeUndefined();
+    await writer!.release();
+  });
+
+  it("quarantines a stale-generation physical entry without advancing revision or events", async () => {
+    const root = await tempDir();
+    const store = new FileWorkflowStore({ rootDir: root });
+    const id = "workflow_stale_entry" as WorkflowRunId;
+    let now = new Date("2026-07-11T00:00:00.000Z");
+    const writerA = await store.acquireWriter(id, {
+      owner: "a",
+      ttlMs: 1_000,
+      now: () => now,
+    });
+    const created = await writerA!.create({
+      id,
+      assetName: "stale",
+      contentHash: "hash",
+    });
+    now = new Date("2026-07-11T00:00:02.000Z");
+    const writerB = await store.acquireWriter(id, {
+      owner: "b",
+      ttlMs: 1_000,
+      now: () => now,
+    });
+    const before = await readWorkflowJournal(root, id);
+    await publishWorkflowJournalEntry({
+      rootDir: root,
+      workflowRunId: id,
+      physicalSequence: before!.physicalSequence + 1,
+      payload: {
+        kind: "mutation",
+        token: writerA!.token,
+        generation: writerA!.generation,
+        expectedRecordRevision: created.recordRevision!,
+        recordRevision: created.recordRevision! + 1,
+        record: {
+          ...created,
+          generation: writerA!.generation,
+          recordRevision: created.recordRevision! + 1,
+          status: "failed",
+        },
+        event: {
+          at: now.toISOString(),
+          type: "failed",
+          workflowRunId: id,
+          status: "failed",
+        },
+      },
+    });
+    const quarantined = await readWorkflowJournal(root, id);
+    expect(quarantined).toMatchObject({ generation: 2, recordRevision: 1 });
+    expect(quarantined!.quarantined).toHaveLength(1);
+    expect(quarantined!.events.map((event) => event.type)).toEqual(["created"]);
+    const completed = await writerB!.mutate({
+      expectedRevision: 1,
+      patch: { status: "completed" },
+      event: {
+        at: now.toISOString(),
+        type: "completed",
+        workflowRunId: id,
+        status: "completed",
+      },
+    });
+    expect(completed).toMatchObject({
+      generation: 2,
+      recordRevision: 2,
+      status: "completed",
+    });
+    await writerB!.release();
+  });
+
+  it("recovers after a torn canonical publication slot", async () => {
+    const root = await tempDir();
+    const store = new FileWorkflowStore({ rootDir: root });
+    const id = "workflow_torn_publication" as WorkflowRunId;
+    const writerA = await store.acquireWriter(id, { owner: "a" });
+    const created = await writerA!.create({
+      id,
+      assetName: "torn",
+      contentHash: "hash",
+    });
+    expect(created.recordRevision).toBe(1);
+    const head = await readWorkflowJournal(root, id);
+    const tornSequence = head!.physicalSequence + 1;
+    await writeFile(
+      join(
+        root,
+        `${id}.journal`,
+        `${String(tornSequence).padStart(16, "0")}.json`,
+      ),
+      '{"schemaVersion":"sparkwright-workflow-journal.v1"',
+      "utf8",
+    );
+    expect(await readWorkflowJournal(root, id)).toMatchObject({
+      recordRevision: 1,
+      quarantined: [expect.anything()],
+    });
+    await writerA!.release();
+    const writerB = await store.acquireWriter(id, { owner: "b" });
+    expect(writerB).toMatchObject({ generation: 2 });
+    const completed = await writerB!.mutate({
+      expectedRevision: 1,
+      patch: { status: "completed" },
+      event: {
+        at: "recovered",
+        type: "completed",
+        workflowRunId: id,
+        status: "completed",
+      },
+    });
+    expect(completed).toMatchObject({
+      generation: 2,
+      recordRevision: 2,
+      status: "completed",
+    });
+    expect(store.eventLog(id).events.map((event) => event.type)).toEqual([
+      "created",
+      "completed",
+    ]);
+    await writerB!.release();
+  });
+
   it("exposes session legacy and workspace workflow-run roots", () => {
     expect(
       workflowRunsDir({ sessionRootDir: "/state/sessions", sessionId: "sess" }),
@@ -255,7 +529,8 @@ describe("FileWorkflowStore", () => {
       { id: "patch", body: "Patch." },
     ]);
 
-    const created = store.create({
+    const writer = await store.acquireWriter(id, { owner: "test" });
+    const created = await writer!.create({
       id,
       parentRunId: "run_parent" as RunId,
       sessionId: "sess_one",
@@ -297,41 +572,51 @@ describe("FileWorkflowStore", () => {
       },
     });
 
-    const updated = store.update(id, {
-      status: "completed",
-      currentNodeId: "patch",
-      attempts: { plan: 1, patch: 1 },
-      parallelBranches: {
-        "unit-a": {
-          sourceNodeId: "fanout",
-          nodeId: "unit-a",
-          attempt: 1,
-          status: "passed",
-          verdict: { status: "passed", reason: "branch_passed" },
-          evidenceRefs: [
-            {
-              kind: "run",
-              ref: "run_branch_a",
-              nodeId: "unit-a",
-              metadata: { execute: "command" },
-            },
-          ],
-          completedAt: "2026-07-04T00:01:30.000Z",
-        },
-      },
-      transitionLog: [
-        {
-          at: "2026-07-04T00:01:00.000Z",
-          verdict: { status: "passed" },
-          decision: {
-            type: "complete",
-            fromNodeId: "patch",
-            reason: "node_passed",
+    const updated = await writer!.mutate({
+      expectedRevision: created.recordRevision!,
+      patch: {
+        status: "completed",
+        currentNodeId: "patch",
+        attempts: { plan: 1, patch: 1 },
+        parallelBranches: {
+          "unit-a": {
+            sourceNodeId: "fanout",
+            nodeId: "unit-a",
+            attempt: 1,
+            status: "passed",
+            verdict: { status: "passed", reason: "branch_passed" },
+            evidenceRefs: [
+              {
+                kind: "run",
+                ref: "run_branch_a",
+                nodeId: "unit-a",
+                metadata: { execute: "command" },
+              },
+            ],
+            completedAt: "2026-07-04T00:01:30.000Z",
           },
         },
-      ],
-      now: () => "2026-07-04T00:02:00.000Z",
+        transitionLog: [
+          {
+            at: "2026-07-04T00:01:00.000Z",
+            verdict: { status: "passed" },
+            decision: {
+              type: "complete",
+              fromNodeId: "patch",
+              reason: "node_passed",
+            },
+          },
+        ],
+        now: () => "2026-07-04T00:02:00.000Z",
+      },
+      event: {
+        at: "2026-07-04T00:02:00.000Z",
+        type: "completed",
+        workflowRunId: id,
+        status: "completed",
+      },
     });
+    await writer!.release();
 
     expect(updated.completedAt).toBe("2026-07-04T00:02:00.000Z");
     expect(updated.transitionLog).toHaveLength(1);
@@ -414,6 +699,164 @@ describe("FileWorkflowStore", () => {
     ).toBeUndefined();
   });
 
+  it("resumes an idempotent lazy migration after baseline publication", async () => {
+    const root = await tempDir();
+    const id = "workflow_migration_retry" as WorkflowRunId;
+    const legacy = {
+      schemaVersion: WORKFLOW_RUN_RECORD_SCHEMA_VERSION,
+      id,
+      assetName: "legacy",
+      contentHash: "hash",
+      runIds: [],
+      status: "running" as const,
+      attempts: {},
+      evidenceRefs: [],
+      verdictLog: [],
+      transitionLog: [],
+      resume: { verifyOnResume: true },
+      createdAt: "2026-07-04T00:00:00.000Z",
+      metadata: {},
+    };
+    await writeFile(join(root, `${id}.json`), JSON.stringify(legacy), "utf8");
+    const legacyEvent = {
+      at: legacy.createdAt,
+      type: "created" as const,
+      workflowRunId: id,
+      status: "running" as const,
+    };
+    await writeFile(
+      join(root, `${id}.events.jsonl`),
+      `${JSON.stringify(legacyEvent)}\n`,
+      "utf8",
+    );
+    const store = new FileWorkflowStore({ rootDir: root, createRoot: false });
+    const record = store.get(id)!;
+    expect(
+      await publishWorkflowJournalEntry({
+        rootDir: root,
+        workflowRunId: id,
+        physicalSequence: 0,
+        payload: {
+          kind: "baseline",
+          generation: 0,
+          recordRevision: 0,
+          record: { ...record, generation: 0, recordRevision: 0 },
+          legacyEvents: [legacyEvent],
+        },
+      }),
+    ).toBe(true);
+
+    const writer = await store.acquireWriter(id, { owner: "migration-retry" });
+    expect(writer).toMatchObject({ generation: 1 });
+    expect(await writer!.readFresh()).toMatchObject({
+      id,
+      generation: 0,
+      recordRevision: 0,
+    });
+    const migrated = await writer!.mutate({
+      expectedRevision: 0,
+      patch: { metadata: { migrated: true } },
+      event: {
+        at: "2026-07-04T00:01:00.000Z",
+        type: "updated",
+        workflowRunId: id,
+        status: "running",
+        metadata: { migration: true },
+      },
+    });
+    expect(migrated).toMatchObject({
+      generation: 1,
+      recordRevision: 1,
+      metadata: { migrated: true },
+    });
+    expect(store.eventLog(id).events).toEqual([
+      legacyEvent,
+      expect.objectContaining({ metadata: { migration: true } }),
+    ]);
+    await writer!.release();
+  });
+
+  it("keeps async and sync replay aligned for a mismatched baseline record", async () => {
+    const root = await tempDir();
+    const id = "workflow_baseline_identity" as WorkflowRunId;
+    const wrongId = "workflow_other_identity" as WorkflowRunId;
+    expect(
+      await publishWorkflowJournalEntry({
+        rootDir: root,
+        workflowRunId: id,
+        physicalSequence: 0,
+        payload: {
+          kind: "baseline",
+          generation: 0,
+          recordRevision: 0,
+          record: {
+            schemaVersion: WORKFLOW_RUN_RECORD_SCHEMA_VERSION,
+            id: wrongId,
+            assetName: "legacy",
+            contentHash: "hash",
+            runIds: [],
+            status: "running",
+            attempts: {},
+            evidenceRefs: [],
+            verdictLog: [],
+            transitionLog: [],
+            resume: { verifyOnResume: true },
+            createdAt: "2026-07-04T00:00:00.000Z",
+            metadata: {},
+            generation: 0,
+            recordRevision: 0,
+          },
+          legacyEvents: [],
+        },
+      }),
+    ).toBe(true);
+
+    const asynchronous = await readWorkflowJournal(root, id);
+    const synchronous = readWorkflowJournalSync(root, id);
+    expect(asynchronous).toEqual(synchronous);
+    expect(asynchronous?.record).toBeUndefined();
+    expect(asynchronous).toMatchObject({
+      quarantined: [
+        expect.objectContaining({
+          reason: "baseline record identity mismatch",
+        }),
+      ],
+    });
+  });
+
+  it("allows only one concurrent lazy-migration claimant", async () => {
+    const root = await tempDir();
+    const id = "workflow_migration_race" as WorkflowRunId;
+    await writeFile(
+      join(root, `${id}.json`),
+      JSON.stringify({
+        schemaVersion: WORKFLOW_RUN_RECORD_SCHEMA_VERSION,
+        id,
+        assetName: "legacy",
+        contentHash: "hash",
+        runIds: [],
+        status: "running",
+        attempts: {},
+        evidenceRefs: [],
+        verdictLog: [],
+        transitionLog: [],
+        resume: { verifyOnResume: true },
+        createdAt: "2026-07-04T00:00:00.000Z",
+        metadata: {},
+      }),
+      "utf8",
+    );
+    const storeA = new FileWorkflowStore({ rootDir: root });
+    const storeB = new FileWorkflowStore({ rootDir: root });
+    const claims = await Promise.all([
+      storeA.acquireWriter(id, { owner: "a" }),
+      storeB.acquireWriter(id, { owner: "b" }),
+    ]);
+    expect(claims.filter(Boolean)).toHaveLength(1);
+    expect(claims.find(Boolean)).toMatchObject({ generation: 1 });
+    await claims.find(Boolean)!.release();
+  });
+
   it("treats partial authorization snapshots as absent instead of defaulting privileges", async () => {
     const root = await tempDir();
     await writeFile(
@@ -456,7 +899,8 @@ describe("FileWorkflowStore", () => {
     const root = await tempDir();
     const store = new FileWorkflowStore({ rootDir: root });
     const id = "workflow_restore" as WorkflowRunId;
-    const original = store.create({
+    const writer = await store.acquireWriter(id, { owner: "test" });
+    const original = await writer!.create({
       id,
       assetName: "restore",
       contentHash: "hash",
@@ -466,29 +910,65 @@ describe("FileWorkflowStore", () => {
         { id: "review", execute: "human", body: "Review." },
       ]),
     });
-    const waiting = store.update(original.id, {
-      status: "waiting",
-      wait: { kind: "input", reason: "Need input." },
+    const waiting = await writer!.mutate({
+      expectedRevision: original.recordRevision!,
+      patch: {
+        status: "waiting",
+        wait: { kind: "input", reason: "Need input." },
+      },
+      event: {
+        at: "2026-07-04T00:00:01.000Z",
+        type: "waiting",
+        workflowRunId: id,
+        status: "waiting",
+      },
     });
-    store.update(original.id, {
-      status: "running",
-      clearWait: true,
-      currentNodeId: "finish",
-      attempts: { review: 1, finish: 1 },
-      verdictLog: [
-        {
-          at: "2026-07-04T00:00:01.000Z",
-          nodeId: "review",
-          attempt: 1,
-          verdict: { status: "passed" },
-        },
-      ],
+    const advanced = await writer!.mutate({
+      expectedRevision: waiting.recordRevision!,
+      patch: {
+        status: "running",
+        clearWait: true,
+        currentNodeId: "finish",
+        attempts: { review: 1, finish: 1 },
+        verdictLog: [
+          {
+            at: "2026-07-04T00:00:01.000Z",
+            nodeId: "review",
+            attempt: 1,
+            verdict: { status: "passed" },
+          },
+        ],
+      },
+      event: {
+        at: "2026-07-04T00:00:01.500Z",
+        type: "updated",
+        workflowRunId: id,
+        status: "running",
+      },
     });
 
-    const restored = store.restore(waiting, {
-      now: () => "2026-07-04T00:00:02.000Z",
-      metadata: { rollbackReason: "test" },
+    const restored = await writer!.compensate({
+      expectedRevision: advanced.recordRevision!,
+      patch: {
+        status: waiting.status,
+        currentNodeId: waiting.currentNodeId,
+        wait: waiting.wait,
+        attempts: waiting.attempts,
+        evidenceRefs: waiting.evidenceRefs,
+        verdictLog: waiting.verdictLog,
+        transitionLog: waiting.transitionLog,
+        metadata: { rollbackReason: "test" },
+        now: () => "2026-07-04T00:00:02.000Z",
+      },
+      event: {
+        at: "2026-07-04T00:00:02.000Z",
+        type: "waiting",
+        workflowRunId: id,
+        status: "waiting",
+        metadata: { compensation: true },
+      },
     });
+    await writer!.release();
 
     expect(restored).toMatchObject({
       status: "waiting",
@@ -507,11 +987,14 @@ describe("FileWorkflowStore", () => {
   it("lists valid records while reporting corrupt entries", async () => {
     const root = await tempDir();
     const store = new FileWorkflowStore({ rootDir: root });
-    store.create({
-      id: "workflow_good" as WorkflowRunId,
+    const id = "workflow_good" as WorkflowRunId;
+    const writer = await store.acquireWriter(id, { owner: "test" });
+    await writer!.create({
+      id,
       assetName: "ok",
       contentHash: "hash",
     });
+    await writer!.release();
     await writeFile(join(root, "bad-json.json"), "{", "utf8");
     await writeFile(
       join(root, "bad-shape.json"),
@@ -536,25 +1019,36 @@ describe("FileWorkflowStore", () => {
     );
   });
 
-  it("records JSONL store events and skips corrupt event rows", async () => {
+  it("rebuilds event projection from the canonical journal", async () => {
     const root = await tempDir();
     const store = new FileWorkflowStore({ rootDir: root });
     const id = "workflow_events" as WorkflowRunId;
-    store.create({
+    const writer = await store.acquireWriter(id, { owner: "test" });
+    const created = await writer!.create({
       id,
       assetName: "events",
       contentHash: "hash",
       now: () => "2026-07-04T00:00:00.000Z",
     });
-    store.update(id, {
-      status: "failed",
-      failure: {
-        kind: "runtime",
-        code: "workflow.runtime",
-        message: "projection failed",
+    await writer!.mutate({
+      expectedRevision: created.recordRevision!,
+      patch: {
+        status: "failed",
+        failure: {
+          kind: "runtime",
+          code: "workflow.runtime",
+          message: "projection failed",
+        },
+        now: () => "2026-07-04T00:01:00.000Z",
       },
-      now: () => "2026-07-04T00:01:00.000Z",
+      event: {
+        at: "2026-07-04T00:01:00.000Z",
+        type: "failed",
+        workflowRunId: id,
+        status: "failed",
+      },
     });
+    await writer!.release();
     await writeFile(join(root, `${id}.events.jsonl`), "{bad\n", {
       flag: "a",
     });
@@ -565,25 +1059,24 @@ describe("FileWorkflowStore", () => {
       "created",
       "failed",
     ]);
-    expect(log.invalidEntries).toEqual([
-      expect.objectContaining({ code: "invalid_json", line: 3 }),
-    ]);
+    expect(log.invalidEntries).toEqual([]);
   });
 
   it("leases workflow records for single-writer adoption", async () => {
     const root = await tempDir();
     const store = new FileWorkflowStore({ rootDir: root });
     const id = "workflow_lease" as WorkflowRunId;
-    store.create({ id, assetName: "lease", contentHash: "hash" });
-
-    const first = await store.acquireLease(id, {
+    const creator = await store.acquireWriter(id, { owner: "creator" });
+    await creator!.create({ id, assetName: "lease", contentHash: "hash" });
+    await creator!.release();
+    const first = await store.acquireWriter(id, {
       owner: "worker-a",
       ttlMs: 60_000,
       now: () => new Date("2026-07-04T00:00:00.000Z"),
     });
     expect(first).not.toBeNull();
 
-    const second = await store.acquireLease(id, {
+    const second = await store.acquireWriter(id, {
       owner: "worker-b",
       ttlMs: 60_000,
       now: () => new Date("2026-07-04T00:00:01.000Z"),
@@ -591,12 +1084,12 @@ describe("FileWorkflowStore", () => {
     expect(second).toBeNull();
 
     expect(await first?.release()).toBe(true);
-    const afterRelease = await store.acquireLease(id, {
+    const afterRelease = await store.acquireWriter(id, {
       owner: "worker-b",
       ttlMs: 60_000,
       now: () => new Date("2026-07-04T00:00:02.000Z"),
     });
-    expect(afterRelease?.owner).toBe("worker-b");
+    expect(afterRelease?.generation).toBe(first!.generation + 1);
     await afterRelease?.release();
   });
 
@@ -606,7 +1099,7 @@ describe("FileWorkflowStore", () => {
     const id = "workflow_fresh_lease" as WorkflowRunId;
     let now = new Date("2026-07-04T00:00:00.000Z");
 
-    const lease = await store.acquireLease(id, {
+    const lease = await store.acquireWriter(id, {
       owner: "fresh-worker",
       ttlMs: 60_000,
       now: () => now,
@@ -614,7 +1107,7 @@ describe("FileWorkflowStore", () => {
     expect(lease).not.toBeNull();
     expect(store.eventLog(id).events).toEqual([]);
 
-    store.create({
+    await lease!.create({
       id,
       assetName: "fresh",
       contentHash: "hash",
@@ -625,47 +1118,79 @@ describe("FileWorkflowStore", () => {
 
     expect(store.eventLog(id).events.map((event) => event.type)).toEqual([
       "created",
-      "released",
     ]);
-    expect(store.eventLog(id).events.at(-1)).toMatchObject({
-      at: "2026-07-04T00:02:00.000Z",
-      type: "released",
-      metadata: { owner: "fresh-worker" },
-    });
   });
 
   it("requires waiting records to carry wait.kind and clears wait on terminal", async () => {
     const root = await tempDir();
     const store = new FileWorkflowStore({ rootDir: root });
     const id = "workflow_wait" as WorkflowRunId;
-    store.create({ id, assetName: "wait", contentHash: "hash" });
-
-    expect(() => store.update(id, { status: "waiting" })).toThrow(/wait.kind/);
-    const waiting = store.update(id, {
-      status: "waiting",
-      wait: { kind: "input", reason: "need user" },
+    const writer = await store.acquireWriter(id, { owner: "test" });
+    const created = await writer!.create({
+      id,
+      assetName: "wait",
+      contentHash: "hash",
     });
-    expect(waiting.wait).toEqual({ kind: "input", reason: "need user" });
+    await expect(
+      writer!.mutate({
+        expectedRevision: created.recordRevision!,
+        patch: { status: "waiting" },
+        event: {
+          at: "t1",
+          type: "waiting",
+          workflowRunId: id,
+          status: "waiting",
+        },
+      }),
+    ).rejects.toThrow(/wait.kind/);
+    const waiting = await writer!.mutate({
+      expectedRevision: created.recordRevision!,
+      patch: {
+        status: "waiting",
+        wait: { kind: "input", reason: "need user" },
+      },
+      event: {
+        at: "t1",
+        type: "waiting",
+        workflowRunId: id,
+        status: "waiting",
+        metadata: { wait: { kind: "input", reason: "need user" } },
+      },
+    });
+    expect(waiting.wait).toMatchObject({
+      id: "workflow_wait_2",
+      kind: "input",
+      reason: "need user",
+    });
     expect(store.eventLog(id).events.at(-1)).toMatchObject({
       type: "waiting",
       status: "waiting",
       metadata: { wait: { kind: "input", reason: "need user" } },
     });
-    store.appendEvent({
-      at: "2026-07-05T00:00:00.000Z",
-      type: "input",
-      workflowRunId: id,
-      status: "running",
-      metadata: { wait: waiting.wait },
+    await expect(
+      writer!.mutate({
+        expectedRevision: waiting.recordRevision!,
+        patch: { status: "waiting", clearWait: true },
+        event: {
+          at: "t2",
+          type: "waiting",
+          workflowRunId: id,
+          status: "waiting",
+        },
+      }),
+    ).rejects.toThrow(/wait.kind/);
+    const cancelled = await writer!.mutate({
+      expectedRevision: waiting.recordRevision!,
+      patch: { status: "cancelled" },
+      event: {
+        at: "t3",
+        type: "cancelled",
+        workflowRunId: id,
+        status: "cancelled",
+      },
     });
-    expect(store.eventLog(id).events.at(-1)).toMatchObject({
-      type: "input",
-      metadata: { wait: { kind: "input", reason: "need user" } },
-    });
-    expect(() =>
-      store.update(id, { status: "waiting", clearWait: true }),
-    ).toThrow(/wait.kind/);
-    expect(store.update(id, { status: "cancelled" }).wait).toBeUndefined();
+    expect(cancelled.wait).toBeUndefined();
+    await writer!.release();
   });
 
   it("persists workflow waiting notifications in a file-backed actor outbox", async () => {

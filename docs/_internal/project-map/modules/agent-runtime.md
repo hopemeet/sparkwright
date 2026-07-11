@@ -105,6 +105,18 @@ Does not own:
   corrupt-entry diagnostics, waiting-state invariants, restore-after-adoption
   rollback, and single-writer leases; host owns parsing, projection, and
   run-loop execution.
+- Workflow control is a separate typed command plane. `FileWorkflowControlInbox`
+  owns immutable accepted commands, immutable terminal outcomes, scoped
+  idempotency, corrupt-entry diagnostics, and a reconstructible cursor;
+  competing exclusive publishers use bounded read-back so a transient
+  final-path half-write cannot be reported as an id conflict;
+  `WorkflowControlCommandProcessor` validates durable preconditions and applies
+  commands only through `WorkflowLeaseBoundWriter`. It is not a generic message
+  bus and does not authenticate transports or choose model context roles.
+- `FileWorkflowWorkerRegistry` owns durable per-instance worker liveness and
+  drain state. Its token-bound heartbeat cannot revive expired/draining/stopped
+  instances. Registry records never grant workflow mutation authority; only a
+  canonical Package C journal claim does that.
 - Workflow P1 runtime state transitions are also portable and model/config
   free. `advanceWorkflowState()` evaluates `(state, verdict) -> transition`
   for linear model-node workflows with `retry`, `goto`, `fail`, and terminal
@@ -298,9 +310,104 @@ Does not own:
 
 ## Known Debts
 
+- Workflow canonical projection rewrites the full event JSONL after each
+  mutation and the immutable journal has no compaction policy. Long-lived,
+  high-mutation workflows may incur quadratic projection write amplification
+  and unbounded journal-file growth.
+
 - Task/todo behavior spans host, CLI, TUI replay, and trace diagnostics; ownership can be easy to blur.
+- Workflow leases carry winner-validated fencing tokens for acquire/refresh/release,
+  but live `WorkflowStore` mutation paths do not validate that token; a stale
+  worker can therefore write after lease takeover until S1 write fencing lands.
+  The Package C audit additionally found constructor-time record caching and
+  split record/event writes. A refresh-only writer handle is insufficient
+  against a process frozen after refresh; the recommended reopen design uses a
+  monotonic fencing generation plus revisioned canonical mutation entries.
+- Durable workflow control remains outbound-notification oriented. The approved
+  staged route adds a narrow typed control inbox after write fencing; it does
+  not authorize a generic actor bus or nested background lifecycle.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-11T18:30:00+0800
+- Scope: post-audit concurrency closure for control publication, shared journal
+  replay, exact publisher physical-sequence verification, and writer-acquisition
+  contention.
+- Read: workflow control, journal, store, and focused tests.
+- Tests: focused suites plus 20 consecutive 46-test combined stress runs.
+
+- Status: Verified
+- Date: 2026-07-11T15:30:00+0800
+- Scope: Package G durable workflow channel binding/revoke/delivery receipt,
+  cursor rebuild, and binding-authorized Package D command acceptance.
+- Read: `packages/agent-runtime/src/workflows/channels.ts`,
+  `packages/agent-runtime/src/workflows/notifications.ts`,
+  `packages/agent-runtime/src/workflows/control.ts`,
+  `packages/agent-runtime/test/workflow-channels.test.ts`.
+- Tests: channel/control 19 focused tests plus agent-runtime typecheck/build.
+
+- Status: Read-only
+- Date: 2026-07-11T15:00:00+0800
+- Scope: Package G design keeps workflow notification outbox and Package D
+  command journal as facts, and adds only durable channel binding,
+  revoke/delivery receipt, and rebuildable cursor storage alongside them.
+- Read: `packages/agent-runtime/src/workflows/notifications.ts`,
+  `packages/agent-runtime/src/workflows/control.ts`,
+  `packages/agent-runtime/src/workflows/control-processor.ts`.
+- Tests: not run; design-only source reconciliation.
+
+- Status: Verified
+- Date: 2026-07-11T13:30:00+0800
+- Scope: Package E durable worker registry and its liveness-only boundary.
+- Read: `packages/agent-runtime/src/workflows/workers.ts`,
+  `packages/agent-runtime/src/workflows/store.ts`,
+  `packages/agent-runtime/test/workflow-workers.test.ts`.
+- Tests: agent-runtime workflow worker/store/control focused tests, typecheck,
+  build, and Package E release gate.
+
+- Status: Read-only
+- Date: 2026-07-11T13:10:00+0800
+- Scope: Package E design confirms the workflow journal claim remains the sole
+  ownership transition; a future worker registry is liveness/discovery only and
+  cannot grant record mutation authority.
+- Read: `packages/agent-runtime/src/workflows/store.ts`,
+  `packages/agent-runtime/src/workflows/journal.ts`,
+  `packages/agent-runtime/src/doc-store/index.ts`, and review section 8.14.
+- Tests: not run; design-only source reconciliation.
+
+- Status: Verified
+- Date: 2026-07-11T13:00:00+0800
+- Scope: Package D typed durable workflow control inbox, fenced processor,
+  canonical-event crash recovery, and durable approval/input linkage.
+- Read: `packages/agent-runtime/src/workflows/control.ts`,
+  `packages/agent-runtime/src/workflows/control-processor.ts`,
+  `packages/agent-runtime/src/workflows/store.ts`,
+  `packages/agent-runtime/src/workflows/types.ts`,
+  `packages/agent-runtime/test/workflow-control.test.ts`.
+- Tests: Package D focused commands and full release gate recorded in
+  `docs/_internal/test-map/coverage/workflow-durable-jobs.md`.
+
+- Status: Verified
+- Date: 2026-07-11T10:40:00+0800
+- Scope: Package C workflow mutation fencing adds an immutable canonical
+  claim/mutation journal, lease-bound writer, generation-aware replay,
+  compensating mutations, and lazy v1 migration. Workflow snapshots and event
+  JSONL are rebuildable projections; legacy public mutation methods retired.
+- Read: `packages/agent-runtime/src/doc-store/index.ts`,
+  `packages/agent-runtime/src/workflows/store.ts`,
+  `packages/agent-runtime/src/workflows/journal.ts`, workflow types/tests.
+- Tests: agent-runtime workflow/doc-store 32 tests; typecheck; build.
+
+- Status: Read-only
+- Date: 2026-07-11T00:00:00+0800
+- Scope: workflow lease/write-fencing gap and its separation from the sealed,
+  flat background-task lifecycle.
+- Read: `packages/agent-runtime/src/doc-store/index.ts`,
+  `packages/agent-runtime/src/workflows/store.ts`,
+  `docs/_internal/proposals/background-task-lifecycle.md`, and workflow job
+  session review section 8.
+- Tests: not run; documentation-only planning audit.
 
 - Status: Verified
 - Date: 2026-07-11T02:10:00+0800

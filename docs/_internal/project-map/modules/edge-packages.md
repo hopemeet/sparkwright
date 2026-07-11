@@ -42,6 +42,14 @@ contracts, and focused checklists that no longer fit here.
 - Server, streaming, memory-store, and trace-perfetto packages are reusable
   runtime/storage/diagnostic adapters around core contracts. Treat core events,
   run/session stores, and trace maps as the active contracts.
+- `server-runtime`'s `DurableCommandDispatcher` only coalesces concurrent local
+  dispatch of the same durable command id. Agent-runtime storage and the
+  workflow journal remain command/outcome/apply truth; Host remains the adapter
+  that assembles a fenced writer and execution behavior.
+- `WorkflowSupervisor` coordinates bounded inventory scans, Package C claim
+  competition, claimed-adapter invocation, heartbeat, and drain reporting. It
+  has no process launcher and is not a daemon; F remains responsible for the
+  long-running service carrier.
 - Project commands and shell sandbox packages are edge helpers consumed by TUI,
   host, CLI, and MCP/shell paths. Route safety-sensitive changes through shell
   and workspace-write maps.
@@ -84,10 +92,100 @@ contracts, and focused checklists that no longer fit here.
   run/session/approval/event orchestration), but current host/CLI paths do not
   wire it as the main process coordinator; source currently uses host-owned
   per-connection `HostRuntime` directly.
+- The workflow job session route now stages durable supervisor/worker ownership
+  and multi-channel control after session isolation, write fencing, and a typed
+  durable workflow control inbox. `server-runtime` owns coordination; IM/Web/API
+  gateways remain authenticated adapters and transport delivery stores rather
+  than canonical workflow owners.
 - This page is intentionally read-only coverage from package manifests and
   source exports. It should not be used as the sole authority for behavior.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-11T15:30:00+0800
+- Scope: Package G server-runtime delivery coordinator, SDK preaccepted-command
+  dispatch, and IM workspace binding/outbox polling/authenticated response.
+- Read: `packages/server-runtime/src/workflow-channel-coordinator.ts`,
+  `packages/sdk-core/src/client.ts`, `packages/im-gateway/src/gateway.ts`,
+  `packages/im-gateway/src/adapters/telegram.ts`,
+  `packages/im-gateway/src/bin.ts`.
+- Tests: server-runtime 15 focused tests, SDK 10, IM 13; affected
+  typecheck/build passed.
+
+- Status: Read-only
+- Date: 2026-07-11T15:00:00+0800
+- Scope: Package G design routes TUI/CLI/agent/IM/Web/API through
+  server-runtime binding/delivery coordination, existing workflow notification
+  outbox, and Package D commands; gateways retain only transport identity and
+  cursor/dedupe state.
+- Read: `packages/im-gateway/src/gateway.ts`,
+  `packages/im-gateway/src/store.ts`, `packages/im-gateway/src/types.ts`,
+  `packages/agent-runtime/src/workflows/notifications.ts`,
+  `packages/agent-runtime/src/workflows/control.ts`,
+  `packages/server-runtime/src/index.ts`, `packages/host/src/runtime.ts`.
+- Tests: not run; design-only source reconciliation after Package F release.
+
+- Status: Verified
+- Date: 2026-07-11T14:30:00+0800
+- Scope: Package F foreground workflow service carrier, durable handoff/outcome,
+  service instance fencing, drain, and embedded Package E supervisor.
+- Read: `packages/server-runtime/src/workflow-service.ts`,
+  `packages/server-runtime/src/workflow-supervisor.ts`,
+  `packages/server-runtime/test/workflow-service.test.ts`,
+  `packages/server-runtime/test/index.test.ts`.
+- Tests: server-runtime 18 tests plus typecheck/build; Host/CLI focused evidence
+  is recorded in the workflow durable-jobs test map.
+
+- Status: Read-only
+- Date: 2026-07-11T14:00:00+0800
+- Scope: Package F design adjudication keeps server-runtime as the foreground
+  service carrier/coordinator, with durable handoff acceptance before honest
+  CLI detach; it does not add an orphan process launcher or ownership truth.
+- Read: `packages/server-runtime/src/workflow-supervisor.ts`,
+  `packages/server-runtime/src/index.ts`, `packages/host/src/server.ts`,
+  `packages/host/src/runtime.ts`, `packages/cli/src/runners/host-runner.ts`.
+- Tests: not run; design-only source reconciliation.
+
+- Status: Verified
+- Date: 2026-07-11T13:30:00+0800
+- Scope: Package E server-runtime workflow supervisor coordination and
+  deterministic claim/drain/restart behavior.
+- Read: `packages/server-runtime/src/workflow-supervisor.ts`,
+  `packages/server-runtime/test/index.test.ts`,
+  `packages/agent-runtime/src/workflows/workers.ts`.
+- Tests: server-runtime focused tests/typecheck/build and Package E release gate.
+
+- Status: Read-only
+- Date: 2026-07-11T13:10:00+0800
+- Scope: Package E design adjudication: server-runtime will coordinate worker
+  registration/drain/inventory claiming, while the Package C journal claim is
+  the only workflow ownership truth and F retains daemon/process lifecycle.
+- Read: `packages/server-runtime/src/index.ts`,
+  `packages/agent-runtime/src/workflows/store.ts`,
+  `packages/agent-runtime/src/workflows/journal.ts`,
+  `packages/host/src/runtime.ts`, and workflow job review section 8.14.
+- Tests: not run; design-only source reconciliation.
+
+- Status: Verified
+- Date: 2026-07-11T13:00:00+0800
+- Scope: Package D SDK `controlWorkflow()` adapter and server-runtime local
+  durable-command dispatch coalescing boundary.
+- Read: `packages/sdk-core/src/client.ts`,
+  `packages/server-runtime/src/index.ts`,
+  `packages/server-runtime/test/index.test.ts`, `packages/host/src/runtime.ts`.
+- Tests: SDK/server-runtime focused tests, typecheck, build, and the full D
+  release gate recorded in the workflow durable-jobs test map.
+
+- Status: Read-only
+- Date: 2026-07-11T00:00:00+0800
+- Scope: routed workflow supervisor/daemon/multi-channel stages through the
+  existing server-runtime coordinator and thin-gateway ownership boundaries.
+- Read: `packages/server-runtime/src/index.ts`,
+  `packages/im-gateway/src/gateway.ts`,
+  `docs/_internal/proposals/session-agent-host-coordinator.md`, and workflow job
+  session review section 8.
+- Tests: not run; documentation-only roadmap convergence.
 
 - Status: Verified
 - Date: 2026-07-05T00:42:02+0800

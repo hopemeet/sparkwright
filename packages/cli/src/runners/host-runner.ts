@@ -47,6 +47,7 @@ export interface HostRunInput {
   modelName?: string;
   workflowName?: string;
   sessionId: string;
+  controlSessionId?: string;
   targetPath?: string;
   confidentialPaths?: readonly string[];
   confidentialDefaults?: boolean;
@@ -302,6 +303,7 @@ async function runHostLifecycle(
           createHostStartRunRequest({
             goal: input.goal,
             sessionId,
+            controlSessionId: input.controlSessionId,
             accessMode,
             backgroundTasks,
             permissionMode,
@@ -318,6 +320,7 @@ async function runHostLifecycle(
           }),
         );
         runId = started.runId;
+        sessionId = started.sessionId ?? sessionId;
       } else if ("runId" in input) {
         const metadata = createHostClientRunMetadata({
           source: "cli",

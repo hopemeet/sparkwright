@@ -14,6 +14,8 @@ export interface ImGatewayConfig {
   /** Model reference "provider/model" (e.g. "openai/gpt-4o-mini"). */
   model?: string;
   dataDir?: string;
+  /** Local workspace whose durable workflow channel stores this gateway serves. */
+  workspaceRoot?: string;
   sessionRouting?: {
     groupSessionsPerUser?: boolean;
     threadSessionsPerUser?: boolean;

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import type {
   BackgroundTaskPolicy,
@@ -21,6 +22,10 @@ import {
 
 export type HostClientSource = "cli" | "tui" | "acp" | string;
 export type HostClientModelSource = "config" | "request" | "cli";
+
+export function createWorkflowJobSessionId(): string {
+  return `session_workflow_${randomUUID().replaceAll("-", "")}`;
+}
 
 export interface HostClientRunAccessInput extends RunAccessResolutionOptions {
   accessMode?: RunAccessMode;
@@ -132,6 +137,7 @@ export function createHostClientRunMetadata(
 export function createHostStartRunRequest(input: {
   goal: string;
   sessionId?: string;
+  controlSessionId?: string;
   modelName?: string;
   modelNameSource?: HostClientModelSource;
   workflowName?: string;
@@ -150,6 +156,9 @@ export function createHostStartRunRequest(input: {
     goal: input.goal,
     ...(input.input ? { input: input.input } : {}),
     sessionId: input.sessionId,
+    ...(input.controlSessionId
+      ? { controlSessionId: input.controlSessionId }
+      : {}),
     model: resolveHostRequestModel(input),
     workflow: input.workflowName,
     accessMode: input.accessMode,

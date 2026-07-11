@@ -17,6 +17,8 @@ import {
   type SessionInspectRequestPayload,
   type WorkflowListRequestPayload,
   type WorkflowResumeRequestPayload,
+  type WorkflowControlRequestPayload,
+  type WorkflowControlProcessRequestPayload,
   type CapabilityInspectRequestPayload,
   type TaskGetRequestPayload,
   type TaskJoinRequestPayload,
@@ -319,6 +321,24 @@ export class Client extends TypedEmitter<ClientEventMap> {
       "workflow.resume",
       payload as unknown as Record<string, unknown>,
     ) as Promise<ResponseResults["workflow.resume"]>;
+  }
+
+  controlWorkflow(
+    payload: WorkflowControlRequestPayload,
+  ): Promise<ResponseResults["workflow.control"]> {
+    return this.request(
+      "workflow.control",
+      payload as unknown as Record<string, unknown>,
+    ) as Promise<ResponseResults["workflow.control"]>;
+  }
+
+  processWorkflowControl(
+    payload: WorkflowControlProcessRequestPayload,
+  ): Promise<ResponseResults["workflow.control.process"]> {
+    return this.request(
+      "workflow.control.process",
+      payload as unknown as Record<string, unknown>,
+    ) as Promise<ResponseResults["workflow.control.process"]>;
   }
 
   cancelRun(payload: {

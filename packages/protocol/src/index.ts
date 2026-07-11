@@ -260,6 +260,8 @@ export type RequestKind =
   | "task.promote"
   | "workflow.list"
   | "workflow.resume"
+  | "workflow.control"
+  | "workflow.control.process"
   | "capability.inspect";
 
 export interface HostRequestBase<TKind extends RequestKind, TPayload> {
@@ -308,6 +310,8 @@ export interface RunStartRequestPayload {
   goal: string;
   input?: RunInputPayload;
   sessionId?: string;
+  /** Parent/control session attribution for a newly instantiated workflow job. */
+  controlSessionId?: string;
   /** Workspace-relative target path that the run should focus on when applicable. */
   targetPath?: string;
   /** Workspace-relative paths/globs whose contents this run must not read. */
@@ -384,6 +388,36 @@ export interface WorkflowResumeRequestPayload {
   permissionMode?: PermissionMode;
   traceLevel?: TraceLevel;
   metadata?: Record<string, unknown>;
+}
+
+export type WorkflowControlCommandPayload =
+  | { kind: "cancel"; reason?: string }
+  | { kind: "provide_input"; waitId: string; value: string }
+  | {
+      kind: "approval_response";
+      approvalId: string;
+      decision: "approved" | "denied";
+      message?: string;
+    }
+  | { kind: "resume_request"; waitId?: string };
+
+export interface WorkflowControlRequestPayload {
+  workflowRunId: string;
+  sessionId?: string;
+  commandId?: string;
+  idempotencyKey: string;
+  expected?: {
+    generation?: number;
+    status?: "running" | "waiting" | "completed" | "failed" | "cancelled";
+    waitId?: string;
+  };
+  command: WorkflowControlCommandPayload;
+}
+
+export interface WorkflowControlProcessRequestPayload {
+  workflowRunId: string;
+  sessionId?: string;
+  commandId: string;
 }
 
 export interface RunCancelRequestPayload {
@@ -616,6 +650,11 @@ export type HostRequest =
   | HostRequestBase<"task.promote", TaskPromoteRequestPayload>
   | HostRequestBase<"workflow.list", WorkflowListRequestPayload>
   | HostRequestBase<"workflow.resume", WorkflowResumeRequestPayload>
+  | HostRequestBase<"workflow.control", WorkflowControlRequestPayload>
+  | HostRequestBase<
+      "workflow.control.process",
+      WorkflowControlProcessRequestPayload
+    >
   | HostRequestBase<"capability.inspect", CapabilityInspectRequestPayload>;
 
 // ---------------------------------------------------------------------------
@@ -643,7 +682,11 @@ export type HostResponse = HostResponseOk | HostResponseError;
 /** Concrete result shapes for ok responses, by originating request kind. */
 export interface ResponseResults {
   handshake: Record<string, never>;
-  "run.start": { runId: string };
+  "run.start": {
+    runId: string;
+    sessionId?: string;
+    workflowRunId?: string;
+  };
   "run.resume": {
     runId: string;
     resumedFromRunId: string;
@@ -657,6 +700,18 @@ export interface ResponseResults {
     runId: string;
     workflowRunId: string;
     sessionId?: string;
+  };
+  "workflow.control": {
+    status: string;
+    commandId: string;
+    code?: string;
+    runId?: string;
+  };
+  "workflow.control.process": {
+    status: string;
+    commandId: string;
+    code?: string;
+    runId?: string;
   };
   "run.inject_message": Record<string, never>;
   "run.cancel": Record<string, never>;
@@ -722,6 +777,8 @@ export interface ResponseResults {
 
 export interface WorkflowRunSnapshot {
   id: string;
+  generation?: number;
+  recordRevision?: number;
   sessionId?: string;
   status: "running" | "waiting" | "completed" | "failed" | "cancelled";
   assetName: string;
@@ -738,6 +795,7 @@ export interface WorkflowRunSnapshot {
     at?: string;
   };
   wait?: {
+    id?: string;
     kind: "input" | "task" | "approval";
     reason?: string;
     taskId?: string;

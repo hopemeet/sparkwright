@@ -4,9 +4,13 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   FileWorkflowStore,
+  FileWorkflowChannelStore,
+  FileWorkflowControlInbox,
   type WorkflowDefinition,
   type WorkflowRunId,
   type WorkflowRunRecord,
+  type CreateWorkflowRunRecordInput,
+  type WorkflowRunRecordPatch,
 } from "@sparkwright/agent-runtime";
 import {
   loadLayeredWorkflowAssets,
@@ -99,7 +103,163 @@ async function waitForWorkflowRecord(
   throw new Error("Timed out waiting for workflow record.");
 }
 
+async function seedWorkflowRecord(
+  store: FileWorkflowStore,
+  input: CreateWorkflowRunRecordInput,
+  patch?: WorkflowRunRecordPatch,
+): Promise<WorkflowRunRecord> {
+  const writer = await store.acquireWriter(input.id, { owner: "test-fixture" });
+  if (!writer) throw new Error(`Could not claim ${input.id}`);
+  let record = await writer.create(input);
+  if (patch) {
+    const status = patch.status ?? record.status;
+    record = await writer.mutate({
+      expectedRevision: record.recordRevision ?? 0,
+      patch,
+      event: {
+        at: new Date().toISOString(),
+        type:
+          status === "completed"
+            ? "completed"
+            : status === "waiting"
+              ? "waiting"
+              : "updated",
+        workflowRunId: record.id,
+        status,
+      },
+    });
+  }
+  await writer.release();
+  return record;
+}
+
 describe("workflow assets", () => {
+  it("returns durable workflow/job identity and records control-session attribution", async () => {
+    const workspace = await tempWorkspace();
+    await writeWorkflow(
+      workspace,
+      "job-identity",
+      [
+        "---",
+        "nodes:",
+        "  - id: main",
+        "    execute: model",
+        "---",
+        "## main",
+        "Finish once.",
+      ].join("\n"),
+    );
+    const events: HostEvent[] = [];
+    const runtime = new HostRuntime({
+      workspaceRoot: workspace,
+      defaultModel: "deterministic",
+      emit: (event) => events.push(event),
+    });
+
+    const started = await runtime.startRun({
+      goal: "isolated workflow job",
+      sessionId: "session_workflow_job",
+      controlSessionId: "session_main_control",
+      workflow: "job-identity",
+    });
+
+    expect(started).toMatchObject({
+      ok: true,
+      sessionId: "session_workflow_job",
+      workflowRunId: expect.stringMatching(/^workflow_/),
+    });
+    if (!started.ok || !started.workflowRunId) {
+      throw new Error("Expected workflow identity.");
+    }
+    const record = new FileWorkflowStore({
+      rootDir: workflowStoreRoot(workspace),
+      createRoot: false,
+    }).get(started.workflowRunId as WorkflowRunId);
+    expect(record).toMatchObject({
+      id: started.workflowRunId,
+      sessionId: "session_workflow_job",
+      metadata: { controlSessionId: "session_main_control" },
+    });
+    await waitForHostEvent(events, (event) => event.kind === "run.completed");
+
+    const invalid = await new HostRuntime({
+      workspaceRoot: workspace,
+      defaultModel: "deterministic",
+      emit: () => {},
+    }).startRun({
+      goal: "invalid shared identity",
+      sessionId: "session_same",
+      controlSessionId: "session_same",
+      workflow: "job-identity",
+    });
+    expect(invalid).toMatchObject({
+      ok: false,
+      error: expect.objectContaining({
+        message: expect.stringContaining("must differ"),
+      }),
+    });
+  });
+
+  it("uses a service-fixed workflow id as the fresh-start idempotency backstop", async () => {
+    const workspace = await tempWorkspace();
+    await writeWorkflow(
+      workspace,
+      "service-fixed",
+      [
+        "---",
+        "nodes:",
+        "  - id: main",
+        "    execute: model",
+        "---",
+        "## main",
+        "Finish once.",
+      ].join("\n"),
+    );
+    const workflowRunId =
+      "workflow_service_0123456789abcdef0123456789abcdef" as WorkflowRunId;
+    const events: HostEvent[] = [];
+    const first = await new HostRuntime({
+      workspaceRoot: workspace,
+      defaultModel: "deterministic",
+      emit: (event) => events.push(event),
+    }).startDetachedWorkflowRun(
+      {
+        goal: "one durable handoff",
+        sessionId: "session_workflow_service_fixed",
+        workflow: "service-fixed",
+        metadata: { serviceHandoffId: "handoff_fixed" },
+      },
+      workflowRunId,
+    );
+    expect(first).toMatchObject({ ok: true, workflowRunId });
+    await waitForHostEvent(events, (event) => event.kind === "run.completed");
+
+    const duplicate = await new HostRuntime({
+      workspaceRoot: workspace,
+      defaultModel: "deterministic",
+      emit: () => {},
+    }).startDetachedWorkflowRun(
+      {
+        goal: "one durable handoff",
+        sessionId: "session_workflow_service_fixed",
+        workflow: "service-fixed",
+        metadata: { serviceHandoffId: "handoff_fixed" },
+      },
+      workflowRunId,
+    );
+    expect(duplicate).toMatchObject({ ok: false });
+    const records = new FileWorkflowStore({
+      rootDir: workflowStoreRoot(workspace),
+      createRoot: false,
+    })
+      .list()
+      .records.filter((record) => record.id === workflowRunId);
+    expect(records).toHaveLength(1);
+    expect(records[0]?.metadata).toMatchObject({
+      serviceHandoffId: "handoff_fixed",
+    });
+  });
+
   it("parses workflow folder assets on the shared markdown-folder primitive", async () => {
     const workspace = await tempWorkspace();
     await writeWorkflow(
@@ -1191,6 +1351,10 @@ describe("workflow assets", () => {
         payload: {
           workflowId: waitingRecord.id,
           wait: { kind: "input", reason: "Need human review." },
+          metadata: {
+            generation: waitingRecord.generation,
+            status: "waiting",
+          },
         },
       },
     ]);
@@ -1275,20 +1439,23 @@ describe("workflow assets", () => {
       rootDir: workflowStoreRoot(workspace, sessionId),
     });
     const workflowRunId = "workflow_prepare_failure" as WorkflowRunId;
-    const created = store.create({
-      id: workflowRunId,
-      sessionId,
-      assetName: definition.assetName,
-      contentHash: definition.contentHash,
-      currentNodeId: "review",
-      attempts: { review: 1 },
-      definitionSnapshot: definition,
-      metadata: { goal: "resume human-gate" },
-    });
-    const waiting = store.update(created.id, {
-      status: "waiting",
-      wait: { kind: "input", reason: "Need human review." },
-    });
+    const waiting = await seedWorkflowRecord(
+      store,
+      {
+        id: workflowRunId,
+        sessionId,
+        assetName: definition.assetName,
+        contentHash: definition.contentHash,
+        currentNodeId: "review",
+        attempts: { review: 1 },
+        definitionSnapshot: definition,
+        metadata: { goal: "resume human-gate" },
+      },
+      {
+        status: "waiting",
+        wait: { kind: "input", reason: "Need human review." },
+      },
+    );
     const runtime = new HostRuntime({
       workspaceRoot: workspace,
       defaultModel: "deterministic",
@@ -1357,7 +1524,7 @@ describe("workflow assets", () => {
       rootDir: workflowStoreRoot(workspace, sessionId),
       createRoot: false,
     });
-    const competingLease = await store.acquireLease(record.id, {
+    const competingLease = await store.acquireWriter(record.id, {
       owner: "test-adopter",
       ttlMs: 60_000,
     });
@@ -1443,7 +1610,7 @@ describe("workflow assets", () => {
         }),
       }),
     ]);
-    const releasedLease = await store.acquireLease(record.id, {
+    const releasedLease = await store.acquireWriter(record.id, {
       owner: "test-after-failure",
       ttlMs: 60_000,
     });
@@ -1479,7 +1646,7 @@ describe("workflow assets", () => {
       rootDir: legacyWorkflowStoreRoot(workspace, sessionId),
     });
     const workflowRunId = "workflow_resume_pinned" as WorkflowRunId;
-    store.create({
+    await seedWorkflowRecord(store, {
       id: workflowRunId,
       sessionId,
       assetName: definition.assetName,
@@ -1534,6 +1701,54 @@ describe("workflow assets", () => {
     expect(record?.runIds).toContain(resumed.ok ? resumed.runId : "");
   });
 
+  it("runs a supervisor-claimed workflow without acquiring a second writer", async () => {
+    const workspace = await tempWorkspace();
+    const sessionId = "sess_workflow_claimed_resume";
+    const workflowRunId = "workflow_claimed_resume" as WorkflowRunId;
+    const definition: WorkflowDefinition = {
+      assetName: "claimed",
+      contentHash: "hash-claimed",
+      nodes: [{ id: "main", body: "Claimed body." }],
+    };
+    const store = new FileWorkflowStore({
+      rootDir: legacyWorkflowStoreRoot(workspace, sessionId),
+    });
+    await seedWorkflowRecord(store, {
+      id: workflowRunId,
+      sessionId,
+      assetName: definition.assetName,
+      contentHash: definition.contentHash,
+      currentNodeId: "main",
+      attempts: { main: 1 },
+      definitionSnapshot: definition,
+      metadata: { goal: "resume claimed workflow" },
+    });
+    const writer = await store.acquireWriter(workflowRunId, {
+      owner: "worker:supervisor:instance",
+    });
+    expect(writer).not.toBeNull();
+    const events: HostEvent[] = [];
+    const runtime = new HostRuntime({
+      workspaceRoot: workspace,
+      defaultModel: "deterministic",
+      emit: (event) => events.push(event),
+    });
+
+    const resumed = await runtime.resumeClaimedWorkflowRun(
+      { workflowRunId, sessionId },
+      writer!,
+    );
+
+    expect(resumed).toMatchObject({ ok: true, workflowRunId, sessionId });
+    await waitForHostEvent(events, (event) => event.kind === "run.completed");
+    expect(
+      new FileWorkflowStore({
+        rootDir: legacyWorkflowStoreRoot(workspace, sessionId),
+        createRoot: false,
+      }).get(workflowRunId),
+    ).toMatchObject({ status: "completed", generation: writer!.generation });
+  });
+
   it("does not re-verify failed historical nodes on workflow resume", async () => {
     const workspace = await tempWorkspace();
     const sessionId = "sess_workflow_resume_failed_verdict";
@@ -1566,7 +1781,7 @@ describe("workflow assets", () => {
       rootDir: workflowStoreRoot(workspace, sessionId),
     });
     const workflowRunId = "workflow_failed_history" as WorkflowRunId;
-    store.create({
+    await seedWorkflowRecord(store, {
       id: workflowRunId,
       sessionId,
       assetName: definition.assetName,
@@ -1627,7 +1842,7 @@ describe("workflow assets", () => {
     const workspaceStore = new FileWorkflowStore({
       rootDir: workflowStoreRoot(workspace, sessionId),
     });
-    workspaceStore.create({
+    await seedWorkflowRecord(workspaceStore, {
       id: workflowRunId,
       sessionId,
       assetName: definition.assetName,
@@ -1639,7 +1854,7 @@ describe("workflow assets", () => {
     const legacyStore = new FileWorkflowStore({
       rootDir: legacyWorkflowStoreRoot(workspace, sessionId),
     });
-    legacyStore.create({
+    await seedWorkflowRecord(legacyStore, {
       id: workflowRunId,
       sessionId,
       assetName: definition.assetName,
@@ -1688,15 +1903,16 @@ describe("workflow assets", () => {
       rootDir: workflowStoreRoot(workspace, sessionId),
     });
     const workflowRunId = "workflow_terminal" as WorkflowRunId;
-    store.update(
-      store.create({
+    await seedWorkflowRecord(
+      store,
+      {
         id: workflowRunId,
         sessionId,
         assetName: definition.assetName,
         contentHash: definition.contentHash,
         currentNodeId: "main",
         definitionSnapshot: definition,
-      }).id,
+      },
       { status: "completed" },
     );
     const runtime = new HostRuntime({
@@ -1716,6 +1932,124 @@ describe("workflow assets", () => {
         code: "invalid_payload",
         message: expect.stringContaining("already completed"),
       },
+    });
+  });
+
+  it("applies durable cancel from a different Host runtime", async () => {
+    const workspace = await tempWorkspace();
+    const sessionId = "sess_workflow_control_cancel";
+    const workflowRunId = "workflow_control_cancel" as WorkflowRunId;
+    const store = new FileWorkflowStore({
+      rootDir: workflowStoreRoot(workspace, sessionId),
+    });
+    const record = await seedWorkflowRecord(store, {
+      id: workflowRunId,
+      sessionId,
+      assetName: "controlled",
+      contentHash: "hash-controlled",
+      currentNodeId: "main",
+      definitionSnapshot: {
+        assetName: "controlled",
+        contentHash: "hash-controlled",
+        nodes: [{ id: "main", body: "Controlled body." }],
+      },
+    });
+    const runtime = new HostRuntime({
+      workspaceRoot: workspace,
+      defaultModel: "deterministic",
+      emit: () => {},
+    });
+
+    const controlled = await runtime.controlWorkflow({
+      workflowRunId,
+      sessionId,
+      idempotencyKey: "cancel-from-other-host",
+      source: {
+        kind: "api",
+        principalId: "test-client",
+        authenticatedBy: "host-test",
+      },
+      expected: { generation: record.generation, status: "running" },
+      command: { kind: "cancel", reason: "remote stop" },
+    });
+
+    expect(controlled).toMatchObject({
+      ok: true,
+      status: "applied",
+      code: "applied",
+    });
+    expect(
+      new FileWorkflowStore({
+        rootDir: workflowStoreRoot(workspace, sessionId),
+        createRoot: false,
+      }).get(workflowRunId),
+    ).toMatchObject({ status: "cancelled" });
+  });
+
+  it("processes a binding-authorized command that was accepted before Host dispatch", async () => {
+    const workspace = await tempWorkspace();
+    const sessionId = "session_workflow_channel_dispatch";
+    const workflowRunId = "workflow_channel_dispatch" as WorkflowRunId;
+    const rootDir = workflowStoreRoot(workspace);
+    const store = new FileWorkflowStore({ rootDir });
+    const record = await seedWorkflowRecord(store, {
+      id: workflowRunId,
+      sessionId,
+      assetName: "channel-controlled",
+      contentHash: "hash-channel-controlled",
+      currentNodeId: "main",
+      definitionSnapshot: {
+        assetName: "channel-controlled",
+        contentHash: "hash-channel-controlled",
+        nodes: [{ id: "main", body: "Controlled body." }],
+      },
+    });
+    const channels = new FileWorkflowChannelStore({ rootDir });
+    const controls = new FileWorkflowControlInbox({ rootDir });
+    const now = new Date();
+    const source = {
+      kind: "api" as const,
+      principalId: "api:user",
+      authenticatedBy: "oauth",
+      channelId: "api-channel-1",
+    };
+    const binding = await channels.bind({
+      bindingId: "workflow_binding_host_dispatch",
+      workspaceId: workspace,
+      workflowRunId,
+      sessionId,
+      source,
+      allowedCommandKinds: ["cancel"],
+      createdAt: now.toISOString(),
+      expiresAt: new Date(now.getTime() + 60_000).toISOString(),
+    });
+    const accepted = await channels.acceptControl({
+      inbox: controls,
+      bindingId: binding.bindingId,
+      workflowRunId,
+      workspaceId: workspace,
+      sessionId,
+      source,
+      idempotencyKey: "api-message-1",
+      expected: { generation: record.generation ?? 0, status: "running" },
+      command: { kind: "cancel", reason: "channel stop" },
+      expiresAt: new Date(now.getTime() + 60_000).toISOString(),
+    });
+    if (accepted.status === "conflict") throw new Error("unexpected conflict");
+    const processed = await new HostRuntime({
+      workspaceRoot: workspace,
+      defaultModel: "deterministic",
+      emit: () => {},
+    }).processWorkflowControlCommand({
+      workflowRunId,
+      sessionId,
+      commandId: accepted.envelope.commandId,
+    });
+    expect(processed).toMatchObject({ ok: true, status: "applied" });
+    expect(
+      new FileWorkflowStore({ rootDir, createRoot: false }).get(workflowRunId),
+    ).toMatchObject({
+      status: "cancelled",
     });
   });
 
