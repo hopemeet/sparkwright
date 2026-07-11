@@ -1161,3 +1161,38 @@ outcome/canonical event 决定唯一 winner。loser 得到 already-resolved/stat
   `npm run release:check` 退出码为 0，全部 workspace tests、regression matrix、source-install
   smoke 与 release pack smoke 通过。Package G 以本 change set 的独立 commit 关闭，不混入
   A-F。
+
+## 9. A–G 最终只读审查（2026-07-11）
+
+Verdict: **Ready**。在 `feat/workflow-job-session` 的 `37d1ba62` 上，对
+`main...HEAD` 完整 diff、逆序 commit gate、公开写面、调用方、fault tests、release 证据、
+project-map/test-map 和协议文档进行了独立复核；未发现 Critical、High、Medium 或 Low finding，
+也未发现未满足 gate。
+
+- A：active run/workflow execution context、approval client 和 cleanup identity 按实例固定；
+  controller 不再把可变全局 permission 当作已启动 execution 的授权真相。
+- B：workflow job storage session 与 main/control session 分离；显式 CLI session id 仅用于
+  attribution，不复用 main session trace/todo/checkpoint storage。
+- C：`WorkflowStore` 的公开 mutation 面由 `WorkflowLeaseBoundWriter` 约束；canonical journal
+  校验 generation/revision/token，snapshot/event log 只是 projection。Host start/resume/wait/
+  finalization/rollback/supervisor failure 未发现裸 `update/restore/appendEvent` 旁路。
+- D：控制面只有 typed durable command/inbox/outcome；authorization、expiry、generation、status、
+  wait/approval identity 均在 canonical apply 前验证，adapter 不能直接写 `WorkflowRunRecord`。
+- E/F：worker registry、supervisor 和 foreground service 复用 Package C claim、Package D inbox、
+  server-runtime 与现有 workflow record；pid/连接/进程内集合都不构成 ownership truth，detach
+  只在 durable accepted outcome 后成功，drain/stop/Ctrl-C 不伪装 pause/completion。
+- G：binding/receipt/cursor 是 durable delivery coordination，不是第二套 workflow/message bus；
+  response 被 clamp 后进入 Package D，message 权限不隐含 approve/cancel，peer messaging、任意
+  JSON RPC、producer-selected context 和 model `workflow_start`/nested spawn 仍关闭。
+
+最终 focused 复跑：`@sparkwright/agent-runtime` workflow store/control/worker/channel 45/45，
+`@sparkwright/server-runtime` supervisor/service/channel 21/21。没有重跑完整 release gate：Git
+中的每个 package closing record 已记载从头成功的 `npm run release:check`，本轮源码/测试证据
+未发现冲突或回归信号。
+
+`check_project_map_drift.py --base main` 的十个 warning 已逐页阅读并判定无需语义更新：
+capabilities agents/cron/index 与 MCP 没有新增 capability 或 MCP surface；trace summary/raw/export
+没有新增 trace schema/diagnostic contract；tool-orchestration/run-loop 仍通过现有 Host/core 路径；
+workspace-writes/approvals clamp 未被 durable adapter 绕过；core module 不拥有新增 durable
+workflow substrate。已修改的 agent-runtime/host/protocol/CLI/TUI/edge module pages、run-loop、
+approvals、session-store/resume-replay、actor inbox design 与 test-map 与源码一致。
