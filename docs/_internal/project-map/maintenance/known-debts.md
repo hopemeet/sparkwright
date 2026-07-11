@@ -17,6 +17,9 @@ These are not promises of current behavior. They are risk flags to revisit when 
 - TUI `/export` is readable, but not a full diagnostic report.
 - Host runtime is a broad composition point where capability, session, trace, and policy changes meet.
 - From-trace resume is only best-effort and can be mistaken for full restore.
+- Durable workflow projection rewrites the complete compatibility event log on
+  each canonical mutation, and immutable journal files currently have no
+  compaction/retention policy.
 - Capability self-evolution design exists, but stable runtime behavior should remain explicit and reviewable.
 - Project-map package coverage is intentionally hot-path based. Packages without
   dedicated module pages are grouped under

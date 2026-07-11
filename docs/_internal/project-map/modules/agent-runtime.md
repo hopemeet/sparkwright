@@ -108,6 +108,8 @@ Does not own:
 - Workflow control is a separate typed command plane. `FileWorkflowControlInbox`
   owns immutable accepted commands, immutable terminal outcomes, scoped
   idempotency, corrupt-entry diagnostics, and a reconstructible cursor;
+  competing exclusive publishers use bounded read-back so a transient
+  final-path half-write cannot be reported as an id conflict;
   `WorkflowControlCommandProcessor` validates durable preconditions and applies
   commands only through `WorkflowLeaseBoundWriter`. It is not a generic message
   bus and does not authenticate transports or choose model context roles.
@@ -308,6 +310,11 @@ Does not own:
 
 ## Known Debts
 
+- Workflow canonical projection rewrites the full event JSONL after each
+  mutation and the immutable journal has no compaction policy. Long-lived,
+  high-mutation workflows may incur quadratic projection write amplification
+  and unbounded journal-file growth.
+
 - Task/todo behavior spans host, CLI, TUI replay, and trace diagnostics; ownership can be easy to blur.
 - Workflow leases carry winner-validated fencing tokens for acquire/refresh/release,
   but live `WorkflowStore` mutation paths do not validate that token; a stale
@@ -321,6 +328,14 @@ Does not own:
   not authorize a generic actor bus or nested background lifecycle.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-11T18:30:00+0800
+- Scope: post-audit concurrency closure for control publication, shared journal
+  replay, exact publisher physical-sequence verification, and writer-acquisition
+  contention.
+- Read: workflow control, journal, store, and focused tests.
+- Tests: focused suites plus 20 consecutive 46-test combined stress runs.
 
 - Status: Verified
 - Date: 2026-07-11T15:30:00+0800

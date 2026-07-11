@@ -112,6 +112,13 @@ Future run in compacted session
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-11T18:30:00+0800
+- Scope: claim publication fencing loss now releases and returns through the
+  documented null/busy acquisition path; resume layout is unchanged.
+- Read: workflow store and Host/control/supervisor acquisition call sites.
+- Tests: agent-runtime, Host, and server-runtime focused suites.
+
+- Status: Verified
 - Date: 2026-07-11T15:30:00+0800
 - Scope: Package G notification delivery receipts/cursors rebuild after restart;
   adapter responses become Package D commands and Package E/F consumers resume

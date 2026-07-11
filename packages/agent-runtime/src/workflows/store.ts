@@ -307,6 +307,7 @@ export class FileWorkflowStore implements WorkflowStore {
           canonical?.token !== lease.token ||
           canonical.generation !== generation ||
           canonical.recordRevision !== recordRevision ||
+          canonical.recordPhysicalSequence !== fresh.physicalSequence + 1 ||
           canonical.record?.id !== id
         )
           throw new WorkflowStaleWriteError(
@@ -372,6 +373,7 @@ export class FileWorkflowStore implements WorkflowStore {
           const canonical = await readWorkflowJournal(this.rootDir, id);
           if (
             canonical?.recordRevision !== 1 ||
+            canonical.recordPhysicalSequence !== fresh.physicalSequence + 1 ||
             canonical.token !== lease.token ||
             !canonical.record
           ) {
@@ -389,6 +391,7 @@ export class FileWorkflowStore implements WorkflowStore {
       };
     } catch (cause) {
       await lease.release();
+      if (cause instanceof WorkflowStaleWriteError) return null;
       throw cause;
     }
   }

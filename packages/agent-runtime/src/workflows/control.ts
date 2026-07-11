@@ -158,10 +158,11 @@ export class FileWorkflowControlInbox {
     const path = this.outcomePath(outcome.workflowRunId, outcome.commandId);
     const published = await publishExclusiveJsonDocument(path, outcome);
     if (!published) {
-      const existing = await this.outcome(
-        outcome.workflowRunId,
-        outcome.commandId,
-      );
+      const existing = await this.readPublishedDocument({
+        dir: this.outcomesDir(outcome.workflowRunId),
+        id: outcome.commandId,
+        parse: parseOutcome,
+      });
       if (!existing || JSON.stringify(existing) !== JSON.stringify(outcome)) {
         throw new Error(
           `Workflow control outcome already differs: ${outcome.commandId}`,
@@ -222,9 +223,11 @@ export class FileWorkflowControlInbox {
       envelope,
     );
     if (!published) {
-      const existing = this.snapshot(envelope.workflowRunId).commands.find(
-        (command) => command.commandId === envelope.commandId,
-      );
+      const existing = await this.readPublishedDocument({
+        dir: this.commandsDir(envelope.workflowRunId),
+        id: envelope.commandId,
+        parse: parseEnvelope,
+      });
       if (!existing || JSON.stringify(existing) !== JSON.stringify(envelope)) {
         throw new Error(
           `Workflow control command id conflict: ${envelope.commandId}`,
@@ -248,6 +251,25 @@ export class FileWorkflowControlInbox {
       await new Promise<void>((resolve) => setImmediate(resolve));
     }
     throw new Error(`Workflow control dedupe entry is unreadable: ${path}`);
+  }
+
+  private async readPublishedDocument<T>(input: {
+    dir: string;
+    id: string;
+    parse: (raw: unknown) => T;
+  }): Promise<T | undefined> {
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const result = await readJsonDocumentDir<T>({
+        dir: input.dir,
+        parse: input.parse,
+      });
+      const entry = result.entries.find(
+        (candidate) => candidate.id === input.id,
+      );
+      if (entry) return entry.value;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+    return undefined;
   }
 
   private rebuildCursor(id: WorkflowRunId): void {

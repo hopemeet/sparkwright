@@ -48,6 +48,7 @@ interface JournalEntry {
 
 export interface WorkflowJournalHead {
   physicalSequence: number;
+  recordPhysicalSequence: number;
   generation: number;
   recordRevision: number;
   token?: string;
@@ -82,6 +83,7 @@ export async function readWorkflowJournal(
   }
   const head: WorkflowJournalHead = {
     physicalSequence: -1,
+    recordPhysicalSequence: -1,
     generation: 0,
     recordRevision: 0,
     events: [],
@@ -103,75 +105,7 @@ export async function readWorkflowJournal(
       );
       continue;
     }
-    head.physicalSequence = Math.max(
-      head.physicalSequence,
-      entry.physicalSequence,
-    );
-    const payload = entry.payload;
-    if (payload.kind === "baseline") {
-      if (
-        entry.physicalSequence !== 0 ||
-        head.record ||
-        head.events.length > 0
-      ) {
-        head.quarantined.push({
-          path,
-          reason: "duplicate or misplaced baseline",
-        });
-        continue;
-      }
-      head.record = payload.record;
-      if (payload.record && payload.record.id !== id) {
-        head.record = undefined;
-        head.quarantined.push({
-          path,
-          reason: "baseline record identity mismatch",
-        });
-        continue;
-      }
-      head.events = [...payload.legacyEvents];
-      continue;
-    }
-    if (payload.kind === "claim") {
-      if (
-        payload.previousGeneration !== head.generation ||
-        payload.generation !== head.generation + 1 ||
-        payload.expectedRecordRevision !== head.recordRevision
-      ) {
-        head.quarantined.push({ path, reason: "invalid claim transition" });
-        continue;
-      }
-      head.generation = payload.generation;
-      head.token = payload.token;
-      continue;
-    }
-    if (
-      payload.generation !== head.generation ||
-      payload.token !== head.token ||
-      payload.expectedRecordRevision !== head.recordRevision ||
-      payload.recordRevision !== head.recordRevision + 1 ||
-      payload.record.recordRevision !== payload.recordRevision ||
-      payload.record.generation !== payload.generation ||
-      payload.record.id !== id ||
-      payload.event.workflowRunId !== id
-    ) {
-      head.quarantined.push({
-        path,
-        reason: "stale or discontinuous mutation",
-      });
-      continue;
-    }
-    head.recordRevision = payload.recordRevision;
-    head.record = payload.record;
-    if (payload.record && payload.record.id !== entry.workflowRunId) {
-      head.record = undefined;
-      head.quarantined.push({
-        path,
-        reason: "baseline record identity mismatch",
-      });
-      return;
-    }
-    head.events.push(payload.event);
+    applyCanonicalEntry(head, entry, path);
   }
   return head;
 }
@@ -245,6 +179,7 @@ function validateEntry(
 function emptyHead(): WorkflowJournalHead {
   return {
     physicalSequence: -1,
+    recordPhysicalSequence: -1,
     generation: 0,
     recordRevision: 0,
     events: [],
@@ -270,7 +205,15 @@ function applyCanonicalEntry(
       });
       return;
     }
+    if (payload.record && payload.record.id !== entry.workflowRunId) {
+      head.quarantined.push({
+        path,
+        reason: "baseline record identity mismatch",
+      });
+      return;
+    }
     head.record = payload.record;
+    if (payload.record) head.recordPhysicalSequence = entry.physicalSequence;
     head.events = [...payload.legacyEvents];
     return;
   }
@@ -302,6 +245,7 @@ function applyCanonicalEntry(
   }
   head.recordRevision = payload.recordRevision;
   head.record = payload.record;
+  head.recordPhysicalSequence = entry.physicalSequence;
   head.events.push(payload.event);
 }
 

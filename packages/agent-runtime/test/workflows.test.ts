@@ -20,6 +20,7 @@ import {
 import {
   publishWorkflowJournalEntry,
   readWorkflowJournal,
+  readWorkflowJournalSync,
 } from "../src/workflows/journal.js";
 
 async function tempDir(): Promise<string> {
@@ -773,6 +774,54 @@ describe("FileWorkflowStore", () => {
       expect.objectContaining({ metadata: { migration: true } }),
     ]);
     await writer!.release();
+  });
+
+  it("keeps async and sync replay aligned for a mismatched baseline record", async () => {
+    const root = await tempDir();
+    const id = "workflow_baseline_identity" as WorkflowRunId;
+    const wrongId = "workflow_other_identity" as WorkflowRunId;
+    expect(
+      await publishWorkflowJournalEntry({
+        rootDir: root,
+        workflowRunId: id,
+        physicalSequence: 0,
+        payload: {
+          kind: "baseline",
+          generation: 0,
+          recordRevision: 0,
+          record: {
+            schemaVersion: WORKFLOW_RUN_RECORD_SCHEMA_VERSION,
+            id: wrongId,
+            assetName: "legacy",
+            contentHash: "hash",
+            runIds: [],
+            status: "running",
+            attempts: {},
+            evidenceRefs: [],
+            verdictLog: [],
+            transitionLog: [],
+            resume: { verifyOnResume: true },
+            createdAt: "2026-07-04T00:00:00.000Z",
+            metadata: {},
+            generation: 0,
+            recordRevision: 0,
+          },
+          legacyEvents: [],
+        },
+      }),
+    ).toBe(true);
+
+    const asynchronous = await readWorkflowJournal(root, id);
+    const synchronous = readWorkflowJournalSync(root, id);
+    expect(asynchronous).toEqual(synchronous);
+    expect(asynchronous?.record).toBeUndefined();
+    expect(asynchronous).toMatchObject({
+      quarantined: [
+        expect.objectContaining({
+          reason: "baseline record identity mismatch",
+        }),
+      ],
+    });
   });
 
   it("allows only one concurrent lazy-migration claimant", async () => {

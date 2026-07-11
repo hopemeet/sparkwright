@@ -118,6 +118,14 @@ Manual compact
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-11T18:30:00+0800
+- Scope: async/sync journal replay now shares one transition function and each
+  publisher verifies its own physical sequence supplied the canonical record;
+  storage layout is unchanged.
+- Read: workflow journal/store implementation and concurrency tests.
+- Tests: focused tests and 20 combined stress runs.
+
+- Status: Verified
 - Date: 2026-07-11T15:30:00+0800
 - Scope: Package G adds sibling `<workflowRunId>.channels/` binding,
   revocation, per-attempt delivery receipt, and rebuildable cursor projections;

@@ -269,3 +269,23 @@ does not change core ownership). The exact reviewed files were:
 - `project-map/maps/runtime/run-loop.md`
 - `project-map/maps/runtime/tool-orchestration.md`
 - `project-map/modules/core.md`
+
+## Post-audit concurrency closure (2026-07-11)
+
+- Reproduced the Package D duplicate-acceptance flake: an EEXIST loser could
+  observe the winner's final path before JSON publication completed and
+  misreport a command-id conflict. Command and outcome publication now use
+  bounded read-back.
+- Stress testing exposed a Package C false-success window: a later publisher
+  could skip a temporarily unreadable winner, publish the next physical slot,
+  then mistake the winner's equal revision for its own success. Publisher
+  read-back now requires its exact physical sequence to be canonical.
+- Async and sync journal readers share `applyCanonicalEntry`; a mismatched
+  baseline identity test proves identical quarantine/head results.
+- `acquireWriter()` releases and returns null when baseline/claim publication
+  loses fencing, preserving existing busy handling.
+- Evidence: workflow/control 38/38; combined workflow/control/channel/worker
+  stress 20 consecutive runs at 46/46; Host workflow/protocol 83/83;
+  server-runtime 21/21; final `npm run release:check` passed all workspace
+  tests, regression matrix cases, source-install smoke, and release-install
+  smoke.
