@@ -306,6 +306,16 @@ Does not own:
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-07-11T14:30:00+0800
+- Scope: Package F `workflow service run|status|drain` and honest
+  `workflow start --detach` durable-accept boundary.
+- Read: `packages/cli/src/cli.ts`, `packages/cli/test/cli.test.ts`,
+  `packages/server-runtime/src/workflow-service.ts`,
+  `packages/host/src/runtime.ts`.
+- Tests: CLI workflow slice 15 tests and CLI typecheck/build; cross-package
+  focused evidence is recorded in the workflow durable-jobs test map.
+
 - Status: Read-only
 - Date: 2026-07-11T14:00:00+0800
 - Scope: Package F design adds an honest detach surface only after durable

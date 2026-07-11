@@ -106,6 +106,22 @@ npm --workspace @sparkwright/host test -- test/config.test.ts
 Broaden to CLI/TUI tests when capability snapshots, protocol responses, or
 run summaries change.
 
+## Server Runtime
+
+### `packages/server-runtime/src/workflow-service.ts` or workflow detach/service
+
+Run:
+
+```bash
+npm --workspace @sparkwright/server-runtime test
+npm --workspace @sparkwright/host test -- test/workflows.test.ts test/protocol.test.ts
+npm --workspace @sparkwright/cli test -- test/cli.test.ts -t "workflow"
+```
+
+Keep service instance/worker heartbeat tests deterministic. Detached success
+must be asserted only after durable outcome publication; unavailable/stale
+service must fail before creating workflow storage.
+
 ## CLI
 
 ### `packages/cli/src/run-outcome.ts`

@@ -198,6 +198,66 @@ describe("workflow assets", () => {
     });
   });
 
+  it("uses a service-fixed workflow id as the fresh-start idempotency backstop", async () => {
+    const workspace = await tempWorkspace();
+    await writeWorkflow(
+      workspace,
+      "service-fixed",
+      [
+        "---",
+        "nodes:",
+        "  - id: main",
+        "    execute: model",
+        "---",
+        "## main",
+        "Finish once.",
+      ].join("\n"),
+    );
+    const workflowRunId =
+      "workflow_service_0123456789abcdef0123456789abcdef" as WorkflowRunId;
+    const events: HostEvent[] = [];
+    const first = await new HostRuntime({
+      workspaceRoot: workspace,
+      defaultModel: "deterministic",
+      emit: (event) => events.push(event),
+    }).startDetachedWorkflowRun(
+      {
+        goal: "one durable handoff",
+        sessionId: "session_workflow_service_fixed",
+        workflow: "service-fixed",
+        metadata: { serviceHandoffId: "handoff_fixed" },
+      },
+      workflowRunId,
+    );
+    expect(first).toMatchObject({ ok: true, workflowRunId });
+    await waitForHostEvent(events, (event) => event.kind === "run.completed");
+
+    const duplicate = await new HostRuntime({
+      workspaceRoot: workspace,
+      defaultModel: "deterministic",
+      emit: () => {},
+    }).startDetachedWorkflowRun(
+      {
+        goal: "one durable handoff",
+        sessionId: "session_workflow_service_fixed",
+        workflow: "service-fixed",
+        metadata: { serviceHandoffId: "handoff_fixed" },
+      },
+      workflowRunId,
+    );
+    expect(duplicate).toMatchObject({ ok: false });
+    const records = new FileWorkflowStore({
+      rootDir: workflowStoreRoot(workspace),
+      createRoot: false,
+    })
+      .list()
+      .records.filter((record) => record.id === workflowRunId);
+    expect(records).toHaveLength(1);
+    expect(records[0]?.metadata).toMatchObject({
+      serviceHandoffId: "handoff_fixed",
+    });
+  });
+
   it("parses workflow folder assets on the shared markdown-folder primitive", async () => {
     const workspace = await tempWorkspace();
     await writeWorkflow(

@@ -102,6 +102,17 @@ contracts, and focused checklists that no longer fit here.
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-07-11T14:30:00+0800
+- Scope: Package F foreground workflow service carrier, durable handoff/outcome,
+  service instance fencing, drain, and embedded Package E supervisor.
+- Read: `packages/server-runtime/src/workflow-service.ts`,
+  `packages/server-runtime/src/workflow-supervisor.ts`,
+  `packages/server-runtime/test/workflow-service.test.ts`,
+  `packages/server-runtime/test/index.test.ts`.
+- Tests: server-runtime 18 tests plus typecheck/build; Host/CLI focused evidence
+  is recorded in the workflow durable-jobs test map.
+
 - Status: Read-only
 - Date: 2026-07-11T14:00:00+0800
 - Scope: Package F design adjudication keeps server-runtime as the foreground

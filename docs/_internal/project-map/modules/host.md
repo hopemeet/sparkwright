@@ -756,6 +756,16 @@ Does not own:
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-07-11T14:30:00+0800
+- Scope: Package F service-only fixed workflow identity start and claimed
+  supervisor recovery reuse existing Host authorization/execution assembly;
+  protocol clients cannot select the durable workflow id.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/host/test/workflows.test.ts`,
+  `packages/cli/src/cli.ts`.
+- Tests: Host workflow/protocol 82 tests plus typecheck/build.
+
 - Status: Read-only
 - Date: 2026-07-11T14:00:00+0800
 - Scope: Package F design verified that connection-owned Host runtimes cancel

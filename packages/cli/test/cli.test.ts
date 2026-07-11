@@ -32,6 +32,10 @@ import {
   skillUsagePath,
 } from "@sparkwright/host";
 import { FileSkillUsageRecorder } from "@sparkwright/skills";
+import {
+  FileWorkflowServiceStore,
+  WorkflowServiceCarrier,
+} from "@sparkwright/server-runtime";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runCli } from "../src/cli.js";
 import { createConfiguredCliTools } from "../src/runners/direct-core-runner.js";
@@ -2839,6 +2843,84 @@ describe("runCli", () => {
     });
     expect(output.stderrText()).toContain(current!.id);
     expect(output.stderrText()).not.toContain(staleWorkflowRunId);
+  });
+
+  it("fails detached workflow start when no healthy service is available", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const output = createOutputCapture();
+    const result = await runCli(
+      [
+        "workflow",
+        "start",
+        "missing-service-workflow",
+        "do work",
+        "--workspace",
+        workspace,
+        "--detach",
+      ],
+      { io: { stdout: output.stdout, stderr: output.stderr } },
+    );
+    expect(result.exitCode).toBe(1);
+    expect(output.stderrText()).toContain("Workflow service is not ready");
+    expect(existsSync(join(workspace, ".sparkwright", "workflow-runs"))).toBe(
+      false,
+    );
+  });
+
+  it("reports workflow service readiness without treating a missing pid as live", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const output = createOutputCapture();
+    const result = await runCli(
+      ["workflow", "service", "status", "--workspace", workspace],
+      { io: { stdout: output.stdout, stderr: output.stderr } },
+    );
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(output.stdoutText())).toEqual({
+      live: false,
+      instance: null,
+    });
+  });
+
+  it("returns detached success only after the durable service accepts the handoff", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const store = new FileWorkflowServiceStore({
+      rootDir: join(workspace, ".sparkwright", "workflow-service"),
+    });
+    const instance = await store.acquireInstance({ workspaceId: workspace });
+    if (!instance) throw new Error("missing workflow service instance");
+    expect(await instance.ready()).toBe(true);
+    const carrier = new WorkflowServiceCarrier({
+      store,
+      instance,
+      adapter: {
+        accept: async (accepted) => ({
+          workflowRunId: "workflow_detached_1",
+          sessionId: accepted.jobSessionId,
+        }),
+      },
+    });
+    const output = createOutputCapture();
+    const cliResult = runCli(
+      [
+        "workflow",
+        "start",
+        "durable-demo",
+        "do work",
+        "--workspace",
+        workspace,
+        "--detach",
+      ],
+      { io: { stdout: output.stdout, stderr: output.stderr } },
+    );
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      if ((await store.pending()).length > 0) break;
+      await new Promise<void>((resolveTurn) => setImmediate(resolveTurn));
+    }
+    expect((await carrier.runOnce()).accepted).toHaveLength(1);
+    expect((await cliResult).exitCode).toBe(0);
+    expect(output.stdoutText()).toContain(
+      "Workflow detached: workflow_detached_1",
+    );
   });
 
   it("distills a session trace into a workflow draft", async () => {

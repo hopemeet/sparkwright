@@ -1505,6 +1505,50 @@ export class HostRuntime {
     }
   }
 
+  /**
+   * Service-owned fresh workflow start with a caller-fixed durable identity.
+   * This is not exposed by the Host protocol: Package F derives the id from an
+   * immutable handoff so crash recovery and competing carriers cannot create
+   * two workflow records for one accepted request.
+   */
+  async startDetachedWorkflowRun(
+    payload: RunStartRequestPayload,
+    workflowRunId: WorkflowRunId,
+  ): Promise<
+    | {
+        ok: true;
+        runId: string;
+        sessionId: string;
+        workflowRunId?: string;
+      }
+    | { ok: false; error: ProtocolError }
+  > {
+    if (!payload.workflow) {
+      return {
+        ok: false,
+        error: {
+          code: "invalid_payload",
+          message: "detached service start requires a workflow asset",
+        },
+      };
+    }
+    if (this.active || this.startingRun) {
+      return {
+        ok: false,
+        error: {
+          code: "internal_error",
+          message: "another run is already active on this service adapter",
+        },
+      };
+    }
+    this.startingRun = true;
+    try {
+      return await this.startRunInner(payload, workflowRunId);
+    } finally {
+      this.startingRun = false;
+    }
+  }
+
   async resumeRun(
     payload: RunResumeRequestPayload,
   ): Promise<
@@ -1920,6 +1964,7 @@ export class HostRuntime {
     confidentialDefaults?: boolean;
     traceLevel?: TraceLevel;
     workflowName?: string;
+    workflowRunId?: WorkflowRunId;
     controlSessionId?: string;
     workflowStore?: FileWorkflowStore;
     workflowRecord?: WorkflowRunRecord;
@@ -2369,7 +2414,7 @@ export class HostRuntime {
       workflowProjection = workflowDefinition
         ? createWorkflowProjectionHooks({
             definition: workflowDefinition,
-            workflowRunId: input.workflowRecord?.id,
+            workflowRunId: input.workflowRecord?.id ?? input.workflowRunId,
             initialState: input.workflowRecord
               ? runtimeStateFromWorkflowRecord(input.workflowRecord)
               : undefined,
@@ -2468,6 +2513,12 @@ export class HostRuntime {
             metadata: {
               goal: input.goal,
               verifyOnResume: true,
+              ...(input.workflowRunId &&
+              typeof input.runMetadata?.serviceHandoffId === "string"
+                ? {
+                    serviceHandoffId: input.runMetadata.serviceHandoffId,
+                  }
+                : {}),
               ...(input.controlSessionId
                 ? { controlSessionId: input.controlSessionId }
                 : {}),
@@ -3687,7 +3738,10 @@ export class HostRuntime {
     return { ok: true, ...matches[0]! };
   }
 
-  private async startRunInner(payload: RunStartRequestPayload): Promise<
+  private async startRunInner(
+    payload: RunStartRequestPayload,
+    workflowRunId?: WorkflowRunId,
+  ): Promise<
     | {
         ok: true;
         runId: string;
@@ -3760,6 +3814,7 @@ export class HostRuntime {
         defaultTraceLevel: this.opts.defaultTraceLevel,
       }),
       workflowName: payload.workflow,
+      workflowRunId,
       controlSessionId,
       runMetadata: {
         ...(payload.metadata ?? {}),

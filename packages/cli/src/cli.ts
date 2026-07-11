@@ -1,4 +1,6 @@
 import { existsSync, readdirSync, readFileSync, readlinkSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -6,12 +8,15 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import type { AnySchema, ErrorObject, ValidateFunction } from "ajv";
 import {
   FileTaskStore,
+  FileWorkflowStore,
+  FileWorkflowWorkerRegistry,
   InMemoryTaskStore,
   TaskManager,
   type TaskId,
   type TaskOutputChunk,
   type TaskRecord,
   type TaskStatus,
+  type WorkflowRunId,
 } from "@sparkwright/agent-runtime";
 import {
   asSessionId,
@@ -117,6 +122,7 @@ import {
   shadowWorkflowFromSession,
   existingSkillRoots,
   HostRuntime,
+  createHostStartRunRequest,
   catalogEntryOrigin,
   canonicalToolName,
   createMainHostToolCatalog,
@@ -150,6 +156,12 @@ import {
   type WorkflowDistillReport,
   type WorkflowShadowReport,
 } from "@sparkwright/host";
+import {
+  FileWorkflowServiceStore,
+  WorkflowServiceCarrier,
+  WorkflowSupervisor,
+  type WorkflowServiceHandoff,
+} from "@sparkwright/server-runtime";
 import { prepareMcpToolsForRun } from "@sparkwright/mcp-adapter";
 import {
   createPlatformShellSandboxRuntime,
@@ -233,6 +245,7 @@ interface ParsedArgs {
   resolveMcp: boolean;
   llm: boolean;
   compaction: boolean;
+  detach: boolean;
   delegateGoal?: string;
 }
 
@@ -841,6 +854,7 @@ function parseArgs(
   let resolveMcp = false;
   let llm = false;
   let compaction = false;
+  let detach = false;
   let delegateGoal: string | undefined;
 
   const applyRequestedAccessMode = (requested: RunAccessMode): void => {
@@ -854,6 +868,13 @@ function parseArgs(
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
+
+    if (arg === "--detach") {
+      detach = true;
+      args.splice(index, 1);
+      index -= 1;
+      continue;
+    }
 
     if (arg === "--trace-level") {
       const value = args[index + 1];
@@ -1314,6 +1335,7 @@ function parseArgs(
     command === "workflow" &&
     subcommand !== "list" &&
     subcommand !== "start" &&
+    subcommand !== "service" &&
     subcommand !== "inspect" &&
     subcommand !== "resume" &&
     subcommand !== "distill" &&
@@ -1322,7 +1344,7 @@ function parseArgs(
     return {
       ok: false,
       message:
-        "Usage: sparkwright workflow <list|inspect|resume|distill|shadow> [workflow-name-or-run-id] [--workspace path] [--format json|text]",
+        "Usage: sparkwright workflow <list|start|service|inspect|resume|distill|shadow> [workflow-name-or-run-id] [--workspace path] [--format json|text]",
     };
   }
 
@@ -1496,6 +1518,7 @@ function parseArgs(
       resolveMcp,
       llm,
       compaction,
+      detach,
       delegateGoal,
     },
   };
@@ -1805,6 +1828,7 @@ async function handleWorkflowCommand(
   if (
     subcommand !== "list" &&
     subcommand !== "start" &&
+    subcommand !== "service" &&
     subcommand !== "inspect" &&
     subcommand !== "resume" &&
     subcommand !== "distill" &&
@@ -1815,6 +1839,10 @@ async function handleWorkflowCommand(
   }
 
   try {
+    if (subcommand === "service") {
+      return handleWorkflowServiceCommand(parsed, io, env);
+    }
+
     if (subcommand === "start") {
       const [workflowName, ...goalParts] = splitCliWords(parsed.goal);
       const goal = goalParts.join(" ").trim();
@@ -1824,6 +1852,14 @@ async function handleWorkflowCommand(
           "Usage: sparkwright workflow start <workflow-name> <goal...>",
         );
         return { exitCode: 1 };
+      }
+      if (parsed.detach) {
+        return startDetachedWorkflow({
+          parsed,
+          workflowName,
+          goal,
+          io,
+        });
       }
       return startHostRun(
         {
@@ -1994,6 +2030,329 @@ async function handleWorkflowCommand(
       error instanceof Error ? error.message : String(error),
     );
     return { exitCode: 1 };
+  }
+}
+
+function workflowServiceRoot(workspaceRoot: string): string {
+  return join(workspaceRoot, ".sparkwright", "workflow-service");
+}
+
+async function startDetachedWorkflow(input: {
+  parsed: ParsedArgs;
+  workflowName: string;
+  goal: string;
+  io: CliIO;
+}): Promise<CliRunResult> {
+  const { parsed, workflowName, goal, io } = input;
+  const now = new Date();
+  const store = new FileWorkflowServiceStore({
+    rootDir: workflowServiceRoot(parsed.workspaceRoot),
+  });
+  const instance = store.readInstance();
+  if (
+    !instance ||
+    instance.state !== "ready" ||
+    instance.workspaceId !== parsed.workspaceRoot ||
+    Date.parse(instance.expiresAt) <= now.getTime()
+  ) {
+    writeLine(
+      io.stderr,
+      "Workflow service is not ready. Run `sparkwright workflow service run --workspace <path>` under a service manager.",
+    );
+    return { exitCode: 1 };
+  }
+  const handoffId = `handoff_${randomUUID().replaceAll("-", "")}`;
+  const sessionId = createWorkflowJobSessionId();
+  await store.publishHandoff({
+    handoffId,
+    idempotencyKey: handoffId,
+    workspaceId: parsed.workspaceRoot,
+    workflowName,
+    goal,
+    jobSessionId: sessionId,
+    ...(parsed.sessionId ? { controlSessionId: parsed.sessionId } : {}),
+    ...(parsed.modelName ? { modelName: parsed.modelName } : {}),
+    ...(parsed.accessMode ? { accessMode: parsed.accessMode } : {}),
+    permissionMode: parsed.permissionMode,
+    shouldWrite: parsed.shouldWrite,
+    traceLevel: parsed.traceLevel,
+    targetPath: parsed.targetPath,
+    confidentialPaths: parsed.confidentialPaths,
+    confidentialDefaults: parsed.confidentialDefaults,
+    source: { kind: "cli", principalId: `pid:${process.pid}` },
+    expiresAt: new Date(now.getTime() + 30_000).toISOString(),
+  });
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    const outcome = store.readOutcome(handoffId);
+    if (outcome) {
+      if (outcome.status === "accepted") {
+        writeLine(
+          io.stdout,
+          `Workflow detached: ${outcome.workflowRunId ?? "accepted"} session=${outcome.sessionId ?? sessionId}`,
+        );
+        return { exitCode: 0, sessionId: outcome.sessionId ?? sessionId };
+      }
+      writeLine(
+        io.stderr,
+        outcome.message ?? outcome.code ?? "Workflow handoff rejected",
+      );
+      return { exitCode: 1, sessionId };
+    }
+    await new Promise((resolveWait) => setTimeout(resolveWait, 25));
+  }
+  writeLine(
+    io.stderr,
+    `Workflow service did not accept handoff ${handoffId} before timeout.`,
+  );
+  return { exitCode: 1, sessionId };
+}
+
+async function handleWorkflowServiceCommand(
+  parsed: ParsedArgs,
+  io: CliIO,
+  _env: Record<string, string | undefined>,
+): Promise<CliRunResult> {
+  const action = firstCliWord(parsed.goal);
+  const store = new FileWorkflowServiceStore({
+    rootDir: workflowServiceRoot(parsed.workspaceRoot),
+  });
+  if (action === "status") {
+    const instance = store.readInstance();
+    const live = Boolean(
+      instance &&
+      instance.workspaceId === parsed.workspaceRoot &&
+      instance.state === "ready" &&
+      Date.parse(instance.expiresAt) > Date.now(),
+    );
+    writeLine(
+      io.stdout,
+      JSON.stringify({ live, instance: instance ?? null }, null, 2),
+    );
+    return { exitCode: live ? 0 : 1 };
+  }
+  if (action === "drain") {
+    const instance = store.readInstance();
+    if (
+      !instance ||
+      instance.workspaceId !== parsed.workspaceRoot ||
+      Date.parse(instance.expiresAt) <= Date.now()
+    ) {
+      writeLine(io.stderr, "Workflow service is not live.");
+      return { exitCode: 1 };
+    }
+    await store.requestDrain(instance.instanceId);
+    writeLine(
+      io.stdout,
+      `Workflow service drain requested: ${instance.instanceId}`,
+    );
+    return { exitCode: 0 };
+  }
+  if (action !== "run") {
+    writeLine(
+      io.stderr,
+      "Usage: sparkwright workflow service <run|status|drain> [--workspace path]",
+    );
+    return { exitCode: 1 };
+  }
+  const instance = await store.acquireInstance({
+    workspaceId: parsed.workspaceRoot,
+    ttlMs: 5_000,
+  });
+  if (!instance) {
+    writeLine(
+      io.stderr,
+      "A live workflow service already owns this workspace.",
+    );
+    return { exitCode: 1 };
+  }
+  const runtimes = new Map<string, HostRuntime>();
+  const adapter = {
+    recover: async (handoff: WorkflowServiceHandoff) => {
+      const runtime = new HostRuntime({
+        workspaceRoot: parsed.workspaceRoot,
+        sessionRootDir: parsed.sessionRootDir,
+        emit: () => {},
+      });
+      const listed = await runtime.listWorkflowRuns({ limit: 10_000 });
+      if (!listed.ok) return undefined;
+      const found = listed.workflows.find(
+        (record) => record.metadata?.serviceHandoffId === handoff.handoffId,
+      );
+      if (!found) return undefined;
+      if (!found.sessionId) {
+        throw new Error(
+          `Recovered workflow ${found.id} is missing its durable job session.`,
+        );
+      }
+      return { workflowRunId: found.id, sessionId: found.sessionId };
+    },
+    accept: async (handoff: WorkflowServiceHandoff) => {
+      const runtime = new HostRuntime({
+        workspaceRoot: parsed.workspaceRoot,
+        sessionRootDir: parsed.sessionRootDir,
+        defaultModel: handoff.modelName,
+        defaultPermissionMode: handoff.permissionMode,
+        defaultTraceLevel: handoff.traceLevel,
+        defaultShouldWrite: handoff.shouldWrite,
+        emit: (event) => {
+          if (event.kind === "run.completed" || event.kind === "run.failed") {
+            runtimes.delete(handoff.handoffId);
+          }
+        },
+      });
+      runtimes.set(handoff.handoffId, runtime);
+      const workflowRunId = `workflow_service_${createHash("sha256")
+        .update(`${handoff.workspaceId}\0${handoff.handoffId}`)
+        .digest("hex")
+        .slice(0, 32)}` as WorkflowRunId;
+      const started = await runtime.startDetachedWorkflowRun(
+        createHostStartRunRequest({
+          goal: handoff.goal,
+          sessionId: handoff.jobSessionId,
+          controlSessionId: handoff.controlSessionId,
+          accessMode: handoff.accessMode,
+          permissionMode: handoff.permissionMode,
+          targetPath: handoff.targetPath,
+          traceLevel: handoff.traceLevel,
+          modelName: handoff.modelName,
+          modelNameSource: "request",
+          workflowName: handoff.workflowName,
+          confidentialPaths: handoff.confidentialPaths,
+          confidentialDefaults: handoff.confidentialDefaults,
+          shouldWrite: handoff.shouldWrite,
+          metadata: {
+            source: "workflow-service",
+            serviceHandoffId: handoff.handoffId,
+          },
+        }),
+        workflowRunId,
+      );
+      if (!started.ok || !started.workflowRunId) {
+        runtimes.delete(handoff.handoffId);
+        throw new Error(
+          started.ok
+            ? "workflow start did not return workflowRunId"
+            : started.error.message,
+        );
+      }
+      return {
+        workflowRunId: started.workflowRunId,
+        sessionId: started.sessionId ?? handoff.jobSessionId,
+      };
+    },
+  };
+  const carrier = new WorkflowServiceCarrier({
+    store,
+    instance,
+    adapter,
+    maxConcurrent: 4,
+  });
+  if (!(await carrier.start())) {
+    writeLine(
+      io.stderr,
+      "Workflow service lost its instance lease during startup.",
+    );
+    return { exitCode: 1 };
+  }
+  const workflowStore = new FileWorkflowStore({
+    rootDir: join(parsed.workspaceRoot, ".sparkwright", "workflow-runs"),
+  });
+  const workerRegistry = new FileWorkflowWorkerRegistry({
+    rootDir: join(parsed.workspaceRoot, ".sparkwright", "workflow-workers"),
+  });
+  const worker = await workerRegistry.register({
+    workerId: "workflow-service",
+    instanceId: instance.record().instanceId,
+    workspaceId: parsed.workspaceRoot,
+    ttlMs: 5_000,
+  });
+  const supervisor = new WorkflowSupervisor({
+    store: workflowStore,
+    worker,
+    maxClaims: 4,
+    adapter: {
+      runClaimed: async ({ record, writer, signal }) => {
+        if (signal.aborted) return "interrupted";
+        let resolveTerminal: (() => void) | undefined;
+        const terminal = new Promise<void>((resolveDone) => {
+          resolveTerminal = resolveDone;
+        });
+        const runtime = new HostRuntime({
+          workspaceRoot: parsed.workspaceRoot,
+          sessionRootDir: parsed.sessionRootDir,
+          defaultModel: parsed.modelName,
+          defaultPermissionMode: parsed.permissionMode,
+          defaultTraceLevel: parsed.traceLevel,
+          defaultShouldWrite: parsed.shouldWrite,
+          emit: (event) => {
+            if (event.kind === "run.completed" || event.kind === "run.failed") {
+              resolveTerminal?.();
+            }
+          },
+        });
+        const resumed = await runtime.resumeClaimedWorkflowRun(
+          { workflowRunId: record.id, sessionId: record.sessionId },
+          writer,
+        );
+        if (!resumed.ok) throw new Error(resumed.error.message);
+        const abort = () => runtime.cancelRun(resumed.runId);
+        signal.addEventListener("abort", abort, { once: true });
+        try {
+          await terminal;
+        } finally {
+          signal.removeEventListener("abort", abort);
+        }
+        const fresh = await writer.readFresh();
+        return fresh?.status === "waiting" ? "waiting" : "terminal";
+      },
+    },
+  });
+  writeLine(
+    io.stdout,
+    `Workflow service ready for ${parsed.workspaceRoot} (foreground).`,
+  );
+  let stopping = false;
+  let heartbeatLost = false;
+  const heartbeatTimer = setInterval(() => {
+    void Promise.all([instance.heartbeat(), supervisor.heartbeat(5_000)])
+      .then(([serviceAlive, workerAlive]) => {
+        if (!serviceAlive || !workerAlive) heartbeatLost = true;
+      })
+      .catch(() => {
+        heartbeatLost = true;
+      });
+  }, 1_000);
+  const stop = () => {
+    stopping = true;
+  };
+  process.once("SIGINT", stop);
+  process.once("SIGTERM", stop);
+  try {
+    while (
+      !stopping &&
+      !heartbeatLost &&
+      !store.drainRequested(instance.record().instanceId)
+    ) {
+      await carrier.runOnce();
+      await supervisor.runOnce();
+      await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+    }
+    const drained = await carrier.drain();
+    const supervisorDrain = await supervisor.drain({ abort: true });
+    if (!drained.drained || !supervisorDrain.drained) {
+      writeLine(
+        io.stderr,
+        `Workflow service interrupted with ${drained.active + supervisorDrain.remainingWorkflowRunIds.length} active workflow(s).`,
+      );
+    }
+    await carrier.stop();
+    await supervisor.stop();
+    return { exitCode: drained.drained && supervisorDrain.drained ? 0 : 1 };
+  } finally {
+    clearInterval(heartbeatTimer);
+    process.off("SIGINT", stop);
+    process.off("SIGTERM", stop);
   }
 }
 
@@ -7595,7 +7954,8 @@ function tasksUsage(): string {
 function workflowUsage(): string {
   return [
     "Usage: sparkwright workflow list [--workspace path] [--format json|text]",
-    "       sparkwright workflow start <workflow-name> <goal...> [--workspace path] [--model provider/model]",
+    "       sparkwright workflow start <workflow-name> <goal...> [--workspace path] [--model provider/model] [--detach]",
+    "       sparkwright workflow service <run|status|drain> [--workspace path]",
     "       sparkwright workflow inspect <workflow-name> [--workspace path] [--format json|text]",
     "       sparkwright workflow resume <workflow-run-id> [--workspace path] [--session <session-id>] [--model provider/model]",
     "       sparkwright workflow distill <session-id> [--workspace path] [--session-root path] [--format json|text]",

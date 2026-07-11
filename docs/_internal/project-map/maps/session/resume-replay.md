@@ -112,6 +112,17 @@ Future run in compacted session
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-11T14:30:00+0800
+- Scope: Package F service restart scans durable handoffs and existing workflow
+  records, recovers outcome by fixed handoff linkage, and delegates existing-run
+  takeover to Package E supervisor/Package C claim fencing.
+- Read: `packages/server-runtime/src/workflow-service.ts`,
+  `packages/server-runtime/src/workflow-supervisor.ts`,
+  `packages/host/src/runtime.ts`, `packages/cli/src/cli.ts`.
+- Tests: server-runtime service/supervisor tests, Host workflow tests, and CLI
+  detach focused tests.
+
+- Status: Verified
 - Date: 2026-07-11T13:30:00+0800
 - Scope: Package E supervisor restart rebuilds non-terminal candidates from
   durable workflow records and resumes through an already claimed writer;

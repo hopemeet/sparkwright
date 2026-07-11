@@ -118,6 +118,16 @@ Manual compact
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-11T14:30:00+0800
+- Scope: Package F stores service carrier state and handoff/outcome under
+  workspace `.sparkwright/workflow-service/`; detached workflow sessions remain
+  unique `session_workflow_*` roots and keep control-session attribution only.
+- Read: `packages/server-runtime/src/workflow-service.ts`,
+  `packages/cli/src/cli.ts`, `packages/host/src/runtime.ts`.
+- Tests: server-runtime service tests, Host fixed-id workflow test, CLI detach
+  focused tests.
+
+- Status: Verified
 - Date: 2026-07-11T13:00:00+0800
 - Scope: each workflow now has a sibling `<workflowRunId>.control/` durable
   command directory with immutable commands/outcomes and a rebuildable cursor;

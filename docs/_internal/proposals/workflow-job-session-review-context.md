@@ -1004,3 +1004,25 @@ SIGTERM/drain 只报告 interrupted/remaining，不伪装 pause。
 - focused agent-runtime/server-runtime/Host/CLI tests、typecheck/build、完整
   `npm run release:check`、maps/test-map、旧 client-owned lifecycle 假设退役和独立 F commit
   全通过后才可 reopen Package G。
+
+#### 实现结果
+
+- `FileWorkflowServiceStore` 持久化 workspace-scoped service instance、immutable
+  handoff/outcome 与 instance-targeted drain request；live/readiness 同时校验 workspace、state、
+  heartbeat expiry 和 instance identity，不把 pid 存在当 ownership。
+- `WorkflowServiceCarrier` 只消费窄类型 handoff，expired/wrong-workspace 明确拒绝；旧 carrier
+  expiry/revival 被 instance fencing 跳过且不能替 successor 发布 rejection。crash 后先按
+  handoff metadata recovery，再决定是否启动。
+- Host `startDetachedWorkflowRun()` 仅供 service adapter 使用，不加入 Host protocol；handoff
+  派生固定 workflowRunId，canonical journal exclusive create 是重复/frozen carrier fresh-start
+  的最终 idempotency backstop。
+- CLI 新增 `workflow service run|status|drain` 和 `workflow start ... --detach`。`service run`
+  保持前台、维护 service/worker heartbeat、消费 handoff，并嵌入 Package E
+  `WorkflowSupervisor` 接管既有 durable workflow；SIGINT/SIGTERM/drain 只报告 interruption。
+- `--detach` 仅在 service ready 且 durable accepted outcome 已发布后返回成功；service 缺失、
+  stale 或 accept timeout 非零退出。普通 stdio foreground workflow 路径不变。
+- focused gate: server-runtime 18 tests，Host workflow/protocol 82 tests，CLI workflow slice
+  15 tests；server-runtime/Host/CLI typecheck/build 均通过。完整 release gate 待本节最终
+  verification 后记录。首次完整 gate 只发现本次 CLI 两处 lint（unused handler env、
+  prefer-const）；修复后 `npm run release:check` 从头重跑并通过全部 workspace tests、
+  regression matrix 与两种 install smoke。

@@ -10,8 +10,7 @@
   deterministic fault gate; full release result recorded below.
 - Package E durable supervisor/worker ownership: `Verified` at the focused
   implementation/fault gate; full release result recorded below.
-- Package F: `Untested`; design gate is adjudicated, implementation/fault/release
-  evidence remains open.
+- Package F: `Verified`; implementation/focused fault/full release gates passed.
 - Package G: `Untested`; reopen gate remains closed by F.
 
 ## Current Evidence
@@ -171,3 +170,23 @@ accept, workflow record creation, outcome publication, and supervisor claim:
 12. CLI detach returns only after durable accepted outcome; unavailable or
     timed-out service fails explicitly, while foreground workflow behavior is
     unchanged.
+
+## Package F Evidence (2026-07-11)
+
+- Deterministic service-store tests cover immutable handoff idempotency/conflict,
+  live-instance single winner, expiry takeover, instance-scoped drain, recovered
+  outcome publication, expired/wrong-workspace rejection, and revived-carrier
+  fencing without false rejection.
+- Host fixed-id integration proves one service handoff can create only one
+  canonical workflow record and persists the handoff recovery linkage; a
+  duplicate fresh start cannot create a second record.
+- CLI tests prove unavailable service fails before workflow storage mutation,
+  status is fail-closed, and detached success is emitted only after a carrier
+  publishes the durable accepted outcome. Existing foreground workflow slice
+  remains green.
+- Focused gate: server-runtime 18 tests, Host workflow/protocol 82 tests, CLI
+  workflow slice 15 tests; affected typecheck/build commands passed.
+- Full gate: the first release run found only two CLI lint errors introduced by
+  the service handler (unused injected env and prefer-const). After fixing them,
+  a complete `npm run release:check` rerun passed all workspace tests,
+  regression matrix, source install smoke, and release install smoke.
