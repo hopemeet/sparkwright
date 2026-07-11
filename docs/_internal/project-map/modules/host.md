@@ -757,6 +757,17 @@ Does not own:
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-11T13:00:00+0800
+- Scope: Package D Host control adapter derives authenticated source/scope,
+  dispatches typed durable commands, polls active workflow controls with the
+  existing writer, and routes compatibility `workflow.resume` through the inbox.
+- Read: `packages/host/src/runtime.ts`, `packages/host/src/server.ts`,
+  `packages/host/test/workflows.test.ts`, `packages/host/test/protocol.test.ts`,
+  `packages/agent-runtime/src/workflows/control-processor.ts`.
+- Tests: Host workflow/protocol focused suites, typecheck/build, and full D
+  release gate recorded in the workflow durable-jobs test map.
+
+- Status: Verified
 - Date: 2026-07-11T10:40:00+0800
 - Scope: Package C migrates every Host live workflow writer—fresh create,
   resume input, episode registration/projection/usage, terminal/supervisor

@@ -150,6 +150,7 @@ async function handleRequest(
             "task.promote",
             "workflow.list",
             "workflow.resume",
+            "workflow.control",
             "capability.inspect",
             "run.resume",
             "run.inject_message",
@@ -362,6 +363,28 @@ async function handleRequest(
           runId: r.runId,
           workflowRunId: r.workflowRunId,
           ...(r.sessionId ? { sessionId: r.sessionId } : {}),
+        });
+      } else {
+        respondError(conn, req.id, r.error);
+      }
+      return false;
+    }
+    case "workflow.control": {
+      const r = await runtime.controlWorkflow({
+        ...req.payload,
+        source: {
+          kind: "api",
+          principalId: "host-protocol-client",
+          authenticatedBy: "host-handshake",
+          connectionId: req.id,
+        },
+      });
+      if (r.ok) {
+        respondOk(conn, req.id, {
+          status: r.status,
+          commandId: r.commandId,
+          ...(r.code ? { code: r.code } : {}),
+          ...(r.runId ? { runId: r.runId } : {}),
         });
       } else {
         respondError(conn, req.id, r.error);
@@ -608,6 +631,23 @@ function validateRequestPayload(req: HostRequest): string | undefined {
         optionalEnum(req.payload, "traceLevel", [...TRACE_LEVELS]) ??
         optionalRecord(req.payload, "metadata")
       );
+    case "workflow.control":
+      return (
+        requireOnly(req.payload, [
+          "workflowRunId",
+          "sessionId",
+          "commandId",
+          "idempotencyKey",
+          "expected",
+          "command",
+        ]) ??
+        requireString(req.payload, "workflowRunId") ??
+        optionalString(req.payload, "sessionId") ??
+        optionalString(req.payload, "commandId") ??
+        requireString(req.payload, "idempotencyKey") ??
+        optionalRecord(req.payload, "expected") ??
+        validateWorkflowControlCommand(req.payload.command)
+      );
     case "capability.inspect":
       return (
         requireOnly(req.payload, [
@@ -628,6 +668,26 @@ function validateRequestPayload(req: HostRequest): string | undefined {
         optionalEnum(req.payload, "permissionMode", [...PERMISSION_MODES])
       );
   }
+}
+
+function validateWorkflowControlCommand(value: unknown): string | undefined {
+  if (!isRecord(value)) return "workflow control command must be an object";
+  const kind = value.kind;
+  if (kind === "cancel") return optionalString(value, "reason");
+  if (kind === "resume_request") return optionalString(value, "waitId");
+  if (kind === "provide_input") {
+    return requireString(value, "waitId") ?? requireString(value, "value");
+  }
+  if (kind === "approval_response") {
+    return (
+      requireString(value, "approvalId") ??
+      (value.decision === "approved" || value.decision === "denied"
+        ? undefined
+        : "decision must be approved or denied") ??
+      optionalString(value, "message")
+    );
+  }
+  return "workflow control command kind is invalid";
 }
 
 function validateClientInfo(value: unknown): string | undefined {

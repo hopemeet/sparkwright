@@ -42,6 +42,10 @@ contracts, and focused checklists that no longer fit here.
 - Server, streaming, memory-store, and trace-perfetto packages are reusable
   runtime/storage/diagnostic adapters around core contracts. Treat core events,
   run/session stores, and trace maps as the active contracts.
+- `server-runtime`'s `DurableCommandDispatcher` only coalesces concurrent local
+  dispatch of the same durable command id. Agent-runtime storage and the
+  workflow journal remain command/outcome/apply truth; Host remains the adapter
+  that assembles a fenced writer and execution behavior.
 - Project commands and shell sandbox packages are edge helpers consumed by TUI,
   host, CLI, and MCP/shell paths. Route safety-sensitive changes through shell
   and workspace-write maps.
@@ -93,6 +97,16 @@ contracts, and focused checklists that no longer fit here.
   source exports. It should not be used as the sole authority for behavior.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-11T13:00:00+0800
+- Scope: Package D SDK `controlWorkflow()` adapter and server-runtime local
+  durable-command dispatch coalescing boundary.
+- Read: `packages/sdk-core/src/client.ts`,
+  `packages/server-runtime/src/index.ts`,
+  `packages/server-runtime/test/index.test.ts`, `packages/host/src/runtime.ts`.
+- Tests: SDK/server-runtime focused tests, typecheck, build, and the full D
+  release gate recorded in the workflow durable-jobs test map.
 
 - Status: Read-only
 - Date: 2026-07-11T00:00:00+0800

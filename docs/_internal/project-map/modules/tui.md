@@ -298,6 +298,15 @@ Does not own:
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-11T13:00:00+0800
+- Scope: workflow stop now submits durable `workflow.control cancel` through
+  the primary Host client and no longer requires a locally owned child Host.
+- Read: `packages/tui/src/state/run-controller.ts`,
+  `packages/tui/src/state/use-workflow-actions.ts`,
+  `packages/tui/test/workflow-actions.test.ts`, `packages/tui/test/sdk-cutover.test.ts`.
+- Tests: TUI focused/full tests and typecheck recorded in the Package D gate.
+
+- Status: Verified
 - Date: 2026-07-11T00:00:00+0800
 - Scope: Workflow Durable Job Session Package B. TUI fresh workflow jobs now
   use unique session storage, handles expose immutable job/run/workflow

@@ -6,9 +6,10 @@
 - Package B independent workflow job session: `Verified`.
 - Package C mutation write fencing: `Verified` at the store/Host focused gate;
   full release gate recorded below.
-- Package D durable control inbox: `Untested`; design gate adjudicated after C,
-  implementation/fault gate open.
-- Packages E–G: `Untested`; reopen gates closed by D.
+- Package D durable control inbox: `Verified` at the focused implementation and
+  deterministic fault gate; full release result recorded below.
+- Package E: `Untested`; design gate may reopen after the independent D commit.
+- Packages F–G: `Untested`; reopen gates remain closed by E.
 
 ## Current Evidence
 
@@ -75,3 +76,24 @@ Use exclusive publication hooks/barriers and restartable consumers:
    process them;
 8. duplicate/multi-channel approval or input response has one winner and all
    losers receive already-resolved or state-mismatch outcomes.
+
+## Package D Evidence (2026-07-11)
+
+- Agent-runtime persists immutable typed commands/outcomes with scoped
+  idempotency, reconstructible cursor state, corrupt-entry isolation, expiry,
+  authorization, generation/status/wait checks, and canonical-event recovery.
+- Deterministic tests cover duplicate/conflicting accept, concurrent producers
+  and consumers, restart/corrupt cursor, torn command isolation, mutation-before-
+  outcome recovery, missing approval authorization, and single canonical apply.
+- Host protocol derives source identity, routes `workflow.resume` through the
+  inbox, applies live controls with the active fenced writer, and treats a busy
+  remote owner as durable acceptance. TUI stop uses `workflow.control` rather
+  than requiring a locally owned child connection.
+- Focused gate: agent-runtime workflow/control 37 tests, server-runtime 7,
+  Host workflow/protocol 80, SDK 10, TUI workflow/SDK 21, and CLI workflow 13;
+  affected typecheck/build and schema checks passed.
+- Full gate: the first `npm run release:check` found the new serialized
+  `connectionId` audit field needed an explicit `@reserved` declaration; after
+  adding it, strict reserved-field check passed and a complete release check
+  rerun passed through all workspace tests, regression matrix, and both install
+  smokes.

@@ -1,4 +1,5 @@
 import { readdir, stat, readFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import {
   buildTraceTimelineFile,
@@ -80,6 +81,10 @@ import {
 import {
   FileTaskNotificationOutbox,
   FileWorkflowNotificationOutbox,
+  FileWorkflowControlInbox,
+  WorkflowControlCommandProcessor,
+  type WorkflowControlCommand,
+  type WorkflowControlSourceIdentity,
   FileWorkflowStore,
   advanceWorkflowState,
   assertSafeWorkflowRunId,
@@ -125,6 +130,7 @@ import {
 } from "@sparkwright/agent-runtime";
 import { CronStore, defaultCronRoot } from "@sparkwright/cron";
 import { RECOMMENDED_FOREGROUND_TIMEOUT_MS } from "@sparkwright/shell-tool";
+import { DurableCommandDispatcher } from "@sparkwright/server-runtime";
 import {
   createPlatformShellSandboxRuntime,
   describeShellSandboxStatus,
@@ -471,6 +477,8 @@ interface ActiveRun {
   trace: MemoryTrace;
   sessionId: string;
   closeCapabilities?: () => Promise<void>;
+  workflowRunId?: WorkflowRunId;
+  processWorkflowControls?: () => Promise<void>;
 }
 
 interface CompletedConversationTurn {
@@ -900,6 +908,8 @@ export class HostRuntime {
   private agentSpawnDeps: HostAgentTaskRunnerDeps | null = null;
   private readonly taskNotifications: FileTaskNotificationOutbox;
   private readonly workflowNotifications: FileWorkflowNotificationOutbox;
+  private readonly workflowControls: FileWorkflowControlInbox;
+  private readonly workflowControlDispatcher = new DurableCommandDispatcher();
   private readonly taskManager: TaskManager;
   private active: ActiveRun | null = null;
   private readonly deliveredWorkflowNotifications = new Set<string>();
@@ -929,6 +939,10 @@ export class HostRuntime {
     });
     this.workflowNotifications = new FileWorkflowNotificationOutbox({
       rootDir: this.workflowNotificationRootDir(),
+      createRoot: false,
+    });
+    this.workflowControls = new FileWorkflowControlInbox({
+      rootDir: this.workflowStoreRootDir(),
       createRoot: false,
     });
     this.taskManager = new TaskManager({
@@ -1593,6 +1607,154 @@ export class HostRuntime {
     return this.workflowNotifications.asActorInbox();
   }
 
+  async controlWorkflow(input: {
+    workflowRunId: string;
+    sessionId?: string;
+    commandId?: string;
+    idempotencyKey: string;
+    source: WorkflowControlSourceIdentity;
+    expected?: {
+      generation?: number;
+      status?: WorkflowRunStatus;
+      waitId?: string;
+    };
+    command: WorkflowControlCommand;
+  }): Promise<
+    | {
+        ok: true;
+        status: string;
+        commandId: string;
+        code?: string;
+        runId?: string;
+      }
+    | { ok: false; error: ProtocolError }
+  > {
+    const located = await this.findWorkflowRunRecord(
+      input.workflowRunId as WorkflowRunId,
+      input.sessionId,
+    );
+    if (!located.ok) return located;
+    const { record, store, sessionId } = located;
+    const accepted = await this.workflowControls.accept(
+      {
+        workflowRunId: record.id,
+        commandId: input.commandId,
+        idempotencyKey: input.idempotencyKey,
+        source: input.source,
+        authorization: {
+          workspaceId: this.opts.workspaceRoot,
+          sessionId,
+          workflowRunId: record.id,
+          allowedCommandKinds: [input.command.kind],
+        },
+        expected: {
+          generation:
+            input.expected?.generation ?? store.canonicalGeneration(record.id),
+          status: input.expected?.status ?? record.status,
+          ...(input.expected?.waitId
+            ? { waitId: input.expected.waitId }
+            : record.wait?.id
+              ? { waitId: record.wait.id }
+              : {}),
+        },
+        command: input.command,
+        createdAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1_000).toISOString(),
+      },
+      { trustedSystemSource: input.source.kind === "system" },
+    );
+    if (accepted.status === "conflict") {
+      return {
+        ok: false,
+        error: {
+          code: "invalid_payload",
+          message: `Workflow control idempotency conflict: ${accepted.commandId}`,
+        },
+      };
+    }
+    return this.workflowControlDispatcher.dispatch(
+      accepted.envelope.commandId,
+      async () => {
+        if (
+          this.active?.workflowRunId === record.id &&
+          this.active.processWorkflowControls
+        ) {
+          await this.active.processWorkflowControls();
+        }
+        const existingOutcome = await this.workflowControls.outcome(
+          record.id,
+          accepted.envelope.commandId,
+        );
+        if (existingOutcome) {
+          return {
+            ok: true,
+            status: existingOutcome.status,
+            commandId: existingOutcome.commandId,
+            code: existingOutcome.code,
+          };
+        }
+        const processor = new WorkflowControlCommandProcessor({
+          inbox: this.workflowControls,
+          store,
+          workspaceId: this.opts.workspaceRoot,
+          owner: workflowLeaseOwner(),
+          leaseTtlMs: WORKFLOW_LEASE_TTL_MS,
+        });
+        const processed = await processor.processNext(
+          record.id,
+          accepted.envelope.commandId,
+        );
+        if (processed.status === "dispatch_required") {
+          if (this.active || this.startingRun) {
+            return {
+              ok: true,
+              status: "accepted",
+              commandId: processed.envelope.commandId,
+              code: "dispatch_waiting",
+            };
+          }
+          this.startingRun = true;
+          try {
+            const resumed = await this.resumeWorkflowRunInner({
+              workflowRunId: record.id,
+              sessionId,
+            });
+            await processor.completeDispatch(processed.envelope, {
+              applied: resumed.ok,
+              code: resumed.ok ? "resume_dispatched" : resumed.error.code,
+              ...(!resumed.ok ? { message: resumed.error.message } : {}),
+            });
+            return resumed.ok
+              ? {
+                  ok: true,
+                  status: "applied",
+                  commandId: processed.envelope.commandId,
+                  code: "resume_dispatched",
+                  runId: resumed.runId,
+                }
+              : resumed;
+          } finally {
+            this.startingRun = false;
+          }
+        }
+        if (processed.status === "terminal") {
+          return {
+            ok: true,
+            status: processed.outcome.status,
+            commandId: processed.outcome.commandId,
+            code: processed.outcome.code,
+          };
+        }
+        return {
+          ok: true,
+          status: processed.status === "busy" ? "accepted" : processed.status,
+          commandId: accepted.envelope.commandId,
+          ...(processed.status === "busy" ? { code: "consumer_busy" } : {}),
+        };
+      },
+    );
+  }
+
   async resumeWorkflowRun(
     payload: WorkflowResumeRequestPayload,
   ): Promise<
@@ -1610,10 +1772,105 @@ export class HostRuntime {
     }
     this.startingRun = true;
     try {
-      return await this.resumeWorkflowRunInner(payload);
+      return await this.resumeWorkflowRunThroughControl(payload);
     } finally {
       this.startingRun = false;
     }
+  }
+
+  private async resumeWorkflowRunThroughControl(
+    payload: WorkflowResumeRequestPayload,
+  ): Promise<
+    | { ok: true; runId: string; workflowRunId: string; sessionId?: string }
+    | { ok: false; error: ProtocolError }
+  > {
+    const located = await this.findWorkflowRunRecord(
+      payload.workflowRunId as WorkflowRunId,
+      payload.sessionId,
+    );
+    if (!located.ok) return located;
+    const { record, store, sessionId } = located;
+    const idempotencyKey =
+      typeof payload.metadata?.controlIdempotencyKey === "string"
+        ? payload.metadata.controlIdempotencyKey
+        : `workflow-resume-${randomUUID()}`;
+    const accepted = await this.workflowControls.accept({
+      workflowRunId: record.id,
+      idempotencyKey,
+      source: {
+        kind: "api",
+        principalId: "host-protocol-client",
+        authenticatedBy: "host-connection",
+      },
+      authorization: {
+        workspaceId: this.opts.workspaceRoot,
+        sessionId,
+        workflowRunId: record.id,
+        allowedCommandKinds: ["resume_request"],
+      },
+      expected: {
+        generation: store.canonicalGeneration(record.id),
+        status: record.status,
+        ...(record.wait?.id ? { waitId: record.wait.id } : {}),
+      },
+      command: {
+        kind: "resume_request",
+        ...(record.wait?.id ? { waitId: record.wait.id } : {}),
+      },
+      createdAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1_000).toISOString(),
+    });
+    if (accepted.status === "conflict") {
+      return {
+        ok: false,
+        error: {
+          code: "invalid_payload",
+          message: `Workflow control idempotency conflict: ${accepted.commandId}`,
+        },
+      };
+    }
+    const processor = new WorkflowControlCommandProcessor({
+      inbox: this.workflowControls,
+      store,
+      workspaceId: this.opts.workspaceRoot,
+      owner: workflowLeaseOwner(),
+      leaseTtlMs: WORKFLOW_LEASE_TTL_MS,
+    });
+    const processed = await processor.processNext(
+      record.id,
+      accepted.envelope.commandId,
+    );
+    if (processed.status === "terminal") {
+      return {
+        ok: false,
+        error: {
+          code: "invalid_payload",
+          message:
+            processed.outcome.message ??
+            `Workflow control command ${processed.outcome.code}.`,
+        },
+      };
+    }
+    if (processed.status !== "dispatch_required") {
+      return {
+        ok: false,
+        error: {
+          code: "internal_error",
+          message: `Workflow control command is ${processed.status}.`,
+        },
+      };
+    }
+    const resumed = await this.resumeWorkflowRunInner({
+      ...payload,
+      workflowRunId: processed.envelope.workflowRunId,
+      sessionId,
+    });
+    await processor.completeDispatch(processed.envelope, {
+      applied: resumed.ok,
+      code: resumed.ok ? "resume_dispatched" : resumed.error.code,
+      ...(!resumed.ok ? { message: resumed.error.message } : {}),
+    });
+    return resumed;
   }
 
   private async prepareHostRunEnvironment(input: {
@@ -2571,11 +2828,52 @@ export class HostRuntime {
         run,
         trace: env.trace,
         sessionId,
+        ...(env.workflowRecord
+          ? {
+              workflowRunId: env.workflowRecord.id,
+              processWorkflowControls: async () => {
+                if (
+                  !env.workflowStore ||
+                  !env.workflowLease ||
+                  !env.workflowRecord
+                )
+                  return;
+                const processor = new WorkflowControlCommandProcessor({
+                  inbox: this.workflowControls,
+                  store: env.workflowStore,
+                  writer: env.workflowLease,
+                  workspaceId: this.opts.workspaceRoot,
+                });
+                const result = await processor.processNext(
+                  env.workflowRecord.id,
+                );
+                if (
+                  result.status === "terminal" &&
+                  result.outcome.status === "applied" &&
+                  result.outcome.code === "applied" &&
+                  env.workflowRecord.status !== "cancelled"
+                ) {
+                  const fresh = await env.workflowLease.readFresh();
+                  if (fresh) env.workflowRecord = fresh;
+                }
+                if (env.workflowRecord.status === "cancelled") {
+                  run.cancel({ reason: "workflow_control_cancel" });
+                }
+              },
+            }
+          : {}),
         closeCapabilities: async () => {
           closeEventHooks();
           await env.preparedMcp?.close();
         },
       };
+      if (env.workflowRecord) {
+        const controlTimer = setInterval(() => {
+          void this.active?.processWorkflowControls?.().catch(() => {});
+        }, 500);
+        controlTimer.unref?.();
+        runCleanups.push(() => clearInterval(controlTimer));
+      }
       const collected: SparkwrightEvent[] = [];
       run.events.subscribe((event: SparkwrightEvent) => {
         env.trace.append(event);
@@ -3112,7 +3410,9 @@ export class HostRuntime {
       workflowRecord: record,
       workflowLease: lease,
       workflowWaitingInputMetadata:
-        record.status === "waiting" ? (payload.metadata ?? {}) : undefined,
+        record.status === "waiting"
+          ? workflowWaitingInputMetadata(record, payload.metadata)
+          : undefined,
       runMetadata: {
         resumedWorkflowRunId: record.id,
         verifyOnResume: record.resume.verifyOnResume,
@@ -8506,6 +8806,26 @@ function workflowToolDescriptor(tool: ToolDefinition): ToolDescriptor {
 
 // Actor-owned resume boundary for P3 input waits. The actor consumes the
 // external input event before it starts the next transient worker run.
+function workflowWaitingInputMetadata(
+  record: WorkflowRunRecord,
+  fallback: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  const staged = record.metadata.pendingWorkflowControlInput;
+  if (!isPlainRecord(staged) || typeof staged.value !== "string") {
+    return fallback ?? {};
+  }
+  return {
+    ...(fallback ?? {}),
+    workflowControlInput: {
+      value: staged.value,
+      commandId:
+        typeof staged.commandId === "string" ? staged.commandId : undefined,
+      waitId: typeof staged.waitId === "string" ? staged.waitId : undefined,
+      source: isPlainRecord(staged.source) ? staged.source : undefined,
+    },
+  };
+}
+
 async function consumeWorkflowActorWaitingInput(
   writer: WorkflowLeaseBoundWriter | undefined,
   record: WorkflowRunRecord,
@@ -8588,6 +8908,7 @@ async function consumeWorkflowActorWaitingInput(
       resumedFromWait: true,
       consumedWaitKind: record.wait.kind,
       consumedWaitNodeId: node.id,
+      pendingWorkflowControlInput: null,
     },
     ...(advanced.state.failure
       ? {
@@ -8772,6 +9093,12 @@ async function listSessionIds(sessionRootDir: string): Promise<string[]> {
 function workflowRunSnapshot(record: WorkflowRunRecord): WorkflowRunSnapshot {
   return {
     id: record.id,
+    ...(record.generation !== undefined
+      ? { generation: record.generation }
+      : {}),
+    ...(record.recordRevision !== undefined
+      ? { recordRevision: record.recordRevision }
+      : {}),
     ...(record.sessionId ? { sessionId: record.sessionId } : {}),
     status: record.status,
     assetName: record.assetName,

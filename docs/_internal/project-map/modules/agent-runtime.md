@@ -105,6 +105,12 @@ Does not own:
   corrupt-entry diagnostics, waiting-state invariants, restore-after-adoption
   rollback, and single-writer leases; host owns parsing, projection, and
   run-loop execution.
+- Workflow control is a separate typed command plane. `FileWorkflowControlInbox`
+  owns immutable accepted commands, immutable terminal outcomes, scoped
+  idempotency, corrupt-entry diagnostics, and a reconstructible cursor;
+  `WorkflowControlCommandProcessor` validates durable preconditions and applies
+  commands only through `WorkflowLeaseBoundWriter`. It is not a generic message
+  bus and does not authenticate transports or choose model context roles.
 - Workflow P1 runtime state transitions are also portable and model/config
   free. `advanceWorkflowState()` evaluates `(state, verdict) -> transition`
   for linear model-node workflows with `retry`, `goto`, `fail`, and terminal
@@ -311,6 +317,18 @@ Does not own:
   not authorize a generic actor bus or nested background lifecycle.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-11T13:00:00+0800
+- Scope: Package D typed durable workflow control inbox, fenced processor,
+  canonical-event crash recovery, and durable approval/input linkage.
+- Read: `packages/agent-runtime/src/workflows/control.ts`,
+  `packages/agent-runtime/src/workflows/control-processor.ts`,
+  `packages/agent-runtime/src/workflows/store.ts`,
+  `packages/agent-runtime/src/workflows/types.ts`,
+  `packages/agent-runtime/test/workflow-control.test.ts`.
+- Tests: Package D focused commands and full release gate recorded in
+  `docs/_internal/test-map/coverage/workflow-durable-jobs.md`.
 
 - Status: Verified
 - Date: 2026-07-11T10:40:00+0800

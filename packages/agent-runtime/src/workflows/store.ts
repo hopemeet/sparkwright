@@ -117,6 +117,7 @@ export interface WorkflowStore {
   list(): WorkflowStoreListResult;
   /** @reserved Public workflow-store log reader consumed by future workflow diagnostics/resume UIs. */
   eventLog(id: WorkflowRunId): WorkflowStoreEventLogResult;
+  canonicalGeneration(id: WorkflowRunId): number;
   acquireWriter(
     id: WorkflowRunId,
     options?: { owner?: string; ttlMs?: number; now?: () => Date },
@@ -178,6 +179,15 @@ export class FileWorkflowStore implements WorkflowStore {
       events: result.entries.map((entry) => entry.value),
       invalidEntries: result.invalidEntries,
     };
+  }
+
+  canonicalGeneration(id: WorkflowRunId): number {
+    assertSafeWorkflowRunId(id);
+    return (
+      readWorkflowJournalSync(this.rootDir, id)?.generation ??
+      this.records.get(id)?.generation ??
+      0
+    );
   }
 
   async acquireWriter(
@@ -544,7 +554,10 @@ function applyWorkflowPatch(
     isTerminalStatus(status) || patch.clearWait
       ? undefined
       : patch.wait
-        ? cloneWait(patch.wait)
+        ? {
+            ...cloneWait(patch.wait),
+            id: patch.wait.id ?? `workflow_wait_${state.recordRevision}`,
+          }
         : existing.wait;
   if (status === "waiting" && !wait)
     throw new Error("Workflow waiting status requires wait.kind.");

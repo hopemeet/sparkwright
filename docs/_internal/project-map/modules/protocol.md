@@ -41,7 +41,8 @@ Does not own:
   `session.fork`, `session.compact`, `capability.inspect`, and durable
   background-task inspection requests `task.list`, `task.get`, `task.output`,
   `task.stop`, plus host-facing task controls `task.join` and `task.promote`,
-  and durable workflow requests `workflow.list` / `workflow.resume`.
+  and durable workflow requests `workflow.list`, `workflow.resume`, and
+  `workflow.control`.
 - Task inspection responses use snapshot/poll contracts: `TaskRecordSnapshot`
   for durable task records, `TaskOutputChunkSnapshot` for buffered stdout/stderr
   chunks, and `task_not_found` as the protocol error code for missing task ids.
@@ -79,6 +80,10 @@ Does not own:
 - `WorkflowRunSnapshot.authorizationSnapshot` exposes target/confidential path
   presence flags plus non-sensitive policy fields, never the path values. The
   values remain host-owned persisted resume defaults.
+- `workflow.control` accepts only the closed cancel/input/approval/resume command
+  union plus idempotency and expected-state fields. Source identity and
+  authorization scope are Host-derived, not producer-supplied; accepted/busy
+  commands remain durable for a later consumer.
 - `run.start` and `run.inject_message` keep their text fields (`goal` and
   `content`) as required user-turn summaries and may add `input.parts` for
   extensible text/image/file/audio content.
@@ -192,6 +197,16 @@ Does not own:
 - Protocol and file trace contracts are related but separate; avoid documenting one as the other.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-11T13:00:00+0800
+- Scope: Package D `workflow.control` request/result, schema validation,
+  capabilities, SDK adapter, and Host protocol dispatch.
+- Read: `packages/protocol/src/index.ts`, `schemas/host-message.schema.json`,
+  `packages/host/src/server.ts`, `packages/sdk-core/src/client.ts`,
+  `docs/reference/HOST_PROTOCOL.md`.
+- Tests: protocol/Host/SDK focused commands and schema check recorded in the D
+  test-map evidence.
 
 - Status: Verified
 - Date: 2026-07-11T10:41:00+0800

@@ -668,6 +668,40 @@ describe("host protocol", () => {
           ],
         },
       });
+
+      pair.clientSend({
+        envelope: "request",
+        id: "workflow_control",
+        kind: "workflow.control",
+        timestamp: TIMESTAMP,
+        payload: {
+          workflowRunId,
+          sessionId,
+          idempotencyKey: "protocol-cancel-one",
+          expected: { status: "running" },
+          command: { kind: "cancel", reason: "protocol test" },
+        },
+      });
+      const controlResp = await pair.waitFor(
+        (m) => m.envelope === "response" && m.id === "workflow_control",
+      );
+      expect(controlResp).toMatchObject({
+        envelope: "response",
+        ok: true,
+        result: { status: "applied", code: "applied" },
+      });
+      expect(
+        new FileWorkflowStore({
+          rootDir: join(
+            workspace,
+            ".sparkwright",
+            "sessions",
+            sessionId,
+            "workflow-runs",
+          ),
+          createRoot: false,
+        }).get(workflowRunId),
+      ).toMatchObject({ status: "cancelled" });
     } finally {
       pair.close();
       await rmWhenReady(workspace);

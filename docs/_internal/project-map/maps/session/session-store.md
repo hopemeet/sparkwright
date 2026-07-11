@@ -118,6 +118,18 @@ Manual compact
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-11T13:00:00+0800
+- Scope: each workflow now has a sibling `<workflowRunId>.control/` durable
+  command directory with immutable commands/outcomes and a rebuildable cursor;
+  the Package C workflow journal remains canonical apply truth.
+- Read: `packages/agent-runtime/src/workflows/control.ts`,
+  `packages/agent-runtime/src/workflows/control-processor.ts`,
+  `packages/agent-runtime/src/workflows/store.ts`,
+  `packages/host/src/runtime.ts`.
+- Tests: Package D persistence/restart/corruption focused tests and release gate
+  recorded in the workflow durable-jobs test map.
+
+- Status: Verified
 - Date: 2026-07-11T10:40:00+0800
 - Scope: Package C makes `.sparkwright/workflow-runs/<id>.journal/` the
   canonical workflow mutation history. `<id>.json` and `<id>.events.jsonl`

@@ -237,26 +237,12 @@ export function useWorkflowActions(deps: {
       });
       return;
     }
-    if (
-      !liveJob ||
-      workflow?.status === "waiting" ||
-      liveJob.status === "waiting" ||
-      liveJob.status === "completed" ||
-      liveJob.status === "failed" ||
-      liveJob.status === "cancelled"
-    ) {
-      store.appendNotice(
-        `workflow stop not available for ${workflow?.id ?? trimmed}: not in the current live connection; resume it or stop it from the owner`,
-      );
-      return;
-    }
+    if (!workflow) return;
     try {
-      await liveJob.handle.client.cancelRun({
-        runId: liveJob.runId,
-        reason: "workflow stop",
-      });
+      const accepted = await controller.cancelWorkflow(workflow);
+      if (!accepted) throw new Error("durable cancel command was rejected");
       store.appendNotice(
-        `workflow stop requested: ${workflow?.id ?? liveJob.workflowRunId ?? liveJob.runId} (stopping is terminal and cannot be resumed)`,
+        `workflow stop requested: ${workflow.id} (stopping is terminal and cannot be resumed)`,
       );
     } catch (error) {
       store.appendNotice(

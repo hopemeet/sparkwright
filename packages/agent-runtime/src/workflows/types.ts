@@ -22,6 +22,7 @@ export interface WorkflowAssetPin {
 }
 
 export interface WorkflowWaitState {
+  id?: string;
   kind: WorkflowWaitKind;
   reason?: string;
   taskId?: string;

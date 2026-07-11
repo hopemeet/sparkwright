@@ -734,6 +734,27 @@ export class RunController {
     }
   }
 
+  async cancelWorkflow(workflow: WorkflowRunSnapshot): Promise<boolean> {
+    try {
+      const client = await this.ensureClient();
+      const result = await client.controlWorkflow({
+        workflowRunId: workflow.id,
+        sessionId: workflow.sessionId,
+        idempotencyKey: `tui-cancel-${workflow.id}-${workflow.generation ?? 0}`,
+        expected: {
+          generation: workflow.generation,
+          status: workflow.status,
+          waitId: workflow.wait?.id,
+        },
+        command: { kind: "cancel", reason: "workflow stop" },
+      });
+      return result.status === "applied" || result.status === "accepted";
+    } catch (err) {
+      this.store.setError(formatError(err));
+      return false;
+    }
+  }
+
   async readTaskOutput(
     taskId: string,
     maxChunks = 200,

@@ -7,9 +7,35 @@ import {
   RunManager,
   SessionManager,
   createServerRuntime,
+  DurableCommandDispatcher,
 } from "../src/index.js";
 
 describe("server-runtime", () => {
+  it("coalesces concurrent consumption of one durable command id", async () => {
+    const dispatcher = new DurableCommandDispatcher();
+    let calls = 0;
+    let release!: () => void;
+    const barrier = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const consume = () =>
+      dispatcher.dispatch("workflow_command_one", async () => {
+        calls += 1;
+        await barrier;
+        return "applied";
+      });
+    const first = consume();
+    const duplicate = consume();
+    expect(dispatcher.isInFlight("workflow_command_one")).toBe(true);
+    release();
+    await expect(Promise.all([first, duplicate])).resolves.toEqual([
+      "applied",
+      "applied",
+    ]);
+    expect(calls).toBe(1);
+    expect(dispatcher.isInFlight("workflow_command_one")).toBe(false);
+  });
+
   it("fans out run events through filtered subscriptions", async () => {
     const hub = new ConnectionHub();
     const seen: string[] = [];

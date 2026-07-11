@@ -686,7 +686,7 @@ writer 无旁路。补偿记录保留 durable history 的产品语义已于 2026
 
 ### 8.13 Package D durable control inbox 裁决（2026-07-11）
 
-状态：**设计 gate 完成；代码 gate 可在 Package D 独立 commit 中打开。**
+状态：**设计 gate 与实现 gate 完成；Package D 独立 commit/release gate 证据见本节末尾。**
 
 #### Ownership 与非目标
 
@@ -708,7 +708,12 @@ writer 无旁路。补偿记录保留 durable history 的产品语义已于 2026
 type WorkflowControlCommand =
   | { kind: "cancel"; reason?: string }
   | { kind: "provide_input"; waitId: string; value: string }
-  | { kind: "approval_response"; approvalId: string; decision: "approved" | "denied"; message?: string }
+  | {
+      kind: "approval_response";
+      approvalId: string;
+      decision: "approved" | "denied";
+      message?: string;
+    }
   | { kind: "resume_request"; waitId?: string };
 
 interface WorkflowControlCommandEnvelope {
@@ -791,3 +796,18 @@ record/journal；否则该命令只能明确 rejected，不能报告 applied。
   路径 apply/dispatch；不能保留直接 consume wait + start 的平行控制路径。
 - approval durable linkage 未完成前 D 不得宣称 approval_response gate 通过；Package E
   与后续 D–G 均保持关闭直到上述 focused/full release、maps/test-map 和独立 commit 完成。
+
+#### 实现结果
+
+- `FileWorkflowControlInbox` 实现 immutable command/outcome、exclusive create、
+  scoped idempotency、可重建 cursor 和 corrupt entry 隔离。
+- `WorkflowControlCommandProcessor` 通过 Package C writer 应用 record/event，使用
+  canonical `controlCommandId` 恢复 mutation 已成功而 outcome 未发布的崩溃窗口。
+- Host/SDK/protocol/TUI 接入 `workflow.control`；`workflow.resume` 先 enqueue 再由同一
+  consumer dispatch；远端 owner busy 时 command 保持 durable accepted。
+- `provide_input` 只持久化 typed value/source，由 Host receiver 在 resume 边界投影并清除
+  staging marker；`approval_response` 要求 durable approval wait 与 authorization snapshot。
+- server-runtime 只提供同 command 的 in-flight dispatch 合并，不成为 workflow record、
+  authorization 或 lifecycle truth。
+- focused gate 与完整 `npm run release:check` 已通过；D 独立 commit 后可 reopen Package E
+  设计 gate，F/G 仍保持关闭。

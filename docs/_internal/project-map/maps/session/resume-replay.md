@@ -112,6 +112,18 @@ Future run in compacted session
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-11T13:00:00+0800
+- Scope: `workflow.resume` is now a compatibility adapter that durably enqueues
+  `resume_request` before Host dispatch; applied controls recover from canonical
+  workflow event metadata after mutation/outcome crash windows.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/agent-runtime/src/workflows/control-processor.ts`,
+  `packages/agent-runtime/test/workflow-control.test.ts`,
+  `packages/host/test/workflows.test.ts`.
+- Tests: Package D focused resume/control/recovery tests and release gate
+  recorded in the workflow durable-jobs test map.
+
+- Status: Verified
 - Date: 2026-07-11T10:40:00+0800
 - Scope: Package C workflow resume claims a higher journal generation, rereads
   canonical state, consumes waiting input through a fenced mutation, and uses

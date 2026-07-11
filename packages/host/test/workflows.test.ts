@@ -1821,6 +1821,57 @@ describe("workflow assets", () => {
     });
   });
 
+  it("applies durable cancel from a different Host runtime", async () => {
+    const workspace = await tempWorkspace();
+    const sessionId = "sess_workflow_control_cancel";
+    const workflowRunId = "workflow_control_cancel" as WorkflowRunId;
+    const store = new FileWorkflowStore({
+      rootDir: workflowStoreRoot(workspace, sessionId),
+    });
+    const record = await seedWorkflowRecord(store, {
+      id: workflowRunId,
+      sessionId,
+      assetName: "controlled",
+      contentHash: "hash-controlled",
+      currentNodeId: "main",
+      definitionSnapshot: {
+        assetName: "controlled",
+        contentHash: "hash-controlled",
+        nodes: [{ id: "main", body: "Controlled body." }],
+      },
+    });
+    const runtime = new HostRuntime({
+      workspaceRoot: workspace,
+      defaultModel: "deterministic",
+      emit: () => {},
+    });
+
+    const controlled = await runtime.controlWorkflow({
+      workflowRunId,
+      sessionId,
+      idempotencyKey: "cancel-from-other-host",
+      source: {
+        kind: "api",
+        principalId: "test-client",
+        authenticatedBy: "host-test",
+      },
+      expected: { generation: record.generation, status: "running" },
+      command: { kind: "cancel", reason: "remote stop" },
+    });
+
+    expect(controlled).toMatchObject({
+      ok: true,
+      status: "applied",
+      code: "applied",
+    });
+    expect(
+      new FileWorkflowStore({
+        rootDir: workflowStoreRoot(workspace, sessionId),
+        createRoot: false,
+      }).get(workflowRunId),
+    ).toMatchObject({ status: "cancelled" });
+  });
+
   it("rejects unsafe workflow resume ids before building paths", async () => {
     const workspace = await tempWorkspace();
     const runtime = new HostRuntime({

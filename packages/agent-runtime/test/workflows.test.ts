@@ -1108,7 +1108,11 @@ describe("FileWorkflowStore", () => {
         metadata: { wait: { kind: "input", reason: "need user" } },
       },
     });
-    expect(waiting.wait).toEqual({ kind: "input", reason: "need user" });
+    expect(waiting.wait).toMatchObject({
+      id: "workflow_wait_2",
+      kind: "input",
+      reason: "need user",
+    });
     expect(store.eventLog(id).events.at(-1)).toMatchObject({
       type: "waiting",
       status: "waiting",

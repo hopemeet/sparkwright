@@ -66,6 +66,23 @@ export {
 } from "./store.js";
 export { WorkflowStaleWriteError } from "./journal.js";
 export {
+  FileWorkflowControlInbox,
+  WORKFLOW_CONTROL_SCHEMA_VERSION,
+  type WorkflowControlAcceptResult,
+  type WorkflowControlAuthorization,
+  type WorkflowControlCommand,
+  type WorkflowControlCommandEnvelope,
+  type WorkflowControlCommandKind,
+  type WorkflowControlInboxSnapshot,
+  type WorkflowControlOutcome,
+  type WorkflowControlOutcomeStatus,
+  type WorkflowControlSourceIdentity,
+} from "./control.js";
+export {
+  WorkflowControlCommandProcessor,
+  type WorkflowControlProcessResult,
+} from "./control-processor.js";
+export {
   FileWorkflowNotificationOutbox,
   type FileWorkflowNotificationEntry,
   type FileWorkflowNotificationInvalidEntry,

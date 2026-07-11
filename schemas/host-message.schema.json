@@ -47,6 +47,7 @@
             "task.promote",
             "workflow.list",
             "workflow.resume",
+            "workflow.control",
             "capability.inspect"
           ]
         },
@@ -198,6 +199,14 @@
           "then": {
             "properties": {
               "payload": { "$ref": "#/$defs/WorkflowResumeRequestPayload" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "workflow.control" } } },
+          "then": {
+            "properties": {
+              "payload": { "$ref": "#/$defs/WorkflowControlRequestPayload" }
             }
           }
         },
@@ -826,6 +835,69 @@
           "enum": ["standard", "debug"]
         },
         "metadata": { "type": "object" }
+      },
+      "additionalProperties": false
+    },
+    "WorkflowControlRequestPayload": {
+      "type": "object",
+      "required": ["workflowRunId", "idempotencyKey", "command"],
+      "properties": {
+        "workflowRunId": { "type": "string", "minLength": 1 },
+        "sessionId": { "type": "string", "minLength": 1 },
+        "commandId": { "type": "string", "minLength": 1 },
+        "idempotencyKey": { "type": "string", "minLength": 1 },
+        "expected": {
+          "type": "object",
+          "properties": {
+            "generation": { "type": "integer", "minimum": 0 },
+            "status": { "$ref": "#/$defs/WorkflowRunStatus" },
+            "waitId": { "type": "string", "minLength": 1 }
+          },
+          "additionalProperties": false
+        },
+        "command": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": ["kind"],
+              "properties": {
+                "kind": { "const": "cancel" },
+                "reason": { "type": "string" }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": ["kind", "waitId", "value"],
+              "properties": {
+                "kind": { "const": "provide_input" },
+                "waitId": { "type": "string", "minLength": 1 },
+                "value": { "type": "string" }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": ["kind", "approvalId", "decision"],
+              "properties": {
+                "kind": { "const": "approval_response" },
+                "approvalId": { "type": "string", "minLength": 1 },
+                "decision": { "enum": ["approved", "denied"] },
+                "message": { "type": "string" }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": ["kind"],
+              "properties": {
+                "kind": { "const": "resume_request" },
+                "waitId": { "type": "string", "minLength": 1 }
+              },
+              "additionalProperties": false
+            }
+          ]
+        }
       },
       "additionalProperties": false
     },
