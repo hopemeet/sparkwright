@@ -1026,3 +1026,110 @@ SIGTERM/drain 只报告 interrupted/remaining，不伪装 pause。
   verification 后记录。首次完整 gate 只发现本次 CLI 两处 lint（unused handler env、
   prefer-const）；修复后 `npm run release:check` 从头重跑并通过全部 workspace tests、
   regression matrix 与两种 install smoke。
+
+### 8.16 Package G 多端 durable 决策闭环裁决（2026-07-11）
+
+状态：**设计 gate 完成；实现、故障注入与 release gate 尚未完成。**
+
+#### 已核实的现状与唯一 truth
+
+- `FileWorkflowNotificationOutbox` 已持久化 workflow actor notification，但 Host 当前
+  `deliveredWorkflowNotifications` 只是 per-process 去重；它不是多端 cursor。
+- Package D `FileWorkflowControlInbox` + canonical workflow event 已经是 command accept/apply/
+  idempotency truth。G adapter 只能 mint scoped D command，不能直接写 WorkflowRunRecord。
+- IM gateway 当前 approval button 依赖 `approvalId -> active run` 和 live bridge pending map；该
+  路径继续服务普通 foreground run，但不能冒充 durable workflow approval truth。
+- server-runtime 是共享 delivery/competition coordinator；gateway 只拥有 transport cursor、
+  raw authenticated identity 与平台 message id。TUI/CLI/主 Agent/IM/Web/API 都是 adapter。
+
+#### Durable channel binding
+
+每个 binding 是 immutable grant + revoke audit，至少固定：
+
+```ts
+interface WorkflowChannelBinding {
+  bindingId: string;
+  workspaceId: string;
+  workflowRunId: string;
+  sessionId?: string;
+  source: {
+    kind: "tui" | "cli" | "agent" | "im" | "web" | "api";
+    principalId: string;
+    authenticatedBy: string;
+    channelId: string;
+  };
+  allowedCommandKinds: Array<
+    "cancel" | "provide_input" | "approval_response" | "resume_request"
+  >;
+  createdAt: string;
+  expiresAt: string;
+  revokedAt?: string;
+}
+```
+
+binding publication/revoke 由 agent-runtime durable store 持有，server-runtime 只协调读取与
+delivery。session/workflow/source/channel/command-kind/expiry/revoke 全部匹配才可 mint D
+authorization envelope。收到 message 权限不自动包含 approve/cancel；approval_response 还
+必须匹配 record 中 durable approvalId/authorization snapshot。外部 adapter 不能自称
+`system`，不能扩大 binding，不能决定 model context role。
+
+#### Notification delivery 与 cursor
+
+每个 `bindingId + notification entry id` 使用 immutable delivery receipt：
+
+```text
+<workflowRunId>.channels/
+  bindings/<bindingId>.json
+  revocations/<bindingId>.json
+  deliveries/<bindingId>/<notificationId>.json
+  cursors/<bindingId>.json              # 可重建投影
+```
+
+outbox notification 仍是消息事实；delivery receipt 只记录 adapter 的
+`delivered|failed|expired|revoked` transport outcome。cursor 可从 receipt 重建，gap 不能隐藏
+后续 notification。adapter disconnect 不删除 notification/binding；reconnect 从 durable
+cursor 补发。delivery 至少一次，平台 message id/delivery key 保证 duplicate webhook 或
+send retry 不产生第二 D command。
+
+#### 决策闭环与竞争
+
+```text
+workflow durable notification
+  -> server-runtime binding/cursor delivery
+  -> adapter authenticated response
+  -> binding authorization clamp
+  -> Package D typed command (scoped idempotency)
+  -> one canonical apply/outcome
+  -> Package E/F scheduling
+  -> workflow resume
+```
+
+多端可同时看到 notification，但 response 使用
+`workflowRunId + waitId/approvalId + expected generation + command kind`；Package D exclusive
+outcome/canonical event 决定唯一 winner。loser 得到 already-resolved/state-mismatch，不静默
+成功。无 binding/无在线 channel 时 workflow 保持 waiting；workflow peer messaging 默认关闭，
+不新增 generic topic/payload bus、任意 JSON command 或 request/response RPC。
+
+#### Adapter 边界与退役
+
+- TUI/CLI live actions 改为 binding-aware D command adapter；可以继续显示即时反馈，但
+  connection 不是 durable owner。
+- IM/Web/API 验证原始平台 identity 后映射 binding；gateway store 只保留 transport dedupe/
+  cursor，不保存 workflow authorization truth，也不调用 live `resolveApproval()` 处理 durable
+  workflow approval。
+- 主 Agent 只接收 receiver-policy 投影后的 notification；模型不能调用 workflow_start、
+  nested spawn 或选择任意 peer。其响应同样经 binding + D command。
+- 退役 Host per-process workflow delivery set 作为唯一去重、TUI live client 唯一闭环、
+  IM active-run approval map 处理 durable workflow approval 的假设。
+
+#### G 故障与完成 gate
+
+- deterministic tests：binding expiry/revoke/scope、消息权限不含 approve/cancel、双端同 wait
+  单 winner、duplicate webhook、send 后 receipt 前 crash、receipt 后 cursor 前 crash、disconnect/
+  reconnect gap replay、corrupt receipt/cursor、adapter restart、无 channel waiting、late revoked
+  response、generation takeover、workflow peer messaging 拒绝。
+- TUI/CLI/IM 至少各一条真实 adapter integration；Web/API 可共享 SDK adapter contract，但必须
+  验证 source authentication 与 idempotency。producer 不能直接 mutation 或控制 context role。
+- agent-runtime/server-runtime/Host/protocol/SDK/TUI/CLI/IM focused tests、typecheck/build、完整
+  `npm run release:check`、maps/test-map、旧机制退役与独立 G commit 全通过后，整个
+  Workflow as Durable Job Session 路线才可关闭。

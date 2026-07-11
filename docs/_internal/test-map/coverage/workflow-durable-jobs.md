@@ -11,7 +11,8 @@
 - Package E durable supervisor/worker ownership: `Verified` at the focused
   implementation/fault gate; full release result recorded below.
 - Package F: `Verified`; implementation/focused fault/full release gates passed.
-- Package G: `Untested`; reopen gate remains closed by F.
+- Package G: `Untested`; design gate is adjudicated after F, implementation and
+  verification remain open.
 
 ## Current Evidence
 
@@ -190,3 +191,29 @@ accept, workflow record creation, outcome publication, and supervisor claim:
   the service handler (unused injected env and prefer-const). After fixing them,
   a complete `npm run release:check` rerun passed all workspace tests,
   regression matrix, source install smoke, and release install smoke.
+
+## Required Package G Fault World
+
+1. publish one durable workflow waiting/approval notification and bind two
+   independently authenticated adapters with different command scopes;
+2. disconnect both after notification publication, reconnect from empty memory,
+   and replay from durable delivery receipts/cursors without losing the gap;
+3. crash after transport send before receipt, and after receipt before cursor;
+   retries may redeliver but must keep one stable delivery/idempotency key;
+4. race two authorized responses to the same wait/approval and prove one
+   Package D canonical apply winner with an explicit loser outcome;
+5. duplicate webhook/message id cannot apply twice; same id with changed payload
+   conflicts;
+6. expired, revoked, wrong-workspace/session/workflow/source/channel or
+   disallowed-command binding fails before D accept;
+7. a message-only binding cannot approve or cancel; durable approval also
+   requires matching approvalId and authorization snapshot;
+8. corrupt receipt/cursor is isolated and rebuilt without skipping later
+   notifications;
+9. generation takeover makes late old-generation responses stale while the new
+   worker/channel can continue;
+10. no channel leaves the workflow waiting; later binding/delivery resumes it;
+11. TUI, CLI, IM and SDK/Web/API adapters all route through the same binding +
+    D command contract and none writes WorkflowRunRecord directly;
+12. workflow peer messaging, arbitrary JSON commands, producer-selected model
+    context injection, model workflow_start and nested spawn remain rejected.

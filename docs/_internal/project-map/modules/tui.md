@@ -297,6 +297,16 @@ Does not own:
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-11T15:00:00+0800
+- Scope: Package G design makes TUI one binding-aware notification/control
+  adapter; it may render live feedback but is no longer the unique durable
+  workflow decision channel.
+- Read: `packages/tui/src/state/use-workflow-actions.ts`,
+  `packages/tui/src/state/run-controller.ts`,
+  `packages/agent-runtime/src/workflows/control.ts`.
+- Tests: not run; design-only source reconciliation.
+
 - Status: Verified
 - Date: 2026-07-11T13:00:00+0800
 - Scope: workflow stop now submits durable `workflow.control cancel` through

@@ -322,6 +322,16 @@ Does not own:
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-11T15:00:00+0800
+- Scope: Package G design keeps workflow notification outbox and Package D
+  command journal as facts, and adds only durable channel binding,
+  revoke/delivery receipt, and rebuildable cursor storage alongside them.
+- Read: `packages/agent-runtime/src/workflows/notifications.ts`,
+  `packages/agent-runtime/src/workflows/control.ts`,
+  `packages/agent-runtime/src/workflows/control-processor.ts`.
+- Tests: not run; design-only source reconciliation.
+
 - Status: Verified
 - Date: 2026-07-11T13:30:00+0800
 - Scope: Package E durable worker registry and its liveness-only boundary.

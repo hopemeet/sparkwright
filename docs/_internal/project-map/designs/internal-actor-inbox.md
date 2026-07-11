@@ -34,6 +34,12 @@
 > this design, but control commands must not enter the lifecycle notification
 > union or let producers choose model-context injection. Active adjudication is
 > in `docs/_internal/proposals/workflow-job-session-review-context.md` 8.13.
+>
+> Package G note (2026-07-11): multi-channel delivery consumes this durable
+> workflow notification outbox through per-binding delivery receipts/cursors,
+> then maps authenticated responses into Package D commands. It does not widen
+> the actor notification union into a generic bus and producers still do not
+> choose model-context injection.
 
 ## 1. Problem Statement
 

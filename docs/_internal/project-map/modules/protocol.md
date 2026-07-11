@@ -198,6 +198,16 @@ Does not own:
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-11T15:00:00+0800
+- Scope: Package G design keeps typed `workflow.control` as the response plane;
+  channel binding/delivery is a server-runtime/adapter contract and does not add
+  arbitrary protocol payloads or peer messaging.
+- Read: `packages/protocol/src/index.ts`,
+  `packages/agent-runtime/src/workflows/control.ts`,
+  `packages/im-gateway/src/gateway.ts`.
+- Tests: not run; design-only source reconciliation.
+
 - Status: Verified
 - Date: 2026-07-11T13:00:00+0800
 - Scope: Package D `workflow.control` request/result, schema validation,

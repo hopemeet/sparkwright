@@ -102,6 +102,19 @@ contracts, and focused checklists that no longer fit here.
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-11T15:00:00+0800
+- Scope: Package G design routes TUI/CLI/agent/IM/Web/API through
+  server-runtime binding/delivery coordination, existing workflow notification
+  outbox, and Package D commands; gateways retain only transport identity and
+  cursor/dedupe state.
+- Read: `packages/im-gateway/src/gateway.ts`,
+  `packages/im-gateway/src/store.ts`, `packages/im-gateway/src/types.ts`,
+  `packages/agent-runtime/src/workflows/notifications.ts`,
+  `packages/agent-runtime/src/workflows/control.ts`,
+  `packages/server-runtime/src/index.ts`, `packages/host/src/runtime.ts`.
+- Tests: not run; design-only source reconciliation after Package F release.
+
 - Status: Verified
 - Date: 2026-07-11T14:30:00+0800
 - Scope: Package F foreground workflow service carrier, durable handoff/outcome,

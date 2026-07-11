@@ -756,6 +756,16 @@ Does not own:
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-11T15:00:00+0800
+- Scope: Package G design retires per-process workflow delivery dedupe as the
+  only cursor and routes durable responses through binding-authorized Package D
+  commands; ordinary foreground approval remains connection-owned.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/agent-runtime/src/workflows/notifications.ts`,
+  `packages/agent-runtime/src/workflows/control.ts`.
+- Tests: not run; design-only source reconciliation.
+
 - Status: Verified
 - Date: 2026-07-11T14:30:00+0800
 - Scope: Package F service-only fixed workflow identity start and claimed
