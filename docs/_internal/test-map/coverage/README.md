@@ -26,6 +26,7 @@ focused tests passed after the relevant change. When in doubt, prefer
 | Trace diagnostics | [trace-diagnostics.md](trace-diagnostics.md) | [routes/capability-routes.md#trace-diagnostics](../routes/capability-routes.md#trace-diagnostics) |
 | Agents and delegates | [agents.md](agents.md) | [routes/capability-routes.md#agents-and-delegates](../routes/capability-routes.md#agents-and-delegates) |
 | TUI rendering | [tui-rendering.md](tui-rendering.md) | [routes/capability-routes.md#tui-first-screen-and-live-rendering](../routes/capability-routes.md#tui-first-screen-and-live-rendering) |
+| Workflow durable jobs | [workflow-durable-jobs.md](workflow-durable-jobs.md) | Package A/B focused routes; Package C fault world remains closed |
 | Config schema | [config-schema.md](config-schema.md) | [routes/capability-routes.md#capability-inspect](../routes/capability-routes.md#capability-inspect) |
 | Skills | [skills.md](skills.md) | focused host/skills/TUI Skill gates plus real Skill capability canary |
 | Cron | [cron.md](cron.md) | focused cron package/CLI gates plus isolated real cron run |
