@@ -108,6 +108,24 @@ run summaries change.
 
 ## Server Runtime
 
+### Durable workflow channels and adapters
+
+Run:
+
+```bash
+npm --workspace @sparkwright/agent-runtime test -- test/workflow-channels.test.ts test/workflow-control.test.ts
+npm --workspace @sparkwright/server-runtime test -- test/workflow-channel-coordinator.test.ts test/index.test.ts
+npm --workspace @sparkwright/host test -- test/workflows.test.ts test/protocol.test.ts
+npm --workspace @sparkwright/sdk-core test -- test/client.test.ts
+npm --workspace @sparkwright/im-gateway test
+npm --workspace @sparkwright/tui test -- test/workflow-actions.test.ts test/sdk-cutover.test.ts
+npm --workspace @sparkwright/cli test -- test/cli.test.ts -t "workflow"
+```
+
+Use deterministic clocks and stable delivery/idempotency keys. Assert that
+failed delivery remains retryable, terminal receipt suppresses redelivery, and
+two bindings responding to one wait produce one canonical Package D winner.
+
 ### `packages/server-runtime/src/workflow-service.ts` or workflow detach/service
 
 Run:

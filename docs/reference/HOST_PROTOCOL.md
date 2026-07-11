@@ -386,6 +386,16 @@ The result contains `status`, `commandId`, and optional `code` / `runId`.
 `accepted` means the command is durable but another consumer currently owns the
 workflow; `applied`, `rejected`, and `dead_letter` are terminal outcomes.
 
+### `workflow.control.process`
+
+Dispatch a command already durably accepted by a scoped workflow channel
+binding. The payload contains `workflowRunId`, optional `sessionId`, and
+`commandId`. This request cannot create a command or widen its authorization:
+Host reloads the immutable Package D envelope, revalidates workspace, session,
+generation, state, wait, and approval scope, and returns the existing or newly
+produced outcome. TUI/CLI/SDK channel adapters use this after binding-aware
+acceptance. Hosts advertise it in `host.ready.capabilities`.
+
 ### `workflow.resume`
 
 Adopt a non-terminal durable workflow run and start a new host run from its

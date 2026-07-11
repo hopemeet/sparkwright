@@ -1,4 +1,5 @@
 import { writeFile, mkdir, readFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { join, resolve } from "node:path";
 import { createClient, type Client } from "@sparkwright/sdk-node";
 import {
@@ -31,6 +32,11 @@ import type {
   WorkflowRunSnapshot,
 } from "@sparkwright/protocol";
 import { runFailureMessage } from "@sparkwright/protocol";
+import {
+  FileWorkflowChannelStore,
+  FileWorkflowControlInbox,
+  type WorkflowRunId,
+} from "@sparkwright/agent-runtime";
 import type { EventStore, PendingApproval } from "./event-store.js";
 import type { SessionDiagnostics } from "../lib/sessions.js";
 import { loadSessionEvents } from "../lib/session-events.js";
@@ -736,17 +742,54 @@ export class RunController {
 
   async cancelWorkflow(workflow: WorkflowRunSnapshot): Promise<boolean> {
     try {
-      const client = await this.ensureClient();
-      const result = await client.controlWorkflow({
-        workflowRunId: workflow.id,
+      const rootDir = join(
+        this.opts.workspaceRoot,
+        ".sparkwright",
+        "workflow-runs",
+      );
+      const channels = new FileWorkflowChannelStore({ rootDir });
+      const controls = new FileWorkflowControlInbox({ rootDir });
+      const now = new Date();
+      const source = {
+        kind: "tui" as const,
+        principalId: process.env.USER ?? "local-user",
+        authenticatedBy: "local-stdio-client",
+        channelId: `tui-${process.pid}`,
+      };
+      const binding = await channels.bind({
+        bindingId: `workflow_binding_tui_${randomUUID().replaceAll("-", "")}`,
+        workspaceId: this.opts.workspaceRoot,
+        workflowRunId: workflow.id as WorkflowRunId,
+        ...(workflow.sessionId ? { sessionId: workflow.sessionId } : {}),
+        source,
+        allowedCommandKinds: ["cancel"],
+        createdAt: now.toISOString(),
+        expiresAt: new Date(now.getTime() + 60 * 60 * 1_000).toISOString(),
+      });
+      const accepted = await channels.acceptControl({
+        inbox: controls,
+        bindingId: binding.bindingId,
+        workflowRunId: workflow.id as WorkflowRunId,
+        workspaceId: this.opts.workspaceRoot,
         sessionId: workflow.sessionId,
+        source,
         idempotencyKey: `tui-cancel-${workflow.id}-${workflow.generation ?? 0}`,
         expected: {
-          generation: workflow.generation,
+          generation: workflow.generation ?? 0,
           status: workflow.status,
-          waitId: workflow.wait?.id,
+          ...(workflow.wait?.id ? { waitId: workflow.wait.id } : {}),
         },
         command: { kind: "cancel", reason: "workflow stop" },
+        expiresAt: new Date(now.getTime() + 24 * 60 * 60 * 1_000).toISOString(),
+      });
+      if (accepted.status === "conflict") {
+        throw new Error("durable cancel idempotency conflict");
+      }
+      const client = await this.ensureClient();
+      const result = await client.processWorkflowControl({
+        workflowRunId: workflow.id,
+        sessionId: workflow.sessionId,
+        commandId: accepted.envelope.commandId,
       });
       return result.status === "applied" || result.status === "accepted";
     } catch (err) {

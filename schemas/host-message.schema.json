@@ -48,6 +48,7 @@
             "workflow.list",
             "workflow.resume",
             "workflow.control",
+            "workflow.control.process",
             "capability.inspect"
           ]
         },
@@ -207,6 +208,20 @@
           "then": {
             "properties": {
               "payload": { "$ref": "#/$defs/WorkflowControlRequestPayload" }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": { "const": "workflow.control.process" }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/WorkflowControlProcessRequestPayload"
+              }
             }
           }
         },
@@ -898,6 +913,16 @@
             }
           ]
         }
+      },
+      "additionalProperties": false
+    },
+    "WorkflowControlProcessRequestPayload": {
+      "type": "object",
+      "required": ["workflowRunId", "commandId"],
+      "properties": {
+        "workflowRunId": { "type": "string", "minLength": 1 },
+        "sessionId": { "type": "string", "minLength": 1 },
+        "commandId": { "type": "string", "minLength": 1 }
       },
       "additionalProperties": false
     },

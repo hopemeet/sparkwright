@@ -102,6 +102,17 @@ contracts, and focused checklists that no longer fit here.
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-07-11T15:30:00+0800
+- Scope: Package G server-runtime delivery coordinator, SDK preaccepted-command
+  dispatch, and IM workspace binding/outbox polling/authenticated response.
+- Read: `packages/server-runtime/src/workflow-channel-coordinator.ts`,
+  `packages/sdk-core/src/client.ts`, `packages/im-gateway/src/gateway.ts`,
+  `packages/im-gateway/src/adapters/telegram.ts`,
+  `packages/im-gateway/src/bin.ts`.
+- Tests: server-runtime 15 focused tests, SDK 10, IM 13; affected
+  typecheck/build passed.
+
 - Status: Read-only
 - Date: 2026-07-11T15:00:00+0800
 - Scope: Package G design routes TUI/CLI/agent/IM/Web/API through

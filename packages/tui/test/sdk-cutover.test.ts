@@ -10,6 +10,11 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SESSION_COMPACT_SCHEMA_VERSION } from "@sparkwright/core";
+import {
+  FileWorkflowChannelStore,
+  FileWorkflowStore,
+  type WorkflowRunId,
+} from "@sparkwright/agent-runtime";
 import { EventStore } from "../src/state/event-store.js";
 import { RunController } from "../src/state/run-controller.js";
 
@@ -116,6 +121,56 @@ async function waitForFileText(path: string): Promise<string> {
  * the TUI accidentally re-introduced @sparkwright/core as a dependency.
  */
 describe("TUI ↔ host via sdk-node", () => {
+  it("stops a workflow through a binding-authorized durable command", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-tui-channel-"));
+    const rootDir = join(workspace, ".sparkwright", "workflow-runs");
+    const workflowRunId = "workflow_tui_channel_stop" as WorkflowRunId;
+    const workflowStore = new FileWorkflowStore({ rootDir });
+    const writer = await workflowStore.acquireWriter(workflowRunId, {
+      owner: "tui-channel-test",
+    });
+    if (!writer) throw new Error("missing workflow writer");
+    await writer.create({
+      id: workflowRunId,
+      sessionId: "session_workflow_tui_channel",
+      assetName: "demo",
+      contentHash: "demo-hash",
+      currentNodeId: "main",
+      definitionSnapshot: {
+        assetName: "demo",
+        contentHash: "demo-hash",
+        nodes: [{ id: "main", body: "Finish." }],
+      },
+    });
+    await writer.release();
+    const controller = new RunController({
+      workspaceRoot: workspace,
+      modelName: "deterministic",
+      store: new EventStore(),
+    });
+    try {
+      const [workflow] = await controller.listWorkflowRuns();
+      expect(workflow?.id).toBe(workflowRunId);
+      if (!workflow) return;
+      expect(await controller.cancelWorkflow(workflow)).toBe(true);
+      expect(
+        new FileWorkflowStore({ rootDir, createRoot: false }).get(workflowRunId)
+          ?.status,
+      ).toBe("cancelled");
+      const channelSnapshot = new FileWorkflowChannelStore({
+        rootDir,
+        createRoot: false,
+      }).snapshot(workflowRunId);
+      expect(channelSnapshot.bindings).toHaveLength(1);
+      expect(channelSnapshot.bindings[0]).toMatchObject({
+        source: { kind: "tui", authenticatedBy: "local-stdio-client" },
+        allowedCommandKinds: ["cancel"],
+      });
+    } finally {
+      controller.shutdown();
+    }
+  }, 30_000);
+
   it("gives each workflow job an independent durable session", async () => {
     const workspace = await mkdtemp(
       join(tmpdir(), "sparkwright-tui-workflow-"),

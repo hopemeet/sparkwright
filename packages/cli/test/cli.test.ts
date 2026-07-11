@@ -17,6 +17,7 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   FileTaskStore,
+  FileWorkflowChannelStore,
   FileWorkflowStore,
   createTaskId,
   type WorkflowRunId,
@@ -2921,6 +2922,50 @@ describe("runCli", () => {
     expect(output.stdoutText()).toContain(
       "Workflow detached: workflow_detached_1",
     );
+  });
+
+  it("stops a workflow through a scoped durable CLI channel command", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const workflowRunId = "workflow_cli_channel_stop" as WorkflowRunId;
+    const rootDir = join(workspace, ".sparkwright", "workflow-runs");
+    const store = new FileWorkflowStore({ rootDir });
+    const writer = await store.acquireWriter(workflowRunId, {
+      owner: "cli-channel-test",
+    });
+    if (!writer) throw new Error("missing workflow writer");
+    await writer.create({
+      id: workflowRunId,
+      sessionId: "session_workflow_cli_channel",
+      assetName: "demo",
+      contentHash: "demo-hash",
+      currentNodeId: "main",
+      definitionSnapshot: {
+        assetName: "demo",
+        contentHash: "demo-hash",
+        nodes: [{ id: "main", body: "Finish." }],
+      },
+    });
+    await writer.release();
+    const output = createOutputCapture();
+    const result = await runCli(
+      ["workflow", "stop", workflowRunId, "--workspace", workspace],
+      { io: { stdout: output.stdout, stderr: output.stderr } },
+    );
+    expect(result.exitCode).toBe(0);
+    expect(output.stdoutText()).toContain("Workflow stop applied");
+    expect(
+      new FileWorkflowStore({ rootDir, createRoot: false }).get(workflowRunId)
+        ?.status,
+    ).toBe("cancelled");
+    const channels = new FileWorkflowChannelStore({
+      rootDir,
+      createRoot: false,
+    }).snapshot(workflowRunId);
+    expect(channels.bindings).toHaveLength(1);
+    expect(channels.bindings[0]).toMatchObject({
+      source: { kind: "cli", authenticatedBy: "local-cli" },
+      allowedCommandKinds: ["cancel"],
+    });
   });
 
   it("distills a session trace into a workflow draft", async () => {

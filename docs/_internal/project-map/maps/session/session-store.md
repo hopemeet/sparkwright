@@ -118,6 +118,16 @@ Manual compact
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-11T15:30:00+0800
+- Scope: Package G adds sibling `<workflowRunId>.channels/` binding,
+  revocation, per-attempt delivery receipt, and rebuildable cursor projections;
+  workflow journal/outbox remain canonical state/message truth.
+- Read: `packages/agent-runtime/src/workflows/channels.ts`,
+  `packages/agent-runtime/src/workflows/notifications.ts`,
+  `packages/server-runtime/src/workflow-channel-coordinator.ts`.
+- Tests: Package G channel store/coordinator focused tests and affected builds.
+
+- Status: Verified
 - Date: 2026-07-11T14:30:00+0800
 - Scope: Package F stores service carrier state and handoff/outcome under
   workspace `.sparkwright/workflow-service/`; detached workflow sessions remain

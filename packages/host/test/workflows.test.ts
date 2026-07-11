@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   FileWorkflowStore,
+  FileWorkflowChannelStore,
+  FileWorkflowControlInbox,
   type WorkflowDefinition,
   type WorkflowRunId,
   type WorkflowRunRecord,
@@ -1349,6 +1351,10 @@ describe("workflow assets", () => {
         payload: {
           workflowId: waitingRecord.id,
           wait: { kind: "input", reason: "Need human review." },
+          metadata: {
+            generation: waitingRecord.generation,
+            status: "waiting",
+          },
         },
       },
     ]);
@@ -1978,6 +1984,73 @@ describe("workflow assets", () => {
         createRoot: false,
       }).get(workflowRunId),
     ).toMatchObject({ status: "cancelled" });
+  });
+
+  it("processes a binding-authorized command that was accepted before Host dispatch", async () => {
+    const workspace = await tempWorkspace();
+    const sessionId = "session_workflow_channel_dispatch";
+    const workflowRunId = "workflow_channel_dispatch" as WorkflowRunId;
+    const rootDir = workflowStoreRoot(workspace);
+    const store = new FileWorkflowStore({ rootDir });
+    const record = await seedWorkflowRecord(store, {
+      id: workflowRunId,
+      sessionId,
+      assetName: "channel-controlled",
+      contentHash: "hash-channel-controlled",
+      currentNodeId: "main",
+      definitionSnapshot: {
+        assetName: "channel-controlled",
+        contentHash: "hash-channel-controlled",
+        nodes: [{ id: "main", body: "Controlled body." }],
+      },
+    });
+    const channels = new FileWorkflowChannelStore({ rootDir });
+    const controls = new FileWorkflowControlInbox({ rootDir });
+    const now = new Date();
+    const source = {
+      kind: "api" as const,
+      principalId: "api:user",
+      authenticatedBy: "oauth",
+      channelId: "api-channel-1",
+    };
+    const binding = await channels.bind({
+      bindingId: "workflow_binding_host_dispatch",
+      workspaceId: workspace,
+      workflowRunId,
+      sessionId,
+      source,
+      allowedCommandKinds: ["cancel"],
+      createdAt: now.toISOString(),
+      expiresAt: new Date(now.getTime() + 60_000).toISOString(),
+    });
+    const accepted = await channels.acceptControl({
+      inbox: controls,
+      bindingId: binding.bindingId,
+      workflowRunId,
+      workspaceId: workspace,
+      sessionId,
+      source,
+      idempotencyKey: "api-message-1",
+      expected: { generation: record.generation ?? 0, status: "running" },
+      command: { kind: "cancel", reason: "channel stop" },
+      expiresAt: new Date(now.getTime() + 60_000).toISOString(),
+    });
+    if (accepted.status === "conflict") throw new Error("unexpected conflict");
+    const processed = await new HostRuntime({
+      workspaceRoot: workspace,
+      defaultModel: "deterministic",
+      emit: () => {},
+    }).processWorkflowControlCommand({
+      workflowRunId,
+      sessionId,
+      commandId: accepted.envelope.commandId,
+    });
+    expect(processed).toMatchObject({ ok: true, status: "applied" });
+    expect(
+      new FileWorkflowStore({ rootDir, createRoot: false }).get(workflowRunId),
+    ).toMatchObject({
+      status: "cancelled",
+    });
   });
 
   it("rejects unsafe workflow resume ids before building paths", async () => {

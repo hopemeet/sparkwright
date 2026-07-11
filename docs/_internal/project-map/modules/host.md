@@ -756,6 +756,15 @@ Does not own:
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-07-11T15:30:00+0800
+- Scope: Package G durable notification wait identity/generation projection,
+  retirement of process-local delivery truth, and dispatch of already accepted
+  binding-authorized commands.
+- Read: `packages/host/src/runtime.ts`, `packages/host/src/server.ts`,
+  `packages/host/test/workflows.test.ts`, `packages/host/test/protocol.test.ts`.
+- Tests: Host workflow/protocol 83 focused tests plus typecheck/build.
+
 - Status: Read-only
 - Date: 2026-07-11T15:00:00+0800
 - Scope: Package G design retires per-process workflow delivery dedupe as the

@@ -261,6 +261,7 @@ export type RequestKind =
   | "workflow.list"
   | "workflow.resume"
   | "workflow.control"
+  | "workflow.control.process"
   | "capability.inspect";
 
 export interface HostRequestBase<TKind extends RequestKind, TPayload> {
@@ -411,6 +412,12 @@ export interface WorkflowControlRequestPayload {
     waitId?: string;
   };
   command: WorkflowControlCommandPayload;
+}
+
+export interface WorkflowControlProcessRequestPayload {
+  workflowRunId: string;
+  sessionId?: string;
+  commandId: string;
 }
 
 export interface RunCancelRequestPayload {
@@ -644,6 +651,10 @@ export type HostRequest =
   | HostRequestBase<"workflow.list", WorkflowListRequestPayload>
   | HostRequestBase<"workflow.resume", WorkflowResumeRequestPayload>
   | HostRequestBase<"workflow.control", WorkflowControlRequestPayload>
+  | HostRequestBase<
+      "workflow.control.process",
+      WorkflowControlProcessRequestPayload
+    >
   | HostRequestBase<"capability.inspect", CapabilityInspectRequestPayload>;
 
 // ---------------------------------------------------------------------------
@@ -691,6 +702,12 @@ export interface ResponseResults {
     sessionId?: string;
   };
   "workflow.control": {
+    status: string;
+    commandId: string;
+    code?: string;
+    runId?: string;
+  };
+  "workflow.control.process": {
     status: string;
     commandId: string;
     code?: string;

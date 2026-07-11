@@ -24,6 +24,11 @@ import {
   type ToolDefinition,
 } from "@sparkwright/core";
 export {
+  WorkflowChannelCoordinator,
+  type WorkflowChannelDeliveryAdapter,
+  type WorkflowChannelDeliveryReport,
+} from "./workflow-channel-coordinator.js";
+export {
   WorkflowSupervisor,
   type WorkflowSupervisorRunReport,
   type WorkflowSupervisorWorkerAdapter,

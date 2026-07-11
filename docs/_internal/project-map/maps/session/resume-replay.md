@@ -112,6 +112,15 @@ Future run in compacted session
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-11T15:30:00+0800
+- Scope: Package G notification delivery receipts/cursors rebuild after restart;
+  adapter responses become Package D commands and Package E/F consumers resume
+  or terminate through canonical generation/state fencing.
+- Read: workflow channels/notification/control store, server-runtime channel
+  coordinator, Host process-existing-command path, TUI/CLI/IM adapters.
+- Tests: Package G focused fault matrix recorded in workflow durable-jobs.
+
+- Status: Verified
 - Date: 2026-07-11T14:30:00+0800
 - Scope: Package F service restart scans durable handoffs and existing workflow
   records, recovers outcome by fixed handoff linkage, and delegates existing-run

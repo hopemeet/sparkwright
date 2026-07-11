@@ -84,6 +84,7 @@ import {
   FileWorkflowControlInbox,
   WorkflowControlCommandProcessor,
   type WorkflowControlCommand,
+  type WorkflowControlCommandEnvelope,
   type WorkflowControlSourceIdentity,
   FileWorkflowStore,
   advanceWorkflowState,
@@ -912,7 +913,6 @@ export class HostRuntime {
   private readonly workflowControlDispatcher = new DurableCommandDispatcher();
   private readonly taskManager: TaskManager;
   private active: ActiveRun | null = null;
-  private readonly deliveredWorkflowNotifications = new Set<string>();
   // Synchronously-set reservation so two concurrent startRun() calls cannot
   // both pass the "is a run active?" guard before `this.active` is populated
   // (which only happens after `await createModel(...)`).
@@ -1172,9 +1172,7 @@ export class HostRuntime {
       return;
     }
     if (record.status === "waiting" && !record.wait) return;
-    const key = `${record.id}:${record.status}`;
-    if (this.deliveredWorkflowNotifications.has(key)) return;
-    this.deliveredWorkflowNotifications.add(key);
+    const wait = record.wait;
     const runId = record.activeRunId ?? record.parentRunId;
     const source = {
       kind: "workflow" as const,
@@ -1191,7 +1189,12 @@ export class HostRuntime {
         source,
         routeHint,
         type: "waiting",
-        correlationId: `${record.id}:waiting:${record.currentNodeId ?? "unknown"}`,
+        correlationId: [
+          record.id,
+          "waiting",
+          record.currentNodeId ?? "unknown",
+          wait?.id ?? wait?.approvalId ?? wait?.taskId ?? "unspecified",
+        ].join(":"),
         payload: {
           workflowId: record.id,
           name: record.assetName,
@@ -1202,6 +1205,8 @@ export class HostRuntime {
             version: record.version,
             contentHash: record.contentHash,
             currentNodeId: record.currentNodeId,
+            generation: record.generation ?? 0,
+            status: record.status,
           },
         },
       });
@@ -1716,8 +1721,29 @@ export class HostRuntime {
         },
       };
     }
+    return this.processAcceptedWorkflowControl(accepted.envelope);
+  }
+
+  async processAcceptedWorkflowControl(
+    envelope: WorkflowControlCommandEnvelope,
+  ): Promise<
+    | {
+        ok: true;
+        status: string;
+        commandId: string;
+        code?: string;
+        runId?: string;
+      }
+    | { ok: false; error: ProtocolError }
+  > {
+    const located = await this.findWorkflowRunRecord(
+      envelope.workflowRunId,
+      envelope.authorization.sessionId,
+    );
+    if (!located.ok) return located;
+    const { record, store, sessionId } = located;
     return this.workflowControlDispatcher.dispatch(
-      accepted.envelope.commandId,
+      envelope.commandId,
       async () => {
         if (
           this.active?.workflowRunId === record.id &&
@@ -1727,7 +1753,7 @@ export class HostRuntime {
         }
         const existingOutcome = await this.workflowControls.outcome(
           record.id,
-          accepted.envelope.commandId,
+          envelope.commandId,
         );
         if (existingOutcome) {
           return {
@@ -1746,7 +1772,7 @@ export class HostRuntime {
         });
         const processed = await processor.processNext(
           record.id,
-          accepted.envelope.commandId,
+          envelope.commandId,
         );
         if (processed.status === "dispatch_required") {
           if (this.active || this.startingRun) {
@@ -1792,11 +1818,45 @@ export class HostRuntime {
         return {
           ok: true,
           status: processed.status === "busy" ? "accepted" : processed.status,
-          commandId: accepted.envelope.commandId,
+          commandId: envelope.commandId,
           ...(processed.status === "busy" ? { code: "consumer_busy" } : {}),
         };
       },
     );
+  }
+
+  async processWorkflowControlCommand(input: {
+    workflowRunId: string;
+    sessionId?: string;
+    commandId: string;
+  }): Promise<
+    | {
+        ok: true;
+        status: string;
+        commandId: string;
+        code?: string;
+        runId?: string;
+      }
+    | { ok: false; error: ProtocolError }
+  > {
+    const located = await this.findWorkflowRunRecord(
+      input.workflowRunId as WorkflowRunId,
+      input.sessionId,
+    );
+    if (!located.ok) return located;
+    const envelope = this.workflowControls
+      .snapshot(located.record.id)
+      .commands.find((candidate) => candidate.commandId === input.commandId);
+    if (!envelope) {
+      return {
+        ok: false,
+        error: {
+          code: "invalid_payload",
+          message: `Durable workflow control command was not found: ${input.commandId}`,
+        },
+      };
+    }
+    return this.processAcceptedWorkflowControl(envelope);
   }
 
   async resumeWorkflowRun(

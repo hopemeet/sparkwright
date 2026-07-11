@@ -11,8 +11,8 @@
 - Package E durable supervisor/worker ownership: `Verified` at the focused
   implementation/fault gate; full release result recorded below.
 - Package F: `Verified`; implementation/focused fault/full release gates passed.
-- Package G: `Untested`; design gate is adjudicated after F, implementation and
-  verification remain open.
+- Package G: `Verified`; implementation, deterministic fault, focused, full
+  release, map/test-map, retirement, and independent change-set gates passed.
 
 ## Current Evidence
 
@@ -217,3 +217,55 @@ accept, workflow record creation, outcome publication, and supervisor claim:
     D command contract and none writes WorkflowRunRecord directly;
 12. workflow peer messaging, arbitrary JSON commands, producer-selected model
     context injection, model workflow_start and nested spawn remain rejected.
+
+## Package G Evidence (2026-07-11)
+
+- Binding tests cover immutable publication/conflict, source/workspace/session/
+  command scope, expiry, revoke, message-only refusal of cancel, command-expiry
+  clamp, webhook duplicate/payload conflict, and two-channel approval single
+  canonical winner.
+- Delivery tests cover one receipt per binding/notification, stable delivery key,
+  send-before-receipt crash retry, failed-to-delivered retry, expired/revoked
+  terminal receipts, corrupt cursor rebuild, and restart from durable stores.
+- Host removes process-local workflow notification dedupe as truth, includes
+  wait identity plus generation/status in durable notification projection, and
+  dispatches only pre-existing commands through `workflow.control.process`.
+- CLI and TUI integration tests prove stop creates a narrow authenticated
+  binding, persists one Package D command, applies it through Host, and reaches
+  one cancelled record. SDK protocol helper, IM durable delivery, authenticated
+  response, duplicate response, and unauthorized cancel tests pass.
+- Focused gate: agent-runtime channel/control 19 tests, server-runtime
+  channel/supervisor 15, Host workflow/protocol 83, SDK 10, IM 13, TUI
+  workflow/SDK 22, CLI workflow 16; affected typecheck/build, schema, and strict
+  reserved-field checks passed.
+- Full gate: the first `npm run release:check` stopped only at ESLint for an
+  unused `dirname` import in the new channel store; after removing it, the
+  complete command was rerun from the beginning and passed all workspace
+  tests, regression matrix cases, source-install smoke, and release pack smoke.
+- Final map drift/diff checks and the independent Package G commit are the
+  closing checks for this change set; no Package G code is mixed into A-F.
+
+### Package G routed-page audit
+
+The final Touch File -> Read Docs drift pass also routed through the following
+pages. They were read and need no semantic update for Package G: capability
+agent/cron/index maps (no capability declaration or cron behavior changed),
+trace summary/raw/export maps (no trace schema or diagnostics path changed),
+safety approvals/workspace-writes maps (durable workflow commands remain behind
+the existing approval and workspace clamps), runtime run-loop/tool-orchestration
+maps (Host dispatch still enters the existing run loop), the MCP capability map
+(no MCP surface changed), and the core module map (server-runtime coordination
+does not change core ownership). The exact reviewed files were:
+
+- `project-map/maps/capabilities/agents.md`
+- `project-map/maps/capabilities/cron.md`
+- `project-map/maps/capabilities/README.md`
+- `project-map/maps/capabilities/mcp.md`
+- `project-map/maps/trace/summary-timeline-verify.md`
+- `project-map/maps/trace/raw-trace.md`
+- `project-map/maps/trace/export-diagnostics.md`
+- `project-map/maps/safety/approvals.md`
+- `project-map/maps/safety/workspace-writes.md`
+- `project-map/maps/runtime/run-loop.md`
+- `project-map/maps/runtime/tool-orchestration.md`
+- `project-map/modules/core.md`

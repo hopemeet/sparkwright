@@ -297,6 +297,14 @@ Does not own:
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-07-11T15:30:00+0800
+- Scope: Package G TUI workflow stop is a local authenticated, cancel-only
+  durable binding adapter followed by `workflow.control.process`.
+- Read: `packages/tui/src/state/run-controller.ts`,
+  `packages/tui/test/sdk-cutover.test.ts`.
+- Tests: TUI workflow/SDK 22 focused tests plus typecheck/build.
+
 - Status: Read-only
 - Date: 2026-07-11T15:00:00+0800
 - Scope: Package G design makes TUI one binding-aware notification/control

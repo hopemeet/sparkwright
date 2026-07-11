@@ -28,7 +28,7 @@ export type WorkflowControlCommand =
 export type WorkflowControlCommandKind = WorkflowControlCommand["kind"];
 
 export interface WorkflowControlSourceIdentity {
-  kind: "tui" | "cli" | "sdk" | "api" | "im" | "system";
+  kind: "tui" | "cli" | "sdk" | "api" | "agent" | "im" | "web" | "system";
   principalId: string;
   authenticatedBy: string;
   /** @reserved Serialized audit correlation consumed by workflow-control diagnostics and channel adapters. */

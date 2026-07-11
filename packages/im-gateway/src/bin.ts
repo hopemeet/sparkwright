@@ -1,5 +1,11 @@
 #!/usr/bin/env node
 import { join } from "node:path";
+import { resolve } from "node:path";
+import {
+  FileWorkflowChannelStore,
+  FileWorkflowControlInbox,
+  FileWorkflowNotificationOutbox,
+} from "@sparkwright/agent-runtime";
 import {
   defaultConfigPath,
   defaultDataDir,
@@ -39,6 +45,7 @@ async function setup(args: string[]): Promise<void> {
     ...existing,
     hostUrl: readFlag(args, "--host-url") ?? existing.hostUrl,
     model: readFlag(args, "--model") ?? existing.model,
+    workspaceRoot: readFlag(args, "--workspace") ?? existing.workspaceRoot,
     telegram: {
       ...existing.telegram,
       token,
@@ -62,6 +69,12 @@ async function run(args: string[]): Promise<void> {
     throw new Error(`telegram token missing in ${path}`);
   }
   const dataDir = config.dataDir ?? defaultDataDir();
+  const workspaceRoot = config.workspaceRoot
+    ? resolve(config.workspaceRoot)
+    : undefined;
+  const workflowRoot = workspaceRoot
+    ? join(workspaceRoot, ".sparkwright", "workflow-runs")
+    : undefined;
   const gateway = new ImGateway({
     adapters: [
       new TelegramAdapter({
@@ -75,6 +88,20 @@ async function run(args: string[]): Promise<void> {
     store: new GatewayStore(join(dataDir, "state.json")),
     sessionRouting: config.sessionRouting,
     model: config.model,
+    ...(workspaceRoot && workflowRoot
+      ? {
+          workspaceId: workspaceRoot,
+          workflowChannels: new FileWorkflowChannelStore({
+            rootDir: workflowRoot,
+          }),
+          workflowControls: new FileWorkflowControlInbox({
+            rootDir: workflowRoot,
+          }),
+          workflowNotifications: new FileWorkflowNotificationOutbox({
+            rootDir: join(workspaceRoot, ".sparkwright", "workflow-actors"),
+          }),
+        }
+      : {}),
   });
 
   const stop = async () => {
@@ -91,7 +118,7 @@ function printHelp(): void {
   console.log(`sparkwright-im-gateway
 
 Commands:
-  setup --telegram-token <token> [--host-url ws://127.0.0.1:...] [--allowed-user-ids 123,456]
+  setup --telegram-token <token> [--host-url ws://127.0.0.1:...] [--workspace path] [--allowed-user-ids 123,456]
   run [--config ~/.config/sparkwright/im-gateway.json]
 `);
 }

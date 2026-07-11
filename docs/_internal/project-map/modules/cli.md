@@ -307,6 +307,14 @@ Does not own:
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-11T15:30:00+0800
+- Scope: Package G `workflow stop` creates a CLI-authenticated cancel-only
+  binding, accepts one durable command, and dispatches the stored envelope.
+- Read: `packages/cli/src/cli.ts`, `packages/cli/test/cli.test.ts`,
+  `packages/host/src/runtime.ts`.
+- Tests: CLI workflow slice 16 tests plus typecheck/build.
+
+- Status: Verified
 - Date: 2026-07-11T14:30:00+0800
 - Scope: Package F `workflow service run|status|drain` and honest
   `workflow start --detach` durable-accept boundary.

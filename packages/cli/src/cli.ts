@@ -10,6 +10,8 @@ import {
   FileTaskStore,
   FileWorkflowStore,
   FileWorkflowWorkerRegistry,
+  FileWorkflowControlInbox,
+  FileWorkflowChannelStore,
   InMemoryTaskStore,
   TaskManager,
   type TaskId,
@@ -1336,6 +1338,7 @@ function parseArgs(
     subcommand !== "list" &&
     subcommand !== "start" &&
     subcommand !== "service" &&
+    subcommand !== "stop" &&
     subcommand !== "inspect" &&
     subcommand !== "resume" &&
     subcommand !== "distill" &&
@@ -1344,7 +1347,7 @@ function parseArgs(
     return {
       ok: false,
       message:
-        "Usage: sparkwright workflow <list|start|service|inspect|resume|distill|shadow> [workflow-name-or-run-id] [--workspace path] [--format json|text]",
+        "Usage: sparkwright workflow <list|start|service|stop|inspect|resume|distill|shadow> [workflow-name-or-run-id] [--workspace path] [--format json|text]",
     };
   }
 
@@ -1829,6 +1832,7 @@ async function handleWorkflowCommand(
     subcommand !== "list" &&
     subcommand !== "start" &&
     subcommand !== "service" &&
+    subcommand !== "stop" &&
     subcommand !== "inspect" &&
     subcommand !== "resume" &&
     subcommand !== "distill" &&
@@ -1910,6 +1914,94 @@ async function handleWorkflowCommand(
         io,
         env,
       );
+    }
+
+    if (subcommand === "stop") {
+      const workflowRunId = firstCliWord(parsed.goal) as WorkflowRunId;
+      if (!workflowRunId) {
+        writeLine(
+          io.stderr,
+          "Usage: sparkwright workflow stop <workflow-run-id>",
+        );
+        return { exitCode: 1 };
+      }
+      const rootDir = join(
+        parsed.workspaceRoot,
+        ".sparkwright",
+        "workflow-runs",
+      );
+      const workflowStore = new FileWorkflowStore({
+        rootDir,
+        createRoot: false,
+      });
+      const record = workflowStore.get(workflowRunId);
+      if (!record) {
+        writeLine(io.stderr, `Workflow not found: ${workflowRunId}`);
+        return { exitCode: 1 };
+      }
+      const channels = new FileWorkflowChannelStore({ rootDir });
+      const controls = new FileWorkflowControlInbox({ rootDir });
+      const now = new Date();
+      const source = {
+        kind: "cli" as const,
+        principalId: process.env.USER ?? "local-user",
+        authenticatedBy: "local-cli",
+        channelId: `cli-${process.pid}`,
+      };
+      const binding = await channels.bind({
+        bindingId: `workflow_binding_cli_${randomUUID().replaceAll("-", "")}`,
+        workspaceId: parsed.workspaceRoot,
+        workflowRunId: record.id,
+        ...(record.sessionId ? { sessionId: record.sessionId } : {}),
+        source,
+        allowedCommandKinds: ["cancel"],
+        createdAt: now.toISOString(),
+        expiresAt: new Date(now.getTime() + 60 * 60 * 1_000).toISOString(),
+      });
+      const accepted = await channels.acceptControl({
+        inbox: controls,
+        bindingId: binding.bindingId,
+        workflowRunId: record.id,
+        workspaceId: parsed.workspaceRoot,
+        sessionId: record.sessionId,
+        source,
+        idempotencyKey: `cli-cancel-${record.id}-${record.generation ?? 0}`,
+        expected: {
+          generation: record.generation ?? 0,
+          status: record.status,
+          ...(record.wait?.id ? { waitId: record.wait.id } : {}),
+        },
+        command: { kind: "cancel", reason: "workflow stop" },
+        expiresAt: new Date(now.getTime() + 24 * 60 * 60 * 1_000).toISOString(),
+      });
+      if (accepted.status === "conflict") {
+        writeLine(io.stderr, "Workflow stop idempotency conflict.");
+        return { exitCode: 1 };
+      }
+      const runtime = new HostRuntime({
+        workspaceRoot: parsed.workspaceRoot,
+        sessionRootDir: parsed.sessionRootDir,
+        emit: () => {},
+      });
+      const processed = await runtime.processWorkflowControlCommand({
+        workflowRunId: record.id,
+        sessionId: record.sessionId,
+        commandId: accepted.envelope.commandId,
+      });
+      if (!processed.ok) {
+        writeLine(io.stderr, processed.error.message);
+        return { exitCode: 1 };
+      }
+      writeLine(
+        io.stdout,
+        `Workflow stop ${processed.status}: ${record.id} (${processed.code ?? "accepted"})`,
+      );
+      return {
+        exitCode:
+          processed.status === "applied" || processed.status === "accepted"
+            ? 0
+            : 1,
+      };
     }
 
     if (subcommand === "distill") {
@@ -2258,6 +2350,10 @@ async function handleWorkflowServiceCommand(
   const workflowStore = new FileWorkflowStore({
     rootDir: join(parsed.workspaceRoot, ".sparkwright", "workflow-runs"),
   });
+  const workflowControls = new FileWorkflowControlInbox({
+    rootDir: join(parsed.workspaceRoot, ".sparkwright", "workflow-runs"),
+  });
+  const controlRuntimes = new Map<string, HostRuntime>();
   const workerRegistry = new FileWorkflowWorkerRegistry({
     rootDir: join(parsed.workspaceRoot, ".sparkwright", "workflow-workers"),
   });
@@ -2335,6 +2431,32 @@ async function handleWorkflowServiceCommand(
       !store.drainRequested(instance.record().instanceId)
     ) {
       await carrier.runOnce();
+      for (const record of workflowStore.list().records) {
+        for (const envelope of workflowControls.pending(record.id)) {
+          if (controlRuntimes.has(envelope.commandId)) continue;
+          const runtime = new HostRuntime({
+            workspaceRoot: parsed.workspaceRoot,
+            sessionRootDir: parsed.sessionRootDir,
+            defaultModel: parsed.modelName,
+            defaultPermissionMode: parsed.permissionMode,
+            defaultTraceLevel: parsed.traceLevel,
+            defaultShouldWrite: parsed.shouldWrite,
+            emit: (event) => {
+              if (
+                event.kind === "run.completed" ||
+                event.kind === "run.failed"
+              ) {
+                controlRuntimes.delete(envelope.commandId);
+              }
+            },
+          });
+          const processed =
+            await runtime.processAcceptedWorkflowControl(envelope);
+          if (processed.ok && processed.runId) {
+            controlRuntimes.set(envelope.commandId, runtime);
+          }
+        }
+      }
       await supervisor.runOnce();
       await new Promise((resolveWait) => setTimeout(resolveWait, 100));
     }
@@ -7956,6 +8078,7 @@ function workflowUsage(): string {
     "Usage: sparkwright workflow list [--workspace path] [--format json|text]",
     "       sparkwright workflow start <workflow-name> <goal...> [--workspace path] [--model provider/model] [--detach]",
     "       sparkwright workflow service <run|status|drain> [--workspace path]",
+    "       sparkwright workflow stop <workflow-run-id> [--workspace path]",
     "       sparkwright workflow inspect <workflow-name> [--workspace path] [--format json|text]",
     "       sparkwright workflow resume <workflow-run-id> [--workspace path] [--session <session-id>] [--model provider/model]",
     "       sparkwright workflow distill <session-id> [--workspace path] [--session-root path] [--format json|text]",

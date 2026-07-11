@@ -322,6 +322,16 @@ Does not own:
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-07-11T15:30:00+0800
+- Scope: Package G durable workflow channel binding/revoke/delivery receipt,
+  cursor rebuild, and binding-authorized Package D command acceptance.
+- Read: `packages/agent-runtime/src/workflows/channels.ts`,
+  `packages/agent-runtime/src/workflows/notifications.ts`,
+  `packages/agent-runtime/src/workflows/control.ts`,
+  `packages/agent-runtime/test/workflow-channels.test.ts`.
+- Tests: channel/control 19 focused tests plus agent-runtime typecheck/build.
+
 - Status: Read-only
 - Date: 2026-07-11T15:00:00+0800
 - Scope: Package G design keeps workflow notification outbox and Package D

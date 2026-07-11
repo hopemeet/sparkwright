@@ -198,6 +198,15 @@ Does not own:
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-07-11T15:30:00+0800
+- Scope: Package G additive `workflow.control.process` request dispatches an
+  existing durable command id without accepting arbitrary payload or widening
+  authorization.
+- Read: `packages/protocol/src/index.ts`, `packages/host/src/server.ts`,
+  `packages/sdk-core/src/client.ts`, `schemas/host-message.schema.json`.
+- Tests: protocol/SDK/Host focused tests, typecheck/build, and schema check.
+
 - Status: Read-only
 - Date: 2026-07-11T15:00:00+0800
 - Scope: Package G design keeps typed `workflow.control` as the response plane;

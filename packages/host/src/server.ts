@@ -151,6 +151,7 @@ async function handleRequest(
             "workflow.list",
             "workflow.resume",
             "workflow.control",
+            "workflow.control.process",
             "capability.inspect",
             "run.resume",
             "run.inject_message",
@@ -379,6 +380,20 @@ async function handleRequest(
           connectionId: req.id,
         },
       });
+      if (r.ok) {
+        respondOk(conn, req.id, {
+          status: r.status,
+          commandId: r.commandId,
+          ...(r.code ? { code: r.code } : {}),
+          ...(r.runId ? { runId: r.runId } : {}),
+        });
+      } else {
+        respondError(conn, req.id, r.error);
+      }
+      return false;
+    }
+    case "workflow.control.process": {
+      const r = await runtime.processWorkflowControlCommand(req.payload);
       if (r.ok) {
         respondOk(conn, req.id, {
           status: r.status,
@@ -647,6 +662,13 @@ function validateRequestPayload(req: HostRequest): string | undefined {
         requireString(req.payload, "idempotencyKey") ??
         optionalRecord(req.payload, "expected") ??
         validateWorkflowControlCommand(req.payload.command)
+      );
+    case "workflow.control.process":
+      return (
+        requireOnly(req.payload, ["workflowRunId", "sessionId", "commandId"]) ??
+        requireString(req.payload, "workflowRunId") ??
+        optionalString(req.payload, "sessionId") ??
+        requireString(req.payload, "commandId")
       );
     case "capability.inspect":
       return (

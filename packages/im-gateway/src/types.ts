@@ -1,4 +1,8 @@
 import type { HostEvent } from "@sparkwright/sdk-node";
+import type {
+  WorkflowControlCommand,
+  WorkflowRunStatus,
+} from "@sparkwright/agent-runtime";
 
 export interface InboundMessage {
   platform: string;
@@ -22,6 +26,8 @@ export interface OutboundTarget {
 
 export interface OutboundMessage {
   text: string;
+  /** @reserved Stable workflow delivery key consumed by idempotent channel adapters. */
+  deliveryKey?: string;
   /** @reserved Public adapter hint consumed by rich-text capable platforms. */
   parseMode?: "plain" | "markdown";
   replyToMessageId?: string;
@@ -35,6 +41,27 @@ export interface ApprovalPrompt {
   details?: Record<string, unknown>;
 }
 
+export interface WorkflowNotificationPrompt {
+  bindingId: string;
+  workflowRunId: string;
+  workspaceId: string;
+  sessionId?: string;
+  deliveryKey: string;
+  summary: string;
+  expected: {
+    generation: number;
+    status: WorkflowRunStatus;
+    waitId?: string;
+  };
+  wait?: {
+    kind: "input" | "task" | "approval";
+    id?: string;
+    approvalId?: string;
+    reason?: string;
+  };
+  expiresAt: string;
+}
+
 export interface PlatformHandlers {
   onMessage(message: InboundMessage): Promise<void>;
   onApprovalDecision(input: {
@@ -42,6 +69,27 @@ export interface PlatformHandlers {
     decision: "approved" | "denied";
     message?: string;
   }): Promise<void>;
+  onWorkflowResponse(input: WorkflowChannelResponse): Promise<void>;
+}
+
+export interface WorkflowChannelResponse {
+  bindingId: string;
+  workflowRunId: string;
+  workspaceId: string;
+  sessionId?: string;
+  platform: string;
+  chatId: string;
+  threadId?: string;
+  userId: string;
+  authenticatedBy: string;
+  messageId: string;
+  expected: {
+    generation: number;
+    status?: WorkflowRunStatus;
+    waitId?: string;
+  };
+  command: WorkflowControlCommand;
+  expiresAt: string;
 }
 
 export interface PlatformAdapter {
@@ -50,6 +98,10 @@ export interface PlatformAdapter {
   stop(): Promise<void>;
   sendMessage(target: OutboundTarget, message: OutboundMessage): Promise<void>;
   sendApproval(target: OutboundTarget, approval: ApprovalPrompt): Promise<void>;
+  sendWorkflowNotification?(
+    target: OutboundTarget,
+    prompt: WorkflowNotificationPrompt,
+  ): Promise<void>;
   /** @reserved Public adapter capability map consumed by gateway UIs. */
   supports?: {
     buttons?: boolean;

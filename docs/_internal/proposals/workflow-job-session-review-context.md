@@ -1133,3 +1133,31 @@ outcome/canonical event 决定唯一 winner。loser 得到 already-resolved/stat
 - agent-runtime/server-runtime/Host/protocol/SDK/TUI/CLI/IM focused tests、typecheck/build、完整
   `npm run release:check`、maps/test-map、旧机制退役与独立 G commit 全通过后，整个
   Workflow as Durable Job Session 路线才可关闭。
+
+#### 实现结果
+
+- agent-runtime `FileWorkflowChannelStore` 持久化 immutable binding/revocation、per-attempt
+  delivery receipt 与可重建 cursor；binding 固定 workspace/session/workflow/source/channel/
+  command kinds/expiry，response command expiry 被 clamp 到 binding expiry。
+- server-runtime `WorkflowChannelCoordinator` 从现有 workflow notification outbox 投递，使用
+  stable delivery key 支持 send-before-receipt crash 重试；failed receipt 可重试，delivered/
+  expired/revoked receipt 抑制重复投递，不复制 notification truth。
+- Host workflow notification correlation 现包含 wait identity，generation/status 由 receiver
+  policy 投影；进程内 `deliveredWorkflowNotifications` 唯一去重已退役。新增
+  `workflow.control.process` 只 dispatch 已存在的 Package D envelope，不能创建或扩大授权。
+- TUI 与 CLI stop 先创建 local authenticated narrow binding，再 durable accept cancel 并经
+  `workflow.control.process` dispatch。SDK 暴露同一 process helper；generic coordinator adapter
+  覆盖 agent/Web/API delivery contract。
+- IM gateway 可绑定本地 workspace，自动轮询 durable outbox/cursor，按 binding source 投递；
+  response 从平台 user/chat identity 派生并进入 Package D。Telegram approval callback 使用
+  binding-scoped prompt/approvalId/generation/waitId，普通 foreground approval map 不再处理
+  durable workflow approval。
+- foreground workflow service 扫描并处理已 accepted channel commands；无 live adapter/service
+  时 command 与 workflow 均保持 durable，waiting 不被误写为 pause/completed。
+- deterministic fault/focused evidence：agent-runtime channel/control 19 tests，server-runtime
+  channel/supervisor 15，Host workflow/protocol 83，SDK 10，IM 13，TUI workflow/SDK 22，CLI
+  workflow 16；相关 typecheck/build/schema/reserved gate 通过。首次完整 release gate 仅因新
+  channel store 的未使用 `dirname` import 停在 ESLint；删除后从头重跑的
+  `npm run release:check` 退出码为 0，全部 workspace tests、regression matrix、source-install
+  smoke 与 release pack smoke 通过。Package G 以本 change set 的独立 commit 关闭，不混入
+  A-F。

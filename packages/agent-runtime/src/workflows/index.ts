@@ -41,6 +41,16 @@ export type {
 } from "./types.js";
 export { WORKFLOW_RUN_RECORD_SCHEMA_VERSION } from "./types.js";
 export {
+  FileWorkflowChannelStore,
+  WORKFLOW_CHANNEL_SCHEMA_VERSION,
+  type WorkflowChannelBinding,
+  type WorkflowChannelDeliveryReceipt,
+  type WorkflowChannelDeliveryStatus,
+  type WorkflowChannelRevocation,
+  type WorkflowChannelSnapshot,
+  type WorkflowChannelSourceKind,
+} from "./channels.js";
+export {
   advanceWorkflowState,
   assertWorkflowRuntimeDefinition,
   createInitialWorkflowRuntimeState,
