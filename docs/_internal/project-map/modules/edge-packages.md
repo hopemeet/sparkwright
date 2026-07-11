@@ -102,6 +102,16 @@ contracts, and focused checklists that no longer fit here.
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-11T14:00:00+0800
+- Scope: Package F design adjudication keeps server-runtime as the foreground
+  service carrier/coordinator, with durable handoff acceptance before honest
+  CLI detach; it does not add an orphan process launcher or ownership truth.
+- Read: `packages/server-runtime/src/workflow-supervisor.ts`,
+  `packages/server-runtime/src/index.ts`, `packages/host/src/server.ts`,
+  `packages/host/src/runtime.ts`, `packages/cli/src/runners/host-runner.ts`.
+- Tests: not run; design-only source reconciliation.
+
 - Status: Verified
 - Date: 2026-07-11T13:30:00+0800
 - Scope: Package E server-runtime workflow supervisor coordination and

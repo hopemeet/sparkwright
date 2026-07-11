@@ -756,6 +756,15 @@ Does not own:
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-11T14:00:00+0800
+- Scope: Package F design verified that connection-owned Host runtimes cancel
+  active work on disconnect, so detached workflow execution must be owned by a
+  durable service adapter rather than a disconnected protocol client.
+- Read: `packages/host/src/server.ts`, `packages/host/src/runtime.ts`,
+  `packages/host/src/main.ts`, `packages/cli/src/runners/host-runner.ts`.
+- Tests: not run; design-only source reconciliation.
+
 - Status: Verified
 - Date: 2026-07-11T13:30:00+0800
 - Scope: Package E claimed-writer Host adapter reuses the ordinary workflow

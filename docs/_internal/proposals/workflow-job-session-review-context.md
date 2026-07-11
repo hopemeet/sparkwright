@@ -907,3 +907,100 @@ instance 使用新 instanceId/token。
 - 本实现没有 service/daemon、CLI detach 或 orphan child；这些仍属于关闭的 Package F。
 - focused fault gate 与完整 `npm run release:check` 已通过；E 独立 commit 后可 reopen
   Package F 设计 gate，Package G 仍保持关闭。
+
+### 8.15 Package F foreground service 与 honest detach 裁决（2026-07-11）
+
+状态：**设计 gate 完成；实现、故障注入与 release gate 尚未完成，Package G 保持关闭。**
+
+#### 已核实的现状与边界
+
+- `WorkflowSupervisor` 已经拥有 inventory rebuild、Package C claim、heartbeat、drain 和
+  claimed Host adapter 调用，但没有 process launcher，也不是 daemon。
+- CLI 当前为每次 run spawn stdio Host；`serveConnection()` 在连接关闭时调用
+  `HostRuntime.cleanup()` 并取消 active run。因此“通过 WS/stdio `run.start` 后立即断连”不是
+  detach，不能作为 F 实现。
+- Package C journal 仍是 workflow ownership/mutation truth，Package D inbox 仍是 control
+  truth，Package E worker registry 仍只回答 worker liveness。F 不新增 workflow record、
+  assignment record、process substrate 或 authorization truth。
+
+#### Service carrier 与命令面
+
+F 提供显式前台 service carrier；推荐产品面为：
+
+```text
+sparkwright workflow service run [--workspace ...]
+sparkwright workflow service status [--workspace ...]
+sparkwright workflow service drain [--workspace ...]
+sparkwright workflow start <name> <goal...> --detach
+```
+
+`service run` 保持前台、输出结构化启动/健康日志并响应 SIGTERM/SIGINT 做 bounded drain。
+它可以由 systemd、launchd、容器或用户自己的进程管理器托管，但 SparkWright 不 double-fork、
+不 `unref()` orphan child，也不把 pid 文件存在称为 daemon。F 不提供隐式后台
+`service start`；没有健康 service 时 `--detach` fail closed，并提示先运行/托管
+`service run`。
+
+每个 workspace 使用独立 service root：
+
+```text
+<workspace>/.sparkwright/workflow-service/
+  instance.json                 # 当前 carrier readiness 投影，可重建/过期
+  handoffs/<handoffId>.json     # immutable durable request，exclusive create
+  outcomes/<handoffId>.json     # immutable accepted/rejected outcome
+  logs/service.jsonl            # bounded/rotatable operational diagnostics
+```
+
+`instance.json` 不是 ownership truth；它含 workspace identity、instance id、pid、startedAt、
+heartbeat/expiresAt、state (`starting|ready|draining|stopped`) 和版本。status 必须同时验证
+workspace、fresh heartbeat 与 instance identity，不能仅用 `kill(pid, 0)`。stale pid/instance
+投影允许 successor 以原子发布替换，但保留诊断；活跃不同 instance 必须阻止第二 carrier。
+
+#### Durable accept/handoff
+
+`--detach` 只允许 workflow fresh start，且必须先把完整、窄类型的 start intent durable
+publish 到 handoff store。intent 固定 workflow asset/name、goal/input、独立 job session id、
+control session attribution、model/access/background/trace/target/confidential snapshot、source
+identity、workspace id、idempotency key、createdAt/expiresAt；producer 不能传任意 JSON 执行器、
+tool policy override 或模型上下文角色。
+
+service 执行顺序：
+
+1. exclusive claim/accept handoff，验证 workspace、expiry、service state 与 authorization clamp；
+2. 通过现有 Host workflow start/claimed execution assembly 创建 durable
+   `WorkflowRunRecord`，不得绕过 workflow hooks、tool policy、approval 或 access mode；
+3. durable publish outcome，固定 workflowRunId/job session id；
+4. CLI 只有看到 accepted outcome 后才返回成功。CLI 退出、transport 丢失或 producer 崩溃
+   不删除 handoff，也不触发 `HostRuntime.cleanup()` 的 client-owned cancel；
+5. service crash 在 record 创建后/outcome 前，通过 handoff id 在 canonical workflow
+   metadata/journal 恢复 outcome，不能重复创建 workflow。
+
+handoff accepted 只表示 durable service ownership 已建立，不表示 workflow completed。没有
+service、handoff 未落盘、超时或被拒绝时 CLI 必须非零退出，不能打印 detached success。
+waiting workflow 在无 channel 时保持 durable waiting；cancel 仍走 Package D typed command，
+SIGTERM/drain 只报告 interrupted/remaining，不伪装 pause。
+
+#### Recovery、健康与隔离
+
+- service startup 从 handoff store、workflow journal、D inbox 和 E registry 重建，不依赖
+  内存 active map；terminal handoff/workflow 不重复执行。
+- readiness 仅在 worker registration 成功、Host adapter 可构造、handoff store 可写且首轮
+  recovery scan 完成后发布。health 区分 `starting|ready|draining|degraded|stopped`。
+- 同 workspace 双 service 只有一个 instance publication winner；不同 workspace 的 service
+  root、worker registry、workflow store、sessions 与 logs 必须隔离。
+- carrier loop 使用 bounded concurrency、controllable clock 和 abortable poll trigger；测试不以
+  sleep 为主要同步。日志不得记录 goal/input/confidential 内容或 auth token。
+- upgrade/drain 先停止接受新 handoff，再 drain supervisor；deadline 后明确返回 remaining，
+  successor 只能在旧 worker/service lease 过期后通过 Package C/E takeover。
+
+#### F 故障与完成 gate
+
+- deterministic tests：双 carrier 单 winner、stale pid/instance recovery、producer crash after
+  publish、service crash before/after accept、record-created/outcome-missing recovery、duplicate
+  handoff idempotency、expired/unauthorized request、SIGKILL + successor takeover、old carrier
+  revival fenced、drain 拒绝新 handoff、workspace isolation、bounded concurrency、waiting without
+  channel、projection/log write failure。
+- CLI integration 必须证明 `workflow start --detach` 在 durable accepted 后退出且 workflow
+  继续；service unavailable/accept timeout 明确失败；普通前台 workflow 行为不回归。
+- focused agent-runtime/server-runtime/Host/CLI tests、typecheck/build、完整
+  `npm run release:check`、maps/test-map、旧 client-owned lifecycle 假设退役和独立 F commit
+  全通过后才可 reopen Package G。

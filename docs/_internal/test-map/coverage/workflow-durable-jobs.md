@@ -10,7 +10,8 @@
   deterministic fault gate; full release result recorded below.
 - Package E durable supervisor/worker ownership: `Verified` at the focused
   implementation/fault gate; full release result recorded below.
-- Package F: `Untested`; design gate may reopen after the independent E commit.
+- Package F: `Untested`; design gate is adjudicated, implementation/fault/release
+  evidence remains open.
 - Package G: `Untested`; reopen gate remains closed by F.
 
 ## Current Evidence
@@ -141,3 +142,32 @@ and adapter start:
   declaration, strict reserved-field check and a complete `npm run release:check`
   rerun passed through all workspace tests, regression matrix, and both install
   smokes.
+
+## Required Package F Fault World
+
+Use a controllable clock plus barriers around instance publication, handoff
+accept, workflow record creation, outcome publication, and supervisor claim:
+
+1. two service carriers race one workspace and only one becomes ready;
+2. stale instance/pid projection is recovered without treating pid liveness as
+   workflow ownership;
+3. producer publishes then exits/crashes and the service still accepts/runs;
+4. service crashes before accept, after accept, and after workflow record
+   creation but before outcome; restart creates at most one workflow;
+5. duplicate handoff/idempotency returns one workflow identity, while payload
+   conflict, expiry, authorization failure, or wrong workspace is rejected;
+6. SIGKILL carrier A, expire worker/workflow leases, start B, and prove revived
+   A cannot mutate/release B's workflow;
+7. drain prevents new accepts and reports remaining workflows without writing
+   pause/completed;
+8. different workspace roots cannot see or claim each other's handoffs,
+   records, workers, sessions, or logs;
+9. bounded concurrency holds under a burst and restart inventory rebuilds from
+   durable stores rather than an in-memory queue;
+10. waiting with no channel remains waiting; durable Package D control later
+    resumes it exactly once;
+11. instance projection, outcome projection, and operational log write faults
+    do not produce false detached success or duplicate canonical workflows;
+12. CLI detach returns only after durable accepted outcome; unavailable or
+    timed-out service fails explicitly, while foreground workflow behavior is
+    unchanged.

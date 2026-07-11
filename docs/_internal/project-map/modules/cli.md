@@ -306,6 +306,15 @@ Does not own:
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-11T14:00:00+0800
+- Scope: Package F design adds an honest detach surface only after durable
+  service handoff acceptance; current per-run stdio Host remains foreground and
+  disconnect-owned until implementation.
+- Read: `packages/cli/src/cli.ts`,
+  `packages/cli/src/runners/host-runner.ts`, `packages/host/src/server.ts`.
+- Tests: not run; design-only source reconciliation.
+
 - Status: Verified
 - Date: 2026-07-11T00:00:00+0800
 - Scope: Package B CLI workflow start session isolation and explicit control
