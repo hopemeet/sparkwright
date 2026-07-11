@@ -756,6 +756,16 @@ Does not own:
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-11T13:10:00+0800
+- Scope: Package E design keeps Host as claimed workflow episode assembler and
+  preserves authorization/hooks/tool-policy boundaries; server-runtime does not
+  gain direct WorkflowRunRecord mutation authority.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/agent-runtime/src/workflows/store.ts`,
+  `packages/server-runtime/src/index.ts`, and review section 8.14.
+- Tests: not run; design-only source reconciliation.
+
 - Status: Verified
 - Date: 2026-07-11T13:00:00+0800
 - Scope: Package D Host control adapter derives authenticated source/scope,

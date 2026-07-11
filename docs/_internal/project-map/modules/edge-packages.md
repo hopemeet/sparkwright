@@ -98,6 +98,17 @@ contracts, and focused checklists that no longer fit here.
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-11T13:10:00+0800
+- Scope: Package E design adjudication: server-runtime will coordinate worker
+  registration/drain/inventory claiming, while the Package C journal claim is
+  the only workflow ownership truth and F retains daemon/process lifecycle.
+- Read: `packages/server-runtime/src/index.ts`,
+  `packages/agent-runtime/src/workflows/store.ts`,
+  `packages/agent-runtime/src/workflows/journal.ts`,
+  `packages/host/src/runtime.ts`, and workflow job review section 8.14.
+- Tests: not run; design-only source reconciliation.
+
 - Status: Verified
 - Date: 2026-07-11T13:00:00+0800
 - Scope: Package D SDK `controlWorkflow()` adapter and server-runtime local

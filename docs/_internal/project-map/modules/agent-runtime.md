@@ -318,6 +318,16 @@ Does not own:
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-11T13:10:00+0800
+- Scope: Package E design confirms the workflow journal claim remains the sole
+  ownership transition; a future worker registry is liveness/discovery only and
+  cannot grant record mutation authority.
+- Read: `packages/agent-runtime/src/workflows/store.ts`,
+  `packages/agent-runtime/src/workflows/journal.ts`,
+  `packages/agent-runtime/src/doc-store/index.ts`, and review section 8.14.
+- Tests: not run; design-only source reconciliation.
+
 - Status: Verified
 - Date: 2026-07-11T13:00:00+0800
 - Scope: Package D typed durable workflow control inbox, fenced processor,

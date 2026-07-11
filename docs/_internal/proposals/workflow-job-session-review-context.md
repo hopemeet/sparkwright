@@ -811,3 +811,85 @@ record/journal；否则该命令只能明确 rejected，不能报告 applied。
   authorization 或 lifecycle truth。
 - focused gate 与完整 `npm run release:check` 已通过；D 独立 commit 后可 reopen Package E
   设计 gate，F/G 仍保持关闭。
+
+### 8.14 Package E durable supervisor / worker ownership 裁决（2026-07-11）
+
+状态：**设计 gate 完成；E 代码 gate 可在独立 commit 中打开，Package F 保持关闭。**
+
+#### 唯一 ownership truth
+
+- Package C canonical journal 的 `claim` entry 是 workflow ownership 唯一线性化点；
+  generation、token 与后续 mutation linkage 决定当前 writer。
+- `<workflowRunId>.lease/<token>.json` 只回答临时 liveness/互斥，不能成为 assignment、
+  generation 或 takeover history truth。
+- worker registry 只回答 worker 是否 registered/active/draining/expired/stopped；它是
+  durable discovery/liveness state，不分配 workflow，也不能授权写 record。
+- 不新增 workflow assignment record、ActorRecord、ProcessManager、SupervisorManager 或
+  第二套 ownership 状态机。supervisor 扫描现有非终态 `WorkflowRunRecord`，worker 通过
+  `FileWorkflowStore.acquireWriter()` 竞争；只有 claim canonical 后才拥有执行权。
+
+#### Ownership 与 API 边界
+
+- `agent-runtime` 拥有 file-backed worker registry 的 portable record/lease primitive，
+  以及从 workflow store 重建可领取候选的 read-only inventory；不启动 Host 或进程。
+- `server-runtime` 拥有 `WorkflowSupervisor` 协调循环：register/heartbeat/drain、扫描候选、
+  bounded claim、调用注入的 Host worker adapter、release/retry 和 shutdown report。
+- Host 保持 workflow definition/authorization/model/tools/run episode 组装，并接收已经
+  claim 成功的 `WorkflowLeaseBoundWriter`；server-runtime 不直接修改 workflow record。
+- F 才提供 daemon/service/CLI detach 载体。E 只交付可由 foreground host/service embedder
+  驱动的 durable coordinator，不启动 orphan child process，也不声称 detach。
+
+建议窄接口：
+
+```ts
+interface WorkflowWorkerRegistration {
+  workerId: string;
+  instanceId: string;
+  workspaceId: string;
+  state: "active" | "draining" | "stopped";
+  registeredAt: string;
+  heartbeatAt: string;
+  expiresAt: string;
+}
+
+interface WorkflowSupervisorWorkerAdapter {
+  runClaimed(input: {
+    record: WorkflowRunRecord;
+    writer: WorkflowLeaseBoundWriter;
+    signal: AbortSignal;
+  }): Promise<"waiting" | "terminal" | "interrupted">;
+}
+```
+
+registry publication 必须按 worker identity exclusive-create；heartbeat 只能由匹配的
+registration token 更新。drain 先 durable 标记 `draining`，停止新 claim，再等待 active
+claims；deadline 到达只能返回明确 interrupted/remaining claims，不能把 workflow 写成
+completed 或假装 pause。stopped/expired worker 的 registry entry 不删除审计身份；新的
+instance 使用新 instanceId/token。
+
+#### Recovery 与 takeover
+
+1. supervisor 启动时从 registry、workflow journal、D inbox/outbox 重建，不依赖旧进程内
+   active map；terminal workflow 不进入候选。
+2. running workflow 只有在 lease TTL 仍有效时不可领取；waiting workflow 默认不启动
+   episode，但其 D inbox 有 pending resume/control 时可由 control consumer 处理。
+3. worker SIGKILL 后 heartbeat 与 workflow lease 分别过期；successor 首先成功发布更高
+   generation claim，再调用 Host adapter。旧 worker 恢复后所有 mutate/compensate/release
+   均由 Package C fencing 拒绝或不影响 successor。
+4. 同一 supervisor 内 command/notification cursor 可重建；E 不复制 D command outcome、
+   ActorNotification outbox 或 workflow journal。
+5. 双 supervisor/worker 对同 workflow 竞争时允许 loser 观察 busy；不得换 physical slot
+   伪造第二 winner，也不得在未 claim 时调用 Host execution adapter。
+
+#### E 故障与完成 gate
+
+- deterministic clock/barrier tests：register/heartbeat/expiry、drain 禁止新 claim、双 worker
+  单 winner、SIGKILL/TTL/successor takeover、旧 worker revival fenced、旧 release 不影响
+  successor、supervisor restart inventory rebuild、waiting/control cursor 不丢不重、adapter
+  crash 后 lease expiry recovery、shutdown report 含 remaining claims。
+- Host integration 必须证明 claimed writer 注入现有 episode 路径且 authorization snapshot、
+  workflow hooks、tool policy、access clamp 均不被绕过。
+- 退役“创建 workflow 的 TUI/CLI child Host connection 是唯一 owner”的内部假设；保留
+  foreground connection 作为一种 worker adapter，而不是 durable truth。
+- focused tests、fault injection、affected typecheck/build、完整 `npm run release:check`、
+  maps/test-map 和独立 E commit 全通过后，才可 reopen Package F。

@@ -97,3 +97,25 @@ Use exclusive publication hooks/barriers and restartable consumers:
   adding it, strict reserved-field check passed and a complete release check
   rerun passed through all workspace tests, regression matrix, and both install
   smokes.
+
+## Required Package E Fault World
+
+Use a controllable clock and barriers around registry heartbeat, workflow claim,
+and adapter start:
+
+1. worker A registers, heartbeats, claims a running workflow, and blocks before
+   its next mutation;
+2. A is killed; its worker heartbeat and workflow lease expire independently;
+3. worker B registers, publishes the only higher-generation canonical claim,
+   and continues the workflow;
+4. revived A mutation/compensation/release cannot change B's record or lease;
+5. two supervisors race the same inventory candidate and only the claim winner
+   invokes the execution adapter;
+6. durable drain prevents new claims, reports active/remaining claims, and does
+   not label interruption as pause or completion;
+7. supervisor restart rebuilds candidates from workflow records/journals and
+   pending D commands without an in-memory owner map;
+8. waiting/input/approval records remain waiting without an authorized command;
+   inbox and notification cursors neither duplicate nor lose accepted work;
+9. adapter crash after claim but before episode start is recoverable after TTL;
+10. terminal workflows and live unexpired claims are never adopted.
