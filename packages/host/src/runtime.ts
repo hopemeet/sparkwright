@@ -1455,10 +1455,14 @@ export class HostRuntime {
    * Start a new run. Returns the runId synchronously (after createRun
    * resolves) and continues streaming events asynchronously.
    */
-  async startRun(
-    payload: RunStartRequestPayload,
-  ): Promise<
-    { ok: true; runId: string } | { ok: false; error: ProtocolError }
+  async startRun(payload: RunStartRequestPayload): Promise<
+    | {
+        ok: true;
+        runId: string;
+        sessionId: string;
+        workflowRunId?: string;
+      }
+    | { ok: false; error: ProtocolError }
   > {
     if (this.active || this.startingRun) {
       return {
@@ -1615,6 +1619,7 @@ export class HostRuntime {
     confidentialDefaults?: boolean;
     traceLevel?: TraceLevel;
     workflowName?: string;
+    controlSessionId?: string;
     workflowStore?: FileWorkflowStore;
     workflowRecord?: WorkflowRunRecord;
     workflowLease?: FileDocumentLease;
@@ -2162,6 +2167,9 @@ export class HostRuntime {
             metadata: {
               goal: input.goal,
               verifyOnResume: true,
+              ...(input.controlSessionId
+                ? { controlSessionId: input.controlSessionId }
+                : {}),
             },
           });
         }
@@ -3320,10 +3328,14 @@ export class HostRuntime {
     return { ok: true, ...matches[0]! };
   }
 
-  private async startRunInner(
-    payload: RunStartRequestPayload,
-  ): Promise<
-    { ok: true; runId: string } | { ok: false; error: ProtocolError }
+  private async startRunInner(payload: RunStartRequestPayload): Promise<
+    | {
+        ok: true;
+        runId: string;
+        sessionId: string;
+        workflowRunId?: string;
+      }
+    | { ok: false; error: ProtocolError }
   > {
     const modelRef = payload.model ?? this.opts.defaultModel;
     const access = resolveRunAccessFields(payload, {
@@ -3337,16 +3349,39 @@ export class HostRuntime {
     const { permissionMode, shouldWrite } = access;
     const accessMetadata = buildAccessMetadata(access);
     let sessionId: string;
+    let controlSessionId: string | undefined;
     try {
       sessionId = payload.sessionId
         ? asSessionId(payload.sessionId)
         : createSessionId();
+      controlSessionId = payload.controlSessionId
+        ? asSessionId(payload.controlSessionId)
+        : undefined;
     } catch (error) {
       return {
         ok: false,
         error: {
           code: "invalid_payload",
           message: error instanceof Error ? error.message : String(error),
+        },
+      };
+    }
+    if (controlSessionId && !payload.workflow) {
+      return {
+        ok: false,
+        error: {
+          code: "invalid_payload",
+          message:
+            "controlSessionId is only valid when starting a workflow job",
+        },
+      };
+    }
+    if (controlSessionId === sessionId) {
+      return {
+        ok: false,
+        error: {
+          code: "invalid_payload",
+          message: "workflow job sessionId must differ from controlSessionId",
         },
       };
     }
@@ -3366,6 +3401,7 @@ export class HostRuntime {
         defaultTraceLevel: this.opts.defaultTraceLevel,
       }),
       workflowName: payload.workflow,
+      controlSessionId,
       runMetadata: {
         ...(payload.metadata ?? {}),
         ...accessMetadata,
@@ -3487,7 +3523,7 @@ export class HostRuntime {
       metadata: { layer: "conversation", stability: "session" },
     });
 
-    return this.startWorkflowActorEpisodeChain({
+    const started = await this.startWorkflowActorEpisodeChain({
       episodeKind: "run_start",
       env,
       todoPath: join(env.sessionRootDir, sessionId, "todo.md"),
@@ -3529,6 +3565,14 @@ export class HostRuntime {
         }
       },
     });
+    if (!started.ok) return started;
+    return {
+      ...started,
+      sessionId,
+      ...(env.workflowRecord
+        ? { workflowRunId: String(env.workflowRecord.id) }
+        : {}),
+    };
   }
 
   private async findRunDir(

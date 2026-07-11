@@ -85,6 +85,10 @@ Does not own:
 - `run.start` may include optional `workflow`, the workflow asset name to
   instantiate for that run. The field is additive and ignored when absent; P1.5
   removes the former experimental host gate.
+- A workflow-job `run.start` may carry typed `controlSessionId` attribution.
+  Successful start responses may include the authoritative `sessionId` and
+  `workflowRunId`; ordinary non-workflow clients remain compatible with the
+  required `runId` field alone.
 - `run.start` and `run.resume` may include `backgroundTasks`
   (`disabled`, `foreground-only`, `enabled`). Host validates and clamps it; the
   protocol only carries the requested run policy.
@@ -188,6 +192,13 @@ Does not own:
 - Protocol and file trace contracts are related but separate; avoid documenting one as the other.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-11T00:00:00+0800
+- Scope: Package B `run.start` workflow job/control session identity fields.
+- Read: `packages/protocol/src/index.ts`, `packages/host/src/server.ts`, SDK
+  client result typing and focused protocol tests.
+- Tests: protocol typecheck/build; host protocol tests; CLI/TUI SDK integration.
 
 - Status: Verified
 - Date: 2026-07-11T01:04:00+0800

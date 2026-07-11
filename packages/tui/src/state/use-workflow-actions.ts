@@ -118,15 +118,16 @@ export function useWorkflowActions(deps: {
       ...current,
       [handle.runId]: {
         runId: handle.runId,
+        workflowRunId: handle.workflowRunId,
         workflowName: parsed.workflowName,
         goal: parsed.goal,
-        status: "connecting",
+        status: "running",
         handle,
         startedAt: now,
       },
     }));
     store.appendNotice(
-      `workflow start: ${parsed.workflowName} · run ${handle.runId}`,
+      `workflow start: ${parsed.workflowName} · ${handle.workflowRunId} · session ${handle.sessionId}`,
     );
     wireWorkflowJob(handle, {
       workflowName: parsed.workflowName,

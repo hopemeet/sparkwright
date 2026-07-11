@@ -394,6 +394,11 @@
         "goal": { "type": "string", "minLength": 1 },
         "input": { "$ref": "#/$defs/RunInputPayload" },
         "sessionId": { "type": "string", "minLength": 1 },
+        "controlSessionId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Parent/control session attribution for a workflow job; it must not be used as the job session storage identity."
+        },
         "targetPath": {
           "type": "string",
           "minLength": 1,

@@ -299,8 +299,28 @@ Does not own:
 ## Known Debts
 
 - Task/todo behavior spans host, CLI, TUI replay, and trace diagnostics; ownership can be easy to blur.
+- Workflow leases carry winner-validated fencing tokens for acquire/refresh/release,
+  but live `WorkflowStore` mutation paths do not validate that token; a stale
+  worker can therefore write after lease takeover until S1 write fencing lands.
+  The Package C audit additionally found constructor-time record caching and
+  split record/event writes. A refresh-only writer handle is insufficient
+  against a process frozen after refresh; the recommended reopen design uses a
+  monotonic fencing generation plus revisioned canonical mutation entries.
+- Durable workflow control remains outbound-notification oriented. The approved
+  staged route adds a narrow typed control inbox after write fencing; it does
+  not authorize a generic actor bus or nested background lifecycle.
 
 ## Last Verified
+
+- Status: Read-only
+- Date: 2026-07-11T00:00:00+0800
+- Scope: workflow lease/write-fencing gap and its separation from the sealed,
+  flat background-task lifecycle.
+- Read: `packages/agent-runtime/src/doc-store/index.ts`,
+  `packages/agent-runtime/src/workflows/store.ts`,
+  `docs/_internal/proposals/background-task-lifecycle.md`, and workflow job
+  session review section 8.
+- Tests: not run; documentation-only planning audit.
 
 - Status: Verified
 - Date: 2026-07-11T02:10:00+0800

@@ -62,6 +62,11 @@ policy requires approval
   Unknown approval shapes remain allow-once/deny only, and concurrent requests
   are queued rather than overwritten. Workflow job connections route their
   approvals through the same controller.
+- TUI approval auto-policy is execution-scoped rather than controller-global.
+  Each request captures the birth client/session/permission mode and exact
+  emitting run id; workflow requests also retain their workflow id when known.
+  Client terminal/disconnect/close cleanup removes its active and queued
+  requests without deleting prompts owned by other clients.
 - Host run access resolution also clamps `backgroundTasks` against project
   ceilings. This is governance, not an approval prompt: cap/policy denials for
   background task surfaces are recoverable tool failures rather than
@@ -102,6 +107,15 @@ policy requires approval
 - Approval UX and diagnostic reporting are split across CLI, TUI, host, and core trace.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-11T00:00:00+0800
+- Scope: Package A immutable TUI approval execution context and per-client
+  active/queued prompt cleanup.
+- Read: `packages/tui/src/state/run-controller.ts`,
+  `packages/tui/test/run-controller-approval.test.ts`.
+- Tests: focused approval/session-mutation suites, full TUI suite (398 tests),
+  and TUI typecheck.
 
 - Status: Verified
 - Date: 2026-07-11T01:04:00+0800

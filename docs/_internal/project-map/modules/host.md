@@ -262,6 +262,11 @@ Does not own:
   stored position. Waiting-input resume does not consume the durable wait until
   host run preparation has succeeded; if a later pre-run failure occurs, host
   restores the prior waiting record before returning the error.
+- Fresh workflow-job starts return `{runId, workflowRunId, sessionId}` after
+  durable record creation. A typed `controlSessionId` is accepted only for a
+  workflow start, must differ from the job session, and is stored as record
+  attribution; it is never used to load conversation history. Resume returns
+  and executes against the record's original job session.
 - Host delivers completed/failed workflow terminal notifications and P3
   `waiting` notifications through the workflow actor inbox with
   `payload.workflowId === WorkflowRunRecord.id`; waiting notifications are
@@ -750,6 +755,15 @@ Does not own:
 - Capability snapshot fields are useful but can become stale if new tools bypass `tool-catalog.ts`; direct-core/cron should add tools by catalog profile, not local factories.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-11T00:00:00+0800
+- Scope: Package B workflow job identity response, control-session validation
+  and durable attribution, and resume session preservation.
+- Read: `packages/host/src/runtime.ts`, `packages/host/src/server.ts`,
+  `packages/host/src/client-run.ts`, focused host tests.
+- Tests: host client-run/workflow/protocol suites (91 tests), host typecheck and
+  build; affected CLI/TUI integration tests.
 
 - Status: Verified
 - Date: 2026-07-11T02:10:00+0800

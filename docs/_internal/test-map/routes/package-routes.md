@@ -134,6 +134,26 @@ are touched.
 
 ## TUI
 
+### `packages/tui/src/state/run-controller.ts`
+
+For execution identity, approval routing/cleanup, or session mutation guards:
+
+```bash
+npm --workspace @sparkwright/tui test -- test/run-controller-approval.test.ts test/run-controller-session-mutation.test.ts test/sdk-cutover.test.ts
+npm --workspace @sparkwright/tui run typecheck
+```
+
+Broaden to the full TUI suite when controller return values or session/workflow
+actions change.
+
+For independent workflow job session identity, also run:
+
+```bash
+npm --workspace @sparkwright/host test -- test/client-run.test.ts test/workflows.test.ts test/protocol.test.ts
+npm --workspace @sparkwright/tui test -- test/sdk-cutover.test.ts
+npm --workspace @sparkwright/cli test -- test/cli.test.ts -t "workflow"
+```
+
 ### Rendering components
 
 For `components/event-stream.tsx`, `components/status-bar.tsx`, or

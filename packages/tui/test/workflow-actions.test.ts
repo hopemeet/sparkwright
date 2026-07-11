@@ -30,6 +30,14 @@ function ownedJob(input: {
   workflowRunId?: string;
   status?: OwnedWorkflowJob["status"];
 }): OwnedWorkflowJob {
+  const workflowRunId = input.workflowRunId ?? "workflow_pending";
+  const execution = {
+    kind: "workflow" as const,
+    sessionId: "session_workflow_test",
+    permissionMode: "default" as const,
+    runId: input.runId,
+    workflowRunId,
+  };
   return {
     runId: input.runId,
     ...(input.workflowRunId ? { workflowRunId: input.workflowRunId } : {}),
@@ -37,7 +45,8 @@ function ownedJob(input: {
     goal: "goal",
     status: input.status ?? "running",
     handle: {
-      runId: input.runId,
+      ...execution,
+      execution,
       client: {} as OwnedWorkflowJob["handle"]["client"],
       close: () => {},
     },

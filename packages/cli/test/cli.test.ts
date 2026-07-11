@@ -2,6 +2,7 @@ import {
   access,
   mkdir,
   mkdtemp,
+  readdir,
   readFile,
   realpath,
   rm,
@@ -770,6 +771,57 @@ describe("runCli", () => {
     );
     expect(result.tracePath).toBeDefined();
     expect(output.stdoutText()).not.toContain("run.started");
+  });
+
+  it("starts a workflow in an isolated job session and records the CLI control session", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    await writeWorkflowAsset(
+      workspace,
+      "isolated-job",
+      [
+        "---",
+        "nodes:",
+        "  - id: main",
+        "    execute: model",
+        "---",
+        "## main",
+        "Finish once.",
+      ].join("\n"),
+    );
+
+    const result = await runCli(
+      [
+        "run",
+        "isolated workflow",
+        "--workspace",
+        workspace,
+        "--session-id",
+        "session_cli_control",
+        "--model",
+        "deterministic",
+        "--workflow",
+        "isolated-job",
+      ],
+      { io: { stdinIsTTY: false } },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.sessionId).toMatch(/^session_workflow_/);
+    expect(result.sessionId).not.toBe("session_cli_control");
+    const recordFiles = (
+      await readdir(join(workspace, ".sparkwright", "workflow-runs"))
+    ).filter((file) => file.endsWith(".json"));
+    expect(recordFiles).toHaveLength(1);
+    const record = JSON.parse(
+      await readFile(
+        join(workspace, ".sparkwright", "workflow-runs", recordFiles[0]!),
+        "utf8",
+      ),
+    );
+    expect(record).toMatchObject({
+      sessionId: result.sessionId,
+      metadata: { controlSessionId: "session_cli_control" },
+    });
   });
 
   it("surfaces in-process delegate tools in capabilities inspect", async () => {

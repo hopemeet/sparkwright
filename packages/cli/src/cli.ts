@@ -95,6 +95,7 @@ import {
   loadLayeredAgentReport,
   loadLayeredWorkflowAssets,
   loadHostConfig,
+  createWorkflowJobSessionId,
   configResolutionOrder,
   DEFAULT_DEFERRED_TOOLS,
   MAX_RUN_IMAGE_INPUT_BYTES,
@@ -399,8 +400,13 @@ export async function runCli(
     io,
   });
 
-  const sessionId = parsed.value.sessionId ?? createSessionId();
-  const runInput = { ...parsed.value, sessionId };
+  const controlSessionId = parsed.value.workflowName
+    ? parsed.value.sessionId
+    : undefined;
+  const sessionId = parsed.value.workflowName
+    ? createWorkflowJobSessionId()
+    : (parsed.value.sessionId ?? createSessionId());
+  const runInput = { ...parsed.value, sessionId, controlSessionId };
   const validation = await validateCliRunInput(runInput, io, env);
   if (!validation.ok) {
     const tracePath = writeValidationFailureTrace(runInput, validation);
@@ -429,6 +435,7 @@ export async function runCli(
     : startHostRun(
         {
           ...runInput,
+          controlSessionId: runInput.controlSessionId,
           modelName:
             runInput.modelNameSource === "cli" ? runInput.modelName : undefined,
           workflowName: runInput.workflowName,

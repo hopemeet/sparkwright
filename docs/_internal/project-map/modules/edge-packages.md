@@ -84,10 +84,25 @@ contracts, and focused checklists that no longer fit here.
   run/session/approval/event orchestration), but current host/CLI paths do not
   wire it as the main process coordinator; source currently uses host-owned
   per-connection `HostRuntime` directly.
+- The workflow job session route now stages durable supervisor/worker ownership
+  and multi-channel control after session isolation, write fencing, and a typed
+  durable workflow control inbox. `server-runtime` owns coordination; IM/Web/API
+  gateways remain authenticated adapters and transport delivery stores rather
+  than canonical workflow owners.
 - This page is intentionally read-only coverage from package manifests and
   source exports. It should not be used as the sole authority for behavior.
 
 ## Last Verified
+
+- Status: Read-only
+- Date: 2026-07-11T00:00:00+0800
+- Scope: routed workflow supervisor/daemon/multi-channel stages through the
+  existing server-runtime coordinator and thin-gateway ownership boundaries.
+- Read: `packages/server-runtime/src/index.ts`,
+  `packages/im-gateway/src/gateway.ts`,
+  `docs/_internal/proposals/session-agent-host-coordinator.md`, and workflow job
+  session review section 8.
+- Tests: not run; documentation-only roadmap convergence.
 
 - Status: Verified
 - Date: 2026-07-05T00:42:02+0800

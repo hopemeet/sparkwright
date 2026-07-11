@@ -14,6 +14,7 @@ import {
   createHostClientRunMetadata,
   createHostResumeRunRequest,
   createHostStartRunRequest,
+  createWorkflowJobSessionId,
   createHostWorkflowResumeRequest,
   nextHostClientAccessMode,
   resolveHostClientRunAccess,
@@ -59,6 +60,14 @@ describe("host client run request helpers", () => {
     });
   });
 
+  it("creates unique workflow job session ids as safe path segments", () => {
+    const first = createWorkflowJobSessionId();
+    const second = createWorkflowJobSessionId();
+    expect(first).toMatch(/^session_workflow_[A-Za-z0-9_.-]+$/);
+    expect(first).not.toBe(second);
+    expect(first.length).toBeLessThanOrEqual(128);
+  });
+
   it("builds start and resume payloads with shared field rules", () => {
     const metadata = { source: "cli", shouldWrite: true, traceLevel: "debug" };
     const input = {
@@ -76,6 +85,7 @@ describe("host client run request helpers", () => {
         goal: "inspect",
         input,
         sessionId: "session_1",
+        controlSessionId: "session_control",
         modelName: "openai/configured",
         modelNameSource: "config",
         permissionMode: "accept_edits",
@@ -90,6 +100,7 @@ describe("host client run request helpers", () => {
       goal: "inspect",
       input,
       sessionId: "session_1",
+      controlSessionId: "session_control",
       model: undefined,
       permissionMode: "accept_edits",
       traceLevel: "debug",

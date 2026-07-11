@@ -50,6 +50,12 @@ Future run in compacted session
 
 ## Contracts
 
+- Workflow-job resume uses the durable `WorkflowRunRecord.sessionId` as the
+  execution/session-store identity. TUI/CLI callers may not substitute their
+  current/control session, and records missing the required session or
+  authorization snapshot fail diagnostically rather than falling back to
+  mutable client defaults.
+
 - Checkpoint resume is the normal path.
 - From-trace resume is best-effort recovery; it restores counters/coarse step data, not full in-loop context.
 - Reconstructed checkpoints are marked not fully resumable and require explicit force.
@@ -104,6 +110,15 @@ Future run in compacted session
   run-loop integration.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-11T00:00:00+0800
+- Scope: Package B workflow resume preserves the original isolated job session
+  and authorization snapshot.
+- Read: Host workflow lookup/resume, TUI resume handle construction, CLI
+  workflow resume integration tests.
+- Tests: host workflow/protocol suites, CLI workflow slice, TUI full suite, and
+  full `npm run release:check`.
 
 - Status: Verified
 - Date: 2026-07-09T21:52:00+0800

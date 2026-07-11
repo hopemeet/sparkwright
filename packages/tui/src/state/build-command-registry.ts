@@ -229,6 +229,15 @@ export function buildCommandRegistry(
     category: "session",
     run: () => {
       const id = controller.newSession();
+      if (!id) {
+        toasts.push({
+          title: "session unchanged",
+          message:
+            "finish or cancel the active run before starting a new session",
+          variant: "warning",
+        });
+        return;
+      }
       toasts.push({
         title: "new session",
         message: id,

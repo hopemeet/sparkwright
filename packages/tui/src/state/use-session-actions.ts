@@ -88,11 +88,13 @@ export function useSessionActions(deps: {
   }
 
   function pickSession(id: string): void {
-    void controller.switchSession(id);
-    layers.pop("sessions");
-    toasts.push({
-      variant: "success",
-      message: `switched to session ${id}`,
+    void controller.switchSession(id).then((switched) => {
+      if (!switched) return;
+      layers.pop("sessions");
+      toasts.push({
+        variant: "success",
+        message: `switched to session ${id}`,
+      });
     });
   }
 
@@ -125,18 +127,20 @@ export function useSessionActions(deps: {
     edit?: boolean,
   ): void {
     const src = sessionId;
-    layers.pop("fork");
     if (!src) return;
     void controller.forkSession(src, forkAtSequence).then((res) => {
       if (!res) return;
+      layers.pop("fork");
       // Switch to the fork AND load its (copied) history so the branched
       // conversation is visible, not a blank screen.
-      void controller.switchSession(res.forkedSessionId);
-      if (edit && label) inputHandleRef.current?.setValue(label);
-      toasts.push({
-        variant: "success",
-        title: edit ? "forked — edit & resend" : "forked",
-        message: `${res.forkedSessionId} (${res.copiedEventCount} events copied)`,
+      void controller.switchSession(res.forkedSessionId).then((switched) => {
+        if (!switched) return;
+        if (edit && label) inputHandleRef.current?.setValue(label);
+        toasts.push({
+          variant: "success",
+          title: edit ? "forked — edit & resend" : "forked",
+          message: `${res.forkedSessionId} (${res.copiedEventCount} events copied)`,
+        });
       });
     });
   }

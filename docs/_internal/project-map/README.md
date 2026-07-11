@@ -11,10 +11,9 @@ The map is deliberately short. It should point maintainers to the right files,
 contracts, and adjacent maps before they edit code.
 
 Source code, schemas, tests, and public reference docs remain the source of
-truth. In this checkout `docs/_internal/` is ignored as local maintenance
-material, so update it in the same local task as the code/docs work and call out
-meaningful drift in the handoff. If this map is copied into a tracked review
-branch, keep the map update in the same commit/PR as the behavior change.
+truth. The structured project map, proposals, and test map are versioned in this
+checkout; keep their updates in the same commit/PR as the behavior change.
+Ephemeral internal run notes and uncatalogued scratch material remain ignored.
 
 For verification routing, scenario design, stochastic run notes, and historical
 failure patterns, use [../test-map/README.md](../test-map/README.md) alongside

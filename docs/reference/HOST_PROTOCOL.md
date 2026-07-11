@@ -180,6 +180,7 @@ Begin a new agent run.
 | `goal`                 | string                    | yes      | User goal text.                                                                                                                                                                                                               |
 | `input.parts`          | array                     | no       | Extensible content parts for the same user turn. Supported part types are `text`, `image`, `file`, and `audio`; image/file/audio parts carry `data` (base64) or `uri`, plus optional `mediaType`, `name`, and `metadata`.     |
 | `sessionId`            | string                    | no       | Existing session to write into; host creates a new one if omitted.                                                                                                                                                            |
+| `controlSessionId`     | string                    | no       | Workflow-job attribution only. Must accompany `workflow` and differ from the job `sessionId`; it is not used as workflow transcript storage.                                                                                  |
 | `targetPath`           | string                    | no       | Workspace-relative target path the run should focus on when applicable.                                                                                                                                                       |
 | `confidentialPaths`    | string[]                  | no       | Additional workspace-relative paths/globs whose contents this run must not read.                                                                                                                                              |
 | `confidentialDefaults` | boolean                   | no       | Whether built-in conservative confidential path defaults are included; defaults to `true`.                                                                                                                                    |
@@ -193,9 +194,11 @@ Begin a new agent run.
 
 **Response result**
 
-| Field   | Type   | Notes                                                                      |
-| ------- | ------ | -------------------------------------------------------------------------- |
-| `runId` | string | Use this in subsequent `run.cancel` requests and to correlate `run.event`. |
+| Field           | Type   | Notes                                                                                 |
+| --------------- | ------ | ------------------------------------------------------------------------------------- |
+| `runId`         | string | Use this in subsequent `run.cancel` requests and to correlate `run.event`.            |
+| `sessionId`     | string | Authoritative session used by the run. Returned by current hosts.                     |
+| `workflowRunId` | string | Durable workflow instance id when `workflow` was supplied; omitted for ordinary runs. |
 
 The run starts asynchronously. The host emits `run.event` events as
 they happen and one terminal event (`run.completed` or `run.failed`).

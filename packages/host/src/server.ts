@@ -160,8 +160,13 @@ async function handleRequest(
     }
     case "run.start": {
       const r = await runtime.startRun(req.payload);
-      if (r.ok) respondOk(conn, req.id, { runId: r.runId });
-      else respondError(conn, req.id, r.error);
+      if (r.ok) {
+        respondOk(conn, req.id, {
+          runId: r.runId,
+          ...(r.sessionId ? { sessionId: r.sessionId } : {}),
+          ...(r.workflowRunId ? { workflowRunId: r.workflowRunId } : {}),
+        });
+      } else respondError(conn, req.id, r.error);
       return false;
     }
     case "run.resume": {
@@ -408,6 +413,7 @@ function validateRequestPayload(req: HostRequest): string | undefined {
         requireOnly(req.payload, [
           "goal",
           "sessionId",
+          "controlSessionId",
           "targetPath",
           "confidentialPaths",
           "confidentialDefaults",
@@ -422,6 +428,7 @@ function validateRequestPayload(req: HostRequest): string | undefined {
         ]) ??
         requireString(req.payload, "goal") ??
         optionalString(req.payload, "sessionId") ??
+        optionalString(req.payload, "controlSessionId") ??
         optionalString(req.payload, "targetPath") ??
         optionalStringArray(req.payload, "confidentialPaths") ??
         optionalBoolean(req.payload, "confidentialDefaults") ??

@@ -29,6 +29,11 @@ createRun/resumeRunFromCheckpoint
 
 ## Contracts
 
+- A freshly submitted workflow job runs in its own session and therefore loads
+  only that job session's conversation history. `controlSessionId` is durable
+  attribution on the workflow record, not a context source. Ordinary main runs
+  keep the existing selected-session history behavior.
+
 - Terminal states are `completed`, `failed`, and `cancelled`.
 - `cancel()` emits `run.cancelled` synchronously and kicks the `RunEnd`
   workflow-hook phase with `state:"cancelled"` / `reason:"manual_cancelled"`.
@@ -242,6 +247,14 @@ createRun/resumeRunFromCheckpoint
   handling can still be noisy.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-11T00:00:00+0800
+- Scope: Package B workflow job session context isolation; core run-loop and
+  tool orchestration semantics are otherwise unchanged.
+- Read: `packages/host/src/runtime.ts`, TUI/CLI workflow start paths and
+  isolated-session integration tests.
+- Tests: Host/TUI/CLI focused suites and full `npm run release:check`.
 
 - Status: Verified
 - Date: 2026-07-10T23:00:00+0800

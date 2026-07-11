@@ -308,6 +308,8 @@ export interface RunStartRequestPayload {
   goal: string;
   input?: RunInputPayload;
   sessionId?: string;
+  /** Parent/control session attribution for a newly instantiated workflow job. */
+  controlSessionId?: string;
   /** Workspace-relative target path that the run should focus on when applicable. */
   targetPath?: string;
   /** Workspace-relative paths/globs whose contents this run must not read. */
@@ -643,7 +645,11 @@ export type HostResponse = HostResponseOk | HostResponseError;
 /** Concrete result shapes for ok responses, by originating request kind. */
 export interface ResponseResults {
   handshake: Record<string, never>;
-  "run.start": { runId: string };
+  "run.start": {
+    runId: string;
+    sessionId?: string;
+    workflowRunId?: string;
+  };
   "run.resume": {
     runId: string;
     resumedFromRunId: string;

@@ -70,6 +70,11 @@ Does not own:
   `sparkwright run <goal...> --workflow <name>`. It routes through the same
   host run lifecycle and `run.start { workflow, goal }` request path; it does
   not add background/daemon semantics.
+- Fresh CLI workflow starts allocate an independent `session_workflow_*` job
+  session. An explicitly supplied `--session-id` is sent as
+  `controlSessionId` attribution and is not reused as workflow storage; the CLI
+  reports the authoritative job session returned by Host. Resume continues to
+  use the session persisted on the workflow record.
 - After a workflow run returns, CLI waiting detection matches only the current
   host `runId` or an explicit resumed `workflowRunId`. Asset name is not a
   fallback because an unrelated stale waiting run of the same workflow asset
@@ -300,6 +305,14 @@ Does not own:
 - The direct-core deterministic model is a diagnostics harness; it should keep exercising real catalog tools (`read_file`, `read_anchored_text`, `write_file`, `edit_anchored_text`/`apply_patch`) rather than reintroducing test-only write tools.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-11T00:00:00+0800
+- Scope: Package B CLI workflow start session isolation and explicit control
+  session attribution.
+- Read: `packages/cli/src/cli.ts`, `packages/cli/src/runners/host-runner.ts`,
+  workflow CLI tests.
+- Tests: CLI workflow slice (13 tests), CLI typecheck and build.
 
 - Status: Verified
 - Date: 2026-07-11T02:10:00+0800

@@ -128,6 +128,13 @@ listed below.
 - **Note:** `workflow-runtime-v1.md` P2 lists this as its prerequisite;
   that stays true, but the primitive is justified independently of
   workflow and should not wait for it.
+- **2026-07-11 write-fencing reopen gate:** current token leases fence
+  acquire/refresh/release only. Workflow live record/event mutations remain
+  unfenced and read from a store-local cache. The durable-job Package C audit
+  rejected optional tokens and refresh-only writer handles; its recommended
+  next slice is a monotonic lease generation plus revisioned append-only
+  record/event mutation journal. D–G workflow job work stays closed until that
+  S1 extension and stale-owner fault matrix pass.
 
 ### S2. FactLedger (core fact-classification substrate)
 

@@ -100,6 +100,72 @@ async function waitForWorkflowRecord(
 }
 
 describe("workflow assets", () => {
+  it("returns durable workflow/job identity and records control-session attribution", async () => {
+    const workspace = await tempWorkspace();
+    await writeWorkflow(
+      workspace,
+      "job-identity",
+      [
+        "---",
+        "nodes:",
+        "  - id: main",
+        "    execute: model",
+        "---",
+        "## main",
+        "Finish once.",
+      ].join("\n"),
+    );
+    const events: HostEvent[] = [];
+    const runtime = new HostRuntime({
+      workspaceRoot: workspace,
+      defaultModel: "deterministic",
+      emit: (event) => events.push(event),
+    });
+
+    const started = await runtime.startRun({
+      goal: "isolated workflow job",
+      sessionId: "session_workflow_job",
+      controlSessionId: "session_main_control",
+      workflow: "job-identity",
+    });
+
+    expect(started).toMatchObject({
+      ok: true,
+      sessionId: "session_workflow_job",
+      workflowRunId: expect.stringMatching(/^workflow_/),
+    });
+    if (!started.ok || !started.workflowRunId) {
+      throw new Error("Expected workflow identity.");
+    }
+    const record = new FileWorkflowStore({
+      rootDir: workflowStoreRoot(workspace),
+      createRoot: false,
+    }).get(started.workflowRunId as WorkflowRunId);
+    expect(record).toMatchObject({
+      id: started.workflowRunId,
+      sessionId: "session_workflow_job",
+      metadata: { controlSessionId: "session_main_control" },
+    });
+    await waitForHostEvent(events, (event) => event.kind === "run.completed");
+
+    const invalid = await new HostRuntime({
+      workspaceRoot: workspace,
+      defaultModel: "deterministic",
+      emit: () => {},
+    }).startRun({
+      goal: "invalid shared identity",
+      sessionId: "session_same",
+      controlSessionId: "session_same",
+      workflow: "job-identity",
+    });
+    expect(invalid).toMatchObject({
+      ok: false,
+      error: expect.objectContaining({
+        message: expect.stringContaining("must differ"),
+      }),
+    });
+  });
+
   it("parses workflow folder assets on the shared markdown-folder primitive", async () => {
     const workspace = await tempWorkspace();
     await writeWorkflow(
