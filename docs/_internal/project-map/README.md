@@ -59,12 +59,20 @@ Design docs in [designs/](designs/) are catalog entries, not routing targets —
 read them for the shape and rationale of a planned or completed change, then
 follow the active maps below for the current contract.
 
+- [designs/asset-package-governance-redirection-review.md](designs/asset-package-governance-redirection-review.md) —
+  Adjudicated review handoff: records the frozen scope redirection that keeps
+  managed change Skill-only, separates filesystem reconciliation, establishes
+  package identity v2 and Workflow executable snapshots, redirects ordinary
+  Agent authoring to Markdown, and keeps Agent/Workflow stats diagnostic-only.
+  It is decision history, not the implementation master or an active runtime
+  contract.
+
 - [designs/skill-managed-change-redesign.md](designs/skill-managed-change-redesign.md) —
-  Active design: managed Skill identity/origin, hash-bound prepared changes,
-  durable approval/recovery, reconciliation, stats/evidence, UX, and phased
-  convergence of model/CLI/TUI creation paths. The first delivery slice is a
-  safe model-authored create that persists the proposal before one final-effect
-  approval and applies in the same run. Active contracts:
+  Implementation-ready master design: preserves completed Skill Phase 1/2,
+  freezes package identity v2 and external-change safety, requires Workflow
+  executable package pinning, limits Agent authoring to validated Markdown,
+  defines trace-derived policy-aware stats, and defers Skill identity
+  continuity/reconciliation to Phase 7. Active contracts:
   [modules/skills.md](modules/skills.md), [modules/host.md](modules/host.md),
   [modules/tui.md](modules/tui.md),
   [maps/capabilities/skill-evolution.md](maps/capabilities/skill-evolution.md),

@@ -2,524 +2,404 @@
 
 ## Status
 
-- Status: Verified
+- Status: Read-only
 - Date: 2026-07-12
-- Scope: frozen design for managed Skill identity, prepared changes, approval,
-  recovery, provenance, reconciliation, evidence, and the first authored-create
-  vertical slice.
-- Source check: current Skill proposal, guard, history, stats, host tool, core
-  approval, protocol, CLI, and TUI paths were read. The source tree already
-  contains session-scoped draft revise/dedupe and an in-progress post-run TUI
-  handoff, but not the transaction described here.
-- Tests: the Phase 1 safe-authored-create slice passed host evolution/tool
-  focused tests, affected typechecks, and TUI approval rendering/controller
-  tests. Later phases remain design-only.
+- Scope: implementation-ready master design after the asset-governance review.
+  Skill Phase 1/2 remain implemented; Phase 3A and later remain design-only.
+- Source check: current Skill package enumeration, prepared-change lifecycle,
+  command service, Agent Markdown discovery, Workflow parsing/execution/resume,
+  and Agent/Workflow trace attribution paths were read.
+- Tests: not run; documentation-only redesign.
 
-## Purpose
+## Purpose and Frozen Boundary
 
-Give Skill creation, update, import, evolution, and rollback one managed-change
-contract without exposing proposal plumbing as the normal user experience.
-
-The ordinary interaction is:
+SparkWright keeps one complete managed-change transaction, and it belongs to
+project Skills:
 
 ```txt
-inspect final effect -> approve once -> receive the applied result
+prepare -> inspect -> approve exact effect -> apply -> history/receipt
 ```
 
-The durable implementation is:
+Direct editor, shell, and Git changes use a separate lifecycle:
+
+```txt
+scan -> finding -> explicit adopt/move/copy/reidentify
+```
+
+The second lifecycle never claims that SparkWright prepared, approved, or
+applied an external mutation. Agent authoring and Workflow execution reuse
+package, validation, trace, and atomic-write primitives where appropriate, but
+do not inherit the Skill proposal/history/restore lifecycle.
+
+Explicitly out of scope:
+
+- managed Agent proposals, history, restore, registry, or self-evolution;
+- Workflow reuse of the Skill proposal store or Workflow self-evolution;
+- a generic managed-artifact lifecycle extraction;
+- implementation of any post-Phase-2 work in this documentation change.
+
+## Implemented Skill Facts: Phase 1 and Phase 2
+
+These current-source facts remain valid and are not redesigned:
+
+- Project Skills are packages under `.sparkwright/skills/<name>`.
+- A prepared change is persisted before approval and carries revision,
+  base/after package hashes, `artifactId`, and an `effectHash` bound to the
+  intended final effect.
+- Model-authored safe creates can wait durably, receive effect-bound approval,
+  apply in the same tool episode, and persist deterministic history plus a
+  mutation receipt. Disconnect or absent approval leaves recoverable waiting
+  state.
+- Apply revalidates staged content, base/after hashes, doctor, and guard;
+  dangerous guard deltas require renewed approval. Base drift is stale and is
+  never overwritten.
+- Applying-state recovery is idempotent: an already-written target matching the
+  approved after hash is reconciled through doctor, history, and receipt rather
+  than rewritten.
+- Model, CLI, canonical TUI `/create skill`, and compatibility
+  `/skill-create` creation paths converge on `SkillCommandService`; persistent
+  proposal storage remains the durable review/recovery surface.
+- Existing proposal inspection/rejection, history, receipt, restore, revision,
+  provenance, and session-scoped deduplication remain supported.
+
+The current package-hash policy is v1. It enumerates `SKILL.md` and recursive
+ordinary files only under `references/`, `templates/`, and `scripts/`. It
+rejects a symlink or special file when encountered in that enumerated set, but
+ignores other root entries. Phase 3A therefore changes observable identity and
+fail-closed coverage; it is not a behavior-neutral refactor.
+
+## Managed Skill Change
+
+### Transaction contract
 
 ```txt
 author final package
   -> persist prepared change
   -> doctor + guard + diff
-  -> wait for hash-bound approval
-  -> revalidate
+  -> wait for approval bound to proposal id + revision + effect hash
+  -> re-enumerate and revalidate base/after packages
   -> idempotently apply
-  -> persist history + receipt
+  -> persist history + mutation receipt + applied state
 ```
 
-Proposal storage is retained. It is the recovery, deduplication, audit, hash
-gate, and history substrate, not an extra user task.
+Approval authorizes only the exact final effect. Revising the package changes
+the after hash, revision, and effect hash and invalidates the old receipt. A
+new dangerous fingerprint also returns the change to waiting. A harmless guard
+message or policy-version change alone does not change effect identity.
 
-## Implemented Facts
+The registry is not a safety prerequisite. Base/after package hashes already
+prevent a prepared change from overwriting a direct edit. Registry and origin
+records later provide identity continuity and provenance across paths.
 
-These are current-source facts, not target-state claims.
+### Recovery invariants
 
-- Project Skills are folder packages under `.sparkwright/skills/<name>`.
-- `packageHash` covers the package; the older `contentHash` identity primarily
-  describes `SKILL.md` and is insufficient for rename/copy reconciliation.
-- Model `create_skill` and `update_skill` persist proposals under
-  `.sparkwright/skill-evolution/proposals/<proposalId>` and do not apply them.
-- Proposal packages contain `metadata.json`, `proposal.md`, `patch.diff`, an
-  `after/<skill>` snapshot, and an update `before/<skill>` snapshot.
-- Apply verifies the staged after-package hash, reruns the Skill guard, checks
-  the base package, writes the target, runs doctor, and writes history.
-- Apply rolls back the target when doctor or history persistence fails, but the
-  current state model has no durable applying/receipt recovery protocol.
-- Model drafts dedupe by session (run fallback), and changed content revises the
-  same proposal id with a monotonic revision and prior after-hash. Closed
-  proposals are immutable.
-- CLI `skills create` and TUI `/create skill` still directly write a Skill;
-  TUI `/skill-create` and model tools draft proposals.
-- Current risky-tool approval occurs before `create_skill` executes, so it
-  approves proposal staging arguments rather than the inspected final effect.
-- The in-progress TUI handoff projects proposal metadata into a post-run action
-  band. Applying there occurs after the originating run and requires a separate
-  low-visibility keyboard flow.
-- Proposal list/review/reject/prune, history, and restore are already public
-  host/CLI/TUI behaviors and must remain compatible.
-- Workflow records and task actor outboxes provide durable waiting patterns,
-  but Skill code must not depend on `WorkflowRunRecord` and TUI memory must not
-  become the canonical waiting store.
-- Spawn-time agent grants establish the useful authorization doctrine: the
-  grant is approved at the parent boundary and can authorize only the exact
-  scoped downstream effect.
-- Skill stats currently use a name/layer/package-hash identity and preserve
-  legacy buckets. There is no stable project-local `artifactId` registry yet.
-- `create_agent` directly mutates prompt/model/tools configuration and has no
-  equivalent proposal/history/restore transaction.
+- Persist proposal and waiting/approval/applying state before the corresponding
+  external effect.
+- Treat target-equals-after as a recovery case, not a new mutation.
+- Write `applied` only after target hash, doctor, deterministic history, and
+  mutation receipt are durable.
+- On base drift, staged-package tampering, package validation failure, or an
+  unprovable partial write, fail closed without overwriting current content.
+- Keep reconciliation records distinct from approval and mutation receipts.
 
-## Adjudicated Design
+## Package Identity v2
 
-### Boundary
+### Canonical file set
 
-Managed change semantics depend on whether the approver can inspect the final
-effect and whether the approval is bound to it. They do not depend on whether
-the caller is CLI, TUI, or a model.
-
-- Explicit authored change with a complete final package: eligible for the
-  fast path after validation.
-- Incomplete intent, automatic learning, low-confidence suggestion, or batch
-  generation: persist to the review inbox; never auto-apply.
-- Dangerous findings: show the final effect and risks, then require explicit
-  approval for those exact risks.
-- Imported/community content: may collect local evidence and propose a local
-  project fork; never mutates the external source and never silently enables
-  inline-shell preprocessing.
-
-### Common interfaces
-
-The following logical interfaces are frozen before the Skill command service
-or agent governance work proceeds. Their physical package may move when the
-general managed-artifact lifecycle is extracted, but their fields and
-invariants are shared.
-
-```ts
-type PreparedChangeState =
-  | "ready"
-  | "waiting"
-  | "approved"
-  | "applying"
-  | "applied"
-  | "rejected"
-  | "stale"
-  | "failed";
-
-interface PreparedChange {
-  schemaVersion: 1;
-  proposalId: string;
-  artifactKind: "skill" | "agent";
-  artifactId: string;
-  operation: "create" | "update" | "rollback" | "import";
-  revision: number;
-  state: PreparedChangeState;
-  target: { layer: string; path: string };
-  basePackageHash: string | null;
-  afterPackageHash: string;
-  originDigest: string | null;
-  capabilityRequirements: string[];
-  effectHash: string;
-  preparedAt: string;
-  updatedAt: string;
-}
-
-interface ApprovalReceipt {
-  schemaVersion: 1;
-  receiptId: string;
-  proposalId: string;
-  proposalRevision: number;
-  effectHash: string;
-  decision: "approved" | "rejected";
-  approvedRiskFingerprints: string[];
-  approvedAt: string;
-  actor?: { kind: string; id?: string };
-}
-
-interface MutationReceipt {
-  schemaVersion: 1;
-  receiptId: string;
-  proposalId: string;
-  effectHash: string;
-  artifactId: string;
-  beforePackageHash: string | null;
-  afterPackageHash: string;
-  targetPath: string;
-  historyId: string;
-  appliedAt: string;
-}
-```
-
-`SkillCommandService` will expose prepare, inspect, approve, apply/resume,
-reject, move/rename/copy/reidentify, import, history, and restore operations.
-CLI, TUI, and model tools become adapters over that service rather than owners
-of distinct mutation semantics.
-
-### Effect hash
-
-`effectHash` is the SHA-256 of canonical JSON containing only stable final
-effect fields:
-
-```json
-{
-  "schemaVersion": 1,
-  "artifactKind": "skill",
-  "artifactId": "...",
-  "operation": "create",
-  "target": { "layer": "project", "path": ".sparkwright/skills/name" },
-  "basePackageHash": null,
-  "afterPackageHash": "...",
-  "originDigest": null,
-  "capabilityRequirements": ["project_skill_write"]
-}
-```
-
-- Canonical objects use fixed key order; requirement arrays are sorted and
-  deduplicated.
-- `guardPolicyVersion`, guard message text, runtime version, and model identity
-  are excluded.
-- Revising a proposal changes `afterPackageHash`, revision, and `effectHash`.
-  Any prior receipt whose revision/effect hash differs is unusable.
-
-### Guard delta authorization
-
-Guard runs at prepare and immediately before apply. A risk fingerprint is a
-stable hash of `ruleId + severity + location + dangerous-object identity`;
-message prose is excluded.
-
-- A receipt authorizes the exact dangerous fingerprints visible at approval.
-- A guard version or harmless wording change does not require reapproval.
-- A new dangerous fingerprint, severity promotion to dangerous, or a changed
-  dangerous object returns the change to `waiting`.
-- Guard execution failure is fail-closed and leaves the prepared package
-  recoverable.
-
-### Waiting and recovery
-
-The canonical waiting state is the persisted prepared change. The active run
-is merely one actor that may consume it.
-
-- Fast path: the tool prepares the final package, marks `waiting`, asks through
-  the run approval channel with `proposalId + revision + effectHash`, records
-  the receipt, and applies before returning the tool result.
-- Slow path: if no interactive approver exists, the run is cancelled, or the
-  client disconnects, the proposal remains `waiting` and appears in the durable
-  Suggestions/Review Inbox.
-- A later session reads the proposal, recomputes effect/base/guard state, and
-  either resumes apply or marks it stale/requires reapproval.
-- A generic actor waiting/outbox interface may reuse the file-backed actor
-  substrate, but Skill records must not import workflow record types.
-
-### Crash consistency and idempotency
-
-- `approved` means a valid receipt exists; `applying` means an apply journal or
-  mutation intent exists.
-- Before target mutation, persist an applying record containing the intended
-  effect hash and expected before/after hashes.
-- Apply is idempotent: if target already equals `afterPackageHash`, finish
-  doctor/history/receipt reconciliation instead of rewriting.
-- History identity is deterministic from proposal/effect, or history creation
-  detects an existing equivalent entry.
-- `applied` is written only after target hash, doctor, history, and mutation
-  receipt are all durable.
-- A base hash mismatch marks `stale`; it never overwrites.
-- A partial target write rolls back from the proposal before snapshot. If
-  rollback cannot be proven, state becomes failed with a repair finding rather
-  than claiming success.
-
-## Identity and Origin Drafts
-
-### Artifact registry
-
-Proposed versioned store:
+For Skill and Workflow folder packages, v2 recursively considers every entry
+under the package root. It includes every ordinary file except this fixed first
+version exclusion table:
 
 ```txt
-.sparkwright/skill-registry/v1/registry.json
+.git/
+.sparkwright/
+node_modules/
+.DS_Store
+Thumbs.db
+*.swp
+*.tmp
+*~
 ```
 
-It is project data and SHOULD be version controlled. Ephemeral scan locks and
-rebuildable indexes live outside the tracked document. Direct unregistered
-folders receive an in-memory provisional id during read-only scans; only an
-explicit mutation/reconciliation command registers it. Doctor shares the
-planner and reports findings but never writes the registry.
+Matching rules are frozen as follows:
 
-```ts
-interface SkillArtifactRecordV1 {
-  artifactId: string; // project-stable identity
-  activePath?: string;
-  packageHash?: string; // full current package
-  lineageId?: string; // verified upstream lineage only
-  derivedFrom?: string;
-  status: "active" | "orphaned" | "conflicted";
-  createdAt: string;
-  updatedAt: string;
-}
-```
+- Normalize relative paths to `/` before matching, sorting, hashing, storage,
+  and display.
+- Directory patterns ending in `/` match a path segment with that exact name
+  and exclude the full subtree. `.git`, `.sparkwright`, and `node_modules`
+  matching is case-sensitive on every platform.
+- `.DS_Store` and `Thumbs.db` match an exact basename with the listed case at
+  any depth.
+- `*.swp` and `*.tmp` match a basename suffix, and `*~` matches a basename
+  suffix `~`, all case-sensitive.
+- Host filesystem case folding must not change these logical matching rules.
+  Two discovered paths that normalize or case-fold to an ambiguous package
+  identity fail closed on affected platforms.
+- No manifest, package-local ignore file, or `.gitignore` interpretation is
+  introduced in v2.
 
-### Origin store
+Every non-excluded entry must be a directory or regular file. Reject symlinks,
+sockets, FIFOs, devices, path escape, ambiguous normalized paths, excessive
+file count, excessive individual file size, and excessive total bytes. Limits
+must be checked during enumeration and before unbounded reads or copies.
 
-Origin is stored outside the Skill package so operational metadata cannot
-perturb `packageHash`:
+Hash included files in stable bytewise relative-path order using the existing
+framing:
 
 ```txt
-.sparkwright/skill-registry/v1/origins/<artifactId>.json
+relativePath + NUL + raw file bytes + NUL
 ```
 
+One canonical enumerator and policy object must drive hash, snapshot, diff,
+apply, history, restore, Skill reconciliation, Workflow instantiate snapshot,
+and Workflow execution source construction. No consumer may silently add or
+omit files.
+
+### Policy-version boundary
+
+New strong identities carry at least:
+
 ```ts
-interface SkillOriginV1 {
-  kind: "local-path" | "git" | "url" | "registry";
-  locator: { canonical?: string; redacted: string };
-  revision?: string;
-  subpath?: string;
-  resolvedDigest?: string;
-  importedAt: string;
-  importedPackageHash: string;
-  updatePolicy: "frozen" | "notify" | "track";
-  evolutionPolicy: "disabled" | "manual" | "suggest";
-  trust: "trusted" | "community" | "agent-created";
-  lineageId?: string;
+interface AssetPackageIdentity {
+  packageHashPolicyVersion: 2;
+  packageHash: string; // sha256:<hex>
+  fileCount: number;
+  totalBytes: number;
 }
 ```
 
-Only verified git/registry sources may assert portable `lineageId`. Local paths
-do not preserve cross-project lineage by default. Import v1 implements frozen
-and notify; track and automatic three-way merge are deferred. Upstream changes
-use upstream-to-imported and imported-to-local diffs plus human adjudication.
+Records without a policy version are legacy v1. Existing v1 history is
+immutable and is not rewritten. Equality and statistics grouping require both
+policy version and hash; the same hash text under different policies does not
+erase the boundary.
 
-### Reconciliation doctrine
+## Direct Filesystem Reconciliation
 
-- Same path, changed content: preserve artifact id; report unmanaged drift.
-- Missing path plus one exact `packageHash` at a new path: recognize rename and
-  preserve artifact id.
-- Missing path plus one content-only match with different package/assets:
-  probable rename finding; no automatic decision.
-- Missing path plus multiple hash matches: ambiguous move finding.
-- Original path still exists plus an exact package copy: allocate a new artifact
-  id and optionally record `derivedFrom`.
-- New unmatched directory: provisional new artifact; register on explicit
-  mutation/reconciliation.
-- Registry entry without a directory: orphan tombstone preserving history and
-  stats.
-- One artifact id at two active paths: blocker requiring owner/copy/reidentify.
-- Explicit move/rename/copy/reidentify receipts override heuristics.
-- Same-path full replacement defaults to path continuity; users use
-  `reidentify` when replacement is semantically new.
+Reconciliation first scans without writing and emits findings. A later explicit
+command may adopt, move, copy, reidentify, or record an orphan. Its receipt
+records observation and user adjudication, never a fictional managed approval.
 
-## Stats and Evidence Draft
+| Direct operation                     | Phase 3B: safety behavior                                                | Phase 7: identity continuity                                                                    |
+| ------------------------------------ | ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------- |
+| add                                  | Discover and validate; colliding prepared create becomes stale.          | `adopt` assigns a registered identity and baseline.                                             |
+| modify any included file             | Current filesystem wins; base mismatch is stale; never overwrite.        | Same-path identity may be retained and unmanaged drift recorded.                                |
+| delete                               | Asset stops loading; related apply fails closed.                         | Preserve an orphan/tombstone with history and stats.                                            |
+| move/rename                          | Without registry, observe delete plus add; make no continuity promise.   | One unambiguous identity/hash match may be confirmed by `move`; ambiguity requires user choice. |
+| copy                                 | Treat the new path as a separate package; target collisions fail closed. | `copy` creates a new identity and may record `derivedFrom`.                                     |
+| same-path replacement                | Current content wins and pending work becomes stale.                     | Default to path continuity; `reidentify` declares a new logical asset.                          |
+| staged proposal tampering            | After-hash mismatch marks stale; never apply.                            | Re-author through the managed command service; no reconciliation shortcut.                      |
+| Git conflict or invalid/special file | Validation fails closed; never apply or load as valid.                   | Resolve externally, rescan, then explicitly adjudicate if needed.                               |
+| concurrent edit                      | Re-enumeration and optimistic hashes prevent silent overwrite.           | Rescan and choose adopt/revise/reidentify after the race settles.                               |
 
-The strong statistics key becomes `artifactId + packageHash`. Do not include
-runtime fingerprints in this key.
+A reconciliation receipt has its own kind and observed package identity. It
+must not contain an assertion that SparkWright approved or applied the observed
+filesystem change.
 
-Each observation may carry bounded attribution dimensions:
+## Workflow Executable Package Pinning
 
-- SparkWright/runtime version
-- model/provider
-- tool catalog digest
-- permission/access mode
-- effective content hash
-- preprocessing policy
-- origin kind/digest and lineage id
-- evidence pointer plus `available | pruned | inaccessible`
+A Workflow is a folder package. Its v2 `packageHash` covers `workflow.md`,
+configuration, scripts, and every other included canonical ordinary file.
+Legacy `contentHash` remains temporarily as the Markdown/compatibility identity;
+it is not sufficient for execution pinning.
 
-Creation/import writes only artifact/package/origin/history baseline. It does
-not invent a zero-use statistics bucket. Local observations begin on first
-index/load/run. External project statistics are marked priors/aggregates and
-never copied into local facts. Each upstream digest starts a new package bucket.
-Evidence labels distinguish association, suspected regression, and confirmed.
+Instantiation must:
 
-Migration keeps existing `name + layer + packageHash` projections readable as
-legacy identities. Registry reconciliation maps an unambiguous current package
-to an artifact id; ambiguous history stays legacy rather than being guessed.
+1. Enumerate the live package with policy v2.
+2. Copy the canonical set to an immutable executable package snapshot.
+3. Hash the snapshot with the same enumerator.
+4. Re-enumerate/hash the live source after copying.
+5. Commit the instance only if pre-copy, snapshot, and post-copy identities
+   agree; otherwise discard and retry within a bounded policy or fail closed.
+6. Parse `workflow.md` and config from the snapshot and persist `packageHash`,
+   `packageHashPolicyVersion`, and `packageSnapshotRef` with the run record.
 
-## Evaluation Metadata Draft
+Every node, script, verifier, normal continuation, and resume executes with the
+snapshot as `sourceDir`. A run must never use a new live script/config under an
+old recorded package identity. Missing or invalid snapshot state fails closed;
+live-folder equality is not a substitute for a durable snapshot once the
+instance has been committed.
 
-Optional package-external file:
+Pinning covers authored files inside the Workflow package only. External
+Node/Python/bash runtimes, workspace dependencies, `PATH`, environment
+variables, OS/toolchain, and other host state are execution environment. Store
+a bounded environment fingerprint for attribution and diagnosis, but exclude it
+from `packageHash`. `node_modules` remains excluded and instantiate never
+installs dependencies. A dependency that must be pinned must be vendored into
+an explicitly supported package-local directory other than `node_modules`.
+
+Workflow proposal, history, restore, and evolution systems remain deferred.
+
+## Markdown Agent Authoring
+
+The ordinary Agent authoring target is one file:
 
 ```txt
-.sparkwright/skill-registry/v1/evaluations/<artifactId>.json
+.sparkwright/agents/<id>.md
 ```
 
-```ts
-interface SkillEvaluationV1 {
-  objective?: string;
-  successSignals?: string[];
-  failureSignals?: string[];
-  replayCases?: Array<{ id: string; evidence: string }>;
-  minimumSamples?: number;
-  observationWindow?: { runs?: number; durationMs?: number };
-}
+Phase 5 authors final Markdown, parses and validates it, resolves an effective
+capability summary, shows the final file diff, uses the existing workspace-write
+approval, writes atomically, then reloads and validates callability. It does not
+mutate config-backed profiles and does not create an Agent proposal store,
+history, receipt, registry, restore, or automatic evolution system. Advanced
+global governance stays in explicit configuration.
+
+Phase 5 generates only the single Markdown file. Folder Agent packages are
+deferred until references/scripts/templates have explicit runtime contracts.
+Before introducing an `AGENT.md` sentinel, doctor must warn that current
+recursive discovery parses files such as `reviewer/AGENT.md` as an ordinary
+Markdown profile whose fallback id is `AGENT`; migration must never silently
+change that meaning.
+
+In a future folder form, the folder name supplies only the default id. A valid
+frontmatter `id` may supply a namespaced logical id, and collisions are judged
+by logical id rather than basename or folder path.
+
+Agent spawn/delegate events must capture the resolved Agent identity and package
+identity at the event boundary. Stats must not infer an older invocation's
+identity by reading the current Markdown file later.
+
+## Trace-Derived Statistics
+
+Skill, Agent, and Workflow retain asset-specific projections over shared trace
+scanning, observation identity, freshness/catalog, and projection-cache
+primitives. Raw trace and Workflow run records remain evidence; projections are
+rebuildable and never become runtime authority. Do not copy three new raw
+evidence stores.
+
+The strong observation identity contains at least:
+
+```txt
+artifactKind + layer + logicalName/artifactId
+  + packageHashPolicyVersion + packageHash
 ```
 
-Validation tiers are manifest/doctor, guard, deterministic fixtures/examples,
-historical shadow/replay, post-apply local observation, and rollback
-recommendation. V1 implements monitoring and a human rollback recommendation,
-not traffic canarying.
+Capture it when the event occurs: Skill index/load/use, Agent spawn/delegate,
+and Workflow instantiate/run/node/usage. Later registry reconciliation may add
+an unambiguous `artifactId`, but must not guess across ambiguity.
 
-## Evolution Pipelines
+The v1-to-v2 transition is an identity-policy boundary. Projections do not
+automatically merge buckets across it and reports distinguish:
 
-Keep three independently governed queues:
+- content changed;
+- policy changed;
+- both content and policy changed.
 
-1. Learning candidates: user corrections, explicit future preference, or
-   repeated local observations.
-2. Upstream updates: supply-chain change from git/registry/url.
-3. Local evolution: a proposed local package or project fork backed by local
-   evidence.
+A policy-only boundary is not reported as a real performance regression.
+Agent and Workflow initially support only `observe -> aggregate -> diagnose`;
+their statistics cannot trigger mutation or evolution.
 
-Diagnosis chooses a suggested owner before proposing a Skill edit:
+## Delivery Plan
 
-| Symptom                     | Suggested owner                              |
-| --------------------------- | -------------------------------------------- |
-| not routed/not loaded       | description, triggers, matcher               |
-| manifest/package invalid    | Skill package                                |
-| tool/MCP/agent missing      | capability/config                            |
-| permission denied           | policy/agent profile                         |
-| command/environment failure | workflow/tool/environment                    |
-| loaded but ignored          | Skill content, context competition, or model |
-| version regression          | rollback/update proposal                     |
+### Completed: Skill Phase 1 and Phase 2
 
-Churn controls: one active proposal per artifact, effect/finding dedupe,
-cooldown, review/mutation budgets, digest-only low confidence, reject reasons as
-suppression evidence, and stop-after-repeated-reject/supersede. Real-time
-interruptions default to explicit current change requests and high-confidence
-severe rollback recommendations.
+Retain the implemented prepared-change, effect-bound approval, durable waiting,
+history, receipt, recovery, and four-entry command-service convergence.
 
-## UX Contract
+### Phase 3A: package identity v2 substrate
 
-Ordinary users see three surfaces:
+- Implement the canonical enumerator, fixed exclusions, special-file/path/size
+  rejection, hashing, snapshot primitives, and policy-version serialization.
+- Add compatibility readers that preserve immutable v1 records.
 
-1. Current task completion card: final effect, validation/files summary, and
-   Create/Review/Cancel.
-2. Persistent Suggestions Inbox: reason, confidence, impact, Review/Dismiss.
-3. Skill detail: source, trust, health, usage, version, history, and
-   Update/History/Rollback/Advanced.
+### Phase 3B: Skill full-package and external-change safety
 
-Proposal ids, hashes, lineage, and raw evidence are Advanced/CLI details. User
-copy says create/update/suggestion/rollback. It does not expose internal
-off/notice/draft/apply modes or depend on a bare `a/r` action band.
+- Move Skill hash, staged snapshots, diff, apply, history, and restore to the
+  v2 canonical set.
+- Implement the safety column of the direct-operation matrix: stale/fail-closed,
+  base/after checks, and never-overwrite behavior, without rename continuity.
 
-## Failure and Recovery Matrix
+### Phase 4: Workflow executable package pinning correctness
 
-| Failure point                        | Durable state                  | Resume behavior                                   |
-| ------------------------------------ | ------------------------------ | ------------------------------------------------- |
-| author/validation before persistence | none                           | report failure; no proposal                       |
-| proposal persistence interrupted     | incomplete dir                 | quarantine/cleanup; never list as ready           |
-| no resolver/client leaves            | waiting                        | inbox or later session resumes review             |
-| proposal revised after approval      | ready/waiting, new effect hash | old receipt invalid; approve again                |
-| guard wording/version changes only   | approved                       | no reapproval; apply after rerun                  |
-| new dangerous risk                   | waiting                        | show delta and require reapproval                 |
-| guard execution fails                | approved/waiting               | fail closed; retry guard later                    |
-| base package drift                   | stale                          | preserve proposal; do not overwrite               |
-| crash before target write            | applying                       | verify base/effect and retry                      |
-| crash after target write             | applying                       | hash target; reconcile history/receipt            |
-| doctor blocks                        | failed or waiting repair       | rollback before package; expose finding           |
-| history/receipt write fails          | applying                       | reconcile deterministically; no duplicate history |
+- Create and verify immutable snapshots at instantiate.
+- Parse and execute every normal/resumed node from snapshot `sourceDir` and
+  persist strong identity plus snapshot reference.
+
+### Phase 5: Markdown Agent authoring and version attribution
+
+- Implement single-file authoring, semantic review, existing write approval,
+  atomic write, post-write callability validation, and event-time identity.
+
+### Phase 6: Agent and Workflow stats projections
+
+- Add trace-derived, rebuildable, package-policy-aware projections and expose
+  content/policy/both change classification.
+
+### Phase 7: Skill registry, origin, import, and reconciliation
+
+- Add stable identity continuity, origin records, explicit adopt/move/copy/
+  reidentify/orphan operations, and distinct reconciliation receipts.
+
+### Phase 8: evidence-driven Skill suggestions
+
+- Add Skill-specific diagnosis, evidence bundles, churn controls, review
+  suggestions, and rollback advice. Do not generalize this into Agent or
+  Workflow self-evolution.
+
+## Acceptance Criteria
+
+- Modifying any included ordinary Skill or Workflow file changes its v2
+  `packageHash`.
+- Hash, snapshot, diff, apply, history, restore, reconciliation, and Workflow
+  execution consume the same canonical file set where applicable.
+- Excluded entries do not affect identity; non-excluded symlink, special,
+  escaping, ambiguous, or over-limit entries fail closed.
+- The direct-operation matrix is covered without silent overwrite in Phase 3B;
+  rename continuity is not promised before Phase 7.
+- Running and resumed Workflows never execute new live script/config content
+  under an old package identity.
+- Workflow snapshot races either produce a snapshot identical to stable live
+  source or retry/fail closed.
+- Agent spawn/delegate and Workflow run/node/usage events record package
+  identity at event time.
+- v1 and v2 statistics boundaries stay visible, do not auto-merge, and do not
+  mislabel policy-only change as performance regression.
+- No Agent/Workflow observation triggers mutation or evolution.
 
 ## Migration and Compatibility
 
-- Read old `state: draft` proposals as `ready` when no transaction state exists.
-- Continue accepting proposal-id list/show/review/apply/reject/prune commands.
-- Existing revisions remain valid; missing effect hashes are computed on read
-  and persisted only during an explicit managed mutation.
-- Existing history is immutable. New mutation receipts point to old history
-  when restoring or reconciling it.
-- Direct CLI/TUI create commands migrate behind `SkillCommandService`; command
-  syntax may remain compatible while mutation semantics change.
-- Existing session draft dedupe remains and becomes the one-active-proposal
-  rule once artifact ids exist.
-- The post-run TUI action band may temporarily consume new waiting metadata,
-  but is not the target UX and cannot be the only recovery surface.
-
-## Phased Delivery
-
-### Phase 1: safe authored create vertical slice
-
-- Persist complete authored proposal and effect hash.
-- Run doctor/guard/diff before requesting approval.
-- Request exactly one approval for `proposalId + revision + effectHash` after
-  the final effect exists.
-- On approval, persist receipt and apply in the same run/tool episode.
-- Leave a durable waiting proposal when no response is available.
-- Invalidate approval on revise; enforce base/after hashes; write history and a
-  mutation receipt.
-- Keep template/intent/dangerous paths in review for this slice.
-
-### Phase 2: command service and four-entry convergence
-
-- Implemented: `SkillCommandService` now routes CLI create, TUI `/create skill`,
-  `/skill-create`, model create, and human review apply through one prepared
-  change boundary. `/create skill` is canonical; `/skill-create` is a
-  compatibility shortcut.
-- Implemented: replaced the transient action band with a completion card. It
-  restores the newest draft from proposal storage on TUI startup; `/skill-review`
-  remains the durable full inbox and the only complete recovery surface.
-
-### Phase 3: managed Agent changes
-
-- Add prepared final effect, prompt/tool/model/capability diff, hash-bound
-  approval, durable waiting/recovery, history, and restore to `create_agent`.
-
-### Phase 4: registry, origin, import, reconciliation
-
-- Ship artifact registry and read-only planner/doctor integration.
-- Implement explicit identity commands and frozen/notify import.
-
-### Phase 5: separated evolution and evaluation
-
-- Split learning/upstream/local queues; add owner diagnosis, churn controls,
-  evidence bundles, evaluation metadata, observation, and rollback advice.
-
-### Phase 6: generic managed-artifact lifecycle
-
-- Extract common prepared-change/waiting/receipt machinery after Skill and
-  Agent prove the interface. Reuse actor substrate without coupling artifact
-  records to workflows.
-
-## Tests and Acceptance
-
-Phase 1 is accepted only when tests prove:
-
-- an explicit safe authored create finishes with a valid live Skill, applied
-  proposal, history, and mutation receipt;
-- proposal persistence precedes approval and the trace contains one approval
-  bound to the final effect hash;
-- there is no pre-staging approval for this path;
-- missing/disconnected approval leaves a recoverable waiting proposal;
-- a later session can approve/apply after full revalidation;
-- revision changes the effect hash and invalidates the old receipt;
-- harmless guard policy/message drift does not reapprove;
-- new dangerous findings return to waiting;
-- base drift marks stale without overwrite;
-- apply resume is idempotent across simulated crashes and does not duplicate
-  Skill/history;
-- proposal list/review/history/restore and continuation dedupe remain green;
-- doctor/reconciliation reads do not write registry state;
-- focused tests, affected package typechecks/builds, project-map drift check,
-  and the cross-package release gate pass before the slice is called complete.
+- Existing Skill v1 history and receipts remain readable and immutable.
+- Existing Phase 1/2 proposal commands, durable waiting, history, restore, and
+  command entrypoints remain compatible.
+- A missing `packageHashPolicyVersion` means legacy v1; readers do not rewrite
+  it during scans.
+- Workflow `contentHash` remains for compatibility while new execution records
+  add v2 package identity and snapshot reference.
+- Existing Markdown Agent discovery remains unchanged until Phase 5; the future
+  `AGENT.md` sentinel requires an explicit doctor-led migration.
+- Registry introduction may reconcile only unambiguous observations; ambiguous
+  legacy identity remains legacy.
 
 ## Open Questions
 
-- Exact home package for the common interfaces before Phase 6 extraction.
-- Whether waiting approval records should share the actor outbox directory or
-  expose it through a generic adapter while proposals remain the source of
-  truth.
-- Stable dangerous-object extraction for findings that currently expose only
-  rule/severity/location/message.
-- Registry merge/conflict format under ordinary git collaboration.
-- Actor identity and delegation fields required in approval receipts.
-- Retention and privacy policy for evidence pointers and origin locators.
-- Whether templates can become fast-path eligible after an explicit preview or
-  should always stay review-required.
+- What exact `maxFiles`, per-file byte, and total-byte limits apply to each
+  asset kind, and which are configurable?
+- Where are executable Workflow snapshots stored, how are references made
+  durable across resume, and what retention/GC rules preserve active runs?
+- What bounded fields and redaction rules define the Workflow environment
+  fingerprint?
+- Which package-local vendored dependency directories receive explicit runtime
+  support, and how are their language-specific entrypoints validated?
+- What registry merge/conflict representation is safe under ordinary Git
+  collaboration?
+- What retention/privacy rules apply to origin locators, evidence pointers, and
+  projection caches?
 
 ## Last Verified
+
+- Status: Read-only
+- Date: 2026-07-12
+- Scope: adjudicated documentation refactor; froze package identity v2,
+  Workflow executable snapshot, Markdown Agent, statistics, reconciliation, and
+  revised delivery boundaries without runtime changes.
+- Read: `packages/skills/src/package.ts`,
+  `packages/skills/src/markdown-folder-asset.ts`,
+  `packages/host/src/skill-evolution.ts`,
+  `packages/host/src/skill-command-service.ts`,
+  `packages/host/src/agent-profiles.ts`, `packages/host/src/workflows.ts`,
+  `packages/host/src/workflow-projection.ts`, `packages/host/src/runtime.ts`,
+  and `packages/agent-runtime/src/workflows/*`.
+- Tests: not run; documentation-only redesign.
 
 - Status: Verified
 - Date: 2026-07-12T08:36:00+0800
