@@ -38,7 +38,7 @@ function envelope(
     expected: { generation: 1, status: "running" },
     command: { kind: "cancel", reason: "test" },
     createdAt: "2026-07-11T00:00:00.000Z",
-    expiresAt: "2026-07-11T23:00:00.000Z",
+    expiresAt: "2099-07-11T23:00:00.000Z",
     ...overrides,
   };
 }
@@ -290,7 +290,7 @@ describe("WorkflowControlCommandProcessor", () => {
       inbox,
       store,
       workspaceId: "workspace-one",
-      now: () => new Date("2026-07-12T00:00:00.000Z"),
+      now: () => new Date("2100-07-12T00:00:00.000Z"),
     });
     const result = await processor.processNext(workflowRunId);
     expect(result).toMatchObject({
