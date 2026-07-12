@@ -196,12 +196,21 @@ EventLog emits full event
 - Stream chunk handling is collapsed at non-debug levels into contiguous
   `model.stream.text` segments; same-run non-chunk events split segments so
   persisted sequence order stays monotonic. Consumers must not rely on
-  individual chunks unless `debug`.
+  individual chunks unless `debug`. During a disk-degraded replay, sequence
+  order remains authoritative but a segment's `chunkCount`/duration may be a
+  conservative approximation if later chunks arrived before recovery.
 - Large process output already materializes through shell/traced-process paths
   and `artifact.created`. A future generic large-result helper must avoid
   double-spilling tool-owned artifacts and honor `resultSize.neverPersist`.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-11T22:55:00+0800
+- Scope: documented degraded-buffer stream-segment telemetry approximation;
+  persisted sequence ordering remains the hard invariant.
+- Read: `packages/core/src/trace-store.ts`, `packages/core/test/trace.test.ts`.
+- Tests: full `npm run release:check`.
 
 - Status: Verified
 - Date: 2026-07-11T19:53:00+0800

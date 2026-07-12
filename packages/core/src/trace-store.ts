@@ -391,7 +391,10 @@ export class FileRunStore implements RunStore {
     // Keep the accumulator until the synthesized segment is durably appended.
     // acknowledgePersistedStreamSegments removes the matching firstEventId
     // after the write succeeds, preserving the marker across degraded-buffer
-    // replay without emitting it twice.
+    // replay without emitting it twice. If later chunks arrive while disk is
+    // degraded, replay may conservatively fold them into this marker, so the
+    // rare failure path preserves sequence order but treats per-segment
+    // chunkCount/duration as approximate telemetry.
     const step =
       isRecord(reference.payload) && typeof reference.payload.step === "number"
         ? reference.payload.step

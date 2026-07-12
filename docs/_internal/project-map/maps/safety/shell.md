@@ -69,15 +69,14 @@ model calls shell tool
   incidental execution fields such as `timeoutMs`, so a model cannot bypass the
   loop guard by varying timeout-only arguments.
 - Long-running shell uses one foreground budget. `foregroundTimeoutMs` defaults
-  to 300000 ms and is capped at 600000 ms. Per-call legacy `timeoutMs` is an
-  observable runtime alias for `foregroundTimeoutMs`, but is omitted from the
-  model-facing schema so new calls use the canonical field. It no longer
-  configures process hard-kill. Tool output reports `foregroundTimeoutMs`,
-  `promotionAvailable`, and whether the alias was used.
+  to 300000 ms and is capped at 600000 ms. It is the only accepted per-call
+  timeout field; legacy `timeoutMs` is rejected by the closed tool schema and
+  no longer has a runtime alias. Tool output reports `foregroundTimeoutMs` and
+  `promotionAvailable`.
 - Invalid shell execution arguments discovered during shell input
-  normalization, including `timeoutMs: 0`, are surfaced through the normal
-  core tool lifecycle as `tool.failed` (`TOOL_ARGUMENTS_INVALID`) instead of
-  escaping before the shell span closes.
+  normalization are surfaced through the normal core tool lifecycle as
+  `tool.failed` (`TOOL_ARGUMENTS_INVALID`) instead of escaping before the shell
+  span closes. Unknown legacy fields fail closed during schema validation.
 - When the foreground budget expires, hosts with a task manager promote the live
   process to durable task state. Hosts without promotion abort the process and
   return `timedOut: true` with a diagnostic saying promotion was unavailable.
@@ -137,6 +136,13 @@ model calls shell tool
 - Shell is powerful and cross-cuts workspace, tasks, trace, and capability state.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-11T22:10:00+0800
+- Scope: removed the legacy per-call timeout alias from public input/output and
+  runtime normalization; `foregroundTimeoutMs` is now the sole contract.
+- Read: `packages/shell-tool/src/tool.ts`, focused tests.
+- Tests: full `npm run release:check`.
 
 - Status: Verified
 - Date: 2026-07-11T21:45:00+0800

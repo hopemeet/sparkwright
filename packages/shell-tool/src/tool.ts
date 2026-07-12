@@ -154,8 +154,7 @@ export interface ShellToolOptions {
   environment: ExecutionEnvironment;
   /**
    * Default wall-clock foreground budget. A call may override this with
-   * `foregroundTimeoutMs`; legacy `timeoutMs` is accepted as an observable alias
-   * for the same foreground budget and no longer controls process hard-kill.
+   * `foregroundTimeoutMs`.
    */
   foregroundTimeoutMs: number;
   /**
@@ -190,8 +189,6 @@ export interface ShellToolOptions {
   workspaceRoot?: string;
   /** Additional trusted filesystem roots for cwd and absolute path arguments. */
   allowedRoots?: readonly string[];
-  /** @deprecated Use `foregroundTimeoutMs`; hard kill timeout is not configured here. */
-  defaultTimeoutMs?: number;
   /**
    * Override the registered tool name (defaults to `"shell"`).
    */
@@ -211,11 +208,6 @@ export interface ShellToolOptions {
 export interface ShellToolInput {
   command: string;
   foregroundTimeoutMs?: number;
-  /**
-   * @deprecated Alias for `foregroundTimeoutMs`. It no longer controls process
-   * hard-kill timeout.
-   */
-  timeoutMs?: number;
   cwd?: string;
   /**
    * Start the command directly as a background task instead of waiting for it
@@ -272,10 +264,6 @@ export interface ShellToolOutput {
   foregroundTimeoutMs: number;
   /** True when a promotion handler was available for this shell call. */
   promotionAvailable: boolean;
-  /** True when legacy `timeoutMs` supplied the foreground budget. */
-  timeoutMsAliasUsed: boolean;
-  /** Human-readable migration note when legacy `timeoutMs` was provided. */
-  timeoutAliasWarning?: string;
   /**
    * @reserved Public shell-output field consumed by trace/report UIs and the
    * model-visible shell observation when foreground promotion is unavailable.
@@ -413,8 +401,6 @@ export function createShellTool(
         approvalStatus: { type: "string", enum: ["approved", "not_required"] },
         foregroundTimeoutMs: { type: "integer" },
         promotionAvailable: { type: "boolean" },
-        timeoutMsAliasUsed: { type: "boolean" },
-        timeoutAliasWarning: { type: "string" },
         promotionUnavailableReason: { type: "string" },
         stdoutArtifactId: { type: "string" },
         stderrArtifactId: { type: "string" },
@@ -457,7 +443,6 @@ export function createShellTool(
         "approvalStatus",
         "foregroundTimeoutMs",
         "promotionAvailable",
-        "timeoutMsAliasUsed",
       ],
       additionalProperties: false,
     },
@@ -481,8 +466,6 @@ export function createShellTool(
         "stderr",
         "foregroundTimeoutMs",
         "promotionAvailable",
-        "timeoutMsAliasUsed",
-        "timeoutAliasWarning",
         "promotionUnavailableReason",
         "stdoutArtifactId",
         "stderrArtifactId",
@@ -530,7 +513,6 @@ export function createShellTool(
           safetyReason: verdict.reason,
           foregroundTimeoutMs: input.foregroundTimeoutMs,
           promotionAvailable: options.promotionAvailable ?? true,
-          timeoutMsAliasUsed: input.timeoutMsAliasUsed,
           backgroundLifetime: input.lifetime,
         },
       };
@@ -553,10 +535,6 @@ export function createShellTool(
             approvalStatus: approvalStatusFromDecision(verdict.decision),
             foregroundTimeoutMs: input.foregroundTimeoutMs,
             promotionAvailable: options.promotionAvailable ?? true,
-            timeoutMsAliasUsed: input.timeoutMsAliasUsed,
-            ...(input.timeoutAliasWarning
-              ? { timeoutAliasWarning: input.timeoutAliasWarning }
-              : {}),
             background: true,
             backgroundOrigin: "explicit",
             lifetime: input.lifetime,
@@ -577,8 +555,6 @@ export function createShellTool(
         foregroundTimeoutMs: input.foregroundTimeoutMs,
         onBackground,
         promotionAvailable: options.promotionAvailable ?? true,
-        timeoutMsAliasUsed: input.timeoutMsAliasUsed,
-        timeoutAliasWarning: input.timeoutAliasWarning,
         background: input.background,
         lifetime: input.lifetime,
       });
@@ -750,8 +726,6 @@ interface BackgroundRunContext {
   foregroundTimeoutMs: number;
   onBackground: ShellBackgroundHandoffHandler;
   promotionAvailable: boolean;
-  timeoutMsAliasUsed: boolean;
-  timeoutAliasWarning?: string;
   background: boolean;
   lifetime: ShellTaskLifetime;
 }
@@ -923,10 +897,6 @@ async function handOffShellToBackground(input: {
       approvalStatus: approvalStatusFromDecision(ctx.verdict.decision),
       foregroundTimeoutMs: ctx.foregroundTimeoutMs,
       promotionAvailable: ctx.promotionAvailable,
-      timeoutMsAliasUsed: ctx.timeoutMsAliasUsed,
-      ...(ctx.timeoutAliasWarning
-        ? { timeoutAliasWarning: ctx.timeoutAliasWarning }
-        : {}),
       background: true,
       backgroundOrigin: input.origin,
       lifetime: ctx.lifetime,
@@ -979,10 +949,6 @@ async function handOffShellToBackground(input: {
       approvalStatus: approvalStatusFromDecision(ctx.verdict.decision),
       foregroundTimeoutMs: ctx.foregroundTimeoutMs,
       promotionAvailable: ctx.promotionAvailable,
-      timeoutMsAliasUsed: ctx.timeoutMsAliasUsed,
-      ...(ctx.timeoutAliasWarning
-        ? { timeoutAliasWarning: ctx.timeoutAliasWarning }
-        : {}),
       promotionUnavailableReason,
       sandbox: shellSandboxOutput(final.metadata),
     };
@@ -1016,10 +982,6 @@ function completedShellOutput(
     approvalStatus: approvalStatusFromDecision(ctx.verdict.decision),
     foregroundTimeoutMs: ctx.foregroundTimeoutMs,
     promotionAvailable: ctx.promotionAvailable,
-    timeoutMsAliasUsed: ctx.timeoutMsAliasUsed,
-    ...(ctx.timeoutAliasWarning
-      ? { timeoutAliasWarning: ctx.timeoutAliasWarning }
-      : {}),
     sandbox: shellSandboxOutput(result.metadata),
   };
 }
@@ -1080,8 +1042,6 @@ function normalizeShellInput(
 ): Required<Pick<ShellToolInput, "command">> &
   Pick<ShellToolInput, "cwd"> & {
     foregroundTimeoutMs: number;
-    timeoutMsAliasUsed: boolean;
-    timeoutAliasWarning?: string;
     background: boolean;
     lifetime: ShellTaskLifetime;
   } {
@@ -1091,35 +1051,23 @@ function normalizeShellInput(
     typeof args.cwd === "string" && args.cwd.length > 0 ? args.cwd : undefined;
   const background = args.background === true;
   const lifetime = readShellTaskLifetime(args.lifetime);
-  const timeoutMs = readOptionalPositiveInteger(args, "timeoutMs");
   const explicitForegroundTimeoutMs = readOptionalPositiveInteger(
     args,
     "foregroundTimeoutMs",
   );
   const foregroundTimeoutMs =
-    explicitForegroundTimeoutMs ?? timeoutMs ?? defaultForegroundTimeoutMs;
+    explicitForegroundTimeoutMs ?? defaultForegroundTimeoutMs;
   if (foregroundTimeoutMs > MAX_FOREGROUND_TIMEOUT_MS) {
     throw new Error(
       `foregroundTimeoutMs must be <= ${MAX_FOREGROUND_TIMEOUT_MS}.`,
     );
   }
-  const timeoutMsAliasUsed =
-    !background &&
-    explicitForegroundTimeoutMs === undefined &&
-    timeoutMs !== undefined;
   return {
     command,
     cwd,
     foregroundTimeoutMs,
-    timeoutMsAliasUsed,
     background,
     lifetime,
-    ...(timeoutMs !== undefined
-      ? {
-          timeoutAliasWarning:
-            "timeoutMs is interpreted as foregroundTimeoutMs; hard kill timeout is no longer controlled here.",
-        }
-      : {}),
   };
 }
 

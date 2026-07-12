@@ -32,7 +32,8 @@
 ## Covered
 
 - Shell tool construction requires `foregroundTimeoutMs`.
-- `timeoutMs` is treated as an observable foreground-timeout alias.
+- `foregroundTimeoutMs` is the sole per-call foreground budget field; legacy
+  `timeoutMs` is rejected by the closed input schema.
 - Unsafe shell syntax and destructive commands are denied before execution.
 - Workspace-relative `cwd` is anchored under the configured workspace root.
 - Long foreground commands promote to background tasks when a `TaskManager` is

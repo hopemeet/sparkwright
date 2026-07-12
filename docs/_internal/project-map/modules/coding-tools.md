@@ -50,6 +50,9 @@ Does not own:
   that marker to route mutations through the managed `workspace.write` diff
   approval path instead of treating the tool call itself as the write boundary.
 - Shell is classified by `@sparkwright/shell-tool` and gated by policy/approval.
+- Shell's only per-call foreground budget field is `foregroundTimeoutMs`;
+  unknown legacy `timeoutMs` input fails the closed schema and no alias fields
+  remain in the public result.
 - Explicit background shell calls detach only after that gate, distinguish
   explicit origin from timeout promotion, support job/service lifecycle hints,
   and reuse an equivalent active explicit task before spawning a process.
@@ -60,8 +63,9 @@ Does not own:
   not re-derive execution semantics from `backgroundOrigin`.
 - `task_create` remains eager on the main host catalog, while existing-task
   control stays an advanced deferred capability loaded through `tool_search`.
-  Shell returns the concrete task id and concise guidance to inspect, read
-  output, wait, or stop it; the `task` action schema owns those operations.
+  Shell returns the concrete task id and treats the task-start observation plus
+  early output as launch confirmation; it points to wait/output/stop only when
+  those operations are actually needed.
 - Managed capability files should use dedicated tools instead of raw shell writes.
 - Tool results should be compact enough for model context and trace summaries.
 - Read/discovery/search tools should declare thin `resultPresentation` hints
@@ -127,6 +131,13 @@ Does not own:
   smokes should use `write`, `edit_anchored_text`, or `edit`.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-11T22:55:00+0800
+- Scope: canonical shell foreground timeout contract and background launch
+  confirmation guidance.
+- Read: `packages/shell-tool/src/tool.ts`, shell/host integration tests.
+- Tests: full `npm run release:check`.
 
 - Status: Verified
 - Date: 2026-07-11T00:19:00+0800

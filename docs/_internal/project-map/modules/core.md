@@ -118,6 +118,11 @@ Does not own:
   contiguous run-local chunk segment. A same-run non-chunk event flushes the
   open segment first, so background task events cannot make persisted sequence
   order move backwards while folded `chunkCount` remains contiguous evidence.
+  Disk-degraded replay preserves that ordering but may conservatively
+  approximate segment chunk count/duration if later chunks arrive before drain.
+- Repeated-call guidance owned by a tool is eligible only after a successful
+  state observation. A same-target prior failure stays on the generic failed
+  repeat path and cannot be converted into a completed no-op nudge.
 - Trace reporting treats a naturally completed `lifetime:service` shell task
   as an informational classification advisory, not a correctness failure;
   finite commands should normally be classified as jobs.
@@ -335,6 +340,14 @@ Does not own:
   guard and trace diagnostics.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-11T22:55:00+0800
+- Scope: prior-failure-safe repeated observation guidance and degraded stream
+  segment telemetry semantics.
+- Read: `packages/core/src/run.ts`, `packages/core/src/trace-store.ts`, focused
+  tests.
+- Tests: full `npm run release:check`.
 
 - Status: Verified
 - Date: 2026-07-11T21:45:00+0800

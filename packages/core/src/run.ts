@@ -3222,7 +3222,7 @@ export class SparkwrightRun implements RunHandle {
       this.tools.get(requestedCall.toolName),
       requestedCall.arguments,
     );
-    if ((priorNoop && !priorFailure) || repeatedCallGuidance) {
+    if (!priorFailure && (priorNoop || repeatedCallGuidance)) {
       const nudged: ToolResult = {
         toolCallId: call.id,
         status: "completed",

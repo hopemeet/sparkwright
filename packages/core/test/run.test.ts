@@ -1536,6 +1536,57 @@ describe("SparkwrightRun", () => {
     ).toBe(true);
   });
 
+  it("does not let repeated state guidance hide a prior tool failure", async () => {
+    let executed = 0;
+    const observe = defineTool({
+      name: "observe",
+      description: "Observe changing state.",
+      inputSchema: { type: "object" },
+      repeatedCallGuidanceForArgs: () =>
+        "Use the blocking wait action instead.",
+      execute() {
+        executed += 1;
+        throw new Error("snapshot target does not exist");
+      },
+    });
+    let modelCalls = 0;
+    const run = createRun({
+      goal: "repeat one failed state observation",
+      tools: [observe],
+      maxSteps: 8,
+      model: {
+        async complete() {
+          modelCalls += 1;
+          if (modelCalls <= 2) {
+            return { toolCalls: [{ toolName: "observe", arguments: {} }] };
+          }
+          return { message: "done" };
+        },
+      },
+    });
+
+    await run.start();
+
+    expect(executed).toBe(1);
+    const events = run.events.all();
+    expect(
+      events.some(
+        (event) =>
+          event.type === "tool.completed" &&
+          (event.payload as { output?: { reason?: string } }).output?.reason ===
+            "repeated_state_observation",
+      ),
+    ).toBe(false);
+    expect(
+      events
+        .filter((event) => event.type === "tool.failed")
+        .map(
+          (event) =>
+            (event.payload as { error?: { code?: string } }).error?.code,
+        ),
+    ).toEqual(["TOOL_EXECUTION_FAILED", "REPEATED_TOOL_CALL_SKIPPED"]);
+  });
+
   it("nudges repeated idempotent no-op tool results without recording a tool failure", async () => {
     let executed = 0;
     const ledger = defineTool({
