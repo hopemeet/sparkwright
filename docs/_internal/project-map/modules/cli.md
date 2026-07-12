@@ -312,6 +312,11 @@ Does not own:
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-07-12
+- Scope: checked Skill reconciliation CLI routing; no CLI run/session/trace contract changed.
+- Tests: focused CLI reconciliation/review tests passed; release gate pending.
+
+- Status: Read-only
 - Date: 2026-07-12T16:36:08+0800
 - Scope: checked Workflow CLI resume against executable snapshots; CLI syntax is unchanged.
 - Tests: not run for broader CLI behavior; Phase 4 Workflow release gate passed.

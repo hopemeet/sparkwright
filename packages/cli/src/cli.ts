@@ -97,6 +97,9 @@ import {
   rejectSkillProposal,
   restoreSkillFromHistory,
   runSkillDoctor,
+  readSkillRegistry,
+  reconcileSkill,
+  scanSkillReconciliation,
   supersedeSkillProposal,
   loadLayeredAgentReport,
   loadLayeredWorkflowAssets,
@@ -1375,7 +1378,8 @@ function parseArgs(
     subcommand !== "doctor" &&
     subcommand !== "proposals" &&
     subcommand !== "history" &&
-    subcommand !== "restore"
+    subcommand !== "restore" &&
+    subcommand !== "reconcile"
   ) {
     return {
       ok: false,
@@ -3726,7 +3730,8 @@ async function handleSkillsCommand(
     subcommand !== "doctor" &&
     subcommand !== "proposals" &&
     subcommand !== "history" &&
-    subcommand !== "restore"
+    subcommand !== "restore" &&
+    subcommand !== "reconcile"
   ) {
     writeLine(io.stderr, skillsUsage());
     return { exitCode: 1 };
@@ -3747,6 +3752,10 @@ async function handleSkillsCommand(
 
     if (subcommand === "restore") {
       return await handleSkillRestoreCommand(parsed, io);
+    }
+
+    if (subcommand === "reconcile") {
+      return await handleSkillReconcileCommand(parsed, io);
     }
 
     const roots = await resolveSkillRootsForCli(parsed.workspaceRoot, env);
@@ -3807,6 +3816,89 @@ async function handleSkillsCommand(
     return {
       exitCode: subcommand === "validate" && report.errors.length > 0 ? 1 : 0,
     };
+  } catch (error) {
+    writeLine(
+      io.stderr,
+      error instanceof Error ? error.message : String(error),
+    );
+    return { exitCode: 1 };
+  }
+}
+
+async function handleSkillReconcileCommand(
+  parsed: ParsedArgs,
+  io: CliIO,
+): Promise<CliRunResult> {
+  const args = splitCliWords(parsed.goal);
+  const action = args.shift();
+  try {
+    if (action === "scan") {
+      const findings = await scanSkillReconciliation(parsed.workspaceRoot);
+      writeLine(
+        io.stdout,
+        parsed.format === "json"
+          ? JSON.stringify(findings, null, 2)
+          : findings.length === 0
+            ? "reconciliation findings: 0"
+            : findings
+                .map(
+                  (finding) =>
+                    `- ${finding.kind} ${finding.skillName ?? finding.artifactId ?? "unknown"}`,
+                )
+                .join("\n"),
+      );
+      return { exitCode: 0 };
+    }
+    if (action === "list") {
+      const registry = await readSkillRegistry(parsed.workspaceRoot);
+      writeLine(
+        io.stdout,
+        parsed.format === "json"
+          ? JSON.stringify(registry, null, 2)
+          : registry.artifacts.length === 0
+            ? "registry artifacts: 0"
+            : registry.artifacts
+                .map(
+                  (artifact) =>
+                    `- ${artifact.artifactId} ${artifact.status} ${artifact.activePath ?? "(none)"}`,
+                )
+                .join("\n"),
+      );
+      return { exitCode: 0 };
+    }
+    const kind = action;
+    if (
+      kind !== "adopt" &&
+      kind !== "move" &&
+      kind !== "copy" &&
+      kind !== "reidentify" &&
+      kind !== "orphan"
+    ) {
+      throw new Error(
+        "Usage: sparkwright skills reconcile <scan|list|adopt|move|copy|reidentify|orphan> ...",
+      );
+    }
+    const first = args.shift();
+    const second = args.shift();
+    const receipt = await reconcileSkill({
+      workspaceRoot: parsed.workspaceRoot,
+      kind,
+      ...(kind === "adopt" ? { skillName: first } : {}),
+      ...(kind === "move" || kind === "reidentify"
+        ? { artifactId: first, skillName: second }
+        : {}),
+      ...(kind === "copy"
+        ? { sourceArtifactId: first, skillName: second }
+        : {}),
+      ...(kind === "orphan" ? { artifactId: first } : {}),
+    });
+    writeLine(
+      io.stdout,
+      parsed.format === "json"
+        ? JSON.stringify(receipt, null, 2)
+        : `reconciled ${receipt.kind}: ${receipt.artifactId}`,
+    );
+    return { exitCode: 0 };
   } catch (error) {
     writeLine(
       io.stderr,
@@ -8017,6 +8109,7 @@ function usage(_env: Record<string, string | undefined>): string {
     "       sparkwright skills review [--workspace path] [--session-root path] [--last n] [--skill name] [--skill-key key] [--package-hash hash] [--format json|text]",
     "       sparkwright skills stats [--workspace path] [--session-root path] [--last n] [--skill name] [--skill-key key] [--package-hash hash] [--format json|text]",
     "       sparkwright skills doctor [--workspace path] [--format json|text]",
+    "       sparkwright skills reconcile scan|list|adopt|move|copy|reidentify|orphan [--workspace path] [--format json|text]",
     "       sparkwright skills proposals list|show|create|update|apply|reject|supersede|prune [--workspace path] [--format json|text]",
     "       sparkwright skills history <skill-name> [--workspace path] [--format json|text]",
     '       sparkwright skills create <name> --description "what it does" [--workspace path] [--root .sparkwright/skills]',

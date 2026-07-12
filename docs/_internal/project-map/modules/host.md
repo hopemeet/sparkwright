@@ -770,6 +770,32 @@ Does not own:
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-12
+- Scope: added rebuildable Agent/Workflow observation primitives, explicit Skill
+  registry reconciliation, and advisory Skill evidence suggestions; none of
+  these paths auto-create or apply a managed change.
+- Read: `asset-stats.ts`, `skill-registry.ts`, `skill-suggestions.ts`,
+  `skill-review-digest.ts`, `runtime.ts`, and CLI reconciliation routing.
+- Tests: focused host/CLI tests, workspace check, regression matrix, source
+  install smoke, and release install smoke passed.
+
+- Status: Verified
+- Date: 2026-07-12T17:28:16+0800
+- Scope: Phase 5 routes normal `create_agent` authoring to a single project
+  Markdown file with semantic summary, workspace-write approval, rediscovery,
+  and package identity capture; config profiles stay explicit governance.
+- Tests: focused host Agent tests and full `npm run release:check`.
+
+- Status: Verified
+- Date: 2026-07-12T16:47:44+0800
+- Scope: Workflow content-addressed executable snapshots now publish atomically
+  and concurrent pins reuse the same verified immutable package directory.
+- Read: `packages/host/src/workflows.ts`, shared package-v2 snapshot substrate,
+  and focused Workflow concurrency tests.
+- Tests: Workflow focused host/CLI suites, test typecheck, and full
+  `npm run release:check`.
+
+- Status: Verified
 - Date: 2026-07-12T16:36:08+0800
 - Scope: Workflow instantiate now pins a v2 executable package snapshot and
   resume verifies its hash before using a snapshot-backed definition.

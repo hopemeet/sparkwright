@@ -1,4 +1,4 @@
-import { readFile, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rename, rm, stat } from "node:fs/promises";
 import { basename, isAbsolute, join, normalize, sep } from "node:path";
 import type { RunBudget } from "@sparkwright/core";
 import type {
@@ -172,20 +172,40 @@ export async function pinWorkflowAssetPackage(input: {
     entryPath: WORKFLOW_FILE_NAME,
   };
   const before = await computeAssetPackageHash(spec);
+  await mkdir(input.snapshotRoot, { recursive: true });
   const packageSnapshotRef = join(
     input.snapshotRoot,
     before.packageHash.slice("sha256:".length),
   );
-  const snapshot = await snapshotAssetPackage(spec, packageSnapshotRef);
-  await input.afterSnapshot?.();
-  const after = await computeAssetPackageHash(spec);
-  if (
-    snapshot.packageHash !== before.packageHash ||
-    after.packageHash !== before.packageHash
-  ) {
-    throw new Error(
-      `Workflow package changed while snapshotting: ${input.asset.assetName}`,
-    );
+  const temporarySnapshotRef = await mkdtemp(
+    join(input.snapshotRoot, ".pending-"),
+  );
+  try {
+    const snapshot = await snapshotAssetPackage(spec, temporarySnapshotRef);
+    await input.afterSnapshot?.();
+    const after = await computeAssetPackageHash(spec);
+    if (
+      snapshot.packageHash !== before.packageHash ||
+      after.packageHash !== before.packageHash
+    ) {
+      throw new Error(
+        `Workflow package changed while snapshotting: ${input.asset.assetName}`,
+      );
+    }
+    try {
+      await rename(temporarySnapshotRef, packageSnapshotRef);
+    } catch (error) {
+      try {
+        await verifyWorkflowPackageSnapshot({
+          packageSnapshotRef,
+          packageHash: before.packageHash,
+        });
+      } catch {
+        throw error;
+      }
+    }
+  } finally {
+    await rm(temporarySnapshotRef, { recursive: true, force: true });
   }
   const snapshotAsset = await loadWorkflowAssetFromDir({
     dir: packageSnapshotRef,

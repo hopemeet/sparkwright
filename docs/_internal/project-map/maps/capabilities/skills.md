@@ -144,6 +144,11 @@ skill roots
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-12
+- Scope: checked v2 Skill package identity, reconciliation, and evidence-review consumers.
+- Tests: focused Skill/host tests passed; release gate pending.
+
 - Status: Verified
 - Date: 2026-07-12T14:05:58+0800
 - Scope: checked the loader/runtime capability path after managed Skill v2

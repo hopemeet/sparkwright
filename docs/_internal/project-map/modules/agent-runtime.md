@@ -338,6 +338,13 @@ Does not own:
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-12T17:28:16+0800
+- Scope: `AgentProfile` carries host-resolved Markdown package identity and
+  `spawnSubAgent` copies it into child-run and parent-visible lifecycle metadata
+  at the invocation boundary.
+- Tests: focused host Agent tests and full `npm run release:check`.
+
+- Status: Verified
 - Date: 2026-07-12T16:36:08+0800
 - Scope: durable Workflow records now preserve package hash policy version and
   executable snapshot reference for host-owned snapshot pinning.

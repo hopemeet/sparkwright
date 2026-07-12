@@ -200,6 +200,11 @@ config + workspace capability roots
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-07-12
+- Scope: checked capability catalog routing for Markdown Agent authoring; no generic capability contract changed.
+- Tests: focused host tool tests passed; release gate pending.
+
+- Status: Read-only
 - Date: 2026-07-12T16:36:08+0800
 - Scope: checked Workflow package pinning; capability catalog contracts are unchanged.
 - Tests: not run for catalog-specific behavior; Phase 4 Workflow release gate passed.

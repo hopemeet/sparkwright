@@ -257,6 +257,11 @@ createRun/resumeRunFromCheckpoint
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-07-12
+- Scope: checked Workflow run metadata now includes package identity; run-loop ownership is unchanged.
+- Tests: focused Workflow tests passed; release gate pending.
+
+- Status: Read-only
 - Date: 2026-07-12T16:36:08+0800
 - Scope: checked host Workflow snapshot preparation; generic run-loop contract is unchanged.
 - Tests: not run for generic run-loop behavior; Phase 4 Workflow release gate passed.

@@ -100,6 +100,11 @@ tool proposes write
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-07-12
+- Scope: checked Markdown Agent atomic workspace-write path; no workspace-write policy change.
+- Tests: focused host tests passed; release gate pending.
+
+- Status: Read-only
 - Date: 2026-07-12T16:36:08+0800
 - Scope: checked Workflow snapshot pinning; workspace-write policy is unchanged.
 - Tests: not run for workspace-write-specific behavior; Phase 4 Workflow release gate passed.

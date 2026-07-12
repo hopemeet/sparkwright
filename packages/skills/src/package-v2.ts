@@ -42,6 +42,7 @@ export interface AssetPackageIdentity {
   packageHashPolicyVersion: typeof PACKAGE_HASH_POLICY_VERSION;
   packageHash: string;
   fileCount: number;
+  /** @reserved Public package-size diagnostic consumed by future inspection and retention tooling. */
   totalBytes: number;
 }
 
@@ -53,6 +54,7 @@ export interface AssetPackageHash extends AssetPackageIdentity {
 
 export interface SnapshotAssetPackageResult extends AssetPackageIdentity {
   sourceDir: string;
+  /** @reserved Public snapshot-location diagnostic consumed by owner-specific persistence tooling. */
   targetDir: string;
   files: AssetPackageFile[];
 }

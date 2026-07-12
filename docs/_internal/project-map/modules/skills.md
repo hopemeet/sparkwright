@@ -191,6 +191,11 @@ list --run/--session`); failed drafts self-clean. See
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-12
+- Scope: checked v2 package consumers, registry reconciliation, and advisory evidence suggestions.
+- Tests: focused host/CLI tests passed; release gate pending.
+
 - Status: Verified
 - Date: 2026-07-12T14:03:23+0800
 - Scope: verified managed Skill v2 proposal/history/restore operations while

@@ -38,6 +38,7 @@ import type { ShellToolOutput } from "@sparkwright/shell-tool";
 import {
   createAgentInspectorTool,
   createAgentManagerTool,
+  createMarkdownAgentManagerTool,
   applyToolConfig,
   createGlobPathsTool,
   createReadFileTool,
@@ -70,6 +71,47 @@ import {
 } from "../src/runtime.js";
 
 describe("host tools", () => {
+  it("authors a validated Markdown Agent without mutating config profiles", async () => {
+    const ctx = await createWorkspace({
+      ".sparkwright/config.yaml": "capabilities:\n  agents:\n    maxDepth: 1\n",
+    });
+    const tool = createMarkdownAgentManagerTool(ctx.workspaceRoot);
+    const created = await tool.execute(
+      {
+        action: "create",
+        id: "reviewer",
+        name: "Reviewer",
+        prompt: "Review changes and report concrete risks.",
+        use: ["workspace.read"],
+        allowedTools: ["read"],
+        maxSteps: 2,
+      },
+      ctx,
+    );
+
+    expect(created).toMatchObject({
+      action: "create",
+      id: "reviewer",
+      changed: true,
+      callability: { callable: true, mode: "child" },
+      semanticSummary: {
+        allowedTools: ["read"],
+        identity: { artifactKind: "agent", packageHashPolicyVersion: 2 },
+      },
+    });
+    await expect(
+      readFile(
+        join(ctx.workspaceRoot, ".sparkwright", "agents", "reviewer.md"),
+        "utf8",
+      ),
+    ).resolves.toContain("Review changes and report concrete risks.");
+    await expect(
+      readFile(join(ctx.workspaceRoot, ".sparkwright", "config.yaml"), "utf8"),
+    ).resolves.toContain("maxDepth: 1");
+    expect(ctx.capabilityMutations).toEqual([
+      expect.objectContaining({ action: "create_markdown_agent" }),
+    ]);
+  });
   it("derives explicit in-process spawn approval without marking spawn risky", () => {
     const profile = deriveDelegatePolicyProfile({
       risk: "safe",

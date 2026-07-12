@@ -23,7 +23,7 @@ import { createHostShellTool } from "./shell.js";
 import {
   applyToolConfig,
   createAgentInspectorTool,
-  createAgentManagerTool,
+  createMarkdownAgentManagerTool,
   createApplyPatchTool,
   createCronTool,
   createEditAnchoredTextTool,
@@ -339,7 +339,7 @@ function createMainHostToolCatalogList(input: {
       "skill",
     ),
     catalogEntry(createAgentInspectorTool(input.workspaceRoot), "agent"),
-    catalogEntry(createAgentManagerTool(input.workspaceRoot), "agent"),
+    catalogEntry(createMarkdownAgentManagerTool(input.workspaceRoot), "agent"),
     catalogEntry(
       createHostShellTool(input.workspaceRoot, {
         taskManager: input.taskManager,

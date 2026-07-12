@@ -206,6 +206,11 @@ EventLog emits full event
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-07-12
+- Scope: checked event-time Agent and Workflow package identity metadata; trace encoding contract is otherwise unchanged.
+- Tests: focused host/agent-runtime tests passed; release gate pending.
+
+- Status: Read-only
 - Date: 2026-07-12T16:36:08+0800
 - Scope: checked Workflow package identity persistence; raw trace event contract is unchanged.
 - Tests: not run for trace-specific behavior; Phase 4 Workflow release gate passed.

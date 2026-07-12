@@ -199,6 +199,11 @@ Does not own:
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-07-12
+- Scope: checked Workflow package-pin fields; no protocol schema change in this slice.
+- Tests: focused Workflow tests passed; release gate pending.
+
+- Status: Read-only
 - Date: 2026-07-12T16:36:08+0800
 - Scope: checked Workflow record identity additions; protocol wire contracts are unchanged.
 - Tests: not run for protocol-specific behavior; Phase 4 Workflow release gate passed.

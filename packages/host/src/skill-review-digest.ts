@@ -15,8 +15,9 @@ import {
   type SkillStatsFreshness,
   type SkillStatsOptions,
 } from "./skill-stats.js";
+import { collectSkillEvidenceSuggestions } from "./skill-suggestions.js";
 
-export type SkillReviewDigestItemKind = "proposal" | "stats_finding";
+export type SkillReviewDigestItemKind = "proposal" | "evidence_suggestion";
 export type SkillReviewDigestSeverity = SkillStatsFindingSeverity;
 
 export interface SkillReviewDigestOptions {
@@ -75,11 +76,6 @@ interface PrioritizedSkillReviewDigestItem extends SkillReviewDigestItem {
   priority: number;
 }
 
-const REVIEWABLE_STATS_FINDINGS: ReadonlySet<SkillStatsFindingCode> = new Set([
-  "SKILL_LOAD_FAILURES",
-  "ASSOCIATED_TOOL_FAILURES",
-]);
-
 export async function collectSkillReviewDigest(
   options: SkillReviewDigestOptions,
 ): Promise<SkillReviewDigest> {
@@ -109,9 +105,10 @@ export async function collectSkillReviewDigest(
   });
   const items = [
     ...draftProposals.map(proposalToReviewItem),
-    ...stats.findings
-      .filter((finding) => REVIEWABLE_STATS_FINDINGS.has(finding.code))
-      .map(findingToReviewItem),
+    ...collectSkillEvidenceSuggestions({
+      findings: stats.findings,
+      proposals: draftProposals,
+    }).map(findingToReviewItem),
   ].sort(compareReviewItems);
 
   return {
@@ -176,21 +173,19 @@ function proposalContentModeMessage(proposal: SkillProposalSummary): string {
 }
 
 function findingToReviewItem(
-  finding: SkillStatsFinding,
+  finding: ReturnType<typeof collectSkillEvidenceSuggestions>[number],
 ): PrioritizedSkillReviewDigestItem {
-  const isLoadFailure = finding.code === "SKILL_LOAD_FAILURES";
+  const isLoadFailure = finding.findingCode === "SKILL_LOAD_FAILURES";
   return {
-    id: `finding:${finding.code}:${finding.skillKey}`,
-    kind: "stats_finding",
+    id: finding.id,
+    kind: "evidence_suggestion",
     severity: finding.severity,
     relation: finding.relation,
     skillName: finding.skillName,
-    title: `${finding.code} for ${finding.skillName}`,
+    title: `${finding.findingCode} for ${finding.skillName}`,
     message: finding.message,
-    action: isLoadFailure
-      ? "Inspect the failed runs and draft or update the skill if the failure is reproducible."
-      : "Inspect the associated failed tool calls; treat this as correlation, not causation.",
-    findingCode: finding.code,
+    action: finding.action,
+    findingCode: finding.findingCode,
     evidence: finding.evidence,
     priority: isLoadFailure ? 40 : 60,
   };

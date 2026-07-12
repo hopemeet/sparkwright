@@ -301,6 +301,12 @@ configured profiles/delegates
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-07-12T17:28:16+0800
+- Scope: Markdown Agent authoring now produces only `<id>.md`; discovery adds
+  v2 single-file identity and spawn/delegate metadata captures it at invocation.
+- Tests: focused host Agent tests and full `npm run release:check`.
+
 - Status: Read-only
 - Date: 2026-07-12T16:36:08+0800
 - Scope: checked Workflow durable-record package pin fields; Agent capability

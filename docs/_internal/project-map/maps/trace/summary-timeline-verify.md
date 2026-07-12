@@ -235,6 +235,11 @@ trace.jsonl
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-12
+- Scope: checked CLI reconciliation routing; trace summary/timeline/verify semantics need no update.
+- Tests: focused CLI tests passed; release gate pending.
+
 - Status: Verified
 - Date: 2026-07-11T21:45:00+0800
 - Scope: report emits an informational `FINITE_SERVICE_TASK` advisory when a

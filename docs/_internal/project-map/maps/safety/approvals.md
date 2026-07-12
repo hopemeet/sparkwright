@@ -114,6 +114,11 @@ policy requires approval
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-12
+- Scope: checked Markdown Agent final-write approval; reconciliation remains outside managed approval semantics.
+- Tests: focused host tests passed; release gate pending.
+
 - Status: Verified
 - Date: 2026-07-12T02:12:00+0800
 - Scope: one final-effect-bound `skill.apply` approval after proposal

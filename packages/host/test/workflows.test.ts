@@ -1,4 +1,11 @@
-import { access, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import {
+  access,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -112,8 +119,9 @@ async function seedWorkflowRecord(
   input: CreateWorkflowRunRecordInput,
   patch?: WorkflowRunRecordPatch,
 ): Promise<WorkflowRunRecord> {
-  const pinnedInput =
-    input.definitionSnapshot && !input.packageHash
+  const definitionSnapshot = input.definitionSnapshot;
+  const pinnedInput: CreateWorkflowRunRecordInput =
+    definitionSnapshot && !input.packageHash
       ? await (async () => {
           const rootDir = (store as unknown as { rootDir: string }).rootDir;
           const packageSnapshotRef = join(
@@ -138,7 +146,7 @@ async function seedWorkflowRecord(
             packageHashPolicyVersion: 2 as const,
             packageSnapshotRef,
             definitionSnapshot: {
-              ...input.definitionSnapshot,
+              ...definitionSnapshot,
               sourceDir: packageSnapshotRef,
             },
           };
@@ -248,6 +256,57 @@ describe("workflow assets", () => {
           writeFile(join(workflowDir, "workflow.md"), "# after\n"),
       }),
     ).rejects.toThrow(/changed while snapshotting/);
+  });
+
+  it("atomically reuses the same content-addressed snapshot under concurrent pins", async () => {
+    const workspace = await tempWorkspace();
+    const workflowDir = join(
+      workspace,
+      ".sparkwright",
+      "workflows",
+      "concurrent",
+    );
+    const snapshotRoot = join(
+      workspace,
+      ".sparkwright",
+      "workflow-runs",
+      "package-snapshots",
+    );
+    await mkdir(join(workflowDir, "scripts"), { recursive: true });
+    await writeFile(join(workflowDir, "workflow.md"), "# concurrent\n");
+    await writeFile(join(workflowDir, "scripts", "run.sh"), "echo stable\n");
+    const asset = await loadWorkflowAssetFromDir({ dir: workflowDir });
+    let snapshotsReady = 0;
+    let releaseSnapshots!: () => void;
+    const snapshotsMayPublish = new Promise<void>((resolve) => {
+      releaseSnapshots = resolve;
+    });
+    const afterSnapshot = async () => {
+      snapshotsReady += 1;
+      if (snapshotsReady === 2) releaseSnapshots();
+      await snapshotsMayPublish;
+    };
+
+    const [left, right] = await Promise.all([
+      pinWorkflowAssetPackage({ asset, snapshotRoot, afterSnapshot }),
+      pinWorkflowAssetPackage({ asset, snapshotRoot, afterSnapshot }),
+    ]);
+
+    expect(left.packageSnapshotRef).toBe(right.packageSnapshotRef);
+    await expect(
+      verifyWorkflowPackageSnapshot({
+        packageSnapshotRef: left.packageSnapshotRef,
+        packageHash: left.packageHash,
+      }),
+    ).resolves.toBeUndefined();
+    await expect(
+      readFile(join(left.packageSnapshotRef, "scripts", "run.sh"), "utf8"),
+    ).resolves.toBe("echo stable\n");
+    expect(
+      (await readdir(snapshotRoot)).filter((name) =>
+        name.startsWith(".pending-"),
+      ),
+    ).toEqual([]);
   });
 
   it("returns durable workflow/job identity and records control-session attribution", async () => {

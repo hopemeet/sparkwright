@@ -146,6 +146,34 @@ export type {
   SkillReviewDigestSeverity,
 } from "./skill-review-digest.js";
 export {
+  aggregateAssetObservations,
+  agentObservationFromMetadata,
+  classifyAssetIdentityChange,
+  workflowObservationFromRunRecord,
+} from "./asset-stats.js";
+export type {
+  AssetIdentityChange,
+  AssetObservation,
+  AssetObservationIdentity,
+  AssetStatsEntry,
+  AssetStatsReport,
+} from "./asset-stats.js";
+export {
+  readSkillRegistry,
+  reconcileSkill,
+  scanSkillReconciliation,
+  skillRegistryPath,
+} from "./skill-registry.js";
+export { collectSkillEvidenceSuggestions } from "./skill-suggestions.js";
+export type { SkillEvidenceSuggestion } from "./skill-suggestions.js";
+export type {
+  SkillArtifactRecord,
+  SkillReconciliationFinding,
+  SkillReconciliationKind,
+  SkillReconciliationReceipt,
+  SkillRegistry,
+} from "./skill-registry.js";
+export {
   createSkillUsageRecorder,
   observeSkillUsageEvent,
   recordSkillPatch,

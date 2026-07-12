@@ -2738,6 +2738,15 @@ export class HostRuntime {
               assetName: workflowRecord.assetName,
               version: workflowRecord.version,
               contentHash: workflowRecord.contentHash,
+              ...(workflowRecord.packageHash
+                ? { packageHash: workflowRecord.packageHash }
+                : {}),
+              ...(workflowRecord.packageHashPolicyVersion
+                ? {
+                    packageHashPolicyVersion:
+                      workflowRecord.packageHashPolicyVersion,
+                  }
+                : {}),
               verifyOnResume: workflowRecord.resume.verifyOnResume,
             },
           }

@@ -2,11 +2,11 @@
 
 ## Status
 
-- Status: Read-only
+- Status: Verified
 - Date: 2026-07-12
 - Scope: implementation-ready master design after the asset-governance review.
-  Skill Phase 1/2 and the Phase 3A package substrate are implemented; later
-  phases remain design-only.
+  Skill Phase 1-8 delivery slices are implemented; remaining open questions
+  concern policy tuning and retention, not a missing managed lifecycle.
 - Source check: current Skill package enumeration, prepared-change lifecycle,
   command service, Agent Markdown discovery, Workflow parsing/execution/resume,
   and Agent/Workflow trace attribution paths were read.
@@ -318,29 +318,45 @@ history, receipt, recovery, and four-entry command-service convergence.
 
 - Instantiate creates a v2 executable snapshot, verifies source-before,
   snapshot, and source-after hashes, then parses snapshot `workflow.md`/config.
+- Content-addressed snapshots publish through a verified temporary directory
+  and atomic rename; concurrent pins safely reuse an already-published hash.
 - Durable records persist strong identity and `packageSnapshotRef`; normal and
   resumed execution require the snapshot hash and snapshot-backed `sourceDir`.
 
-### Phase 5: Markdown Agent authoring and version attribution
+### Completed: Phase 5 Markdown Agent authoring and version attribution
 
-- Implement single-file authoring, semantic review, existing write approval,
-  atomic write, post-write callability validation, and event-time identity.
+- `create_agent` now writes only `.sparkwright/agents/<id>.md`, parses the
+  final file before approval, reports its effective capability summary and v2
+  single-file identity, uses the workspace-write path, and rediscoveres the
+  file after writing before declaring it callable.
+- Explicit config profiles remain advanced governance and fail closed when they
+  shadow the requested Markdown id. No Agent proposal/history/receipt/registry
+  lifecycle was introduced.
+- Markdown discovery hashes the logical `AGENT.md` single-file package and
+  spawn/delegate lifecycle metadata captures that identity at invocation time.
 
-### Phase 6: Agent and Workflow stats projections
+### Completed: Phase 6 Agent and Workflow stats projections
 
-- Add trace-derived, rebuildable, package-policy-aware projections and expose
-  content/policy/both change classification.
+- Agent and Workflow observation helpers consume event-time Agent trace metadata
+  and durable Workflow package pins; they never read current authored files to
+  infer historical identity.
+- Rebuildable aggregation keeps policy-version buckets distinct and labels
+  content/policy/both changes without converting policy-only changes into
+  performance claims.
 
-### Phase 7: Skill registry, origin, import, and reconciliation
+### Completed: Phase 7 Skill registry, origin, import, and reconciliation
 
-- Add stable identity continuity, origin records, explicit adopt/move/copy/
-  reidentify/orphan operations, and distinct reconciliation receipts.
+- The tracked project registry supports read-only scan plus explicit
+  `adopt`/`move`/`copy`/`reidentify`/`orphan` operations through
+  `skills reconcile`. Reconciliation receipts are distinct from managed
+  mutation receipts and carry no approval/effect assertion.
 
-### Phase 8: evidence-driven Skill suggestions
+### Completed: Phase 8 evidence-driven Skill suggestions
 
-- Add Skill-specific diagnosis, evidence bundles, churn controls, review
-  suggestions, and rollback advice. Do not generalize this into Agent or
-  Workflow self-evolution.
+- Existing trace-derived load/tool-failure evidence now yields bounded,
+  deterministic advisory suggestions in `skills review`. Existing draft
+  proposals suppress duplicate suggestions; suggestions never create or apply
+  a mutation. Agent and Workflow observations remain diagnostic-only.
 
 ## Acceptance Criteria
 
@@ -380,8 +396,8 @@ history, receipt, recovery, and four-entry command-service convergence.
 
 - What exact `maxFiles`, per-file byte, and total-byte limits apply to each
   asset kind, and which are configurable?
-- Where are executable Workflow snapshots stored, how are references made
-  durable across resume, and what retention/GC rules preserve active runs?
+- What retention/GC rules preserve active executable Workflow snapshots while
+  reclaiming snapshots that are no longer referenced by durable runs?
 - What bounded fields and redaction rules define the Workflow environment
   fingerprint?
 - Which package-local vendored dependency directories receive explicit runtime
@@ -392,6 +408,36 @@ history, receipt, recovery, and four-entry command-service convergence.
   projection caches?
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-12T17:28:16+0800
+- Scope: completed Phase 5 single-file Markdown Agent authoring, callability
+  validation, config-shadow rejection, and event-time package attribution.
+- Read: `packages/host/src/tools.ts`, `packages/host/src/agent-profiles.ts`,
+  `packages/agent-runtime/src/index.ts`, host agent/tool tests.
+- Tests: focused host agent-profile/tool tests, agent-runtime/host typechecks,
+  and full `npm run release:check`.
+
+- Status: Read-only
+- Date: 2026-07-12
+- Scope: implemented Phase 6 observation/projection primitives, Phase 7 Skill
+  reconciliation registry/CLI, and Phase 8 advisory evidence suggestions.
+- Read: `packages/host/src/asset-stats.ts`, `skill-registry.ts`,
+  `skill-suggestions.ts`, `skill-review-digest.ts`, `runtime.ts`, and CLI
+  reconciliation routing.
+- Tests: focused host/CLI tests, workspace check, regression matrix, source
+  install smoke, and release install smoke passed.
+
+- Status: Verified
+- Date: 2026-07-12T16:47:44+0800
+- Scope: closed Phase 4 with atomic content-addressed Workflow snapshot
+  publication, concurrent same-package reuse, durable resume verification, and
+  a reproducible full release gate.
+- Read: `packages/host/src/workflows.ts`, `packages/host/src/runtime.ts`,
+  `packages/skills/src/package-v2.ts`, durable Workflow record types/store,
+  reserved-field diagnostics, and focused host/CLI tests.
+- Tests: Workflow focused host/CLI suites, test typecheck, and full
+  `npm run release:check`.
 
 - Status: Verified
 - Date: 2026-07-12T14:03:23+0800

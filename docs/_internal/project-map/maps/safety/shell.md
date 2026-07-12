@@ -138,6 +138,11 @@ model calls shell tool
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-07-12
+- Scope: checked Workflow v2 package source path; shell policy is unchanged.
+- Tests: focused Workflow tests passed; release gate pending.
+
+- Status: Read-only
 - Date: 2026-07-12T16:36:08+0800
 - Scope: checked snapshot-backed Workflow script source resolution; shell policy is unchanged.
 - Tests: not run for shell-policy-specific behavior; Phase 4 Workflow release gate passed.

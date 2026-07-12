@@ -118,6 +118,11 @@ Manual compact
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-07-12
+- Scope: checked CLI reconciliation routing; session-store contract is unchanged.
+- Tests: focused CLI tests passed; release gate pending.
+
+- Status: Read-only
 - Date: 2026-07-12T16:36:08+0800
 - Scope: checked Workflow durable package snapshot fields; session-store contracts are unchanged.
 - Tests: not run for session-store-specific behavior; Phase 4 Workflow release gate passed.

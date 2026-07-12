@@ -132,6 +132,11 @@ Does not own:
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-12
+- Scope: checked Markdown Agent write routing; existing workspace-write tooling contract remains unchanged.
+- Tests: focused host tool tests passed; release gate pending.
+
 - Status: Verified
 - Date: 2026-07-11T22:55:00+0800
 - Scope: canonical shell foreground timeout contract and background launch

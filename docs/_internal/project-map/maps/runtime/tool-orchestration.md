@@ -322,6 +322,11 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-12
+- Scope: checked Markdown Agent workspace-write authoring and Skill reconciliation CLI; no orchestration policy change.
+- Tests: focused host/CLI tests passed; release gate pending.
+
 - Status: Verified
 - Date: 2026-07-12T02:12:00+0800
 - Scope: post-prepare approval orchestration for the safe authored Skill create

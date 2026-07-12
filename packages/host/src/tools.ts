@@ -1,4 +1,4 @@
-import { isAbsolute, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   defineTool,
@@ -24,6 +24,7 @@ import {
 import { type SkillRoot } from "@sparkwright/skills";
 import {
   canonicalWorkspacePath,
+  readWorkspaceTextIfExists,
   writeCapabilityText,
   type CapabilityWriteResult,
 } from "./capability-mutation.js";
@@ -56,6 +57,11 @@ import { SkillCommandService } from "./skill-command-service.js";
 import { delegateToolName } from "./delegate-capability.js";
 import { projectSkillRoot } from "./skill-roots.js";
 import { loadLayeredSkillReport } from "./skill-report.js";
+import {
+  discoverProjectAgentProfiles,
+  markdownAgentIdentity,
+  parseAgentProfileFile,
+} from "./agent-profiles.js";
 
 /**
  * Built-in tool: read a UTF-8 file from the workspace. Safe (no approval).
@@ -671,6 +677,51 @@ export function createAgentInspectorTool(workspaceRoot: string) {
   });
 }
 
+export function createMarkdownAgentManagerTool(workspaceRoot: string) {
+  return defineTool({
+    name: "create_agent",
+    description:
+      "Create, update, or replace one Markdown Agent at .sparkwright/agents/<id>.md. " +
+      "The final Markdown is parsed, semantically summarized, approval-gated as a workspace write, atomically written, then rediscovered for callability. " +
+      "This does not mutate config-backed agent profiles or create proposal/history records.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["create", "update", "replace"] },
+        id: { type: "string" },
+        name: { type: "string" },
+        description: { type: "string" },
+        mode: { type: "string", enum: ["primary", "child", "all"] },
+        prompt: { type: "string" },
+        model: { type: "string" },
+        use: { type: "array", items: { type: "string" } },
+        allowedTools: { type: "array", items: { type: "string" } },
+        deniedTools: { type: "array", items: { type: "string" } },
+        maxSteps: { type: "integer", minimum: 1 },
+        replaceReason: { type: "string" },
+      },
+      required: ["action", "id", "prompt"],
+      additionalProperties: false,
+    },
+    policy: { risk: "risky" },
+    governance: {
+      origin: { kind: "local", name: "sparkwright" },
+      sideEffects: ["read", "write"],
+      idempotency: "conditional",
+    },
+    isReplaySafe: false,
+    async execute(args: unknown, ctx) {
+      if (!ctx.workspace) throw new Error("Workspace is not configured.");
+      return writeMarkdownAgent(
+        ctx,
+        workspaceRoot,
+        parseMarkdownAgentArgs(args),
+      );
+    },
+  });
+}
+
+/** Legacy config mutation surface retained for compatibility-only callers. */
 export function createAgentManagerTool(workspaceRoot: string) {
   return defineTool({
     name: "create_agent",
@@ -1754,6 +1805,220 @@ function agentCallabilityFields(
         : { suggestedDelegateToolName }),
     },
   };
+}
+
+type MarkdownAgentAction = "create" | "update" | "replace";
+
+interface MarkdownAgentInput {
+  action: MarkdownAgentAction;
+  id: string;
+  name?: string;
+  description?: string;
+  mode?: "primary" | "child" | "all";
+  prompt: string;
+  model?: string;
+  use?: string[];
+  allowedTools?: string[];
+  deniedTools?: string[];
+  maxSteps?: number;
+  replaceReason?: string;
+}
+
+function parseMarkdownAgentArgs(args: unknown): MarkdownAgentInput {
+  if (!isPlainObject(args)) {
+    throw toolArgumentsInvalid("create_agent expects an object argument.");
+  }
+  const action = args.action;
+  if (action !== "create" && action !== "update" && action !== "replace") {
+    throw toolArgumentsInvalid(
+      "create_agent action must be create, update, or replace.",
+    );
+  }
+  const id = typeof args.id === "string" ? args.id.trim() : "";
+  const prompt = typeof args.prompt === "string" ? args.prompt.trim() : "";
+  if (!isAgentId(id) || !prompt) {
+    throw toolArgumentsInvalid(
+      "create_agent requires a valid id and non-empty prompt.",
+    );
+  }
+  if (action === "replace" && typeof args.replaceReason !== "string") {
+    throw toolArgumentsInvalid("create_agent replace requires replaceReason.");
+  }
+  const mode = args.mode;
+  if (
+    mode !== undefined &&
+    mode !== "primary" &&
+    mode !== "child" &&
+    mode !== "all"
+  ) {
+    throw toolArgumentsInvalid(
+      "create_agent mode must be primary, child, or all.",
+    );
+  }
+  const maxSteps = args.maxSteps;
+  if (
+    maxSteps !== undefined &&
+    (typeof maxSteps !== "number" ||
+      !Number.isInteger(maxSteps) ||
+      maxSteps < 1)
+  ) {
+    throw toolArgumentsInvalid(
+      "create_agent maxSteps must be a positive integer.",
+    );
+  }
+  return {
+    action,
+    id,
+    prompt,
+    ...(typeof args.name === "string" ? { name: args.name.trim() } : {}),
+    ...(typeof args.description === "string"
+      ? { description: args.description.trim() }
+      : {}),
+    ...(mode ? { mode } : {}),
+    ...(typeof args.model === "string" && args.model.trim()
+      ? { model: args.model.trim() }
+      : {}),
+    ...(args.use !== undefined
+      ? { use: toolUseSelectorArrayArg(args.use, "use") }
+      : {}),
+    ...(args.allowedTools !== undefined
+      ? { allowedTools: stringArrayArg(args.allowedTools, "allowedTools") }
+      : {}),
+    ...(args.deniedTools !== undefined
+      ? { deniedTools: stringArrayArg(args.deniedTools, "deniedTools") }
+      : {}),
+    ...(typeof maxSteps === "number" ? { maxSteps } : {}),
+    ...(typeof args.replaceReason === "string"
+      ? { replaceReason: args.replaceReason.trim() }
+      : {}),
+  };
+}
+
+async function writeMarkdownAgent(
+  ctx: RuntimeContext,
+  workspaceRoot: string,
+  input: MarkdownAgentInput,
+) {
+  const path = join(".sparkwright", "agents", `${input.id}.md`);
+  const before = await readWorkspaceTextIfExists(ctx, path);
+  if (input.action === "create" && before !== undefined) {
+    throw new Error(
+      `Markdown Agent already exists: ${input.id}. Use update or replace.`,
+    );
+  }
+  if (input.action === "update" && before === undefined) {
+    throw new Error(`Markdown Agent not found for update: ${input.id}`);
+  }
+  const content = markdownAgentDocument(input);
+  const profile = parseAgentProfileFile(input.id, content);
+  if (profile.id !== input.id || !profile.prompt) {
+    throw new Error("create_agent produced an invalid Markdown Agent profile.");
+  }
+  const config = await readProjectConfig(workspaceRoot);
+  if (
+    getAgentConfigShape(config.data).profiles.some(
+      (entry) => entry.id === input.id,
+    )
+  ) {
+    throw new Error(
+      `Markdown Agent ${input.id} is shadowed by an explicit config profile; update config deliberately or choose another id.`,
+    );
+  }
+  if (before === content) {
+    const canonicalPath = await canonicalWorkspacePath(ctx, path);
+    ctx.reportWorkspaceWriteSkipped?.({
+      path: canonicalPath,
+      reason: `Markdown Agent ${input.id} already matches the requested final file.`,
+    });
+    return markdownAgentResult(input, canonicalPath, profile, false);
+  }
+  const write = await writeCapabilityText(
+    ctx,
+    path,
+    content,
+    `${input.action === "replace" ? "Replace" : input.action === "update" ? "Update" : "Create"} Markdown Agent ${input.id}`,
+  );
+  const discovered = await discoverProjectAgentProfiles(workspaceRoot);
+  const callable = discovered.find((entry) => entry.id === input.id);
+  if (!callable || !callable.prompt) {
+    throw new Error(
+      `Markdown Agent ${input.id} was written but is not callable after rediscovery.`,
+    );
+  }
+  ctx.reportCapabilityMutationCompleted?.({
+    action: `${input.action}_markdown_agent`,
+    path: write.path,
+    reason: `Write Markdown Agent ${input.id}`,
+    fileCount: 1,
+    files: [{ relativePath: write.path }],
+    metadata: {
+      kind: "agent",
+      id: input.id,
+      identity: markdownAgentIdentity(input.id, content),
+    },
+  });
+  return {
+    ...markdownAgentResult(input, write.path, callable, true),
+    diffArtifactId: write.diffArtifactId,
+    writeSummary: write.summary,
+  };
+}
+
+function markdownAgentResult(
+  input: MarkdownAgentInput,
+  path: string,
+  profile: AgentProfile,
+  changed: boolean,
+) {
+  return {
+    action: input.action,
+    id: input.id,
+    path,
+    changed,
+    profile,
+    semanticSummary: {
+      mode: profile.mode ?? "child",
+      model: profile.model,
+      allowedTools: profile.allowedTools ?? [],
+      deniedTools: profile.deniedTools ?? [],
+      use: profile.use ?? [],
+      maxSteps: profile.maxSteps,
+      identity: markdownAgentIdentity(input.id, markdownAgentDocument(input)),
+    },
+    callability: {
+      callable: Boolean(profile.prompt),
+      mode: profile.mode ?? "child",
+    },
+  };
+}
+
+function markdownAgentDocument(input: MarkdownAgentInput): string {
+  const lines = [
+    "---",
+    `id: ${input.id}`,
+    `name: ${yamlScalar(input.name || input.id)}`,
+    `mode: ${input.mode ?? "child"}`,
+  ];
+  if (input.description)
+    lines.push(`description: ${yamlScalar(input.description)}`);
+  if (input.model) lines.push(`model: ${yamlScalar(input.model)}`);
+  if (input.use?.length)
+    lines.push(`use: [${input.use.map(yamlScalar).join(", ")}]`);
+  if (input.allowedTools?.length)
+    lines.push(
+      `allowedTools: [${input.allowedTools.map(yamlScalar).join(", ")}]`,
+    );
+  if (input.deniedTools?.length)
+    lines.push(
+      `deniedTools: [${input.deniedTools.map(yamlScalar).join(", ")}]`,
+    );
+  if (input.maxSteps) lines.push(`maxSteps: ${input.maxSteps}`);
+  lines.push("---", "", input.prompt, "");
+  return lines.join("\n");
+}
+
+function yamlScalar(value: string): string {
+  return JSON.stringify(value);
 }
 
 type AgentManagerAction = "create" | "update" | "replace" | "remove";

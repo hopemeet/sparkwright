@@ -103,6 +103,11 @@ cron config/state
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-07-12
+- Scope: checked Agent runtime attribution change; cron Agent contracts need no update.
+- Tests: focused agent-runtime tests passed; release gate pending.
+
+- Status: Read-only
 - Date: 2026-07-12T16:36:08+0800
 - Scope: checked portable Workflow record changes; Cron behavior is unchanged.
 - Tests: not run for Cron behavior; Phase 4 Workflow release gate passed.

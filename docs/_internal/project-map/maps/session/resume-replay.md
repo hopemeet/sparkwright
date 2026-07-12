@@ -117,6 +117,11 @@ Future run in compacted session
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-12
+- Scope: checked snapshot-backed Workflow identity attribution; resume behavior is unchanged from Phase 4.
+- Tests: focused Workflow tests passed; release gate pending.
+
 - Status: Verified
 - Date: 2026-07-12T16:36:08+0800
 - Scope: Workflow resume now fails closed unless its executable package snapshot
