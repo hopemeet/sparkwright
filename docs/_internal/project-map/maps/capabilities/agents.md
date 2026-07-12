@@ -88,6 +88,10 @@ configured profiles/delegates
   non-empty `replaceReason`; replace removes stale delegate tools for the
   profile before optionally adding a new delegate. These managed writes preserve
   sibling `capabilities.agents` policy fields such as `maxDepth`.
+- The builtin capability-builder Skill declares `create_agent` as an expected
+  tool dependency. A successful Skill body load makes that already-registered
+  deferred schema available on the next model turn, avoiding a second
+  `tool_search`; it does not restore a disabled tool or bypass write approval.
 - External ACP and external-command delegates are config-declared agent profile
   metadata exposed through inline profile `delegateTool` or
   `capabilities.agents.delegateTools`.
@@ -305,6 +309,14 @@ configured profiles/delegates
   or mtime prefilters.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-12T23:45:00+0800
+- Scope: loading the capability-builder Skill now exposes the registered
+  deferred `create_agent` schema without a separate discovery call.
+- Read: capability-builder Skill, Skills loader, core deferred-tool state, and
+  focused tests.
+- Tests: full core run test and Skills index test suites passed.
 
 - Status: Verified
 - Date: 2026-07-12T23:35:00+0800

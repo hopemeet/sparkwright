@@ -769,6 +769,7 @@ Review safely.
       `---
 name: code-reviewer
 description: Reviews code changes.
+allowed-tools: read create_agent
 metadata:
   version: 1.0.0
 ---
@@ -805,6 +806,7 @@ Review only the requested change.
       status: "loaded",
       name: "code-reviewer",
       version: "1.0.0",
+      toolDependencies: ["read", "create_agent"],
       // Resource files are reported skill-relative, never as absolute host
       // paths (which leak the host layout and lure a workspace-escaping read).
       resourceFiles: ["references/rules.md"],

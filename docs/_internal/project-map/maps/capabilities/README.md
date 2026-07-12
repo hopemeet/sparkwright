@@ -200,6 +200,14 @@ config + workspace capability roots
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-12T23:45:00+0800
+- Scope: Skill body loads may hydrate declared deferred tool dependencies that
+  already survived host catalog filtering; policy and approvals remain intact.
+- Read: Skills loader, core run/context, capability-builder Skill, and routed
+  capability maps.
+- Tests: full core run test and Skills index test suites passed.
+
+- Status: Verified
 - Date: 2026-07-12T20:00:00+0800
 - Scope: Agent and Workflow package identities now feed production rebuildable
   stats queries; Workflow remains pinned to executable snapshots. Workflow

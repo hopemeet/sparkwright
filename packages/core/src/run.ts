@@ -3524,6 +3524,7 @@ export class SparkwrightRun implements RunHandle {
     );
     if (requestedCall.toolName === "skill_load") {
       this.emitSkillEventFromToolResult(annotatedResult);
+      this.loadDeferredToolsFromSkillLoad(annotatedResult);
     }
     if (requestedCall.toolName === "tool_search") {
       this.loadDeferredToolsFromToolSearch(annotatedResult);
@@ -3632,6 +3633,21 @@ export class SparkwrightRun implements RunHandle {
     for (const match of matches) {
       if (!isRecord(match)) continue;
       const name = getStringProperty(match, "name");
+      if (!name) continue;
+      const tool = this.tools.get(name);
+      if (!tool?.deferLoading || tool.alwaysLoad === true) continue;
+      this.loadedDeferredTools.add(name);
+    }
+  }
+
+  private loadDeferredToolsFromSkillLoad(result: ToolResult): void {
+    if (result.status !== "completed" || !isRecord(result.output)) return;
+    if (result.output.status !== "loaded") return;
+    const dependencies = result.output.toolDependencies;
+    if (!Array.isArray(dependencies)) return;
+    for (const dependency of dependencies) {
+      if (typeof dependency !== "string") continue;
+      const name = dependency.trim();
       if (!name) continue;
       const tool = this.tools.get(name);
       if (!tool?.deferLoading || tool.alwaysLoad === true) continue;

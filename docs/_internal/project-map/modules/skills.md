@@ -197,6 +197,14 @@ list --run/--session`); failed drafts self-clean. See
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-12T23:45:00+0800
+- Scope: `skill_load` returns the loaded Skill's `allowed-tools` as declarative
+  tool dependencies for run-local deferred schema hydration.
+- Read: Skills manifest/loader, capability-builder Skill, core consumer, and
+  focused tests.
+- Tests: focused Skills loader and core deferred-tool tests passed.
+
+- Status: Verified
 - Date: 2026-07-12
 - Scope: proposal lifecycle reconciliation and competing-draft closure across
   host create/apply and TUI inbox recovery.

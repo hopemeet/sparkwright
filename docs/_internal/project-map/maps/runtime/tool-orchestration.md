@@ -126,6 +126,10 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
   so they cannot escape a configured selector/allowlist/denylist; selector-kept
   deferred tools implicitly retain `tool_search`, and discovery results include
   required/related tool closures outside max-result truncation.
+- A successful body-level `skill_load` may load deferred schemas named by the
+  Skill's `allowed-tools`. Core only marks matching tools already present in the
+  run registry; absent/disabled tools stay absent, and normal policy/approval
+  still governs execution. Resource-only loads do not change tool loading.
 - Child-agent tool orchestration uses catalog selector paths before child tool
   descriptors or delegate tools are created. Dynamic `spawn_agent` uses a
   dynamic child catalog that defaults to read-only tools but can expose managed
@@ -321,6 +325,14 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
 - TUI live rendering and transcript export now share presentation summaries, but trace/model-context result compaction is still a separate backend concern.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-12T23:45:00+0800
+- Scope: Skill-declared registered tool dependencies load after `skill_load`
+  without an extra `tool_search`; unrelated deferred tools remain lazy.
+- Read: core run/context, Skills loader output, capability-builder Skill, and
+  focused tests.
+- Tests: focused core deferred-tool tests and Skills loader test passed.
 
 - Status: Read-only
 - Date: 2026-07-12T20:00:00+0800

@@ -708,6 +708,7 @@ export function createSkillLoaderTool(
         name: skill.name,
         description: skill.description,
         version: skillVersion(skill),
+        toolDependencies: [...(skill.allowedTools ?? [])],
         content: createSkillToolOutput(skill, resourceFiles),
         resourceFiles,
       };

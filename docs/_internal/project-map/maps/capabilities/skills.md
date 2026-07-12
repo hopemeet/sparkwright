@@ -145,6 +145,14 @@ skill roots
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-12T23:45:00+0800
+- Scope: body-level Skill loading carries declared tool dependencies to core;
+  only dependencies already registered in the run become model-visible.
+- Read: Skills loader, core run loop, capability-builder Skill, and focused
+  tests.
+- Tests: focused Skills loader and core deferred-tool tests passed.
+
+- Status: Verified
 - Date: 2026-07-12T20:00:00+0800
 - Scope: v2 snapshots reject ancestor targets; reconciliation enforces one
   active owner per path and recovers journaled registry/receipt writes; import

@@ -256,6 +256,14 @@ createRun/resumeRunFromCheckpoint
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-07-12T23:45:00+0800
+- Scope: successful body-level Skill loads hydrate only registered deferred
+  schemas declared by the Skill; execution policy is unchanged.
+- Read: `packages/core/src/run.ts`, `packages/core/src/context.ts`, focused core
+  tests, and routed capability maps.
+- Tests: focused core deferred-tool tests passed.
+
 - Status: Read-only
 - Date: 2026-07-12T20:12:00+0800
 - Scope: checked fresh Workflow record layer persistence; run-loop state and

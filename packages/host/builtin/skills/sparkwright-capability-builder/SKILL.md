@@ -2,7 +2,7 @@
 name: sparkwright-capability-builder
 description: Build SparkWright project capabilities from user intent. Use when the user wants to create, add, scaffold, wire, or configure a Skill, agent profile, delegate tool, MCP server, cron job, slash command, tool policy, or project capability.
 triggers: create add scaffold build configure wire setup skill agent delegate MCP server cron schedule automation slash command project capability tool policy permission
-allowed-tools: bash
+allowed-tools: bash list_skills create_skill update_skill list_agents create_agent cron
 metadata:
   version: 0.1.0
 ---

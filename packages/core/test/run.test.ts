@@ -487,6 +487,89 @@ describe("SparkwrightRun", () => {
     expect(modelCalls).toBe(3);
   });
 
+  it("loads a skill's registered deferred tool dependencies without tool_search", async () => {
+    let modelCalls = 0;
+    const deferredEcho = defineTool({
+      name: "deferred_echo",
+      description: "Echo text after loading its skill.",
+      inputSchema: {
+        type: "object",
+        properties: { text: { type: "string" } },
+        required: ["text"],
+      },
+      deferLoading: true,
+      execute(args: unknown) {
+        return args;
+      },
+    });
+    const skillLoad = defineTool({
+      name: "skill_load",
+      description: "Load a skill and its declared tool dependencies.",
+      inputSchema: {
+        type: "object",
+        properties: { name: { type: "string" } },
+        required: ["name"],
+      },
+      execute() {
+        return {
+          status: "loaded",
+          name: "echo-builder",
+          toolDependencies: ["deferred_echo", "disabled_elsewhere"],
+          content: "Use deferred_echo.",
+        };
+      },
+    });
+
+    const run = createRun({
+      goal: "load a skill then use its tool",
+      tools: [deferredEcho, skillLoad],
+      maxSteps: 3,
+      model: {
+        async complete(input) {
+          modelCalls += 1;
+          const toolNames = input.tools.map((tool) => tool.name);
+          if (modelCalls === 1) {
+            expect(toolNames).toEqual(["skill_load"]);
+            return {
+              toolCalls: [
+                {
+                  toolName: "skill_load",
+                  arguments: { name: "echo-builder" },
+                },
+              ],
+            };
+          }
+          if (modelCalls === 2) {
+            expect(toolNames).toEqual(["deferred_echo", "skill_load"]);
+            return {
+              toolCalls: [
+                {
+                  toolName: "deferred_echo",
+                  arguments: { text: "loaded by skill" },
+                },
+              ],
+            };
+          }
+          return { message: "done" };
+        },
+      },
+    });
+
+    const result = await run.start();
+
+    expect(result).toMatchObject({ signal: "completed", message: "done" });
+    expect(modelCalls).toBe(3);
+    expect(
+      run.events
+        .all()
+        .some(
+          (event) =>
+            event.type === "tool.requested" &&
+            event.payload.toolName === "tool_search",
+        ),
+    ).toBe(false);
+  });
+
   it("adds recovery metadata when an unloaded deferred tool fails schema validation", async () => {
     let modelCalls = 0;
     let observedToolResults: ContextItem[] = [];

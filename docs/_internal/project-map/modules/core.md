@@ -342,6 +342,14 @@ Does not own:
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-12T23:45:00+0800
+- Scope: run-local deferred schema state now accepts registered dependencies
+  from successful Skill body loads in addition to explicit tool search.
+- Read: `packages/core/src/run.ts`, `packages/core/src/context.ts`, and focused
+  run tests.
+- Tests: focused core deferred-tool tests passed.
+
+- Status: Verified
 - Date: 2026-07-11T22:55:00+0800
 - Scope: prior-failure-safe repeated observation guidance and degraded stream
   segment telemetry semantics.
