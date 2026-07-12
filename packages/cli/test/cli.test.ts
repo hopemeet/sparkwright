@@ -3693,13 +3693,23 @@ describe("runCli", () => {
         "Reviews code changes for risk and missing tests.",
         "--workspace",
         workspace,
+        "--format",
+        "json",
       ],
       {
         io: { stdout: createOutput.stdout, stderr: createOutput.stderr },
       },
     );
     expect(created.exitCode).toBe(0);
-    expect(createOutput.stdoutText()).toContain("code-reviewer/SKILL.md");
+    const prepared = JSON.parse(createOutput.stdoutText()) as {
+      id: string;
+      state: string;
+      contentMode: string;
+    };
+    expect(prepared).toMatchObject({
+      state: "draft",
+      contentMode: "template",
+    });
 
     const skillPath = join(
       workspace,
@@ -3708,6 +3718,16 @@ describe("runCli", () => {
       "code-reviewer",
       "SKILL.md",
     );
+    await expect(readFile(skillPath, "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    const applied = await runCli(
+      ["skills", "proposals", "apply", prepared.id, "--workspace", workspace],
+      {
+        io: { stdout: createOutput.stdout, stderr: createOutput.stderr },
+      },
+    );
+    expect(applied.exitCode).toBe(0);
     await expect(readFile(skillPath, "utf8")).resolves.toContain(
       "name: code-reviewer",
     );

@@ -151,6 +151,11 @@ follow the active maps below for the current contract.
 - `packages/project-context/src/index.ts`: [modules/coding-tools.md](modules/coding-tools.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md)
 - `packages/project-commands/src/*`: [modules/edge-packages.md](modules/edge-packages.md), [modules/tui.md](modules/tui.md), [maps/safety/shell.md](maps/safety/shell.md)
 - `packages/skills/src/*` or `packages/host/src/skill-*`: [modules/skills.md](modules/skills.md), [maps/capabilities/skills.md](maps/capabilities/skills.md)
+- `packages/host/src/skill-command-service.ts`, `sparkwright skills create`,
+  TUI `/create skill`, or TUI `/skill-create`:
+  [modules/skills.md](modules/skills.md), [modules/host.md](modules/host.md),
+  [modules/cli.md](modules/cli.md), [modules/tui.md](modules/tui.md),
+  [maps/capabilities/skill-evolution.md](maps/capabilities/skill-evolution.md).
 - `packages/skills/src/markdown-folder-asset.ts`: [modules/skills.md](modules/skills.md), [modules/host.md](modules/host.md), [maps/capabilities/README.md](maps/capabilities/README.md)
 - `packages/host/src/skill-evolution.ts` or `sparkwright skills proposals|history|restore`: [modules/skills.md](modules/skills.md), [maps/capabilities/skill-evolution.md](maps/capabilities/skill-evolution.md)
 - `packages/mcp-adapter/src/index.ts`: [modules/mcp-adapter.md](modules/mcp-adapter.md), [maps/capabilities/mcp.md](maps/capabilities/mcp.md), [maps/safety/shell.md](maps/safety/shell.md)
@@ -176,6 +181,15 @@ TUI events; it is not a trace diagnostic report and must not replace
 trace/session inspection.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-12T08:25:00+0800
+- Scope: added the shared Skill command-service hot spot and routed all four
+  create entrypoints to the active evolution/module maps.
+- Read: `packages/host/src/skill-command-service.ts`, model tool, CLI and both
+  TUI create adapters.
+- Tests: host/CLI/TUI focused entrypoint suites, affected typechecks, and full
+  `npm run release:check` on the same source tree.
 
 - Status: Verified
 - Date: 2026-07-12T02:12:00+0800

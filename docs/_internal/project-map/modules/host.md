@@ -69,6 +69,12 @@ Does not own:
 
 ## Contracts
 
+- `SkillCommandService` owns create preparation, session/run draft dedupe,
+  approval preparation, receipt persistence, and approved apply. CLI/TUI/model
+  adapters must not reproduce those transitions. Low-level proposal/history
+  functions remain in `skill-evolution.ts` for the service and advanced
+  lifecycle commands.
+
 - Host owns the first Skill prepared-change transaction slice. A safe authored
   `create_skill` persists the final proposal/effect hash, requests
   `skill.apply` through the run approval channel, records the hash-bound
@@ -762,6 +768,13 @@ Does not own:
 - Capability snapshot fields are useful but can become stale if new tools bypass `tool-catalog.ts`; direct-core/cron should add tools by catalog profile, not local factories.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-12T08:25:00+0800
+- Scope: introduced the shared Skill command boundary and moved all ordinary
+  create/apply adapters onto it.
+- Read: `packages/host/src/skill-command-service.ts`, exports and consumers.
+- Tests: host focused suites and host build/typecheck.
 
 - Status: Verified
 - Date: 2026-07-12T02:12:00+0800

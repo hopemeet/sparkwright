@@ -23,6 +23,7 @@ and [../maps/capabilities/skill-evolution.md](../maps/capabilities/skill-evoluti
 - `packages/skills/src/markdown-folder-asset.ts`
 - `packages/host/src/skill-report.ts`
 - `packages/host/src/skill-evolution.ts`
+- `packages/host/src/skill-command-service.ts`
 - `packages/host/src/skill-review-digest.ts`
 - `packages/host/src/skill-usage.ts`
 - `packages/host/src/skill-roots.ts`
@@ -48,6 +49,13 @@ Does not own:
 - process execution, sandboxing, or trace emission for inline shell
 
 ## Contracts
+
+- `SkillCommandService` is the host-owned create command boundary. Model
+  `create_skill`, CLI `skills create`, TUI `/create skill`, and TUI
+  `/skill-create` call `prepareCreate`; proposal review apply calls
+  `approveAndApply`. Adapters parse/render only and may not directly write a
+  current Skill. `/skill-create` is a compatibility shortcut for the canonical
+  general `/create skill` entrypoint.
 
 - Safe model-authored create proposals now use the first prepared-change fast
   path: the complete package and `effectHash` are persisted before approval;
@@ -173,6 +181,15 @@ list --run/--session`); failed drafts self-clean. See
   [../maps/capabilities/skill-evolution.md](../maps/capabilities/skill-evolution.md#known-debts).
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-12T08:25:00+0800
+- Scope: create-entrypoint convergence behind `SkillCommandService`, including
+  shared dedupe and effect-bound human review apply.
+- Read: service, model tool, CLI and TUI adapters, focused tests.
+- Tests: host service/evolution/tool suites, CLI create/apply tests, TUI generic
+  and dedicated create/review tests, affected typechecks, and full
+  `npm run release:check` on the same source tree.
 
 - Status: Verified
 - Date: 2026-07-12T02:12:00+0800

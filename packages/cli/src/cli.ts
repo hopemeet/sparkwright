@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync, readlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
-import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { AnySchema, ErrorObject, ValidateFunction } from "ajv";
@@ -83,8 +83,8 @@ import {
 } from "@sparkwright/cron";
 import { type SkillGuardFinding, type SkillRoot } from "@sparkwright/skills";
 import {
+  SkillCommandService,
   loadLayeredSkillReport,
-  applySkillProposal,
   collectSkillReviewDigest,
   collectSkillStats,
   createSkillCreateProposal,
@@ -95,7 +95,6 @@ import {
   readSkillHistoryDetail,
   readSkillProposal,
   rejectSkillProposal,
-  recordSkillPatch,
   restoreSkillFromHistory,
   runSkillDoctor,
   supersedeSkillProposal,
@@ -128,7 +127,6 @@ import {
   catalogEntryOrigin,
   canonicalToolName,
   createMainHostToolCatalog,
-  projectSkillRoot,
   resolveCapabilityDirs,
   resolveConfiguredToolAllowlist,
   resolveSkillRootsForRuntime,
@@ -3870,9 +3868,9 @@ async function handleSkillProposalsCommand(
       writeLine(io.stderr, "Usage: sparkwright skills proposals apply <id>");
       return { exitCode: 1 };
     }
-    const result = await applySkillProposal(parsed.workspaceRoot, id, {
-      force: parsed.force,
-    });
+    const { applied: result } = await new SkillCommandService(
+      parsed.workspaceRoot,
+    ).approveAndApply(id, { force: parsed.force });
     writeLine(
       io.stdout,
       parsed.format === "json"
@@ -4087,36 +4085,30 @@ async function handleSkillsCreate(
     writeLine(io.stderr, input.message);
     return { exitCode: 1 };
   }
-  const root = input.value.root
-    ? isAbsolute(input.value.root)
-      ? input.value.root
-      : resolve(parsed.workspaceRoot, input.value.root)
-    : projectSkillRoot(parsed.workspaceRoot);
-  const skillDir = join(root, input.value.name);
-  const skillPath = join(skillDir, "SKILL.md");
-  const { mkdir, writeFile } = await import("node:fs/promises");
-  const { existsSync } = await import("node:fs");
-
-  if (existsSync(skillPath) && !parsed.force) {
+  if (parsed.force) {
     writeLine(
       io.stderr,
-      `Skill already exists: ${skillPath}. Re-run with --force to overwrite.`,
+      "skills create no longer accepts --force; prepare the proposal, review its final effect, then apply it.",
     );
     return { exitCode: 1 };
   }
-
-  await mkdir(skillDir, { recursive: true });
-  await writeFile(
-    skillPath,
-    renderSkillTemplate(input.value.name, input.value.description),
-    "utf8",
+  const { proposal } = await new SkillCommandService(
+    parsed.workspaceRoot,
+  ).prepareCreate({
+    name: input.value.name,
+    description: input.value.description,
+    root: input.value.root,
+  });
+  writeLine(
+    io.stdout,
+    parsed.format === "json"
+      ? JSON.stringify(proposal, null, 2)
+      : `Prepared proposal ${proposal.id} at ${proposal.path
+          .split(sep)
+          .join(
+            "/",
+          )}. Review and apply it with: sparkwright skills proposals apply ${proposal.id}`,
   );
-  if (resolve(root) === resolve(projectSkillRoot(parsed.workspaceRoot))) {
-    recordSkillPatch(parsed.workspaceRoot, input.value.name);
-  }
-  // Display with forward slashes so output is stable across platforms
-  // (Windows would otherwise print backslashes).
-  writeLine(io.stdout, `Created ${skillPath.split(sep).join("/")}`);
   return { exitCode: 0 };
 }
 
@@ -4430,7 +4422,7 @@ function parseSkillsCreateArgs(
     return {
       ok: false,
       message:
-        "Usage: sparkwright skills create <name> --description <text> [--root path]",
+        "Usage: sparkwright skills create <name> --description <text> [--root .sparkwright/skills]",
     };
   }
   if (!isSkillName(name)) {
@@ -4473,21 +4465,6 @@ function parseSkillsCreateArgs(
 
 function isSkillName(value: string): boolean {
   return /^[a-z0-9][a-z0-9-]{0,63}$/.test(value);
-}
-
-function renderSkillTemplate(name: string, description: string): string {
-  return [
-    "---",
-    `name: ${name}`,
-    `description: ${description}`,
-    'version: "1.0.0"',
-    "metadata:",
-    '  version: "1.0.0"',
-    "---",
-    "",
-    `Use this skill when the user asks for ${description}`,
-    "",
-  ].join("\n");
 }
 
 function formatSkillReport(report: SkillReport): string {
@@ -8042,7 +8019,7 @@ function usage(_env: Record<string, string | undefined>): string {
     "       sparkwright skills doctor [--workspace path] [--format json|text]",
     "       sparkwright skills proposals list|show|create|update|apply|reject|supersede|prune [--workspace path] [--format json|text]",
     "       sparkwright skills history <skill-name> [--workspace path] [--format json|text]",
-    '       sparkwright skills create <name> --description "what it does" [--workspace path] [--root path] [--force]',
+    '       sparkwright skills create <name> --description "what it does" [--workspace path] [--root .sparkwright/skills]',
     "       sparkwright agents list|validate [--workspace path] [--format json|text]",
     '       sparkwright agents create <id> --prompt "what it should do" [--use selector] [--allow tool] [--delegate tool_name] [--workspace path] [--force]',
     '       sparkwright run "your goal" [--image path] [--workspace path] [--session-root path] [--target README.md] [--confidential path-or-glob] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--access-mode mode] [--session-id id] [--model provider/model] [--workflow name] [--verbose]',
@@ -8116,7 +8093,7 @@ function skillsUsage(): string {
     "       sparkwright skills restore <skill-name> --version <history-id> [--to before|after] [--dry-run|--apply] [--workspace path] [--format json|text]",
     '       sparkwright skills proposals create <name> --description "what it does" [--workspace path] [--format json|text]',
     '       sparkwright skills proposals update <name> --description "what should change" [--workspace path] [--format json|text]',
-    '       sparkwright skills create <name> --description "what it does" [--workspace path] [--root path] [--force]',
+    '       sparkwright skills create <name> --description "what it does" [--workspace path] [--root .sparkwright/skills]',
   ].join("\n");
 }
 

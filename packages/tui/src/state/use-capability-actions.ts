@@ -66,7 +66,7 @@ export function useCapabilityActions(deps: {
         layers.pop("create");
         toasts.push({
           variant: "success",
-          title: "created",
+          title: result.kind === "skill" ? "prepared" : "created",
           message: result.path
             ? `${result.message} · ${formatWorkspaceDisplayPath(result.path, {
                 workspaceRoot,

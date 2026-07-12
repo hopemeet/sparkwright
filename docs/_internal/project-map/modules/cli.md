@@ -41,6 +41,11 @@ Does not own:
 
 ## Contracts
 
+- `skills create` prepares a project Skill proposal through host
+  `SkillCommandService`; it no longer writes `SKILL.md` directly or accepts
+  `--force`. `skills proposals apply` is the explicit human review decision and
+  calls the same service's effect-bound approve/apply path.
+
 - `sparkwright trace *` reads a `trace.jsonl` path.
 - Top-level help must list every trace diagnostic subcommand, including
   `trace report`; subcommand usage remains owned by command-specific handlers.
@@ -305,6 +310,13 @@ Does not own:
 - The direct-core deterministic model is a diagnostics harness; it should keep exercising real catalog tools (`read_file`, `read_anchored_text`, `write_file`, `edit_anchored_text`/`apply_patch`) rather than reintroducing test-only write tools.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-12T08:25:00+0800
+- Scope: converged CLI Skill create/apply with model and TUI managed-change
+  semantics.
+- Read: `packages/cli/src/cli.ts`, host Skill command service, CLI tests.
+- Tests: focused CLI create/proposal suites and CLI typecheck.
 
 - Status: Verified
 - Date: 2026-07-11T15:30:00+0800

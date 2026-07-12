@@ -51,6 +51,12 @@ Does not own:
 
 ## Contracts
 
+- `/create skill` is the canonical general creation entrypoint and
+  `/skill-create` is a hidden compatibility/advanced shortcut. Both prepare a
+  proposal through host `SkillCommandService`; neither writes the current Skill
+  directly. Review apply also calls the service so later-session approval uses
+  the same effect-bound receipt as the in-run fast path.
+
 - The prepared-change fast path uses the normal queued approval controller with
   action `skill.apply`. `ApprovalPrompt` renders the persisted final patch and
   target before the one-shot decision; it deliberately has an unknown session
@@ -330,6 +336,14 @@ Does not own:
   durable control inbox before adding daemon and multi-channel adapters.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-12T08:25:00+0800
+- Scope: converged generic and dedicated TUI Skill create/review adapters on
+  the host command service and clarified canonical/shortcut UX.
+- Read: `lib/create-capability.ts`, `lib/skill-evolution.ts`, command registry,
+  capability and Skill action hooks.
+- Tests: focused TUI create/evolution suites and TUI typecheck.
 
 - Status: Verified
 - Date: 2026-07-12T02:12:00+0800

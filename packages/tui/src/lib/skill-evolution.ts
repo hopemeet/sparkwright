@@ -1,8 +1,7 @@
 import {
-  createSkillCreateProposal,
   createSkillUpdateProposal,
   existingSkillRoots,
-  applySkillProposal,
+  SkillCommandService,
   listSkillProposals,
   loadHostConfig,
   readSkillProposal,
@@ -89,8 +88,9 @@ export async function createTuiSkillProposalFromInput(
   workspaceRoot: string,
   input: TuiSkillProposalInput,
 ): Promise<TuiSkillProposalResult> {
-  const proposal = await createSkillCreateProposal({
+  const { proposal } = await new SkillCommandService(
     workspaceRoot,
+  ).prepareCreate({
     name: input.name,
     description: input.description,
   });
@@ -229,7 +229,9 @@ export async function applyTuiSkillReviewProposal(
   workspaceRoot: string,
   proposalId: string,
 ): Promise<TuiSkillReviewActionResult> {
-  const applied = await applySkillProposal(workspaceRoot, proposalId);
+  const { applied } = await new SkillCommandService(
+    workspaceRoot,
+  ).approveAndApply(proposalId);
   return {
     id: applied.proposal.id,
     state: applied.proposal.state,

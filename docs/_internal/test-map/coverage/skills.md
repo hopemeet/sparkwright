@@ -14,6 +14,12 @@
 
 ## Covered
 
+- 2026-07-12 Phase 2 create convergence routes model `create_skill`, CLI
+  `skills create`, TUI `/create skill`, and `/skill-create` through host
+  `SkillCommandService`. Focused service, host tool, CLI and TUI tests verify
+  proposal-first behavior, shared review apply, session dedupe, and absence of
+  direct current-Skill writes from ordinary create adapters.
+
 - 2026-07-11 real `openai/gpt-5.6-terra` TUI evidence showed the pre-fix human
   apply handoff was broken: a user follow-up of `应用` entered a model run with
   no apply tool, causing repeated discovery/resource loads and leaving the

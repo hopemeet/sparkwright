@@ -13,6 +13,7 @@ See [../../modules/skills.md](../../modules/skills.md).
 ## Main Files
 
 - `packages/host/src/skill-evolution.ts` (proposal/history/restore lifecycle)
+- `packages/host/src/skill-command-service.ts` (ordinary create/approve/apply command boundary)
 - `packages/host/src/skill-review-digest.ts` (`skills review` host digest)
 - `packages/host/src/skill-usage.ts` (advisory patch observations)
 - `packages/host/src/tools.ts` (`create_skill`, `update_skill` model tools)
@@ -55,6 +56,13 @@ history kinds:   create | update | restore
 
 ## Contracts
 
+- **Create entrypoint convergence:** model `create_skill`, CLI `skills create`,
+  TUI `/create skill`, and TUI `/skill-create` all call
+  `SkillCommandService.prepareCreate`. CLI/TUI review apply calls
+  `approveAndApply`; the in-run model fast path uses `prepareApproval` plus
+  `approvePrepared` after the run approval resolves. Advanced proposal-create
+  commands remain low-level authoring surfaces, not a fifth ordinary UX.
+
 - **Prepared create fast path:** a complete clean authored model create is
   persisted as `ready`/`waiting` with `artifactId` and `effectHash` before the
   run asks for `skill.apply`. Approval binds proposal id + revision + effect
@@ -74,8 +82,9 @@ history kinds:   create | update | restore
 
 - **Actor boundary:** model-facing `create_skill` and `update_skill` draft
   proposals. `applySkillProposal`, reject, supersede, prune, and restore are
-  **never exposed as model tools** — they run from CLI/TUI only. Manual CLI
-  `sparkwright skills create` remains a human direct-write management command.
+  **never exposed as model tools** — they run from CLI/TUI only. CLI
+  `sparkwright skills create` now prepares through the same proposal service;
+  it is no longer a direct-write exception.
 - **Human-action handoff:** model-facing draft results carry one canonical
   `/skill-review <proposal-id>` command plus a host-computed `humanAction`
   projection (eligibility, validation, content mode, guard severity, and
@@ -190,6 +199,13 @@ history kinds:   create | update | restore
   there is no persisted run→proposals index (a scan, not an index).
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-12T08:25:00+0800
+- Scope: Phase 2 create-entrypoint convergence and service-owned later-session
+  approve/apply.
+- Read: host service/evolution, CLI and both TUI adapters, model tool.
+- Tests: focused host, CLI and TUI entrypoint suites plus affected typechecks.
 
 - Status: Verified
 - Date: 2026-07-12T02:12:00+0800

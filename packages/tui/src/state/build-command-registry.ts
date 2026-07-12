@@ -378,9 +378,9 @@ export function buildCommandRegistry(
   });
   reg.register({
     name: "skill-create",
-    title: "Draft Skill proposal",
+    title: "Create Skill (shortcut)",
     description:
-      "Create a project Skill proposal interactively or from arguments.",
+      "Compatibility shortcut for /create skill; uses the same managed proposal flow.",
     category: "capability",
     hiddenByDefault: true,
     run: () => skillActions.openSkillCreateProposal(),

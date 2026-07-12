@@ -1020,6 +1020,7 @@ export async function recordSkillProposalApproval(input: {
 export async function applyApprovedSkillProposal(
   workspaceRoot: string,
   proposalId: string,
+  options: { force?: boolean } = {},
 ): Promise<ApplySkillProposalResult> {
   const proposal = await readSkillProposal(workspaceRoot, proposalId);
   const receipt = JSON.parse(
@@ -1028,6 +1029,7 @@ export async function applyApprovedSkillProposal(
   return applySkillProposal(workspaceRoot, proposalId, {
     approvalReceipt: receipt,
     requireEffectApproval: true,
+    force: options.force,
   });
 }
 

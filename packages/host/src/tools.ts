@@ -45,17 +45,14 @@ import {
   shouldDeferToolByDefault,
 } from "./tool-identities.js";
 import {
-  applyApprovedSkillProposal,
-  createSkillCreateProposal,
   createSkillUpdateProposal,
   listSkillProposals,
   reviseSkillProposalDraft,
-  prepareSkillProposalApproval,
-  recordSkillProposalApproval,
   skillProposalReviewCommand,
   type SkillProposalProvenance,
   type SkillProposalSummary,
 } from "./skill-evolution.js";
+import { SkillCommandService } from "./skill-command-service.js";
 import { delegateToolName } from "./delegate-capability.js";
 import { projectSkillRoot } from "./skill-roots.js";
 import { loadLayeredSkillReport } from "./skill-report.js";
@@ -513,45 +510,28 @@ export function createSkillManagerTool(
         description,
         ...(input.body ? { body: input.body } : {}),
       });
-      resolveSkillCreateRoot(workspaceRoot, input.root);
+      const root = resolveSkillCreateRoot(workspaceRoot, input.root);
       const provenance = skillProposalProvenanceFromContext(ctx, description);
-      const existing = await findExistingRunSkillDraft(
-        workspaceRoot,
-        name,
-        provenance,
-        "create",
-      );
-      if (existing) {
-        const revised = await reviseSkillProposalDraft({
-          workspaceRoot,
-          proposalId: existing.id,
-          description,
-          content,
-          provenance,
-          mutationReporter: ctx,
-        });
-        return finishSafeAuthoredSkillCreate(
-          workspaceRoot,
-          revised.proposal,
-          ctx,
-          {
-            changed: revised.changed,
-            existing: true,
-            revised: revised.changed,
-          },
-        );
-      }
-      const proposal = await createSkillCreateProposal({
-        workspaceRoot,
+      const service = new SkillCommandService(workspaceRoot);
+      const prepared = await service.prepareCreate({
         name,
         description,
         ...(content ? { content } : {}),
+        root,
         provenance,
         mutationReporter: ctx,
       });
-      return finishSafeAuthoredSkillCreate(workspaceRoot, proposal, ctx, {
-        changed: true,
-      });
+      return finishSafeAuthoredSkillCreate(
+        service,
+        workspaceRoot,
+        prepared.proposal,
+        ctx,
+        {
+          changed: prepared.changed,
+          existing: prepared.existing,
+          revised: prepared.revised,
+        },
+      );
     },
   });
 }
@@ -1322,6 +1302,7 @@ function skillDraftToolOutput(
 }
 
 async function finishSafeAuthoredSkillCreate(
+  service: SkillCommandService,
   workspaceRoot: string,
   proposal: SkillProposalSummary,
   ctx: Pick<RuntimeContext, "run"> & {
@@ -1341,10 +1322,7 @@ async function finishSafeAuthoredSkillCreate(
     return skillDraftToolOutput(proposal, outputOptions);
   }
 
-  const prepared = await prepareSkillProposalApproval(
-    workspaceRoot,
-    proposal.id,
-  );
+  const prepared = await service.prepareApproval(proposal.id);
   if (!ctx.requestApproval) {
     return {
       ...skillDraftToolOutput(prepared.proposal, outputOptions),
@@ -1397,12 +1375,7 @@ async function finishSafeAuthoredSkillCreate(
     };
   }
 
-  const approval = await recordSkillProposalApproval({
-    workspaceRoot,
-    proposalId: proposal.id,
-    effectHash: prepared.effectHash,
-  });
-  const applied = await applyApprovedSkillProposal(workspaceRoot, proposal.id);
+  const { approval, applied } = await service.approvePrepared(prepared);
   return {
     action: "applied",
     changed: true,

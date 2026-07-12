@@ -454,8 +454,10 @@ off/notice/draft/apply modes or depend on a bare `a/r` action band.
 
 ### Phase 2: command service and four-entry convergence
 
-- Introduce `SkillCommandService` and route CLI create, TUI create,
-  `/skill-create`, and model tools through it.
+- Implemented: `SkillCommandService` now routes CLI create, TUI `/create skill`,
+  `/skill-create`, model create, and human review apply through one prepared
+  change boundary. `/create skill` is canonical; `/skill-create` is a
+  compatibility shortcut.
 - Replace the bare action band with the completion card and persistent inbox.
 
 ### Phase 3: managed Agent changes
@@ -516,6 +518,15 @@ Phase 1 is accepted only when tests prove:
   should always stay review-required.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-12T08:34:00+0800
+- Scope: Phase 2 command-service extraction and convergence of model, CLI,
+  `/create skill`, and compatibility `/skill-create` proposal preparation.
+- Read: shared service, four entry adapters, approval/apply path, focused tests,
+  and the linked project/test maps.
+- Tests: focused host/CLI/TUI suites, affected typechecks, and full
+  `npm run release:check` on the same source tree.
 
 - Status: Verified
 - Date: 2026-07-12T02:00:00+0800

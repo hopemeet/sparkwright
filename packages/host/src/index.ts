@@ -190,6 +190,13 @@ export {
   restoreSkillFromHistory,
   supersedeSkillProposal,
 } from "./skill-evolution.js";
+export { SkillCommandService } from "./skill-command-service.js";
+export type {
+  ApprovePreparedSkillResult,
+  PrepareSkillCreateCommandInput,
+  PrepareSkillCreateCommandResult,
+  SkillCreateEligibility,
+} from "./skill-command-service.js";
 export type {
   ApplySkillProposalResult,
   CloseSkillProposalInput,
