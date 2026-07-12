@@ -565,7 +565,7 @@ describe("SparkwrightRun", () => {
         .some(
           (event) =>
             event.type === "tool.requested" &&
-            event.payload.toolName === "tool_search",
+            (event.payload as { toolName?: string }).toolName === "tool_search",
         ),
     ).toBe(false);
   });

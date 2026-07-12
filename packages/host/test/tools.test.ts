@@ -109,7 +109,7 @@ describe("host tools", () => {
       },
     });
     expect(created).not.toHaveProperty("id");
-    expect(created.profile).not.toHaveProperty("id");
+    expect((created as { profile: unknown }).profile).not.toHaveProperty("id");
     const document = await readFile(
       join(ctx.workspaceRoot, ".sparkwright", "agents", "reviewer.md"),
       "utf8",
