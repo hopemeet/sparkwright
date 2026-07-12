@@ -458,7 +458,9 @@ off/notice/draft/apply modes or depend on a bare `a/r` action band.
   `/skill-create`, model create, and human review apply through one prepared
   change boundary. `/create skill` is canonical; `/skill-create` is a
   compatibility shortcut.
-- Replace the bare action band with the completion card and persistent inbox.
+- Implemented: replaced the transient action band with a completion card. It
+  restores the newest draft from proposal storage on TUI startup; `/skill-review`
+  remains the durable full inbox and the only complete recovery surface.
 
 ### Phase 3: managed Agent changes
 
@@ -518,6 +520,14 @@ Phase 1 is accepted only when tests prove:
   should always stay review-required.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-12T08:36:00+0800
+- Scope: Phase 2 completion-card and persisted Skill inbox recovery slice.
+- Read: TUI proposal store projection, App lifecycle, completion-card render,
+  capability/Skill create adapters, and review dialog route.
+- Tests: focused TUI completion card, event-store, proposal inbox/create/review
+  tests and TUI typecheck.
 
 - Status: Verified
 - Date: 2026-07-12T08:34:00+0800

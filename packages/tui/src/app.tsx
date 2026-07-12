@@ -27,6 +27,7 @@ import {
   useSkillActions,
   runSkillLearnAutoNotice,
 } from "./state/use-skill-actions.js";
+import { loadTuiSkillInboxAction } from "./lib/skill-evolution.js";
 import { useCapabilityActions } from "./state/use-capability-actions.js";
 import { useSessionActions } from "./state/use-session-actions.js";
 import { useTaskActions } from "./state/use-task-actions.js";
@@ -495,7 +496,28 @@ function AppReady(
       setConfirmingHumanAction(false);
       setApplyingHumanAction(false);
     },
+    onProposalPrepared: () => {
+      void loadTuiSkillInboxAction(resolved.workspaceRoot)
+        .then((action) => store.setPendingHumanAction(action))
+        .catch(() => {});
+    },
   });
+
+  // Proposal files are durable. Restore the most recent open proposal after a
+  // restart so the completion card is a convenience, never the only inbox.
+  useEffect(() => {
+    let cancelled = false;
+    void loadTuiSkillInboxAction(resolved.workspaceRoot)
+      .then((action) => {
+        if (!cancelled) store.setPendingHumanAction(action);
+      })
+      .catch(() => {
+        if (!cancelled) store.setPendingHumanAction(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [resolved.workspaceRoot, store]);
 
   useEffect(() => {
     setConfirmingHumanAction(false);
@@ -508,6 +530,11 @@ function AppReady(
     controller,
     toasts,
     layers,
+    onSkillProposalPrepared: () => {
+      void loadTuiSkillInboxAction(resolved.workspaceRoot)
+        .then((action) => store.setPendingHumanAction(action))
+        .catch(() => {});
+    },
   });
 
   // Session browsing / diagnostics / labels / rename / fork / export.

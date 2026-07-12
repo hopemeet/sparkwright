@@ -63,6 +63,11 @@ history kinds:   create | update | restore
   `approvePrepared` after the run approval resolves. Advanced proposal-create
   commands remain low-level authoring surfaces, not a fifth ordinary UX.
 
+- **TUI persistent inbox:** proposal files remain the source of truth. TUI
+  reads the newest draft after startup and after either creation surface, then
+  presents a dismissible completion card linked to `/skill-review`; dismissing
+  the card never closes or mutates the draft.
+
 - **Prepared create fast path:** a complete clean authored model create is
   persisted as `ready`/`waiting` with `artifactId` and `effectHash` before the
   run asks for `skill.apply`. Approval binds proposal id + revision + effect
@@ -199,6 +204,12 @@ history kinds:   create | update | restore
   there is no persisted run→proposals index (a scan, not an index).
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-12T08:36:00+0800
+- Scope: documented TUI persisted-inbox recovery and completion-card boundary.
+- Read: TUI proposal helper, action hooks, event store, App and review dialog.
+- Tests: focused TUI completion-card and persistent-inbox suites; TUI typecheck.
 
 - Status: Verified
 - Date: 2026-07-12T08:25:00+0800

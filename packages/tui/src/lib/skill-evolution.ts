@@ -47,6 +47,17 @@ export interface TuiSkillReviewActionResult {
   historyId?: string;
 }
 
+export interface TuiSkillInboxAction {
+  kind: "skill_proposal_review";
+  proposalId: string;
+  reviewCommand: string;
+  eligibility: "review_required";
+  validationStatus: "passed";
+  contentMode?: string;
+  guardSeverity: "none" | "caution" | "dangerous";
+  recommendedAction: "review";
+}
+
 const REVIEW_STATES: readonly SkillProposalState[] = [
   "draft",
   "applied",
@@ -187,6 +198,38 @@ export async function loadTuiSkillReview(
     total: filtered.length,
     items,
     ...(stateFilter ? { stateFilter } : {}),
+  };
+}
+
+/**
+ * Proposal files are the persistent inbox. Restore the newest open draft as a
+ * small completion-card affordance; the full inbox remains `/skill-review`.
+ */
+export async function loadTuiSkillInboxAction(
+  workspaceRoot: string,
+): Promise<TuiSkillInboxAction | null> {
+  const proposals = await listSkillProposals(workspaceRoot);
+  const latest = proposals
+    .filter((proposal) => proposal.state === "draft")
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
+  if (!latest) return null;
+  const proposal = await readSkillProposal(workspaceRoot, latest.id);
+  const guardSeverity = proposal.guardFindings?.some(
+    (finding) => finding.severity === "dangerous",
+  )
+    ? "dangerous"
+    : (proposal.guardFindings?.length ?? 0) > 0
+      ? "caution"
+      : "none";
+  return {
+    kind: "skill_proposal_review",
+    proposalId: proposal.id,
+    reviewCommand: `/skill-review ${proposal.id}`,
+    eligibility: "review_required",
+    validationStatus: "passed",
+    contentMode: proposal.contentMode,
+    guardSeverity,
+    recommendedAction: "review",
   };
 }
 

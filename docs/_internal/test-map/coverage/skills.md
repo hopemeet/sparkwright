@@ -14,6 +14,11 @@
 
 ## Covered
 
+- 2026-07-12 TUI completion-card coverage proves a draft proposal is restored
+  from persistent proposal storage after startup, card dismissal leaves the
+  draft recoverable through `/skill-review`, and both generic and dedicated
+  creation paths refresh the affordance.
+
 - 2026-07-12 Phase 2 create convergence routes model `create_skill`, CLI
   `skills create`, TUI `/create skill`, and `/skill-create` through host
   `SkillCommandService`. Focused service, host tool, CLI and TUI tests verify

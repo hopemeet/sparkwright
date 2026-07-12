@@ -1,7 +1,7 @@
 import React from "react";
 import { render } from "ink";
 import { describe, expect, it } from "vitest";
-import { HumanActionBand } from "../src/components/human-action-band.js";
+import { SkillProposalCompletionCard } from "../src/components/skill-proposal-completion-card.js";
 
 async function renderToText(
   confirmingApply: boolean,
@@ -35,7 +35,7 @@ async function renderToText(
     pause() {},
   } as unknown as NodeJS.ReadStream;
   const view = render(
-    <HumanActionBand
+    <SkillProposalCompletionCard
       confirmingApply={confirmingApply}
       applying={applying}
       action={{
@@ -57,10 +57,11 @@ async function renderToText(
   return writes.join("").replace(/\x1b\[[0-9;?]*[a-zA-Z]/gu, "");
 }
 
-describe("HumanActionBand", () => {
+describe("SkillProposalCompletionCard", () => {
   it("renders the quick apply and review affordances", async () => {
     const text = await renderToText(false);
-    expect(text).toContain("skill proposal ready");
+    expect(text).toContain("Skill proposal ready for review");
+    expect(text).toContain("Stored in the Skill inbox");
     expect(text).toContain("a apply · r review diff · esc dismiss");
   });
 

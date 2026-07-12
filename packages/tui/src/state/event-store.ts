@@ -440,6 +440,12 @@ export class EventStore {
     this.schedule();
   }
 
+  /** Restore a durable Skill inbox item after TUI startup or capability create. */
+  setPendingHumanAction(action: PendingHumanAction | null): void {
+    this.state = { ...this.state, pendingHumanAction: action };
+    this.schedule();
+  }
+
   /**
    * Commit the user's goal as a synthetic transcript entry. The host's
    * `run.started` payload carries the goal only for the streaming provider

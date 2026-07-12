@@ -56,6 +56,7 @@ export function useSkillActions(deps: {
   layers: LayerStack;
   reloadConfig: (verbose: boolean) => void;
   onProposalClosed?: (proposalId: string) => void;
+  onProposalPrepared?: () => void;
 }): SkillActions {
   const { workspaceRoot, toasts, layers, reloadConfig } = deps;
   const [skillReviewSnapshot, setSkillReviewSnapshot] =
@@ -71,6 +72,7 @@ export function useSkillActions(deps: {
           title: "skill proposal",
           message: formatTuiSkillProposalResult(proposal),
         });
+        deps.onProposalPrepared?.();
       })
       .catch((error: unknown) => {
         toasts.push({
@@ -98,6 +100,7 @@ export function useSkillActions(deps: {
           title: "skill proposal",
           message: formatTuiSkillProposalResult(proposal),
         });
+        deps.onProposalPrepared?.();
       })
       .catch((error: unknown) => {
         toasts.push({

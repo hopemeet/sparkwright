@@ -12,6 +12,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   applyTuiSkillReviewProposal,
   createTuiSkillProposal,
+  loadTuiSkillInboxAction,
   formatTuiSkillProposalResult,
   formatTuiSkillReviewSummary,
   loadTuiSkillReview,
@@ -111,6 +112,28 @@ describe("tui skill evolution commands", () => {
     await expect(
       loadTuiSkillReview(workspace, "skillprop_missing"),
     ).rejects.toThrow(/ENOENT|no such file/i);
+  });
+
+  it("restores the newest open proposal as a persistent inbox action", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-tui-inbox-"));
+    tempDirs.push(workspace);
+    const first = await createTuiSkillProposal(
+      workspace,
+      "first --description First Skill",
+    );
+    const second = await createTuiSkillProposal(
+      workspace,
+      "second --description Second Skill",
+    );
+
+    const inbox = await loadTuiSkillInboxAction(workspace);
+    expect(inbox).toMatchObject({
+      kind: "skill_proposal_review",
+      proposalId: second.id,
+      reviewCommand: `/skill-review ${second.id}`,
+      eligibility: "review_required",
+    });
+    expect(inbox?.proposalId).not.toBe(first.id);
   });
 
   it("reads and writes the project skill learn mode", async () => {

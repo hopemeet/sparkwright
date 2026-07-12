@@ -57,6 +57,10 @@ Does not own:
   directly. Review apply also calls the service so later-session approval uses
   the same effect-bound receipt as the in-run fast path.
 
+- Skill proposal files are the persistent inbox. On startup, TUI restores the
+  newest `draft` as a completion-card affordance; `esc` only dismisses that
+  card, while `/skill-review` lists and recovers all durable proposals.
+
 - The prepared-change fast path uses the normal queued approval controller with
   action `skill.apply`. `ApprovalPrompt` renders the persisted final patch and
   target before the one-shot decision; it deliberately has an unknown session
@@ -336,6 +340,14 @@ Does not own:
   durable control inbox before adding daemon and multi-channel adapters.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-12T08:36:00+0800
+- Scope: replaced the transient Skill action band with a persisted-inbox
+  completion card and wired both TUI creation paths to refresh it.
+- Read: `app.tsx`, completion card, event store, Skill evolution helpers, and
+  capability/Skill action hooks.
+- Tests: focused card/event-store/inbox/create/review tests; TUI typecheck.
 
 - Status: Verified
 - Date: 2026-07-12T08:25:00+0800

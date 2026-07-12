@@ -9,7 +9,7 @@ import { StatusBar } from "./status-bar.js";
 import { StreamingMessage } from "./streaming-message.js";
 import { TodoBand } from "./todo-band.js";
 import { ToastView } from "./toast.js";
-import { HumanActionBand } from "./human-action-band.js";
+import { SkillProposalCompletionCard } from "./skill-proposal-completion-card.js";
 
 export function LiveFrame(props: {
   state: StoreState;
@@ -104,7 +104,7 @@ export function LiveFrame(props: {
       {props.state.pendingHumanAction &&
       props.state.status !== "running" &&
       props.state.status !== "awaiting-approval" ? (
-        <HumanActionBand
+        <SkillProposalCompletionCard
           action={props.state.pendingHumanAction}
           confirmingApply={props.confirmingHumanAction}
           applying={props.applyingHumanAction}

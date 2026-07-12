@@ -3,20 +3,27 @@ import { Box, Text } from "ink";
 import type { PendingHumanAction } from "../state/event-store.js";
 import { useTheme } from "../lib/theme-context.js";
 
-export function HumanActionBand(props: {
+/** A durable-review completion card, replacing the transient action band. */
+export function SkillProposalCompletionCard(props: {
   action: PendingHumanAction;
   confirmingApply: boolean;
   applying: boolean;
 }): React.ReactElement {
   const theme = useTheme();
-  const action = props.action;
+  const { action } = props;
   return (
-    <Box paddingX={1} flexDirection="column">
+    <Box
+      borderStyle="round"
+      borderColor={theme.accent}
+      flexDirection="column"
+      paddingX={1}
+    >
       <Text>
-        <Text color={theme.success}>skill proposal ready</Text>
-        <Text color={theme.muted}>
-          {` · ${action.proposalId} · validation ${action.validationStatus} · ${action.guardSeverity} findings`}
-        </Text>
+        <Text color={theme.success}>Skill proposal ready for review</Text>
+        <Text color={theme.muted}>{` · ${action.proposalId}`}</Text>
+      </Text>
+      <Text color={theme.muted}>
+        {`Stored in the Skill inbox · validation ${action.validationStatus} · ${action.guardSeverity} findings`}
       </Text>
       {props.applying ? (
         <Text color={theme.warning}>applying proposal…</Text>
