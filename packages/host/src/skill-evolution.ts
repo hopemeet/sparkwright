@@ -4,6 +4,8 @@ import {
   formatWorkspaceDisplayPath,
 } from "@sparkwright/core";
 import {
+  PACKAGE_HASH_POLICY_VERSION,
+  computeAssetPackageHash,
   computeSkillPackageHash,
   inspectSkill,
   parseSkill,
@@ -14,6 +16,7 @@ import {
 import { readdir, readFile, stat } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { createHash } from "node:crypto";
 import {
   createFileCapabilityPackageWriter,
   type CapabilityPackageMutationReporter,
@@ -38,6 +41,16 @@ export type SkillProposalState =
 export type SkillProposalKind = "create" | "update";
 export type SkillProposalContentMode = "authored" | "intent_stub" | "template";
 export type SkillHistoryKind = SkillProposalKind | "restore";
+export type PreparedChangeState =
+  | "ready"
+  | "waiting"
+  | "approved"
+  | "applying"
+  | "applied"
+  | "rejected"
+  | "superseded"
+  | "stale"
+  | "failed";
 
 const PRUNABLE_PROPOSAL_STATES: readonly SkillProposalState[] = [
   "rejected",
@@ -45,6 +58,32 @@ const PRUNABLE_PROPOSAL_STATES: readonly SkillProposalState[] = [
   "superseded",
   "failed",
 ];
+
+function packageHashPolicyVersion(value: {
+  packageHashPolicyVersion?: 1 | 2;
+}): 1 | 2 {
+  return value.packageHashPolicyVersion ?? 1;
+}
+
+async function computeSkillPackageHashForPolicy(
+  skillDir: string,
+  policyVersion: 1 | 2,
+) {
+  if (policyVersion === PACKAGE_HASH_POLICY_VERSION) {
+    return computeAssetPackageHash({
+      rootPath: skillDir,
+      entryPath: "SKILL.md",
+    });
+  }
+  return computeSkillPackageHash(skillDir);
+}
+
+async function computeCurrentSkillPackageHash(skillDir: string) {
+  return computeSkillPackageHashForPolicy(
+    skillDir,
+    PACKAGE_HASH_POLICY_VERSION,
+  );
+}
 
 /**
  * Where a proposal came from. Auto-captured when a proposal is drafted by a
@@ -69,6 +108,18 @@ export interface SkillProposalMetadata {
   updatedAt: string;
   basePackageHash: string | null;
   afterPackageHash: string;
+  /** Missing means immutable legacy package-hash policy v1. */
+  packageHashPolicyVersion?: 1 | 2;
+  /** Stable project identity allocated for managed creates. */
+  artifactId?: string;
+  /** Hash of the inspectable final effect; excludes guard policy versions. */
+  effectHash?: string;
+  /** Prepared-change transaction state. Legacy draft proposals omit it. */
+  preparedState?: PreparedChangeState;
+  /** Monotonic revision of a mutable draft. Applied/closed proposals freeze it. */
+  revision?: number;
+  /** Hash replaced by the latest draft revision, for reviewer-visible audit. */
+  previousAfterPackageHash?: string;
   summary: string;
   contentMode?: SkillProposalContentMode;
   sourceLayer?: SkillRoot["layer"];
@@ -86,6 +137,37 @@ export interface SkillProposalMetadata {
   provenance?: SkillProposalProvenance;
 }
 
+export interface SkillApprovalReceipt {
+  schemaVersion: 1;
+  receiptId: string;
+  proposalId: string;
+  proposalRevision: number;
+  effectHash: string;
+  decision: "approved" | "rejected";
+  approvedRiskFingerprints: string[];
+  approvedAt: string;
+}
+
+export interface SkillMutationReceipt {
+  schemaVersion: 1;
+  receiptId: string;
+  proposalId: string;
+  effectHash: string;
+  artifactId: string;
+  beforePackageHash: string | null;
+  afterPackageHash: string;
+  packageHashPolicyVersion?: 1 | 2;
+  targetPath: string;
+  historyId: string;
+  appliedAt: string;
+}
+
+export interface PreparedSkillApproval {
+  proposal: SkillProposalDetail;
+  effectHash: string;
+  riskFingerprints: string[];
+}
+
 export interface SkillProposalSummary extends SkillProposalMetadata {
   path: string;
 }
@@ -93,6 +175,16 @@ export interface SkillProposalSummary extends SkillProposalMetadata {
 export interface SkillProposalDetail extends SkillProposalSummary {
   proposalMarkdown: string;
   patchDiff: string;
+}
+
+export function skillProposalReviewCommand(proposalId: string): string {
+  assertSafePathSegment(proposalId, "proposal id");
+  return `/skill-review ${proposalId}`;
+}
+
+export interface ReviseSkillProposalDraftResult {
+  proposal: SkillProposalDetail;
+  changed: boolean;
 }
 
 export interface SkillHistoryMetadata {
@@ -103,6 +195,8 @@ export interface SkillHistoryMetadata {
   createdAt: string;
   beforePackageHash: string | null;
   afterPackageHash: string;
+  /** Missing means immutable legacy package-hash policy v1. */
+  packageHashPolicyVersion?: 1 | 2;
   targetPath: string;
   /** @reserved Restore provenance linking back to the source history version, persisted for readers/diagnostics, not by an in-process TS reader. */
   sourceHistoryId?: string;
@@ -151,6 +245,13 @@ export interface PruneSkillProposalsResult {
   cutoff?: string;
   candidates: SkillProposalSummary[];
   deleted: SkillProposalSummary[];
+}
+
+export interface ReconcileSkillProposalDraftsResult {
+  checked: number;
+  /** @reserved Public reconciliation diagnostic consumed by host product adapters and audit tooling. */
+  superseded: SkillProposalDetail[];
+  stale: SkillProposalDetail[];
 }
 
 export interface RestoreSkillFromHistoryInput {
@@ -251,7 +352,8 @@ export async function createSkillCreateProposal(
     });
     const guardFindings = inspectProposedSkillContent(input.name, skillContent);
 
-    const afterHash = await computeSkillPackageHash(afterSkillDir);
+    const afterHash = await computeCurrentSkillPackageHash(afterSkillDir);
+    const artifactId = createId("skill") as string;
     const metadata: SkillProposalMetadata = {
       id: proposalId,
       kind: "create",
@@ -263,6 +365,19 @@ export async function createSkillCreateProposal(
       updatedAt: now,
       basePackageHash: null,
       afterPackageHash: afterHash.packageHash,
+      packageHashPolicyVersion: PACKAGE_HASH_POLICY_VERSION,
+      artifactId,
+      effectHash: skillProposalEffectHash({
+        artifactId,
+        operation: "create",
+        skillName: input.name,
+        basePackageHash: null,
+        afterPackageHash: afterHash.packageHash,
+        packageHashPolicyVersion: PACKAGE_HASH_POLICY_VERSION,
+        provenance: input.provenance,
+      }),
+      preparedState: "ready",
+      revision: 1,
       summary: `Create project Skill ${input.name}`,
       contentMode: input.content ? "authored" : "template",
       ...(guardFindings.length > 0 ? { guardFindings } : {}),
@@ -327,7 +442,7 @@ export async function createSkillUpdateProposal(
   }
 
   const sourceDir = skillPackageDir(skill);
-  const baseHash = await computeSkillPackageHash(sourceDir);
+  const baseHash = await computeCurrentSkillPackageHash(sourceDir);
   const targetPath = join(projectSkillRoot(input.workspaceRoot), input.name);
   const proposalId = createId("skillprop") as string;
   const proposalPath = proposalDir(input.workspaceRoot, proposalId);
@@ -356,7 +471,8 @@ export async function createSkillUpdateProposal(
     });
     const guardFindings = inspectProposedSkillContent(input.name, afterContent);
 
-    const afterHash = await computeSkillPackageHash(afterSkillDir);
+    const afterHash = await computeCurrentSkillPackageHash(afterSkillDir);
+    const artifactId = `legacy:project:${input.name}`;
     const metadata: SkillProposalMetadata = {
       id: proposalId,
       kind: "update",
@@ -368,6 +484,19 @@ export async function createSkillUpdateProposal(
       updatedAt: now,
       basePackageHash: baseHash.packageHash,
       afterPackageHash: afterHash.packageHash,
+      packageHashPolicyVersion: PACKAGE_HASH_POLICY_VERSION,
+      artifactId,
+      effectHash: skillProposalEffectHash({
+        artifactId,
+        operation: "update",
+        skillName: input.name,
+        basePackageHash: baseHash.packageHash,
+        afterPackageHash: afterHash.packageHash,
+        packageHashPolicyVersion: PACKAGE_HASH_POLICY_VERSION,
+        provenance: input.provenance,
+      }),
+      preparedState: "ready",
+      revision: 1,
       summary:
         skill.layer === "project"
           ? `Update project Skill ${input.name}`
@@ -417,6 +546,162 @@ export async function createSkillUpdateProposal(
   }
 }
 
+/**
+ * Revise an existing draft in place. The proposal id remains stable, while
+ * revision/hash metadata makes a changed model-authored body visible to the
+ * human review gate. Closed proposals are immutable.
+ */
+export async function reviseSkillProposalDraft(input: {
+  workspaceRoot: string;
+  proposalId: string;
+  description: string;
+  content?: string;
+  revisedAt?: Date | string;
+  provenance?: SkillProposalProvenance;
+  mutationReporter?: CapabilityPackageMutationReporter;
+}): Promise<ReviseSkillProposalDraftResult> {
+  const proposal = await readSkillProposal(
+    input.workspaceRoot,
+    input.proposalId,
+  );
+  if (proposal.state !== "draft") {
+    throw new Error(`Skill proposal is not draft: ${proposal.id}`);
+  }
+  const mutations = createFileCapabilityPackageWriter(
+    input.workspaceRoot,
+    input.mutationReporter,
+  );
+  const afterSkillPath = join(
+    proposal.path,
+    "after",
+    proposal.skillName,
+    "SKILL.md",
+  );
+  const previousContent = await readFile(afterSkillPath, "utf8");
+  const beforeContent =
+    proposal.kind === "update"
+      ? await readFile(
+          join(proposal.path, "before", proposal.skillName, "SKILL.md"),
+          "utf8",
+        )
+      : undefined;
+  const nextContent =
+    input.content ??
+    (beforeContent
+      ? renderUpdatedSkillContent(beforeContent, input.description)
+      : renderSkillTemplate(proposal.skillName, input.description));
+  assertSkillMarkdownName(nextContent, proposal.skillName, afterSkillPath);
+  if (nextContent === previousContent) {
+    return { proposal, changed: false };
+  }
+
+  const previousMetadata =
+    JSON.stringify(proposalMetadataFromDetail(proposal), null, 2) + "\n";
+  const previousProposalMarkdown = proposal.proposalMarkdown;
+  const previousPatchDiff = proposal.patchDiff;
+  try {
+    await mutations.writeText(afterSkillPath, nextContent, {
+      reason: `Revise proposed Skill ${proposal.skillName}`,
+    });
+    const policyVersion = packageHashPolicyVersion(proposal);
+    const afterHash = await computeSkillPackageHashForPolicy(
+      join(proposal.path, "after", proposal.skillName),
+      policyVersion,
+    );
+    const guardFindings = inspectProposedSkillContent(
+      proposal.skillName,
+      nextContent,
+    );
+    const updatedAt = normalizeDateInput(input.revisedAt);
+    const metadata: SkillProposalMetadata = {
+      ...proposalMetadataFromDetail(proposal),
+      updatedAt,
+      afterPackageHash: afterHash.packageHash,
+      packageHashPolicyVersion: policyVersion,
+      effectHash: skillProposalEffectHash({
+        artifactId:
+          proposal.artifactId ?? `legacy:project:${proposal.skillName}`,
+        operation: proposal.kind,
+        skillName: proposal.skillName,
+        basePackageHash: proposal.basePackageHash,
+        afterPackageHash: afterHash.packageHash,
+        packageHashPolicyVersion: policyVersion,
+        provenance: input.provenance ?? proposal.provenance,
+      }),
+      preparedState: "ready",
+      revision: (proposal.revision ?? 1) + 1,
+      previousAfterPackageHash: proposal.afterPackageHash,
+      contentMode: input.content ? "authored" : proposal.contentMode,
+      guardFindings: guardFindings.length > 0 ? guardFindings : undefined,
+      provenance: normalizeProvenance(input.provenance) ?? proposal.provenance,
+    };
+    const proposalMarkdown =
+      proposal.kind === "create"
+        ? renderCreateProposalMarkdown(
+            metadata,
+            input.description,
+            input.workspaceRoot,
+          )
+        : renderUpdateProposalMarkdown(
+            metadata,
+            input.description,
+            input.workspaceRoot,
+          );
+    const patchDiff =
+      proposal.kind === "create"
+        ? renderCreatePatch(proposal.skillName, nextContent)
+        : renderUpdatePatch(
+            proposal.skillName,
+            beforeContent ?? "",
+            nextContent,
+          );
+    await mutations.writeJson(join(proposal.path, "metadata.json"), metadata, {
+      reason: `Write revised proposal metadata ${proposal.id}`,
+    });
+    await mutations.writeText(
+      join(proposal.path, "proposal.md"),
+      proposalMarkdown,
+      { reason: `Write revised proposal markdown ${proposal.id}` },
+    );
+    await mutations.writeText(join(proposal.path, "patch.diff"), patchDiff, {
+      reason: `Write revised proposal patch ${proposal.id}`,
+    });
+    return {
+      proposal: {
+        ...metadata,
+        path: proposal.path,
+        proposalMarkdown,
+        patchDiff,
+      },
+      changed: true,
+    };
+  } catch (error) {
+    await Promise.allSettled([
+      mutations.writeText(afterSkillPath, previousContent, {
+        reason: `Roll back proposed Skill revision ${proposal.id}`,
+      }),
+      mutations.writeText(
+        join(proposal.path, "metadata.json"),
+        previousMetadata,
+        {
+          reason: `Roll back proposal metadata ${proposal.id}`,
+        },
+      ),
+      mutations.writeText(
+        join(proposal.path, "proposal.md"),
+        previousProposalMarkdown,
+        { reason: `Roll back proposal markdown ${proposal.id}` },
+      ),
+      mutations.writeText(
+        join(proposal.path, "patch.diff"),
+        previousPatchDiff,
+        { reason: `Roll back proposal patch ${proposal.id}` },
+      ),
+    ]);
+    throw error;
+  }
+}
+
 export async function listSkillProposals(
   workspaceRoot: string,
 ): Promise<SkillProposalSummary[]> {
@@ -448,6 +733,39 @@ export async function listSkillProposals(
         p,
     )
     .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+}
+
+/**
+ * Reconcile durable drafts against the current project Skill packages.
+ *
+ * This is intentionally an explicit maintenance operation rather than a side
+ * effect of listSkillProposals(): callers that only inspect the inbox remain
+ * read-only, while product entrypoints may repair legacy/orphaned drafts before
+ * presenting them as actionable work.
+ */
+export async function reconcileSkillProposalDrafts(
+  workspaceRoot: string,
+): Promise<ReconcileSkillProposalDraftsResult> {
+  const mutations = createFileCapabilityPackageWriter(workspaceRoot);
+  const drafts = (await listSkillProposals(workspaceRoot)).filter(
+    (proposal) => proposal.state === "draft",
+  );
+  const superseded: SkillProposalDetail[] = [];
+  const stale: SkillProposalDetail[] = [];
+
+  for (const summary of drafts) {
+    const proposal = await readSkillProposal(workspaceRoot, summary.id);
+    const outcome = await reconcileDraftAgainstCurrentTarget(
+      workspaceRoot,
+      proposal,
+      mutations,
+    );
+    if (!outcome) continue;
+    if (outcome.state === "superseded") superseded.push(outcome);
+    else stale.push(outcome);
+  }
+
+  return { checked: drafts.length, superseded, stale };
 }
 
 export async function pruneSkillProposals(
@@ -518,7 +836,12 @@ async function readSkillProposalFromPath(
 export async function applySkillProposal(
   workspaceRoot: string,
   proposalId: string,
-  options: { appliedAt?: Date | string; force?: boolean } = {},
+  options: {
+    appliedAt?: Date | string;
+    force?: boolean;
+    approvalReceipt?: SkillApprovalReceipt;
+    requireEffectApproval?: boolean;
+  } = {},
 ): Promise<ApplySkillProposalResult> {
   const mutations = createFileCapabilityPackageWriter(workspaceRoot);
   const proposal = await readSkillProposal(workspaceRoot, proposalId);
@@ -526,10 +849,21 @@ export async function applySkillProposal(
     throw new Error(`Skill proposal is not draft: ${proposal.id}`);
   }
   validateProposalTarget(workspaceRoot, proposal);
+  const expectedEffectHash = currentSkillProposalEffectHash(proposal);
+  if (options.requireEffectApproval) {
+    validateSkillApprovalReceipt(
+      proposal,
+      expectedEffectHash,
+      options.approvalReceipt,
+    );
+  }
 
   const afterSkillDir = join(proposal.path, "after", proposal.skillName);
   await verifyProposalAfterSkillName(proposal, afterSkillDir, mutations);
-  const currentAfterHash = await computeSkillPackageHash(afterSkillDir);
+  const currentAfterHash = await computeSkillPackageHashForPolicy(
+    afterSkillDir,
+    packageHashPolicyVersion(proposal),
+  );
   if (currentAfterHash.packageHash !== proposal.afterPackageHash) {
     await updateProposalState(proposal, "stale", mutations);
     throw new Error(
@@ -545,6 +879,18 @@ export async function applySkillProposal(
     proposal.skillName,
     afterContent,
   );
+  if (options.requireEffectApproval) {
+    const approved = new Set(
+      options.approvalReceipt?.approvedRiskFingerprints ?? [],
+    );
+    const dangerous = dangerousRiskFingerprints(guardFindings);
+    if (dangerous.some((fingerprint) => !approved.has(fingerprint))) {
+      await updatePreparedChangeState(proposal, "waiting", mutations);
+      throw new Error(
+        `Skill proposal ${proposal.id} has new dangerous guard findings and requires reapproval.`,
+      );
+    }
+  }
   if (hasDangerousGuardFinding(guardFindings) && !options.force) {
     throw new Error(
       `Skill proposal ${proposal.id} has dangerous guard findings; ` +
@@ -552,7 +898,85 @@ export async function applySkillProposal(
     );
   }
 
+  if (
+    options.requireEffectApproval &&
+    (proposal.preparedState === "approved" ||
+      proposal.preparedState === "applying") &&
+    existsSync(join(proposal.targetPath, "SKILL.md"))
+  ) {
+    const currentTarget = await computeSkillPackageHashForPolicy(
+      proposal.targetPath,
+      packageHashPolicyVersion(proposal),
+    );
+    if (currentTarget.packageHash === proposal.afterPackageHash) {
+      const roots = [
+        { root: projectSkillRoot(workspaceRoot), layer: "project" as const },
+      ];
+      const doctor = await runSkillDoctor({ skillRoots: roots });
+      if (doctor.status === "blocked") {
+        await rollbackAppliedProposal(
+          proposal,
+          proposalCreatesFromProject(proposal),
+          mutations,
+        );
+        await updateProposalState(proposal, "failed", mutations, undefined, {
+          preparedState: "failed",
+        });
+        throw new Error(
+          `Applied Skill proposal failed doctor checks: ${proposal.id}`,
+        );
+      }
+      const now =
+        options.appliedAt instanceof Date
+          ? options.appliedAt.toISOString()
+          : (options.appliedAt ?? new Date().toISOString());
+      const receiptAlreadyExisted = existsSync(
+        join(proposal.path, "mutation-receipt.json"),
+      );
+      const history = await writeHistoryEntry(
+        workspaceRoot,
+        proposal,
+        now,
+        mutations,
+      );
+      await writeSkillMutationReceipt(
+        proposal,
+        expectedEffectHash,
+        history,
+        now,
+        mutations,
+      );
+      const applied = await updateProposalState(
+        proposal,
+        "applied",
+        mutations,
+        now,
+        { preparedState: "applied" },
+      );
+      if (!receiptAlreadyExisted) {
+        recordSkillPatch(workspaceRoot, proposal.skillName, now);
+      }
+      await supersedeCompetingDraftsAfterApply(
+        workspaceRoot,
+        applied,
+        mutations,
+        now,
+      );
+      return {
+        proposal: applied,
+        history,
+        doctor,
+        guardFindings,
+        changed: true,
+      };
+    }
+  }
+
   await verifyProposalBase(proposal, mutations);
+
+  if (options.requireEffectApproval) {
+    await updatePreparedChangeState(proposal, "applying", mutations);
+  }
 
   await mutations.ensureDirectory(projectSkillRoot(workspaceRoot), {
     reason: "Ensure project Skill root before applying proposal",
@@ -586,14 +1010,29 @@ export async function applySkillProposal(
   let history: SkillHistoryEntry | undefined;
   try {
     history = await writeHistoryEntry(workspaceRoot, proposal, now, mutations);
+    if (options.requireEffectApproval) {
+      await writeSkillMutationReceipt(
+        proposal,
+        expectedEffectHash,
+        history,
+        now,
+        mutations,
+      );
+    }
     const applied = await updateProposalState(
       proposal,
       "applied",
       mutations,
       now,
-      {},
+      options.requireEffectApproval ? { preparedState: "applied" } : {},
     );
     recordSkillPatch(workspaceRoot, proposal.skillName, now);
+    await supersedeCompetingDraftsAfterApply(
+      workspaceRoot,
+      applied,
+      mutations,
+      now,
+    );
 
     return {
       proposal: applied,
@@ -611,6 +1050,87 @@ export async function applySkillProposal(
     await rollbackAppliedProposal(proposal, restoreProjectBefore, mutations);
     throw error;
   }
+}
+
+export async function prepareSkillProposalApproval(
+  workspaceRoot: string,
+  proposalId: string,
+): Promise<PreparedSkillApproval> {
+  const mutations = createFileCapabilityPackageWriter(workspaceRoot);
+  const proposal = await readSkillProposal(workspaceRoot, proposalId);
+  if (proposal.state !== "draft") {
+    throw new Error(`Skill proposal is not draft: ${proposal.id}`);
+  }
+  const effectHash = currentSkillProposalEffectHash(proposal);
+  if (proposal.effectHash && proposal.effectHash !== effectHash) {
+    await updateProposalState(proposal, "stale", mutations, undefined, {
+      preparedState: "stale",
+    });
+    throw new Error(`Skill proposal effect hash is stale: ${proposal.id}`);
+  }
+  const waiting = await updatePreparedChangeState(
+    { ...proposal, effectHash },
+    "waiting",
+    mutations,
+  );
+  return {
+    proposal: waiting,
+    effectHash,
+    riskFingerprints: dangerousRiskFingerprints(waiting.guardFindings ?? []),
+  };
+}
+
+export async function recordSkillProposalApproval(input: {
+  workspaceRoot: string;
+  proposalId: string;
+  effectHash: string;
+  approvedAt?: Date | string;
+}): Promise<SkillApprovalReceipt> {
+  const mutations = createFileCapabilityPackageWriter(input.workspaceRoot);
+  const proposal = await readSkillProposal(
+    input.workspaceRoot,
+    input.proposalId,
+  );
+  const currentEffectHash = currentSkillProposalEffectHash(proposal);
+  if (input.effectHash !== currentEffectHash) {
+    throw new Error(
+      `Skill proposal approval effect hash mismatch: ${proposal.id}`,
+    );
+  }
+  const approvedAt = normalizeDateInput(input.approvedAt);
+  const receipt: SkillApprovalReceipt = {
+    schemaVersion: 1,
+    receiptId: createId("skillapproval") as string,
+    proposalId: proposal.id,
+    proposalRevision: proposal.revision ?? 1,
+    effectHash: currentEffectHash,
+    decision: "approved",
+    approvedRiskFingerprints: dangerousRiskFingerprints(
+      proposal.guardFindings ?? [],
+    ),
+    approvedAt,
+  };
+  await mutations.writeJson(join(proposal.path, "approval.json"), receipt, {
+    reason: `Record effect-bound approval ${proposal.id}`,
+  });
+  await updatePreparedChangeState(proposal, "approved", mutations, approvedAt);
+  return receipt;
+}
+
+export async function applyApprovedSkillProposal(
+  workspaceRoot: string,
+  proposalId: string,
+  options: { force?: boolean } = {},
+): Promise<ApplySkillProposalResult> {
+  const proposal = await readSkillProposal(workspaceRoot, proposalId);
+  const receipt = JSON.parse(
+    await readFile(join(proposal.path, "approval.json"), "utf8"),
+  ) as SkillApprovalReceipt;
+  return applySkillProposal(workspaceRoot, proposalId, {
+    approvalReceipt: receipt,
+    requireEffectApproval: true,
+    force: options.force,
+  });
 }
 
 export async function rejectSkillProposal(
@@ -751,11 +1271,16 @@ export async function restoreSkillFromHistory(
     projectSkillRoot(input.workspaceRoot),
     input.skillName,
   );
-  const currentPackageHash = await computeSkillPackageHash(targetPath)
+  const historyPolicyVersion = packageHashPolicyVersion(sourceHistory);
+  const currentPackageHash = await computeSkillPackageHashForPolicy(
+    targetPath,
+    historyPolicyVersion,
+  )
     .then((hash) => hash.packageHash)
     .catch(() => null);
-  const restorePackageHash = await computeSkillPackageHash(
+  const restorePackageHash = await computeSkillPackageHashForPolicy(
     restoreSourceDir,
+    historyPolicyVersion,
   ).then((hash) => hash.packageHash);
 
   if (!input.apply) {
@@ -935,6 +1460,114 @@ function proposalsRoot(workspaceRoot: string): string {
   return join(skillEvolutionRoot(workspaceRoot), "proposals");
 }
 
+function proposalMetadataFromDetail(
+  proposal: SkillProposalDetail,
+): SkillProposalMetadata {
+  const {
+    path: _path,
+    proposalMarkdown: _proposalMarkdown,
+    patchDiff: _patchDiff,
+    ...metadata
+  } = proposal;
+  return metadata;
+}
+
+function sha256(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function skillProposalEffectHash(input: {
+  artifactId: string;
+  operation: SkillProposalKind;
+  skillName: string;
+  basePackageHash: string | null;
+  afterPackageHash: string;
+  packageHashPolicyVersion?: 1 | 2;
+  provenance?: SkillProposalProvenance;
+}): string {
+  const origin = normalizeProvenance(input.provenance);
+  const originDigest = origin
+    ? sha256(
+        JSON.stringify({
+          runId: origin.runId ?? null,
+          sessionId: origin.sessionId ?? null,
+        }),
+      )
+    : null;
+  const effect = {
+    schemaVersion: 1,
+    artifactKind: "skill",
+    artifactId: input.artifactId,
+    operation: input.operation,
+    target: {
+      layer: "project",
+      path: `.sparkwright/skills/${input.skillName}`,
+    },
+    basePackageHash: input.basePackageHash,
+    afterPackageHash: input.afterPackageHash,
+    originDigest,
+    capabilityRequirements: ["project_skill_write"],
+  };
+  return sha256(
+    JSON.stringify(
+      input.packageHashPolicyVersion === undefined
+        ? effect
+        : {
+            ...effect,
+            packageHashPolicyVersion: input.packageHashPolicyVersion,
+          },
+    ),
+  );
+}
+
+function currentSkillProposalEffectHash(proposal: SkillProposalDetail): string {
+  return skillProposalEffectHash({
+    artifactId: proposal.artifactId ?? `legacy:project:${proposal.skillName}`,
+    operation: proposal.kind,
+    skillName: proposal.skillName,
+    basePackageHash: proposal.basePackageHash,
+    afterPackageHash: proposal.afterPackageHash,
+    packageHashPolicyVersion: proposal.packageHashPolicyVersion,
+    provenance: proposal.provenance,
+  });
+}
+
+function dangerousRiskFingerprints(
+  findings: readonly SkillGuardFinding[],
+): string[] {
+  return findings
+    .filter((finding) => finding.severity === "dangerous")
+    .map((finding) =>
+      sha256(
+        JSON.stringify({
+          ruleId: finding.ruleId,
+          severity: finding.severity,
+          location: finding.location,
+        }),
+      ),
+    )
+    .sort();
+}
+
+function validateSkillApprovalReceipt(
+  proposal: SkillProposalDetail,
+  effectHash: string,
+  receipt: SkillApprovalReceipt | undefined,
+): asserts receipt is SkillApprovalReceipt {
+  if (
+    !receipt ||
+    receipt.schemaVersion !== 1 ||
+    receipt.decision !== "approved" ||
+    receipt.proposalId !== proposal.id ||
+    receipt.proposalRevision !== (proposal.revision ?? 1) ||
+    receipt.effectHash !== effectHash
+  ) {
+    throw new Error(
+      `Skill proposal ${proposal.id} requires approval for its current final effect.`,
+    );
+  }
+}
+
 function proposalDir(workspaceRoot: string, proposalId: string): string {
   return join(proposalsRoot(workspaceRoot), proposalId);
 }
@@ -953,7 +1586,10 @@ async function updateProposalState(
   mutations: CapabilityPackageMutationWriter,
   updatedAt = new Date().toISOString(),
   extra: Partial<
-    Pick<SkillProposalMetadata, "closedAt" | "statusReason" | "supersededBy">
+    Pick<
+      SkillProposalMetadata,
+      "closedAt" | "statusReason" | "supersededBy" | "preparedState"
+    >
   > = {},
 ): Promise<SkillProposalDetail> {
   const metadata: SkillProposalMetadata = {
@@ -967,6 +1603,12 @@ async function updateProposalState(
     updatedAt,
     basePackageHash: proposal.basePackageHash,
     afterPackageHash: proposal.afterPackageHash,
+    packageHashPolicyVersion: proposal.packageHashPolicyVersion,
+    artifactId: proposal.artifactId,
+    effectHash: proposal.effectHash,
+    preparedState: extra.preparedState ?? proposal.preparedState,
+    revision: proposal.revision,
+    previousAfterPackageHash: proposal.previousAfterPackageHash,
     summary: proposal.summary,
     sourceLayer: proposal.sourceLayer,
     sourcePath: proposal.sourcePath,
@@ -981,6 +1623,52 @@ async function updateProposalState(
     reason: `Update proposal state ${proposal.id} to ${state}`,
   });
   return readSkillProposalFromPath(proposal.path);
+}
+
+async function updatePreparedChangeState(
+  proposal: SkillProposalDetail,
+  preparedState: PreparedChangeState,
+  mutations: CapabilityPackageMutationWriter,
+  updatedAt = new Date().toISOString(),
+): Promise<SkillProposalDetail> {
+  const metadata: SkillProposalMetadata = {
+    ...proposalMetadataFromDetail(proposal),
+    effectHash: currentSkillProposalEffectHash(proposal),
+    preparedState,
+    updatedAt,
+  };
+  await mutations.writeJson(join(proposal.path, "metadata.json"), metadata, {
+    reason: `Update prepared change ${proposal.id} to ${preparedState}`,
+  });
+  return readSkillProposalFromPath(proposal.path);
+}
+
+async function writeSkillMutationReceipt(
+  proposal: SkillProposalDetail,
+  effectHash: string,
+  history: SkillHistoryEntry,
+  appliedAt: string,
+  mutations: CapabilityPackageMutationWriter,
+): Promise<SkillMutationReceipt> {
+  const receipt: SkillMutationReceipt = {
+    schemaVersion: 1,
+    receiptId: createId("skillmutation") as string,
+    proposalId: proposal.id,
+    effectHash,
+    artifactId: proposal.artifactId ?? `legacy:project:${proposal.skillName}`,
+    beforePackageHash: proposal.basePackageHash,
+    afterPackageHash: proposal.afterPackageHash,
+    packageHashPolicyVersion: proposal.packageHashPolicyVersion,
+    targetPath: proposal.targetPath,
+    historyId: history.id,
+    appliedAt,
+  };
+  await mutations.writeJson(
+    join(proposal.path, "mutation-receipt.json"),
+    receipt,
+    { reason: `Record Skill mutation receipt ${proposal.id}` },
+  );
+  return receipt;
 }
 
 function ensureClosableProposal(
@@ -1034,8 +1722,21 @@ async function writeHistoryEntry(
   createdAt: string,
   mutations: CapabilityPackageMutationWriter,
 ): Promise<SkillHistoryEntry> {
-  const id = createId("skillver") as string;
+  const id = proposal.effectHash
+    ? `skillver_${proposal.effectHash.slice(0, 24)}`
+    : (createId("skillver") as string);
   const path = join(historySkillRoot(workspaceRoot, proposal.skillName), id);
+  if (existsSync(join(path, "metadata.json"))) {
+    const existing = await readHistoryEntry(path);
+    if (
+      existing.proposalId !== proposal.id ||
+      existing.afterPackageHash !== proposal.afterPackageHash ||
+      packageHashPolicyVersion(existing) !== packageHashPolicyVersion(proposal)
+    ) {
+      throw new Error(`Skill history identity collision: ${id}`);
+    }
+    return existing;
+  }
   const afterSkillDir = join(proposal.path, "after", proposal.skillName);
   const beforeSkillDir = join(proposal.path, "before", proposal.skillName);
   if (proposal.basePackageHash) {
@@ -1069,6 +1770,7 @@ async function writeHistoryEntry(
     createdAt,
     beforePackageHash: proposal.basePackageHash,
     afterPackageHash: proposal.afterPackageHash,
+    packageHashPolicyVersion: proposal.packageHashPolicyVersion,
     targetPath: proposal.targetPath,
   };
   await mutations.writeJson(join(path, "metadata.json"), metadata, {
@@ -1122,6 +1824,7 @@ async function writeRestoreHistoryEntry(input: {
     createdAt: input.createdAt,
     beforePackageHash: input.beforePackageHash,
     afterPackageHash: input.afterPackageHash,
+    packageHashPolicyVersion: input.sourceHistory.packageHashPolicyVersion,
     targetPath: input.targetPath,
     sourceHistoryId: input.sourceHistory.id,
   };
@@ -1159,16 +1862,17 @@ async function verifyProposalBase(
   }
 
   if (proposalCreatesFromProject(proposal)) {
-    const current = await computeSkillPackageHash(proposal.targetPath).catch(
-      async (error) => {
-        await updateProposalState(proposal, "stale", mutations);
-        throw new Error(
-          `Project Skill changed since proposal: ${proposal.id}: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        );
-      },
-    );
+    const current = await computeSkillPackageHashForPolicy(
+      proposal.targetPath,
+      packageHashPolicyVersion(proposal),
+    ).catch(async (error) => {
+      await updateProposalState(proposal, "stale", mutations);
+      throw new Error(
+        `Project Skill changed since proposal: ${proposal.id}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    });
     if (current.packageHash !== proposal.basePackageHash) {
       await updateProposalState(proposal, "stale", mutations);
       throw new Error(`Project Skill changed since proposal: ${proposal.id}`);
@@ -1184,8 +1888,9 @@ async function verifyProposalBase(
     await updateProposalState(proposal, "stale", mutations);
     throw new Error(`Skill proposal missing source path: ${proposal.id}`);
   }
-  const sourceHash = await computeSkillPackageHash(
+  const sourceHash = await computeSkillPackageHashForPolicy(
     dirname(proposal.sourcePath),
+    packageHashPolicyVersion(proposal),
   ).catch(async (error) => {
     await updateProposalState(proposal, "stale", mutations);
     throw new Error(
@@ -1197,6 +1902,118 @@ async function verifyProposalBase(
   if (sourceHash.packageHash !== proposal.basePackageHash) {
     await updateProposalState(proposal, "stale", mutations);
     throw new Error(`Source Skill changed since proposal: ${proposal.id}`);
+  }
+}
+
+async function reconcileDraftAgainstCurrentTarget(
+  workspaceRoot: string,
+  proposal: SkillProposalDetail,
+  mutations: CapabilityPackageMutationWriter,
+): Promise<SkillProposalDetail | undefined> {
+  if (proposal.kind === "create") {
+    if (!existsSync(join(proposal.targetPath, "SKILL.md"))) return undefined;
+    const current = await computeSkillPackageHashForPolicy(
+      proposal.targetPath,
+      packageHashPolicyVersion(proposal),
+    ).catch(() => undefined);
+    const replacement = current
+      ? (await listSkillHistory(workspaceRoot, proposal.skillName)).find(
+          (entry) =>
+            entry.proposalId !== proposal.id &&
+            entry.afterPackageHash === current.packageHash &&
+            packageHashPolicyVersion(entry) ===
+              packageHashPolicyVersion(proposal),
+        )
+      : undefined;
+    const closedAt = new Date().toISOString();
+    if (replacement) {
+      return updateProposalState(proposal, "superseded", mutations, closedAt, {
+        closedAt,
+        preparedState: "superseded",
+        supersededBy: replacement.proposalId,
+        statusReason: `Current Skill was produced by applied proposal ${replacement.proposalId}.`,
+      });
+    }
+    return updateProposalState(proposal, "stale", mutations, closedAt, {
+      closedAt,
+      preparedState: "stale",
+      statusReason:
+        "Create target already exists and is not the package this proposal was based on.",
+    });
+  }
+
+  if (!proposal.basePackageHash) {
+    const closedAt = new Date().toISOString();
+    return updateProposalState(proposal, "stale", mutations, closedAt, {
+      closedAt,
+      preparedState: "stale",
+      statusReason: "Update proposal has no base package hash.",
+    });
+  }
+
+  const basePath = proposalCreatesFromProject(proposal)
+    ? proposal.targetPath
+    : proposal.sourcePath
+      ? dirname(proposal.sourcePath)
+      : undefined;
+  const current = basePath
+    ? await computeSkillPackageHashForPolicy(
+        basePath,
+        packageHashPolicyVersion(proposal),
+      ).catch(() => undefined)
+    : undefined;
+  if (current?.packageHash === proposal.basePackageHash) return undefined;
+
+  const closedAt = new Date().toISOString();
+  return updateProposalState(proposal, "stale", mutations, closedAt, {
+    closedAt,
+    preparedState: "stale",
+    statusReason: current
+      ? "Update base package changed after this proposal was drafted."
+      : "Update base package is no longer available.",
+  });
+}
+
+async function supersedeCompetingDrafts(
+  workspaceRoot: string,
+  applied: SkillProposalDetail,
+  mutations: CapabilityPackageMutationWriter,
+  closedAt: string,
+): Promise<void> {
+  const competitors = (await listSkillProposals(workspaceRoot)).filter(
+    (proposal) =>
+      proposal.id !== applied.id &&
+      proposal.state === "draft" &&
+      proposal.targetPath === applied.targetPath,
+  );
+  for (const competitor of competitors) {
+    await updateProposalState(
+      await readSkillProposal(workspaceRoot, competitor.id),
+      "superseded",
+      mutations,
+      closedAt,
+      {
+        closedAt,
+        preparedState: "superseded",
+        supersededBy: applied.id,
+        statusReason: `Competing proposal ${applied.id} was applied to the same target.`,
+      },
+    );
+  }
+}
+
+async function supersedeCompetingDraftsAfterApply(
+  workspaceRoot: string,
+  applied: SkillProposalDetail,
+  mutations: CapabilityPackageMutationWriter,
+  closedAt: string,
+): Promise<void> {
+  try {
+    await supersedeCompetingDrafts(workspaceRoot, applied, mutations, closedAt);
+  } catch {
+    // Applying the selected proposal is the primary transaction. Do not report
+    // it as failed (or roll it back) because secondary inbox cleanup failed;
+    // the explicit reconciliation pass repairs remaining drafts on next use.
   }
 }
 

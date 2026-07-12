@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -13,6 +13,32 @@ describe("createCapability", () => {
       tempDirs.map((dir) => rm(dir, { recursive: true, force: true })),
     );
     tempDirs = [];
+  });
+
+  it("routes generic Skill creation through the managed proposal service", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-tui-create-"));
+    tempDirs.push(workspace);
+
+    const result = await createCapability(
+      {
+        kind: "skill",
+        name: "code-reviewer",
+        description: "Review code changes",
+      },
+      workspace,
+    );
+
+    expect(result).toMatchObject({
+      kind: "skill",
+      message: expect.stringContaining("Prepared Skill code-reviewer"),
+      path: expect.stringContaining("skill-evolution/proposals/skillprop_"),
+    });
+    await expect(
+      access(join(workspace, ".sparkwright", "skills", "code-reviewer")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(
+      readFile(join(result.path!, "metadata.json"), "utf8"),
+    ).resolves.toContain('"contentMode": "template"');
   });
 
   it("omits cwd when creating stdio MCP servers", async () => {

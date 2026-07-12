@@ -192,6 +192,17 @@ export interface AgentProfile {
   maxSteps?: number;
   runBudget?: RunBudget;
   metadata?: Record<string, unknown>;
+  /**
+   * @reserved Host-resolved Markdown package identity consumed by trace-derived
+   * attribution and statistics; it must be captured at invocation time.
+   */
+  assetIdentity?: {
+    artifactKind: "agent";
+    layer: string;
+    logicalName: string;
+    packageHashPolicyVersion: 2;
+    packageHash: string;
+  };
 }
 
 export interface DerivedChildAgentProfile {
@@ -780,6 +791,8 @@ interface MultiAgentFacts {
   agentId?: string;
   agentProfileId?: string;
   agentName?: string;
+  /** @reserved Parent-visible trace attribution for the invoked Markdown Agent. */
+  agentAssetIdentity?: AgentProfile["assetIdentity"];
   delegateTool?: string;
   subagentDepth: number;
   entrypoint: SubAgentEntrypoint;
@@ -818,6 +831,9 @@ export function spawnSubAgent(input: SpawnSubAgentInput): SpawnedSubAgent {
     agentId: childAgentId,
     agentProfileId: input.childAgentProfile?.id,
     agentName: input.childAgentProfile?.name,
+    ...(input.childAgentProfile?.assetIdentity
+      ? { agentAssetIdentity: input.childAgentProfile.assetIdentity }
+      : {}),
   });
 
   // Build effective child policy: explicit override > profile-derived > default.
@@ -893,6 +909,7 @@ export function spawnSubAgent(input: SpawnSubAgentInput): SpawnedSubAgent {
     childAgentId,
     agentProfileId: input.childAgentProfile?.id,
     agentName: input.childAgentProfile?.name,
+    agentAssetIdentity: input.childAgentProfile?.assetIdentity,
     delegateTool: stringMetadata(input.metadata, "delegateTool"),
     subagentDepth,
     entrypoint: subagentEntrypointFromMetadata(input.metadata),
@@ -984,6 +1001,7 @@ function multiAgentMetadata(facts: MultiAgentFacts): Record<string, unknown> {
     childAgentId: facts.childAgentId,
     agentProfileId: facts.agentProfileId,
     agentName: facts.agentName,
+    agentAssetIdentity: facts.agentAssetIdentity,
     delegateTool: facts.delegateTool,
     subagentDepth: facts.subagentDepth,
     entrypoint: facts.entrypoint,

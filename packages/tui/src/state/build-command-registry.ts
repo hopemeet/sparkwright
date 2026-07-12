@@ -378,9 +378,9 @@ export function buildCommandRegistry(
   });
   reg.register({
     name: "skill-create",
-    title: "Draft Skill proposal",
+    title: "Create Skill (shortcut)",
     description:
-      "Create a project Skill proposal interactively or from arguments.",
+      "Compatibility shortcut for /create skill; uses the same managed proposal flow.",
     category: "capability",
     hiddenByDefault: true,
     run: () => skillActions.openSkillCreateProposal(),
@@ -400,7 +400,7 @@ export function buildCommandRegistry(
     name: "skill-review",
     title: "Review Skill proposals",
     description:
-      "Summarize recent Skill proposals; optionally pass a state like draft.",
+      "Review Skill proposals; optionally pass a proposal id or state like draft.",
     category: "capability",
     hiddenByDefault: true,
     run: () => skillActions.reviewSkillProposalsFromSlash(""),

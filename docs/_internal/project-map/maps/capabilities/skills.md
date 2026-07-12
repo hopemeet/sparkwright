@@ -33,6 +33,12 @@ skill roots
 
 ## Contracts
 
+- The first managed-change fast path applies only to a complete, clean,
+  model-authored create. Its package hash participates in a stable final-effect
+  hash; runtime/model fingerprints remain outside that identity. The broader
+  `artifactId + packageHash` registry/stats migration is designed but not yet
+  implemented.
+
 - Default host behavior exposes loader tool and does not auto-reside all selected skills.
 - Project skill root defaults to `.sparkwright/skills`.
 - Skill metadata parsing is manifest-centered. `parseSkillManifest` is the
@@ -56,6 +62,11 @@ skill roots
   the Skill's available reference files when known, so a model that guessed a
   path like `README.md` can recover by loading the body and choosing an exact
   `<skill_files>` entry.
+- A loader/run caches successful reference loads by Skill name, canonical
+  resource path, and package/content identity. Repeating the same resource for
+  the same Skill version returns a short `already_loaded` result without the
+  content or another file read; failed/denied loads are never cached. The cache
+  is loader-scoped and does not replace package-hash identity or trace stats.
 - Skill index and resident Skill context must not expose host absolute
   `sourcePath`/`contentHash` values to provider prompts. Keep source provenance
   in metadata and trace events.
@@ -68,6 +79,12 @@ skill roots
   hasher cache, reducing repeated content reads for unchanged packages across
   runs/agents. The run-time identity path has conservative file/byte guardrails;
   direct exact hash computation remains available to evolution guard paths.
+- `packages/skills/src/package-v2.ts` provides the dormant v2 canonical package
+  substrate for later Skill/Workflow migration: complete ordinary-file
+  enumeration, fixed exclusions, normalized NUL-framed hashing, identical-set
+  snapshots, policy version 2, and fail-closed special-file/path/size checks.
+  It does not change current Skill index/load or proposal behavior until
+  Phase 3B.
 - `skills stats` is read-time only in v1. It aggregates by
   `name + layer + packageHash`, classifies old traces as legacy/unknown,
   separates explicit and resident loads, classifies load failures by mode/status,
@@ -126,6 +143,66 @@ skill roots
 - Self-evolution design exists, but automatic learning should remain clearly opt-in/reviewed.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-12T23:45:00+0800
+- Scope: body-level Skill loading carries declared tool dependencies to core;
+  only dependencies already registered in the run become model-visible.
+- Read: Skills loader, core run loop, capability-builder Skill, and focused
+  tests.
+- Tests: focused Skills loader and core deferred-tool tests passed.
+
+- Status: Verified
+- Date: 2026-07-12T20:00:00+0800
+- Scope: v2 snapshots reject ancestor targets; reconciliation enforces one
+  active owner per path and recovers journaled registry/receipt writes; import
+  records origin in the same recoverable transaction; review suggestions
+  support durable cooldown dismissal. Snapshot overlap checks are cross-volume
+  aware on Windows.
+- Read: package-v2, Skill registry, suggestions/review, CLI and tests.
+- Tests: focused Skills, host, and CLI suites passed.
+
+- Status: Read-only
+- Date: 2026-07-12
+- Scope: checked v2 Skill package identity, reconciliation, and evidence-review consumers.
+- Tests: focused Skill/host tests passed; release gate pending.
+
+- Status: Verified
+- Date: 2026-07-12T14:05:58+0800
+- Scope: checked the loader/runtime capability path after managed Skill v2
+  evolution migration; its v1 runtime package identity contract is unchanged
+  pending the separate Phase 6 event-time stats migration.
+- Read: `packages/host/src/skill-evolution.ts`,
+  `packages/host/src/capability-package-mutation.ts`,
+  `packages/skills/src/index.ts`, and `packages/skills/src/package-v2.ts`.
+- Tests: focused host/CLI/Skills suites and full `npm run release:check`.
+
+- Status: Verified
+- Date: 2026-07-12T13:45:22+0800
+- Scope: verified the standalone package identity v2 substrate and that current
+  Skill runtime identity still uses the v1 hasher.
+- Read: `packages/skills/src/package.ts`, `packages/skills/src/package-v2.ts`,
+  `packages/skills/src/index.ts`, and `packages/skills/test/index.test.ts`.
+- Tests: full `@sparkwright/skills` suite, Skills typecheck/build, package
+  boundaries, and internal-import checks.
+
+- Status: Verified
+- Date: 2026-07-12T02:12:00+0800
+- Scope: safe authored create prepared-change identity and apply path; runtime
+  Skill indexing/loading contracts are unchanged.
+- Read: `packages/host/src/skill-evolution.ts`, `packages/host/src/tools.ts`,
+  `packages/skills/src/package.ts`, `packages/skills/src/guard.ts`.
+- Tests: host focused Skill suites and affected typechecks.
+
+- Status: Verified
+- Date: 2026-07-12T00:56:00+0800
+- Scope: added run-scoped Skill reference deduplication keyed by canonical
+  resource path and package/content identity; repeat results omit resource
+  content while preserving failure recovery and version boundaries.
+- Read: `packages/skills/src/index.ts`, `packages/skills/test/index.test.ts`,
+  `packages/core/src/run.ts`, and this map.
+- Tests: `npm --workspace @sparkwright/skills test -- test/index.test.ts`;
+  `npm --workspace @sparkwright/skills run typecheck`.
 
 - Status: Verified
 - Date: 2026-07-07T13:18:00+0800

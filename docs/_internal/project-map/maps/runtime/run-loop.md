@@ -29,6 +29,12 @@ createRun/resumeRunFromCheckpoint
 
 ## Contracts
 
+- `RuntimeContext.requestApproval()` lets an executing tool request approval
+  after it has persisted an inspectable final effect. It delegates to the same
+  run-owned approval state/events/resolver as policy-gate approvals; embedders
+  executing tools outside a run may omit it. The Skill prepared-change slice is
+  its first consumer.
+
 - A freshly submitted workflow job runs in its own session and therefore loads
   only that job session's conversation history. `controlSessionId` is durable
   attribution on the workflow record, not a context source. Ordinary main runs
@@ -54,6 +60,8 @@ createRun/resumeRunFromCheckpoint
   context into the synthetic `REPEATED_TOOL_CALL_SKIPPED` result. Policy and
   approval denials keep their expected-denial category through the guard; other
   repeated calls keep the normal argument/runtime failure classification.
+  Tool-owned repeated-observation guidance applies only when there is no prior
+  failure, so a friendly completed nudge cannot mask failed state observation.
 - Completed-run outcome treats read-confidentiality denials as expected policy
   denials. A run can still complete successfully after a denied confidential
   read if the model produces a final answer; the denial remains visible through
@@ -247,6 +255,59 @@ createRun/resumeRunFromCheckpoint
   handling can still be noisy.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-12T23:45:00+0800
+- Scope: successful body-level Skill loads hydrate only registered deferred
+  schemas declared by the Skill; execution policy is unchanged.
+- Read: `packages/core/src/run.ts`, `packages/core/src/context.ts`, focused core
+  tests, and routed capability maps.
+- Tests: focused core deferred-tool tests passed.
+
+- Status: Read-only
+- Date: 2026-07-12T20:12:00+0800
+- Scope: checked fresh Workflow record layer persistence; run-loop state and
+  model/tool execution contracts are unchanged.
+- Read: host Workflow record creation and runtime map.
+- Tests: focused Workflow suites passed; no run-loop contract change.
+
+- Status: Read-only
+- Date: 2026-07-12
+- Scope: checked Workflow run metadata now includes package identity; run-loop ownership is unchanged.
+- Tests: focused Workflow tests passed; release gate pending.
+
+- Status: Read-only
+- Date: 2026-07-12T16:36:08+0800
+- Scope: checked host Workflow snapshot preparation; generic run-loop contract is unchanged.
+- Tests: not run for generic run-loop behavior; Phase 4 Workflow release gate passed.
+
+- Status: Verified
+- Date: 2026-07-12T02:12:00+0800
+- Scope: runtime-context post-prepare approval bridge; existing policy-gate
+  order and event protocol remain unchanged.
+- Read: `packages/core/src/types.ts`, `packages/core/src/run.ts`,
+  `packages/host/src/tools.ts`.
+- Tests: core/host affected typechecks and host same-run Skill integration test.
+
+- Status: Verified
+- Date: 2026-07-11T22:55:00+0800
+- Scope: tool-owned repeated state-observation guidance is suppressed after a
+  same-target failure so the generic failed-repeat path preserves failure
+  evidence.
+- Read: `packages/core/src/run.ts`, `packages/core/test/run.test.ts`.
+- Tests: full `npm run release:check`.
+
+- Status: Verified
+- Date: 2026-07-11T20:32:00+0800
+- Scope: todo-supervised main run chains may reconcile an unfinished actionable
+  ledger after `final_answer` only when the just-finished run made external
+  progress. Existing continuation/stall limits remain authoritative; blocked
+  and no-progress ledgers hand back.
+- Read: `packages/agent-runtime/src/todo/ledger.ts`,
+  `packages/agent-runtime/src/todo/supervisor.ts`,
+  `packages/host/src/runtime.ts`, `packages/agent-runtime/test/todo.test.ts`.
+- Tests: `npm --workspace @sparkwright/agent-runtime test --
+test/todo.test.ts`; `npm run typecheck:test`.
 
 - Status: Verified
 - Date: 2026-07-11T10:41:00+0800

@@ -32,7 +32,10 @@ import {
   loadHostConfig,
   skillUsagePath,
 } from "@sparkwright/host";
-import { FileSkillUsageRecorder } from "@sparkwright/skills";
+import {
+  computeAssetPackageHash,
+  FileSkillUsageRecorder,
+} from "@sparkwright/skills";
 import {
   FileWorkflowServiceStore,
   WorkflowServiceCarrier,
@@ -3276,16 +3279,40 @@ describe("runCli", () => {
     const writer = await store.acquireWriter(workflowRunId, {
       owner: "test-fixture",
     });
+    const packageSnapshotRef = join(
+      workspace,
+      ".sparkwright",
+      "sessions",
+      sessionId,
+      "workflow-runs",
+      "package-snapshots",
+      workflowRunId,
+    );
+    await mkdir(packageSnapshotRef, { recursive: true });
+    await writeFile(join(packageSnapshotRef, "workflow.md"), "# snapshot\n");
+    const packageHash = (
+      await computeAssetPackageHash({
+        rootPath: packageSnapshotRef,
+        entryPath: "workflow.md",
+      })
+    ).packageHash;
     await writer!.create({
       id: workflowRunId,
       sessionId,
       assetName: "cli-resume",
       contentHash: "hash-cli-resume",
+      packageHash,
+      packageHashPolicyVersion: 2,
+      packageSnapshotRef,
       currentNodeId: "main",
       attempts: { main: 1 },
       definitionSnapshot: {
         assetName: "cli-resume",
         contentHash: "hash-cli-resume",
+        packageHash,
+        packageHashPolicyVersion: 2,
+        packageSnapshotRef,
+        sourceDir: packageSnapshotRef,
         nodes: [{ id: "main", body: "Resume through the CLI." }],
       },
       metadata: { goal: "resume workflow from cli" },
@@ -3693,13 +3720,23 @@ describe("runCli", () => {
         "Reviews code changes for risk and missing tests.",
         "--workspace",
         workspace,
+        "--format",
+        "json",
       ],
       {
         io: { stdout: createOutput.stdout, stderr: createOutput.stderr },
       },
     );
     expect(created.exitCode).toBe(0);
-    expect(createOutput.stdoutText()).toContain("code-reviewer/SKILL.md");
+    const prepared = JSON.parse(createOutput.stdoutText()) as {
+      id: string;
+      state: string;
+      contentMode: string;
+    };
+    expect(prepared).toMatchObject({
+      state: "draft",
+      contentMode: "template",
+    });
 
     const skillPath = join(
       workspace,
@@ -3708,6 +3745,16 @@ describe("runCli", () => {
       "code-reviewer",
       "SKILL.md",
     );
+    await expect(readFile(skillPath, "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    const applied = await runCli(
+      ["skills", "proposals", "apply", prepared.id, "--workspace", workspace],
+      {
+        io: { stdout: createOutput.stdout, stderr: createOutput.stderr },
+      },
+    );
+    expect(applied.exitCode).toBe(0);
     await expect(readFile(skillPath, "utf8")).resolves.toContain(
       "name: code-reviewer",
     );
@@ -3746,6 +3793,96 @@ describe("runCli", () => {
       ]),
     );
     expect(report.errors).toEqual([]);
+  });
+
+  it("reconciles direct Skill filesystem content through explicit registry receipts", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const skillDir = join(workspace, ".sparkwright", "skills", "reviewer");
+    await mkdir(skillDir, { recursive: true });
+    await writeFile(
+      join(skillDir, "SKILL.md"),
+      "---\nname: reviewer\ndescription: Review\n---\nReview.\n",
+    );
+    const output = createOutputCapture();
+    const scan = await runCli(
+      [
+        "skills",
+        "reconcile",
+        "scan",
+        "--workspace",
+        workspace,
+        "--format",
+        "json",
+      ],
+      { io: { stdout: output.stdout, stderr: output.stderr } },
+    );
+    expect(scan.exitCode).toBe(0);
+    expect(JSON.parse(output.stdoutText())).toMatchObject([
+      { kind: "unregistered", skillName: "reviewer" },
+    ]);
+    const adoptOutput = createOutputCapture();
+    const adopted = await runCli(
+      [
+        "skills",
+        "reconcile",
+        "adopt",
+        "reviewer",
+        "--workspace",
+        workspace,
+        "--format",
+        "json",
+      ],
+      { io: { stdout: adoptOutput.stdout, stderr: adoptOutput.stderr } },
+    );
+    expect(adopted.exitCode).toBe(0);
+    expect(JSON.parse(adoptOutput.stdoutText())).toMatchObject({
+      kind: "adopt",
+      packageHashPolicyVersion: 2,
+    });
+  });
+
+  it("imports Skill packages with origin records through reconciliation", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const source = join(workspace, "external-skill");
+    await mkdir(source, { recursive: true });
+    await writeFile(join(source, "SKILL.md"), "# External\n");
+    await writeFile(join(source, "fixture.txt"), "fixture\n");
+    const output = createOutputCapture();
+    const result = await runCli(
+      [
+        "skills",
+        "reconcile",
+        "import",
+        "external",
+        source,
+        "--workspace",
+        workspace,
+        "--format",
+        "json",
+      ],
+      { io: { stdout: output.stdout, stderr: output.stderr } },
+    );
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(output.stdoutText())).toMatchObject({
+      receipt: { kind: "adopt", currentPath: "external" },
+      origin: { kind: "local-path", updatePolicy: "frozen" },
+    });
+  });
+
+  it("exposes rebuildable Agent and Workflow stats commands", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    for (const command of ["agents", "workflow"] as const) {
+      const output = createOutputCapture();
+      const result = await runCli(
+        [command, "stats", "--workspace", workspace, "--format", "json"],
+        { io: { stdout: output.stdout, stderr: output.stderr } },
+      );
+      expect(result.exitCode).toBe(0);
+      expect(JSON.parse(output.stdoutText())).toMatchObject({
+        observationsScanned: 0,
+        errors: [],
+      });
+    }
   });
 
   it("reports read-only skill stats from recent session traces", async () => {
@@ -4449,7 +4586,7 @@ describe("runCli", () => {
     expect(textOutput.stdoutText()).toContain("not causal claims");
   });
 
-  it("summarizes draft proposals and stats findings in the skill review digest", async () => {
+  it("summarizes draft proposals and evidence suggestions in the skill review digest", async () => {
     const workspace = await createWorkspace("# Demo\n");
     const skillDir = join(workspace, ".sparkwright", "skills", "code-reviewer");
     await mkdir(skillDir, { recursive: true });
@@ -4597,13 +4734,13 @@ describe("runCli", () => {
     expect(digest.items).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          kind: "stats_finding",
+          kind: "evidence_suggestion",
           severity: "warning",
           skillName: "code-reviewer",
           findingCode: "SKILL_LOAD_FAILURES",
         }),
         expect.objectContaining({
-          kind: "stats_finding",
+          kind: "evidence_suggestion",
           relation: "associated",
           skillName: "code-reviewer",
           findingCode: "ASSOCIATED_TOOL_FAILURES",

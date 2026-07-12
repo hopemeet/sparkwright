@@ -38,6 +38,7 @@ import type { ShellToolOutput } from "@sparkwright/shell-tool";
 import {
   createAgentInspectorTool,
   createAgentManagerTool,
+  createMarkdownAgentManagerTool,
   applyToolConfig,
   createGlobPathsTool,
   createReadFileTool,
@@ -70,6 +71,91 @@ import {
 } from "../src/runtime.js";
 
 describe("host tools", () => {
+  it("authors a validated Markdown Agent without mutating config profiles", async () => {
+    const ctx = await createWorkspace({
+      ".sparkwright/config.yaml": "capabilities:\n  agents:\n    maxDepth: 1\n",
+    });
+    const tool = createMarkdownAgentManagerTool(ctx.workspaceRoot);
+    expect(tool.inputSchema).toMatchObject({
+      properties: {
+        name: expect.objectContaining({ type: "string" }),
+      },
+      required: ["action", "name"],
+    });
+    expect(
+      (tool.inputSchema as { properties: Record<string, unknown> }).properties,
+    ).not.toHaveProperty("id");
+    const created = await tool.execute(
+      {
+        action: "create",
+        name: "reviewer",
+        prompt: "Review changes and report concrete risks.",
+        use: ["workspace.read"],
+        allowedTools: ["read"],
+        maxSteps: 2,
+      },
+      ctx,
+    );
+
+    expect(created).toMatchObject({
+      action: "create",
+      name: "reviewer",
+      changed: true,
+      profile: { name: "reviewer" },
+      callability: { callable: true, mode: "child" },
+      semanticSummary: {
+        allowedTools: ["read"],
+        identity: { artifactKind: "agent", packageHashPolicyVersion: 2 },
+      },
+    });
+    expect(created).not.toHaveProperty("id");
+    expect((created as { profile: unknown }).profile).not.toHaveProperty("id");
+    const document = await readFile(
+      join(ctx.workspaceRoot, ".sparkwright", "agents", "reviewer.md"),
+      "utf8",
+    );
+    expect(document).toContain('name: "reviewer"');
+    expect(document).toContain("Review changes and report concrete risks.");
+    expect(document).not.toContain("id:");
+    expect(document).not.toContain("mode:");
+    await expect(
+      readFile(join(ctx.workspaceRoot, ".sparkwright", "config.yaml"), "utf8"),
+    ).resolves.toContain("maxDepth: 1");
+    expect(ctx.capabilityMutations).toEqual([
+      expect.objectContaining({ action: "create_markdown_agent" }),
+    ]);
+  });
+
+  it("fails post-write validation when another Markdown file owns the same logical id", async () => {
+    const ctx = await createWorkspace({
+      ".sparkwright/agents/a/owner.md":
+        "---\nid: reviewer\n---\nExisting reviewer.\n",
+    });
+    const tool = createMarkdownAgentManagerTool(ctx.workspaceRoot);
+    await expect(
+      tool.execute(
+        { action: "create", name: "reviewer", prompt: "New reviewer." },
+        ctx,
+      ),
+    ).rejects.toThrow(/not uniquely callable/);
+  });
+
+  it("keeps legacy config-profile removal reachable through create_agent", async () => {
+    const ctx = await createWorkspace({});
+    const legacy = createAgentManagerTool(ctx.workspaceRoot);
+    await legacy.execute(
+      { action: "create", id: "reviewer", prompt: "Review changes." },
+      ctx,
+    );
+    const tool = createMarkdownAgentManagerTool(ctx.workspaceRoot);
+    await expect(
+      tool.execute({ action: "remove", name: "reviewer" }, ctx),
+    ).resolves.toMatchObject({
+      action: "remove",
+      id: "reviewer",
+      changed: true,
+    });
+  });
   it("derives explicit in-process spawn approval without marking spawn risky", () => {
     const profile = deriveDelegatePolicyProfile({
       risk: "safe",
@@ -2667,6 +2753,97 @@ describe("host tools", () => {
     ).resolves.toHaveLength(1);
   });
 
+  it("reuses and revises a create draft across runs in one session", async () => {
+    const ctx = await createWorkspace({});
+    ctx.run!.metadata = { sessionId: "session_skill_chain" };
+    const tool = createSkillManagerTool(ctx.workspaceRoot, undefined);
+    const firstBody = [
+      "---",
+      "name: repo-review",
+      "description: review repository changes",
+      "---",
+      "",
+      "Review the diff.",
+      "",
+    ].join("\n");
+    const revisedBody = firstBody.replace(
+      "Review the diff.",
+      "Review the diff and run focused tests.",
+    );
+
+    const first = await tool.execute(
+      {
+        action: "create",
+        name: "repo-review",
+        description: "review repository changes",
+        body: firstBody,
+      },
+      ctx,
+    );
+    ctx.run!.id = createRunId();
+    const revised = await tool.execute(
+      {
+        action: "create",
+        name: "repo-review",
+        description: "review repository changes",
+        body: revisedBody,
+      },
+      ctx,
+    );
+
+    expect(revised).toMatchObject({
+      changed: true,
+      existing: true,
+      revised: true,
+      revision: 2,
+      proposalId: (first as { proposalId: string }).proposalId,
+      reviewCommand: expect.stringContaining("/skill-review skillprop_"),
+    });
+    expect(
+      (revised as { previousAfterPackageHash?: string })
+        .previousAfterPackageHash,
+    ).toBe((first as { afterPackageHash: string }).afterPackageHash);
+    await expect(
+      readFile(
+        join(
+          (first as { proposalPath: string }).proposalPath,
+          "after",
+          "repo-review",
+          "SKILL.md",
+        ),
+        "utf8",
+      ),
+    ).resolves.toBe(revisedBody);
+    await expect(
+      readdir(
+        join(ctx.workspaceRoot, ".sparkwright", "skill-evolution", "proposals"),
+      ),
+    ).resolves.toHaveLength(1);
+  });
+
+  it("returns an unchanged create draft across runs in one session", async () => {
+    const ctx = await createWorkspace({});
+    ctx.run!.metadata = { sessionId: "session_skill_chain" };
+    const tool = createSkillManagerTool(ctx.workspaceRoot, undefined);
+    const input = {
+      action: "create",
+      name: "repo-review",
+      description: "review repository changes",
+    };
+
+    const first = await tool.execute(input, ctx);
+    ctx.run!.id = createRunId();
+    const duplicate = await tool.execute(input, ctx);
+
+    expect(duplicate).toMatchObject({
+      changed: false,
+      existing: true,
+      revised: false,
+      revision: 1,
+      proposalId: (first as { proposalId: string }).proposalId,
+    });
+  });
+
   it("drafts create_skill proposals with model-authored SKILL.md bodies", async () => {
     const ctx = await createWorkspace({});
     const tool = createSkillManagerTool(ctx.workspaceRoot, undefined);
@@ -2699,7 +2876,20 @@ describe("host tools", () => {
       changed: true,
       skillName: "repo-review",
       contentMode: "authored",
+      reviewCommand: expect.stringMatching(
+        /^\/skill-review skillprop_[a-z0-9]+$/,
+      ),
+      humanAction: {
+        kind: "skill_proposal_review",
+        eligibility: "quick_apply",
+        validationStatus: "passed",
+        guardSeverity: "none",
+        recommendedAction: "apply",
+      },
     });
+    expect((drafted as { nextStep: string }).nextStep).toContain(
+      "do NOT search for an apply tool",
+    );
     const proposal = drafted as { proposalPath: string };
     await expect(
       readFile(
@@ -2707,6 +2897,152 @@ describe("host tools", () => {
         "utf8",
       ),
     ).resolves.toBe(body);
+  });
+
+  it("approves the persisted final authored Skill effect once and applies it in the same tool episode", async () => {
+    const ctx = await createWorkspace({});
+    const tool = createSkillManagerTool(ctx.workspaceRoot, undefined);
+    const approvals: Array<{
+      action: string;
+      details?: Record<string, unknown>;
+    }> = [];
+    ctx.requestApproval = async (request) => {
+      approvals.push(request);
+      const proposalId = String(request.details?.proposalId);
+      await expect(
+        readFile(
+          join(
+            ctx.workspaceRoot,
+            ".sparkwright",
+            "skill-evolution",
+            "proposals",
+            proposalId,
+            "metadata.json",
+          ),
+          "utf8",
+        ),
+      ).resolves.toContain('"preparedState": "waiting"');
+      return true;
+    };
+
+    const result = await tool.execute(
+      {
+        action: "create",
+        name: "ready-skill",
+        description: "verify repository changes",
+        body: "Always inspect the diff and run focused tests.",
+      },
+      ctx,
+    );
+
+    expect(approvals).toHaveLength(1);
+    expect(approvals[0]).toMatchObject({
+      action: "skill.apply",
+      details: {
+        proposalRevision: 1,
+        effectHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+        path: ".sparkwright/skills/ready-skill",
+        diff: expect.stringContaining("SKILL.md"),
+      },
+    });
+    expect(result).toMatchObject({
+      action: "applied",
+      state: "applied",
+      preparedState: "applied",
+      skillName: "ready-skill",
+      approvalReceiptId: expect.stringMatching(/^skillapproval_/),
+      historyId: expect.stringMatching(/^skillver_/),
+      effectHash: approvals[0]?.details?.effectHash,
+    });
+    const proposalPath = (result as { proposalPath: string }).proposalPath;
+    await expect(
+      readFile(join(proposalPath, "approval.json"), "utf8"),
+    ).resolves.toContain(String(approvals[0]?.details?.effectHash));
+    await expect(
+      readFile(join(proposalPath, "mutation-receipt.json"), "utf8"),
+    ).resolves.toContain((result as { historyId: string }).historyId);
+    await expect(
+      readFile(
+        join(
+          ctx.workspaceRoot,
+          ".sparkwright",
+          "skills",
+          "ready-skill",
+          "SKILL.md",
+        ),
+        "utf8",
+      ),
+    ).resolves.toContain("Always inspect the diff");
+  });
+
+  it("keeps the authored Skill final-effect approval inside the originating run", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-skill-run-"));
+    try {
+      const tool = createSkillManagerTool(root, undefined);
+      let modelCalls = 0;
+      let approvalCalls = 0;
+      const run = createRun({
+        goal: "create a repository review Skill",
+        workspace: new LocalWorkspace(root),
+        tools: [tool],
+        maxSteps: 3,
+        approvalResolver(request) {
+          approvalCalls += 1;
+          expect(request.action).toBe("skill.apply");
+          expect(request.details).toMatchObject({
+            proposalId: expect.stringMatching(/^skillprop_/),
+            proposalRevision: 1,
+            effectHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+            diff: expect.stringContaining("SKILL.md"),
+          });
+          return {
+            approvalId: request.id,
+            decision: "approved",
+          };
+        },
+        model: {
+          async complete() {
+            modelCalls += 1;
+            return modelCalls === 1
+              ? {
+                  toolCalls: [
+                    {
+                      toolName: "create_skill",
+                      arguments: {
+                        action: "create",
+                        name: "repo-review-run",
+                        description: "review repository changes",
+                        body: "Inspect the diff and run focused tests.",
+                      },
+                    },
+                  ],
+                }
+              : { message: "Skill repo-review-run was created." };
+          },
+        },
+      });
+
+      const result = await run.start();
+
+      expect(result.signal).toBe("completed");
+      expect(approvalCalls).toBe(1);
+      expect(
+        run.events.all().filter((event) => event.type === "approval.requested"),
+      ).toHaveLength(1);
+      expect(
+        run.events
+          .all()
+          .filter((event) => event.type === "capability.mutation.completed"),
+      ).not.toHaveLength(0);
+      await expect(
+        readFile(
+          join(root, ".sparkwright", "skills", "repo-review-run", "SKILL.md"),
+          "utf8",
+        ),
+      ).resolves.toContain("Inspect the diff");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it("wraps create_skill instruction bodies with required frontmatter", async () => {
@@ -3116,6 +3452,67 @@ describe("host tools", () => {
       proposalId: (first as { proposalId: string }).proposalId,
     });
     expect(proposals).toHaveLength(1);
+  });
+
+  it("revises an authored update draft instead of discarding later content", async () => {
+    const original = [
+      "---",
+      "name: repo-review",
+      "description: review repository changes",
+      "---",
+      "",
+      "Review changes.",
+      "",
+    ].join("\n");
+    const ctx = await createWorkspace({
+      ".sparkwright/skills/repo-review/SKILL.md": original,
+    });
+    ctx.run!.metadata = { sessionId: "session_skill_update_chain" };
+    const tool = createSkillUpdateTool(ctx.workspaceRoot, undefined);
+    const firstBody = original.replace("Review changes.", "Review tests.");
+    const secondBody = original.replace(
+      "Review changes.",
+      "Review tests and report failures.",
+    );
+
+    const first = await tool.execute(
+      {
+        action: "draft",
+        name: "repo-review",
+        description: "Add test review guidance",
+        body: firstBody,
+      },
+      ctx,
+    );
+    ctx.run!.id = createRunId();
+    const second = await tool.execute(
+      {
+        action: "draft",
+        name: "repo-review",
+        description: "Add stronger test review guidance",
+        body: secondBody,
+      },
+      ctx,
+    );
+
+    expect(second).toMatchObject({
+      changed: true,
+      existing: true,
+      revised: true,
+      revision: 2,
+      proposalId: (first as { proposalId: string }).proposalId,
+    });
+    await expect(
+      readFile(
+        join(
+          (first as { proposalPath: string }).proposalPath,
+          "after",
+          "repo-review",
+          "SKILL.md",
+        ),
+        "utf8",
+      ),
+    ).resolves.toBe(secondBody);
   });
 
   it("creates project agent profiles and delegate tools", async () => {
@@ -3692,10 +4089,10 @@ describe("host tools", () => {
     }
 
     // Managers still carry the write side effect that triggers approval.
-    for (const tool of [skillManager, agentManager]) {
-      expect(tool.governance?.sideEffects).toContain("write");
-      expect(tool.policy?.risk).toBe("risky");
-    }
+    expect(skillManager.governance?.sideEffects).toContain("write");
+    expect(skillManager.policy?.risk).toBe("safe");
+    expect(agentManager.governance?.sideEffects).toContain("write");
+    expect(agentManager.policy?.risk).toBe("risky");
 
     // The read-only actions are no longer accepted by the managers.
     expect(

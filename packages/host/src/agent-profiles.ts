@@ -6,6 +6,7 @@
 // (policy, runBudget) stay in config.json; markdown frontmatter covers the
 // common case. See docs/guides/AGENTS.md and docs/reference/EXTENSION_INTERFACES.md.
 
+import { createHash } from "node:crypto";
 import type { Dirent } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
@@ -105,6 +106,17 @@ export interface AgentProfileCollision {
 export interface AgentProfileFileEntry {
   profile: AgentProfile;
   source: string;
+  identity: MarkdownAgentIdentity;
+}
+
+export interface MarkdownAgentIdentity {
+  /** @reserved Stable artifact kind carried into invocation-time trace attribution. */
+  artifactKind: "agent";
+  layer: "builtin" | "user" | "project";
+  /** @reserved Logical asset name used by future trace-derived projections. */
+  logicalName: string;
+  packageHashPolicyVersion: 2;
+  packageHash: string;
 }
 
 export interface AgentProfileFileCollision {
@@ -144,11 +156,13 @@ export async function discoverLayeredAgentProfiles(
     // Same id in different layers is legitimate layering (project overrides
     // user); last layer wins. Same id within one layer is an ambiguous
     // basename collision and is failed closed inside discoverAgentProfilesInDir.
-    for (const profile of await discoverAgentProfilesInDir(
-      dir.dir,
+    for (const entry of await discoverAgentProfileFileEntriesInDir(dir.dir, {
       onCollision,
-    )) {
-      byId.set(profile.id, profile);
+    })) {
+      byId.set(entry.profile.id, {
+        ...entry.profile,
+        assetIdentity: { ...entry.identity, layer: dir.layer },
+      });
     }
   }
   return [...byId.values()];
@@ -200,7 +214,11 @@ async function collectAgentProfileFileEntriesInDir(
     const profile = parseAgentProfileFile(basename(entry.name, ".md"), raw);
     const existing = byId.get(profile.id);
     if (existing) {
-      const dropped = { profile, source: fullPath };
+      const dropped = {
+        profile,
+        source: fullPath,
+        identity: markdownAgentIdentity(profile.id, raw),
+      };
       // Fail closed: keep the first file for this id and drop the rest, instead
       // of silently last-wins. The dropped file is reported so authors can fix
       // the ambiguity (or move to an explicit namespaced id).
@@ -216,8 +234,31 @@ async function collectAgentProfileFileEntriesInDir(
       });
       continue;
     }
-    byId.set(profile.id, { profile, source: fullPath });
+    byId.set(profile.id, {
+      profile,
+      source: fullPath,
+      identity: markdownAgentIdentity(profile.id, raw),
+    });
   }
+}
+
+export function markdownAgentIdentity(
+  logicalName: string,
+  raw: string,
+  layer: MarkdownAgentIdentity["layer"] = "project",
+): MarkdownAgentIdentity {
+  const hash = createHash("sha256");
+  hash.update("AGENT.md");
+  hash.update("\0");
+  hash.update(raw);
+  hash.update("\0");
+  return {
+    artifactKind: "agent",
+    layer,
+    logicalName,
+    packageHashPolicyVersion: 2,
+    packageHash: `sha256:${hash.digest("hex")}`,
+  };
 }
 
 /**

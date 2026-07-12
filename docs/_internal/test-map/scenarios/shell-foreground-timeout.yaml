@@ -9,8 +9,8 @@ task:
   expected_behavior:
     - "With TaskManager, the live process is promoted and returns promoted=true."
     - "Without TaskManager, the process is aborted and returns timedOut=true."
-    - "Result reports foregroundTimeoutMs, promotionAvailable, and timeoutMsAliasUsed."
-    - "Legacy timeoutMs is an alias for foregroundTimeoutMs, not a hard-kill timeout."
+    - "Result reports foregroundTimeoutMs and promotionAvailable."
+    - "Legacy timeoutMs is rejected as an unknown input property."
 
 model:
   baseline: deterministic

@@ -357,6 +357,9 @@ describe("createTodoWriteTool", () => {
     expect(todoWrite.description).toContain(
       "Never mark an item completed before its result is in.",
     );
+    expect(todoWrite.description).toContain(
+      "Do not create a todo list for a simple one-file change",
+    );
     expect(todoWrite.description).not.toContain("same message");
     expect(todoWrite.description).not.toContain("same turn");
     expect(todoWrite.description).not.toContain("separate turn");
@@ -395,7 +398,7 @@ describe("TodoLedger helpers", () => {
     expect(context.metadata.todoLedger).toBe(true);
   });
 
-  it("hands off unfinished todos after a final answer", async () => {
+  it("reconciles unfinished actionable todos after a final answer with progress", async () => {
     const ledger = {
       schemaVersion: "todo-ledger.v1" as const,
       metadata: {},
@@ -411,6 +414,53 @@ describe("TodoLedger helpers", () => {
       events: [{ type: "workspace.write.completed" } as never],
       maxContinuations: 3,
       continuationCount: 0,
+    });
+    expect(decision).toMatchObject({
+      kind: "continue",
+      reason: "unfinished_todo",
+    });
+    expect(decision.kind === "continue" ? decision.prompt : "").toContain(
+      "reconcile",
+    );
+  });
+
+  it("hands off unfinished todos after a final answer without progress", () => {
+    const ledger = {
+      schemaVersion: "todo-ledger.v1" as const,
+      metadata: {},
+      items: [{ title: "next", status: "pending" as const, depth: 0 }],
+    };
+    const decision = auditTodoAfterTerminal(ledger, {
+      result: {
+        signal: "completed",
+        state: "completed",
+        stopReason: "final_answer",
+        metadata: {},
+      },
+      events: [{ type: "workspace.read" } as never],
+      maxContinuations: 3,
+      continuationCount: 0,
+    });
+    expect(decision).toMatchObject({
+      kind: "handoff",
+      reason: "non_resumable_stop_reason",
+    });
+  });
+
+  it("hands off blocked todos after a final answer even with progress", () => {
+    const ledger = {
+      schemaVersion: "todo-ledger.v1" as const,
+      metadata: {},
+      items: [{ title: "needs user", status: "blocked" as const, depth: 0 }],
+    };
+    const decision = auditTodoAfterTerminal(ledger, {
+      result: {
+        signal: "completed",
+        state: "completed",
+        stopReason: "final_answer",
+        metadata: {},
+      },
+      events: [{ type: "workspace.write.completed" } as never],
     });
     expect(decision).toMatchObject({
       kind: "handoff",
@@ -460,9 +510,10 @@ describe("TodoLedger helpers", () => {
       kind: "next_open_item",
       title: "do this",
     });
-    expect(buildTodoContinuationPrompt(ledger)).toContain(
-      "Next open item: do this.",
-    );
+    const prompt = buildTodoContinuationPrompt(ledger);
+    expect(prompt).toContain("Next open item: do this.");
+    expect(prompt).toContain("Todo ledger is reconciled");
+    expect(prompt).toContain("unless a task.completed observation is present");
   });
 
   it("derives all_blocked when every unfinished item is blocked", () => {
@@ -530,6 +581,45 @@ describe("TodoLedger helpers", () => {
 });
 
 describe("runTodoSupervised", () => {
+  it("uses one reconciliation continuation when a final answer leaves progressed work open", async () => {
+    let ledger: TodoLedger = {
+      schemaVersion: "todo-ledger.v1",
+      metadata: {},
+      items: [
+        { title: "confirm background launch", status: "in_progress", depth: 0 },
+      ],
+    };
+    let runs = 0;
+    const result = await runTodoSupervised({
+      readLedger: () => ledger,
+      maxContinuations: 2,
+      runOnce(input) {
+        runs += 1;
+        if (input.continuation) {
+          ledger = {
+            ...ledger,
+            items: [{ ...ledger.items[0]!, status: "completed" }],
+          };
+        }
+        return {
+          result: {
+            signal: "completed",
+            state: "completed",
+            stopReason: "final_answer",
+            metadata: {},
+          },
+          events: input.continuation
+            ? []
+            : ([{ type: "task.started" }] as never),
+        };
+      },
+    });
+
+    expect(runs).toBe(2);
+    expect(result.continuationCount).toBe(1);
+    expect(result.decision.kind).toBe("complete");
+  });
+
   it("creates synthetic continuation requests until the ledger is complete", async () => {
     let ledger: TodoLedger = {
       schemaVersion: "todo-ledger.v1",

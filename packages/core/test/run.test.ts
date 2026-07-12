@@ -487,6 +487,89 @@ describe("SparkwrightRun", () => {
     expect(modelCalls).toBe(3);
   });
 
+  it("loads a skill's registered deferred tool dependencies without tool_search", async () => {
+    let modelCalls = 0;
+    const deferredEcho = defineTool({
+      name: "deferred_echo",
+      description: "Echo text after loading its skill.",
+      inputSchema: {
+        type: "object",
+        properties: { text: { type: "string" } },
+        required: ["text"],
+      },
+      deferLoading: true,
+      execute(args: unknown) {
+        return args;
+      },
+    });
+    const skillLoad = defineTool({
+      name: "skill_load",
+      description: "Load a skill and its declared tool dependencies.",
+      inputSchema: {
+        type: "object",
+        properties: { name: { type: "string" } },
+        required: ["name"],
+      },
+      execute() {
+        return {
+          status: "loaded",
+          name: "echo-builder",
+          toolDependencies: ["deferred_echo", "disabled_elsewhere"],
+          content: "Use deferred_echo.",
+        };
+      },
+    });
+
+    const run = createRun({
+      goal: "load a skill then use its tool",
+      tools: [deferredEcho, skillLoad],
+      maxSteps: 3,
+      model: {
+        async complete(input) {
+          modelCalls += 1;
+          const toolNames = input.tools.map((tool) => tool.name);
+          if (modelCalls === 1) {
+            expect(toolNames).toEqual(["skill_load"]);
+            return {
+              toolCalls: [
+                {
+                  toolName: "skill_load",
+                  arguments: { name: "echo-builder" },
+                },
+              ],
+            };
+          }
+          if (modelCalls === 2) {
+            expect(toolNames).toEqual(["deferred_echo", "skill_load"]);
+            return {
+              toolCalls: [
+                {
+                  toolName: "deferred_echo",
+                  arguments: { text: "loaded by skill" },
+                },
+              ],
+            };
+          }
+          return { message: "done" };
+        },
+      },
+    });
+
+    const result = await run.start();
+
+    expect(result).toMatchObject({ signal: "completed", message: "done" });
+    expect(modelCalls).toBe(3);
+    expect(
+      run.events
+        .all()
+        .some(
+          (event) =>
+            event.type === "tool.requested" &&
+            (event.payload as { toolName?: string }).toolName === "tool_search",
+        ),
+    ).toBe(false);
+  });
+
   it("adds recovery metadata when an unloaded deferred tool fails schema validation", async () => {
     let modelCalls = 0;
     let observedToolResults: ContextItem[] = [];
@@ -1487,6 +1570,104 @@ describe("SparkwrightRun", () => {
       state: "completed",
       stopReason: "final_answer",
     });
+  });
+
+  it("renders tool-owned repeated state observation guidance as a completed skip", async () => {
+    let executed = 0;
+    const observe = defineTool({
+      name: "observe",
+      description: "Observe changing state.",
+      inputSchema: { type: "object" },
+      repeatedCallGuidanceForArgs: () =>
+        "Use the blocking wait action instead.",
+      execute() {
+        executed += 1;
+        return { status: "running" };
+      },
+    });
+    let modelCalls = 0;
+    const run = createRun({
+      goal: "observe once, then recover from a repeated snapshot",
+      tools: [observe],
+      maxSteps: 8,
+      model: {
+        async complete() {
+          modelCalls += 1;
+          if (modelCalls <= 2) {
+            return { toolCalls: [{ toolName: "observe", arguments: {} }] };
+          }
+          return { message: "done" };
+        },
+      },
+    });
+
+    const result = await run.start();
+
+    expect(executed).toBe(1);
+    expect(result.stopReason).toBe("final_answer");
+    expect(
+      run.events
+        .all()
+        .some(
+          (event) =>
+            event.type === "tool.completed" &&
+            (event.payload as { output?: { reason?: string; hint?: string } })
+              .output?.reason === "repeated_state_observation" &&
+            (event.payload as { output?: { hint?: string } }).output?.hint ===
+              "Use the blocking wait action instead.",
+        ),
+    ).toBe(true);
+  });
+
+  it("does not let repeated state guidance hide a prior tool failure", async () => {
+    let executed = 0;
+    const observe = defineTool({
+      name: "observe",
+      description: "Observe changing state.",
+      inputSchema: { type: "object" },
+      repeatedCallGuidanceForArgs: () =>
+        "Use the blocking wait action instead.",
+      execute() {
+        executed += 1;
+        throw new Error("snapshot target does not exist");
+      },
+    });
+    let modelCalls = 0;
+    const run = createRun({
+      goal: "repeat one failed state observation",
+      tools: [observe],
+      maxSteps: 8,
+      model: {
+        async complete() {
+          modelCalls += 1;
+          if (modelCalls <= 2) {
+            return { toolCalls: [{ toolName: "observe", arguments: {} }] };
+          }
+          return { message: "done" };
+        },
+      },
+    });
+
+    await run.start();
+
+    expect(executed).toBe(1);
+    const events = run.events.all();
+    expect(
+      events.some(
+        (event) =>
+          event.type === "tool.completed" &&
+          (event.payload as { output?: { reason?: string } }).output?.reason ===
+            "repeated_state_observation",
+      ),
+    ).toBe(false);
+    expect(
+      events
+        .filter((event) => event.type === "tool.failed")
+        .map(
+          (event) =>
+            (event.payload as { error?: { code?: string } }).error?.code,
+        ),
+    ).toEqual(["TOOL_EXECUTION_FAILED", "REPEATED_TOOL_CALL_SKIPPED"]);
   });
 
   it("nudges repeated idempotent no-op tool results without recording a tool failure", async () => {

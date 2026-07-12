@@ -32,6 +32,7 @@ export function useCapabilityActions(deps: {
   controller: RunController;
   toasts: ToastStore;
   layers: LayerStack;
+  onSkillProposalPrepared?: () => void;
 }): CapabilityActions {
   const { workspaceRoot, controller, toasts, layers } = deps;
   const [capabilitySnapshot, setCapabilitySnapshot] =
@@ -66,7 +67,7 @@ export function useCapabilityActions(deps: {
         layers.pop("create");
         toasts.push({
           variant: "success",
-          title: "created",
+          title: result.kind === "skill" ? "prepared" : "created",
           message: result.path
             ? `${result.message} · ${formatWorkspaceDisplayPath(result.path, {
                 workspaceRoot,
@@ -74,6 +75,7 @@ export function useCapabilityActions(deps: {
               })}`
             : result.message,
         });
+        if (result.kind === "skill") deps.onSkillProposalPrepared?.();
         const snapshot = await controller.inspectCapabilities();
         if (snapshot) setCapabilitySnapshot(snapshot);
       } catch (error) {

@@ -3,7 +3,7 @@
 ## Current Confidence
 
 - Status: `Partially Verified`
-- Last reviewed: 2026-07-07
+- Last reviewed: 2026-07-11
 - Evidence source: 2026-06-23 focused host Skill evolution,
   capability-package mutation, inline-shell, TUI skill review, and
   `@sparkwright/skills` package tests passed. Real `openai/gpt-5.4-nano`
@@ -13,6 +13,51 @@
   duplicate recovered `create_skill` call.
 
 ## Covered
+
+- 2026-07-12 hardening coverage rejects snapshot targets that are ancestors of
+  their source, rejects duplicate registry path ownership, preserves concurrent
+  reconciliation updates, imports canonical packages with origin records,
+  validates exact Markdown Agent sources under collisions, exercises production
+  Agent/Workflow stats commands, and persists suggestion dismiss cooldowns.
+  Follow-up coverage verifies one terminal count per Workflow run, durable
+  Workflow source layers, pending import-origin recovery, and Windows
+  cross-volume snapshot disjointness.
+
+- 2026-07-12 Phase 3B coverage proves new managed proposal/history/receipt
+  records use v2 identity, ordinary root files survive proposal apply/history,
+  and direct change to an included file marks the proposal stale without target
+  overwrite. Missing-policy legacy records remain v1 readers.
+
+- 2026-07-12 Phase 3A package identity v2 substrate coverage proves complete
+  canonical ordinary-file enumeration, fixed exclusions, NUL-framed stable
+  hashing, same-set snapshotting, policy version attribution, and fail-closed
+  file/path/size guardrails. It deliberately does not change the current Skill
+  v1 runtime/evolution path; Phase 3B owns that migration.
+
+- 2026-07-12 TUI completion-card coverage proves a draft proposal is restored
+  from persistent proposal storage after startup, card dismissal leaves the
+  draft recoverable through `/skill-review`, and both generic and dedicated
+  creation paths refresh the affordance.
+
+- 2026-07-12 Phase 2 create convergence routes model `create_skill`, CLI
+  `skills create`, TUI `/create skill`, and `/skill-create` through host
+  `SkillCommandService`. Focused service, host tool, CLI and TUI tests verify
+  proposal-first behavior, shared review apply, session dedupe, and absence of
+  direct current-Skill writes from ordinary create adapters.
+
+- 2026-07-11 real `openai/gpt-5.6-terra` TUI evidence showed the pre-fix human
+  apply handoff was broken: a user follow-up of `应用` entered a model run with
+  no apply tool, causing repeated discovery/resource loads and leaving the
+  proposal draft. The fix makes `/skill-review <proposal-id>` a valid focused
+  TUI route, emits host-owned `humanAction` metadata, and renders a terminal-only
+  confirmation band. Focused host/TUI tests passed and a PTY command opened the
+  exact original proposal. See
+  [../runs/2026-07-11-real-terra-skill-apply-handoff.md](../runs/2026-07-11-real-terra-skill-apply-handoff.md).
+- 2026-07-12 P1 containment keeps proposal audit events but folds their default
+  TUI rows into the terminal proposal result, and bounds repeated reference
+  observations with loader-scoped, version-aware `already_loaded` results.
+  Focused Skills and TUI render tests cover canonical-path repeats, no-content
+  repeat results, unrelated mutation visibility, and proposal mutation counts.
 
 - Skill loading/indexing package behavior.
 - Skill evolution proposal snapshots and guard/doctor gates in focused tests.
@@ -122,6 +167,10 @@
 npm --workspace @sparkwright/host test -- test/skill-evolution.test.ts test/capability-package-mutation.test.ts test/skill-inline-shell.test.ts
 npm --workspace @sparkwright/tui test -- test/skill-review-dialog-render.test.tsx test/path-display.test.ts
 npm --workspace @sparkwright/skills test
+npm --workspace @sparkwright/skills run typecheck
+npm --workspace @sparkwright/skills run build
+npm run check:package-boundaries
+npm run check:internal-imports
 ```
 
 Use the real regression script as an opt-in canary:

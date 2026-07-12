@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync, readlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
-import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { AnySchema, ErrorObject, ValidateFunction } from "ajv";
@@ -83,10 +83,12 @@ import {
 } from "@sparkwright/cron";
 import { type SkillGuardFinding, type SkillRoot } from "@sparkwright/skills";
 import {
+  SkillCommandService,
   loadLayeredSkillReport,
-  applySkillProposal,
   collectSkillReviewDigest,
   collectSkillStats,
+  collectAssetStats,
+  dismissSkillSuggestion,
   createSkillCreateProposal,
   createSkillUpdateProposal,
   listSkillHistory,
@@ -95,9 +97,12 @@ import {
   readSkillHistoryDetail,
   readSkillProposal,
   rejectSkillProposal,
-  recordSkillPatch,
   restoreSkillFromHistory,
   runSkillDoctor,
+  importSkill,
+  readSkillRegistry,
+  reconcileSkill,
+  scanSkillReconciliation,
   supersedeSkillProposal,
   loadLayeredAgentReport,
   loadLayeredWorkflowAssets,
@@ -128,7 +133,6 @@ import {
   catalogEntryOrigin,
   canonicalToolName,
   createMainHostToolCatalog,
-  projectSkillRoot,
   resolveCapabilityDirs,
   resolveConfiguredToolAllowlist,
   resolveSkillRootsForRuntime,
@@ -1342,7 +1346,8 @@ function parseArgs(
     subcommand !== "inspect" &&
     subcommand !== "resume" &&
     subcommand !== "distill" &&
-    subcommand !== "shadow"
+    subcommand !== "shadow" &&
+    subcommand !== "stats"
   ) {
     return {
       ok: false,
@@ -1377,7 +1382,8 @@ function parseArgs(
     subcommand !== "doctor" &&
     subcommand !== "proposals" &&
     subcommand !== "history" &&
-    subcommand !== "restore"
+    subcommand !== "restore" &&
+    subcommand !== "reconcile"
   ) {
     return {
       ok: false,
@@ -1390,12 +1396,13 @@ function parseArgs(
     command === "agents" &&
     subcommand !== "list" &&
     subcommand !== "create" &&
-    subcommand !== "validate"
+    subcommand !== "validate" &&
+    subcommand !== "stats"
   ) {
     return {
       ok: false,
       message:
-        "Usage: sparkwright agents <list|create|validate> [id] [--prompt text]",
+        "Usage: sparkwright agents <list|create|validate|stats> [id] [--prompt text]",
     };
   }
 
@@ -1836,13 +1843,28 @@ async function handleWorkflowCommand(
     subcommand !== "inspect" &&
     subcommand !== "resume" &&
     subcommand !== "distill" &&
-    subcommand !== "shadow"
+    subcommand !== "shadow" &&
+    subcommand !== "stats"
   ) {
     writeLine(io.stderr, workflowUsage());
     return { exitCode: 1 };
   }
 
   try {
+    if (subcommand === "stats") {
+      const report = await collectAssetStats({
+        workspaceRoot: parsed.workspaceRoot,
+        sessionRootDir: parsed.sessionRootDir,
+        artifactKind: "workflow",
+      });
+      writeLine(
+        io.stdout,
+        parsed.format === "json"
+          ? JSON.stringify(report, null, 2)
+          : formatAssetStatsReport(report),
+      );
+      return { exitCode: report.errors.length > 0 ? 1 : 0 };
+    }
     if (subcommand === "service") {
       return handleWorkflowServiceCommand(parsed, io, env);
     }
@@ -3728,7 +3750,8 @@ async function handleSkillsCommand(
     subcommand !== "doctor" &&
     subcommand !== "proposals" &&
     subcommand !== "history" &&
-    subcommand !== "restore"
+    subcommand !== "restore" &&
+    subcommand !== "reconcile"
   ) {
     writeLine(io.stderr, skillsUsage());
     return { exitCode: 1 };
@@ -3751,8 +3774,24 @@ async function handleSkillsCommand(
       return await handleSkillRestoreCommand(parsed, io);
     }
 
+    if (subcommand === "reconcile") {
+      return await handleSkillReconcileCommand(parsed, io);
+    }
+
     const roots = await resolveSkillRootsForCli(parsed.workspaceRoot, env);
     if (subcommand === "review") {
+      const [reviewAction, suggestionId] = splitCliWords(parsed.goal);
+      if (reviewAction === "dismiss") {
+        if (!suggestionId) {
+          throw new Error("skills review dismiss requires a suggestion id.");
+        }
+        await dismissSkillSuggestion({
+          workspaceRoot: parsed.workspaceRoot,
+          suggestionId,
+        });
+        writeLine(io.stdout, `dismissed suggestion: ${suggestionId}`);
+        return { exitCode: 0 };
+      }
       const digest = await collectSkillReviewDigest({
         workspaceRoot: parsed.workspaceRoot,
         sessionRootDir: parsed.sessionRootDir,
@@ -3818,6 +3857,107 @@ async function handleSkillsCommand(
   }
 }
 
+async function handleSkillReconcileCommand(
+  parsed: ParsedArgs,
+  io: CliIO,
+): Promise<CliRunResult> {
+  const args = splitCliWords(parsed.goal);
+  const action = args.shift();
+  try {
+    if (action === "scan") {
+      const findings = await scanSkillReconciliation(parsed.workspaceRoot);
+      writeLine(
+        io.stdout,
+        parsed.format === "json"
+          ? JSON.stringify(findings, null, 2)
+          : findings.length === 0
+            ? "reconciliation findings: 0"
+            : findings
+                .map(
+                  (finding) =>
+                    `- ${finding.kind} ${finding.skillName ?? finding.artifactId ?? "unknown"}`,
+                )
+                .join("\n"),
+      );
+      return { exitCode: 0 };
+    }
+    if (action === "list") {
+      const registry = await readSkillRegistry(parsed.workspaceRoot);
+      writeLine(
+        io.stdout,
+        parsed.format === "json"
+          ? JSON.stringify(registry, null, 2)
+          : registry.artifacts.length === 0
+            ? "registry artifacts: 0"
+            : registry.artifacts
+                .map(
+                  (artifact) =>
+                    `- ${artifact.artifactId} ${artifact.status} ${artifact.activePath ?? "(none)"}`,
+                )
+                .join("\n"),
+      );
+      return { exitCode: 0 };
+    }
+    const kind = action;
+    if (
+      kind !== "adopt" &&
+      kind !== "move" &&
+      kind !== "copy" &&
+      kind !== "reidentify" &&
+      kind !== "orphan" &&
+      kind !== "import"
+    ) {
+      throw new Error(
+        "Usage: sparkwright skills reconcile <scan|list|adopt|move|copy|reidentify|orphan|import> ...",
+      );
+    }
+    const first = args.shift();
+    const second = args.shift();
+    if (kind === "import") {
+      if (!first || !second) {
+        throw new Error("import requires <skill-name> <source-path>.");
+      }
+      const imported = await importSkill({
+        workspaceRoot: parsed.workspaceRoot,
+        skillName: first,
+        sourcePath: second,
+      });
+      writeLine(
+        io.stdout,
+        parsed.format === "json"
+          ? JSON.stringify(imported, null, 2)
+          : `imported ${first}: ${imported.receipt.artifactId}`,
+      );
+      return { exitCode: 0 };
+    }
+    const receipt = await reconcileSkill({
+      workspaceRoot: parsed.workspaceRoot,
+      kind,
+      ...(kind === "adopt" ? { skillName: first } : {}),
+      ...(kind === "move" || kind === "reidentify"
+        ? { artifactId: first, skillName: second }
+        : {}),
+      ...(kind === "copy"
+        ? { sourceArtifactId: first, skillName: second }
+        : {}),
+      ...(kind === "orphan" ? { artifactId: first } : {}),
+    });
+    writeLine(
+      io.stdout,
+      parsed.format === "json"
+        ? JSON.stringify(receipt, null, 2)
+        : `reconciled ${receipt.kind}: ${receipt.artifactId}`,
+    );
+    return { exitCode: 0 };
+  } catch (error) {
+    writeLine(
+      io.stderr,
+      error instanceof Error ? error.message : String(error),
+    );
+    return { exitCode: 1 };
+  }
+}
+
 async function handleSkillProposalsCommand(
   parsed: ParsedArgs,
   io: CliIO,
@@ -3870,9 +4010,9 @@ async function handleSkillProposalsCommand(
       writeLine(io.stderr, "Usage: sparkwright skills proposals apply <id>");
       return { exitCode: 1 };
     }
-    const result = await applySkillProposal(parsed.workspaceRoot, id, {
-      force: parsed.force,
-    });
+    const { applied: result } = await new SkillCommandService(
+      parsed.workspaceRoot,
+    ).approveAndApply(id, { force: parsed.force });
     writeLine(
       io.stdout,
       parsed.format === "json"
@@ -4087,36 +4227,30 @@ async function handleSkillsCreate(
     writeLine(io.stderr, input.message);
     return { exitCode: 1 };
   }
-  const root = input.value.root
-    ? isAbsolute(input.value.root)
-      ? input.value.root
-      : resolve(parsed.workspaceRoot, input.value.root)
-    : projectSkillRoot(parsed.workspaceRoot);
-  const skillDir = join(root, input.value.name);
-  const skillPath = join(skillDir, "SKILL.md");
-  const { mkdir, writeFile } = await import("node:fs/promises");
-  const { existsSync } = await import("node:fs");
-
-  if (existsSync(skillPath) && !parsed.force) {
+  if (parsed.force) {
     writeLine(
       io.stderr,
-      `Skill already exists: ${skillPath}. Re-run with --force to overwrite.`,
+      "skills create no longer accepts --force; prepare the proposal, review its final effect, then apply it.",
     );
     return { exitCode: 1 };
   }
-
-  await mkdir(skillDir, { recursive: true });
-  await writeFile(
-    skillPath,
-    renderSkillTemplate(input.value.name, input.value.description),
-    "utf8",
+  const { proposal } = await new SkillCommandService(
+    parsed.workspaceRoot,
+  ).prepareCreate({
+    name: input.value.name,
+    description: input.value.description,
+    root: input.value.root,
+  });
+  writeLine(
+    io.stdout,
+    parsed.format === "json"
+      ? JSON.stringify(proposal, null, 2)
+      : `Prepared proposal ${proposal.id} at ${proposal.path
+          .split(sep)
+          .join(
+            "/",
+          )}. Review and apply it with: sparkwright skills proposals apply ${proposal.id}`,
   );
-  if (resolve(root) === resolve(projectSkillRoot(parsed.workspaceRoot))) {
-    recordSkillPatch(parsed.workspaceRoot, input.value.name);
-  }
-  // Display with forward slashes so output is stable across platforms
-  // (Windows would otherwise print backslashes).
-  writeLine(io.stdout, `Created ${skillPath.split(sep).join("/")}`);
   return { exitCode: 0 };
 }
 
@@ -4430,7 +4564,7 @@ function parseSkillsCreateArgs(
     return {
       ok: false,
       message:
-        "Usage: sparkwright skills create <name> --description <text> [--root path]",
+        "Usage: sparkwright skills create <name> --description <text> [--root .sparkwright/skills]",
     };
   }
   if (!isSkillName(name)) {
@@ -4473,21 +4607,6 @@ function parseSkillsCreateArgs(
 
 function isSkillName(value: string): boolean {
   return /^[a-z0-9][a-z0-9-]{0,63}$/.test(value);
-}
-
-function renderSkillTemplate(name: string, description: string): string {
-  return [
-    "---",
-    `name: ${name}`,
-    `description: ${description}`,
-    'version: "1.0.0"',
-    "metadata:",
-    '  version: "1.0.0"',
-    "---",
-    "",
-    `Use this skill when the user asks for ${description}`,
-    "",
-  ].join("\n");
 }
 
 function formatSkillReport(report: SkillReport): string {
@@ -4938,14 +5057,29 @@ async function handleAgentsCommand(
   if (
     subcommand !== "list" &&
     subcommand !== "create" &&
-    subcommand !== "validate"
+    subcommand !== "validate" &&
+    subcommand !== "stats"
   ) {
     writeLine(io.stderr, agentsUsage());
     return { exitCode: 1 };
   }
 
-  const configPath = projectConfigPathForWorkspace(parsed.workspaceRoot);
   try {
+    if (subcommand === "stats") {
+      const report = await collectAssetStats({
+        workspaceRoot: parsed.workspaceRoot,
+        sessionRootDir: parsed.sessionRootDir,
+        artifactKind: "agent",
+      });
+      writeLine(
+        io.stdout,
+        parsed.format === "json"
+          ? JSON.stringify(report, null, 2)
+          : formatAssetStatsReport(report),
+      );
+      return { exitCode: report.errors.length > 0 ? 1 : 0 };
+    }
+    const configPath = projectConfigPathForWorkspace(parsed.workspaceRoot);
     const loaded = await readConfigObject(configPath);
     const agents = getAgentsConfig(loaded.value);
 
@@ -5045,6 +5179,35 @@ async function handleAgentsCommand(
     );
     return { exitCode: 1 };
   }
+}
+
+function formatAssetStatsReport(report: {
+  observationsScanned: number;
+  sessionsScanned: number;
+  workflowRecordsScanned: number;
+  entries: Array<{
+    identity: {
+      artifactKind: string;
+      logicalName: string;
+      packageHashPolicyVersion: number;
+      packageHash: string;
+    };
+    observations: number;
+    completed: number;
+    failed: number;
+  }>;
+}): string {
+  const lines = [
+    `observations scanned: ${report.observationsScanned}`,
+    `sessions scanned: ${report.sessionsScanned}`,
+    `workflow records scanned: ${report.workflowRecordsScanned}`,
+  ];
+  for (const entry of report.entries) {
+    lines.push(
+      `- ${entry.identity.artifactKind}:${entry.identity.logicalName} v${entry.identity.packageHashPolicyVersion} ${entry.identity.packageHash} observations=${entry.observations} completed=${entry.completed} failed=${entry.failed}`,
+    );
+  }
+  return lines.join("\n");
 }
 
 function configUsage(): string {
@@ -8040,9 +8203,10 @@ function usage(_env: Record<string, string | undefined>): string {
     "       sparkwright skills review [--workspace path] [--session-root path] [--last n] [--skill name] [--skill-key key] [--package-hash hash] [--format json|text]",
     "       sparkwright skills stats [--workspace path] [--session-root path] [--last n] [--skill name] [--skill-key key] [--package-hash hash] [--format json|text]",
     "       sparkwright skills doctor [--workspace path] [--format json|text]",
+    "       sparkwright skills reconcile scan|list|adopt|move|copy|reidentify|orphan [--workspace path] [--format json|text]",
     "       sparkwright skills proposals list|show|create|update|apply|reject|supersede|prune [--workspace path] [--format json|text]",
     "       sparkwright skills history <skill-name> [--workspace path] [--format json|text]",
-    '       sparkwright skills create <name> --description "what it does" [--workspace path] [--root path] [--force]',
+    '       sparkwright skills create <name> --description "what it does" [--workspace path] [--root .sparkwright/skills]',
     "       sparkwright agents list|validate [--workspace path] [--format json|text]",
     '       sparkwright agents create <id> --prompt "what it should do" [--use selector] [--allow tool] [--delegate tool_name] [--workspace path] [--force]',
     '       sparkwright run "your goal" [--image path] [--workspace path] [--session-root path] [--target README.md] [--confidential path-or-glob] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--access-mode mode] [--session-id id] [--model provider/model] [--workflow name] [--verbose]',
@@ -8083,6 +8247,7 @@ function workflowUsage(): string {
     "       sparkwright workflow resume <workflow-run-id> [--workspace path] [--session <session-id>] [--model provider/model]",
     "       sparkwright workflow distill <session-id> [--workspace path] [--session-root path] [--format json|text]",
     "       sparkwright workflow shadow <workflow-name> <session-id> [--workspace path] [--session-root path] [--format json|text]",
+    "       sparkwright workflow stats [--workspace path] [--session-root path] [--format json|text]",
   ].join("\n");
 }
 
@@ -8102,6 +8267,7 @@ function skillsUsage(): string {
     "Usage: sparkwright skills list [--workspace path] [--format json|text]",
     "       sparkwright skills validate [--workspace path] [--format json|text]",
     "       sparkwright skills review [--workspace path] [--session-root path] [--last n] [--skill name] [--skill-key key] [--package-hash hash] [--format json|text]",
+    "       sparkwright skills review dismiss <suggestion-id> [--workspace path]",
     "       sparkwright skills stats [--workspace path] [--session-root path] [--last n] [--skill name] [--skill-key key] [--package-hash hash] [--format json|text]",
     "       sparkwright skills doctor [--workspace path] [--format json|text]",
     "       sparkwright skills proposals list [--run <run-id>] [--session <session-id>] [--workspace path] [--format json|text]",
@@ -8116,7 +8282,7 @@ function skillsUsage(): string {
     "       sparkwright skills restore <skill-name> --version <history-id> [--to before|after] [--dry-run|--apply] [--workspace path] [--format json|text]",
     '       sparkwright skills proposals create <name> --description "what it does" [--workspace path] [--format json|text]',
     '       sparkwright skills proposals update <name> --description "what should change" [--workspace path] [--format json|text]',
-    '       sparkwright skills create <name> --description "what it does" [--workspace path] [--root path] [--force]',
+    '       sparkwright skills create <name> --description "what it does" [--workspace path] [--root .sparkwright/skills]',
   ].join("\n");
 }
 
@@ -8137,6 +8303,7 @@ function agentsUsage(): string {
   return [
     "Usage: sparkwright agents list [--workspace path] [--format json|text]",
     "       sparkwright agents validate [--workspace path] [--format json|text]",
+    "       sparkwright agents stats [--workspace path] [--session-root path] [--format json|text]",
     '       sparkwright agents create <id> --prompt "what it should do" [--name text] [--model provider/model] [--use selector] [--allow tool] [--deny tool] [--delegate tool_name] [--max-steps n] [--workspace path] [--force]',
   ].join("\n");
 }

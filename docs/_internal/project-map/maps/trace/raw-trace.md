@@ -193,12 +193,51 @@ EventLog emits full event
 
 - JSONL can grow without bound; retention/rotation remains an embedder concern.
 - `workspace.read` can create high-volume noise.
-- Stream chunk handling is collapsed at non-debug levels; consumers must not rely on individual chunks unless `debug`.
+- Stream chunk handling is collapsed at non-debug levels into contiguous
+  `model.stream.text` segments; same-run non-chunk events split segments so
+  persisted sequence order stays monotonic. Consumers must not rely on
+  individual chunks unless `debug`. During a disk-degraded replay, sequence
+  order remains authoritative but a segment's `chunkCount`/duration may be a
+  conservative approximation if later chunks arrived before recovery.
 - Large process output already materializes through shell/traced-process paths
   and `artifact.created`. A future generic large-result helper must avoid
   double-spilling tool-owned artifacts and honor `resultSize.neverPersist`.
 
 ## Last Verified
+
+- Status: Read-only
+- Date: 2026-07-12T20:12:00+0800
+- Scope: Workflow statistics now count terminal state only on the run
+  observation and use durable record layer; raw trace event contracts are unchanged.
+- Read: asset stats, Workflow record types/store, and raw trace map.
+- Tests: focused stats/Workflow tests passed; no raw trace schema change.
+
+- Status: Read-only
+- Date: 2026-07-12
+- Scope: checked event-time Agent and Workflow package identity metadata; trace encoding contract is otherwise unchanged.
+- Tests: focused host/agent-runtime tests passed; release gate pending.
+
+- Status: Read-only
+- Date: 2026-07-12T16:36:08+0800
+- Scope: checked Workflow package identity persistence; raw trace event contract is unchanged.
+- Tests: not run for trace-specific behavior; Phase 4 Workflow release gate passed.
+
+- Status: Verified
+- Date: 2026-07-11T22:55:00+0800
+- Scope: documented degraded-buffer stream-segment telemetry approximation;
+  persisted sequence ordering remains the hard invariant.
+- Read: `packages/core/src/trace-store.ts`, `packages/core/test/trace.test.ts`.
+- Tests: full `npm run release:check`.
+
+- Status: Verified
+- Date: 2026-07-11T19:53:00+0800
+- Scope: fixed standard-level folded stream persistence when same-run
+  background `task.output` events interleave; session and per-agent traces use
+  the same ordered serialized batch.
+- Read: `packages/core/src/trace-store.ts`,
+  `packages/core/test/trace.test.ts`.
+- Tests: `npm --workspace @sparkwright/core test -- test/trace.test.ts`;
+  `npm --workspace @sparkwright/core run typecheck`.
 
 - Status: Verified
 - Date: 2026-07-07T16:15:00+0800

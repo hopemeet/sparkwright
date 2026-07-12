@@ -239,7 +239,9 @@ export class RunController {
         // trace), so on replay we detect the continuation by its goal preamble
         // and render a divider instead of a fake user bubble.
         if (payload.goal.startsWith(TODO_CONTINUATION_GOAL_PREFIX)) {
-          this.store.appendNotice("continuing — todos unfinished");
+          this.store.appendNotice(
+            "previous answer provisional · continuing — todos unfinished",
+          );
         } else {
           this.store.appendUserMessage(payload.goal);
         }
@@ -1037,7 +1039,7 @@ export class RunController {
       this.cancelRequested = false;
       this.store.setStatus("running");
       this.store.appendNotice(
-        `continuing (#${msg.payload.continuationCount}) — todos unfinished`,
+        `previous answer provisional · continuing (#${msg.payload.continuationCount}) — todos unfinished`,
       );
     });
 
@@ -1154,14 +1156,21 @@ export class RunController {
         return;
       }
     }
-    const kind: "workspace.write" | "tool.execute" | "shell.execute" | "other" =
+    const kind:
+      | "workspace.write"
+      | "skill.apply"
+      | "tool.execute"
+      | "shell.execute"
+      | "other" =
       action === "workspace.write"
         ? "workspace.write"
-        : action === "tool.execute"
-          ? "tool.execute"
-          : action === "shell.execute"
-            ? "shell.execute"
-            : "other";
+        : action === "skill.apply"
+          ? "skill.apply"
+          : action === "tool.execute"
+            ? "tool.execute"
+            : action === "shell.execute"
+              ? "shell.execute"
+              : "other";
     const pickString = (k: string): string | undefined =>
       typeof details[k] === "string" ? (details[k] as string) : undefined;
     const policyRaw = details.policy as

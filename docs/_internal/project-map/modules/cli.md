@@ -41,6 +41,11 @@ Does not own:
 
 ## Contracts
 
+- `skills create` prepares a project Skill proposal through host
+  `SkillCommandService`; it no longer writes `SKILL.md` directly or accepts
+  `--force`. `skills proposals apply` is the explicit human review decision and
+  calls the same service's effect-bound approve/apply path.
+
 - `sparkwright trace *` reads a `trace.jsonl` path.
 - Top-level help must list every trace diagnostic subcommand, including
   `trace report`; subcommand usage remains owned by command-specific handlers.
@@ -305,6 +310,31 @@ Does not own:
 - The direct-core deterministic model is a diagnostics harness; it should keep exercising real catalog tools (`read_file`, `read_anchored_text`, `write_file`, `edit_anchored_text`/`apply_patch`) rather than reintroducing test-only write tools.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-12T20:00:00+0800
+- Scope: added Agent/Workflow stats, Skill origin import, and suggestion-dismiss
+  command routing while preserving config-backed Agent remove compatibility;
+  Workflow completed/failed values now represent runs rather than observations.
+- Read: CLI handlers/usage and focused CLI tests.
+- Tests: focused CLI reconciliation/stats suites and CLI typecheck passed.
+
+- Status: Read-only
+- Date: 2026-07-12
+- Scope: checked Skill reconciliation CLI routing; no CLI run/session/trace contract changed.
+- Tests: focused CLI reconciliation/review tests passed; release gate pending.
+
+- Status: Read-only
+- Date: 2026-07-12T16:36:08+0800
+- Scope: checked Workflow CLI resume against executable snapshots; CLI syntax is unchanged.
+- Tests: not run for broader CLI behavior; Phase 4 Workflow release gate passed.
+
+- Status: Verified
+- Date: 2026-07-12T08:25:00+0800
+- Scope: converged CLI Skill create/apply with model and TUI managed-change
+  semantics.
+- Read: `packages/cli/src/cli.ts`, host Skill command service, CLI tests.
+- Tests: focused CLI create/proposal suites and CLI typecheck.
 
 - Status: Verified
 - Date: 2026-07-11T15:30:00+0800

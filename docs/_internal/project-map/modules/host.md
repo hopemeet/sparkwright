@@ -69,6 +69,24 @@ Does not own:
 
 ## Contracts
 
+- `SkillCommandService` owns create preparation, session/run draft dedupe,
+  approval preparation, receipt persistence, and approved apply. CLI/TUI/model
+  adapters must not reproduce those transitions. Low-level proposal/history
+  functions remain in `skill-evolution.ts` for the service and advanced
+  lifecycle commands.
+
+- Host owns the first Skill prepared-change transaction slice. A safe authored
+  `create_skill` persists the final proposal/effect hash, requests
+  `skill.apply` through the run approval channel, records the hash-bound
+  receipt, applies in the same tool episode, and persists history/mutation
+  receipt. Proposal storage is the slow-path source of truth; TUI state is only
+  presentation. Other Skill entrypoints are not unified yet.
+
+- Host's model-facing Markdown Agent authoring surface uses canonical `name` as
+  the filename stem and public identity. Runtime `AgentProfile.id` remains an
+  internal compatibility field, legacy Markdown `id` overrides remain
+  readable, and new files omit inferred child mode and inherited budgets.
+
 - One active run per host connection.
 - Session root defaults to `<workspace>/.sparkwright/sessions`.
 - Host protocol `run.failed` events emitted by runtime carry canonical
@@ -755,6 +773,73 @@ Does not own:
 - Capability snapshot fields are useful but can become stale if new tools bypass `tool-catalog.ts`; direct-core/cron should add tools by catalog profile, not local factories.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-12T23:35:00+0800
+- Scope: model-facing Markdown Agent authoring now uses canonical public
+  `name`, keeps runtime `id` internal, and omits inferred default fields.
+- Read: `packages/host/src/tools.ts`, `packages/host/src/agent-profiles.ts`,
+  focused Host tests, and routed project maps.
+- Tests: `npm --workspace @sparkwright/host test -- test/tools.test.ts`;
+  `npm --workspace @sparkwright/host run typecheck`; focused Prettier and
+  `git diff --check` passed.
+
+- Status: Verified
+- Date: 2026-07-12T20:00:00+0800
+- Scope: reviewed Agent exact-file authoring validation, production asset stats
+  scanning with run-scoped Workflow outcomes and durable layers,
+  transactional Skill reconciliation/import, and suggestion state.
+- Read: host tools, agent profiles, asset stats, Skill registry/review/suggestions.
+- Tests: focused host suites and host typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-12
+- Scope: added rebuildable Agent/Workflow observation primitives, explicit Skill
+  registry reconciliation, and advisory Skill evidence suggestions; none of
+  these paths auto-create or apply a managed change.
+- Read: `asset-stats.ts`, `skill-registry.ts`, `skill-suggestions.ts`,
+  `skill-review-digest.ts`, `runtime.ts`, and CLI reconciliation routing.
+- Tests: focused host/CLI tests, workspace check, regression matrix, source
+  install smoke, and release install smoke passed.
+
+- Status: Verified
+- Date: 2026-07-12T17:28:16+0800
+- Scope: Phase 5 routes normal `create_agent` authoring to a single project
+  Markdown file with semantic summary, workspace-write approval, rediscovery,
+  and package identity capture; config profiles stay explicit governance.
+- Tests: focused host Agent tests and full `npm run release:check`.
+
+- Status: Verified
+- Date: 2026-07-12T16:47:44+0800
+- Scope: Workflow content-addressed executable snapshots now publish atomically
+  and concurrent pins reuse the same verified immutable package directory.
+- Read: `packages/host/src/workflows.ts`, shared package-v2 snapshot substrate,
+  and focused Workflow concurrency tests.
+- Tests: Workflow focused host/CLI suites, test typecheck, and full
+  `npm run release:check`.
+
+- Status: Verified
+- Date: 2026-07-12T16:36:08+0800
+- Scope: Workflow instantiate now pins a v2 executable package snapshot and
+  resume verifies its hash before using a snapshot-backed definition.
+- Read: `packages/host/src/runtime.ts`, `packages/host/src/workflows.ts`, and
+  Workflow host/CLI tests.
+- Tests: Workflow focused host/CLI suites and full `npm run release:check`.
+
+- Status: Verified
+- Date: 2026-07-12T08:25:00+0800
+- Scope: introduced the shared Skill command boundary and moved all ordinary
+  create/apply adapters onto it.
+- Read: `packages/host/src/skill-command-service.ts`, exports and consumers.
+- Tests: host focused suites and host build/typecheck.
+
+- Status: Verified
+- Date: 2026-07-12T02:12:00+0800
+- Scope: safe authored Skill prepared-change fast path and durable recovery
+  metadata; no host protocol schema change.
+- Read: `packages/host/src/tools.ts`,
+  `packages/host/src/skill-evolution.ts`, `packages/host/src/index.ts`.
+- Tests: host focused Skill suites (109 tests) and host typecheck.
 
 - Status: Verified
 - Date: 2026-07-11T15:30:00+0800

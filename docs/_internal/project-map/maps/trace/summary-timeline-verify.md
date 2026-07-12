@@ -191,6 +191,9 @@ trace.jsonl
   Dropped stderr-token samples do not consume event sequences; debug-only
   `progressDroppedSamples` are diagnostic payload, not fold evidence.
   The same skip applies to session-consistency `RUN_EVENT_SEQUENCE_INVALID`.
+  Stream folding may produce multiple `model.stream.text` markers for one
+  model stream when same-run task or runtime events split the chunk sequence;
+  each marker describes one contiguous sequence segment.
 - Trace diagnostics operate over persisted raw `trace.jsonl`; valid trace
   levels are `standard` and `debug`.
 - `trace-diagnostics.ts` owns summary/timeline/report/verify and their pure
@@ -231,6 +234,37 @@ trace.jsonl
   guard.
 
 ## Last Verified
+
+- Status: Read-only
+- Date: 2026-07-12T20:00:00+0800
+- Scope: checked new Agent/Workflow stats CLI routing; it scans canonical trace
+  and Workflow records without changing summary/timeline/verify contracts.
+- Read: CLI stats handlers and host asset projection scanner.
+- Tests: covered by the full release gate; no map contract change needed.
+
+- Status: Read-only
+- Date: 2026-07-12
+- Scope: checked CLI reconciliation routing; trace summary/timeline/verify semantics need no update.
+- Tests: focused CLI tests passed; release gate pending.
+
+- Status: Verified
+- Date: 2026-07-11T21:45:00+0800
+- Scope: report emits an informational `FINITE_SERVICE_TASK` advisory when a
+  service-classified shell task completes naturally with exit code zero; this
+  does not change an otherwise-ok verdict.
+- Read: `packages/core/src/trace-diagnostics.ts`,
+  `packages/core/test/trace.test.ts`.
+- Tests: `npm exec -- vitest run packages/core/test/trace.test.ts`.
+
+- Status: Verified
+- Date: 2026-07-11T19:53:00+0800
+- Scope: verified sequence diagnostics accept multiple contiguous folded stream
+  segments while still rejecting unexplained gaps or backwards append order.
+- Read: `packages/core/src/trace-store.ts`,
+  `packages/core/src/trace-diagnostics.ts`,
+  `packages/core/src/trace-session-consistency.ts`,
+  `packages/core/test/trace.test.ts`.
+- Tests: `npm --workspace @sparkwright/core test -- test/trace.test.ts`.
 
 - Status: Verified
 - Date: 2026-07-07T15:21:23+0800

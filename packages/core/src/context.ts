@@ -1606,7 +1606,7 @@ function formatCapabilityDelta(tools: ToolDescriptor[]): string {
   const categories = formatDeferredToolCategories(tools);
   return [
     "Capability delta:",
-    "Advanced and infrastructure tools may be available through tool_search. Use free-text discovery for the management tools of agents, delegates, cron, tasks, todo, MCP, skill authoring, or verified anchored edits; fetch a full schema before calling a deferred tool. (To use a skill's own instructions, load it with skill_load per the skill index — that is separate from tool discovery.)",
+    "Advanced and infrastructure tools may be available through tool_search. Use free-text discovery for the management tools of agents, delegates, cron, tasks, todo, MCP, skill authoring, or verified anchored edits; fetch a full schema before calling a deferred tool. Loading a skill with skill_load also loads schemas for that skill's declared, currently registered tool dependencies; use tool_search for other deferred tools.",
     "For verified anchored edits, discover and use the pair together: first read anchors, then apply anchored edits with those anchors.",
     ...(categories.length > 0
       ? [`Deferred categories this turn: ${categories.join(", ")}.`]

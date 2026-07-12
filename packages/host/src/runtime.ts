@@ -273,7 +273,11 @@ import {
   describeActiveEventRules,
   describeActiveWorkflowRules,
 } from "./active-rules.js";
-import { loadLayeredWorkflowAssets } from "./workflows.js";
+import {
+  loadLayeredWorkflowAssets,
+  pinWorkflowAssetPackage,
+  verifyWorkflowPackageSnapshot,
+} from "./workflows.js";
 import {
   createWorkflowProjectionHooks,
   type WorkflowProjectionStateSnapshot,
@@ -2398,16 +2402,57 @@ export class HostRuntime {
         },
       };
     }
+    const pinnedWorkflow = selectedWorkflow
+      ? await pinWorkflowAssetPackage({
+          asset: selectedWorkflow,
+          snapshotRoot: join(this.workflowStoreRootDir(), "package-snapshots"),
+        })
+      : undefined;
     const workflowDefinition =
-      input.workflowRecord?.definitionSnapshot ?? selectedWorkflow?.definition;
-    if (input.workflowRecord && !workflowDefinition) {
+      input.workflowRecord?.definitionSnapshot ??
+      pinnedWorkflow?.asset.definition;
+    if (
+      input.workflowRecord &&
+      (!workflowDefinition ||
+        !input.workflowRecord.packageHash ||
+        !input.workflowRecord.packageSnapshotRef)
+    ) {
       return {
         ok: false,
         error: {
           code: "invalid_payload",
-          message: `Workflow run "${input.workflowRecord.id}" does not contain a pinned definition snapshot.`,
+          message: `Workflow run "${input.workflowRecord.id}" does not contain an executable package snapshot.`,
         },
       };
+    }
+    if (input.workflowRecord && workflowDefinition) {
+      try {
+        await verifyWorkflowPackageSnapshot({
+          packageSnapshotRef: input.workflowRecord.packageSnapshotRef!,
+          packageHash: input.workflowRecord.packageHash!,
+        });
+      } catch (error) {
+        return {
+          ok: false,
+          error: {
+            code: "invalid_payload",
+            message: `Workflow run "${input.workflowRecord.id}" executable package snapshot is invalid: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          },
+        };
+      }
+      if (
+        workflowDefinition.sourceDir !== input.workflowRecord.packageSnapshotRef
+      ) {
+        return {
+          ok: false,
+          error: {
+            code: "invalid_payload",
+            message: `Workflow run "${input.workflowRecord.id}" definition does not execute from its package snapshot.`,
+          },
+        };
+      }
     }
     const workflowModelAdapters = workflowDefinition
       ? await resolveWorkflowModelAdapters({
@@ -2548,10 +2593,25 @@ export class HostRuntime {
           workflowRecord = await acquiredLease.create({
             id: workflowRunId,
             assetName: workflowDefinition.assetName,
+            ...(pinnedWorkflow?.asset.layer
+              ? { layer: pinnedWorkflow.asset.layer }
+              : {}),
             ...(workflowDefinition.version
               ? { version: workflowDefinition.version }
               : {}),
             contentHash: workflowDefinition.contentHash,
+            ...(workflowDefinition.packageHash
+              ? { packageHash: workflowDefinition.packageHash }
+              : {}),
+            ...(workflowDefinition.packageHashPolicyVersion
+              ? {
+                  packageHashPolicyVersion:
+                    workflowDefinition.packageHashPolicyVersion,
+                }
+              : {}),
+            ...(workflowDefinition.packageSnapshotRef
+              ? { packageSnapshotRef: workflowDefinition.packageSnapshotRef }
+              : {}),
             sessionId: input.sessionId,
             currentNodeId: projectedState.currentNodeId,
             attempts: projectedState.attempts,
@@ -2681,6 +2741,15 @@ export class HostRuntime {
               assetName: workflowRecord.assetName,
               version: workflowRecord.version,
               contentHash: workflowRecord.contentHash,
+              ...(workflowRecord.packageHash
+                ? { packageHash: workflowRecord.packageHash }
+                : {}),
+              ...(workflowRecord.packageHashPolicyVersion
+                ? {
+                    packageHashPolicyVersion:
+                      workflowRecord.packageHashPolicyVersion,
+                  }
+                : {}),
               verifyOnResume: workflowRecord.resume.verifyOnResume,
             },
           }
@@ -3484,12 +3553,16 @@ export class HostRuntime {
         },
       };
     }
-    if (!record.definitionSnapshot) {
+    if (
+      !record.definitionSnapshot ||
+      !record.packageHash ||
+      !record.packageSnapshotRef
+    ) {
       return {
         ok: false,
         error: {
           code: "invalid_payload",
-          message: `Workflow run ${record.id} does not contain a pinned definition snapshot.`,
+          message: `Workflow run ${record.id} does not contain an executable package snapshot.`,
         },
       };
     }

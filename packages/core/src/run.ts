@@ -2814,6 +2814,7 @@ export class SparkwrightRun implements RunHandle {
       run: this.record,
       workspace: this.runtimeWorkspace,
       abortSignal: this.abortController.signal,
+      requestApproval: (approval) => this.requestApproval(approval),
       reportToolProgress: input?.toolCallId
         ? (update) => {
             this.events.emit("tool.progress", {
@@ -3218,7 +3219,11 @@ export class SparkwrightRun implements RunHandle {
     priorFailure?: RunLoopState["lastFailedToolTarget"],
     priorNoop?: RunLoopState["lastNoopToolTarget"],
   ): Promise<RunResult | undefined> {
-    if (priorNoop && !priorFailure) {
+    const repeatedCallGuidance = safelyRepeatedCallGuidance(
+      this.tools.get(requestedCall.toolName),
+      requestedCall.arguments,
+    );
+    if (!priorFailure && (priorNoop || repeatedCallGuidance)) {
       const nudged: ToolResult = {
         toolCallId: call.id,
         status: "completed",
@@ -3226,14 +3231,17 @@ export class SparkwrightRun implements RunHandle {
           saved: false,
           changed: false,
           skipped: true,
-          reason: "repeated_idempotent_noop",
+          reason: repeatedCallGuidance
+            ? "repeated_state_observation"
+            : "repeated_idempotent_noop",
           hint:
+            repeatedCallGuidance ??
             `Skipped: \`${requestedCall.toolName}\` already completed ` +
-            `without making progress on this target (${priorNoop.code}: ` +
-            `${priorNoop.message}). Repeating it cannot produce new ` +
-            `information. Choose a different concrete action, or answer the ` +
-            `user directly if the work is done. Repeating this exact call ` +
-            `again will end the run.`,
+              `without making progress on this target (${priorNoop!.code}: ` +
+              `${priorNoop!.message}). Repeating it cannot produce new ` +
+              `information. Choose a different concrete action, or answer the ` +
+              `user directly if the work is done. Repeating this exact call ` +
+              `again will end the run.`,
         },
         artifacts: [],
       };
@@ -3516,6 +3524,7 @@ export class SparkwrightRun implements RunHandle {
     );
     if (requestedCall.toolName === "skill_load") {
       this.emitSkillEventFromToolResult(annotatedResult);
+      this.loadDeferredToolsFromSkillLoad(annotatedResult);
     }
     if (requestedCall.toolName === "tool_search") {
       this.loadDeferredToolsFromToolSearch(annotatedResult);
@@ -3624,6 +3633,21 @@ export class SparkwrightRun implements RunHandle {
     for (const match of matches) {
       if (!isRecord(match)) continue;
       const name = getStringProperty(match, "name");
+      if (!name) continue;
+      const tool = this.tools.get(name);
+      if (!tool?.deferLoading || tool.alwaysLoad === true) continue;
+      this.loadedDeferredTools.add(name);
+    }
+  }
+
+  private loadDeferredToolsFromSkillLoad(result: ToolResult): void {
+    if (result.status !== "completed" || !isRecord(result.output)) return;
+    if (result.output.status !== "loaded") return;
+    const dependencies = result.output.toolDependencies;
+    if (!Array.isArray(dependencies)) return;
+    for (const dependency of dependencies) {
+      if (typeof dependency !== "string") continue;
+      const name = dependency.trim();
       if (!name) continue;
       const tool = this.tools.get(name);
       if (!tool?.deferLoading || tool.alwaysLoad === true) continue;
@@ -5105,6 +5129,21 @@ function semanticToolTarget(toolName: string, args: unknown): string {
     serialized = String(args);
   }
   return `${toolName}::args::${serialized}`;
+}
+
+function safelyRepeatedCallGuidance(
+  tool: ToolDefinition | undefined,
+  args: unknown,
+): string | undefined {
+  if (!tool?.repeatedCallGuidanceForArgs) return undefined;
+  try {
+    const guidance = tool.repeatedCallGuidanceForArgs(args);
+    return typeof guidance === "string" && guidance.trim().length > 0
+      ? guidance.trim()
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function toolFailureContext(result: ToolResult): {

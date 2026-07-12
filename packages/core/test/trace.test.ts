@@ -179,6 +179,63 @@ describe("trace", () => {
     expect(payload.lastTokenAt).toBeDefined();
   });
 
+  it("keeps folded streams ordered when background task events interleave", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-stream-task-"));
+    tempDirs.push(root);
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const store = new FileRunStore(run, {
+      sessionRootDir: root,
+      sessionId: "session_stream_task",
+      agentId: "main",
+    });
+
+    store.append(log.emit("model.stream.started", { step: 1 }));
+    store.append(
+      log.emit("model.stream.chunk", { type: "text_delta", text: "a" }),
+    );
+    store.append(
+      log.emit("task.output", {
+        taskId: "task_background",
+        channel: "stdout",
+        data: "1\n",
+      }),
+    );
+    store.append(
+      log.emit("model.stream.chunk", { type: "text_delta", text: "b" }),
+    );
+    store.append(
+      log.emit("task.output", {
+        taskId: "task_background",
+        channel: "stdout",
+        data: "2\n",
+      }),
+    );
+    store.append(log.emit("model.stream.completed", { step: 1 }));
+
+    const sessionJsonl = await readFile(store.tracePath, "utf8");
+    const agentJsonl = await readFile(store.agentTracePath!, "utf8");
+    const events = sessionJsonl
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as SparkwrightEvent);
+
+    expect(events.map((event) => [event.sequence, event.type])).toEqual([
+      [1, "model.stream.started"],
+      [2, "model.stream.text"],
+      [3, "task.output"],
+      [4, "model.stream.text"],
+      [5, "task.output"],
+      [6, "model.stream.completed"],
+    ]);
+    expect(agentJsonl).toBe(sessionJsonl);
+    expect(
+      verifyTraceJsonl(sessionJsonl).findings.filter(
+        (finding) => finding.code === "TRACE_SEQUENCE_INVALID",
+      ),
+    ).toEqual([]);
+  });
+
   it("keeps raw stream chunks at debug level", async () => {
     const root = await mkdtemp(join(tmpdir(), "sparkwright-stream-debug-"));
     tempDirs.push(root);
@@ -2527,6 +2584,46 @@ describe("trace", () => {
             expect.stringContaining("task_create kind=agent"),
             "prior task_create returned nextAction",
             expect.stringContaining("task task_1 completed"),
+          ]),
+        }),
+      ]),
+    );
+  });
+
+  it("advises when a service-classified shell task exits naturally", () => {
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const events = [
+      log.emit("run.created", { goal: "run a finite command" }),
+      log.emit("task.completed", {
+        taskId: "task_finite_service",
+        kind: "shell.background",
+        command: "python3 finite.py",
+        lifetime: "service",
+        result: { exitCode: 0 },
+      }),
+      log.emit("task.completed", {
+        taskId: "task_finite_job",
+        kind: "shell.background",
+        command: "python3 other.py",
+        lifetime: "job",
+        result: { exitCode: 0 },
+      }),
+      log.emit("run.completed", { state: "completed" }),
+    ];
+
+    const report = buildTraceReportJsonl(
+      events.map(serializeEventJsonl).join(""),
+    );
+
+    expect(report.verdict).toBe("ok");
+    expect(report.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: "info",
+          code: "FINITE_SERVICE_TASK",
+          evidence: expect.arrayContaining([
+            expect.stringContaining("task_finite_service"),
           ]),
         }),
       ]),

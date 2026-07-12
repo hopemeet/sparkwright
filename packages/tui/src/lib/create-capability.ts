@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { CronCommandService, defaultCronRoot } from "@sparkwright/cron";
 import {
+  SkillCommandService,
   projectConfigPath,
   readConfigFileObject,
   resolveConfigWriteTarget,
@@ -88,12 +89,14 @@ async function createSkill(
 ): Promise<CreateCapabilityResult> {
   const name = assertName(draft.name, "Skill name");
   const description = required(draft.description, "Description");
-  const dir = join(workspaceRoot, ".sparkwright", "skills", name);
-  const path = join(dir, "SKILL.md");
-  if (existsSync(path)) throw new Error(`Skill already exists: ${path}`);
-  await mkdir(dir, { recursive: true });
-  await writeFile(path, renderSkillTemplate(name, description), "utf8");
-  return { kind: "skill", message: `Created Skill ${name}`, path };
+  const { proposal } = await new SkillCommandService(
+    workspaceRoot,
+  ).prepareCreate({ name, description });
+  return {
+    kind: "skill",
+    message: `Prepared Skill ${name} for review (${proposal.id})`,
+    path: proposal.path,
+  };
 }
 
 async function createCommand(
@@ -221,21 +224,6 @@ function required(value: string, label: string): string {
   const trimmed = value.trim();
   if (!trimmed) throw new Error(`${label} is required`);
   return trimmed;
-}
-
-function renderSkillTemplate(name: string, description: string): string {
-  return [
-    "---",
-    `name: ${name}`,
-    `description: ${description}`,
-    'version: "1.0.0"',
-    "metadata:",
-    '  version: "1.0.0"',
-    "---",
-    "",
-    `Use this skill when the user asks for ${description}`,
-    "",
-  ].join("\n");
 }
 
 function renderCommandTemplate(description: string, prompt: string): string {

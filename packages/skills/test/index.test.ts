@@ -1,5 +1,12 @@
-import { access, mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import {
+  access,
+  mkdtemp,
+  mkdir,
+  readFile,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
+import { join, win32 } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
 import { createRunId } from "@sparkwright/core";
@@ -8,11 +15,13 @@ import {
   createSkillLoaderTool,
   createLoadedSkillContext,
   createSkillPackageHasher,
+  computeAssetPackageHash,
   computeSkillPackageHash,
   filterSkillsForAgent,
   isDevSkill,
   listSkillResourceFiles,
   listSkillPackageFiles,
+  listAssetPackageFiles,
   lockSkills,
   loadSkill,
   loadSkills,
@@ -21,6 +30,8 @@ import {
   rankIndexedSkillsByGoal,
   selectSkills,
   snapshotSkillPackage,
+  snapshotAssetPackage,
+  assetPackagePathsOverlap,
   type SkillIndexEntry,
 } from "../src/index.js";
 
@@ -221,6 +232,114 @@ Review carefully.
     await expect(
       computeSkillPackageHash(skillDir, { maxFiles: 1 }),
     ).rejects.toThrow(/file limit/);
+  });
+
+  it("enumerates v2 asset packages consistently with exclusions and limits", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-asset-package-v2-"));
+    const packageDir = join(root, "workflow");
+    await mkdir(join(packageDir, "scripts"), { recursive: true });
+    await mkdir(join(packageDir, "nested"), { recursive: true });
+    await mkdir(join(packageDir, "node_modules", "ignored"), {
+      recursive: true,
+    });
+    await writeFile(join(packageDir, "workflow.md"), "# workflow\n");
+    await writeFile(join(packageDir, "config.yaml"), "retries: 1\n");
+    await writeFile(join(packageDir, "scripts", "run.sh"), "echo run\n");
+    await writeFile(join(packageDir, "nested", "fixture.txt"), "fixture\n");
+    await writeFile(join(packageDir, "node_modules", "ignored", "dep.js"), "x");
+    await writeFile(join(packageDir, ".DS_Store"), "ignored");
+    await writeFile(join(packageDir, "nested", "swap.swp"), "ignored");
+
+    const spec = { rootPath: packageDir, entryPath: "workflow.md" };
+    const before = await computeAssetPackageHash(spec);
+    expect(before.packageHashPolicyVersion).toBe(2);
+    expect(before.files.map((file) => file.relativePath)).toEqual([
+      "config.yaml",
+      "nested/fixture.txt",
+      "scripts/run.sh",
+      "workflow.md",
+    ]);
+
+    await writeFile(join(packageDir, "nested", "fixture.txt"), "changed\n");
+    const after = await computeAssetPackageHash(spec);
+    expect(after.packageHash).not.toBe(before.packageHash);
+
+    const snapshotDir = join(root, "snapshot");
+    const snapshot = await snapshotAssetPackage(spec, snapshotDir);
+    expect(snapshot.packageHash).toBe(after.packageHash);
+    await expect(listAssetPackageFiles(spec)).resolves.toEqual(after.files);
+    await expect(
+      access(join(snapshotDir, "node_modules")),
+    ).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("fails closed for v2 unsafe paths and package limits", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-asset-package-v2-"));
+    const packageDir = join(root, "skill");
+    await mkdir(packageDir);
+    await writeFile(join(packageDir, "SKILL.md"), "# skill\n");
+    await writeFile(join(packageDir, "large.txt"), "1234");
+
+    await expect(
+      computeAssetPackageHash({
+        rootPath: packageDir,
+        entryPath: "SKILL.md",
+        limits: { maxFileBytes: 3 },
+      }),
+    ).rejects.toThrow(/file exceeds byte limit/);
+    await expect(
+      computeAssetPackageHash({
+        rootPath: packageDir,
+        entryPath: "SKILL.md",
+        limits: { maxTotalBytes: 3 },
+      }),
+    ).rejects.toThrow(/exceeds byte limit/);
+    await expect(
+      computeAssetPackageHash({
+        rootPath: packageDir,
+        entryPath: "../SKILL.md",
+      }),
+    ).rejects.toThrow(/must stay inside/);
+    await expect(
+      snapshotAssetPackage(
+        { rootPath: packageDir, entryPath: "SKILL.md" },
+        join(packageDir, "snapshot"),
+      ),
+    ).rejects.toThrow(/disjoint from its source root/);
+    await expect(
+      snapshotAssetPackage(
+        { rootPath: packageDir, entryPath: "SKILL.md" },
+        root,
+      ),
+    ).rejects.toThrow(/disjoint from its source root/);
+    await expect(access(join(packageDir, "SKILL.md"))).resolves.toBeUndefined();
+
+    await symlink(join(packageDir, "SKILL.md"), join(packageDir, "link.md"));
+    await expect(
+      computeAssetPackageHash({ rootPath: packageDir, entryPath: "SKILL.md" }),
+    ).rejects.toThrow(/cannot contain a symlink/);
+  });
+
+  it("treats Windows cross-volume snapshot paths as disjoint", () => {
+    expect(
+      assetPackagePathsOverlap(
+        "C:\\assets\\skill",
+        "D:\\snapshots\\skill",
+        win32,
+      ),
+    ).toBe(false);
+    expect(
+      assetPackagePathsOverlap(
+        "C:\\assets\\skill",
+        "C:\\assets\\skill\\snapshot",
+        win32,
+      ),
+    ).toBe(true);
+    expect(
+      assetPackagePathsOverlap("C:\\assets", "C:\\assets\\skill", win32),
+    ).toBe(true);
   });
 
   it("lets stronger roots shadow weaker skills with the same name", async () => {
@@ -650,6 +769,7 @@ Review safely.
       `---
 name: code-reviewer
 description: Reviews code changes.
+allowed-tools: read create_agent
 metadata:
   version: 1.0.0
 ---
@@ -686,6 +806,7 @@ Review only the requested change.
       status: "loaded",
       name: "code-reviewer",
       version: "1.0.0",
+      toolDependencies: ["read", "create_agent"],
       // Resource files are reported skill-relative, never as absolute host
       // paths (which leak the host layout and lure a workspace-escaping read).
       resourceFiles: ["references/rules.md"],
@@ -774,6 +895,27 @@ Review only the requested change.
       name: "code-reviewer",
       resource: "references/rules.md",
       content: "Rule one.\nRule two.\n",
+    });
+
+    const repeated = await tool.execute(
+      { name: "code-reviewer", resource: "references/rules.md" },
+      ctx,
+    );
+    expect(repeated).toMatchObject({
+      status: "already_loaded",
+      name: "code-reviewer",
+      resource: "references/rules.md",
+      samePackageHash: true,
+    });
+    expect(repeated).not.toHaveProperty("content");
+
+    const aliasedRepeat = await tool.execute(
+      { name: "code-reviewer", resource: "references/./rules.md" },
+      ctx,
+    );
+    expect(aliasedRepeat).toMatchObject({
+      status: "already_loaded",
+      resource: "references/rules.md",
     });
 
     const emptyResource = await tool.execute(

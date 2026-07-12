@@ -1,8 +1,8 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import {
-  snapshotSkillPackage,
-  type SnapshotSkillPackageResult,
+  snapshotAssetPackage,
+  type SnapshotAssetPackageResult,
 } from "@sparkwright/skills";
 import type { CapabilityMutationEvent } from "@sparkwright/core";
 
@@ -18,7 +18,7 @@ export interface CapabilityPackageMutationResult {
   path: string;
   reason?: string;
   sourcePath?: string;
-  files?: SnapshotSkillPackageResult["files"];
+  files?: SnapshotAssetPackageResult["files"];
 }
 
 export interface CapabilityPackageMutationReporter {
@@ -159,7 +159,10 @@ class FileCapabilityPackageMutationWriter implements CapabilityPackageMutationWr
     options: { reason?: string },
   ): Promise<CapabilityPackageMutationResult> {
     const target = this.resolveTarget(targetDir);
-    const snapshot = await snapshotSkillPackage(sourceDir, target);
+    const snapshot = await snapshotAssetPackage(
+      { rootPath: sourceDir, entryPath: "SKILL.md" },
+      target,
+    );
     return this.report({
       action,
       path: target,

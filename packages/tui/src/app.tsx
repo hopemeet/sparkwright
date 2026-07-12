@@ -27,6 +27,7 @@ import {
   useSkillActions,
   runSkillLearnAutoNotice,
 } from "./state/use-skill-actions.js";
+import { loadTuiSkillInboxAction } from "./lib/skill-evolution.js";
 import { useCapabilityActions } from "./state/use-capability-actions.js";
 import { useSessionActions } from "./state/use-session-actions.js";
 import { useTaskActions } from "./state/use-task-actions.js";
@@ -276,6 +277,8 @@ function AppReady(
   // Todo band: collapsed by default (active items only); ctrl+t expands to show
   // completed items too.
   const [todoExpanded, setTodoExpanded] = useState(false);
+  const [confirmingHumanAction, setConfirmingHumanAction] = useState(false);
+  const [applyingHumanAction, setApplyingHumanAction] = useState(false);
   // Prompt stash bridge — the InputBox reads/writes through this ref.
   const stashRef = useRef<StashFile>({ current: null, list: [] });
   const inputDraftRef = useRef("");
@@ -488,7 +491,38 @@ function AppReady(
     toasts,
     layers,
     reloadConfig,
+    onProposalClosed: (proposalId) => {
+      store.clearPendingHumanAction(proposalId);
+      setConfirmingHumanAction(false);
+      setApplyingHumanAction(false);
+    },
+    onProposalPrepared: () => {
+      void loadTuiSkillInboxAction(resolved.workspaceRoot)
+        .then((action) => store.setPendingHumanAction(action))
+        .catch(() => {});
+    },
   });
+
+  // Proposal files are durable. Restore the most recent open proposal after a
+  // restart so the completion card is a convenience, never the only inbox.
+  useEffect(() => {
+    let cancelled = false;
+    void loadTuiSkillInboxAction(resolved.workspaceRoot)
+      .then((action) => {
+        if (!cancelled) store.setPendingHumanAction(action);
+      })
+      .catch(() => {
+        if (!cancelled) store.setPendingHumanAction(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [resolved.workspaceRoot, store]);
+
+  useEffect(() => {
+    setConfirmingHumanAction(false);
+    setApplyingHumanAction(false);
+  }, [state.pendingHumanAction?.proposalId]);
 
   // Capability browser + creation flow (panel snapshot state + handlers).
   const capActions = useCapabilityActions({
@@ -496,6 +530,11 @@ function AppReady(
     controller,
     toasts,
     layers,
+    onSkillProposalPrepared: () => {
+      void loadTuiSkillInboxAction(resolved.workspaceRoot)
+        .then((action) => store.setPendingHumanAction(action))
+        .catch(() => {});
+    },
   });
 
   // Session browsing / diagnostics / labels / rename / fork / export.
@@ -737,6 +776,45 @@ function AppReady(
     };
     const matchesGlobal = (name: keyof Bindings): boolean =>
       matchesChords(b[name]);
+    const humanAction = state.pendingHumanAction;
+    const draft = inputHandleRef.current?.getValue() ?? "";
+    if (
+      !top &&
+      humanAction &&
+      draft.length === 0 &&
+      state.status !== "running" &&
+      state.status !== "awaiting-approval"
+    ) {
+      if (applyingHumanAction) return;
+      if (confirmingHumanAction) {
+        if (key.return) {
+          setApplyingHumanAction(true);
+          void skillActions
+            .applySkillReviewProposal(humanAction.proposalId)
+            .then((applied) => {
+              if (!applied) setApplyingHumanAction(false);
+            });
+          return;
+        }
+        if (key.escape) {
+          setConfirmingHumanAction(false);
+          return;
+        }
+      } else {
+        if (input === "a" && humanAction.eligibility === "quick_apply") {
+          setConfirmingHumanAction(true);
+          return;
+        }
+        if (input === "r") {
+          skillActions.reviewSkillProposalsFromSlash(humanAction.proposalId);
+          return;
+        }
+        if (key.escape) {
+          store.clearPendingHumanAction(humanAction.proposalId);
+          return;
+        }
+      }
+    }
     if (matchesGlobal("quit.app")) {
       if (!top) return;
       requestQuit(Math.max(1, ctrlCPressCount(input)));
@@ -776,7 +854,25 @@ function AppReady(
     key: Key,
     draft: string,
   ): boolean {
-    if (draft.length > 0 || input.length !== 1) return false;
+    if (draft.length > 0) return false;
+    const humanAction = state.pendingHumanAction;
+    if (
+      humanAction &&
+      state.status !== "running" &&
+      state.status !== "awaiting-approval"
+    ) {
+      if (confirmingHumanAction && (key.return || key.escape)) return true;
+      if (applyingHumanAction) return true;
+      if (
+        !confirmingHumanAction &&
+        (input === "r" ||
+          key.escape ||
+          (input === "a" && humanAction.eligibility === "quick_apply"))
+      ) {
+        return true;
+      }
+    }
+    if (input.length !== 1) return false;
     const b = resolved.bindings;
     const matchesPlainPrintable = (chords: Bindings[keyof Bindings]): boolean =>
       chords.some(
@@ -929,6 +1025,8 @@ function AppReady(
           errors={resolved.errors}
           queued={queued}
           showQueued={!topLayer}
+          confirmingHumanAction={confirmingHumanAction}
+          applyingHumanAction={applyingHumanAction}
         />
 
         {/* Layer rendering — only the topmost layer owns input. */}

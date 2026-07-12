@@ -200,6 +200,32 @@ config + workspace capability roots
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-12T23:45:00+0800
+- Scope: Skill body loads may hydrate declared deferred tool dependencies that
+  already survived host catalog filtering; policy and approvals remain intact.
+- Read: Skills loader, core run/context, capability-builder Skill, and routed
+  capability maps.
+- Tests: full core run test and Skills index test suites passed.
+
+- Status: Verified
+- Date: 2026-07-12T20:00:00+0800
+- Scope: Agent and Workflow package identities now feed production rebuildable
+  stats queries; Workflow remains pinned to executable snapshots. Workflow
+  run outcomes count once per run and retain the durable source layer.
+- Read: asset stats, Workflow store/runtime pins, Agent trace attribution, CLI.
+- Tests: focused host/CLI stats and Workflow suites passed.
+
+- Status: Read-only
+- Date: 2026-07-12
+- Scope: checked capability catalog routing for Markdown Agent authoring; no generic capability contract changed.
+- Tests: focused host tool tests passed; release gate pending.
+
+- Status: Read-only
+- Date: 2026-07-12T16:36:08+0800
+- Scope: checked Workflow package pinning; capability catalog contracts are unchanged.
+- Tests: not run for catalog-specific behavior; Phase 4 Workflow release gate passed.
+
+- Status: Verified
 - Date: 2026-07-11T02:10:00+0800
 - Scope: background governance capability is complete through P4; nested
   background work is not an exposed capability in v1.

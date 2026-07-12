@@ -770,7 +770,7 @@ async function delegateNoTaskManagerTimeoutCase() {
     expectedTrace:
       "child bash output reports foregroundTimeoutMs, promotionAvailable=false, timedOut=true, and clear kill reason",
     failureRule:
-      "Fails if no-taskManager bash silently promotes, hides alias/promotion metadata, or omits the kill reason.",
+      "Fails if no-taskManager bash silently promotes, hides foreground-timeout/promotion metadata, or omits the kill reason.",
     harness: true,
     ok:
       result.exitCode === 0 &&

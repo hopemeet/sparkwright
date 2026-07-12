@@ -9,7 +9,15 @@
 // downstream `import { ... } from "@sparkwright/skills"` keeps working.
 
 import { readdir, readFile, stat } from "node:fs/promises";
-import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import {
+  basename,
+  dirname,
+  join,
+  normalize as normalizeFsPath,
+  relative,
+  resolve,
+  sep,
+} from "node:path";
 import {
   createContextItemId,
   defineTool,
@@ -584,6 +592,10 @@ export function createSkillLoaderTool(
   // it already has it, on the FIRST repeat rather than waiting for the
   // doom-loop nudge after a wasted round-trip.
   const loadedNames = new Set<string>();
+  // Successfully loaded reference files for this loader/run. Include the
+  // package/content identity so a future loader that can observe a refreshed
+  // Skill version cannot reuse an older resource result by name/path alone.
+  const loadedResources = new Set<string>();
   const resourceFileLimit =
     options.resourceFileLimit ?? DEFAULT_RESOURCE_FILE_LIMIT;
 
@@ -643,7 +655,28 @@ export function createSkillLoaderTool(
       const resource =
         typeof args.resource === "string" ? args.resource.trim() : undefined;
       if (resource) {
-        return await readSkillResource(skill, resource, resourceFileLimit);
+        const canonicalResource = normalizePath(normalizeFsPath(resource));
+        const versionIdentity = skill.packageHash ?? skill.contentHash;
+        const resourceKey = `${skill.name}\0${versionIdentity}\0${canonicalResource}`;
+        if (loadedResources.has(resourceKey)) {
+          return {
+            status: "already_loaded",
+            name: skill.name,
+            resource: canonicalResource,
+            samePackageHash: Boolean(skill.packageHash),
+            message:
+              `Skill resource \`${skill.name}:${canonicalResource}\` is ` +
+              "already loaded in this run; its content is in context. Use it " +
+              "directly — do not load it again.",
+          };
+        }
+        const result = await readSkillResource(
+          skill,
+          resource,
+          resourceFileLimit,
+        );
+        if (result.status === "resource") loadedResources.add(resourceKey);
+        return result;
       }
 
       if (loadedNames.has(skill.name)) {
@@ -675,6 +708,7 @@ export function createSkillLoaderTool(
         name: skill.name,
         description: skill.description,
         version: skillVersion(skill),
+        toolDependencies: [...(skill.allowedTools ?? [])],
         content: createSkillToolOutput(skill, resourceFiles),
         resourceFiles,
       };
@@ -1104,3 +1138,20 @@ export {
   type SkillPackageHashOptions,
   type SnapshotSkillPackageResult,
 } from "./package.js";
+export {
+  DEFAULT_ASSET_PACKAGE_MAX_FILES,
+  DEFAULT_ASSET_PACKAGE_MAX_FILE_BYTES,
+  DEFAULT_ASSET_PACKAGE_MAX_TOTAL_BYTES,
+  PACKAGE_HASH_POLICY_VERSION,
+  assetPackageLimits,
+  computeAssetPackageHash,
+  listAssetPackageFiles,
+  snapshotAssetPackage,
+  assetPackagePathsOverlap,
+  type AssetPackageFile,
+  type AssetPackageHash,
+  type AssetPackageIdentity,
+  type AssetPackageLimits,
+  type AssetPackageSpec,
+  type SnapshotAssetPackageResult,
+} from "./package-v2.js";

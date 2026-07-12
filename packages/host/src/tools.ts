@@ -1,7 +1,8 @@
-import { isAbsolute, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   defineTool,
+  formatWorkspaceDisplayPath,
   type RuntimeContext,
   type ToolDefinition,
   type WorkspaceRuntime,
@@ -23,6 +24,7 @@ import {
 import { type SkillRoot } from "@sparkwright/skills";
 import {
   canonicalWorkspacePath,
+  readWorkspaceTextIfExists,
   writeCapabilityText,
   type CapabilityWriteResult,
 } from "./capability-mutation.js";
@@ -44,15 +46,22 @@ import {
   shouldDeferToolByDefault,
 } from "./tool-identities.js";
 import {
-  createSkillCreateProposal,
   createSkillUpdateProposal,
   listSkillProposals,
+  reviseSkillProposalDraft,
+  skillProposalReviewCommand,
   type SkillProposalProvenance,
   type SkillProposalSummary,
 } from "./skill-evolution.js";
+import { SkillCommandService } from "./skill-command-service.js";
 import { delegateToolName } from "./delegate-capability.js";
 import { projectSkillRoot } from "./skill-roots.js";
 import { loadLayeredSkillReport } from "./skill-report.js";
+import {
+  discoverAgentProfileFileEntriesInDir,
+  markdownAgentIdentity,
+  parseAgentProfileFile,
+} from "./agent-profiles.js";
 
 /**
  * Built-in tool: read a UTF-8 file from the workspace. Safe (no approval).
@@ -436,10 +445,10 @@ export function createSkillManagerTool(
   return defineTool({
     name: "create_skill",
     description:
-      "Draft a proposal to create a project Skill. This does not apply the " +
-      "proposal or write the current Skill package; a human must review and " +
-      "apply it through the Skill proposal flow. Use list_skills to list or " +
-      "validate current skills.",
+      "Prepare a proposal to create a project Skill. A complete safe authored " +
+      "Skill can be approved once for its final effect and applied in this " +
+      "run; templates or review-required content remain in the durable review " +
+      "flow. Use list_skills to list or validate current skills.",
     inputSchema: {
       type: "object",
       properties: {
@@ -472,7 +481,10 @@ export function createSkillManagerTool(
       required: ["action"],
       additionalProperties: false,
     },
-    policy: { risk: "risky" },
+    // Proposal staging is a recoverable prepared change. The final package is
+    // approved after it exists, inside execute, and that approval is bound to
+    // the host-computed effect hash.
+    policy: { risk: "safe" },
     governance: {
       origin: { kind: "local", name: "sparkwright" },
       sideEffects: ["read", "write"],
@@ -504,26 +516,28 @@ export function createSkillManagerTool(
         description,
         ...(input.body ? { body: input.body } : {}),
       });
-      resolveSkillCreateRoot(workspaceRoot, input.root);
+      const root = resolveSkillCreateRoot(workspaceRoot, input.root);
       const provenance = skillProposalProvenanceFromContext(ctx, description);
-      const existing = await findExistingRunSkillDraft(
-        workspaceRoot,
-        name,
-        provenance.runId,
-        "create",
-      );
-      if (existing) {
-        return skillDraftToolOutput(existing, false);
-      }
-      const proposal = await createSkillCreateProposal({
-        workspaceRoot,
+      const service = new SkillCommandService(workspaceRoot);
+      const prepared = await service.prepareCreate({
         name,
         description,
         ...(content ? { content } : {}),
+        root,
         provenance,
         mutationReporter: ctx,
       });
-      return skillDraftToolOutput(proposal, true);
+      return finishSafeAuthoredSkillCreate(
+        service,
+        workspaceRoot,
+        prepared.proposal,
+        ctx,
+        {
+          changed: prepared.changed,
+          existing: prepared.existing,
+          revised: prepared.revised,
+        },
+      );
     },
   });
 }
@@ -602,10 +616,22 @@ export function createSkillUpdateTool(
       const existing = await findExistingRunSkillDraft(
         workspaceRoot,
         input.name,
-        provenance.runId,
+        provenance,
       );
       if (existing) {
-        return skillDraftToolOutput(existing, false);
+        const revised = await reviseSkillProposalDraft({
+          workspaceRoot,
+          proposalId: existing.id,
+          description: input.description,
+          ...(body ? { content: body } : {}),
+          provenance,
+          mutationReporter: ctx,
+        });
+        return skillDraftToolOutput(revised.proposal, {
+          changed: revised.changed,
+          existing: true,
+          revised: revised.changed,
+        });
       }
       const proposalInput = {
         workspaceRoot,
@@ -618,7 +644,7 @@ export function createSkillUpdateTool(
       };
       const proposal = await createSkillUpdateProposal(proposalInput);
 
-      return skillDraftToolOutput(proposal, true);
+      return skillDraftToolOutput(proposal, { changed: true });
     },
   });
 }
@@ -651,6 +677,70 @@ export function createAgentInspectorTool(workspaceRoot: string) {
   });
 }
 
+export function createMarkdownAgentManagerTool(workspaceRoot: string) {
+  return defineTool({
+    name: "create_agent",
+    description:
+      "Create, update, replace, or remove one Markdown Agent at .sparkwright/agents/<name>.md. " +
+      "The canonical name is also the filename stem; omit default mode/maxSteps and redundant deny rules. " +
+      "The final Markdown is parsed, semantically summarized, approval-gated as a workspace write, atomically written, then rediscovered for callability. " +
+      "This does not mutate config-backed agent profiles or create proposal/history records.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        action: {
+          type: "string",
+          enum: ["create", "update", "replace", "remove"],
+        },
+        name: {
+          type: "string",
+          description:
+            "Canonical Agent name and filename stem, for example code-reviewer. The created file is .sparkwright/agents/<name>.md.",
+        },
+        description: { type: "string" },
+        mode: { type: "string", enum: ["primary", "child", "all"] },
+        prompt: { type: "string" },
+        model: { type: "string" },
+        use: { type: "array", items: { type: "string" } },
+        allowedTools: { type: "array", items: { type: "string" } },
+        deniedTools: { type: "array", items: { type: "string" } },
+        maxSteps: { type: "integer", minimum: 1 },
+        replaceReason: { type: "string" },
+      },
+      required: ["action", "name"],
+      additionalProperties: false,
+    },
+    policy: { risk: "risky" },
+    governance: {
+      origin: { kind: "local", name: "sparkwright" },
+      sideEffects: ["read", "write"],
+      idempotency: "conditional",
+    },
+    isReplaySafe: false,
+    async execute(args: unknown, ctx) {
+      if (!ctx.workspace) throw new Error("Workspace is not configured.");
+      if (isPlainObject(args) && args.action === "remove") {
+        return createAgentManagerTool(workspaceRoot).execute(
+          {
+            ...args,
+            id:
+              typeof args.name === "string" && args.name.trim()
+                ? args.name.trim()
+                : args.id,
+          },
+          ctx,
+        );
+      }
+      return writeMarkdownAgent(
+        ctx,
+        workspaceRoot,
+        parseMarkdownAgentArgs(args),
+      );
+    },
+  });
+}
+
+/** Legacy config mutation surface retained for compatibility-only callers. */
 export function createAgentManagerTool(workspaceRoot: string) {
   return defineTool({
     name: "create_agent",
@@ -1185,27 +1275,48 @@ function skillProposalProvenanceFromContext(
 async function findExistingRunSkillDraft(
   workspaceRoot: string,
   skillName: string,
-  runId: string | undefined,
+  provenance: SkillProposalProvenance,
   kind: "create" | "update" = "update",
 ): Promise<SkillProposalSummary | undefined> {
-  if (!runId) return undefined;
+  const sessionId = provenance.sessionId?.trim();
+  const runId = provenance.runId?.trim();
+  if (!sessionId && !runId) return undefined;
   const proposals = await listSkillProposals(workspaceRoot);
   return proposals.find(
     (proposal) =>
       proposal.kind === kind &&
       proposal.state === "draft" &&
       proposal.skillName === skillName &&
-      proposal.provenance?.runId === runId,
+      (sessionId
+        ? proposal.provenance?.sessionId === sessionId
+        : proposal.provenance?.runId === runId),
   );
 }
 
 function skillDraftToolOutput(
   proposal: SkillProposalSummary,
-  changed: boolean,
+  options: { changed: boolean; existing?: boolean; revised?: boolean },
 ) {
+  const existing = options.existing === true;
+  const reviewCommand = skillProposalReviewCommand(proposal.id);
+  const guardSeverity = proposal.guardFindings?.some(
+    (finding) => finding.severity === "dangerous",
+  )
+    ? "dangerous"
+    : proposal.guardFindings && proposal.guardFindings.length > 0
+      ? "caution"
+      : "none";
+  const eligibility =
+    guardSeverity === "dangerous"
+      ? "force_required"
+      : proposal.kind === "create" &&
+          proposal.contentMode === "authored" &&
+          guardSeverity === "none"
+        ? "quick_apply"
+        : "review_required";
   return {
     action: "draft",
-    changed,
+    changed: options.changed,
     proposalId: proposal.id,
     proposalPath: proposal.path,
     state: proposal.state,
@@ -1216,14 +1327,35 @@ function skillDraftToolOutput(
     targetPath: proposal.targetPath,
     basePackageHash: proposal.basePackageHash,
     afterPackageHash: proposal.afterPackageHash,
+    contentHash: proposal.afterPackageHash,
+    revision: proposal.revision ?? 1,
+    previousAfterPackageHash: proposal.previousAfterPackageHash,
     contentMode: proposal.contentMode,
     ...(proposal.guardFindings
       ? { guardFindings: proposal.guardFindings }
       : {}),
-    summary: changed
-      ? proposal.summary
-      : `${proposal.summary} This draft already exists for the current run; the same proposal was returned unchanged.`,
-    existing: !changed,
+    validation: {
+      status: "passed",
+      guardFindingCount: proposal.guardFindings?.length ?? 0,
+    },
+    summary: options.revised
+      ? `${proposal.summary} The existing draft was revised with the latest content.`
+      : existing
+        ? `${proposal.summary} This draft already exists for the current session; the same proposal was returned unchanged.`
+        : proposal.summary,
+    existing,
+    revised: options.revised === true,
+    reviewCommand,
+    humanAction: {
+      kind: "skill_proposal_review",
+      proposalId: proposal.id,
+      reviewCommand,
+      eligibility,
+      validationStatus: "passed",
+      contentMode: proposal.contentMode,
+      guardSeverity,
+      recommendedAction: eligibility === "quick_apply" ? "apply" : "review",
+    },
     // Lifecycle contract, stated so the model stops here instead of retrying or
     // trying to load a skill that does not exist yet. A draft is a proposal,
     // not a live skill: it is not indexed and cannot be skill_load'ed until a
@@ -1232,7 +1364,105 @@ function skillDraftToolOutput(
       "Done — the draft proposal is recorded. Do NOT call create_skill again " +
       "for this skill and do NOT skill_load it: a draft is not a live, " +
       "loadable skill until a human reviews and applies the proposal. Report " +
-      "the proposalId to the user and stop.",
+      `the proposalId to the user and stop. If the user later asks to apply it, ` +
+      `do NOT search for an apply tool: model tools cannot apply proposals. ` +
+      `Tell the user to run ${reviewCommand}; the TUI human review action owns ` +
+      "apply and reject.",
+  };
+}
+
+async function finishSafeAuthoredSkillCreate(
+  service: SkillCommandService,
+  workspaceRoot: string,
+  proposal: SkillProposalSummary,
+  ctx: Pick<RuntimeContext, "run"> & {
+    requestApproval?(input: {
+      action: string;
+      summary: string;
+      details?: Record<string, unknown>;
+    }): Promise<boolean>;
+  },
+  outputOptions: { changed: boolean; existing?: boolean; revised?: boolean },
+) {
+  const safeAuthoredCreate =
+    proposal.kind === "create" &&
+    proposal.contentMode === "authored" &&
+    (proposal.guardFindings?.length ?? 0) === 0;
+  if (!safeAuthoredCreate) {
+    return skillDraftToolOutput(proposal, outputOptions);
+  }
+
+  const prepared = await service.prepareApproval(proposal.id);
+  if (!ctx.requestApproval) {
+    return {
+      ...skillDraftToolOutput(prepared.proposal, outputOptions),
+      preparedState: "waiting",
+      nextStep:
+        `The final Skill effect is prepared and waiting for approval. ` +
+        `Review it with ${skillProposalReviewCommand(proposal.id)}; do not ` +
+        "create another proposal and do NOT search for an apply tool.",
+    };
+  }
+
+  let approved: boolean;
+  try {
+    approved = await ctx.requestApproval({
+      action: "skill.apply",
+      summary: `Create Skill ${proposal.skillName}`,
+      details: {
+        proposalId: proposal.id,
+        proposalRevision: proposal.revision ?? 1,
+        effectHash: prepared.effectHash,
+        path: formatWorkspaceDisplayPath(proposal.targetPath, {
+          workspaceRoot,
+        }),
+        diff: prepared.proposal.patchDiff,
+        riskFingerprints: prepared.riskFingerprints,
+      },
+    });
+  } catch (error) {
+    return {
+      ...skillDraftToolOutput(prepared.proposal, outputOptions),
+      preparedState: "waiting",
+      approvalUnavailable:
+        error instanceof Error ? error.message : String(error),
+      nextStep:
+        `The final Skill effect is prepared and waiting for approval. ` +
+        `Review it with ${skillProposalReviewCommand(proposal.id)}; do not ` +
+        "create another proposal and do NOT search for an apply tool.",
+    };
+  }
+
+  if (!approved) {
+    return {
+      ...skillDraftToolOutput(prepared.proposal, outputOptions),
+      preparedState: "waiting",
+      approvalDecision: "denied",
+      nextStep:
+        `The final Skill effect was not approved and remains in the review ` +
+        `inbox. Use ${skillProposalReviewCommand(proposal.id)} to review it ` +
+        "later; do not create another proposal.",
+    };
+  }
+
+  const { approval, applied } = await service.approvePrepared(prepared);
+  return {
+    action: "applied",
+    changed: true,
+    proposalId: applied.proposal.id,
+    proposalPath: applied.proposal.path,
+    state: applied.proposal.state,
+    preparedState: applied.proposal.preparedState,
+    skillName: applied.proposal.skillName,
+    targetPath: applied.proposal.targetPath,
+    artifactId: applied.proposal.artifactId,
+    effectHash: prepared.effectHash,
+    approvalReceiptId: approval.receiptId,
+    historyId: applied.history.id,
+    afterPackageHash: applied.proposal.afterPackageHash,
+    summary: `Skill ${applied.proposal.skillName} was created and is ready to use.`,
+    nextStep:
+      "Done — the final Skill was approved and applied in this run. Do not call create_skill again.",
   };
 }
 
@@ -1594,6 +1824,237 @@ function agentCallabilityFields(
         : { suggestedDelegateToolName }),
     },
   };
+}
+
+type MarkdownAgentAction = "create" | "update" | "replace";
+
+interface MarkdownAgentInput {
+  action: MarkdownAgentAction;
+  id: string;
+  description?: string;
+  mode?: "primary" | "child" | "all";
+  prompt: string;
+  model?: string;
+  use?: string[];
+  allowedTools?: string[];
+  deniedTools?: string[];
+  maxSteps?: number;
+  replaceReason?: string;
+}
+
+function parseMarkdownAgentArgs(args: unknown): MarkdownAgentInput {
+  if (!isPlainObject(args)) {
+    throw toolArgumentsInvalid("create_agent expects an object argument.");
+  }
+  const action = args.action;
+  if (action !== "create" && action !== "update" && action !== "replace") {
+    throw toolArgumentsInvalid(
+      "create_agent action must be create, update, or replace.",
+    );
+  }
+  const id =
+    typeof args.id === "string" && args.id.trim()
+      ? args.id.trim()
+      : typeof args.name === "string"
+        ? args.name.trim()
+        : "";
+  const prompt = typeof args.prompt === "string" ? args.prompt.trim() : "";
+  if (!isAgentId(id) || !prompt) {
+    throw toolArgumentsInvalid(
+      "create_agent requires a valid name and non-empty prompt.",
+    );
+  }
+  if (action === "replace" && typeof args.replaceReason !== "string") {
+    throw toolArgumentsInvalid("create_agent replace requires replaceReason.");
+  }
+  const mode = args.mode;
+  if (
+    mode !== undefined &&
+    mode !== "primary" &&
+    mode !== "child" &&
+    mode !== "all"
+  ) {
+    throw toolArgumentsInvalid(
+      "create_agent mode must be primary, child, or all.",
+    );
+  }
+  const maxSteps = args.maxSteps;
+  if (
+    maxSteps !== undefined &&
+    (typeof maxSteps !== "number" ||
+      !Number.isInteger(maxSteps) ||
+      maxSteps < 1)
+  ) {
+    throw toolArgumentsInvalid(
+      "create_agent maxSteps must be a positive integer.",
+    );
+  }
+  return {
+    action,
+    id,
+    prompt,
+    ...(typeof args.description === "string"
+      ? { description: args.description.trim() }
+      : {}),
+    ...(mode ? { mode } : {}),
+    ...(typeof args.model === "string" && args.model.trim()
+      ? { model: args.model.trim() }
+      : {}),
+    ...(args.use !== undefined
+      ? { use: toolUseSelectorArrayArg(args.use, "use") }
+      : {}),
+    ...(args.allowedTools !== undefined
+      ? { allowedTools: stringArrayArg(args.allowedTools, "allowedTools") }
+      : {}),
+    ...(args.deniedTools !== undefined
+      ? { deniedTools: stringArrayArg(args.deniedTools, "deniedTools") }
+      : {}),
+    ...(typeof maxSteps === "number" ? { maxSteps } : {}),
+    ...(typeof args.replaceReason === "string"
+      ? { replaceReason: args.replaceReason.trim() }
+      : {}),
+  };
+}
+
+async function writeMarkdownAgent(
+  ctx: RuntimeContext,
+  workspaceRoot: string,
+  input: MarkdownAgentInput,
+) {
+  const path = join(".sparkwright", "agents", `${input.id}.md`);
+  const before = await readWorkspaceTextIfExists(ctx, path);
+  if (input.action === "create" && before !== undefined) {
+    throw new Error(
+      `Markdown Agent already exists: ${input.id}. Use update or replace.`,
+    );
+  }
+  if (input.action === "update" && before === undefined) {
+    throw new Error(`Markdown Agent not found for update: ${input.id}`);
+  }
+  const content = markdownAgentDocument(input);
+  const profile = parseAgentProfileFile(input.id, content);
+  if (profile.id !== input.id || !profile.prompt) {
+    throw new Error("create_agent produced an invalid Markdown Agent profile.");
+  }
+  const config = await readProjectConfig(workspaceRoot);
+  if (
+    getAgentConfigShape(config.data).profiles.some(
+      (entry) => entry.id === input.id,
+    )
+  ) {
+    throw new Error(
+      `Markdown Agent ${input.id} is shadowed by an explicit config profile; update config deliberately or choose another id.`,
+    );
+  }
+  if (before === content) {
+    const canonicalPath = await canonicalWorkspacePath(ctx, path);
+    ctx.reportWorkspaceWriteSkipped?.({
+      path: canonicalPath,
+      reason: `Markdown Agent ${input.id} already matches the requested final file.`,
+    });
+    return markdownAgentResult(input, canonicalPath, profile, false);
+  }
+  const write = await writeCapabilityText(
+    ctx,
+    path,
+    content,
+    `${input.action === "replace" ? "Replace" : input.action === "update" ? "Update" : "Create"} Markdown Agent ${input.id}`,
+  );
+  const collisions: string[] = [];
+  const entries = await discoverAgentProfileFileEntriesInDir(
+    join(workspaceRoot, ".sparkwright", "agents"),
+    {
+      onCollision: (collision) => collisions.push(collision.id),
+    },
+  );
+  const expectedSource = resolve(workspaceRoot, path);
+  const discoveredEntry = entries.find(
+    (entry) => entry.profile.id === input.id && entry.source === expectedSource,
+  );
+  if (
+    collisions.includes(input.id) ||
+    !discoveredEntry ||
+    !discoveredEntry.profile.prompt
+  ) {
+    throw new Error(
+      `Markdown Agent ${input.id} was written but its exact file is not uniquely callable after rediscovery.`,
+    );
+  }
+  const callable = discoveredEntry.profile;
+  ctx.reportCapabilityMutationCompleted?.({
+    action: `${input.action}_markdown_agent`,
+    path: write.path,
+    reason: `Write Markdown Agent ${input.id}`,
+    fileCount: 1,
+    files: [{ relativePath: write.path }],
+    metadata: {
+      kind: "agent",
+      id: input.id,
+      identity: markdownAgentIdentity(input.id, content),
+    },
+  });
+  return {
+    ...markdownAgentResult(input, write.path, callable, true),
+    diffArtifactId: write.diffArtifactId,
+    writeSummary: write.summary,
+  };
+}
+
+function markdownAgentResult(
+  input: MarkdownAgentInput,
+  path: string,
+  profile: AgentProfile,
+  changed: boolean,
+) {
+  const { id: _internalId, ...publicProfile } = profile;
+  return {
+    action: input.action,
+    name: input.id,
+    path,
+    changed,
+    profile: {
+      ...publicProfile,
+      name: input.id,
+    },
+    semanticSummary: {
+      mode: profile.mode ?? "child",
+      model: profile.model,
+      allowedTools: profile.allowedTools ?? [],
+      deniedTools: profile.deniedTools ?? [],
+      use: profile.use ?? [],
+      maxSteps: profile.maxSteps,
+      identity: markdownAgentIdentity(input.id, markdownAgentDocument(input)),
+    },
+    callability: {
+      callable: Boolean(profile.prompt),
+      mode: profile.mode ?? "child",
+    },
+  };
+}
+
+function markdownAgentDocument(input: MarkdownAgentInput): string {
+  const lines = ["---", `name: ${yamlScalar(input.id)}`];
+  if (input.description)
+    lines.push(`description: ${yamlScalar(input.description)}`);
+  if (input.model) lines.push(`model: ${yamlScalar(input.model)}`);
+  if (input.mode) lines.push(`mode: ${input.mode}`);
+  if (input.use?.length)
+    lines.push(`use: [${input.use.map(yamlScalar).join(", ")}]`);
+  if (input.allowedTools?.length)
+    lines.push(
+      `allowedTools: [${input.allowedTools.map(yamlScalar).join(", ")}]`,
+    );
+  if (input.deniedTools?.length)
+    lines.push(
+      `deniedTools: [${input.deniedTools.map(yamlScalar).join(", ")}]`,
+    );
+  if (input.maxSteps) lines.push(`maxSteps: ${input.maxSteps}`);
+  lines.push("---", "", input.prompt, "");
+  return lines.join("\n");
+}
+
+function yamlScalar(value: string): string {
+  return JSON.stringify(value);
 }
 
 type AgentManagerAction = "create" | "update" | "replace" | "remove";

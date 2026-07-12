@@ -304,7 +304,7 @@ export type TaskCreateResult =
 export interface TaskCreateNextAction {
   tool: "task";
   taskId: TaskId;
-  action: "wait" | "get";
+  action: "wait";
   /** @reserved Public task-create output field consumed by model-visible tool results. */
   instruction: string;
   /** @reserved Public task-create output field consumed by model-visible tool results. */
@@ -320,10 +320,10 @@ function taskCreateNextAction(
   return {
     tool: "task",
     taskId,
-    action: awaited ? "wait" : "get",
+    action: "wait",
     instruction: awaited
       ? `Call task with action="wait" and taskId="${taskId}" to wait for this task before creating another task for the same goal.`
-      : `Call task with action="get" and taskId="${taskId}" to inspect this background task if you need its status.`,
+      : `The background launch is complete. If you need terminal completion before answering, call task with action="wait" and taskId="${taskId}"; use action="get" only for a one-time status snapshot.`,
     outputInstruction:
       'After the task is terminal, call task with action="output" and the same taskId if you need buffered output that was not included in the task result.',
     duplicateAvoidance:
@@ -453,6 +453,14 @@ export function createTaskControl(
     deferLoading: false,
     policy: { risk: "risky", requiresApproval: false },
     governance: { sideEffects: ["read", "write"] },
+    repeatedCallGuidanceForArgs(args: unknown) {
+      const record = normalizeTaskControlArgs(args);
+      if ((record as Record<string, unknown>).action !== "get")
+        return undefined;
+      const taskId = (record as Record<string, unknown>).taskId;
+      if (typeof taskId !== "string" || taskId.length === 0) return undefined;
+      return `Skipped a repeated point-in-time snapshot for ${taskId}. Call task with action="wait" and this taskId to wait for terminal completion, or action="output" with fromSequence to inspect new buffered output.`;
+    },
     policyForArgs(args: unknown) {
       const record = args && typeof args === "object" ? args : {};
       if ((record as Record<string, unknown>).action === "stop") {
@@ -467,25 +475,30 @@ export function createTaskControl(
       };
     },
     validateInput(args: unknown) {
-      return validateTaskControlInput(args);
+      return validateTaskControlInput(normalizeTaskControlArgs(args));
     },
     isReadOnly(args: unknown): boolean {
       const record = args && typeof args === "object" ? args : {};
       return (record as Record<string, unknown>).action !== "stop";
     },
     async execute(args: unknown, ctx) {
-      const record = requireRecord(args, "task");
+      const normalizedArgs = normalizeTaskControlArgs(args);
+      const validation = validateTaskControlInput(normalizedArgs);
+      if (!validation.ok) {
+        throw makeToolError(validation.code, validation.message);
+      }
+      const record = requireRecord(normalizedArgs, "task");
       switch (record.action) {
         case "list":
-          return taskList.execute(args, ctx);
+          return taskList.execute(normalizedArgs, ctx);
         case "get":
-          return taskGet.execute(args, ctx);
+          return taskGet.execute(normalizedArgs, ctx);
         case "output":
-          return taskOutput.execute(args, ctx);
+          return taskOutput.execute(normalizedArgs, ctx);
         case "wait":
-          return taskWait.execute(args, ctx);
+          return taskWait.execute(normalizedArgs, ctx);
         case "stop":
-          return taskStop.execute(args, ctx);
+          return taskStop.execute(normalizedArgs, ctx);
         default:
           throw makeToolError(
             "TASK_ARGUMENTS_INVALID",
@@ -510,35 +523,110 @@ function taskControlInputSchema(): JsonSchemaObject {
         type: "string",
         minLength: 1,
         description:
-          "Concrete task id returned by a previous task_create, task list, or task get call. Required for get/output/stop and accepted as a one-id shorthand for wait.",
+          "For action=get, output, stop, or one-task wait only. Concrete task id returned by task_create/list/get; omit for action=list and when wait uses ids.",
       },
       ids: {
         type: "array",
         minItems: 1,
         items: { type: "string", minLength: 1 },
         description:
-          "Concrete task ids for action=wait. Use ids only after task_create/list/get has returned real task ids; do not pass an empty array or placeholder strings.",
+          "For action=wait only. Concrete task ids returned by task_create/list/get; omit for every other action and do not combine with a different taskId.",
       },
       mode: {
         type: "string",
         enum: ["any", "all"],
         description:
-          "Barrier mode for action=wait. any returns after the first listed task reaches terminal state; all waits for every listed task.",
+          "For action=wait only; omit otherwise. any returns after the first listed task reaches terminal state; all waits for every listed task.",
       },
-      status: { type: "string" },
-      kind: { type: "string" },
+      status: {
+        type: "string",
+        description:
+          "For action=list only; omit otherwise and omit when unfiltered.",
+      },
+      kind: {
+        type: "string",
+        description:
+          "For action=list only; omit otherwise and omit when unfiltered.",
+      },
       scope: {
         type: "string",
         enum: ["run", "all"],
         description:
           "For action=list only. run lists tasks owned by the current run; all lists every durable task in this task store, useful after resume when older task ids are unknown.",
       },
-      fromSequence: { type: "integer" },
-      maxChunks: { type: "integer" },
+      fromSequence: {
+        type: "integer",
+        description: "For action=output only; omit otherwise.",
+      },
+      maxChunks: {
+        type: "integer",
+        description: "For action=output only; omit otherwise.",
+      },
     },
     required: ["action"],
     additionalProperties: false,
   };
+}
+
+/**
+ * Canonicalize the provider-friendly flat task schema before action-specific
+ * validation and execution. Models sometimes populate every optional field;
+ * harmless empty or unrelated values must not leak into the legacy handlers.
+ */
+function normalizeTaskControlArgs(args: unknown): Record<string, unknown> {
+  if (typeof args !== "object" || args === null || Array.isArray(args)) {
+    return {};
+  }
+  const input = args as Record<string, unknown>;
+  const action = input.action;
+  if (typeof action !== "string") return {};
+  const nonEmptyString = (value: unknown): string | undefined =>
+    typeof value === "string" && value.length > 0 ? value : undefined;
+  const output: Record<string, unknown> = { action };
+
+  switch (action) {
+    case "list": {
+      const status = nonEmptyString(input.status);
+      const kind = nonEmptyString(input.kind);
+      const scope = nonEmptyString(input.scope);
+      if (status) output.status = status;
+      if (kind) output.kind = kind;
+      if (scope) output.scope = scope;
+      break;
+    }
+    case "get":
+    case "stop": {
+      const taskId = nonEmptyString(input.taskId);
+      if (taskId) output.taskId = taskId;
+      break;
+    }
+    case "output": {
+      const taskId = nonEmptyString(input.taskId);
+      if (taskId) output.taskId = taskId;
+      if (Number.isInteger(input.fromSequence)) {
+        output.fromSequence = input.fromSequence;
+      }
+      if (Number.isInteger(input.maxChunks)) output.maxChunks = input.maxChunks;
+      break;
+    }
+    case "wait": {
+      const taskId = nonEmptyString(input.taskId);
+      const ids = Array.isArray(input.ids)
+        ? input.ids.filter(
+            (id): id is string => typeof id === "string" && id.length > 0,
+          )
+        : undefined;
+      if (taskId) output.taskId = taskId;
+      if (ids && (ids.length !== 1 || ids[0] !== taskId)) output.ids = ids;
+      if (input.mode === "any" || input.mode === "all") {
+        output.mode = input.mode;
+      }
+      break;
+    }
+    default:
+      break;
+  }
+  return output;
 }
 
 function validateTaskControlInput(
@@ -635,6 +723,17 @@ function validateTaskControlWaitIds(
         ok: false,
         code: "TASK_ARGUMENTS_INVALID",
         message: "task wait ids must be non-empty strings.",
+      };
+    }
+    if (
+      typeof record.taskId === "string" &&
+      (record.ids.length !== 1 || record.ids[0] !== record.taskId)
+    ) {
+      return {
+        ok: false,
+        code: "TASK_ARGUMENTS_INVALID",
+        message:
+          "task wait must not combine taskId with a different ids list; use one form.",
       };
     }
   }

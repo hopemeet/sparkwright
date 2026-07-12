@@ -146,6 +146,43 @@ export type {
   SkillReviewDigestSeverity,
 } from "./skill-review-digest.js";
 export {
+  aggregateAssetObservations,
+  collectAssetStats,
+  agentObservationFromMetadata,
+  classifyAssetIdentityChange,
+  workflowObservationFromRunRecord,
+} from "./asset-stats.js";
+export type {
+  AssetIdentityChange,
+  AssetObservation,
+  CollectedAssetStatsReport,
+  AssetObservationIdentity,
+  AssetStatsEntry,
+  AssetStatsReport,
+} from "./asset-stats.js";
+export {
+  importSkill,
+  readSkillOrigin,
+  readSkillRegistry,
+  reconcileSkill,
+  scanSkillReconciliation,
+  skillRegistryPath,
+} from "./skill-registry.js";
+export type { SkillOrigin } from "./skill-registry.js";
+export {
+  activeDismissedSkillSuggestionIds,
+  collectSkillEvidenceSuggestions,
+  dismissSkillSuggestion,
+} from "./skill-suggestions.js";
+export type { SkillEvidenceSuggestion } from "./skill-suggestions.js";
+export type {
+  SkillArtifactRecord,
+  SkillReconciliationFinding,
+  SkillReconciliationKind,
+  SkillReconciliationReceipt,
+  SkillRegistry,
+} from "./skill-registry.js";
+export {
   createSkillUsageRecorder,
   observeSkillUsageEvent,
   recordSkillPatch,
@@ -172,6 +209,7 @@ export {
   middleEllipsisPath,
 } from "@sparkwright/core";
 export {
+  applyApprovedSkillProposal,
   applySkillProposal,
   createSkillCreateProposal,
   createSkillUpdateProposal,
@@ -180,24 +218,41 @@ export {
   pruneSkillProposals,
   readSkillHistoryDetail,
   readSkillProposal,
+  reconcileSkillProposalDrafts,
+  prepareSkillProposalApproval,
+  recordSkillProposalApproval,
   rejectSkillProposal,
+  reviseSkillProposalDraft,
   skillEvolutionRoot,
+  skillProposalReviewCommand,
   restoreSkillFromHistory,
   supersedeSkillProposal,
 } from "./skill-evolution.js";
+export { SkillCommandService } from "./skill-command-service.js";
+export type {
+  ApprovePreparedSkillResult,
+  PrepareSkillCreateCommandInput,
+  PrepareSkillCreateCommandResult,
+  SkillCreateEligibility,
+} from "./skill-command-service.js";
 export type {
   ApplySkillProposalResult,
   CloseSkillProposalInput,
   CreateSkillCreateProposalInput,
   CreateSkillUpdateProposalInput,
+  PreparedChangeState,
+  PreparedSkillApproval,
   PruneSkillProposalsInput,
   PruneSkillProposalsResult,
+  ReconcileSkillProposalDraftsResult,
   RestoreSkillFromHistoryInput,
   RestoreSkillFromHistoryResult,
   SkillHistoryEntry,
   SkillHistoryDetail,
   SkillHistoryKind,
   SkillHistoryMetadata,
+  SkillApprovalReceipt,
+  SkillMutationReceipt,
   SkillProposalDetail,
   SkillProposalKind,
   SkillProposalMetadata,

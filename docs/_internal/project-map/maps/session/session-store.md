@@ -117,6 +117,23 @@ Manual compact
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-12T20:00:00+0800
+- Scope: checked read-only asset statistics session scanning; session storage
+  layout and ownership are unchanged.
+- Read: CLI stats handlers, host asset scanner, `FileSessionStore` usage.
+- Tests: covered by the full release gate; no map contract change needed.
+
+- Status: Read-only
+- Date: 2026-07-12
+- Scope: checked CLI reconciliation routing; session-store contract is unchanged.
+- Tests: focused CLI tests passed; release gate pending.
+
+- Status: Read-only
+- Date: 2026-07-12T16:36:08+0800
+- Scope: checked Workflow durable package snapshot fields; session-store contracts are unchanged.
+- Tests: not run for session-store-specific behavior; Phase 4 Workflow release gate passed.
+
 - Status: Verified
 - Date: 2026-07-11T18:30:00+0800
 - Scope: async/sync journal replay now shares one transition function and each

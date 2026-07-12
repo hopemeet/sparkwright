@@ -59,6 +59,25 @@ Design docs in [designs/](designs/) are catalog entries, not routing targets —
 read them for the shape and rationale of a planned or completed change, then
 follow the active maps below for the current contract.
 
+- [designs/asset-package-governance-redirection-review.md](designs/asset-package-governance-redirection-review.md) —
+  Adjudicated review handoff: records the frozen scope redirection that keeps
+  managed change Skill-only, separates filesystem reconciliation, establishes
+  package identity v2 and Workflow executable snapshots, redirects ordinary
+  Agent authoring to Markdown, and keeps Agent/Workflow stats diagnostic-only.
+  It is decision history, not the implementation master or an active runtime
+  contract.
+
+- [designs/skill-managed-change-redesign.md](designs/skill-managed-change-redesign.md) —
+  Implementation-ready master design: preserves completed Skill Phase 1/2,
+  freezes package identity v2 and external-change safety, requires Workflow
+  executable package pinning, limits Agent authoring to validated Markdown,
+  defines trace-derived policy-aware stats, and defers Skill identity
+  continuity/reconciliation to Phase 7. Active contracts:
+  [modules/skills.md](modules/skills.md), [modules/host.md](modules/host.md),
+  [modules/tui.md](modules/tui.md),
+  [maps/capabilities/skill-evolution.md](maps/capabilities/skill-evolution.md),
+  and [maps/safety/approvals.md](maps/safety/approvals.md).
+
 - [designs/compaction-redesign.md](designs/compaction-redesign.md) —
   Historical/implemented design: shared compaction result/stage substrate,
   session compact artifacts, deterministic/model-backed summarization paths,
@@ -140,6 +159,11 @@ follow the active maps below for the current contract.
 - `packages/project-context/src/index.ts`: [modules/coding-tools.md](modules/coding-tools.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md)
 - `packages/project-commands/src/*`: [modules/edge-packages.md](modules/edge-packages.md), [modules/tui.md](modules/tui.md), [maps/safety/shell.md](maps/safety/shell.md)
 - `packages/skills/src/*` or `packages/host/src/skill-*`: [modules/skills.md](modules/skills.md), [maps/capabilities/skills.md](maps/capabilities/skills.md)
+- `packages/host/src/skill-command-service.ts`, `sparkwright skills create`,
+  TUI `/create skill`, or TUI `/skill-create`:
+  [modules/skills.md](modules/skills.md), [modules/host.md](modules/host.md),
+  [modules/cli.md](modules/cli.md), [modules/tui.md](modules/tui.md),
+  [maps/capabilities/skill-evolution.md](maps/capabilities/skill-evolution.md).
 - `packages/skills/src/markdown-folder-asset.ts`: [modules/skills.md](modules/skills.md), [modules/host.md](modules/host.md), [maps/capabilities/README.md](maps/capabilities/README.md)
 - `packages/host/src/skill-evolution.ts` or `sparkwright skills proposals|history|restore`: [modules/skills.md](modules/skills.md), [maps/capabilities/skill-evolution.md](maps/capabilities/skill-evolution.md)
 - `packages/mcp-adapter/src/index.ts`: [modules/mcp-adapter.md](modules/mcp-adapter.md), [maps/capabilities/mcp.md](maps/capabilities/mcp.md), [maps/safety/shell.md](maps/safety/shell.md)
@@ -165,6 +189,24 @@ TUI events; it is not a trace diagnostic report and must not replace
 trace/session inspection.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-12T08:25:00+0800
+- Scope: added the shared Skill command-service hot spot and routed all four
+  create entrypoints to the active evolution/module maps.
+- Read: `packages/host/src/skill-command-service.ts`, model tool, CLI and both
+  TUI create adapters.
+- Tests: host/CLI/TUI focused entrypoint suites, affected typechecks, and full
+  `npm run release:check` on the same source tree.
+
+- Status: Verified
+- Date: 2026-07-12T02:12:00+0800
+- Scope: cataloged the active Skill managed-change redesign and routed its
+  implemented safe authored-create slice through skills/host/TUI, runtime,
+  approval, and resume maps.
+- Read: `designs/skill-managed-change-redesign.md` and every linked active map.
+- Tests: host Skill focused suites, affected typechecks, TUI approval focused
+  suites, and full `npm run release:check`.
 
 - Status: Verified
 - Date: 2026-07-06T20:47:10+0800

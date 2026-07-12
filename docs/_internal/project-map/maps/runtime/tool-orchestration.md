@@ -32,6 +32,12 @@ model tool calls
 
 ## Contracts
 
+- Prepared-change tools may call `RuntimeContext.requestApproval()` during
+  execute after persisting a final effect. This is not a second approval bus:
+  it uses the run's normal `approval.requested/resolved` lifecycle. Such tools
+  must avoid a redundant pre-staging risky-tool approval on their eligible fast
+  path and bind the in-execute request to durable effect identity.
+
 - Tool requests are trace-visible before execution.
 - `ToolDefinition.previewArgs()` is the source of truth for one-line request
   display. Core writes its bounded output to `tool.requested.payload.preview`;
@@ -44,6 +50,10 @@ model tool calls
   tool-name switches in the run loop.
 - Workspace writes must produce request, approval/policy evidence, artifact/write terminal events.
 - Repeated idempotent/no-op calls should not invent false failures.
+- State-observation tools may provide bounded repeated-call guidance. The
+  generic repeat guard then records a completed skipped observation and lets
+  the model choose a blocking or incremental control surface without core
+  hard-coding a tool name.
 - Repeated calls inherit enough prior same-target failure context to keep
   expected policy/approval denials non-failing. This rule is category-based,
   not tool-specific; do not special-case shell/bash when adding future guarded
@@ -85,6 +95,10 @@ true` records a mutation index for its target (`mutatedByTarget`). A
 mode:"any"|"all")` is the join surface. Detached/promoted create results
   include concrete `nextAction` guidance so the model has a task id and monitor
   action to reuse instead of issuing an equivalent `task_create`.
+- The model-facing `task` control schema stays a provider-compatible flat
+  object. The wrapper canonicalizes optional fields per action before
+  validation/execution, discards empty/action-irrelevant values, and rejects
+  conflicting `taskId`/`ids` wait forms.
 - Trace report derives a task-specific repeated-create advisory from
   `task_create` lifecycle events when a later same-run create has the same
   `kind` + stable payload fingerprint after an earlier same-payload task
@@ -112,6 +126,10 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
   so they cannot escape a configured selector/allowlist/denylist; selector-kept
   deferred tools implicitly retain `tool_search`, and discovery results include
   required/related tool closures outside max-result truncation.
+- A successful body-level `skill_load` may load deferred schemas named by the
+  Skill's `allowed-tools`. Core only marks matching tools already present in the
+  run registry; absent/disabled tools stay absent, and normal policy/approval
+  still governs execution. Resource-only loads do not change tool loading.
 - Child-agent tool orchestration uses catalog selector paths before child tool
   descriptors or delegate tools are created. Dynamic `spawn_agent` uses a
   dynamic child catalog that defaults to read-only tools but can expose managed
@@ -178,11 +196,12 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
   (`workspaceWrites`), bridged in `spawnSubAgent` — not a parent-side filesystem
   snapshot. Shell duplicate-loop detection keys on command plus cwd, ignoring
   incidental execution fields such as `timeoutMs`.
-- Shell tool execution treats legacy `timeoutMs` as an observable alias for
-  `foregroundTimeoutMs`, not as an incidental hard-kill field. Result payloads
-  preserve timeout/promotion observability (`foregroundTimeoutMs`,
-  `promotionAvailable`, `timeoutMsAliasUsed`) for model observations and trace
-  diagnostics. When a foreground shell is promoted, the shell tool returns the
+- Shell tool execution accepts only the canonical per-call
+  `foregroundTimeoutMs`; legacy `timeoutMs` is rejected by the closed input
+  schema rather than retained behind unreachable runtime alias logic. Result
+  payloads preserve timeout/promotion observability (`foregroundTimeoutMs`,
+  `promotionAvailable`) for model observations and trace diagnostics. When a
+  foreground shell is promoted, the shell tool returns the
   promoted `taskId` at the handoff point; the adopted task then owns ongoing
   stdout/stderr observation and emits `task.created` / `task.started` /
   `task.output` / terminal `task.*` trace facts.
@@ -204,6 +223,9 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
   notifications still use the shared notification source. `lifetime:service`
   adds only an immediate-exit grace check, and active equivalent explicit shell
   work deduplicates before process spawn.
+- Direct-background results treat the task id, `task.started`, and captured
+  early output as sufficient launch confirmation. Guidance forbids a redundant
+  `task get` snapshot and points to wait only when the terminal result is needed.
 - Shell promotion, task foreground promotion, and dynamic `spawn_agent`
   promotion all honor the host-level `backgroundTasks` policy: disabled rejects
   new background work, foreground-only keeps foreground behavior without
@@ -303,6 +325,61 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
 - TUI live rendering and transcript export now share presentation summaries, but trace/model-context result compaction is still a separate backend concern.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-12T23:45:00+0800
+- Scope: Skill-declared registered tool dependencies load after `skill_load`
+  without an extra `tool_search`; unrelated deferred tools remain lazy.
+- Read: core run/context, Skills loader output, capability-builder Skill, and
+  focused tests.
+- Tests: focused core deferred-tool tests and Skills loader test passed.
+
+- Status: Read-only
+- Date: 2026-07-12T20:00:00+0800
+- Scope: checked `create_agent` compatibility and CLI-only stats/reconciliation
+  additions; deferred loading and runtime tool orchestration are unchanged.
+- Read: host tool catalog/Agent tool and CLI handlers.
+- Tests: focused host/CLI tests and full release gate; no contract change.
+
+- Status: Read-only
+- Date: 2026-07-12
+- Scope: checked Markdown Agent workspace-write authoring and Skill reconciliation CLI; no orchestration policy change.
+- Tests: focused host/CLI tests passed; release gate pending.
+
+- Status: Verified
+- Date: 2026-07-12T02:12:00+0800
+- Scope: post-prepare approval orchestration for the safe authored Skill create
+  slice; one approval occurs after proposal persistence and before apply.
+- Read: `packages/core/src/run.ts`, `packages/core/src/types.ts`,
+  `packages/host/src/tools.ts`.
+- Tests: host same-run integration/focused tool suite and affected typechecks.
+
+- Status: Verified
+- Date: 2026-07-11T22:10:00+0800
+- Scope: removed the unreachable shell timeout alias and ensured tool-owned
+  repeated-observation guidance cannot convert a prior failure into a completed
+  no-op.
+- Read: `packages/shell-tool/src/tool.ts`, `packages/core/src/run.ts`, focused
+  tests.
+- Tests: full `npm run release:check`.
+
+- Status: Verified
+- Date: 2026-07-11T21:45:00+0800
+- Scope: task wrapper canonicalization, canonical shell timeout schema, and
+  direct-background launch-confirmation guidance.
+- Read: `packages/agent-runtime/src/tasks/tools.ts`,
+  `packages/shell-tool/src/tool.ts`.
+- Tests: `npm exec -- vitest run packages/agent-runtime/test/tasks.test.ts
+packages/shell-tool/test/shell-tool.test.ts`.
+
+- Status: Verified
+- Date: 2026-07-11T19:53:00+0800
+- Scope: added tool-owned repeated state-observation guidance and task control
+  guidance without changing task wait/output execution semantics.
+- Read: `packages/core/src/tools.ts`, `packages/core/src/run.ts`,
+  `packages/agent-runtime/src/tasks/tools.ts`.
+- Tests: `npm --workspace @sparkwright/core test -- test/run.test.ts`;
+  `npm --workspace @sparkwright/agent-runtime test -- test/tasks.test.ts`.
 
 - Status: Verified
 - Date: 2026-07-11T02:10:00+0800

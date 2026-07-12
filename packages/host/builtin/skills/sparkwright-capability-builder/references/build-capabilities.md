@@ -79,8 +79,26 @@ the profile as a tool. For committed markdown profiles, an inline
 `delegateTool` block provides the same callable surface. A profile without
 either delegate form is still inspectable but not callable by the main agent.
 
-Use allow/deny rules to constrain the child agent. Child allow rules must not
-be treated as permission escalation; inherited policy still applies.
+Author the smallest Agent document that captures the user's intent. The
+canonical Agent name matches the Markdown filename stem; do not add a separate
+`id`. Omit the default child `mode`, inherited `model`, and inherited step
+budget. Do not guess `maxSteps`. When a concrete allowlist fully enumerates the
+role's tools, do not repeat every excluded tool in `deniedTools`; use deny rules
+only to subtract exceptions from a broader allowed surface. Child allow rules
+must not be treated as permission escalation; inherited policy still applies.
+
+A read-only reviewer normally needs only:
+
+```md
+---
+name: code-reviewer
+description: Review code and report problems without modifying files.
+allowedTools: [read, glob, grep]
+---
+
+Review the project for correctness, security, and maintainability problems.
+Do not modify files.
+```
 
 ## MCP Servers
 

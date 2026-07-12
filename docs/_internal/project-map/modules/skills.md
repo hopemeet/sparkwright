@@ -21,8 +21,10 @@ and [../maps/capabilities/skill-evolution.md](../maps/capabilities/skill-evoluti
 - `packages/skills/src/usage-file.ts`
 - `packages/skills/src/manifest.ts`
 - `packages/skills/src/markdown-folder-asset.ts`
+- `packages/skills/src/package-v2.ts`
 - `packages/host/src/skill-report.ts`
 - `packages/host/src/skill-evolution.ts`
+- `packages/host/src/skill-command-service.ts`
 - `packages/host/src/skill-review-digest.ts`
 - `packages/host/src/skill-usage.ts`
 - `packages/host/src/skill-roots.ts`
@@ -49,6 +51,22 @@ Does not own:
 
 ## Contracts
 
+- `SkillCommandService` is the host-owned create command boundary. Model
+  `create_skill`, CLI `skills create`, TUI `/create skill`, and TUI
+  `/skill-create` call `prepareCreate`; proposal review apply calls
+  `approveAndApply`. Adapters parse/render only and may not directly write a
+  current Skill. `/skill-create` is a compatibility shortcut for the canonical
+  general `/create skill` entrypoint.
+
+- Safe model-authored create proposals now use the first prepared-change fast
+  path: the complete package and `effectHash` are persisted before approval;
+  one `skill.apply` approval binds proposal id, revision, and effect hash; the
+  originating tool episode then writes an approval receipt, applies the Skill,
+  writes deterministic history plus a mutation receipt, and returns an applied
+  result. Missing approval leaves `preparedState: waiting`. Templates,
+  updates, caution/dangerous content, and direct CLI/TUI creation retain their
+  existing review/direct behavior until `SkillCommandService` convergence.
+
 - Skill events include `skill.indexed`, `skill.failed`, and `skill.loaded`.
 - `skill.indexed.metadata.skills[]` carries emit-time identity provenance,
   including `contentHash`, `packageHash` when available, and layer. Skill stats
@@ -62,6 +80,14 @@ Does not own:
   conservative file/byte limits on the run-time identity path. Direct
   `computeSkillPackageHash()` remains the exact, uncached path for evolution
   apply/restore guard checks.
+- Package identity v2 substrate lives in `package-v2.ts` without changing the
+  current Skill v1 runtime path. It recursively enumerates all canonical
+  ordinary files except the fixed exclusion table, rejects non-excluded
+  symlinks/special files and limit violations, hashes normalized relative paths
+  with NUL framing, snapshots the identical file set, and returns
+  `packageHashPolicyVersion: 2`. Managed evolution now uses this API for new
+  proposal/history/restore operations; runtime trace/stats identity remains
+  v1 until Phase 6.
 - `skills stats` materializes rebuildable per-session projections under
   `.sparkwright/skill-stats/sessions/`, keyed by trace fingerprints plus a
   projection algorithm version. Reports expose trace/evolution windows,
@@ -79,6 +105,10 @@ Does not own:
   and does not affect default ranking.
 - Host defaults to on-demand loading via `skill_load` unless config opts into
   selected skill residency.
+- The on-demand loader deduplicates successful body loads by name and reference
+  loads by name + canonical resource path + package/content identity within the
+  loader/run. Repeat references return a short `already_loaded` result without
+  content; unsuccessful loads remain retryable.
 - Markdown-folder asset helpers own only generic folder discovery,
   frontmatter/body splitting, loose frontmatter parsing, and content hashing.
   Domain schemas and diagnostics remain with the owner, such as host skills,
@@ -113,16 +143,30 @@ Does not own:
   metadata records whether content is authored, a generated create template, or
   an intent-only update stub. Apply, reject,
   supersede, prune, and restore are human-only CLI/TUI surfaces, never model
-  tools. Manual CLI `sparkwright skills create` remains a direct project Skill
+  tools. Model-authored drafts dedupe at session scope across supervised
+  continuation runs (with run-scope fallback when session provenance is
+  absent). Changed content revises the existing draft id with monotonic
+  revision and prior-hash metadata instead of creating a duplicate proposal or
+  silently discarding the later content; closed proposals remain immutable.
+  Manual CLI `sparkwright skills create` remains a direct project Skill
   management command. Applied proposal changes snapshot to history; `skills
 restore --to before` is the revert edge. See
   [../maps/capabilities/skill-evolution.md](../maps/capabilities/skill-evolution.md).
+- Model draft results expose a host-computed human-action handoff and canonical
+  proposal-id review command. This is presentation/governance metadata, not a
+  model apply capability; TUI remains the actor that confirms and executes
+  proposal application.
 - `skills review` is a host-backed CLI digest that combines draft proposal
   backlog with actionable trace-stats findings (`SKILL_LOAD_FAILURES` and
   `ASSOCIATED_TOOL_FAILURES`) without relying on the usage sidecar.
 - Repeated model-authored `create_skill` / `update_skill` drafts for the same
-  skill within the same run return the existing draft proposal instead of
-  creating another one.
+  skill and session reuse the existing draft across supervised continuation
+  runs; callers without session provenance retain run-scoped fallback.
+- Applying a proposal closes competing drafts for the same project target as
+  superseded. Explicit host reconciliation repairs legacy create drafts against
+  managed history or marks externally occupied/drifted targets stale; TUI
+  inbox/review recovery and ordinary create preparation invoke it, while plain
+  proposal listing stays read-only.
 
 ## Consumers
 
@@ -151,6 +195,103 @@ list --run/--session`); failed drafts self-clean. See
   [../maps/capabilities/skill-evolution.md](../maps/capabilities/skill-evolution.md#known-debts).
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-12T23:45:00+0800
+- Scope: `skill_load` returns the loaded Skill's `allowed-tools` as declarative
+  tool dependencies for run-local deferred schema hydration.
+- Read: Skills manifest/loader, capability-builder Skill, core consumer, and
+  focused tests.
+- Tests: focused Skills loader and core deferred-tool tests passed.
+
+- Status: Verified
+- Date: 2026-07-12
+- Scope: proposal lifecycle reconciliation and competing-draft closure across
+  host create/apply and TUI inbox recovery.
+- Tests: focused host and TUI Skill proposal suites and affected typechecks.
+
+- Status: Verified
+- Date: 2026-07-12T20:00:00+0800
+- Scope: hardened v2 snapshot disjointness and completed registry uniqueness,
+  cross-volume-aware path relationships, recovery journal, transactionally
+  origin-backed import, and suggestion cooldown behavior.
+- Read: `packages/skills/src/package-v2.ts`, host Skill registry/suggestions,
+  and focused package/host tests.
+- Tests: focused Skills and host registry/suggestion suites passed.
+
+- Status: Read-only
+- Date: 2026-07-12
+- Scope: checked v2 package consumers, registry reconciliation, and advisory evidence suggestions.
+- Tests: focused host/CLI tests passed; release gate pending.
+
+- Status: Verified
+- Date: 2026-07-12T14:03:23+0800
+- Scope: verified managed Skill v2 proposal/history/restore operations while
+  retaining v1 readers for legacy records and deferring runtime stats identity.
+- Read: `packages/host/src/skill-evolution.ts`,
+  `packages/host/src/capability-package-mutation.ts`,
+  `packages/skills/src/package-v2.ts`, and focused host tests.
+- Tests: host focused Skill evolution/package-mutation suites and host
+  typecheck/build.
+
+- Status: Verified
+- Date: 2026-07-12T13:45:22+0800
+- Scope: added the standalone package identity v2 substrate without changing
+  the v1 Skill runtime/evolution package path.
+- Read: `packages/skills/src/package.ts`, `packages/skills/src/package-v2.ts`,
+  `packages/skills/src/index.ts`, and `packages/skills/test/index.test.ts`.
+- Tests: `npm --workspace @sparkwright/skills test`; Skills typecheck/build;
+  `npm run check:package-boundaries`; `npm run check:internal-imports`.
+
+- Status: Verified
+- Date: 2026-07-12T08:25:00+0800
+- Scope: create-entrypoint convergence behind `SkillCommandService`, including
+  shared dedupe and effect-bound human review apply.
+- Read: service, model tool, CLI and TUI adapters, focused tests.
+- Tests: host service/evolution/tool suites, CLI create/apply tests, TUI generic
+  and dedicated create/review tests, affected typechecks, and full
+  `npm run release:check` on the same source tree.
+
+- Status: Verified
+- Date: 2026-07-12T02:12:00+0800
+- Scope: first managed-change vertical slice for safe model-authored Skill
+  creation, including effect-bound approval, same-run apply, receipts, revision
+  invalidation, and crash reconciliation.
+- Read: `packages/host/src/skill-evolution.ts`, `packages/host/src/tools.ts`,
+  `packages/core/src/types.ts`, `packages/core/src/run.ts`.
+- Tests: host Skill evolution/tool focused suites (109 tests); affected
+  typechecks; TUI approval render/controller focused suites.
+
+- Status: Verified
+- Date: 2026-07-12T00:56:00+0800
+- Scope: added version-aware, run-scoped reference-load deduplication to bound
+  repeated model observation cost without changing Skill routing or stats.
+- Read: `packages/skills/src/index.ts`, `packages/skills/test/index.test.ts`,
+  and `maps/capabilities/skills.md`.
+- Tests: `npm --workspace @sparkwright/skills test -- test/index.test.ts`;
+  `npm --workspace @sparkwright/skills run typecheck`.
+
+- Status: Verified
+- Date: 2026-07-11T23:20:00+0800
+- Scope: added the structured model-draft to human-review handoff without
+  widening the model-facing mutation boundary.
+- Read: `packages/host/src/tools.ts`, `packages/host/src/skill-evolution.ts`,
+  `packages/tui/src/lib/skill-evolution.ts`, and
+  `maps/capabilities/skill-evolution.md`.
+- Tests: host Skill tool/evolution focused suites and TUI Skill review focused
+  suites passed; proposal-id review was verified through a real PTY.
+
+- Status: Verified
+- Date: 2026-07-11T22:17:00+0800
+- Scope: model-facing create/update proposals now reuse session drafts across
+  continuation runs and visibly revise changed draft content instead of
+  creating duplicate directories or discarding later bodies.
+- Read: `packages/host/src/tools.ts`, `packages/host/src/skill-evolution.ts`,
+  `packages/host/test/tools.test.ts`, and
+  `maps/capabilities/skill-evolution.md`.
+- Tests: `npm --workspace @sparkwright/host test -- test/tools.test.ts
+test/skill-evolution.test.ts`; `npm --workspace @sparkwright/host run
+typecheck`.
 
 - Status: Verified
 - Date: 2026-07-07T13:18:00+0800

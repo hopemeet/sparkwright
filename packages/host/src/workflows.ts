@@ -1,4 +1,4 @@
-import { readFile, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rename, rm, stat } from "node:fs/promises";
 import { basename, isAbsolute, join, normalize, sep } from "node:path";
 import type { RunBudget } from "@sparkwright/core";
 import type {
@@ -21,9 +21,11 @@ import type {
   WorkflowVerifierExpectation,
 } from "@sparkwright/agent-runtime";
 import {
+  computeAssetPackageHash,
   discoverMarkdownFolderAssets,
   loadMarkdownFolderAsset,
   markdownAssetContentHash,
+  snapshotAssetPackage,
   splitMarkdownFrontmatter,
   type MarkdownFolderAsset,
 } from "@sparkwright/skills";
@@ -62,6 +64,8 @@ export interface WorkflowAssetSummary {
   sourcePath: string;
   layer: CapabilityLayer;
   contentHash: string;
+  packageHash?: string;
+  packageHashPolicyVersion?: 2;
   version?: string;
   description?: string;
   nodeCount: number;
@@ -70,6 +74,13 @@ export interface WorkflowAssetSummary {
 
 export interface WorkflowAssetDetail extends WorkflowAssetSummary {
   definition: WorkflowDefinition;
+}
+
+export interface PinnedWorkflowAsset {
+  asset: WorkflowAssetDetail;
+  packageHash: string;
+  packageHashPolicyVersion: 2;
+  packageSnapshotRef: string;
 }
 
 export interface WorkflowAssetError {
@@ -148,6 +159,97 @@ export async function loadWorkflowAssetFromDir(input: {
     parseFrontmatter: parseWorkflowFrontmatter,
   });
   return workflowDetailFromMarkdown(markdown, input.layer ?? "project");
+}
+
+export async function pinWorkflowAssetPackage(input: {
+  asset: WorkflowAssetDetail;
+  snapshotRoot: string;
+  /** Internal test/coordination seam between snapshot copy and source recheck. */
+  afterSnapshot?: () => Promise<void> | void;
+}): Promise<PinnedWorkflowAsset> {
+  const spec = {
+    rootPath: input.asset.definition.sourceDir!,
+    entryPath: WORKFLOW_FILE_NAME,
+  };
+  const before = await computeAssetPackageHash(spec);
+  await mkdir(input.snapshotRoot, { recursive: true });
+  const packageSnapshotRef = join(
+    input.snapshotRoot,
+    before.packageHash.slice("sha256:".length),
+  );
+  const temporarySnapshotRef = await mkdtemp(
+    join(input.snapshotRoot, ".pending-"),
+  );
+  try {
+    const snapshot = await snapshotAssetPackage(spec, temporarySnapshotRef);
+    await input.afterSnapshot?.();
+    const after = await computeAssetPackageHash(spec);
+    if (
+      snapshot.packageHash !== before.packageHash ||
+      after.packageHash !== before.packageHash
+    ) {
+      throw new Error(
+        `Workflow package changed while snapshotting: ${input.asset.assetName}`,
+      );
+    }
+    try {
+      await rename(temporarySnapshotRef, packageSnapshotRef);
+    } catch (error) {
+      try {
+        await verifyWorkflowPackageSnapshot({
+          packageSnapshotRef,
+          packageHash: before.packageHash,
+        });
+      } catch {
+        throw error;
+      }
+    }
+  } finally {
+    await rm(temporarySnapshotRef, { recursive: true, force: true });
+  }
+  const snapshotAsset = await loadWorkflowAssetFromDir({
+    dir: packageSnapshotRef,
+    layer: input.asset.layer,
+  });
+  const asset: WorkflowAssetDetail = {
+    ...snapshotAsset,
+    assetName: input.asset.assetName,
+    definition: {
+      ...snapshotAsset.definition,
+      assetName: input.asset.assetName,
+    },
+  };
+  return {
+    asset: {
+      ...asset,
+      packageHash: before.packageHash,
+      packageHashPolicyVersion: 2,
+      definition: {
+        ...asset.definition,
+        packageHash: before.packageHash,
+        packageHashPolicyVersion: 2,
+        packageSnapshotRef,
+      },
+    },
+    packageHash: before.packageHash,
+    packageHashPolicyVersion: 2,
+    packageSnapshotRef,
+  };
+}
+
+export async function verifyWorkflowPackageSnapshot(input: {
+  packageSnapshotRef: string;
+  packageHash: string;
+}): Promise<void> {
+  const snapshot = await computeAssetPackageHash({
+    rootPath: input.packageSnapshotRef,
+    entryPath: WORKFLOW_FILE_NAME,
+  });
+  if (snapshot.packageHash !== input.packageHash) {
+    throw new Error(
+      "Workflow executable package snapshot hash does not match its record.",
+    );
+  }
 }
 
 export function parseWorkflowMarkdownAsset(input: {

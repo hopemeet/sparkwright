@@ -109,14 +109,11 @@ sparkwright skills create code-reviewer \
 
 `list` and `validate` discover Skills across the builtin, user, and project
 layers. If `capabilities.skills.roots` is configured, those roots are loaded as
-legacy workspace roots after builtin/user roots. `create` writes
-`<workspace>/.sparkwright/skills/<name>/SKILL.md` unless `--root` is passed. It
-refuses to overwrite an existing Skill unless `--force` is passed.
-
-The model-facing `create_skill` tool is intentionally different from the manual
-CLI create command: it drafts a Skill Evolution proposal and does not write the
-current project Skill package. A human applies or rejects the proposal through
-the proposal flow.
+legacy workspace roots after builtin/user roots. `create` prepares a managed
+project-layer proposal and prints its review/apply command; it does not write the
+current Skill package or accept `--force`. Apply the proposal only after
+reviewing its final patch. CLI, TUI, and model creation adapters share the host
+`SkillCommandService`, so they no longer have different mutation semantics.
 
 Reports include each Skill's `layer`, `root`, and filesystem `source`. When two
 layers declare the same Skill name, the stronger layer wins and `validate`
@@ -201,6 +198,10 @@ The TUI exposes slash-command entry points for the same proposal flow:
 /skill-learn
 /skill-learn notice
 ```
+
+`/create skill` is the canonical general capability-creation entrypoint.
+`/skill-create` remains a compatibility/advanced shortcut; both call the same
+managed proposal service and neither directly writes the current Skill.
 
 `/skill-create` without arguments opens a guided prompt for a project Skill
 proposal. `/skill-update` without arguments opens a guided prompt for an

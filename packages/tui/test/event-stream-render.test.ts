@@ -3,6 +3,7 @@ import React from "react";
 import { render } from "ink";
 import {
   EventStream,
+  taskTerminalTone,
   type TranscriptHeaderInfo,
 } from "../src/components/event-stream.js";
 import type { RunEvent } from "../src/lib/event-type.js";
@@ -241,8 +242,8 @@ describe("EventStream committed rendering", () => {
       }),
     ];
     const text = await renderToText(stream(events), 72);
-    expect(text).toContain("› apply_patch");
-    expect(text).not.toContain("›apply_patc");
+    expect(text).toContain("⚙ apply_patch");
+    expect(text).not.toContain("batch  1 tool");
   });
 
   it("renders shell tool requests as commands instead of raw JSON", async () => {
@@ -311,18 +312,56 @@ describe("EventStream committed rendering", () => {
     const events = [
       ev("capability.mutation.completed", 1, {
         action: "write_text",
-        path: "/tmp/project/.sparkwright/skill-evolution/proposals/p1/proposal.md",
-        reason: "Write proposal markdown p1",
+        path: "/tmp/project/.sparkwright/agents/reviewer/Agent.md",
+        reason: "Write agent profile reviewer",
       }),
     ];
     const text = await renderToText(stream(events));
     expect(text).toContain("capability mutation");
     expect(text).toContain("write_text");
-    expect(text).toContain(
-      ".sparkwright/skill-evolution/proposals/p1/proposal.md",
-    );
-    expect(text).toContain("Write proposal markdown p1");
+    expect(text).toContain(".sparkwright/agents/reviewer/Agent.md");
+    expect(text).toContain("Write agent profile reviewer");
     expect(text).not.toContain('"action"');
+  });
+
+  it("folds proposal package mutations into the terminal tool result", async () => {
+    const spanId = "span_skill_create";
+    const events = [
+      {
+        ...ev("capability.mutation.completed", 1, {
+          action: "ensure_directory",
+          path: "/tmp/project/.sparkwright/skill-evolution/proposals/skillprop_123/after/demo",
+          reason: "Create proposal package skillprop_123",
+        }),
+        spanId,
+      },
+      {
+        ...ev("capability.mutation.completed", 2, {
+          action: "write_text",
+          path: "/tmp/project/.sparkwright/skill-evolution/proposals/skillprop_123/after/demo/SKILL.md",
+          reason: "Write proposed Skill demo",
+        }),
+        spanId,
+      },
+      {
+        ...ev("tool.completed", 3, {
+          toolName: "create_skill",
+          output: {
+            action: "draft",
+            changed: true,
+            proposalId: "skillprop_123",
+            proposalPath:
+              "/tmp/project/.sparkwright/skill-evolution/proposals/skillprop_123",
+          },
+        }),
+        spanId,
+      },
+    ];
+    const text = await renderToText(stream(events));
+    expect(text).toContain("skill proposal skillprop_123");
+    expect(text).toContain("2 internal mutations");
+    expect(text).not.toContain("capability mutation");
+    expect(text).not.toContain("Write proposed Skill demo");
   });
 
   it("renders skill mutation tool results as compact summaries", async () => {
@@ -503,6 +542,78 @@ describe("EventStream committed rendering", () => {
     expect(text).toContain("approvals 1/1");
     expect(text).toContain("tools 1");
     expect(text).toContain("last command: npm test passed");
+  });
+
+  it("does not call a background handoff a completed command in run facts", async () => {
+    const text = await renderToText(
+      stream([
+        ev("run.started", 1, {}),
+        ev("tool.requested", 2, {
+          toolName: "bash",
+          arguments: { command: "python3 -u print_numbers.py" },
+        }),
+        ev("tool.completed", 3, {
+          toolName: "bash",
+          output: {
+            stdout: "",
+            stderr: "",
+            exitCode: null,
+            timedOut: false,
+            background: true,
+            taskId: "task_background",
+          },
+        }),
+        ev("run.completed", 4, { reason: "final_answer" }),
+      ]),
+    );
+
+    expect(text).toContain("run facts tools 1");
+    expect(text).not.toContain("last command:");
+    expect(text).not.toContain("print_numbers.py completed");
+  });
+
+  it("renders terminal task updates that arrive during final model generation", async () => {
+    const text = await renderToText(
+      stream([
+        ev("run.started", 1, {}),
+        ev("model.requested", 2, { step: 1 }),
+        ev(
+          "task.completed",
+          3,
+          {
+            taskId: "task_mqzd1c1b30yc24hj",
+            result: { exitCode: 0 },
+            progressCount: 10,
+          },
+          { durationMs: 10_000 },
+        ),
+        ev("model.completed", 4, { message: "Task is running." }),
+        ev("run.completed", 5, { reason: "final_answer" }),
+      ]),
+    );
+
+    expect(text).toContain("runtime update");
+    expect(text).toContain("task_mqzd...yc24hj · completed · exit 0");
+    expect(text).toContain("10 chunks · 10s");
+  });
+
+  it("renders task cancellation updates as warnings rather than errors", async () => {
+    const text = await renderToText(
+      stream([
+        ev("run.started", 1, {}),
+        ev("model.requested", 2, { step: 1 }),
+        ev("task.cancelled", 3, {
+          taskId: "task_cancelled",
+          result: { exitCode: null },
+        }),
+        ev("model.completed", 4, { message: "Stopped." }),
+        ev("run.completed", 5, { reason: "final_answer" }),
+      ]),
+    );
+
+    expect(text).toContain("runtime update");
+    expect(taskTerminalTone("cancelled")).toBe("warning");
+    expect(taskTerminalTone("failed")).toBe("error");
   });
 
   it("renders failed run completion messages from canonical failure payloads", async () => {

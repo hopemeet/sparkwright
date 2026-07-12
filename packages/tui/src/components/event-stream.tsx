@@ -22,6 +22,14 @@ import { shortTaskId } from "../lib/task-activity.js";
 
 export { oneLine } from "../lib/tool-display.js";
 
+/** @internal Semantic tone shared by task lifecycle and runtime-update rows. */
+export function taskTerminalTone(status: string): ToolDisplayTone {
+  if (status === "completed") return "success";
+  if (status === "cancelled") return "warning";
+  if (status === "failed") return "error";
+  return "normal";
+}
+
 export interface TranscriptHeaderInfo {
   workspaceRoot: string;
   modelLabel: string;
@@ -36,6 +44,7 @@ type Row =
       event: RunEvent;
       inBatch: boolean;
       facts?: RunFactsSnapshot;
+      internalMutationCount?: number;
     };
 
 interface RunFacts {
@@ -46,6 +55,8 @@ interface RunFacts {
   approvalsDenied: number;
   shellRequests: string[];
   shellResults: ShellFact[];
+  lastModelRequestSequence: number;
+  terminalTaskUpdates: RuntimeTaskUpdate[];
 }
 
 interface RunFactsSnapshot {
@@ -56,12 +67,22 @@ interface RunFactsSnapshot {
   approvalsDenied: number;
   lastShell?: ShellFact;
   commandOutcome?: CommandOutcomeFact;
+  terminalTaskUpdates: RuntimeTaskUpdate[];
+}
+
+interface RuntimeTaskUpdate {
+  taskId: string;
+  status: string;
+  exitCode?: number;
+  chunks?: number;
+  durationMs?: number;
 }
 
 interface ShellFact {
   command?: string;
   exitCode: number | null;
   timedOut: boolean;
+  background: boolean;
 }
 
 interface CommandOutcomeFact {
@@ -95,7 +116,8 @@ export function EventStream(props: {
   // This is <Static>-safe: by the time a child row is committed its opening
   // batch.requested has already been seen, so each row's `inBatch` is stable and
   // never changes on a later commit.
-  let batchDepth = 0;
+  const visibleBatchStack: boolean[] = [];
+  const proposalMutationCounts = new Map<string, number>();
   let facts = createRunFacts();
   const rows: Row[] = [
     { kind: "header", key: "__header", header: props.header },
@@ -103,15 +125,38 @@ export function EventStream(props: {
       if (event.type === "run.started") facts = createRunFacts();
       // The batch.requested header itself is NOT a member (depth flips after
       // it); the batch.completed closer drops back out before this row.
-      if (event.type === "tool.batch.completed" && batchDepth > 0) batchDepth--;
-      const inBatch = batchDepth > 0;
-      if (event.type === "tool.batch.requested") batchDepth++;
+      if (event.type === "tool.batch.completed") visibleBatchStack.pop();
+      const inBatch = visibleBatchStack.some(Boolean);
+      if (event.type === "tool.batch.requested") {
+        const payload = rec(event.payload);
+        const count =
+          typeof payload.toolCallCount === "number"
+            ? payload.toolCallCount
+            : Array.isArray(payload.toolNames)
+              ? payload.toolNames.length
+              : 0;
+        visibleBatchStack.push(count > 1);
+      }
       const row: Row = {
         kind: "event",
         key: event.id ?? `${event.sequence}`,
         event,
         inBatch,
       };
+      const spanId = str(rec(event).spanId);
+      if (
+        event.type === "capability.mutation.completed" &&
+        isProposalMutationEvent(event) &&
+        spanId
+      ) {
+        proposalMutationCounts.set(
+          spanId,
+          (proposalMutationCounts.get(spanId) ?? 0) + 1,
+        );
+      } else if (event.type === "tool.completed" && spanId) {
+        const count = proposalMutationCounts.get(spanId);
+        if (count) row.internalMutationCount = count;
+      }
       if (event.type === "run.completed") {
         row.facts = snapshotRunFacts(facts, event);
         facts = createRunFacts();
@@ -132,6 +177,7 @@ export function EventStream(props: {
             event={row.event}
             inBatch={row.inBatch}
             facts={row.facts}
+            internalMutationCount={row.internalMutationCount}
           />
         )
       }
@@ -147,13 +193,19 @@ export function EventStream(props: {
  * to its own row and degrades to a dim diagnostic line instead.
  */
 class EventCardBoundary extends React.Component<
-  { event: RunEvent; inBatch: boolean; facts?: RunFactsSnapshot },
+  {
+    event: RunEvent;
+    inBatch: boolean;
+    facts?: RunFactsSnapshot;
+    internalMutationCount?: number;
+  },
   { error: Error | null }
 > {
   constructor(props: {
     event: RunEvent;
     inBatch: boolean;
     facts?: RunFactsSnapshot;
+    internalMutationCount?: number;
   }) {
     super(props);
     this.state = { error: null };
@@ -178,6 +230,7 @@ class EventCardBoundary extends React.Component<
         event={this.props.event}
         inBatch={this.props.inBatch}
         facts={this.props.facts}
+        internalMutationCount={this.props.internalMutationCount}
       />
     );
   }
@@ -233,12 +286,18 @@ function createRunFacts(): RunFacts {
     approvalsDenied: 0,
     shellRequests: [],
     shellResults: [],
+    lastModelRequestSequence: 0,
+    terminalTaskUpdates: [],
   };
 }
 
 function recordRunFact(facts: RunFacts, event: RunEvent): void {
   const p = rec(event.payload);
   switch (event.type) {
+    case "model.requested":
+      facts.lastModelRequestSequence = event.sequence;
+      facts.terminalTaskUpdates = [];
+      return;
     case "tool.requested": {
       facts.toolCalls += 1;
       if (isShellToolName(str(p.toolName))) {
@@ -256,6 +315,7 @@ function recordRunFact(facts: RunFacts, event: RunEvent): void {
           command: facts.shellRequests.shift(),
           exitCode: typeof r.exitCode === "number" ? r.exitCode : null,
           timedOut: r.timedOut === true,
+          background: r.background === true,
         });
       }
       return;
@@ -273,6 +333,29 @@ function recordRunFact(facts: RunFacts, event: RunEvent): void {
       const decision = str(p.decision);
       if (decision === "approved") facts.approvalsApproved += 1;
       else if (decision === "denied") facts.approvalsDenied += 1;
+      return;
+    }
+    case "task.completed":
+    case "task.failed":
+    case "task.cancelled": {
+      if (event.sequence <= facts.lastModelRequestSequence) return;
+      const result = rec(p.result);
+      const metadata = rec(event.metadata);
+      const taskId = str(p.taskId) || str(p.id);
+      if (!taskId) return;
+      facts.terminalTaskUpdates.push({
+        taskId,
+        status: event.type.slice("task.".length),
+        ...(typeof result.exitCode === "number"
+          ? { exitCode: result.exitCode }
+          : {}),
+        ...(typeof p.progressCount === "number"
+          ? { chunks: p.progressCount }
+          : {}),
+        ...(typeof metadata.durationMs === "number"
+          ? { durationMs: metadata.durationMs }
+          : {}),
+      });
       return;
     }
   }
@@ -295,6 +378,7 @@ function snapshotRunFacts(
     approvalsDenied: facts.approvalsDenied,
     lastShell: facts.shellResults[facts.shellResults.length - 1],
     commandOutcome: commandOutcomeFact(p.commandOutcome),
+    terminalTaskUpdates: [...facts.terminalTaskUpdates],
   };
 }
 
@@ -341,6 +425,7 @@ function runFactsParts(facts: RunFactsSnapshot | undefined): string[] {
 
 function commandFact(facts: RunFactsSnapshot): string | undefined {
   const shell = facts.lastShell;
+  if (shell?.background) return undefined;
   if (shell?.command) return `last command: ${commandStatus(shell)}`;
   const outcome = facts.commandOutcome;
   if (!outcome?.lastCommand) return undefined;
@@ -349,6 +434,7 @@ function commandFact(facts: RunFactsSnapshot): string | undefined {
     exitCode:
       typeof outcome.lastExitCode === "number" ? outcome.lastExitCode : null,
     timedOut: outcome.lastTimedOut === true,
+    background: false,
   })}`;
 }
 
@@ -372,6 +458,38 @@ function RunFactsLine(props: {
   return <Text dimColor>run facts {parts.join(" · ")}</Text>;
 }
 
+function RuntimeTaskUpdatesLine(props: {
+  updates: readonly RuntimeTaskUpdate[] | undefined;
+}): React.ReactElement | null {
+  const theme = useTheme();
+  if (!props.updates || props.updates.length === 0) return null;
+  return (
+    <Box flexDirection="column">
+      {props.updates.map((update) => {
+        const detail = [
+          shortTaskId(update.taskId),
+          update.status,
+          update.exitCode !== undefined ? `exit ${update.exitCode}` : "",
+          update.chunks !== undefined
+            ? `${update.chunks} chunk${update.chunks === 1 ? "" : "s"}`
+            : "",
+          update.durationMs !== undefined
+            ? formatShortDuration(update.durationMs)
+            : "",
+        ]
+          .filter(Boolean)
+          .join(" · ");
+        const color = toolToneColor(taskTerminalTone(update.status), theme);
+        return (
+          <Text key={`${update.taskId}:${update.status}`} color={color}>
+            runtime update<Text dimColor>{` · ${detail}`}</Text>
+          </Text>
+        );
+      })}
+    </Box>
+  );
+}
+
 /**
  * One committed event → one typed card. Intermediate / noisy events
  * (stream start, tool start, usage, write-requested) render to nothing so the
@@ -383,6 +501,7 @@ function EventCard(props: {
   event: RunEvent;
   inBatch: boolean;
   facts?: RunFactsSnapshot;
+  internalMutationCount?: number;
 }): React.ReactElement | null {
   const theme = useTheme();
   const { stdout } = useStdout();
@@ -468,12 +587,10 @@ function EventCard(props: {
             ? p.toolNames.length
             : 0;
       const mode = str(p.mode) || "concurrent";
+      if (count <= 1) return null;
       return (
         <Box paddingX={1} marginTop={1}>
-          <Text color={theme.accent}>{"⚙ "}</Text>
-          <Text color={theme.accent} bold>
-            batch
-          </Text>
+          <Text color={theme.muted}>{"⚙ batch"}</Text>
           <Text
             dimColor
           >{`  ${count} tool${count === 1 ? "" : "s"} · ${mode}`}</Text>
@@ -528,10 +645,8 @@ function EventCard(props: {
           marginTop={inBatch ? 0 : 1}
         >
           <Text>
-            <Text color={theme.accent} bold>
-              {marker}
-              {visibleName}
-            </Text>
+            <Text color={theme.muted}>{marker}</Text>
+            <Text bold>{visibleName}</Text>
             {preview ? <Text dimColor>{"  " + preview}</Text> : null}
           </Text>
         </Box>
@@ -540,9 +655,22 @@ function EventCard(props: {
 
     case "tool.completed": {
       const toolName = str(p.toolName) || undefined;
-      const result = p.result ?? p.output;
+      const rawResult = p.result ?? p.output;
+      const result =
+        props.internalMutationCount && rec(rawResult).action === "draft"
+          ? {
+              ...rec(rawResult),
+              internalMutationCount: props.internalMutationCount,
+            }
+          : rawResult;
       const artifacts = Array.isArray(p.artifacts) ? p.artifacts : [];
       if (result === undefined && artifacts.length === 0) return null;
+      const resultRecord = rec(result);
+      if (resultRecord.background === true && str(resultRecord.taskId)) {
+        return artifacts.length > 0 ? (
+          <ArtifactHint artifacts={artifacts} paddingLeft={childPad} />
+        ) : null;
+      }
       const display =
         result === undefined
           ? ({ kind: "hidden", reason: "no_result" } as const)
@@ -595,6 +723,7 @@ function EventCard(props: {
     }
 
     case "task.created":
+      return null;
     case "task.started":
     case "task.completed":
     case "task.failed":
@@ -665,6 +794,7 @@ function EventCard(props: {
     }
 
     case "capability.mutation.completed": {
+      if (isProposalMutationEvent(ev)) return null;
       const action = str(p.action) || "mutation";
       const path = compactMutationPath(str(p.path));
       const reason = str(p.reason);
@@ -855,6 +985,7 @@ function EventCard(props: {
       const isFinal = displayReason === "final_answer";
       return (
         <Box flexDirection="column" paddingX={1} marginTop={1}>
+          <RuntimeTaskUpdatesLine updates={props.facts?.terminalTaskUpdates} />
           <Text dimColor>{isFinal ? "─────" : `── run ${displayReason}`}</Text>
           <RunFactsLine facts={props.facts} />
         </Box>
@@ -887,6 +1018,12 @@ function EventCard(props: {
       );
     }
   }
+}
+
+function isProposalMutationEvent(event: RunEvent): boolean {
+  if (event.type !== "capability.mutation.completed") return false;
+  const path = str(rec(event.payload).path).replace(/\\/gu, "/");
+  return path.includes(".sparkwright/skill-evolution/proposals/");
 }
 
 function TaskLifecycleLine(props: {
@@ -930,11 +1067,9 @@ function TaskLifecycleLine(props: {
           ? "completed"
           : phase;
   const color =
-    phase === "failed" || phase === "cancelled"
-      ? theme.error
-      : phase === "completed"
-        ? theme.success
-        : theme.accent;
+    phase === "started" || phase === "created"
+      ? theme.accent
+      : toolToneColor(taskTerminalTone(phase), theme);
   const details = [
     shortTaskId(taskId),
     kind,

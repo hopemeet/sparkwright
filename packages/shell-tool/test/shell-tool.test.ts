@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   createRunId,
+  validateToolArguments,
   type ExecutionEnvironment,
   type LiveShellHandle,
   type RuntimeContext,
@@ -612,10 +613,9 @@ describe("foreground→background promotion", () => {
     expect(result.stdout).toBe("fast\n");
     expect(result.foregroundTimeoutMs).toBe(1000);
     expect(result.promotionAvailable).toBe(true);
-    expect(result.timeoutMsAliasUsed).toBe(false);
   });
 
-  it("treats timeoutMs as an observable foregroundTimeoutMs alias", async () => {
+  it("accepts an explicit foregroundTimeoutMs override", async () => {
     const environment = streamingEnv({
       stdoutChunks: ["fast\n"],
       stderrChunks: [],
@@ -629,15 +629,11 @@ describe("foreground→background promotion", () => {
     });
 
     const result = await tool.execute(
-      { command: "ls", timeoutMs: 25 },
+      { command: "ls", foregroundTimeoutMs: 25 },
       runtimeContext(),
     );
 
     expect(result.foregroundTimeoutMs).toBe(25);
-    expect(result.timeoutMsAliasUsed).toBe(true);
-    expect(result.timeoutAliasWarning).toContain(
-      "timeoutMs is interpreted as foregroundTimeoutMs",
-    );
     expect(result.timedOut).toBe(false);
   });
 
@@ -855,6 +851,22 @@ describe("foreground→background promotion", () => {
     expect(result.exitCode).toBeNull();
     expect(result.foregroundTimeoutMs).toBe(5 * 60 * 1000);
     expect(result.backgroundGuidance).toContain("successful start");
+    expect(result.backgroundGuidance).toContain('action="get" merely');
+    expect(result.backgroundGuidance).toContain('action="wait"');
+    const schema = tool.inputSchema as {
+      properties: Record<string, unknown>;
+    };
+    expect(schema.properties.timeoutMs).toBeUndefined();
+    expect(schema.properties.foregroundTimeoutMs).toBeDefined();
+    expect(
+      validateToolArguments(tool.inputSchema, {
+        command: "sleep 1",
+        timeoutMs: 25,
+      }),
+    ).toMatchObject({
+      code: "TOOL_ARGUMENTS_INVALID",
+      message: expect.stringContaining("additional property is not allowed"),
+    });
     expect(result.promotionGuidance).toBeUndefined();
     expect(promotions).toHaveLength(1);
     expect(promotions[0]!.origin).toBe("explicit");

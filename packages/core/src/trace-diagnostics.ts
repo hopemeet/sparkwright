@@ -320,6 +320,7 @@ const TRACE_REPORT_ANALYZERS: TraceReportAnalyzer[] = [
   analyzeCommandFailures,
   analyzeMultiAgentAuditability,
   analyzeEfficiency,
+  analyzeTaskLifetimeClassification,
   analyzeToolRecovery,
   analyzeCostReporting,
 ];
@@ -745,6 +746,38 @@ function analyzeEfficiency({
   }
 
   return findings;
+}
+
+function analyzeTaskLifetimeClassification({
+  events,
+}: TraceReportContext): TraceReportFinding[] {
+  const naturallyCompletedServices = events.flatMap((event, index) => {
+    if (event.type !== "task.completed" || !isRecord(event.payload)) return [];
+    if (event.payload.lifetime !== "service") return [];
+    const result = isRecord(event.payload.result)
+      ? event.payload.result
+      : undefined;
+    return result?.exitCode === 0 ? [{ event, index }] : [];
+  });
+  if (naturallyCompletedServices.length === 0) return [];
+
+  return [
+    {
+      severity: "info",
+      code: "FINITE_SERVICE_TASK",
+      title: "A service-classified task exited naturally",
+      evidence: naturallyCompletedServices
+        .slice(0, 5)
+        .map(({ event, index }) => {
+          const payload = event.payload as Record<string, unknown>;
+          const taskId = stringValue(payload.taskId, payload.id) ?? "unknown";
+          const command = stringValue(payload.command, payload.title);
+          return `${taskId}${command ? `: ${truncateDiagnostic(command, 140)}` : ""} at event ${eventOrdinal(event, index)}`;
+        }),
+      recommendation:
+        "Review whether lifetime=job was intended. Use service only for indefinite servers, watchers, or intentional endless loops; finite commands remain jobs even when they run for a long time.",
+    },
+  ];
 }
 
 function collectRepeatedToolRequestRunFacts(

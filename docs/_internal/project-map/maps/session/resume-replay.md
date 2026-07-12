@@ -50,6 +50,12 @@ Future run in compacted session
 
 ## Contracts
 
+- Skill prepared-change waiting is durable proposal state, not checkpoint or
+  live TUI state. If the originating run cannot obtain approval, a later
+  session can read the waiting proposal, recompute effect/base/guard facts, and
+  continue through the host approval/apply functions. This does not make
+  in-flight core tool execution generally resumable.
+
 - Workflow-job resume uses the durable `WorkflowRunRecord.sessionId` as the
   execution/session-store identity. TUI/CLI callers may not substitute their
   current/control session, and records missing the required session or
@@ -110,6 +116,33 @@ Future run in compacted session
   run-loop integration.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-12T20:12:00+0800
+- Scope: resumed Workflow records retain their event-time source layer while
+  continuing to execute only from the verified package snapshot.
+- Read: Workflow store parser, host resume preparation and focused tests.
+- Tests: focused host Workflow resume suite passed.
+
+- Status: Read-only
+- Date: 2026-07-12
+- Scope: checked snapshot-backed Workflow identity attribution; resume behavior is unchanged from Phase 4.
+- Tests: focused Workflow tests passed; release gate pending.
+
+- Status: Verified
+- Date: 2026-07-12T16:36:08+0800
+- Scope: Workflow resume now fails closed unless its executable package snapshot
+  exists, hashes to the persisted v2 identity, and backs definition `sourceDir`.
+- Read: host Workflow resume/runtime paths and durable workflow record store.
+- Tests: host/CLI Workflow resume suites and full `npm run release:check`.
+
+- Status: Verified
+- Date: 2026-07-12T02:12:00+0800
+- Scope: documented proposal-backed Skill waiting/recovery without widening
+  core checkpoint guarantees or coupling Skill records to workflows.
+- Read: `packages/host/src/skill-evolution.ts`, `packages/core/src/run.ts`,
+  and the managed-change design.
+- Tests: host approval/revision/crash-reconciliation focused tests.
 
 - Status: Verified
 - Date: 2026-07-11T18:30:00+0800

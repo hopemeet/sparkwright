@@ -1,11 +1,11 @@
 import {
-  createSkillCreateProposal,
   createSkillUpdateProposal,
   existingSkillRoots,
-  applySkillProposal,
+  SkillCommandService,
   listSkillProposals,
   loadHostConfig,
   readSkillProposal,
+  reconcileSkillProposalDrafts,
   rejectSkillProposal,
   resolveSkillRootsForRuntime,
   type SkillProposalDetail,
@@ -38,6 +38,7 @@ export interface TuiSkillReviewDetail {
   total: number;
   items: TuiSkillReviewItem[];
   stateFilter?: SkillProposalState;
+  proposalId?: string;
 }
 
 export interface TuiSkillReviewActionResult {
@@ -45,6 +46,17 @@ export interface TuiSkillReviewActionResult {
   state: string;
   skillName: string;
   historyId?: string;
+}
+
+export interface TuiSkillInboxAction {
+  kind: "skill_proposal_review";
+  proposalId: string;
+  reviewCommand: string;
+  eligibility: "review_required";
+  validationStatus: "passed";
+  contentMode?: string;
+  guardSeverity: "none" | "caution" | "dangerous";
+  recommendedAction: "review";
 }
 
 const REVIEW_STATES: readonly SkillProposalState[] = [
@@ -88,8 +100,9 @@ export async function createTuiSkillProposalFromInput(
   workspaceRoot: string,
   input: TuiSkillProposalInput,
 ): Promise<TuiSkillProposalResult> {
-  const proposal = await createSkillCreateProposal({
+  const { proposal } = await new SkillCommandService(
     workspaceRoot,
+  ).prepareCreate({
     name: input.name,
     description: input.description,
   });
@@ -142,7 +155,12 @@ export async function reviewTuiSkillProposals(
   rest: string,
   limit = 5,
 ): Promise<TuiSkillReviewSummary> {
-  const stateFilter = parseReviewState(rest);
+  const target = parseTuiSkillReviewTarget(rest);
+  if (target.kind === "proposal") {
+    const proposal = await readSkillProposal(workspaceRoot, target.proposalId);
+    return { total: 1, shown: [proposal] };
+  }
+  const stateFilter = target.kind === "state" ? target.state : undefined;
   const proposals = await listSkillProposals(workspaceRoot);
   const filtered = stateFilter
     ? proposals.filter((proposal) => proposal.state === stateFilter)
@@ -159,7 +177,17 @@ export async function loadTuiSkillReview(
   rest: string,
   limit = 20,
 ): Promise<TuiSkillReviewDetail> {
-  const stateFilter = parseReviewState(rest);
+  await reconcileSkillProposalDrafts(workspaceRoot);
+  const target = parseTuiSkillReviewTarget(rest);
+  if (target.kind === "proposal") {
+    const proposal = await readSkillProposal(workspaceRoot, target.proposalId);
+    return {
+      total: 1,
+      items: [proposal],
+      proposalId: target.proposalId,
+    };
+  }
+  const stateFilter = target.kind === "state" ? target.state : undefined;
   const proposals = await listSkillProposals(workspaceRoot);
   const filtered = stateFilter
     ? proposals.filter((proposal) => proposal.state === stateFilter)
@@ -172,6 +200,39 @@ export async function loadTuiSkillReview(
     total: filtered.length,
     items,
     ...(stateFilter ? { stateFilter } : {}),
+  };
+}
+
+/**
+ * Proposal files are the persistent inbox. Restore the newest open draft as a
+ * small completion-card affordance; the full inbox remains `/skill-review`.
+ */
+export async function loadTuiSkillInboxAction(
+  workspaceRoot: string,
+): Promise<TuiSkillInboxAction | null> {
+  await reconcileSkillProposalDrafts(workspaceRoot);
+  const proposals = await listSkillProposals(workspaceRoot);
+  const latest = proposals
+    .filter((proposal) => proposal.state === "draft")
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
+  if (!latest) return null;
+  const proposal = await readSkillProposal(workspaceRoot, latest.id);
+  const guardSeverity = proposal.guardFindings?.some(
+    (finding) => finding.severity === "dangerous",
+  )
+    ? "dangerous"
+    : (proposal.guardFindings?.length ?? 0) > 0
+      ? "caution"
+      : "none";
+  return {
+    kind: "skill_proposal_review",
+    proposalId: proposal.id,
+    reviewCommand: `/skill-review ${proposal.id}`,
+    eligibility: "review_required",
+    validationStatus: "passed",
+    contentMode: proposal.contentMode,
+    guardSeverity,
+    recommendedAction: "review",
   };
 }
 
@@ -214,7 +275,9 @@ export async function applyTuiSkillReviewProposal(
   workspaceRoot: string,
   proposalId: string,
 ): Promise<TuiSkillReviewActionResult> {
-  const applied = await applySkillProposal(workspaceRoot, proposalId);
+  const { applied } = await new SkillCommandService(
+    workspaceRoot,
+  ).approveAndApply(proposalId);
   return {
     id: applied.proposal.id,
     state: applied.proposal.state,
@@ -239,14 +302,24 @@ export async function rejectTuiSkillReviewProposal(
   };
 }
 
-function parseReviewState(rest: string): SkillProposalState | undefined {
+export type TuiSkillReviewTarget =
+  | { kind: "all" }
+  | { kind: "state"; state: SkillProposalState }
+  | { kind: "proposal"; proposalId: string };
+
+export function parseTuiSkillReviewTarget(rest: string): TuiSkillReviewTarget {
   const value = rest.trim();
-  if (!value) return undefined;
+  if (!value) return { kind: "all" };
+  if (/^skillprop_[a-z0-9]+$/u.test(value)) {
+    return { kind: "proposal", proposalId: value };
+  }
   const normalized = value.startsWith("--state ")
     ? value.slice("--state ".length).trim()
     : value;
   if (!REVIEW_STATES.includes(normalized as SkillProposalState)) {
-    throw new Error(`usage: /skill-review [${REVIEW_STATES.join("|")}]`);
+    throw new Error(
+      `usage: /skill-review [proposal-id|${REVIEW_STATES.join("|")}]`,
+    );
   }
-  return normalized as SkillProposalState;
+  return { kind: "state", state: normalized as SkillProposalState };
 }

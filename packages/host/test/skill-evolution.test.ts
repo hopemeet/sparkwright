@@ -1,17 +1,31 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  cp,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   FileSkillUsageRecorder,
-  computeSkillPackageHash,
+  computeAssetPackageHash,
 } from "@sparkwright/skills";
 import {
+  applyApprovedSkillProposal,
   applySkillProposal,
   createSkillCreateProposal,
   createSkillUpdateProposal,
   loadLayeredSkillReport,
+  prepareSkillProposalApproval,
+  readSkillProposal,
+  reconcileSkillProposalDrafts,
+  recordSkillProposalApproval,
   resolveSkillRootsForRuntime,
+  reviseSkillProposalDraft,
   restoreSkillFromHistory,
   skillUsagePath,
 } from "../src/index.js";
@@ -56,17 +70,230 @@ describe("skill roots", () => {
 });
 
 describe("skill proposal application", () => {
+  it("supersedes every competing draft after one proposal is applied", async () => {
+    const workspace = await makeWorkspace();
+    try {
+      const older = await createSkillCreateProposal({
+        workspaceRoot: workspace,
+        name: "competing-skill",
+        description: "Older proposal",
+        content: skillMarkdown("competing-skill").replace("Body.", "Older."),
+      });
+      const selected = await createSkillCreateProposal({
+        workspaceRoot: workspace,
+        name: "competing-skill",
+        description: "Selected proposal",
+        content: skillMarkdown("competing-skill").replace("Body.", "Selected."),
+      });
+
+      await applySkillProposal(workspace, selected.id);
+
+      await expect(
+        readSkillProposal(workspace, older.id),
+      ).resolves.toMatchObject({
+        state: "superseded",
+        preparedState: "superseded",
+        supersededBy: selected.id,
+        closedAt: expect.any(String),
+      });
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("reconciles an orphaned create draft against applied history", async () => {
+    const workspace = await makeWorkspace();
+    try {
+      const orphan = await createSkillCreateProposal({
+        workspaceRoot: workspace,
+        name: "orphan-skill",
+        description: "Orphaned proposal",
+        content: skillMarkdown("orphan-skill").replace("Body.", "Orphaned."),
+      });
+      const applied = await createSkillCreateProposal({
+        workspaceRoot: workspace,
+        name: "orphan-skill",
+        description: "Applied proposal",
+        content: skillMarkdown("orphan-skill").replace("Body.", "Applied."),
+      });
+      await applySkillProposal(workspace, applied.id);
+
+      // Simulate a legacy inbox written before competing drafts were closed.
+      const orphanMetadataPath = join(orphan.path, "metadata.json");
+      const orphanMetadata = JSON.parse(
+        await readFile(orphanMetadataPath, "utf8"),
+      );
+      await writeFile(
+        orphanMetadataPath,
+        JSON.stringify({
+          ...orphanMetadata,
+          state: "draft",
+          preparedState: "ready",
+          closedAt: undefined,
+          statusReason: undefined,
+          supersededBy: undefined,
+        }),
+      );
+
+      const result = await reconcileSkillProposalDrafts(workspace);
+
+      expect(result).toMatchObject({ checked: 1 });
+      expect(result.superseded).toHaveLength(1);
+      await expect(
+        readSkillProposal(workspace, orphan.id),
+      ).resolves.toMatchObject({
+        state: "superseded",
+        preparedState: "superseded",
+        supersededBy: applied.id,
+      });
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("marks an orphaned create draft stale when the target has no managed history", async () => {
+    const workspace = await makeWorkspace();
+    try {
+      const proposal = await createSkillCreateProposal({
+        workspaceRoot: workspace,
+        name: "external-skill",
+        description: "Draft before external creation",
+        content: skillMarkdown("external-skill"),
+      });
+      await mkdir(proposal.targetPath, { recursive: true });
+      await writeFile(
+        join(proposal.targetPath, "SKILL.md"),
+        skillMarkdown("external-skill").replace("Body.", "External."),
+      );
+
+      const result = await reconcileSkillProposalDrafts(workspace);
+
+      expect(result.stale).toHaveLength(1);
+      await expect(
+        readSkillProposal(workspace, proposal.id),
+      ).resolves.toMatchObject({
+        state: "stale",
+        preparedState: "stale",
+        closedAt: expect.any(String),
+      });
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("invalidates an effect-bound approval when a draft is revised", async () => {
+    const workspace = await makeWorkspace();
+    try {
+      const proposal = await createSkillCreateProposal({
+        workspaceRoot: workspace,
+        name: "revision-skill",
+        description: "Initial authored skill",
+        content: skillMarkdown("revision-skill"),
+      });
+      const prepared = await prepareSkillProposalApproval(
+        workspace,
+        proposal.id,
+      );
+      const receipt = await recordSkillProposalApproval({
+        workspaceRoot: workspace,
+        proposalId: proposal.id,
+        effectHash: prepared.effectHash,
+      });
+      const revised = await reviseSkillProposalDraft({
+        workspaceRoot: workspace,
+        proposalId: proposal.id,
+        description: "Revised authored skill",
+        content: skillMarkdown("revision-skill").replace("Body.", "Revised."),
+      });
+
+      expect(revised.proposal.effectHash).not.toBe(receipt.effectHash);
+      expect(revised.proposal.preparedState).toBe("ready");
+      await expect(
+        applyApprovedSkillProposal(workspace, proposal.id),
+      ).rejects.toThrow(/requires approval for its current final effect/);
+      await expect(
+        readFile(
+          join(
+            workspace,
+            ".sparkwright",
+            "skills",
+            "revision-skill",
+            "SKILL.md",
+          ),
+          "utf8",
+        ),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("reconciles a crash after the prepared package reached its target without duplicating history", async () => {
+    const workspace = await makeWorkspace();
+    try {
+      const proposal = await createSkillCreateProposal({
+        workspaceRoot: workspace,
+        name: "resume-skill",
+        description: "Crash-resumable authored skill",
+        content: skillMarkdown("resume-skill"),
+      });
+      const prepared = await prepareSkillProposalApproval(
+        workspace,
+        proposal.id,
+      );
+      await recordSkillProposalApproval({
+        workspaceRoot: workspace,
+        proposalId: proposal.id,
+        effectHash: prepared.effectHash,
+      });
+      await mkdir(join(proposal.targetPath, ".."), { recursive: true });
+      await cp(
+        join(proposal.path, "after", proposal.skillName),
+        proposal.targetPath,
+        { recursive: true },
+      );
+
+      const applied = await applyApprovedSkillProposal(workspace, proposal.id);
+      expect(applied.proposal).toMatchObject({
+        state: "applied",
+        preparedState: "applied",
+      });
+      expect(applied.history.id).toBe(
+        `skillver_${prepared.effectHash.slice(0, 24)}`,
+      );
+      await expect(
+        readFile(join(proposal.path, "mutation-receipt.json"), "utf8"),
+      ).resolves.toContain(applied.history.id);
+      const receipt = JSON.parse(
+        await readFile(join(proposal.path, "mutation-receipt.json"), "utf8"),
+      ) as { packageHashPolicyVersion?: number };
+      expect(receipt.packageHashPolicyVersion).toBe(2);
+      const historyRoot = join(
+        workspace,
+        ".sparkwright",
+        "skill-evolution",
+        "history",
+        "resume-skill",
+      );
+      expect(await readdir(historyRoot)).toEqual([applied.history.id]);
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
   it("applies update proposals with full package assets and history", async () => {
     const workspace = await makeWorkspace();
     try {
       const sourceRoot = join(workspace, "user-skills");
       const sourceSkill = join(sourceRoot, "asset-skill");
       await mkdir(join(sourceSkill, "references"), { recursive: true });
+      await mkdir(join(sourceSkill, "fixtures"), { recursive: true });
       await writeFile(
         join(sourceSkill, "SKILL.md"),
         skillMarkdown("asset-skill"),
       );
       await writeFile(join(sourceSkill, "references", "guide.md"), "guide\n");
+      await writeFile(join(sourceSkill, "fixtures", "case.txt"), "case\n");
 
       const proposal = await createSkillUpdateProposal({
         workspaceRoot: workspace,
@@ -84,8 +311,9 @@ describe("skill proposal application", () => {
           "utf8",
         ),
       ).resolves.toBe("guide\n");
-
       const applied = await applySkillProposal(workspace, proposal.id);
+      expect(proposal.packageHashPolicyVersion).toBe(2);
+      expect(applied.history.packageHashPolicyVersion).toBe(2);
 
       await expect(
         readFile(
@@ -109,6 +337,31 @@ describe("skill proposal application", () => {
       await expect(
         readFile(
           join(
+            workspace,
+            ".sparkwright",
+            "skills",
+            "asset-skill",
+            "fixtures",
+            "case.txt",
+          ),
+          "utf8",
+        ),
+      ).resolves.toBe("case\n");
+      await expect(
+        readFile(
+          join(
+            applied.history.path,
+            "after",
+            "asset-skill",
+            "fixtures",
+            "case.txt",
+          ),
+          "utf8",
+        ),
+      ).resolves.toBe("case\n");
+      await expect(
+        readFile(
+          join(
             applied.history.path,
             "after",
             "asset-skill",
@@ -123,6 +376,46 @@ describe("skill proposal application", () => {
           "asset-skill",
         ),
       ).toMatchObject({ patchCount: 1 });
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("marks an update stale when an externally changed v2 file was omitted by v1", async () => {
+    const workspace = await makeWorkspace();
+    try {
+      const sourceRoot = join(workspace, "user-skills");
+      const sourceSkill = join(sourceRoot, "drift-skill");
+      await mkdir(join(sourceSkill, "fixtures"), { recursive: true });
+      await writeFile(
+        join(sourceSkill, "SKILL.md"),
+        skillMarkdown("drift-skill"),
+      );
+      await writeFile(join(sourceSkill, "fixtures", "case.txt"), "before\n");
+
+      const proposal = await createSkillUpdateProposal({
+        workspaceRoot: workspace,
+        skillRoots: [{ root: sourceRoot, layer: "user" }],
+        name: "drift-skill",
+        description: "Update while preserving fixture",
+        applyEdit: (content) => content.replace("Body.", "Updated body."),
+      });
+      expect(proposal.packageHashPolicyVersion).toBe(2);
+      await writeFile(join(sourceSkill, "fixtures", "case.txt"), "changed\n");
+
+      await expect(applySkillProposal(workspace, proposal.id)).rejects.toThrow(
+        /Source Skill changed since proposal/,
+      );
+      const metadata = JSON.parse(
+        await readFile(join(proposal.path, "metadata.json"), "utf8"),
+      ) as { state: string };
+      expect(metadata.state).toBe("stale");
+      await expect(
+        readFile(
+          join(workspace, ".sparkwright", "skills", "drift-skill", "SKILL.md"),
+          "utf8",
+        ),
+      ).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
       await rm(workspace, { recursive: true, force: true });
     }
@@ -440,7 +733,10 @@ describe("skill proposal application", () => {
       });
       const afterDir = join(proposal.path, "after", "safe-skill");
       await writeFile(join(afterDir, "SKILL.md"), skillMarkdown("other-skill"));
-      const hash = await computeSkillPackageHash(afterDir);
+      const hash = await computeAssetPackageHash({
+        rootPath: afterDir,
+        entryPath: "SKILL.md",
+      });
       const metadataPath = join(proposal.path, "metadata.json");
       const metadata = JSON.parse(await readFile(metadataPath, "utf8")) as {
         afterPackageHash: string;

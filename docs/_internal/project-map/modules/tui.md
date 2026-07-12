@@ -51,7 +51,41 @@ Does not own:
 
 ## Contracts
 
+- `/create skill` is the canonical general creation entrypoint and
+  `/skill-create` is a hidden compatibility/advanced shortcut. Both prepare a
+  proposal through host `SkillCommandService`; neither writes the current Skill
+  directly. Review apply also calls the service so later-session approval uses
+  the same effect-bound receipt as the in-run fast path.
+
+- Skill proposal files are the persistent inbox. On startup, TUI restores the
+  newest `draft` as a completion-card affordance; `esc` only dismisses that
+  card, while `/skill-review` lists and recovers all durable proposals.
+  Recovery first asks the host to reconcile legacy drafts against current Skill
+  packages, so superseded/stale work remains auditable in review but is not
+  restored as an actionable completion card.
+
+- The prepared-change fast path uses the normal queued approval controller with
+  action `skill.apply`. `ApprovalPrompt` renders the persisted final patch and
+  target before the one-shot decision; it deliberately has an unknown session
+  approval subject, so no remembered rule can authorize later effects. The
+  post-run human-action band remains transitional for review-only/legacy drafts
+  and is not canonical waiting state.
+
 - `RunController` sends `run.start` with the current `sessionId`.
+- Todo-supervisor continuation notices are scrollback-native and label the
+  preceding assistant answer as provisional before showing the continuation
+  count; committed assistant cards remain append-only and are not rewritten.
+- Model-authored Skill draft tool results project host-owned `humanAction`
+  metadata into a short-lived live-frame action band after the run settles.
+  Safe authored create drafts offer `a` then Enter confirmation; `r` opens
+  `/skill-review <proposal-id>` directly; Esc dismisses. Review-required or
+  dangerous drafts do not offer quick apply. Static scrollback rows remain
+  non-interactive and TUI does not recompute the host risk projection.
+- Default committed scrollback suppresses per-file capability mutation rows
+  under `.sparkwright/skill-evolution/proposals/`, counts them by their shared
+  tool span, and appends `N internal mutations` to the terminal Skill proposal
+  result. Raw events remain in the event store/Activity Events view for debug
+  and audit; unrelated capability mutations keep their individual rows.
 - TUI presents one runtime permission axis (`read-only`, `ask`, `accept-edits`,
   `bypass`) but no longer owns a persisted `ui.tuiPermissionMode` config field.
   File config uses shared `run.accessMode`; project `run.accessMode` becomes an
@@ -106,6 +140,19 @@ Does not own:
   summaries through `lib/tool-display.ts`. For tool requests they first consume
   `tool.requested.payload.preview` produced by the tool definition; the local
   name-based formatter is fallback for older traces.
+- Committed tool history hides one-tool batch headers and removes their batch
+  indentation/margin; multi-tool batches remain muted structural groups while
+  ordinary tool markers are muted and names use normal foreground emphasis.
+- Explicit background shell handoff results and `task.created` queue rows stay
+  out of committed history; `task.started` plus terminal `task.*` rows carry the
+  visible lifecycle. If a task becomes terminal after the final model request,
+  the run footer appends a structured runtime update so stale model prose does
+  not override the current task record. Completed terminals use success color,
+  failures use error color, and user/requested cancellation uses warning color
+  in both lifecycle rows and runtime updates.
+- Run facts do not label an explicit/promoted background shell handoff as a
+  completed command; task lifecycle rows remain the visible source for its
+  later terminal state.
 - Ctrl+O uses the `activity.open` binding and opens the Activity Drawer on the
   Tasks tab by default. `events.open` remains a configurable action with no
   default binding; `/events` and `events.open` both open the Activity Drawer on
@@ -296,6 +343,96 @@ Does not own:
   durable control inbox before adding daemon and multi-channel adapters.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-12T08:36:00+0800
+- Scope: replaced the transient Skill action band with a persisted-inbox
+  completion card and wired both TUI creation paths to refresh it.
+- Read: `app.tsx`, completion card, event store, Skill evolution helpers, and
+  capability/Skill action hooks.
+- Tests: focused card/event-store/inbox/create/review tests; TUI typecheck.
+
+- Status: Verified
+- Date: 2026-07-12T08:25:00+0800
+- Scope: converged generic and dedicated TUI Skill create/review adapters on
+  the host command service and clarified canonical/shortcut UX.
+- Read: `lib/create-capability.ts`, `lib/skill-evolution.ts`, command registry,
+  capability and Skill action hooks.
+- Tests: focused TUI create/evolution suites and TUI typecheck.
+
+- Status: Verified
+- Date: 2026-07-12T02:12:00+0800
+- Scope: effect-bound `skill.apply` approval projection and final-diff render;
+  canonical waiting/receipt state remains host-persisted.
+- Read: `packages/tui/src/state/run-controller.ts`,
+  `packages/tui/src/state/event-store.ts`,
+  `packages/tui/src/components/approval-prompt.tsx`.
+- Tests: TUI typecheck; approval prompt render and queued approval controller
+  focused suites.
+
+- Status: Verified
+- Date: 2026-07-12T00:56:00+0800
+- Scope: folded proposal-package mutation noise into the terminal Skill tool
+  summary while retaining raw events and append-only Static rendering.
+- Read: `packages/tui/src/components/event-stream.tsx`,
+  `packages/tui/src/lib/tool-display.ts`, and
+  `packages/tui/test/event-stream-render.test.ts`.
+- Tests: `npm --workspace @sparkwright/tui test --
+test/event-stream-render.test.ts test/tool-request-preview.test.ts`;
+  `npm --workspace @sparkwright/tui run typecheck`.
+
+- Status: Verified
+- Date: 2026-07-11T23:20:00+0800
+- Scope: proposal-id review routing plus a centralized, terminal-only Skill
+  human-action band with explicit apply confirmation and duplicate-submit
+  suppression.
+- Read: `packages/tui/src/lib/skill-evolution.ts`,
+  `packages/tui/src/state/event-store.ts`,
+  `packages/tui/src/state/use-skill-actions.ts`, `packages/tui/src/app.tsx`,
+  `packages/tui/src/components/live-frame.tsx`, and
+  `packages/tui/src/components/human-action-band.tsx`.
+- Tests: TUI Skill parser/review, event-store projection, action-band render,
+  and review-dialog focused tests passed; PTY proposal-id review focused the
+  requested proposal without model involvement.
+
+- Status: Verified
+- Date: 2026-07-11T22:55:00+0800
+- Scope: cancelled background task lifecycle and runtime-update rows use warning
+  tone while failed rows retain error tone.
+- Read: `packages/tui/src/components/event-stream.tsx`,
+  `packages/tui/test/event-stream-render.test.ts`.
+- Tests: full `npm run release:check`.
+
+- Status: Verified
+- Date: 2026-07-11T22:17:00+0800
+- Scope: todo-supervisor continuation dividers now mark the preceding assistant
+  answer provisional while preserving append-only, scrollback-native rendering.
+- Read: `packages/tui/src/state/run-controller.ts`,
+  `packages/tui/src/state/event-store.ts`, and
+  `packages/tui/src/components/event-stream.tsx`.
+- Tests: `npm --workspace @sparkwright/tui test --
+test/event-stream-render.test.ts`; `npm --workspace @sparkwright/tui run
+typecheck`.
+
+- Status: Verified
+- Date: 2026-07-11T20:32:00+0800
+- Scope: background shell handoffs no longer produce the misleading run-facts
+  label `last command ... completed`.
+- Read: `packages/tui/src/components/event-stream.tsx`,
+  `packages/tui/test/event-stream-render.test.ts`.
+- Tests: `npm --workspace @sparkwright/tui test --
+test/event-stream-render.test.ts`; `npm --workspace @sparkwright/tui run
+typecheck`.
+
+- Status: Verified
+- Date: 2026-07-11T19:53:00+0800
+- Scope: reduced single-tool/background lifecycle noise, lowered tool-request
+  accent intensity, and added terminal task updates for final-generation races.
+- Read: `packages/tui/src/components/event-stream.tsx`,
+  `packages/tui/test/event-stream-render.test.ts`.
+- Tests: `npm --workspace @sparkwright/tui test --
+test/event-stream-render.test.ts`; `npm --workspace @sparkwright/tui run
+typecheck`.
 
 - Status: Verified
 - Date: 2026-07-11T15:30:00+0800

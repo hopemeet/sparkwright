@@ -12,9 +12,11 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   applyTuiSkillReviewProposal,
   createTuiSkillProposal,
+  loadTuiSkillInboxAction,
   formatTuiSkillProposalResult,
   formatTuiSkillReviewSummary,
   loadTuiSkillReview,
+  parseTuiSkillReviewTarget,
   parseTuiSkillProposalInput,
   rejectTuiSkillReviewProposal,
   reviewTuiSkillProposals,
@@ -56,6 +58,23 @@ describe("tui skill evolution commands", () => {
     expect(() => parseTuiSkillProposalInput("Bad Name")).toThrow(/usage/);
   });
 
+  it("parses skill review proposal ids without breaking state filters", () => {
+    expect(parseTuiSkillReviewTarget("")).toEqual({ kind: "all" });
+    expect(parseTuiSkillReviewTarget("draft")).toEqual({
+      kind: "state",
+      state: "draft",
+    });
+    expect(parseTuiSkillReviewTarget("--state applied")).toEqual({
+      kind: "state",
+      state: "applied",
+    });
+    expect(parseTuiSkillReviewTarget("skillprop_abc123")).toEqual({
+      kind: "proposal",
+      proposalId: "skillprop_abc123",
+    });
+    expect(() => parseTuiSkillReviewTarget("not-a-state")).toThrow(/usage/);
+  });
+
   it("creates and reviews proposals without writing current skills", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "sparkwright-tui-skill-"));
     tempDirs.push(workspace);
@@ -83,6 +102,38 @@ describe("tui skill evolution commands", () => {
     expect(detail.total).toBe(1);
     expect(detail.items[0]?.proposalMarkdown).toContain("code-reviewer");
     expect(detail.items[0]?.patchDiff).toContain("+name: code-reviewer");
+
+    const byId = await loadTuiSkillReview(workspace, proposal.id);
+    expect(byId).toMatchObject({
+      total: 1,
+      proposalId: proposal.id,
+    });
+    expect(byId.items.map((item) => item.id)).toEqual([proposal.id]);
+    await expect(
+      loadTuiSkillReview(workspace, "skillprop_missing"),
+    ).rejects.toThrow(/ENOENT|no such file/i);
+  });
+
+  it("restores the newest open proposal as a persistent inbox action", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-tui-inbox-"));
+    tempDirs.push(workspace);
+    const first = await createTuiSkillProposal(
+      workspace,
+      "first --description First Skill",
+    );
+    const second = await createTuiSkillProposal(
+      workspace,
+      "second --description Second Skill",
+    );
+
+    const inbox = await loadTuiSkillInboxAction(workspace);
+    expect(inbox).toMatchObject({
+      kind: "skill_proposal_review",
+      proposalId: second.id,
+      reviewCommand: `/skill-review ${second.id}`,
+      eligibility: "review_required",
+    });
+    expect(inbox?.proposalId).not.toBe(first.id);
   });
 
   it("reads and writes the project skill learn mode", async () => {

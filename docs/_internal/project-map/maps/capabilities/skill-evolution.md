@@ -13,6 +13,7 @@ See [../../modules/skills.md](../../modules/skills.md).
 ## Main Files
 
 - `packages/host/src/skill-evolution.ts` (proposal/history/restore lifecycle)
+- `packages/host/src/skill-command-service.ts` (ordinary create/approve/apply command boundary)
 - `packages/host/src/skill-review-digest.ts` (`skills review` host digest)
 - `packages/host/src/skill-usage.ts` (advisory patch observations)
 - `packages/host/src/tools.ts` (`create_skill`, `update_skill` model tools)
@@ -37,6 +38,11 @@ See [../../modules/skills.md](../../modules/skills.md).
 Both `before/` and `after/` are full immutable skill-package snapshots with
 `sha256` package hashes in metadata.
 
+New managed proposals, revisions, apply/recovery, history, restore, and
+mutation receipts use package identity v2 and persist
+`packageHashPolicyVersion: 2`. Missing policy version means immutable legacy v1
+and continues to use the v1 enumerator; readers never rewrite it during scans.
+
 ## Lifecycle
 
 ```txt
@@ -55,10 +61,57 @@ history kinds:   create | update | restore
 
 ## Contracts
 
+- **Create entrypoint convergence:** model `create_skill`, CLI `skills create`,
+  TUI `/create skill`, and TUI `/skill-create` all call
+  `SkillCommandService.prepareCreate`. CLI/TUI review apply calls
+  `approveAndApply`; the in-run model fast path uses `prepareApproval` plus
+  `approvePrepared` after the run approval resolves. Advanced proposal-create
+  commands remain low-level authoring surfaces, not a fifth ordinary UX.
+
+- **TUI persistent inbox:** proposal files remain the source of truth. TUI
+  reads the newest draft after startup and after either creation surface, then
+  presents a dismissible completion card linked to `/skill-review`; dismissing
+  the card never closes or mutates the draft.
+- **Draft reconciliation and competing proposals:** successful apply closes all
+  other draft proposals for the same project target as `superseded`, linked by
+  `supersededBy`. Before TUI inbox/review recovery and ordinary create
+  preparation, host reconciliation repairs legacy drafts: a create whose
+  current target matches managed applied history becomes `superseded`; an
+  externally occupied create target or an update whose base disappeared or
+  drifted becomes `stale`. Listing proposals remains read-only. Apply-time hash
+  and base checks remain the safety gate; reconciliation controls whether a
+  draft is presented as actionable. Secondary cleanup failure never rolls back
+  an already successful apply and is retried by the next reconciliation pass.
+
+- **Prepared create fast path:** a complete clean authored model create is
+  persisted as `ready`/`waiting` with `artifactId` and `effectHash` before the
+  run asks for `skill.apply`. Approval binds proposal id + revision + effect
+  hash, persists `approval.json`, applies in the same tool episode, and writes
+  `mutation-receipt.json` plus deterministic effect-keyed history. No resolver
+  or a denial leaves the proposal waiting for later review.
+- **Effect authorization:** the hash covers artifact kind/id, operation,
+  project target, base/after package hashes, origin digest, and capability
+  requirements; guard policy version/message text is excluded. Revision
+  recomputes the effect hash and makes an old receipt unusable. Apply reruns the
+  guard; dangerous fingerprints not present in the receipt return the proposal
+  to waiting.
+- **Crash reconciliation:** an approved/applying proposal whose target already
+  equals the after-package hash completes doctor, deterministic history,
+  mutation receipt, and applied state instead of becoming stale or duplicating
+  history.
+
 - **Actor boundary:** model-facing `create_skill` and `update_skill` draft
   proposals. `applySkillProposal`, reject, supersede, prune, and restore are
-  **never exposed as model tools** — they run from CLI/TUI only. Manual CLI
-  `sparkwright skills create` remains a human direct-write management command.
+  **never exposed as model tools** — they run from CLI/TUI only. CLI
+  `sparkwright skills create` now prepares through the same proposal service;
+  it is no longer a direct-write exception.
+- **Human-action handoff:** model-facing draft results carry one canonical
+  `/skill-review <proposal-id>` command plus a host-computed `humanAction`
+  projection (eligibility, validation, content mode, guard severity, and
+  recommended action). TUI consumes that projection only after the run settles;
+  it never recomputes risk and apply still runs through the human-only
+  hash/guard/doctor/history gate. The model fallback explicitly directs later
+  apply requests to the review command instead of searching for an apply tool.
 - **Failed drafts self-clean:** `createSkillCreateProposal` /
   `createSkillUpdateProposal` wrap their package writes; if a post-snapshot step
   throws (unparseable body, name mismatch, guard parse), the partial proposal
@@ -112,11 +165,15 @@ history kinds:   create | update | restore
   only conservative reuse-signal evidence plus the active session id. It does
   not infer a target Skill name from prompt text; named Skill updates are
   explicit `/skill-update` or caller-supplied `targetSkillName` paths.
-- **Run-scoped draft idempotency:** during a model run, repeated `create_skill`
-  or `update_skill` drafts for the same skill and run id return the existing
-  draft proposal (`changed:false`, `existing:true`) instead of creating another
-  proposal directory. Human CLI-authored proposals have no run provenance and
-  remain separate drafts.
+- **Session-scoped draft idempotency and revision:** model-authored
+  `create_skill` / `update_skill` calls reuse a draft for the same session,
+  proposal kind, and skill target across todo-supervisor continuation runs;
+  callers without session provenance fall back to run-scoped matching. Equal
+  content returns the existing proposal unchanged, while changed content
+  revises the same proposal id, increments its `revision`, records the replaced
+  package hash, and refreshes the after package, patch, guard findings, and
+  review metadata. Closed proposals are never revised. Human CLI-authored
+  proposals have no run/session provenance and remain separate drafts.
 - **Mutations are trace-visible:** every atomic write emits
   `capability.mutation.completed`; proposals/history themselves are file
   artifacts, not a separate trace event family. Draft proposal writes are
@@ -162,6 +219,83 @@ history kinds:   create | update | restore
   there is no persisted run→proposals index (a scan, not an index).
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-12
+- Scope: competing-draft supersession, legacy inbox reconciliation, stale
+  create/update classification, and TUI actionable-draft recovery.
+- Read: `packages/host/src/skill-evolution.ts`,
+  `packages/host/src/skill-command-service.ts`,
+  `packages/tui/src/lib/skill-evolution.ts`, and focused tests.
+- Tests: focused host Skill evolution/command-service and TUI Skill evolution
+  suites; affected typechecks.
+
+- Status: Verified
+- Date: 2026-07-12T20:00:00+0800
+- Scope: direct reconciliation remains distinct from mutation receipts and now
+  has unique ownership, recovery journaling, explicit import origin, and
+  persisted advisory-suggestion suppression. Import origin, registry, and
+  reconciliation receipt recover from one pending transaction.
+- Read: Skill evolution, registry, suggestion/review and CLI paths.
+- Tests: focused registry, suggestion, evolution, and CLI suites passed.
+
+- Status: Verified
+- Date: 2026-07-12T14:03:23+0800
+- Scope: migrated new managed Skill package operations to the v2 canonical file
+  set with legacy v1 proposal/history compatibility and external-file drift
+  stale protection.
+- Read: `packages/host/src/skill-evolution.ts`,
+  `packages/host/src/capability-package-mutation.ts`,
+  `packages/skills/src/package-v2.ts`, and focused host tests.
+- Tests: host focused Skill evolution/package-mutation suites and host
+  typecheck/build.
+
+- Status: Verified
+- Date: 2026-07-12T08:36:00+0800
+- Scope: documented TUI persisted-inbox recovery and completion-card boundary.
+- Read: TUI proposal helper, action hooks, event store, App and review dialog.
+- Tests: focused TUI completion-card and persistent-inbox suites; TUI typecheck.
+
+- Status: Verified
+- Date: 2026-07-12T08:25:00+0800
+- Scope: Phase 2 create-entrypoint convergence and service-owned later-session
+  approve/apply.
+- Read: host service/evolution, CLI and both TUI adapters, model tool.
+- Tests: focused host, CLI and TUI entrypoint suites plus affected typechecks.
+
+- Status: Verified
+- Date: 2026-07-12T02:12:00+0800
+- Scope: first durable prepared-change vertical slice for safe authored create;
+  existing list/review/history/restore and continuation draft dedupe preserved.
+- Read: `packages/host/src/skill-evolution.ts`, `packages/host/src/tools.ts`.
+- Tests: host Skill evolution/tool focused suites (109 tests); host typecheck.
+
+- Status: Verified
+- Date: 2026-07-11T23:20:00+0800
+- Scope: closed the model-draft to human-apply handoff: proposal ids are valid
+  TUI review targets, draft results expose host-owned human-action eligibility,
+  and the fallback instruction prevents model apply-tool searches.
+- Read: `packages/host/src/tools.ts`, `packages/host/src/skill-evolution.ts`,
+  `packages/tui/src/lib/skill-evolution.ts`,
+  `packages/tui/src/state/event-store.ts`, `packages/tui/src/app.tsx`, and
+  `packages/tui/src/components/human-action-band.tsx`.
+- Tests: `npm --workspace @sparkwright/host test -- test/tools.test.ts
+test/skill-evolution.test.ts`; `npm --workspace @sparkwright/tui test --
+test/skill-evolution.test.ts test/event-store-active-phase.test.ts
+test/human-action-band-render.test.tsx test/skill-review-dialog-render.test.tsx`;
+  PTY `/skill-review skillprop_mrggqcyvwiz9rts2` focused the requested draft.
+
+- Status: Verified
+- Date: 2026-07-11T22:17:00+0800
+- Scope: session-scoped model draft reuse now spans todo-supervisor run-chain
+  episodes; changed create/update bodies revise the same draft id with
+  monotonic revision and prior-hash metadata, while equal bodies remain
+  no-write idempotent and missing session provenance falls back to run scope.
+- Read: `packages/host/src/tools.ts`, `packages/host/src/skill-evolution.ts`,
+  `packages/host/test/tools.test.ts`, this map, and `modules/skills.md`.
+- Tests: `npm --workspace @sparkwright/host test -- test/tools.test.ts
+test/skill-evolution.test.ts`; `npm --workspace @sparkwright/host run
+typecheck`.
 
 - Status: Verified
 - Date: 2026-07-07T13:18:00+0800
