@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   FileSkillUsageRecorder,
-  computeSkillPackageHash,
+  computeAssetPackageHash,
 } from "@sparkwright/skills";
 import {
   applyApprovedSkillProposal,
@@ -151,6 +151,10 @@ describe("skill proposal application", () => {
       await expect(
         readFile(join(proposal.path, "mutation-receipt.json"), "utf8"),
       ).resolves.toContain(applied.history.id);
+      const receipt = JSON.parse(
+        await readFile(join(proposal.path, "mutation-receipt.json"), "utf8"),
+      ) as { packageHashPolicyVersion?: number };
+      expect(receipt.packageHashPolicyVersion).toBe(2);
       const historyRoot = join(
         workspace,
         ".sparkwright",
@@ -170,11 +174,13 @@ describe("skill proposal application", () => {
       const sourceRoot = join(workspace, "user-skills");
       const sourceSkill = join(sourceRoot, "asset-skill");
       await mkdir(join(sourceSkill, "references"), { recursive: true });
+      await mkdir(join(sourceSkill, "fixtures"), { recursive: true });
       await writeFile(
         join(sourceSkill, "SKILL.md"),
         skillMarkdown("asset-skill"),
       );
       await writeFile(join(sourceSkill, "references", "guide.md"), "guide\n");
+      await writeFile(join(sourceSkill, "fixtures", "case.txt"), "case\n");
 
       const proposal = await createSkillUpdateProposal({
         workspaceRoot: workspace,
@@ -192,8 +198,9 @@ describe("skill proposal application", () => {
           "utf8",
         ),
       ).resolves.toBe("guide\n");
-
       const applied = await applySkillProposal(workspace, proposal.id);
+      expect(proposal.packageHashPolicyVersion).toBe(2);
+      expect(applied.history.packageHashPolicyVersion).toBe(2);
 
       await expect(
         readFile(
@@ -217,6 +224,31 @@ describe("skill proposal application", () => {
       await expect(
         readFile(
           join(
+            workspace,
+            ".sparkwright",
+            "skills",
+            "asset-skill",
+            "fixtures",
+            "case.txt",
+          ),
+          "utf8",
+        ),
+      ).resolves.toBe("case\n");
+      await expect(
+        readFile(
+          join(
+            applied.history.path,
+            "after",
+            "asset-skill",
+            "fixtures",
+            "case.txt",
+          ),
+          "utf8",
+        ),
+      ).resolves.toBe("case\n");
+      await expect(
+        readFile(
+          join(
             applied.history.path,
             "after",
             "asset-skill",
@@ -231,6 +263,46 @@ describe("skill proposal application", () => {
           "asset-skill",
         ),
       ).toMatchObject({ patchCount: 1 });
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("marks an update stale when an externally changed v2 file was omitted by v1", async () => {
+    const workspace = await makeWorkspace();
+    try {
+      const sourceRoot = join(workspace, "user-skills");
+      const sourceSkill = join(sourceRoot, "drift-skill");
+      await mkdir(join(sourceSkill, "fixtures"), { recursive: true });
+      await writeFile(
+        join(sourceSkill, "SKILL.md"),
+        skillMarkdown("drift-skill"),
+      );
+      await writeFile(join(sourceSkill, "fixtures", "case.txt"), "before\n");
+
+      const proposal = await createSkillUpdateProposal({
+        workspaceRoot: workspace,
+        skillRoots: [{ root: sourceRoot, layer: "user" }],
+        name: "drift-skill",
+        description: "Update while preserving fixture",
+        applyEdit: (content) => content.replace("Body.", "Updated body."),
+      });
+      expect(proposal.packageHashPolicyVersion).toBe(2);
+      await writeFile(join(sourceSkill, "fixtures", "case.txt"), "changed\n");
+
+      await expect(applySkillProposal(workspace, proposal.id)).rejects.toThrow(
+        /Source Skill changed since proposal/,
+      );
+      const metadata = JSON.parse(
+        await readFile(join(proposal.path, "metadata.json"), "utf8"),
+      ) as { state: string };
+      expect(metadata.state).toBe("stale");
+      await expect(
+        readFile(
+          join(workspace, ".sparkwright", "skills", "drift-skill", "SKILL.md"),
+          "utf8",
+        ),
+      ).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
       await rm(workspace, { recursive: true, force: true });
     }
@@ -548,7 +620,10 @@ describe("skill proposal application", () => {
       });
       const afterDir = join(proposal.path, "after", "safe-skill");
       await writeFile(join(afterDir, "SKILL.md"), skillMarkdown("other-skill"));
-      const hash = await computeSkillPackageHash(afterDir);
+      const hash = await computeAssetPackageHash({
+        rootPath: afterDir,
+        entryPath: "SKILL.md",
+      });
       const metadataPath = join(proposal.path, "metadata.json");
       const metadata = JSON.parse(await readFile(metadataPath, "utf8")) as {
         afterPackageHash: string;

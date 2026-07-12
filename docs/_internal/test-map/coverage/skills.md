@@ -14,6 +14,11 @@
 
 ## Covered
 
+- 2026-07-12 Phase 3B coverage proves new managed proposal/history/receipt
+  records use v2 identity, ordinary root files survive proposal apply/history,
+  and direct change to an included file marks the proposal stale without target
+  overwrite. Missing-policy legacy records remain v1 readers.
+
 - 2026-07-12 Phase 3A package identity v2 substrate coverage proves complete
   canonical ordinary-file enumeration, fixed exclusions, NUL-framed stable
   hashing, same-set snapshotting, policy version attribution, and fail-closed

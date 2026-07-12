@@ -145,6 +145,16 @@ skill roots
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-12T14:05:58+0800
+- Scope: checked the loader/runtime capability path after managed Skill v2
+  evolution migration; its v1 runtime package identity contract is unchanged
+  pending the separate Phase 6 event-time stats migration.
+- Read: `packages/host/src/skill-evolution.ts`,
+  `packages/host/src/capability-package-mutation.ts`,
+  `packages/skills/src/index.ts`, and `packages/skills/src/package-v2.ts`.
+- Tests: focused host/CLI/Skills suites and full `npm run release:check`.
+
+- Status: Verified
 - Date: 2026-07-12T13:45:22+0800
 - Scope: verified the standalone package identity v2 substrate and that current
   Skill runtime identity still uses the v1 hasher.

@@ -306,12 +306,13 @@ history, receipt, recovery, and four-entry command-service convergence.
 - Existing v1 APIs and records remain readable and are not rewritten. Phase 3B
   performs the explicit Skill migration.
 
-### Phase 3B: Skill full-package and external-change safety
+### Completed: Phase 3B Skill full-package and external-change safety
 
-- Move Skill hash, staged snapshots, diff, apply, history, and restore to the
-  v2 canonical set.
-- Implement the safety column of the direct-operation matrix: stale/fail-closed,
-  base/after checks, and never-overwrite behavior, without rename continuity.
+- New managed proposals, revisions, staged snapshots, apply/recovery, history,
+  restore, and mutation receipts use the v2 canonical set and carry policy 2.
+- Missing policy version remains legacy v1. Included external ordinary-file
+  drift marks a proposal stale without overwriting the target; registry-based
+  continuity and runtime stats attribution remain later phases.
 
 ### Phase 4: Workflow executable package pinning correctness
 
@@ -390,6 +391,16 @@ history, receipt, recovery, and four-entry command-service convergence.
   projection caches?
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-12T14:03:23+0800
+- Scope: completed Phase 3B managed Skill migration to v2 package identity,
+  including legacy v1 compatibility and external-file stale protection.
+- Read: `packages/host/src/skill-evolution.ts`,
+  `packages/host/src/capability-package-mutation.ts`,
+  `packages/skills/src/package-v2.ts`, and focused host tests.
+- Tests: host focused Skill evolution/package-mutation suites and host
+  typecheck/build.
 
 - Status: Verified
 - Date: 2026-07-12T13:45:22+0800

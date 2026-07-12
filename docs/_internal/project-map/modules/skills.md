@@ -85,8 +85,9 @@ Does not own:
   ordinary files except the fixed exclusion table, rejects non-excluded
   symlinks/special files and limit violations, hashes normalized relative paths
   with NUL framing, snapshots the identical file set, and returns
-  `packageHashPolicyVersion: 2`. Phase 3B owns migration of current Skill
-  loading/evolution consumers to this API.
+  `packageHashPolicyVersion: 2`. Managed evolution now uses this API for new
+  proposal/history/restore operations; runtime trace/stats identity remains
+  v1 until Phase 6.
 - `skills stats` materializes rebuildable per-session projections under
   `.sparkwright/skill-stats/sessions/`, keyed by trace fingerprints plus a
   projection algorithm version. Reports expose trace/evolution windows,
@@ -189,6 +190,16 @@ list --run/--session`); failed drafts self-clean. See
   [../maps/capabilities/skill-evolution.md](../maps/capabilities/skill-evolution.md#known-debts).
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-12T14:03:23+0800
+- Scope: verified managed Skill v2 proposal/history/restore operations while
+  retaining v1 readers for legacy records and deferring runtime stats identity.
+- Read: `packages/host/src/skill-evolution.ts`,
+  `packages/host/src/capability-package-mutation.ts`,
+  `packages/skills/src/package-v2.ts`, and focused host tests.
+- Tests: host focused Skill evolution/package-mutation suites and host
+  typecheck/build.
 
 - Status: Verified
 - Date: 2026-07-12T13:45:22+0800
