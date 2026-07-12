@@ -118,6 +118,13 @@ Future run in compacted session
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-12T16:36:08+0800
+- Scope: Workflow resume now fails closed unless its executable package snapshot
+  exists, hashes to the persisted v2 identity, and backs definition `sourceDir`.
+- Read: host Workflow resume/runtime paths and durable workflow record store.
+- Tests: host/CLI Workflow resume suites and full `npm run release:check`.
+
+- Status: Verified
 - Date: 2026-07-12T02:12:00+0800
 - Scope: documented proposal-backed Skill waiting/recovery without widening
   core checkpoint guarantees or coupling Skill records to workflows.

@@ -199,6 +199,11 @@ Does not own:
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-07-12T16:36:08+0800
+- Scope: checked Workflow record identity additions; protocol wire contracts are unchanged.
+- Tests: not run for protocol-specific behavior; Phase 4 Workflow release gate passed.
+
+- Status: Read-only
 - Date: 2026-07-12T02:12:00+0800
 - Scope: checked the first Skill prepared-change slice; it reuses the existing
   `approval.requested` / `approval.resolve` envelope with action `skill.apply`

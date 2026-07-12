@@ -514,6 +514,13 @@ function buildWorkflowRecord(
     assetName: input.assetName,
     ...(input.version ? { version: input.version } : {}),
     contentHash: input.contentHash,
+    ...(input.packageHash ? { packageHash: input.packageHash } : {}),
+    ...(input.packageHashPolicyVersion
+      ? { packageHashPolicyVersion: input.packageHashPolicyVersion }
+      : {}),
+    ...(input.packageSnapshotRef
+      ? { packageSnapshotRef: input.packageSnapshotRef }
+      : {}),
     ...(input.parentRunId ? { parentRunId: input.parentRunId } : {}),
     ...(input.sessionId ? { sessionId: input.sessionId } : {}),
     ...(input.activeRunId ? { activeRunId: input.activeRunId } : {}),
@@ -654,6 +661,15 @@ function parseWorkflowRunRecord(raw: unknown): WorkflowRunRecord {
     assetName,
     ...(optionalString(raw.version) ? { version: raw.version } : {}),
     contentHash,
+    ...(optionalString(raw.packageHash)
+      ? { packageHash: raw.packageHash }
+      : {}),
+    ...(raw.packageHashPolicyVersion === 2
+      ? { packageHashPolicyVersion: 2 as const }
+      : {}),
+    ...(optionalString(raw.packageSnapshotRef)
+      ? { packageSnapshotRef: raw.packageSnapshotRef }
+      : {}),
     ...(optionalString(raw.parentRunId)
       ? { parentRunId: raw.parentRunId as WorkflowRunRecord["parentRunId"] }
       : {}),

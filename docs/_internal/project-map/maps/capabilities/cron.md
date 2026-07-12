@@ -103,6 +103,11 @@ cron config/state
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-07-12T16:36:08+0800
+- Scope: checked portable Workflow record changes; Cron behavior is unchanged.
+- Tests: not run for Cron behavior; Phase 4 Workflow release gate passed.
+
+- Status: Read-only
 - Date: 2026-07-07T14:43:43+0800
 - Scope: real mini Agent + Skill QA follow-up changed detached/promoted
   `task_create` result guidance and host terminal task notification body text

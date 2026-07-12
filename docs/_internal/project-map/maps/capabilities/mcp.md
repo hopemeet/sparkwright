@@ -83,6 +83,11 @@ host config MCP servers
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-07-12T16:36:08+0800
+- Scope: checked host Workflow snapshot preparation; MCP contracts are unchanged.
+- Tests: not run for MCP behavior; Phase 4 Workflow release gate passed.
+
+- Status: Read-only
 - Date: 2026-07-07T00:55:52+0800
 - Scope: workflow nested help and offline workflow observation filtering do not
   change MCP preparation, wrapped MCP tool execution, server cwd handling,

@@ -32,7 +32,10 @@ import {
   loadHostConfig,
   skillUsagePath,
 } from "@sparkwright/host";
-import { FileSkillUsageRecorder } from "@sparkwright/skills";
+import {
+  computeAssetPackageHash,
+  FileSkillUsageRecorder,
+} from "@sparkwright/skills";
 import {
   FileWorkflowServiceStore,
   WorkflowServiceCarrier,
@@ -3276,16 +3279,40 @@ describe("runCli", () => {
     const writer = await store.acquireWriter(workflowRunId, {
       owner: "test-fixture",
     });
+    const packageSnapshotRef = join(
+      workspace,
+      ".sparkwright",
+      "sessions",
+      sessionId,
+      "workflow-runs",
+      "package-snapshots",
+      workflowRunId,
+    );
+    await mkdir(packageSnapshotRef, { recursive: true });
+    await writeFile(join(packageSnapshotRef, "workflow.md"), "# snapshot\n");
+    const packageHash = (
+      await computeAssetPackageHash({
+        rootPath: packageSnapshotRef,
+        entryPath: "workflow.md",
+      })
+    ).packageHash;
     await writer!.create({
       id: workflowRunId,
       sessionId,
       assetName: "cli-resume",
       contentHash: "hash-cli-resume",
+      packageHash,
+      packageHashPolicyVersion: 2,
+      packageSnapshotRef,
       currentNodeId: "main",
       attempts: { main: 1 },
       definitionSnapshot: {
         assetName: "cli-resume",
         contentHash: "hash-cli-resume",
+        packageHash,
+        packageHashPolicyVersion: 2,
+        packageSnapshotRef,
+        sourceDir: packageSnapshotRef,
         nodes: [{ id: "main", body: "Resume through the CLI." }],
       },
       metadata: { goal: "resume workflow from cli" },

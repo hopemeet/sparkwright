@@ -199,6 +199,11 @@ config + workspace capability roots
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-12T16:36:08+0800
+- Scope: checked Workflow package pinning; capability catalog contracts are unchanged.
+- Tests: not run for catalog-specific behavior; Phase 4 Workflow release gate passed.
+
 - Status: Verified
 - Date: 2026-07-11T02:10:00+0800
 - Scope: background governance capability is complete through P4; nested

@@ -205,6 +205,11 @@ EventLog emits full event
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-12T16:36:08+0800
+- Scope: checked Workflow package identity persistence; raw trace event contract is unchanged.
+- Tests: not run for trace-specific behavior; Phase 4 Workflow release gate passed.
+
 - Status: Verified
 - Date: 2026-07-11T22:55:00+0800
 - Scope: documented degraded-buffer stream-segment telemetry approximation;

@@ -311,6 +311,11 @@ Does not own:
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-12T16:36:08+0800
+- Scope: checked Workflow CLI resume against executable snapshots; CLI syntax is unchanged.
+- Tests: not run for broader CLI behavior; Phase 4 Workflow release gate passed.
+
 - Status: Verified
 - Date: 2026-07-12T08:25:00+0800
 - Scope: converged CLI Skill create/apply with model and TUI managed-change

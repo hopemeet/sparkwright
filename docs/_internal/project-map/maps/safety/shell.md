@@ -137,6 +137,11 @@ model calls shell tool
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-12T16:36:08+0800
+- Scope: checked snapshot-backed Workflow script source resolution; shell policy is unchanged.
+- Tests: not run for shell-policy-specific behavior; Phase 4 Workflow release gate passed.
+
 - Status: Verified
 - Date: 2026-07-11T22:10:00+0800
 - Scope: removed the legacy per-call timeout alias from public input/output and

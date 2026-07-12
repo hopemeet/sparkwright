@@ -770,6 +770,14 @@ Does not own:
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-12T16:36:08+0800
+- Scope: Workflow instantiate now pins a v2 executable package snapshot and
+  resume verifies its hash before using a snapshot-backed definition.
+- Read: `packages/host/src/runtime.ts`, `packages/host/src/workflows.ts`, and
+  Workflow host/CLI tests.
+- Tests: Workflow focused host/CLI suites and full `npm run release:check`.
+
+- Status: Verified
 - Date: 2026-07-12T08:25:00+0800
 - Scope: introduced the shared Skill command boundary and moved all ordinary
   create/apply adapters onto it.

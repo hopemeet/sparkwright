@@ -301,6 +301,12 @@ configured profiles/delegates
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-12T16:36:08+0800
+- Scope: checked Workflow durable-record package pin fields; Agent capability
+  contracts are unchanged.
+- Tests: not run for Agent behavior; Phase 4 Workflow release gate passed.
+
 - Status: Verified
 - Date: 2026-07-11T02:10:00+0800
 - Scope: ordinary dynamic spawn and top-level background agent tasks remain;

@@ -19,6 +19,11 @@ export interface WorkflowAssetPin {
   assetName: string;
   version?: string;
   contentHash: string;
+  /** Strong executable-package identity for new pinned runs. */
+  packageHash?: string;
+  packageHashPolicyVersion?: 2;
+  /** Durable reference to the executable package snapshot. */
+  packageSnapshotRef?: string;
 }
 
 export interface WorkflowWaitState {

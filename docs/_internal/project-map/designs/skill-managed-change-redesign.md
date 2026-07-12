@@ -314,11 +314,12 @@ history, receipt, recovery, and four-entry command-service convergence.
   drift marks a proposal stale without overwriting the target; registry-based
   continuity and runtime stats attribution remain later phases.
 
-### Phase 4: Workflow executable package pinning correctness
+### Completed: Phase 4 Workflow executable package pinning correctness
 
-- Create and verify immutable snapshots at instantiate.
-- Parse and execute every normal/resumed node from snapshot `sourceDir` and
-  persist strong identity plus snapshot reference.
+- Instantiate creates a v2 executable snapshot, verifies source-before,
+  snapshot, and source-after hashes, then parses snapshot `workflow.md`/config.
+- Durable records persist strong identity and `packageSnapshotRef`; normal and
+  resumed execution require the snapshot hash and snapshot-backed `sourceDir`.
 
 ### Phase 5: Markdown Agent authoring and version attribution
 

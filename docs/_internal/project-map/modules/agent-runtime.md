@@ -338,6 +338,13 @@ Does not own:
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-12T16:36:08+0800
+- Scope: durable Workflow records now preserve package hash policy version and
+  executable snapshot reference for host-owned snapshot pinning.
+- Read: `packages/agent-runtime/src/workflows/types.ts` and `store.ts`.
+- Tests: agent-runtime Workflow focused suite and full `npm run release:check`.
+
+- Status: Verified
 - Date: 2026-07-11T21:45:00+0800
 - Scope: simple-task Todo admission guidance, reconciliation wording, and
   provider-compatible action-specific task argument normalization.

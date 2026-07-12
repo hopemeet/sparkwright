@@ -256,6 +256,11 @@ createRun/resumeRunFromCheckpoint
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-12T16:36:08+0800
+- Scope: checked host Workflow snapshot preparation; generic run-loop contract is unchanged.
+- Tests: not run for generic run-loop behavior; Phase 4 Workflow release gate passed.
+
 - Status: Verified
 - Date: 2026-07-12T02:12:00+0800
 - Scope: runtime-context post-prepare approval bridge; existing policy-gate
