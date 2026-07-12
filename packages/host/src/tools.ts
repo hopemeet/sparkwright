@@ -2,6 +2,7 @@ import { isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   defineTool,
+  formatWorkspaceDisplayPath,
   type RuntimeContext,
   type ToolDefinition,
   type WorkspaceRuntime,
@@ -44,10 +45,14 @@ import {
   shouldDeferToolByDefault,
 } from "./tool-identities.js";
 import {
+  applyApprovedSkillProposal,
   createSkillCreateProposal,
   createSkillUpdateProposal,
   listSkillProposals,
   reviseSkillProposalDraft,
+  prepareSkillProposalApproval,
+  recordSkillProposalApproval,
+  skillProposalReviewCommand,
   type SkillProposalProvenance,
   type SkillProposalSummary,
 } from "./skill-evolution.js";
@@ -437,10 +442,10 @@ export function createSkillManagerTool(
   return defineTool({
     name: "create_skill",
     description:
-      "Draft a proposal to create a project Skill. This does not apply the " +
-      "proposal or write the current Skill package; a human must review and " +
-      "apply it through the Skill proposal flow. Use list_skills to list or " +
-      "validate current skills.",
+      "Prepare a proposal to create a project Skill. A complete safe authored " +
+      "Skill can be approved once for its final effect and applied in this " +
+      "run; templates or review-required content remain in the durable review " +
+      "flow. Use list_skills to list or validate current skills.",
     inputSchema: {
       type: "object",
       properties: {
@@ -473,7 +478,10 @@ export function createSkillManagerTool(
       required: ["action"],
       additionalProperties: false,
     },
-    policy: { risk: "risky" },
+    // Proposal staging is a recoverable prepared change. The final package is
+    // approved after it exists, inside execute, and that approval is bound to
+    // the host-computed effect hash.
+    policy: { risk: "safe" },
     governance: {
       origin: { kind: "local", name: "sparkwright" },
       sideEffects: ["read", "write"],
@@ -522,11 +530,16 @@ export function createSkillManagerTool(
           provenance,
           mutationReporter: ctx,
         });
-        return skillDraftToolOutput(revised.proposal, {
-          changed: revised.changed,
-          existing: true,
-          revised: revised.changed,
-        });
+        return finishSafeAuthoredSkillCreate(
+          workspaceRoot,
+          revised.proposal,
+          ctx,
+          {
+            changed: revised.changed,
+            existing: true,
+            revised: revised.changed,
+          },
+        );
       }
       const proposal = await createSkillCreateProposal({
         workspaceRoot,
@@ -536,7 +549,9 @@ export function createSkillManagerTool(
         provenance,
         mutationReporter: ctx,
       });
-      return skillDraftToolOutput(proposal, { changed: true });
+      return finishSafeAuthoredSkillCreate(workspaceRoot, proposal, ctx, {
+        changed: true,
+      });
     },
   });
 }
@@ -1233,6 +1248,22 @@ function skillDraftToolOutput(
   options: { changed: boolean; existing?: boolean; revised?: boolean },
 ) {
   const existing = options.existing === true;
+  const reviewCommand = skillProposalReviewCommand(proposal.id);
+  const guardSeverity = proposal.guardFindings?.some(
+    (finding) => finding.severity === "dangerous",
+  )
+    ? "dangerous"
+    : proposal.guardFindings && proposal.guardFindings.length > 0
+      ? "caution"
+      : "none";
+  const eligibility =
+    guardSeverity === "dangerous"
+      ? "force_required"
+      : proposal.kind === "create" &&
+          proposal.contentMode === "authored" &&
+          guardSeverity === "none"
+        ? "quick_apply"
+        : "review_required";
   return {
     action: "draft",
     changed: options.changed,
@@ -1264,7 +1295,17 @@ function skillDraftToolOutput(
         : proposal.summary,
     existing,
     revised: options.revised === true,
-    reviewCommand: `/skill-review ${proposal.id}`,
+    reviewCommand,
+    humanAction: {
+      kind: "skill_proposal_review",
+      proposalId: proposal.id,
+      reviewCommand,
+      eligibility,
+      validationStatus: "passed",
+      contentMode: proposal.contentMode,
+      guardSeverity,
+      recommendedAction: eligibility === "quick_apply" ? "apply" : "review",
+    },
     // Lifecycle contract, stated so the model stops here instead of retrying or
     // trying to load a skill that does not exist yet. A draft is a proposal,
     // not a live skill: it is not indexed and cannot be skill_load'ed until a
@@ -1273,7 +1314,112 @@ function skillDraftToolOutput(
       "Done — the draft proposal is recorded. Do NOT call create_skill again " +
       "for this skill and do NOT skill_load it: a draft is not a live, " +
       "loadable skill until a human reviews and applies the proposal. Report " +
-      "the proposalId to the user and stop.",
+      `the proposalId to the user and stop. If the user later asks to apply it, ` +
+      `do NOT search for an apply tool: model tools cannot apply proposals. ` +
+      `Tell the user to run ${reviewCommand}; the TUI human review action owns ` +
+      "apply and reject.",
+  };
+}
+
+async function finishSafeAuthoredSkillCreate(
+  workspaceRoot: string,
+  proposal: SkillProposalSummary,
+  ctx: Pick<RuntimeContext, "run"> & {
+    requestApproval?(input: {
+      action: string;
+      summary: string;
+      details?: Record<string, unknown>;
+    }): Promise<boolean>;
+  },
+  outputOptions: { changed: boolean; existing?: boolean; revised?: boolean },
+) {
+  const safeAuthoredCreate =
+    proposal.kind === "create" &&
+    proposal.contentMode === "authored" &&
+    (proposal.guardFindings?.length ?? 0) === 0;
+  if (!safeAuthoredCreate) {
+    return skillDraftToolOutput(proposal, outputOptions);
+  }
+
+  const prepared = await prepareSkillProposalApproval(
+    workspaceRoot,
+    proposal.id,
+  );
+  if (!ctx.requestApproval) {
+    return {
+      ...skillDraftToolOutput(prepared.proposal, outputOptions),
+      preparedState: "waiting",
+      nextStep:
+        `The final Skill effect is prepared and waiting for approval. ` +
+        `Review it with ${skillProposalReviewCommand(proposal.id)}; do not ` +
+        "create another proposal and do NOT search for an apply tool.",
+    };
+  }
+
+  let approved: boolean;
+  try {
+    approved = await ctx.requestApproval({
+      action: "skill.apply",
+      summary: `Create Skill ${proposal.skillName}`,
+      details: {
+        proposalId: proposal.id,
+        proposalRevision: proposal.revision ?? 1,
+        effectHash: prepared.effectHash,
+        path: formatWorkspaceDisplayPath(proposal.targetPath, {
+          workspaceRoot,
+        }),
+        diff: prepared.proposal.patchDiff,
+        riskFingerprints: prepared.riskFingerprints,
+      },
+    });
+  } catch (error) {
+    return {
+      ...skillDraftToolOutput(prepared.proposal, outputOptions),
+      preparedState: "waiting",
+      approvalUnavailable:
+        error instanceof Error ? error.message : String(error),
+      nextStep:
+        `The final Skill effect is prepared and waiting for approval. ` +
+        `Review it with ${skillProposalReviewCommand(proposal.id)}; do not ` +
+        "create another proposal and do NOT search for an apply tool.",
+    };
+  }
+
+  if (!approved) {
+    return {
+      ...skillDraftToolOutput(prepared.proposal, outputOptions),
+      preparedState: "waiting",
+      approvalDecision: "denied",
+      nextStep:
+        `The final Skill effect was not approved and remains in the review ` +
+        `inbox. Use ${skillProposalReviewCommand(proposal.id)} to review it ` +
+        "later; do not create another proposal.",
+    };
+  }
+
+  const approval = await recordSkillProposalApproval({
+    workspaceRoot,
+    proposalId: proposal.id,
+    effectHash: prepared.effectHash,
+  });
+  const applied = await applyApprovedSkillProposal(workspaceRoot, proposal.id);
+  return {
+    action: "applied",
+    changed: true,
+    proposalId: applied.proposal.id,
+    proposalPath: applied.proposal.path,
+    state: applied.proposal.state,
+    preparedState: applied.proposal.preparedState,
+    skillName: applied.proposal.skillName,
+    targetPath: applied.proposal.targetPath,
+    artifactId: applied.proposal.artifactId,
+    effectHash: prepared.effectHash,
+    approvalReceiptId: approval.receiptId,
+    historyId: applied.history.id,
+    afterPackageHash: applied.proposal.afterPackageHash,
+    summary: `Skill ${applied.proposal.skillName} was created and is ready to use.`,
+    nextStep:
+      "Done — the final Skill was approved and applied in this run. Do not call create_skill again.",
   };
 }
 

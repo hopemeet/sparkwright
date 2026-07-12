@@ -1,4 +1,12 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  cp,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -7,11 +15,15 @@ import {
   computeSkillPackageHash,
 } from "@sparkwright/skills";
 import {
+  applyApprovedSkillProposal,
   applySkillProposal,
   createSkillCreateProposal,
   createSkillUpdateProposal,
   loadLayeredSkillReport,
+  prepareSkillProposalApproval,
+  recordSkillProposalApproval,
   resolveSkillRootsForRuntime,
+  reviseSkillProposalDraft,
   restoreSkillFromHistory,
   skillUsagePath,
 } from "../src/index.js";
@@ -56,6 +68,102 @@ describe("skill roots", () => {
 });
 
 describe("skill proposal application", () => {
+  it("invalidates an effect-bound approval when a draft is revised", async () => {
+    const workspace = await makeWorkspace();
+    try {
+      const proposal = await createSkillCreateProposal({
+        workspaceRoot: workspace,
+        name: "revision-skill",
+        description: "Initial authored skill",
+        content: skillMarkdown("revision-skill"),
+      });
+      const prepared = await prepareSkillProposalApproval(
+        workspace,
+        proposal.id,
+      );
+      const receipt = await recordSkillProposalApproval({
+        workspaceRoot: workspace,
+        proposalId: proposal.id,
+        effectHash: prepared.effectHash,
+      });
+      const revised = await reviseSkillProposalDraft({
+        workspaceRoot: workspace,
+        proposalId: proposal.id,
+        description: "Revised authored skill",
+        content: skillMarkdown("revision-skill").replace("Body.", "Revised."),
+      });
+
+      expect(revised.proposal.effectHash).not.toBe(receipt.effectHash);
+      expect(revised.proposal.preparedState).toBe("ready");
+      await expect(
+        applyApprovedSkillProposal(workspace, proposal.id),
+      ).rejects.toThrow(/requires approval for its current final effect/);
+      await expect(
+        readFile(
+          join(
+            workspace,
+            ".sparkwright",
+            "skills",
+            "revision-skill",
+            "SKILL.md",
+          ),
+          "utf8",
+        ),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("reconciles a crash after the prepared package reached its target without duplicating history", async () => {
+    const workspace = await makeWorkspace();
+    try {
+      const proposal = await createSkillCreateProposal({
+        workspaceRoot: workspace,
+        name: "resume-skill",
+        description: "Crash-resumable authored skill",
+        content: skillMarkdown("resume-skill"),
+      });
+      const prepared = await prepareSkillProposalApproval(
+        workspace,
+        proposal.id,
+      );
+      await recordSkillProposalApproval({
+        workspaceRoot: workspace,
+        proposalId: proposal.id,
+        effectHash: prepared.effectHash,
+      });
+      await mkdir(join(proposal.targetPath, ".."), { recursive: true });
+      await cp(
+        join(proposal.path, "after", proposal.skillName),
+        proposal.targetPath,
+        { recursive: true },
+      );
+
+      const applied = await applyApprovedSkillProposal(workspace, proposal.id);
+      expect(applied.proposal).toMatchObject({
+        state: "applied",
+        preparedState: "applied",
+      });
+      expect(applied.history.id).toBe(
+        `skillver_${prepared.effectHash.slice(0, 24)}`,
+      );
+      await expect(
+        readFile(join(proposal.path, "mutation-receipt.json"), "utf8"),
+      ).resolves.toContain(applied.history.id);
+      const historyRoot = join(
+        workspace,
+        ".sparkwright",
+        "skill-evolution",
+        "history",
+        "resume-skill",
+      );
+      expect(await readdir(historyRoot)).toEqual([applied.history.id]);
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
   it("applies update proposals with full package assets and history", async () => {
     const workspace = await makeWorkspace();
     try {

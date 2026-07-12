@@ -59,6 +59,17 @@ Design docs in [designs/](designs/) are catalog entries, not routing targets —
 read them for the shape and rationale of a planned or completed change, then
 follow the active maps below for the current contract.
 
+- [designs/skill-managed-change-redesign.md](designs/skill-managed-change-redesign.md) —
+  Active design: managed Skill identity/origin, hash-bound prepared changes,
+  durable approval/recovery, reconciliation, stats/evidence, UX, and phased
+  convergence of model/CLI/TUI creation paths. The first delivery slice is a
+  safe model-authored create that persists the proposal before one final-effect
+  approval and applies in the same run. Active contracts:
+  [modules/skills.md](modules/skills.md), [modules/host.md](modules/host.md),
+  [modules/tui.md](modules/tui.md),
+  [maps/capabilities/skill-evolution.md](maps/capabilities/skill-evolution.md),
+  and [maps/safety/approvals.md](maps/safety/approvals.md).
+
 - [designs/compaction-redesign.md](designs/compaction-redesign.md) —
   Historical/implemented design: shared compaction result/stage substrate,
   session compact artifacts, deterministic/model-backed summarization paths,
@@ -165,6 +176,15 @@ TUI events; it is not a trace diagnostic report and must not replace
 trace/session inspection.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-12T02:12:00+0800
+- Scope: cataloged the active Skill managed-change redesign and routed its
+  implemented safe authored-create slice through skills/host/TUI, runtime,
+  approval, and resume maps.
+- Read: `designs/skill-managed-change-redesign.md` and every linked active map.
+- Tests: host Skill focused suites, affected typechecks, TUI approval focused
+  suites, and full `npm run release:check`.
 
 - Status: Verified
 - Date: 2026-07-06T20:47:10+0800

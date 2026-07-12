@@ -18,6 +18,7 @@ import {
 /**
  * Kind-aware approval panel. Shows a renderable body matching the action:
  *  - workspace.write  → unified diff with scroll keys
+ *  - skill.apply      → final prepared Skill diff with scroll keys
  *  - tool.execute     → tool name + truncated args
  *  - shell.execute    → command (one-line) + reason
  *  - other            → summary + raw details
@@ -141,13 +142,21 @@ function Body(props: {
 }): React.ReactElement | null {
   const { pending, theme } = props;
 
-  if (pending.kind === "workspace.write" && pending.diff) {
+  if (
+    (pending.kind === "workspace.write" || pending.kind === "skill.apply") &&
+    pending.diff
+  ) {
     return (
       <Box flexDirection="column" marginTop={1}>
         <Text>
           <Text dimColor>file: </Text>
           <Text color={theme.accent2}>{pending.path ?? "?"}</Text>
         </Text>
+        {pending.kind === "skill.apply" ? (
+          <Text dimColor>
+            final prepared effect · approval is bound to this revision
+          </Text>
+        ) : null}
         <DiffView
           diff={pending.diff}
           scrollOffset={props.scroll}

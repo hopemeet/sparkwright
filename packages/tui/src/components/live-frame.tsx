@@ -9,6 +9,7 @@ import { StatusBar } from "./status-bar.js";
 import { StreamingMessage } from "./streaming-message.js";
 import { TodoBand } from "./todo-band.js";
 import { ToastView } from "./toast.js";
+import { HumanActionBand } from "./human-action-band.js";
 
 export function LiveFrame(props: {
   state: StoreState;
@@ -28,6 +29,8 @@ export function LiveFrame(props: {
   errors: ValidationError[];
   queued: readonly string[];
   showQueued: boolean;
+  confirmingHumanAction: boolean;
+  applyingHumanAction: boolean;
 }): React.ReactElement {
   const theme = useTheme();
   const showStatus =
@@ -97,6 +100,16 @@ export function LiveFrame(props: {
       ) : null}
 
       <ToastView toast={props.toast} queueDepth={props.toastQueueDepth} />
+
+      {props.state.pendingHumanAction &&
+      props.state.status !== "running" &&
+      props.state.status !== "awaiting-approval" ? (
+        <HumanActionBand
+          action={props.state.pendingHumanAction}
+          confirmingApply={props.confirmingHumanAction}
+          applying={props.applyingHumanAction}
+        />
+      ) : null}
 
       {props.errors.length > 0 ? (
         <Box

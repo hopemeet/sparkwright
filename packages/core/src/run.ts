@@ -2814,6 +2814,7 @@ export class SparkwrightRun implements RunHandle {
       run: this.record,
       workspace: this.runtimeWorkspace,
       abortSignal: this.abortController.signal,
+      requestApproval: (approval) => this.requestApproval(approval),
       reportToolProgress: input?.toolCallId
         ? (update) => {
             this.events.emit("tool.progress", {

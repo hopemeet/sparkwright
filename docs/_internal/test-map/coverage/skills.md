@@ -3,7 +3,7 @@
 ## Current Confidence
 
 - Status: `Partially Verified`
-- Last reviewed: 2026-07-07
+- Last reviewed: 2026-07-11
 - Evidence source: 2026-06-23 focused host Skill evolution,
   capability-package mutation, inline-shell, TUI skill review, and
   `@sparkwright/skills` package tests passed. Real `openai/gpt-5.4-nano`
@@ -13,6 +13,20 @@
   duplicate recovered `create_skill` call.
 
 ## Covered
+
+- 2026-07-11 real `openai/gpt-5.6-terra` TUI evidence showed the pre-fix human
+  apply handoff was broken: a user follow-up of `应用` entered a model run with
+  no apply tool, causing repeated discovery/resource loads and leaving the
+  proposal draft. The fix makes `/skill-review <proposal-id>` a valid focused
+  TUI route, emits host-owned `humanAction` metadata, and renders a terminal-only
+  confirmation band. Focused host/TUI tests passed and a PTY command opened the
+  exact original proposal. See
+  [../runs/2026-07-11-real-terra-skill-apply-handoff.md](../runs/2026-07-11-real-terra-skill-apply-handoff.md).
+- 2026-07-12 P1 containment keeps proposal audit events but folds their default
+  TUI rows into the terminal proposal result, and bounds repeated reference
+  observations with loader-scoped, version-aware `already_loaded` results.
+  Focused Skills and TUI render tests cover canonical-path repeats, no-content
+  repeat results, unrelated mutation visibility, and proposal mutation counts.
 
 - Skill loading/indexing package behavior.
 - Skill evolution proposal snapshots and guard/doctor gates in focused tests.

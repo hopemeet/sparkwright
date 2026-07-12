@@ -22,6 +22,14 @@ import { shortTaskId } from "../lib/task-activity.js";
 
 export { oneLine } from "../lib/tool-display.js";
 
+/** @internal Semantic tone shared by task lifecycle and runtime-update rows. */
+export function taskTerminalTone(status: string): ToolDisplayTone {
+  if (status === "completed") return "success";
+  if (status === "cancelled") return "warning";
+  if (status === "failed") return "error";
+  return "normal";
+}
+
 export interface TranscriptHeaderInfo {
   workspaceRoot: string;
   modelLabel: string;
@@ -36,6 +44,7 @@ type Row =
       event: RunEvent;
       inBatch: boolean;
       facts?: RunFactsSnapshot;
+      internalMutationCount?: number;
     };
 
 interface RunFacts {
@@ -108,6 +117,7 @@ export function EventStream(props: {
   // batch.requested has already been seen, so each row's `inBatch` is stable and
   // never changes on a later commit.
   const visibleBatchStack: boolean[] = [];
+  const proposalMutationCounts = new Map<string, number>();
   let facts = createRunFacts();
   const rows: Row[] = [
     { kind: "header", key: "__header", header: props.header },
@@ -133,6 +143,20 @@ export function EventStream(props: {
         event,
         inBatch,
       };
+      const spanId = str(rec(event).spanId);
+      if (
+        event.type === "capability.mutation.completed" &&
+        isProposalMutationEvent(event) &&
+        spanId
+      ) {
+        proposalMutationCounts.set(
+          spanId,
+          (proposalMutationCounts.get(spanId) ?? 0) + 1,
+        );
+      } else if (event.type === "tool.completed" && spanId) {
+        const count = proposalMutationCounts.get(spanId);
+        if (count) row.internalMutationCount = count;
+      }
       if (event.type === "run.completed") {
         row.facts = snapshotRunFacts(facts, event);
         facts = createRunFacts();
@@ -153,6 +177,7 @@ export function EventStream(props: {
             event={row.event}
             inBatch={row.inBatch}
             facts={row.facts}
+            internalMutationCount={row.internalMutationCount}
           />
         )
       }
@@ -168,13 +193,19 @@ export function EventStream(props: {
  * to its own row and degrades to a dim diagnostic line instead.
  */
 class EventCardBoundary extends React.Component<
-  { event: RunEvent; inBatch: boolean; facts?: RunFactsSnapshot },
+  {
+    event: RunEvent;
+    inBatch: boolean;
+    facts?: RunFactsSnapshot;
+    internalMutationCount?: number;
+  },
   { error: Error | null }
 > {
   constructor(props: {
     event: RunEvent;
     inBatch: boolean;
     facts?: RunFactsSnapshot;
+    internalMutationCount?: number;
   }) {
     super(props);
     this.state = { error: null };
@@ -199,6 +230,7 @@ class EventCardBoundary extends React.Component<
         event={this.props.event}
         inBatch={this.props.inBatch}
         facts={this.props.facts}
+        internalMutationCount={this.props.internalMutationCount}
       />
     );
   }
@@ -447,8 +479,7 @@ function RuntimeTaskUpdatesLine(props: {
         ]
           .filter(Boolean)
           .join(" · ");
-        const color =
-          update.status === "completed" ? theme.success : theme.error;
+        const color = toolToneColor(taskTerminalTone(update.status), theme);
         return (
           <Text key={`${update.taskId}:${update.status}`} color={color}>
             runtime update<Text dimColor>{` · ${detail}`}</Text>
@@ -470,6 +501,7 @@ function EventCard(props: {
   event: RunEvent;
   inBatch: boolean;
   facts?: RunFactsSnapshot;
+  internalMutationCount?: number;
 }): React.ReactElement | null {
   const theme = useTheme();
   const { stdout } = useStdout();
@@ -623,7 +655,14 @@ function EventCard(props: {
 
     case "tool.completed": {
       const toolName = str(p.toolName) || undefined;
-      const result = p.result ?? p.output;
+      const rawResult = p.result ?? p.output;
+      const result =
+        props.internalMutationCount && rec(rawResult).action === "draft"
+          ? {
+              ...rec(rawResult),
+              internalMutationCount: props.internalMutationCount,
+            }
+          : rawResult;
       const artifacts = Array.isArray(p.artifacts) ? p.artifacts : [];
       if (result === undefined && artifacts.length === 0) return null;
       const resultRecord = rec(result);
@@ -755,6 +794,7 @@ function EventCard(props: {
     }
 
     case "capability.mutation.completed": {
+      if (isProposalMutationEvent(ev)) return null;
       const action = str(p.action) || "mutation";
       const path = compactMutationPath(str(p.path));
       const reason = str(p.reason);
@@ -980,6 +1020,12 @@ function EventCard(props: {
   }
 }
 
+function isProposalMutationEvent(event: RunEvent): boolean {
+  if (event.type !== "capability.mutation.completed") return false;
+  const path = str(rec(event.payload).path).replace(/\\/gu, "/");
+  return path.includes(".sparkwright/skill-evolution/proposals/");
+}
+
 function TaskLifecycleLine(props: {
   event: RunEvent;
   paddingLeft: number;
@@ -1021,11 +1067,9 @@ function TaskLifecycleLine(props: {
           ? "completed"
           : phase;
   const color =
-    phase === "failed" || phase === "cancelled"
-      ? theme.error
-      : phase === "completed"
-        ? theme.success
-        : theme.accent;
+    phase === "started" || phase === "created"
+      ? theme.accent
+      : toolToneColor(taskTerminalTone(phase), theme);
   const details = [
     shortTaskId(taskId),
     kind,

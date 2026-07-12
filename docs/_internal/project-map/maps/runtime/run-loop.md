@@ -29,6 +29,12 @@ createRun/resumeRunFromCheckpoint
 
 ## Contracts
 
+- `RuntimeContext.requestApproval()` lets an executing tool request approval
+  after it has persisted an inspectable final effect. It delegates to the same
+  run-owned approval state/events/resolver as policy-gate approvals; embedders
+  executing tools outside a run may omit it. The Skill prepared-change slice is
+  its first consumer.
+
 - A freshly submitted workflow job runs in its own session and therefore loads
   only that job session's conversation history. `controlSessionId` is durable
   attribution on the workflow record, not a context source. Ordinary main runs
@@ -54,6 +60,8 @@ createRun/resumeRunFromCheckpoint
   context into the synthetic `REPEATED_TOOL_CALL_SKIPPED` result. Policy and
   approval denials keep their expected-denial category through the guard; other
   repeated calls keep the normal argument/runtime failure classification.
+  Tool-owned repeated-observation guidance applies only when there is no prior
+  failure, so a friendly completed nudge cannot mask failed state observation.
 - Completed-run outcome treats read-confidentiality denials as expected policy
   denials. A run can still complete successfully after a denied confidential
   read if the model produces a final answer; the denial remains visible through
@@ -247,6 +255,22 @@ createRun/resumeRunFromCheckpoint
   handling can still be noisy.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-12T02:12:00+0800
+- Scope: runtime-context post-prepare approval bridge; existing policy-gate
+  order and event protocol remain unchanged.
+- Read: `packages/core/src/types.ts`, `packages/core/src/run.ts`,
+  `packages/host/src/tools.ts`.
+- Tests: core/host affected typechecks and host same-run Skill integration test.
+
+- Status: Verified
+- Date: 2026-07-11T22:55:00+0800
+- Scope: tool-owned repeated state-observation guidance is suppressed after a
+  same-target failure so the generic failed-repeat path preserves failure
+  evidence.
+- Read: `packages/core/src/run.ts`, `packages/core/test/run.test.ts`.
+- Tests: full `npm run release:check`.
 
 - Status: Verified
 - Date: 2026-07-11T20:32:00+0800

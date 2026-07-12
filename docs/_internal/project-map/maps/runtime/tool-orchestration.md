@@ -32,6 +32,12 @@ model tool calls
 
 ## Contracts
 
+- Prepared-change tools may call `RuntimeContext.requestApproval()` during
+  execute after persisting a final effect. This is not a second approval bus:
+  it uses the run's normal `approval.requested/resolved` lifecycle. Such tools
+  must avoid a redundant pre-staging risky-tool approval on their eligible fast
+  path and bind the in-execute request to durable effect identity.
+
 - Tool requests are trace-visible before execution.
 - `ToolDefinition.previewArgs()` is the source of truth for one-line request
   display. Core writes its bounded output to `tool.requested.payload.preview`;
@@ -186,12 +192,12 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
   (`workspaceWrites`), bridged in `spawnSubAgent` — not a parent-side filesystem
   snapshot. Shell duplicate-loop detection keys on command plus cwd, ignoring
   incidental execution fields such as `timeoutMs`.
-- Shell tool execution treats legacy `timeoutMs` as an observable alias for
-  `foregroundTimeoutMs`, not as an incidental hard-kill field. The alias stays
-  runtime-compatible but is no longer advertised in the model-facing schema.
-  Result payloads preserve timeout/promotion observability (`foregroundTimeoutMs`,
-  `promotionAvailable`, `timeoutMsAliasUsed`) for model observations and trace
-  diagnostics. When a foreground shell is promoted, the shell tool returns the
+- Shell tool execution accepts only the canonical per-call
+  `foregroundTimeoutMs`; legacy `timeoutMs` is rejected by the closed input
+  schema rather than retained behind unreachable runtime alias logic. Result
+  payloads preserve timeout/promotion observability (`foregroundTimeoutMs`,
+  `promotionAvailable`) for model observations and trace diagnostics. When a
+  foreground shell is promoted, the shell tool returns the
   promoted `taskId` at the handoff point; the adopted task then owns ongoing
   stdout/stderr observation and emits `task.created` / `task.started` /
   `task.output` / terminal `task.*` trace facts.
@@ -315,6 +321,23 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
 - TUI live rendering and transcript export now share presentation summaries, but trace/model-context result compaction is still a separate backend concern.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-12T02:12:00+0800
+- Scope: post-prepare approval orchestration for the safe authored Skill create
+  slice; one approval occurs after proposal persistence and before apply.
+- Read: `packages/core/src/run.ts`, `packages/core/src/types.ts`,
+  `packages/host/src/tools.ts`.
+- Tests: host same-run integration/focused tool suite and affected typechecks.
+
+- Status: Verified
+- Date: 2026-07-11T22:10:00+0800
+- Scope: removed the unreachable shell timeout alias and ensured tool-owned
+  repeated-observation guidance cannot convert a prior failure into a completed
+  no-op.
+- Read: `packages/shell-tool/src/tool.ts`, `packages/core/src/run.ts`, focused
+  tests.
+- Tests: full `npm run release:check`.
 
 - Status: Verified
 - Date: 2026-07-11T21:45:00+0800

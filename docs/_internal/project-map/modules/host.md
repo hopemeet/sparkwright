@@ -69,6 +69,13 @@ Does not own:
 
 ## Contracts
 
+- Host owns the first Skill prepared-change transaction slice. A safe authored
+  `create_skill` persists the final proposal/effect hash, requests
+  `skill.apply` through the run approval channel, records the hash-bound
+  receipt, applies in the same tool episode, and persists history/mutation
+  receipt. Proposal storage is the slow-path source of truth; TUI state is only
+  presentation. Other Skill entrypoints are not unified yet.
+
 - One active run per host connection.
 - Session root defaults to `<workspace>/.sparkwright/sessions`.
 - Host protocol `run.failed` events emitted by runtime carry canonical
@@ -755,6 +762,14 @@ Does not own:
 - Capability snapshot fields are useful but can become stale if new tools bypass `tool-catalog.ts`; direct-core/cron should add tools by catalog profile, not local factories.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-12T02:12:00+0800
+- Scope: safe authored Skill prepared-change fast path and durable recovery
+  metadata; no host protocol schema change.
+- Read: `packages/host/src/tools.ts`,
+  `packages/host/src/skill-evolution.ts`, `packages/host/src/index.ts`.
+- Tests: host focused Skill suites (109 tests) and host typecheck.
 
 - Status: Verified
 - Date: 2026-07-11T15:30:00+0800

@@ -31,6 +31,12 @@ policy requires approval
 
 ## Contracts
 
+- `RuntimeContext.requestApproval()` is the run-owned bridge for a tool that
+  must prepare an inspectable final effect before authorization. The initial
+  Skill consumer uses action `skill.apply`, includes proposal id + revision +
+  effect hash and final diff, and persists a receipt before mutation. TUI treats
+  it as one-shot (no remembered session rule).
+
 - `approval.requested` carries an id used by protocol `approval.resolve`.
 - `approval.resolved` preserves optional resolver `message` and structured
   `autoApproved` state; trace summary/report diagnostics should not rely on
@@ -107,6 +113,17 @@ policy requires approval
 - Approval UX and diagnostic reporting are split across CLI, TUI, host, and core trace.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-12T02:12:00+0800
+- Scope: one final-effect-bound `skill.apply` approval after proposal
+  persistence, rendered with the final diff and consumed in the same run.
+- Read: `packages/core/src/run.ts`, `packages/core/src/types.ts`,
+  `packages/host/src/skill-evolution.ts`, `packages/host/src/tools.ts`,
+  `packages/tui/src/state/run-controller.ts`,
+  `packages/tui/src/components/approval-prompt.tsx`.
+- Tests: host same-run integration, revision/crash recovery, TUI approval
+  render/controller suites, and affected typechecks.
 
 - Status: Verified
 - Date: 2026-07-11T00:00:00+0800

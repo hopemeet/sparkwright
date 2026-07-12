@@ -14,6 +14,7 @@ import {
 import { readdir, readFile, stat } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { createHash } from "node:crypto";
 import {
   createFileCapabilityPackageWriter,
   type CapabilityPackageMutationReporter,
@@ -38,6 +39,15 @@ export type SkillProposalState =
 export type SkillProposalKind = "create" | "update";
 export type SkillProposalContentMode = "authored" | "intent_stub" | "template";
 export type SkillHistoryKind = SkillProposalKind | "restore";
+export type PreparedChangeState =
+  | "ready"
+  | "waiting"
+  | "approved"
+  | "applying"
+  | "applied"
+  | "rejected"
+  | "stale"
+  | "failed";
 
 const PRUNABLE_PROPOSAL_STATES: readonly SkillProposalState[] = [
   "rejected",
@@ -69,6 +79,12 @@ export interface SkillProposalMetadata {
   updatedAt: string;
   basePackageHash: string | null;
   afterPackageHash: string;
+  /** Stable project identity allocated for managed creates. */
+  artifactId?: string;
+  /** Hash of the inspectable final effect; excludes guard policy versions. */
+  effectHash?: string;
+  /** Prepared-change transaction state. Legacy draft proposals omit it. */
+  preparedState?: PreparedChangeState;
   /** Monotonic revision of a mutable draft. Applied/closed proposals freeze it. */
   revision?: number;
   /** Hash replaced by the latest draft revision, for reviewer-visible audit. */
@@ -90,6 +106,36 @@ export interface SkillProposalMetadata {
   provenance?: SkillProposalProvenance;
 }
 
+export interface SkillApprovalReceipt {
+  schemaVersion: 1;
+  receiptId: string;
+  proposalId: string;
+  proposalRevision: number;
+  effectHash: string;
+  decision: "approved" | "rejected";
+  approvedRiskFingerprints: string[];
+  approvedAt: string;
+}
+
+export interface SkillMutationReceipt {
+  schemaVersion: 1;
+  receiptId: string;
+  proposalId: string;
+  effectHash: string;
+  artifactId: string;
+  beforePackageHash: string | null;
+  afterPackageHash: string;
+  targetPath: string;
+  historyId: string;
+  appliedAt: string;
+}
+
+export interface PreparedSkillApproval {
+  proposal: SkillProposalDetail;
+  effectHash: string;
+  riskFingerprints: string[];
+}
+
 export interface SkillProposalSummary extends SkillProposalMetadata {
   path: string;
 }
@@ -97,6 +143,11 @@ export interface SkillProposalSummary extends SkillProposalMetadata {
 export interface SkillProposalDetail extends SkillProposalSummary {
   proposalMarkdown: string;
   patchDiff: string;
+}
+
+export function skillProposalReviewCommand(proposalId: string): string {
+  assertSafePathSegment(proposalId, "proposal id");
+  return `/skill-review ${proposalId}`;
 }
 
 export interface ReviseSkillProposalDraftResult {
@@ -261,6 +312,7 @@ export async function createSkillCreateProposal(
     const guardFindings = inspectProposedSkillContent(input.name, skillContent);
 
     const afterHash = await computeSkillPackageHash(afterSkillDir);
+    const artifactId = createId("skill") as string;
     const metadata: SkillProposalMetadata = {
       id: proposalId,
       kind: "create",
@@ -272,6 +324,16 @@ export async function createSkillCreateProposal(
       updatedAt: now,
       basePackageHash: null,
       afterPackageHash: afterHash.packageHash,
+      artifactId,
+      effectHash: skillProposalEffectHash({
+        artifactId,
+        operation: "create",
+        skillName: input.name,
+        basePackageHash: null,
+        afterPackageHash: afterHash.packageHash,
+        provenance: input.provenance,
+      }),
+      preparedState: "ready",
       revision: 1,
       summary: `Create project Skill ${input.name}`,
       contentMode: input.content ? "authored" : "template",
@@ -367,6 +429,7 @@ export async function createSkillUpdateProposal(
     const guardFindings = inspectProposedSkillContent(input.name, afterContent);
 
     const afterHash = await computeSkillPackageHash(afterSkillDir);
+    const artifactId = `legacy:project:${input.name}`;
     const metadata: SkillProposalMetadata = {
       id: proposalId,
       kind: "update",
@@ -378,6 +441,16 @@ export async function createSkillUpdateProposal(
       updatedAt: now,
       basePackageHash: baseHash.packageHash,
       afterPackageHash: afterHash.packageHash,
+      artifactId,
+      effectHash: skillProposalEffectHash({
+        artifactId,
+        operation: "update",
+        skillName: input.name,
+        basePackageHash: baseHash.packageHash,
+        afterPackageHash: afterHash.packageHash,
+        provenance: input.provenance,
+      }),
+      preparedState: "ready",
       revision: 1,
       summary:
         skill.layer === "project"
@@ -497,6 +570,16 @@ export async function reviseSkillProposalDraft(input: {
       ...proposalMetadataFromDetail(proposal),
       updatedAt,
       afterPackageHash: afterHash.packageHash,
+      effectHash: skillProposalEffectHash({
+        artifactId:
+          proposal.artifactId ?? `legacy:project:${proposal.skillName}`,
+        operation: proposal.kind,
+        skillName: proposal.skillName,
+        basePackageHash: proposal.basePackageHash,
+        afterPackageHash: afterHash.packageHash,
+        provenance: input.provenance ?? proposal.provenance,
+      }),
+      preparedState: "ready",
       revision: (proposal.revision ?? 1) + 1,
       previousAfterPackageHash: proposal.afterPackageHash,
       contentMode: input.content ? "authored" : proposal.contentMode,
@@ -671,7 +754,12 @@ async function readSkillProposalFromPath(
 export async function applySkillProposal(
   workspaceRoot: string,
   proposalId: string,
-  options: { appliedAt?: Date | string; force?: boolean } = {},
+  options: {
+    appliedAt?: Date | string;
+    force?: boolean;
+    approvalReceipt?: SkillApprovalReceipt;
+    requireEffectApproval?: boolean;
+  } = {},
 ): Promise<ApplySkillProposalResult> {
   const mutations = createFileCapabilityPackageWriter(workspaceRoot);
   const proposal = await readSkillProposal(workspaceRoot, proposalId);
@@ -679,6 +767,14 @@ export async function applySkillProposal(
     throw new Error(`Skill proposal is not draft: ${proposal.id}`);
   }
   validateProposalTarget(workspaceRoot, proposal);
+  const expectedEffectHash = currentSkillProposalEffectHash(proposal);
+  if (options.requireEffectApproval) {
+    validateSkillApprovalReceipt(
+      proposal,
+      expectedEffectHash,
+      options.approvalReceipt,
+    );
+  }
 
   const afterSkillDir = join(proposal.path, "after", proposal.skillName);
   await verifyProposalAfterSkillName(proposal, afterSkillDir, mutations);
@@ -698,6 +794,18 @@ export async function applySkillProposal(
     proposal.skillName,
     afterContent,
   );
+  if (options.requireEffectApproval) {
+    const approved = new Set(
+      options.approvalReceipt?.approvedRiskFingerprints ?? [],
+    );
+    const dangerous = dangerousRiskFingerprints(guardFindings);
+    if (dangerous.some((fingerprint) => !approved.has(fingerprint))) {
+      await updatePreparedChangeState(proposal, "waiting", mutations);
+      throw new Error(
+        `Skill proposal ${proposal.id} has new dangerous guard findings and requires reapproval.`,
+      );
+    }
+  }
   if (hasDangerousGuardFinding(guardFindings) && !options.force) {
     throw new Error(
       `Skill proposal ${proposal.id} has dangerous guard findings; ` +
@@ -705,7 +813,76 @@ export async function applySkillProposal(
     );
   }
 
+  if (
+    options.requireEffectApproval &&
+    (proposal.preparedState === "approved" ||
+      proposal.preparedState === "applying") &&
+    existsSync(join(proposal.targetPath, "SKILL.md"))
+  ) {
+    const currentTarget = await computeSkillPackageHash(proposal.targetPath);
+    if (currentTarget.packageHash === proposal.afterPackageHash) {
+      const roots = [
+        { root: projectSkillRoot(workspaceRoot), layer: "project" as const },
+      ];
+      const doctor = await runSkillDoctor({ skillRoots: roots });
+      if (doctor.status === "blocked") {
+        await rollbackAppliedProposal(
+          proposal,
+          proposalCreatesFromProject(proposal),
+          mutations,
+        );
+        await updateProposalState(proposal, "failed", mutations, undefined, {
+          preparedState: "failed",
+        });
+        throw new Error(
+          `Applied Skill proposal failed doctor checks: ${proposal.id}`,
+        );
+      }
+      const now =
+        options.appliedAt instanceof Date
+          ? options.appliedAt.toISOString()
+          : (options.appliedAt ?? new Date().toISOString());
+      const receiptAlreadyExisted = existsSync(
+        join(proposal.path, "mutation-receipt.json"),
+      );
+      const history = await writeHistoryEntry(
+        workspaceRoot,
+        proposal,
+        now,
+        mutations,
+      );
+      await writeSkillMutationReceipt(
+        proposal,
+        expectedEffectHash,
+        history,
+        now,
+        mutations,
+      );
+      const applied = await updateProposalState(
+        proposal,
+        "applied",
+        mutations,
+        now,
+        { preparedState: "applied" },
+      );
+      if (!receiptAlreadyExisted) {
+        recordSkillPatch(workspaceRoot, proposal.skillName, now);
+      }
+      return {
+        proposal: applied,
+        history,
+        doctor,
+        guardFindings,
+        changed: true,
+      };
+    }
+  }
+
   await verifyProposalBase(proposal, mutations);
+
+  if (options.requireEffectApproval) {
+    await updatePreparedChangeState(proposal, "applying", mutations);
+  }
 
   await mutations.ensureDirectory(projectSkillRoot(workspaceRoot), {
     reason: "Ensure project Skill root before applying proposal",
@@ -739,12 +916,21 @@ export async function applySkillProposal(
   let history: SkillHistoryEntry | undefined;
   try {
     history = await writeHistoryEntry(workspaceRoot, proposal, now, mutations);
+    if (options.requireEffectApproval) {
+      await writeSkillMutationReceipt(
+        proposal,
+        expectedEffectHash,
+        history,
+        now,
+        mutations,
+      );
+    }
     const applied = await updateProposalState(
       proposal,
       "applied",
       mutations,
       now,
-      {},
+      options.requireEffectApproval ? { preparedState: "applied" } : {},
     );
     recordSkillPatch(workspaceRoot, proposal.skillName, now);
 
@@ -764,6 +950,85 @@ export async function applySkillProposal(
     await rollbackAppliedProposal(proposal, restoreProjectBefore, mutations);
     throw error;
   }
+}
+
+export async function prepareSkillProposalApproval(
+  workspaceRoot: string,
+  proposalId: string,
+): Promise<PreparedSkillApproval> {
+  const mutations = createFileCapabilityPackageWriter(workspaceRoot);
+  const proposal = await readSkillProposal(workspaceRoot, proposalId);
+  if (proposal.state !== "draft") {
+    throw new Error(`Skill proposal is not draft: ${proposal.id}`);
+  }
+  const effectHash = currentSkillProposalEffectHash(proposal);
+  if (proposal.effectHash && proposal.effectHash !== effectHash) {
+    await updateProposalState(proposal, "stale", mutations, undefined, {
+      preparedState: "stale",
+    });
+    throw new Error(`Skill proposal effect hash is stale: ${proposal.id}`);
+  }
+  const waiting = await updatePreparedChangeState(
+    { ...proposal, effectHash },
+    "waiting",
+    mutations,
+  );
+  return {
+    proposal: waiting,
+    effectHash,
+    riskFingerprints: dangerousRiskFingerprints(waiting.guardFindings ?? []),
+  };
+}
+
+export async function recordSkillProposalApproval(input: {
+  workspaceRoot: string;
+  proposalId: string;
+  effectHash: string;
+  approvedAt?: Date | string;
+}): Promise<SkillApprovalReceipt> {
+  const mutations = createFileCapabilityPackageWriter(input.workspaceRoot);
+  const proposal = await readSkillProposal(
+    input.workspaceRoot,
+    input.proposalId,
+  );
+  const currentEffectHash = currentSkillProposalEffectHash(proposal);
+  if (input.effectHash !== currentEffectHash) {
+    throw new Error(
+      `Skill proposal approval effect hash mismatch: ${proposal.id}`,
+    );
+  }
+  const approvedAt = normalizeDateInput(input.approvedAt);
+  const receipt: SkillApprovalReceipt = {
+    schemaVersion: 1,
+    receiptId: createId("skillapproval") as string,
+    proposalId: proposal.id,
+    proposalRevision: proposal.revision ?? 1,
+    effectHash: currentEffectHash,
+    decision: "approved",
+    approvedRiskFingerprints: dangerousRiskFingerprints(
+      proposal.guardFindings ?? [],
+    ),
+    approvedAt,
+  };
+  await mutations.writeJson(join(proposal.path, "approval.json"), receipt, {
+    reason: `Record effect-bound approval ${proposal.id}`,
+  });
+  await updatePreparedChangeState(proposal, "approved", mutations, approvedAt);
+  return receipt;
+}
+
+export async function applyApprovedSkillProposal(
+  workspaceRoot: string,
+  proposalId: string,
+): Promise<ApplySkillProposalResult> {
+  const proposal = await readSkillProposal(workspaceRoot, proposalId);
+  const receipt = JSON.parse(
+    await readFile(join(proposal.path, "approval.json"), "utf8"),
+  ) as SkillApprovalReceipt;
+  return applySkillProposal(workspaceRoot, proposalId, {
+    approvalReceipt: receipt,
+    requireEffectApproval: true,
+  });
 }
 
 export async function rejectSkillProposal(
@@ -1100,6 +1365,92 @@ function proposalMetadataFromDetail(
   return metadata;
 }
 
+function sha256(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function skillProposalEffectHash(input: {
+  artifactId: string;
+  operation: SkillProposalKind;
+  skillName: string;
+  basePackageHash: string | null;
+  afterPackageHash: string;
+  provenance?: SkillProposalProvenance;
+}): string {
+  const origin = normalizeProvenance(input.provenance);
+  const originDigest = origin
+    ? sha256(
+        JSON.stringify({
+          runId: origin.runId ?? null,
+          sessionId: origin.sessionId ?? null,
+        }),
+      )
+    : null;
+  return sha256(
+    JSON.stringify({
+      schemaVersion: 1,
+      artifactKind: "skill",
+      artifactId: input.artifactId,
+      operation: input.operation,
+      target: {
+        layer: "project",
+        path: `.sparkwright/skills/${input.skillName}`,
+      },
+      basePackageHash: input.basePackageHash,
+      afterPackageHash: input.afterPackageHash,
+      originDigest,
+      capabilityRequirements: ["project_skill_write"],
+    }),
+  );
+}
+
+function currentSkillProposalEffectHash(proposal: SkillProposalDetail): string {
+  return skillProposalEffectHash({
+    artifactId: proposal.artifactId ?? `legacy:project:${proposal.skillName}`,
+    operation: proposal.kind,
+    skillName: proposal.skillName,
+    basePackageHash: proposal.basePackageHash,
+    afterPackageHash: proposal.afterPackageHash,
+    provenance: proposal.provenance,
+  });
+}
+
+function dangerousRiskFingerprints(
+  findings: readonly SkillGuardFinding[],
+): string[] {
+  return findings
+    .filter((finding) => finding.severity === "dangerous")
+    .map((finding) =>
+      sha256(
+        JSON.stringify({
+          ruleId: finding.ruleId,
+          severity: finding.severity,
+          location: finding.location,
+        }),
+      ),
+    )
+    .sort();
+}
+
+function validateSkillApprovalReceipt(
+  proposal: SkillProposalDetail,
+  effectHash: string,
+  receipt: SkillApprovalReceipt | undefined,
+): asserts receipt is SkillApprovalReceipt {
+  if (
+    !receipt ||
+    receipt.schemaVersion !== 1 ||
+    receipt.decision !== "approved" ||
+    receipt.proposalId !== proposal.id ||
+    receipt.proposalRevision !== (proposal.revision ?? 1) ||
+    receipt.effectHash !== effectHash
+  ) {
+    throw new Error(
+      `Skill proposal ${proposal.id} requires approval for its current final effect.`,
+    );
+  }
+}
+
 function proposalDir(workspaceRoot: string, proposalId: string): string {
   return join(proposalsRoot(workspaceRoot), proposalId);
 }
@@ -1118,7 +1469,10 @@ async function updateProposalState(
   mutations: CapabilityPackageMutationWriter,
   updatedAt = new Date().toISOString(),
   extra: Partial<
-    Pick<SkillProposalMetadata, "closedAt" | "statusReason" | "supersededBy">
+    Pick<
+      SkillProposalMetadata,
+      "closedAt" | "statusReason" | "supersededBy" | "preparedState"
+    >
   > = {},
 ): Promise<SkillProposalDetail> {
   const metadata: SkillProposalMetadata = {
@@ -1132,6 +1486,9 @@ async function updateProposalState(
     updatedAt,
     basePackageHash: proposal.basePackageHash,
     afterPackageHash: proposal.afterPackageHash,
+    artifactId: proposal.artifactId,
+    effectHash: proposal.effectHash,
+    preparedState: extra.preparedState ?? proposal.preparedState,
     revision: proposal.revision,
     previousAfterPackageHash: proposal.previousAfterPackageHash,
     summary: proposal.summary,
@@ -1148,6 +1505,51 @@ async function updateProposalState(
     reason: `Update proposal state ${proposal.id} to ${state}`,
   });
   return readSkillProposalFromPath(proposal.path);
+}
+
+async function updatePreparedChangeState(
+  proposal: SkillProposalDetail,
+  preparedState: PreparedChangeState,
+  mutations: CapabilityPackageMutationWriter,
+  updatedAt = new Date().toISOString(),
+): Promise<SkillProposalDetail> {
+  const metadata: SkillProposalMetadata = {
+    ...proposalMetadataFromDetail(proposal),
+    effectHash: currentSkillProposalEffectHash(proposal),
+    preparedState,
+    updatedAt,
+  };
+  await mutations.writeJson(join(proposal.path, "metadata.json"), metadata, {
+    reason: `Update prepared change ${proposal.id} to ${preparedState}`,
+  });
+  return readSkillProposalFromPath(proposal.path);
+}
+
+async function writeSkillMutationReceipt(
+  proposal: SkillProposalDetail,
+  effectHash: string,
+  history: SkillHistoryEntry,
+  appliedAt: string,
+  mutations: CapabilityPackageMutationWriter,
+): Promise<SkillMutationReceipt> {
+  const receipt: SkillMutationReceipt = {
+    schemaVersion: 1,
+    receiptId: createId("skillmutation") as string,
+    proposalId: proposal.id,
+    effectHash,
+    artifactId: proposal.artifactId ?? `legacy:project:${proposal.skillName}`,
+    beforePackageHash: proposal.basePackageHash,
+    afterPackageHash: proposal.afterPackageHash,
+    targetPath: proposal.targetPath,
+    historyId: history.id,
+    appliedAt,
+  };
+  await mutations.writeJson(
+    join(proposal.path, "mutation-receipt.json"),
+    receipt,
+    { reason: `Record Skill mutation receipt ${proposal.id}` },
+  );
+  return receipt;
 }
 
 function ensureClosableProposal(
@@ -1201,8 +1603,20 @@ async function writeHistoryEntry(
   createdAt: string,
   mutations: CapabilityPackageMutationWriter,
 ): Promise<SkillHistoryEntry> {
-  const id = createId("skillver") as string;
+  const id = proposal.effectHash
+    ? `skillver_${proposal.effectHash.slice(0, 24)}`
+    : (createId("skillver") as string);
   const path = join(historySkillRoot(workspaceRoot, proposal.skillName), id);
+  if (existsSync(join(path, "metadata.json"))) {
+    const existing = await readHistoryEntry(path);
+    if (
+      existing.proposalId !== proposal.id ||
+      existing.afterPackageHash !== proposal.afterPackageHash
+    ) {
+      throw new Error(`Skill history identity collision: ${id}`);
+    }
+    return existing;
+  }
   const afterSkillDir = join(proposal.path, "after", proposal.skillName);
   const beforeSkillDir = join(proposal.path, "before", proposal.skillName);
   if (proposal.basePackageHash) {

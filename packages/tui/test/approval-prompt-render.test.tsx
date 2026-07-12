@@ -50,6 +50,32 @@ async function renderToText(
 }
 
 describe("ApprovalPrompt rendering", () => {
+  it("renders the final prepared Skill diff before effect-bound approval", async () => {
+    const pending: PendingApproval = {
+      id: "approval_skill",
+      action: "skill.apply",
+      kind: "skill.apply",
+      summary: "Create Skill repo-review",
+      path: ".sparkwright/skills/repo-review",
+      diff: [
+        "--- /dev/null",
+        "+++ b/.sparkwright/skills/repo-review/SKILL.md",
+        "+Inspect the diff.",
+      ].join("\n"),
+      subject: { kind: "unknown" },
+    };
+
+    const text = await renderToText(
+      <ApprovalPrompt pending={pending} onDecision={() => {}} />,
+    );
+
+    expect(text).toContain("Create Skill repo-review");
+    expect(text).toContain(".sparkwright/skills/repo-review");
+    expect(text).toContain("final prepared effect");
+    expect(text).toContain("Inspect the diff.");
+    expect(text).not.toContain("Allow for this session");
+  });
+
   it("renders shell tool approvals as command details instead of raw JSON", async () => {
     const pending: PendingApproval = {
       id: "approval_1",

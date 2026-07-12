@@ -400,7 +400,7 @@ export function buildCommandRegistry(
     name: "skill-review",
     title: "Review Skill proposals",
     description:
-      "Summarize recent Skill proposals; optionally pass a state like draft.",
+      "Review Skill proposals; optionally pass a proposal id or state like draft.",
     category: "capability",
     hiddenByDefault: true,
     run: () => skillActions.reviewSkillProposalsFromSlash(""),

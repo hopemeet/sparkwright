@@ -140,6 +140,10 @@ function summarizeSkillMutation(r: Record<string, unknown>): ToolResultDisplay {
   const proposalId = str(r.proposalId);
   const changed = r.changed === false ? "unchanged" : "changed";
   const path = compactMutationPath(str(r.path) || str(r.proposalPath));
+  const internalMutationCount =
+    typeof r.internalMutationCount === "number"
+      ? r.internalMutationCount
+      : undefined;
   const label =
     action === "draft"
       ? "skill proposal"
@@ -151,6 +155,9 @@ function summarizeSkillMutation(r: Record<string, unknown>): ToolResultDisplay {
     [
       changed,
       path,
+      internalMutationCount
+        ? `${internalMutationCount} internal mutations`
+        : "",
       action === "draft" ? "draft only; original Skill package unchanged" : "",
     ],
     "success",

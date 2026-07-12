@@ -33,6 +33,12 @@ skill roots
 
 ## Contracts
 
+- The first managed-change fast path applies only to a complete, clean,
+  model-authored create. Its package hash participates in a stable final-effect
+  hash; runtime/model fingerprints remain outside that identity. The broader
+  `artifactId + packageHash` registry/stats migration is designed but not yet
+  implemented.
+
 - Default host behavior exposes loader tool and does not auto-reside all selected skills.
 - Project skill root defaults to `.sparkwright/skills`.
 - Skill metadata parsing is manifest-centered. `parseSkillManifest` is the
@@ -56,6 +62,11 @@ skill roots
   the Skill's available reference files when known, so a model that guessed a
   path like `README.md` can recover by loading the body and choosing an exact
   `<skill_files>` entry.
+- A loader/run caches successful reference loads by Skill name, canonical
+  resource path, and package/content identity. Repeating the same resource for
+  the same Skill version returns a short `already_loaded` result without the
+  content or another file read; failed/denied loads are never cached. The cache
+  is loader-scoped and does not replace package-hash identity or trace stats.
 - Skill index and resident Skill context must not expose host absolute
   `sourcePath`/`contentHash` values to provider prompts. Keep source provenance
   in metadata and trace events.
@@ -126,6 +137,24 @@ skill roots
 - Self-evolution design exists, but automatic learning should remain clearly opt-in/reviewed.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-12T02:12:00+0800
+- Scope: safe authored create prepared-change identity and apply path; runtime
+  Skill indexing/loading contracts are unchanged.
+- Read: `packages/host/src/skill-evolution.ts`, `packages/host/src/tools.ts`,
+  `packages/skills/src/package.ts`, `packages/skills/src/guard.ts`.
+- Tests: host focused Skill suites and affected typechecks.
+
+- Status: Verified
+- Date: 2026-07-12T00:56:00+0800
+- Scope: added run-scoped Skill reference deduplication keyed by canonical
+  resource path and package/content identity; repeat results omit resource
+  content while preserving failure recovery and version boundaries.
+- Read: `packages/skills/src/index.ts`, `packages/skills/test/index.test.ts`,
+  `packages/core/src/run.ts`, and this map.
+- Tests: `npm --workspace @sparkwright/skills test -- test/index.test.ts`;
+  `npm --workspace @sparkwright/skills run typecheck`.
 
 - Status: Verified
 - Date: 2026-07-07T13:18:00+0800

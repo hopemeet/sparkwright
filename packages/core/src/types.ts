@@ -659,6 +659,17 @@ export interface RuntimeContext {
   run: RunRecord;
   workspace?: WorkspaceRuntime;
   /**
+   * Request approval after a tool has prepared an inspectable final effect.
+   * Unlike the tool policy gate, this hook is available during execution so
+   * durable prepared-change tools can bind authorization to an effect hash.
+   * Embedders that execute tools outside a run may omit it.
+   */
+  requestApproval?(input: {
+    action: string;
+    summary: string;
+    details?: Record<string, unknown>;
+  }): Promise<boolean>;
+  /**
    * Run-scoped abort signal. Tools that perform I/O SHOULD wire this into
    * their underlying request (fetch, child_process, etc.) so that `cancel()`
    * on the run is observed mid-execution. Tools which ignore the signal will

@@ -55,10 +55,34 @@ history kinds:   create | update | restore
 
 ## Contracts
 
+- **Prepared create fast path:** a complete clean authored model create is
+  persisted as `ready`/`waiting` with `artifactId` and `effectHash` before the
+  run asks for `skill.apply`. Approval binds proposal id + revision + effect
+  hash, persists `approval.json`, applies in the same tool episode, and writes
+  `mutation-receipt.json` plus deterministic effect-keyed history. No resolver
+  or a denial leaves the proposal waiting for later review.
+- **Effect authorization:** the hash covers artifact kind/id, operation,
+  project target, base/after package hashes, origin digest, and capability
+  requirements; guard policy version/message text is excluded. Revision
+  recomputes the effect hash and makes an old receipt unusable. Apply reruns the
+  guard; dangerous fingerprints not present in the receipt return the proposal
+  to waiting.
+- **Crash reconciliation:** an approved/applying proposal whose target already
+  equals the after-package hash completes doctor, deterministic history,
+  mutation receipt, and applied state instead of becoming stale or duplicating
+  history.
+
 - **Actor boundary:** model-facing `create_skill` and `update_skill` draft
   proposals. `applySkillProposal`, reject, supersede, prune, and restore are
   **never exposed as model tools** — they run from CLI/TUI only. Manual CLI
   `sparkwright skills create` remains a human direct-write management command.
+- **Human-action handoff:** model-facing draft results carry one canonical
+  `/skill-review <proposal-id>` command plus a host-computed `humanAction`
+  projection (eligibility, validation, content mode, guard severity, and
+  recommended action). TUI consumes that projection only after the run settles;
+  it never recomputes risk and apply still runs through the human-only
+  hash/guard/doctor/history gate. The model fallback explicitly directs later
+  apply requests to the review command instead of searching for an apply tool.
 - **Failed drafts self-clean:** `createSkillCreateProposal` /
   `createSkillUpdateProposal` wrap their package writes; if a post-snapshot step
   throws (unparseable body, name mismatch, guard parse), the partial proposal
@@ -166,6 +190,28 @@ history kinds:   create | update | restore
   there is no persisted run→proposals index (a scan, not an index).
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-12T02:12:00+0800
+- Scope: first durable prepared-change vertical slice for safe authored create;
+  existing list/review/history/restore and continuation draft dedupe preserved.
+- Read: `packages/host/src/skill-evolution.ts`, `packages/host/src/tools.ts`.
+- Tests: host Skill evolution/tool focused suites (109 tests); host typecheck.
+
+- Status: Verified
+- Date: 2026-07-11T23:20:00+0800
+- Scope: closed the model-draft to human-apply handoff: proposal ids are valid
+  TUI review targets, draft results expose host-owned human-action eligibility,
+  and the fallback instruction prevents model apply-tool searches.
+- Read: `packages/host/src/tools.ts`, `packages/host/src/skill-evolution.ts`,
+  `packages/tui/src/lib/skill-evolution.ts`,
+  `packages/tui/src/state/event-store.ts`, `packages/tui/src/app.tsx`, and
+  `packages/tui/src/components/human-action-band.tsx`.
+- Tests: `npm --workspace @sparkwright/host test -- test/tools.test.ts
+test/skill-evolution.test.ts`; `npm --workspace @sparkwright/tui test --
+test/skill-evolution.test.ts test/event-store-active-phase.test.ts
+test/human-action-band-render.test.tsx test/skill-review-dialog-render.test.tsx`;
+  PTY `/skill-review skillprop_mrggqcyvwiz9rts2` focused the requested draft.
 
 - Status: Verified
 - Date: 2026-07-11T22:17:00+0800

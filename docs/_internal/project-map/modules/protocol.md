@@ -198,6 +198,15 @@ Does not own:
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-12T02:12:00+0800
+- Scope: checked the first Skill prepared-change slice; it reuses the existing
+  `approval.requested` / `approval.resolve` envelope with action `skill.apply`
+  and adds no protocol schema or request kind.
+- Read: `packages/protocol/src/index.ts`, `packages/core/src/approval.ts`,
+  `packages/tui/src/state/run-controller.ts`.
+- Tests: no protocol-specific tests run; host/TUI focused approval tests passed.
+
 - Status: Verified
 - Date: 2026-07-11T15:30:00+0800
 - Scope: Package G additive `workflow.control.process` request dispatches an

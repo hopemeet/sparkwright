@@ -45,7 +45,7 @@ export interface SkillActions {
   openSkillUpdateProposal: (rest?: string) => void;
   handleUpdateSkillProposal: (draft: TuiSkillProposalInput) => void;
   reviewSkillProposalsFromSlash: (rest: string) => void;
-  applySkillReviewProposal: (proposalId: string) => void;
+  applySkillReviewProposal: (proposalId: string) => Promise<boolean>;
   rejectSkillReviewProposal: (proposalId: string) => void;
   handleSkillLearn: (rest?: string) => void;
 }
@@ -55,6 +55,7 @@ export function useSkillActions(deps: {
   toasts: ToastStore;
   layers: LayerStack;
   reloadConfig: (verbose: boolean) => void;
+  onProposalClosed?: (proposalId: string) => void;
 }): SkillActions {
   const { workspaceRoot, toasts, layers, reloadConfig } = deps;
   const [skillReviewSnapshot, setSkillReviewSnapshot] =
@@ -194,25 +195,32 @@ export function useSkillActions(deps: {
       });
   }
 
-  function applySkillReviewProposal(proposalId: string): void {
-    void applyTuiSkillReviewProposal(workspaceRoot, proposalId)
-      .then((result) => {
-        toasts.push({
-          variant: "success",
-          title: "skill proposal applied",
-          message: `${result.id} -> ${result.historyId ?? "history"}`,
-          durationMs: 7000,
-        });
-        refreshSkillReview();
-      })
-      .catch((error: unknown) => {
-        toasts.push({
-          variant: "error",
-          title: "skill proposal apply failed",
-          message: error instanceof Error ? error.message : String(error),
-          durationMs: 9000,
-        });
+  async function applySkillReviewProposal(
+    proposalId: string,
+  ): Promise<boolean> {
+    try {
+      const result = await applyTuiSkillReviewProposal(
+        workspaceRoot,
+        proposalId,
+      );
+      toasts.push({
+        variant: "success",
+        title: "skill proposal applied",
+        message: `${result.id} -> ${result.historyId ?? "history"}`,
+        durationMs: 7000,
       });
+      deps.onProposalClosed?.(proposalId);
+      refreshSkillReview();
+      return true;
+    } catch (error) {
+      toasts.push({
+        variant: "error",
+        title: "skill proposal apply failed",
+        message: error instanceof Error ? error.message : String(error),
+        durationMs: 9000,
+      });
+      return false;
+    }
   }
 
   function rejectSkillReviewProposal(proposalId: string): void {
@@ -224,6 +232,7 @@ export function useSkillActions(deps: {
           message: `${result.id} ${result.skillName}`,
           durationMs: 7000,
         });
+        deps.onProposalClosed?.(proposalId);
         refreshSkillReview();
       })
       .catch((error: unknown) => {

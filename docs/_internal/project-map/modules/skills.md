@@ -49,6 +49,15 @@ Does not own:
 
 ## Contracts
 
+- Safe model-authored create proposals now use the first prepared-change fast
+  path: the complete package and `effectHash` are persisted before approval;
+  one `skill.apply` approval binds proposal id, revision, and effect hash; the
+  originating tool episode then writes an approval receipt, applies the Skill,
+  writes deterministic history plus a mutation receipt, and returns an applied
+  result. Missing approval leaves `preparedState: waiting`. Templates,
+  updates, caution/dangerous content, and direct CLI/TUI creation retain their
+  existing review/direct behavior until `SkillCommandService` convergence.
+
 - Skill events include `skill.indexed`, `skill.failed`, and `skill.loaded`.
 - `skill.indexed.metadata.skills[]` carries emit-time identity provenance,
   including `contentHash`, `packageHash` when available, and layer. Skill stats
@@ -79,6 +88,10 @@ Does not own:
   and does not affect default ranking.
 - Host defaults to on-demand loading via `skill_load` unless config opts into
   selected skill residency.
+- The on-demand loader deduplicates successful body loads by name and reference
+  loads by name + canonical resource path + package/content identity within the
+  loader/run. Repeat references return a short `already_loaded` result without
+  content; unsuccessful loads remain retryable.
 - Markdown-folder asset helpers own only generic folder discovery,
   frontmatter/body splitting, loose frontmatter parsing, and content hashing.
   Domain schemas and diagnostics remain with the owner, such as host skills,
@@ -122,12 +135,16 @@ Does not own:
   management command. Applied proposal changes snapshot to history; `skills
 restore --to before` is the revert edge. See
   [../maps/capabilities/skill-evolution.md](../maps/capabilities/skill-evolution.md).
+- Model draft results expose a host-computed human-action handoff and canonical
+  proposal-id review command. This is presentation/governance metadata, not a
+  model apply capability; TUI remains the actor that confirms and executes
+  proposal application.
 - `skills review` is a host-backed CLI digest that combines draft proposal
   backlog with actionable trace-stats findings (`SKILL_LOAD_FAILURES` and
   `ASSOCIATED_TOOL_FAILURES`) without relying on the usage sidecar.
 - Repeated model-authored `create_skill` / `update_skill` drafts for the same
-  skill within the same run return the existing draft proposal instead of
-  creating another one.
+  skill and session reuse the existing draft across supervised continuation
+  runs; callers without session provenance retain run-scoped fallback.
 
 ## Consumers
 
@@ -156,6 +173,35 @@ list --run/--session`); failed drafts self-clean. See
   [../maps/capabilities/skill-evolution.md](../maps/capabilities/skill-evolution.md#known-debts).
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-12T02:12:00+0800
+- Scope: first managed-change vertical slice for safe model-authored Skill
+  creation, including effect-bound approval, same-run apply, receipts, revision
+  invalidation, and crash reconciliation.
+- Read: `packages/host/src/skill-evolution.ts`, `packages/host/src/tools.ts`,
+  `packages/core/src/types.ts`, `packages/core/src/run.ts`.
+- Tests: host Skill evolution/tool focused suites (109 tests); affected
+  typechecks; TUI approval render/controller focused suites.
+
+- Status: Verified
+- Date: 2026-07-12T00:56:00+0800
+- Scope: added version-aware, run-scoped reference-load deduplication to bound
+  repeated model observation cost without changing Skill routing or stats.
+- Read: `packages/skills/src/index.ts`, `packages/skills/test/index.test.ts`,
+  and `maps/capabilities/skills.md`.
+- Tests: `npm --workspace @sparkwright/skills test -- test/index.test.ts`;
+  `npm --workspace @sparkwright/skills run typecheck`.
+
+- Status: Verified
+- Date: 2026-07-11T23:20:00+0800
+- Scope: added the structured model-draft to human-review handoff without
+  widening the model-facing mutation boundary.
+- Read: `packages/host/src/tools.ts`, `packages/host/src/skill-evolution.ts`,
+  `packages/tui/src/lib/skill-evolution.ts`, and
+  `maps/capabilities/skill-evolution.md`.
+- Tests: host Skill tool/evolution focused suites and TUI Skill review focused
+  suites passed; proposal-id review was verified through a real PTY.
 
 - Status: Verified
 - Date: 2026-07-11T22:17:00+0800

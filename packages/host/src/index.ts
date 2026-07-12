@@ -172,6 +172,7 @@ export {
   middleEllipsisPath,
 } from "@sparkwright/core";
 export {
+  applyApprovedSkillProposal,
   applySkillProposal,
   createSkillCreateProposal,
   createSkillUpdateProposal,
@@ -180,8 +181,12 @@ export {
   pruneSkillProposals,
   readSkillHistoryDetail,
   readSkillProposal,
+  prepareSkillProposalApproval,
+  recordSkillProposalApproval,
   rejectSkillProposal,
+  reviseSkillProposalDraft,
   skillEvolutionRoot,
+  skillProposalReviewCommand,
   restoreSkillFromHistory,
   supersedeSkillProposal,
 } from "./skill-evolution.js";
@@ -190,6 +195,8 @@ export type {
   CloseSkillProposalInput,
   CreateSkillCreateProposalInput,
   CreateSkillUpdateProposalInput,
+  PreparedChangeState,
+  PreparedSkillApproval,
   PruneSkillProposalsInput,
   PruneSkillProposalsResult,
   RestoreSkillFromHistoryInput,
@@ -198,6 +205,8 @@ export type {
   SkillHistoryDetail,
   SkillHistoryKind,
   SkillHistoryMetadata,
+  SkillApprovalReceipt,
+  SkillMutationReceipt,
   SkillProposalDetail,
   SkillProposalKind,
   SkillProposalMetadata,

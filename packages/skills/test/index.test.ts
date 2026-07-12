@@ -776,6 +776,27 @@ Review only the requested change.
       content: "Rule one.\nRule two.\n",
     });
 
+    const repeated = await tool.execute(
+      { name: "code-reviewer", resource: "references/rules.md" },
+      ctx,
+    );
+    expect(repeated).toMatchObject({
+      status: "already_loaded",
+      name: "code-reviewer",
+      resource: "references/rules.md",
+      samePackageHash: true,
+    });
+    expect(repeated).not.toHaveProperty("content");
+
+    const aliasedRepeat = await tool.execute(
+      { name: "code-reviewer", resource: "references/./rules.md" },
+      ctx,
+    );
+    expect(aliasedRepeat).toMatchObject({
+      status: "already_loaded",
+      resource: "references/rules.md",
+    });
+
     const emptyResource = await tool.execute(
       { name: "code-reviewer", resource: "" },
       ctx,

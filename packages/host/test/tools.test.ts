@@ -2790,7 +2790,20 @@ describe("host tools", () => {
       changed: true,
       skillName: "repo-review",
       contentMode: "authored",
+      reviewCommand: expect.stringMatching(
+        /^\/skill-review skillprop_[a-z0-9]+$/,
+      ),
+      humanAction: {
+        kind: "skill_proposal_review",
+        eligibility: "quick_apply",
+        validationStatus: "passed",
+        guardSeverity: "none",
+        recommendedAction: "apply",
+      },
     });
+    expect((drafted as { nextStep: string }).nextStep).toContain(
+      "do NOT search for an apply tool",
+    );
     const proposal = drafted as { proposalPath: string };
     await expect(
       readFile(
@@ -2798,6 +2811,152 @@ describe("host tools", () => {
         "utf8",
       ),
     ).resolves.toBe(body);
+  });
+
+  it("approves the persisted final authored Skill effect once and applies it in the same tool episode", async () => {
+    const ctx = await createWorkspace({});
+    const tool = createSkillManagerTool(ctx.workspaceRoot, undefined);
+    const approvals: Array<{
+      action: string;
+      details?: Record<string, unknown>;
+    }> = [];
+    ctx.requestApproval = async (request) => {
+      approvals.push(request);
+      const proposalId = String(request.details?.proposalId);
+      await expect(
+        readFile(
+          join(
+            ctx.workspaceRoot,
+            ".sparkwright",
+            "skill-evolution",
+            "proposals",
+            proposalId,
+            "metadata.json",
+          ),
+          "utf8",
+        ),
+      ).resolves.toContain('"preparedState": "waiting"');
+      return true;
+    };
+
+    const result = await tool.execute(
+      {
+        action: "create",
+        name: "ready-skill",
+        description: "verify repository changes",
+        body: "Always inspect the diff and run focused tests.",
+      },
+      ctx,
+    );
+
+    expect(approvals).toHaveLength(1);
+    expect(approvals[0]).toMatchObject({
+      action: "skill.apply",
+      details: {
+        proposalRevision: 1,
+        effectHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+        path: ".sparkwright/skills/ready-skill",
+        diff: expect.stringContaining("SKILL.md"),
+      },
+    });
+    expect(result).toMatchObject({
+      action: "applied",
+      state: "applied",
+      preparedState: "applied",
+      skillName: "ready-skill",
+      approvalReceiptId: expect.stringMatching(/^skillapproval_/),
+      historyId: expect.stringMatching(/^skillver_/),
+      effectHash: approvals[0]?.details?.effectHash,
+    });
+    const proposalPath = (result as { proposalPath: string }).proposalPath;
+    await expect(
+      readFile(join(proposalPath, "approval.json"), "utf8"),
+    ).resolves.toContain(String(approvals[0]?.details?.effectHash));
+    await expect(
+      readFile(join(proposalPath, "mutation-receipt.json"), "utf8"),
+    ).resolves.toContain((result as { historyId: string }).historyId);
+    await expect(
+      readFile(
+        join(
+          ctx.workspaceRoot,
+          ".sparkwright",
+          "skills",
+          "ready-skill",
+          "SKILL.md",
+        ),
+        "utf8",
+      ),
+    ).resolves.toContain("Always inspect the diff");
+  });
+
+  it("keeps the authored Skill final-effect approval inside the originating run", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-skill-run-"));
+    try {
+      const tool = createSkillManagerTool(root, undefined);
+      let modelCalls = 0;
+      let approvalCalls = 0;
+      const run = createRun({
+        goal: "create a repository review Skill",
+        workspace: new LocalWorkspace(root),
+        tools: [tool],
+        maxSteps: 3,
+        approvalResolver(request) {
+          approvalCalls += 1;
+          expect(request.action).toBe("skill.apply");
+          expect(request.details).toMatchObject({
+            proposalId: expect.stringMatching(/^skillprop_/),
+            proposalRevision: 1,
+            effectHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+            diff: expect.stringContaining("SKILL.md"),
+          });
+          return {
+            approvalId: request.id,
+            decision: "approved",
+          };
+        },
+        model: {
+          async complete() {
+            modelCalls += 1;
+            return modelCalls === 1
+              ? {
+                  toolCalls: [
+                    {
+                      toolName: "create_skill",
+                      arguments: {
+                        action: "create",
+                        name: "repo-review-run",
+                        description: "review repository changes",
+                        body: "Inspect the diff and run focused tests.",
+                      },
+                    },
+                  ],
+                }
+              : { message: "Skill repo-review-run was created." };
+          },
+        },
+      });
+
+      const result = await run.start();
+
+      expect(result.signal).toBe("completed");
+      expect(approvalCalls).toBe(1);
+      expect(
+        run.events.all().filter((event) => event.type === "approval.requested"),
+      ).toHaveLength(1);
+      expect(
+        run.events
+          .all()
+          .filter((event) => event.type === "capability.mutation.completed"),
+      ).not.toHaveLength(0);
+      await expect(
+        readFile(
+          join(root, ".sparkwright", "skills", "repo-review-run", "SKILL.md"),
+          "utf8",
+        ),
+      ).resolves.toContain("Inspect the diff");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it("wraps create_skill instruction bodies with required frontmatter", async () => {
@@ -3844,10 +4003,10 @@ describe("host tools", () => {
     }
 
     // Managers still carry the write side effect that triggers approval.
-    for (const tool of [skillManager, agentManager]) {
-      expect(tool.governance?.sideEffects).toContain("write");
-      expect(tool.policy?.risk).toBe("risky");
-    }
+    expect(skillManager.governance?.sideEffects).toContain("write");
+    expect(skillManager.policy?.risk).toBe("safe");
+    expect(agentManager.governance?.sideEffects).toContain("write");
+    expect(agentManager.policy?.risk).toBe("risky");
 
     // The read-only actions are no longer accepted by the managers.
     expect(

@@ -1156,14 +1156,21 @@ export class RunController {
         return;
       }
     }
-    const kind: "workspace.write" | "tool.execute" | "shell.execute" | "other" =
+    const kind:
+      | "workspace.write"
+      | "skill.apply"
+      | "tool.execute"
+      | "shell.execute"
+      | "other" =
       action === "workspace.write"
         ? "workspace.write"
-        : action === "tool.execute"
-          ? "tool.execute"
-          : action === "shell.execute"
-            ? "shell.execute"
-            : "other";
+        : action === "skill.apply"
+          ? "skill.apply"
+          : action === "tool.execute"
+            ? "tool.execute"
+            : action === "shell.execute"
+              ? "shell.execute"
+              : "other";
     const pickString = (k: string): string | undefined =>
       typeof details[k] === "string" ? (details[k] as string) : undefined;
     const policyRaw = details.policy as

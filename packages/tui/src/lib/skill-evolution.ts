@@ -38,6 +38,7 @@ export interface TuiSkillReviewDetail {
   total: number;
   items: TuiSkillReviewItem[];
   stateFilter?: SkillProposalState;
+  proposalId?: string;
 }
 
 export interface TuiSkillReviewActionResult {
@@ -142,7 +143,12 @@ export async function reviewTuiSkillProposals(
   rest: string,
   limit = 5,
 ): Promise<TuiSkillReviewSummary> {
-  const stateFilter = parseReviewState(rest);
+  const target = parseTuiSkillReviewTarget(rest);
+  if (target.kind === "proposal") {
+    const proposal = await readSkillProposal(workspaceRoot, target.proposalId);
+    return { total: 1, shown: [proposal] };
+  }
+  const stateFilter = target.kind === "state" ? target.state : undefined;
   const proposals = await listSkillProposals(workspaceRoot);
   const filtered = stateFilter
     ? proposals.filter((proposal) => proposal.state === stateFilter)
@@ -159,7 +165,16 @@ export async function loadTuiSkillReview(
   rest: string,
   limit = 20,
 ): Promise<TuiSkillReviewDetail> {
-  const stateFilter = parseReviewState(rest);
+  const target = parseTuiSkillReviewTarget(rest);
+  if (target.kind === "proposal") {
+    const proposal = await readSkillProposal(workspaceRoot, target.proposalId);
+    return {
+      total: 1,
+      items: [proposal],
+      proposalId: target.proposalId,
+    };
+  }
+  const stateFilter = target.kind === "state" ? target.state : undefined;
   const proposals = await listSkillProposals(workspaceRoot);
   const filtered = stateFilter
     ? proposals.filter((proposal) => proposal.state === stateFilter)
@@ -239,14 +254,24 @@ export async function rejectTuiSkillReviewProposal(
   };
 }
 
-function parseReviewState(rest: string): SkillProposalState | undefined {
+export type TuiSkillReviewTarget =
+  | { kind: "all" }
+  | { kind: "state"; state: SkillProposalState }
+  | { kind: "proposal"; proposalId: string };
+
+export function parseTuiSkillReviewTarget(rest: string): TuiSkillReviewTarget {
   const value = rest.trim();
-  if (!value) return undefined;
+  if (!value) return { kind: "all" };
+  if (/^skillprop_[a-z0-9]+$/u.test(value)) {
+    return { kind: "proposal", proposalId: value };
+  }
   const normalized = value.startsWith("--state ")
     ? value.slice("--state ".length).trim()
     : value;
   if (!REVIEW_STATES.includes(normalized as SkillProposalState)) {
-    throw new Error(`usage: /skill-review [${REVIEW_STATES.join("|")}]`);
+    throw new Error(
+      `usage: /skill-review [proposal-id|${REVIEW_STATES.join("|")}]`,
+    );
   }
-  return normalized as SkillProposalState;
+  return { kind: "state", state: normalized as SkillProposalState };
 }

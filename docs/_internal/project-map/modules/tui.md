@@ -51,10 +51,28 @@ Does not own:
 
 ## Contracts
 
+- The prepared-change fast path uses the normal queued approval controller with
+  action `skill.apply`. `ApprovalPrompt` renders the persisted final patch and
+  target before the one-shot decision; it deliberately has an unknown session
+  approval subject, so no remembered rule can authorize later effects. The
+  post-run human-action band remains transitional for review-only/legacy drafts
+  and is not canonical waiting state.
+
 - `RunController` sends `run.start` with the current `sessionId`.
 - Todo-supervisor continuation notices are scrollback-native and label the
   preceding assistant answer as provisional before showing the continuation
   count; committed assistant cards remain append-only and are not rewritten.
+- Model-authored Skill draft tool results project host-owned `humanAction`
+  metadata into a short-lived live-frame action band after the run settles.
+  Safe authored create drafts offer `a` then Enter confirmation; `r` opens
+  `/skill-review <proposal-id>` directly; Esc dismisses. Review-required or
+  dangerous drafts do not offer quick apply. Static scrollback rows remain
+  non-interactive and TUI does not recompute the host risk projection.
+- Default committed scrollback suppresses per-file capability mutation rows
+  under `.sparkwright/skill-evolution/proposals/`, counts them by their shared
+  tool span, and appends `N internal mutations` to the terminal Skill proposal
+  result. Raw events remain in the event store/Activity Events view for debug
+  and audit; unrelated capability mutations keep their individual rows.
 - TUI presents one runtime permission axis (`read-only`, `ask`, `accept-edits`,
   `bypass`) but no longer owns a persisted `ui.tuiPermissionMode` config field.
   File config uses shared `run.accessMode`; project `run.accessMode` becomes an
@@ -116,7 +134,9 @@ Does not own:
   out of committed history; `task.started` plus terminal `task.*` rows carry the
   visible lifecycle. If a task becomes terminal after the final model request,
   the run footer appends a structured runtime update so stale model prose does
-  not override the current task record.
+  not override the current task record. Completed terminals use success color,
+  failures use error color, and user/requested cancellation uses warning color
+  in both lifecycle rows and runtime updates.
 - Run facts do not label an explicit/promoted background shell handoff as a
   completed command; task lifecycle rows remain the visible source for its
   later terminal state.
@@ -310,6 +330,49 @@ Does not own:
   durable control inbox before adding daemon and multi-channel adapters.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-12T02:12:00+0800
+- Scope: effect-bound `skill.apply` approval projection and final-diff render;
+  canonical waiting/receipt state remains host-persisted.
+- Read: `packages/tui/src/state/run-controller.ts`,
+  `packages/tui/src/state/event-store.ts`,
+  `packages/tui/src/components/approval-prompt.tsx`.
+- Tests: TUI typecheck; approval prompt render and queued approval controller
+  focused suites.
+
+- Status: Verified
+- Date: 2026-07-12T00:56:00+0800
+- Scope: folded proposal-package mutation noise into the terminal Skill tool
+  summary while retaining raw events and append-only Static rendering.
+- Read: `packages/tui/src/components/event-stream.tsx`,
+  `packages/tui/src/lib/tool-display.ts`, and
+  `packages/tui/test/event-stream-render.test.ts`.
+- Tests: `npm --workspace @sparkwright/tui test --
+test/event-stream-render.test.ts test/tool-request-preview.test.ts`;
+  `npm --workspace @sparkwright/tui run typecheck`.
+
+- Status: Verified
+- Date: 2026-07-11T23:20:00+0800
+- Scope: proposal-id review routing plus a centralized, terminal-only Skill
+  human-action band with explicit apply confirmation and duplicate-submit
+  suppression.
+- Read: `packages/tui/src/lib/skill-evolution.ts`,
+  `packages/tui/src/state/event-store.ts`,
+  `packages/tui/src/state/use-skill-actions.ts`, `packages/tui/src/app.tsx`,
+  `packages/tui/src/components/live-frame.tsx`, and
+  `packages/tui/src/components/human-action-band.tsx`.
+- Tests: TUI Skill parser/review, event-store projection, action-band render,
+  and review-dialog focused tests passed; PTY proposal-id review focused the
+  requested proposal without model involvement.
+
+- Status: Verified
+- Date: 2026-07-11T22:55:00+0800
+- Scope: cancelled background task lifecycle and runtime-update rows use warning
+  tone while failed rows retain error tone.
+- Read: `packages/tui/src/components/event-stream.tsx`,
+  `packages/tui/test/event-stream-render.test.ts`.
+- Tests: full `npm run release:check`.
 
 - Status: Verified
 - Date: 2026-07-11T22:17:00+0800
