@@ -338,6 +338,13 @@ Does not own:
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-12T20:12:00+0800
+- Scope: Workflow durable asset pins now preserve source layer through create,
+  serialization, reload, and stats projection; legacy records remain readable.
+- Read: Workflow types/store, host runtime creation, asset stats and tests.
+- Tests: focused agent-runtime Workflow and host Workflow/stats suites passed.
+
+- Status: Verified
 - Date: 2026-07-12T17:28:16+0800
 - Scope: `AgentProfile` carries host-resolved Markdown package identity and
   `spawnSubAgent` copies it into child-run and parent-visible lifecycle metadata

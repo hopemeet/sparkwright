@@ -1146,6 +1146,7 @@ export {
   computeAssetPackageHash,
   listAssetPackageFiles,
   snapshotAssetPackage,
+  assetPackagePathsOverlap,
   type AssetPackageFile,
   type AssetPackageHash,
   type AssetPackageIdentity,

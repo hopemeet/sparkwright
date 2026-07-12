@@ -430,6 +430,7 @@ describe("workflow assets", () => {
       .list()
       .records.filter((record) => record.id === workflowRunId);
     expect(records).toHaveLength(1);
+    expect(records[0]?.layer).toBe("project");
     expect(records[0]?.metadata).toMatchObject({
       serviceHandoffId: "handoff_fixed",
     });

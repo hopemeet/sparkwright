@@ -115,6 +115,13 @@ policy requires approval
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-07-12T20:00:00+0800
+- Scope: checked Markdown Agent exact-file validation and legacy removal route;
+  both continue through the existing workspace-write approval boundary.
+- Read: host Agent tool and capability write helper.
+- Tests: focused tool tests and full release gate; no approval contract change.
+
+- Status: Read-only
 - Date: 2026-07-12
 - Scope: checked Markdown Agent final-write approval; reconciliation remains outside managed approval semantics.
 - Tests: focused host tests passed; release gate pending.

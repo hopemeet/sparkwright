@@ -6,6 +6,7 @@ import {
   listSkillProposals,
   prepareSkillProposalApproval,
   readSkillProposal,
+  reconcileSkillProposalDrafts,
   recordSkillProposalApproval,
   reviseSkillProposalDraft,
   type ApplySkillProposalResult,
@@ -57,6 +58,7 @@ export class SkillCommandService {
     input: PrepareSkillCreateCommandInput,
   ): Promise<PrepareSkillCreateCommandResult> {
     this.assertProjectRoot(input.root);
+    await reconcileSkillProposalDrafts(this.workspaceRoot);
     const existing = await this.findExistingCreateDraft(
       input.name,
       input.provenance,

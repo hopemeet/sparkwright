@@ -58,7 +58,7 @@ import { delegateToolName } from "./delegate-capability.js";
 import { projectSkillRoot } from "./skill-roots.js";
 import { loadLayeredSkillReport } from "./skill-report.js";
 import {
-  discoverProjectAgentProfiles,
+  discoverAgentProfileFileEntriesInDir,
   markdownAgentIdentity,
   parseAgentProfileFile,
 } from "./agent-profiles.js";
@@ -681,15 +681,22 @@ export function createMarkdownAgentManagerTool(workspaceRoot: string) {
   return defineTool({
     name: "create_agent",
     description:
-      "Create, update, or replace one Markdown Agent at .sparkwright/agents/<id>.md. " +
+      "Create, update, replace, or remove one Markdown Agent at .sparkwright/agents/<name>.md. " +
+      "The canonical name is also the filename stem; omit default mode/maxSteps and redundant deny rules. " +
       "The final Markdown is parsed, semantically summarized, approval-gated as a workspace write, atomically written, then rediscovered for callability. " +
       "This does not mutate config-backed agent profiles or create proposal/history records.",
     inputSchema: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["create", "update", "replace"] },
-        id: { type: "string" },
-        name: { type: "string" },
+        action: {
+          type: "string",
+          enum: ["create", "update", "replace", "remove"],
+        },
+        name: {
+          type: "string",
+          description:
+            "Canonical Agent name and filename stem, for example code-reviewer. The created file is .sparkwright/agents/<name>.md.",
+        },
         description: { type: "string" },
         mode: { type: "string", enum: ["primary", "child", "all"] },
         prompt: { type: "string" },
@@ -700,7 +707,7 @@ export function createMarkdownAgentManagerTool(workspaceRoot: string) {
         maxSteps: { type: "integer", minimum: 1 },
         replaceReason: { type: "string" },
       },
-      required: ["action", "id", "prompt"],
+      required: ["action", "name"],
       additionalProperties: false,
     },
     policy: { risk: "risky" },
@@ -712,6 +719,18 @@ export function createMarkdownAgentManagerTool(workspaceRoot: string) {
     isReplaySafe: false,
     async execute(args: unknown, ctx) {
       if (!ctx.workspace) throw new Error("Workspace is not configured.");
+      if (isPlainObject(args) && args.action === "remove") {
+        return createAgentManagerTool(workspaceRoot).execute(
+          {
+            ...args,
+            id:
+              typeof args.name === "string" && args.name.trim()
+                ? args.name.trim()
+                : args.id,
+          },
+          ctx,
+        );
+      }
       return writeMarkdownAgent(
         ctx,
         workspaceRoot,
@@ -1812,7 +1831,6 @@ type MarkdownAgentAction = "create" | "update" | "replace";
 interface MarkdownAgentInput {
   action: MarkdownAgentAction;
   id: string;
-  name?: string;
   description?: string;
   mode?: "primary" | "child" | "all";
   prompt: string;
@@ -1834,11 +1852,16 @@ function parseMarkdownAgentArgs(args: unknown): MarkdownAgentInput {
       "create_agent action must be create, update, or replace.",
     );
   }
-  const id = typeof args.id === "string" ? args.id.trim() : "";
+  const id =
+    typeof args.id === "string" && args.id.trim()
+      ? args.id.trim()
+      : typeof args.name === "string"
+        ? args.name.trim()
+        : "";
   const prompt = typeof args.prompt === "string" ? args.prompt.trim() : "";
   if (!isAgentId(id) || !prompt) {
     throw toolArgumentsInvalid(
-      "create_agent requires a valid id and non-empty prompt.",
+      "create_agent requires a valid name and non-empty prompt.",
     );
   }
   if (action === "replace" && typeof args.replaceReason !== "string") {
@@ -1870,7 +1893,6 @@ function parseMarkdownAgentArgs(args: unknown): MarkdownAgentInput {
     action,
     id,
     prompt,
-    ...(typeof args.name === "string" ? { name: args.name.trim() } : {}),
     ...(typeof args.description === "string"
       ? { description: args.description.trim() }
       : {}),
@@ -1938,13 +1960,27 @@ async function writeMarkdownAgent(
     content,
     `${input.action === "replace" ? "Replace" : input.action === "update" ? "Update" : "Create"} Markdown Agent ${input.id}`,
   );
-  const discovered = await discoverProjectAgentProfiles(workspaceRoot);
-  const callable = discovered.find((entry) => entry.id === input.id);
-  if (!callable || !callable.prompt) {
+  const collisions: string[] = [];
+  const entries = await discoverAgentProfileFileEntriesInDir(
+    join(workspaceRoot, ".sparkwright", "agents"),
+    {
+      onCollision: (collision) => collisions.push(collision.id),
+    },
+  );
+  const expectedSource = resolve(workspaceRoot, path);
+  const discoveredEntry = entries.find(
+    (entry) => entry.profile.id === input.id && entry.source === expectedSource,
+  );
+  if (
+    collisions.includes(input.id) ||
+    !discoveredEntry ||
+    !discoveredEntry.profile.prompt
+  ) {
     throw new Error(
-      `Markdown Agent ${input.id} was written but is not callable after rediscovery.`,
+      `Markdown Agent ${input.id} was written but its exact file is not uniquely callable after rediscovery.`,
     );
   }
+  const callable = discoveredEntry.profile;
   ctx.reportCapabilityMutationCompleted?.({
     action: `${input.action}_markdown_agent`,
     path: write.path,
@@ -1970,12 +2006,16 @@ function markdownAgentResult(
   profile: AgentProfile,
   changed: boolean,
 ) {
+  const { id: _internalId, ...publicProfile } = profile;
   return {
     action: input.action,
-    id: input.id,
+    name: input.id,
     path,
     changed,
-    profile,
+    profile: {
+      ...publicProfile,
+      name: input.id,
+    },
     semanticSummary: {
       mode: profile.mode ?? "child",
       model: profile.model,
@@ -1993,15 +2033,11 @@ function markdownAgentResult(
 }
 
 function markdownAgentDocument(input: MarkdownAgentInput): string {
-  const lines = [
-    "---",
-    `id: ${input.id}`,
-    `name: ${yamlScalar(input.name || input.id)}`,
-    `mode: ${input.mode ?? "child"}`,
-  ];
+  const lines = ["---", `name: ${yamlScalar(input.id)}`];
   if (input.description)
     lines.push(`description: ${yamlScalar(input.description)}`);
   if (input.model) lines.push(`model: ${yamlScalar(input.model)}`);
+  if (input.mode) lines.push(`mode: ${input.mode}`);
   if (input.use?.length)
     lines.push(`use: [${input.use.map(yamlScalar).join(", ")}]`);
   if (input.allowedTools?.length)

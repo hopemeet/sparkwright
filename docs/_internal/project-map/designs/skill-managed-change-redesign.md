@@ -410,6 +410,20 @@ history, receipt, recovery, and four-entry command-service convergence.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-12T20:00:00+0800
+- Scope: post-review hardening completed disjoint snapshot containment,
+  transactional/unique Skill reconciliation, local-path import origins,
+  exact-file Agent callability validation and remove compatibility, production
+  Agent/Workflow stats queries, and persisted Skill suggestion cooldowns.
+  Follow-up fixes keep Workflow terminal counters run-scoped, persist the
+  event-time Workflow layer, journal import origin with registry/receipt, and
+  handle Windows cross-volume snapshot paths as disjoint.
+- Read: package-v2, Skill registry/import, Markdown Agent manager/discovery,
+  asset stats, Skill suggestion/review, CLI routing, and focused tests.
+- Tests: focused Skills/host/CLI suites and affected typechecks; full release
+  gate recorded after the final verification pass.
+
+- Status: Verified
 - Date: 2026-07-12T17:28:16+0800
 - Scope: completed Phase 5 single-file Markdown Agent authoring, callability
   validation, config-shadow rejection, and event-time package attribution.

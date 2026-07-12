@@ -15,7 +15,10 @@ import {
   type SkillStatsFreshness,
   type SkillStatsOptions,
 } from "./skill-stats.js";
-import { collectSkillEvidenceSuggestions } from "./skill-suggestions.js";
+import {
+  activeDismissedSkillSuggestionIds,
+  collectSkillEvidenceSuggestions,
+} from "./skill-suggestions.js";
 
 export type SkillReviewDigestItemKind = "proposal" | "evidence_suggestion";
 export type SkillReviewDigestSeverity = SkillStatsFindingSeverity;
@@ -96,6 +99,9 @@ export async function collectSkillReviewDigest(
   };
   const stats = await collectSkillStats(statsOptions);
   const proposals = await listSkillProposals(options.workspaceRoot);
+  const suppressedSuggestionIds = await activeDismissedSkillSuggestionIds(
+    options.workspaceRoot,
+  );
   const draftProposals = proposals.filter((proposal) => {
     if (proposal.state !== "draft") return false;
     if (options.skillName && proposal.skillName !== options.skillName) {
@@ -108,6 +114,7 @@ export async function collectSkillReviewDigest(
     ...collectSkillEvidenceSuggestions({
       findings: stats.findings,
       proposals: draftProposals,
+      suppressedSuggestionIds,
     }).map(findingToReviewItem),
   ].sort(compareReviewItems);
 

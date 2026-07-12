@@ -162,6 +162,11 @@ restore --to before` is the revert edge. See
 - Repeated model-authored `create_skill` / `update_skill` drafts for the same
   skill and session reuse the existing draft across supervised continuation
   runs; callers without session provenance retain run-scoped fallback.
+- Applying a proposal closes competing drafts for the same project target as
+  superseded. Explicit host reconciliation repairs legacy create drafts against
+  managed history or marks externally occupied/drifted targets stale; TUI
+  inbox/review recovery and ordinary create preparation invoke it, while plain
+  proposal listing stays read-only.
 
 ## Consumers
 
@@ -190,6 +195,21 @@ list --run/--session`); failed drafts self-clean. See
   [../maps/capabilities/skill-evolution.md](../maps/capabilities/skill-evolution.md#known-debts).
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-12
+- Scope: proposal lifecycle reconciliation and competing-draft closure across
+  host create/apply and TUI inbox recovery.
+- Tests: focused host and TUI Skill proposal suites and affected typechecks.
+
+- Status: Verified
+- Date: 2026-07-12T20:00:00+0800
+- Scope: hardened v2 snapshot disjointness and completed registry uniqueness,
+  cross-volume-aware path relationships, recovery journal, transactionally
+  origin-backed import, and suggestion cooldown behavior.
+- Read: `packages/skills/src/package-v2.ts`, host Skill registry/suggestions,
+  and focused package/host tests.
+- Tests: focused Skills and host registry/suggestion suites passed.
 
 - Status: Read-only
 - Date: 2026-07-12

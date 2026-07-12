@@ -6,7 +6,7 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { join } from "node:path";
+import { join, win32 } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
 import { createRunId } from "@sparkwright/core";
@@ -31,6 +31,7 @@ import {
   selectSkills,
   snapshotSkillPackage,
   snapshotAssetPackage,
+  assetPackagePathsOverlap,
   type SkillIndexEntry,
 } from "../src/index.js";
 
@@ -306,12 +307,39 @@ Review carefully.
         { rootPath: packageDir, entryPath: "SKILL.md" },
         join(packageDir, "snapshot"),
       ),
-    ).rejects.toThrow(/outside its source root/);
+    ).rejects.toThrow(/disjoint from its source root/);
+    await expect(
+      snapshotAssetPackage(
+        { rootPath: packageDir, entryPath: "SKILL.md" },
+        root,
+      ),
+    ).rejects.toThrow(/disjoint from its source root/);
+    await expect(access(join(packageDir, "SKILL.md"))).resolves.toBeUndefined();
 
     await symlink(join(packageDir, "SKILL.md"), join(packageDir, "link.md"));
     await expect(
       computeAssetPackageHash({ rootPath: packageDir, entryPath: "SKILL.md" }),
     ).rejects.toThrow(/cannot contain a symlink/);
+  });
+
+  it("treats Windows cross-volume snapshot paths as disjoint", () => {
+    expect(
+      assetPackagePathsOverlap(
+        "C:\\assets\\skill",
+        "D:\\snapshots\\skill",
+        win32,
+      ),
+    ).toBe(false);
+    expect(
+      assetPackagePathsOverlap(
+        "C:\\assets\\skill",
+        "C:\\assets\\skill\\snapshot",
+        win32,
+      ),
+    ).toBe(true);
+    expect(
+      assetPackagePathsOverlap("C:\\assets", "C:\\assets\\skill", win32),
+    ).toBe(true);
   });
 
   it("lets stronger roots shadow weaker skills with the same name", async () => {

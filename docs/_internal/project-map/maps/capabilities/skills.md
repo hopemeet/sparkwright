@@ -144,6 +144,16 @@ skill roots
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-07-12T20:00:00+0800
+- Scope: v2 snapshots reject ancestor targets; reconciliation enforces one
+  active owner per path and recovers journaled registry/receipt writes; import
+  records origin in the same recoverable transaction; review suggestions
+  support durable cooldown dismissal. Snapshot overlap checks are cross-volume
+  aware on Windows.
+- Read: package-v2, Skill registry, suggestions/review, CLI and tests.
+- Tests: focused Skills, host, and CLI suites passed.
+
 - Status: Read-only
 - Date: 2026-07-12
 - Scope: checked v2 Skill package identity, reconciliation, and evidence-review consumers.

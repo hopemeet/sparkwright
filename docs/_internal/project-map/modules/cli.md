@@ -311,6 +311,14 @@ Does not own:
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-07-12T20:00:00+0800
+- Scope: added Agent/Workflow stats, Skill origin import, and suggestion-dismiss
+  command routing while preserving config-backed Agent remove compatibility;
+  Workflow completed/failed values now represent runs rather than observations.
+- Read: CLI handlers/usage and focused CLI tests.
+- Tests: focused CLI reconciliation/stats suites and CLI typecheck passed.
+
 - Status: Read-only
 - Date: 2026-07-12
 - Scope: checked Skill reconciliation CLI routing; no CLI run/session/trace contract changed.

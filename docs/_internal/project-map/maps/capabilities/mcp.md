@@ -83,6 +83,13 @@ host config MCP servers
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-07-12T20:12:00+0800
+- Scope: checked host runtime Workflow layer change; MCP preparation and tool
+  exposure are unchanged.
+- Read: host runtime Workflow record creation and MCP capability map.
+- Tests: focused Workflow tests passed; no MCP contract change.
+
+- Status: Read-only
 - Date: 2026-07-12
 - Scope: checked Workflow run package-identity metadata; MCP capability behavior is unchanged.
 - Tests: focused Workflow tests passed; release gate pending.

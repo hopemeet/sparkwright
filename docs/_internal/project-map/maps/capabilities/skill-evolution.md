@@ -72,6 +72,16 @@ history kinds:   create | update | restore
   reads the newest draft after startup and after either creation surface, then
   presents a dismissible completion card linked to `/skill-review`; dismissing
   the card never closes or mutates the draft.
+- **Draft reconciliation and competing proposals:** successful apply closes all
+  other draft proposals for the same project target as `superseded`, linked by
+  `supersededBy`. Before TUI inbox/review recovery and ordinary create
+  preparation, host reconciliation repairs legacy drafts: a create whose
+  current target matches managed applied history becomes `superseded`; an
+  externally occupied create target or an update whose base disappeared or
+  drifted becomes `stale`. Listing proposals remains read-only. Apply-time hash
+  and base checks remain the safety gate; reconciliation controls whether a
+  draft is presented as actionable. Secondary cleanup failure never rolls back
+  an already successful apply and is retried by the next reconciliation pass.
 
 - **Prepared create fast path:** a complete clean authored model create is
   persisted as `ready`/`waiting` with `artifactId` and `effectHash` before the
@@ -209,6 +219,25 @@ history kinds:   create | update | restore
   there is no persisted run→proposals index (a scan, not an index).
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-12
+- Scope: competing-draft supersession, legacy inbox reconciliation, stale
+  create/update classification, and TUI actionable-draft recovery.
+- Read: `packages/host/src/skill-evolution.ts`,
+  `packages/host/src/skill-command-service.ts`,
+  `packages/tui/src/lib/skill-evolution.ts`, and focused tests.
+- Tests: focused host Skill evolution/command-service and TUI Skill evolution
+  suites; affected typechecks.
+
+- Status: Verified
+- Date: 2026-07-12T20:00:00+0800
+- Scope: direct reconciliation remains distinct from mutation receipts and now
+  has unique ownership, recovery journaling, explicit import origin, and
+  persisted advisory-suggestion suppression. Import origin, registry, and
+  reconciliation receipt recover from one pending transaction.
+- Read: Skill evolution, registry, suggestion/review and CLI paths.
+- Tests: focused registry, suggestion, evolution, and CLI suites passed.
 
 - Status: Verified
 - Date: 2026-07-12T14:03:23+0800

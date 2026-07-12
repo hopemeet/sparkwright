@@ -199,6 +199,14 @@ config + workspace capability roots
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-07-12T20:00:00+0800
+- Scope: Agent and Workflow package identities now feed production rebuildable
+  stats queries; Workflow remains pinned to executable snapshots. Workflow
+  run outcomes count once per run and retain the durable source layer.
+- Read: asset stats, Workflow store/runtime pins, Agent trace attribution, CLI.
+- Tests: focused host/CLI stats and Workflow suites passed.
+
 - Status: Read-only
 - Date: 2026-07-12
 - Scope: checked capability catalog routing for Markdown Agent authoring; no generic capability contract changed.

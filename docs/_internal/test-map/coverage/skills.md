@@ -14,6 +14,15 @@
 
 ## Covered
 
+- 2026-07-12 hardening coverage rejects snapshot targets that are ancestors of
+  their source, rejects duplicate registry path ownership, preserves concurrent
+  reconciliation updates, imports canonical packages with origin records,
+  validates exact Markdown Agent sources under collisions, exercises production
+  Agent/Workflow stats commands, and persists suggestion dismiss cooldowns.
+  Follow-up coverage verifies one terminal count per Workflow run, durable
+  Workflow source layers, pending import-origin recovery, and Windows
+  cross-volume snapshot disjointness.
+
 - 2026-07-12 Phase 3B coverage proves new managed proposal/history/receipt
   records use v2 identity, ordinary root files survive proposal apply/history,
   and direct change to an included file marks the proposal stale without target

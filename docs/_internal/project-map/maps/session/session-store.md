@@ -118,6 +118,13 @@ Manual compact
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-07-12T20:00:00+0800
+- Scope: checked read-only asset statistics session scanning; session storage
+  layout and ownership are unchanged.
+- Read: CLI stats handlers, host asset scanner, `FileSessionStore` usage.
+- Tests: covered by the full release gate; no map contract change needed.
+
+- Status: Read-only
 - Date: 2026-07-12
 - Scope: checked CLI reconciliation routing; session-store contract is unchanged.
 - Tests: focused CLI tests passed; release gate pending.

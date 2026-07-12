@@ -82,6 +82,11 @@ Does not own:
   receipt. Proposal storage is the slow-path source of truth; TUI state is only
   presentation. Other Skill entrypoints are not unified yet.
 
+- Host's model-facing Markdown Agent authoring surface uses canonical `name` as
+  the filename stem and public identity. Runtime `AgentProfile.id` remains an
+  internal compatibility field, legacy Markdown `id` overrides remain
+  readable, and new files omit inferred child mode and inherited budgets.
+
 - One active run per host connection.
 - Session root defaults to `<workspace>/.sparkwright/sessions`.
 - Host protocol `run.failed` events emitted by runtime carry canonical
@@ -768,6 +773,24 @@ Does not own:
 - Capability snapshot fields are useful but can become stale if new tools bypass `tool-catalog.ts`; direct-core/cron should add tools by catalog profile, not local factories.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-12T23:35:00+0800
+- Scope: model-facing Markdown Agent authoring now uses canonical public
+  `name`, keeps runtime `id` internal, and omits inferred default fields.
+- Read: `packages/host/src/tools.ts`, `packages/host/src/agent-profiles.ts`,
+  focused Host tests, and routed project maps.
+- Tests: `npm --workspace @sparkwright/host test -- test/tools.test.ts`;
+  `npm --workspace @sparkwright/host run typecheck`; focused Prettier and
+  `git diff --check` passed.
+
+- Status: Verified
+- Date: 2026-07-12T20:00:00+0800
+- Scope: reviewed Agent exact-file authoring validation, production asset stats
+  scanning with run-scoped Workflow outcomes and durable layers,
+  transactional Skill reconciliation/import, and suggestion state.
+- Read: host tools, agent profiles, asset stats, Skill registry/review/suggestions.
+- Tests: focused host suites and host typecheck passed.
 
 - Status: Verified
 - Date: 2026-07-12

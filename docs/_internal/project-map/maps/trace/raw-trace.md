@@ -206,6 +206,13 @@ EventLog emits full event
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-07-12T20:12:00+0800
+- Scope: Workflow statistics now count terminal state only on the run
+  observation and use durable record layer; raw trace event contracts are unchanged.
+- Read: asset stats, Workflow record types/store, and raw trace map.
+- Tests: focused stats/Workflow tests passed; no raw trace schema change.
+
+- Status: Read-only
 - Date: 2026-07-12
 - Scope: checked event-time Agent and Workflow package identity metadata; trace encoding contract is otherwise unchanged.
 - Tests: focused host/agent-runtime tests passed; release gate pending.

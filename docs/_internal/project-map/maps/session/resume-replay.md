@@ -117,6 +117,13 @@ Future run in compacted session
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-07-12T20:12:00+0800
+- Scope: resumed Workflow records retain their event-time source layer while
+  continuing to execute only from the verified package snapshot.
+- Read: Workflow store parser, host resume preparation and focused tests.
+- Tests: focused host Workflow resume suite passed.
+
 - Status: Read-only
 - Date: 2026-07-12
 - Scope: checked snapshot-backed Workflow identity attribution; resume behavior is unchanged from Phase 4.

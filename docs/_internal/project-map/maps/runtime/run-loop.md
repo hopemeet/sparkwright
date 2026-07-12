@@ -257,6 +257,13 @@ createRun/resumeRunFromCheckpoint
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-07-12T20:12:00+0800
+- Scope: checked fresh Workflow record layer persistence; run-loop state and
+  model/tool execution contracts are unchanged.
+- Read: host Workflow record creation and runtime map.
+- Tests: focused Workflow suites passed; no run-loop contract change.
+
+- Status: Read-only
 - Date: 2026-07-12
 - Scope: checked Workflow run metadata now includes package identity; run-loop ownership is unchanged.
 - Tests: focused Workflow tests passed; release gate pending.

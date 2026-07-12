@@ -133,6 +133,13 @@ Does not own:
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-07-12T20:00:00+0800
+- Scope: checked Markdown Agent write/remove compatibility; it uses the existing
+  workspace capability-write boundary and does not change coding-tool ownership.
+- Read: host Agent manager and capability mutation helper.
+- Tests: focused host tools and full release gate; no module contract change.
+
+- Status: Read-only
 - Date: 2026-07-12
 - Scope: checked Markdown Agent write routing; existing workspace-write tooling contract remains unchanged.
 - Tests: focused host tool tests passed; release gate pending.

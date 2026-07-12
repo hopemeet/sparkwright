@@ -2593,6 +2593,9 @@ export class HostRuntime {
           workflowRecord = await acquiredLease.create({
             id: workflowRunId,
             assetName: workflowDefinition.assetName,
+            ...(pinnedWorkflow?.asset.layer
+              ? { layer: pinnedWorkflow.asset.layer }
+              : {}),
             ...(workflowDefinition.version
               ? { version: workflowDefinition.version }
               : {}),

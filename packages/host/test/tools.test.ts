@@ -76,11 +76,19 @@ describe("host tools", () => {
       ".sparkwright/config.yaml": "capabilities:\n  agents:\n    maxDepth: 1\n",
     });
     const tool = createMarkdownAgentManagerTool(ctx.workspaceRoot);
+    expect(tool.inputSchema).toMatchObject({
+      properties: {
+        name: expect.objectContaining({ type: "string" }),
+      },
+      required: ["action", "name"],
+    });
+    expect(
+      (tool.inputSchema as { properties: Record<string, unknown> }).properties,
+    ).not.toHaveProperty("id");
     const created = await tool.execute(
       {
         action: "create",
-        id: "reviewer",
-        name: "Reviewer",
+        name: "reviewer",
         prompt: "Review changes and report concrete risks.",
         use: ["workspace.read"],
         allowedTools: ["read"],
@@ -91,26 +99,62 @@ describe("host tools", () => {
 
     expect(created).toMatchObject({
       action: "create",
-      id: "reviewer",
+      name: "reviewer",
       changed: true,
+      profile: { name: "reviewer" },
       callability: { callable: true, mode: "child" },
       semanticSummary: {
         allowedTools: ["read"],
         identity: { artifactKind: "agent", packageHashPolicyVersion: 2 },
       },
     });
-    await expect(
-      readFile(
-        join(ctx.workspaceRoot, ".sparkwright", "agents", "reviewer.md"),
-        "utf8",
-      ),
-    ).resolves.toContain("Review changes and report concrete risks.");
+    expect(created).not.toHaveProperty("id");
+    expect(created.profile).not.toHaveProperty("id");
+    const document = await readFile(
+      join(ctx.workspaceRoot, ".sparkwright", "agents", "reviewer.md"),
+      "utf8",
+    );
+    expect(document).toContain('name: "reviewer"');
+    expect(document).toContain("Review changes and report concrete risks.");
+    expect(document).not.toContain("id:");
+    expect(document).not.toContain("mode:");
     await expect(
       readFile(join(ctx.workspaceRoot, ".sparkwright", "config.yaml"), "utf8"),
     ).resolves.toContain("maxDepth: 1");
     expect(ctx.capabilityMutations).toEqual([
       expect.objectContaining({ action: "create_markdown_agent" }),
     ]);
+  });
+
+  it("fails post-write validation when another Markdown file owns the same logical id", async () => {
+    const ctx = await createWorkspace({
+      ".sparkwright/agents/a/owner.md":
+        "---\nid: reviewer\n---\nExisting reviewer.\n",
+    });
+    const tool = createMarkdownAgentManagerTool(ctx.workspaceRoot);
+    await expect(
+      tool.execute(
+        { action: "create", name: "reviewer", prompt: "New reviewer." },
+        ctx,
+      ),
+    ).rejects.toThrow(/not uniquely callable/);
+  });
+
+  it("keeps legacy config-profile removal reachable through create_agent", async () => {
+    const ctx = await createWorkspace({});
+    const legacy = createAgentManagerTool(ctx.workspaceRoot);
+    await legacy.execute(
+      { action: "create", id: "reviewer", prompt: "Review changes." },
+      ctx,
+    );
+    const tool = createMarkdownAgentManagerTool(ctx.workspaceRoot);
+    await expect(
+      tool.execute({ action: "remove", name: "reviewer" }, ctx),
+    ).resolves.toMatchObject({
+      action: "remove",
+      id: "reviewer",
+      changed: true,
+    });
   });
   it("derives explicit in-process spawn approval without marking spawn risky", () => {
     const profile = deriveDelegatePolicyProfile({

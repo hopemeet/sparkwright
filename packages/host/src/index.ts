@@ -147,6 +147,7 @@ export type {
 } from "./skill-review-digest.js";
 export {
   aggregateAssetObservations,
+  collectAssetStats,
   agentObservationFromMetadata,
   classifyAssetIdentityChange,
   workflowObservationFromRunRecord,
@@ -154,17 +155,25 @@ export {
 export type {
   AssetIdentityChange,
   AssetObservation,
+  CollectedAssetStatsReport,
   AssetObservationIdentity,
   AssetStatsEntry,
   AssetStatsReport,
 } from "./asset-stats.js";
 export {
+  importSkill,
+  readSkillOrigin,
   readSkillRegistry,
   reconcileSkill,
   scanSkillReconciliation,
   skillRegistryPath,
 } from "./skill-registry.js";
-export { collectSkillEvidenceSuggestions } from "./skill-suggestions.js";
+export type { SkillOrigin } from "./skill-registry.js";
+export {
+  activeDismissedSkillSuggestionIds,
+  collectSkillEvidenceSuggestions,
+  dismissSkillSuggestion,
+} from "./skill-suggestions.js";
 export type { SkillEvidenceSuggestion } from "./skill-suggestions.js";
 export type {
   SkillArtifactRecord,
@@ -209,6 +218,7 @@ export {
   pruneSkillProposals,
   readSkillHistoryDetail,
   readSkillProposal,
+  reconcileSkillProposalDrafts,
   prepareSkillProposalApproval,
   recordSkillProposalApproval,
   rejectSkillProposal,
@@ -234,6 +244,7 @@ export type {
   PreparedSkillApproval,
   PruneSkillProposalsInput,
   PruneSkillProposalsResult,
+  ReconcileSkillProposalDraftsResult,
   RestoreSkillFromHistoryInput,
   RestoreSkillFromHistoryResult,
   SkillHistoryEntry,

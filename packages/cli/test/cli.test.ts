@@ -3841,6 +3841,50 @@ describe("runCli", () => {
     });
   });
 
+  it("imports Skill packages with origin records through reconciliation", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const source = join(workspace, "external-skill");
+    await mkdir(source, { recursive: true });
+    await writeFile(join(source, "SKILL.md"), "# External\n");
+    await writeFile(join(source, "fixture.txt"), "fixture\n");
+    const output = createOutputCapture();
+    const result = await runCli(
+      [
+        "skills",
+        "reconcile",
+        "import",
+        "external",
+        source,
+        "--workspace",
+        workspace,
+        "--format",
+        "json",
+      ],
+      { io: { stdout: output.stdout, stderr: output.stderr } },
+    );
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(output.stdoutText())).toMatchObject({
+      receipt: { kind: "adopt", currentPath: "external" },
+      origin: { kind: "local-path", updatePolicy: "frozen" },
+    });
+  });
+
+  it("exposes rebuildable Agent and Workflow stats commands", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    for (const command of ["agents", "workflow"] as const) {
+      const output = createOutputCapture();
+      const result = await runCli(
+        [command, "stats", "--workspace", workspace, "--format", "json"],
+        { io: { stdout: output.stdout, stderr: output.stderr } },
+      );
+      expect(result.exitCode).toBe(0);
+      expect(JSON.parse(output.stdoutText())).toMatchObject({
+        observationsScanned: 0,
+        errors: [],
+      });
+    }
+  });
+
   it("reports read-only skill stats from recent session traces", async () => {
     const workspace = await createWorkspace("# Demo\n");
     const skillDir = join(workspace, ".sparkwright", "skills", "code-reviewer");

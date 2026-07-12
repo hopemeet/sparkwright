@@ -199,6 +199,13 @@ Does not own:
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-07-12T20:12:00+0800
+- Scope: checked durable Workflow source-layer serialization; no public client
+  protocol message or schema changed.
+- Read: Workflow record types/store and protocol module map.
+- Tests: focused Workflow/typecheck passed; no protocol contract change.
+
+- Status: Read-only
 - Date: 2026-07-12
 - Scope: checked Workflow package-pin fields; no protocol schema change in this slice.
 - Tests: focused Workflow tests passed; release gate pending.

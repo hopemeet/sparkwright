@@ -100,6 +100,13 @@ tool proposes write
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-07-12T20:12:00+0800
+- Scope: checked Workflow pin-layer and Skill import transaction follow-up;
+  ordinary workspace-write approval semantics are unchanged.
+- Read: host runtime, Skill registry/import, and workspace-write map.
+- Tests: focused registry/Workflow tests passed; no workspace-write contract change.
+
+- Status: Read-only
 - Date: 2026-07-12
 - Scope: checked Markdown Agent atomic workspace-write path; no workspace-write policy change.
 - Tests: focused host tests passed; release gate pending.

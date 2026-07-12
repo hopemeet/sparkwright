@@ -48,6 +48,11 @@ configured profiles/delegates
   `.sparkwright/agents` roots, parsed as YAML frontmatter plus prompt body, and
   folded under config profiles by id. Markdown aliases `tools` and
   `disallowedTools` map to `allowedTools` and `deniedTools`.
+  New model-authored Markdown Agents use the filename stem as the internal id
+  and persist that same value as the canonical frontmatter `name`; the
+  `create_agent` surface does not expose or write a second `id`. It omits the
+  default child mode and other inherited fields unless explicitly requested.
+  Legacy Markdown `id` overrides remain readable during migration.
   Runtime discovery and CLI/capability reports share the same source-aware
   scanner so recursive walk, parse, and same-layer collision behavior stay in
   one place.
@@ -300,6 +305,23 @@ configured profiles/delegates
   or mtime prefilters.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-12T23:35:00+0800
+- Scope: model-facing Markdown Agent authoring exposes canonical `name`, writes
+  the same filename stem without a second `id`, and omits inferred child mode.
+- Read: `packages/host/src/tools.ts`, Agent capability map, capability-builder
+  Agent authoring guidance, and focused Host tests.
+- Tests: `npm --workspace @sparkwright/host test -- test/tools.test.ts`;
+  `npm --workspace @sparkwright/host run typecheck`; focused Prettier and
+  `git diff --check` passed.
+
+- Status: Verified
+- Date: 2026-07-12T20:00:00+0800
+- Scope: Markdown authoring validates the exact written source under collision,
+  preserves legacy config-profile removal, and exposes trace-derived stats.
+- Read: agent profiles, host tools, asset stats, CLI and focused tests.
+- Tests: focused host Agent/tool and CLI stats suites passed.
 
 - Status: Verified
 - Date: 2026-07-12T17:28:16+0800

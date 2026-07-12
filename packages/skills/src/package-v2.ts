@@ -7,7 +7,7 @@ import {
   readFile,
   rm,
 } from "node:fs/promises";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 export const PACKAGE_HASH_POLICY_VERSION = 2 as const;
 export const DEFAULT_ASSET_PACKAGE_MAX_FILES = 512;
@@ -110,9 +110,9 @@ export async function snapshotAssetPackage(
 ): Promise<SnapshotAssetPackageResult> {
   const root = resolve(spec.rootPath);
   const target = resolve(targetDir);
-  if (target === root || !relative(root, target).startsWith("..")) {
+  if (assetPackagePathsOverlap(root, target)) {
     throw new Error(
-      "Asset package snapshot target must be outside its source root.",
+      "Asset package snapshot target must be disjoint from its source root.",
     );
   }
   const files = await listAssetPackageFilesWithStats(spec);
@@ -131,6 +131,34 @@ export async function snapshotAssetPackage(
     totalBytes: totalBytes(files),
     files: files.map(publicPackageFile),
   };
+}
+
+export function assetPackagePathsOverlap(
+  root: string,
+  target: string,
+  pathOps: Pick<typeof import("node:path"), "relative" | "isAbsolute"> = {
+    relative,
+    isAbsolute,
+  },
+): boolean {
+  return (
+    isInsideOrEqual(root, target, pathOps) ||
+    isInsideOrEqual(target, root, pathOps)
+  );
+}
+
+function isInsideOrEqual(
+  parent: string,
+  child: string,
+  pathOps: Pick<typeof import("node:path"), "relative" | "isAbsolute">,
+): boolean {
+  const relation = pathOps.relative(parent, child);
+  if (relation === "") return true;
+  if (pathOps.isAbsolute(relation)) return false;
+  return (
+    relation !== ".." &&
+    !relation.startsWith(`..${/\\/.test(relation) ? "\\" : "/"}`)
+  );
 }
 
 async function listAssetPackageFilesWithStats(

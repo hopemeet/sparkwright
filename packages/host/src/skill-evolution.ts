@@ -48,6 +48,7 @@ export type PreparedChangeState =
   | "applying"
   | "applied"
   | "rejected"
+  | "superseded"
   | "stale"
   | "failed";
 
@@ -244,6 +245,13 @@ export interface PruneSkillProposalsResult {
   cutoff?: string;
   candidates: SkillProposalSummary[];
   deleted: SkillProposalSummary[];
+}
+
+export interface ReconcileSkillProposalDraftsResult {
+  checked: number;
+  /** @reserved Public reconciliation diagnostic consumed by host product adapters and audit tooling. */
+  superseded: SkillProposalDetail[];
+  stale: SkillProposalDetail[];
 }
 
 export interface RestoreSkillFromHistoryInput {
@@ -727,6 +735,39 @@ export async function listSkillProposals(
     .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
 }
 
+/**
+ * Reconcile durable drafts against the current project Skill packages.
+ *
+ * This is intentionally an explicit maintenance operation rather than a side
+ * effect of listSkillProposals(): callers that only inspect the inbox remain
+ * read-only, while product entrypoints may repair legacy/orphaned drafts before
+ * presenting them as actionable work.
+ */
+export async function reconcileSkillProposalDrafts(
+  workspaceRoot: string,
+): Promise<ReconcileSkillProposalDraftsResult> {
+  const mutations = createFileCapabilityPackageWriter(workspaceRoot);
+  const drafts = (await listSkillProposals(workspaceRoot)).filter(
+    (proposal) => proposal.state === "draft",
+  );
+  const superseded: SkillProposalDetail[] = [];
+  const stale: SkillProposalDetail[] = [];
+
+  for (const summary of drafts) {
+    const proposal = await readSkillProposal(workspaceRoot, summary.id);
+    const outcome = await reconcileDraftAgainstCurrentTarget(
+      workspaceRoot,
+      proposal,
+      mutations,
+    );
+    if (!outcome) continue;
+    if (outcome.state === "superseded") superseded.push(outcome);
+    else stale.push(outcome);
+  }
+
+  return { checked: drafts.length, superseded, stale };
+}
+
 export async function pruneSkillProposals(
   input: PruneSkillProposalsInput,
 ): Promise<PruneSkillProposalsResult> {
@@ -915,6 +956,12 @@ export async function applySkillProposal(
       if (!receiptAlreadyExisted) {
         recordSkillPatch(workspaceRoot, proposal.skillName, now);
       }
+      await supersedeCompetingDraftsAfterApply(
+        workspaceRoot,
+        applied,
+        mutations,
+        now,
+      );
       return {
         proposal: applied,
         history,
@@ -980,6 +1027,12 @@ export async function applySkillProposal(
       options.requireEffectApproval ? { preparedState: "applied" } : {},
     );
     recordSkillPatch(workspaceRoot, proposal.skillName, now);
+    await supersedeCompetingDraftsAfterApply(
+      workspaceRoot,
+      applied,
+      mutations,
+      now,
+    );
 
     return {
       proposal: applied,
@@ -1849,6 +1902,118 @@ async function verifyProposalBase(
   if (sourceHash.packageHash !== proposal.basePackageHash) {
     await updateProposalState(proposal, "stale", mutations);
     throw new Error(`Source Skill changed since proposal: ${proposal.id}`);
+  }
+}
+
+async function reconcileDraftAgainstCurrentTarget(
+  workspaceRoot: string,
+  proposal: SkillProposalDetail,
+  mutations: CapabilityPackageMutationWriter,
+): Promise<SkillProposalDetail | undefined> {
+  if (proposal.kind === "create") {
+    if (!existsSync(join(proposal.targetPath, "SKILL.md"))) return undefined;
+    const current = await computeSkillPackageHashForPolicy(
+      proposal.targetPath,
+      packageHashPolicyVersion(proposal),
+    ).catch(() => undefined);
+    const replacement = current
+      ? (await listSkillHistory(workspaceRoot, proposal.skillName)).find(
+          (entry) =>
+            entry.proposalId !== proposal.id &&
+            entry.afterPackageHash === current.packageHash &&
+            packageHashPolicyVersion(entry) ===
+              packageHashPolicyVersion(proposal),
+        )
+      : undefined;
+    const closedAt = new Date().toISOString();
+    if (replacement) {
+      return updateProposalState(proposal, "superseded", mutations, closedAt, {
+        closedAt,
+        preparedState: "superseded",
+        supersededBy: replacement.proposalId,
+        statusReason: `Current Skill was produced by applied proposal ${replacement.proposalId}.`,
+      });
+    }
+    return updateProposalState(proposal, "stale", mutations, closedAt, {
+      closedAt,
+      preparedState: "stale",
+      statusReason:
+        "Create target already exists and is not the package this proposal was based on.",
+    });
+  }
+
+  if (!proposal.basePackageHash) {
+    const closedAt = new Date().toISOString();
+    return updateProposalState(proposal, "stale", mutations, closedAt, {
+      closedAt,
+      preparedState: "stale",
+      statusReason: "Update proposal has no base package hash.",
+    });
+  }
+
+  const basePath = proposalCreatesFromProject(proposal)
+    ? proposal.targetPath
+    : proposal.sourcePath
+      ? dirname(proposal.sourcePath)
+      : undefined;
+  const current = basePath
+    ? await computeSkillPackageHashForPolicy(
+        basePath,
+        packageHashPolicyVersion(proposal),
+      ).catch(() => undefined)
+    : undefined;
+  if (current?.packageHash === proposal.basePackageHash) return undefined;
+
+  const closedAt = new Date().toISOString();
+  return updateProposalState(proposal, "stale", mutations, closedAt, {
+    closedAt,
+    preparedState: "stale",
+    statusReason: current
+      ? "Update base package changed after this proposal was drafted."
+      : "Update base package is no longer available.",
+  });
+}
+
+async function supersedeCompetingDrafts(
+  workspaceRoot: string,
+  applied: SkillProposalDetail,
+  mutations: CapabilityPackageMutationWriter,
+  closedAt: string,
+): Promise<void> {
+  const competitors = (await listSkillProposals(workspaceRoot)).filter(
+    (proposal) =>
+      proposal.id !== applied.id &&
+      proposal.state === "draft" &&
+      proposal.targetPath === applied.targetPath,
+  );
+  for (const competitor of competitors) {
+    await updateProposalState(
+      await readSkillProposal(workspaceRoot, competitor.id),
+      "superseded",
+      mutations,
+      closedAt,
+      {
+        closedAt,
+        preparedState: "superseded",
+        supersededBy: applied.id,
+        statusReason: `Competing proposal ${applied.id} was applied to the same target.`,
+      },
+    );
+  }
+}
+
+async function supersedeCompetingDraftsAfterApply(
+  workspaceRoot: string,
+  applied: SkillProposalDetail,
+  mutations: CapabilityPackageMutationWriter,
+  closedAt: string,
+): Promise<void> {
+  try {
+    await supersedeCompetingDrafts(workspaceRoot, applied, mutations, closedAt);
+  } catch {
+    // Applying the selected proposal is the primary transaction. Do not report
+    // it as failed (or roll it back) because secondary inbox cleanup failed;
+    // the explicit reconciliation pass repairs remaining drafts on next use.
   }
 }
 

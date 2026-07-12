@@ -236,6 +236,13 @@ trace.jsonl
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-07-12T20:00:00+0800
+- Scope: checked new Agent/Workflow stats CLI routing; it scans canonical trace
+  and Workflow records without changing summary/timeline/verify contracts.
+- Read: CLI stats handlers and host asset projection scanner.
+- Tests: covered by the full release gate; no map contract change needed.
+
+- Status: Read-only
 - Date: 2026-07-12
 - Scope: checked CLI reconciliation routing; trace summary/timeline/verify semantics need no update.
 - Tests: focused CLI tests passed; release gate pending.

@@ -3,6 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  importSkill,
+  readSkillOrigin,
   readSkillRegistry,
   reconcileSkill,
   scanSkillReconciliation,
@@ -113,5 +115,131 @@ describe("Skill registry reconciliation", () => {
       "utf8",
     );
     expect(receiptText).toContain('"kind": "orphan"');
+  });
+
+  it("rejects duplicate active-path ownership and preserves concurrent updates", async () => {
+    const root = await workspace();
+    await writeSkill(root, "one");
+    await writeSkill(root, "two");
+    await reconcileSkill({
+      workspaceRoot: root,
+      kind: "adopt",
+      skillName: "one",
+    });
+    await expect(
+      reconcileSkill({ workspaceRoot: root, kind: "adopt", skillName: "one" }),
+    ).rejects.toThrow(/already owned/);
+
+    await Promise.all([
+      reconcileSkill({ workspaceRoot: root, kind: "adopt", skillName: "two" }),
+      (async () => {
+        await writeSkill(root, "three");
+        return reconcileSkill({
+          workspaceRoot: root,
+          kind: "adopt",
+          skillName: "three",
+        });
+      })(),
+    ]);
+    const registry = await readSkillRegistry(root);
+    expect(registry.revision).toBe(3);
+    expect(registry.artifacts.map((entry) => entry.activePath).sort()).toEqual([
+      "one",
+      "three",
+      "two",
+    ]);
+  });
+
+  it("imports a validated package with an external origin record", async () => {
+    const root = await workspace();
+    const sourceRoot = await workspace();
+    const source = join(sourceRoot, "source");
+    await mkdir(source, { recursive: true });
+    await writeFile(join(source, "SKILL.md"), "# Imported\n");
+    await writeFile(join(source, "extra.txt"), "included\n");
+    const imported = await importSkill({
+      workspaceRoot: root,
+      skillName: "imported",
+      sourcePath: source,
+      updatePolicy: "notify",
+    });
+    await expect(
+      readFile(
+        join(root, ".sparkwright", "skills", "imported", "extra.txt"),
+        "utf8",
+      ),
+    ).resolves.toBe("included\n");
+    await expect(
+      readSkillOrigin(root, imported.receipt.artifactId),
+    ).resolves.toMatchObject({ updatePolicy: "notify", kind: "local-path" });
+  });
+
+  it("recovers registry, receipt, and origin from one pending transaction", async () => {
+    const root = await workspace();
+    await writeSkill(root, "imported");
+    await writeSkill(root, "next");
+    const artifactId = "skill_pending_import";
+    const receiptId = "skillrecon_pending_import";
+    const now = new Date().toISOString();
+    const transactionDir = join(root, ".sparkwright", "skill-registry", "v1");
+    await mkdir(transactionDir, { recursive: true });
+    await writeFile(
+      join(transactionDir, "reconciliation.pending.json"),
+      `${JSON.stringify(
+        {
+          registry: {
+            schemaVersion: 1,
+            revision: 1,
+            artifacts: [
+              {
+                artifactId,
+                activePath: "imported",
+                packageHash: "sha256:pending",
+                packageHashPolicyVersion: 2,
+                status: "active",
+                createdAt: now,
+                updatedAt: now,
+              },
+            ],
+          },
+          receipt: {
+            schemaVersion: 1,
+            receiptId,
+            kind: "adopt",
+            artifactId,
+            observedPackageHash: "sha256:pending",
+            packageHashPolicyVersion: 2,
+            currentPath: "imported",
+            reconciledAt: now,
+          },
+          origin: {
+            schemaVersion: 1,
+            artifactId,
+            kind: "local-path",
+            locator: { redacted: "source" },
+            importedAt: now,
+            importedPackageHash: "sha256:pending",
+            packageHashPolicyVersion: 2,
+            updatePolicy: "frozen",
+          },
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    await reconcileSkill({
+      workspaceRoot: root,
+      kind: "adopt",
+      skillName: "next",
+    });
+    await expect(readSkillOrigin(root, artifactId)).resolves.toMatchObject({
+      importedPackageHash: "sha256:pending",
+    });
+    await expect(
+      readFile(
+        join(transactionDir, "reconciliation", `${receiptId}.json`),
+        "utf8",
+      ),
+    ).resolves.toContain(receiptId);
   });
 });

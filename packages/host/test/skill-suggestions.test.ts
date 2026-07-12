@@ -1,5 +1,12 @@
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { collectSkillEvidenceSuggestions } from "../src/skill-suggestions.js";
+import {
+  activeDismissedSkillSuggestionIds,
+  collectSkillEvidenceSuggestions,
+  dismissSkillSuggestion,
+} from "../src/skill-suggestions.js";
 
 const finding = {
   code: "SKILL_LOAD_FAILURES" as const,
@@ -45,6 +52,21 @@ describe("Skill evidence suggestions", () => {
       collectSkillEvidenceSuggestions({
         findings: [{ ...finding, code: "LEGACY_SKILL_IDENTITY" }],
         proposals: [],
+      }),
+    ).toEqual([]);
+  });
+
+  it("persists dismissal cooldowns and suppresses the exact evidence bucket", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-suggestions-"));
+    const id = "suggestion:reviewer|SKILL_LOAD_FAILURES|sha256:v2";
+    await dismissSkillSuggestion({ workspaceRoot: root, suggestionId: id });
+    const suppressedSuggestionIds =
+      await activeDismissedSkillSuggestionIds(root);
+    expect(
+      collectSkillEvidenceSuggestions({
+        findings: [finding],
+        proposals: [],
+        suppressedSuggestionIds,
       }),
     ).toEqual([]);
   });

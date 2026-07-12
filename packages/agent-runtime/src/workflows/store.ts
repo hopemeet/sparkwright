@@ -512,6 +512,7 @@ function buildWorkflowRecord(
     generation: state.generation,
     recordRevision: state.recordRevision,
     assetName: input.assetName,
+    ...(input.layer ? { layer: input.layer } : {}),
     ...(input.version ? { version: input.version } : {}),
     contentHash: input.contentHash,
     ...(input.packageHash ? { packageHash: input.packageHash } : {}),
@@ -659,6 +660,12 @@ function parseWorkflowRunRecord(raw: unknown): WorkflowRunRecord {
       ? { generation: raw.generation }
       : {}),
     assetName,
+    ...(raw.layer === "builtin" ||
+    raw.layer === "user" ||
+    raw.layer === "project" ||
+    raw.layer === "unknown"
+      ? { layer: raw.layer }
+      : {}),
     ...(optionalString(raw.version) ? { version: raw.version } : {}),
     contentHash,
     ...(optionalString(raw.packageHash)

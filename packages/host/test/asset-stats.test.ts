@@ -1,8 +1,16 @@
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  FileWorkflowStore,
+  type WorkflowRunId,
+} from "@sparkwright/agent-runtime";
 import { describe, expect, it } from "vitest";
 import {
   aggregateAssetObservations,
   agentObservationFromMetadata,
   classifyAssetIdentityChange,
+  collectAssetStats,
   workflowObservationFromRunRecord,
 } from "../src/asset-stats.js";
 
@@ -72,6 +80,7 @@ describe("asset stats", () => {
         id: "workflow_1",
         schemaVersion: "sparkwright-workflow-run.v1",
         assetName: "release",
+        layer: "user",
         contentHash: "legacy",
         packageHash: "sha256:workflow-v2",
         packageHashPolicyVersion: 2,
@@ -89,8 +98,62 @@ describe("asset stats", () => {
     );
     expect(observation).toMatchObject({
       event: "workflow.usage",
-      state: "completed",
-      identity: { artifactKind: "workflow", packageHash: "sha256:workflow-v2" },
+      identity: {
+        artifactKind: "workflow",
+        layer: "user",
+        packageHash: "sha256:workflow-v2",
+      },
     });
+    expect(observation).not.toHaveProperty("state");
+  });
+
+  it("collects Workflow projections from the production durable store", async () => {
+    const workspaceRoot = await mkdtemp(
+      join(tmpdir(), "asset-stats-workspace-"),
+    );
+    const sessionRootDir = join(workspaceRoot, ".sparkwright", "sessions");
+    const store = new FileWorkflowStore({
+      rootDir: join(workspaceRoot, ".sparkwright", "workflow-runs"),
+    });
+    const id = "workflow_stats" as WorkflowRunId;
+    const writer = await store.acquireWriter(id, { owner: "test" });
+    const created = await writer!.create({
+      id,
+      assetName: "release",
+      layer: "user",
+      contentHash: "legacy",
+      packageHash: "sha256:workflow-v2",
+      packageHashPolicyVersion: 2,
+      packageSnapshotRef: join(workspaceRoot, "snapshot"),
+      attempts: { build: 2 },
+      metadata: { workflowUsage: { modelCalls: 1 } },
+    });
+    await writer!.mutate({
+      expectedRevision: created.recordRevision!,
+      patch: { status: "completed" },
+      event: {
+        at: new Date().toISOString(),
+        type: "completed",
+        workflowRunId: id,
+        status: "completed",
+      },
+    });
+    await writer!.release();
+    const report = await collectAssetStats({
+      workspaceRoot,
+      sessionRootDir,
+      artifactKind: "workflow",
+    });
+    expect(report).toMatchObject({
+      workflowRecordsScanned: 1,
+      observationsScanned: 4,
+      errors: [],
+    });
+    expect(report.entries[0]?.identity).toMatchObject({
+      artifactKind: "workflow",
+      layer: "user",
+      logicalName: "release",
+    });
+    expect(report.entries[0]).toMatchObject({ completed: 1, failed: 0 });
   });
 });

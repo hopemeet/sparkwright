@@ -323,6 +323,13 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-07-12T20:00:00+0800
+- Scope: checked `create_agent` compatibility and CLI-only stats/reconciliation
+  additions; deferred loading and runtime tool orchestration are unchanged.
+- Read: host tool catalog/Agent tool and CLI handlers.
+- Tests: focused host/CLI tests and full release gate; no contract change.
+
+- Status: Read-only
 - Date: 2026-07-12
 - Scope: checked Markdown Agent workspace-write authoring and Skill reconciliation CLI; no orchestration policy change.
 - Tests: focused host/CLI tests passed; release gate pending.

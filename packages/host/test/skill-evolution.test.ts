@@ -21,6 +21,8 @@ import {
   createSkillUpdateProposal,
   loadLayeredSkillReport,
   prepareSkillProposalApproval,
+  readSkillProposal,
+  reconcileSkillProposalDrafts,
   recordSkillProposalApproval,
   resolveSkillRootsForRuntime,
   reviseSkillProposalDraft,
@@ -68,6 +70,117 @@ describe("skill roots", () => {
 });
 
 describe("skill proposal application", () => {
+  it("supersedes every competing draft after one proposal is applied", async () => {
+    const workspace = await makeWorkspace();
+    try {
+      const older = await createSkillCreateProposal({
+        workspaceRoot: workspace,
+        name: "competing-skill",
+        description: "Older proposal",
+        content: skillMarkdown("competing-skill").replace("Body.", "Older."),
+      });
+      const selected = await createSkillCreateProposal({
+        workspaceRoot: workspace,
+        name: "competing-skill",
+        description: "Selected proposal",
+        content: skillMarkdown("competing-skill").replace("Body.", "Selected."),
+      });
+
+      await applySkillProposal(workspace, selected.id);
+
+      await expect(
+        readSkillProposal(workspace, older.id),
+      ).resolves.toMatchObject({
+        state: "superseded",
+        preparedState: "superseded",
+        supersededBy: selected.id,
+        closedAt: expect.any(String),
+      });
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("reconciles an orphaned create draft against applied history", async () => {
+    const workspace = await makeWorkspace();
+    try {
+      const orphan = await createSkillCreateProposal({
+        workspaceRoot: workspace,
+        name: "orphan-skill",
+        description: "Orphaned proposal",
+        content: skillMarkdown("orphan-skill").replace("Body.", "Orphaned."),
+      });
+      const applied = await createSkillCreateProposal({
+        workspaceRoot: workspace,
+        name: "orphan-skill",
+        description: "Applied proposal",
+        content: skillMarkdown("orphan-skill").replace("Body.", "Applied."),
+      });
+      await applySkillProposal(workspace, applied.id);
+
+      // Simulate a legacy inbox written before competing drafts were closed.
+      const orphanMetadataPath = join(orphan.path, "metadata.json");
+      const orphanMetadata = JSON.parse(
+        await readFile(orphanMetadataPath, "utf8"),
+      );
+      await writeFile(
+        orphanMetadataPath,
+        JSON.stringify({
+          ...orphanMetadata,
+          state: "draft",
+          preparedState: "ready",
+          closedAt: undefined,
+          statusReason: undefined,
+          supersededBy: undefined,
+        }),
+      );
+
+      const result = await reconcileSkillProposalDrafts(workspace);
+
+      expect(result).toMatchObject({ checked: 1 });
+      expect(result.superseded).toHaveLength(1);
+      await expect(
+        readSkillProposal(workspace, orphan.id),
+      ).resolves.toMatchObject({
+        state: "superseded",
+        preparedState: "superseded",
+        supersededBy: applied.id,
+      });
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("marks an orphaned create draft stale when the target has no managed history", async () => {
+    const workspace = await makeWorkspace();
+    try {
+      const proposal = await createSkillCreateProposal({
+        workspaceRoot: workspace,
+        name: "external-skill",
+        description: "Draft before external creation",
+        content: skillMarkdown("external-skill"),
+      });
+      await mkdir(proposal.targetPath, { recursive: true });
+      await writeFile(
+        join(proposal.targetPath, "SKILL.md"),
+        skillMarkdown("external-skill").replace("Body.", "External."),
+      );
+
+      const result = await reconcileSkillProposalDrafts(workspace);
+
+      expect(result.stale).toHaveLength(1);
+      await expect(
+        readSkillProposal(workspace, proposal.id),
+      ).resolves.toMatchObject({
+        state: "stale",
+        preparedState: "stale",
+        closedAt: expect.any(String),
+      });
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
   it("invalidates an effect-bound approval when a draft is revised", async () => {
     const workspace = await makeWorkspace();
     try {

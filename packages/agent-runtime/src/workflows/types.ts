@@ -17,6 +17,8 @@ export type WorkflowWaitKind = "input" | "task" | "approval";
 
 export interface WorkflowAssetPin {
   assetName: string;
+  /** Event-time authored asset layer; legacy records may omit it. */
+  layer?: "builtin" | "user" | "project" | "unknown";
   version?: string;
   contentHash: string;
   /** Strong executable-package identity for new pinned runs. */

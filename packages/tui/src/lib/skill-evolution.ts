@@ -5,6 +5,7 @@ import {
   listSkillProposals,
   loadHostConfig,
   readSkillProposal,
+  reconcileSkillProposalDrafts,
   rejectSkillProposal,
   resolveSkillRootsForRuntime,
   type SkillProposalDetail,
@@ -176,6 +177,7 @@ export async function loadTuiSkillReview(
   rest: string,
   limit = 20,
 ): Promise<TuiSkillReviewDetail> {
+  await reconcileSkillProposalDrafts(workspaceRoot);
   const target = parseTuiSkillReviewTarget(rest);
   if (target.kind === "proposal") {
     const proposal = await readSkillProposal(workspaceRoot, target.proposalId);
@@ -208,6 +210,7 @@ export async function loadTuiSkillReview(
 export async function loadTuiSkillInboxAction(
   workspaceRoot: string,
 ): Promise<TuiSkillInboxAction | null> {
+  await reconcileSkillProposalDrafts(workspaceRoot);
   const proposals = await listSkillProposals(workspaceRoot);
   const latest = proposals
     .filter((proposal) => proposal.state === "draft")

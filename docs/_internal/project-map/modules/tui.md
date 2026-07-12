@@ -60,6 +60,9 @@ Does not own:
 - Skill proposal files are the persistent inbox. On startup, TUI restores the
   newest `draft` as a completion-card affordance; `esc` only dismisses that
   card, while `/skill-review` lists and recovers all durable proposals.
+  Recovery first asks the host to reconcile legacy drafts against current Skill
+  packages, so superseded/stale work remains auditable in review but is not
+  restored as an actionable completion card.
 
 - The prepared-change fast path uses the normal queued approval controller with
   action `skill.apply`. `ApprovalPrompt` renders the persisted final patch and

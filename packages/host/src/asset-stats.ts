@@ -1,4 +1,9 @@
-import type { WorkflowRunRecord } from "@sparkwright/agent-runtime";
+import {
+  FileWorkflowStore,
+  type WorkflowRunRecord,
+} from "@sparkwright/agent-runtime";
+import { FileSessionStore, loadTraceEventsFile } from "@sparkwright/core";
+import { join } from "node:path";
 
 /**
  * Runtime-time identity used by rebuildable Agent and Workflow projections.
@@ -43,6 +48,119 @@ export interface AssetStatsReport {
   entries: AssetStatsEntry[];
   /** @reserved Public projection scan count consumed by future diagnostics UIs. */
   observationsScanned: number;
+}
+
+export interface CollectedAssetStatsReport extends AssetStatsReport {
+  sessionsScanned: number;
+  workflowRecordsScanned: number;
+  errors: Array<{ path: string; message: string }>;
+}
+
+export async function collectAssetStats(input: {
+  workspaceRoot: string;
+  sessionRootDir: string;
+  sessionLimit?: number;
+  artifactKind?: AssetObservationIdentity["artifactKind"];
+}): Promise<CollectedAssetStatsReport> {
+  const observations: AssetObservation[] = [];
+  const errors: CollectedAssetStatsReport["errors"] = [];
+  const sessionStore = new FileSessionStore({ rootDir: input.sessionRootDir });
+  const sessions = await sessionStore.list({ limit: input.sessionLimit ?? 20 });
+  if (input.artifactKind !== "workflow") {
+    for (const session of sessions) {
+      const path = join(input.sessionRootDir, session.id, "trace.jsonl");
+      try {
+        const events = await loadTraceEventsFile(path);
+        for (const event of events) {
+          if (
+            event.type !== "subagent.started" &&
+            event.type !== "subagent.completed" &&
+            event.type !== "subagent.failed"
+          ) {
+            continue;
+          }
+          const entrypoint =
+            typeof event.metadata.entrypoint === "string"
+              ? event.metadata.entrypoint
+              : undefined;
+          const observation = agentObservationFromMetadata({
+            metadata: event.metadata,
+            event:
+              entrypoint === "delegate" || entrypoint === "configured_delegate"
+                ? "agent.delegate"
+                : "agent.spawn",
+            runId:
+              typeof event.metadata.runId === "string"
+                ? event.metadata.runId
+                : undefined,
+            sessionId: session.id,
+            state:
+              event.type === "subagent.completed"
+                ? "completed"
+                : event.type === "subagent.failed"
+                  ? "failed"
+                  : undefined,
+            at: event.timestamp,
+          });
+          if (observation) observations.push(observation);
+        }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+          errors.push({
+            path,
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+    }
+  }
+
+  let workflowRecordsScanned = 0;
+  if (input.artifactKind !== "agent") {
+    const rootDir = join(input.workspaceRoot, ".sparkwright", "workflow-runs");
+    try {
+      const store = new FileWorkflowStore({ rootDir, createRoot: false });
+      for (const record of store.list().records) {
+        workflowRecordsScanned += 1;
+        const run = workflowObservationFromRunRecord(record, "workflow.run");
+        if (run) observations.push(run);
+        if (record.metadata.workflowUsage) {
+          const usage = workflowObservationFromRunRecord(
+            record,
+            "workflow.usage",
+          );
+          if (usage) observations.push(usage);
+        }
+        for (const [nodeId, attempts] of Object.entries(record.attempts)) {
+          for (let attempt = 0; attempt < attempts; attempt += 1) {
+            const node = workflowObservationFromRunRecord(
+              record,
+              "workflow.node",
+            );
+            if (node) {
+              observations.push({
+                ...node,
+                runId: `${node.runId ?? record.id}:${nodeId}:${attempt + 1}`,
+              });
+            }
+          }
+        }
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        errors.push({
+          path: rootDir,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+  }
+  return {
+    ...aggregateAssetObservations(observations),
+    sessionsScanned: sessions.length,
+    workflowRecordsScanned,
+    errors,
+  };
 }
 
 export type AssetIdentityChange =
@@ -133,7 +251,7 @@ export function workflowObservationFromRunRecord(
   return {
     identity: {
       artifactKind: "workflow",
-      layer: "project",
+      layer: record.layer ?? "unknown",
       logicalName: record.assetName,
       packageHashPolicyVersion: record.packageHashPolicyVersion,
       packageHash: record.packageHash,
@@ -141,7 +259,7 @@ export function workflowObservationFromRunRecord(
     event,
     ...(record.activeRunId ? { runId: String(record.activeRunId) } : {}),
     ...(record.sessionId ? { sessionId: record.sessionId } : {}),
-    ...(terminalState(record.status)
+    ...(event === "workflow.run" && terminalState(record.status)
       ? { state: terminalState(record.status) }
       : {}),
     ...((record.updatedAt ?? record.createdAt)
