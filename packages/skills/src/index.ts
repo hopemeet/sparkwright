@@ -1137,3 +1137,19 @@ export {
   type SkillPackageHashOptions,
   type SnapshotSkillPackageResult,
 } from "./package.js";
+export {
+  DEFAULT_ASSET_PACKAGE_MAX_FILES,
+  DEFAULT_ASSET_PACKAGE_MAX_FILE_BYTES,
+  DEFAULT_ASSET_PACKAGE_MAX_TOTAL_BYTES,
+  PACKAGE_HASH_POLICY_VERSION,
+  assetPackageLimits,
+  computeAssetPackageHash,
+  listAssetPackageFiles,
+  snapshotAssetPackage,
+  type AssetPackageFile,
+  type AssetPackageHash,
+  type AssetPackageIdentity,
+  type AssetPackageLimits,
+  type AssetPackageSpec,
+  type SnapshotAssetPackageResult,
+} from "./package-v2.js";

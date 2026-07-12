@@ -21,6 +21,7 @@ and [../maps/capabilities/skill-evolution.md](../maps/capabilities/skill-evoluti
 - `packages/skills/src/usage-file.ts`
 - `packages/skills/src/manifest.ts`
 - `packages/skills/src/markdown-folder-asset.ts`
+- `packages/skills/src/package-v2.ts`
 - `packages/host/src/skill-report.ts`
 - `packages/host/src/skill-evolution.ts`
 - `packages/host/src/skill-command-service.ts`
@@ -79,6 +80,13 @@ Does not own:
   conservative file/byte limits on the run-time identity path. Direct
   `computeSkillPackageHash()` remains the exact, uncached path for evolution
   apply/restore guard checks.
+- Package identity v2 substrate lives in `package-v2.ts` without changing the
+  current Skill v1 runtime path. It recursively enumerates all canonical
+  ordinary files except the fixed exclusion table, rejects non-excluded
+  symlinks/special files and limit violations, hashes normalized relative paths
+  with NUL framing, snapshots the identical file set, and returns
+  `packageHashPolicyVersion: 2`. Phase 3B owns migration of current Skill
+  loading/evolution consumers to this API.
 - `skills stats` materializes rebuildable per-session projections under
   `.sparkwright/skill-stats/sessions/`, keyed by trace fingerprints plus a
   projection algorithm version. Reports expose trace/evolution windows,
@@ -181,6 +189,15 @@ list --run/--session`); failed drafts self-clean. See
   [../maps/capabilities/skill-evolution.md](../maps/capabilities/skill-evolution.md#known-debts).
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-12T13:45:22+0800
+- Scope: added the standalone package identity v2 substrate without changing
+  the v1 Skill runtime/evolution package path.
+- Read: `packages/skills/src/package.ts`, `packages/skills/src/package-v2.ts`,
+  `packages/skills/src/index.ts`, and `packages/skills/test/index.test.ts`.
+- Tests: `npm --workspace @sparkwright/skills test`; Skills typecheck/build;
+  `npm run check:package-boundaries`; `npm run check:internal-imports`.
 
 - Status: Verified
 - Date: 2026-07-12T08:25:00+0800

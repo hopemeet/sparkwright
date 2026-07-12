@@ -14,6 +14,12 @@
 
 ## Covered
 
+- 2026-07-12 Phase 3A package identity v2 substrate coverage proves complete
+  canonical ordinary-file enumeration, fixed exclusions, NUL-framed stable
+  hashing, same-set snapshotting, policy version attribution, and fail-closed
+  file/path/size guardrails. It deliberately does not change the current Skill
+  v1 runtime/evolution path; Phase 3B owns that migration.
+
 - 2026-07-12 TUI completion-card coverage proves a draft proposal is restored
   from persistent proposal storage after startup, card dismissal leaves the
   draft recoverable through `/skill-review`, and both generic and dedicated
@@ -147,6 +153,10 @@
 npm --workspace @sparkwright/host test -- test/skill-evolution.test.ts test/capability-package-mutation.test.ts test/skill-inline-shell.test.ts
 npm --workspace @sparkwright/tui test -- test/skill-review-dialog-render.test.tsx test/path-display.test.ts
 npm --workspace @sparkwright/skills test
+npm --workspace @sparkwright/skills run typecheck
+npm --workspace @sparkwright/skills run build
+npm run check:package-boundaries
+npm run check:internal-imports
 ```
 
 Use the real regression script as an opt-in canary:

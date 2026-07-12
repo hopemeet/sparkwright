@@ -1,4 +1,11 @@
-import { access, mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import {
+  access,
+  mkdtemp,
+  mkdir,
+  readFile,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
@@ -8,11 +15,13 @@ import {
   createSkillLoaderTool,
   createLoadedSkillContext,
   createSkillPackageHasher,
+  computeAssetPackageHash,
   computeSkillPackageHash,
   filterSkillsForAgent,
   isDevSkill,
   listSkillResourceFiles,
   listSkillPackageFiles,
+  listAssetPackageFiles,
   lockSkills,
   loadSkill,
   loadSkills,
@@ -21,6 +30,7 @@ import {
   rankIndexedSkillsByGoal,
   selectSkills,
   snapshotSkillPackage,
+  snapshotAssetPackage,
   type SkillIndexEntry,
 } from "../src/index.js";
 
@@ -221,6 +231,87 @@ Review carefully.
     await expect(
       computeSkillPackageHash(skillDir, { maxFiles: 1 }),
     ).rejects.toThrow(/file limit/);
+  });
+
+  it("enumerates v2 asset packages consistently with exclusions and limits", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-asset-package-v2-"));
+    const packageDir = join(root, "workflow");
+    await mkdir(join(packageDir, "scripts"), { recursive: true });
+    await mkdir(join(packageDir, "nested"), { recursive: true });
+    await mkdir(join(packageDir, "node_modules", "ignored"), {
+      recursive: true,
+    });
+    await writeFile(join(packageDir, "workflow.md"), "# workflow\n");
+    await writeFile(join(packageDir, "config.yaml"), "retries: 1\n");
+    await writeFile(join(packageDir, "scripts", "run.sh"), "echo run\n");
+    await writeFile(join(packageDir, "nested", "fixture.txt"), "fixture\n");
+    await writeFile(join(packageDir, "node_modules", "ignored", "dep.js"), "x");
+    await writeFile(join(packageDir, ".DS_Store"), "ignored");
+    await writeFile(join(packageDir, "nested", "swap.swp"), "ignored");
+
+    const spec = { rootPath: packageDir, entryPath: "workflow.md" };
+    const before = await computeAssetPackageHash(spec);
+    expect(before.packageHashPolicyVersion).toBe(2);
+    expect(before.files.map((file) => file.relativePath)).toEqual([
+      "config.yaml",
+      "nested/fixture.txt",
+      "scripts/run.sh",
+      "workflow.md",
+    ]);
+
+    await writeFile(join(packageDir, "nested", "fixture.txt"), "changed\n");
+    const after = await computeAssetPackageHash(spec);
+    expect(after.packageHash).not.toBe(before.packageHash);
+
+    const snapshotDir = join(root, "snapshot");
+    const snapshot = await snapshotAssetPackage(spec, snapshotDir);
+    expect(snapshot.packageHash).toBe(after.packageHash);
+    await expect(listAssetPackageFiles(spec)).resolves.toEqual(after.files);
+    await expect(
+      access(join(snapshotDir, "node_modules")),
+    ).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("fails closed for v2 unsafe paths and package limits", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-asset-package-v2-"));
+    const packageDir = join(root, "skill");
+    await mkdir(packageDir);
+    await writeFile(join(packageDir, "SKILL.md"), "# skill\n");
+    await writeFile(join(packageDir, "large.txt"), "1234");
+
+    await expect(
+      computeAssetPackageHash({
+        rootPath: packageDir,
+        entryPath: "SKILL.md",
+        limits: { maxFileBytes: 3 },
+      }),
+    ).rejects.toThrow(/file exceeds byte limit/);
+    await expect(
+      computeAssetPackageHash({
+        rootPath: packageDir,
+        entryPath: "SKILL.md",
+        limits: { maxTotalBytes: 3 },
+      }),
+    ).rejects.toThrow(/exceeds byte limit/);
+    await expect(
+      computeAssetPackageHash({
+        rootPath: packageDir,
+        entryPath: "../SKILL.md",
+      }),
+    ).rejects.toThrow(/must stay inside/);
+    await expect(
+      snapshotAssetPackage(
+        { rootPath: packageDir, entryPath: "SKILL.md" },
+        join(packageDir, "snapshot"),
+      ),
+    ).rejects.toThrow(/outside its source root/);
+
+    await symlink(join(packageDir, "SKILL.md"), join(packageDir, "link.md"));
+    await expect(
+      computeAssetPackageHash({ rootPath: packageDir, entryPath: "SKILL.md" }),
+    ).rejects.toThrow(/cannot contain a symlink/);
   });
 
   it("lets stronger roots shadow weaker skills with the same name", async () => {

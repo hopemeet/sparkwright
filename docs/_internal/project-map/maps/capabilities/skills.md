@@ -79,6 +79,12 @@ skill roots
   hasher cache, reducing repeated content reads for unchanged packages across
   runs/agents. The run-time identity path has conservative file/byte guardrails;
   direct exact hash computation remains available to evolution guard paths.
+- `packages/skills/src/package-v2.ts` provides the dormant v2 canonical package
+  substrate for later Skill/Workflow migration: complete ordinary-file
+  enumeration, fixed exclusions, normalized NUL-framed hashing, identical-set
+  snapshots, policy version 2, and fail-closed special-file/path/size checks.
+  It does not change current Skill index/load or proposal behavior until
+  Phase 3B.
 - `skills stats` is read-time only in v1. It aggregates by
   `name + layer + packageHash`, classifies old traces as legacy/unknown,
   separates explicit and resident loads, classifies load failures by mode/status,
@@ -137,6 +143,15 @@ skill roots
 - Self-evolution design exists, but automatic learning should remain clearly opt-in/reviewed.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-12T13:45:22+0800
+- Scope: verified the standalone package identity v2 substrate and that current
+  Skill runtime identity still uses the v1 hasher.
+- Read: `packages/skills/src/package.ts`, `packages/skills/src/package-v2.ts`,
+  `packages/skills/src/index.ts`, and `packages/skills/test/index.test.ts`.
+- Tests: full `@sparkwright/skills` suite, Skills typecheck/build, package
+  boundaries, and internal-import checks.
 
 - Status: Verified
 - Date: 2026-07-12T02:12:00+0800

@@ -5,7 +5,8 @@
 - Status: Read-only
 - Date: 2026-07-12
 - Scope: implementation-ready master design after the asset-governance review.
-  Skill Phase 1/2 remain implemented; Phase 3A and later remain design-only.
+  Skill Phase 1/2 and the Phase 3A package substrate are implemented; later
+  phases remain design-only.
 - Source check: current Skill package enumeration, prepared-change lifecycle,
   command service, Agent Markdown discovery, Workflow parsing/execution/resume,
   and Agent/Workflow trace attribution paths were read.
@@ -296,11 +297,14 @@ their statistics cannot trigger mutation or evolution.
 Retain the implemented prepared-change, effect-bound approval, durable waiting,
 history, receipt, recovery, and four-entry command-service convergence.
 
-### Phase 3A: package identity v2 substrate
+### Completed: Phase 3A package identity v2 substrate
 
-- Implement the canonical enumerator, fixed exclusions, special-file/path/size
-  rejection, hashing, snapshot primitives, and policy-version serialization.
-- Add compatibility readers that preserve immutable v1 records.
+- `packages/skills/src/package-v2.ts` provides canonical enumeration, fixed
+  exclusions, special-file/path/size rejection, NUL-framed hashing, same-set
+  snapshots, and `packageHashPolicyVersion: 2` without migrating current
+  consumers.
+- Existing v1 APIs and records remain readable and are not rewritten. Phase 3B
+  performs the explicit Skill migration.
 
 ### Phase 3B: Skill full-package and external-change safety
 
@@ -386,6 +390,15 @@ history, receipt, recovery, and four-entry command-service convergence.
   projection caches?
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-12T13:45:22+0800
+- Scope: completed Phase 3A substrate only; existing v1 Skill loading and
+  evolution consumers remain unchanged pending Phase 3B.
+- Read: `packages/skills/src/package.ts`, `packages/skills/src/package-v2.ts`,
+  `packages/skills/src/index.ts`, and `packages/skills/test/index.test.ts`.
+- Tests: `npm --workspace @sparkwright/skills test`; Skills typecheck/build;
+  package-boundary and internal-import checks.
 
 - Status: Read-only
 - Date: 2026-07-12
