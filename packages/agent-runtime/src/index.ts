@@ -1230,6 +1230,7 @@ export interface DelegationLedgerResult extends AgentToolResult {
 interface DelegationLedgerEntry {
   key: string;
   goal: string;
+  goalFingerprint: string;
   result: DelegationLedgerResult;
 }
 
@@ -1288,6 +1289,12 @@ export interface CreateAgentToolOptions {
    * remains safe and only `requiresApproval` can force approval on spawn.
    */
   policy?: ToolDefinition["policy"];
+  /**
+   * Optional host-derived admission classifier for the child capability set.
+   * Return true only when concurrent child execution cannot mutate shared
+   * resources and does not require a serialized spawn approval.
+   */
+  isConcurrencySafe?(input: AgentToolInvocationInput): boolean;
 }
 
 const DEFAULT_AGENT_TOOL_NAME = "delegate";
@@ -1334,6 +1341,9 @@ export function createAgentTool(
       risk: "safe",
       requiresApproval: options.requiresApproval === true,
     },
+    ...(options.isConcurrencySafe
+      ? { isConcurrencySafe: options.isConcurrencySafe }
+      : {}),
     async execute(args: unknown, _ctx: RuntimeContext): Promise<unknown> {
       const parent = getParent();
       if (!parent) {
@@ -1470,10 +1480,11 @@ export function findSimilarSuccessfulDelegation(
 ): DelegationLedgerHit | undefined {
   const entries = delegationLedgersByParent.get(parent) ?? [];
   const normalizedKey = delegationLedgerKeyString(key);
+  const goalFingerprint = delegationGoalFingerprint(goal);
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const candidate = entries[i];
     if (!candidate || candidate.key !== normalizedKey) continue;
-    if (similarGoalScore(candidate.goal, goal) >= 0.35) {
+    if (candidate.goalFingerprint === goalFingerprint) {
       return { goal: candidate.goal, result: candidate.result };
     }
   }
@@ -1491,6 +1502,7 @@ export function rememberSuccessfulDelegation(
   entries.push({
     key: delegationLedgerKeyString(key),
     goal,
+    goalFingerprint: delegationGoalFingerprint(goal),
     result: { ...result },
   });
   delegationLedgersByParent.set(
@@ -1581,46 +1593,6 @@ function isAgentToolResult(value: unknown): value is AgentToolResult {
   );
 }
 
-function similarGoalScore(a: string, b: string): number {
-  if (hasDirectoryListingIntent(a) && hasDirectoryListingIntent(b)) return 0.7;
-  const left = normalizeGoalForSimilarity(a);
-  const right = normalizeGoalForSimilarity(b);
-  if (left.length === 0 || right.length === 0) return 0;
-  if (left === right) return 1;
-  if (left.includes(right) || right.includes(left)) return 0.85;
-  const leftBigrams = charBigrams(left);
-  const rightBigrams = charBigrams(right);
-  if (leftBigrams.size === 0 || rightBigrams.size === 0) return 0;
-  let overlap = 0;
-  for (const item of leftBigrams) {
-    if (rightBigrams.has(item)) overlap += 1;
-  }
-  return (2 * overlap) / (leftBigrams.size + rightBigrams.size);
-}
-
-function hasDirectoryListingIntent(goal: string): boolean {
-  const normalized = goal.toLowerCase();
-  const asksToList = /列出|清单|有哪些|查看|list|show|inspect/.test(normalized);
-  const mentionsFiles =
-    /文件|目录|文件夹|条目|file|files|dir|directory|entries/.test(normalized);
-  const scopesWorkspace =
-    /当前|工作区|根目录|workspace|root|directory|cwd|\./.test(normalized);
-  return asksToList && mentionsFiles && scopesWorkspace;
-}
-
-function normalizeGoalForSimilarity(goal: string): string {
-  return goal
-    .toLowerCase()
-    .replace(/[`"'“”‘’（）()[\]{}，。；;：:、,.!?！？\s]+/g, "")
-    .replace(/\/applications\/xgw\/projects\/ai-native\/sparkwright/g, "")
-    .replace(/workspace|sparkwright|当前|目录|文件|文件夹|清单/g, "");
-}
-
-function charBigrams(value: string): Set<string> {
-  if (value.length < 2) return new Set(value ? [value] : []);
-  const out = new Set<string>();
-  for (let i = 0; i < value.length - 1; i += 1) {
-    out.add(value.slice(i, i + 2));
-  }
-  return out;
+function delegationGoalFingerprint(goal: string): string {
+  return goal.normalize("NFKC").toLowerCase().trim().replace(/\s+/g, " ");
 }

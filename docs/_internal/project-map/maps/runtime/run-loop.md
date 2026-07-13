@@ -106,6 +106,11 @@ createRun/resumeRunFromCheckpoint
   order, but model-visible tool observations are appended after the batch in
   original request order. This keeps trace fidelity while stabilizing the next
   model call's context.
+- Batch partitioning happens before the per-call policy gate. Tools with
+  `policyForArgs()` therefore default to serial unless they explicitly provide
+  a pure `isConcurrencySafe(args)` classifier; Host Agent tools use that seam
+  to keep write-granted or write/shell-capable children out of the same
+  concurrent batch without changing their later approval lifecycle.
 - `fail()` is the terminal failure boundary for payload hygiene. It sanitizes
   `metadata.cause` to a bounded diagnostic summary before emitting
   `run.failed`, returning `RunResult`, or invoking `RunEnd` hooks; raw
@@ -255,6 +260,14 @@ createRun/resumeRunFromCheckpoint
   handling can still be noisy.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: made pre-gate batch partitioning fail closed for dynamic-policy tools
+  and verified Host Agent argument-level classifiers.
+- Read: Core run/tool orchestration and Host Agent tool assembly.
+- Tests: Core run 127/127; Host Agent/tool suites 155/155; affected typechecks
+  passed.
 
 - Status: Read-only
 - Date: 2026-07-13

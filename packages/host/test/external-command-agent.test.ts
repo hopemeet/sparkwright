@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createRun } from "@sparkwright/core";
 import type { AgentProfile } from "@sparkwright/agent-runtime";
 import {
@@ -45,6 +45,59 @@ describe("external command delegate tool", () => {
       envMode: "explicit",
       workspaceAccess: "read_write",
     });
+  });
+
+  it("mints unique child run ids for same-millisecond invocations", async () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
+    let randomValue = 0;
+    const random = vi
+      .spyOn(Math, "random")
+      .mockImplementation(() => ((randomValue += 1) % 1000) / 1000);
+    try {
+      const parent = createRun({
+        goal: "parent",
+        model: {
+          async complete() {
+            return { message: "parent" };
+          },
+        },
+        maxSteps: 1,
+      });
+      const profile: AgentProfile = {
+        id: "external_reviewer",
+        metadata: {
+          externalCommand: {
+            command: "unused",
+            workspaceAccess: "read_write",
+          },
+        },
+      };
+      const tool = createExternalCommandDelegateTool({
+        getParent: () => parent,
+        profile,
+        toolName: "delegate_external_reviewer",
+        description: "Blocked before process launch.",
+        workspaceRoot: process.cwd(),
+        allowReadWriteWorkspaceAccess: false,
+      });
+
+      await expect(
+        tool.execute({ goal: "first" }, { run: parent.record } as never),
+      ).rejects.toBeDefined();
+      await expect(
+        tool.execute({ goal: "second" }, { run: parent.record } as never),
+      ).rejects.toBeDefined();
+
+      const childRunIds = parent.events
+        .all()
+        .filter((event) => event.type === "subagent.requested")
+        .map((event) => (event.payload as { childRunId: string }).childRunId);
+      expect(childRunIds).toHaveLength(2);
+      expect(new Set(childRunIds).size).toBe(2);
+    } finally {
+      random.mockRestore();
+      now.mockRestore();
+    }
   });
 
   it("runs an argument-based command and mirrors subagent lifecycle events", async () => {

@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createRun } from "@sparkwright/core";
 import type { AgentProfile } from "@sparkwright/agent-runtime";
 import {
@@ -35,6 +35,60 @@ describe("ACP child agent delegate tool", () => {
       args: ["acp"],
       timeoutMs: 120000,
     });
+  });
+
+  it("mints unique child run ids for same-millisecond invocations", async () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
+    let randomValue = 0;
+    const random = vi
+      .spyOn(Math, "random")
+      .mockImplementation(() => ((randomValue += 1) % 1000) / 1000);
+    try {
+      const parent = createRun({
+        goal: "parent",
+        model: {
+          async complete() {
+            return { message: "parent" };
+          },
+        },
+        maxSteps: 1,
+      });
+      const profile: AgentProfile = {
+        id: "external_reviewer",
+        metadata: {
+          acp: {
+            transport: "stdio",
+            command: "unused",
+            workspaceAccess: "read_write",
+          },
+        },
+      };
+      const tool = createAcpDelegateTool({
+        getParent: () => parent,
+        profile,
+        toolName: "delegate_external_reviewer",
+        description: "Blocked before process launch.",
+        workspaceRoot: process.cwd(),
+        allowReadWriteWorkspaceAccess: false,
+      });
+
+      await expect(
+        tool.execute({ goal: "first" }, { run: parent.record } as never),
+      ).rejects.toBeDefined();
+      await expect(
+        tool.execute({ goal: "second" }, { run: parent.record } as never),
+      ).rejects.toBeDefined();
+
+      const childRunIds = parent.events
+        .all()
+        .filter((event) => event.type === "subagent.requested")
+        .map((event) => (event.payload as { childRunId: string }).childRunId);
+      expect(childRunIds).toHaveLength(2);
+      expect(new Set(childRunIds).size).toBe(2);
+    } finally {
+      random.mockRestore();
+      now.mockRestore();
+    }
   });
 
   it("runs an external ACP worker and mirrors subagent lifecycle events", async () => {

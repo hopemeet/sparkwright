@@ -14,6 +14,7 @@ import {
   createSessionRunStoreFactory,
   loadSessionCompactArtifact,
   loadTraceEventsFile,
+  isToolConcurrencySafe,
   createRun,
   createToolSearchTool,
   defineTool,
@@ -216,6 +217,7 @@ import {
   AGENT_WORKSPACE_WRITE_CHILD_TOOLS,
   agentWorkspaceWriteGrantApprovalSummaryForPayload,
   agentWorkspaceWriteGrantPolicyForPayload,
+  isAgentSpawnRequestConcurrencySafe,
   parseAgentAllowedToolsFromRecord,
   parseAgentWorkspaceWriteGrantFromRecord,
   resolveAgentSpawnToolRequest,
@@ -6442,6 +6444,11 @@ export function createConfiguredDelegateTools(input: {
       description: delegateToolDescription(delegate, profile),
       requiresApproval: delegate.requiresApproval,
       policy: capabilityFacts.policyProfile.policy,
+      isConcurrencySafe: () =>
+        capabilityFacts.workspaceAccess === "none" &&
+        capabilityFacts.shellAccess === false &&
+        capabilityFacts.policyProfile.policy.risk === "safe" &&
+        capabilityFacts.policyProfile.policy.requiresApproval === false,
       forbidNesting: delegate.forbidNesting ?? true,
       delegationLedgerKey: configuredDelegateLedgerKey(profile.id, toolName),
       buildSpawnInput: async (args, parent) => {
@@ -6624,6 +6631,15 @@ export function createDelegateAgentTool(input: {
         policy: perTarget?.policy ?? target.tool.policy,
         governance: perTarget?.governance ?? target.tool.governance,
       };
+    },
+    isConcurrencySafe(args) {
+      try {
+        const task = parseDelegateAgentArgs(args);
+        const target = resolveTarget(task);
+        return isToolConcurrencySafe(target.tool, delegateAgentToolArgs(task));
+      } catch {
+        return false;
+      }
     },
     isReplaySafe: false,
     async execute(args: unknown, ctx): Promise<unknown> {
@@ -7370,6 +7386,12 @@ export function createDynamicSpawnAgentTool(input: {
           args,
           input.entrypoint ?? "spawn_agent",
         ) ?? {}
+      );
+    },
+    isConcurrencySafe(args: unknown) {
+      return isAgentSpawnRequestConcurrencySafe(
+        args,
+        input.entrypoint ?? "spawn_agent",
       );
     },
     approvalSummaryForArgs(args: unknown, options: ToolRequestPreviewOptions) {

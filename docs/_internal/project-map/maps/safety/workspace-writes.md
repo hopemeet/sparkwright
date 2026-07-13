@@ -50,6 +50,11 @@ tool proposes write
   parent run policy is still layered into the child, so `shouldWrite:false`,
   target-path restrictions, file budgets, and diff budgets deny before the
   grant resolver can approve.
+- Same-turn Agent tool batching treats a requested dynamic workspace-write grant
+  or a configured child write/shell capability as serial. This prevents two
+  independently policy-checked and approved child writers from being admitted
+  to the same Core concurrent batch; it is not yet a cross-run or cross-host
+  workspace lock.
 - Trace report may lower the severity of an incomplete child only at the
   report layer, and only when raw events prove the ordered chain: child
   `workspace.write.completed`, parent-visible `subagent.*.workspaceWrites > 0`,
@@ -116,6 +121,15 @@ tool proposes write
   from managed workspace writes.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: added fail-closed same-turn Agent concurrency classification for
+  workspace-write capability without changing write approval semantics.
+- Read: Core concurrency classifier, Host Agent spawn/delegate capability, and
+  workspace-write policy boundary.
+- Tests: Core run 127/127; Host Agent/tool suites 155/155; affected typechecks
+  passed.
 
 - Status: Verified
 - Date: 2026-07-13T22:42:00+0800

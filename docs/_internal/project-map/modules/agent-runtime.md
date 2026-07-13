@@ -294,7 +294,14 @@ Does not own:
   the delegation surface identity (`agent_tool`, configured delegate, or dynamic
   spawn) plus the stable child/profile/scope fields needed to avoid reusing a
   different agent's answer. Only completed, non-`stepLimitReached`,
-  non-truncated results are reusable.
+  non-truncated results are reusable. Goal reuse requires equality of a narrow
+  normalized fingerprint (Unicode normalization, case folding, trim, and
+  whitespace collapse); fuzzy intent or character-overlap scoring must not
+  reuse results across different paths or targets.
+- `createAgentTool` accepts an optional argument-level concurrency classifier.
+  Host uses it to keep write-capable, shell-capable, or spawn-approval-bound
+  configured children out of Core concurrent batches while preserving
+  concurrency for unapproved read-only children.
 - `createAgentTool` accepts synchronous or asynchronous `buildSpawnInput`.
   Embedders still own provider/model construction, but async spawn input lets
   host resolve child-scope model adapters on demand before calling
@@ -336,6 +343,15 @@ Does not own:
   not authorize a generic actor bus or nested background lifecycle.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: replaced fuzzy delegation reuse with exact normalized fingerprints and
+  added the portable configured-child concurrency-classifier seam.
+- Read: agent-runtime AgentTool/ledger, Host configured delegate assembly, and
+  Core concurrency classification.
+- Tests: agent-runtime Agent tests 38/38; Host Agent tests 155/155; affected
+  typechecks passed.
 
 - Status: Read-only
 - Date: 2026-07-13

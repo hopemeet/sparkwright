@@ -156,6 +156,23 @@ export function agentWorkspaceWriteGrantPolicyForPayload(
   };
 }
 
+/**
+ * Classify a spawn-shaped agent request before Core forms concurrent tool
+ * batches. Invalid requests fail closed to serial execution and are still
+ * reported by the normal validation/policy path when executed.
+ */
+export function isAgentSpawnRequestConcurrencySafe(
+  payload: unknown,
+  source: string,
+): boolean {
+  try {
+    return !agentWorkspaceWriteGrantRequestFromPayload(payload, source)
+      .workspaceWriteGrant;
+  } catch {
+    return false;
+  }
+}
+
 export function agentWorkspaceWriteGrantApprovalSummaryForPayload(
   payload: unknown,
   source: string,

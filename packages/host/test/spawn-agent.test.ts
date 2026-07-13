@@ -13,6 +13,7 @@ import {
   createWorkspaceReadScopePolicy,
   defineTool,
   FileSessionStore,
+  isToolConcurrencySafe,
   LocalWorkspace,
   type ModelAdapter,
   type ToolDefinition,
@@ -75,6 +76,42 @@ async function readFileWhenReady(
  * scripted child model and asserts both fixes hold.
  */
 describe("host spawn_agent wiring", () => {
+  it("allows read-only spawn calls to batch but serializes write grants", () => {
+    const spawnTool = createDynamicSpawnAgentTool({
+      getParent: () => undefined,
+      model: {
+        async complete() {
+          return { message: "unused" };
+        },
+      },
+      childTools: [],
+      parentRunPolicy: createDefaultPolicy(),
+      childRunStoreFactory: () => undefined as never,
+    });
+    const base = {
+      goal: "Inspect the project.",
+      role: "reader",
+      prompt: "Read and report.",
+    };
+
+    expect(isToolConcurrencySafe(spawnTool, base)).toBe(true);
+    expect(
+      isToolConcurrencySafe(spawnTool, {
+        ...base,
+        grant: { workspaceWrite: true },
+      }),
+    ).toBe(false);
+    expect(
+      isToolConcurrencySafe(spawnTool, {
+        ...base,
+        allowedTools: ["edit"],
+      }),
+    ).toBe(false);
+    expect(isToolConcurrencySafe(spawnTool, { ...base, grant: "write" })).toBe(
+      false,
+    );
+  });
+
   it("persists the child trace into the session and rolls usage into the parent", async () => {
     const root = await mkdtemp(join(tmpdir(), "sparkwright-host-spawn-"));
     try {

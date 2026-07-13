@@ -1,4 +1,5 @@
 import {
+  createId,
   createSpanId,
   defineTool,
   type SandboxSummary,
@@ -173,7 +174,7 @@ export function createAcpDelegateTool(
       });
       const parsed = parseDelegateArgs(args);
       const spanId = createSpanId();
-      const childRunId = `acp_${sanitizeSegment(input.profile.id)}_${Date.now().toString(36)}`;
+      const childRunId = createId(`acp_${sanitizeSegment(input.profile.id)}`);
       const base = {
         childRunId,
         parentRunId: parent.record.id,

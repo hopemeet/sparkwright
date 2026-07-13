@@ -19,6 +19,7 @@ import {
   defineTool,
   createRunId,
   EventLog,
+  isToolConcurrencySafe,
   LocalWorkspace,
   type CapabilityMutationEvent,
   type ModelAdapter,
@@ -71,6 +72,60 @@ import {
 } from "../src/runtime.js";
 
 describe("host tools", () => {
+  it("classifies indexed delegate concurrency from the selected target", () => {
+    const delegates = [
+      { profileId: "reader", toolName: "delegate_reader" },
+      { profileId: "writer", toolName: "delegate_writer" },
+    ];
+    const derivedAgents = [
+      { effectiveProfile: { id: "reader", name: "Reader" } },
+      { effectiveProfile: { id: "writer", name: "Writer" } },
+    ];
+    const delegateTools = [
+      defineTool({
+        name: "delegate_reader",
+        description: "Read-only delegate.",
+        inputSchema: { type: "object" },
+        policy: { risk: "safe" },
+        governance: { sideEffects: ["read"], idempotency: "conditional" },
+        execute() {
+          return { ok: true };
+        },
+      }),
+      defineTool({
+        name: "delegate_writer",
+        description: "Write-capable delegate.",
+        inputSchema: { type: "object" },
+        policy: { risk: "risky", requiresApproval: true },
+        governance: { sideEffects: ["write"], idempotency: "conditional" },
+        execute() {
+          return { ok: true };
+        },
+      }),
+    ];
+    const indexed = createDelegateAgentTool({
+      delegates,
+      derivedAgents: derivedAgents as never,
+      delegateTools,
+    });
+
+    expect(
+      isToolConcurrencySafe(indexed, {
+        agentId: "reader",
+        goal: "Inspect README.md.",
+      }),
+    ).toBe(true);
+    expect(
+      isToolConcurrencySafe(indexed, {
+        agentId: "writer",
+        goal: "Update README.md.",
+      }),
+    ).toBe(false);
+    expect(isToolConcurrencySafe(indexed, { goal: "Missing target." })).toBe(
+      false,
+    );
+  });
+
   it("authors a validated Markdown Agent without mutating config profiles", async () => {
     const ctx = await createWorkspace({
       ".sparkwright/config.yaml": "capabilities:\n  agents:\n    maxDepth: 1\n",
@@ -1092,6 +1147,9 @@ describe("host tools", () => {
     });
 
     expect(delegate?.policy).toEqual({ risk: "safe", requiresApproval: false });
+    expect(
+      isToolConcurrencySafe(delegate, { goal: "Inspect README.md." }),
+    ).toBe(true);
 
     await delegate!.execute({ goal: "Inspect README.md." }, {
       run: parent.record,
@@ -1164,6 +1222,18 @@ describe("host tools", () => {
       derivedAgents,
       delegateTools: hiddenDelegateTools,
     });
+
+    expect(
+      isToolConcurrencySafe(hiddenDelegateTools[0], {
+        goal: "Inspect README.md.",
+      }),
+    ).toBe(false);
+    expect(
+      isToolConcurrencySafe(delegateAgent, {
+        agentId: "reader",
+        goal: "Inspect README.md.",
+      }),
+    ).toBe(false);
 
     expect(
       delegateAgent.policyForArgs?.({
@@ -1938,27 +2008,60 @@ describe("host tools", () => {
       workspace: new LocalWorkspace(ctx.workspaceRoot),
       maxSteps: 2,
     });
+    const delegates = [{ profileId: "writer", toolName: "delegate_writer" }];
+    const derivedAgents = [
+      {
+        effectiveProfile: {
+          id: "writer",
+          name: "Writer",
+          mode: "child" as const,
+          prompt: "Write.",
+          allowedTools: ["write"],
+          maxSteps: 1,
+        },
+        inheritedPolicy: [],
+        effectivePolicy: [],
+        parentAgentDenyCount: 0,
+        parentRunDenyCount: 0,
+        childDenyCount: 0,
+        effectiveToolCount: 1,
+      },
+    ];
+    const [writerDelegate] = createConfiguredDelegateTools({
+      getParent: () => parent,
+      delegates,
+      derivedAgents,
+      model: {
+        async complete() {
+          return { message: "writer done" };
+        },
+      },
+      childTools: childToolCatalog.map((entry) => entry.definition),
+      workspaceRoot: ctx.workspaceRoot,
+      parentRunPolicy: createDefaultPolicy(),
+      allowReadWriteWorkspaceAccess: true,
+      childRunStoreFactory: () => undefined as never,
+    });
+    const indexedWriter = createDelegateAgentTool({
+      delegates,
+      derivedAgents,
+      delegateTools: [writerDelegate!],
+    });
+
+    expect(
+      isToolConcurrencySafe(writerDelegate, { goal: "Write a file." }),
+    ).toBe(false);
+    expect(
+      isToolConcurrencySafe(indexedWriter, {
+        agentId: "writer",
+        goal: "Write a file.",
+      }),
+    ).toBe(false);
+
     const parallel = createDelegateParallelTool({
       getParent: () => parent,
-      delegates: [{ profileId: "writer", toolName: "delegate_writer" }],
-      derivedAgents: [
-        {
-          effectiveProfile: {
-            id: "writer",
-            name: "Writer",
-            mode: "child",
-            prompt: "Write.",
-            allowedTools: ["write"],
-            maxSteps: 1,
-          },
-          inheritedPolicy: [],
-          effectivePolicy: [],
-          parentAgentDenyCount: 0,
-          parentRunDenyCount: 0,
-          childDenyCount: 0,
-          effectiveToolCount: 1,
-        },
-      ],
+      delegates,
+      derivedAgents,
       model: {
         async complete() {
           return { message: "writer done" };

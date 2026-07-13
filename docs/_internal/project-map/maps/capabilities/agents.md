@@ -255,7 +255,18 @@ configured profiles/delegates
   dynamic `spawn_agent` all read and write this ledger so a later equivalent
   delegation can return the previous child result with `alreadyCompleted: true`
   instead of spawning a duplicate child. The ledger does not reuse failed,
-  step-limited, or truncated children.
+  step-limited, or truncated children. Equivalence is exact after conservative
+  Unicode/case/whitespace normalization; fuzzy directory-listing or text
+  similarity must not cross target paths.
+- Core same-turn concurrency follows the effective Agent invocation: dynamic
+  write grants, configured child write/shell capability, spawn approval, invalid
+  inputs, and unresolved indexed targets are serial. Read-only dynamic and
+  configured children may remain concurrent. This is separate from policy and
+  approval, which still run for every tool call.
+- ACP and external-command child run ids retain their protocol/profile prefix
+  and use the shared entropy-bearing Core id generator rather than a bare
+  millisecond suffix, so same-profile concurrent invocations cannot collide
+  merely because they start in the same millisecond.
 - In-process delegate and granted dynamic-spawn workspace writes are surfaced
   to the parent run-end summary by rolling up the child run's own
   `workspace.write.completed` events onto the parent-visible
@@ -317,6 +328,15 @@ configured profiles/delegates
   detection.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: hardened Agent concurrency admission, delegation result identity, and
+  process-child run identity without changing approval semantics.
+- Read: Core batching, agent-runtime ledger/AgentTool, Host spawn/delegate tools,
+  and ACP/external adapters.
+- Tests: Core run 127/127; agent-runtime Agent tests 38/38; Host Agent/tool suites
+  155/155; affected typechecks passed.
 
 - Status: Verified
 - Date: 2026-07-14

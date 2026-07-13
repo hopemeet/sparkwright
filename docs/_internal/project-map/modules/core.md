@@ -111,6 +111,11 @@ Does not own:
 - Concurrent tool batches preserve real-time event emission and after-tool hook
   execution, while deferring only the next-turn `tool_result` context append so
   model observations are ordered by the original tool-call order.
+- Tool concurrency classification is argument-aware only through an explicit
+  `ToolDefinition.isConcurrencySafe(args)` implementation. A tool that declares
+  `policyForArgs()` without that classifier fails closed to serial batching, so
+  argument-level risk or side effects cannot be discovered only after Core has
+  already admitted the call to a concurrent batch.
 - `SessionEvent.sequence` is session-local. Host-level session compaction
   writes `session.compaction.completed` / `session.compaction.skipped` events
   to the append-only session event stream for durable audit.
@@ -354,6 +359,13 @@ Does not own:
   guard and trace diagnostics.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: made dynamic-policy tool batching fail closed unless the tool supplies
+  an explicit argument-level concurrency classifier.
+- Read: Core tool registry/orchestration and Host Agent consumers.
+- Tests: Core run 127/127; affected package and test typechecks passed.
 
 - Status: Verified
 - Date: 2026-07-13T22:42:00+0800

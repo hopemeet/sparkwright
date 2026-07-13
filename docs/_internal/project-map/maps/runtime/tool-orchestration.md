@@ -250,6 +250,13 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
   converted into structured `tool.failed` results with
   `TOOL_ARGUMENTS_INVALID` and `metadata.phase: "policyForArgs"`; they do not
   escape the tool span as runtime crashes.
+- Batch admission must not infer concurrency safety from static governance when
+  `policyForArgs()` can strengthen it. Such tools are serial by default and may
+  opt back into argument-specific concurrency only through a pure,
+  invalid-input-tolerant `isConcurrencySafe(args)` classifier. Policy and
+  approval still execute at the ordinary per-call gate; this rule prevents
+  separately authorized mutations from being scheduled concurrently, not an
+  approval bypass.
 - Tool input validation has two layers: JSON schema first, then optional
   `ToolDefinition.validateInput(args, ctx)`, then `policyForArgs()`, policy /
   approval, execute, and output validation. `validateInput()` is a runtime-level
@@ -341,6 +348,15 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
 - TUI live rendering and transcript export now share presentation summaries, but trace/model-context result compaction is still a separate backend concern.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: aligned concurrent batch admission with dynamic tool governance and
+  added Agent-specific argument/target classifiers.
+- Read: Core tool orchestration/tools/run and Host dynamic/indexed/configured
+  Agent tools.
+- Tests: Core run 127/127; Host Agent/tool suites 155/155; affected typechecks
+  passed.
 
 - Status: Verified
 - Date: 2026-07-13T22:42:00+0800

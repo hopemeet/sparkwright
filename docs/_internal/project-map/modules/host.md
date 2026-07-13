@@ -457,6 +457,13 @@ Does not own:
 - Host-owned task tools pass default concurrency caps to agent-runtime
   (`global=4`, `agent=1`) unless configured. Cap violations are recoverable
   tool errors and must not become an internal host queue.
+- Host Agent tools classify Core same-turn concurrency from effective call
+  capability rather than their static read-shaped wrapper. Dynamic
+  `spawn_agent` remains concurrent only without a workspace-write grant;
+  configured direct/indexed delegates remain concurrent only when their child
+  catalog is read-only, shell-free, and does not require spawn approval.
+  Invalid or unresolved Agent arguments fail closed to serial execution; the
+  normal validation/policy path still owns their user-visible failure.
 - Host-facing task controls `task.join` and `task.promote` are protocol/runtime
   controls for TUI and other clients. They do not reuse model-facing task tool
   JSON: join marks a task awaited, while promote forwards a manual foreground
@@ -816,6 +823,15 @@ Does not own:
 - Capability snapshot fields are useful but can become stale if new tools bypass `tool-catalog.ts`; direct-core/cron should add tools by catalog profile, not local factories.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: closed Agent argument-level concurrency gaps, removed fuzzy delegation
+  reuse, and added collision-resistant ACP/external child run ids.
+- Read: Host dynamic/configured/indexed delegate assembly, spawn grants, ACP and
+  external-command adapters, plus Core/agent-runtime boundaries.
+- Tests: Host Agent/tool focused suites 155/155; Core run 127/127;
+  agent-runtime Agent tests 38/38; affected typechecks passed.
 
 - Status: Verified
 - Date: 2026-07-14

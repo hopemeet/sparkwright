@@ -1,4 +1,5 @@
 import {
+  createId,
   createSpanId,
   defineTool,
   type EventEmitter,
@@ -223,7 +224,7 @@ export function createExternalCommandDelegateTool(
 
       const parsed = parseDelegateArgs(args);
       const spanId = createSpanId();
-      const childRunId = `cmd_${sanitizeSegment(input.profile.id)}_${Date.now().toString(36)}`;
+      const childRunId = createId(`cmd_${sanitizeSegment(input.profile.id)}`);
       const base = {
         childRunId,
         parentRunId: parent.record.id,

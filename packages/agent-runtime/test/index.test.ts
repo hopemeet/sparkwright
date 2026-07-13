@@ -1000,7 +1000,7 @@ describe("createAgentTool / mountAgentTool", () => {
     });
   });
 
-  it("short-circuits similar repeated delegate calls after success", async () => {
+  it("short-circuits exactly equivalent normalized delegate calls after success", async () => {
     let childCalls = 0;
     const parent = createRun({
       goal: "parent",
@@ -1024,14 +1024,12 @@ describe("createAgentTool / mountAgentTool", () => {
       }),
     });
 
-    const first = await tool.execute(
-      { goal: "查看当前 workspace root 下有哪些文件和目录" },
-      { run: parent.record } as never,
-    );
-    const second = await tool.execute(
-      { goal: "查看当前工作区根目录有哪些文件/文件夹，并列出顶层条目" },
-      { run: parent.record } as never,
-    );
+    const first = await tool.execute({ goal: "Inspect README.md" }, {
+      run: parent.record,
+    } as never);
+    const second = await tool.execute({ goal: "  inspect   readme.md  " }, {
+      run: parent.record,
+    } as never);
 
     expect(first).toMatchObject({ signal: "completed" });
     expect(second).toMatchObject({
@@ -1040,6 +1038,51 @@ describe("createAgentTool / mountAgentTool", () => {
       message: "root entries: README.md, packages/",
     });
     expect(childCalls).toBe(1);
+  });
+
+  it("does not reuse directory-listing results across different target paths", async () => {
+    let childCalls = 0;
+    const parent = createRun({
+      goal: "parent",
+      model: {
+        async complete() {
+          return { message: "parent done" };
+        },
+      },
+      maxSteps: 1,
+    });
+    const tool = createAgentTool(() => parent, {
+      buildSpawnInput: (input) => ({
+        goal: input.goal,
+        model: {
+          async complete() {
+            childCalls += 1;
+            return { message: `directory result ${childCalls}` };
+          },
+        },
+        maxSteps: 2,
+      }),
+    });
+
+    const first = await tool.execute(
+      { goal: "列出 packages/host 目录的文件" },
+      { run: parent.record } as never,
+    );
+    const second = await tool.execute(
+      { goal: "列出 packages/core 目录的文件" },
+      { run: parent.record } as never,
+    );
+
+    expect(first).toMatchObject({
+      signal: "completed",
+      message: "directory result 1",
+    });
+    expect(second).toMatchObject({
+      signal: "completed",
+      message: "directory result 2",
+    });
+    expect(second).not.toMatchObject({ alreadyCompleted: true });
+    expect(childCalls).toBe(2);
   });
 
   it("does not cache delegate results completed on the child step limit", async () => {

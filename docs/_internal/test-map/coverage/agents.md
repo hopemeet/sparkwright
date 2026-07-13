@@ -3,7 +3,7 @@
 ## Current Confidence
 
 - Status: `Partially Verified`
-- Last reviewed: 2026-07-11
+- Last reviewed: 2026-07-14
 - Evidence source: 2026-06-22 focused host/agent tests passed and real
   `openai/gpt-5.4-mini` read-only dynamic `spawn_agent` canaries produced valid
   trace/session structure. A configured read/write delegate canary wrote through
@@ -36,7 +36,10 @@
   completion semantics, and nested awaited `task_create(kind:"agent")`
   result delivery. The 2026-07-11 closure audit treated that nested run as QA
   evidence rather than a user requirement and removed the incomplete opt-in;
-  current v1 lifecycle is flat.
+  current v1 lifecycle is flat. 2026-07-14 deterministic verification covered
+  argument-level Agent concurrency admission, exact delegation fingerprints,
+  and same-millisecond ACP/external child-id uniqueness across Core,
+  agent-runtime, and Host focused suites.
 
 ## Covered
 
@@ -118,6 +121,13 @@
   `alreadyCompleted: true`; the trace had two `subagent.completed` events
   instead of four and passed trace verify/session check
   (`session_mqvxzwjy7x1ixlvu`).
+- 2026-07-14 hardening narrowed that ledger to exact conservative normalized
+  goal fingerprints, with regression coverage proving `packages/host` directory
+  results are not reused for `packages/core`. Core now serializes tools that
+  declare dynamic policy without an explicit argument-level classifier;
+  dynamic read-only spawn remains concurrent, while write-granted, configured
+  write/shell, approval-bound, invalid, and unresolved Agent calls are serial.
+  ACP/external adapters also mint distinct child ids under a frozen timestamp.
 - 2026-06-27 indexed delegation verification covered the new default agent
   exposure surface: capability snapshots expose `delegate_agent` instead of
   every configured `delegate_*` alias, `delegate_agent(agentId)` preserves
