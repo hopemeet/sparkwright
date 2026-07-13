@@ -118,6 +118,13 @@ Manual compact
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-07-13
+- Scope: checked Host security-plan and CLI inspect refactor; session roots,
+  records, trace paths, and storage formats did not change.
+- Read: Host prepared environment/session-store assembly and CLI inspect path.
+- Tests: Host protocol focused tests passed; no session schema changed.
+
+- Status: Read-only
 - Date: 2026-07-12T20:00:00+0800
 - Scope: checked read-only asset statistics session scanning; session storage
   layout and ownership are unchanged.

@@ -117,6 +117,15 @@ Future run in compacted session
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-13
+- Scope: checked all three Host preparation entrypoints after access-plan
+  consolidation; start, checkpoint resume, and Workflow resume still resolve a
+  fresh access plan and retain existing replay semantics.
+- Read: Host start/resume/workflow-resume preparation call sites.
+- Tests: Host protocol focused tests passed; replay/checkpoint formats did not
+  change.
+
 - Status: Verified
 - Date: 2026-07-12T20:12:00+0800
 - Scope: resumed Workflow records retain their event-time source layer while

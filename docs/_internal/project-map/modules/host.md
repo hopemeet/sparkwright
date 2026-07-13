@@ -12,6 +12,8 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 ## Main Files
 
 - `packages/host/src/runtime.ts`
+- `packages/host/src/run-access.ts`
+- `packages/host/src/run-security-plan.ts`
 - `packages/host/src/server.ts`
 - `packages/host/src/connection.ts`
 - `packages/host/src/agent-spawn-grants.ts`
@@ -54,6 +56,8 @@ Owns:
   and `capability.inspect` diagnostics
 - skill, MCP, shell, cron, and agent capability preparation
 - host tool catalog entries that preserve runtime tool source metadata
+- immutable per-run/per-inspect derivation of resolved access, workspace,
+  confidential path inputs, skill/config roots, and shell sandbox status
 - host-level approval resolver and pending approval routing
 - host-client approval helpers used by frontends that must not import core directly
 - session diagnostics bundle composition
@@ -88,6 +92,15 @@ Does not own:
   readable, and new files omit inferred child mode and inherited budgets.
 
 - One active run per host connection.
+- `run-security-plan.ts` is the immutable boundary between config/access
+  parsing and runtime assembly. A run and `capability.inspect` derive the same
+  workspace, access, confidential paths, skill/config roots, and resolved shell
+  sandbox inputs there. It must not own prepared tools/processes, approval
+  resolvers, traces, Workflow state, or Core's mutable per-run mutation policy.
+- CLI `capabilities inspect` treats the Host `CapabilitySnapshot` as required
+  for effective tool, delegate, and sandbox facts. It may add CLI-only config
+  diagnostics and optional MCP resolution detail, but it no longer reconstructs
+  a fallback Host tool catalog or independently reports sandbox availability.
 - Session root defaults to `<workspace>/.sparkwright/sessions`.
 - Host protocol `run.failed` events emitted by runtime carry canonical
   `failure` and deprecated compatibility `error`; failed core completions remain
@@ -773,6 +786,18 @@ Does not own:
 - Capability snapshot fields are useful but can become stale if new tools bypass `tool-catalog.ts`; direct-core/cron should add tools by catalog profile, not local factories.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-13
+- Scope: extracted the immutable Host run security plan shared by run
+  preparation and capability inspection; removed CLI's snapshot-less effective
+  tool/delegate/sandbox fallback.
+- Read: `packages/host/src/runtime.ts`, `packages/host/src/run-access.ts`,
+  `packages/host/src/run-security-plan.ts`, `packages/cli/src/cli.ts`, and
+  focused Host/CLI tests.
+- Tests: Host run-security/client/config/tools/protocol tests 222/222 passed;
+  Host and CLI typechecks passed; Host build passed; CLI capability-inspect
+  tests 13/13 passed.
 
 - Status: Verified
 - Date: 2026-07-12T23:35:00+0800

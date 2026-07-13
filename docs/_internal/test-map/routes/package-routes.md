@@ -77,6 +77,20 @@ exports, which point at `dist`.
 
 ## Host
 
+### `packages/host/src/run-access.ts` or `run-security-plan.ts`
+
+Run:
+
+```bash
+npm --workspace @sparkwright/host test -- test/run-security-plan.test.ts test/client-run.test.ts test/protocol.test.ts
+npm --workspace @sparkwright/host run typecheck
+```
+
+Add the capability-inspect route when effective access, sandbox status, or tool
+inventory consumption changes. Keep mutable policy-state tests separate: a
+frozen security plan must never share Core mutation-policy instances between
+runs.
+
 ### `packages/host/src/config.ts` or `config-zod-schema.ts`
 
 Run:

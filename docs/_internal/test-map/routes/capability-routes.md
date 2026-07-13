@@ -65,6 +65,7 @@ Focused route:
 
 ```bash
 npm --workspace @sparkwright/protocol run build
+npm --workspace @sparkwright/host test -- test/run-security-plan.test.ts test/client-run.test.ts test/protocol.test.ts
 npm --workspace @sparkwright/host run build
 npm --workspace @sparkwright/cli test -- test/cli.test.ts -t "capabilities inspect"
 ```

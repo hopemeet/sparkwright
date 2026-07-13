@@ -256,6 +256,15 @@ createRun/resumeRunFromCheckpoint
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-13
+- Scope: checked Host security-plan and CLI inspect refactor; Core run-loop
+  ordering, policy evaluation, approvals, execution, and terminal events did
+  not change.
+- Read: Host runtime/security plan and Core run-loop boundary.
+- Tests: Host tools/protocol focused tests passed; no Core run-loop behavior
+  changed.
+
 - Status: Verified
 - Date: 2026-07-12T23:45:00+0800
 - Scope: successful body-level Skill loads hydrate only registered deferred

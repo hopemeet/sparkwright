@@ -206,6 +206,14 @@ EventLog emits full event
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-07-13
+- Scope: checked Host security-plan and CLI inspect refactor; raw event names,
+  payloads, ordering, redaction, and trace storage did not change.
+- Read: Host prepared environment metadata/capability snapshot and CLI inspect
+  path.
+- Tests: Host tools/protocol focused tests passed; no trace contract changed.
+
+- Status: Read-only
 - Date: 2026-07-12T20:12:00+0800
 - Scope: Workflow statistics now count terminal state only on the run
   observation and use durable record layer; raw trace event contracts are unchanged.

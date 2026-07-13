@@ -33,6 +33,10 @@ config + workspace capability roots
 
 - Capabilities affect model input, tool availability, policy, or side effects and must be trace-visible.
 - Capability inspection is diagnostic; it does not replace run trace.
+- Effective tool, delegate, access, and shell sandbox facts in CLI inspection
+  come from Host `CapabilitySnapshot`. CLI may add layered/config diagnostics,
+  but Host inspection failure is not permission to synthesize a second
+  effective runtime inventory.
 - `CapabilitySnapshot.rules.workflow` and `rules.events` are diagnostic only.
   Host builds workflow descriptors from configured workflow hooks, verification
   invariants, and documented-command built-in invariants, and event descriptors
@@ -198,6 +202,14 @@ config + workspace capability roots
 - Do not add one-off direct-core/cron tools for capability smokes; exercise the same coding tools used by host runs.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-13
+- Scope: confirmed Host snapshot ownership for effective CLI capability facts;
+  no protocol field or runtime capability membership changed.
+- Read: Host capability inspection/security plan, CLI report assembly, and
+  protocol `CapabilitySnapshot`.
+- Tests: Host focused suite 222/222; CLI capability-inspect tests 13/13.
 
 - Status: Verified
 - Date: 2026-07-12T23:45:00+0800

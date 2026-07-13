@@ -83,6 +83,16 @@ host config MCP servers
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-07-13
+- Scope: Host run and configured inspection now receive the same resolved
+  sandbox input from the security plan. MCP startup, neutral cwd, optional CLI
+  resolution, transport lifecycle, and tool policy behavior are unchanged.
+- Read: Host runtime/security plan, CLI capability report, and MCP adapter
+  boundary.
+- Tests: Host tools/protocol focused tests and CLI capability-inspect tests
+  passed; MCP-specific behavior did not change.
+
+- Status: Read-only
 - Date: 2026-07-12T20:12:00+0800
 - Scope: checked host runtime Workflow layer change; MCP preparation and tool
   exposure are unchanged.

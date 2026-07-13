@@ -133,9 +133,6 @@ import { CronStore, defaultCronRoot } from "@sparkwright/cron";
 import { RECOMMENDED_FOREGROUND_TIMEOUT_MS } from "@sparkwright/shell-tool";
 import { DurableCommandDispatcher } from "@sparkwright/server-runtime";
 import {
-  createPlatformShellSandboxRuntime,
-  describeShellSandboxStatus,
-  resolveShellSandboxConfig,
   type ResolvedShellSandboxConfig,
   type ShellSandboxStatus,
 } from "@sparkwright/shell-sandbox";
@@ -200,10 +197,8 @@ import {
   resolveRunAccessFields,
   type ResolvedRunAccess,
 } from "./run-access.js";
-import {
-  existingSkillRoots,
-  resolveSkillRootsForRuntime,
-} from "./skill-roots.js";
+import { prepareHostRunSecurityPlan } from "./run-security-plan.js";
+import { existingSkillRoots } from "./skill-roots.js";
 import { nextMessageId, nowIso } from "./connection.js";
 import {
   createModel,
@@ -334,13 +329,6 @@ function createHostRunPolicy(input: {
   ]);
 }
 
-function mergeConfidentialPaths(
-  ...groups: Array<readonly string[] | undefined>
-): string[] | undefined {
-  const merged = groups.flatMap((group) => group ?? []);
-  return merged.length > 0 ? [...new Set(merged)] : undefined;
-}
-
 type RuntimeMcpConfig = Omit<CapabilityMcpConfig, "servers"> & {
   servers?: McpServerConfig[];
 };
@@ -385,7 +373,7 @@ async function createRuntimeMcpTools(input: {
   workspaceRoot: string;
   emitter?: EventEmitter;
   agentId?: string;
-  shellSandbox?: ReturnType<typeof resolveShellSandboxConfig>;
+  shellSandbox?: ResolvedShellSandboxConfig;
 }): Promise<PreparedMcp | null> {
   const config = input.config;
   if (!config?.servers?.length) return null;
@@ -2018,10 +2006,7 @@ export class HostRuntime {
   private async prepareHostRunEnvironment(input: {
     goal: string;
     modelRef?: string;
-    access?: ResolvedRunAccess;
-    permissionMode: PermissionMode;
-    shouldWrite: boolean;
-    backgroundTasks: BackgroundTaskPolicy;
+    access: ResolvedRunAccess;
     sessionId: string;
     targetPath?: string;
     confidentialPaths?: readonly string[];
@@ -2073,28 +2058,19 @@ export class HostRuntime {
     );
     const agentConfig = loadedConfig.config.capabilities?.agents;
     const writeGuardrails = loadedConfig.config.write;
-    const confidentialPaths = mergeConfidentialPaths(
-      loadedConfig.config.confidentialPaths,
-      input.confidentialPaths,
-    );
-    const confidentialDefaults =
-      input.confidentialDefaults ?? loadedConfig.config.confidentialDefaults;
-    const skillRoots = resolveSkillRootsForRuntime(
+    const securityPlan = await prepareHostRunSecurityPlan({
       workspaceRoot,
-      skillConfig?.roots,
-    );
-    const shellSandbox = await inspectShellSandboxStatus({
-      workspaceRoot,
-      shellConfig,
-      skillRoots: skillRoots.map((root) => root.root),
-      configPaths: loadedConfig.attempted.map((entry) => entry.path),
+      access: input.access,
+      loadedConfig,
+      requestConfidentialPaths: input.confidentialPaths,
+      requestConfidentialDefaults: input.confidentialDefaults,
     });
-    const mcpShellSandbox = resolveShellSandboxConfig({
-      workspaceRoot,
-      config: shellConfig?.sandbox,
-      skillRoots: skillRoots.map((root) => root.root),
-      extraForcedDenyWrite: loadedConfig.attempted.map((entry) => entry.path),
-    });
+    const runAccess = securityPlan.access;
+    const confidentialPaths = securityPlan.confidentialPaths;
+    const confidentialDefaults = securityPlan.confidentialDefaults;
+    const skillRoots = securityPlan.skillRoots;
+    const shellSandbox = securityPlan.shellSandboxStatus;
+    const mcpShellSandbox = securityPlan.shellSandbox;
     const skillPreprocess = createSkillPreprocessOptions({
       skillConfig,
       emitter: pendingExtensionEvents,
@@ -2206,8 +2182,8 @@ export class HostRuntime {
     );
     const toolConfig = applyMainAgentToolUse(baseToolConfig, mainAgent);
     const parentRunPolicy = createHostRunPolicy({
-      permissionMode: input.permissionMode,
-      shouldWrite: input.shouldWrite,
+      permissionMode: runAccess.permissionMode,
+      shouldWrite: runAccess.shouldWrite,
       targetPath: input.targetPath,
       confidentialPaths,
       confidentialDefaults,
@@ -2289,7 +2265,7 @@ export class HostRuntime {
       skillRoots: skillRoots.map((root) => root.root),
       configPaths: loadedConfig.attempted.map((entry) => entry.path),
       childRunStoreFactory,
-      allowReadWriteWorkspaceAccess: input.shouldWrite,
+      allowReadWriteWorkspaceAccess: runAccess.shouldWrite,
       maxDepth: agentConfig?.maxDepth,
     });
     const directDelegates = filterDirectDelegatesForExposure(
@@ -2324,7 +2300,7 @@ export class HostRuntime {
           parentRunPolicy,
           approvalResolver,
           childRunStoreFactory,
-          allowReadWriteWorkspaceAccess: input.shouldWrite,
+          allowReadWriteWorkspaceAccess: runAccess.shouldWrite,
           maxDepth: agentConfig?.maxDepth,
         })
       : undefined;
@@ -2332,7 +2308,7 @@ export class HostRuntime {
       delegates: delegateRouting.delegates,
       derivedAgents,
       delegateChildToolCatalog,
-      allowReadWriteWorkspaceAccess: input.shouldWrite,
+      allowReadWriteWorkspaceAccess: runAccess.shouldWrite,
       routingByProfileId: delegateRouting.routingByProfileId,
     });
     const subagentMaxDepth = agentConfig?.maxDepth;
@@ -2347,7 +2323,7 @@ export class HostRuntime {
       foregroundTimeoutMs:
         shellConfig?.foregroundTimeoutMs ?? RECOMMENDED_FOREGROUND_TIMEOUT_MS,
       taskManager: this.taskManager,
-      backgroundTasks: input.backgroundTasks,
+      backgroundTasks: runAccess.backgroundTasks,
     });
     // Publish spawn deps for the registered `agent` background task kind so a
     // `task_create(kind:"agent")` call can drive a child run that the task,
@@ -2362,13 +2338,13 @@ export class HostRuntime {
       maxDepth: subagentMaxDepth,
       sessionId: input.sessionId,
       taskManager: this.taskManager,
-      backgroundTasks: input.backgroundTasks,
+      backgroundTasks: runAccess.backgroundTasks,
       foregroundTimeoutMs:
         shellConfig?.foregroundTimeoutMs ?? RECOMMENDED_FOREGROUND_TIMEOUT_MS,
     };
     const toolCatalog = createMainHostToolCatalog({
       workspaceRoot,
-      skillRoots,
+      skillRoots: [...skillRoots],
       toolConfig,
       taskManager: this.taskManager,
       getParentRunId: () => requireActiveRunId(runIdHolder.value),
@@ -2381,7 +2357,7 @@ export class HostRuntime {
       delegateParallelTool,
       dynamicSpawnTool,
       shell: shellConfig,
-      backgroundTasks: input.backgroundTasks,
+      backgroundTasks: runAccess.backgroundTasks,
       configPaths: loadedConfig.attempted.map((entry) => entry.path),
     });
     const tools = catalogToolDefinitions(toolCatalog);
@@ -2553,7 +2529,7 @@ export class HostRuntime {
               ),
             readTodoLedger: () =>
               readTodoLedger(join(sessionRootDir, input.sessionId, "todo.md")),
-            allowScriptWrite: input.shouldWrite,
+            allowScriptWrite: runAccess.shouldWrite,
             agentTool: delegateAgentTool,
             delegateParallelTool: tools.find(
               (tool) => tool.name === DELEGATE_PARALLEL_TOOL_NAME,
@@ -2620,14 +2596,14 @@ export class HostRuntime {
               ...(input.targetPath ? { targetPath: input.targetPath } : {}),
               confidentialPaths: [...(confidentialPaths ?? [])],
               confidentialDefaults: confidentialDefaults ?? true,
-              shouldWrite: input.shouldWrite,
+              shouldWrite: runAccess.shouldWrite,
               accessMode:
-                input.access?.accessMode ??
+                runAccess.accessMode ??
                 accessModeFromResolvedFields(
-                  input.permissionMode,
-                  input.shouldWrite,
+                  runAccess.permissionMode,
+                  runAccess.shouldWrite,
                 ),
-              backgroundTasks: input.backgroundTasks,
+              backgroundTasks: runAccess.backgroundTasks,
             },
             definitionSnapshot: workflowDefinition,
             metadata: {
@@ -2681,7 +2657,7 @@ export class HostRuntime {
       agentTool: delegateAgentTool,
       documentedCommand: {
         goal: input.goal,
-        shouldWrite: input.shouldWrite,
+        shouldWrite: runAccess.shouldWrite,
       },
     });
     const workflowRules = describeActiveWorkflowRules({
@@ -2689,7 +2665,7 @@ export class HostRuntime {
       verification: loadedConfig.config.capabilities?.verification,
       documentedCommand: {
         goal: input.goal,
-        shouldWrite: input.shouldWrite,
+        shouldWrite: runAccess.shouldWrite,
       },
     });
     const eventRules = describeActiveEventRules({
@@ -2715,7 +2691,7 @@ export class HostRuntime {
       shellSandbox,
       shellForegroundTimeoutMs:
         shellConfig?.foregroundTimeoutMs ?? RECOMMENDED_FOREGROUND_TIMEOUT_MS,
-      shellPromotionAvailable: input.backgroundTasks === "enabled",
+      shellPromotionAvailable: runAccess.backgroundTasks === "enabled",
       workflowRules,
       eventRules,
       workflows: workflowCapabilitySummary(workflows),
@@ -2730,7 +2706,7 @@ export class HostRuntime {
       ...(input.runMetadata ?? {}),
       sessionId: input.sessionId,
       workspaceRoot,
-      permissionMode: input.permissionMode,
+      permissionMode: runAccess.permissionMode,
       traceLevel,
       ...(mcpWorkspaceCwdServers.length > 0 ? { mcpWorkspaceCwdServers } : {}),
       ...(input.modelRef ? { requestedModel: input.modelRef } : {}),
@@ -3339,9 +3315,6 @@ export class HostRuntime {
       goal: checkpoint.run.goal,
       modelRef,
       access,
-      permissionMode,
-      shouldWrite,
-      backgroundTasks: access.backgroundTasks,
       sessionId: resumeSessionId,
       targetPath: payload.targetPath,
       confidentialPaths: payload.confidentialPaths,
@@ -3616,9 +3589,6 @@ export class HostRuntime {
           : `Resume workflow ${record.assetName}`,
       modelRef: payload.model ?? this.opts.defaultModel,
       access,
-      permissionMode,
-      shouldWrite,
-      backgroundTasks: access.backgroundTasks,
       sessionId,
       targetPath: effectiveResumePayload.targetPath,
       confidentialPaths: effectiveResumePayload.confidentialPaths,
@@ -3935,9 +3905,6 @@ export class HostRuntime {
       goal: payload.goal,
       modelRef,
       access,
-      permissionMode,
-      shouldWrite,
-      backgroundTasks: access.backgroundTasks,
       sessionId,
       targetPath: payload.targetPath,
       confidentialPaths: payload.confidentialPaths,
@@ -4382,22 +4349,14 @@ export class HostRuntime {
         includeAllChildProfiles: true,
       },
     );
-    const skillRoots = resolveSkillRootsForRuntime(
-      this.opts.workspaceRoot,
-      skillConfig?.roots,
-    );
-    const shellSandbox = await inspectShellSandboxStatus({
+    const securityPlan = await prepareHostRunSecurityPlan({
       workspaceRoot: this.opts.workspaceRoot,
-      shellConfig,
-      skillRoots: skillRoots.map((root) => root.root),
-      configPaths: loadedConfig.attempted.map((entry) => entry.path),
+      access: input.access,
+      loadedConfig,
     });
-    const mcpShellSandbox = resolveShellSandboxConfig({
-      workspaceRoot: this.opts.workspaceRoot,
-      config: shellConfig?.sandbox,
-      skillRoots: skillRoots.map((root) => root.root),
-      extraForcedDenyWrite: loadedConfig.attempted.map((entry) => entry.path),
-    });
+    const skillRoots = securityPlan.skillRoots;
+    const shellSandbox = securityPlan.shellSandboxStatus;
+    const mcpShellSandbox = securityPlan.shellSandbox;
     const existingPreparedSkillRoots = await existingSkillRoots(skillRoots);
     const preparedSkills =
       existingPreparedSkillRoots.length > 0
@@ -4516,7 +4475,7 @@ export class HostRuntime {
       });
       const toolCatalog = createMainHostToolCatalog({
         workspaceRoot: this.opts.workspaceRoot,
-        skillRoots,
+        skillRoots: [...skillRoots],
         toolConfig,
         taskManager: this.taskManager,
         getParentRunId: () => "run_capability_snapshot" as RunId,
@@ -5553,24 +5512,6 @@ function inlineShellCapabilitySummary(
     writePolicy: enabled ? "no-write" : "disabled",
     failClosed: enabled,
   };
-}
-
-async function inspectShellSandboxStatus(input: {
-  workspaceRoot: string;
-  shellConfig?: ShellConfig;
-  skillRoots: readonly string[];
-  configPaths: readonly string[];
-}): Promise<ShellSandboxStatus> {
-  const config = resolveShellSandboxConfig({
-    workspaceRoot: input.workspaceRoot,
-    config: input.shellConfig?.sandbox,
-    skillRoots: input.skillRoots,
-    extraForcedDenyWrite: input.configPaths,
-  });
-  return describeShellSandboxStatus(
-    config,
-    createPlatformShellSandboxRuntime(),
-  );
 }
 
 function createSkillPreprocessOptions(input: {

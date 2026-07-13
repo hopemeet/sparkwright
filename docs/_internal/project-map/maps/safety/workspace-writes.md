@@ -105,6 +105,14 @@ tool proposes write
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-13
+- Scope: checked Host security-plan extraction. It freezes access/path inputs
+  only; managed mutation policy instances and their `writtenPaths` state remain
+  fresh per run, and workspace-write events/counting are unchanged.
+- Read: Host runtime/security plan and Core mutation policy.
+- Tests: Host focused suite 222/222; no workspace-write event contract changed.
+
 - Status: Verified
 - Date: 2026-07-13
 - Scope: verified and hardened managed workspace symlink containment. Added

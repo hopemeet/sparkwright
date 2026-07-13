@@ -122,9 +122,10 @@ Does not own:
   from host `capability.inspect` / tool catalog snapshots. Delegate tool
   origins, including `in_process:<profileId>`, come from
   `agents.delegateTools`; CLI should not maintain a separate local in-process
-  delegate inventory. Snapshot-less fallback uses the host-resolved delegate
-  list so inline profile `delegateTool` hints and explicit delegate config stay
-  aligned.
+  delegate inventory. A Host snapshot is required for effective tool,
+  delegate, and sandbox facts; Host inspection failure is reported instead of
+  synthesizing a snapshot-less effective catalog. CLI still owns additive
+  config diagnostics, layered asset reports, and opt-in MCP resolution detail.
 - CLI JSON preserves both views: `agents.profiles` is the layered/config report,
   and `runtime.agents.profiles` comes from host `CapabilitySnapshot` and must
   include inline-config profiles even when they are primary/non-delegate
@@ -310,6 +311,15 @@ Does not own:
 - The direct-core deterministic model is a diagnostics harness; it should keep exercising real catalog tools (`read_file`, `read_anchored_text`, `write_file`, `edit_anchored_text`/`apply_patch`) rather than reintroducing test-only write tools.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-13
+- Scope: made Host `CapabilitySnapshot` mandatory for CLI effective tool,
+  delegate, and sandbox inspection and deleted the local fallback catalog.
+- Read: `packages/cli/src/cli.ts`, Host runtime/tool catalog/security plan, and
+  protocol snapshot types.
+- Tests: CLI typecheck passed; capability-inspect tests 13/13 passed after Host
+  build.
 
 - Status: Verified
 - Date: 2026-07-12T20:00:00+0800

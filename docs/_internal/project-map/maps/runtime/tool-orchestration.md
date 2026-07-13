@@ -13,6 +13,7 @@ See [../safety/workspace-writes.md](../safety/workspace-writes.md), [../safety/s
 - `packages/core/src/tool-orchestration.ts`
 - `packages/core/src/tools.ts`
 - `packages/host/src/tool-catalog.ts`
+- `packages/host/src/run-security-plan.ts`
 - `packages/host/src/tools.ts`
 - `packages/host/src/shell.ts`
 
@@ -83,6 +84,13 @@ true` records a mutation index for its target (`mutatedByTarget`). A
   `ToolDefinition[]`; capability snapshots use catalog source metadata and
   identity metadata (`canonicalName`, `legacyNames`, `defaultExposureTier`,
   `relatedTools`, `requiresTool`, and per-run `effectiveLoading`).
+- Host run preparation and configured capability inspection share one immutable
+  security plan for resolved access and filesystem/sandbox inputs, then build
+  separate stateful lifecycles on top. The plan must not retain prepared MCP
+  handles, tool instances, approval state, or Core mutation-policy state.
+- CLI capability inspection consumes the Host snapshot as the effective tool,
+  delegate, and sandbox source. CLI-only report sections may enrich it, but
+  must not synthesize a second effective catalog when Host inspection fails.
 - Host-owned task creation schema belongs at the catalog boundary: the main
   catalog can describe registered task kinds and kind-specific payloads for
   model/tool validation, while `TaskManager` remains the execution registry and
@@ -325,6 +333,16 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
 - TUI live rendering and transcript export now share presentation summaries, but trace/model-context result compaction is still a separate backend concern.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-13
+- Scope: unified Host run/inspect security derivation and removed the CLI
+  snapshot-less effective catalog/delegate/sandbox fallback without changing
+  protocol snapshot shape.
+- Read: Host runtime/security plan/tool catalog, CLI capability inspection, and
+  protocol capability snapshot types.
+- Tests: Host focused suite 222/222; Host and CLI typechecks; Host build; CLI
+  capability-inspect tests 13/13.
 
 - Status: Verified
 - Date: 2026-07-12T23:45:00+0800
