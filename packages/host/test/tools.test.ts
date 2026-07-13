@@ -70,6 +70,11 @@ import {
   createInProcessDelegateHooksResolver,
   createInProcessDelegateModelResolver,
 } from "../src/runtime.js";
+import {
+  lifecycleTypes,
+  projectAgentLifecycle,
+  terminalLifecycleCount,
+} from "./helpers/agent-lifecycle.js";
 
 describe("host tools", () => {
   it("classifies indexed delegate concurrency from the selected target", () => {
@@ -1151,11 +1156,32 @@ describe("host tools", () => {
       isToolConcurrencySafe(delegate, { goal: "Inspect README.md." }),
     ).toBe(true);
 
-    await delegate!.execute({ goal: "Inspect README.md." }, {
-      run: parent.record,
-    } as never);
+    const delegateResult = (await delegate!.execute(
+      { goal: "Inspect README.md." },
+      {
+        run: parent.record,
+      } as never,
+    )) as { childRunId: string };
 
     expect(childToolNames).toEqual(["read"]);
+    expect(
+      lifecycleTypes(parent.events.all(), delegateResult.childRunId),
+    ).toEqual(["subagent.requested", "subagent.started", "subagent.completed"]);
+    expect(
+      projectAgentLifecycle(parent.events.all(), delegateResult.childRunId),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          childAgentId: "reader",
+          agentProfileId: "reader",
+          entrypoint: "delegate",
+          identityConsistent: true,
+        }),
+      ]),
+    );
+    expect(
+      terminalLifecycleCount(parent.events.all(), delegateResult.childRunId),
+    ).toBe(1);
   });
 
   it("delegates by agentId through the generic delegate_agent tool", async () => {
@@ -1245,17 +1271,30 @@ describe("host tools", () => {
       policy: { risk: "safe", requiresApproval: true },
     });
 
-    await expect(
-      delegateAgent.execute(
-        { agentId: "reader", toolName: "", goal: "Inspect README.md." },
-        {
-          run: parent.record,
-        } as never,
-      ),
-    ).resolves.toMatchObject({
+    const indexedResult = (await delegateAgent.execute(
+      { agentId: "reader", toolName: "", goal: "Inspect README.md." },
+      {
+        run: parent.record,
+      } as never,
+    )) as { childRunId: string; signal: string; message: string };
+    expect(indexedResult).toMatchObject({
       signal: "completed",
       message: "reader done",
     });
+    expect(
+      lifecycleTypes(parent.events.all(), indexedResult.childRunId),
+    ).toEqual(["subagent.requested", "subagent.started", "subagent.completed"]);
+    // Characterization: the indexed wrapper currently preserves the hidden
+    // direct tool's `delegate` entrypoint instead of recording delegate_agent.
+    expect(
+      projectAgentLifecycle(
+        parent.events.all(),
+        indexedResult.childRunId,
+      ).every((event) => event.entrypoint === "delegate"),
+    ).toBe(true);
+    expect(
+      terminalLifecycleCount(parent.events.all(), indexedResult.childRunId),
+    ).toBe(1);
     expect(childCalls).toBe(1);
   });
 
@@ -1424,7 +1463,11 @@ describe("host tools", () => {
       mode: string;
       completed: number;
       failed: number;
-      results: Array<{ toolName: string; message: string }>;
+      results: Array<{
+        toolName: string;
+        message: string;
+        childRunId: string;
+      }>;
     };
 
     expect(maxActive).toBe(2);
@@ -1437,6 +1480,23 @@ describe("host tools", () => {
         { toolName: "delegate_auditor", message: "auditor done" },
       ],
     });
+    for (const result of output.results) {
+      expect(lifecycleTypes(parent.events.all(), result.childRunId)).toEqual([
+        "subagent.requested",
+        "subagent.started",
+        "subagent.completed",
+      ]);
+      expect(
+        projectAgentLifecycle(parent.events.all(), result.childRunId).every(
+          (event) =>
+            event.entrypoint === "delegate_parallel" &&
+            event.identityConsistent,
+        ),
+      ).toBe(true);
+      expect(
+        terminalLifecycleCount(parent.events.all(), result.childRunId),
+      ).toBe(1);
+    }
   });
 
   it("applies profile workflow hooks to delegate_parallel child runs", async () => {

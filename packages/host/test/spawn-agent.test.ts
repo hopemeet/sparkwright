@@ -31,6 +31,11 @@ import {
 } from "../src/runtime.js";
 import { createReadFileTool } from "../src/tools.js";
 import { createDynamicChildToolCatalog } from "../src/tool-catalog.js";
+import {
+  lifecycleTypes,
+  projectAgentLifecycle,
+  terminalLifecycleCount,
+} from "./helpers/agent-lifecycle.js";
 
 /**
  * The session run store flushes to disk asynchronously, so a trace/session file
@@ -1127,6 +1132,19 @@ describe("host spawn_agent wiring", () => {
       terminalState: "completed",
       finality: "complete",
     });
+    expect(lifecycleTypes(parent.events.all(), ticket.childRunId)).toEqual([
+      "subagent.requested",
+      "subagent.started",
+      "subagent.completed",
+    ]);
+    expect(
+      projectAgentLifecycle(parent.events.all(), ticket.childRunId).every(
+        (event) => event.identityConsistent,
+      ),
+    ).toBe(true);
+    expect(terminalLifecycleCount(parent.events.all(), ticket.childRunId)).toBe(
+      1,
+    );
     expect(parent.usage().modelCalls).toBeGreaterThanOrEqual(1);
 
     const cached = (await spawnTool.execute(args, {
@@ -1194,7 +1212,7 @@ describe("host spawn_agent wiring", () => {
         maxSteps: 2,
       },
       { run: parent.record } as never,
-    )) as { taskId: string };
+    )) as { taskId: string; childRunId: string };
 
     const handle = taskManager.handle(ticket.taskId as unknown as TaskId);
     await handle?.cancel();
@@ -1208,6 +1226,14 @@ describe("host spawn_agent wiring", () => {
       terminalState: "cancelled",
       finality: "partial",
     });
+    expect(lifecycleTypes(parent.events.all(), ticket.childRunId)).toEqual([
+      "subagent.requested",
+      "subagent.started",
+      "subagent.failed",
+    ]);
+    expect(terminalLifecycleCount(parent.events.all(), ticket.childRunId)).toBe(
+      1,
+    );
   });
 
   it("foreground-only background policy keeps dynamic spawn_agent inline", async () => {

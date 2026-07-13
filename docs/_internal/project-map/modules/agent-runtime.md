@@ -95,6 +95,11 @@ Does not own:
   `subagentDepth`. Spawned child run metadata also carries the resolved
   `sessionId` when the parent/input metadata has one, so child-owned EventLog
   events and parent-visible lifecycle events agree after persistence.
+- The in-process `spawnSubAgent` substrate emits `subagent.requested`
+  synchronously when the child is created, then `subagent.started`, then exactly
+  one `subagent.completed` or `subagent.failed` projection from the child run.
+  Host process adapters currently reproduce this lifecycle separately; this
+  contract does not claim they share the same terminal payload yet.
 - Workflow types in agent-runtime are portable runtime/store declarations.
   `WorkflowRunRecord` is now a durable P2 state document with five-value
   status, version pinning, attempts, evidence refs, verdict/transition logs,
@@ -343,6 +348,14 @@ Does not own:
   not authorize a generic actor bus or nested background lifecycle.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: added lifecycle characterization for the in-process Agent substrate,
+  including ordered success/failure phases and one terminal projection.
+- Read: `spawnSubAgent`, `createAgentTool`, and Host lifecycle consumers.
+- Tests: agent-runtime Agent tests 38/38; Host lifecycle suites 157/157; direct
+  CLI delegate focused test 1/1; test typecheck passed.
 
 - Status: Verified
 - Date: 2026-07-14

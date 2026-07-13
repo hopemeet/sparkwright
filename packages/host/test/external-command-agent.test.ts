@@ -14,6 +14,11 @@ import {
   isSecretEnvKey,
   redactSecretEnv,
 } from "../src/external-command-agent.js";
+import {
+  lifecycleTypes,
+  projectAgentLifecycle,
+  terminalLifecycleCount,
+} from "./helpers/agent-lifecycle.js";
 
 describe("external command delegate tool", () => {
   it("parses external command config from agent profile metadata", () => {
@@ -133,6 +138,7 @@ describe("external command delegate tool", () => {
     const result = (await tool.execute({ goal: "review the patch" }, {
       run: parent.record,
     } as never)) as {
+      childRunId: string;
       protocol: string;
       stdout: string;
       exitCode: number;
@@ -153,6 +159,35 @@ describe("external command delegate tool", () => {
       stdoutBytes: result.stdout.length,
       stdoutPreview: result.stdout,
     });
+    expect(
+      projectAgentLifecycle(parent.events.all(), result.childRunId),
+    ).toEqual([
+      expect.objectContaining({
+        type: "subagent.requested",
+        childRunId: result.childRunId,
+        parentRunId: parent.record.id,
+        childAgentId: "external_reviewer",
+        agentProfileId: "external_reviewer",
+        entrypoint: "external_command",
+        identityConsistent: true,
+      }),
+      expect.objectContaining({
+        type: "subagent.started",
+        identityConsistent: true,
+      }),
+      expect.objectContaining({
+        type: "subagent.completed",
+        identityConsistent: true,
+      }),
+    ]);
+    // Characterization: process delegates do not yet carry the terminalState
+    // field used by in-process/dynamic Agent terminal projections.
+    expect(
+      projectAgentLifecycle(parent.events.all(), result.childRunId).at(-1),
+    ).not.toHaveProperty("terminalState");
+    expect(terminalLifecycleCount(parent.events.all(), result.childRunId)).toBe(
+      1,
+    );
     expect(parent.events.all().map((event) => event.type)).toEqual(
       expect.arrayContaining([
         "subagent.requested",
@@ -348,6 +383,15 @@ describe("external command delegate tool", () => {
         run: parent.record,
       } as never),
     ).rejects.toThrow("parent run has not enabled workspace writes");
+    // Characterization: the current process adapter announces started before
+    // its workspace-access admission check. Supervisor migration should move
+    // this failure before started rather than preserve the adapter ordering.
+    expect(lifecycleTypes(parent.events.all())).toEqual([
+      "subagent.requested",
+      "subagent.started",
+      "subagent.failed",
+    ]);
+    expect(terminalLifecycleCount(parent.events.all())).toBe(1);
     expect(parent.events.all()).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

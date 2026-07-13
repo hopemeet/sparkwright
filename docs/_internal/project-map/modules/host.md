@@ -821,8 +821,24 @@ Does not own:
 
 - Host is a large composition point; changes can look local while affecting trace, sessions, and capabilities.
 - Capability snapshot fields are useful but can become stale if new tools bypass `tool-catalog.ts`; direct-core/cron should add tools by catalog profile, not local factories.
+- Agent lifecycle is assembled separately by in-process, dynamic/task,
+  ACP, external-command, and direct CLI paths. Characterization tests show ACP
+  and external-command emit `started` before workspace-access admission and do
+  not project `terminalState` on completion; indexed `delegate_agent` currently
+  records the hidden direct tool's `entrypoint:"delegate"`. Treat these as
+  migration debts, not target contracts.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: established normalized lifecycle characterization across configured
+  direct/indexed/parallel delegates, dynamic/promoted Agent runs, background
+  Agent tasks, ACP/external adapters, and direct CLI delegates.
+- Read: Host Agent tools/adapters/task runner/direct delegate runner and
+  parent-visible lifecycle events.
+- Tests: Host lifecycle suites 157/157; agent-runtime Agent tests 38/38; direct
+  CLI delegate 1/1; test typecheck passed.
 
 - Status: Verified
 - Date: 2026-07-14

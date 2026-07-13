@@ -98,7 +98,8 @@ Focused route:
 npm --workspace @sparkwright/agent-runtime run build
 npm --workspace @sparkwright/core test -- test/run.test.ts
 npm --workspace @sparkwright/agent-runtime test -- test/index.test.ts
-npm --workspace @sparkwright/host test -- test/tools.test.ts test/spawn-agent.test.ts test/acp-child-agent.test.ts test/external-command-agent.test.ts
+npm --workspace @sparkwright/host test -- test/tools.test.ts test/spawn-agent.test.ts test/agent-task-runner.test.ts test/acp-child-agent.test.ts test/external-command-agent.test.ts
+npm --workspace @sparkwright/cli test -- test/cli.test.ts -t "configured external command delegate directly"
 npm --workspace @sparkwright/core test -- test/trace.test.ts
 ```
 

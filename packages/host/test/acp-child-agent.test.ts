@@ -14,6 +14,11 @@ import {
   acpConfigFromAgentProfile,
   createAcpDelegateTool,
 } from "../src/acp-child-agent.js";
+import {
+  lifecycleTypes,
+  projectAgentLifecycle,
+  terminalLifecycleCount,
+} from "./helpers/agent-lifecycle.js";
 
 describe("ACP child agent delegate tool", () => {
   it("parses ACP config from agent profile metadata", () => {
@@ -124,6 +129,7 @@ describe("ACP child agent delegate tool", () => {
     const result = (await tool.execute({ goal: "review the patch" }, {
       run: parent.record,
     } as never)) as {
+      childRunId: string;
       protocol: string;
       message: string;
       stopReason: string;
@@ -136,6 +142,35 @@ describe("ACP child agent delegate tool", () => {
       stopReason: "end_turn",
     });
     expect(result.message).toContain("fixture reviewed: review the patch");
+    expect(
+      projectAgentLifecycle(parent.events.all(), result.childRunId),
+    ).toEqual([
+      expect.objectContaining({
+        type: "subagent.requested",
+        childRunId: result.childRunId,
+        parentRunId: parent.record.id,
+        childAgentId: "external_reviewer",
+        agentProfileId: "external_reviewer",
+        entrypoint: "acp",
+        identityConsistent: true,
+      }),
+      expect.objectContaining({
+        type: "subagent.started",
+        identityConsistent: true,
+      }),
+      expect.objectContaining({
+        type: "subagent.completed",
+        identityConsistent: true,
+      }),
+    ]);
+    // Characterization: ACP terminal projection does not yet carry the
+    // terminalState field used by in-process/dynamic Agent paths.
+    expect(
+      projectAgentLifecycle(parent.events.all(), result.childRunId).at(-1),
+    ).not.toHaveProperty("terminalState");
+    expect(terminalLifecycleCount(parent.events.all(), result.childRunId)).toBe(
+      1,
+    );
     expect(parent.events.all().map((event) => event.type)).toEqual(
       expect.arrayContaining([
         "subagent.requested",
@@ -200,6 +235,15 @@ describe("ACP child agent delegate tool", () => {
         run: parent.record,
       } as never),
     ).rejects.toThrow("parent run has not enabled workspace writes");
+    // Characterization: the current ACP adapter announces started before its
+    // workspace-access admission check. Supervisor migration should replace
+    // this with a pre-start admission state rather than preserve this order.
+    expect(lifecycleTypes(parent.events.all())).toEqual([
+      "subagent.requested",
+      "subagent.started",
+      "subagent.failed",
+    ]);
+    expect(terminalLifecycleCount(parent.events.all())).toBe(1);
     expect(parent.events.all()).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

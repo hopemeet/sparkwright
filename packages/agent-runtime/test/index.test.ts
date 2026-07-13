@@ -1369,9 +1369,20 @@ describe("createAgentTool / mountAgentTool", () => {
 
     await spawned.run.start();
 
-    expect(parentEvents).toContain("subagent.requested");
-    expect(parentEvents).toContain("subagent.failed");
-    expect(parentEvents).not.toContain("subagent.completed");
+    expect(parentEvents).toEqual([
+      "subagent.requested",
+      "subagent.started",
+      "subagent.failed",
+    ]);
+    expect(
+      parent.events
+        .all()
+        .filter(
+          (event) =>
+            event.type === "subagent.completed" ||
+            event.type === "subagent.failed",
+        ),
+    ).toHaveLength(1);
   });
 
   it("refuses nested spawn when forbidNesting is set", async () => {

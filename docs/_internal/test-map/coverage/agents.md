@@ -128,6 +128,14 @@
   dynamic read-only spawn remains concurrent, while write-granted, configured
   write/shell, approval-bound, invalid, and unresolved Agent calls are serial.
   ACP/external adapters also mint distinct child ids under a frozen timestamp.
+- 2026-07-14 lifecycle characterization projects stable identity, entrypoint,
+  phase ordering, and terminal cardinality across configured direct/indexed/
+  parallel delegates, dynamic promotion/cancellation, background Agent tasks,
+  ACP, external-command, and direct CLI delegation. It deliberately leaves
+  timestamps, sequence, spans, prose, and adapter result bodies out of the
+  golden shape. Known adapter differences remain visible: ACP/external start
+  before access admission and omit successful `terminalState`; indexed
+  delegation currently reports the hidden direct `delegate` entrypoint.
 - 2026-06-27 indexed delegation verification covered the new default agent
   exposure surface: capability snapshots expose `delegate_agent` instead of
   every configured `delegate_*` alias, `delegate_agent(agentId)` preserves

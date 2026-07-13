@@ -19,6 +19,11 @@ import {
   type TaskRunner,
 } from "@sparkwright/agent-runtime";
 import { runHostAgentTask } from "../src/runtime.js";
+import {
+  lifecycleTypes,
+  projectAgentLifecycle,
+  terminalLifecycleCount,
+} from "./helpers/agent-lifecycle.js";
 
 /**
  * Coverage for the background `agent` task kind. `HostRuntime.runAgentTask`
@@ -151,6 +156,25 @@ describe("background agent task runner", () => {
       await withTimeout(handle.cancel(), 2000, "agent task cancel"); // <- task_stop
 
       expect(handle.record.status).toBe("cancelled");
+      expect(lifecycleTypes(harness.parent.events.all())).toEqual([
+        "subagent.requested",
+        "subagent.started",
+        "subagent.failed",
+      ]);
+      expect(terminalLifecycleCount(harness.parent.events.all())).toBe(1);
+      expect(projectAgentLifecycle(harness.parent.events.all())).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            entrypoint: "agent_task",
+            taskId: handle.record.id,
+            identityConsistent: true,
+          }),
+          expect.objectContaining({
+            type: "subagent.failed",
+            terminalState: "cancelled",
+          }),
+        ]),
+      );
     } finally {
       await rmWhenReady(harness.root);
     }
@@ -208,6 +232,27 @@ describe("background agent task runner", () => {
       expect(result.signal).toBe("completed");
       expect(result.childRunId).toMatch(/^run_/);
       expect(globCalls).toBe(1);
+      expect(
+        lifecycleTypes(harness.parent.events.all(), result.childRunId),
+      ).toEqual([
+        "subagent.requested",
+        "subagent.started",
+        "subagent.completed",
+      ]);
+      expect(
+        projectAgentLifecycle(
+          harness.parent.events.all(),
+          result.childRunId,
+        ).every(
+          (event) =>
+            event.entrypoint === "agent_task" &&
+            event.taskId === handle.record.id &&
+            event.identityConsistent,
+        ),
+      ).toBe(true);
+      expect(
+        terminalLifecycleCount(harness.parent.events.all(), result.childRunId),
+      ).toBe(1);
     } finally {
       await rmWhenReady(harness.root);
     }

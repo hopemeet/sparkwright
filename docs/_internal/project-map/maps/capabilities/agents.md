@@ -321,6 +321,12 @@ configured profiles/delegates
 ## Known Debts
 
 - Multi-agent semantics are still edge/composition behavior, not fully absorbed core primitives.
+- Lifecycle payload parity is incomplete: ACP/external adapters emit `started`
+  before workspace-access admission and omit `terminalState` on successful
+  terminal events, while indexed delegation reports `entrypoint:"delegate"`
+  from its hidden target rather than the indexed surface. The lifecycle test
+  projection intentionally records these differences so Supervisor migration
+  can remove them explicitly.
 - Foreground Host shell filesystem snapshots remain O(tree) when enabled. The
   in-process delegate path rolls up child write events, external processes use
   untracked-access markers, and MCP stdio does not run a workspace snapshot;
@@ -328,6 +334,16 @@ configured profiles/delegates
   detection.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: added cross-entrypoint Agent lifecycle characterization and a normalized
+  test projection that excludes timestamps, spans, sequence, prose, and
+  adapter-specific result bodies.
+- Read: in-process/direct/indexed/parallel/dynamic/task/ACP/external/direct-CLI
+  Agent paths.
+- Tests: Host lifecycle suites 157/157; agent-runtime Agent tests 38/38; direct
+  CLI delegate 1/1; test typecheck passed.
 
 - Status: Verified
 - Date: 2026-07-14
