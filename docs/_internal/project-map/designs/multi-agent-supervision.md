@@ -112,6 +112,10 @@ stay on `subagent.*`/tool results. Task and Workflow notifications retain their
 narrow typed inbox/outbox contracts. Any expansion of `ActorRef` routing must
 add a concrete consumer and delivery semantics in the same phase.
 
+`InternalActorKind` therefore exposes only `task | workflow` today. A task
+payload may still use `kind:"agent"` to select the Agent task runner; that is
+not an Agent actor-notification lane.
+
 ## Delivery Sequence
 
 1. Correctness fixes: argument-level concurrency, exact result identity, unique
@@ -125,7 +129,7 @@ add a concrete consumer and delivery semantics in the same phase.
    Complete.
 6. Host workspace lease arbiter with TTL/heartbeat and Core-backed in-process
    descendant-tree work-budget enforcement. Complete.
-7. Narrow task/communication cleanup and release verification.
+7. Narrow task/communication cleanup and release verification. Complete.
 
 Each behavioral phase must delete or migrate at least one parallel mechanism.
 Large event-stream shadow execution is out of scope; characterization tests are
@@ -137,3 +141,14 @@ the migration oracle.
   ownership remains future session-coordinator work.
 - ACP/external-command process-internal model/tool usage remains opaque to Core
   descendant-tree accounts; only their parent tool call is budget-visible.
+
+## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: completed the staged multi-Agent supervision migration, narrowed actor
+  notification kinds to concrete consumers, and verified the integrated tree.
+- Read: all staged implementation seams, linked capability/module maps, and
+  focused characterization suites.
+- Tests: full `npm run release:check`, including the regression matrix and both
+  source/release installation smoke suites.

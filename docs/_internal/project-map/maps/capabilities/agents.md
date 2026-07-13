@@ -174,6 +174,12 @@ configured profiles/delegates
   metadata so trace diagnostics can join child terminal evidence back to
   `task_create`. `task_create(kind:"agent")` uses the same workspace-write
   grant parsing and child grant consumption as inline `spawn_agent`.
+- `kind:"agent"` on a `TaskRecord`/task payload identifies the registered task
+  runner, not an actor-notification source kind. Agent lifecycle and bounded
+  results remain on `subagent.*`/tool results. The typed actor inbox accepts
+  only task/workflow notification sources; introducing an Agent notification
+  lane requires a concrete producer and receiver rather than widening a shared
+  enum in advance.
 - Main-run `task_create` advertises the host-registered `agent` kind and its
   required child-agent payload fields so real models can create background
   agent tasks without guessing runner kind names from roles. Detached/promoted
@@ -374,6 +380,15 @@ configured profiles/delegates
   detection.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: removed the unused `run|agent` actor-notification kind promise while
+  retaining task-owned Agent execution and existing `subagent.*` communication.
+- Read: actor inbox unions, task-owned Agent path, Supervisor lifecycle, and
+  active supervision communication boundary.
+- Tests: agent-runtime task/workflow/channel 99/99; downstream focused suites;
+  full `npm run release:check`.
 
 - Status: Verified
 - Date: 2026-07-14

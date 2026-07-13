@@ -3421,7 +3421,7 @@ describe("host protocol", () => {
         childAgentId: "writer",
         agentProfileId: "writer",
         delegateTool: "delegate_writer",
-        entrypoint: "delegate",
+        entrypoint: "delegate_agent",
         subagentDepth: 1,
       });
     } finally {

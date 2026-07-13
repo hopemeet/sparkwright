@@ -202,6 +202,18 @@ trace/session inspection.
 
 - Status: Verified
 - Date: 2026-07-14
+- Scope: routed actor-notification kind narrowing through agent-runtime, Agent
+  communication, and the internal actor inbox/supervision designs.
+- Read: typed actor unions, all production task/workflow sources and consumers,
+  durable adapters, Host receiver bridge, and linked maps.
+- Checked with no contract update needed: `maps/capabilities/cron.md`, Core
+  `NotificationSource`, Host task revival, workflow durable formats, protocol,
+  trace, and external transports are unchanged.
+- Tests: agent-runtime task/workflow/channel 99/99; downstream Host,
+  server-runtime, and IM gateway focused suites; full `npm run release:check`.
+
+- Status: Verified
+- Date: 2026-07-14
 - Scope: routed Core descendant-tree budget accounts, Agent inheritance, and
   checkpoint preservation through the run-loop, Agent, and resume maps.
 - Read: affected Core/agent-runtime source, active supervision design, extension

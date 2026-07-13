@@ -215,6 +215,12 @@ Does not own:
   sink; consumers use predicate `peek()`/`drain()` plus non-consuming
   `waitUntilAvailable()`. The legacy `TaskNotificationSink` and task
   notification API remain compatible for existing embedders.
+- `InternalActorKind` names only notification sources with implemented typed
+  producer and consumer semantics: `task | workflow`. Agent work may still be a
+  task payload `kind:"agent"`, but Agent lifecycle communication remains on
+  `subagent.*` and bounded tool results; `run` and `agent` are not reserved
+  actor-notification kinds. Add a new kind only with its concrete notification
+  union, delivery adapter, and receiver policy in the same change.
 - `InMemoryTaskNotificationQueue.waitUntilAvailable({ signal, predicate })` is
   non-consuming and abortable. The actor adapter has the same non-consuming wait
   contract and does not expose `waitForNext()` as part of `ActorInbox`.
@@ -385,6 +391,15 @@ Does not own:
   not authorize a generic actor bus or nested background lifecycle.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: narrowed actor-notification source kinds to the implemented task and
+  workflow lanes while preserving runtime rejection of forged future kinds.
+- Read: actor notification unions/validation, task/workflow durable adapters,
+  Host receiver boundary, and internal actor inbox design.
+- Tests: agent-runtime task/workflow/channel 99/99; downstream focused suites;
+  full `npm run release:check`.
 
 - Status: Verified
 - Date: 2026-07-14
