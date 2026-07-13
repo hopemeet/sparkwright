@@ -37,6 +37,7 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 - `packages/host/src/skill-inline-shell.ts`
 - `packages/host/src/external-command-agent.ts`
 - `packages/host/src/delegate-capability.ts`
+- `packages/host/src/indexed-delegate-tool.ts`
 - `packages/host/src/agent-profiles.ts`
 - `packages/host/src/crash-log.ts`
 - `packages/host/src/model-builder.ts`
@@ -464,6 +465,10 @@ Does not own:
   catalog is read-only, shell-free, and does not require spawn approval.
   Invalid or unresolved Agent arguments fail closed to serial execution; the
   normal validation/policy path still owns their user-visible failure.
+- `indexed-delegate-tool.ts` owns the generic `delegate_agent` argument parsing,
+  target routing, preview, target policy projection, and target concurrency
+  delegation. `runtime.ts` assembles its resolved profiles/tools and retains a
+  compatibility re-export; it must not grow a second indexed-router copy.
 - Host-facing task controls `task.join` and `task.promote` are protocol/runtime
   controls for TUI and other clients. They do not reuse model-facing task tool
   JSON: join marks a task awaited, while promote forwards a manual foreground
@@ -829,6 +834,16 @@ Does not own:
   migration debts, not target contracts.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: mechanically extracted the indexed `delegate_agent` router from the
+  Host composition file without changing its target, policy, concurrency, or
+  execution behavior.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/host/src/indexed-delegate-tool.ts`, and Host Agent tool tests.
+- Tests: Host tools 100/100; Host typecheck passed after rebuilding
+  agent-runtime.
 
 - Status: Verified
 - Date: 2026-07-14

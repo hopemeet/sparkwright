@@ -15,11 +15,13 @@ See [../../modules/agent-runtime.md](../../modules/agent-runtime.md) and [../../
 - `packages/host/src/agent-profiles.ts`
 - `packages/host/src/delegate-runner.ts`
 - `packages/host/src/delegate-capability.ts`
+- `packages/host/src/indexed-delegate-tool.ts`
 - `packages/host/src/config.ts`
 - `packages/host/src/config-zod-schema.ts`
 - `packages/host/src/external-command-agent.ts`
 - `packages/host/src/traced-process-runner.ts`
 - `packages/agent-runtime/src/index.ts`
+- `packages/agent-runtime/src/agents/*`
 - `packages/agent-runtime/src/concurrency/*`
 
 ## Data Flow
@@ -258,6 +260,10 @@ configured profiles/delegates
   step-limited, or truncated children. Equivalence is exact after conservative
   Unicode/case/whitespace normalization; fuzzy directory-listing or text
   similarity must not cross target paths.
+- The indexed `delegate_agent` router is a Host-owned adapter in
+  `indexed-delegate-tool.ts`; portable result identity and parent-scoped reuse
+  live under agent-runtime `src/agents/`. Host runtime composes these pieces but
+  does not own a duplicate router or ledger implementation.
 - Core same-turn concurrency follows the effective Agent invocation: dynamic
   write grants, configured child write/shell capability, spawn approval, invalid
   inputs, and unresolved indexed targets are serial. Read-only dynamic and
@@ -334,6 +340,16 @@ configured profiles/delegates
   detection.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: established explicit module ownership for indexed Agent routing and
+  delegation result contracts/ledger while retaining existing root/runtime
+  compatibility exports.
+- Read: Host indexed router, agent-runtime `src/agents/*`, both compatibility
+  entrypoints, and focused tests.
+- Tests: agent-runtime ledger/AgentTool 43/43; Host tools 100/100; affected
+  typechecks and agent-runtime build passed.
 
 - Status: Verified
 - Date: 2026-07-14

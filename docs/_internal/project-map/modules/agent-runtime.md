@@ -9,6 +9,7 @@ See also [../maps/capabilities/agents.md](../maps/capabilities/agents.md), [../m
 ## Main Files
 
 - `packages/agent-runtime/src/index.ts`
+- `packages/agent-runtime/src/agents/*`
 - `packages/agent-runtime/src/tasks/*`
 - `packages/agent-runtime/src/doc-store/*`
 - `packages/agent-runtime/src/todo/*`
@@ -25,6 +26,7 @@ Owns:
 - todo ledger parsing and continuation supervision helpers
 - worktree/concurrency coordination utilities
 - child/delegate policy helpers used by host integrations
+- parent-run delegation result contracts and ledger ownership
 - portable workflow type declarations
 
 Does not own:
@@ -303,6 +305,10 @@ Does not own:
   normalized fingerprint (Unicode normalization, case folding, trim, and
   whitespace collapse); fuzzy intent or character-overlap scoring must not
   reuse results across different paths or targets.
+- `src/agents/types.ts` owns portable AgentTool/delegation result contracts and
+  `src/agents/delegation-ledger.ts` owns the parent-scoped reuse state. The root
+  `src/index.ts` keeps compatibility exports and consumes those modules; ledger
+  state or fingerprint logic must not be duplicated back into the root file.
 - `createAgentTool` accepts an optional argument-level concurrency classifier.
   Host uses it to keep write-capable, shell-capable, or spawn-approval-bound
   configured children out of Core concurrent batches while preserving
@@ -348,6 +354,15 @@ Does not own:
   not authorize a generic actor bus or nested background lifecycle.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: mechanically extracted AgentTool/delegation contracts and the exact
+  parent-scoped delegation ledger into `src/agents/`, preserving root exports.
+- Read: agent-runtime root, `src/agents/*`, AgentTool tests, and Host ledger
+  consumers.
+- Tests: delegation ledger 5/5; agent-runtime Agent tests 38/38; typecheck and
+  build passed.
 
 - Status: Verified
 - Date: 2026-07-14

@@ -63,13 +63,13 @@ import {
   resolveSelectorAllowlist,
 } from "../src/tool-selectors.js";
 import {
-  createDelegateAgentTool,
   createConfiguredDelegateTools,
   createDelegateParallelTool,
   createDynamicSpawnAgentTool,
   createInProcessDelegateHooksResolver,
   createInProcessDelegateModelResolver,
 } from "../src/runtime.js";
+import { createDelegateAgentTool } from "../src/indexed-delegate-tool.js";
 import {
   lifecycleTypes,
   projectAgentLifecycle,

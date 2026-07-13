@@ -47,6 +47,32 @@ import {
   DefaultPromptBuilder,
   defineTool,
 } from "@sparkwright/core";
+import type {
+  AgentToolInvocationInput,
+  AgentToolResult,
+  AgentToolSummarizeInput,
+  DelegationLedgerKey,
+  DelegationLedgerResult,
+} from "./agents/types.js";
+import {
+  findSimilarSuccessfulDelegation,
+  rememberSuccessfulDelegation,
+  withAlreadyCompletedNote,
+} from "./agents/delegation-ledger.js";
+
+export type {
+  AgentToolInvocationInput,
+  AgentToolResult,
+  AgentToolSummarizeInput,
+  DelegationLedgerHit,
+  DelegationLedgerKey,
+  DelegationLedgerResult,
+} from "./agents/types.js";
+export {
+  findSimilarSuccessfulDelegation,
+  rememberSuccessfulDelegation,
+  withAlreadyCompletedNote,
+} from "./agents/delegation-ledger.js";
 
 export type PermissionEffect = "allow" | "deny" | "requires_approval";
 export type AgentMode = "primary" | "child" | "all";
@@ -1174,77 +1200,6 @@ function stringOrUndefined(value: unknown): string | undefined {
 // AgentTool: a ToolDefinition that delegates to spawnSubAgent.
 // ----------------------------------------------------------------------------
 
-export interface AgentToolInvocationInput {
-  /** The goal forwarded to the child run. */
-  goal: string;
-  /** Optional free-form metadata supplied by the LLM. */
-  metadata?: Record<string, unknown>;
-}
-
-export interface AgentToolSummarizeInput {
-  childRunId: string;
-  spanId: string;
-  result: RunResult;
-  /** Child's final usage snapshot at termination. */
-  usage: UsageSnapshot;
-}
-
-export interface AgentToolResult {
-  childRunId: string;
-  spanId: string;
-  signal: RunResult["signal"];
-  stopReason: RunResult["stopReason"];
-  message?: string;
-  tokens: number;
-  costUsd: number;
-  toolCalls: number;
-  modelCalls: number;
-  /**
-   * True when the child answered on its last allowed step (`stepLimitReached`
-   * in the run result metadata). A `final_answer` produced under an exhausted
-   * step budget may be truncated; the parent should caveat rather than treat it
-   * as exhaustive.
-   *
-   * @reserved Public delegate-tool output field consumed by parent agents and UIs.
-   */
-  stepLimitReached?: boolean;
-  /** @reserved Public delegate-tool output field consumed by parent agents and UIs. */
-  alreadyCompleted?: boolean;
-  note?: string;
-}
-
-export interface DelegationLedgerKey {
-  kind: "agent_tool" | "configured_delegate" | "dynamic_spawn";
-  agentProfileId?: string;
-  delegateTool?: string;
-  role?: string;
-  prompt?: string;
-  allowedTools?: readonly string[];
-}
-
-export interface DelegationLedgerResult extends AgentToolResult {
-  truncated?: boolean;
-  output?: Record<string, unknown>;
-}
-
-interface DelegationLedgerEntry {
-  key: string;
-  goal: string;
-  goalFingerprint: string;
-  result: DelegationLedgerResult;
-}
-
-export interface DelegationLedgerHit {
-  goal: string;
-  result: DelegationLedgerResult;
-}
-
-const DELEGATION_LEDGER_MAX_RESULTS = 24;
-const delegationLedgersByParent = new WeakMap<
-  RunHandle,
-  DelegationLedgerEntry[]
->();
-
 export interface CreateAgentToolOptions {
   /** Tool name registered with the parent. Default: "delegate". */
   name?: string;
@@ -1473,78 +1428,6 @@ function runResultTruncated(result: RunResult): boolean {
   );
 }
 
-export function findSimilarSuccessfulDelegation(
-  parent: RunHandle,
-  key: DelegationLedgerKey,
-  goal: string,
-): DelegationLedgerHit | undefined {
-  const entries = delegationLedgersByParent.get(parent) ?? [];
-  const normalizedKey = delegationLedgerKeyString(key);
-  const goalFingerprint = delegationGoalFingerprint(goal);
-  for (let i = entries.length - 1; i >= 0; i -= 1) {
-    const candidate = entries[i];
-    if (!candidate || candidate.key !== normalizedKey) continue;
-    if (candidate.goalFingerprint === goalFingerprint) {
-      return { goal: candidate.goal, result: candidate.result };
-    }
-  }
-  return undefined;
-}
-
-export function rememberSuccessfulDelegation(
-  parent: RunHandle,
-  key: DelegationLedgerKey,
-  goal: string,
-  result: DelegationLedgerResult,
-): boolean {
-  if (!isReusableDelegationResult(result)) return false;
-  const entries = delegationLedgersByParent.get(parent) ?? [];
-  entries.push({
-    key: delegationLedgerKeyString(key),
-    goal,
-    goalFingerprint: delegationGoalFingerprint(goal),
-    result: { ...result },
-  });
-  delegationLedgersByParent.set(
-    parent,
-    entries.slice(-DELEGATION_LEDGER_MAX_RESULTS),
-  );
-  return true;
-}
-
-function isReusableDelegationResult(result: DelegationLedgerResult): boolean {
-  return (
-    result.signal === "completed" &&
-    result.stepLimitReached !== true &&
-    result.truncated !== true
-  );
-}
-
-export function withAlreadyCompletedNote(
-  result: DelegationLedgerResult,
-): DelegationLedgerResult {
-  return {
-    ...result,
-    alreadyCompleted: true,
-    note: "A similar delegation already completed in this parent run; summarize the previous child result instead of spawning another child agent.",
-  };
-}
-
-function delegationLedgerKeyString(key: DelegationLedgerKey): string {
-  const allowedTools =
-    key.allowedTools && key.allowedTools.length > 0
-      ? [...new Set(key.allowedTools)].sort()
-      : undefined;
-  return JSON.stringify({
-    kind: key.kind,
-    ...(key.agentProfileId ? { agentProfileId: key.agentProfileId } : {}),
-    ...(key.delegateTool ? { delegateTool: key.delegateTool } : {}),
-    ...(key.role ? { role: key.role } : {}),
-    ...(key.prompt ? { prompt: key.prompt } : {}),
-    ...(allowedTools ? { allowedTools } : {}),
-  });
-}
-
 function withStepLimitReachedNote(
   output: unknown,
   structured: AgentToolResult,
@@ -1591,8 +1474,4 @@ function isAgentToolResult(value: unknown): value is AgentToolResult {
     typeof (value as { spanId?: unknown }).spanId === "string" &&
     typeof (value as { signal?: unknown }).signal === "string"
   );
-}
-
-function delegationGoalFingerprint(goal: string): string {
-  return goal.normalize("NFKC").toLowerCase().trim().replace(/\s+/g, " ");
 }
