@@ -20,6 +20,7 @@ See [../../modules/agent-runtime.md](../../modules/agent-runtime.md) and [../../
 - `packages/host/src/config-zod-schema.ts`
 - `packages/host/src/external-command-agent.ts`
 - `packages/host/src/traced-process-runner.ts`
+- `packages/host/src/workspace-agent-arbiter.ts`
 - `packages/agent-runtime/src/index.ts`
 - `packages/agent-runtime/src/agents/*`
 - `packages/agent-runtime/src/concurrency/*`
@@ -275,6 +276,17 @@ configured profiles/delegates
   external-command access/sandbox admission failures emit requested -> failed,
   process completions carry `terminalState`/`finality`, and indexed calls record
   `entrypoint:"delegate_agent"` without exposing a spoofable model JSON field.
+- Host Agent execution is admitted through one process-local fair RW arbiter
+  keyed by the workspace realpath. Read-only in-process, dynamic, and parallel
+  children may share; write-capable in-process, ACP, and external-command
+  children serialize across HostRuntime connections. `subagent.requested`
+  remains visible while queued, while `started` cannot appear before lease
+  acquisition. Lifecycle metadata carries `workspaceAccess` and
+  `agentConcurrency` so the requested-to-started gap is interpretable.
+- Lease TTL, heartbeat renewal, abortable queue removal, inspection, and
+  idempotent release provide an availability escape hatch. The guarantee ends
+  at the Node process boundary and has no fencing generation; it does not
+  serialize unrelated parent-run writes or claim distributed exclusion.
 - Core same-turn concurrency follows the effective Agent invocation: dynamic
   write grants, configured child write/shell capability, spawn approval, invalid
   inputs, and unresolved indexed targets are serial. Read-only dynamic and
@@ -349,6 +361,16 @@ configured profiles/delegates
   detection.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: added process-local workspace RW arbitration across every Host Agent
+  entrypoint and projected its workspace/concurrency facts into lifecycle
+  metadata.
+- Read: arbiter, all Host Agent execution paths, portable admission seam,
+  workspace-write map, and active supervision design.
+- Tests: agent-runtime Agent/invocation/supervisor/ledger 60/60; Host focused
+  Agent/process suites 162/162; affected typechecks/build passed.
 
 - Status: Verified
 - Date: 2026-07-14

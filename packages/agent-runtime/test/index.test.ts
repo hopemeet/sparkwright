@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   compileAgentProfileRunOptions,
   createAgentProfilePolicy,
@@ -1179,6 +1179,90 @@ describe("createAgentTool / mountAgentTool", () => {
       spanId: spawned.spanId,
       goal: "child task",
     });
+  });
+
+  it("waits for embedder admission before starting and releases afterwards", async () => {
+    const parent = createRun({
+      goal: "parent",
+      model: {
+        async complete() {
+          return { message: "parent done" };
+        },
+      },
+      maxSteps: 1,
+    });
+    let admit: (() => void) | undefined;
+    const release = vi.fn();
+    let childCalls = 0;
+    const spawned = spawnSubAgent({
+      parent,
+      goal: "queued child",
+      model: {
+        async complete() {
+          childCalls += 1;
+          return { message: "child done" };
+        },
+      },
+      admission: () =>
+        new Promise((resolve) => {
+          admit = () => resolve(release);
+        }),
+    });
+
+    const completion = spawned.start();
+    await Promise.resolve();
+    expect(childCalls).toBe(0);
+    expect(
+      parent.events
+        .all()
+        .filter((event) => event.type.startsWith("subagent."))
+        .map((event) => event.type),
+    ).toEqual(["subagent.requested"]);
+
+    admit?.();
+    await completion;
+    expect(childCalls).toBe(1);
+    expect(release).toHaveBeenCalledTimes(1);
+    expect(
+      parent.events
+        .all()
+        .filter((event) => event.type.startsWith("subagent."))
+        .map((event) => event.type),
+    ).toEqual(["subagent.requested", "subagent.started", "subagent.completed"]);
+  });
+
+  it("fails without starting when embedder admission rejects", async () => {
+    const parent = createRun({
+      goal: "parent",
+      model: {
+        async complete() {
+          return { message: "parent done" };
+        },
+      },
+      maxSteps: 1,
+    });
+    const spawned = spawnSubAgent({
+      parent,
+      goal: "rejected child",
+      model: {
+        async complete() {
+          return { message: "not reached" };
+        },
+      },
+      admission: async () => {
+        throw new Error("workspace lease unavailable");
+      },
+    });
+
+    await expect(spawned.start()).rejects.toThrow(
+      "workspace lease unavailable",
+    );
+    expect(
+      parent.events
+        .all()
+        .filter((event) => event.type.startsWith("subagent."))
+        .map((event) => event.type),
+    ).toEqual(["subagent.requested", "subagent.failed"]);
   });
 
   it("carries the child's agentName/agentProfileId on every subagent phase", async () => {

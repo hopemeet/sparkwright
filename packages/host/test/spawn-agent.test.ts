@@ -754,6 +754,7 @@ describe("host spawn_agent wiring", () => {
           createWorkspaceMutationPolicy({ allowWorkspaceWrites: true }),
         ]),
         childRunStoreFactory: () => undefined as never,
+        workspaceRoot: root,
       });
 
       expect(
@@ -797,7 +798,7 @@ describe("host spawn_agent wiring", () => {
           maxSteps: 3,
         },
         { run: parent.record } as never,
-      )) as { signal: string; message?: string };
+      )) as { childRunId: string; signal: string; message?: string };
 
       expect(output).toMatchObject({
         signal: "completed",
@@ -811,6 +812,19 @@ describe("host spawn_agent wiring", () => {
           ?.payload,
       ).toMatchObject({
         workspaceWrites: 1,
+      });
+      expect(
+        parent.events
+          .all()
+          .find(
+            (event) =>
+              event.type === "subagent.requested" &&
+              (event.payload as { childRunId?: string }).childRunId ===
+                output.childRunId,
+          )?.metadata,
+      ).toMatchObject({
+        workspaceAccess: "read_write",
+        agentConcurrency: "serial",
       });
     } finally {
       await rm(root, { recursive: true, force: true });

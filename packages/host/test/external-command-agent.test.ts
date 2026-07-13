@@ -19,6 +19,7 @@ import {
   projectAgentLifecycle,
   terminalLifecycleCount,
 } from "./helpers/agent-lifecycle.js";
+import { WorkspaceAgentArbiter } from "../src/workspace-agent-arbiter.js";
 
 describe("external command delegate tool", () => {
   it("parses external command config from agent profile metadata", () => {
@@ -221,6 +222,71 @@ describe("external command delegate tool", () => {
         }),
       ]),
     );
+  });
+
+  it("serializes read-write delegates across parents sharing one workspace", async () => {
+    const fixture = await createFixtureCommand("setTimeout(() => {}, 250);");
+    const arbiter = new WorkspaceAgentArbiter();
+    const makeParent = () =>
+      createRun({
+        goal: "parent",
+        model: {
+          async complete() {
+            return { message: "parent" };
+          },
+        },
+        maxSteps: 1,
+      });
+    const profile: AgentProfile = {
+      id: "external_writer",
+      metadata: {
+        externalCommand: {
+          command: process.execPath,
+          args: [fixture.commandPath],
+          input: "none",
+          workspaceAccess: "read_write",
+        },
+      },
+    };
+    const firstParent = makeParent();
+    const secondParent = makeParent();
+    const makeTool = (parent: ReturnType<typeof createRun>) =>
+      createExternalCommandDelegateTool({
+        getParent: () => parent,
+        profile,
+        toolName: "delegate_external_writer",
+        description: "Delegate to a serialized writer.",
+        workspaceRoot: fixture.cwd,
+        allowReadWriteWorkspaceAccess: true,
+        workspaceAgentArbiter: arbiter,
+      });
+
+    const first = makeTool(firstParent).execute({ goal: "first" }, {
+      run: firstParent.record,
+    } as never);
+    await vi.waitFor(() =>
+      expect(arbiter.inspect(fixture.cwd).writer).toBeDefined(),
+    );
+    const second = makeTool(secondParent).execute({ goal: "second" }, {
+      run: secondParent.record,
+    } as never);
+    await vi.waitFor(() =>
+      expect(arbiter.inspect(fixture.cwd).queued).toHaveLength(1),
+    );
+
+    expect(lifecycleTypes(secondParent.events.all())).toEqual([
+      "subagent.requested",
+    ]);
+    await Promise.all([first, second]);
+    expect(lifecycleTypes(secondParent.events.all())).toEqual([
+      "subagent.requested",
+      "subagent.started",
+      "subagent.completed",
+    ]);
+    expect(arbiter.inspect(fixture.cwd)).toMatchObject({
+      readers: [],
+      queued: [],
+    });
   });
 
   it("summarizes stderr token progress on the external delegate result", async () => {

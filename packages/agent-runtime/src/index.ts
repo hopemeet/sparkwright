@@ -797,13 +797,29 @@ export interface SpawnSubAgentInput {
    * parent-turn interrupt does not kill a background child.
    */
   abortSignal?: AbortSignal;
+  /**
+   * Optional embedder-owned admission gate. The child is created and
+   * `subagent.requested` is emitted before this gate runs; the internal
+   * supervisor enters its admitted state only after it resolves. The returned
+   * release callback is held for the full child execution and invoked exactly
+   * once afterwards.
+   *
+   * Callers that provide a gate must start the child through the returned
+   * {@link SpawnedSubAgent.start} method so the gate cannot be bypassed.
+   */
+  admission?(input: {
+    invocation: PreparedAgentInvocation;
+    abortSignal: AbortSignal;
+  }): Promise<(() => void) | void>;
   /** Override for testing. Defaults to the core `createRun`. */
   createRun?: typeof defaultCreateRun;
 }
 
 export interface SpawnedSubAgent {
-  /** The child RunHandle. Call `.start()` to execute. */
+  /** The child RunHandle. Prefer {@link start} to honor optional admission. */
   run: RunHandle;
+  /** Admit and execute the child once, returning the shared start promise. */
+  start(): Promise<RunResult>;
   parentRunId: string;
   childRunId: string;
   /** Stable span id stamped on the child's metadata for trace stitching. */
@@ -935,13 +951,14 @@ export function spawnSubAgent(input: SpawnSubAgentInput): SpawnedSubAgent {
     delegateTool: stringMetadata(input.metadata, "delegateTool"),
     subagentDepth,
     entrypoint: subagentEntrypointFromMetadata(input.metadata),
+    governance: agentInvocationGovernanceFromMetadata(input.metadata),
   });
   const supervisor = createAgentSupervisor({
     invocation,
     emitter: parent.events,
   });
   supervisor.requested();
-  supervisor.admit();
+  if (!input.admission) supervisor.admit();
 
   // Roll up the child's own workspace writes onto the parent-visible terminal
   // event. The child run records each `apply_patch`/`edit_anchored_text` as a
@@ -984,8 +1001,40 @@ export function spawnSubAgent(input: SpawnSubAgentInput): SpawnedSubAgent {
     }
   });
 
+  let startPromise: Promise<RunResult> | undefined;
+  const start = (): Promise<RunResult> => {
+    if (startPromise) return startPromise;
+    startPromise = (async () => {
+      let releaseAdmission: (() => void) | undefined;
+      try {
+        if (input.admission) {
+          const admitted = await input.admission({
+            invocation,
+            abortSignal: createOptions.abortSignal ?? parent.abortSignal,
+          });
+          releaseAdmission = admitted || undefined;
+          supervisor.admit();
+        }
+        return await child.start();
+      } catch (error) {
+        supervisor.failed({
+          reason:
+            error instanceof Error && error.name === "AbortError"
+              ? "cancelled"
+              : "failed",
+          error: error instanceof Error ? error.message : String(error),
+        });
+        throw error;
+      } finally {
+        releaseAdmission?.();
+      }
+    })();
+    return startPromise;
+  };
+
   return {
     run: child,
+    start,
     parentRunId: parent.record.id,
     childRunId: child.record.id,
     spanId,
@@ -1006,6 +1055,26 @@ function subagentEntrypointFromMetadata(
 ): SubAgentEntrypoint {
   const entrypoint = metadata?.entrypoint;
   return isSubAgentEntrypoint(entrypoint) ? entrypoint : "run";
+}
+
+function agentInvocationGovernanceFromMetadata(
+  metadata: Record<string, unknown> | undefined,
+): PreparedAgentInvocation["governance"] {
+  const workspaceAccess = metadata?.workspaceAccess;
+  const concurrency = metadata?.agentConcurrency;
+  if (
+    workspaceAccess !== "none" &&
+    workspaceAccess !== "read_only" &&
+    workspaceAccess !== "read_write"
+  ) {
+    return undefined;
+  }
+  return {
+    workspaceAccess,
+    ...(concurrency === "serial" || concurrency === "concurrent"
+      ? { concurrency }
+      : {}),
+  };
 }
 
 function subagentTerminalProjection(
@@ -1289,7 +1358,7 @@ export function createAgentTool(
             }
           : {}),
       });
-      const result = await spawned.run.start();
+      const result = await spawned.start();
       const usage = spawned.run.usage();
       const output = summarize({
         childRunId: spawned.childRunId,

@@ -16,6 +16,7 @@ See [approvals.md](approvals.md) and [../runtime/tool-orchestration.md](../runti
 - `packages/host/src/tools.ts`
 - `packages/host/src/shell.ts`
 - `packages/host/src/workspace-snapshot.ts`
+- `packages/host/src/workspace-agent-arbiter.ts`
 
 ## Data Flow
 
@@ -53,8 +54,19 @@ tool proposes write
 - Same-turn Agent tool batching treats a requested dynamic workspace-write grant
   or a configured child write/shell capability as serial. This prevents two
   independently policy-checked and approved child writers from being admitted
-  to the same Core concurrent batch; it is not yet a cross-run or cross-host
-  workspace lock.
+  to the same Core concurrent batch; this remains the early argument-level
+  classifier rather than the workspace lock itself.
+- Host additionally uses a process-local Agent RW arbiter keyed by the
+  realpath-canonical workspace root. Read-only managed Agent children share;
+  write-capable in-process, ACP, and external-command delegates serialize
+  across HostRuntime connections. A fair queue, abortable waits, TTL,
+  heartbeat renewal, inspection, and idempotent release prevent one connection
+  from owning an unbounded unrecoverable lock under normal lifecycle cleanup.
+- The arbiter does not replace policy or approval, and its scope must be stated
+  precisely: it does not lock arbitrary parent tools, other Node processes, or
+  distributed hosts, and expiry has no stale-writer fencing guarantee. Managed
+  writes still use normal Core policy/events; process delegates still emit the
+  untracked write-capable marker after lease admission.
 - Trace report may lower the severity of an incomplete child only at the
   report layer, and only when raw events prove the ordered chain: child
   `workspace.write.completed`, parent-visible `subagent.*.workspaceWrites > 0`,
@@ -121,6 +133,15 @@ tool proposes write
   from managed workspace writes.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: added Host process-local Agent workspace RW admission without changing
+  write authorization or managed/untracked write attribution.
+- Read: arbiter, in-process/dynamic/process Agent entrypoints, Core write event
+  contracts, and active supervision design.
+- Tests: Host arbiter/Agent/process focused suites 162/162; agent-runtime
+  Agent/invocation/supervisor/ledger 60/60; affected typechecks passed.
 
 - Status: Verified
 - Date: 2026-07-14

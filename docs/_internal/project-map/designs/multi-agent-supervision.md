@@ -83,9 +83,23 @@ The first write lease must include an escape hatch from day one:
 - bounded TTL;
 - holder heartbeat/renewal;
 - idempotent release;
-- expired-holder takeover with an audit fact;
+- expired non-renewing-holder takeover and inspectable owner/queue facts;
 - cancellation/finally release;
 - no claim of cross-process safety.
+
+The implemented first slice is a process-local fair RW arbiter shared by
+HostRuntime connections. `spawnSubAgent` exposes an embedder-owned asynchronous
+admission seam so in-process children do not enter the Supervisor's admitted
+state before a lease is acquired; process adapters use the same arbiter before
+their native start signal. Lifecycle metadata carries workspace/concurrency
+facts, and the requested-to-started gap exposes queue delay without adding a
+second lifecycle event family.
+
+TTL is an availability lease, not a fencing generation. The current slice has
+no durable expiry audit, cannot exclude a stale holder after takeover, does not
+coordinate other OS processes, and does not serialize non-Agent parent tools.
+Those boundaries must remain explicit until the session coordinator owns a
+fenced cross-process protocol.
 
 This Agent lease is compatible with the future session-turn workspace lock but
 must not create a second permanent owner. The session coordinator remains the
@@ -109,8 +123,8 @@ add a concrete consumer and delivery semantics in the same phase.
 5. `AgentSupervisor`; migrate one adapter at a time and retire adapter-owned
    lifecycle emission. Fix process admission ordering and terminal parity here.
    Complete.
-6. Host workspace lease arbiter with TTL/heartbeat, then tree-level budget
-   enforcement.
+6. Host workspace lease arbiter with TTL/heartbeat. Complete. Tree-level budget
+   enforcement remains the next substage.
 7. Narrow task/communication cleanup and release verification.
 
 Each behavioral phase must delete or migrate at least one parallel mechanism.
@@ -119,5 +133,7 @@ the migration oracle.
 
 ## Known Migration Debts
 
-- Per-connection `HostRuntime` does not coordinate workspace writers across
-  clients; the compatibility path remains until a process-wide owner is wired.
+- Workspace exclusion is process-local and unfenced; cross-process/session-turn
+  ownership remains future session-coordinator work.
+- Parent-tree budget enforcement is not yet shared across sibling Agent
+  invocations.

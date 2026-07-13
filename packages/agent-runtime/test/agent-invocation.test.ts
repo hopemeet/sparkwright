@@ -71,6 +71,8 @@ describe("PreparedAgentInvocation", () => {
       entrypoint: "delegates_run",
       protocol: "external_command",
       workspaceAccess: "read_write",
+      agentConcurrency: "serial",
+      agentApproval: "required",
       childRunId: "run_child",
       parentRunId: "run_parent",
     });

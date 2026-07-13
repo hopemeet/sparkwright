@@ -35,6 +35,10 @@ import {
   workspaceAccessField,
   type DelegateWorkspaceAccess,
 } from "./delegate-capability.js";
+import {
+  createWorkspaceAgentAdmission,
+  type WorkspaceAgentArbiter,
+} from "./workspace-agent-arbiter.js";
 
 export interface AcpChildAgentConfig {
   transport: "stdio";
@@ -62,6 +66,7 @@ export interface CreateAcpDelegateToolInput {
   sandboxRuntime?: ShellSandboxRuntime;
   skillRoots?: readonly string[];
   configPaths?: readonly string[];
+  workspaceAgentArbiter?: WorkspaceAgentArbiter;
 }
 
 export interface AcpDelegateToolResult {
@@ -218,12 +223,20 @@ export function createAcpDelegateTool(
       let executionWorkspace:
         | Awaited<ReturnType<typeof resolveDelegateProcessWorkspace>>
         | undefined;
+      let releaseWorkspaceLease: (() => void) | undefined;
       try {
         assertReadWriteWorkspaceAccessAllowed({
           workspaceAccess,
           toolName: input.toolName,
           allowed: input.allowReadWriteWorkspaceAccess === true,
         });
+        if (workspaceAccess === "read_write") {
+          releaseWorkspaceLease = await createWorkspaceAgentAdmission({
+            arbiter: input.workspaceAgentArbiter,
+            workspaceRoot: input.workspaceRoot,
+            mode: "write",
+          })({ invocation, abortSignal: parent.abortSignal });
+        }
         if (workspaceAccess === "read_write") {
           parent.events.emit(
             "workspace.write.untracked_access_granted",
@@ -309,6 +322,7 @@ export function createAcpDelegateTool(
         });
         throw wrapped;
       } finally {
+        releaseWorkspaceLease?.();
         await executionWorkspace?.cleanup();
       }
     },

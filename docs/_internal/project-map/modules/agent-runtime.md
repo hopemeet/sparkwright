@@ -103,8 +103,9 @@ Does not own:
 - The in-process `spawnSubAgent` substrate emits `subagent.requested`
   synchronously when the child is created, then `subagent.started`, then exactly
   one `subagent.completed` or `subagent.failed` projection from the child run.
-  Host process adapters currently reproduce this lifecycle separately; this
-  contract does not claim they share the same terminal payload yet.
+  Host process adapters retain native execution but report the same
+  requested/admitted/started/terminal sequence through `AgentSupervisor`, with
+  shared terminal state/finality fields.
 - Workflow types in agent-runtime are portable runtime/store declarations.
   `WorkflowRunRecord` is now a durable P2 state document with five-value
   status, version pinning, attempts, evidence refs, verdict/transition logs,
@@ -323,6 +324,17 @@ Does not own:
   state/finality parity, and makes repeated phases/terminal attempts
   idempotent. Execution adapters retain native run/process mechanics and report
   their phases through this one supervisor.
+- `spawnSubAgent` accepts an optional embedder-owned asynchronous `admission`
+  gate and returns `SpawnedSubAgent.start()`. The child identity and
+  `subagent.requested` exist before the gate; the supervisor becomes admitted
+  and the Core run starts only after the gate resolves. Its release callback is
+  held across the child execution and invoked once in `finally`. Callers that
+  supply admission must use `SpawnedSubAgent.start()` rather than bypassing the
+  gate through the raw `RunHandle`.
+- Prepared invocation metadata projects optional `workspaceAccess` and
+  `agentConcurrency` governance facts onto every parent-visible lifecycle
+  phase. Agent-runtime carries those facts but does not choose workspace lease
+  policy.
 - `createAgentTool` accepts an optional argument-level concurrency classifier.
   Host uses it to keep write-capable, shell-capable, or spawn-approval-bound
   configured children out of Core concurrent batches while preserving
@@ -368,6 +380,16 @@ Does not own:
   not authorize a generic actor bus or nested background lifecycle.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: added the portable asynchronous child-admission seam used by Host
+  workspace arbitration, including one-shot start/release and admission-failure
+  lifecycle behavior.
+- Read: spawn substrate, prepared invocation/supervisor projections, Host lease
+  integration, and Agent lifecycle tests.
+- Tests: agent-runtime Agent/invocation/supervisor/ledger 60/60; typecheck and
+  build passed.
 
 - Status: Verified
 - Date: 2026-07-14

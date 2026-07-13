@@ -23,6 +23,7 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 - `packages/host/src/tools.ts`
 - `packages/host/src/shell.ts`
 - `packages/host/src/workspace-snapshot.ts`
+- `packages/host/src/workspace-agent-arbiter.ts`
 - `packages/host/src/workflow-hooks.ts`
 - `packages/host/src/invariant-projection.ts`
 - `packages/host/src/workflows.ts`
@@ -717,6 +718,18 @@ Does not own:
   invocation entrypoint so direct aliases remain `delegate` while
   `delegate_agent` lifecycle records the real indexed surface. Model-authored
   string fields cannot override this attribution marker.
+- `workspace-agent-arbiter.ts` owns the process-local Host Agent workspace
+  admission policy. One singleton is shared by HostRuntime connections and is
+  keyed by realpath-canonical workspace root. Read-only in-process/dynamic
+  children share read leases; write-capable in-process, ACP, and external
+  delegates take an exclusive write lease. FIFO admission prevents later
+  readers from starving a queued writer. Leases have TTL, renewal heartbeat,
+  abortable waits, inspection snapshots, and idempotent release.
+- This arbiter is deliberately narrower than a workspace transaction manager:
+  it coordinates Agent invocations inside one Host process, not arbitrary
+  parent tools, other OS processes, or distributed hosts. Expiry is not a
+  fencing token, so the code must not claim stale-writer exclusion after
+  takeover. A future session coordinator remains the target long-lived owner.
 - `capabilities.agents.maxDepth` is enforced before dynamic spawn, LLM child
   delegates, ACP delegates, and external-command delegates start; sub-agent
   events carry `subagentDepth` metadata so nested runs share one depth budget.
@@ -846,6 +859,15 @@ Does not own:
   remain adapter-native and need continued cross-entrypoint characterization.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: wired process-local workspace Agent RW admission through configured,
+  indexed, parallel, dynamic/task-owned, ACP, and external-command paths.
+- Read: Host runtime assembly, process adapters, agent-runtime admission seam,
+  workspace-write safety map, and active supervision design.
+- Tests: Host arbiter/Agent/process focused suites 162/162; Host typecheck
+  passed after rebuilding agent-runtime.
 
 - Status: Verified
 - Date: 2026-07-14

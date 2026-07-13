@@ -129,6 +129,10 @@ import { CronStore, defaultCronRoot } from "@sparkwright/cron";
 import { RECOMMENDED_FOREGROUND_TIMEOUT_MS } from "@sparkwright/shell-tool";
 import { DurableCommandDispatcher } from "@sparkwright/server-runtime";
 import {
+  createWorkspaceAgentAdmission,
+  type WorkspaceAgentArbiter,
+} from "./workspace-agent-arbiter.js";
+import {
   type ResolvedShellSandboxConfig,
   type ShellSandboxStatus,
 } from "@sparkwright/shell-sandbox";
@@ -800,6 +804,8 @@ export interface HostAgentTaskRunnerDeps {
   ) => ReturnType<typeof createSessionRunStoreFactory>;
   maxDepth?: number;
   sessionId?: string;
+  workspaceRoot?: string;
+  workspaceAgentArbiter?: WorkspaceAgentArbiter;
 }
 
 /**
@@ -844,6 +850,8 @@ export async function runHostAgentTask(
     backgroundTasks: deps.backgroundTasks,
     foregroundTimeoutMs: deps.foregroundTimeoutMs,
     taskId: String(controller.taskId),
+    workspaceRoot: deps.workspaceRoot,
+    workspaceAgentArbiter: deps.workspaceAgentArbiter,
   });
   const ctx: RuntimeContext = {
     run: parent.record,
@@ -2270,6 +2278,7 @@ export class HostRuntime {
           childRunStoreFactory,
           allowReadWriteWorkspaceAccess: runAccess.shouldWrite,
           maxDepth: agentConfig?.maxDepth,
+          workspaceRoot,
         })
       : undefined;
     const delegateDescriptors = describeConfiguredDelegateTools({
@@ -2292,6 +2301,7 @@ export class HostRuntime {
         shellConfig?.foregroundTimeoutMs ?? RECOMMENDED_FOREGROUND_TIMEOUT_MS,
       taskManager: this.taskManager,
       backgroundTasks: runAccess.backgroundTasks,
+      workspaceRoot,
     });
     // Publish spawn deps for the registered `agent` background task kind so a
     // `task_create(kind:"agent")` call can drive a child run that the task,
@@ -2305,6 +2315,7 @@ export class HostRuntime {
       childRunStoreFactory,
       maxDepth: subagentMaxDepth,
       sessionId: input.sessionId,
+      workspaceRoot,
       taskManager: this.taskManager,
       backgroundTasks: runAccess.backgroundTasks,
       foregroundTimeoutMs:
@@ -4427,6 +4438,7 @@ export class HostRuntime {
             childRunStoreFactory: snapshotOnlyChildRunStoreFactory,
             allowReadWriteWorkspaceAccess: input.access.shouldWrite,
             maxDepth: agentConfig?.maxDepth,
+            workspaceRoot: this.opts.workspaceRoot,
           })
         : undefined;
       const dynamicSpawnTool = createDynamicSpawnAgentTool({
@@ -4440,6 +4452,7 @@ export class HostRuntime {
         parentRunPolicy: createDefaultPolicy(),
         childRunStoreFactory: snapshotOnlyChildRunStoreFactory,
         maxDepth: agentConfig?.maxDepth,
+        workspaceRoot: this.opts.workspaceRoot,
       });
       const toolCatalog = createMainHostToolCatalog({
         workspaceRoot: this.opts.workspaceRoot,
@@ -6364,6 +6377,7 @@ export function createConfiguredDelegateTools(input: {
   configPaths?: readonly string[];
   allowReadWriteWorkspaceAccess: boolean;
   maxDepth?: number;
+  workspaceAgentArbiter?: WorkspaceAgentArbiter;
   /** Builds a session-scoped run store for the child, keyed by its agent id. */
   childRunStoreFactory: (
     childAgentId: string,
@@ -6396,6 +6410,7 @@ export function createConfiguredDelegateTools(input: {
           sandbox: input.sandbox,
           skillRoots: input.skillRoots,
           configPaths: input.configPaths,
+          workspaceAgentArbiter: input.workspaceAgentArbiter,
         }),
       );
       continue;
@@ -6417,6 +6432,7 @@ export function createConfiguredDelegateTools(input: {
           sandbox: input.sandbox,
           skillRoots: input.skillRoots,
           configPaths: input.configPaths,
+          workspaceAgentArbiter: input.workspaceAgentArbiter,
         }),
       );
       continue;
@@ -6467,6 +6483,14 @@ export function createConfiguredDelegateTools(input: {
           ]),
           maxSteps: delegate.maxSteps ?? profile.maxSteps,
           runBudget: profile.runBudget,
+          admission: createWorkspaceAgentAdmission({
+            arbiter: input.workspaceAgentArbiter,
+            workspaceRoot: input.workspaceRoot,
+            mode:
+              capabilityFacts.workspaceAccess === "read_write"
+                ? "write"
+                : "read",
+          }),
           ...childWorkflowHookSpawnOptions(
             profile.id,
             input.workflowHooksForProfile,
@@ -6489,6 +6513,14 @@ export function createConfiguredDelegateTools(input: {
             agentName: profile.name,
             delegateTool: toolName,
             entrypoint: "delegate",
+            workspaceAccess:
+              capabilityFacts.workspaceAccess === "read_write"
+                ? "read_write"
+                : "read_only",
+            agentConcurrency:
+              capabilityFacts.workspaceAccess === "read_write"
+                ? "serial"
+                : "concurrent",
           },
         };
       },
@@ -6519,6 +6551,8 @@ export function createDelegateParallelTool(input: {
   approvalResolver?: ApprovalResolver;
   allowReadWriteWorkspaceAccess: boolean;
   maxDepth?: number;
+  workspaceRoot?: string;
+  workspaceAgentArbiter?: WorkspaceAgentArbiter;
   childRunStoreFactory: (
     childAgentId: string,
   ) => ReturnType<typeof createSessionRunStoreFactory>;
@@ -6752,6 +6786,15 @@ export function createDelegateParallelTool(input: {
             ]),
             maxSteps: spec.delegate.maxSteps ?? spec.profile.maxSteps,
             runBudget: spec.profile.runBudget,
+            ...(input.workspaceRoot
+              ? {
+                  admission: createWorkspaceAgentAdmission({
+                    arbiter: input.workspaceAgentArbiter,
+                    workspaceRoot: input.workspaceRoot,
+                    mode: "read",
+                  }),
+                }
+              : {}),
             ...childWorkflowHookSpawnOptions(
               spec.profile.id,
               input.workflowHooksForProfile,
@@ -6774,6 +6817,8 @@ export function createDelegateParallelTool(input: {
               entrypoint: "delegate_parallel",
               parallelTool: DELEGATE_PARALLEL_TOOL_NAME,
               parallelIndex: index,
+              workspaceAccess: "read_only",
+              agentConcurrency: "concurrent",
             },
           }),
         };
@@ -6784,7 +6829,7 @@ export function createDelegateParallelTool(input: {
           if (item.mode === "cached") return item.cached;
           const { task, index, spec, spawned: child, ledgerKey } = item;
           try {
-            const result = await child.run.start();
+            const result = await child.start();
             const usage = child.run.usage();
             const summary = summarizeDelegateParallelChild({
               index,
@@ -7159,6 +7204,8 @@ export function createDynamicSpawnAgentTool(input: {
   entrypoint?: "spawn_agent" | "agent_task";
   delegateToolName?: string;
   taskId?: string;
+  workspaceRoot?: string;
+  workspaceAgentArbiter?: WorkspaceAgentArbiter;
   /**
    * When set with `taskManager`, inline spawn_agent runs in foreground up to
    * this budget and then promotes the same child run into an awaited task.
@@ -7395,6 +7442,15 @@ export function createDynamicSpawnAgentTool(input: {
         }),
         maxSteps: childMaxSteps,
         abortSignal: childAbort.controller.signal,
+        ...(input.workspaceRoot
+          ? {
+              admission: createWorkspaceAgentAdmission({
+                arbiter: input.workspaceAgentArbiter,
+                workspaceRoot: input.workspaceRoot,
+                mode: toolRequest.workspaceWriteGrant ? "write" : "read",
+              }),
+            }
+          : {}),
         interactionChannel: null,
         // Persist the child's own trace/transcript under
         // `sessions/<id>/agents/<agentId>/` and register it in session.json,
@@ -7418,6 +7474,12 @@ export function createDynamicSpawnAgentTool(input: {
           capabilityGrants: {
             workspaceWrite: toolRequest.workspaceWriteGrant,
           },
+          workspaceAccess: toolRequest.workspaceWriteGrant
+            ? "read_write"
+            : "read_only",
+          agentConcurrency: toolRequest.workspaceWriteGrant
+            ? "serial"
+            : "concurrent",
         },
       });
       const completion = completeDynamicSpawnAgent({
@@ -7490,7 +7552,7 @@ async function completeDynamicSpawnAgent(
     childTools,
     childMaxSteps,
   } = input;
-  const result = await spawned.run.start();
+  const result = await spawned.start();
   const usage = spawned.run.usage();
   // A child that answered on its last allowed step may have wrapped up early
   // under the step budget; tell the parent so it can caveat rather than

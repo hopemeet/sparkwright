@@ -1180,6 +1180,13 @@ describe("host tools", () => {
       ]),
     );
     expect(
+      parent.events.all().find((event) => event.type === "subagent.requested")
+        ?.metadata,
+    ).toMatchObject({
+      workspaceAccess: "read_only",
+      agentConcurrency: "concurrent",
+    });
+    expect(
       terminalLifecycleCount(parent.events.all(), delegateResult.childRunId),
     ).toBe(1);
   });
@@ -2115,6 +2122,24 @@ describe("host tools", () => {
         goal: "Write a file.",
       }),
     ).toBe(false);
+
+    const writerResult = (await writerDelegate!.execute(
+      { goal: "Prepare a write-capable answer." },
+      { run: parent.record } as never,
+    )) as { childRunId: string };
+    expect(
+      parent.events
+        .all()
+        .find(
+          (event) =>
+            event.type === "subagent.requested" &&
+            (event.payload as { childRunId?: string }).childRunId ===
+              writerResult.childRunId,
+        )?.metadata,
+    ).toMatchObject({
+      workspaceAccess: "read_write",
+      agentConcurrency: "serial",
+    });
 
     const parallel = createDelegateParallelTool({
       getParent: () => parent,

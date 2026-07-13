@@ -29,7 +29,7 @@ export interface AgentAssetIdentity {
 
 export interface PreparedAgentInvocationGovernance {
   readonly workspaceAccess?: AgentInvocationWorkspaceAccess;
-  /** @reserved Supervisor admission fact; Host governance will populate it during migration. */
+  /** @reserved Supervisor admission fact populated by Host governance. */
   readonly concurrency?: "serial" | "concurrent";
   readonly approval?: "not_required" | "required" | "resolved";
 }
@@ -41,7 +41,7 @@ export interface PreparedAgentInvocationGovernance {
  */
 export interface PreparedAgentInvocation {
   readonly schemaVersion: typeof PREPARED_AGENT_INVOCATION_SCHEMA_VERSION;
-  /** @reserved Pre-start lifecycle state consumed by the upcoming AgentSupervisor. */
+  /** @reserved Pre-start lifecycle state consumed by AgentSupervisor. */
   readonly admissionState: "admission_pending";
   readonly goal: string;
   readonly protocol: AgentInvocationProtocol;
@@ -116,6 +116,8 @@ export function agentInvocationMetadata(
     entrypoint: invocation.entrypoint,
     protocol: invocation.protocol,
     workspaceAccess: invocation.governance?.workspaceAccess,
+    agentConcurrency: invocation.governance?.concurrency,
+    agentApproval: invocation.governance?.approval,
     childRunId: invocation.childRunId,
     parentRunId: invocation.parentRunId,
   });

@@ -43,6 +43,10 @@ import {
   TracedProcessRunner,
   type ProgressChunk,
 } from "./traced-process-runner.js";
+import {
+  createWorkspaceAgentAdmission,
+  type WorkspaceAgentArbiter,
+} from "./workspace-agent-arbiter.js";
 
 export interface ExternalCommandAgentConfig {
   command: string;
@@ -74,6 +78,7 @@ export interface CreateExternalCommandDelegateToolInput {
   sandboxRuntime?: ShellSandboxRuntime;
   skillRoots?: readonly string[];
   configPaths?: readonly string[];
+  workspaceAgentArbiter?: WorkspaceAgentArbiter;
 }
 
 export interface ExternalCommandDelegateToolResult {
@@ -265,12 +270,20 @@ export function createExternalCommandDelegateTool(
         emitter: parent.events,
       });
       supervisor.requested();
+      let releaseWorkspaceLease: (() => void) | undefined;
       try {
         assertReadWriteWorkspaceAccessAllowed({
           workspaceAccess,
           toolName: input.toolName,
           allowed: input.allowReadWriteWorkspaceAccess === true,
         });
+        if (workspaceAccess === "read_write") {
+          releaseWorkspaceLease = await createWorkspaceAgentAdmission({
+            arbiter: input.workspaceAgentArbiter,
+            workspaceRoot: input.workspaceRoot,
+            mode: "write",
+          })({ invocation, abortSignal: parent.abortSignal });
+        }
         if (workspaceAccess === "read_write") {
           parent.events.emit(
             "workspace.write.untracked_access_granted",
@@ -357,6 +370,8 @@ export function createExternalCommandDelegateTool(
           error: error instanceof Error ? error.message : String(error),
         });
         throw error;
+      } finally {
+        releaseWorkspaceLease?.();
       }
     },
   });
