@@ -702,7 +702,11 @@ Does not own:
   `.sparkwright/skills`, `.sparkwright/agents`, and `.sparkwright/command`; cron
   state is not project-authored.
 - `workspace-snapshot.ts` owns host-side workspace snapshot/diff/rollback
-  primitives used by shell mutation rollback.
+  primitives used by foreground shell mutation rollback. Snapshots record
+  regular files and symlinks; rollback removes created/replacement symlinks and
+  restores captured bytes through Core `LocalWorkspace` rather than direct
+  filesystem writes. The audit remains whole-tree and does not observe writes
+  outside the workspace.
 - Runtime exposes MCP tools as normal tools. Stdio MCP servers without explicit
   `cwd` run from the adapter's neutral temporary cwd; host run metadata records
   configured MCP servers whose explicit `cwd` resolves inside the workspace so
@@ -805,6 +809,16 @@ Does not own:
 - Capability snapshot fields are useful but can become stale if new tools bypass `tool-catalog.ts`; direct-core/cron should add tools by catalog profile, not local factories.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-13T22:30:00+0800
+- Scope: foreground Shell snapshots now detect symlink mutations and rollback
+  reuses Core containment for binary restoration. Sandbox config/schema wording
+  now distinguishes no-fallback enforcement from OS filesystem guarantees.
+- Read: Host snapshot/shell/config schema, Core LocalWorkspace, shell-sandbox,
+  generated config schema, and configuration guide.
+- Tests: Host config/snapshot/tools 161/161; Host typecheck; schema check;
+  shell-sandbox 14/14 and build; Core workspace/checkpoint 31/31 and build.
 
 - Status: Verified
 - Date: 2026-07-13T22:21:00+0800

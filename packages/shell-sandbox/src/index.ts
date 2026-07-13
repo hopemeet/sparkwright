@@ -204,6 +204,10 @@ export interface ShellSandboxStatus {
   platform: NodeJS.Platform | "unsupported";
   available: boolean;
   networkMode: ShellSandboxNetworkMode;
+  /**
+   * Backend filesystem model, independent of mode/fallback strictness.
+   * In particular, `enforce` + `deny-list-guard` is not a workspace allowlist.
+   */
   filesystemIsolation: "bind-allowlist" | "deny-list-guard" | "unsupported";
 }
 

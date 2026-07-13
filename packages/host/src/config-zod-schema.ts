@@ -246,7 +246,7 @@ export const shellSandboxSchema = z
   .object({
     mode: shellSandboxModeSchema
       .describe(
-        "off disables OS sandboxing; warn uses it when available; enforce fails shell execution when sandboxing is unavailable.",
+        "off disables OS sandboxing; warn uses it when available and otherwise falls back; enforce prevents unsandboxed fallback when the runtime is unavailable. Enforce does not imply the same filesystem boundary on every OS.",
       )
       .optional(),
     failIfUnavailable: z
@@ -258,7 +258,7 @@ export const shellSandboxSchema = z
   })
   .strict()
   .describe(
-    "OS-level process sandbox for local command execution. Forced deny-write paths are always appended by the host.",
+    "Experimental OS-level process sandbox for supported local execution paths. Linux bubblewrap uses a bind allowlist; macOS sandbox-exec uses an allow-default deny-list guard. Forced deny-write paths are always appended by the host.",
   );
 export const SHELL_SANDBOX_CONFIG_KEYS = shellSandboxSchema.keyof().options;
 

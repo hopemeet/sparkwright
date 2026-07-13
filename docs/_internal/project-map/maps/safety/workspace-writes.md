@@ -78,12 +78,15 @@ tool proposes write
   declared `write` capability before their sandbox receives write grants.
   Read-only command hooks are also forced into a fail-closed no-write sandbox
   when Host run metadata explicitly records `shouldWrite:false`.
-- Managed `LocalWorkspace` writes and removals use realpath containment and
-  reject stable symlink segments in the caller's original workspace-relative
-  path, even when the symlink target stays inside the workspace. Missing parent
-  chains are checked again after creation and before the file write. These
-  checks narrow but cannot eliminate filesystem TOCTOU races; they are not an
-  OS-level sandbox for arbitrary processes.
+- Managed `LocalWorkspace` writes use realpath containment and reject stable
+  symlink segments in the caller's original workspace-relative path, even when
+  the symlink target stays inside the workspace. Missing parent chains are
+  checked again after creation and before the file write. Removal rejects
+  symlink ancestors but can unlink a symlink leaf without following its target.
+  Foreground Shell snapshot rollback detects symlink entries and restores
+  captured binary content through this boundary. These checks narrow but cannot
+  eliminate filesystem TOCTOU races; they are not an OS-level sandbox for
+  arbitrary processes or a detector for writes outside the workspace.
 
 ## Consumers
 
@@ -110,6 +113,16 @@ tool proposes write
   from managed workspace writes.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-13T22:30:00+0800
+- Scope: foreground Shell audit now detects created/replacement symlinks and
+  uses Core containment for rollback restoration; outside-workspace writes
+  remain beyond snapshot coverage.
+- Read: Core LocalWorkspace, Host workspace snapshot/Shell integration, and
+  focused tests.
+- Tests: Core workspace/checkpoint 31/31; Host snapshot/tools 102/102; affected
+  typechecks/build passed.
 
 - Status: Verified
 - Date: 2026-07-13T22:21:00+0800

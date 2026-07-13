@@ -11,6 +11,7 @@ setup behavior. Record environment assumptions in scenarios.
 | sandbox runtime     | Linux bind allow-list and macOS deny-list guard have different evidence |
 | network             | real MCP/provider tests may depend on network availability              |
 | workspace dirtiness | unrelated files can affect snapshot/diff/audit tests                    |
+| symlink support     | snapshot rollback tests require local symlink creation                  |
 | cwd                 | relative cwd/path bugs often depend on process cwd vs workspace root    |
 | XDG config/state    | user config can leak into tests unless isolated                         |
 | generated `dist`    | downstream packages may import stale built output                       |

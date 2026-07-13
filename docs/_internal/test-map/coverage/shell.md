@@ -43,6 +43,9 @@
 - Long foreground commands fall back to abort plus `timedOut: true` when
   promotion is unavailable.
 - Host shell mutation audits roll back unmanaged writes on non-promoted paths.
+- Snapshot audit records symlink entries; focused tests cover created symlink
+  cleanup and parent-directory symlink replacement without writing through to
+  the external target.
 - Configured delegate child shell tools can inherit workspace anchoring.
 
 ## Weak Or Untested
@@ -92,7 +95,7 @@ npm --workspace @sparkwright/shell-tool test -- test/shell-tool.test.ts
 npm --workspace @sparkwright/shell-tool run build
 npm --workspace @sparkwright/shell-sandbox test
 npm --workspace @sparkwright/shell-sandbox run build
-npm --workspace @sparkwright/host test -- test/tools.test.ts
+npm --workspace @sparkwright/host test -- test/workspace-snapshot.test.ts test/tools.test.ts
 ```
 
 Add CLI route checks for user-facing run outcomes:

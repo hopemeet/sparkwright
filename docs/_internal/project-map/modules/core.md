@@ -115,9 +115,11 @@ Does not own:
   to the append-only session event stream for durable audit.
 - `LocalWorkspace` owns managed workspace path containment. It combines
   realpath containment with inspection of the original lexical path and denies
-  stable symlink segments for writes/removals, including symlinks whose target
-  remains inside the workspace. Callers must not weaken this by pre-resolving
-  paths before passing them to the workspace API.
+  stable symlink segments for writes, including symlinks whose target remains
+  inside the workspace. `removeFile()` rejects symlink ancestors but may unlink
+  a symlink leaf without following its target; Host rollback uses the internal
+  binary write path so restoration shares these guards. Callers must not weaken
+  this by pre-resolving paths before passing them to the workspace API.
 - Trace levels are `standard` and `debug`; `minimal` is not a valid mode.
 - Standard trace stream folding emits one `model.stream.text` marker per
   contiguous run-local chunk segment. A same-run non-chunk event flushes the
@@ -345,6 +347,15 @@ Does not own:
   guard and trace diagnostics.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-13T22:30:00+0800
+- Scope: added guarded binary restoration and safe symlink-leaf unlinking for
+  Host snapshot rollback while preserving managed text-write semantics.
+- Read: Core LocalWorkspace and checkpoint/workspace tests; Host snapshot
+  consumer.
+- Tests: Core workspace/checkpoint 31/31; Core typecheck/build; Host snapshot
+  and tools 102/102.
 
 - Status: Read-only
 - Date: 2026-07-13

@@ -286,16 +286,19 @@ stdio MCP servers:
 defaults to `300000` (5 minutes) and is capped at `600000` (10 minutes). When
 the budget expires, a host with background task support promotes the live
 process; without task promotion, the process is killed and the shell result
-reports that promotion was unavailable. Legacy per-call `timeoutMs` is only an
-alias for this foreground budget; it is not a hard-kill timeout.
+reports that promotion was unavailable. The legacy per-call `timeoutMs` field
+is rejected by the closed tool schema; use the host-level
+`shell.foregroundTimeoutMs` setting instead. It is not a process hard-kill
+timeout when promotion is available.
 
 Modes:
 
 - `off`: run through the legacy unsandboxed process executors.
 - `warn`: use the platform sandbox when available; otherwise fall back and mark
   supported command result metadata with the unavailable runtime.
-- `enforce`: fail supported local process execution when the platform sandbox
-  runtime is missing.
+- `enforce`: prevent supported local process execution from falling back to an
+  unsandboxed process when the platform runtime is missing. It does not upgrade
+  the selected OS backend into a stronger filesystem model.
 
 Linux uses `bubblewrap` (`bwrap`) for bind-based filesystem isolation. macOS
 uses `sandbox-exec` for deny-list and network controls in this first adapter;
@@ -307,6 +310,11 @@ config and capability state so project config cannot remove those protections.
 `fs=bind-allowlist` on Linux and `fs=deny-list-guard` on macOS. Treat the macOS
 mode as a guard for configured deny paths and network access, not as evidence
 that every unlisted filesystem path is hidden.
+Read-only Host runs strengthen local extension processes and Workflow Scripts
+to fail-closed no-write profiles. This relies on the backend-specific model
+above: Linux removes writable binds, while macOS explicitly denies the
+workspace (including stable realpath/private-path variants). It still does not
+make the macOS backend a general filesystem allowlist.
 Across user, project, and explicit config files, `shell.sandbox` is merged
 conservatively: stricter modes, `failIfUnavailable: true`, network deny,
 filesystem deny paths, and `tmp: false` win over later weaker settings.

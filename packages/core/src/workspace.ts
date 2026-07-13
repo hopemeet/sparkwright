@@ -73,6 +73,18 @@ export class LocalWorkspace {
   }
 
   async writeText(path: string, content: string): Promise<void> {
+    await this.writeContent(path, content);
+  }
+
+  /** @internal Restore binary workspace content through the same path guard. */
+  async writeBytes(path: string, content: Uint8Array): Promise<void> {
+    await this.writeContent(path, content);
+  }
+
+  private async writeContent(
+    path: string,
+    content: string | Uint8Array,
+  ): Promise<void> {
     const fullPath = await this.resolveInsideRoot(path);
     await this.assertWritePathHasNoSymlinkSegments(fullPath, path);
     // Create missing parent dirs so a write to a not-yet-existing nested path
@@ -84,7 +96,11 @@ export class LocalWorkspace {
     // being created is rejected before writeFile follows it. This narrows, but
     // cannot eliminate, the filesystem race between validation and mutation.
     await this.assertWritePathHasNoSymlinkSegments(fullPath, path);
-    await writeFile(fullPath, content, "utf8");
+    if (typeof content === "string") {
+      await writeFile(fullPath, content, "utf8");
+    } else {
+      await writeFile(fullPath, content);
+    }
     await this.assertResolvedPathStillInsideRoot(fullPath, path);
   }
 
@@ -96,19 +112,34 @@ export class LocalWorkspace {
   /**
    * Remove a file inside the root. Used by checkpoint rollback to undo the
    * creation of files that did not exist when a checkpoint opened. Missing
-   * targets are a no-op. Subject to the same containment + symlink checks as
-   * writes.
+   * targets are a no-op. Symlink ancestors are rejected; a symlink leaf is
+   * unlinked without following its target so rollback can safely remove it.
    */
   async removeFile(path: string): Promise<void> {
-    const fullPath = await this.resolveInsideRoot(path);
-    await this.assertWritePathHasNoSymlinkSegments(fullPath, path);
+    // Resolve the target lexically so a symlink leaf can be unlinked without
+    // following its target. Symlink ancestors remain forbidden.
+    const fullPath = this.resolveLexicallyInsideRoot(path);
+    await this.assertWritePathHasNoSymlinkSegments(fullPath, path, true);
     await rm(fullPath, { force: true });
   }
 
   async resolveInsideRoot(path: string): Promise<string> {
-    const fullPath = resolve(this.root, path);
+    const fullPath = this.resolveLexicallyInsideRoot(path);
     await this.assertResolvedPathStillInsideRoot(fullPath, path);
 
+    return fullPath;
+  }
+
+  private resolveLexicallyInsideRoot(path: string): string {
+    const fullPath = resolve(this.root, path);
+    const rel = relative(this.root, fullPath);
+    if (rel.startsWith("..") || rel === ".." || fullPath === this.root) {
+      throw new WorkspaceRuntimeError(
+        "WORKSPACE_PATH_ESCAPED",
+        `Path escapes workspace root: ${path}`,
+        { path },
+      );
+    }
     return fullPath;
   }
 
@@ -149,13 +180,15 @@ export class LocalWorkspace {
   private async assertWritePathHasNoSymlinkSegments(
     fullPath: string,
     path: string,
+    allowLeafSymlink = false,
   ): Promise<void> {
     // Inspect the original lexical path rather than its realpath. Resolving the
     // complete target first erases symlink segments that point back inside the
     // workspace, so lstat() would only see their non-symlink destination.
     const relativePath = relative(this.root, fullPath);
     let candidate = this.root;
-    for (const segment of relativePath.split(sep)) {
+    const segments = relativePath.split(sep).filter(Boolean);
+    for (const [index, segment] of segments.entries()) {
       if (!segment) continue;
       candidate = resolve(candidate, segment);
       const stat = await lstat(candidate).catch(() => undefined);
@@ -163,6 +196,7 @@ export class LocalWorkspace {
       // post-mkdir invocation checks the newly-created chain again.
       if (!stat) break;
       if (!stat.isSymbolicLink()) continue;
+      if (allowLeafSymlink && index === segments.length - 1) continue;
 
       throw new WorkspaceRuntimeError(
         "WORKSPACE_SYMLINK_WRITE_DENIED",

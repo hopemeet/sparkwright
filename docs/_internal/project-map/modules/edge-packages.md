@@ -59,7 +59,9 @@ contracts, and focused checklists that no longer fit here.
   grant compilation plus the availability/enforce/fallback launch decision for
   argv processes; callers still own transport I/O, timeout, shutdown, and trace
   lifecycle. Route safety-sensitive changes through shell and workspace-write
-  maps.
+  maps. Its status explicitly distinguishes Linux `bind-allowlist` from macOS
+  `deny-list-guard`; `enforce` controls fallback and must not be interpreted as
+  a portable workspace allowlist.
 - IM gateway is an application bridge over `sdk-node` and host events. Route
   protocol shape changes through protocol/host maps before updating gateway
   renderers or state.
@@ -108,6 +110,14 @@ contracts, and focused checklists that no longer fit here.
   source exports. It should not be used as the sole authority for behavior.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-13T22:30:00+0800
+- Scope: verified platform profile compilation and clarified the public status
+  contract: Linux is bind-allowlist, macOS is allow-default deny-list guard,
+  and enforce means no unsandboxed fallback.
+- Read: shell-sandbox status/profile compiler, config schema/guide, and tests.
+- Tests: shell-sandbox 14/14; typecheck/build; Host config/schema checks passed.
 
 - Status: Verified
 - Date: 2026-07-13

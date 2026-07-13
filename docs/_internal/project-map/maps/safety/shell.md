@@ -56,10 +56,13 @@ model calls shell tool
   and allowed roots so "wrong semantic anchor" and real escape attempts are
   distinguishable.
 - Foreground Host shell mutation audit uses `workspace-snapshot.ts` for
-  snapshot/diff/rollback. MCP execution does not reuse this primitive: local
-  stdio servers use their own transport lifecycle and a neutral cwd only avoids
-  accidental relative-path project writes; it is not mutation detection or
-  filesystem isolation.
+  snapshot/diff/rollback. It records regular files and symlinks, removes a
+  created/replacement symlink before restoration, and routes captured binary
+  writes through Core `LocalWorkspace` containment. It is still a whole-tree
+  workspace audit, not protection for writes outside the workspace. MCP
+  execution does not reuse this primitive: local stdio servers use their own
+  transport lifecycle and a neutral cwd only avoids accidental relative-path
+  project writes; it is not mutation detection or filesystem isolation.
 - Shell mutation audit excludes SparkWright runtime control-plane state such as
   `.sparkwright/sessions/` and `.sparkwright/workflow-runs/` so host-owned
   session traces and durable workflow state are not reported as model shell
@@ -136,6 +139,10 @@ model calls shell tool
 - ACP child workers also consume the shared launch decision, but keep ACP
   JSON-RPC/session/permission lifecycle in `acp-client-adapter`; they do not use
   Host shell parsing, shell mutation snapshots, or `TracedProcessRunner`.
+- Sandbox `enforce` means fail closed when the selected runtime is unavailable;
+  it does not imply workspace allowlisting. Linux bubblewrap reports
+  `bind-allowlist`; macOS sandbox-exec uses an allow-default profile and reports
+  `deny-list-guard`. Capability inspection must preserve that distinction.
 
 ## Consumers
 
@@ -156,6 +163,15 @@ model calls shell tool
 - Shell is powerful and cross-cuts workspace, tasks, trace, and capability state.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-13T22:30:00+0800
+- Scope: hardened foreground snapshot rollback against symlink replacement and
+  aligned schema/user wording with the backend-specific filesystem guarantee.
+- Read: Host Shell/snapshot/config, Core LocalWorkspace, shell-sandbox profile
+  compiler/status, configuration guide, and focused tests.
+- Tests: Host config/snapshot/tools 161/161; Core workspace/checkpoint 31/31;
+  shell-sandbox 14/14; schema check; affected typechecks/builds passed.
 
 - Status: Verified
 - Date: 2026-07-13T22:21:00+0800

@@ -237,7 +237,7 @@
             "mode": {
               "type": "string",
               "enum": ["off", "warn", "enforce"],
-              "description": "off disables OS sandboxing; warn uses it when available; enforce fails shell execution when sandboxing is unavailable."
+              "description": "off disables OS sandboxing; warn uses it when available and otherwise falls back; enforce prevents unsandboxed fallback when the runtime is unavailable. Enforce does not imply the same filesystem boundary on every OS."
             },
             "failIfUnavailable": {
               "type": "boolean",
@@ -292,7 +292,7 @@
             }
           },
           "additionalProperties": false,
-          "description": "OS-level process sandbox for local command execution. Forced deny-write paths are always appended by the host."
+          "description": "Experimental OS-level process sandbox for supported local execution paths. Linux bubblewrap uses a bind allowlist; macOS sandbox-exec uses an allow-default deny-list guard. Forced deny-write paths are always appended by the host."
         }
       },
       "additionalProperties": false,
@@ -1491,7 +1491,7 @@
             "mode": {
               "type": "string",
               "enum": ["off", "warn", "enforce"],
-              "description": "off disables OS sandboxing; warn uses it when available; enforce fails shell execution when sandboxing is unavailable."
+              "description": "off disables OS sandboxing; warn uses it when available and otherwise falls back; enforce prevents unsandboxed fallback when the runtime is unavailable. Enforce does not imply the same filesystem boundary on every OS."
             },
             "failIfUnavailable": {
               "type": "boolean",
@@ -1546,7 +1546,7 @@
             }
           },
           "additionalProperties": false,
-          "description": "OS-level process sandbox for local command execution. Forced deny-write paths are always appended by the host."
+          "description": "Experimental OS-level process sandbox for supported local execution paths. Linux bubblewrap uses a bind allowlist; macOS sandbox-exec uses an allow-default deny-list guard. Forced deny-write paths are always appended by the host."
         }
       },
       "additionalProperties": false,

@@ -96,6 +96,23 @@ describe("LocalWorkspace", () => {
     );
   });
 
+  it("removes a symlink leaf without following it", async () => {
+    const outside = await mkdtemp(join(tmpdir(), "sparkwright-outside-"));
+    try {
+      const target = join(outside, "keep.txt");
+      await writeFile(target, "keep\n", "utf8");
+      await symlink(target, join(root, "link.txt"));
+      const workspace = new LocalWorkspace(root);
+
+      await workspace.removeFile("link.txt");
+
+      await expect(readFile(join(root, "link.txt"))).rejects.toThrow();
+      await expect(readFile(target, "utf8")).resolves.toBe("keep\n");
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
   it("creates parent dirs when writing to a not-yet-existing nested path", async () => {
     // Regression: writeText previously called writeFile without mkdir, so a
     // write to a new nested path threw ENOENT and the model could not create
