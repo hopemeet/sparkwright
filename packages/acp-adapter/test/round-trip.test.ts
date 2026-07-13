@@ -300,6 +300,10 @@ describe("ACP round trip", () => {
         defaultWorkspaceRoot: cwd,
         defaultModel: "scripted",
         defaultTraceLevel: "debug",
+        // This fixture writes a workspace marker when the MCP process starts;
+        // opt into a write run so the test exercises ACP MCP injection rather
+        // than the read-only extension-process guard.
+        defaultShouldWrite: true,
       }),
       ndJsonStream(agentToClient.writable, clientToAgent.readable),
     );
