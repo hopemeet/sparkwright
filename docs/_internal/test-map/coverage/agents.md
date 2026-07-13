@@ -61,7 +61,7 @@
   subagent lifecycle events, writes a session trace, and honors `maxDepth`.
 - Configured in-process delegates can write through the parent approval path and
   the parent can verify after `subagent.completed` with a later `read_file`.
-- External-command delegates with `workspaceAccess: read_write` disclose
+- ACP and external-command delegates with `workspaceAccess: read_write` disclose
   untracked write-capable boundaries; without parent `--write`, they fail before
   process execution and are counted as expected denials.
 - CLI `agents create` can create a project-local child profile with a callable
@@ -258,8 +258,10 @@
 - Real-model delegation decisions are prompt- and model-sensitive.
 - Multiple similar delegate calls in one batch can make event pairing and
   repeated-delegate diagnosis harder.
-- ACP direct delegate behavior still deserves a live command/fixture route when
-  ACP delegate transport changes.
+- ACP has a deterministic fixture route covering protocol completion, env
+  inheritance, parent write denial, read-write untracked audit, and enforce-mode
+  sandbox unavailability. Real external ACP binaries remain environment- and
+  installation-sensitive.
 - Dynamic `spawn_agent` is read-only by contract; child-write scenarios must use
   configured delegates rather than dynamic spawn.
 - Real configured delegates can recover from repeated identical tool calls; keep

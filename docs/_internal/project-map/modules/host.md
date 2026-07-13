@@ -727,12 +727,17 @@ Does not own:
   bounded `progressCount` / `progressDropped` / `progressHead` /
   `progressTail` summaries on the delegate tool result and
   `subagent.completed.payload.result`, not routed as `extension.process.*`.
-  Read/write external command delegates emit
+  Read/write ACP and external command delegates emit
   `workspace.write.untracked_access_granted` when direct workspace access is
   granted; this is a boundary marker, not a managed write event.
   Parent-visible lifecycle metadata uses parent `agentId`, inherited
   `sessionId`, plus `childAgentId`/`agentProfileId` for the external profile
   identity so direct CLI JSON output and persisted trace attribution agree.
+- ACP delegates use the same `workspaceAccess:none|read_write` sandbox/access
+  compilation as external command delegates. `none` runs from a private
+  execution cwd under the configured sandbox posture; `read_write` requires the
+  parent run write gate and emits the untracked-access marker. ACP JSON-RPC,
+  permission, timeout, and session shutdown stay in `acp-client-adapter`.
 - Background shell tasks adopt the already-started shell stream through
   `TracedProcessRunner.observeStreaming`, keep `task.*` as the lifecycle, emit
   `task.created` before opening the task span with `task.started`, write full
@@ -791,6 +796,14 @@ Does not own:
 - Capability snapshot fields are useful but can become stale if new tools bypass `tool-catalog.ts`; direct-core/cron should add tools by catalog profile, not local factories.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-13
+- Scope: brought ACP child delegates under the configured sandbox launch path
+  and added read-write untracked-access audit parity with external commands.
+- Read: Host ACP/external delegate assembly, delegate runner, runtime, and ACP
+  client worker.
+- Tests: Host ACP/external/tool tests 122/122; ACP adapter 2/2; typechecks passed.
 
 - Status: Verified
 - Date: 2026-07-13

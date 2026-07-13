@@ -119,6 +119,13 @@ Manual compact
 
 - Status: Read-only
 - Date: 2026-07-13
+- Scope: checked ACP prepared invocation cleanup; session ids, run persistence,
+  trace paths, and stored formats are unchanged.
+- Read: ACP worker/Host delegate runner and session persistence boundary.
+- Tests: ACP/Host focused tests and CLI delegate tests passed.
+
+- Status: Read-only
+- Date: 2026-07-13
 - Scope: checked Host security-plan and CLI inspect refactor; session roots,
   records, trace paths, and storage formats did not change.
 - Read: Host prepared environment/session-store assembly and CLI inspect path.

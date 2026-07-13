@@ -258,6 +258,13 @@ createRun/resumeRunFromCheckpoint
 
 - Status: Read-only
 - Date: 2026-07-13
+- Scope: ACP sandbox/access validation occurs inside the existing delegate tool
+  execution after normal policy/approval; Core run-loop ordering is unchanged.
+- Read: Host ACP tool and Core tool execution boundary.
+- Tests: Host tool/ACP focused suites passed.
+
+- Status: Read-only
+- Date: 2026-07-13
 - Scope: checked Host security-plan and CLI inspect refactor; Core run-loop
   ordering, policy evaluation, approvals, execution, and terminal events did
   not change.

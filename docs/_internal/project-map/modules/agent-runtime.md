@@ -339,6 +339,13 @@ Does not own:
 
 - Status: Read-only
 - Date: 2026-07-13
+- Scope: ACP process delegates gained Host sandbox/access parity; agent-runtime
+  in-process child, depth, task, and rollup semantics did not change.
+- Read: Host ACP delegate/runtime assembly and agent-runtime boundary.
+- Tests: Host ACP/external/tool focused suites passed.
+
+- Status: Read-only
+- Date: 2026-07-13
 - Scope: checked external Delegate sandbox/grant refactor; agent runtime child
   lifecycle, depth, task, and write-rollup contracts did not change.
 - Read: Host external command adapter boundary and agent-runtime contracts.

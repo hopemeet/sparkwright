@@ -85,6 +85,13 @@ host config MCP servers
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-13
+- Scope: ACP child worker sandbox launch changed independently of MCP; MCP
+  server merging, transport, neutral cwd, and tool behavior are unchanged.
+- Read: Host delegate assembly and MCP runtime assembly boundary.
+- Tests: no MCP behavior changed; prior Stage 3 MCP suite remained green.
+
 - Status: Verified
 - Date: 2026-07-13
 - Scope: MCP stdio adopted the shared argv sandbox launch decision; neutral cwd

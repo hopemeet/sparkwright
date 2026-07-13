@@ -119,6 +119,14 @@ Future run in compacted session
 
 - Status: Read-only
 - Date: 2026-07-13
+- Scope: ACP delegate sandbox/access assembly applies to fresh prepared tools;
+  resume payload, checkpoint, Workflow authorization snapshot, and replay
+  formats are unchanged.
+- Read: Host runtime delegate assembly and resume preparation paths.
+- Tests: Host focused suites passed.
+
+- Status: Read-only
+- Date: 2026-07-13
 - Scope: checked all three Host preparation entrypoints after access-plan
   consolidation; start, checkpoint resume, and Workflow resume still resolve a
   fresh access plan and retain existing replay semantics.

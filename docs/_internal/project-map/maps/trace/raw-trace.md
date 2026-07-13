@@ -205,6 +205,14 @@ EventLog emits full event
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-07-13
+- Scope: ACP read-write delegates now emit the existing
+  `workspace.write.untracked_access_granted` event; no new event name or payload
+  family was introduced.
+- Read: Host ACP/external subagent lifecycle and workspace-write marker events.
+- Tests: Host ACP/external/tool focused suites 122/122.
+
 - Status: Read-only
 - Date: 2026-07-13
 - Scope: sandbox launch/grant ownership moved, but process/delegate/MCP event

@@ -95,6 +95,11 @@ configured profiles/delegates
 - External ACP and external-command delegates are config-declared agent profile
   metadata exposed through inline profile `delegateTool` or
   `capabilities.agents.delegateTools`.
+- Both process delegate protocols compile `workspaceAccess:none|read_write`
+  through Host before launch. `none` uses a private cwd and configured sandbox;
+  `read_write` requires the parent run write gate and emits an untracked
+  write-capable marker. ACP retains its own JSON-RPC/session lifecycle instead
+  of entering `TracedProcessRunner`.
 - Configured in-process delegates are also exposed through
   `capabilities.agents.delegateTools` with `protocol: "in_process"`, so host
   snapshots, CLI inspect, and TUI capability views use one descriptor source.
@@ -283,8 +288,8 @@ configured profiles/delegates
   delegate tool result and `subagent.completed.payload.result` as
   `progressCount`, `progressDropped`, `progressHead`, and `progressTail`; it
   does not create `extension.process.*` lifecycle rows. When a read/write
-  external command delegate is granted direct workspace access it emits an
-  untracked write-capable marker, not managed write events.
+  ACP or external command delegate is granted direct workspace access it emits
+  an untracked write-capable marker, not managed write events.
 
 ## Consumers
 
@@ -309,6 +314,15 @@ configured profiles/delegates
   detection.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-13
+- Scope: ACP child delegates gained sandbox/access and untracked-write audit
+  parity with external command delegates without merging their process
+  lifecycles.
+- Read: Host ACP/external delegate tools, runtime assembly, direct delegate
+  runner, and ACP client adapter.
+- Tests: Host ACP/external/tool tests 122/122; ACP adapter tests 2/2.
 
 - Status: Verified
 - Date: 2026-07-13

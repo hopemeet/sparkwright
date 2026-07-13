@@ -93,6 +93,21 @@ exports, which point at `dist`.
 
 ## Host
 
+### `packages/host/src/acp-child-agent.ts` or ACP worker launch
+
+Run:
+
+```bash
+npm --workspace @sparkwright/acp-client-adapter test
+npm --workspace @sparkwright/acp-client-adapter run build
+npm --workspace @sparkwright/host test -- test/acp-child-agent.test.ts test/external-command-agent.test.ts test/tools.test.ts
+npm --workspace @sparkwright/host run typecheck
+```
+
+Assert parent write denial before launch, sandbox enforce failure, private-cwd
+behavior, and the untracked-access marker for approved read-write delegates.
+Do not require a real installed ACP binary for deterministic focused coverage.
+
 ### `packages/host/src/run-access.ts` or `run-security-plan.ts`
 
 Run:

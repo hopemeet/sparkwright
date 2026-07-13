@@ -6433,6 +6433,9 @@ export function createConfiguredDelegateTools(input: {
           forbidNesting: delegate.forbidNesting ?? true,
           maxDepth: input.maxDepth,
           allowReadWriteWorkspaceAccess: input.allowReadWriteWorkspaceAccess,
+          sandbox: input.sandbox,
+          skillRoots: input.skillRoots,
+          configPaths: input.configPaths,
         }),
       );
       continue;

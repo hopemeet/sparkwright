@@ -13,11 +13,15 @@ import type { RuntimeContext } from "@sparkwright/core";
 describe("ExternalAcpWorker", () => {
   it("runs an external ACP agent process", async () => {
     const fixture = await createFixtureAgent();
+    let cleaned = false;
     const worker = new ExternalAcpWorker({
       command: process.execPath,
       args: [fixture.agentPath],
       cwd: fixture.cwd,
       env: process.env,
+      cleanup: async () => {
+        cleaned = true;
+      },
     });
 
     const result = await worker.run({
@@ -30,6 +34,7 @@ describe("ExternalAcpWorker", () => {
     expect(result.sessionId).toBe("session_fixture");
     expect(result.text).toContain("fixture handled: delegate this");
     expect(result.toolCallCount).toBe(1);
+    expect(cleaned).toBe(true);
   });
 
   it("wraps an external ACP agent as a governed SparkWright tool", async () => {

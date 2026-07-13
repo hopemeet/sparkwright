@@ -334,6 +334,13 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-13
+- Scope: ACP delegate kept its existing tool descriptor, policy, approval, and
+  subagent lifecycle while adding sandbox/access enforcement at execution.
+- Read: Host ACP delegate/runtime catalog assembly.
+- Tests: Host ACP/external/tool suites 122/122; CLI delegate tests 7/7.
+
 - Status: Verified
 - Date: 2026-07-13
 - Scope: unified Host run/inspect security derivation and removed the CLI

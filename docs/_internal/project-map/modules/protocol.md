@@ -199,6 +199,13 @@ Does not own:
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-07-13
+- Scope: ACP worker invocation cleanup and Host sandbox/access parity changed no
+  Host wire method, ACP SDK message, capability snapshot, or event schema.
+- Read: ACP client worker, Host ACP delegate result, and protocol exports.
+- Tests: ACP adapter and Host ACP focused suites passed.
+
+- Status: Read-only
 - Date: 2026-07-12T20:12:00+0800
 - Scope: checked durable Workflow source-layer serialization; no public client
   protocol message or schema changed.

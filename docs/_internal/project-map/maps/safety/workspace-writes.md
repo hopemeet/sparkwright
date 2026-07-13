@@ -53,7 +53,7 @@ tool proposes write
   later successful verification, and no later workspace write. Raw write events
   and raw child finality are not rewritten.
 - Untracked write-capable process boundaries are explicit audit boundaries:
-  read/write external command delegates emit
+  read/write ACP and external command delegates emit
   `workspace.write.untracked_access_granted` when direct access is granted, and
   background shell tasks emit the same marker with
   `protocol: "background_shell"`, `backgroundOrigin`, and sandbox status. The
@@ -104,6 +104,14 @@ tool proposes write
   from managed workspace writes.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-13
+- Scope: ACP `workspaceAccess:read_write` now emits the same
+  untracked-access-granted marker as external commands after the parent write
+  gate; no managed write is inferred.
+- Read: Host ACP/external delegate tools and workspace-write event contract.
+- Tests: Host ACP/external/tool focused suites 122/122.
 
 - Status: Read-only
 - Date: 2026-07-13

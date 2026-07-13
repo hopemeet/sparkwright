@@ -32,6 +32,10 @@ contracts, and focused checklists that no longer fit here.
 - ACP packages bridge the host/runtime/protocol world to ACP sessions and
   external ACP workers. Route ACP server changes through host/protocol/session
   maps; route external worker tool changes through agents and tool orchestration.
+- `acp-client-adapter` owns ACP worker JSON-RPC, permission rejection, session
+  lifecycle, timeout, child termination, and optional prepared-invocation
+  cleanup. Host compiles workspace access and sandbox launch before constructing
+  the worker; the adapter does not decide filesystem authority.
 - SDK packages are host protocol clients. `sdk-core` owns transport-agnostic
   client behavior; `sdk-node` and `sdk-browser` add environment-specific
   transports. Protocol schema and host-client behavior remain the source of
@@ -104,6 +108,14 @@ contracts, and focused checklists that no longer fit here.
   source exports. It should not be used as the sole authority for behavior.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-13
+- Scope: ACP workers now accept and clean up Host-prepared sandbox invocations;
+  ACP protocol/session ownership remains in the adapter.
+- Read: ACP client worker, Host ACP delegate, and shared sandbox launch compiler.
+- Tests: ACP client adapter 2/2; Host ACP/delegate/tool suites 122/122;
+  typechecks passed.
 
 - Status: Verified
 - Date: 2026-07-13

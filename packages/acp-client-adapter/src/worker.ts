@@ -23,6 +23,8 @@ export interface ExternalAcpWorkerCommand {
   args?: string[];
   cwd?: string;
   env?: NodeJS.ProcessEnv;
+  /** Optional invocation cleanup (for example a generated OS sandbox profile). */
+  cleanup?: () => Promise<void>;
 }
 
 export interface ExternalAcpWorkerRunInput {
@@ -117,6 +119,7 @@ export class ExternalAcpWorker {
     } finally {
       timeout.dispose();
       terminateWorker(child);
+      await this.options.cleanup?.();
     }
   }
 }

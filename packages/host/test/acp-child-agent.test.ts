@@ -6,6 +6,7 @@ import { createRequire } from "node:module";
 import { describe, expect, it } from "vitest";
 import { createRun } from "@sparkwright/core";
 import type { AgentProfile } from "@sparkwright/agent-runtime";
+import type { ShellSandboxRuntime } from "@sparkwright/shell-sandbox";
 import {
   acpConfigFromAgentProfile,
   createAcpDelegateTool,
@@ -154,6 +155,99 @@ describe("ACP child agent delegate tool", () => {
     );
   });
 
+  it("marks approved read-write ACP workspace access as untracked", async () => {
+    const fixture = await createFixtureAgent();
+    const parent = createRun({
+      goal: "parent",
+      model: {
+        async complete() {
+          return { message: "parent" };
+        },
+      },
+      maxSteps: 1,
+    });
+    const profile: AgentProfile = {
+      id: "external_reviewer",
+      metadata: {
+        acp: {
+          transport: "stdio",
+          command: process.execPath,
+          args: [fixture.agentPath],
+          workspaceAccess: "read_write",
+        },
+      },
+    };
+    const tool = createAcpDelegateTool({
+      getParent: () => parent,
+      profile,
+      toolName: "delegate_external_reviewer",
+      description: "Delegate to fixture ACP worker.",
+      workspaceRoot: fixture.cwd,
+      allowReadWriteWorkspaceAccess: true,
+      sandbox: { mode: "off" },
+    });
+
+    await tool.execute({ goal: "review" }, { run: parent.record } as never);
+
+    expect(parent.events.all()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "workspace.write.untracked_access_granted",
+          payload: expect.objectContaining({
+            protocol: "acp",
+            marker: "untracked-write-capable",
+          }),
+        }),
+      ]),
+    );
+  });
+
+  it("fails closed when ACP enforce-mode sandbox is unavailable", async () => {
+    const fixture = await createFixtureAgent();
+    const parent = createRun({
+      goal: "parent",
+      model: {
+        async complete() {
+          return { message: "parent" };
+        },
+      },
+      maxSteps: 1,
+    });
+    const profile: AgentProfile = {
+      id: "external_reviewer",
+      metadata: {
+        acp: {
+          transport: "stdio",
+          command: process.execPath,
+          args: [fixture.agentPath],
+        },
+      },
+    };
+    const tool = createAcpDelegateTool({
+      getParent: () => parent,
+      profile,
+      toolName: "delegate_external_reviewer",
+      description: "Delegate to fixture ACP worker.",
+      workspaceRoot: fixture.cwd,
+      sandbox: { mode: "enforce" },
+      sandboxRuntime: unavailableRuntime(),
+    });
+
+    await expect(
+      tool.execute({ goal: "review" }, { run: parent.record } as never),
+    ).rejects.toMatchObject({ code: "DELEGATE_EXECUTION_FAILED" });
+    expect(parent.events.all()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "subagent.failed",
+          payload: expect.objectContaining({
+            errorCode: "DELEGATE_EXECUTION_FAILED",
+          }),
+        }),
+      ]),
+    );
+  });
+
   it("does not inherit host environment by default", async () => {
     const fixture = await createEnvProbeAgent();
     const previous = process.env.SPARKWRIGHT_QA_SECRET;
@@ -182,6 +276,17 @@ describe("ACP child agent delegate tool", () => {
     }
   });
 });
+
+function unavailableRuntime(): ShellSandboxRuntime {
+  return {
+    id: "missing-test-sandbox",
+    platform: process.platform,
+    isAvailable: async () => false,
+    execute: async () => {
+      throw new Error("unavailable runtime must not execute");
+    },
+  };
+}
 
 async function runEnvProbeDelegate(
   fixture: { cwd: string; agentPath: string },

@@ -124,6 +124,9 @@ model calls shell tool
   filesystem grant compilation. Host JSON-RPC, MCP stdio, Delegate, and Skill
   adapters keep separate I/O, timeout, trace, and cleanup lifecycles; this seam
   is not a general-purpose runner.
+- ACP child workers also consume the shared launch decision, but keep ACP
+  JSON-RPC/session/permission lifecycle in `acp-client-adapter`; they do not use
+  Host shell parsing, shell mutation snapshots, or `TracedProcessRunner`.
 
 ## Consumers
 
@@ -144,6 +147,13 @@ model calls shell tool
 - Shell is powerful and cross-cuts workspace, tasks, trace, and capability state.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-13
+- Scope: added configured sandbox launch to ACP child workers while preserving
+  their distinct protocol lifecycle and workspaceAccess gate.
+- Read: Host ACP delegate, ACP client worker, and shell-sandbox compiler.
+- Tests: ACP adapter 2/2 and Host ACP/external/tool suites 122/122.
 
 - Status: Verified
 - Date: 2026-07-13

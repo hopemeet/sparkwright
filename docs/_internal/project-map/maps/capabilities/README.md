@@ -205,6 +205,13 @@ config + workspace capability roots
 
 - Status: Read-only
 - Date: 2026-07-13
+- Scope: ACP execution gained sandbox/access parity; configured capability
+  membership and `CapabilitySnapshot` shape did not change.
+- Read: Host ACP delegate descriptor/runtime assembly and capability snapshot.
+- Tests: Host focused suites and CLI delegate tests passed.
+
+- Status: Read-only
+- Date: 2026-07-13
 - Scope: checked filesystem grant/launch decision extraction; capability
   membership and protocol snapshot fields did not change.
 - Read: Host/MCP adapters and shell-sandbox public decision types.
