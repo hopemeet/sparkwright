@@ -30,6 +30,7 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md),
 - `packages/core/src/fact-ledger.ts`
 - `packages/core/src/run-outcome.ts`
 - `packages/core/src/policy.ts`
+- `packages/core/src/environment.ts`
 - `packages/core/src/workspace.ts`
 - `packages/core/test/run.test.ts`
 - `packages/core/test/trace.test.ts`
@@ -120,6 +121,12 @@ Does not own:
   a symlink leaf without following its target; Host rollback uses the internal
   binary write path so restoration shares these guards. Callers must not weaken
   this by pre-resolving paths before passing them to the workspace API.
+- Core `createWorkspaceShellPolicy` is a structured `command + args` embedder
+  policy, not the Host shell-tool command parser. Relative `cwd` is evaluated
+  against its configured workspace root, while the original request remains
+  unchanged for the embedder executor. Host shell-tool separately owns parsing
+  a command string, heredoc stripping, and execution-time `cwd` normalization;
+  do not merge these different input contracts into a generic path helper.
 - Trace levels are `standard` and `debug`; `minimal` is not a valid mode.
 - Standard trace stream folding emits one `model.stream.text` marker per
   contiguous run-local chunk segment. A same-run non-chunk event flushes the
@@ -347,6 +354,13 @@ Does not own:
   guard and trace diagnostics.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-13T22:42:00+0800
+- Scope: corrected the standalone workspace Shell policy's relative-cwd anchor
+  without changing its non-transforming embedder request contract.
+- Read: Core environment policy/tests and Host shell-tool path-scope boundary.
+- Tests: Core environment/policy 35/35; Core typecheck/build; shell-tool 42/42.
 
 - Status: Verified
 - Date: 2026-07-13T22:30:00+0800

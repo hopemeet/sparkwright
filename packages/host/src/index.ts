@@ -208,6 +208,8 @@ export {
   formatWorkspaceDisplayPath,
   middleEllipsisPath,
 } from "@sparkwright/core";
+/** @internal Fresh per-run policy factory shared with diagnostic runners. */
+export { createHostRunPolicy } from "./run-policy.js";
 export {
   applyApprovedSkillProposal,
   applySkillProposal,

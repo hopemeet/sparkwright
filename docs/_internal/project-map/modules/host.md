@@ -14,6 +14,7 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 - `packages/host/src/runtime.ts`
 - `packages/host/src/run-access.ts`
 - `packages/host/src/run-security-plan.ts`
+- `packages/host/src/run-policy.ts`
 - `packages/host/src/server.ts`
 - `packages/host/src/connection.ts`
 - `packages/host/src/agent-spawn-grants.ts`
@@ -97,6 +98,10 @@ Does not own:
   workspace, access, confidential paths, skill/config roots, and resolved shell
   sandbox inputs there. It must not own prepared tools/processes, approval
   resolvers, traces, Workflow state, or Core's mutable per-run mutation policy.
+- `run-policy.ts` is the stateful companion factory. Every call creates a fresh
+  layered policy and fresh mutation `writtenPaths` state. Host runtime and the
+  internal CLI direct-core start/resume paths share its target/default
+  guardrails, but never share a returned policy instance.
 - The security plan keeps configured shell-sandbox status separate from the
   process sandbox passed to local extension adapters. Read-only run access
   strengthens that adapter input to fail-closed no-write without misreporting
@@ -809,6 +814,16 @@ Does not own:
 - Capability snapshot fields are useful but can become stale if new tools bypass `tool-catalog.ts`; direct-core/cron should add tools by catalog profile, not local factories.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-13T22:42:00+0800
+- Scope: extracted the fresh Host run-policy factory and reused it in runtime
+  plus direct-core start/resume, removing duplicated/default-drifted policy
+  assembly without moving mutable state into the security plan.
+- Read: Host run policy/runtime/config, CLI direct-core start/resume, Core
+  mutation policy, and focused tests.
+- Tests: Host policy/security-plan/tools/protocol 155/155; CLI 152/152; Core
+  environment/policy 35/35; shell-tool 42/42; affected typechecks/builds passed.
 
 - Status: Verified
 - Date: 2026-07-13T22:30:00+0800

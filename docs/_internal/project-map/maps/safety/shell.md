@@ -33,6 +33,11 @@ model calls shell tool
 ## Contracts
 
 - Shell is a normal tool and must not bypass core policy or trace.
+- Core `createWorkspaceShellPolicy` and shell-tool path scope are intentionally
+  not one fact source: the former validates structured embedder `command +
+args` without rewriting requests, while the latter parses Host command text
+  and normalizes execution cwd. They share workspace-relative cwd semantics,
+  but command parsing stays shell-tool-owned.
 - Shell `previewArgs()` only formats `tool.requested.payload.preview` for UI
   display; safety classification, path-scope checks, policy, and approval still
   use the parsed command arguments at execution/gating time.
@@ -163,6 +168,14 @@ model calls shell tool
 - Shell is powerful and cross-cuts workspace, tasks, trace, and capability state.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-13T22:42:00+0800
+- Scope: source review rejected a forced Core/shell-tool policy merge and fixed
+  the actual Core relative-cwd anchor drift.
+- Read: Core environment policy/tests and shell-tool path parsing/scope tests.
+- Tests: Core environment/policy 35/35; shell-tool 42/42; no shell-tool behavior
+  changed.
 
 - Status: Verified
 - Date: 2026-07-13T22:30:00+0800

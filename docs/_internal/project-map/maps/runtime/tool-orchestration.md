@@ -88,6 +88,10 @@ true` records a mutation index for its target (`mutatedByTarget`). A
   security plan for resolved access and filesystem/sandbox inputs, then build
   separate stateful lifecycles on top. The plan must not retain prepared MCP
   handles, tool instances, approval state, or Core mutation-policy state.
+- Host runtime and CLI direct-core start/resume call the same Host-owned
+  run-policy factory, but each call receives a new stateful policy instance.
+  This keeps target/write defaults aligned without leaking the mutation
+  policy's per-run `writtenPaths` into immutable preparation state.
 - That plan reports configured main-Shell sandbox status separately from the
   effective extension-process sandbox. Read-only runs strengthen the latter for
   MCP/Skill preparation; Workflow Script and explicit run-bound command hooks
@@ -337,6 +341,14 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
 - TUI live rendering and transcript export now share presentation summaries, but trace/model-context result compaction is still a separate backend concern.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-13T22:42:00+0800
+- Scope: centralized Host-shaped run policy construction across Host and
+  direct-core while preserving fresh per-run state and existing catalogs.
+- Read: Host run policy/runtime, CLI direct runner/resume, and Core policy.
+- Tests: Host focused 155/155; CLI 152/152; Core environment/policy 35/35;
+  shell-tool 42/42; affected typechecks/builds passed.
 
 - Status: Verified
 - Date: 2026-07-13T22:21:00+0800

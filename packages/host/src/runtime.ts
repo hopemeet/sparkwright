@@ -14,12 +14,8 @@ import {
   createSessionRunStoreFactory,
   loadSessionCompactArtifact,
   loadTraceEventsFile,
-  createPermissionModePolicy,
   createRun,
   createToolSearchTool,
-  createWorkspaceMutationPolicy,
-  createWorkspaceReadScopePolicy,
-  resolveRunConfidentialPaths,
   defineTool,
   FileSessionStore,
   EventLog,
@@ -198,6 +194,7 @@ import {
   type ResolvedRunAccess,
 } from "./run-access.js";
 import { prepareHostRunSecurityPlan } from "./run-security-plan.js";
+import { createHostRunPolicy } from "./run-policy.js";
 import { existingSkillRoots } from "./skill-roots.js";
 import { nextMessageId, nowIso } from "./connection.js";
 import {
@@ -296,38 +293,6 @@ function devSkillsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
 
 const WORKFLOW_SCOPED_TOOL_SEARCH_ORIGIN =
   "@sparkwright/host.workflow-scoped-tool-search";
-
-function createHostRunPolicy(input: {
-  permissionMode: PermissionMode;
-  shouldWrite: boolean;
-  targetPath?: string;
-  confidentialPaths?: readonly string[];
-  confidentialDefaults?: boolean;
-  writeGuardrails?: WriteGuardrailsConfig;
-}): Policy {
-  // Config write guardrails override the built-in defaults when present. The
-  // defaults: explicit --target runs stay bounded to that single file, while
-  // untargeted write runs get a small multi-file budget so real code+test
-  // changes can complete. In-place edits (edit_anchored_text / apply_patch)
-  // need to remove the lines they replace, so deletions default to permitted.
-  return createLayeredPolicy([
-    createPermissionModePolicy({ mode: input.permissionMode }),
-    createWorkspaceMutationPolicy({
-      allowWorkspaceWrites: input.shouldWrite,
-      allowedPaths: input.targetPath ? [input.targetPath] : undefined,
-      maxWriteFiles:
-        input.writeGuardrails?.maxFiles ?? (input.targetPath ? 1 : 4),
-      maxDiffLines: input.writeGuardrails?.maxDiffLines ?? 200,
-      allowDeletions: input.writeGuardrails?.allowDeletions ?? true,
-    }),
-    createWorkspaceReadScopePolicy({
-      confidentialPaths: resolveRunConfidentialPaths({
-        confidentialDefaults: input.confidentialDefaults,
-        confidentialPaths: input.confidentialPaths,
-      }),
-    }),
-  ]);
-}
 
 type RuntimeMcpConfig = Omit<CapabilityMcpConfig, "servers"> & {
   servers?: McpServerConfig[];

@@ -36,6 +36,9 @@ tool proposes write
   Interactive clients that need write approvals should send `shouldWrite: true`;
   managed coding tools then defer to the normal `workspace.write` diff approval
   path and guardrails.
+- Host and internal direct-core start/resume construct this mutation layer from
+  one Host factory. Every invocation is fresh: its `writtenPaths` file-budget
+  state must never be cached or shared through the immutable security plan.
 - Shell writes, managed capability mutations, and delegate child writes must
   still leave trace evidence. In-process delegate child writes are surfaced to
   the parent summary by rolling up the child run's own
@@ -113,6 +116,14 @@ tool proposes write
   from managed workspace writes.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-13T22:42:00+0800
+- Scope: aligned Host/direct-core start/resume target and write-budget policy
+  construction while preserving fresh mutation state per run.
+- Read: Host run policy/runtime, CLI direct-core/resume, Core mutation policy.
+- Tests: Host focused 155/155; CLI 152/152; Core policy/environment 35/35;
+  affected typechecks/builds passed.
 
 - Status: Verified
 - Date: 2026-07-13T22:30:00+0800

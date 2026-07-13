@@ -185,6 +185,12 @@ Does not own:
   and writes a stderr notice when unique-name storage creates a suffixed name
   such as `name 2`.
 - direct-core and cron run paths call `createConfiguredCliTools`, which now flattens the host `createCliDiagnosticToolCatalog` profile; do not add ad hoc CLI-only tools there. The deterministic direct-core write fallback uses `write_file` when the target file does not exist.
+- Direct-core remains an opt-in internal diagnostic path, but its fresh run and
+  run-resume mutation/read/permission policy comes from Host
+  `createHostRunPolicy`. Untargeted writes therefore use the Host default
+  four-file budget and deletion semantics; explicit `--target` and configured
+  write guardrails clamp both paths identically. Other Host-only capability
+  assembly is intentionally not implied by this policy parity.
 - `cron tick` passes a model factory into `@sparkwright/cron` so every due job
   receives a fresh adapter; this is required for stateful diagnostic adapters
   such as `deterministic`. Manual `cron run <ref>` remains single-job/single
@@ -311,6 +317,16 @@ Does not own:
 - The direct-core deterministic model is a diagnostics harness; it should keep exercising real catalog tools (`read_file`, `read_anchored_text`, `write_file`, `edit_anchored_text`/`apply_patch`) rather than reintroducing test-only write tools.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-13T22:42:00+0800
+- Scope: direct-core start/resume now share Host run-policy defaults and clamps;
+  the internal opt-in gate, catalog profile, model, storage, and resume carrier
+  remain CLI-owned diagnostics.
+- Read: CLI parser/start/session-resume/run-resume/direct runner, Host policy
+  factory, and focused tests.
+- Tests: CLI 152/152 and typecheck; Host policy/security-plan/tools/protocol
+  155/155; affected builds passed.
 
 - Status: Verified
 - Date: 2026-07-13

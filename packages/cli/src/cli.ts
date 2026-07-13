@@ -23,10 +23,6 @@ import {
   buildTraceReportFile,
   buildTraceTimelineFile,
   createSessionId,
-  createLayeredPolicy,
-  createPermissionModePolicy,
-  createWorkspaceReadScopePolicy,
-  resolveRunConfidentialPaths,
   createContextItemId,
   createRunId,
   FileSessionStore,
@@ -106,6 +102,7 @@ import {
   loadLayeredWorkflowAssets,
   loadHostConfig,
   createWorkflowJobSessionId,
+  createHostRunPolicy,
   configResolutionOrder,
   DEFAULT_DEFERRED_TOOLS,
   MAX_RUN_IMAGE_INPUT_BYTES,
@@ -431,6 +428,10 @@ export async function runCli(
     ? startDirectCoreRun(
         {
           ...runInput,
+          policyTargetPath:
+            runInput.targetPathSource === "cli"
+              ? runInput.targetPath
+              : undefined,
           contextItems: contextItemsForCliInput(
             runInput.goal,
             loadedInput.input,
@@ -7146,6 +7147,8 @@ async function handleSessionResumeCommand(
     ...parsed,
     sessionId: session.id,
     contextItems,
+    policyTargetPath:
+      parsed.targetPathSource === "cli" ? parsed.targetPath : undefined,
   };
   return parsed.directCore
     ? startDirectCoreRun(runInput, io, env)
@@ -7304,15 +7307,16 @@ async function handleRunResumeCommand(
     permissionMode: parsed.runAccess.permissionMode,
     io,
   });
-  const policy = createLayeredPolicy([
-    createPermissionModePolicy({ mode: parsed.runAccess.permissionMode }),
-    createWorkspaceReadScopePolicy({
-      confidentialPaths: resolveRunConfidentialPaths({
-        confidentialDefaults: parsed.confidentialDefaults,
-        confidentialPaths: parsed.confidentialPaths,
-      }),
-    }),
-  ]);
+  const loadedConfig = await loadHostConfig(parsed.workspaceRoot, env);
+  const policy = createHostRunPolicy({
+    permissionMode: parsed.runAccess.permissionMode,
+    shouldWrite: parsed.runAccess.shouldWrite,
+    targetPath:
+      parsed.targetPathSource === "cli" ? parsed.targetPath : undefined,
+    writeGuardrails: loadedConfig.config.write,
+    confidentialDefaults: parsed.confidentialDefaults,
+    confidentialPaths: parsed.confidentialPaths,
+  });
   const tools = await createConfiguredCliTools(parsed.workspaceRoot, env);
 
   // Wire a FileRunStore pointing at the same run dir so the resumed run's
