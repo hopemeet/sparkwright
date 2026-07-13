@@ -1284,13 +1284,11 @@ describe("host tools", () => {
     expect(
       lifecycleTypes(parent.events.all(), indexedResult.childRunId),
     ).toEqual(["subagent.requested", "subagent.started", "subagent.completed"]);
-    // Characterization: the indexed wrapper currently preserves the hidden
-    // direct tool's `delegate` entrypoint instead of recording delegate_agent.
     expect(
       projectAgentLifecycle(
         parent.events.all(),
         indexedResult.childRunId,
-      ).every((event) => event.entrypoint === "delegate"),
+      ).every((event) => event.entrypoint === "delegate_agent"),
     ).toBe(true);
     expect(
       terminalLifecycleCount(parent.events.all(), indexedResult.childRunId),

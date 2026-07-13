@@ -163,11 +163,9 @@ describe("ACP child agent delegate tool", () => {
         identityConsistent: true,
       }),
     ]);
-    // Characterization: ACP terminal projection does not yet carry the
-    // terminalState field used by in-process/dynamic Agent paths.
     expect(
       projectAgentLifecycle(parent.events.all(), result.childRunId).at(-1),
-    ).not.toHaveProperty("terminalState");
+    ).toMatchObject({ terminalState: "completed" });
     expect(terminalLifecycleCount(parent.events.all(), result.childRunId)).toBe(
       1,
     );
@@ -237,12 +235,8 @@ describe("ACP child agent delegate tool", () => {
         run: parent.record,
       } as never),
     ).rejects.toThrow("parent run has not enabled workspace writes");
-    // Characterization: the current ACP adapter announces started before its
-    // workspace-access admission check. Supervisor migration should replace
-    // this with a pre-start admission state rather than preserve this order.
     expect(lifecycleTypes(parent.events.all())).toEqual([
       "subagent.requested",
-      "subagent.started",
       "subagent.failed",
     ]);
     expect(terminalLifecycleCount(parent.events.all())).toBe(1);
@@ -252,6 +246,7 @@ describe("ACP child agent delegate tool", () => {
           type: "subagent.failed",
           payload: expect.objectContaining({
             errorCode: "DELEGATE_WORKSPACE_ACCESS_DENIED",
+            terminalState: "failed",
           }),
         }),
       ]),
@@ -339,6 +334,10 @@ describe("ACP child agent delegate tool", () => {
     await expect(
       tool.execute({ goal: "review" }, { run: parent.record } as never),
     ).rejects.toMatchObject({ code: "DELEGATE_EXECUTION_FAILED" });
+    expect(lifecycleTypes(parent.events.all())).toEqual([
+      "subagent.requested",
+      "subagent.failed",
+    ]);
     expect(parent.events.all()).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

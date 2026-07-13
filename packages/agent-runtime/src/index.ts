@@ -64,9 +64,9 @@ import type {
   PreparedAgentInvocation,
   SubAgentEntrypoint,
 } from "./agents/invocation.js";
+import { createAgentSupervisor } from "./agents/supervisor.js";
 import {
-  agentInvocationEventBase,
-  agentInvocationMetadata,
+  agentInvocationEntrypointFromArgs,
   isSubAgentEntrypoint,
   prepareAgentInvocation,
 } from "./agents/invocation.js";
@@ -93,10 +93,17 @@ export type {
   PrepareAgentInvocationInput,
   SubAgentEntrypoint,
 } from "./agents/invocation.js";
+export type {
+  AgentSupervisor,
+  AgentSupervisorState,
+} from "./agents/supervisor.js";
+export { createAgentSupervisor } from "./agents/supervisor.js";
 export {
   agentInvocationEventBase,
+  agentInvocationEntrypointFromArgs,
   agentInvocationMetadata,
   isSubAgentEntrypoint,
+  markAgentInvocationEntrypoint,
   PREPARED_AGENT_INVOCATION_SCHEMA_VERSION,
   prepareAgentInvocation,
 } from "./agents/invocation.js";
@@ -929,9 +936,12 @@ export function spawnSubAgent(input: SpawnSubAgentInput): SpawnedSubAgent {
     subagentDepth,
     entrypoint: subagentEntrypointFromMetadata(input.metadata),
   });
-  const subagentBase = agentInvocationEventBase(invocation);
-  const invocationMetadata = agentInvocationMetadata(invocation);
-  parent.events.emit("subagent.requested", subagentBase, invocationMetadata);
+  const supervisor = createAgentSupervisor({
+    invocation,
+    emitter: parent.events,
+  });
+  supervisor.requested();
+  supervisor.admit();
 
   // Roll up the child's own workspace writes onto the parent-visible terminal
   // event. The child run records each `apply_patch`/`edit_anchored_text` as a
@@ -947,39 +957,28 @@ export function spawnSubAgent(input: SpawnSubAgentInput): SpawnedSubAgent {
       return;
     }
     if (event.type === "run.started") {
-      parent.events.emit("subagent.started", subagentBase, invocationMetadata);
+      supervisor.started();
     } else if (event.type === "run.completed") {
       const terminal = subagentTerminalProjection("run.completed", event);
-      parent.events.emit(
-        "subagent.completed",
-        {
-          ...subagentBase,
-          stopReason: childStopReason(event.payload),
-          ...terminal,
-          ...(childWorkspaceWrites > 0
-            ? { workspaceWrites: childWorkspaceWrites }
-            : {}),
-        },
-        invocationMetadata,
-      );
+      supervisor.completed({
+        stopReason: childStopReason(event.payload),
+        ...terminal,
+        ...(childWorkspaceWrites > 0
+          ? { workspaceWrites: childWorkspaceWrites }
+          : {}),
+      });
       detach();
       unsubscribeBridge();
     } else if (event.type === "run.failed" || event.type === "run.cancelled") {
       const terminal = subagentTerminalProjection(event.type, event);
-      parent.events.emit(
-        "subagent.failed",
-        {
-          ...subagentBase,
-          reason:
-            terminal.terminalState === "cancelled" ? "cancelled" : "failed",
-          error: (event.payload as { error?: unknown } | undefined)?.error,
-          ...terminal,
-          ...(childWorkspaceWrites > 0
-            ? { workspaceWrites: childWorkspaceWrites }
-            : {}),
-        },
-        invocationMetadata,
-      );
+      supervisor.failed({
+        reason: terminal.terminalState === "cancelled" ? "cancelled" : "failed",
+        error: (event.payload as { error?: unknown } | undefined)?.error,
+        ...terminal,
+        ...(childWorkspaceWrites > 0
+          ? { workspaceWrites: childWorkspaceWrites }
+          : {}),
+      });
       detach();
       unsubscribeBridge();
     }
@@ -1277,7 +1276,19 @@ export function createAgentTool(
         return withAlreadyCompletedNote(prior.result);
       }
       const spawnOverrides = await options.buildSpawnInput(parsed, parent);
-      const spawned = spawnSubAgent({ ...spawnOverrides, parent });
+      const invocationEntrypoint = agentInvocationEntrypointFromArgs(args);
+      const spawned = spawnSubAgent({
+        ...spawnOverrides,
+        parent,
+        ...(invocationEntrypoint
+          ? {
+              metadata: {
+                ...(spawnOverrides.metadata ?? {}),
+                entrypoint: invocationEntrypoint,
+              },
+            }
+          : {}),
+      });
       const result = await spawned.run.start();
       const usage = spawned.run.usage();
       const output = summarize({

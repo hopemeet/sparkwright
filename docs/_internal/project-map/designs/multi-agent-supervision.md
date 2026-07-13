@@ -108,6 +108,7 @@ add a concrete consumer and delivery semantics in the same phase.
    builders. Complete.
 5. `AgentSupervisor`; migrate one adapter at a time and retire adapter-owned
    lifecycle emission. Fix process admission ordering and terminal parity here.
+   Complete.
 6. Host workspace lease arbiter with TTL/heartbeat, then tree-level budget
    enforcement.
 7. Narrow task/communication cleanup and release verification.
@@ -118,10 +119,5 @@ the migration oracle.
 
 ## Known Migration Debts
 
-- ACP and external-command adapters currently emit `started` before
-  workspace-access admission and omit `terminalState` on successful terminal
-  events.
-- Indexed delegation currently preserves the hidden direct delegate's
-  `entrypoint:"delegate"` instead of the indexed surface identity.
 - Per-connection `HostRuntime` does not coordinate workspace writers across
   clients; the compatibility path remains until a process-wide owner is wired.

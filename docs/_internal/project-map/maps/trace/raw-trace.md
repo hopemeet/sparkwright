@@ -111,11 +111,12 @@ EventLog emits full event
   parent/child run ids, and `taskId` when the child is owned by an
   `agent_task`). SparkWright child-run terminal payloads carry
   `terminalState` and `stepLimitReached`/`truncated` when derived from the child
-  `run.*` outcome; external-process parent events must not invent those fields
-  without a child `run.*` source.
+  `run.*` outcome. Process adapters project `completed`/`failed` only from their
+  native worker/process result.
 - Parent-visible Agent lifecycle identity is projected from the portable
   `PreparedAgentInvocation` data contract. Its `admission_pending` state is not
-  yet a raw event phase; current raw event order remains adapter-owned. Metadata
+  a raw event phase; `AgentSupervisor` requires admission before `started` and
+  emits at most one terminal event. Metadata
   identifies `protocol` as `in_process`, `acp`, or `external_command`, with
   process workspace access included when known.
   Derived trace reports may downgrade the severity of an incomplete child when
@@ -209,6 +210,16 @@ EventLog emits full event
   double-spilling tool-owned artifacts and honor `resultSize.neverPersist`.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: unified parent Agent lifecycle projection under `AgentSupervisor`;
+  admission failures no longer emit `started`, process terminals have parity,
+  and indexed calls expose their real entrypoint.
+- Read: supervisor, all production subagent emitters, traced process start
+  signal, protocol docs, and lifecycle tests.
+- Tests: agent-runtime supervisor/Agent and Host Agent/process lifecycle suites
+  passed.
 
 - Status: Verified
 - Date: 2026-07-14

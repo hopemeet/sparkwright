@@ -180,11 +180,9 @@ describe("external command delegate tool", () => {
         identityConsistent: true,
       }),
     ]);
-    // Characterization: process delegates do not yet carry the terminalState
-    // field used by in-process/dynamic Agent terminal projections.
     expect(
       projectAgentLifecycle(parent.events.all(), result.childRunId).at(-1),
-    ).not.toHaveProperty("terminalState");
+    ).toMatchObject({ terminalState: "completed" });
     expect(terminalLifecycleCount(parent.events.all(), result.childRunId)).toBe(
       1,
     );
@@ -385,12 +383,8 @@ describe("external command delegate tool", () => {
         run: parent.record,
       } as never),
     ).rejects.toThrow("parent run has not enabled workspace writes");
-    // Characterization: the current process adapter announces started before
-    // its workspace-access admission check. Supervisor migration should move
-    // this failure before started rather than preserve the adapter ordering.
     expect(lifecycleTypes(parent.events.all())).toEqual([
       "subagent.requested",
-      "subagent.started",
       "subagent.failed",
     ]);
     expect(terminalLifecycleCount(parent.events.all())).toBe(1);
@@ -400,6 +394,7 @@ describe("external command delegate tool", () => {
           type: "subagent.failed",
           payload: expect.objectContaining({
             errorCode: "DELEGATE_WORKSPACE_ACCESS_DENIED",
+            terminalState: "failed",
           }),
         }),
       ]),
@@ -792,6 +787,10 @@ describe("external command delegate tool", () => {
     await expect(
       tool.execute({ goal: "inspect docs" }, { run: parent.record } as never),
     ).rejects.toThrow("test-unavailable");
+    expect(lifecycleTypes(parent.events.all())).toEqual([
+      "subagent.requested",
+      "subagent.failed",
+    ]);
   });
 
   it("fails closed for workspaceAccess none even when sandbox mode is warn", async () => {
@@ -828,6 +827,10 @@ describe("external command delegate tool", () => {
     await expect(
       tool.execute({ goal: "inspect docs" }, { run: parent.record } as never),
     ).rejects.toMatchObject({ code: "DELEGATE_EXECUTION_FAILED" });
+    expect(lifecycleTypes(parent.events.all())).toEqual([
+      "subagent.requested",
+      "subagent.failed",
+    ]);
   });
 
   it("blocks workspace writes but keeps the private delegate cwd writable", async () => {

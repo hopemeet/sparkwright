@@ -827,6 +827,9 @@ Before lifecycle execution, all built-in transports construct a serializable
 pre-start data state for governance/supervisor migration; it is not yet a new
 raw event. The structure intentionally excludes live models, tools, policies,
 emitters, run handles, and process handles.
+`AgentSupervisor` consumes that data and owns requested/admitted/started plus
+exactly-one-terminal projection. Adapters must complete governance admission
+before reporting started; an admission failure is requested -> failed.
 
 ```ts
 import {

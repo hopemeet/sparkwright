@@ -7,8 +7,9 @@ import {
   type ToolDefinition,
 } from "@sparkwright/core";
 import {
-  agentInvocationEventBase,
+  agentInvocationEntrypointFromArgs,
   agentInvocationMetadata,
+  createAgentSupervisor,
   prepareAgentInvocation,
   type AgentProfile,
 } from "@sparkwright/agent-runtime";
@@ -201,14 +202,19 @@ export function createAcpDelegateTool(
         agentName: input.profile.name,
         agentAssetIdentity: input.profile.assetIdentity,
         delegateTool: input.toolName,
-        entrypoint: input.entrypoint ?? "acp",
+        entrypoint: agentInvocationEntrypointFromArgs(
+          args,
+          input.entrypoint ?? "acp",
+        ),
         subagentDepth,
         governance: { workspaceAccess },
       });
-      const base = agentInvocationEventBase(invocation);
       const meta = agentInvocationMetadata(invocation);
-      parent.events.emit("subagent.requested", base, meta);
-      parent.events.emit("subagent.started", base, meta);
+      const supervisor = createAgentSupervisor({
+        invocation,
+        emitter: parent.events,
+      });
+      supervisor.requested();
       let executionWorkspace:
         | Awaited<ReturnType<typeof resolveDelegateProcessWorkspace>>
         | undefined;
@@ -260,6 +266,8 @@ export function createAcpDelegateTool(
           cleanup: workerLaunch.cleanup,
           timeoutMs: config.timeoutMs,
         });
+        supervisor.admit();
+        supervisor.started();
         const result = await worker.run({
           cwd:
             workspaceAccess === "read_write"
@@ -280,35 +288,25 @@ export function createAcpDelegateTool(
           updates: result.updates.slice(-20),
           sandbox: workerLaunch.sandbox,
         };
-        parent.events.emit(
-          "subagent.completed",
-          {
-            ...base,
+        supervisor.completed({
+          stopReason: result.stopReason,
+          result: {
+            protocol: "acp",
+            agentProfileId: input.profile.id,
             stopReason: result.stopReason,
-            result: {
-              protocol: "acp",
-              agentProfileId: input.profile.id,
-              stopReason: result.stopReason,
-              messageChars: result.text.length,
-              toolCalls: result.toolCallCount,
-              sandbox: workerLaunch.sandbox,
-            },
+            messageChars: result.text.length,
+            toolCalls: result.toolCallCount,
+            sandbox: workerLaunch.sandbox,
           },
-          meta,
-        );
+        });
         return output;
       } catch (error) {
         const wrapped = wrapAcpDelegateError(error);
-        parent.events.emit(
-          "subagent.failed",
-          {
-            ...base,
-            reason: "failed",
-            errorCode: errorCode(wrapped),
-            error: wrapped.message,
-          },
-          meta,
-        );
+        supervisor.failed({
+          reason: "failed",
+          errorCode: errorCode(wrapped),
+          error: wrapped.message,
+        });
         throw wrapped;
       } finally {
         await executionWorkspace?.cleanup();

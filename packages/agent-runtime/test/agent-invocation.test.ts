@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   agentInvocationEventBase,
+  agentInvocationEntrypointFromArgs,
   agentInvocationMetadata,
+  markAgentInvocationEntrypoint,
   prepareAgentInvocation,
 } from "../src/agents/invocation.js";
 
@@ -92,6 +94,24 @@ describe("PreparedAgentInvocation", () => {
       childRunId: "run_child",
       parentRunId: "run_parent",
     });
+  });
+
+  it("carries internal indexed-entrypoint attribution outside model JSON", () => {
+    const args = markAgentInvocationEntrypoint(
+      { goal: "Inspect", entrypoint: "spoofed" },
+      "delegate_agent",
+    );
+    expect(agentInvocationEntrypointFromArgs(args)).toBe("delegate_agent");
+    expect(JSON.parse(JSON.stringify(args))).toEqual({
+      goal: "Inspect",
+      entrypoint: "spoofed",
+    });
+    expect(
+      agentInvocationEntrypointFromArgs(
+        { goal: "Inspect", entrypoint: "delegate_agent" },
+        "delegate",
+      ),
+    ).toBe("delegate");
   });
 
   it.each([

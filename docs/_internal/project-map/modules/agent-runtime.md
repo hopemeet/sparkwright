@@ -90,6 +90,9 @@ Does not own:
   host-owned parallel fan-out can preserve parent-visible lifecycle attribution.
   Agent-runtime does not own the fan-out policy; it only projects the supplied
   entrypoint into `subagent.*` metadata.
+- `delegate_agent` is the indexed single-target `SubAgentEntrypoint`. The Host
+  wrapper carries it on a non-JSON internal argument marker so an LLM cannot
+  spoof lifecycle attribution through ordinary tool arguments.
 - Spawn helpers project one `MultiAgentFacts` snapshot onto parent-visible
   `subagent.*` lifecycle events: `parentRunId`, `childRunId`, parent
   `agentId`, optional `sessionId`, child/delegate `childAgentId`, optional
@@ -313,8 +316,13 @@ Does not own:
   `PreparedAgentInvocation` identity and its parent-event projections. The
   contract starts at `admission_pending` and contains no run/process handles,
   models, tools, policies, emitters, or callbacks. `spawnSubAgent` consumes it
-  for lifecycle identity, but execution and event transitions remain on the
-  existing path until Supervisor migration.
+  for lifecycle identity; `AgentSupervisor` now owns the parent-visible phase
+  transitions while native adapters keep execution.
+- `src/agents/supervisor.ts` owns parent-visible Agent lifecycle transitions.
+  It requires requested -> admitted before `started`, supplies terminal
+  state/finality parity, and makes repeated phases/terminal attempts
+  idempotent. Execution adapters retain native run/process mechanics and report
+  their phases through this one supervisor.
 - `createAgentTool` accepts an optional argument-level concurrency classifier.
   Host uses it to keep write-capable, shell-capable, or spawn-approval-bound
   configured children out of Core concurrent batches while preserving
@@ -360,6 +368,16 @@ Does not own:
   not authorize a generic actor bus or nested background lifecycle.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: introduced `AgentSupervisor` and migrated in-process, ACP, and
+  external-command parent lifecycle emission onto its admission and exactly-one
+  terminal state machine.
+- Read: invocation/supervisor/spawn source, all Host Agent adapters, traced
+  process start callback, and characterization tests.
+- Tests: supervisor 4/4; invocation 11/11; agent-runtime Agent 38/38; Host Agent
+  and process lifecycle 173/173.
 
 - Status: Verified
 - Date: 2026-07-14

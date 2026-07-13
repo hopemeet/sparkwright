@@ -6,6 +6,7 @@ export type SubAgentEntrypoint =
   | "spawn_agent"
   | "agent_task"
   | "delegate"
+  | "delegate_agent"
   | "delegate_parallel"
   | "delegates_run"
   | "acp"
@@ -128,11 +129,49 @@ export function isSubAgentEntrypoint(
     value === "spawn_agent" ||
     value === "agent_task" ||
     value === "delegate" ||
+    value === "delegate_agent" ||
     value === "delegate_parallel" ||
     value === "delegates_run" ||
     value === "acp" ||
     value === "external_command"
   );
+}
+
+const AGENT_INVOCATION_ENTRYPOINT = Symbol.for(
+  "@sparkwright/agent-runtime/invocation-entrypoint",
+);
+
+/**
+ * Mark an internal tool-to-tool call with its real Agent entry surface without
+ * exposing a model-authored JSON field that can spoof lifecycle attribution.
+ */
+export function markAgentInvocationEntrypoint<T extends object>(
+  args: T,
+  entrypoint: SubAgentEntrypoint,
+): T {
+  Object.defineProperty(args, AGENT_INVOCATION_ENTRYPOINT, {
+    value: entrypoint,
+    enumerable: false,
+  });
+  return args;
+}
+
+export function agentInvocationEntrypointFromArgs(
+  args: unknown,
+  fallback: SubAgentEntrypoint,
+): SubAgentEntrypoint;
+export function agentInvocationEntrypointFromArgs(
+  args: unknown,
+): SubAgentEntrypoint | undefined;
+export function agentInvocationEntrypointFromArgs(
+  args: unknown,
+  fallback?: SubAgentEntrypoint,
+): SubAgentEntrypoint | undefined {
+  if (typeof args !== "object" || args === null) return fallback;
+  const value = (args as Record<PropertyKey, unknown>)[
+    AGENT_INVOCATION_ENTRYPOINT
+  ];
+  return isSubAgentEntrypoint(value) ? value : fallback;
 }
 
 function assertNonEmptyInvocationField(value: string, field: string): void {

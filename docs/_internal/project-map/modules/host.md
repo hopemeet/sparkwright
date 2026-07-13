@@ -706,8 +706,17 @@ Does not own:
 - Host in-process, ACP, and external-command Agent adapters now construct the
   same agent-runtime `PreparedAgentInvocation` data before projecting parent
   lifecycle identity. Host still owns governance admission and adapter
-  execution; this phase does not move event transitions into a Supervisor or
-  change the known process `started`-before-admission debt.
+  execution; agent-runtime Supervisor owns the parent-visible transitions.
+- Agent adapters delegate parent-visible lifecycle transitions to
+  agent-runtime `AgentSupervisor`. ACP emits `started` only after access,
+  workspace, sandbox, and worker-launch preparation; external commands use the
+  traced-process `onStarted` signal after sandbox/process admission. Admission
+  failures therefore terminate as requested -> failed, and process successes
+  carry the same terminal state/finality fields as in-process children.
+- The indexed router marks internal tool-to-tool arguments with a non-JSON
+  invocation entrypoint so direct aliases remain `delegate` while
+  `delegate_agent` lifecycle records the real indexed surface. Model-authored
+  string fields cannot override this attribution marker.
 - `capabilities.agents.maxDepth` is enforced before dynamic spawn, LLM child
   delegates, ACP delegates, and external-command delegates start; sub-agent
   events carry `subagentDepth` metadata so nested runs share one depth budget.
@@ -832,13 +841,21 @@ Does not own:
 - Host is a large composition point; changes can look local while affecting trace, sessions, and capabilities.
 - Capability snapshot fields are useful but can become stale if new tools bypass `tool-catalog.ts`; direct-core/cron should add tools by catalog profile, not local factories.
 - Agent lifecycle is assembled separately by in-process, dynamic/task,
-  ACP, external-command, and direct CLI paths. Characterization tests show ACP
-  and external-command emit `started` before workspace-access admission and do
-  not project `terminalState` on completion; indexed `delegate_agent` currently
-  records the hidden direct tool's `entrypoint:"delegate"`. Treat these as
-  migration debts, not target contracts.
+  ACP, external-command, and direct CLI execution paths. Parent-visible phase
+  transitions now share `AgentSupervisor`, but execution/cancellation handles
+  remain adapter-native and need continued cross-entrypoint characterization.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: migrated all production `subagent.*` emitters to `AgentSupervisor`,
+  moved process `started` after admission, added terminal parity, and corrected
+  indexed entrypoint attribution.
+- Read: Host indexed/process adapters, traced process runner, agent-runtime
+  supervisor, and lifecycle tests.
+- Tests: Host Agent/process lifecycle 173/173 with files serialized; Host
+  typecheck passed.
 
 - Status: Verified
 - Date: 2026-07-14

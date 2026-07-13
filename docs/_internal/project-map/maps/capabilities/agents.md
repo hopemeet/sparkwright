@@ -269,7 +269,12 @@ configured profiles/delegates
   reserves `admission_pending`, includes optional governance facts, and excludes
   execution handles. In-process paths now report `protocol:"in_process"` in
   lifecycle metadata; ACP/external retain their protocol and workspace-access
-  facts. Event sequencing remains adapter-owned until Supervisor migration.
+  facts. `AgentSupervisor` now owns parent-visible sequencing and terminal
+  dedupe; adapters keep only native execution.
+- Agent lifecycle requires requested -> admitted before `started`. ACP and
+  external-command access/sandbox admission failures emit requested -> failed,
+  process completions carry `terminalState`/`finality`, and indexed calls record
+  `entrypoint:"delegate_agent"` without exposing a spoofable model JSON field.
 - Core same-turn concurrency follows the effective Agent invocation: dynamic
   write grants, configured child write/shell capability, spawn approval, invalid
   inputs, and unresolved indexed targets are serial. Read-only dynamic and
@@ -333,12 +338,10 @@ configured profiles/delegates
 ## Known Debts
 
 - Multi-agent semantics are still edge/composition behavior, not fully absorbed core primitives.
-- Lifecycle payload parity is incomplete: ACP/external adapters emit `started`
-  before workspace-access admission and omit `terminalState` on successful
-  terminal events, while indexed delegation reports `entrypoint:"delegate"`
-  from its hidden target rather than the indexed surface. The lifecycle test
-  projection intentionally records these differences so Supervisor migration
-  can remove them explicitly.
+- Execution and cancellation handles remain transport-specific even though
+  parent-visible phase transitions are supervised uniformly. Preserve the
+  cross-entrypoint characterization suite while resource/cancellation ownership
+  converges.
 - Foreground Host shell filesystem snapshots remain O(tree) when enabled. The
   in-process delegate path rolls up child write events, external processes use
   untracked-access markers, and MCP stdio does not run a workspace snapshot;
@@ -346,6 +349,16 @@ configured profiles/delegates
   detection.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: unified all production Agent lifecycle emitters under
+  `AgentSupervisor`, fixed pre-admission process starts and terminal parity,
+  and attributed indexed delegation to its real entry surface.
+- Read: supervisor/invocation, in-process/process/indexed adapters, trace docs,
+  and characterization tests.
+- Tests: agent-runtime supervisor/invocation/Agent 53/53; Host Agent/process
+  lifecycle 173/173.
 
 - Status: Verified
 - Date: 2026-07-14

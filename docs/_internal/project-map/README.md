@@ -201,6 +201,19 @@ trace/session inspection.
 
 - Status: Verified
 - Date: 2026-07-14
+- Scope: routed the AgentSupervisor lifecycle convergence through
+  agent-runtime, Host/indexed/process adapters, raw trace, and protocol docs.
+- Read: active design, all production `subagent.*` emitters, traced process
+  start signaling, and linked maps.
+- Checked with no contract update needed: the Core module, capability overview,
+  shell/process execution semantics, trace summary derivation, session replay,
+  MCP, Cron, and workspace-write authorization; only Agent lifecycle
+  admission/projection changed.
+- Tests: agent-runtime supervisor/invocation/Agent and Host Agent/process
+  lifecycle focused suites passed.
+
+- Status: Verified
+- Date: 2026-07-14
 - Scope: cataloged the active multi-Agent supervision refactor and routed its
   prepared invocation boundary through agent-runtime, Host, Agents, and raw
   trace maps.

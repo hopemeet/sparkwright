@@ -17,11 +17,15 @@ export type {
 } from "./invocation.js";
 export {
   agentInvocationEventBase,
+  agentInvocationEntrypointFromArgs,
   agentInvocationMetadata,
   isSubAgentEntrypoint,
+  markAgentInvocationEntrypoint,
   PREPARED_AGENT_INVOCATION_SCHEMA_VERSION,
   prepareAgentInvocation,
 } from "./invocation.js";
+export type { AgentSupervisor, AgentSupervisorState } from "./supervisor.js";
+export { createAgentSupervisor } from "./supervisor.js";
 export {
   findSimilarSuccessfulDelegation,
   rememberSuccessfulDelegation,

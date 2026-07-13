@@ -329,13 +329,15 @@ Current event types:
   `agentId`, `subagentDepth`, `delegateTool`, `entrypoint`, and `protocol`
   (`in_process`, `acp`, or `external_command`). Process-backed invocations also
   include `workspaceAccess` when known. Terminal
-  payloads add `terminalState` plus `stepLimitReached` / `truncated` when the
-  child `run.*` outcome reports them. External-command delegate terminal
+  payloads add `terminalState` and `finality`; SparkWright child runs also add
+  `stepLimitReached` / `truncated` when the child outcome reports them. Agent
+  admission failures may go directly from requested to failed and must not emit
+  started. External-command delegate terminal
   results may also carry bounded child progress summaries (`progressCount`,
   `progressDropped`, `progressHead`, `progressTail`).
-  `entrypoint` can be `delegate_parallel` when the child was launched by the
-  opt-in foreground fan-out tool; no separate parallel-delegate event type is
-  required.
+  `entrypoint` can be `delegate_agent` for the indexed single-target surface or
+  `delegate_parallel` for opt-in foreground fan-out; neither needs a separate
+  event type.
 - `task.created` / `task.started` / `task.output` / `task.completed` /
   `task.failed` / `task.cancelled`: background-task lifecycle events emitted
   by `@sparkwright/agent-runtime` Tasks. Tasks are spawned by a run and live

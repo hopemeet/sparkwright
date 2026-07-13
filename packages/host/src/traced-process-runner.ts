@@ -165,6 +165,8 @@ export interface TracedProcessInput {
     chunk: ProgressChunk,
     context: ProgressContext,
   ) => void | Promise<void>;
+  /** Called once after the child process is actually admitted and started. */
+  onStarted?: () => void;
 }
 
 export interface TracedStreamingProcessInput {
@@ -690,6 +692,7 @@ export class TracedProcessRunner {
         },
       };
     }
+    input.onStarted?.();
     return {
       status: "completed",
       result: await collectStreamingResult(
@@ -840,6 +843,7 @@ export class TracedProcessRunner {
           },
         });
       });
+      child.once("spawn", () => input.onStarted?.());
       child.once("close", (code, signal) => {
         finish({
           exitCode: code,

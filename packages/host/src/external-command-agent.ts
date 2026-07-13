@@ -10,8 +10,9 @@ import {
   type ToolDefinition,
 } from "@sparkwright/core";
 import {
-  agentInvocationEventBase,
+  agentInvocationEntrypointFromArgs,
   agentInvocationMetadata,
+  createAgentSupervisor,
   prepareAgentInvocation,
   type AgentProfile,
 } from "@sparkwright/agent-runtime";
@@ -251,14 +252,19 @@ export function createExternalCommandDelegateTool(
         agentName: input.profile.name,
         agentAssetIdentity: input.profile.assetIdentity,
         delegateTool: input.toolName,
-        entrypoint: input.entrypoint ?? "external_command",
+        entrypoint: agentInvocationEntrypointFromArgs(
+          args,
+          input.entrypoint ?? "external_command",
+        ),
         subagentDepth,
         governance: { workspaceAccess },
       });
-      const base = agentInvocationEventBase(invocation);
       const meta = agentInvocationMetadata(invocation);
-      parent.events.emit("subagent.requested", base, meta);
-      parent.events.emit("subagent.started", base, meta);
+      const supervisor = createAgentSupervisor({
+        invocation,
+        emitter: parent.events,
+      });
+      supervisor.requested();
       try {
         assertReadWriteWorkspaceAccessAllowed({
           workspaceAccess,
@@ -292,6 +298,10 @@ export function createExternalCommandDelegateTool(
           configPaths: input.configPaths,
           emitter: parent.events,
           runId: parent.record.id,
+          onStarted() {
+            supervisor.admit();
+            supervisor.started();
+          },
         });
         const successExitCodes = config.successExitCodes ?? [0];
         if (
@@ -312,31 +322,26 @@ export function createExternalCommandDelegateTool(
             },
           );
         }
-        parent.events.emit(
-          "subagent.completed",
-          {
-            ...base,
-            stopReason: "completed",
-            result: {
-              protocol: "external_command",
-              agentProfileId: input.profile.id,
-              exitCode: result.exitCode,
-              signal: result.signal,
-              stdoutChars: result.stdout.length,
-              stderrChars: result.stderr.length,
-              stdoutTruncated: result.stdoutTruncated,
-              stderrTruncated: result.stderrTruncated,
-              outputTruncated: result.outputTruncated,
-              output: result.output,
-              sandbox: result.sandbox,
-              progressCount: result.progressCount,
-              progressDropped: result.progressDropped,
-              progressHead: result.progressHead,
-              progressTail: result.progressTail,
-            },
+        supervisor.completed({
+          stopReason: "completed",
+          result: {
+            protocol: "external_command",
+            agentProfileId: input.profile.id,
+            exitCode: result.exitCode,
+            signal: result.signal,
+            stdoutChars: result.stdout.length,
+            stderrChars: result.stderr.length,
+            stdoutTruncated: result.stdoutTruncated,
+            stderrTruncated: result.stderrTruncated,
+            outputTruncated: result.outputTruncated,
+            output: result.output,
+            sandbox: result.sandbox,
+            progressCount: result.progressCount,
+            progressDropped: result.progressDropped,
+            progressHead: result.progressHead,
+            progressTail: result.progressTail,
           },
-          meta,
-        );
+        });
         return {
           childRunId,
           spanId,
@@ -346,16 +351,11 @@ export function createExternalCommandDelegateTool(
           ...result,
         };
       } catch (error) {
-        parent.events.emit(
-          "subagent.failed",
-          {
-            ...base,
-            reason: "failed",
-            errorCode: errorCode(error),
-            error: error instanceof Error ? error.message : String(error),
-          },
-          meta,
-        );
+        supervisor.failed({
+          reason: "failed",
+          errorCode: errorCode(error),
+          error: error instanceof Error ? error.message : String(error),
+        });
         throw error;
       }
     },
@@ -374,6 +374,7 @@ async function runExternalCommand(input: {
   configPaths?: readonly string[];
   emitter: EventEmitter;
   runId: RunId;
+  onStarted?: () => void;
 }): Promise<
   Pick<
     ExternalCommandDelegateToolResult,
@@ -471,6 +472,7 @@ async function runExternalCommand(input: {
       sandbox: effectiveSandboxConfig,
       sandboxRuntime,
       emitLifecycle: false,
+      onStarted: input.onStarted,
       onProgress: (chunk) => {
         progress.record(chunk);
       },

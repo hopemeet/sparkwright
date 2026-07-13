@@ -7,6 +7,7 @@ import type {
   AgentProfile,
   DerivedChildAgentProfile,
 } from "@sparkwright/agent-runtime";
+import { markAgentInvocationEntrypoint } from "@sparkwright/agent-runtime";
 import type { CapabilityDelegateToolConfig } from "./config.js";
 import { delegateToolName } from "./delegate-capability.js";
 
@@ -190,10 +191,13 @@ function delegateAgentToolArgs(task: DelegateAgentTask): {
   goal: string;
   metadata?: Record<string, unknown>;
 } {
-  return {
-    goal: task.goal,
-    ...(task.metadata ? { metadata: task.metadata } : {}),
-  };
+  return markAgentInvocationEntrypoint(
+    {
+      goal: task.goal,
+      ...(task.metadata ? { metadata: task.metadata } : {}),
+    },
+    "delegate_agent",
+  );
 }
 
 function optionalTargetStringField(
