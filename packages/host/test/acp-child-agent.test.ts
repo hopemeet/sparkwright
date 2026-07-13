@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -6,7 +6,10 @@ import { createRequire } from "node:module";
 import { describe, expect, it } from "vitest";
 import { createRun } from "@sparkwright/core";
 import type { AgentProfile } from "@sparkwright/agent-runtime";
-import type { ShellSandboxRuntime } from "@sparkwright/shell-sandbox";
+import {
+  createPlatformShellSandboxRuntime,
+  type ShellSandboxRuntime,
+} from "@sparkwright/shell-sandbox";
 import {
   acpConfigFromAgentProfile,
   createAcpDelegateTool,
@@ -202,7 +205,7 @@ describe("ACP child agent delegate tool", () => {
     );
   });
 
-  it("fails closed when ACP enforce-mode sandbox is unavailable", async () => {
+  it("fails closed for workspaceAccess none when ACP sandbox is unavailable", async () => {
     const fixture = await createFixtureAgent();
     const parent = createRun({
       goal: "parent",
@@ -229,7 +232,7 @@ describe("ACP child agent delegate tool", () => {
       toolName: "delegate_external_reviewer",
       description: "Delegate to fixture ACP worker.",
       workspaceRoot: fixture.cwd,
-      sandbox: { mode: "enforce" },
+      sandbox: { mode: "warn" },
       sandboxRuntime: unavailableRuntime(),
     });
 
@@ -246,6 +249,49 @@ describe("ACP child agent delegate tool", () => {
         }),
       ]),
     );
+  });
+
+  it("blocks workspace writes from workspaceAccess none ACP workers", async () => {
+    const runtime = createPlatformShellSandboxRuntime();
+    if (!(await runtime.isAvailable())) return;
+    const fixture = await createFixtureAgent(
+      'writeFileSync(new URL("workspace-write.txt", import.meta.url), "bad\\n");',
+    );
+    const parent = createRun({
+      goal: "parent",
+      model: {
+        async complete() {
+          return { message: "parent" };
+        },
+      },
+      maxSteps: 1,
+    });
+    const profile: AgentProfile = {
+      id: "external_workspace_writer",
+      metadata: {
+        acp: {
+          transport: "stdio",
+          command: process.execPath,
+          args: [fixture.agentPath],
+        },
+      },
+    };
+    const tool = createAcpDelegateTool({
+      getParent: () => parent,
+      profile,
+      toolName: "delegate_external_workspace_writer",
+      description: "Attempt a workspace write without access.",
+      workspaceRoot: fixture.cwd,
+      sandbox: { mode: "enforce" },
+      sandboxRuntime: runtime,
+    });
+
+    await expect(
+      tool.execute({ goal: "review" }, { run: parent.record } as never),
+    ).rejects.toThrow("ACP connection closed");
+    await expect(
+      readFile(join(fixture.cwd, "workspace-write.txt"), "utf8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("does not inherit host environment by default", async () => {
@@ -325,7 +371,7 @@ async function runEnvProbeDelegate(
   } as never)) as { message?: string };
 }
 
-async function createFixtureAgent(): Promise<{
+async function createFixtureAgent(startupCode = ""): Promise<{
   cwd: string;
   agentPath: string;
 }> {
@@ -339,6 +385,9 @@ async function createFixtureAgent(): Promise<{
     agentPath,
     `
 import { AgentSideConnection, ndJsonStream } from ${JSON.stringify(sdkUrl)};
+import { writeFileSync } from "node:fs";
+
+${startupCode}
 
 class FixtureAgent {
   async initialize() {

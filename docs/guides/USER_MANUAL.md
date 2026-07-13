@@ -241,7 +241,10 @@ inherits the full environment. `maxStdoutBytes` and `maxStderrBytes` set
 independent capture limits, while `maxOutputBytes` remains a shared fallback.
 `{{workspaceRoot}}` and `cwd` require `"workspaceAccess": "read_write"`;
 otherwise the process runs from an isolated temporary cwd and receives only the
-configured arguments/stdin.
+configured arguments/stdin. The temporary cwd remains writable for normal agent
+scratch files, but SparkWright forces the process sandbox to fail closed and
+protect the project workspace from writes. On macOS this is an explicit
+workspace deny-write guard, not a full filesystem allowlist.
 
 To debug a configured delegate without asking the main model to choose the
 tool, run it directly:

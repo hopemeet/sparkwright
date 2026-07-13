@@ -9,6 +9,7 @@ import type { AgentProfile } from "@sparkwright/agent-runtime";
 import { ExternalAcpWorker } from "@sparkwright/acp-client-adapter";
 import {
   createPlatformShellSandboxRuntime,
+  enforceProtectedWriteRootsShellSandbox,
   prepareSandboxedProcessLaunch,
   resolveShellSandboxConfig,
   scopeShellSandboxFilesystem,
@@ -339,19 +340,25 @@ async function prepareAcpWorkerLaunch(input: {
           skillRoots: input.skillRoots,
           extraForcedDenyWrite: input.configPaths,
         });
-  const sandbox =
-    baseSandbox.mode === "off" || input.workspaceAccess === "read_write"
-      ? baseSandbox
-      : scopeShellSandboxFilesystem(baseSandbox, {
-          allowRead: [
-            input.cwd,
-            ...[input.command, ...(input.args ?? [])].filter((value) =>
-              value.startsWith("/"),
-            ),
-          ],
-          allowWrite: [input.cwd],
-        });
   const runtime = input.sandboxRuntime ?? createPlatformShellSandboxRuntime();
+  const sandbox =
+    input.workspaceAccess === "read_write"
+      ? baseSandbox
+      : await enforceProtectedWriteRootsShellSandbox(
+          scopeShellSandboxFilesystem(baseSandbox, {
+            allowRead: [
+              input.cwd,
+              ...[input.command, ...(input.args ?? [])].filter((value) =>
+                value.startsWith("/"),
+              ),
+            ],
+            allowWrite: [input.cwd],
+          }),
+          {
+            runtime,
+            protectedRoots: [input.workspaceRoot],
+          },
+        );
   const decision = await prepareSandboxedProcessLaunch(
     runtime,
     {

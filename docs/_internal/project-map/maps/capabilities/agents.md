@@ -96,10 +96,13 @@ configured profiles/delegates
   metadata exposed through inline profile `delegateTool` or
   `capabilities.agents.delegateTools`.
 - Both process delegate protocols compile `workspaceAccess:none|read_write`
-  through Host before launch. `none` uses a private cwd and configured sandbox;
-  `read_write` requires the parent run write gate and emits an untracked
-  write-capable marker. ACP retains its own JSON-RPC/session lifecycle instead
-  of entering `TracedProcessRunner`.
+  through Host before launch. `none` uses a private writable cwd and a
+  fail-closed protected-root sandbox: Linux keeps that cwd as its positive
+  writable bind, while macOS adds lexical/realpath workspace deny-write rules.
+  This prevents workspace writes without claiming a macOS filesystem allowlist
+  or denying every possible workspace read. `read_write` requires the parent
+  run write gate and emits an untracked write-capable marker. ACP retains its
+  own JSON-RPC/session lifecycle instead of entering `TracedProcessRunner`.
 - Configured in-process delegates are also exposed through
   `capabilities.agents.delegateTools` with `protocol: "in_process"`, so host
   snapshots, CLI inspect, and TUI capability views use one descriptor source.
@@ -314,6 +317,14 @@ configured profiles/delegates
   detection.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: made `workspaceAccess:none` a fail-closed workspace-write boundary for
+  ACP and external-command delegates while preserving their private cwd writes.
+- Read: Host ACP/external delegate adapters and shell-sandbox protected-root
+  compiler.
+- Tests: shell-sandbox plus Host ACP/external focused suites 40/40.
 
 - Status: Verified
 - Date: 2026-07-13

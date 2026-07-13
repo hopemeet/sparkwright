@@ -23,6 +23,12 @@ Sandbox launch-decision unit tests should inject a runtime with deterministic
 current OS; do not infer macOS deny-list behavior from a Linux bind-allowlist
 pass, or vice versa.
 
+`workspaceAccess:none` process delegates are fail-closed when the runtime is
+unavailable. Their tests must separately assert that the private delegate cwd
+remains writable and that a known absolute workspace path is not: Linux derives
+that boundary from positive writable binds, while macOS requires explicit
+protected-root deny rules.
+
 ## Dist Freshness Rule
 
 If a changed package is imported by name from another workspace and its

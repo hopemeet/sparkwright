@@ -753,9 +753,11 @@ Does not own:
   identity so direct CLI JSON output and persisted trace attribution agree.
 - ACP delegates use the same `workspaceAccess:none|read_write` sandbox/access
   compilation as external command delegates. `none` runs from a private
-  execution cwd under the configured sandbox posture; `read_write` requires the
-  parent run write gate and emits the untracked-access marker. ACP JSON-RPC,
-  permission, timeout, and session shutdown stay in `acp-client-adapter`.
+  writable execution cwd but forces a fail-closed sandbox that protects the
+  workspace from writes: bind allowlisting owns the Linux boundary and explicit
+  protected-root denies own the macOS boundary. `read_write` requires the parent
+  run write gate and emits the untracked-access marker. ACP JSON-RPC, permission,
+  timeout, and session shutdown stay in `acp-client-adapter`.
 - Background shell tasks adopt the already-started shell stream through
   `TracedProcessRunner.observeStreaming`, keep `task.*` as the lifecycle, emit
   `task.created` before opening the task span with `task.started`, write full
@@ -814,6 +816,15 @@ Does not own:
 - Capability snapshot fields are useful but can become stale if new tools bypass `tool-catalog.ts`; direct-core/cron should add tools by catalog profile, not local factories.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: enforced workspace-write protection for ACP/external delegates with
+  `workspaceAccess:none`, including macOS deny-list compilation and unavailable
+  runtime failure, while retaining private cwd scratch writes.
+- Read: Host ACP/external delegate adapters and shell-sandbox source/tests.
+- Tests: shell-sandbox plus Host ACP/external focused suites 40/40; Host
+  typecheck passed.
 
 - Status: Verified
 - Date: 2026-07-13T22:42:00+0800

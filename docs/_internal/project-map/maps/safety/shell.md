@@ -144,6 +144,13 @@ args` without rewriting requests, while the latter parses Host command text
 - ACP child workers also consume the shared launch decision, but keep ACP
   JSON-RPC/session/permission lifecycle in `acp-client-adapter`; they do not use
   Host shell parsing, shell mutation snapshots, or `TracedProcessRunner`.
+- ACP and external-command delegates with `workspaceAccess:none` force the
+  sandbox launch decision to fail closed and protect the workspace from writes
+  while keeping their private execution cwd writable. Linux enforces this with
+  its positive bind scope; macOS needs explicit workspace lexical/realpath deny
+  rules because its allow-default profile ignores positive filesystem grants.
+  This is a workspace-write guarantee, not a claim that macOS becomes a full
+  read/write allowlist.
 - Sandbox `enforce` means fail closed when the selected runtime is unavailable;
   it does not imply workspace allowlisting. Linux bubblewrap reports
   `bind-allowlist`; macOS sandbox-exec uses an allow-default profile and reports
@@ -168,6 +175,14 @@ args` without rewriting requests, while the latter parses Host command text
 - Shell is powerful and cross-cuts workspace, tasks, trace, and capability state.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: closed the macOS delegate positive-scope gap and warn-mode fallback for
+  `workspaceAccess:none` without removing private scratch writes.
+- Read: shell-sandbox protected-root compiler and Host ACP/external delegate
+  launch assembly.
+- Tests: shell-sandbox plus Host ACP/external focused suites 40/40.
 
 - Status: Verified
 - Date: 2026-07-13T22:42:00+0800

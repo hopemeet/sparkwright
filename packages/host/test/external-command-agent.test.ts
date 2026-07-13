@@ -695,7 +695,7 @@ describe("external command delegate tool", () => {
     ).rejects.toThrow("test-unavailable");
   });
 
-  it("falls back in warn mode and returns sandbox metadata", async () => {
+  it("fails closed for workspaceAccess none even when sandbox mode is warn", async () => {
     const fixture = await createFixtureCommand();
     const parent = createRun({
       goal: "parent",
@@ -726,28 +726,88 @@ describe("external command delegate tool", () => {
       sandboxRuntime: unavailableRuntime(),
     });
 
-    const result = (await tool.execute({ goal: "inspect docs" }, {
-      run: parent.record,
-    } as never)) as { stdout: string; sandbox?: Record<string, unknown> };
+    await expect(
+      tool.execute({ goal: "inspect docs" }, { run: parent.record } as never),
+    ).rejects.toMatchObject({ code: "DELEGATE_EXECUTION_FAILED" });
+  });
 
-    expect(JSON.parse(result.stdout)).toMatchObject({ argv: [] });
-    expect(result.sandbox).toEqual({
-      sandboxed: false,
-      mode: "warn",
-      runtime: "test-unavailable",
-      networkMode: "deny",
-      unavailable: expect.stringContaining("test-unavailable"),
-      available: false,
-      fallbackReason: expect.stringContaining("test-unavailable"),
-      enforced: false,
+  it("blocks workspace writes but keeps the private delegate cwd writable", async () => {
+    const runtime = createPlatformShellSandboxRuntime();
+    if (!(await runtime.isAvailable())) return;
+    const fixture = await createFixtureCommand(
+      'writeFileSync("scratch.txt", "scratch\\n");',
+    );
+    const parent = createRun({
+      goal: "parent",
+      model: {
+        async complete() {
+          return { message: "parent" };
+        },
+      },
+      maxSteps: 1,
     });
+    const profile: AgentProfile = {
+      id: "external_private_scratch",
+      metadata: {
+        externalCommand: {
+          command: process.execPath,
+          args: [fixture.commandPath],
+          input: "none",
+        },
+      },
+    };
+    const tool = createExternalCommandDelegateTool({
+      getParent: () => parent,
+      profile,
+      toolName: "delegate_external_private_scratch",
+      description: "Exercise private delegate scratch writes.",
+      workspaceRoot: fixture.cwd,
+      sandbox: { mode: "enforce" },
+      sandboxRuntime: runtime,
+    });
+
+    await expect(
+      tool.execute({ goal: "inspect docs" }, { run: parent.record } as never),
+    ).resolves.toMatchObject({ exitCode: 0 });
+
+    const workspaceWriteFixture = await createFixtureCommand(
+      'writeFileSync(new URL("workspace-write.txt", import.meta.url), "bad\\n");',
+    );
+    const blockedProfile: AgentProfile = {
+      id: "external_workspace_write",
+      metadata: {
+        externalCommand: {
+          command: process.execPath,
+          args: [workspaceWriteFixture.commandPath],
+          input: "none",
+        },
+      },
+    };
+    const blockedTool = createExternalCommandDelegateTool({
+      getParent: () => parent,
+      profile: blockedProfile,
+      toolName: "delegate_external_workspace_write",
+      description: "Attempt a workspace write without access.",
+      workspaceRoot: workspaceWriteFixture.cwd,
+      sandbox: { mode: "enforce" },
+      sandboxRuntime: runtime,
+    });
+
+    await expect(
+      blockedTool.execute({ goal: "inspect docs" }, {
+        run: parent.record,
+      } as never),
+    ).rejects.toThrow("exited with exit code");
+    await expect(
+      readFile(join(workspaceWriteFixture.cwd, "workspace-write.txt"), "utf8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("prevents read_write delegates from changing forced deny paths when runtime is available", async () => {
     const runtime = createPlatformShellSandboxRuntime();
     if (!(await runtime.isAvailable())) return;
     const fixture = await createFixtureCommand(
-      "require('node:fs').writeFileSync('.sparkwright/config.json', 'bad\\n');",
+      'writeFileSync(".sparkwright/config.json", "bad\\n");',
     );
     const configPath = join(fixture.cwd, ".sparkwright", "config.json");
     await mkdir(join(fixture.cwd, ".sparkwright"), { recursive: true });
@@ -819,6 +879,8 @@ async function createFixtureCommand(extraCode = ""): Promise<{
   await writeFile(
     commandPath,
     `
+import { writeFileSync } from "node:fs";
+
 const chunks = [];
 process.stdin.on("data", (chunk) => chunks.push(chunk));
 process.stdin.on("end", () => {

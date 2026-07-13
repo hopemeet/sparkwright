@@ -64,6 +64,10 @@
 - ACP and external-command delegates with `workspaceAccess: read_write` disclose
   untracked write-capable boundaries; without parent `--write`, they fail before
   process execution and are counted as expected denials.
+- ACP and external-command delegates with `workspaceAccess: none` keep a private
+  cwd writable but fail closed when sandboxing is unavailable and cannot write
+  a known absolute workspace path. Installed-runtime tests exercise the current
+  OS backend; shell-sandbox unit coverage checks both Linux and macOS compilation.
 - CLI `agents create` can create a project-local child profile with a callable
   in-process delegate, and `capabilities inspect` / TUI `/capabilities` surface
   the configured agent and delegate.

@@ -403,6 +403,38 @@ export async function enforceNoWriteShellSandbox(
   };
 }
 
+/**
+ * Compile a fail-closed write boundary for processes that may write to their
+ * explicitly scoped scratch roots but must not write protected roots. Bind
+ * allowlist backends keep the caller's positive write scope; deny-list guards
+ * receive explicit lexical, realpath, and platform-alias denies.
+ */
+export async function enforceProtectedWriteRootsShellSandbox(
+  config: ResolvedShellSandboxConfig,
+  input: {
+    runtime: Pick<ShellSandboxRuntime, "id" | "platform">;
+    protectedRoots: readonly string[];
+  },
+): Promise<ResolvedShellSandboxConfig> {
+  const isolation = filesystemIsolationForRuntime(input.runtime);
+  const denyWrite =
+    isolation === "deny-list-guard"
+      ? uniquePaths([
+          ...config.filesystem.denyWrite,
+          ...(await sandboxPathVariants(input.protectedRoots)),
+        ])
+      : config.filesystem.denyWrite;
+  return {
+    ...config,
+    mode: "enforce",
+    failIfUnavailable: true,
+    filesystem: {
+      ...config.filesystem,
+      denyWrite,
+    },
+  };
+}
+
 async function sandboxPathVariants(
   paths: readonly string[],
 ): Promise<string[]> {

@@ -8,6 +8,7 @@ import {
   createPlatformShellSandboxRuntime,
   describeShellSandboxStatus,
   enforceNoWriteShellSandbox,
+  enforceProtectedWriteRootsShellSandbox,
   extendShellSandboxReadAccess,
   LinuxBubblewrapShellSandboxRuntime,
   MacOSShellSandboxRuntime,
@@ -190,6 +191,34 @@ describe("resolved filesystem grants", () => {
       filesystem: { allowWrite: [], denyWrite: [], tmp: true },
     });
     expect(mac.filesystem.allowWrite).toEqual([]);
+    expect(mac.filesystem.denyWrite).toContain(ROOT);
+  });
+
+  it("protects workspace writes while preserving delegate scratch writes", async () => {
+    const scratch = resolve("/tmp/sparkwright-delegate");
+    const scoped = scopeShellSandboxFilesystem(
+      resolveShellSandboxConfig({ workspaceRoot: ROOT }),
+      {
+        allowRead: [scratch],
+        allowWrite: [scratch],
+      },
+    );
+    const linux = await enforceProtectedWriteRootsShellSandbox(scoped, {
+      runtime: { id: "bubblewrap", platform: "linux" },
+      protectedRoots: [ROOT],
+    });
+    const mac = await enforceProtectedWriteRootsShellSandbox(scoped, {
+      runtime: { id: "sandbox-exec", platform: "darwin" },
+      protectedRoots: [ROOT],
+    });
+
+    expect(linux).toMatchObject({
+      mode: "enforce",
+      failIfUnavailable: true,
+      filesystem: { allowWrite: [scratch] },
+    });
+    expect(linux.filesystem.denyWrite).not.toContain(ROOT);
+    expect(mac.filesystem.allowWrite).toEqual([scratch]);
     expect(mac.filesystem.denyWrite).toContain(ROOT);
   });
 

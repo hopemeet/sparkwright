@@ -10,6 +10,8 @@ import {
 } from "@sparkwright/core";
 import type { AgentProfile } from "@sparkwright/agent-runtime";
 import {
+  createPlatformShellSandboxRuntime,
+  enforceProtectedWriteRootsShellSandbox,
   resolveShellSandboxConfig,
   scopeShellSandboxFilesystem,
   type ResolvedShellSandboxConfig,
@@ -432,12 +434,16 @@ async function runExternalCommand(input: {
             skillRoots: input.skillRoots,
             extraForcedDenyWrite: input.configPaths,
           });
-    const effectiveSandboxConfig = delegateSandboxConfig({
+    const sandboxRuntime =
+      input.sandboxRuntime ?? createPlatformShellSandboxRuntime();
+    const effectiveSandboxConfig = await delegateSandboxConfig({
       config: sandboxConfig,
       workspaceAccess,
+      workspaceRoot: input.workspaceRoot,
       executionCwd: executionWorkspace.cwd,
       command: input.config.command,
       args,
+      runtime: sandboxRuntime,
     });
     const stdin =
       inputMode === "stdin"
@@ -458,7 +464,7 @@ async function runExternalCommand(input: {
       stdin,
       timeoutMs: input.config.timeoutMs,
       sandbox: effectiveSandboxConfig,
-      sandboxRuntime: input.sandboxRuntime,
+      sandboxRuntime,
       emitLifecycle: false,
       onProgress: (chunk) => {
         progress.record(chunk);
@@ -528,22 +534,28 @@ async function runExternalCommand(input: {
   }
 }
 
-function delegateSandboxConfig(input: {
+async function delegateSandboxConfig(input: {
   config: ResolvedShellSandboxConfig;
   workspaceAccess: DelegateWorkspaceAccess;
+  workspaceRoot: string;
   executionCwd: string;
   command: string;
   args: readonly string[];
-}): ResolvedShellSandboxConfig {
-  if (input.config.mode === "off" || input.workspaceAccess === "read_write") {
+  runtime: Pick<ShellSandboxRuntime, "id" | "platform">;
+}): Promise<ResolvedShellSandboxConfig> {
+  if (input.workspaceAccess === "read_write") {
     return input.config;
   }
-  return scopeShellSandboxFilesystem(input.config, {
+  const scoped = scopeShellSandboxFilesystem(input.config, {
     allowRead: [
       input.executionCwd,
       ...absoluteArgPaths([input.command, ...input.args]),
     ],
     allowWrite: [input.executionCwd],
+  });
+  return enforceProtectedWriteRootsShellSandbox(scoped, {
+    runtime: input.runtime,
+    protectedRoots: [input.workspaceRoot],
   });
 }
 

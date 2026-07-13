@@ -64,6 +64,10 @@
   fail-closed when the platform sandbox is unavailable. The deterministic
   security-plan test covers compilation; successful real process launch remains
   platform/runtime-sensitive.
+- `workspaceAccess:none` delegate tests cover protected workspace writes and
+  preserved private-cwd scratch writes on the installed backend. Cross-OS
+  confidence still requires the shell-sandbox compiler tests plus Linux CI and
+  macOS integration evidence; one platform pass is not evidence for the other.
 - Stale `dist` can make host/CLI tests miss shell-tool source behavior.
 - Timing-sensitive timeout tests need tiny injected budgets and should avoid
   depending on wall-clock precision.
