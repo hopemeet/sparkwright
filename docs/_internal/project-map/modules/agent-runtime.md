@@ -300,6 +300,11 @@ Does not own:
   inherit the parent run's effective `maxSteps` when no child/profile override
   is provided; explicit child `maxSteps` still wins, while `runBudget` remains
   tightened through parent/child intersection.
+- `spawnSubAgent()` passes the parent's opaque child-budget accounts into every
+  in-process child run. Siblings and deeper descendants therefore compete for
+  each ancestor's descendant-tree model/tool/token/cost/duration ceiling while
+  retaining their own local `runBudget`. Agent-runtime transports the accounts;
+  Core owns reservation, accounting, failure projection, and checkpoint state.
 - Completed delegation result reuse is backed by a shared, parent-run-scoped
   ledger rather than a `createAgentTool` closure-local cache. Ledger keys include
   the delegation surface identity (`agent_tool`, configured delegate, or dynamic
@@ -380,6 +385,15 @@ Does not own:
   not authorize a generic actor bus or nested background lifecycle.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: propagated Core descendant-tree budget accounts through the portable
+  in-process spawn substrate, including siblings, nested descendants, tools,
+  provider usage, and checkpoint resume.
+- Read: spawn substrate, Core budget protocol, Agent tests, and Host consumers.
+- Tests: agent-runtime Agent/invocation/supervisor/ledger 65/65; typecheck/build;
+  Host Agent/process/arbiter suites 102/102.
 
 - Status: Verified
 - Date: 2026-07-14

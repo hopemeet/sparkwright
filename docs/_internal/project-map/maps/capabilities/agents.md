@@ -287,6 +287,19 @@ configured profiles/delegates
   idempotent release provide an availability escape hatch. The guarantee ends
   at the Node process boundary and has no fencing generation; it does not
   serialize unrelated parent-run writes or claim distributed exclusion.
+- In-process Agent runs inherit opaque Core descendant-tree budget accounts.
+  A configured run budget still governs the run locally and also creates a
+  separate shared ceiling for all of its descendants; nested children consume
+  every ancestor account, so sibling or deeper fan-out cannot multiply model
+  calls, tool calls, provider tokens, cost, or active duration independently.
+  Exact model/tool counters are reserved before execution; token/cost/duration
+  remain post-usage/time checks as in ordinary Core runs.
+- This tree accounting covers Core-backed in-process children only. ACP and
+  external-command delegates expose one parent tool call and lifecycle result,
+  but their process-internal model/tool usage is not observable as Core run
+  usage and therefore cannot be charged to these accounts. This budget layer is
+  independent of Agent workspace leases, approval, `maxDepth`, forced
+  continuations, and Workflow/session run-chain ceilings.
 - Core same-turn concurrency follows the effective Agent invocation: dynamic
   write grants, configured child write/shell capability, spawn approval, invalid
   inputs, and unresolved indexed targets are serial. Read-only dynamic and
@@ -361,6 +374,16 @@ configured profiles/delegates
   detection.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: enforced shared descendant-tree work budgets for in-process Agent
+  siblings and nested descendants without changing process adapters or Host
+  admission policy.
+- Read: Core budget accounts, agent-runtime spawn inheritance, all Agent entry
+  surfaces, active supervision design, and checkpoint behavior.
+- Tests: Core budget/run/resume/trace 275/275; agent-runtime Agent suites 65/65;
+  Host Agent/process/arbiter suites 102/102.
 
 - Status: Verified
 - Date: 2026-07-14

@@ -19,6 +19,7 @@ import {
   defineTool,
   FileRunStore,
   LocalWorkspace,
+  resumeRunFromCheckpoint,
   type CreateRunOptions,
   type ModelAdapter,
   type WorkflowHook,
@@ -881,6 +882,245 @@ describe("spawnSubAgent", () => {
       runIds: [spawned.childRunId],
       agents: ["reviewer"],
     });
+  });
+
+  it("shares the parent child-tree model budget across concurrent siblings", async () => {
+    const parent = createRun({
+      goal: "parent",
+      model: {
+        async complete() {
+          return { message: "parent done" };
+        },
+      },
+      runBudget: { maxModelCalls: 1 },
+    });
+    let childModelCalls = 0;
+    const childModel: ModelAdapter = {
+      async complete() {
+        childModelCalls += 1;
+        await Promise.resolve();
+        return { message: "child done" };
+      },
+    };
+    const first = spawnSubAgent({ parent, goal: "first", model: childModel });
+    const second = spawnSubAgent({
+      parent,
+      goal: "second",
+      model: childModel,
+    });
+
+    const results = await Promise.all([first.start(), second.start()]);
+    expect(childModelCalls).toBe(1);
+    expect(results.map((result) => result.stopReason).sort()).toEqual([
+      "final_answer",
+      "max_model_calls_exceeded",
+    ]);
+    const failed = results.find(
+      (result) => result.stopReason === "max_model_calls_exceeded",
+    );
+    expect(failed?.failure).toMatchObject({
+      code: "MAX_MODEL_CALLS_EXCEEDED",
+      metadata: { budgetScope: "ancestor_tree" },
+    });
+  });
+
+  it("shares the parent child-tree tool budget before sibling execution", async () => {
+    const parent = createRun({
+      goal: "parent",
+      model: {
+        async complete() {
+          return { message: "parent done" };
+        },
+      },
+      runBudget: { maxToolCalls: 1 },
+    });
+    let toolExecutions = 0;
+    const probe = defineTool({
+      name: "budget_probe",
+      description: "count executions",
+      inputSchema: { type: "object", properties: {} },
+      policy: { risk: "safe" },
+      execute() {
+        toolExecutions += 1;
+        return "ok";
+      },
+    });
+    const childModel = (): ModelAdapter => {
+      let calls = 0;
+      return {
+        async complete() {
+          calls += 1;
+          return calls === 1
+            ? {
+                toolCalls: [{ toolName: "budget_probe", arguments: {} }],
+              }
+            : { message: "child done" };
+        },
+      };
+    };
+
+    const first = spawnSubAgent({
+      parent,
+      goal: "first",
+      model: childModel(),
+      tools: [probe],
+    });
+    expect(await first.start()).toMatchObject({ stopReason: "final_answer" });
+    const second = spawnSubAgent({
+      parent,
+      goal: "second",
+      model: childModel(),
+      tools: [probe],
+    });
+    expect(await second.start()).toMatchObject({
+      stopReason: "max_tool_calls_exceeded",
+      failure: {
+        code: "MAX_TOOL_CALLS_EXCEEDED",
+        metadata: { budgetScope: "ancestor_tree" },
+      },
+    });
+    expect(toolExecutions).toBe(1);
+  });
+
+  it("applies every ancestor tree budget to deeper descendants", async () => {
+    const root = createRun({
+      goal: "root",
+      model: {
+        async complete() {
+          return { message: "root done" };
+        },
+      },
+      runBudget: { maxModelCalls: 1 },
+    });
+    const child = spawnSubAgent({
+      parent: root,
+      goal: "child",
+      model: {
+        async complete() {
+          return { message: "child done" };
+        },
+      },
+      runBudget: { maxModelCalls: 5 },
+    });
+    let grandchildCalls = 0;
+    const grandchildModel: ModelAdapter = {
+      async complete() {
+        grandchildCalls += 1;
+        return { message: "grandchild done" };
+      },
+    };
+    const first = spawnSubAgent({
+      parent: child.run,
+      goal: "first grandchild",
+      model: grandchildModel,
+    });
+    const second = spawnSubAgent({
+      parent: child.run,
+      goal: "second grandchild",
+      model: grandchildModel,
+    });
+
+    const results = await Promise.all([first.start(), second.start()]);
+    expect(grandchildCalls).toBe(1);
+    expect(results.map((result) => result.stopReason).sort()).toEqual([
+      "final_answer",
+      "max_model_calls_exceeded",
+    ]);
+    expect(
+      results.find((result) => result.stopReason === "max_model_calls_exceeded")
+        ?.failure,
+    ).toMatchObject({
+      metadata: { budgetScope: "ancestor_tree", ancestorIndex: 0 },
+    });
+  });
+
+  it("aggregates descendant token usage across sequential siblings", async () => {
+    const parent = createRun({
+      goal: "parent",
+      model: {
+        async complete() {
+          return { message: "parent done" };
+        },
+      },
+      runBudget: { maxTokens: 5 },
+    });
+    const childModel: ModelAdapter = {
+      async complete() {
+        return {
+          message: "child done",
+          usage: { inputTokens: 2, outputTokens: 1 },
+        };
+      },
+    };
+
+    const first = spawnSubAgent({ parent, goal: "first", model: childModel });
+    expect(await first.start()).toMatchObject({ stopReason: "final_answer" });
+    const second = spawnSubAgent({
+      parent,
+      goal: "second",
+      model: childModel,
+    });
+    expect(await second.start()).toMatchObject({
+      stopReason: "token_budget_exceeded",
+      failure: {
+        code: "TOKEN_BUDGET_EXCEEDED",
+        metadata: {
+          budgetScope: "ancestor_tree",
+          usage: { tokens: 6 },
+        },
+      },
+    });
+  });
+
+  it("preserves child-tree budget usage across parent checkpoint resume", async () => {
+    const runBudget = { maxModelCalls: 1 };
+    const parent = createRun({
+      goal: "parent",
+      model: {
+        async complete() {
+          return { message: "parent done" };
+        },
+      },
+      runBudget,
+    });
+    const first = spawnSubAgent({
+      parent,
+      goal: "first",
+      model: {
+        async complete() {
+          return { message: "first done" };
+        },
+      },
+    });
+    await first.start();
+    const checkpoint = parent.checkpoint();
+    expect(checkpoint.budget.childTreeUsage).toMatchObject({ modelCalls: 1 });
+
+    const resumedParent = resumeRunFromCheckpoint(checkpoint, {
+      model: {
+        async complete() {
+          return { message: "parent done" };
+        },
+      },
+      runBudget,
+    });
+    let secondCalls = 0;
+    const second = spawnSubAgent({
+      parent: resumedParent,
+      goal: "second",
+      model: {
+        async complete() {
+          secondCalls += 1;
+          return { message: "not reached" };
+        },
+      },
+    });
+
+    expect(await second.start()).toMatchObject({
+      stopReason: "max_model_calls_exceeded",
+      failure: { metadata: { budgetScope: "ancestor_tree" } },
+    });
+    expect(secondCalls).toBe(0);
   });
 });
 

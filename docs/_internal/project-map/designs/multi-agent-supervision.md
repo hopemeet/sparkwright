@@ -123,8 +123,8 @@ add a concrete consumer and delivery semantics in the same phase.
 5. `AgentSupervisor`; migrate one adapter at a time and retire adapter-owned
    lifecycle emission. Fix process admission ordering and terminal parity here.
    Complete.
-6. Host workspace lease arbiter with TTL/heartbeat. Complete. Tree-level budget
-   enforcement remains the next substage.
+6. Host workspace lease arbiter with TTL/heartbeat and Core-backed in-process
+   descendant-tree work-budget enforcement. Complete.
 7. Narrow task/communication cleanup and release verification.
 
 Each behavioral phase must delete or migrate at least one parallel mechanism.
@@ -135,5 +135,5 @@ the migration oracle.
 
 - Workspace exclusion is process-local and unfenced; cross-process/session-turn
   ownership remains future session-coordinator work.
-- Parent-tree budget enforcement is not yet shared across sibling Agent
-  invocations.
+- ACP/external-command process-internal model/tool usage remains opaque to Core
+  descendant-tree accounts; only their parent tool call is budget-visible.

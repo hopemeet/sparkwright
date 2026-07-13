@@ -170,9 +170,13 @@ import {
 import {
   selectModelFailureStopReason,
   validateModelOutput,
-  validateRunBudget,
 } from "./run-validation.js";
 import { RunHealthAnalyzer, type RunHealthFeedback } from "./run-health.js";
+import {
+  createRunBudgetAccount,
+  type RunBudgetAccount,
+  type RunBudgetViolation,
+} from "./run-budget.js";
 
 const DEFAULT_DOOM_LOOP_TOOL_CALL_REPEAT_LIMIT = 3;
 const DEFAULT_MODEL_RETRY_MAX_ATTEMPTS = 3;
@@ -183,6 +187,12 @@ const DEFAULT_MODEL_RETRY_JITTER: "full" | "none" = "full";
 const DEFAULT_MODEL_RETRY_RESPECT_RETRY_AFTER = true;
 const DEFAULT_MAX_REVIVAL_TURNS = 5;
 const FORCED_CONTINUATION_SOURCES = ["revival", "workflow"] as const;
+
+interface RunBudgetAccountDescriptor {
+  account: RunBudgetAccount;
+  scope: "run" | "ancestor_tree";
+  ancestorIndex?: number;
+}
 const FAILURE_CAUSE_RESPONSE_BODY_PREVIEW_CHARS = 2_000;
 
 type ForcedContinuationBudgetConfig = Partial<
@@ -416,6 +426,14 @@ export interface CreateRunOptions {
   promptBuilder?: PromptBuilder<PromptMessage[]>;
   validationHooks?: ValidationHook[];
   runBudget?: RunBudget;
+  /**
+   * Ancestor-owned work-budget accounts consumed by this run. Orchestrators
+   * pass these from `RunHandle.getChildRunBudgetAccounts()` so siblings and
+   * deeper descendants share each ancestor's configured ceiling.
+   *
+   * @internal
+   */
+  ancestorRunBudgetAccounts?: readonly RunBudgetAccount[];
   maxSteps?: number;
   toolTimeoutMs?: number;
   maxToolConcurrency?: number;
@@ -633,6 +651,14 @@ export interface RunHandle {
    */
   getWorkspace(): RuntimeContext["workspace"] | undefined;
   /**
+   * Opaque budget accounts descendants must inherit. The returned array
+   * includes ancestor scopes plus this run's own descendant-tree scope when it
+   * has a configured `runBudget`.
+   *
+   * @reserved Public sub-agent-protocol accessor consumed by spawn helpers.
+   */
+  getChildRunBudgetAccounts(): readonly RunBudgetAccount[];
+  /**
    * Serializable best-effort snapshot for debugging, branch/fork, and resume.
    *
    * @reserved Public run-control helper consumed by stores and frontends.
@@ -716,6 +742,9 @@ export class SparkwrightRun implements RunHandle {
   private readonly prefetchers: ContextPrefetcher[];
   private readonly observationSummarizer?: ObservationSummarizer;
   private readonly runBudget?: RunBudget;
+  private readonly localRunBudgetAccount: RunBudgetAccount;
+  private readonly ancestorRunBudgetAccounts: readonly RunBudgetAccount[];
+  private readonly childTreeRunBudgetAccount?: RunBudgetAccount;
   readonly maxSteps: number;
   private readonly toolTimeoutMs?: number;
   private readonly maxToolConcurrency: number;
@@ -728,13 +757,6 @@ export class SparkwrightRun implements RunHandle {
   private readonly notificationSources: NotificationSource[];
   private readonly taskRevivalSource?: TaskRevivalSource;
   private readonly loadedDeferredTools = new Set<string>();
-  private startedAtMs?: number;
-  private readonly budgetUsage: Omit<RunBudgetUsage, "elapsedMs"> = {
-    modelCalls: 0,
-    toolCalls: 0,
-    tokens: 0,
-    costUsd: 0,
-  };
   private result?: RunResult;
   private readonly runStore?: RunStore;
   private storeAppendQueue: Promise<void> = Promise.resolve();
@@ -866,6 +888,19 @@ export class SparkwrightRun implements RunHandle {
     this.prefetchers = [...(options.prefetchers ?? [])];
     this.observationSummarizer = options.observationSummarizer;
     this.runBudget = options.runBudget;
+    this.localRunBudgetAccount = createRunBudgetAccount({
+      budget: this.runBudget,
+      initialUsage: checkpoint?.budget.usage,
+    });
+    this.ancestorRunBudgetAccounts = uniqueBudgetAccounts(
+      options.ancestorRunBudgetAccounts ?? [],
+    );
+    this.childTreeRunBudgetAccount = this.runBudget
+      ? createRunBudgetAccount({
+          budget: this.runBudget,
+          initialUsage: checkpoint?.budget.childTreeUsage,
+        })
+      : undefined;
     this.maxSteps = options.maxSteps ?? 8;
     this.toolTimeoutMs = options.toolTimeoutMs;
     this.maxToolConcurrency = options.maxToolConcurrency ?? 10;
@@ -927,8 +962,6 @@ export class SparkwrightRun implements RunHandle {
       throw new Error("maxToolConcurrency must be a positive integer.");
     }
 
-    validateRunBudget(this.runBudget);
-
     if (
       !Number.isInteger(this.modelRetry.maxAttempts) ||
       this.modelRetry.maxAttempts < 1
@@ -966,15 +999,8 @@ export class SparkwrightRun implements RunHandle {
     }
 
     if (checkpoint) {
-      // Restore accumulated counters so a resumed run keeps honoring the
-      // original budget rather than starting fresh. elapsedMs is recomputed
-      // from `startedAtMs`, which is set when start() runs.
-      this.budgetUsage = {
-        modelCalls: checkpoint.budget.usage.modelCalls,
-        toolCalls: checkpoint.budget.usage.toolCalls,
-        tokens: checkpoint.budget.usage.tokens,
-        costUsd: checkpoint.budget.usage.costUsd,
-      };
+      // The local and descendant-tree budget accounts were seeded above so a
+      // resumed run keeps honoring resource usage instead of starting fresh.
       // Resume on the model the original run was actively using when the
       // checkpoint was taken; default to head if the recorded index falls
       // outside the configured fallback chain (e.g. caller reduced models[]).
@@ -1177,7 +1203,7 @@ export class SparkwrightRun implements RunHandle {
 
   private async runLoopBody(): Promise<RunResult> {
     this.setState("running");
-    this.startedAtMs = Date.now();
+    for (const { account } of this.workBudgetAccounts()) account.markStarted();
     this.usageTracker.markStarted();
     this.events.emit("run.started", runStartedPayload(this.record.metadata));
     if (this.resumedFromCheckpoint && this.seedLoopState) {
@@ -2564,6 +2590,12 @@ export class SparkwrightRun implements RunHandle {
     return this.workspace;
   }
 
+  getChildRunBudgetAccounts(): readonly RunBudgetAccount[] {
+    return this.childTreeRunBudgetAccount
+      ? [...this.ancestorRunBudgetAccounts, this.childTreeRunBudgetAccount]
+      : this.ancestorRunBudgetAccounts;
+  }
+
   addHook(hook: RunHook): string {
     const id = hook.id ?? `hook-dyn-${++this.dynamicHookCounter}`;
     if (this.dynamicHooks.some((existing) => existing.id === id)) {
@@ -2629,6 +2661,9 @@ export class SparkwrightRun implements RunHandle {
       budget: {
         configured: this.runBudget,
         usage: this.currentBudgetUsage(),
+        ...(this.childTreeRunBudgetAccount
+          ? { childTreeUsage: this.childTreeRunBudgetAccount.snapshot() }
+          : {}),
         forcedContinuation: this.forcedContinuationBudget.snapshot(),
       },
       queues: {
@@ -4351,23 +4386,14 @@ export class SparkwrightRun implements RunHandle {
     step: number;
     toolName: string;
   }): RunResult | undefined {
-    if (
-      this.runBudget?.maxToolCalls !== undefined &&
-      this.budgetUsage.toolCalls >= this.runBudget.maxToolCalls
-    ) {
-      return this.fail(
-        "max_tool_calls_exceeded",
-        "MAX_TOOL_CALLS_EXCEEDED",
-        `Run exceeded the maximum tool call count of ${this.runBudget.maxToolCalls}.`,
-        {
-          ...metadata,
-          budget: this.runBudget,
-          usage: this.currentBudgetUsage(),
-        },
-      );
+    const accounts = this.workBudgetAccounts();
+    for (const descriptor of accounts) {
+      const violation = descriptor.account.checkToolCall();
+      if (violation) {
+        return this.failBudgetViolation(violation, descriptor, metadata);
+      }
     }
-
-    this.budgetUsage.toolCalls += 1;
+    for (const { account } of accounts) account.commitToolCall();
     this.emitBudgetChecked("tool_call_reserved", metadata);
     return this.checkRunBudget("tool_call_reserved", metadata);
   }
@@ -4376,23 +4402,14 @@ export class SparkwrightRun implements RunHandle {
     step: number;
     attempt: number;
   }): void {
-    if (
-      this.runBudget?.maxModelCalls !== undefined &&
-      this.budgetUsage.modelCalls >= this.runBudget.maxModelCalls
-    ) {
-      throw new RunBudgetExceededError(
-        "max_model_calls_exceeded",
-        "MAX_MODEL_CALLS_EXCEEDED",
-        `Run exceeded the maximum model call count of ${this.runBudget.maxModelCalls}.`,
-        {
-          ...metadata,
-          budget: this.runBudget,
-          usage: this.currentBudgetUsage(),
-        },
-      );
+    const accounts = this.workBudgetAccounts();
+    for (const descriptor of accounts) {
+      const violation = descriptor.account.checkModelCall();
+      if (violation) {
+        throw this.budgetViolationError(violation, descriptor, metadata);
+      }
     }
-
-    this.budgetUsage.modelCalls += 1;
+    for (const { account } of accounts) account.commitModelCall();
     this.emitBudgetChecked("model_call_reserved", metadata);
   }
 
@@ -4442,10 +4459,9 @@ export class SparkwrightRun implements RunHandle {
       this.lastModelInputTokens = usage.inputTokens;
     }
 
-    const tokens =
-      usage.totalTokens ?? (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0);
-    this.budgetUsage.tokens += tokens;
-    this.budgetUsage.costUsd += usage.costUsd ?? 0;
+    for (const { account } of this.workBudgetAccounts()) {
+      account.recordModelUsage(usage);
+    }
     this.emitBudgetChecked("model_usage_recorded", { usage });
   }
 
@@ -4454,44 +4470,12 @@ export class SparkwrightRun implements RunHandle {
     metadata: Record<string, unknown> = {},
   ): RunResult | undefined {
     this.emitBudgetChecked(stage, metadata);
-    const usage = this.currentBudgetUsage();
-
-    if (
-      this.runBudget?.maxDurationMs !== undefined &&
-      usage.elapsedMs > this.runBudget.maxDurationMs
-    ) {
-      return this.fail(
-        "max_duration_exceeded",
-        "MAX_DURATION_EXCEEDED",
-        `Run exceeded the maximum duration of ${this.runBudget.maxDurationMs}ms.`,
-        { ...metadata, budget: this.runBudget, usage },
-      );
+    for (const descriptor of this.workBudgetAccounts()) {
+      const violation = descriptor.account.checkUsage();
+      if (violation) {
+        return this.failBudgetViolation(violation, descriptor, metadata);
+      }
     }
-
-    if (
-      this.runBudget?.maxTokens !== undefined &&
-      usage.tokens > this.runBudget.maxTokens
-    ) {
-      return this.fail(
-        "token_budget_exceeded",
-        "TOKEN_BUDGET_EXCEEDED",
-        `Run exceeded the token budget of ${this.runBudget.maxTokens}.`,
-        { ...metadata, budget: this.runBudget, usage },
-      );
-    }
-
-    if (
-      this.runBudget?.maxCostUsd !== undefined &&
-      usage.costUsd > this.runBudget.maxCostUsd
-    ) {
-      return this.fail(
-        "cost_budget_exceeded",
-        "COST_BUDGET_EXCEEDED",
-        `Run exceeded the cost budget of ${this.runBudget.maxCostUsd} USD.`,
-        { ...metadata, budget: this.runBudget, usage },
-      );
-    }
-
     return undefined;
   }
 
@@ -4499,22 +4483,73 @@ export class SparkwrightRun implements RunHandle {
     stage: string,
     metadata: Record<string, unknown> = {},
   ): void {
-    if (!this.runBudget) return;
-
-    this.events.emit("run.budget.checked", {
-      stage,
-      budget: this.runBudget,
-      usage: this.currentBudgetUsage(),
-      metadata,
-    });
+    for (const descriptor of this.workBudgetAccounts()) {
+      if (!descriptor.account.budget) continue;
+      this.events.emit("run.budget.checked", {
+        stage,
+        budget: descriptor.account.budget,
+        usage: descriptor.account.snapshot(),
+        budgetScope: descriptor.scope,
+        ...(descriptor.ancestorIndex !== undefined
+          ? { ancestorIndex: descriptor.ancestorIndex }
+          : {}),
+        metadata,
+      });
+    }
   }
 
   private currentBudgetUsage(): RunBudgetUsage {
-    return {
-      elapsedMs:
-        this.startedAtMs === undefined ? 0 : Date.now() - this.startedAtMs,
-      ...this.budgetUsage,
-    };
+    return this.localRunBudgetAccount.snapshot();
+  }
+
+  private workBudgetAccounts(): RunBudgetAccountDescriptor[] {
+    return [
+      { account: this.localRunBudgetAccount, scope: "run" },
+      ...this.ancestorRunBudgetAccounts.map((account, ancestorIndex) => ({
+        account,
+        scope: "ancestor_tree" as const,
+        ancestorIndex,
+      })),
+    ];
+  }
+
+  private failBudgetViolation(
+    violation: RunBudgetViolation,
+    descriptor: RunBudgetAccountDescriptor,
+    metadata: Record<string, unknown>,
+  ): RunResult {
+    const failure = budgetViolationFailure(violation);
+    return this.fail(failure.stopReason, failure.code, failure.message, {
+      ...metadata,
+      budget: violation.budget,
+      usage: violation.usage,
+      budgetScope: descriptor.scope,
+      ...(descriptor.ancestorIndex !== undefined
+        ? { ancestorIndex: descriptor.ancestorIndex }
+        : {}),
+    });
+  }
+
+  private budgetViolationError(
+    violation: RunBudgetViolation,
+    descriptor: RunBudgetAccountDescriptor,
+    metadata: Record<string, unknown>,
+  ): RunBudgetExceededError {
+    const failure = budgetViolationFailure(violation);
+    return new RunBudgetExceededError(
+      failure.stopReason,
+      failure.code,
+      failure.message,
+      {
+        ...metadata,
+        budget: violation.budget,
+        usage: violation.usage,
+        budgetScope: descriptor.scope,
+        ...(descriptor.ancestorIndex !== undefined
+          ? { ancestorIndex: descriptor.ancestorIndex }
+          : {}),
+      },
+    );
   }
 
   private async completeModelWithRetries(
@@ -4695,7 +4730,7 @@ export class SparkwrightRun implements RunHandle {
     adapter: ModelAdapter,
     input: ModelInput,
   ): Promise<ModelOutput> {
-    const timing: StreamTraceTiming = { startedAtMs: Date.now() };
+    const timing: StreamTraceTiming = {};
     this.lastStreamTraceTiming = timing;
     this.events.emit("model.stream.started", { step: input.step });
 
@@ -4755,7 +4790,6 @@ export class SparkwrightRun implements RunHandle {
         }
       }
     } catch (cause) {
-      timing.completedAtMs = Date.now();
       const modelError = normalizeModelError(cause);
       if (modelError.category === "timeout") {
         this.events.emit("model.stream.timeout", {
@@ -4850,7 +4884,6 @@ export class SparkwrightRun implements RunHandle {
       stopReason,
     };
 
-    timing.completedAtMs = Date.now();
     // Stream-layer terminal marker only: the assembled `output` (text, tool
     // calls, usage) is emitted on the immediately-following `model.completed`,
     // so re-attaching it here would serialize the whole answer twice in a row.
@@ -5327,6 +5360,63 @@ function cloneLoopState(state: RunLoopState): RunLoopState {
         : undefined,
     },
   };
+}
+
+function uniqueBudgetAccounts(
+  accounts: readonly RunBudgetAccount[],
+): readonly RunBudgetAccount[] {
+  return [...new Set(accounts)];
+}
+
+function budgetViolationFailure(violation: RunBudgetViolation): {
+  stopReason: Extract<
+    RunStopReason,
+    | "max_duration_exceeded"
+    | "max_model_calls_exceeded"
+    | "max_tool_calls_exceeded"
+    | "token_budget_exceeded"
+    | "cost_budget_exceeded"
+  >;
+  code:
+    | "MAX_DURATION_EXCEEDED"
+    | "MAX_MODEL_CALLS_EXCEEDED"
+    | "MAX_TOOL_CALLS_EXCEEDED"
+    | "TOKEN_BUDGET_EXCEEDED"
+    | "COST_BUDGET_EXCEEDED";
+  message: string;
+} {
+  switch (violation.limit) {
+    case "maxDurationMs":
+      return {
+        stopReason: "max_duration_exceeded",
+        code: "MAX_DURATION_EXCEEDED",
+        message: `Run exceeded the maximum duration of ${violation.configured}ms.`,
+      };
+    case "maxModelCalls":
+      return {
+        stopReason: "max_model_calls_exceeded",
+        code: "MAX_MODEL_CALLS_EXCEEDED",
+        message: `Run exceeded the maximum model call count of ${violation.configured}.`,
+      };
+    case "maxToolCalls":
+      return {
+        stopReason: "max_tool_calls_exceeded",
+        code: "MAX_TOOL_CALLS_EXCEEDED",
+        message: `Run exceeded the maximum tool call count of ${violation.configured}.`,
+      };
+    case "maxTokens":
+      return {
+        stopReason: "token_budget_exceeded",
+        code: "TOKEN_BUDGET_EXCEEDED",
+        message: `Run exceeded the token budget of ${violation.configured}.`,
+      };
+    case "maxCostUsd":
+      return {
+        stopReason: "cost_budget_exceeded",
+        code: "COST_BUDGET_EXCEEDED",
+        message: `Run exceeded the cost budget of ${violation.configured} USD.`,
+      };
+  }
 }
 
 class RunBudgetExceededError extends Error {

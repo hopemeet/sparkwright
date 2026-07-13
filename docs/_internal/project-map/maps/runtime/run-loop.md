@@ -10,6 +10,7 @@ See [tool-orchestration.md](tool-orchestration.md) and [../trace/raw-trace.md](.
 ## Main Files
 
 - `packages/core/src/run.ts`
+- `packages/core/src/run-budget.ts`
 - `packages/core/src/events.ts`
 - `packages/core/src/run-validation.ts`
 - `packages/core/src/run-outcome.ts`
@@ -47,6 +48,13 @@ createRun/resumeRunFromCheckpoint
 - Do not infer terminal run outcome from `model.completed` or `tool.completed`.
 - State transitions emit diagnostics when rejected.
 - Budget and max-step behavior are part of runtime semantics.
+- Ordinary work budgets use a synchronous Core account protocol. A run reserves
+  model/tool calls against its local account and every inherited ancestor-tree
+  account before work starts, then records provider token/cost usage into the
+  same accounts. `run.budget.checked` identifies `budgetScope:"run"` or
+  `"ancestor_tree"`; violations retain the existing stop reasons/codes and add
+  scope/index metadata. This does not merge work budgets with `maxSteps`,
+  forced-continuation source budgets, or run-chain ceilings.
 - Runtime compaction stages run before prompt-bound model calls when configured.
   Stage results with no net savings are reported as skipped rather than applied,
   and compaction failures preserve partial progress and continue.
@@ -260,6 +268,15 @@ createRun/resumeRunFromCheckpoint
   handling can still be noisy.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: replaced run-local counter duplication with reusable work-budget
+  accounts and added inherited descendant-tree enforcement.
+- Read: Core reservation, provider usage, failure/event, checkpoint, and resume
+  paths plus agent-runtime inheritance.
+- Tests: Core budget/run/resume/trace 275/275; agent-runtime Agent suites 65/65;
+  Host integration 102/102.
 
 - Status: Verified
 - Date: 2026-07-14

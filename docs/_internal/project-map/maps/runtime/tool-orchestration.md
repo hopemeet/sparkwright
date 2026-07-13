@@ -10,6 +10,7 @@ See [../safety/workspace-writes.md](../safety/workspace-writes.md), [../safety/s
 ## Main Files
 
 - `packages/core/src/run.ts`
+- `packages/core/src/run-budget.ts`
 - `packages/core/src/tool-orchestration.ts`
 - `packages/core/src/tools.ts`
 - `packages/host/src/tool-catalog.ts`
@@ -40,6 +41,12 @@ model tool calls
   path and bind the in-execute request to durable effect identity.
 
 - Tool requests are trace-visible before execution.
+- A tool call reserves the run-local and all inherited ancestor-tree
+  `maxToolCalls` counters before execution. Core first checks every account and
+  commits only after all checks pass, so concurrent in-process sibling Agents
+  cannot oversubscribe a shared descendant ceiling and a refused call never
+  reaches the tool implementation. Policy/approval ordering and evidence remain
+  unchanged.
 - `ToolDefinition.previewArgs()` is the source of truth for one-line request
   display. Core writes its bounded output to `tool.requested.payload.preview`;
   TUI/transcript renderers consume that field before falling back to legacy
@@ -348,6 +355,14 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
 - TUI live rendering and transcript export now share presentation summaries, but trace/model-context result compaction is still a separate backend concern.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: added atomic tool-call reservation across local and inherited
+  descendant-tree work-budget accounts.
+- Read: Core tool reservation/execution order and agent-runtime inheritance.
+- Tests: Core budget/run 130/130; agent-runtime Agent suites 65/65; Host
+  Agent/process/arbiter integration 102/102.
 
 - Status: Verified
 - Date: 2026-07-14

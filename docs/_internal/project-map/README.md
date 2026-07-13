@@ -130,6 +130,7 @@ follow the active maps below for the current contract.
 - `packages/core/src/fact-ledger.ts`, `packages/core/src/fact-classifier.ts`, or `packages/core/src/run-outcome.ts`: [modules/core.md](modules/core.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md), [maps/trace/summary-timeline-verify.md](maps/trace/summary-timeline-verify.md)
 - `packages/core/src/file-atomic.ts`: [modules/core.md](modules/core.md), [modules/agent-runtime.md](modules/agent-runtime.md), [maps/session/session-store.md](maps/session/session-store.md)
 - `packages/core/src/session.ts`: [modules/core.md](modules/core.md), [maps/session/session-store.md](maps/session/session-store.md), [maps/session/resume-replay.md](maps/session/resume-replay.md), [maps/runtime/context-compaction.md](maps/runtime/context-compaction.md)
+- `packages/core/src/run-budget.ts`: [modules/core.md](modules/core.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/session/resume-replay.md](maps/session/resume-replay.md), [maps/capabilities/agents.md](maps/capabilities/agents.md)
 - `packages/core/src/run.ts`: [modules/core.md](modules/core.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md), [maps/safety/approvals.md](maps/safety/approvals.md)
 - `packages/core/src/policy.ts` or `packages/core/src/approval-policy.ts`: [modules/core.md](modules/core.md), [maps/safety/approvals.md](maps/safety/approvals.md), [maps/safety/workspace-writes.md](maps/safety/workspace-writes.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md)
 - `packages/core/src/workspace.ts` or `packages/core/src/workspace-checkpoint.ts`: [modules/core.md](modules/core.md), [maps/safety/workspace-writes.md](maps/safety/workspace-writes.md)
@@ -198,6 +199,20 @@ TUI events; it is not a trace diagnostic report and must not replace
 trace/session inspection.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: routed Core descendant-tree budget accounts, Agent inheritance, and
+  checkpoint preservation through the run-loop, Agent, and resume maps.
+- Read: affected Core/agent-runtime source, active supervision design, extension
+  interface, and linked project-map pages.
+- Checked with no contract update needed: Host workspace admission,
+  `maps/safety/approvals.md`, forced-continuation budgets, Workflow run-chain
+  budgets, protocol event families, process delegate execution, and
+  `maps/capabilities/cron.md` remain unchanged. Tool-call reservation was
+  updated in `maps/runtime/tool-orchestration.md`.
+- Tests: Core budget/run/resume/trace 275/275; agent-runtime Agent suites 65/65;
+  Host Agent/process/arbiter suites 102/102; affected typechecks/build passed.
 
 - Status: Verified
 - Date: 2026-07-14

@@ -916,6 +916,7 @@ export function spawnSubAgent(input: SpawnSubAgentInput): SpawnedSubAgent {
     workflowHooks: input.workflowHooks,
     maxSteps: input.maxSteps ?? parent.maxSteps,
     runBudget: input.runBudget,
+    ancestorRunBudgetAccounts: parent.getChildRunBudgetAccounts(),
     abortSignal: input.abortSignal ?? parent.abortSignal,
     metadata: childRunMetadata,
     runStore: input.runStore,

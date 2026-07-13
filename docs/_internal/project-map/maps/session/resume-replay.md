@@ -63,6 +63,12 @@ Future run in compacted session
   mutable client defaults.
 
 - Checkpoint resume is the normal path.
+- Run checkpoints optionally persist `budget.childTreeUsage` alongside the
+  existing local `budget.usage`. Old checkpoints without the field remain
+  valid; resumed parents seed descendant consumable counters so later children
+  cannot regain model/tool/token/cost budget. Both local and tree elapsed
+  duration restart for the resumed active execution segment, preserving the
+  established duration-resume contract.
 - From-trace resume is best-effort recovery; it restores counters/coarse step data, not full in-loop context.
 - Reconstructed checkpoints are marked not fully resumable and require explicit force.
 - Session replay projects persisted events into context; it is not live-process restoration.
@@ -116,6 +122,15 @@ Future run in compacted session
   run-loop integration.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: added backward-compatible descendant-tree budget usage to Core
+  checkpoints and verified child refusal after parent resume.
+- Read: checkpoint schema, create/resume seeds, trace reconstruction boundary,
+  and Agent inheritance.
+- Tests: Core run/resume/trace 272/272 plus budget account 3/3;
+  agent-runtime checkpointed child-tree coverage passed.
 
 - Status: Read-only
 - Date: 2026-07-13
