@@ -6,6 +6,22 @@ contracts, public schema, package exports, or generated `dist`.
 
 ## Core
 
+### `packages/core/src/workspace.ts` or `workspace-checkpoint.ts`
+
+Run:
+
+```bash
+npm --workspace @sparkwright/core test -- test/workspace.test.ts test/workspace-checkpoint.test.ts test/policy.test.ts
+npm --workspace @sparkwright/core run typecheck
+```
+
+Sensitivity:
+
+- Cover symlinks that escape the workspace and symlinks whose targets remain
+  inside it; realpath containment alone does not distinguish the latter.
+- Nonexistent descendants and the workspace root have different semantics.
+  Do not replace focused cases with one generic path-helper assertion.
+
 ### `packages/core/src/run.ts`
 
 Run:

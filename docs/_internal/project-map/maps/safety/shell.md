@@ -55,8 +55,11 @@ model calls shell tool
   cwd. Denial reasons include the given path, resolution anchor, resolved path,
   and allowed roots so "wrong semantic anchor" and real escape attempts are
   distinguishable.
-- Shell mutation audit uses `workspace-snapshot.ts` for snapshot/diff/rollback;
-  the same host primitive is reused by MCP side-effect detection.
+- Foreground Host shell mutation audit uses `workspace-snapshot.ts` for
+  snapshot/diff/rollback. MCP execution does not reuse this primitive: local
+  stdio servers use their own transport lifecycle and a neutral cwd only avoids
+  accidental relative-path project writes; it is not mutation detection or
+  filesystem isolation.
 - Shell mutation audit excludes SparkWright runtime control-plane state such as
   `.sparkwright/sessions/` and `.sparkwright/workflow-runs/` so host-owned
   session traces and durable workflow state are not reported as model shell
@@ -136,6 +139,18 @@ model calls shell tool
 - Shell is powerful and cross-cuts workspace, tasks, trace, and capability state.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-13
+- Scope: corrected the execution-boundary map after source review: workspace
+  snapshot/diff/rollback belongs to foreground Host shell and is not reused by
+  MCP stdio transport.
+- Read: `packages/host/src/shell.ts`,
+  `packages/host/src/workspace-snapshot.ts`, and
+  `packages/mcp-adapter/src/index.ts`.
+- Tests: documentation correction supported by source inspection; Core
+  workspace/checkpoint/policy tests 59/59 passed for the behavior changed in
+  this stage.
 
 - Status: Read-only
 - Date: 2026-07-12

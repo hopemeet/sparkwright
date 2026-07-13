@@ -113,6 +113,11 @@ Does not own:
 - `SessionEvent.sequence` is session-local. Host-level session compaction
   writes `session.compaction.completed` / `session.compaction.skipped` events
   to the append-only session event stream for durable audit.
+- `LocalWorkspace` owns managed workspace path containment. It combines
+  realpath containment with inspection of the original lexical path and denies
+  stable symlink segments for writes/removals, including symlinks whose target
+  remains inside the workspace. Callers must not weaken this by pre-resolving
+  paths before passing them to the workspace API.
 - Trace levels are `standard` and `debug`; `minimal` is not a valid mode.
 - Standard trace stream folding emits one `model.stream.text` marker per
   contiguous run-local chunk segment. A same-run non-chunk event flushes the
@@ -340,6 +345,16 @@ Does not own:
   guard and trace diagnostics.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-13
+- Scope: hardened `LocalWorkspace` managed writes so same-workspace directory
+  and file symlink segments are denied without changing per-run policy state or
+  read semantics.
+- Read: `packages/core/src/workspace.ts`, `packages/core/src/policy.ts`, and
+  focused workspace/policy tests.
+- Tests: Core workspace/checkpoint/policy tests 59/59 passed; Core typecheck
+  passed.
 
 - Status: Verified
 - Date: 2026-07-12T23:45:00+0800

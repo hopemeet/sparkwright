@@ -1,4 +1,11 @@
-import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -59,6 +66,34 @@ describe("LocalWorkspace", () => {
     } finally {
       await rm(outside, { recursive: true, force: true });
     }
+  });
+
+  it("rejects directory symlinks that point back inside the workspace", async () => {
+    await mkdir(join(root, "real"));
+    await symlink(join(root, "real"), join(root, "alias"));
+    const workspace = new LocalWorkspace(root);
+
+    await expect(
+      workspace.writeText("alias/new.txt", "nope"),
+    ).rejects.toMatchObject({
+      code: "WORKSPACE_SYMLINK_WRITE_DENIED",
+    });
+    await expect(readFile(join(root, "real", "new.txt"))).rejects.toThrow();
+  });
+
+  it("rejects file symlinks that point back inside the workspace", async () => {
+    await writeFile(join(root, "real.txt"), "before\n", "utf8");
+    await symlink(join(root, "real.txt"), join(root, "alias.txt"));
+    const workspace = new LocalWorkspace(root);
+
+    await expect(
+      workspace.writeText("alias.txt", "after\n"),
+    ).rejects.toMatchObject({
+      code: "WORKSPACE_SYMLINK_WRITE_DENIED",
+    });
+    await expect(readFile(join(root, "real.txt"), "utf8")).resolves.toBe(
+      "before\n",
+    );
   });
 
   it("creates parent dirs when writing to a not-yet-existing nested path", async () => {

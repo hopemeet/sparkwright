@@ -80,6 +80,10 @@ export class LocalWorkspace {
     // above by resolveInsideRoot + the symlink-segment check, so the recursive
     // mkdir cannot escape the root.
     await mkdir(dirname(fullPath), { recursive: true });
+    // Re-check after mkdir so a stable symlink introduced while parents were
+    // being created is rejected before writeFile follows it. This narrows, but
+    // cannot eliminate, the filesystem race between validation and mutation.
+    await this.assertWritePathHasNoSymlinkSegments(fullPath, path);
     await writeFile(fullPath, content, "utf8");
     await this.assertResolvedPathStillInsideRoot(fullPath, path);
   }
@@ -146,18 +150,19 @@ export class LocalWorkspace {
     fullPath: string,
     path: string,
   ): Promise<void> {
-    const realRoot = await this.getResolvedRoot();
-    let current = await resolveRealPathAllowMissing(fullPath);
-    const pathsToCheck: string[] = [];
-
-    while (current !== realRoot && current !== dirname(current)) {
-      pathsToCheck.push(current);
-      current = dirname(current);
-    }
-
-    for (const candidate of pathsToCheck.reverse()) {
+    // Inspect the original lexical path rather than its realpath. Resolving the
+    // complete target first erases symlink segments that point back inside the
+    // workspace, so lstat() would only see their non-symlink destination.
+    const relativePath = relative(this.root, fullPath);
+    let candidate = this.root;
+    for (const segment of relativePath.split(sep)) {
+      if (!segment) continue;
+      candidate = resolve(candidate, segment);
       const stat = await lstat(candidate).catch(() => undefined);
-      if (!stat?.isSymbolicLink()) continue;
+      // Once an ancestor is missing, no deeper stable path can exist yet. The
+      // post-mkdir invocation checks the newly-created chain again.
+      if (!stat) break;
+      if (!stat.isSymbolicLink()) continue;
 
       throw new WorkspaceRuntimeError(
         "WORKSPACE_SYMLINK_WRITE_DENIED",

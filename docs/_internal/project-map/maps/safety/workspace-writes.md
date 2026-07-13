@@ -72,6 +72,12 @@ tool proposes write
   managed `workspace.write.*`, those writes are not counted as managed
   workspace writes; stdio MCP servers default to neutral cwd to avoid accidental
   relative-path project writes.
+- Managed `LocalWorkspace` writes and removals use realpath containment and
+  reject stable symlink segments in the caller's original workspace-relative
+  path, even when the symlink target stays inside the workspace. Missing parent
+  chains are checked again after creation and before the file write. These
+  checks narrow but cannot eliminate filesystem TOCTOU races; they are not an
+  OS-level sandbox for arbitrary processes.
 
 ## Consumers
 
@@ -98,6 +104,16 @@ tool proposes write
   from managed workspace writes.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-13
+- Scope: verified and hardened managed workspace symlink containment. Added
+  regressions for directory and file symlinks targeting paths inside the same
+  workspace; both are denied before mutation.
+- Read: `packages/core/src/workspace.ts`, workspace checkpoint and mutation
+  policy tests.
+- Tests: Core workspace/checkpoint/policy tests 59/59 passed; Core typecheck
+  passed.
 
 - Status: Read-only
 - Date: 2026-07-12T20:12:00+0800
