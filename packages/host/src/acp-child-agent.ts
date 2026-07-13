@@ -6,7 +6,12 @@ import {
   type RunHandle,
   type ToolDefinition,
 } from "@sparkwright/core";
-import type { AgentProfile } from "@sparkwright/agent-runtime";
+import {
+  agentInvocationEventBase,
+  agentInvocationMetadata,
+  prepareAgentInvocation,
+  type AgentProfile,
+} from "@sparkwright/agent-runtime";
 import { ExternalAcpWorker } from "@sparkwright/acp-client-adapter";
 import {
   createPlatformShellSandboxRuntime,
@@ -175,12 +180,6 @@ export function createAcpDelegateTool(
       const parsed = parseDelegateArgs(args);
       const spanId = createSpanId();
       const childRunId = createId(`acp_${sanitizeSegment(input.profile.id)}`);
-      const base = {
-        childRunId,
-        parentRunId: parent.record.id,
-        spanId,
-        goal: parsed.goal,
-      };
       const parentAgentId =
         typeof parent.record.metadata?.agentId === "string"
           ? parent.record.metadata.agentId
@@ -189,20 +188,25 @@ export function createAcpDelegateTool(
         typeof parent.record.metadata?.sessionId === "string"
           ? parent.record.metadata.sessionId
           : undefined;
-      const meta = {
-        ...(parentSessionId ? { sessionId: parentSessionId } : {}),
+      const invocation = prepareAgentInvocation({
+        goal: parsed.goal,
+        protocol: "acp",
+        sessionId: parentSessionId,
+        parentRunId: parent.record.id,
+        childRunId,
+        spanId,
         agentId: parentAgentId,
         childAgentId: input.profile.id,
         agentProfileId: input.profile.id,
         agentName: input.profile.name,
+        agentAssetIdentity: input.profile.assetIdentity,
         delegateTool: input.toolName,
-        childRunId,
-        parentRunId: parent.record.id,
         entrypoint: input.entrypoint ?? "acp",
-        protocol: "acp",
-        workspaceAccess,
         subagentDepth,
-      };
+        governance: { workspaceAccess },
+      });
+      const base = agentInvocationEventBase(invocation);
+      const meta = agentInvocationMetadata(invocation);
       parent.events.emit("subagent.requested", base, meta);
       parent.events.emit("subagent.started", base, meta);
       let executionWorkspace:

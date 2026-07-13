@@ -113,6 +113,11 @@ EventLog emits full event
   `terminalState` and `stepLimitReached`/`truncated` when derived from the child
   `run.*` outcome; external-process parent events must not invent those fields
   without a child `run.*` source.
+- Parent-visible Agent lifecycle identity is projected from the portable
+  `PreparedAgentInvocation` data contract. Its `admission_pending` state is not
+  yet a raw event phase; current raw event order remains adapter-owned. Metadata
+  identifies `protocol` as `in_process`, `acp`, or `external_command`, with
+  process workspace access included when known.
   Derived trace reports may downgrade the severity of an incomplete child when
   later parent verification covers the current workspace state, but they must
   not rewrite these raw terminal facts.
@@ -204,6 +209,14 @@ EventLog emits full event
   double-spilling tool-owned artifacts and honor `resultSize.neverPersist`.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: verified the prepared Agent invocation metadata projection; no event
+  family, ordering, or terminal payload semantics changed.
+- Read: agent-runtime invocation/spawn projection, Host process adapters, and
+  raw trace Agent contracts.
+- Tests: agent-runtime invocation/Agent tests and Host lifecycle suites passed.
 
 - Status: Verified
 - Date: 2026-07-13

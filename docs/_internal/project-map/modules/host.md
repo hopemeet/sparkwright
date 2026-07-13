@@ -703,6 +703,11 @@ Does not own:
   before spawning, and dynamic `spawn_agent` stores/reuses completed dynamic
   scope results under a prompt/role/tools key. Failed, step-limited, or
   truncated children remain non-reusable.
+- Host in-process, ACP, and external-command Agent adapters now construct the
+  same agent-runtime `PreparedAgentInvocation` data before projecting parent
+  lifecycle identity. Host still owns governance admission and adapter
+  execution; this phase does not move event transitions into a Supervisor or
+  change the known process `started`-before-admission debt.
 - `capabilities.agents.maxDepth` is enforced before dynamic spawn, LLM child
   delegates, ACP delegates, and external-command delegates start; sub-agent
   events carry `subagentDepth` metadata so nested runs share one depth budget.
@@ -834,6 +839,16 @@ Does not own:
   migration debts, not target contracts.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: migrated ACP/external-command lifecycle identity and governance facts
+  onto `PreparedAgentInvocation`, removing two hand-built metadata copies while
+  retaining adapter execution/event order.
+- Read: ACP/external-command adapters, agent-runtime invocation projection, and
+  cross-entrypoint lifecycle tests.
+- Tests: Host Agent lifecycle suites 157/157 with test files serialized; Host
+  typecheck passed after rebuilding agent-runtime.
 
 - Status: Verified
 - Date: 2026-07-14

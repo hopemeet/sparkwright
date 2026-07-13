@@ -206,6 +206,8 @@ describe("external command delegate tool", () => {
             agentId: "main",
             childAgentId: "external_reviewer",
             agentProfileId: "external_reviewer",
+            protocol: "external_command",
+            workspaceAccess: "none",
           }),
           payload: expect.objectContaining({
             result: expect.objectContaining({

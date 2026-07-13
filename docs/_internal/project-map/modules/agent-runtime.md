@@ -309,6 +309,12 @@ Does not own:
   `src/agents/delegation-ledger.ts` owns the parent-scoped reuse state. The root
   `src/index.ts` keeps compatibility exports and consumes those modules; ledger
   state or fingerprint logic must not be duplicated back into the root file.
+- `src/agents/invocation.ts` owns the serializable
+  `PreparedAgentInvocation` identity and its parent-event projections. The
+  contract starts at `admission_pending` and contains no run/process handles,
+  models, tools, policies, emitters, or callbacks. `spawnSubAgent` consumes it
+  for lifecycle identity, but execution and event transitions remain on the
+  existing path until Supervisor migration.
 - `createAgentTool` accepts an optional argument-level concurrency classifier.
   Host uses it to keep write-capable, shell-capable, or spawn-approval-bound
   configured children out of Core concurrent batches while preserving
@@ -354,6 +360,16 @@ Does not own:
   not authorize a generic actor bus or nested background lifecycle.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: introduced the pure-data `PreparedAgentInvocation` boundary and
+  migrated in-process lifecycle identity off the private `MultiAgentFacts`
+  implementation.
+- Read: `src/agents/invocation.ts`, root spawn path, Host process adapters, and
+  lifecycle characterization tests.
+- Tests: prepared invocation 10/10; agent-runtime Agent tests 38/38; Host
+  lifecycle suites 157/157; affected typechecks passed.
 
 - Status: Verified
 - Date: 2026-07-14

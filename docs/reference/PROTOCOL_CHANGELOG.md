@@ -12,6 +12,12 @@ Conventions:
 
 ## Unreleased
 
+- `subagent.*` metadata: additive — every built-in Agent transport identifies
+  `protocol` as `in_process`, `acp`, or `external_command`; process-backed
+  invocations also retain `workspaceAccess` when known. Migration: consumers
+  may use these optional fields for transport/governance diagnostics and must
+  continue grouping lifecycle by `childRunId`.
+
 - `host-message.schema.json`: additive — `capability.inspect` accepts optional
   `accessMode`, `backgroundTasks`, `permissionMode`, and `shouldWrite` fields,
   and `CapabilitySnapshot` may include an `access` summary. Migration: clients

@@ -59,6 +59,17 @@ import {
   rememberSuccessfulDelegation,
   withAlreadyCompletedNote,
 } from "./agents/delegation-ledger.js";
+import type {
+  AgentAssetIdentity,
+  PreparedAgentInvocation,
+  SubAgentEntrypoint,
+} from "./agents/invocation.js";
+import {
+  agentInvocationEventBase,
+  agentInvocationMetadata,
+  isSubAgentEntrypoint,
+  prepareAgentInvocation,
+} from "./agents/invocation.js";
 
 export type {
   AgentToolInvocationInput,
@@ -73,6 +84,22 @@ export {
   rememberSuccessfulDelegation,
   withAlreadyCompletedNote,
 } from "./agents/delegation-ledger.js";
+export type {
+  AgentAssetIdentity,
+  AgentInvocationProtocol,
+  AgentInvocationWorkspaceAccess,
+  PreparedAgentInvocation,
+  PreparedAgentInvocationGovernance,
+  PrepareAgentInvocationInput,
+  SubAgentEntrypoint,
+} from "./agents/invocation.js";
+export {
+  agentInvocationEventBase,
+  agentInvocationMetadata,
+  isSubAgentEntrypoint,
+  PREPARED_AGENT_INVOCATION_SCHEMA_VERSION,
+  prepareAgentInvocation,
+} from "./agents/invocation.js";
 
 export type PermissionEffect = "allow" | "deny" | "requires_approval";
 export type AgentMode = "primary" | "child" | "all";
@@ -222,13 +249,7 @@ export interface AgentProfile {
    * @reserved Host-resolved Markdown package identity consumed by trace-derived
    * attribution and statistics; it must be captured at invocation time.
    */
-  assetIdentity?: {
-    artifactKind: "agent";
-    layer: string;
-    logicalName: string;
-    packageHashPolicyVersion: 2;
-    packageHash: string;
-  };
+  assetIdentity?: AgentAssetIdentity;
 }
 
 export interface DerivedChildAgentProfile {
@@ -789,16 +810,6 @@ export interface SpawnedSubAgent {
   detachUsageRollup(): void;
 }
 
-export type SubAgentEntrypoint =
-  | "run"
-  | "spawn_agent"
-  | "agent_task"
-  | "delegate"
-  | "delegate_parallel"
-  | "delegates_run"
-  | "acp"
-  | "external_command";
-
 export type SubAgentTerminalState =
   | "completed"
   | "failed"
@@ -806,23 +817,6 @@ export type SubAgentTerminalState =
   | "blocked"
   | "step_limit"
   | "truncated";
-
-interface MultiAgentFacts {
-  sessionId?: string;
-  parentRunId: string;
-  childRunId: string;
-  spanId: string;
-  taskId?: string;
-  childAgentId?: string;
-  agentId?: string;
-  agentProfileId?: string;
-  agentName?: string;
-  /** @reserved Parent-visible trace attribution for the invoked Markdown Agent. */
-  agentAssetIdentity?: AgentProfile["assetIdentity"];
-  delegateTool?: string;
-  subagentDepth: number;
-  entrypoint: SubAgentEntrypoint;
-}
 
 /**
  * Spawn a child run under `parent`. Does NOT call `child.start()` — the
@@ -918,14 +912,9 @@ export function spawnSubAgent(input: SpawnSubAgentInput): SpawnedSubAgent {
   // started gap is observable when the embedder queues `.start()` behind a
   // concurrency limit.
   const taskId = stringMetadata(input.metadata, "taskId");
-  const subagentBase = {
-    childRunId: child.record.id,
-    parentRunId: parent.record.id,
-    spanId,
+  const invocation: PreparedAgentInvocation = prepareAgentInvocation({
     goal: input.goal,
-    ...(taskId ? { taskId } : {}),
-  };
-  const facts: MultiAgentFacts = removeUndefinedMetadata({
+    protocol: "in_process",
     sessionId,
     parentRunId: parent.record.id,
     childRunId: child.record.id,
@@ -939,12 +928,10 @@ export function spawnSubAgent(input: SpawnSubAgentInput): SpawnedSubAgent {
     delegateTool: stringMetadata(input.metadata, "delegateTool"),
     subagentDepth,
     entrypoint: subagentEntrypointFromMetadata(input.metadata),
-  }) as unknown as MultiAgentFacts;
-  parent.events.emit(
-    "subagent.requested",
-    subagentBase,
-    multiAgentMetadata(facts),
-  );
+  });
+  const subagentBase = agentInvocationEventBase(invocation);
+  const invocationMetadata = agentInvocationMetadata(invocation);
+  parent.events.emit("subagent.requested", subagentBase, invocationMetadata);
 
   // Roll up the child's own workspace writes onto the parent-visible terminal
   // event. The child run records each `apply_patch`/`edit_anchored_text` as a
@@ -960,11 +947,7 @@ export function spawnSubAgent(input: SpawnSubAgentInput): SpawnedSubAgent {
       return;
     }
     if (event.type === "run.started") {
-      parent.events.emit(
-        "subagent.started",
-        subagentBase,
-        multiAgentMetadata(facts),
-      );
+      parent.events.emit("subagent.started", subagentBase, invocationMetadata);
     } else if (event.type === "run.completed") {
       const terminal = subagentTerminalProjection("run.completed", event);
       parent.events.emit(
@@ -977,7 +960,7 @@ export function spawnSubAgent(input: SpawnSubAgentInput): SpawnedSubAgent {
             ? { workspaceWrites: childWorkspaceWrites }
             : {}),
         },
-        multiAgentMetadata(facts),
+        invocationMetadata,
       );
       detach();
       unsubscribeBridge();
@@ -995,7 +978,7 @@ export function spawnSubAgent(input: SpawnSubAgentInput): SpawnedSubAgent {
             ? { workspaceWrites: childWorkspaceWrites }
             : {}),
         },
-        multiAgentMetadata(facts),
+        invocationMetadata,
       );
       detach();
       unsubscribeBridge();
@@ -1019,41 +1002,11 @@ function childStopReason(payload: unknown): string | undefined {
   return typeof stopReason === "string" ? stopReason : undefined;
 }
 
-function multiAgentMetadata(facts: MultiAgentFacts): Record<string, unknown> {
-  return removeUndefinedMetadata({
-    sessionId: facts.sessionId,
-    agentId: facts.agentId,
-    taskId: facts.taskId,
-    childAgentId: facts.childAgentId,
-    agentProfileId: facts.agentProfileId,
-    agentName: facts.agentName,
-    agentAssetIdentity: facts.agentAssetIdentity,
-    delegateTool: facts.delegateTool,
-    subagentDepth: facts.subagentDepth,
-    entrypoint: facts.entrypoint,
-    childRunId: facts.childRunId,
-    parentRunId: facts.parentRunId,
-  });
-}
-
 function subagentEntrypointFromMetadata(
   metadata: Record<string, unknown> | undefined,
 ): SubAgentEntrypoint {
   const entrypoint = metadata?.entrypoint;
   return isSubAgentEntrypoint(entrypoint) ? entrypoint : "run";
-}
-
-function isSubAgentEntrypoint(value: unknown): value is SubAgentEntrypoint {
-  return (
-    value === "run" ||
-    value === "spawn_agent" ||
-    value === "agent_task" ||
-    value === "delegate" ||
-    value === "delegate_parallel" ||
-    value === "delegates_run" ||
-    value === "acp" ||
-    value === "external_command"
-  );
 }
 
 function subagentTerminalProjection(

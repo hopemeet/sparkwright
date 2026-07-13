@@ -822,8 +822,15 @@ async function runChildAgent(
 `@sparkwright/agent-runtime` ships the runnable helpers that enforce this
 contract. Use them directly rather than rewriting the wiring:
 
+Before lifecycle execution, all built-in transports construct a serializable
+`PreparedAgentInvocation`. Its `admissionState:"admission_pending"` is a
+pre-start data state for governance/supervisor migration; it is not yet a new
+raw event. The structure intentionally excludes live models, tools, policies,
+emitters, run handles, and process handles.
+
 ```ts
 import {
+  prepareAgentInvocation,
   spawnSubAgent,
   createAgentTool,
   mountAgentTool,

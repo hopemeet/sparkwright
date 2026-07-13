@@ -29,7 +29,7 @@ See [../../modules/agent-runtime.md](../../modules/agent-runtime.md) and [../../
 ```txt
 configured profiles/delegates
   -> host derives agent profiles
-  -> delegate/spawn tools
+  -> delegate/spawn tools prepare one Agent invocation identity
   -> child run store factory
   -> session/agent trace attribution
 ```
@@ -264,6 +264,12 @@ configured profiles/delegates
   `indexed-delegate-tool.ts`; portable result identity and parent-scoped reuse
   live under agent-runtime `src/agents/`. Host runtime composes these pieces but
   does not own a duplicate router or ledger implementation.
+- All current Agent transports prepare the same serializable invocation
+  identity before projecting parent lifecycle metadata. The data contract
+  reserves `admission_pending`, includes optional governance facts, and excludes
+  execution handles. In-process paths now report `protocol:"in_process"` in
+  lifecycle metadata; ACP/external retain their protocol and workspace-access
+  facts. Event sequencing remains adapter-owned until Supervisor migration.
 - Core same-turn concurrency follows the effective Agent invocation: dynamic
   write grants, configured child write/shell capability, spawn approval, invalid
   inputs, and unresolved indexed targets are serial. Read-only dynamic and
@@ -340,6 +346,16 @@ configured profiles/delegates
   detection.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: converged lifecycle identity construction for in-process, ACP, and
+  external-command Agent transports on `PreparedAgentInvocation`; lifecycle
+  execution remains unchanged.
+- Read: all Agent adapters, invocation projections, active supervision design,
+  protocol event docs, and characterization tests.
+- Tests: prepared invocation 10/10; agent-runtime Agent tests 38/38; Host Agent
+  lifecycle suites 157/157.
 
 - Status: Verified
 - Date: 2026-07-14

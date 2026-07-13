@@ -186,6 +186,8 @@ describe("ACP child agent delegate tool", () => {
             agentId: "main",
             childAgentId: "external_reviewer",
             agentProfileId: "external_reviewer",
+            protocol: "acp",
+            workspaceAccess: "none",
           }),
           payload: expect.objectContaining({
             result: expect.objectContaining({

@@ -1225,7 +1225,7 @@ describe("createAgentTool / mountAgentTool", () => {
     }
   });
 
-  it("projects multi-agent facts onto every subagent phase", async () => {
+  it("projects prepared invocation facts onto every subagent phase", async () => {
     const parent = createRun({
       goal: "parent",
       model: {
@@ -1275,6 +1275,7 @@ describe("createAgentTool / mountAgentTool", () => {
         agentProfileId: "reviewer",
         delegateTool: "delegate_reviewer",
         entrypoint: "delegate",
+        protocol: "in_process",
         subagentDepth: 1,
       });
     }

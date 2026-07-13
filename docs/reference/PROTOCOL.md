@@ -326,7 +326,9 @@ Current event types:
   SparkWright child run, the child still has its own `run.*` event stream; these
   events let a parent trace show fan-out and completion status.
   Metadata carries additive audit fields such as `childRunId`, `parentRunId`,
-  `agentId`, `subagentDepth`, `delegateTool`, and `entrypoint`. Terminal
+  `agentId`, `subagentDepth`, `delegateTool`, `entrypoint`, and `protocol`
+  (`in_process`, `acp`, or `external_command`). Process-backed invocations also
+  include `workspaceAccess` when known. Terminal
   payloads add `terminalState` plus `stepLimitReached` / `truncated` when the
   child `run.*` outcome reports them. External-command delegate terminal
   results may also carry bounded child progress summaries (`progressCount`,

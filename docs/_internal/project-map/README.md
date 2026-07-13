@@ -59,6 +59,13 @@ Design docs in [designs/](designs/) are catalog entries, not routing targets —
 read them for the shape and rationale of a planned or completed change, then
 follow the active maps below for the current contract.
 
+- [designs/multi-agent-supervision.md](designs/multi-agent-supervision.md) —
+  Active staged refactor for converging Agent invocation identity, lifecycle,
+  resource admission, and adapter ownership without adding a generic actor bus.
+  Active contracts: [modules/agent-runtime.md](modules/agent-runtime.md),
+  [modules/host.md](modules/host.md), and
+  [maps/capabilities/agents.md](maps/capabilities/agents.md).
+
 - [designs/asset-package-governance-redirection-review.md](designs/asset-package-governance-redirection-review.md) —
   Adjudicated review handoff: records the frozen scope redirection that keeps
   managed change Skill-only, separates filesystem reconciliation, establishes
@@ -191,6 +198,17 @@ TUI events; it is not a trace diagnostic report and must not replace
 trace/session inspection.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: cataloged the active multi-Agent supervision refactor and routed its
+  prepared invocation boundary through agent-runtime, Host, Agents, and raw
+  trace maps.
+- Read: active design, implementation/adapters, protocol event docs, and all
+  linked map pages.
+- Checked with no contract update needed: Cron consumes task/runtime exports but
+  does not construct or observe child Agent invocation lifecycles.
+- Tests: prepared invocation/Agent and Host lifecycle focused suites passed.
 
 - Status: Verified
 - Date: 2026-07-14

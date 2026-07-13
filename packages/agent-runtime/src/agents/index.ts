@@ -6,6 +6,22 @@ export type {
   DelegationLedgerKey,
   DelegationLedgerResult,
 } from "./types.js";
+export type {
+  AgentAssetIdentity,
+  AgentInvocationProtocol,
+  AgentInvocationWorkspaceAccess,
+  PreparedAgentInvocation,
+  PreparedAgentInvocationGovernance,
+  PrepareAgentInvocationInput,
+  SubAgentEntrypoint,
+} from "./invocation.js";
+export {
+  agentInvocationEventBase,
+  agentInvocationMetadata,
+  isSubAgentEntrypoint,
+  PREPARED_AGENT_INVOCATION_SCHEMA_VERSION,
+  prepareAgentInvocation,
+} from "./invocation.js";
 export {
   findSimilarSuccessfulDelegation,
   rememberSuccessfulDelegation,
