@@ -57,6 +57,10 @@
 - Shared argv launch-decision tests deterministically cover unavailable
   warn/enforce behavior, but installed-runtime integration remains
   environment-sensitive and may exercise only the current OS backend.
+- Read-only Workflow Script and local extension process execution is
+  fail-closed when the platform sandbox is unavailable. The deterministic
+  security-plan test covers compilation; successful real process launch remains
+  platform/runtime-sensitive.
 - Stale `dist` can make host/CLI tests miss shell-tool source behavior.
 - Timing-sensitive timeout tests need tiny injected budgets and should avoid
   depending on wall-clock precision.

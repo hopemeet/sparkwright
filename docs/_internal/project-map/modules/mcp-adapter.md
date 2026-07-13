@@ -34,7 +34,10 @@ Does not own:
 
 - MCP startup may be lazy or eager depending on config.
 - Tool schemas may be loaded or deferred depending on config.
-- Stdio MCP servers can be launched under the configured shell sandbox.
+- Stdio MCP servers can be launched under the Host-provided effective process
+  sandbox. For read-only Host runs this is strengthened to fail-closed
+  no-write, even when the configured shell sandbox is off; the adapter does not
+  derive run access itself.
 - Stdio MCP delegates sandbox availability/enforce/fallback and concrete argv
   invocation compilation to `shell-sandbox`, while MCP adapter retains neutral
   cwd creation, SDK transport selection, stderr draining, connection shutdown,
@@ -72,6 +75,15 @@ Does not own:
   can still give a trusted MCP server project access.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-13T22:21:00+0800
+- Scope: Host read-only security plans now pass a fail-closed no-write process
+  sandbox to stdio MCP preparation while capability inspection continues to
+  report the configured main-Shell sandbox status.
+- Read: Host security-plan/runtime assembly and MCP adapter input boundary.
+- Tests: Host security-plan/protocol/tools/workflows 263/263; MCP adapter 34/34;
+  CLI capability-inspect selection 11/11.
 
 - Status: Verified
 - Date: 2026-07-13

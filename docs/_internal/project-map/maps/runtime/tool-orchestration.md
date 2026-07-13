@@ -88,6 +88,10 @@ true` records a mutation index for its target (`mutatedByTarget`). A
   security plan for resolved access and filesystem/sandbox inputs, then build
   separate stateful lifecycles on top. The plan must not retain prepared MCP
   handles, tool instances, approval state, or Core mutation-policy state.
+- That plan reports configured main-Shell sandbox status separately from the
+  effective extension-process sandbox. Read-only runs strengthen the latter for
+  MCP/Skill preparation; Workflow Script and explicit run-bound command hooks
+  apply their capability-specific no-write clamp at their execution boundary.
 - CLI capability inspection consumes the Host snapshot as the effective tool,
   delegate, and sandbox source. CLI-only report sections may enrich it, but
   must not synthesize a second effective catalog when Host inspection fails.
@@ -333,6 +337,15 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
 - TUI live rendering and transcript export now share presentation summaries, but trace/model-context result compaction is still a separate backend concern.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-13T22:21:00+0800
+- Scope: separated configured Shell status from the read-only effective process
+  sandbox and applied capability-specific no-write clamps at Workflow/Hook
+  execution boundaries; tool policy, approval, and trace lifecycles are unchanged.
+- Read: Host security plan/runtime, Workflow node API/hooks, and capability
+  inspection assembly.
+- Tests: Host focused 263/263; MCP adapter 34/34; CLI inspect 11/11.
 
 - Status: Read-only
 - Date: 2026-07-13

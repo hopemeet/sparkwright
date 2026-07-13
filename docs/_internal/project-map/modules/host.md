@@ -97,6 +97,15 @@ Does not own:
   workspace, access, confidential paths, skill/config roots, and resolved shell
   sandbox inputs there. It must not own prepared tools/processes, approval
   resolvers, traces, Workflow state, or Core's mutable per-run mutation policy.
+- The security plan keeps configured shell-sandbox status separate from the
+  process sandbox passed to local extension adapters. Read-only run access
+  strengthens that adapter input to fail-closed no-write without misreporting
+  the main Shell tool's configured sandbox mode in capability inspection.
+- Workflow Script execution receives write access only when both the resolved
+  run access and the script's declared capabilities allow `write`. Command
+  hooks are likewise strengthened to fail-closed no-write when run metadata
+  explicitly carries `shouldWrite:false`; missing metadata retains the legacy
+  embedder contract.
 - CLI `capabilities inspect` treats the Host `CapabilitySnapshot` as required
   for effective tool, delegate, and sandbox facts. It may add CLI-only config
   diagnostics and optional MCP resolution detail, but it no longer reconstructs
@@ -796,6 +805,16 @@ Does not own:
 - Capability snapshot fields are useful but can become stale if new tools bypass `tool-catalog.ts`; direct-core/cron should add tools by catalog profile, not local factories.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-13T22:21:00+0800
+- Scope: read-only run access now strengthens local extension, Workflow Script,
+  and explicit run-bound command-hook process sandboxes without changing the
+  configured main-Shell status reported by capability inspection.
+- Read: Host security plan, runtime assembly, Workflow node API/hooks, MCP
+  preparation boundary, and focused tests.
+- Tests: Host typecheck; security-plan/workflow-hooks 78/78;
+  protocol/tools/workflows 185/185; MCP adapter 34/34; CLI inspect 11/11.
 
 - Status: Verified
 - Date: 2026-07-13

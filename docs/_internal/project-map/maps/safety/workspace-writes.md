@@ -71,7 +71,13 @@ tool proposes write
 - MCP tools are normal external tools. If they write files without using
   managed `workspace.write.*`, those writes are not counted as managed
   workspace writes; stdio MCP servers default to neutral cwd to avoid accidental
-  relative-path project writes.
+  relative-path project writes. In Host read-only runs, local stdio MCP
+  processes additionally receive a fail-closed no-write OS sandbox; this does
+  not turn MCP writes in write-enabled runs into managed write attribution.
+- Workflow Script processes require both write-enabled run access and a
+  declared `write` capability before their sandbox receives write grants.
+  Read-only command hooks are also forced into a fail-closed no-write sandbox
+  when Host run metadata explicitly records `shouldWrite:false`.
 - Managed `LocalWorkspace` writes and removals use realpath containment and
   reject stable symlink segments in the caller's original workspace-relative
   path, even when the symlink target stays inside the workspace. Missing parent
@@ -104,6 +110,15 @@ tool proposes write
   from managed workspace writes.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-13T22:21:00+0800
+- Scope: read-only extension-process boundaries now compile fail-closed
+  no-write sandbox inputs for local MCP, Workflow Script, and explicit
+  run-bound command hooks; managed write event/counting semantics are unchanged.
+- Read: Host security plan, Workflow node API/hooks, MCP assembly, and
+  shell-sandbox no-write compiler.
+- Tests: Host focused 263/263; MCP adapter 34/34; CLI capability inspect 11/11.
 
 - Status: Verified
 - Date: 2026-07-13

@@ -3,6 +3,7 @@ import type { SkillRoot } from "@sparkwright/skills";
 import {
   createPlatformShellSandboxRuntime,
   describeShellSandboxStatus,
+  enforceNoWriteShellSandbox,
   resolveShellSandboxConfig,
   type ResolvedShellSandboxConfig,
   type ShellSandboxRuntime,
@@ -51,19 +52,24 @@ export async function prepareHostRunSecurityPlan(input: {
       input.loadedConfig.config.capabilities?.skills?.roots,
     ).map((root) => Object.freeze({ ...root })),
   );
+  const sandboxRuntime =
+    input.sandboxRuntime ?? createPlatformShellSandboxRuntime();
+  const configuredShellSandbox = resolveShellSandboxConfig({
+    workspaceRoot,
+    config: input.loadedConfig.config.shell?.sandbox,
+    skillRoots: skillRoots.map((root) => root.root),
+    extraForcedDenyWrite: configPaths,
+  });
   const shellSandbox = freezeResolvedShellSandbox(
-    resolveShellSandboxConfig({
-      workspaceRoot,
-      config: input.loadedConfig.config.shell?.sandbox,
-      skillRoots: skillRoots.map((root) => root.root),
-      extraForcedDenyWrite: configPaths,
-    }),
+    input.access.shouldWrite
+      ? configuredShellSandbox
+      : await enforceNoWriteShellSandbox(configuredShellSandbox, {
+          runtime: sandboxRuntime,
+          denyWriteRoots: [workspaceRoot],
+        }),
   );
   const shellSandboxStatus = Object.freeze(
-    await describeShellSandboxStatus(
-      shellSandbox,
-      input.sandboxRuntime ?? createPlatformShellSandboxRuntime(),
-    ),
+    await describeShellSandboxStatus(configuredShellSandbox, sandboxRuntime),
   );
   const confidentialPaths = mergeUniquePaths(
     input.loadedConfig.config.confidentialPaths,

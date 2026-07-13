@@ -89,4 +89,42 @@ describe("prepareHostRunSecurityPlan", () => {
     expect(Object.isFrozen(plan.skillRoots)).toBe(true);
     expect(Object.isFrozen(plan.shellSandbox.filesystem.allowRead)).toBe(true);
   });
+
+  it("compiles read-only run access into a fail-closed no-write process sandbox", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "host-security-plan-"));
+    roots.push(workspaceRoot);
+    const plan = await prepareHostRunSecurityPlan({
+      workspaceRoot,
+      access: {
+        permissionMode: "plan",
+        shouldWrite: false,
+        backgroundTasks: "disabled",
+        accessMode: "read-only",
+        overriddenLegacyFields: [],
+      },
+      loadedConfig: {
+        config: { shell: { sandbox: { mode: "off" } } },
+        sources: {},
+        attempted: [],
+        errors: [],
+        warnings: [],
+      } as LoadedSharedConfig,
+      sandboxRuntime: {
+        id: "sandbox-exec",
+        platform: "darwin",
+        isAvailable: async () => true,
+        execute: async () => {
+          throw new Error("not used by plan preparation");
+        },
+      },
+    });
+
+    expect(plan.shellSandbox).toMatchObject({
+      mode: "enforce",
+      failIfUnavailable: true,
+      filesystem: { allowWrite: [], tmp: true },
+    });
+    expect(plan.shellSandbox.filesystem.denyWrite).toContain(workspaceRoot);
+    expect(plan.shellSandboxStatus.mode).toBe("off");
+  });
 });

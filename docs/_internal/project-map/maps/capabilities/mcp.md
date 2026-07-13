@@ -32,7 +32,9 @@ host config MCP servers
 - ACP `session/new` may supply session-scoped MCP servers; those merge with
   configured user/project MCP servers for that session and are not written to
   config files.
-- Stdio server launch can be sandboxed.
+- Stdio server launch consumes the Host-provided effective process sandbox.
+  Read-only Host runs strengthen it to fail-closed no-write even when the
+  configured main-Shell sandbox is off.
 - Stdio sandbox availability/enforce/fallback and argv invocation compilation
   use the same shell-sandbox decision as Host JSON-RPC processes. MCP retains
   its own transport, neutral-cwd, stderr, close, and cleanup lifecycle.
@@ -84,6 +86,14 @@ host config MCP servers
   trusted opt-ins and are not counted as managed workspace writes.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-13T22:21:00+0800
+- Scope: read-only Host run access now supplies stdio MCP with a fail-closed
+  no-write sandbox while configured Shell status remains separately reported.
+  Neutral cwd, transport lifecycle, and managed-write attribution are unchanged.
+- Read: Host security plan/runtime and MCP adapter launch boundary.
+- Tests: MCP adapter 34/34; Host focused 263/263; CLI inspect selection 11/11.
 
 - Status: Read-only
 - Date: 2026-07-13

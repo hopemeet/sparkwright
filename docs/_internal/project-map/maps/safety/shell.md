@@ -119,6 +119,15 @@ model calls shell tool
   progress/telemetry. Script requests for governed command side effects go back
   through the host node API (`invoke(type:"command")`) instead of granting the
   script a raw shell capability.
+- Workflow Script process writes require two independent grants: write-enabled
+  run access and an explicit script `write` capability. Otherwise Host compiles
+  a fail-closed no-write sandbox that denies the workspace. Command hooks do the
+  same when the run explicitly records `shouldWrite:false`; legacy hook
+  embedders with no access metadata keep their prior behavior.
+- Host run security planning distinguishes the configured main-Shell sandbox
+  status used by capability inspection from the effective extension-process
+  sandbox. Read-only runs may strengthen the latter for MCP and Skill process
+  launch without claiming that the configured Shell mode changed.
 - `shell-sandbox` owns the shared argv launch decision
   (`sandboxed`/`unsandboxed` fallback/`unavailable`) and OS-specific resolved
   filesystem grant compilation. Host JSON-RPC, MCP stdio, Delegate, and Skill
@@ -147,6 +156,15 @@ model calls shell tool
 - Shell is powerful and cross-cuts workspace, tasks, trace, and capability state.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-13T22:21:00+0800
+- Scope: read-only MCP/Skill adapter inputs, Workflow Scripts, and explicit
+  run-bound command hooks now use fail-closed no-write sandbox compilation;
+  their distinct process lifecycles remain intact.
+- Read: Host security plan, Workflow node API/hooks, runtime assembly, and
+  shell-sandbox no-write compiler.
+- Tests: Host focused 263/263; MCP adapter 34/34; CLI inspect 11/11.
 
 - Status: Verified
 - Date: 2026-07-13
