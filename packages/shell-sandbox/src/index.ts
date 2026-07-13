@@ -147,6 +147,35 @@ export interface SandboxedProcessInvocation {
 }
 
 /**
+ * One argv-process launch decision. Callers keep ownership of process I/O and
+ * lifecycle, while this package owns the platform availability/fallback rule
+ * and the concrete invocation.
+ */
+export type SandboxedProcessLaunchDecision =
+  | {
+      status: "sandboxed";
+      invocation: SandboxedProcessInvocation;
+      runtimeId: string;
+      available: true;
+      enforced: boolean;
+    }
+  | {
+      status: "unsandboxed";
+      invocation: SandboxedProcessInvocation;
+      runtimeId: string;
+      available: false;
+      enforced: false;
+      reason?: string;
+    }
+  | {
+      status: "unavailable";
+      runtimeId: string;
+      available: false;
+      enforced: true;
+      reason: string;
+    };
+
+/**
  * OS-level sandbox adapter.
  *
  * @public
@@ -296,6 +325,111 @@ export function filesystemIsolationForRuntime(
   return "unsupported";
 }
 
+/** Replace the positive filesystem scope while preserving configured denies. */
+export function scopeShellSandboxFilesystem(
+  config: ResolvedShellSandboxConfig,
+  input: { allowRead: readonly string[]; allowWrite: readonly string[] },
+): ResolvedShellSandboxConfig {
+  return {
+    ...config,
+    filesystem: {
+      ...config.filesystem,
+      allowRead: uniquePaths(input.allowRead),
+      allowWrite: uniquePaths(input.allowWrite),
+    },
+  };
+}
+
+/** Add stable lexical/realpath read grants without changing write access. */
+export async function extendShellSandboxReadAccess(
+  config: ResolvedShellSandboxConfig,
+  paths: readonly string[],
+): Promise<ResolvedShellSandboxConfig> {
+  const variants = [...config.filesystem.allowRead];
+  for (const path of paths) {
+    const resolved = resolve(path);
+    variants.push(resolved);
+    try {
+      variants.push(await realpath(resolved));
+    } catch {
+      // Missing paths remain represented by their stable lexical form.
+    }
+  }
+  return {
+    ...config,
+    filesystem: {
+      ...config.filesystem,
+      allowRead: uniquePaths(variants),
+    },
+  };
+}
+
+/**
+ * Compile a fail-closed no-write profile for the selected OS backend. Bind
+ * allowlists deny writes by having no writable roots; macOS deny-list guards
+ * need explicit lexical, realpath, and /private alias variants.
+ */
+export async function enforceNoWriteShellSandbox(
+  config: ResolvedShellSandboxConfig,
+  input: {
+    runtime: Pick<ShellSandboxRuntime, "id" | "platform">;
+    denyWriteRoots?: readonly string[];
+  },
+): Promise<ResolvedShellSandboxConfig> {
+  const isolation = filesystemIsolationForRuntime(input.runtime);
+  const denyWrite =
+    isolation === "bind-allowlist"
+      ? []
+      : isolation === "deny-list-guard"
+        ? uniquePaths([
+            ...config.filesystem.denyWrite,
+            ...(await sandboxPathVariants(input.denyWriteRoots ?? [])),
+          ])
+        : config.filesystem.denyWrite;
+  return {
+    ...config,
+    mode: "enforce",
+    failIfUnavailable: true,
+    filesystem: {
+      ...config.filesystem,
+      allowWrite: [],
+      denyWrite,
+      tmp: true,
+    },
+  };
+}
+
+async function sandboxPathVariants(
+  paths: readonly string[],
+): Promise<string[]> {
+  const variants: string[] = [];
+  for (const path of paths) {
+    const resolved = resolve(path);
+    variants.push(resolved, ...macOSPrivatePathVariants(resolved));
+    try {
+      const real = await realpath(resolved);
+      variants.push(real, ...macOSPrivatePathVariants(real));
+    } catch {
+      // Nonexistent roots are still denied by their stable lexical form.
+    }
+  }
+  return variants;
+}
+
+function macOSPrivatePathVariants(path: string): string[] {
+  const variants: string[] = [];
+  for (const alias of ["/var", "/tmp", "/etc"]) {
+    const privateAlias = `/private${alias}`;
+    if (path === alias || path.startsWith(`${alias}/`)) {
+      variants.push(`/private${path}`);
+    }
+    if (path === privateAlias || path.startsWith(`${privateAlias}/`)) {
+      variants.push(path.slice("/private".length));
+    }
+  }
+  return variants;
+}
+
 export class ShellSandboxExecutor {
   constructor(private readonly runtime: ShellSandboxRuntime) {}
 
@@ -427,6 +561,70 @@ export async function prepareSandboxedProcessInvocation(
   }
 
   throw new Error(`Shell sandbox runtime "${runtime.id}" cannot spawn.`);
+}
+
+/**
+ * Compile sandbox mode + runtime availability into a launch decision for an
+ * argv-owned process. This deliberately does not spawn: MCP, Workflow JSON-RPC,
+ * and other transports retain their distinct I/O and shutdown protocols.
+ */
+export async function prepareSandboxedProcessLaunch(
+  runtime: ShellSandboxRuntime,
+  request: SandboxedProcessRequest,
+  config: ResolvedShellSandboxConfig,
+): Promise<SandboxedProcessLaunchDecision> {
+  if (config.mode === "off") {
+    return {
+      status: "unsandboxed",
+      invocation: rawProcessInvocation(request),
+      runtimeId: runtime.id,
+      available: false,
+      enforced: false,
+    };
+  }
+  if (!(await runtime.isAvailable())) {
+    const reason = `Shell sandbox runtime "${runtime.id}" is unavailable on ${runtime.platform}.`;
+    if (config.failIfUnavailable) {
+      return {
+        status: "unavailable",
+        runtimeId: runtime.id,
+        available: false,
+        enforced: true,
+        reason,
+      };
+    }
+    return {
+      status: "unsandboxed",
+      invocation: rawProcessInvocation(request),
+      runtimeId: runtime.id,
+      available: false,
+      enforced: false,
+      reason,
+    };
+  }
+  return {
+    status: "sandboxed",
+    invocation: await prepareSandboxedProcessInvocation(
+      runtime,
+      request,
+      config,
+    ),
+    runtimeId: runtime.id,
+    available: true,
+    enforced: config.failIfUnavailable,
+  };
+}
+
+function rawProcessInvocation(
+  request: SandboxedProcessRequest,
+): SandboxedProcessInvocation {
+  return {
+    command: request.command,
+    args: request.args ?? [],
+    cwd: request.cwd,
+    env: request.env,
+    metadata: request.metadata,
+  };
 }
 
 export class LinuxBubblewrapShellSandboxRuntime implements ShellSandboxRuntime {

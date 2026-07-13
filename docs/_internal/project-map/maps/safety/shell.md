@@ -119,6 +119,11 @@ model calls shell tool
   progress/telemetry. Script requests for governed command side effects go back
   through the host node API (`invoke(type:"command")`) instead of granting the
   script a raw shell capability.
+- `shell-sandbox` owns the shared argv launch decision
+  (`sandboxed`/`unsandboxed` fallback/`unavailable`) and OS-specific resolved
+  filesystem grant compilation. Host JSON-RPC, MCP stdio, Delegate, and Skill
+  adapters keep separate I/O, timeout, trace, and cleanup lifecycles; this seam
+  is not a general-purpose runner.
 
 ## Consumers
 
@@ -139,6 +144,15 @@ model calls shell tool
 - Shell is powerful and cross-cuts workspace, tasks, trace, and capability state.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-13
+- Scope: unified argv sandbox fallback decisions and filesystem grant
+  compilation across Host JSON-RPC, MCP stdio, external Delegate isolation,
+  and Skill inline no-write execution.
+- Read: shell-sandbox, Host process/Delegate/Skill adapters, and MCP adapter.
+- Tests: shell-sandbox 14/14; Host focused process tests 37/37; MCP 34/34;
+  affected typechecks passed.
 
 - Status: Verified
 - Date: 2026-07-13

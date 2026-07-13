@@ -7,10 +7,14 @@ import {
   buildMacOSSandboxProfile,
   createPlatformShellSandboxRuntime,
   describeShellSandboxStatus,
+  enforceNoWriteShellSandbox,
+  extendShellSandboxReadAccess,
   LinuxBubblewrapShellSandboxRuntime,
   MacOSShellSandboxRuntime,
   prepareSandboxedProcessInvocation,
+  prepareSandboxedProcessLaunch,
   resolveShellSandboxConfig,
+  scopeShellSandboxFilesystem,
   shellJoin,
   shellQuoteArg,
 } from "../src/index.js";
@@ -88,6 +92,117 @@ describe("resolveShellSandboxConfig", () => {
       networkMode: "deny",
       filesystemIsolation: "bind-allowlist",
     });
+  });
+});
+
+describe("prepareSandboxedProcessLaunch", () => {
+  const request = {
+    command: "node",
+    args: ["server.js"],
+    cwd: ROOT,
+  };
+
+  it("returns an unsandboxed argv invocation when warn mode is unavailable", async () => {
+    const config = resolveShellSandboxConfig({ workspaceRoot: ROOT });
+    const decision = await prepareSandboxedProcessLaunch(
+      {
+        id: "missing",
+        platform: "linux",
+        isAvailable: async () => false,
+        execute: async () => {
+          throw new Error("unused");
+        },
+      },
+      request,
+      config,
+    );
+
+    expect(decision).toMatchObject({
+      status: "unsandboxed",
+      available: false,
+      enforced: false,
+      runtimeId: "missing",
+      invocation: request,
+    });
+    expect(decision.status === "unsandboxed" && decision.reason).toMatch(
+      /unavailable/,
+    );
+  });
+
+  it("returns unavailable without an invocation when enforce mode cannot start", async () => {
+    const config = resolveShellSandboxConfig({
+      workspaceRoot: ROOT,
+      config: { mode: "enforce" },
+    });
+    const decision = await prepareSandboxedProcessLaunch(
+      {
+        id: "missing",
+        platform: "darwin",
+        isAvailable: async () => false,
+        execute: async () => {
+          throw new Error("unused");
+        },
+      },
+      request,
+      config,
+    );
+
+    expect(decision).toMatchObject({
+      status: "unavailable",
+      available: false,
+      enforced: true,
+      runtimeId: "missing",
+    });
+    expect(decision).not.toHaveProperty("invocation");
+  });
+});
+
+describe("resolved filesystem grants", () => {
+  it("scopes positive roots without discarding configured denies", () => {
+    const config = resolveShellSandboxConfig({
+      workspaceRoot: ROOT,
+      config: { filesystem: { denyWrite: ["protected"] } },
+    });
+    const scoped = scopeShellSandboxFilesystem(config, {
+      allowRead: [join(ROOT, "input")],
+      allowWrite: [join(ROOT, "scratch")],
+    });
+
+    expect(scoped.filesystem.allowRead).toEqual([join(ROOT, "input")]);
+    expect(scoped.filesystem.allowWrite).toEqual([join(ROOT, "scratch")]);
+    expect(scoped.filesystem.denyWrite).toContain(join(ROOT, "protected"));
+  });
+
+  it("compiles no-write semantics for bind and deny-list backends", async () => {
+    const config = resolveShellSandboxConfig({ workspaceRoot: ROOT });
+    const linux = await enforceNoWriteShellSandbox(config, {
+      runtime: { id: "bubblewrap", platform: "linux" },
+      denyWriteRoots: [ROOT],
+    });
+    const mac = await enforceNoWriteShellSandbox(config, {
+      runtime: { id: "sandbox-exec", platform: "darwin" },
+      denyWriteRoots: [ROOT],
+    });
+
+    expect(linux).toMatchObject({
+      mode: "enforce",
+      failIfUnavailable: true,
+      filesystem: { allowWrite: [], denyWrite: [], tmp: true },
+    });
+    expect(mac.filesystem.allowWrite).toEqual([]);
+    expect(mac.filesystem.denyWrite).toContain(ROOT);
+  });
+
+  it("extends read access with a stable resolved path", async () => {
+    const config = resolveShellSandboxConfig({ workspaceRoot: ROOT });
+    const extended = await extendShellSandboxReadAccess(config, [
+      join(ROOT, "skills"),
+    ]);
+
+    expect(extended.filesystem.allowRead).toContain(join(ROOT, "skills"));
+    expect(extended.filesystem.allowWrite).toEqual(
+      config.filesystem.allowWrite,
+    );
   });
 });
 

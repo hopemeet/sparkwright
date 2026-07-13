@@ -346,6 +346,13 @@ Does not own:
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-13
+- Scope: checked shared argv sandbox launch decision in Host/MCP; Core process
+  events, spans, sandbox summary types, and run semantics did not change.
+- Read: Host traced process runner and Core process/trace type boundary.
+- Tests: Host traced-process focused tests passed; no Core contract changed.
+
 - Status: Verified
 - Date: 2026-07-13
 - Scope: hardened `LocalWorkspace` managed writes so same-workspace directory

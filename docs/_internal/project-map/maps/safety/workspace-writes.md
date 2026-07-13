@@ -107,6 +107,14 @@ tool proposes write
 
 - Status: Read-only
 - Date: 2026-07-13
+- Scope: filesystem grant compilation moved to shell-sandbox; managed write
+  events, untracked-access markers, snapshot ownership, and rollback semantics
+  did not change.
+- Read: external Delegate, Skill inline shell, MCP, and shell-sandbox boundaries.
+- Tests: focused Host/MCP/shell-sandbox suites passed.
+
+- Status: Read-only
+- Date: 2026-07-13
 - Scope: checked Host security-plan extraction. It freezes access/path inputs
   only; managed mutation policy instances and their `writtenPaths` state remain
   fresh per run, and workspace-write events/counting are unchanged.

@@ -712,6 +712,11 @@ Does not own:
   output surfaces, and lets callers override progress routing (for example,
   task progress to `task.output`) without hard-coding business event families
   in the runner.
+- `TracedProcessRunner.runJsonRpc()`, external command delegates, and Skill
+  inline shell consume shell-sandbox's compiled launch/grant decisions. Host
+  retains stdout/stderr protocols, timeout/kill, progress, artifacts, cleanup,
+  and boundary-specific trace events; the sandbox package does not become a
+  universal process runner.
 - Configured workflow command hooks keep their `workflow_hook.*` lifecycle and
   use `TracedProcessRunner` internally for process spans, output summaries, and
   artifact materialization.
@@ -786,6 +791,15 @@ Does not own:
 - Capability snapshot fields are useful but can become stale if new tools bypass `tool-catalog.ts`; direct-core/cron should add tools by catalog profile, not local factories.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-13
+- Scope: moved OS-specific no-write/positive-root compilation and argv sandbox
+  availability/fallback decisions out of Host adapters while retaining their
+  distinct process lifecycles.
+- Read: Host traced process runner, external command agent, Skill inline shell,
+  and shell-sandbox source/tests.
+- Tests: Host focused process suites 37/37 and Host typecheck passed.
 
 - Status: Verified
 - Date: 2026-07-13

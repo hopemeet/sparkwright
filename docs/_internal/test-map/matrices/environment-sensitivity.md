@@ -17,6 +17,11 @@ setup behavior. Record environment assumptions in scenarios.
 | trace level         | `standard` folds/suppresses high-volume events; `debug` preserves more  |
 | timing              | foreground timeout/promotion tests should use tiny injected budgets     |
 
+Sandbox launch-decision unit tests should inject a runtime with deterministic
+`isAvailable()`. Installed-runtime tests prove backend integration only for the
+current OS; do not infer macOS deny-list behavior from a Linux bind-allowlist
+pass, or vice versa.
+
 ## Dist Freshness Rule
 
 If a changed package is imported by name from another workspace and its

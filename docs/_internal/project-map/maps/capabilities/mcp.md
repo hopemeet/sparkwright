@@ -33,6 +33,9 @@ host config MCP servers
   configured user/project MCP servers for that session and are not written to
   config files.
 - Stdio server launch can be sandboxed.
+- Stdio sandbox availability/enforce/fallback and argv invocation compilation
+  use the same shell-sandbox decision as Host JSON-RPC processes. MCP retains
+  its own transport, neutral-cwd, stderr, close, and cleanup lifecycle.
 - Capability inspect can optionally resolve MCP servers and tools.
 - Stdio MCP servers without explicit `cwd` run from a neutral temporary
   directory, not the workspace. Servers that intentionally need project files
@@ -81,6 +84,13 @@ host config MCP servers
   trusted opt-ins and are not counted as managed workspace writes.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-13
+- Scope: MCP stdio adopted the shared argv sandbox launch decision; neutral cwd
+  and MCP transport semantics are unchanged.
+- Read: MCP adapter and shell-sandbox launch compiler.
+- Tests: MCP adapter 34/34; shell-sandbox 14/14; typechecks passed.
 
 - Status: Read-only
 - Date: 2026-07-13

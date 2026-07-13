@@ -35,6 +35,10 @@ Does not own:
 - MCP startup may be lazy or eager depending on config.
 - Tool schemas may be loaded or deferred depending on config.
 - Stdio MCP servers can be launched under the configured shell sandbox.
+- Stdio MCP delegates sandbox availability/enforce/fallback and concrete argv
+  invocation compilation to `shell-sandbox`, while MCP adapter retains neutral
+  cwd creation, SDK transport selection, stderr draining, connection shutdown,
+  and combined cleanup ownership.
 - Stdio MCP servers without explicit `cwd` are launched from a neutral
   temporary cwd and clean it up when the transport closes.
 - Wrapped MCP tools must remain normal SparkWright tools for policy, trace, and result handling.
@@ -68,6 +72,13 @@ Does not own:
   can still give a trusted MCP server project access.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-13
+- Scope: MCP stdio now consumes the shared argv sandbox launch decision without
+  merging its transport lifecycle into the Host process runner.
+- Read: MCP adapter transport construction and shell-sandbox launch compiler.
+- Tests: MCP adapter 34/34 and typecheck passed after shell-sandbox build.
 
 - Status: Verified
 - Date: 2026-06-30T23:59:00+0800

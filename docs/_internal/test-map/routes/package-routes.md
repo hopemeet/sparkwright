@@ -56,6 +56,22 @@ Sensitivity:
 
 ## Shell Tool
 
+### `packages/shell-sandbox/src/*`
+
+Run:
+
+```bash
+npm --workspace @sparkwright/shell-sandbox test
+npm --workspace @sparkwright/shell-sandbox run typecheck
+npm --workspace @sparkwright/shell-sandbox run build
+npm --workspace @sparkwright/host test -- test/traced-process-runner.test.ts test/external-command-agent.test.ts test/skill-inline-shell.test.ts
+npm --workspace @sparkwright/mcp-adapter test
+```
+
+Downstream packages import shell-sandbox through `dist`; build it before Host
+or MCP tests. Treat current-platform integration as environment-specific and
+keep warn/enforce fallback assertions on injected runtimes.
+
 ### `packages/shell-tool/src/*`
 
 Run:

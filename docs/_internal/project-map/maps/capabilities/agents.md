@@ -302,13 +302,22 @@ configured profiles/delegates
 ## Known Debts
 
 - Multi-agent semantics are still edge/composition behavior, not fully absorbed core primitives.
-- Audited MCP and shell filesystem snapshots remain O(tree) when enabled (the
-  in-process delegate path no longer snapshots — it rolls up child write
-  events); MCP stdio servers outside the workspace skip snapshots unless args
-  reference workspace paths, but large repositories may still need scoped roots
-  or mtime prefilters.
+- Foreground Host shell filesystem snapshots remain O(tree) when enabled. The
+  in-process delegate path rolls up child write events, external processes use
+  untracked-access markers, and MCP stdio does not run a workspace snapshot;
+  neutral MCP cwd and sandbox posture must not be described as mutation
+  detection.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-13
+- Scope: external Delegate positive filesystem scope now compiles in
+  shell-sandbox; corrected the stale debt that incorrectly attributed
+  workspace snapshotting to MCP stdio.
+- Read: external command agent, MCP adapter, workspace snapshot, and
+  shell-sandbox.
+- Tests: Host external delegate focused tests and MCP adapter tests passed.
 
 - Status: Verified
 - Date: 2026-07-12T23:45:00+0800

@@ -54,6 +54,9 @@
   shows a false terminal claim; use focused contract tests as the stable gate.
   Do not change global tool exposure solely to make that weak-model canary pass.
 - Platform-specific sandbox evidence differs across macOS and Linux.
+- Shared argv launch-decision tests deterministically cover unavailable
+  warn/enforce behavior, but installed-runtime integration remains
+  environment-sensitive and may exercise only the current OS backend.
 - Stale `dist` can make host/CLI tests miss shell-tool source behavior.
 - Timing-sensitive timeout tests need tiny injected budgets and should avoid
   depending on wall-clock precision.
@@ -83,6 +86,8 @@
 ```bash
 npm --workspace @sparkwright/shell-tool test -- test/shell-tool.test.ts
 npm --workspace @sparkwright/shell-tool run build
+npm --workspace @sparkwright/shell-sandbox test
+npm --workspace @sparkwright/shell-sandbox run build
 npm --workspace @sparkwright/host test -- test/tools.test.ts
 ```
 

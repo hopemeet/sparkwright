@@ -207,6 +207,13 @@ EventLog emits full event
 
 - Status: Read-only
 - Date: 2026-07-13
+- Scope: sandbox launch/grant ownership moved, but process/delegate/MCP event
+  names, payloads, span nesting, and redaction are unchanged.
+- Read: Host traced process/delegate adapters and MCP preparation boundary.
+- Tests: Host process and MCP focused tests passed.
+
+- Status: Read-only
+- Date: 2026-07-13
 - Scope: checked Host security-plan and CLI inspect refactor; raw event names,
   payloads, ordering, redaction, and trace storage did not change.
 - Read: Host prepared environment metadata/capability snapshot and CLI inspect

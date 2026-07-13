@@ -42,9 +42,10 @@ import type { EventEmitter, ToolRisk } from "@sparkwright/core";
 import type { Policy } from "@sparkwright/core";
 import {
   createPlatformShellSandboxRuntime,
-  prepareSandboxedProcessInvocation,
+  prepareSandboxedProcessLaunch,
   type ResolvedShellSandboxConfig,
   type SandboxedProcessInvocation,
+  type SandboxedProcessLaunchDecision,
   type ShellSandboxRuntime,
 } from "@sparkwright/shell-sandbox";
 
@@ -1220,13 +1221,13 @@ async function buildMcpTransport(
   cleanup?: () => Promise<void>;
 }> {
   if (config.type === "stdio") {
-    if (shellSandbox && shellSandbox.mode !== "off") {
+    if (shellSandbox) {
       const runtime =
         shellSandboxRuntime ?? createPlatformShellSandboxRuntime();
-      const available = await runtime.isAvailable();
-      if (available) {
-        const cwd = await resolveMcpStdioCwd(config, name);
-        const invocation = await prepareSandboxedProcessInvocation(
+      const cwd = await resolveMcpStdioCwd(config, name);
+      let decision: SandboxedProcessLaunchDecision;
+      try {
+        decision = await prepareSandboxedProcessLaunch(
           runtime,
           {
             command: config.command,
@@ -1241,6 +1242,24 @@ async function buildMcpTransport(
           },
           shellSandbox,
         );
+      } catch (error) {
+        await cwd.cleanup?.();
+        throw error;
+      }
+      if (decision.status === "unavailable") {
+        await cwd.cleanup?.();
+        throw new McpSandboxUnavailableError(decision.reason, {
+          sandboxed: false,
+          mode: shellSandbox.mode,
+          runtime: decision.runtimeId,
+          networkMode: shellSandbox.network.mode,
+          available: false,
+          fallbackReason: decision.reason,
+          enforced: true,
+        });
+      }
+      const invocation = decision.invocation;
+      if (decision.status === "sandboxed") {
         const originalCleanup = invocation.cleanup;
         const cleanup = onceCleanup(async () => {
           await originalCleanup?.();
@@ -1257,31 +1276,18 @@ async function buildMcpTransport(
           sandbox: {
             sandboxed: true,
             mode: shellSandbox.mode,
-            runtime: runtime.id,
+            runtime: decision.runtimeId,
             networkMode: shellSandbox.network.mode,
-            available: true,
-            enforced: shellSandbox.failIfUnavailable,
+            available: decision.available,
+            enforced: decision.enforced,
           },
           cleanup,
         };
       }
-      const reason = `MCP stdio sandbox runtime "${runtime.id}" is unavailable on ${runtime.platform}.`;
-      if (shellSandbox.failIfUnavailable) {
-        throw new McpSandboxUnavailableError(reason, {
-          sandboxed: false,
-          mode: shellSandbox.mode,
-          runtime: runtime.id,
-          networkMode: shellSandbox.network.mode,
-          available: false,
-          fallbackReason: reason,
-          enforced: true,
-        });
-      }
-      const cwd = await resolveMcpStdioCwd(config, name);
       const transport = new StdioClientTransport({
-        command: config.command,
-        args: config.args,
-        cwd: cwd.path,
+        command: invocation.command,
+        args: [...invocation.args],
+        cwd: invocation.cwd,
         env: config.env,
         stderr: "pipe",
       });
@@ -1291,11 +1297,13 @@ async function buildMcpTransport(
         sandbox: {
           sandboxed: false,
           mode: shellSandbox.mode,
-          runtime: runtime.id,
           networkMode: shellSandbox.network.mode,
-          available: false,
-          fallbackReason: reason,
-          enforced: false,
+          ...(shellSandbox.mode !== "off"
+            ? { runtime: decision.runtimeId }
+            : {}),
+          available: decision.available,
+          ...(decision.reason ? { fallbackReason: decision.reason } : {}),
+          enforced: decision.enforced,
         },
         cleanup: cwd.cleanup,
       };
@@ -1312,15 +1320,6 @@ async function buildMcpTransport(
     drainStdioStderr(transport, name, onStdioStderr);
     return {
       transport,
-      sandbox: shellSandbox
-        ? {
-            sandboxed: false,
-            mode: shellSandbox.mode,
-            networkMode: shellSandbox.network.mode,
-            available: false,
-            enforced: false,
-          }
-        : undefined,
       cleanup: cwd.cleanup,
     };
   }

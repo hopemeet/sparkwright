@@ -11,6 +11,7 @@ import {
 import type { AgentProfile } from "@sparkwright/agent-runtime";
 import {
   resolveShellSandboxConfig,
+  scopeShellSandboxFilesystem,
   type ResolvedShellSandboxConfig,
   type ShellSandboxConfig,
   type ShellSandboxRuntime,
@@ -537,17 +538,13 @@ function delegateSandboxConfig(input: {
   if (input.config.mode === "off" || input.workspaceAccess === "read_write") {
     return input.config;
   }
-  return {
-    ...input.config,
-    filesystem: {
-      ...input.config.filesystem,
-      allowRead: [
-        input.executionCwd,
-        ...absoluteArgPaths([input.command, ...input.args]),
-      ],
-      allowWrite: [input.executionCwd],
-    },
-  };
+  return scopeShellSandboxFilesystem(input.config, {
+    allowRead: [
+      input.executionCwd,
+      ...absoluteArgPaths([input.command, ...input.args]),
+    ],
+    allowWrite: [input.executionCwd],
+  });
 }
 
 function absoluteArgPaths(values: readonly string[]): string[] {

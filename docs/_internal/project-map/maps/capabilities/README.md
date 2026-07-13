@@ -203,6 +203,13 @@ config + workspace capability roots
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-13
+- Scope: checked filesystem grant/launch decision extraction; capability
+  membership and protocol snapshot fields did not change.
+- Read: Host/MCP adapters and shell-sandbox public decision types.
+- Tests: focused Host, MCP, and shell-sandbox tests passed.
+
 - Status: Verified
 - Date: 2026-07-13
 - Scope: confirmed Host snapshot ownership for effective CLI capability facts;

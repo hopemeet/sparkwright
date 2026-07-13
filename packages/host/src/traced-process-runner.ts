@@ -20,7 +20,7 @@ import {
 import {
   ShellSandboxExecutor,
   createPlatformShellSandboxRuntime,
-  prepareSandboxedProcessInvocation,
+  prepareSandboxedProcessLaunch,
   type ResolvedShellSandboxConfig,
   type ShellSandboxRuntime,
 } from "@sparkwright/shell-sandbox";
@@ -876,43 +876,27 @@ export class TracedProcessRunner {
           sandbox?: SandboxSummary;
         }
       | undefined;
-    if (input.sandbox && input.sandbox.mode !== "off") {
+    if (input.sandbox) {
       const runtime =
         input.sandboxRuntime ?? createPlatformShellSandboxRuntime();
-      if (await runtime.isAvailable()) {
-        const invocation = await prepareSandboxedProcessInvocation(
-          runtime,
-          {
-            command: input.command,
-            args: input.args,
-            cwd: input.cwd,
-            env,
-            metadata: {
-              sandboxMode: input.sandbox.mode,
-              sandboxNetworkMode: input.sandbox.network.mode,
-              sandboxAvailable: true,
-              sandboxEnforced: input.sandbox.failIfUnavailable,
-            },
+      const decision = await prepareSandboxedProcessLaunch(
+        runtime,
+        {
+          command: input.command,
+          args: input.args,
+          cwd: input.cwd,
+          env,
+          metadata: {
+            sandboxMode: input.sandbox.mode,
+            sandboxNetworkMode: input.sandbox.network.mode,
+            sandboxAvailable: true,
+            sandboxEnforced: input.sandbox.failIfUnavailable,
           },
-          input.sandbox,
-        );
-        prepared = {
-          command: invocation.command,
-          args: invocation.args,
-          cwd: invocation.cwd,
-          env: invocation.env,
-          cleanup: invocation.cleanup,
-          sandbox: {
-            sandboxed: true,
-            mode: input.sandbox.mode,
-            runtime: runtime.id,
-            networkMode: input.sandbox.network.mode,
-            available: true,
-            enforced: input.sandbox.failIfUnavailable,
-          },
-        };
-      } else if (input.sandbox.failIfUnavailable) {
-        const message = `Shell sandbox runtime "${runtime.id}" is unavailable on ${runtime.platform}.`;
+        },
+        input.sandbox,
+      );
+      if (decision.status === "unavailable") {
+        const message = decision.reason;
         stderr.append(`${message}\n`);
         return {
           exitCode: null,
@@ -923,7 +907,7 @@ export class TracedProcessRunner {
           sandbox: {
             sandboxed: false,
             mode: input.sandbox.mode,
-            runtime: runtime.id,
+            runtime: decision.runtimeId,
             networkMode: input.sandbox.network.mode,
             available: false,
             fallbackReason: message,
@@ -934,24 +918,30 @@ export class TracedProcessRunner {
             message,
           },
         };
-      } else {
-        const message = `Shell sandbox runtime "${runtime.id}" is unavailable on ${runtime.platform}.`;
-        prepared = {
-          command: input.command,
-          args: input.args ?? [],
-          cwd: input.cwd,
-          env,
-          sandbox: {
-            sandboxed: false,
-            mode: input.sandbox.mode,
-            runtime: runtime.id,
-            networkMode: input.sandbox.network.mode,
-            available: false,
-            fallbackReason: message,
-            enforced: false,
-          },
-        };
       }
+      const invocation = decision.invocation;
+      prepared = {
+        command: invocation.command,
+        args: invocation.args,
+        cwd: invocation.cwd,
+        env: invocation.env,
+        cleanup: invocation.cleanup,
+        ...(input.sandbox.mode !== "off"
+          ? {
+              sandbox: {
+                sandboxed: decision.status === "sandboxed",
+                mode: input.sandbox.mode,
+                runtime: decision.runtimeId,
+                networkMode: input.sandbox.network.mode,
+                available: decision.available,
+                ...(decision.status === "unsandboxed" && decision.reason
+                  ? { fallbackReason: decision.reason }
+                  : {}),
+                enforced: decision.enforced,
+              },
+            }
+          : {}),
+      };
     } else {
       prepared = {
         command: input.command,

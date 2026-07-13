@@ -337,6 +337,13 @@ Does not own:
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-13
+- Scope: checked external Delegate sandbox/grant refactor; agent runtime child
+  lifecycle, depth, task, and write-rollup contracts did not change.
+- Read: Host external command adapter boundary and agent-runtime contracts.
+- Tests: Host external command focused tests passed.
+
 - Status: Verified
 - Date: 2026-07-12T20:12:00+0800
 - Scope: Workflow durable asset pins now preserve source layer through create,

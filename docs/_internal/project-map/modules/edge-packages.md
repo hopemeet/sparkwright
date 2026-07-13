@@ -51,8 +51,11 @@ contracts, and focused checklists that no longer fit here.
   has no process launcher and is not a daemon; F remains responsible for the
   long-running service carrier.
 - Project commands and shell sandbox packages are edge helpers consumed by TUI,
-  host, CLI, and MCP/shell paths. Route safety-sensitive changes through shell
-  and workspace-write maps.
+  host, CLI, and MCP/shell paths. `shell-sandbox` owns OS-specific filesystem
+  grant compilation plus the availability/enforce/fallback launch decision for
+  argv processes; callers still own transport I/O, timeout, shutdown, and trace
+  lifecycle. Route safety-sensitive changes through shell and workspace-write
+  maps.
 - IM gateway is an application bridge over `sdk-node` and host events. Route
   protocol shape changes through protocol/host maps before updating gateway
   renderers or state.
@@ -101,6 +104,15 @@ contracts, and focused checklists that no longer fit here.
   source exports. It should not be used as the sole authority for behavior.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-13
+- Scope: centralized resolved filesystem grants and argv sandbox launch
+  decisions in `shell-sandbox` without moving process lifecycle ownership.
+- Read: shell-sandbox, Host traced/delegate/Skill adapters, and MCP stdio
+  transport.
+- Tests: shell-sandbox 14/14; Host focused process tests 37/37; MCP 34/34;
+  affected typechecks passed.
 
 - Status: Verified
 - Date: 2026-07-11T15:30:00+0800
