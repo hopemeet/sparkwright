@@ -53,7 +53,10 @@ export interface DirectCoreRunInput {
   workspaceRoot: string;
   sessionRootDir: string;
   targetPath: string;
-  /** Explicit CLI --target policy scope; absent uses the Host untargeted default. */
+  /**
+   * @reserved Internal diagnostic policy scope consumed by CLI fresh/session
+   * resume routing. Absent uses the Host untargeted default.
+   */
   policyTargetPath?: string;
   confidentialPaths?: readonly string[];
   confidentialDefaults?: boolean;
