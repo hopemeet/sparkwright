@@ -124,6 +124,10 @@ export class HostExecution {
     return this.runIds.has(runId);
   }
 
+  runIdAliases(): readonly string[] {
+    return [...this.runIds];
+  }
+
   tryInject(
     runId: string,
     input: {

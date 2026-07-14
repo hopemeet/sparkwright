@@ -103,6 +103,10 @@ contracts, and focused checklists that no longer fit here.
   command dispatch primitives, but ordinary Host execution still runs through
   host-owned per-connection `HostRuntime`. The future lane coordinator must not
   absorb Workflow/Task/Agent lifecycle ownership or workspace mutation leases.
+- Host stdio/WS, ACP, and CLI/Workflow-service production adapters now create
+  runtime facades through one process-scoped HostService. The adapters retain
+  protocol/transport ownership; workspace Task/Workflow durable owners live in
+  Host WorkspaceContext rather than each connection/session facade.
 - The workflow job session route now stages durable supervisor/worker ownership
   and multi-channel control after session isolation, write fencing, and a typed
   durable workflow control inbox. `server-runtime` owns coordination; IM/Web/API
@@ -112,6 +116,14 @@ contracts, and focused checklists that no longer fit here.
   source exports. It should not be used as the sole authority for behavior.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: migrated Host stdio/WS, ACP, CLI, and Workflow-service carriers to the
+  process HostService assembly path without changing their transport contracts.
+- Read: edge entrypoints, Host service/context/runtime, package manifests, and
+  focused tests.
+- Tests: Host 58/58; ACP 15/15; CLI 31 focused; affected typecheck/build.
 
 - Status: Verified
 - Date: 2026-07-14

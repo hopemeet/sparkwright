@@ -3,6 +3,7 @@ import { installLogPipe, attachLogSink } from "./log-pipe.js";
 import { createStdioConnection } from "./transport-stdio.js";
 import { startWsServer } from "./transport-ws.js";
 import { serveConnection } from "./server.js";
+import { createHostService } from "./host-service.js";
 import {
   ACCESS_MODES,
   compileRunAccessMode,
@@ -129,6 +130,7 @@ function printHelp(): void {
 export async function runHostMain(argv: string[]): Promise<void> {
   installCrashLog();
   const args = parseArgs(argv);
+  const hostService = createHostService();
 
   // Patch stderr in WS mode so library logs reach clients as host.log
   // events. In stdio mode we leave stderr alone — the parent process
@@ -149,6 +151,7 @@ export async function runHostMain(argv: string[]): Promise<void> {
       process.exit(0);
     });
     serveConnection(conn, {
+      hostService,
       workspaceRoot: args.workspaceRoot,
       sessionRootDir: args.sessionRootDir,
       defaultModel: args.model,
@@ -187,6 +190,7 @@ export async function runHostMain(argv: string[]): Promise<void> {
       });
       conn.onClose(() => detach());
       serveConnection(conn, {
+        hostService,
         workspaceRoot: args.workspaceRoot,
         sessionRootDir: args.sessionRootDir,
         defaultModel: args.model,

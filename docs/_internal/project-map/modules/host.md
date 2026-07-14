@@ -109,6 +109,14 @@ Does not own:
 - `resolveExecutionPlan()` freezes workspace/session/model/access identity
   before `createExecutionResources()` creates a fresh LocalWorkspace, trace
   emitter, and session store handles. Live execution resources are not pooled.
+- `HostService` is the process composition root and the only production
+  `HostRuntime` factory. It keys `WorkspaceContext` by canonical workspace and
+  session-store roots, shares one workspace mutation lease coordinator per
+  canonical workspace, attaches runtime facades, provides execution/run alias
+  lookup without copying execution truth, and drains attached runtimes.
+- `WorkspaceContext` owns the shared TaskManager/store/outbox and Workflow
+  notification/control adapters. It never owns live MCP, LocalWorkspace,
+  mutable policy, event emitter, approval resolver, or active execution.
 - `run-security-plan.ts` is the immutable boundary between config/access
   parsing and runtime assembly. A run and `capability.inspect` derive the same
   workspace, access, confidential paths, skill/config roots, and resolved shell
@@ -880,6 +888,15 @@ Does not own:
   remain adapter-native and need continued cross-entrypoint characterization.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: introduced process HostService/workspace contexts and migrated all
+  production HostRuntime construction through the service.
+- Read: Host stdio/WS server/main, ACP session/inspection, CLI Workflow/session/
+  capability paths, Workflow service/supervisor adapters, manifests, and tests.
+- Tests: Host service/protocol/WS 58/58 plus typecheck/build; ACP 15/15 plus
+  typecheck; CLI focused 31/31 plus typecheck.
 
 - Status: Verified
 - Date: 2026-07-14

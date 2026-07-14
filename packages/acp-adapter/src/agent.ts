@@ -26,7 +26,7 @@ import {
   type RunAccessMode,
   type TraceLevel,
 } from "@sparkwright/protocol";
-import { HostRuntime } from "@sparkwright/host";
+import { createHostService, type HostService } from "@sparkwright/host";
 import type { McpServerConfig } from "@sparkwright/mcp-adapter";
 import { contentBlocksToText } from "./content.js";
 import {
@@ -64,12 +64,15 @@ export class SparkwrightAcpAgent implements Agent {
     }
   >();
   private readonly eventQueues = new Map<string, Promise<void>>();
+  private readonly hostService: HostService;
 
   constructor(
     private readonly connection: AcpClientConnection,
     private readonly options: SparkwrightAcpAgentOptions,
   ) {
+    this.hostService = createHostService();
     this.sessions = new AcpSessionStore({
+      hostService: this.hostService,
       defaultModel: options.defaultModel,
       defaultAccessMode: options.defaultAccessMode,
       defaultPermissionMode: options.defaultPermissionMode,
@@ -311,7 +314,7 @@ export class SparkwrightAcpAgent implements Agent {
 
     const rawCwd = stringParam(params.cwd) ?? this.options.defaultWorkspaceRoot;
     const cwd = resolve(this.options.defaultWorkspaceRoot, rawCwd);
-    const runtime = new HostRuntime({
+    const runtime = this.hostService.createRuntime({
       workspaceRoot: cwd,
       defaultModel: this.options.defaultModel,
       defaultAccessMode: this.options.defaultAccessMode,
@@ -327,7 +330,7 @@ export class SparkwrightAcpAgent implements Agent {
       }
       throw RequestError.internalError(inspected.error);
     } finally {
-      runtime.cleanup();
+      this.hostService.releaseRuntime(runtime);
     }
   }
 }

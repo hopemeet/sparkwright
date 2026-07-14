@@ -207,6 +207,7 @@ import {
 } from "./host-execution.js";
 import { resolveExecutionPlan } from "./execution-plan.js";
 import { createExecutionResources } from "./execution-resources.js";
+import { WorkspaceContext } from "./workspace-context.js";
 import {
   createModel,
   inspectResolvedModelConfig,
@@ -432,6 +433,8 @@ export interface RuntimeOptions {
   emit: (event: HostEvent) => void;
   /** @internal Process-scoped workspace mutation coordinator override. */
   workspaceLeaseCoordinator?: WorkspaceLeaseCoordinator;
+  /** @internal Workspace-scoped durable owner injected by HostService. */
+  workspaceContext?: WorkspaceContext;
 }
 
 interface CompletedConversationTurn {
@@ -863,7 +866,7 @@ export class HostRuntime {
   private readonly taskNotifications: FileTaskNotificationOutbox;
   private readonly workflowNotifications: FileWorkflowNotificationOutbox;
   private readonly workflowControls: FileWorkflowControlInbox;
-  private readonly workflowControlDispatcher = new DurableCommandDispatcher();
+  private readonly workflowControlDispatcher: DurableCommandDispatcher;
   private readonly taskManager: TaskManager;
   private currentExecution: HostExecution | null = null;
   // One abort for the complete interactive execution, including assembly and
@@ -878,29 +881,40 @@ export class HostRuntime {
         ? { sessionRootDir: resolve(opts.sessionRootDir) }
         : {}),
     };
-    this.taskNotifications = new FileTaskNotificationOutbox({
-      rootDir: this.taskRootDir(),
-      createRoot: false,
-    });
-    this.workflowNotifications = new FileWorkflowNotificationOutbox({
-      rootDir: this.workflowNotificationRootDir(),
-      createRoot: false,
-    });
-    this.workflowControls = new FileWorkflowControlInbox({
-      rootDir: this.workflowStoreRootDir(),
-      createRoot: false,
-    });
-    this.taskManager = new TaskManager({
-      store: new FileTaskStore({
-        rootDir: this.taskRootDir(),
-        createRoot: false,
-      }),
-      notificationSink: this.taskNotifications,
-    });
+    const context =
+      opts.workspaceContext ??
+      new WorkspaceContext(
+        {
+          workspaceRoot: this.opts.workspaceRoot,
+          sessionRootDir:
+            this.opts.sessionRootDir ??
+            defaultSessionRootDir(this.opts.workspaceRoot),
+        },
+        opts.workspaceLeaseCoordinator ?? processWorkspaceLeaseCoordinator,
+      );
+    this.taskNotifications = context.taskNotifications;
+    this.workflowNotifications = context.workflowNotifications;
+    this.workflowControls = context.workflowControls;
+    this.workflowControlDispatcher = context.workflowControlDispatcher;
+    this.taskManager = context.taskManager;
   }
 
   hasActiveRun(): boolean {
     return this.currentExecution?.activeRun != null;
+  }
+
+  /** @internal HostService lookup without mirroring execution truth. */
+  executionIdentity():
+    | { executionId: string; sessionId?: string; runIds: readonly string[] }
+    | undefined {
+    const execution = this.currentExecution;
+    return execution
+      ? {
+          executionId: execution.executionId,
+          ...(execution.sessionId ? { sessionId: execution.sessionId } : {}),
+          runIds: execution.runIdAliases(),
+        }
+      : undefined;
   }
 
   private get active(): HostExecutionActiveRun | null {

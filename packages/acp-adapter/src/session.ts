@@ -1,6 +1,10 @@
 import { isAbsolute } from "node:path";
 import { asSessionId, createSessionId } from "@sparkwright/core";
-import { HostRuntime } from "@sparkwright/host";
+import {
+  createHostService,
+  type HostRuntime,
+  type HostService,
+} from "@sparkwright/host";
 import type { McpServerConfig } from "@sparkwright/mcp-adapter";
 import type { AgentSideConnection, SessionId } from "@agentclientprotocol/sdk";
 import type {
@@ -33,12 +37,16 @@ export interface AcpSessionStoreOptions {
    */
   sessionRootDir?: string;
   emit: (session: AcpSessionInfo, event: HostEvent) => void;
+  hostService?: HostService;
 }
 
 export class AcpSessionStore {
   private readonly sessions = new Map<SessionId, AcpSessionInfo>();
+  private readonly hostService: HostService;
 
-  constructor(private readonly options: AcpSessionStoreOptions) {}
+  constructor(private readonly options: AcpSessionStoreOptions) {
+    this.hostService = options.hostService ?? createHostService();
+  }
 
   create(input: {
     cwd: string;
@@ -72,13 +80,13 @@ export class AcpSessionStore {
   close(sessionId: string): void {
     const session = this.sessions.get(sessionId);
     if (!session) return;
-    session.runtime.cleanup();
+    this.hostService.releaseRuntime(session.runtime);
     this.sessions.delete(sessionId);
   }
 
   closeAll(): void {
     for (const session of this.sessions.values()) {
-      session.runtime.cleanup();
+      this.hostService.releaseRuntime(session.runtime);
     }
     this.sessions.clear();
   }
@@ -92,7 +100,7 @@ export class AcpSessionStore {
       sessionId,
       cwd,
       ...(mcpServers && mcpServers.length > 0 ? { mcpServers } : {}),
-      runtime: new HostRuntime({
+      runtime: this.hostService.createRuntime({
         workspaceRoot: cwd,
         ...(this.options.sessionRootDir
           ? { sessionRootDir: this.options.sessionRootDir }

@@ -6,6 +6,8 @@ export { serveConnection } from "./server.js";
 export type { ServeConnectionOptions } from "./server.js";
 export { HostRuntime } from "./runtime.js";
 export type { RuntimeOptions } from "./runtime.js";
+export { HostService, createHostService } from "./host-service.js";
+export type { HostRuntimeFacadeOptions } from "./host-service.js";
 export type { Connection } from "./connection.js";
 export { createStdioConnection } from "./transport-stdio.js";
 export { startWsServer } from "./transport-ws.js";

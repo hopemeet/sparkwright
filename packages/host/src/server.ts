@@ -17,8 +17,10 @@ import {
 import type { Connection } from "./connection.js";
 import { nextMessageId, nowIso } from "./connection.js";
 import { HostRuntime, type RuntimeOptions } from "./runtime.js";
+import { createHostService, type HostService } from "./host-service.js";
 
 export interface ServeConnectionOptions {
+  hostService?: HostService;
   workspaceRoot: string;
   sessionRootDir?: string;
   defaultModel?: string;
@@ -44,7 +46,8 @@ export function serveConnection(
   opts: ServeConnectionOptions,
 ): void {
   let handshakeDone = false;
-  const runtime = new HostRuntime({
+  const hostService = opts.hostService ?? createHostService();
+  const runtime = hostService.createRuntime({
     workspaceRoot: opts.workspaceRoot,
     sessionRootDir: opts.sessionRootDir,
     defaultModel: opts.defaultModel,
@@ -65,7 +68,7 @@ export function serveConnection(
   });
 
   conn.onClose(() => {
-    runtime.cleanup();
+    hostService.releaseRuntime(runtime);
   });
 
   conn.onMessage((message: HostMessage) => {

@@ -123,6 +123,7 @@ import {
   shadowWorkflowFromSession,
   existingSkillRoots,
   HostRuntime,
+  createHostService,
   createHostStartRunRequest,
   resolveCapabilityDirs,
   resolveSkillRootsForRuntime,
@@ -177,6 +178,8 @@ import {
 } from "./runners/host-runner.js";
 
 export type { CliIO } from "./io.js";
+
+const cliHostService = createHostService();
 
 export interface CliRunResult {
   exitCode: number;
@@ -1989,7 +1992,7 @@ async function handleWorkflowCommand(
         writeLine(io.stderr, "Workflow stop idempotency conflict.");
         return { exitCode: 1 };
       }
-      const runtime = new HostRuntime({
+      const runtime = cliHostService.createRuntime({
         workspaceRoot: parsed.workspaceRoot,
         sessionRootDir: parsed.sessionRootDir,
         emit: () => {},
@@ -2064,7 +2067,7 @@ async function handleWorkflowCommand(
 
     const report = await loadLayeredWorkflowAssets(parsed.workspaceRoot, env);
     if (subcommand === "list") {
-      const runtime = new HostRuntime({
+      const runtime = cliHostService.createRuntime({
         workspaceRoot: parsed.workspaceRoot,
         sessionRootDir: parsed.sessionRootDir,
         defaultModel: parsed.modelName,
@@ -2272,7 +2275,7 @@ async function handleWorkflowServiceCommand(
   const runtimes = new Map<string, HostRuntime>();
   const adapter = {
     recover: async (handoff: WorkflowServiceHandoff) => {
-      const runtime = new HostRuntime({
+      const runtime = cliHostService.createRuntime({
         workspaceRoot: parsed.workspaceRoot,
         sessionRootDir: parsed.sessionRootDir,
         emit: () => {},
@@ -2291,7 +2294,7 @@ async function handleWorkflowServiceCommand(
       return { workflowRunId: found.id, sessionId: found.sessionId };
     },
     accept: async (handoff: WorkflowServiceHandoff) => {
-      const runtime = new HostRuntime({
+      const runtime = cliHostService.createRuntime({
         workspaceRoot: parsed.workspaceRoot,
         sessionRootDir: parsed.sessionRootDir,
         defaultModel: handoff.modelName,
@@ -2385,7 +2388,7 @@ async function handleWorkflowServiceCommand(
         const terminal = new Promise<void>((resolveDone) => {
           resolveTerminal = resolveDone;
         });
-        const runtime = new HostRuntime({
+        const runtime = cliHostService.createRuntime({
           workspaceRoot: parsed.workspaceRoot,
           sessionRootDir: parsed.sessionRootDir,
           defaultModel: parsed.modelName,
@@ -2445,7 +2448,7 @@ async function handleWorkflowServiceCommand(
       for (const record of workflowStore.list().records) {
         for (const envelope of workflowControls.pending(record.id)) {
           if (controlRuntimes.has(envelope.commandId)) continue;
-          const runtime = new HostRuntime({
+          const runtime = cliHostService.createRuntime({
             workspaceRoot: parsed.workspaceRoot,
             sessionRootDir: parsed.sessionRootDir,
             defaultModel: parsed.modelName,
@@ -3134,7 +3137,7 @@ async function inspectRuntimeCapabilities(
   workspaceRoot: string,
   options: { modelName?: string; runAccess?: CliRunAccess } = {},
 ): Promise<CapabilitySnapshot> {
-  const runtime = new HostRuntime({
+  const runtime = cliHostService.createRuntime({
     workspaceRoot,
     defaultModel: options.modelName,
     emit: () => {},
@@ -7027,7 +7030,7 @@ async function handleSessionCommand(
   }
 
   if (parsed.subcommand === "compact") {
-    const runtime = new HostRuntime({
+    const runtime = cliHostService.createRuntime({
       workspaceRoot: parsed.workspaceRoot,
       sessionRootDir: parsed.sessionRootDir,
       defaultModel: parsed.modelName,
@@ -7052,7 +7055,7 @@ async function handleSessionCommand(
   }
 
   if (parsed.subcommand === "inspect") {
-    const runtime = new HostRuntime({
+    const runtime = cliHostService.createRuntime({
       workspaceRoot: parsed.workspaceRoot,
       sessionRootDir: parsed.sessionRootDir,
       defaultModel: parsed.modelName,
