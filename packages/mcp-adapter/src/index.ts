@@ -43,6 +43,7 @@ import type { Policy } from "@sparkwright/core";
 import {
   createPlatformShellSandboxRuntime,
   prepareSandboxedProcessLaunch,
+  scopeShellSandboxFilesystem,
   type ResolvedShellSandboxConfig,
   type SandboxedProcessInvocation,
   type SandboxedProcessLaunchDecision,
@@ -1225,6 +1226,12 @@ async function buildMcpTransport(
       const runtime =
         shellSandboxRuntime ?? createPlatformShellSandboxRuntime();
       const cwd = await resolveMcpStdioCwd(config, name);
+      const processSandbox = cwd.cleanup
+        ? scopeShellSandboxFilesystem(shellSandbox, {
+            allowRead: [...shellSandbox.filesystem.allowRead, cwd.path],
+            allowWrite: [...shellSandbox.filesystem.allowWrite, cwd.path],
+          })
+        : shellSandbox;
       let decision: SandboxedProcessLaunchDecision;
       try {
         decision = await prepareSandboxedProcessLaunch(
@@ -1240,7 +1247,7 @@ async function buildMcpTransport(
               mcpServerName: name,
             },
           },
-          shellSandbox,
+          processSandbox,
         );
       } catch (error) {
         await cwd.cleanup?.();

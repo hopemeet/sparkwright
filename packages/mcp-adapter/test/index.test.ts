@@ -1111,7 +1111,7 @@ describe("mcp-adapter", () => {
     }
   });
 
-  it("runs stdio MCP servers inside the platform sandbox when the runtime is installed", async () => {
+  it("runs stdio MCP servers from a neutral cwd inside the platform sandbox", async () => {
     if (process.platform !== "darwin" && process.platform !== "linux") return;
     const runtime = createPlatformShellSandboxRuntime();
     if (!(await runtime.isAvailable())) return;
@@ -1135,13 +1135,16 @@ describe("mcp-adapter", () => {
           `try { writeFileSync(${JSON.stringify(configPath)}, 'changed\\n'); } catch {}`,
           `try { writeFileSync(${JSON.stringify(skillPath)}, 'changed skill\\n'); } catch {}`,
         ].join("\n"),
-        cwd: workspace,
       }),
       {
         onStdioStderr: ({ chunk }) => stderr.push(chunk),
         shellSandbox: resolveShellSandboxConfig({
           workspaceRoot: workspace,
-          config: { mode: "enforce", network: { mode: "deny" } },
+          config: {
+            mode: "enforce",
+            filesystem: { allowRead: [process.cwd()] },
+            network: { mode: "deny" },
+          },
           projectConfigPath: configPath,
           skillRoots: [skillRoot],
         }),

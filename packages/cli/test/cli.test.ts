@@ -3438,6 +3438,7 @@ describe("runCli", () => {
     await writeFile(
       join(workspace, ".sparkwright", "config.json"),
       JSON.stringify({
+        shell: mcpFixtureShellConfig(),
         capabilities: {
           mcp: {
             namePrefix: "mcp",
@@ -8179,6 +8180,7 @@ describe("runCli", () => {
     await writeFile(
       join(workspace, ".sparkwright", "config.json"),
       JSON.stringify({
+        shell: mcpFixtureShellConfig(),
         capabilities: {
           mcp: {
             namePrefix: "mcp",
@@ -8244,6 +8246,7 @@ describe("runCli", () => {
     await writeFile(
       join(workspace, ".sparkwright", "config.json"),
       JSON.stringify({
+        shell: mcpFixtureShellConfig(),
         capabilities: {
           mcp: {
             namePrefix: "mcp",
@@ -8337,6 +8340,7 @@ describe("runCli", () => {
     await writeFile(
       join(workspace, ".sparkwright", "config.json"),
       JSON.stringify({
+        shell: mcpFixtureShellConfig(),
         capabilities: {
           mcp: {
             namePrefix: "mcp",
@@ -8426,6 +8430,7 @@ describe("runCli", () => {
     await writeFile(
       join(workspace, ".sparkwright", "config.json"),
       JSON.stringify({
+        shell: mcpFixtureShellConfig(),
         capabilities: {
           mcp: {
             namePrefix: "mcp",
@@ -10528,6 +10533,14 @@ describe("runCli", () => {
       // runner has room to connect (not a delay on fast machines).
       timeoutMs: 15000,
       ...(options.cwd ? { cwd: options.cwd } : {}),
+    };
+  }
+
+  function mcpFixtureShellConfig() {
+    return {
+      sandbox: {
+        filesystem: { allowRead: [findRepoRoot(process.cwd())] },
+      },
     };
   }
 

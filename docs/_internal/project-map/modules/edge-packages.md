@@ -115,6 +115,16 @@ contracts, and focused checklists that no longer fit here.
 
 - Status: Verified
 - Date: 2026-07-14
+- Scope: kept sandboxed stdio MCP servers without an explicit cwd in their
+  writable neutral scratch directory while preserving the Linux read
+  allow-list; external fixture/runtime dependencies must be granted explicitly.
+- Read: MCP adapter sandbox launch assembly, shell-sandbox positive scope, and
+  MCP/CLI/ACP integration fixtures.
+- Tests: focused MCP adapter, CLI, ACP, and shell-sandbox suites; CI covers the
+  real Linux bubblewrap runtime.
+
+- Status: Verified
+- Date: 2026-07-14
 - Scope: collapsed overlapping Linux bubblewrap deny mounts to their minimal
   ancestor roots and restored explicit read/write grants after the private
   `/tmp` overlay. The private parent is remounted read-only, and nonexistent

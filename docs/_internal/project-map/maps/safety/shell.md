@@ -187,6 +187,15 @@ args` without rewriting requests, while the latter parses Host command text
 
 - Status: Verified
 - Date: 2026-07-14
+- Scope: granted sandboxed stdio MCP servers only their generated neutral cwd
+  as writable scratch; Linux still requires explicit read grants for runtime
+  dependencies outside the configured workspace.
+- Read: MCP adapter cwd lifecycle and shared shell-sandbox scope compiler.
+- Tests: focused MCP adapter, CLI, ACP, and shell-sandbox suites; CI covers the
+  real Linux bubblewrap runtime.
+
+- Status: Verified
+- Date: 2026-07-14
 - Scope: fixed Linux bubblewrap launch when protected configuration paths
   overlap and when explicit read/write grants live beneath the private `/tmp`
   overlay; the private parent is read-only outside explicit writable grants,
