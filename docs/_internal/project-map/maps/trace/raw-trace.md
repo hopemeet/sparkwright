@@ -224,12 +224,12 @@ EventLog emits full event
   but raw trace remains canonical and no duplicate event store was introduced.
 - Tests: Host session inspection/full suite passed.
 
-- Status: Verified (no canonical trace change)
+- Status: Verified
 - Date: 2026-07-14
 - Scope: reviewed IM delivery replay; Host outbox entries are bounded delivery
   projections and do not replace or duplicate canonical trace storage.
 
-- Status: Verified (no canonical-event change)
+- Status: Verified
 - Date: 2026-07-14
 - Scope: reviewed Host lanes; the coordinator neither subscribes to nor copies
   Core canonical events, and trace storage remains unchanged.

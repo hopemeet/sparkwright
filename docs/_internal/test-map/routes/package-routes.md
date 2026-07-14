@@ -227,6 +227,37 @@ npm --workspace @sparkwright/cli test -- test/cli.test.ts -t "session"
 Then broaden to the full CLI test file when command parsing or shared helpers
 are touched.
 
+### `packages/cli/test/support/*`
+
+Run:
+
+```bash
+npm --workspace @sparkwright/cli test -- test/cli.test.ts
+npm run typecheck:test
+```
+
+Keep real `process.env` mutation inside the sequential CLI suite. New temporary
+directories, HTTP servers, MCP fixtures, and process-like resources should
+register cleanup with the shared LIFO stack.
+
+## Repository Governance
+
+### import/facade or project-map routing scripts
+
+Run:
+
+```bash
+node scripts/check-package-boundaries.mjs
+node scripts/check-internal-imports.mjs
+node scripts/check-import-graph.mjs
+python3 scripts/check-project-map-drift.py
+python3 scripts/check-project-map-drift.py --base origin/main
+```
+
+The value-import graph is a hard zero-SCC gate. Type-only SCCs are reported as
+information and must not grow silently. Workspace manifest discovery follows
+the root `workspaces` declarations rather than a package allowlist.
+
 ## TUI
 
 ### `packages/tui/src/state/run-controller.ts`

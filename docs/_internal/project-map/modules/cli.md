@@ -15,6 +15,7 @@ See also [../maps/trace/summary-timeline-verify.md](../maps/trace/summary-timeli
 - `packages/cli/src/runners/host-runner.ts`
 - `packages/cli/src/cli-approval.ts`
 - `packages/cli/test/cli.test.ts`
+- `packages/cli/test/support/cli-harness.ts`
 - `packages/cli/test/fixtures/trace-diagnostics/*`
 - `scripts/copy-cli-schemas.mjs`
 
@@ -52,6 +53,14 @@ Does not own:
 - Top-level `sparkwright --version` / `sparkwright -v` prints the CLI package
   version and exits before config loading, parsing a run goal, or starting a
   model run.
+- A first token outside the known command set is the default `run` goal, not an
+  unknown-command error. Recognized flags are consumed wherever they occur;
+  repeated scalar flags use the last value, unknown flags remain goal text,
+  and `--` is currently ordinary goal text rather than an option terminator.
+- CLI tests that mutate the real `process.env` live in one sequential suite and
+  use `test/support/cli-harness.ts` for explicit env restoration, LIFO cleanup,
+  temporary workspace/XDG roots, output capture, HTTP servers, MCP fixtures,
+  and trace/checkpoint helpers.
 - `sparkwright session *` resolves a session id under the session root.
 - `sparkwright session compact` calls the host session compaction path and
   prints `freedChars`, measurement regime/savings ratio, optional
@@ -318,7 +327,16 @@ Does not own:
 
 ## Last Verified
 
-- Status: Verified (adapter-only change)
+- Status: Verified
+- Date: 2026-07-15
+- Scope: froze existing command/parser behavior and extracted shared CLI test
+  support without changing production CLI behavior or output.
+- Read: CLI bootstrap/parser/help, test setup/helpers, direct-core/Host paths,
+  and root governance scripts.
+- Tests: CLI 155/155; config/schema/entry/outcome 29/29; CLI and test
+  typechecks; deterministic repo-pilot; import/boundary/drift checks.
+
+- Status: Verified
 - Date: 2026-07-14
 - Scope: CLI Host-backed entrypoints now use the shared HostService assembly;
   CLI command and output contracts remain unchanged.

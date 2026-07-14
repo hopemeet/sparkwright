@@ -56,6 +56,23 @@ Coverage ref:
 
 - [../coverage/trace-diagnostics.md](../coverage/trace-diagnostics.md)
 
+## Facade And Import Integrity
+
+Covers runtime value cycles, implementation-to-facade reverse imports, and
+workspace package discovery during mechanical module splits.
+
+Focused route:
+
+```bash
+node scripts/check-import-graph.mjs
+node scripts/check-package-boundaries.mjs
+node scripts/check-internal-imports.mjs
+```
+
+Treat any runtime value SCC or new sibling implementation import of a listed
+facade as a hard failure. Existing type-only SCCs are diagnostic debt, not
+permission to add another cycle.
+
 ## Capability Inspect
 
 Covers host `capability.inspect`, CLI `capabilities inspect`, capability

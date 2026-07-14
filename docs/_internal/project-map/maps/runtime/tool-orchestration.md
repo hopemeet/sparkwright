@@ -375,12 +375,12 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
   unchanged by module renaming.
 - Tests: Host full suite passed.
 
-- Status: Verified (no tool contract change)
+- Status: Verified
 - Date: 2026-07-14
 - Scope: reviewed Host IM message and approval routing; tool execution and
   approval policy remain Core/Host execution concerns.
 
-- Status: Verified (no tool ownership change)
+- Status: Verified
 - Date: 2026-07-14
 - Scope: reviewed atomic interactive command acceptance and Host lanes; tool
   preparation, policy gates, and Core tool execution remain existing owners.

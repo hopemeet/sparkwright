@@ -99,7 +99,7 @@ host config MCP servers
   into session query/compaction modules.
 - Tests: Host full suite passed.
 
-- Status: Verified (no MCP ownership change)
+- Status: Verified
 - Date: 2026-07-14
 - Scope: reviewed retained IM executions; live MCP remains execution-scoped and
   is disposed by HostExecution, never the subscription/outbox control state.

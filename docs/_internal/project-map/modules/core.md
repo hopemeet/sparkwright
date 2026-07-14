@@ -384,7 +384,7 @@ Does not own:
   isolated and Core run/session/event ownership is unchanged.
 - Tests: server-runtime 30/30 and Host 571/571 passed.
 
-- Status: Verified (no ownership change)
+- Status: Verified
 - Date: 2026-07-14
 - Scope: reviewed Host execution lanes and atomic command acceptance; Core
   remains the per-run state machine and canonical run-event owner.

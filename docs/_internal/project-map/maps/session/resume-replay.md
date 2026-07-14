@@ -143,7 +143,7 @@ Future run in compacted session
   resume and replay contracts and adds no durable lane recovery claim.
 - Tests: Host session/compaction coverage in the 571-test suite passed.
 
-- Status: Verified (no durable resume change)
+- Status: Verified
 - Date: 2026-07-14
 - Scope: reviewed IM reconnect replay; it replays bounded Host event
   projections only and does not add execution restart adoption.

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -12,15 +12,15 @@ const DEPENDENCY_FIELDS = [
   "optionalDependencies",
 ];
 
+const rootManifest = JSON.parse(
+  readFileSync(path.join(root, "package.json"), "utf8"),
+);
+const workspacePatterns = Array.isArray(rootManifest.workspaces)
+  ? rootManifest.workspaces
+  : (rootManifest.workspaces?.packages ?? []);
+const workspaceManifests = discoverWorkspaceManifests(workspacePatterns);
 const packages = new Map(
-  [
-    "packages/core/package.json",
-    "packages/protocol/package.json",
-    "packages/host/package.json",
-    "packages/tui/package.json",
-    "packages/sdk-core/package.json",
-    "packages/sdk-browser/package.json",
-  ].map((relativePath) => {
+  workspaceManifests.map((relativePath) => {
     const manifest = JSON.parse(
       readFileSync(path.join(root, relativePath), "utf8"),
     );
@@ -73,6 +73,34 @@ if (violations.length > 0) {
 }
 
 console.log("Package dependency boundaries OK.");
+console.log(`Discovered ${workspaceManifests.length} workspace manifests.`);
+
+function discoverWorkspaceManifests(patterns) {
+  const manifests = [];
+  for (const pattern of patterns) {
+    if (pattern.endsWith("/*")) {
+      const relativeParent = pattern.slice(0, -2);
+      const parent = path.join(root, relativeParent);
+      for (const entry of readdirSync(parent, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue;
+        const relativeManifest = path.join(
+          relativeParent,
+          entry.name,
+          "package.json",
+        );
+        if (existsSync(path.join(root, relativeManifest)))
+          manifests.push(relativeManifest);
+      }
+      continue;
+    }
+    const relativeManifest = path.join(pattern, "package.json");
+    if (!existsSync(path.join(root, relativeManifest))) {
+      throw new Error(`Workspace manifest not found: ${relativeManifest}`);
+    }
+    manifests.push(relativeManifest);
+  }
+  return manifests.sort();
+}
 
 function noWorkspaceDependencies(packageName, reason) {
   const entry = requirePackage(packageName);

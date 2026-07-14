@@ -136,9 +136,11 @@ follow the active maps below for the current contract.
 - `packages/core/src/workspace.ts` or `packages/core/src/workspace-checkpoint.ts`: [modules/core.md](modules/core.md), [maps/safety/workspace-writes.md](maps/safety/workspace-writes.md)
 - `packages/core/src/usage.ts`: [modules/core.md](modules/core.md), [maps/trace/summary-timeline-verify.md](maps/trace/summary-timeline-verify.md)
 - `packages/host/src/config.ts` or `packages/host/src/config-zod-schema.ts`: [modules/host.md](modules/host.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md)
+- `packages/host/src/config/*`: [modules/host.md](modules/host.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md)
 - `packages/host/src/tool-identities.ts`, `packages/host/src/tool-catalog.ts`, or `packages/host/src/tool-selectors.ts`: [modules/host.md](modules/host.md), [modules/coding-tools.md](modules/coding-tools.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md), [maps/capabilities/README.md](maps/capabilities/README.md)
 - `packages/host/src/model-builder.ts` or `packages/host/src/model-factory.ts`: [modules/host.md](modules/host.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/trace/summary-timeline-verify.md](maps/trace/summary-timeline-verify.md), [maps/runtime/context-compaction.md](maps/runtime/context-compaction.md)
 - `packages/host/src/runtime.ts`, `packages/host/src/run-access.ts`, `packages/host/src/run-security-plan.ts`, or `packages/host/src/run-policy.ts`: [modules/host.md](modules/host.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md), [maps/session/resume-replay.md](maps/session/resume-replay.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/capabilities/mcp.md](maps/capabilities/mcp.md), [maps/safety/workspace-writes.md](maps/safety/workspace-writes.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md)
+- `packages/host/src/runtime/*`: [modules/host.md](modules/host.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md), [maps/session/resume-replay.md](maps/session/resume-replay.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/capabilities/mcp.md](maps/capabilities/mcp.md), [maps/safety/workspace-writes.md](maps/safety/workspace-writes.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md)
 - `packages/host/src/host-execution.ts`, `packages/host/src/execution-plan.ts`, or `packages/host/src/execution-resources.ts`: [modules/host.md](modules/host.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/session/session-store.md](maps/session/session-store.md), [maps/safety/workspace-writes.md](maps/safety/workspace-writes.md)
 - `packages/host/src/host-service.ts` or `packages/host/src/workspace-context.ts`: [modules/host.md](modules/host.md), [modules/edge-packages.md](modules/edge-packages.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/session/session-store.md](maps/session/session-store.md), [maps/safety/workspace-writes.md](maps/safety/workspace-writes.md)
 - `packages/host/src/client-input.ts`: [modules/host.md](modules/host.md), [modules/cli.md](modules/cli.md), [modules/tui.md](modules/tui.md), [modules/protocol.md](modules/protocol.md)
@@ -147,6 +149,8 @@ follow the active maps below for the current contract.
 - `packages/acp-client-adapter/src/worker.ts`, `packages/host/src/acp-child-agent.ts`, `packages/host/src/external-command-agent.ts`, `packages/host/src/workspace-agent-arbiter.ts`, `packages/host/src/delegate-capability.ts`, `packages/host/src/delegate-runner.ts`, `packages/host/src/indexed-delegate-tool.ts`, or `packages/host/src/agent-profiles.ts`: [modules/host.md](modules/host.md), [modules/agent-runtime.md](modules/agent-runtime.md), [maps/capabilities/agents.md](maps/capabilities/agents.md), [maps/safety/workspace-writes.md](maps/safety/workspace-writes.md), [maps/safety/shell.md](maps/safety/shell.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md)
 - `packages/host/src/workflows.ts`, `packages/host/src/workflow-projection.ts`, `packages/host/src/workflow-node-api.ts`, `packages/host/src/workflow-distill.ts`, `packages/host/src/workflow-shadow.ts`, `packages/host/src/workflow-trace-observation.ts`, `sparkwright workflow list|inspect|distill|shadow`, or `sparkwright run --workflow`: [modules/host.md](modules/host.md), [modules/cli.md](modules/cli.md), [modules/protocol.md](modules/protocol.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/safety/shell.md](maps/safety/shell.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md)
 - `packages/cli/src/cli.ts`, `packages/cli/src/runners/direct-core-runner.ts`, or `packages/cli/src/runners/host-runner.ts`: [modules/cli.md](modules/cli.md), [maps/trace/summary-timeline-verify.md](maps/trace/summary-timeline-verify.md), [maps/session/session-store.md](maps/session/session-store.md), [maps/safety/approvals.md](maps/safety/approvals.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md)
+- `packages/cli/src/commands/*` or `packages/cli/src/parser/*`: [modules/cli.md](modules/cli.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md), [maps/session/resume-replay.md](maps/session/resume-replay.md), [maps/capabilities/README.md](maps/capabilities/README.md)
+- `packages/cli/test/support/*`: [modules/cli.md](modules/cli.md)
 - `packages/cli/src/event-format.ts`: [modules/cli.md](modules/cli.md), [modules/protocol.md](modules/protocol.md), [maps/trace/summary-timeline-verify.md](maps/trace/summary-timeline-verify.md)
 - `scripts/build-workspaces.mjs`, `scripts/check-dist-fresh.mjs`, `scripts/stamp-workspace-build.mjs`, or workspace `package.json` build scripts: [modules/cli.md](modules/cli.md)
 - `scripts/copy-cli-schemas.mjs`, `scripts/generate-config-schema.ts`, or CLI-packaged/generated config schemas: [modules/cli.md](modules/cli.md), [modules/host.md](modules/host.md)
@@ -179,6 +183,9 @@ follow the active maps below for the current contract.
 - `packages/skills/src/markdown-folder-asset.ts`: [modules/skills.md](modules/skills.md), [modules/host.md](modules/host.md), [maps/capabilities/README.md](maps/capabilities/README.md)
 - `packages/host/src/skill-evolution.ts` or `sparkwright skills proposals|history|restore`: [modules/skills.md](modules/skills.md), [maps/capabilities/skill-evolution.md](maps/capabilities/skill-evolution.md)
 - `packages/mcp-adapter/src/index.ts`: [modules/mcp-adapter.md](modules/mcp-adapter.md), [maps/capabilities/mcp.md](maps/capabilities/mcp.md), [maps/safety/shell.md](maps/safety/shell.md)
+- `packages/mcp-adapter/src/*`: [modules/mcp-adapter.md](modules/mcp-adapter.md), [maps/capabilities/mcp.md](maps/capabilities/mcp.md), [maps/safety/shell.md](maps/safety/shell.md)
+- `packages/coding-tools/src/*`: [modules/coding-tools.md](modules/coding-tools.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md), [maps/safety/workspace-writes.md](maps/safety/workspace-writes.md)
+- `packages/core/src/runtime/*`: [modules/core.md](modules/core.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md), [maps/safety/approvals.md](maps/safety/approvals.md)
 - `packages/cron/src/*`: [maps/capabilities/cron.md](maps/capabilities/cron.md), [modules/cli.md](modules/cli.md), [modules/tui.md](modules/tui.md), [modules/host.md](modules/host.md)
 - `packages/agent-runtime/src/*`: [modules/agent-runtime.md](modules/agent-runtime.md), [maps/capabilities/agents.md](maps/capabilities/agents.md), [maps/capabilities/cron.md](maps/capabilities/cron.md)
 - `packages/agent-runtime/src/workflows/*`: [modules/agent-runtime.md](modules/agent-runtime.md), [modules/protocol.md](modules/protocol.md), [maps/capabilities/README.md](maps/capabilities/README.md)
@@ -203,6 +210,16 @@ TUI events; it is not a trace diagnostic report and must not replace
 trace/session inspection.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: added directory-level routing for the progressive large-file split
+  hotspots and introduced repository-owned drift/import graph guardrails.
+- Read: all routed Host/CLI/Core/coding-tools/MCP module and runtime, safety,
+  session, trace, capability, and test-map pages required by the campaign.
+- Tests: package/internal/import graph checks; CLI characterization and
+  outcome/config/parity suites; CLI/test typechecks; deterministic repo-pilot;
+  worktree and `--base origin/main` drift modes.
 
 - Status: Verified
 - Date: 2026-07-14

@@ -12,6 +12,9 @@ Keep `docs/_internal/project-map/` useful as the codebase grows.
 - Structured project-map, proposal, and test-map files are versioned in this
   checkout. Keep their updates with the behavior change; ephemeral run notes
   and uncatalogued scratch material remain ignored.
+- `scripts/check-project-map-drift.py` includes untracked files, rejects
+  unrouted changes under mapped refactor hotspots, and validates the exact
+  verification status vocabulary in both working-tree and `--base` modes.
 
 ## Consumers
 
@@ -57,6 +60,12 @@ Rules:
   local-only wording; remove it when encountered and keep drift checks in review.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-15
+- Read: project-map status blocks, root touch-file routing, and the repository
+  drift checker.
+- Tests: working-tree and `--base origin/main` drift checks passed.
 
 - Status: Read-only
 - Date: 2026-07-11T00:00:00+0800

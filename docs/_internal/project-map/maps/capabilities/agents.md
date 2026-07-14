@@ -392,7 +392,7 @@ configured profiles/delegates
   unchanged by the workspace lease module rename.
 - Tests: Host Agent and full suites passed.
 
-- Status: Verified (no contract change)
+- Status: Verified
 - Date: 2026-07-14
 - Scope: reviewed immutable Task runner capture and Host lanes; AgentSupervisor
   remains the child invocation lifecycle owner.

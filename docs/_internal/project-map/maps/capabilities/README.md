@@ -219,12 +219,12 @@ config + workspace capability roots
   unchanged by session-module extraction and lease import renaming.
 - Tests: Host full suite/typecheck passed.
 
-- Status: Verified (no capability activation change)
+- Status: Verified
 - Date: 2026-07-14
 - Scope: reviewed Host IM control integration; it adds protocol/session control
   and does not alter tool or capability discovery.
 
-- Status: Verified (no capability contract change)
+- Status: Verified
 - Date: 2026-07-14
 - Scope: reviewed Host execution planning/resource extraction and tool catalog;
   capability discovery and activation remain unchanged.

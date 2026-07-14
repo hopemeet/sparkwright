@@ -20,6 +20,7 @@ The release gate layers:
 - lint and format checks
 - schema drift checks
 - package-boundary and internal-import checks
+- runtime value-import/facade reverse-import checks
 - reserved-field checks
 - workspace tests
 - deterministic regression matrix for host/CLI/TUI/ACP convergence scenarios

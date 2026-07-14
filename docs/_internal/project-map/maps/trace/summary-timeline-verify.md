@@ -235,7 +235,7 @@ trace.jsonl
 
 ## Last Verified
 
-- Status: Verified (no trace-view change)
+- Status: Verified
 - Date: 2026-07-14
 - Scope: reviewed CLI/Host assembly migration; trace summary, timeline, and
   verification derivation remain unchanged.

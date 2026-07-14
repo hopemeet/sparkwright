@@ -134,13 +134,13 @@ Manual compact
   extracted query/compaction functions use the same store and artifact format.
 - Tests: Host session/compaction coverage passed.
 
-- Status: Verified (no persisted-format change)
+- Status: Verified
 - Date: 2026-07-14
 - Scope: reviewed Host-owned IM retention/replay; ordinary IM control state is
   explicitly process-local while existing session and Workflow stores remain
   unchanged.
 
-- Status: Verified (no storage contract change)
+- Status: Verified
 - Date: 2026-07-14
 - Scope: reviewed Host workspace contexts and session lane keys; session stores
   remain per execution and in-memory lane queues are not durable state.

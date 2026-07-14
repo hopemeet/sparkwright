@@ -225,7 +225,7 @@ Does not own:
   and Gateway bridge.
 - Tests: protocol 8/8; SDK 12/12; Host protocol focused; schema check passed.
 
-- Status: Verified (no contract change)
+- Status: Verified
 - Date: 2026-07-14
 - Scope: reviewed HostService/lane migration; existing run request and response
   shapes remain compatible and root run ids remain legacy execution aliases.

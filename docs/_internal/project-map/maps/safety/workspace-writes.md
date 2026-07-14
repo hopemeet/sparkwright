@@ -150,12 +150,12 @@ tool proposes write
   changing admission scope, fairness, or the non-fencing limitation.
 - Tests: Workspace lease tests and Host 571/571 passed.
 
-- Status: Verified (no write-admission change)
+- Status: Verified
 - Date: 2026-07-14
 - Scope: reviewed IM principal/binding permissions; they authorize session
   control only and do not grant workspace mutation or replace existing leases.
 
-- Status: Verified (no lease semantic change)
+- Status: Verified
 - Date: 2026-07-14
 - Scope: reviewed WorkspaceContext and lane capacity; canonical workspace lease
   admission remains independent from execution scheduling capacity.

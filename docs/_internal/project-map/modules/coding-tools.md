@@ -138,7 +138,7 @@ Does not own:
   unchanged by the workspace lease import rename.
 - Tests: Host tool catalog/full suite passed.
 
-- Status: Verified (no contract change)
+- Status: Verified
 - Date: 2026-07-14
 - Scope: reviewed Host tool catalog during execution refactor; coding-tool
   ownership and write admission remain unchanged.

@@ -56,6 +56,18 @@ npm --workspace @sparkwright/cli test -- test/run-outcome.test.ts
 npm --workspace @sparkwright/cli test -- test/run-outcome-consistency.test.ts
 ```
 
+### Mechanical Split Integrity Gate
+
+```bash
+node scripts/check-package-boundaries.mjs
+node scripts/check-internal-imports.mjs
+node scripts/check-import-graph.mjs
+python3 scripts/check-project-map-drift.py
+```
+
+For PR-style committed comparisons, add
+`python3 scripts/check-project-map-drift.py --base origin/main`.
+
 ### TUI Rendering Gate
 
 ```bash
