@@ -141,6 +141,14 @@ tool proposes write
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-15
+- Scope: access/capability projection moved to a stateless collaborator;
+  WorkspaceContext, policy, mutation admission, approvals, containment, and
+  write-event ownership are unchanged.
+- Read: capability-assembly access summary and concrete runtime security path.
+- Tests: Host security/tools focused suites and repo-pilot.
+
 - Status: Verified
 - Date: 2026-07-15
 - Scope: HostRuntime module relocation preserves WorkspaceContext ownership,

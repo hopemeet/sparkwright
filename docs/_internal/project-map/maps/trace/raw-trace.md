@@ -211,6 +211,13 @@ EventLog emits full event
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-15
+- Scope: capability projection extraction does not change trace emitters,
+  payloads, event order, storage, levels, or session trace facts.
+- Read: capability-assembly and concrete runtime trace boundary.
+- Tests: Host protocol/client focused suites and repo-pilot trace smoke.
+
 - Status: Verified
 - Date: 2026-07-15
 - Scope: HostRuntime module relocation preserves trace emitters, payloads,

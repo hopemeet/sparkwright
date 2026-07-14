@@ -9,6 +9,7 @@ cron, shell/task tools, and capability inspection.
 
 - `packages/host/src/runtime.ts`
 - `packages/host/src/runtime/host-runtime.ts`
+- `packages/host/src/runtime/capability-assembly.ts`
 - `packages/host/src/active-rules.ts`
 - `packages/host/src/tool-catalog.ts`
 - `packages/host/src/tools.ts`
@@ -207,6 +208,15 @@ config + workspace capability roots
 - Do not add one-off direct-core/cron tools for capability smokes; exercise the same coding tools used by host runs.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: capability snapshot projection, model/access/workflow/skill summaries,
+  automation inspection, and configured/live snapshot merge moved into a
+  stateless collaborator; protocol shape and snapshot cache ownership remain
+  with HostRuntime and are unchanged.
+- Read: concrete runtime and capability-assembly module.
+- Tests: Host protocol/client/run-security/tools and CLI capability inspect.
 
 - Status: Verified
 - Date: 2026-07-15

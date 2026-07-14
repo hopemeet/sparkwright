@@ -12,6 +12,7 @@ See [../../modules/mcp-adapter.md](../../modules/mcp-adapter.md).
 - `packages/mcp-adapter/src/index.ts`
 - `packages/host/src/runtime.ts`
 - `packages/host/src/runtime/host-runtime.ts`
+- `packages/host/src/runtime/capability-assembly.ts`
 - `packages/cli/src/cli.ts`
 - `packages/tui/src/lib/create-capability.ts`
 - `docs/reference/EXTENSION_INTERFACES.md`
@@ -87,6 +88,14 @@ host config MCP servers
   trusted opt-ins and are not counted as managed workspace writes.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: MCP status-to-capability projection moved into the stateless
+  capability collaborator; MCP preparation, lazy startup, transport, reconnect,
+  process ownership, and cleanup remain in their existing owners.
+- Read: capability-assembly MCP projection and concrete runtime preparation.
+- Tests: Host protocol/tools focused suites and CLI capability inspect.
 
 - Status: Read-only
 - Date: 2026-07-15

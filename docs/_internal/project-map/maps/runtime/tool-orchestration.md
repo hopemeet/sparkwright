@@ -368,6 +368,14 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
 
 - Status: Verified
 - Date: 2026-07-15
+- Scope: tool capability projection and configured/live snapshot merge moved
+  to a stateless collaborator; actual catalog assembly, policy, approval,
+  invocation, observation, and event behavior are unchanged.
+- Read: capability-assembly and concrete runtime tool preparation.
+- Tests: Host tools/agent/delegate/protocol focused suites and repo-pilot.
+
+- Status: Verified
+- Date: 2026-07-15
 - Scope: HostRuntime module relocation only; tool assembly, policy, approval,
   execution, observation, and event behavior are unchanged.
 - Read: runtime facade and concrete runtime imports/tool assembly.

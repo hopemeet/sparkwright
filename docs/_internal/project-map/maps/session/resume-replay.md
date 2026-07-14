@@ -131,6 +131,13 @@ Future run in compacted session
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-15
+- Scope: capability snapshot merge moved to a stateless collaborator; resume
+  lookup, checkpoint reconstruction, run identity, and replay order are unchanged.
+- Read: capability-assembly merge and concrete runtime resume path.
+- Tests: Host protocol/client and CLI host-resume focused suites.
+
 - Status: Verified
 - Date: 2026-07-15
 - Scope: concrete resume orchestration moved behind the runtime facade;

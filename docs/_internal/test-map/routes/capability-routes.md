@@ -89,6 +89,10 @@ npm --workspace @sparkwright/host run build
 npm --workspace @sparkwright/cli test -- test/cli.test.ts -t "capabilities inspect"
 ```
 
+For `packages/host/src/runtime/capability-assembly.ts`, keep HostRuntime as the
+snapshot-cache owner and run the import graph/facade gate in addition to this
+route.
+
 Add TUI panel tests when visible panel rendering changes:
 
 ```bash

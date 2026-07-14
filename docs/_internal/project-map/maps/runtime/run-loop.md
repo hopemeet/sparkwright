@@ -283,6 +283,14 @@ createRun/resumeRunFromCheckpoint
 
 - Status: Verified
 - Date: 2026-07-15
+- Scope: moved stateless capability projection/preparation helpers out of the
+  concrete runtime; start/resume supervision, run-loop state, events, and
+  HostExecution ownership are unchanged.
+- Read: concrete runtime and capability-assembly collaborator.
+- Tests: Host execution/service/protocol/client focused suites and repo-pilot.
+
+- Status: Verified
+- Date: 2026-07-15
 - Scope: concrete Host run orchestration moved behind the runtime facade with
   no change to start/resume supervision, event order, Core run ownership, or
   HostExecution lifecycle.

@@ -13,6 +13,7 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 
 - `packages/host/src/runtime.ts` — stable named compatibility facade
 - `packages/host/src/runtime/host-runtime.ts` — concrete HostRuntime composition and execution orchestration
+- `packages/host/src/runtime/capability-assembly.ts` — capability snapshot projection, summaries, automation reads, and merge
 - `packages/host/src/runtime/contracts.ts` — runtime construction and execution coordination ports
 - `packages/host/src/session-queries.ts`
 - `packages/host/src/session-compaction.ts`
@@ -927,6 +928,15 @@ Does not own:
   remain adapter-native and need continued cross-entrypoint characterization.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: extracted capability snapshot construction, summaries, automation
+  inspection, inline-shell preprocess preparation, and snapshot merge into one
+  cohesive collaborator. It receives immutable inputs and owns no live state.
+- Read: concrete runtime and capability-assembly module.
+- Tests: capability/protocol/client/tools focused suites, Host build/typecheck,
+  CLI capability/host paths, repo-pilot, import/boundary gates, and map drift.
 
 - Status: Verified
 - Date: 2026-07-15
