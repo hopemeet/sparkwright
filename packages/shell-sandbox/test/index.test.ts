@@ -268,12 +268,15 @@ describe("platform invocation builders", () => {
     );
   });
 
-  it("binds writable paths after the private /tmp overlay so they are not shadowed", () => {
+  it("binds allowed paths after the private /tmp overlay so they are not shadowed", () => {
     if (process.platform === "win32") return;
     const config = resolveShellSandboxConfig({
       workspaceRoot: "/repo",
       config: {
-        filesystem: { allowWrite: ["/tmp/sparkwright-trace-x"] },
+        filesystem: {
+          allowRead: ["/tmp/sparkwright-read-x"],
+          allowWrite: ["/tmp/sparkwright-trace-x"],
+        },
         network: { mode: "allow" },
       },
     });
@@ -295,7 +298,13 @@ describe("platform invocation builders", () => {
         arg === "--bind-try" &&
         invocation.args[i + 1] === "/tmp/sparkwright-trace-x",
     );
+    const readBind = invocation.args.findIndex(
+      (arg, i) =>
+        arg === "--ro-bind-try" &&
+        invocation.args[i + 1] === "/tmp/sparkwright-read-x",
+    );
     expect(tmpBind).toBeGreaterThanOrEqual(0);
+    expect(readBind).toBeGreaterThan(tmpBind);
     expect(writeBind).toBeGreaterThan(tmpBind);
   });
 
@@ -438,6 +447,24 @@ describe("platform sandbox integration", () => {
       config,
     );
     await expect(allowed.completed).resolves.toMatchObject({
+      status: "completed",
+      exitCode: 0,
+      stdout: "ok\n",
+    });
+
+    const readOnlyConfig = await enforceNoWriteShellSandbox(config, {
+      runtime,
+      denyWriteRoots: [workspace],
+    });
+    const readOnly = await runtime.execute(
+      {
+        command: "cat allowed.txt",
+        cwd: workspace,
+        env: process.env,
+      },
+      readOnlyConfig,
+    );
+    await expect(readOnly.completed).resolves.toMatchObject({
       status: "completed",
       exitCode: 0,
       stdout: "ok\n",

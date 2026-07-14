@@ -805,15 +805,14 @@ export function buildBubblewrapInvocation(
     args.push("--unshare-net");
   }
 
-  for (const path of config.filesystem.allowRead) {
-    args.push("--ro-bind-try", path, path);
-  }
   if (config.filesystem.tmp) {
     args.push("--bind", options.tmpRoot, "/tmp");
   }
-  // Bind writable paths AFTER the private /tmp overlay so an explicitly
-  // allowed path under /tmp is not shadowed by the empty tmpRoot mounted over
-  // /tmp.
+  // Bind explicit grants AFTER the private /tmp overlay so allowed paths under
+  // /tmp are not shadowed by the empty tmpRoot mounted over /tmp.
+  for (const path of config.filesystem.allowRead) {
+    args.push("--ro-bind-try", path, path);
+  }
   for (const path of config.filesystem.allowWrite) {
     args.push("--bind-try", path, path);
   }

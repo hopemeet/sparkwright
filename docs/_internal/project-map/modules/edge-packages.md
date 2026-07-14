@@ -116,7 +116,8 @@ contracts, and focused checklists that no longer fit here.
 - Status: Verified
 - Date: 2026-07-14
 - Scope: collapsed overlapping Linux bubblewrap deny mounts to their minimal
-  ancestor roots so protected descendants do not make sandbox startup fail.
+  ancestor roots and restored explicit read/write grants after the private
+  `/tmp` overlay so protected descendants and temporary workspaces launch.
 - Read: shell-sandbox bubblewrap invocation compiler and platform tests.
 - Tests: shell-sandbox 16/16 on Node 20 and Node 22; the CI matrix covers the
   Linux runtime.
