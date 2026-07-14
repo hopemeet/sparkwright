@@ -211,6 +211,13 @@ EventLog emits full event
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-15
+- Scope: runtime contract extraction does not change trace emitters, event
+  payloads, ordering, storage, or trace-level behavior.
+- Read: runtime contracts and Host runtime event boundary.
+- Tests: Host protocol/client focused suites and repo-pilot trace smoke.
+
 - Status: Verified
 - Date: 2026-07-14
 - Scope: checked Workflow API principal attribution; no Core trace event or file

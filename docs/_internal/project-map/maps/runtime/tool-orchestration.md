@@ -365,6 +365,14 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-15
+- Scope: Host execution coordination contracts moved to a type leaf; tool
+  preparation, policy, approval, invocation, result, and event behavior are
+  unchanged.
+- Read: runtime contracts and Host runtime coordination boundary.
+- Tests: Host tools/agent/delegate focused suites and repo-pilot.
+
 - Status: Verified
 - Date: 2026-07-15
 - Scope: unified-diff parsing/application moved behind the coding-tools named

@@ -171,7 +171,7 @@ npm --workspace @sparkwright/host test -- test/tools.test.ts
 Also run shell-tool tests when behavior belongs to command parsing, path scope,
 foreground timeout, promotion, or shell output schema.
 
-### `packages/host/src/runtime.ts`
+### `packages/host/src/runtime.ts` or `packages/host/src/runtime/*`
 
 Run the focused suite matching the changed surface:
 
@@ -183,6 +183,10 @@ npm --workspace @sparkwright/host test -- test/config.test.ts
 
 Broaden to CLI/TUI tests when capability snapshots, protocol responses, or
 run summaries change.
+
+For `runtime/contracts.ts`, also run Host execution/service and the import graph
+gate; coordinator ports must not derive their signatures from `HostRuntime`
+class methods.
 
 ## Server Runtime
 

@@ -131,6 +131,13 @@ contracts, and focused checklists that no longer fit here.
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-15
+- Scope: Host runtime contract extraction preserves all package exports and
+  downstream edge-package behavior; no edge package source changed.
+- Read: Host package index, runtime contracts, and server imports.
+- Tests: Host build/typecheck and CLI host-path focused verification.
+
 - Status: Verified
 - Date: 2026-07-14
 - Scope: checked SDK/Gateway consumers after Host principal isolation. Existing

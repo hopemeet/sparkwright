@@ -87,6 +87,13 @@ host config MCP servers
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-15
+- Scope: runtime contract extraction does not move or alter MCP preparation,
+  transport, lazy startup, reconnect, or cleanup ownership.
+- Read: Host runtime contracts and existing runtime MCP imports.
+- Tests: Host tools/protocol focused suites; no MCP lifecycle code changed.
+
 - Status: Verified
 - Date: 2026-07-14
 - Scope: checked Host runtime source-attribution signature change; MCP

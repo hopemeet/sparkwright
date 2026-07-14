@@ -131,6 +131,13 @@ Future run in compacted session
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-15
+- Scope: resume request/outcome ports are now neutral contracts; session lookup,
+  lane selection, checkpoint replay, and identity behavior are unchanged.
+- Read: runtime contracts, Host runtime resume path, and HostService coordinator.
+- Tests: Host service/protocol/client focused suites.
+
+- Status: Verified
 - Date: 2026-07-14
 - Scope: corrected IM reconnect identity to use stable authenticated credential
   context and Host-issued new-binding sessions while preserving bounded

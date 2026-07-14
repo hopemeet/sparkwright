@@ -121,6 +121,13 @@ Manual compact
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-15
+- Scope: runtime construction types moved to a leaf; session root resolution,
+  WorkspaceContext ownership, stores, and persistence are unchanged.
+- Read: runtime contracts, Host runtime constructor, WorkspaceContext.
+- Tests: Host execution/service/protocol focused suites.
+
 - Status: Verified
 - Date: 2026-07-14
 - Scope: Host principal/auth isolation changes only process-memory ordinary IM

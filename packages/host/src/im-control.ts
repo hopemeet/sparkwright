@@ -6,7 +6,7 @@ import type {
   ImSubjectClaims,
   ProtocolError,
 } from "@sparkwright/protocol";
-import type { HostRuntime } from "./runtime.js";
+import type { HostExecutionIdentityView } from "./runtime/contracts.js";
 
 export interface HostImPrincipal {
   readonly id: string;
@@ -53,7 +53,7 @@ export interface HostImControlState {
   policy: HostImControlPolicy;
   bindings: Map<string, HostImBinding>;
   bindingsBySubject: Map<string, string>;
-  runtimeAssociations: Map<HostRuntime, RuntimeAssociation>;
+  runtimeAssociations: Map<HostExecutionIdentityView, RuntimeAssociation>;
   approvals: Map<string, ApprovalRoute>;
   outboxes: Map<string, ImDelivery[]>;
   acknowledgedDeliveries: Map<string, Set<string>>;
@@ -254,7 +254,7 @@ export function acknowledgeHostImDeliveries(
 
 export function associateHostImRuntime(
   state: HostImControlState,
-  runtime: HostRuntime,
+  runtime: HostExecutionIdentityView,
   binding: HostImBinding,
 ): void {
   state.runtimeAssociations.set(runtime, {
@@ -265,7 +265,7 @@ export function associateHostImRuntime(
 
 export function recordHostImEvent(
   state: HostImControlState,
-  runtime: HostRuntime,
+  runtime: HostExecutionIdentityView,
   event: HostEvent,
 ): void {
   const association = state.runtimeAssociations.get(runtime);
@@ -329,7 +329,7 @@ export function reopenHostImApproval(
 
 export function shouldRetainHostImRuntime(
   state: HostImControlState,
-  runtime: HostRuntime,
+  runtime: HostExecutionIdentityView,
 ): boolean {
   const association = state.runtimeAssociations.get(runtime);
   if (!association || !runtime.executionIdentity()) return false;

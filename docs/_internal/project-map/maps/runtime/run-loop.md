@@ -281,6 +281,14 @@ createRun/resumeRunFromCheckpoint
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-15
+- Scope: extracted neutral Host execution coordination contracts without
+  changing start/resume orchestration, Core run ownership, event ordering, or
+  HostExecution lifecycle.
+- Read: runtime contracts, Host runtime, HostService, HostExecution.
+- Tests: Host execution/service/protocol/client focused suites and repo-pilot.
+
+- Status: Verified
 - Date: 2026-07-14
 - Scope: checked Host Workflow resume source attribution; execution assembly,
   episode driving, lane completion, and Core run-loop behavior are unchanged.

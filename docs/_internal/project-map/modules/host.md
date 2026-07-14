@@ -12,6 +12,7 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 ## Main Files
 
 - `packages/host/src/runtime.ts`
+- `packages/host/src/runtime/contracts.ts` — runtime construction and execution coordination ports
 - `packages/host/src/session-queries.ts`
 - `packages/host/src/session-compaction.ts`
 - `packages/host/src/run-access.ts`
@@ -925,6 +926,17 @@ Does not own:
   remain adapter-native and need continued cross-entrypoint characterization.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: moved RuntimeOptions, execution messages, outcomes, and lane-driver
+  ports into a dependency leaf. HostService remains the sole process/lane
+  owner; HostRuntime and HostExecution ownership and behavior are unchanged.
+- Read: runtime contracts, Host runtime, HostService, server, IM control, and
+  Host public exports.
+- Tests: Host execution/service/protocol/client/tools/agent/delegate focused
+  suites, Host typecheck/build, CLI host path, static import/boundary gates,
+  deterministic repo-pilot, and map drift.
 
 - Status: Verified
 - Date: 2026-07-14

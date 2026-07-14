@@ -115,6 +115,16 @@ import {
   InFlightCommandDispatcher,
   type ExecutionHandle,
 } from "@sparkwright/server-runtime";
+import type {
+  HostExecutionCoordinatorPort,
+  HostExecutionMessage,
+  RuntimeOptions,
+} from "./runtime/contracts.js";
+export type {
+  HostExecutionCoordinatorPort,
+  HostExecutionMessage,
+  RuntimeOptions,
+} from "./runtime/contracts.js";
 import {
   createWorkspaceMutationAdmission,
   processWorkspaceLeaseCoordinator,
@@ -396,69 +406,6 @@ function requireActiveRunId(value: string | null): RunId {
     throw new Error("Task tool invoked before a run id was assigned.");
   }
   return value as RunId;
-}
-
-export interface RuntimeOptions {
-  /** Workspace root for all runs spawned through this runtime. */
-  workspaceRoot: string;
-  /** Session/trace storage root. Defaults to <workspaceRoot>/.sparkwright/sessions. */
-  sessionRootDir?: string;
-  /** Default model reference ("provider/model") when run.start omits one. */
-  defaultModel?: string;
-  /** Default high-level access mode when run.start does not specify one. */
-  defaultAccessMode?: RunAccessMode;
-  /** Project/runtime ceiling for requested high-level access modes. */
-  accessModeCeiling?: RunAccessMode;
-  /** Default session foreground/background task policy. */
-  defaultBackgroundTasks?: BackgroundTaskPolicy;
-  /** Project/runtime ceiling for foreground/background task policy. */
-  backgroundTasksCeiling?: BackgroundTaskPolicy;
-  /** Default permission mode when run.start does not specify one. */
-  defaultPermissionMode?: PermissionMode;
-  /** Default trace level when run.start does not specify one. */
-  defaultTraceLevel?: TraceLevel;
-  /** Default workspace-write permission when run.start does not specify one. */
-  defaultShouldWrite?: boolean;
-  /** Session-scoped MCP servers supplied by an embedding protocol (for example ACP). */
-  extraMcpServers?: readonly McpServerConfig[];
-  /** Called to deliver host events to the client. */
-  emit: (event: HostEvent) => void;
-  /** @internal Process-scoped workspace mutation coordinator override. */
-  workspaceLeaseCoordinator?: WorkspaceLeaseCoordinator;
-  /** @internal Workspace-scoped durable owner injected by HostService. */
-  workspaceContext?: WorkspaceContext;
-  /** @internal Canonical process lane path injected by HostService. */
-  executionCoordinator?: HostExecutionCoordinatorPort;
-  /** @internal Finite live approval wait; defaults to five minutes. */
-  approvalTimeoutMs?: number;
-}
-
-export interface HostExecutionCoordinatorPort {
-  startRun(
-    runtime: HostRuntime,
-    payload: RunStartRequestPayload,
-  ): ReturnType<HostRuntime["startRunDirect"]>;
-  resumeRun(
-    runtime: HostRuntime,
-    payload: RunResumeRequestPayload,
-  ): ReturnType<HostRuntime["resumeRunDirect"]>;
-  injectRunMessage(
-    runtime: HostRuntime,
-    runId: string,
-    input: Parameters<HostRuntime["injectRunMessageDirect"]>[1],
-  ): ReturnType<HostRuntime["injectRunMessageDirect"]>;
-  cancelRun(
-    runtime: HostRuntime,
-    runId: string,
-    reason?: string,
-  ): ReturnType<HostRuntime["cancelRunDirect"]>;
-}
-
-export interface HostExecutionMessage {
-  runId: string;
-  content: string;
-  parts?: readonly RunInputPart[];
-  metadata?: Record<string, unknown>;
 }
 
 interface CompletedConversationTurn {

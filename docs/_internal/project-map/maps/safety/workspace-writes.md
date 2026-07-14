@@ -140,6 +140,13 @@ tool proposes write
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-15
+- Scope: Host runtime contract extraction leaves WorkspaceContext, mutation
+  admission, policy, approval, and execution-resource ownership unchanged.
+- Read: runtime contracts, Host runtime constructor, and HostService.
+- Tests: Host service/tools focused suites and repo-pilot.
+
 - Status: Verified
 - Date: 2026-07-15
 - Scope: pure unified-diff parsing/application moved to a leaf module; managed

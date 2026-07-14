@@ -129,6 +129,13 @@ policy requires approval
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-15
+- Scope: runtime contract extraction leaves approval resolver ownership,
+  timeout, routing, and HostExecution cleanup unchanged.
+- Read: runtime contracts, Host runtime, HostExecution, and HostService.
+- Tests: Host execution/service/protocol focused suites.
+
 - Status: Verified
 - Date: 2026-07-14
 - Scope: bound IM approval/subscription/cancel authorization to immutable

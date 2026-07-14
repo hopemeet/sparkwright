@@ -208,6 +208,13 @@ config + workspace capability roots
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-15
+- Scope: runtime contract extraction only; capability assembly, snapshot cache,
+  tool/model/skill/MCP facts, and inspect output are unchanged.
+- Read: Host runtime contracts and runtime composition.
+- Tests: Host protocol/client/tools focused suites and deterministic repo-pilot.
+
+- Status: Verified
 - Date: 2026-07-14
 - Scope: checked Host connection principal and Workflow control attribution;
   capability snapshot shapes and resolution behavior are unchanged.

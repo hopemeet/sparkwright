@@ -209,6 +209,13 @@ Does not own:
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-15
+- Scope: protocol request, response, error, event, and wire schema types are
+  only referenced by the new Host contracts leaf; no protocol contract changed.
+- Read: Host runtime contracts and protocol types consumed by them.
+- Tests: Host protocol/client focused suites and Host build.
+
 - Status: Verified
 - Date: 2026-07-14
 - Scope: Host principal isolation keeps existing handshake/IM/Workflow request
