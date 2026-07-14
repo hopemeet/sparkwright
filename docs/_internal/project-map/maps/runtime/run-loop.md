@@ -45,6 +45,9 @@ createRun/resumeRunFromCheckpoint
 - Interactive commands enter through one atomic acceptance operation. Terminal
   or abort-closing runs reject before queue mutation, so a successful Host
   inject response always means the command reached the consumable Core queue.
+- A Host interactive execution may contain multiple Core runs. HostExecution
+  retains the stable root alias and current/final episode ids; only its
+  completion drains execution ownership. Core terminal remains a per-run fact.
 - `cancel()` emits `run.cancelled` synchronously and kicks the `RunEnd`
   workflow-hook phase with `state:"cancelled"` / `reason:"manual_cancelled"`.
   `RunEnd` remains fire-and-forget.
@@ -271,6 +274,14 @@ createRun/resumeRunFromCheckpoint
   handling can still be noisy.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: separated Core episode terminal from HostExecution terminal and moved
+  todo-chain admission/cancellation to the execution lifecycle owner.
+- Read: HostExecution/runtime episode assembly and agent-runtime run-chain/todo
+  supervisor.
+- Tests: Host full 562/562; agent-runtime affected 107/107; Core run 129/129.
 
 - Status: Verified
 - Date: 2026-07-14

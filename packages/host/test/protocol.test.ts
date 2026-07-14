@@ -4990,7 +4990,7 @@ describe("host protocol", () => {
         runtime.injectRunMessage(run.record.id, { content: "too late" }),
       ).toMatchObject({
         ok: false,
-        error: { code: "run_not_found", message: expect.stringContaining("terminal") },
+        error: { code: "run_not_found", message: expect.stringContaining("closed") },
       });
       expect(
         run.events.all().filter((event) => event.type === "run.command.enqueued"),

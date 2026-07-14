@@ -95,7 +95,6 @@ import {
   notificationFromRecord,
   rememberSuccessfulDelegation,
   readTodoLedger,
-  runTodoSupervised,
   spawnSubAgent,
   summarizeDelegationResult,
   withAlreadyCompletedNote,
@@ -202,6 +201,12 @@ import { prepareHostRunSecurityPlan } from "./run-security-plan.js";
 import { createHostRunPolicy } from "./run-policy.js";
 import { existingSkillRoots } from "./skill-roots.js";
 import { nextMessageId, nowIso } from "./connection.js";
+import {
+  HostExecution,
+  type HostExecutionActiveRun,
+} from "./host-execution.js";
+import { resolveExecutionPlan } from "./execution-plan.js";
+import { createExecutionResources } from "./execution-resources.js";
 import {
   createModel,
   inspectResolvedModelConfig,
@@ -427,26 +432,6 @@ export interface RuntimeOptions {
   emit: (event: HostEvent) => void;
   /** @internal Process-scoped workspace mutation coordinator override. */
   workspaceLeaseCoordinator?: WorkspaceLeaseCoordinator;
-}
-
-interface PendingApproval {
-  approvalId: string;
-  runId: string;
-  resolve: (response: {
-    decision: "approved" | "denied";
-    message?: string;
-    autoApproved?: boolean;
-  }) => void;
-}
-
-interface ActiveRun {
-  runId: string;
-  run: ReturnType<typeof createRun>;
-  trace: MemoryTrace;
-  sessionId: string;
-  closeCapabilities?: () => Promise<void>;
-  workflowRunId?: WorkflowRunId;
-  processWorkflowControls?: () => Promise<void>;
 }
 
 interface CompletedConversationTurn {
@@ -880,15 +865,9 @@ export class HostRuntime {
   private readonly workflowControls: FileWorkflowControlInbox;
   private readonly workflowControlDispatcher = new DurableCommandDispatcher();
   private readonly taskManager: TaskManager;
-  private active: ActiveRun | null = null;
-  // Synchronously-set reservation so two concurrent startRun() calls cannot
-  // both pass the "is a run active?" guard before `this.active` is populated
-  // (which only happens after `await createModel(...)`).
-  private startingRun = false;
+  private currentExecution: HostExecution | null = null;
   // One abort for the complete interactive execution, including assembly and
   // every todo/workflow episode. Core run cancellation remains run-scoped.
-  private executionAbortController: AbortController | null = null;
-  private pendingApprovals = new Map<string, PendingApproval>();
   private lastCapabilitySnapshot: CapabilitySnapshot | null = null;
 
   constructor(opts: RuntimeOptions) {
@@ -921,7 +900,34 @@ export class HostRuntime {
   }
 
   hasActiveRun(): boolean {
-    return this.active !== null;
+    return this.currentExecution?.activeRun != null;
+  }
+
+  private get active(): HostExecutionActiveRun | null {
+    return this.currentExecution?.activeRun ?? null;
+  }
+
+  private set active(value: HostExecutionActiveRun | null) {
+    if (value) {
+      if (!this.currentExecution) this.currentExecution = new HostExecution();
+      this.currentExecution.attachRun(value);
+    } else {
+      this.currentExecution?.detachRun();
+    }
+  }
+
+  private beginExecution(abortController?: AbortController): HostExecution {
+    const execution = new HostExecution({ abortController });
+    this.currentExecution = execution;
+    return execution;
+  }
+
+  private releaseUnstartedExecution(execution: HostExecution): void {
+    if (this.currentExecution !== execution || execution.activeRun) return;
+    execution.finish(
+      execution.abortController.signal.aborted ? "cancelled" : "failed",
+    );
+    this.currentExecution = null;
   }
 
   private taskRootDir(): string {
@@ -1437,7 +1443,7 @@ export class HostRuntime {
       }
     | { ok: false; error: ProtocolError }
   > {
-    if (this.active || this.startingRun) {
+    if (this.currentExecution) {
       return {
         ok: false,
         error: {
@@ -1446,16 +1452,12 @@ export class HostRuntime {
         },
       };
     }
-    this.startingRun = true;
     const executionAbort = new AbortController();
-    this.executionAbortController = executionAbort;
+    const execution = this.beginExecution(executionAbort);
     try {
       return await this.startRunInner(payload);
     } finally {
-      this.startingRun = false;
-      if (!this.active && this.executionAbortController === executionAbort) {
-        this.executionAbortController = null;
-      }
+      this.releaseUnstartedExecution(execution);
     }
   }
 
@@ -1486,7 +1488,7 @@ export class HostRuntime {
         },
       };
     }
-    if (this.active || this.startingRun) {
+    if (this.currentExecution) {
       return {
         ok: false,
         error: {
@@ -1495,11 +1497,11 @@ export class HostRuntime {
         },
       };
     }
-    this.startingRun = true;
+    const execution = this.beginExecution();
     try {
       return await this.startRunInner(payload, workflowRunId);
     } finally {
-      this.startingRun = false;
+      this.releaseUnstartedExecution(execution);
     }
   }
 
@@ -1509,7 +1511,7 @@ export class HostRuntime {
     | { ok: true; runId: string; resumedFromRunId: string; sessionId?: string }
     | { ok: false; error: ProtocolError }
   > {
-    if (this.active || this.startingRun) {
+    if (this.currentExecution) {
       return {
         ok: false,
         error: {
@@ -1518,16 +1520,12 @@ export class HostRuntime {
         },
       };
     }
-    this.startingRun = true;
     const executionAbort = new AbortController();
-    this.executionAbortController = executionAbort;
+    const execution = this.beginExecution(executionAbort);
     try {
       return await this.resumeRunInner(payload);
     } finally {
-      this.startingRun = false;
-      if (!this.active && this.executionAbortController === executionAbort) {
-        this.executionAbortController = null;
-      }
+      this.releaseUnstartedExecution(execution);
     }
   }
 
@@ -1729,7 +1727,7 @@ export class HostRuntime {
           envelope.commandId,
         );
         if (processed.status === "dispatch_required") {
-          if (this.active || this.startingRun) {
+          if (this.currentExecution) {
             return {
               ok: true,
               status: "accepted",
@@ -1737,7 +1735,7 @@ export class HostRuntime {
               code: "dispatch_waiting",
             };
           }
-          this.startingRun = true;
+          const execution = this.beginExecution();
           try {
             const resumed = await this.resumeWorkflowRunInner({
               workflowRunId: record.id,
@@ -1758,7 +1756,7 @@ export class HostRuntime {
                 }
               : resumed;
           } finally {
-            this.startingRun = false;
+            this.releaseUnstartedExecution(execution);
           }
         }
         if (processed.status === "terminal") {
@@ -1819,7 +1817,7 @@ export class HostRuntime {
     | { ok: true; runId: string; workflowRunId: string; sessionId?: string }
     | { ok: false; error: ProtocolError }
   > {
-    if (this.active || this.startingRun) {
+    if (this.currentExecution) {
       return {
         ok: false,
         error: {
@@ -1828,11 +1826,11 @@ export class HostRuntime {
         },
       };
     }
-    this.startingRun = true;
+    const execution = this.beginExecution();
     try {
       return await this.resumeWorkflowRunThroughControl(payload);
     } finally {
-      this.startingRun = false;
+      this.releaseUnstartedExecution(execution);
     }
   }
 
@@ -1853,7 +1851,7 @@ export class HostRuntime {
         },
       };
     }
-    if (this.active || this.startingRun) {
+    if (this.currentExecution) {
       return {
         ok: false,
         error: {
@@ -1862,11 +1860,11 @@ export class HostRuntime {
         },
       };
     }
-    this.startingRun = true;
+    const execution = this.beginExecution();
     try {
       return await this.resumeWorkflowRunInner(payload, writer);
     } finally {
-      this.startingRun = false;
+      this.releaseUnstartedExecution(execution);
     }
   }
 
@@ -1987,11 +1985,21 @@ export class HostRuntime {
     | { ok: true; env: PreparedHostRunEnvironment }
     | { ok: false; error: ProtocolError }
   > {
-    const model = await createModel({
-      modelRef: input.modelRef,
-      goal: input.goal,
+    const plan = resolveExecutionPlan({
       workspaceRoot: this.opts.workspaceRoot,
+      sessionRootDir: this.opts.sessionRootDir,
+      sessionId: input.sessionId,
+      goal: input.goal,
+      modelRef: input.modelRef,
       targetPath: input.targetPath,
+      traceLevel: input.traceLevel,
+      access: input.access,
+    });
+    const model = await createModel({
+      modelRef: plan.modelRef,
+      goal: plan.goal,
+      workspaceRoot: plan.workspaceRoot,
+      targetPath: plan.targetPath,
     });
     if (!model.ok) {
       return {
@@ -2000,14 +2008,12 @@ export class HostRuntime {
       };
     }
 
-    const workspaceRoot = this.opts.workspaceRoot;
+    const workspaceRoot = plan.workspaceRoot;
     const workspaceLeaseCoordinator =
       this.opts.workspaceLeaseCoordinator ?? processWorkspaceLeaseCoordinator;
-    const workspace = new LocalWorkspace(workspaceRoot);
-    const sessionRootDir =
-      this.opts.sessionRootDir ?? defaultSessionRootDir(workspaceRoot);
-    const trace = new MemoryTrace();
-    const pendingExtensionEvents = createBufferedEmitter();
+    const resources = createExecutionResources(plan);
+    const { workspace, trace, pendingExtensionEvents } = resources;
+    const sessionRootDir = plan.sessionRootDir;
     const skillUsageRecorder = createSkillUsageRecorder(workspaceRoot);
     const runIdHolder: { value: string | null } = { value: null };
     const approvalResolver = this.createApprovalResolver(runIdHolder);
@@ -2172,7 +2178,7 @@ export class HostRuntime {
       delegateChildToolCatalog,
       pendingExtensionEvents,
     );
-    const sessionStore = new FileSessionStore({ rootDir: sessionRootDir });
+    const sessionStore = resources.sessionStore;
     const childRunStoreFactory = (childAgentId: string) =>
       createSessionRunStoreFactory({
         sessionStore,
@@ -2890,7 +2896,12 @@ export class HostRuntime {
           resolve({ approvalId, decision: "denied" });
           return;
         }
-        this.pendingApprovals.set(approvalId, {
+        const execution = this.currentExecution;
+        if (!execution) {
+          resolve({ approvalId, decision: "denied" });
+          return;
+        }
+        execution.addApproval({
           approvalId,
           runId: currentRunId,
           resolve: (response) => resolve({ approvalId, ...response }),
@@ -2937,11 +2948,22 @@ export class HostRuntime {
     { ok: true; runId: string } | { ok: false; error: ProtocolError }
   > {
     const { env, sessionId, todoPath } = input;
-    const executionAbort =
-      this.executionAbortController ?? new AbortController();
-    this.executionAbortController = executionAbort;
-    if (executionAbort.signal.aborted) {
+    const execution = this.currentExecution ?? this.beginExecution();
+    const executionAbort = execution.abortController;
+    execution.bindSession(sessionId);
+    const runCleanups: Array<() => void> = [];
+    const stopWorkflowLeaseRefresh = startWorkflowLeaseRefresh(
+      env.workflowLease,
+    );
+    execution.addCleanup(async () => {
+      stopWorkflowLeaseRefresh();
+      await env.workflowLease?.release().catch(() => {});
+      env.workflowLease = undefined;
+      for (const cleanup of runCleanups.splice(0)) cleanup();
       await env.preparedMcp?.close().catch(() => {});
+    });
+    if (executionAbort.signal.aborted) {
+      await execution.disposeResources();
       return {
         ok: false,
         error: {
@@ -2950,10 +2972,6 @@ export class HostRuntime {
         },
       };
     }
-    const runCleanups: Array<() => void> = [];
-    const stopWorkflowLeaseRefresh = startWorkflowLeaseRefresh(
-      env.workflowLease,
-    );
     const registerActiveRun = async (
       run: ReturnType<typeof createRun>,
       runId: string,
@@ -3084,18 +3102,15 @@ export class HostRuntime {
     let firstRunStarted = false;
     let previousRunId: string | undefined;
     let lastRunId = "";
+    let executionTerminalState: "completed" | "failed" | "cancelled" =
+      "failed";
 
-    const supervised = runTodoSupervised({
+    const supervised = execution.runEpisodeChain({
       todoPath,
       sessionId,
       maxContinuations: MAIN_TODO_MAX_CONTINUATIONS,
       maxStalledContinuations: MAIN_TODO_MAX_STALLED_CONTINUATIONS,
       runOnce: async (supervisedInput) => {
-        if (executionAbort.signal.aborted) {
-          throw Object.assign(new Error("Interactive execution cancelled."), {
-            name: "AbortError",
-          });
-        }
         const run = input.buildRun(supervisedInput);
         const runId = run.record.id;
         lastRunId = runId;
@@ -3138,6 +3153,12 @@ export class HostRuntime {
 
     supervised
       .then(async (outcome) => {
+        executionTerminalState =
+          outcome.result.state === "cancelled"
+            ? "cancelled"
+            : outcome.result.state === "failed"
+              ? "failed"
+              : "completed";
         const handoff =
           !executionAbort.signal.aborted && outcome.decision.kind === "handoff"
             ? {
@@ -3198,20 +3219,18 @@ export class HostRuntime {
           });
         });
       })
-      .finally(() => {
-        stopWorkflowLeaseRefresh();
-        void env.workflowLease?.release().catch(() => {});
-        env.workflowLease = undefined;
-        for (const cleanup of runCleanups.splice(0)) cleanup();
-        void env.preparedMcp?.close().catch(() => {});
+      .finally(async () => {
+        await execution.disposeResources();
         this.active = null;
-        if (this.executionAbortController === executionAbort) {
-          this.executionAbortController = null;
+        execution.finish(
+          executionAbort.signal.aborted
+            ? "cancelled"
+            : executionTerminalState,
+        );
+        if (this.currentExecution === execution) {
+          this.currentExecution = null;
         }
-        for (const [id, p] of this.pendingApprovals) {
-          p.resolve({ decision: "denied" });
-          this.pendingApprovals.delete(id);
-        }
+        execution.denyPendingApprovals();
       });
 
     try {
@@ -4585,7 +4604,7 @@ export class HostRuntime {
     runId: string,
     reason?: string,
   ): { ok: true } | { ok: false; error: ProtocolError } {
-    if (!this.active || this.active.runId !== runId) {
+    if (!this.currentExecution?.ownsRun(runId)) {
       return {
         ok: false,
         error: {
@@ -4596,10 +4615,7 @@ export class HostRuntime {
     }
     // Stop the whole supervised chain, not just this run: a cancel that races
     // a run's natural completion must still prevent further continuations.
-    if (!this.executionAbortController?.signal.aborted) {
-      this.executionAbortController?.abort(reason ?? "client requested cancel");
-    }
-    this.active.run.cancel({ reason: reason ?? "client requested cancel" });
+    this.currentExecution.cancel(reason ?? "client requested cancel");
     return { ok: true };
   }
 
@@ -4611,7 +4627,7 @@ export class HostRuntime {
       metadata?: Record<string, unknown>;
     },
   ): { ok: true } | { ok: false; error: ProtocolError } {
-    if (!this.active || this.active.runId !== runId) {
+    if (!this.currentExecution?.ownsRun(runId)) {
       return {
         ok: false,
         error: {
@@ -4630,18 +4646,17 @@ export class HostRuntime {
       };
     }
     const parts = inputPartsFromPayload(input.parts);
-    const acceptance = this.active.run.tryEnqueueCommand({
-      type: "user_message",
+    const acceptance = this.currentExecution.tryInject(runId, {
       content: input.content,
       parts,
       metadata: input.metadata,
     });
-    if (!acceptance.accepted) {
+    if (acceptance !== "accepted") {
       return {
         ok: false,
         error: {
           code: "run_not_found",
-          message: `run ${runId} is no longer accepting messages (${acceptance.reason})`,
+          message: `run ${runId} is no longer accepting messages (${acceptance})`,
         },
       };
     }
@@ -4654,8 +4669,12 @@ export class HostRuntime {
     message?: string,
     autoApproved?: boolean,
   ): { ok: true } | { ok: false; error: ProtocolError } {
-    const pending = this.pendingApprovals.get(approvalId);
-    if (!pending) {
+    const resolved = this.currentExecution?.resolveApproval(approvalId, {
+      decision,
+      ...(message !== undefined ? { message } : {}),
+      ...(autoApproved !== undefined ? { autoApproved } : {}),
+    });
+    if (!resolved) {
       return {
         ok: false,
         error: {
@@ -4664,12 +4683,6 @@ export class HostRuntime {
         },
       };
     }
-    this.pendingApprovals.delete(approvalId);
-    pending.resolve({
-      decision,
-      ...(message !== undefined ? { message } : {}),
-      ...(autoApproved !== undefined ? { autoApproved } : {}),
-    });
     return { ok: true };
   }
 
@@ -4678,22 +4691,7 @@ export class HostRuntime {
    * core does not leak file handles or hang on never-arriving decisions.
    */
   cleanup(): void {
-    if (!this.executionAbortController?.signal.aborted) {
-      this.executionAbortController?.abort("client_disconnected");
-    }
-    for (const p of this.pendingApprovals.values()) {
-      p.resolve({ decision: "denied" });
-    }
-    this.pendingApprovals.clear();
-    if (this.active) {
-      try {
-        this.active.run.cancel({ reason: "client_disconnected" });
-        void this.active.closeCapabilities?.().catch(() => {});
-      } catch {
-        // already cancelled
-      }
-      this.active = null;
-    }
+    this.currentExecution?.cleanup("client_disconnected");
   }
 
   async listSessions(

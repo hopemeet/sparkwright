@@ -94,13 +94,21 @@ Does not own:
   internal compatibility field, legacy Markdown `id` overrides remain
   readable, and new files omit inferred child mode and inherited budgets.
 
-- One active run per host connection.
-- Until HostExecution extraction, one execution-wide abort now spans assembly
+- One active HostExecution per compatibility runtime facade.
+- One execution-wide abort spans assembly
   and all todo/workflow episodes on that connection. Disconnect and legacy
   cancel trip the same abort; Core run cancellation remains run-scoped.
 - Background Agent `task_create` tools capture their model, policy, session,
   child-store, permission, and workspace-lease dependencies in an inline Task
   runner. Host has no mutable latest-run Agent dependency slot.
+- `HostExecution` is the lifecycle owner for one interactive execution. It owns
+  execution/session/root/current/final identity, run aliases, the episode-chain
+  abort, live approval waiters, completion, and idempotent resource disposal.
+  Core terminal for an episode does not complete the execution while the
+  Workflow/todo run-chain driver selects a continuation.
+- `resolveExecutionPlan()` freezes workspace/session/model/access identity
+  before `createExecutionResources()` creates a fresh LocalWorkspace, trace
+  emitter, and session store handles. Live execution resources are not pooled.
 - `run-security-plan.ts` is the immutable boundary between config/access
   parsing and runtime assembly. A run and `capability.inspect` derive the same
   workspace, access, confidential paths, skill/config roots, and resolved shell
@@ -872,6 +880,15 @@ Does not own:
   remain adapter-native and need continued cross-entrypoint characterization.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: extracted HostExecution, immutable execution planning, and live
+  execution resource creation while retaining protocol compatibility.
+- Read: Host start/resume/Workflow episode driver, approval/inject/cancel,
+  resource cleanup, Core run, agent-runtime todo/Workflow drivers, and tests.
+- Tests: Host full 562/562; agent-runtime Task/Workflow/control 107/107; Core
+  run 129/129; Host typecheck/build.
 
 - Status: Verified
 - Date: 2026-07-14
