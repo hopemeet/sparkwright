@@ -101,6 +101,9 @@ For `packages/cli/src/commands/capabilities.ts`, run `capabilities
 inspect|delegates run` focused slices plus the full CLI golden. Assert the
 existing HostService is passed in and MCP inspection always closes preparation.
 
+For CLI config/doctor extraction, also run config schema parity and the
+`config|doctor|init|first interactive` focused slice before the full golden.
+
 Add TUI panel tests when visible panel rendering changes:
 
 ```bash

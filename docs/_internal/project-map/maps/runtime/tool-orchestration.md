@@ -366,6 +366,13 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-15
+- Scope: CLI config/doctor handler extraction preserves tools configuration
+  display and validation; runtime catalog, policy, approval, and invocation are unchanged.
+- Read: CLI config-doctor and facade config routing.
+- Tests: CLI config focused/full golden and repo-pilot.
+
 - Status: Verified
 - Date: 2026-07-15
 - Scope: CLI tool capability inventory and delegate diagnostics moved to a

@@ -133,6 +133,13 @@ Future run in compacted session
 
 - Status: Read-only
 - Date: 2026-07-15
+- Scope: doctor session-root path reporting moved to a domain module; resume,
+  checkpoint, replay, identity, and session behavior are unchanged.
+- Read: CLI config-doctor path report and trace-session module.
+- Tests: doctor/session focused and full CLI golden.
+
+- Status: Read-only
+- Date: 2026-07-15
 - Scope: capability/delegate command relocation preserves delegate session-id
   creation and trace routing; resume/replay behavior is unchanged.
 - Read: CLI capability command and facade routing.

@@ -238,6 +238,13 @@ trace.jsonl
 
 - Status: Read-only
 - Date: 2026-07-15
+- Scope: config/doctor handler extraction preserves diagnostic paths and does
+  not alter trace summary, timeline, report, verify, or repair semantics.
+- Read: CLI config-doctor and trace-session modules.
+- Tests: full CLI golden and repo-pilot trace smoke.
+
+- Status: Read-only
+- Date: 2026-07-15
 - Scope: capability/delegate command relocation preserves delegate trace path
   reporting and does not change trace summaries, timelines, reports, or verify.
 - Read: CLI capability command and existing trace-session module.

@@ -130,6 +130,13 @@ policy requires approval
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-15
+- Scope: config/doctor read diagnostics moved mechanically; permission,
+  approval defaults, resolver, and execution behavior are unchanged.
+- Read: CLI config-doctor and facade routing.
+- Tests: full CLI golden and config-schema suite.
+
 - Status: Verified
 - Date: 2026-07-15
 - Scope: configured delegate CLI handler relocation preserves approval option

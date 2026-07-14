@@ -211,6 +211,14 @@ config + workspace capability roots
 
 - Status: Verified
 - Date: 2026-07-15
+- Scope: CLI config/doctor diagnostics moved to a domain module; capability
+  directory resolution, config precedence, inspect fields, redaction, and schema
+  validation behavior are unchanged.
+- Read: CLI config-doctor/config-paths and Host config/capability APIs.
+- Tests: CLI config/doctor focused/full golden and config-schema suite.
+
+- Status: Verified
+- Date: 2026-07-15
 - Scope: CLI capability/delegate diagnostics moved intact to a domain module;
   Host remains the capability snapshot/cache owner and inspect protocol/text/JSON
   fields, delegate collision semantics, and effective access reporting are unchanged.

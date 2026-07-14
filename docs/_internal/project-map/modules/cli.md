@@ -12,6 +12,8 @@ See also [../maps/trace/summary-timeline-verify.md](../maps/trace/summary-timeli
 - `packages/cli/src/commands/contracts.ts` — shared parsed-command and result contracts
 - `packages/cli/src/commands/trace-session.ts` — trace, session, and run-resume diagnostics/lifecycle handlers
 - `packages/cli/src/commands/capabilities.ts` — capability inspection and configured delegate diagnostics
+- `packages/cli/src/commands/config-doctor.ts` — config read/validate/explain/example and doctor path diagnostics
+- `packages/cli/src/commands/config-paths.ts` — stable config/task path resolution leaf
 - `packages/cli/src/parser/numbers.ts` — shared pure integer flag parsing
 - `packages/cli/src/parser/values.ts` — shared pure record/list/word parsing
 - `packages/cli/src/event-format.ts`
@@ -331,6 +333,15 @@ Does not own:
 - The direct-core deterministic model is a diagnostics harness; it should keep exercising real catalog tools (`read_file`, `read_anchored_text`, `write_file`, `edit_anchored_text`/`apply_patch`) rather than reintroducing test-only write tools.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: moved config path/validate/inspect/explain/example and doctor paths
+  into one domain module with a shared path-resolution leaf. Config precedence,
+  schema diagnostics, redaction, output, help, and init template behavior are unchanged.
+- Read: CLI facade, config-doctor/config-paths, config schema, and CLI tests.
+- Tests: config/doctor focused and full CLI golden, schema/entry/outcome,
+  typecheck/build, repo-pilot, import/boundary, and map drift.
 
 - Status: Verified
 - Date: 2026-07-15

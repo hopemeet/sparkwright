@@ -122,6 +122,13 @@ Manual compact
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-07-15
+- Scope: doctor session/task path reporting now uses a shared resolution leaf;
+  store roots, persistence, cleanup, and Host ownership are unchanged.
+- Read: CLI config-doctor/config-paths and facade callers.
+- Tests: doctor/config focused and full CLI golden.
+
 - Status: Read-only
 - Date: 2026-07-15
 - Scope: capability/delegate command relocation reuses the composition-root

@@ -256,6 +256,10 @@ For `commands/trace-session.ts`, run all `trace|session|run resume` slices and
 the full CLI golden. Assert that the module receives the existing HostService;
 it must not create a second one.
 
+For `commands/config-doctor.ts`, run `config|doctor|init|first interactive`
+CLI slices, `config-schema.test.ts`, and the full CLI golden. Preserve schema
+artifact parity and secret redaction.
+
 ### `packages/cli/test/support/*`
 
 Run:
