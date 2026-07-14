@@ -54,6 +54,23 @@ Sensitivity:
   should use trace append order or timeline projection rules.
 - Standard trace level folds high-volume progress events.
 
+## Coding Tools
+
+### `packages/coding-tools/src/*`
+
+Run:
+
+```bash
+npm --workspace @sparkwright/coding-tools test
+npm --workspace @sparkwright/coding-tools run typecheck
+npm --workspace @sparkwright/coding-tools run build
+npm --workspace @sparkwright/host test -- test/tools.test.ts
+```
+
+Downstream Host imports coding-tools through package exports, so build the
+package before the Host test. Preserve the named `index.ts` facade and reject
+implementation-to-facade reverse imports.
+
 ## Shell Tool
 
 ### `packages/shell-sandbox/src/*`

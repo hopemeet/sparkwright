@@ -17,6 +17,8 @@ See [approvals.md](approvals.md) and [../runtime/tool-orchestration.md](../runti
 - `packages/host/src/shell.ts`
 - `packages/host/src/workspace-snapshot.ts`
 - `packages/host/src/workspace-agent-arbiter.ts`
+- `packages/coding-tools/src/index.ts`
+- `packages/coding-tools/src/unified-diff.ts`
 
 ## Data Flow
 
@@ -137,6 +139,14 @@ tool proposes write
   from managed workspace writes.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: pure unified-diff parsing/application moved to a leaf module; managed
+  workspace mutation, containment, approval, and write-event contracts are
+  unchanged.
+- Read: coding-tools facade, unified-diff leaf, and coding-tools tests.
+- Tests: coding-tools full suite and Host tools downstream test.
 
 - Status: Verified
 - Date: 2026-07-14

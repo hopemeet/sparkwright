@@ -14,7 +14,8 @@ See also [../maps/runtime/tool-orchestration.md](../maps/runtime/tool-orchestrat
 - `packages/host/src/tools.ts`
 - `packages/host/src/shell.ts`
 - `packages/project-context/src/index.ts`
-- `packages/coding-tools/src/*`
+- `packages/coding-tools/src/index.ts` — named public facade and tool factories
+- `packages/coding-tools/src/unified-diff.ts` — pure unified-diff parsing and application leaf
 - `packages/core/src/tools.ts`
 - `packages/core/src/workspace.ts`
 - `packages/core/src/anchored-edit.ts`
@@ -131,6 +132,17 @@ Does not own:
   smokes should use `write`, `edit_anchored_text`, or `edit`.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: mechanically moved unified-diff parsing and application into a pure
+  implementation leaf. Public named exports, tool schemas, workspace write
+  routing, containment, and policy behavior are unchanged.
+- Read: `packages/coding-tools/src/index.ts`,
+  `packages/coding-tools/src/unified-diff.ts`,
+  `packages/coding-tools/test/index.test.ts`.
+- Tests: coding-tools test/typecheck/build; Host tools downstream test; import,
+  facade, package-boundary, deterministic repo-pilot, and map-drift gates.
 
 - Status: Verified
 - Date: 2026-07-14T14:35:00+0800
