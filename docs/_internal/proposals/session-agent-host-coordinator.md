@@ -763,6 +763,13 @@ Deletion boundary:
 - gateway store retains delivery/dedupe facts only;
 - ordinary session binding policy no longer lives in gateway.
 
+Implementation status (2026-07-14): complete for the single-process scope.
+Host owns exact bindings, typed permissions, retained connection attachments,
+approval routing, bounded outbox projection, and per-binding delivery cursors.
+Gateway keeps only platform verification/formatting, transport dedupe and
+delivery-attempt facts, plus its pre-existing durable Workflow channel adapter.
+The state is intentionally non-durable; Host restart adoption remains P4 debt.
+
 ### P4: Durable Single-Host Coordination
 
 - Add command/outcome journal and durable lane queue store.

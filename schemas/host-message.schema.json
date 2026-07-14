@@ -35,6 +35,13 @@
             "run.inject_message",
             "run.cancel",
             "approval.resolve",
+            "im.bind",
+            "im.message",
+            "im.subscribe",
+            "im.delivery.ack",
+            "im.approval.resolve",
+            "im.cancel",
+            "im.inspect",
             "session.list",
             "session.inspect",
             "session.fork",
@@ -104,6 +111,64 @@
           "then": {
             "properties": {
               "payload": { "$ref": "#/$defs/ApprovalResolveRequestPayload" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "im.bind" } } },
+          "then": {
+            "properties": {
+              "payload": { "$ref": "#/$defs/ImBindRequestPayload" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "im.message" } } },
+          "then": {
+            "properties": {
+              "payload": { "$ref": "#/$defs/ImMessageRequestPayload" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "im.subscribe" } } },
+          "then": {
+            "properties": {
+              "payload": { "$ref": "#/$defs/ImSubscribeRequestPayload" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "im.delivery.ack" } } },
+          "then": {
+            "properties": {
+              "payload": { "$ref": "#/$defs/ImDeliveryAckRequestPayload" }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "kind": { "const": "im.approval.resolve" } }
+          },
+          "then": {
+            "properties": {
+              "payload": { "$ref": "#/$defs/ImApprovalResolveRequestPayload" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "im.cancel" } } },
+          "then": {
+            "properties": {
+              "payload": { "$ref": "#/$defs/ImCancelRequestPayload" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "im.inspect" } } },
+          "then": {
+            "properties": {
+              "payload": { "$ref": "#/$defs/ImInspectRequestPayload" }
             }
           }
         },
@@ -365,6 +430,9 @@
             "approval_not_found",
             "session_not_found",
             "task_not_found",
+            "unauthorized",
+            "conflict",
+            "capacity",
             "internal_error"
           ]
         },
@@ -620,6 +688,110 @@
         "decision": { "type": "string", "enum": ["approved", "denied"] },
         "message": { "type": "string" },
         "autoApproved": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "ImSubjectClaims": {
+      "type": "object",
+      "required": ["platform", "chatId", "userId"],
+      "properties": {
+        "platform": { "type": "string", "minLength": 1 },
+        "chatId": { "type": "string", "minLength": 1 },
+        "threadId": { "type": "string", "minLength": 1 },
+        "userId": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "ImPermission": {
+      "type": "string",
+      "enum": [
+        "message",
+        "inspect",
+        "approve",
+        "cancel_execution",
+        "cancel_lane"
+      ]
+    },
+    "ImBindRequestPayload": {
+      "type": "object",
+      "required": ["subject", "permissions"],
+      "properties": {
+        "subject": { "$ref": "#/$defs/ImSubjectClaims" },
+        "permissions": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/ImPermission" }
+        },
+        "sessionId": { "type": "string", "minLength": 1 },
+        "expiresAt": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": false
+    },
+    "ImMessageRequestPayload": {
+      "type": "object",
+      "required": ["bindingId", "subject", "text"],
+      "properties": {
+        "bindingId": { "type": "string", "minLength": 1 },
+        "subject": { "$ref": "#/$defs/ImSubjectClaims" },
+        "text": { "type": "string", "minLength": 1 },
+        "messageId": { "type": "string", "minLength": 1 },
+        "model": { "type": "string", "minLength": 1 },
+        "metadata": { "type": "object" }
+      },
+      "additionalProperties": false
+    },
+    "ImSubscribeRequestPayload": {
+      "type": "object",
+      "required": ["bindingId", "subject"],
+      "properties": {
+        "bindingId": { "type": "string", "minLength": 1 },
+        "subject": { "$ref": "#/$defs/ImSubjectClaims" },
+        "limit": { "type": "integer", "minimum": 1, "maximum": 200 }
+      },
+      "additionalProperties": false
+    },
+    "ImDeliveryAckRequestPayload": {
+      "type": "object",
+      "required": ["bindingId", "subject", "deliveryKeys"],
+      "properties": {
+        "bindingId": { "type": "string", "minLength": 1 },
+        "subject": { "$ref": "#/$defs/ImSubjectClaims" },
+        "deliveryKeys": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        }
+      },
+      "additionalProperties": false
+    },
+    "ImApprovalResolveRequestPayload": {
+      "type": "object",
+      "required": ["bindingId", "subject", "approvalId", "decision"],
+      "properties": {
+        "bindingId": { "type": "string", "minLength": 1 },
+        "subject": { "$ref": "#/$defs/ImSubjectClaims" },
+        "approvalId": { "type": "string", "minLength": 1 },
+        "decision": { "type": "string", "enum": ["approved", "denied"] },
+        "message": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "ImCancelRequestPayload": {
+      "type": "object",
+      "required": ["bindingId", "subject", "scope"],
+      "properties": {
+        "bindingId": { "type": "string", "minLength": 1 },
+        "subject": { "$ref": "#/$defs/ImSubjectClaims" },
+        "scope": { "type": "string", "enum": ["execution", "lane"] },
+        "reason": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "ImInspectRequestPayload": {
+      "type": "object",
+      "required": ["bindingId", "subject"],
+      "properties": {
+        "bindingId": { "type": "string", "minLength": 1 },
+        "subject": { "$ref": "#/$defs/ImSubjectClaims" }
       },
       "additionalProperties": false
     },

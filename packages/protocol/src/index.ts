@@ -164,6 +164,9 @@ export type ProtocolErrorCode =
   | "approval_not_found"
   | "session_not_found"
   | "task_not_found"
+  | "unauthorized"
+  | "conflict"
+  | "capacity"
   | "internal_error";
 
 const PROTOCOL_ERROR_CODES: readonly ProtocolErrorCode[] = [
@@ -174,6 +177,9 @@ const PROTOCOL_ERROR_CODES: readonly ProtocolErrorCode[] = [
   "approval_not_found",
   "session_not_found",
   "task_not_found",
+  "unauthorized",
+  "conflict",
+  "capacity",
   "internal_error",
 ];
 
@@ -248,6 +254,13 @@ export type RequestKind =
   | "run.inject_message"
   | "run.cancel"
   | "approval.resolve"
+  | "im.bind"
+  | "im.message"
+  | "im.subscribe"
+  | "im.delivery.ack"
+  | "im.approval.resolve"
+  | "im.cancel"
+  | "im.inspect"
   | "session.list"
   | "session.inspect"
   | "session.fork"
@@ -276,6 +289,77 @@ export interface HandshakeRequestPayload {
   protocolVersion: string;
   client: { name: string; version: string };
   capabilities?: string[];
+}
+
+export const IM_SESSION_PERMISSIONS = [
+  "message",
+  "inspect",
+  "approve",
+  "cancel_execution",
+  "cancel_lane",
+] as const;
+
+export type ImSessionPermission = (typeof IM_SESSION_PERMISSIONS)[number];
+
+export interface ImSubjectClaims {
+  platform: string;
+  chatId: string;
+  threadId?: string;
+  userId: string;
+}
+
+export interface ImBindRequestPayload {
+  subject: ImSubjectClaims;
+  permissions: ImSessionPermission[];
+  sessionId?: string;
+  expiresAt?: string;
+}
+
+export interface ImMessageRequestPayload {
+  bindingId: string;
+  subject: ImSubjectClaims;
+  text: string;
+  messageId?: string;
+  model?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface ImSubscribeRequestPayload {
+  bindingId: string;
+  subject: ImSubjectClaims;
+  limit?: number;
+}
+
+export interface ImDeliveryAckRequestPayload {
+  bindingId: string;
+  subject: ImSubjectClaims;
+  deliveryKeys: string[];
+}
+
+export interface ImApprovalResolveRequestPayload {
+  bindingId: string;
+  subject: ImSubjectClaims;
+  approvalId: string;
+  decision: "approved" | "denied";
+  message?: string;
+}
+
+export interface ImCancelRequestPayload {
+  bindingId: string;
+  subject: ImSubjectClaims;
+  scope: "execution" | "lane";
+  reason?: string;
+}
+
+export interface ImInspectRequestPayload {
+  bindingId: string;
+  subject: ImSubjectClaims;
+}
+
+export interface ImDelivery {
+  deliveryKey: string;
+  sessionId: string;
+  event: HostEvent;
 }
 
 export interface RunTextInputPart {
@@ -638,6 +722,13 @@ export type HostRequest =
   | HostRequestBase<"run.inject_message", RunInjectMessageRequestPayload>
   | HostRequestBase<"run.cancel", RunCancelRequestPayload>
   | HostRequestBase<"approval.resolve", ApprovalResolveRequestPayload>
+  | HostRequestBase<"im.bind", ImBindRequestPayload>
+  | HostRequestBase<"im.message", ImMessageRequestPayload>
+  | HostRequestBase<"im.subscribe", ImSubscribeRequestPayload>
+  | HostRequestBase<"im.delivery.ack", ImDeliveryAckRequestPayload>
+  | HostRequestBase<"im.approval.resolve", ImApprovalResolveRequestPayload>
+  | HostRequestBase<"im.cancel", ImCancelRequestPayload>
+  | HostRequestBase<"im.inspect", ImInspectRequestPayload>
   | HostRequestBase<"session.list", SessionListRequestPayload>
   | HostRequestBase<"session.inspect", SessionInspectRequestPayload>
   | HostRequestBase<"session.fork", SessionForkRequestPayload>
@@ -716,6 +807,28 @@ export interface ResponseResults {
   "run.inject_message": Record<string, never>;
   "run.cancel": Record<string, never>;
   "approval.resolve": Record<string, never>;
+  "im.bind": {
+    bindingId: string;
+    sessionId: string;
+    permissions: ImSessionPermission[];
+    expiresAt: string;
+  };
+  "im.message": {
+    sessionId: string;
+    status: "started" | "injected";
+    runId: string;
+  };
+  "im.subscribe": { deliveries: ImDelivery[] };
+  "im.delivery.ack": { acknowledged: number };
+  "im.approval.resolve": Record<string, never>;
+  "im.cancel": { cancelled: number };
+  "im.inspect": {
+    sessionId: string;
+    active: boolean;
+    executionId?: string;
+    runId?: string;
+    queuedDeliveries: number;
+  };
   "session.list": {
     sessions: Array<{ id: string; mtimeMs: number; preview: string }>;
   };

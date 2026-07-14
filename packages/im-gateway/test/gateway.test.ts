@@ -2,7 +2,11 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
-import type { HostEvent } from "@sparkwright/sdk-node";
+import type {
+  HostEvent,
+  ImDelivery,
+  ImSubjectClaims,
+} from "@sparkwright/sdk-node";
 import {
   FileWorkflowChannelStore,
   FileWorkflowControlInbox,
@@ -29,6 +33,7 @@ class FakeAdapter implements PlatformAdapter {
     prompt: WorkflowNotificationPrompt;
   }> = [];
   handlers?: PlatformHandlers;
+  failNextMessage = false;
 
   async start(handlers: PlatformHandlers): Promise<void> {
     this.handlers = handlers;
@@ -38,6 +43,10 @@ class FakeAdapter implements PlatformAdapter {
     target: OutboundTarget,
     message: OutboundMessage,
   ): Promise<void> {
+    if (this.failNextMessage) {
+      this.failNextMessage = false;
+      throw new Error("transport offline");
+    }
     this.sent.push({ target, message });
   }
   async sendApproval(
@@ -55,70 +64,65 @@ class FakeAdapter implements PlatformAdapter {
 }
 
 class FakeBridge {
-  starts: Array<{ goal: string; sessionId?: string }> = [];
-  runs = new Map<
-    string,
-    {
-      onEvent(event: HostEvent): Promise<void> | void;
-      onTerminal(event: HostEvent): Promise<void> | void;
-      approvals: string[];
-      injected: string[];
-      closed: boolean;
-    }
-  >();
+  handlers?: {
+    onDelivery(input: {
+      subject: ImSubjectClaims;
+      delivery: ImDelivery;
+    }): Promise<void>;
+  };
+  dispatches: Array<{ subject: ImSubjectClaims; text: string }> = [];
+  approvals: Array<{ subject: ImSubjectClaims; approvalId: string }> = [];
 
-  async startRun(
-    payload: { goal: string; sessionId?: string },
-    handlers: {
-      onEvent(event: HostEvent): Promise<void> | void;
-      onTerminal(event: HostEvent): Promise<void> | void;
-    },
-  ) {
-    const runId = `run_${this.starts.length + 1}`;
-    this.starts.push(payload);
-    this.runs.set(runId, {
-      ...handlers,
-      approvals: [],
-      injected: [],
-      closed: false,
-    });
+  async start(handlers: NonNullable<FakeBridge["handlers"]>): Promise<void> {
+    this.handlers = handlers;
+  }
+  async stop(): Promise<void> {}
+  async dispatchMessage(input: { subject: ImSubjectClaims; text: string }) {
+    this.dispatches.push(input);
     return {
-      runId,
-      injectMessage: async (input: { content: string }) => {
-        this.runs.get(runId)?.injected.push(input.content);
-      },
-      resolveApproval: async (input: { approvalId: string }) => {
-        this.runs.get(runId)?.approvals.push(input.approvalId);
-      },
-      cancel: async () => undefined,
-      close: () => {
-        const run = this.runs.get(runId);
-        if (run) run.closed = true;
-      },
+      sessionId: "session_im",
+      runId: "run_im",
+      status: this.dispatches.length === 1 ? "started" : "injected",
     };
+  }
+  async resolveApproval(input: {
+    subject: ImSubjectClaims;
+    approvalId: string;
+  }): Promise<void> {
+    this.approvals.push(input);
+  }
+
+  async deliver(subject: ImSubjectClaims, event: HostEvent): Promise<void> {
+    await this.handlers!.onDelivery({
+      subject,
+      delivery: {
+        deliveryKey: `delivery_${event.id}`,
+        sessionId: "session_im",
+        event,
+      },
+    });
   }
 }
 
 describe("ImGateway", () => {
-  it("persists a stable session id for the same gateway session key", async () => {
+  it("persists transport dedupe and delivery attempt facts only", async () => {
     const tmp = await mkdtemp(join(tmpdir(), "sparkwright-im-gateway-"));
     try {
       const path = join(tmp, "state.json");
-      const first = new GatewayStore(path);
-      const sessionA = await first.getOrCreateSessionId("telegram:dm:1");
-      const second = new GatewayStore(path);
-      const sessionB = await second.getOrCreateSessionId("telegram:dm:1");
-      const sessionC = await second.getOrCreateSessionId("telegram:dm:2");
-
-      expect(sessionA).toBe(sessionB);
-      expect(sessionA).toMatch(/^im_/);
-      expect(sessionC).not.toBe(sessionA);
+      const store = new GatewayStore(path);
+      await store.markProcessedMessage("telegram:1:m1");
+      await store.recordDeliveryAttempt("delivery_1", "failed", "offline");
+      const reloaded = new GatewayStore(path);
+      expect(await reloaded.hasProcessedMessage("telegram:1:m1")).toBe(true);
+      expect(await reloaded.deliveryAttempts("delivery_1")).toMatchObject([
+        { status: "failed", error: "offline" },
+      ]);
     } finally {
       await rm(tmp, { recursive: true, force: true });
     }
   });
 
-  it("injects a second message into the active Telegram session", async () => {
+  it("submits every non-duplicate message to the Host control plane", async () => {
     const tmp = await mkdtemp(join(tmpdir(), "sparkwright-im-gateway-"));
     try {
       const adapter = new FakeAdapter();
@@ -134,26 +138,72 @@ describe("ImGateway", () => {
         platform: "telegram",
         chatId: "1",
         text: "first",
-        chatType: "dm",
         messageId: "m1",
+        userId: "user_1",
       });
       await adapter.handlers!.onMessage({
         platform: "telegram",
         chatId: "1",
         text: "second",
-        chatType: "dm",
         messageId: "m2",
+        userId: "user_1",
+      });
+      await adapter.handlers!.onMessage({
+        platform: "telegram",
+        chatId: "1",
+        text: "second duplicate",
+        messageId: "m2",
+        userId: "user_1",
       });
 
-      expect(bridge.starts.map((start) => start.goal)).toEqual(["first"]);
-      expect(bridge.runs.get("run_1")!.injected).toEqual(["second"]);
+      expect(bridge.dispatches.map((dispatch) => dispatch.text)).toEqual([
+        "first",
+        "second",
+      ]);
       expect(adapter.sent.at(-1)?.message.text).toContain("active run");
     } finally {
       await rm(tmp, { recursive: true, force: true });
     }
   });
 
-  it("routes approval decisions back to the active run", async () => {
+  it("keeps delivery failure independent and records a replayable attempt", async () => {
+    const tmp = await mkdtemp(join(tmpdir(), "sparkwright-im-gateway-"));
+    try {
+      const adapter = new FakeAdapter();
+      const bridge = new FakeBridge();
+      const store = new GatewayStore(join(tmp, "state.json"));
+      const gateway = new ImGateway({ adapters: [adapter], bridge, store });
+      await gateway.start();
+      const subject = {
+        platform: "telegram",
+        chatId: "1",
+        userId: "user_1",
+      };
+      const event: HostEvent = {
+        envelope: "event",
+        id: "delivery_retry",
+        kind: "run.completed",
+        timestamp: new Date().toISOString(),
+        payload: {
+          runId: "run_delivery_retry",
+          state: "completed",
+          message: "hello",
+        },
+      };
+      adapter.failNextMessage = true;
+      await expect(bridge.deliver(subject, event)).rejects.toThrow(
+        "transport offline",
+      );
+      await bridge.deliver(subject, event);
+      expect(
+        await store.deliveryAttempts("delivery_delivery_retry"),
+      ).toMatchObject([{ status: "failed" }, { status: "delivered" }]);
+    } finally {
+      await rm(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("routes approval through exact Host-bound platform claims", async () => {
     const tmp = await mkdtemp(join(tmpdir(), "sparkwright-im-gateway-"));
     try {
       const adapter = new FakeAdapter();
@@ -169,10 +219,15 @@ describe("ImGateway", () => {
         platform: "telegram",
         chatId: "1",
         text: "needs approval",
-        chatType: "dm",
         messageId: "m1",
+        userId: "user_1",
       });
-      await bridge.runs.get("run_1")!.onEvent({
+      const subject = {
+        platform: "telegram",
+        chatId: "1",
+        userId: "user_1",
+      };
+      await bridge.deliver(subject, {
         envelope: "event",
         id: "a1",
         kind: "approval.requested",
@@ -189,8 +244,11 @@ describe("ImGateway", () => {
       await adapter.handlers!.onApprovalDecision({
         approvalId: "approval_1",
         decision: "approved",
+        ...subject,
       });
-      expect(bridge.runs.get("run_1")!.approvals).toEqual(["approval_1"]);
+      expect(bridge.approvals).toEqual([
+        { subject, approvalId: "approval_1", decision: "approved" },
+      ]);
     } finally {
       await rm(tmp, { recursive: true, force: true });
     }

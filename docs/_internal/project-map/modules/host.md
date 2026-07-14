@@ -120,6 +120,12 @@ Does not own:
   Same-lane executions serialize; different lanes may consume the bounded
   process capacity concurrently. Core episode terminal does not release the
   lane until `HostExecution.completion` settles.
+- `HostService` also owns ordinary IM session bindings, exact subject
+  authorization, approval-to-execution routing, retained runtime attachment,
+  and per-binding delivery cursors over a bounded event-projection outbox.
+  Self-binding is disabled unless the operator explicitly enables it. This
+  live control state is process memory and is separate from durable Workflow
+  channel bindings and Core's canonical event log.
 - `WorkspaceContext` owns the shared TaskManager/store/outbox and Workflow
   notification/control adapters. It never owns live MCP, LocalWorkspace,
   mutable policy, event emitter, approval resolver, or active execution.
@@ -894,6 +900,15 @@ Does not own:
   remain adapter-native and need continued cross-entrypoint characterization.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: moved ordinary IM session execution, binding, approval routing,
+  subscription retention, and bounded replay into HostService.
+- Read: Host IM control, HostService/server/runtime integration, protocol/SDK,
+  Gateway bridge/store/adapters, and focused tests.
+- Tests: Host 571/571; server-runtime 29/29; protocol 8/8; SDK 12/12; IM
+  Gateway 9/9; affected typecheck/build and schema checks.
 
 - Status: Verified
 - Date: 2026-07-14

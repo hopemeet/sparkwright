@@ -30,6 +30,7 @@ interface ParsedArgs {
   traceLevel: TraceLevel;
   shouldWrite: boolean;
   authToken?: string;
+  imControlSelfBinding: boolean;
 }
 
 function parseArgs(argv: string[]): ParsedArgs {
@@ -44,6 +45,8 @@ function parseArgs(argv: string[]): ParsedArgs {
   let traceLevel: TraceLevel = "standard";
   let shouldWrite = false;
   let authToken = process.env.SPARKWRIGHT_HOST_TOKEN;
+  let imControlSelfBinding =
+    process.env.SPARKWRIGHT_HOST_IM_SELF_BINDING === "1";
   const applyAccessMode = (mode: RunAccessMode): void => {
     accessMode = mode;
     const compiled = compileRunAccessMode(mode);
@@ -72,6 +75,7 @@ function parseArgs(argv: string[]): ParsedArgs {
       const v = argv[++i];
       if (isTraceLevel(v)) traceLevel = v;
     } else if (a === "--auth-token" && argv[i + 1]) authToken = argv[++i];
+    else if (a === "--allow-im-self-binding") imControlSelfBinding = true;
     else if (a === "--help" || a === "-h") {
       printHelp();
       process.exit(0);
@@ -90,6 +94,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     traceLevel,
     shouldWrite,
     authToken,
+    imControlSelfBinding,
   };
 }
 
@@ -111,6 +116,7 @@ function printHelp(): void {
       "  --trace-level <level>      standard | debug",
       "  --auth-token <token>       require WS clients to provide Bearer token or ?token=...",
       "                             (also SPARKWRIGHT_HOST_TOKEN)",
+      "  --allow-im-self-binding    allow bounded bindings for authenticated IM clients",
       "",
       "See docs/HOST_PROTOCOL.md for the wire protocol.",
       "",
@@ -130,7 +136,9 @@ function printHelp(): void {
 export async function runHostMain(argv: string[]): Promise<void> {
   installCrashLog();
   const args = parseArgs(argv);
-  const hostService = createHostService();
+  const hostService = createHostService({
+    imControl: { allowSelfBinding: args.imControlSelfBinding },
+  });
 
   // Patch stderr in WS mode so library logs reach clients as host.log
   // events. In stdio mode we leave stderr alone — the parent process

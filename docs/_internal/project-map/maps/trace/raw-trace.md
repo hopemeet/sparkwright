@@ -211,6 +211,11 @@ EventLog emits full event
 
 ## Last Verified
 
+- Status: Verified (no canonical trace change)
+- Date: 2026-07-14
+- Scope: reviewed IM delivery replay; Host outbox entries are bounded delivery
+  projections and do not replace or duplicate canonical trace storage.
+
 - Status: Verified (no canonical-event change)
 - Date: 2026-07-14
 - Scope: reviewed Host lanes; the coordinator neither subscribes to nor copies

@@ -191,7 +191,7 @@ follow the active maps below for the current contract.
 - `packages/server-runtime/src/execution-lanes.ts` or Host interactive lane scheduling: [modules/edge-packages.md](modules/edge-packages.md), [modules/host.md](modules/host.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [designs/host-execution-lane-p0-baseline.md](designs/host-execution-lane-p0-baseline.md)
 - Other `packages/server-runtime/src/*`, `packages/streaming-runtime/src/*`, or `packages/memory-file-store/src/*`: [modules/edge-packages.md](modules/edge-packages.md), [modules/core.md](modules/core.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/session/session-store.md](maps/session/session-store.md)
 - `packages/trace-perfetto/src/*`: [modules/edge-packages.md](modules/edge-packages.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md)
-- `packages/im-gateway/src/*`: [modules/edge-packages.md](modules/edge-packages.md), [modules/protocol.md](modules/protocol.md), [modules/host.md](modules/host.md)
+- `packages/host/src/im-control.ts`, `packages/im-gateway/src/*`, or ordinary IM session control: [modules/edge-packages.md](modules/edge-packages.md), [modules/protocol.md](modules/protocol.md), [modules/host.md](modules/host.md), [maps/safety/approvals.md](maps/safety/approvals.md), [maps/session/session-store.md](maps/session/session-store.md)
 
 ## Trace / Session / Export Rule
 

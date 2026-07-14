@@ -197,6 +197,188 @@ async function waitForAgentTaskTerminal(
 }
 
 describe("host protocol", () => {
+  it("denies live approvals on timeout so execution capacity can drain", async () => {
+    const workspace = await mkdtemp(
+      join(tmpdir(), "sparkwright-host-approval-timeout-"),
+    );
+    const pair = createConnectionPair();
+    const previousScript = process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON;
+    process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON = JSON.stringify([
+      {
+        toolCalls: [
+          {
+            toolName: "edit",
+            arguments: {
+              path: "README.md",
+              patch: [
+                "--- a/README.md",
+                "+++ b/README.md",
+                "@@ -1 +1,2 @@",
+                " # Demo",
+                "+timed out",
+                "",
+              ].join("\n"),
+            },
+          },
+        ],
+      },
+      { message: "done" },
+    ]);
+    try {
+      await writeFile(join(workspace, "README.md"), "# Demo\n", "utf8");
+      serveConnection(pair.hostSide, {
+        workspaceRoot: workspace,
+        defaultModel: "scripted",
+        approvalTimeoutMs: 10,
+      });
+      pair.clientSend({
+        envelope: "request",
+        id: "h",
+        kind: "handshake",
+        timestamp: TIMESTAMP,
+        payload: {
+          protocolVersion: PROTOCOL_VERSION,
+          client: { name: "test", version: "0.0.0" },
+        },
+      });
+      await pair.waitFor(
+        (message) => message.envelope === "response" && message.id === "h",
+      );
+      pair.clientSend({
+        envelope: "request",
+        id: "start_timeout",
+        kind: "run.start",
+        timestamp: TIMESTAMP,
+        payload: {
+          goal: "request a write and time out",
+          model: "scripted",
+          shouldWrite: true,
+        },
+      });
+      await pair.waitFor(
+        (message) =>
+          message.envelope === "event" && message.kind === "approval.requested",
+      );
+      await pair.waitFor(
+        (message) =>
+          message.envelope === "event" && message.kind === "run.completed",
+      );
+      expect(await readFile(join(workspace, "README.md"), "utf8")).toBe(
+        "# Demo\n",
+      );
+      const resolved = pair
+        .clientMessages()
+        .filter(
+          (message) =>
+            message.envelope === "event" && message.kind === "run.event",
+        )
+        .map((message) => message.payload.event as SparkwrightEvent)
+        .find((event) => event.type === "approval.resolved");
+      expect(resolved?.payload).toMatchObject({
+        decision: "denied",
+        message: "Approval timed out.",
+      });
+    } finally {
+      if (previousScript === undefined) {
+        delete process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON;
+      } else {
+        process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON = previousScript;
+      }
+      pair.close();
+      await rmWhenReady(workspace);
+    }
+  });
+
+  it("derives IM principals in Host and keeps self-binding opt-in", async () => {
+    const workspace = await mkdtemp(
+      join(tmpdir(), "sparkwright-host-im-bind-"),
+    );
+    const handshake = (pair: ReturnType<typeof createConnectionPair>) => {
+      pair.clientSend({
+        envelope: "request",
+        id: "h",
+        kind: "handshake",
+        timestamp: TIMESTAMP,
+        payload: {
+          protocolVersion: PROTOCOL_VERSION,
+          client: { name: "sparkwright-im-gateway", version: "0.1.0" },
+        },
+      });
+      return pair.waitFor(
+        (message) => message.envelope === "response" && message.id === "h",
+      );
+    };
+    const payload = {
+      subject: {
+        platform: "telegram",
+        chatId: "chat_1",
+        userId: "user_1",
+      },
+      permissions: ["message", "inspect", "approve"] as const,
+    };
+    try {
+      const deniedPair = createConnectionPair();
+      serveConnection(deniedPair.hostSide, { workspaceRoot: workspace });
+      await handshake(deniedPair);
+      deniedPair.clientSend({
+        envelope: "request",
+        id: "bind_denied",
+        kind: "im.bind",
+        timestamp: TIMESTAMP,
+        payload: { ...payload, permissions: [...payload.permissions] },
+      });
+      expect(
+        await deniedPair.waitFor(
+          (message) =>
+            message.envelope === "response" && message.id === "bind_denied",
+        ),
+      ).toMatchObject({ ok: false, error: { code: "unauthorized" } });
+
+      const enabledPair = createConnectionPair();
+      serveConnection(enabledPair.hostSide, {
+        workspaceRoot: workspace,
+        imControlSelfBinding: true,
+      });
+      await handshake(enabledPair);
+      enabledPair.clientSend({
+        envelope: "request",
+        id: "bind_spoofed",
+        kind: "im.bind",
+        timestamp: TIMESTAMP,
+        payload: {
+          ...payload,
+          permissions: [...payload.permissions],
+          subject: { ...payload.subject, verified: true },
+        },
+      } as unknown as HostMessage);
+      expect(
+        await enabledPair.waitFor(
+          (message) =>
+            message.envelope === "response" && message.id === "bind_spoofed",
+        ),
+      ).toMatchObject({ ok: false, error: { code: "invalid_payload" } });
+
+      enabledPair.clientSend({
+        envelope: "request",
+        id: "bind_ok",
+        kind: "im.bind",
+        timestamp: TIMESTAMP,
+        payload: { ...payload, permissions: [...payload.permissions] },
+      });
+      expect(
+        await enabledPair.waitFor(
+          (message) =>
+            message.envelope === "response" && message.id === "bind_ok",
+        ),
+      ).toMatchObject({
+        ok: true,
+        result: { sessionId: expect.stringMatching(/^session_/) },
+      });
+    } finally {
+      await rmWhenReady(workspace);
+    }
+  });
+
   it("rejects requests before handshake", async () => {
     const pair = createConnectionPair();
     serveConnection(pair.hostSide, {

@@ -1,0 +1,14 @@
+{
+  "envelope": "request",
+  "id": "req_im_bind_1",
+  "kind": "im.bind",
+  "timestamp": "2026-07-14T00:00:00.000Z",
+  "payload": {
+    "subject": {
+      "platform": "telegram",
+      "chatId": "chat_1",
+      "userId": "user_1"
+    },
+    "permissions": ["message", "inspect", "approve"]
+  }
+}

@@ -87,6 +87,11 @@ host config MCP servers
 
 ## Last Verified
 
+- Status: Verified (no MCP ownership change)
+- Date: 2026-07-14
+- Scope: reviewed retained IM executions; live MCP remains execution-scoped and
+  is disposed by HostExecution, never the subscription/outbox control state.
+
 - Status: Verified
 - Date: 2026-07-14
 - Scope: reviewed HostExecution resource ownership; live MCP clients remain

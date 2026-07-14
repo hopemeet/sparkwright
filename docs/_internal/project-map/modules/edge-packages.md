@@ -106,6 +106,11 @@ contracts, and focused checklists that no longer fit here.
   runtime facades through one process-scoped HostService. The adapters retain
   protocol/transport ownership; workspace Task/Workflow durable owners live in
   Host WorkspaceContext rather than each connection/session facade.
+- Ordinary IM Gateway traffic now uses typed `im.*` Host control requests.
+  Gateway retains platform verification, formatting, inbound message dedupe,
+  outbound delivery attempts, and the existing durable Workflow channel
+  adapter. It no longer stores active sessions/runs, ordinary message queues,
+  canonical run targets, approval routes, or session-routing policy.
 - The workflow job session route now stages durable supervisor/worker ownership
   and multi-channel control after session isolation, write fencing, and a typed
   durable workflow control inbox. `server-runtime` owns coordination; IM/Web/API
@@ -115,6 +120,15 @@ contracts, and focused checklists that no longer fit here.
   source exports. It should not be used as the sole authority for behavior.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: migrated ordinary IM control to Host-owned exact bindings,
+  subscriptions, approval routing, and bounded replay.
+- Read: IM Gateway bridge/gateway/store/Telegram adapter, Host control methods,
+  protocol/SDK, and Workflow channel separation.
+- Tests: IM Gateway 9/9; Host 571/571; protocol/SDK focused suites; schema and
+  affected typecheck/build.
 
 - Status: Verified
 - Date: 2026-07-14

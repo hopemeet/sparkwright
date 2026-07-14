@@ -8,6 +8,7 @@ import type {
 import {
   ACCESS_MODES,
   BACKGROUND_TASK_POLICIES,
+  IM_SESSION_PERMISSIONS,
   PERMISSION_MODES,
   PROTOCOL_VERSION,
   TASK_STATUSES,
@@ -18,6 +19,7 @@ import type { Connection } from "./connection.js";
 import { nextMessageId, nowIso } from "./connection.js";
 import { HostRuntime, type RuntimeOptions } from "./runtime.js";
 import { createHostService, type HostService } from "./host-service.js";
+import type { HostImPrincipal } from "./im-control.js";
 
 export interface ServeConnectionOptions {
   hostService?: HostService;
@@ -33,6 +35,12 @@ export interface ServeConnectionOptions {
   defaultShouldWrite?: RuntimeOptions["defaultShouldWrite"];
   hostName?: string;
   hostVersion?: string;
+  /** Explicit operator opt-in; false by default. */
+  imControlSelfBinding?: boolean;
+  /** Stable transport/auth-derived principal id for this connection. */
+  principalId?: string;
+  /** Finite live approval timeout override used by bounded surfaces/tests. */
+  approvalTimeoutMs?: number;
 }
 
 /**
@@ -46,7 +54,15 @@ export function serveConnection(
   opts: ServeConnectionOptions,
 ): void {
   let handshakeDone = false;
-  const hostService = opts.hostService ?? createHostService();
+  const hostService =
+    opts.hostService ??
+    createHostService({
+      imControl: { allowSelfBinding: opts.imControlSelfBinding === true },
+    });
+  const principal: HostImPrincipal = {
+    id: opts.principalId ?? `connection:${conn.id}`,
+    clientName: "pending-handshake",
+  };
   const runtime = hostService.createRuntime({
     workspaceRoot: opts.workspaceRoot,
     sessionRootDir: opts.sessionRootDir,
@@ -58,6 +74,7 @@ export function serveConnection(
     defaultPermissionMode: opts.defaultPermissionMode,
     defaultTraceLevel: opts.defaultTraceLevel,
     defaultShouldWrite: opts.defaultShouldWrite,
+    approvalTimeoutMs: opts.approvalTimeoutMs,
     emit: (event: HostEvent) => {
       try {
         conn.send(event);
@@ -87,7 +104,7 @@ export function serveConnection(
       return;
     }
 
-    handleRequest(conn, runtime, message, opts)
+    handleRequest(conn, runtime, hostService, principal, message, opts)
       .then((didHandshake) => {
         if (didHandshake) handshakeDone = true;
       })
@@ -103,6 +120,8 @@ export function serveConnection(
 async function handleRequest(
   conn: Connection,
   runtime: HostRuntime,
+  hostService: HostService,
+  principal: HostImPrincipal,
   req: HostRequest,
   opts: ServeConnectionOptions,
 ): Promise<boolean> {
@@ -127,6 +146,8 @@ async function handleRequest(
         conn.close("version mismatch");
         return false;
       }
+      principal.clientName = req.payload.client.name;
+      if (!opts.principalId) principal.id = `client:${req.payload.client.name}`;
       respondOk(conn, req.id, {});
       conn.send({
         envelope: "event",
@@ -158,6 +179,7 @@ async function handleRequest(
             "capability.inspect",
             "run.resume",
             "run.inject_message",
+            "im.control",
           ],
         },
       });
@@ -215,6 +237,76 @@ async function handleRequest(
       );
       if (r.ok) respondOk(conn, req.id, {});
       else respondError(conn, req.id, r.error);
+      return false;
+    }
+    case "im.bind": {
+      const result = hostService.bindImSession(principal, req.payload, runtime);
+      if (!result.ok) respondError(conn, req.id, result.error);
+      else {
+        respondOk(conn, req.id, {
+          bindingId: result.binding.bindingId,
+          sessionId: result.binding.sessionId,
+          permissions: result.binding.permissions,
+          expiresAt: result.binding.expiresAt,
+        });
+      }
+      return false;
+    }
+    case "im.message": {
+      const result = await hostService.dispatchImMessage(
+        principal,
+        runtime,
+        req.payload,
+      );
+      if (!result.ok) respondError(conn, req.id, result.error);
+      else {
+        respondOk(conn, req.id, {
+          sessionId: result.sessionId,
+          status: result.status,
+          runId: result.runId,
+        });
+      }
+      return false;
+    }
+    case "im.subscribe": {
+      const result = hostService.subscribeImSession(principal, req.payload);
+      if (!result.ok) respondError(conn, req.id, result.error);
+      else respondOk(conn, req.id, { deliveries: result.deliveries });
+      return false;
+    }
+    case "im.delivery.ack": {
+      const result = hostService.acknowledgeImDeliveries(
+        principal,
+        req.payload,
+      );
+      if (!result.ok) respondError(conn, req.id, result.error);
+      else respondOk(conn, req.id, { acknowledged: result.acknowledged });
+      return false;
+    }
+    case "im.approval.resolve": {
+      const result = hostService.resolveImApproval(principal, req.payload);
+      if (!result.ok) respondError(conn, req.id, result.error);
+      else respondOk(conn, req.id, {});
+      return false;
+    }
+    case "im.cancel": {
+      const result = hostService.cancelImSession(principal, req.payload);
+      if (!result.ok) respondError(conn, req.id, result.error);
+      else respondOk(conn, req.id, { cancelled: result.cancelled });
+      return false;
+    }
+    case "im.inspect": {
+      const result = hostService.inspectImSession(principal, req.payload);
+      if (!result.ok) respondError(conn, req.id, result.error);
+      else {
+        respondOk(conn, req.id, {
+          sessionId: result.sessionId,
+          active: result.active,
+          ...(result.executionId ? { executionId: result.executionId } : {}),
+          ...(result.runId ? { runId: result.runId } : {}),
+          queuedDeliveries: result.queuedDeliveries,
+        });
+      }
       return false;
     }
     case "session.list": {
@@ -546,6 +638,84 @@ function validateRequestPayload(req: HostRequest): string | undefined {
         optionalString(req.payload, "message") ??
         optionalBoolean(req.payload, "autoApproved")
       );
+    case "im.bind":
+      return (
+        requireOnly(req.payload, [
+          "subject",
+          "permissions",
+          "sessionId",
+          "expiresAt",
+        ]) ??
+        validateImSubject(req.payload.subject) ??
+        requireStringArray(req.payload, "permissions") ??
+        invalidEnumValues(req.payload.permissions, "permissions", [
+          ...IM_SESSION_PERMISSIONS,
+        ]) ??
+        optionalString(req.payload, "sessionId") ??
+        optionalString(req.payload, "expiresAt")
+      );
+    case "im.message":
+      return (
+        requireOnly(req.payload, [
+          "bindingId",
+          "subject",
+          "text",
+          "messageId",
+          "model",
+          "metadata",
+        ]) ??
+        requireString(req.payload, "bindingId") ??
+        validateImSubject(req.payload.subject) ??
+        requireString(req.payload, "text") ??
+        optionalString(req.payload, "messageId") ??
+        optionalString(req.payload, "model") ??
+        optionalRecord(req.payload, "metadata")
+      );
+    case "im.subscribe":
+      return (
+        requireOnly(req.payload, ["bindingId", "subject", "limit"]) ??
+        requireString(req.payload, "bindingId") ??
+        validateImSubject(req.payload.subject) ??
+        optionalPositiveInteger(req.payload, "limit", 200)
+      );
+    case "im.delivery.ack":
+      return (
+        requireOnly(req.payload, ["bindingId", "subject", "deliveryKeys"]) ??
+        requireString(req.payload, "bindingId") ??
+        validateImSubject(req.payload.subject) ??
+        requireStringArray(req.payload, "deliveryKeys")
+      );
+    case "im.approval.resolve":
+      return (
+        requireOnly(req.payload, [
+          "bindingId",
+          "subject",
+          "approvalId",
+          "decision",
+          "message",
+        ]) ??
+        requireString(req.payload, "bindingId") ??
+        validateImSubject(req.payload.subject) ??
+        requireString(req.payload, "approvalId") ??
+        optionalEnum(req.payload, "decision", ["approved", "denied"]) ??
+        requireString(req.payload, "decision") ??
+        optionalString(req.payload, "message")
+      );
+    case "im.cancel":
+      return (
+        requireOnly(req.payload, ["bindingId", "subject", "scope", "reason"]) ??
+        requireString(req.payload, "bindingId") ??
+        validateImSubject(req.payload.subject) ??
+        optionalEnum(req.payload, "scope", ["execution", "lane"]) ??
+        requireString(req.payload, "scope") ??
+        optionalString(req.payload, "reason")
+      );
+    case "im.inspect":
+      return (
+        requireOnly(req.payload, ["bindingId", "subject"]) ??
+        requireString(req.payload, "bindingId") ??
+        validateImSubject(req.payload.subject)
+      );
     case "session.list":
       return (
         requireOnly(req.payload, ["limit"]) ??
@@ -804,6 +974,44 @@ function optionalStringArray(
     value.every((entry) => typeof entry === "string")
     ? undefined
     : `${key} must be an array of strings`;
+}
+
+function requireStringArray(
+  payload: Record<string, unknown>,
+  field: string,
+): string | undefined {
+  const value = payload[field];
+  return Array.isArray(value) &&
+    value.every((entry) => typeof entry === "string")
+    ? undefined
+    : `${field} must be an array of strings`;
+}
+
+function invalidEnumValues(
+  value: unknown,
+  field: string,
+  allowed: readonly string[],
+): string | undefined {
+  if (!Array.isArray(value)) return undefined;
+  return value.every(
+    (entry) => typeof entry === "string" && allowed.includes(entry),
+  )
+    ? undefined
+    : `${field} contains an unsupported value`;
+}
+
+function validateImSubject(value: unknown): string | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return "subject must be an object";
+  }
+  const subject = value as Record<string, unknown>;
+  return (
+    requireOnly(subject, ["platform", "chatId", "threadId", "userId"]) ??
+    requireString(subject, "platform") ??
+    requireString(subject, "chatId") ??
+    optionalString(subject, "threadId") ??
+    requireString(subject, "userId")
+  );
 }
 
 function optionalPositiveInteger(

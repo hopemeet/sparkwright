@@ -138,6 +138,11 @@ tool proposes write
 
 ## Last Verified
 
+- Status: Verified (no write-admission change)
+- Date: 2026-07-14
+- Scope: reviewed IM principal/binding permissions; they authorize session
+  control only and do not grant workspace mutation or replace existing leases.
+
 - Status: Verified (no lease semantic change)
 - Date: 2026-07-14
 - Scope: reviewed WorkspaceContext and lane capacity; canonical workspace lease

@@ -940,13 +940,21 @@ export class HostRuntime {
 
   /** @internal HostService lookup without mirroring execution truth. */
   executionIdentity():
-    | { executionId: string; sessionId?: string; runIds: readonly string[] }
+    | {
+        executionId: string;
+        sessionId?: string;
+        currentRunId?: string;
+        runIds: readonly string[];
+      }
     | undefined {
     const execution = this.currentExecution;
     return execution
       ? {
           executionId: execution.executionId,
           ...(execution.sessionId ? { sessionId: execution.sessionId } : {}),
+          ...(execution.currentRunId()
+            ? { currentRunId: execution.currentRunId() }
+            : {}),
           runIds: execution.runIdAliases(),
         }
       : undefined;

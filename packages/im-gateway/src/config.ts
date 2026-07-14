@@ -16,10 +16,6 @@ export interface ImGatewayConfig {
   dataDir?: string;
   /** Local workspace whose durable workflow channel stores this gateway serves. */
   workspaceRoot?: string;
-  sessionRouting?: {
-    groupSessionsPerUser?: boolean;
-    threadSessionsPerUser?: boolean;
-  };
   telegram?: TelegramGatewayConfig;
 }
 

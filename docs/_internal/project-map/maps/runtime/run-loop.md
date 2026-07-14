@@ -280,6 +280,11 @@ createRun/resumeRunFromCheckpoint
 
 ## Last Verified
 
+- Status: Verified (no Core loop change)
+- Date: 2026-07-14
+- Scope: reviewed Host-owned IM dispatch/retention; messages still enter through
+  atomic Core acceptance and lane release still follows HostExecution completion.
+
 - Status: Verified
 - Date: 2026-07-14
 - Scope: made HostExecution completion the lane handoff fact and added bounded

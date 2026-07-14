@@ -207,6 +207,11 @@ config + workspace capability roots
 
 ## Last Verified
 
+- Status: Verified (no capability activation change)
+- Date: 2026-07-14
+- Scope: reviewed Host IM control integration; it adds protocol/session control
+  and does not alter tool or capability discovery.
+
 - Status: Verified (no capability contract change)
 - Date: 2026-07-14
 - Scope: reviewed Host execution planning/resource extraction and tool catalog;

@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createHostService } from "../src/host-service.js";
+import type { HostImPrincipal } from "../src/im-control.js";
 
 const tempDirs: string[] = [];
 
@@ -63,6 +64,81 @@ describe("HostService", () => {
       );
     }
 
+    await service.shutdown();
+  });
+
+  it("owns IM binding, subscription, dispatch, replay, and retention", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-service-im-"));
+    tempDirs.push(workspace);
+    const service = createHostService({
+      imControl: { allowSelfBinding: true },
+    });
+    const runtime = service.createRuntime({
+      workspaceRoot: workspace,
+      defaultModel: "deterministic",
+      emit: () => {},
+    });
+    const principal: HostImPrincipal = {
+      id: "gateway:trusted",
+      clientName: "sparkwright-im-gateway",
+    };
+    const subject = {
+      platform: "telegram",
+      chatId: "chat_1",
+      userId: "user_1",
+    };
+    const bound = service.bindImSession(
+      principal,
+      {
+        subject,
+        permissions: ["message", "inspect", "approve"],
+      },
+      runtime,
+    );
+    expect(bound.ok).toBe(true);
+    if (!bound.ok) return;
+    expect(
+      service.subscribeImSession(principal, {
+        bindingId: bound.binding.bindingId,
+        subject,
+      }).ok,
+    ).toBe(true);
+
+    const starting = service.dispatchImMessage(principal, runtime, {
+      bindingId: bound.binding.bindingId,
+      subject,
+      text: "inspect the workspace",
+    });
+    const identity = runtime.executionIdentity();
+    expect(identity?.executionId).toBeDefined();
+    service.releaseRuntime(runtime);
+    expect(service.findExecutionById(identity!.executionId)).toBe(runtime);
+    const started = await starting;
+    expect(started).toMatchObject({ ok: true, status: "started" });
+
+    const rebound = service.bindImSession(principal, {
+      subject,
+      permissions: ["message", "inspect", "approve"],
+    });
+    expect(rebound).toMatchObject({
+      ok: true,
+      binding: { bindingId: bound.binding.bindingId },
+    });
+
+    const replay = service.subscribeImSession(principal, {
+      bindingId: bound.binding.bindingId,
+      subject,
+    });
+    expect(replay.ok).toBe(true);
+    if (replay.ok) {
+      expect(replay.deliveries.length).toBeGreaterThan(0);
+      const acknowledged = service.acknowledgeImDeliveries(principal, {
+        bindingId: bound.binding.bindingId,
+        subject,
+        deliveryKeys: replay.deliveries.map((item) => item.deliveryKey),
+      });
+      expect(acknowledged).toMatchObject({ ok: true });
+    }
     await service.shutdown();
   });
 });

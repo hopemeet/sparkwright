@@ -114,8 +114,17 @@ Manual compact
 
 - File-backed session updates are best-effort and not a full database transaction model.
 - Session metadata should make terminal run state easier to inspect.
+- Ordinary IM bindings, subscriptions, outbox cursors, and lane commands remain
+  in-memory Host control state; they are not part of the session store and are
+  not restart-recovered in this phase.
 
 ## Last Verified
+
+- Status: Verified (no persisted-format change)
+- Date: 2026-07-14
+- Scope: reviewed Host-owned IM retention/replay; ordinary IM control state is
+  explicitly process-local while existing session and Workflow stores remain
+  unchanged.
 
 - Status: Verified (no storage contract change)
 - Date: 2026-07-14

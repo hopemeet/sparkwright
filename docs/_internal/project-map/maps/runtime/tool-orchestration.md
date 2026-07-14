@@ -363,6 +363,11 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
 
 ## Last Verified
 
+- Status: Verified (no tool contract change)
+- Date: 2026-07-14
+- Scope: reviewed Host IM message and approval routing; tool execution and
+  approval policy remain Core/Host execution concerns.
+
 - Status: Verified (no tool ownership change)
 - Date: 2026-07-14
 - Scope: reviewed atomic interactive command acceptance and Host lanes; tool
