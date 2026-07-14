@@ -19,7 +19,10 @@ import {
   type ToolOrigin,
 } from "@sparkwright/core";
 import type { SkillRoot } from "@sparkwright/skills";
-import type { CapabilityToolsConfig, ShellConfig } from "./config.js";
+import type {
+  CapabilityToolsConfig,
+  ShellConfig,
+} from "./config-zod-schema.js";
 import { createHostShellTool } from "./shell.js";
 import {
   applyToolConfig,

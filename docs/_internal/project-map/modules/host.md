@@ -51,6 +51,8 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 - `packages/host/src/model-builder.ts`
 - `packages/host/src/model-factory.ts`
 - `packages/host/src/config.ts`
+- `packages/host/src/config/contracts.ts`
+- `packages/host/src/config/config-implementation.ts`
 - `packages/host/src/config-zod-schema.ts`
 - `packages/host/src/client-input.ts`
 - `packages/host/test/protocol.test.ts`
@@ -929,6 +931,17 @@ Does not own:
   remain adapter-native and need continued cross-entrypoint characterization.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-15T07:26:47+0800
+- Scope: established `config.ts` as a named compatibility facade and moved
+  public config contracts, provider constants, and model-selection types into
+  a dependency leaf. Internal Host code imports the leaf or concrete loader;
+  the facade is only consumed by the package public index.
+- Read: config facade, contracts, concrete loader, Zod schema source, internal
+  consumers, and import-graph guardrails.
+- Tests: config/schema/CLI focused suites, Host and CLI builds, typecheck,
+  import/boundary gates, generated schema parity, and map drift.
 
 - Status: Verified
 - Date: 2026-07-15

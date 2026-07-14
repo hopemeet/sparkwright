@@ -14,7 +14,7 @@ import {
   type ShellSandboxConfig,
   type ShellSandboxRuntime,
 } from "@sparkwright/shell-sandbox";
-import type { CapabilityWorkflowHookConfig } from "./config.js";
+import type { CapabilityWorkflowHookConfig } from "./config-zod-schema.js";
 import {
   inferProcessRuntime,
   TracedProcessRunner,

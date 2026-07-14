@@ -7,7 +7,7 @@ import {
 import type {
   CapabilityVerificationCommandConfig,
   CapabilityVerificationConfig,
-} from "./config.js";
+} from "./config-zod-schema.js";
 import {
   createInvariantProjectionHooks,
   type CreateInvariantProjectionHooksOptions,

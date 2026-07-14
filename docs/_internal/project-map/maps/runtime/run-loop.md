@@ -283,7 +283,7 @@ createRun/resumeRunFromCheckpoint
 ## Last Verified
 
 - Status: Verified
-- Date: 2026-07-15
+- Date: 2026-07-15T07:26:47+0800
 - Scope: stateless tool-result/repeat/compaction classifiers moved to a leaf;
   SparkwrightRun loop state, transitions, event/tool observation order, budgets,
   commands, checkpoints, and terminal behavior are unchanged.

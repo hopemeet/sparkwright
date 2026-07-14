@@ -14,11 +14,11 @@ import {
   type SessionCompactionTurn,
 } from "@sparkwright/core";
 import type { ProtocolError } from "@sparkwright/protocol";
+import { DETERMINISTIC_PROVIDER } from "./config/contracts.js";
 import {
-  DETERMINISTIC_PROVIDER,
   loadHostConfig,
   type TaskConfig,
-} from "./config.js";
+} from "./config/config-implementation.js";
 import { createModel, type ResolvedModelConfig } from "./model-factory.js";
 import { createModelSessionSummarizer } from "./session-summarizer.js";
 import {

@@ -142,7 +142,7 @@ tool proposes write
 ## Last Verified
 
 - Status: Read-only
-- Date: 2026-07-15
+- Date: 2026-07-15T07:26:47+0800
 - Scope: task projection extraction does not change WorkspaceContext, mutation
   admission, policy, approvals, containment, or write events.
 - Read: concrete runtime and task-projections boundary.

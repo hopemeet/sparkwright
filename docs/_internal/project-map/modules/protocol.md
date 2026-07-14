@@ -210,7 +210,7 @@ Does not own:
 ## Last Verified
 
 - Status: Read-only
-- Date: 2026-07-15
+- Date: 2026-07-15T07:26:47+0800
 - Scope: HostRuntime relocation does not alter protocol requests, responses,
   errors, events, wire schema, or emission ordering.
 - Read: runtime facade, concrete runtime, and protocol imports.

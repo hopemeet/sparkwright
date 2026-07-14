@@ -2,10 +2,12 @@ import { stat } from "node:fs/promises";
 import { isAbsolute, resolve, sep } from "node:path";
 import {
   DETERMINISTIC_PROVIDER,
+  type SharedConfig,
+} from "./config/contracts.js";
+import {
   loadHostConfig,
   resolveModelSelection,
-  type SharedConfig,
-} from "./config.js";
+} from "./config/config-implementation.js";
 
 const RESERVED_MODEL_REFS = new Set([DETERMINISTIC_PROVIDER, "scripted"]);
 

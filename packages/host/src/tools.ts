@@ -34,7 +34,7 @@ import {
   resolveConfigWriteTarget,
   serializeConfigFileObject,
   type CapabilityToolsConfig,
-} from "./config.js";
+} from "./config/config-implementation.js";
 import {
   formatToolUseSelectorList,
   isToolUseSelector,

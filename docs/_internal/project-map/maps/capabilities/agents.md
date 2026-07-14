@@ -387,7 +387,7 @@ configured profiles/delegates
 ## Last Verified
 
 - Status: Verified
-- Date: 2026-07-15
+- Date: 2026-07-15T07:26:47+0800
 - Scope: CLI configured-delegate run and capability formatting moved to a
   domain module; Host profile resolution, collision handling, approvals,
   workspace access, and execution governance are unchanged.

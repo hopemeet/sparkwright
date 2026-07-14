@@ -90,7 +90,7 @@ host config MCP servers
 ## Last Verified
 
 - Status: Verified
-- Date: 2026-07-15
+- Date: 2026-07-15T07:26:47+0800
 - Scope: CLI `--resolve-mcp` inspection moved mechanically with its close-finally
   cleanup intact; MCP preparation, transport, lazy startup, reconnect, process,
   and runtime cleanup behavior are unchanged.

@@ -212,7 +212,7 @@ EventLog emits full event
 ## Last Verified
 
 - Status: Verified
-- Date: 2026-07-15
+- Date: 2026-07-15T07:26:47+0800
 - Scope: task snapshot/output/notification value conversion moved to a leaf;
   trace events, payloads, ordering, storage, and levels are unchanged.
 - Read: concrete runtime task output path and task-projections.

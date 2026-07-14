@@ -143,7 +143,7 @@ inventory consumption changes. Keep mutable policy-state tests separate: a
 frozen security plan must never share Core mutation-policy instances between
 runs.
 
-### `packages/host/src/config.ts` or `config-zod-schema.ts`
+### `packages/host/src/config.ts`, `config/*`, or `config-zod-schema.ts`
 
 Run:
 

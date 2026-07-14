@@ -237,7 +237,7 @@ trace.jsonl
 ## Last Verified
 
 - Status: Read-only
-- Date: 2026-07-15
+- Date: 2026-07-15T07:26:47+0800
 - Scope: config/doctor handler extraction preserves diagnostic paths and does
   not alter trace summary, timeline, report, verify, or repair semantics.
 - Read: CLI config-doctor and trace-session modules.

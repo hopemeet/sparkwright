@@ -335,7 +335,7 @@ Does not own:
 ## Last Verified
 
 - Status: Verified
-- Date: 2026-07-15
+- Date: 2026-07-15T07:26:47+0800
 - Scope: moved config path/validate/inspect/explain/example and doctor paths
   into one domain module with a shared path-resolution leaf. Config precedence,
   schema diagnostics, redaction, output, help, and init template behavior are unchanged.

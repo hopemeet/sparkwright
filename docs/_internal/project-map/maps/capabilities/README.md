@@ -210,7 +210,7 @@ config + workspace capability roots
 ## Last Verified
 
 - Status: Verified
-- Date: 2026-07-15
+- Date: 2026-07-15T07:26:47+0800
 - Scope: CLI config/doctor diagnostics moved to a domain module; capability
   directory resolution, config precedence, inspect fields, redaction, and schema
   validation behavior are unchanged.

@@ -134,7 +134,7 @@ Does not own:
 ## Last Verified
 
 - Status: Verified
-- Date: 2026-07-15
+- Date: 2026-07-15T07:26:47+0800
 - Scope: mechanically moved unified-diff parsing and application into a pure
   implementation leaf. Public named exports, tool schemas, workspace write
   routing, containment, and policy behavior are unchanged.

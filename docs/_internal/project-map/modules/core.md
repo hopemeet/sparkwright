@@ -380,7 +380,7 @@ Does not own:
 ## Last Verified
 
 - Status: Verified
-- Date: 2026-07-15
+- Date: 2026-07-15T07:26:47+0800
 - Scope: moved pure tool-result duplicate, repeat-target, failure-context,
   idempotent-noop, nudge, and compaction-request analysis to a dependency leaf.
   SparkwrightRun retains RunRecord, loop state, events, commands, budgets,

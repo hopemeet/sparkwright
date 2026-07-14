@@ -9,7 +9,7 @@ import type {
   CapabilityVerificationCommandConfig,
   CapabilityVerificationConfig,
   CapabilityWorkflowHookConfig,
-} from "./config.js";
+} from "./config-zod-schema.js";
 import {
   DOCUMENTED_COMMAND_RULE_ACTION_SUMMARY,
   DOCUMENTED_COMMAND_RULE_CONFIGURATION_HINT,

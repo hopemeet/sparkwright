@@ -8,7 +8,7 @@ import type {
   DerivedChildAgentProfile,
 } from "@sparkwright/agent-runtime";
 import { markAgentInvocationEntrypoint } from "@sparkwright/agent-runtime";
-import type { CapabilityDelegateToolConfig } from "./config.js";
+import type { CapabilityDelegateToolConfig } from "./config-zod-schema.js";
 import { delegateToolName } from "./delegate-capability.js";
 
 export const DELEGATE_AGENT_TOOL_NAME = "delegate_agent";

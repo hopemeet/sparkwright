@@ -164,7 +164,7 @@ import type {
   CapabilityWorkflowHookConfig,
   ShellConfig,
   WriteGuardrailsConfig,
-} from "../config.js";
+} from "../config-zod-schema.js";
 import {
   createSessionFileRunStoreFactory,
   LocalWorkspace,
@@ -197,7 +197,8 @@ import {
   type CapabilityWorkflowAssetSummary,
 } from "@sparkwright/protocol";
 import { buildAgentPromptBuilder } from "@sparkwright/project-context";
-import { loadHostConfig, type CapabilityMcpConfig } from "../config.js";
+import { loadHostConfig } from "../config/config-implementation.js";
+import type { CapabilityMcpConfig } from "../config/contracts.js";
 import {
   resolveAgentProfiles,
   type AgentProfileCollision,

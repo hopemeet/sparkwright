@@ -32,7 +32,7 @@ import {
   type WorkflowVerifierDefinition,
   type WorkflowWaitState,
 } from "@sparkwright/agent-runtime";
-import type { CapabilityWorkflowHookConfig } from "./config.js";
+import type { CapabilityWorkflowHookConfig } from "./config-zod-schema.js";
 import {
   createConfiguredWorkflowHooks,
   type CreateConfiguredWorkflowHooksOptions,

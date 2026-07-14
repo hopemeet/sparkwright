@@ -9,7 +9,7 @@ import {
   type ShellSandboxRuntime,
   type ShellSandboxStatus,
 } from "@sparkwright/shell-sandbox";
-import type { LoadedSharedConfig } from "./config.js";
+import type { LoadedSharedConfig } from "./config/contracts.js";
 import type { ResolvedRunAccess } from "./run-access.js";
 import { resolveSkillRootsForRuntime } from "./skill-roots.js";
 

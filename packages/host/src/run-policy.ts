@@ -7,7 +7,7 @@ import {
   type PermissionMode,
   type Policy,
 } from "@sparkwright/core";
-import type { WriteGuardrailsConfig } from "./config.js";
+import type { WriteGuardrailsConfig } from "./config-zod-schema.js";
 
 /**
  * Build one fresh, stateful policy for a Host-shaped run.

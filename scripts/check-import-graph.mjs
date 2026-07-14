@@ -29,30 +29,7 @@ const FACADE_IMPORT_ALLOWLIST = new Map([
     new Set(["packages/core/src/index.ts", "packages/core/src/internal.ts"]),
   ],
   ["packages/coding-tools/src/index.ts", new Set()],
-  [
-    "packages/host/src/config.ts",
-    new Set([
-      "packages/host/src/index.ts",
-      "packages/host/src/runtime/host-runtime.ts",
-      "packages/host/src/model-builder.ts",
-      "packages/host/src/model-factory.ts",
-      "packages/host/src/workflow-node-api.ts",
-      "packages/host/src/delegate-runner.ts",
-      "packages/host/src/run-input-validation.ts",
-      "packages/host/src/active-rules.ts",
-      "packages/host/src/verification.ts",
-      "packages/host/src/indexed-delegate-tool.ts",
-      "packages/host/src/workflow-projection.ts",
-      "packages/host/src/tools.ts",
-      "packages/host/src/run-policy.ts",
-      "packages/host/src/invariant-projection.ts",
-      "packages/host/src/run-security-plan.ts",
-      "packages/host/src/session-compaction.ts",
-      "packages/host/src/workflow-hooks.ts",
-      "packages/host/src/delegate-capability.ts",
-      "packages/host/src/tool-catalog.ts",
-    ]),
-  ],
+  ["packages/host/src/config.ts", new Set(["packages/host/src/index.ts"])],
 ]);
 
 const facadeViolations = [];
