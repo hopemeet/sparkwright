@@ -13,6 +13,7 @@ See [workspace-writes.md](workspace-writes.md) and [shell.md](shell.md).
 - `packages/core/src/approval.ts`
 - `packages/core/src/approval-policy.ts`
 - `packages/host/src/runtime.ts`
+- `packages/host/src/runtime/host-runtime.ts`
 - `packages/host/src/client-approval.ts`
 - `packages/cli/src/cli-approval.ts`
 - `packages/tui/src/app.tsx`
@@ -128,6 +129,13 @@ policy requires approval
 - Approval UX and diagnostic reporting are split across CLI, TUI, host, and core trace.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: HostRuntime relocation preserves approval routing, timeout, resolver,
+  cancellation, and HostExecution cleanup behavior.
+- Read: runtime facade, concrete runtime, HostExecution, HostService.
+- Tests: Host execution/service/protocol focused suites.
 
 - Status: Read-only
 - Date: 2026-07-15

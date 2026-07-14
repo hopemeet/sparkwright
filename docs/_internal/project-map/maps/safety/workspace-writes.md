@@ -19,6 +19,7 @@ See [approvals.md](approvals.md) and [../runtime/tool-orchestration.md](../runti
 - `packages/host/src/workspace-agent-arbiter.ts`
 - `packages/coding-tools/src/index.ts`
 - `packages/coding-tools/src/unified-diff.ts`
+- `packages/host/src/runtime/host-runtime.ts`
 
 ## Data Flow
 
@@ -139,6 +140,13 @@ tool proposes write
   from managed workspace writes.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: HostRuntime module relocation preserves WorkspaceContext ownership,
+  mutation admission, policy, approvals, containment, and write events.
+- Read: runtime facade, concrete runtime, HostService, WorkspaceContext.
+- Tests: Host service/tools focused suites and repo-pilot.
 
 - Status: Read-only
 - Date: 2026-07-15

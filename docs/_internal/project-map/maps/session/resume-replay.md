@@ -13,6 +13,7 @@ See [session-store.md](session-store.md) and [../runtime/context-compaction.md](
 - `packages/core/src/trace.ts`
 - `packages/core/src/session.ts`
 - `packages/host/src/runtime.ts`
+- `packages/host/src/runtime/host-runtime.ts`
 - `packages/cli/src/cli.ts`
 - `packages/tui/src/state/run-controller.ts`
 
@@ -129,6 +130,13 @@ Future run in compacted session
   run-loop integration.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: concrete resume orchestration moved behind the runtime facade;
+  session lookup, lane selection, checkpoint replay, and identities are unchanged.
+- Read: runtime facade, concrete resume path, contracts, HostService.
+- Tests: Host service/protocol/client and CLI host-resume focused suites.
 
 - Status: Verified
 - Date: 2026-07-15

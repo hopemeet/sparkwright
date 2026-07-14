@@ -11,7 +11,8 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 
 ## Main Files
 
-- `packages/host/src/runtime.ts`
+- `packages/host/src/runtime.ts` — stable named compatibility facade
+- `packages/host/src/runtime/host-runtime.ts` — concrete HostRuntime composition and execution orchestration
 - `packages/host/src/runtime/contracts.ts` — runtime construction and execution coordination ports
 - `packages/host/src/session-queries.ts`
 - `packages/host/src/session-compaction.ts`
@@ -926,6 +927,17 @@ Does not own:
   remain adapter-native and need continued cross-entrypoint characterization.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: established `runtime.ts` as a named facade and mechanically moved the
+  concrete class to `runtime/host-runtime.ts`. Internal production callers use
+  the concrete module; exports, initialization order, singleton count, and all
+  Host/Workspace/Execution/Core ownership remain unchanged.
+- Read: runtime facade, concrete runtime, contracts, HostService, server, and
+  import-graph guardrails.
+- Tests: full Host focused matrix, Host build/typecheck, CLI host path,
+  deterministic repo-pilot, import/boundary gates, and map drift.
 
 - Status: Verified
 - Date: 2026-07-15

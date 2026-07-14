@@ -11,6 +11,7 @@ See [../../modules/mcp-adapter.md](../../modules/mcp-adapter.md).
 
 - `packages/mcp-adapter/src/index.ts`
 - `packages/host/src/runtime.ts`
+- `packages/host/src/runtime/host-runtime.ts`
 - `packages/cli/src/cli.ts`
 - `packages/tui/src/lib/create-capability.ts`
 - `docs/reference/EXTENSION_INTERFACES.md`
@@ -86,6 +87,13 @@ host config MCP servers
   trusted opt-ins and are not counted as managed workspace writes.
 
 ## Last Verified
+
+- Status: Read-only
+- Date: 2026-07-15
+- Scope: HostRuntime relocation only; MCP preparation, lazy startup, transport,
+  reconnect, process ownership, and cleanup are unchanged.
+- Read: runtime facade and concrete runtime MCP imports/preparation paths.
+- Tests: Host tools/protocol focused suites; no MCP lifecycle code changed.
 
 - Status: Read-only
 - Date: 2026-07-15

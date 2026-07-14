@@ -22,15 +22,7 @@ const valueGraph = new Map(sourceFiles.map((file) => [file, new Set()]));
 const typeGraph = new Map(sourceFiles.map((file) => [file, new Set()]));
 
 const FACADE_IMPORT_ALLOWLIST = new Map([
-  [
-    "packages/host/src/runtime.ts",
-    new Set([
-      "packages/host/src/index.ts",
-      "packages/host/src/host-service.ts",
-      "packages/host/src/server.ts",
-      "packages/host/src/im-control.ts",
-    ]),
-  ],
+  ["packages/host/src/runtime.ts", new Set(["packages/host/src/index.ts"])],
   ["packages/cli/src/cli.ts", new Set(["packages/cli/src/index.ts"])],
   [
     "packages/core/src/run.ts",
@@ -41,7 +33,7 @@ const FACADE_IMPORT_ALLOWLIST = new Map([
     "packages/host/src/config.ts",
     new Set([
       "packages/host/src/index.ts",
-      "packages/host/src/runtime.ts",
+      "packages/host/src/runtime/host-runtime.ts",
       "packages/host/src/model-builder.ts",
       "packages/host/src/model-factory.ts",
       "packages/host/src/workflow-node-api.ts",

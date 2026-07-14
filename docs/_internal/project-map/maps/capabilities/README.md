@@ -8,6 +8,7 @@ cron, shell/task tools, and capability inspection.
 ## Main Files
 
 - `packages/host/src/runtime.ts`
+- `packages/host/src/runtime/host-runtime.ts`
 - `packages/host/src/active-rules.ts`
 - `packages/host/src/tool-catalog.ts`
 - `packages/host/src/tools.ts`
@@ -206,6 +207,13 @@ config + workspace capability roots
 - Do not add one-off direct-core/cron tools for capability smokes; exercise the same coding tools used by host runs.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: HostRuntime relocation preserves capability preparation, snapshot
+  cache, inspect output, and tool/model/skill/MCP facts.
+- Read: runtime facade, concrete runtime capability paths, contracts.
+- Tests: Host protocol/client/tools focused suites and repo-pilot.
 
 - Status: Verified
 - Date: 2026-07-15

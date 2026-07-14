@@ -131,6 +131,13 @@ contracts, and focused checklists that no longer fit here.
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-07-15
+- Scope: Host runtime facade preserves package exports while internal Host
+  production callers import the concrete implementation directly.
+- Read: Host package index, runtime facade/concrete implementation, server.
+- Tests: Host build/typecheck and CLI entry parity/host path.
+
 - Status: Read-only
 - Date: 2026-07-15
 - Scope: Host runtime contract extraction preserves all package exports and

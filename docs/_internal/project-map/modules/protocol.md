@@ -211,6 +211,13 @@ Does not own:
 
 - Status: Read-only
 - Date: 2026-07-15
+- Scope: HostRuntime relocation does not alter protocol requests, responses,
+  errors, events, wire schema, or emission ordering.
+- Read: runtime facade, concrete runtime, and protocol imports.
+- Tests: Host protocol/client focused suites and Host build.
+
+- Status: Read-only
+- Date: 2026-07-15
 - Scope: protocol request, response, error, event, and wire schema types are
   only referenced by the new Host contracts leaf; no protocol contract changed.
 - Read: Host runtime contracts and protocol types consumed by them.

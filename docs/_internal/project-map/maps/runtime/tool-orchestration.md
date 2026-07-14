@@ -19,6 +19,7 @@ See [../safety/workspace-writes.md](../safety/workspace-writes.md), [../safety/s
 - `packages/host/src/shell.ts`
 - `packages/coding-tools/src/index.ts`
 - `packages/coding-tools/src/unified-diff.ts`
+- `packages/host/src/runtime/host-runtime.ts`
 
 ## Data Flow
 
@@ -364,6 +365,13 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
 - TUI live rendering and transcript export now share presentation summaries, but trace/model-context result compaction is still a separate backend concern.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: HostRuntime module relocation only; tool assembly, policy, approval,
+  execution, observation, and event behavior are unchanged.
+- Read: runtime facade and concrete runtime imports/tool assembly.
+- Tests: Host tools/agent/delegate focused suites and repo-pilot.
 
 - Status: Read-only
 - Date: 2026-07-15

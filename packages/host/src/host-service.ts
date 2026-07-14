@@ -15,7 +15,7 @@ import {
   ExecutionLaneCoordinator,
   type ExecutionDriver,
 } from "@sparkwright/server-runtime";
-import { HostRuntime } from "./runtime.js";
+import { HostRuntime } from "./runtime/host-runtime.js";
 import type {
   HostExecutionCoordinatorPort,
   HostExecutionMessage,

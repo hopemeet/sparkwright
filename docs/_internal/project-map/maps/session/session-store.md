@@ -16,6 +16,7 @@ See [../trace/raw-trace.md](../trace/raw-trace.md) for raw event evidence.
 - `packages/core/src/trace-diagnostics.ts`
 - `packages/core/src/trace-session-consistency.ts`
 - `packages/host/src/runtime.ts`
+- `packages/host/src/runtime/host-runtime.ts`
 - `docs/reference/STATE_AND_TRACE_MODEL.md`
 
 ## Data Flow
@@ -120,6 +121,13 @@ Manual compact
   session ids rather than selecting arbitrary existing session-store records.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: HostRuntime relocation leaves session-root resolution, stores,
+  WorkspaceContext ownership, and persistence unchanged.
+- Read: runtime facade, concrete runtime constructor, WorkspaceContext.
+- Tests: Host execution/service/protocol focused suites.
 
 - Status: Read-only
 - Date: 2026-07-15

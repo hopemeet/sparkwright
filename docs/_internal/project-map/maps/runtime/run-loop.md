@@ -15,6 +15,7 @@ See [tool-orchestration.md](tool-orchestration.md) and [../trace/raw-trace.md](.
 - `packages/core/src/run-validation.ts`
 - `packages/core/src/run-outcome.ts`
 - `packages/host/src/runtime.ts`
+- `packages/host/src/runtime/host-runtime.ts`
 
 ## Data Flow
 
@@ -279,6 +280,14 @@ createRun/resumeRunFromCheckpoint
   handling can still be noisy.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: concrete Host run orchestration moved behind the runtime facade with
+  no change to start/resume supervision, event order, Core run ownership, or
+  HostExecution lifecycle.
+- Read: runtime facade, concrete runtime, contracts, HostService.
+- Tests: Host execution/service/protocol/client focused suites and repo-pilot.
 
 - Status: Verified
 - Date: 2026-07-15

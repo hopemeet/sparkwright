@@ -211,6 +211,13 @@ EventLog emits full event
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-07-15
+- Scope: HostRuntime module relocation preserves trace emitters, payloads,
+  ordering, storage, levels, and session trace facts.
+- Read: runtime facade and concrete runtime event/trace boundaries.
+- Tests: Host protocol/client focused suites and repo-pilot trace smoke.
+
 - Status: Read-only
 - Date: 2026-07-15
 - Scope: runtime contract extraction does not change trace emitters, event
