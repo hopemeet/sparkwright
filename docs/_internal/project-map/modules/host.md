@@ -718,18 +718,25 @@ Does not own:
   invocation entrypoint so direct aliases remain `delegate` while
   `delegate_agent` lifecycle records the real indexed surface. Model-authored
   string fields cannot override this attribution marker.
-- `workspace-agent-arbiter.ts` owns the process-local Host Agent workspace
-  admission policy. One singleton is shared by HostRuntime connections and is
-  keyed by realpath-canonical workspace root. Read-only in-process/dynamic
-  children share read leases; write-capable in-process, ACP, and external
-  delegates take an exclusive write lease. FIFO admission prevents later
-  readers from starving a queued writer. Leases have TTL, renewal heartbeat,
-  abortable waits, inspection snapshots, and idempotent release.
-- This arbiter is deliberately narrower than a workspace transaction manager:
-  it coordinates Agent invocations inside one Host process, not arbitrary
-  parent tools, other OS processes, or distributed hosts. Expiry is not a
-  fencing token, so the code must not claim stale-writer exclusion after
-  takeover. A future session coordinator remains the target long-lived owner.
+- `workspace-agent-arbiter.ts` now owns the process-local Host workspace lease
+  primitive (the legacy filename/export remains for compatibility). One
+  `WorkspaceLeaseCoordinator` singleton is shared by HostRuntime connections
+  and keyed by realpath-canonical workspace root. Host wraps actual parent and
+  child coding/Shell/capability mutation windows, while write-capable
+  in-process, ACP, and external delegates retain a lease for their full
+  execution. Dynamic Agent grant/delegate dispatch tools are not themselves
+  wrapped because their child owns the mutation window.
+- Same-owner acquisition is reference-counted and reentrant, so a child holding
+  its execution lease can call managed write tools. A descendant request that
+  would wait on an ancestor fails fast instead of entering a run-chain
+  deadlock. FIFO admission prevents later readers from starving a queued
+  writer. Acquisitions auto-renew by default; waits are abortable, release is
+  idempotent, and involuntary loss is observable and initiates adapter abort.
+- This coordinator remains narrower than a workspace transaction manager: it
+  does not coordinate other Node processes or distributed hosts, and TTL/loss
+  notification is not a fencing generation or proof that a stale process has
+  stopped writing. A future session coordinator remains the target long-lived
+  owner.
 - `capabilities.agents.maxDepth` is enforced before dynamic spawn, LLM child
   delegates, ACP delegates, and external-command delegates start; sub-agent
   events carry `subagentDepth` metadata so nested runs share one depth budget.
@@ -859,6 +866,17 @@ Does not own:
   remain adapter-native and need continued cross-entrypoint characterization.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: generalized child-only Agent admission into one Host process-local
+  parent/child workspace mutation coordinator with reentrancy, run-chain
+  fail-fast, auto-renewal, loss notification, and adapter termination.
+- Read: runtime/catalog assembly, Agent admission, Shell/background transfer,
+  ACP/external adapters, and traced process cleanup.
+- Tests: focused suites 235/235; all workspaces/tests and release smokes passed.
+  Touched files are format-clean; the global format scan is blocked only by
+  pre-existing dirty proposal docs outside this change.
 
 - Status: Verified
 - Date: 2026-07-14

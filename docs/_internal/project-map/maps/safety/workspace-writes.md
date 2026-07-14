@@ -56,17 +56,21 @@ tool proposes write
   independently policy-checked and approved child writers from being admitted
   to the same Core concurrent batch; this remains the early argument-level
   classifier rather than the workspace lock itself.
-- Host additionally uses a process-local Agent RW arbiter keyed by the
-  realpath-canonical workspace root. Read-only managed Agent children share;
-  write-capable in-process, ACP, and external-command delegates serialize
-  across HostRuntime connections. A fair queue, abortable waits, TTL,
-  heartbeat renewal, inspection, and idempotent release prevent one connection
-  from owning an unbounded unrecoverable lock under normal lifecycle cleanup.
-- The arbiter does not replace policy or approval, and its scope must be stated
-  precisely: it does not lock arbitrary parent tools, other Node processes, or
-  distributed hosts, and expiry has no stale-writer fencing guarantee. Managed
-  writes still use normal Core policy/events; process delegates still emit the
-  untracked write-capable marker after lease admission.
+- Host additionally uses one process-local fair workspace lease coordinator
+  keyed by the realpath-canonical workspace root. It wraps actual mutation
+  windows for parent and child managed coding tools, Shell, Skill/Agent
+  capability files, and holds write-capable in-process/ACP/external delegates
+  for their full execution across HostRuntime connections. Background Shell
+  transfers its lease to the returned Task until terminal state. Agent dispatch
+  tools are not parent-locked; their admitted child owns the mutation window.
+- Same-run write leases reenter with reference counting, and descendant waits
+  on ancestor owners fail fast. Acquisitions auto-renew by default; involuntary
+  loss is observable and starts child/process abort before the queue drains.
+  This does not replace policy or approval, coordinate other Node processes or
+  distributed hosts, or provide a fencing generation/termination
+  acknowledgement. Managed writes still use normal Core policy/events;
+  process delegates still emit the untracked write-capable marker after lease
+  admission.
 - Trace report may lower the severity of an incomplete child only at the
   report layer, and only when raw events prove the ordered chain: child
   `workspace.write.completed`, parent-visible `subagent.*.workspaceWrites > 0`,
@@ -133,6 +137,17 @@ tool proposes write
   from managed workspace writes.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: extended Host workspace arbitration from child-only admission to
+  actual parent/child mutation windows, including background lease transfer,
+  reentrant ownership, run-chain fail-fast, and loss-triggered cancellation.
+- Read: coordinator, Host catalog/runtime, coding/Shell tools, all Agent
+  adapters, and workspace-write event boundaries.
+- Tests: focused coordinator/Agent/process suites, all workspace tests, and
+  release smokes passed. Touched files are format-clean; the global format scan
+  is blocked only by pre-existing dirty proposal docs outside this change.
 
 - Status: Verified
 - Date: 2026-07-14

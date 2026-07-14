@@ -560,6 +560,19 @@ function stringMetadata(
   return typeof value === "string" ? value : undefined;
 }
 
+function stringArrayMetadata(
+  metadata: Record<string, unknown> | undefined,
+  key: string,
+): string[] {
+  const value = metadata?.[key];
+  return Array.isArray(value)
+    ? value.filter(
+        (entry): entry is string =>
+          typeof entry === "string" && entry.length > 0,
+      )
+    : [];
+}
+
 function numberMetadata(
   metadata: Record<string, unknown> | undefined,
   key: string,
@@ -810,6 +823,8 @@ export interface SpawnSubAgentInput {
   admission?(input: {
     invocation: PreparedAgentInvocation;
     abortSignal: AbortSignal;
+    /** Abort the created child if admitted ownership is later lost. */
+    cancel(reason: string, metadata?: Record<string, unknown>): void;
   }): Promise<(() => void) | void>;
   /** Override for testing. Defaults to the core `createRun`. */
   createRun?: typeof defaultCreateRun;
@@ -866,6 +881,10 @@ export function spawnSubAgent(input: SpawnSubAgentInput): SpawnedSubAgent {
     nextSubagentDepth(parent.record.metadata);
   const childRunMetadata = removeUndefinedMetadata({
     ...(input.metadata ?? {}),
+    ancestorRunIds: [
+      ...stringArrayMetadata(parent.record.metadata, "ancestorRunIds"),
+      parent.record.id,
+    ],
     parentRunId: parent.record.id,
     parentSpanId: parent.record.metadata?.spanId as string | undefined,
     sessionId,
@@ -923,6 +942,7 @@ export function spawnSubAgent(input: SpawnSubAgentInput): SpawnedSubAgent {
   };
 
   const child = createRunFn(createOptions);
+  const startChild = child.start.bind(child);
 
   let detach: () => void = () => {};
   if (input.parentUsageTracker) {
@@ -1012,11 +1032,14 @@ export function spawnSubAgent(input: SpawnSubAgentInput): SpawnedSubAgent {
           const admitted = await input.admission({
             invocation,
             abortSignal: createOptions.abortSignal ?? parent.abortSignal,
+            cancel: (reason, metadata) => {
+              child.cancel({ reason, metadata });
+            },
           });
           releaseAdmission = admitted || undefined;
           supervisor.admit();
         }
-        return await child.start();
+        return await startChild();
       } catch (error) {
         supervisor.failed({
           reason:
@@ -1032,6 +1055,11 @@ export function spawnSubAgent(input: SpawnSubAgentInput): SpawnedSubAgent {
     })();
     return startPromise;
   };
+
+  // Preserve the public RunHandle inspection surface without leaving a second
+  // executable path that can bypass admission. `stream()` also observes this
+  // instance method, so every start route shares the same one-shot promise.
+  child.start = start;
 
   return {
     run: child,

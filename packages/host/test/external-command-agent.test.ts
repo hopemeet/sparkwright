@@ -19,7 +19,7 @@ import {
   projectAgentLifecycle,
   terminalLifecycleCount,
 } from "./helpers/agent-lifecycle.js";
-import { WorkspaceAgentArbiter } from "../src/workspace-agent-arbiter.js";
+import { WorkspaceLeaseCoordinator } from "../src/workspace-agent-arbiter.js";
 
 describe("external command delegate tool", () => {
   it("parses external command config from agent profile metadata", () => {
@@ -226,7 +226,7 @@ describe("external command delegate tool", () => {
 
   it("serializes read-write delegates across parents sharing one workspace", async () => {
     const fixture = await createFixtureCommand("setTimeout(() => {}, 250);");
-    const arbiter = new WorkspaceAgentArbiter();
+    const arbiter = new WorkspaceLeaseCoordinator();
     const makeParent = () =>
       createRun({
         goal: "parent",
@@ -258,7 +258,7 @@ describe("external command delegate tool", () => {
         description: "Delegate to a serialized writer.",
         workspaceRoot: fixture.cwd,
         allowReadWriteWorkspaceAccess: true,
-        workspaceAgentArbiter: arbiter,
+        workspaceLeaseCoordinator: arbiter,
       });
 
     const first = makeTool(firstParent).execute({ goal: "first" }, {
@@ -287,6 +287,64 @@ describe("external command delegate tool", () => {
       readers: [],
       queued: [],
     });
+  });
+
+  it("terminates a read-write delegate when its workspace lease is revoked", async () => {
+    const fixture = await createFixtureCommand("setInterval(() => {}, 1000);");
+    const coordinator = new WorkspaceLeaseCoordinator();
+    const parent = createRun({
+      goal: "parent",
+      model: {
+        async complete() {
+          return { message: "parent" };
+        },
+      },
+      maxSteps: 1,
+    });
+    const profile: AgentProfile = {
+      id: "external_writer",
+      metadata: {
+        externalCommand: {
+          command: process.execPath,
+          args: [fixture.commandPath],
+          input: "none",
+          workspaceAccess: "read_write",
+        },
+      },
+    };
+    const tool = createExternalCommandDelegateTool({
+      getParent: () => parent,
+      profile,
+      toolName: "delegate_external_writer",
+      description: "Delegate to a revocable writer.",
+      workspaceRoot: fixture.cwd,
+      allowReadWriteWorkspaceAccess: true,
+      workspaceLeaseCoordinator: coordinator,
+    });
+
+    const pending = tool.execute({ goal: "write until revoked" }, {
+      run: parent.record,
+    } as never);
+    await vi.waitFor(() =>
+      expect(lifecycleTypes(parent.events.all())).toContain("subagent.started"),
+    );
+    const ownerId = coordinator.inspect(fixture.cwd).writer?.ownerId;
+    expect(ownerId).toBeDefined();
+    expect(coordinator.revoke(fixture.cwd, ownerId!)).toBe(true);
+
+    await expect(pending).rejects.toMatchObject({
+      code: "DELEGATE_NONZERO_EXIT",
+    });
+    const requested = parent.events
+      .all()
+      .find((event) => event.type === "subagent.requested");
+    const childRunId = (requested?.payload as { childRunId: string })
+      .childRunId;
+    expect(
+      projectAgentLifecycle(parent.events.all(), childRunId).at(-1),
+    ).toMatchObject({ terminalState: "failed" });
+    expect(terminalLifecycleCount(parent.events.all(), childRunId)).toBe(1);
+    expect(coordinator.inspect(fixture.cwd).writer).toBeUndefined();
   });
 
   it("summarizes stderr token progress on the external delegate result", async () => {

@@ -1449,7 +1449,10 @@ describe("createAgentTool / mountAgentTool", () => {
         }),
     });
 
-    const completion = spawned.start();
+    // The public RunHandle route is guarded too; embedders cannot bypass the
+    // admission gate by reaching through SpawnedSubAgent.run.
+    const completion = spawned.run.start();
+    expect(spawned.start()).toBe(completion);
     await Promise.resolve();
     expect(childCalls).toBe(0);
     expect(

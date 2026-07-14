@@ -120,6 +120,11 @@ args` without rewriting requests, while the latter parses Host command text
 - Background shell tasks keep `task.*` as their trace lifecycle; stdout/stderr are
   buffered in `TaskStore`, mirrored as `task.output`, and summarized on the
   terminal task event through `ProcessOutputSummary`.
+- Host acquires a process-local workspace mutation lease only for Shell calls
+  whose effective argument-level governance includes `write`. Foreground calls
+  release after execution; explicit/promoted background calls transfer the same
+  lease to the returned Task and release at terminal state. A lease-loss signal
+  aborts/cancels the live task, but is not an OS fencing guarantee.
 - Workflow P4 script processes reuse the host process/sandbox substrate rather
   than defining a second runner. `workflow-node-api.ts` maps script execution
   into `TracedProcessRunner.runJsonRpc()` with shell-sandbox policy inputs,
@@ -144,6 +149,10 @@ args` without rewriting requests, while the latter parses Host command text
 - ACP child workers also consume the shared launch decision, but keep ACP
   JSON-RPC/session/permission lifecycle in `acp-client-adapter`; they do not use
   Host shell parsing, shell mutation snapshots, or `TracedProcessRunner`.
+- External-command and ACP write delegates hold the same workspace lease for
+  their complete process/session window. Lease loss reaches their native abort
+  path; raw processes use TERM then KILL escalation, and ACP cleanup waits for
+  worker exit before its adapter releases the lease.
 - ACP and external-command delegates with `workspaceAccess:none` force the
   sandbox launch decision to fail closed and protect the workspace from writes
   while keeping their private execution cwd writable. Linux enforces this with
@@ -175,6 +184,17 @@ args` without rewriting requests, while the latter parses Host command text
 - Shell is powerful and cross-cuts workspace, tasks, trace, and capability state.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: tied mutating foreground/background Shell and write-capable process
+  delegates to Host workspace lease lifetimes, including loss-triggered process
+  termination and ACP exit acknowledgement.
+- Read: Host Shell catalog/wrapper, Task handoff, traced process runner,
+  external-command adapter, and ACP worker.
+- Tests: focused Shell/process/ACP suites, all workspace tests, and release
+  smokes passed. Touched files are format-clean; the global format scan is
+  blocked only by pre-existing dirty proposal docs outside this change.
 
 - Status: Verified
 - Date: 2026-07-14

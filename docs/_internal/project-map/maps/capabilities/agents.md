@@ -282,17 +282,22 @@ configured profiles/delegates
   external-command access/sandbox admission failures emit requested -> failed,
   process completions carry `terminalState`/`finality`, and indexed calls record
   `entrypoint:"delegate_agent"` without exposing a spoofable model JSON field.
-- Host Agent execution is admitted through one process-local fair RW arbiter
-  keyed by the workspace realpath. Read-only in-process, dynamic, and parallel
-  children may share; write-capable in-process, ACP, and external-command
-  children serialize across HostRuntime connections. `subagent.requested`
-  remains visible while queued, while `started` cannot appear before lease
-  acquisition. Lifecycle metadata carries `workspaceAccess` and
-  `agentConcurrency` so the requested-to-started gap is interpretable.
-- Lease TTL, heartbeat renewal, abortable queue removal, inspection, and
-  idempotent release provide an availability escape hatch. The guarantee ends
-  at the Node process boundary and has no fencing generation; it does not
-  serialize unrelated parent-run writes or claim distributed exclusion.
+- Host Agent execution and actual Host parent/child mutation tools share one
+  process-local fair workspace lease coordinator keyed by workspace realpath.
+  Read-only Agent children may share; write-capable in-process, ACP, and
+  external-command children serialize with parent coding/Shell/capability
+  mutations across HostRuntime connections. `subagent.requested` remains
+  visible while queued, while `started` cannot appear before lease acquisition.
+  Lifecycle metadata carries `workspaceAccess` and `agentConcurrency` so the
+  requested-to-started gap is interpretable.
+- Child execution leases and child write tools reenter under the same run id.
+  Descendant requests blocked by an ancestor fail fast; opening nested
+  delegation beyond current Host catalogs must preserve full run-chain
+  ancestry. Acquisitions auto-renew, queue removal is abortable, release is
+  reference-counted/idempotent, and loss signals child/process cancellation.
+  The guarantee ends at the Node process boundary and has no fencing generation
+  or termination acknowledgement, so it does not claim distributed or stale-
+  writer exclusion.
 - In-process Agent runs inherit opaque Core descendant-tree budget accounts.
   A configured run budget still governs the run locally and also creates a
   separate shared ceiling for all of its descendants; nested children consume
@@ -380,6 +385,17 @@ configured profiles/delegates
   detection.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: unified Agent execution admission with parent/child mutation leases,
+  closed raw child-start admission bypass, and connected lease loss to native
+  in-process, ACP, and external-command cancellation.
+- Read: coordinator, all Host Agent entrypoints, portable spawn substrate,
+  process adapters, and lifecycle projections.
+- Tests: focused Agent/coordinator/process suites, all workspace tests, and
+  release smokes passed. Touched files are format-clean; the global format scan
+  is blocked only by pre-existing dirty proposal docs outside this change.
 
 - Status: Verified
 - Date: 2026-07-14

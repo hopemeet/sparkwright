@@ -52,6 +52,10 @@ import {
   agentWorkspaceWriteGrantApprovalSummaryForPayload,
   agentWorkspaceWriteGrantPolicyForPayload,
 } from "./agent-spawn-grants.js";
+import {
+  withWorkspaceMutationLease,
+  type WorkspaceLeaseCoordinator,
+} from "./workspace-agent-arbiter.js";
 
 const MAIN_TODO_MAX_WRITES_PER_RUN = 4;
 export const AGENT_TASK_CREATE_PAYLOAD_DESCRIPTION =
@@ -157,19 +161,23 @@ export function createReadOnlyChildToolCatalog(input: {
 export function createDynamicChildToolCatalog(input: {
   workspaceRoot: string;
   toolConfig?: CapabilityToolsConfig;
+  workspaceLeaseCoordinator?: WorkspaceLeaseCoordinator;
 }): HostToolCatalogEntry[] {
   return withDeferredToolSearch(
-    applyToolConfigToCatalog(
-      [
-        catalogEntry(createReadFileTool(), "coding"),
-        catalogEntry(createGlobPathsTool(input.workspaceRoot), "coding"),
-        catalogEntry(createGrepTextTool(input.workspaceRoot), "coding"),
-        catalogEntry(createListDirTool(input.workspaceRoot), "coding"),
-        catalogEntry(createWriteFileTool(), "coding"),
-        catalogEntry(createEditAnchoredTextTool(), "coding"),
-        catalogEntry(createApplyPatchTool(), "coding"),
-      ],
-      input.toolConfig,
+    applyWorkspaceMutationLeases(
+      applyToolConfigToCatalog(
+        [
+          catalogEntry(createReadFileTool(), "coding"),
+          catalogEntry(createGlobPathsTool(input.workspaceRoot), "coding"),
+          catalogEntry(createGrepTextTool(input.workspaceRoot), "coding"),
+          catalogEntry(createListDirTool(input.workspaceRoot), "coding"),
+          catalogEntry(createWriteFileTool(), "coding"),
+          catalogEntry(createEditAnchoredTextTool(), "coding"),
+          catalogEntry(createApplyPatchTool(), "coding"),
+        ],
+        input.toolConfig,
+      ),
+      input,
     ),
     input.toolConfig,
   );
@@ -181,22 +189,26 @@ export function createConfiguredDelegateChildToolCatalog(input: {
   shell?: ShellConfig;
   skillRoots?: readonly string[];
   configPaths?: readonly string[];
+  workspaceLeaseCoordinator?: WorkspaceLeaseCoordinator;
 }): HostToolCatalogEntry[] {
   return withDeferredToolSearch(
-    applyToolConfigToCatalog(
-      [
-        ...createCoreCodingToolCatalog(input.workspaceRoot),
-        catalogEntry(
-          createHostShellTool(input.workspaceRoot, {
-            foregroundTimeoutMs: input.shell?.foregroundTimeoutMs,
-            sandbox: input.shell?.sandbox,
-            skillRoots: input.skillRoots,
-            extraForcedDenyWrite: input.configPaths,
-          }),
-          "shell",
-        ),
-      ],
-      input.toolConfig,
+    applyWorkspaceMutationLeases(
+      applyToolConfigToCatalog(
+        [
+          ...createCoreCodingToolCatalog(input.workspaceRoot),
+          catalogEntry(
+            createHostShellTool(input.workspaceRoot, {
+              foregroundTimeoutMs: input.shell?.foregroundTimeoutMs,
+              sandbox: input.shell?.sandbox,
+              skillRoots: input.skillRoots,
+              extraForcedDenyWrite: input.configPaths,
+            }),
+            "shell",
+          ),
+        ],
+        input.toolConfig,
+      ),
+      input,
     ),
     input.toolConfig,
   );
@@ -232,10 +244,14 @@ export function createMainHostToolCatalog(input: {
   shell?: ShellConfig;
   backgroundTasks?: BackgroundTaskPolicy;
   configPaths?: readonly string[];
+  workspaceLeaseCoordinator?: WorkspaceLeaseCoordinator;
 }): HostToolCatalogEntry[] {
-  const entries = applyToolConfigToCatalog(
-    createMainHostToolCatalogList(input),
-    input.toolConfig,
+  const entries = applyWorkspaceMutationLeases(
+    applyToolConfigToCatalog(
+      createMainHostToolCatalogList(input),
+      input.toolConfig,
+    ),
+    input,
   );
   return withDeferredToolSearch(entries, input.toolConfig);
 }
@@ -430,6 +446,37 @@ function createCoreCodingToolCatalog(
     catalogEntry(createEditAnchoredTextTool(), "coding"),
     catalogEntry(createApplyPatchTool(), "coding"),
   ];
+}
+
+function applyWorkspaceMutationLeases(
+  entries: HostToolCatalogEntry[],
+  input: {
+    workspaceRoot: string;
+    workspaceLeaseCoordinator?: WorkspaceLeaseCoordinator;
+    taskManager?: TaskManager;
+  },
+): HostToolCatalogEntry[] {
+  if (!input.workspaceLeaseCoordinator) return entries;
+  const eligibleSources = new Set<HostToolCatalogSource>([
+    "coding",
+    "shell",
+    "skill",
+  ]);
+  return entries.map((entry) =>
+    eligibleSources.has(entry.source) ||
+    (entry.source === "agent" && entry.definition.name === "create_agent")
+      ? {
+          ...entry,
+          definition: withWorkspaceMutationLease(entry.definition, {
+            coordinator: input.workspaceLeaseCoordinator,
+            workspaceRoot: input.workspaceRoot,
+            ...(entry.source === "shell" && input.taskManager
+              ? { backgroundTaskManager: input.taskManager }
+              : {}),
+          }),
+        }
+      : entry,
+  );
 }
 
 function applyToolConfigToCatalog(

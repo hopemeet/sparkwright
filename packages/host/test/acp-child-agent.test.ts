@@ -19,6 +19,7 @@ import {
   projectAgentLifecycle,
   terminalLifecycleCount,
 } from "./helpers/agent-lifecycle.js";
+import { WorkspaceLeaseCoordinator } from "../src/workspace-agent-arbiter.js";
 
 describe("ACP child agent delegate tool", () => {
   it("parses ACP config from agent profile metadata", () => {
@@ -300,6 +301,65 @@ describe("ACP child agent delegate tool", () => {
     );
   });
 
+  it("terminates an ACP writer when its workspace lease is revoked", async () => {
+    const fixture = await createFixtureAgent(
+      'globalThis.__promptDelayMs = 10_000; process.on("SIGTERM", () => {});',
+    );
+    const coordinator = new WorkspaceLeaseCoordinator();
+    const parent = createRun({
+      goal: "parent",
+      model: {
+        async complete() {
+          return { message: "parent" };
+        },
+      },
+      maxSteps: 1,
+    });
+    const profile: AgentProfile = {
+      id: "external_writer",
+      metadata: {
+        acp: {
+          transport: "stdio",
+          command: process.execPath,
+          args: [fixture.agentPath],
+          workspaceAccess: "read_write",
+        },
+      },
+    };
+    const tool = createAcpDelegateTool({
+      getParent: () => parent,
+      profile,
+      toolName: "delegate_external_writer",
+      description: "Delegate to a revocable ACP writer.",
+      workspaceRoot: fixture.cwd,
+      allowReadWriteWorkspaceAccess: true,
+      sandbox: { mode: "off" },
+      workspaceLeaseCoordinator: coordinator,
+    });
+
+    const pending = tool.execute({ goal: "write until revoked" }, {
+      run: parent.record,
+    } as never);
+    await vi.waitFor(() =>
+      expect(lifecycleTypes(parent.events.all())).toContain("subagent.started"),
+    );
+    const ownerId = coordinator.inspect(fixture.cwd).writer?.ownerId;
+    expect(ownerId).toBeDefined();
+    expect(coordinator.revoke(fixture.cwd, ownerId!)).toBe(true);
+
+    await expect(pending).rejects.toThrow("External ACP worker aborted");
+    const requested = parent.events
+      .all()
+      .find((event) => event.type === "subagent.requested");
+    const childRunId = (requested?.payload as { childRunId: string })
+      .childRunId;
+    expect(
+      projectAgentLifecycle(parent.events.all(), childRunId).at(-1),
+    ).toMatchObject({ terminalState: "failed" });
+    expect(terminalLifecycleCount(parent.events.all(), childRunId)).toBe(1);
+    expect(coordinator.inspect(fixture.cwd).writer).toBeUndefined();
+  });
+
   it("fails closed for workspaceAccess none when ACP sandbox is unavailable", async () => {
     const fixture = await createFixtureAgent();
     const parent = createRun({
@@ -497,6 +557,7 @@ class FixtureAgent {
   async closeSession() { return {}; }
   async cancel() {}
   async prompt(params) {
+    await new Promise((resolve) => setTimeout(resolve, globalThis.__promptDelayMs ?? 0));
     const text = params.prompt.find((block) => block.type === "text")?.text ?? "";
     await this.connection.sessionUpdate({
       sessionId: params.sessionId,

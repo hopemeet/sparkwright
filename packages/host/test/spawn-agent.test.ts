@@ -31,6 +31,7 @@ import {
 } from "../src/runtime.js";
 import { createReadFileTool } from "../src/tools.js";
 import { createDynamicChildToolCatalog } from "../src/tool-catalog.js";
+import { WorkspaceLeaseCoordinator } from "../src/workspace-agent-arbiter.js";
 import {
   lifecycleTypes,
   projectAgentLifecycle,
@@ -304,8 +305,10 @@ describe("host spawn_agent wiring", () => {
         createWorkspaceMutationPolicy({ allowWorkspaceWrites: true }),
       ]);
       const parentRef: { current?: ReturnType<typeof createRun> } = {};
+      const workspaceLeaseCoordinator = new WorkspaceLeaseCoordinator();
       const childTools = createDynamicChildToolCatalog({
         workspaceRoot: root,
+        workspaceLeaseCoordinator,
       }).map((entry) => entry.definition);
       const spawnTool = createDynamicSpawnAgentTool({
         getParent: () => parentRef.current,
@@ -313,6 +316,8 @@ describe("host spawn_agent wiring", () => {
         childTools,
         parentRunPolicy: policy,
         childRunStoreFactory: () => undefined as never,
+        workspaceRoot: root,
+        workspaceLeaseCoordinator,
       });
       let parentCalls = 0;
       let approvalCalls = 0;
@@ -371,6 +376,11 @@ describe("host spawn_agent wiring", () => {
         "written after approval\n",
       );
       expect(parent.record.state).toBe("completed");
+      expect(workspaceLeaseCoordinator.inspect(root)).toMatchObject({
+        readers: [],
+        queued: [],
+      });
+      expect(workspaceLeaseCoordinator.inspect(root).writer).toBeUndefined();
     } finally {
       await rm(root, { recursive: true, force: true });
     }

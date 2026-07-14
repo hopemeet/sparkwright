@@ -31,6 +31,7 @@ export interface ExternalAcpWorkerRunInput {
   goal: string;
   cwd: string;
   metadata?: Record<string, unknown>;
+  signal?: AbortSignal;
 }
 
 export interface ExternalAcpWorkerRunResult {
@@ -91,34 +92,45 @@ export class ExternalAcpWorker {
     );
     const timeout = createTimeout(this.options.timeoutMs);
     try {
-      const run = runWithAbort(timeout.signal, async () => {
-        await connection.initialize({
-          protocolVersion: PROTOCOL_VERSION,
-          clientCapabilities: {},
-          clientInfo: { name: "SparkWright", version: "0.1.0" },
-        });
-        const session = await connection.newSession({
-          cwd: input.cwd,
-          mcpServers: [],
-        });
-        const response = await connection.prompt({
-          sessionId: session.sessionId,
-          prompt: runInputToContent(input),
-        });
-        await connection
-          .closeSession({ sessionId: session.sessionId })
-          .catch(() => {});
-        return summarizeRun({
-          sessionId: session.sessionId,
-          response,
-          updates,
-          metadata: input.metadata ?? {},
-        });
-      });
+      const timedRun = runWithAbort(
+        timeout.signal,
+        async () => {
+          await connection.initialize({
+            protocolVersion: PROTOCOL_VERSION,
+            clientCapabilities: {},
+            clientInfo: { name: "SparkWright", version: "0.1.0" },
+          });
+          const session = await connection.newSession({
+            cwd: input.cwd,
+            mcpServers: [],
+          });
+          const response = await connection.prompt({
+            sessionId: session.sessionId,
+            prompt: runInputToContent(input),
+          });
+          await connection
+            .closeSession({ sessionId: session.sessionId })
+            .catch(() => {});
+          return summarizeRun({
+            sessionId: session.sessionId,
+            response,
+            updates,
+            metadata: input.metadata ?? {},
+          });
+        },
+        "External ACP worker timed out.",
+      );
+      const run = input.signal
+        ? runWithAbort(
+            input.signal,
+            () => timedRun,
+            "External ACP worker aborted.",
+          )
+        : timedRun;
       return await Promise.race([run, childFailure]);
     } finally {
       timeout.dispose();
-      terminateWorker(child);
+      await terminateWorker(child);
       await this.options.cleanup?.();
     }
   }
@@ -292,23 +304,49 @@ function createTimeout(timeoutMs: number | undefined): {
 async function runWithAbort<T>(
   signal: AbortSignal,
   fn: () => Promise<T>,
+  message: string,
 ): Promise<T> {
-  if (signal.aborted) throw new Error("External ACP worker timed out.");
-  return Promise.race([
-    fn(),
-    new Promise<T>((_resolve, reject) => {
-      signal.addEventListener(
-        "abort",
-        () => reject(new Error("External ACP worker timed out.")),
-        { once: true },
-      );
-    }),
-  ]);
+  if (signal.aborted) throw new Error(message);
+  let abort!: () => void;
+  const aborted = new Promise<T>((_resolve, reject) => {
+    abort = () => reject(new Error(message));
+    signal.addEventListener("abort", abort, { once: true });
+  });
+  try {
+    return await Promise.race([fn(), aborted]);
+  } finally {
+    signal.removeEventListener("abort", abort);
+  }
 }
 
-function terminateWorker(child: ChildProcess): void {
+const WORKER_TERMINATION_GRACE_MS = 500;
+
+async function terminateWorker(child: ChildProcess): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null) return;
-  child.kill();
+  if (child.pid === undefined) return;
+  await new Promise<void>((resolve) => {
+    let settled = false;
+    const killTimer = setTimeout(
+      () => child.kill("SIGKILL"),
+      WORKER_TERMINATION_GRACE_MS,
+    );
+    killTimer.unref?.();
+    const finish = (): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(killTimer);
+      child.removeListener("exit", finish);
+      child.removeListener("error", finish);
+      resolve();
+    };
+    child.once("exit", finish);
+    child.once("error", finish);
+    if (child.exitCode !== null || child.signalCode !== null) {
+      finish();
+      return;
+    }
+    child.kill("SIGTERM");
+  });
 }
 
 function exitStatus(

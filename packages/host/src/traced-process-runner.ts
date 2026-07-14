@@ -167,6 +167,8 @@ export interface TracedProcessInput {
   ) => void | Promise<void>;
   /** Called once after the child process is actually admitted and started. */
   onStarted?: () => void;
+  /** Abort an admitted process and report PROCESS_ABORTED. */
+  abortSignal?: AbortSignal;
 }
 
 export interface TracedStreamingProcessInput {
@@ -613,6 +615,14 @@ export class TracedProcessRunner {
     stderr: OutputCollector,
     progress: ProgressEmitter,
   ): Promise<RawProcessResult> {
+    if (input.abortSignal?.aborted) {
+      return {
+        exitCode: null,
+        signal: null,
+        timedOut: false,
+        error: { code: "PROCESS_ABORTED", message: "Process aborted." },
+      };
+    }
     if (input.sandbox && input.sandbox.mode !== "off") {
       const sandboxed = await this.executeSandboxed(
         input,
@@ -693,15 +703,27 @@ export class TracedProcessRunner {
       };
     }
     input.onStarted?.();
-    return {
-      status: "completed",
-      result: await collectStreamingResult(
+    const abort = () => started.result.handle.abort("process aborted");
+    input.abortSignal?.addEventListener("abort", abort, { once: true });
+    try {
+      const result = await collectStreamingResult(
         started.result,
         stdout,
         stderr,
         progress,
-      ),
-    };
+      );
+      return {
+        status: "completed",
+        result: input.abortSignal?.aborted
+          ? {
+              ...result,
+              error: { code: "PROCESS_ABORTED", message: "Process aborted." },
+            }
+          : result,
+      };
+    } finally {
+      input.abortSignal?.removeEventListener("abort", abort);
+    }
   }
 
   private async executeRaw(
@@ -715,6 +737,7 @@ export class TracedProcessRunner {
     return new Promise<RawProcessResult>((resolve) => {
       let settled = false;
       let timedOut = false;
+      let aborted = false;
       // eslint-disable-next-line prefer-const -- assigned after spawn; finish closes over it.
       let timer: NodeJS.Timeout | undefined;
       let killTimer: NodeJS.Timeout | undefined;
@@ -735,6 +758,7 @@ export class TracedProcessRunner {
       const finish = (result: RawProcessResult): void => {
         if (settled) return;
         settled = true;
+        input.abortSignal?.removeEventListener("abort", abort);
         if (timer) clearTimeout(timer);
         if (killTimer) clearTimeout(killTimer);
         stderrChain = stderrChain
@@ -757,6 +781,20 @@ export class TracedProcessRunner {
           });
       };
       let child: ReturnType<typeof spawn>;
+      const abort = (): void => {
+        if (settled || aborted) return;
+        aborted = true;
+        child?.kill("SIGTERM");
+        killTimer = setTimeout(() => {
+          child?.kill("SIGKILL");
+          finish({
+            exitCode: null,
+            signal: "SIGKILL",
+            timedOut: false,
+            error: { code: "PROCESS_ABORTED", message: "Process aborted." },
+          });
+        }, TIMEOUT_KILL_GRACE_MS);
+      };
       try {
         child = spawn(input.command, [...(input.args ?? [])], {
           cwd: input.cwd,
@@ -779,6 +817,9 @@ export class TracedProcessRunner {
         });
         return;
       }
+
+      input.abortSignal?.addEventListener("abort", abort, { once: true });
+      if (input.abortSignal?.aborted) abort();
 
       timer =
         input.timeoutMs && input.timeoutMs > 0
@@ -849,14 +890,21 @@ export class TracedProcessRunner {
           exitCode: code,
           signal,
           timedOut,
-          ...(timedOut
+          ...(aborted
             ? {
                 error: {
-                  code: "PROCESS_TIMEOUT",
-                  message: "Process timed out.",
+                  code: "PROCESS_ABORTED",
+                  message: "Process aborted.",
                 },
               }
-            : {}),
+            : timedOut
+              ? {
+                  error: {
+                    code: "PROCESS_TIMEOUT",
+                    message: "Process timed out.",
+                  },
+                }
+              : {}),
         });
       });
     });

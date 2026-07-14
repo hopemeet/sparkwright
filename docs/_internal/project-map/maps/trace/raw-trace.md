@@ -213,6 +213,17 @@ EventLog emits full event
 
 - Status: Verified
 - Date: 2026-07-14
+- Scope: workspace lease loss now surfaces bounded tool progress/cancellation
+  diagnostics and `PROCESS_ABORTED` process failure evidence without changing
+  event envelopes, lifecycle families, or managed-write attribution.
+- Read: workspace lease wrapper, Agent supervisors, traced process runner, ACP
+  worker, and raw event projections.
+- Tests: focused coordinator/Agent/process suites, all workspace tests, and
+  release smokes passed. Touched files are format-clean; the global format scan
+  is blocked only by pre-existing dirty proposal docs outside this change.
+
+- Status: Verified
+- Date: 2026-07-14
 - Scope: unified parent Agent lifecycle projection under `AgentSupervisor`;
   admission failures no longer emit `started`, process terminals have parity,
   and indexed calls expose their real entrypoint.

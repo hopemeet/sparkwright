@@ -339,9 +339,10 @@ Does not own:
   gate and returns `SpawnedSubAgent.start()`. The child identity and
   `subagent.requested` exist before the gate; the supervisor becomes admitted
   and the Core run starts only after the gate resolves. Its release callback is
-  held across the child execution and invoked once in `finally`. Callers that
-  supply admission must use `SpawnedSubAgent.start()` rather than bypassing the
-  gate through the raw `RunHandle`.
+  held across the child execution and invoked once in `finally`. The returned
+  `RunHandle.start()` is replaced with that same one-shot guarded start, so
+  embedders cannot bypass admission through `SpawnedSubAgent.run`; `stream()`
+  observes the guarded instance method as well.
 - Prepared invocation metadata projects optional `workspaceAccess` and
   `agentConcurrency` governance facts onto every parent-visible lifecycle
   phase. Agent-runtime carries those facts but does not choose workspace lease
@@ -391,6 +392,16 @@ Does not own:
   not authorize a generic actor bus or nested background lifecycle.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: closed the public `SpawnedSubAgent.run.start()` admission bypass and
+  propagated ancestor run ids into child metadata for Host lease ownership.
+- Read: portable spawn substrate, RunHandle start/stream behavior, Host
+  workspace admission, and Agent lifecycle tests.
+- Tests: agent-runtime index 45/45, all workspace tests, and release smokes
+  passed. Touched files are format-clean; the global format scan is blocked
+  only by pre-existing dirty proposal docs outside this change.
 
 - Status: Verified
 - Date: 2026-07-14

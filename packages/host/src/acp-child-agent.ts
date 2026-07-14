@@ -36,8 +36,9 @@ import {
   type DelegateWorkspaceAccess,
 } from "./delegate-capability.js";
 import {
-  createWorkspaceAgentAdmission,
-  type WorkspaceAgentArbiter,
+  createWorkspaceLeaseAbortController,
+  createWorkspaceMutationAdmission,
+  type WorkspaceLeaseCoordinator,
 } from "./workspace-agent-arbiter.js";
 
 export interface AcpChildAgentConfig {
@@ -66,7 +67,7 @@ export interface CreateAcpDelegateToolInput {
   sandboxRuntime?: ShellSandboxRuntime;
   skillRoots?: readonly string[];
   configPaths?: readonly string[];
-  workspaceAgentArbiter?: WorkspaceAgentArbiter;
+  workspaceLeaseCoordinator?: WorkspaceLeaseCoordinator;
 }
 
 export interface AcpDelegateToolResult {
@@ -224,6 +225,9 @@ export function createAcpDelegateTool(
         | Awaited<ReturnType<typeof resolveDelegateProcessWorkspace>>
         | undefined;
       let releaseWorkspaceLease: (() => void) | undefined;
+      const leaseAbort = createWorkspaceLeaseAbortController(
+        parent.abortSignal,
+      );
       try {
         assertReadWriteWorkspaceAccessAllowed({
           workspaceAccess,
@@ -231,11 +235,15 @@ export function createAcpDelegateTool(
           allowed: input.allowReadWriteWorkspaceAccess === true,
         });
         if (workspaceAccess === "read_write") {
-          releaseWorkspaceLease = await createWorkspaceAgentAdmission({
-            arbiter: input.workspaceAgentArbiter,
+          releaseWorkspaceLease = await createWorkspaceMutationAdmission({
+            coordinator: input.workspaceLeaseCoordinator,
             workspaceRoot: input.workspaceRoot,
             mode: "write",
-          })({ invocation, abortSignal: parent.abortSignal });
+          })({
+            invocation,
+            abortSignal: leaseAbort.signal,
+            cancel: leaseAbort.cancel,
+          });
         }
         if (workspaceAccess === "read_write") {
           parent.events.emit(
@@ -288,6 +296,7 @@ export function createAcpDelegateTool(
               : executionWorkspace.cwd,
           goal: parsed.goal,
           metadata: parsed.metadata,
+          signal: leaseAbort.signal,
         });
         const output: AcpDelegateToolResult = {
           childRunId,
@@ -323,6 +332,7 @@ export function createAcpDelegateTool(
         throw wrapped;
       } finally {
         releaseWorkspaceLease?.();
+        leaseAbort.dispose();
         await executionWorkspace?.cleanup();
       }
     },

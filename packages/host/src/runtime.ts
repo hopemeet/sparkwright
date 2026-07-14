@@ -129,8 +129,9 @@ import { CronStore, defaultCronRoot } from "@sparkwright/cron";
 import { RECOMMENDED_FOREGROUND_TIMEOUT_MS } from "@sparkwright/shell-tool";
 import { DurableCommandDispatcher } from "@sparkwright/server-runtime";
 import {
-  createWorkspaceAgentAdmission,
-  type WorkspaceAgentArbiter,
+  createWorkspaceMutationAdmission,
+  processWorkspaceLeaseCoordinator,
+  type WorkspaceLeaseCoordinator,
 } from "./workspace-agent-arbiter.js";
 import {
   type ResolvedShellSandboxConfig,
@@ -424,6 +425,8 @@ export interface RuntimeOptions {
   extraMcpServers?: readonly McpServerConfig[];
   /** Called to deliver host events to the client. */
   emit: (event: HostEvent) => void;
+  /** @internal Process-scoped workspace mutation coordinator override. */
+  workspaceLeaseCoordinator?: WorkspaceLeaseCoordinator;
 }
 
 interface PendingApproval {
@@ -805,7 +808,7 @@ export interface HostAgentTaskRunnerDeps {
   maxDepth?: number;
   sessionId?: string;
   workspaceRoot?: string;
-  workspaceAgentArbiter?: WorkspaceAgentArbiter;
+  workspaceLeaseCoordinator?: WorkspaceLeaseCoordinator;
 }
 
 /**
@@ -851,7 +854,7 @@ export async function runHostAgentTask(
     foregroundTimeoutMs: deps.foregroundTimeoutMs,
     taskId: String(controller.taskId),
     workspaceRoot: deps.workspaceRoot,
-    workspaceAgentArbiter: deps.workspaceAgentArbiter,
+    workspaceLeaseCoordinator: deps.workspaceLeaseCoordinator,
   });
   const ctx: RuntimeContext = {
     run: parent.record,
@@ -2015,6 +2018,8 @@ export class HostRuntime {
     }
 
     const workspaceRoot = this.opts.workspaceRoot;
+    const workspaceLeaseCoordinator =
+      this.opts.workspaceLeaseCoordinator ?? processWorkspaceLeaseCoordinator;
     const workspace = new LocalWorkspace(workspaceRoot);
     const sessionRootDir =
       this.opts.sessionRootDir ?? defaultSessionRootDir(workspaceRoot);
@@ -2168,6 +2173,7 @@ export class HostRuntime {
     const dynamicChildToolCatalog = createDynamicChildToolCatalog({
       workspaceRoot,
       toolConfig,
+      workspaceLeaseCoordinator,
     });
     const delegateChildToolCatalog = createConfiguredDelegateChildToolCatalog({
       workspaceRoot,
@@ -2175,6 +2181,7 @@ export class HostRuntime {
       shell: shellConfig,
       skillRoots: skillRoots.map((root) => root.root),
       configPaths: loadedConfig.attempted.map((entry) => entry.path),
+      workspaceLeaseCoordinator,
     });
     const derivedAgents = deriveConfiguredAgents(
       mainAgent,
@@ -2243,6 +2250,7 @@ export class HostRuntime {
       childRunStoreFactory,
       allowReadWriteWorkspaceAccess: runAccess.shouldWrite,
       maxDepth: agentConfig?.maxDepth,
+      workspaceLeaseCoordinator,
     });
     const directDelegates = filterDirectDelegatesForExposure(
       delegateRouting.delegates,
@@ -2279,6 +2287,7 @@ export class HostRuntime {
           allowReadWriteWorkspaceAccess: runAccess.shouldWrite,
           maxDepth: agentConfig?.maxDepth,
           workspaceRoot,
+          workspaceLeaseCoordinator,
         })
       : undefined;
     const delegateDescriptors = describeConfiguredDelegateTools({
@@ -2302,6 +2311,7 @@ export class HostRuntime {
       taskManager: this.taskManager,
       backgroundTasks: runAccess.backgroundTasks,
       workspaceRoot,
+      workspaceLeaseCoordinator,
     });
     // Publish spawn deps for the registered `agent` background task kind so a
     // `task_create(kind:"agent")` call can drive a child run that the task,
@@ -2320,6 +2330,7 @@ export class HostRuntime {
       backgroundTasks: runAccess.backgroundTasks,
       foregroundTimeoutMs:
         shellConfig?.foregroundTimeoutMs ?? RECOMMENDED_FOREGROUND_TIMEOUT_MS,
+      workspaceLeaseCoordinator,
     };
     const toolCatalog = createMainHostToolCatalog({
       workspaceRoot,
@@ -2338,6 +2349,7 @@ export class HostRuntime {
       shell: shellConfig,
       backgroundTasks: runAccess.backgroundTasks,
       configPaths: loadedConfig.attempted.map((entry) => entry.path),
+      workspaceLeaseCoordinator,
     });
     const tools = catalogToolDefinitions(toolCatalog);
     const workflows = await loadLayeredWorkflowAssets(workspaceRoot);
@@ -6377,7 +6389,7 @@ export function createConfiguredDelegateTools(input: {
   configPaths?: readonly string[];
   allowReadWriteWorkspaceAccess: boolean;
   maxDepth?: number;
-  workspaceAgentArbiter?: WorkspaceAgentArbiter;
+  workspaceLeaseCoordinator?: WorkspaceLeaseCoordinator;
   /** Builds a session-scoped run store for the child, keyed by its agent id. */
   childRunStoreFactory: (
     childAgentId: string,
@@ -6410,7 +6422,7 @@ export function createConfiguredDelegateTools(input: {
           sandbox: input.sandbox,
           skillRoots: input.skillRoots,
           configPaths: input.configPaths,
-          workspaceAgentArbiter: input.workspaceAgentArbiter,
+          workspaceLeaseCoordinator: input.workspaceLeaseCoordinator,
         }),
       );
       continue;
@@ -6432,7 +6444,7 @@ export function createConfiguredDelegateTools(input: {
           sandbox: input.sandbox,
           skillRoots: input.skillRoots,
           configPaths: input.configPaths,
-          workspaceAgentArbiter: input.workspaceAgentArbiter,
+          workspaceLeaseCoordinator: input.workspaceLeaseCoordinator,
         }),
       );
       continue;
@@ -6483,8 +6495,8 @@ export function createConfiguredDelegateTools(input: {
           ]),
           maxSteps: delegate.maxSteps ?? profile.maxSteps,
           runBudget: profile.runBudget,
-          admission: createWorkspaceAgentAdmission({
-            arbiter: input.workspaceAgentArbiter,
+          admission: createWorkspaceMutationAdmission({
+            coordinator: input.workspaceLeaseCoordinator,
             workspaceRoot: input.workspaceRoot,
             mode:
               capabilityFacts.workspaceAccess === "read_write"
@@ -6552,7 +6564,7 @@ export function createDelegateParallelTool(input: {
   allowReadWriteWorkspaceAccess: boolean;
   maxDepth?: number;
   workspaceRoot?: string;
-  workspaceAgentArbiter?: WorkspaceAgentArbiter;
+  workspaceLeaseCoordinator?: WorkspaceLeaseCoordinator;
   childRunStoreFactory: (
     childAgentId: string,
   ) => ReturnType<typeof createSessionRunStoreFactory>;
@@ -6788,8 +6800,8 @@ export function createDelegateParallelTool(input: {
             runBudget: spec.profile.runBudget,
             ...(input.workspaceRoot
               ? {
-                  admission: createWorkspaceAgentAdmission({
-                    arbiter: input.workspaceAgentArbiter,
+                  admission: createWorkspaceMutationAdmission({
+                    coordinator: input.workspaceLeaseCoordinator,
                     workspaceRoot: input.workspaceRoot,
                     mode: "read",
                   }),
@@ -7205,7 +7217,7 @@ export function createDynamicSpawnAgentTool(input: {
   delegateToolName?: string;
   taskId?: string;
   workspaceRoot?: string;
-  workspaceAgentArbiter?: WorkspaceAgentArbiter;
+  workspaceLeaseCoordinator?: WorkspaceLeaseCoordinator;
   /**
    * When set with `taskManager`, inline spawn_agent runs in foreground up to
    * this budget and then promotes the same child run into an awaited task.
@@ -7444,8 +7456,8 @@ export function createDynamicSpawnAgentTool(input: {
         abortSignal: childAbort.controller.signal,
         ...(input.workspaceRoot
           ? {
-              admission: createWorkspaceAgentAdmission({
-                arbiter: input.workspaceAgentArbiter,
+              admission: createWorkspaceMutationAdmission({
+                coordinator: input.workspaceLeaseCoordinator,
                 workspaceRoot: input.workspaceRoot,
                 mode: toolRequest.workspaceWriteGrant ? "write" : "read",
               }),

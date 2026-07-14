@@ -44,8 +44,9 @@ import {
   type ProgressChunk,
 } from "./traced-process-runner.js";
 import {
-  createWorkspaceAgentAdmission,
-  type WorkspaceAgentArbiter,
+  createWorkspaceLeaseAbortController,
+  createWorkspaceMutationAdmission,
+  type WorkspaceLeaseCoordinator,
 } from "./workspace-agent-arbiter.js";
 
 export interface ExternalCommandAgentConfig {
@@ -78,7 +79,7 @@ export interface CreateExternalCommandDelegateToolInput {
   sandboxRuntime?: ShellSandboxRuntime;
   skillRoots?: readonly string[];
   configPaths?: readonly string[];
-  workspaceAgentArbiter?: WorkspaceAgentArbiter;
+  workspaceLeaseCoordinator?: WorkspaceLeaseCoordinator;
 }
 
 export interface ExternalCommandDelegateToolResult {
@@ -271,6 +272,9 @@ export function createExternalCommandDelegateTool(
       });
       supervisor.requested();
       let releaseWorkspaceLease: (() => void) | undefined;
+      const leaseAbort = createWorkspaceLeaseAbortController(
+        parent.abortSignal,
+      );
       try {
         assertReadWriteWorkspaceAccessAllowed({
           workspaceAccess,
@@ -278,11 +282,15 @@ export function createExternalCommandDelegateTool(
           allowed: input.allowReadWriteWorkspaceAccess === true,
         });
         if (workspaceAccess === "read_write") {
-          releaseWorkspaceLease = await createWorkspaceAgentAdmission({
-            arbiter: input.workspaceAgentArbiter,
+          releaseWorkspaceLease = await createWorkspaceMutationAdmission({
+            coordinator: input.workspaceLeaseCoordinator,
             workspaceRoot: input.workspaceRoot,
             mode: "write",
-          })({ invocation, abortSignal: parent.abortSignal });
+          })({
+            invocation,
+            abortSignal: leaseAbort.signal,
+            cancel: leaseAbort.cancel,
+          });
         }
         if (workspaceAccess === "read_write") {
           parent.events.emit(
@@ -311,6 +319,7 @@ export function createExternalCommandDelegateTool(
           configPaths: input.configPaths,
           emitter: parent.events,
           runId: parent.record.id,
+          abortSignal: leaseAbort.signal,
           onStarted() {
             supervisor.admit();
             supervisor.started();
@@ -372,6 +381,7 @@ export function createExternalCommandDelegateTool(
         throw error;
       } finally {
         releaseWorkspaceLease?.();
+        leaseAbort.dispose();
       }
     },
   });
@@ -389,6 +399,7 @@ async function runExternalCommand(input: {
   configPaths?: readonly string[];
   emitter: EventEmitter;
   runId: RunId;
+  abortSignal?: AbortSignal;
   onStarted?: () => void;
 }): Promise<
   Pick<
@@ -487,6 +498,7 @@ async function runExternalCommand(input: {
       sandbox: effectiveSandboxConfig,
       sandboxRuntime,
       emitLifecycle: false,
+      abortSignal: input.abortSignal,
       onStarted: input.onStarted,
       onProgress: (chunk) => {
         progress.record(chunk);

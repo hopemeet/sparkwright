@@ -91,6 +91,13 @@ true` records a mutation index for its target (`mutatedByTarget`). A
   `ToolDefinition[]`; capability snapshots use catalog source metadata and
   identity metadata (`canonicalName`, `legacyNames`, `defaultExposureTier`,
   `relatedTools`, `requiresTool`, and per-run `effectiveLoading`).
+- Live Host catalogs wrap tools whose effective argument-level governance
+  declares workspace `write` with a process-local mutation lease. The wrapper
+  is applied after tool filtering and before flattening, so parent and child
+  coding/Shell/capability mutations share one execution boundary. Agent
+  dispatch/delegate tools that admit a child are excluded from parent wrapping;
+  the child execution owns the lease and its managed write tools reenter by run
+  id. Capability inspection builds inert catalogs and does not acquire leases.
 - Host run preparation and configured capability inspection share one immutable
   security plan for resolved access and filesystem/sandbox inputs, then build
   separate stateful lifecycles on top. The plan must not retain prepared MCP
@@ -355,6 +362,17 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
 - TUI live rendering and transcript export now share presentation summaries, but trace/model-context result compaction is still a separate backend concern.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: added catalog-level mutation lease wrapping around actual Host
+  parent/child write execution without moving policy, approval, or concurrency
+  classification out of Core.
+- Read: Host tool catalog/runtime, effective argument governance, Agent spawn
+  grants, Shell background handoff, and coordinator wrapper.
+- Tests: focused Host tool/Agent/coordinator suites, all workspace tests, and
+  release smokes passed. Touched files are format-clean; the global format scan
+  is blocked only by pre-existing dirty proposal docs outside this change.
 
 - Status: Verified
 - Date: 2026-07-14
