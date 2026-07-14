@@ -299,6 +299,30 @@ describe("platform invocation builders", () => {
     expect(writeBind).toBeGreaterThan(tmpBind);
   });
 
+  it("omits descendant deny mounts covered by an ancestor", () => {
+    const config = resolveShellSandboxConfig({
+      workspaceRoot: "/repo",
+      config: { network: { mode: "allow" } },
+    });
+
+    const invocation = buildBubblewrapInvocation({
+      request: { command: "true", cwd: "/repo", env: {} },
+      config,
+      tmpRoot: "/tmp/sw",
+      denyMounts: [
+        { path: "/repo/.sparkwright", source: "/tmp/empty-dir", kind: "dir" },
+        {
+          path: "/repo/.sparkwright/config.json",
+          source: "/tmp/empty-file",
+          kind: "file",
+        },
+      ],
+    });
+
+    expect(invocation.args).toContain("/repo/.sparkwright");
+    expect(invocation.args).not.toContain("/repo/.sparkwright/config.json");
+  });
+
   it("builds macOS sandbox profiles with explicit deny-list controls", () => {
     const config = resolveShellSandboxConfig({
       workspaceRoot: "/repo",

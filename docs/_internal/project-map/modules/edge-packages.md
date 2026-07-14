@@ -113,6 +113,14 @@ contracts, and focused checklists that no longer fit here.
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-07-14
+- Scope: collapsed overlapping Linux bubblewrap deny mounts to their minimal
+  ancestor roots so protected descendants do not make sandbox startup fail.
+- Read: shell-sandbox bubblewrap invocation compiler and platform tests.
+- Tests: shell-sandbox 16/16 on Node 20 and Node 22; the CI matrix covers the
+  Linux runtime.
+
 - Status: Read-only
 - Date: 2026-07-14
 - Scope: re-baselined the session coordination proposal after Workflow, Task,

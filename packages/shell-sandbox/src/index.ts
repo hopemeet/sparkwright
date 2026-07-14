@@ -820,13 +820,33 @@ export function buildBubblewrapInvocation(
 
   // bwrap has no deny-after-bind primitive. Hide explicit deny paths by
   // overlaying an empty read-only file or directory over each target.
-  for (const mount of options.denyMounts ??
-    heuristicBubblewrapDenyMounts(config)) {
+  for (const mount of minimalBubblewrapDenyMounts(
+    options.denyMounts ?? heuristicBubblewrapDenyMounts(config),
+  )) {
     args.push("--ro-bind-try", mount.source, mount.path);
   }
 
   args.push("bash", "-c", options.request.command);
   return { command: executable, args };
+}
+
+function minimalBubblewrapDenyMounts(
+  mounts: readonly BubblewrapDenyMount[],
+): BubblewrapDenyMount[] {
+  const unique = new Map<string, BubblewrapDenyMount>();
+  for (const mount of mounts) {
+    const path = resolve(mount.path);
+    if (!unique.has(path)) unique.set(path, { ...mount, path });
+  }
+  const candidates = [...unique.values()];
+  return candidates.filter(
+    (candidate) =>
+      !candidates.some((ancestor) => {
+        if (ancestor.path === candidate.path) return false;
+        const rel = relative(ancestor.path, candidate.path);
+        return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
+      }),
+  );
 }
 
 async function prepareBubblewrapDenyMounts(
