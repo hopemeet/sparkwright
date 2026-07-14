@@ -95,6 +95,12 @@ Does not own:
   readable, and new files omit inferred child mode and inherited budgets.
 
 - One active run per host connection.
+- Until HostExecution extraction, one execution-wide abort now spans assembly
+  and all todo/workflow episodes on that connection. Disconnect and legacy
+  cancel trip the same abort; Core run cancellation remains run-scoped.
+- Background Agent `task_create` tools capture their model, policy, session,
+  child-store, permission, and workspace-lease dependencies in an inline Task
+  runner. Host has no mutable latest-run Agent dependency slot.
 - `run-security-plan.ts` is the immutable boundary between config/access
   parsing and runtime assembly. A run and `capability.inspect` derive the same
   workspace, access, confidential paths, skill/config roots, and resolved shell
@@ -866,6 +872,15 @@ Does not own:
   remain adapter-native and need continued cross-entrypoint characterization.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: Host execution-coordinator P1 prerequisites: atomic inject rejection,
+  immutable Agent Task context, and execution-wide assembly/episode abort.
+- Read: Host runtime protocol/start/resume/inject/cancel/cleanup and task tool
+  assembly plus Core and agent-runtime contracts.
+- Tests: Host protocol/Agent-task/revival 57/57; Core run 129/129;
+  agent-runtime Task/Workflow 94/94; affected typecheck and Host build.
 
 - Status: Verified
 - Date: 2026-07-14

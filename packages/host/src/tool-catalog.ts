@@ -5,6 +5,7 @@ import {
   createTodoTools,
   InMemoryTaskStore,
   TaskManager,
+  type TaskRunner,
 } from "@sparkwright/agent-runtime";
 import {
   createRunId,
@@ -232,6 +233,7 @@ export function createMainHostToolCatalog(input: {
   skillRoots: SkillRoot[];
   toolConfig?: CapabilityToolsConfig;
   taskManager: TaskManager;
+  taskRunners?: Readonly<Record<string, TaskRunner>>;
   getParentRunId: (ctx?: RuntimeContext) => RunId;
   getRunEvents?: () => EventEmitter | undefined;
   todoPath: string;
@@ -326,6 +328,7 @@ function createMainHostToolCatalogList(input: {
   workspaceRoot: string;
   skillRoots: SkillRoot[];
   taskManager: TaskManager;
+  taskRunners?: Readonly<Record<string, TaskRunner>>;
   getParentRunId: (ctx?: RuntimeContext) => RunId;
   getRunEvents?: () => EventEmitter | undefined;
   todoPath: string;
@@ -371,6 +374,7 @@ function createMainHostToolCatalogList(input: {
     catalogEntry(
       createTaskCreate({
         manager: input.taskManager,
+        taskRunners: input.taskRunners,
         getParentRunId: input.getParentRunId,
         foregroundTimeoutMs: input.shell?.foregroundTimeoutMs,
         backgroundTasks: input.backgroundTasks,

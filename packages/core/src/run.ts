@@ -569,6 +569,10 @@ export type CredentialResolver = (
   request: CredentialRefreshRequest,
 ) => Promise<CredentialRefreshResponse> | CredentialRefreshResponse;
 
+export type RunCommandAcceptance =
+  | { accepted: true }
+  | { accepted: false; reason: "terminal" | "closing" };
+
 export interface RunLoopServices {
   now?: () => Date;
   createRunId?: typeof createRunId;
@@ -594,7 +598,8 @@ export interface RunHandle {
     reason?: string;
     metadata?: Record<string, unknown>;
   }): RunResult;
-  enqueueCommand(command: RunCommand): void;
+  tryEnqueueCommand(command: RunCommand): RunCommandAcceptance;
+  enqueueCommand(command: RunCommand): RunCommandAcceptance;
   /**
    * @reserved Public run-control helper consumed by embedders and frontends.
    */
@@ -602,7 +607,7 @@ export interface RunHandle {
     content: string;
     parts?: ContentPart[];
     metadata?: Record<string, unknown>;
-  }): void;
+  }): RunCommandAcceptance;
   requestApproval(input: {
     action: string;
     summary: string;
@@ -2715,6 +2720,9 @@ export class SparkwrightRun implements RunHandle {
   cancel(
     input: { reason?: string; metadata?: Record<string, unknown> } = {},
   ): RunResult {
+    if (isTerminalState(this.record.state) && this.result) {
+      return this.result;
+    }
     this.setState("cancelled", "manual_cancelled");
     // Trip the internal abort controller so any mid-stream model call or
     // in-flight tool that honors `RuntimeContext.abortSignal` tears down
@@ -2754,20 +2762,31 @@ export class SparkwrightRun implements RunHandle {
     return this.abortController.signal;
   }
 
-  enqueueCommand(command: RunCommand): void {
+  tryEnqueueCommand(command: RunCommand): RunCommandAcceptance {
+    if (isTerminalState(this.record.state)) {
+      return { accepted: false, reason: "terminal" };
+    }
+    if (this.abortController.signal.aborted) {
+      return { accepted: false, reason: "closing" };
+    }
     this.commandQueue.push(command);
     this.events.emit("run.command.enqueued", {
       commandType: command.type,
       metadata: command.metadata ?? {},
     });
+    return { accepted: true };
+  }
+
+  enqueueCommand(command: RunCommand): RunCommandAcceptance {
+    return this.tryEnqueueCommand(command);
   }
 
   injectUserMessage(input: {
     content: string;
     parts?: ContentPart[];
     metadata?: Record<string, unknown>;
-  }): void {
-    this.enqueueCommand({
+  }): RunCommandAcceptance {
+    return this.tryEnqueueCommand({
       type: "user_message",
       content: input.content,
       parts: input.parts,

@@ -63,6 +63,10 @@ Does not own:
 
 - Facts enter append-only event streams before derived stores or views.
 - `runId` routes kernel work; `sessionId` groups runs at the edge.
+- Run command admission is a single lifecycle-aware operation:
+  `tryEnqueueCommand()` either enqueues and emits `run.command.enqueued`, or
+  rejects with `terminal`/`closing`. Embedders must not split acceptance into a
+  state probe followed by dispatch.
 - `event.sequence` is per run, not per session.
 - `ToolDefinition.previewArgs()` is the tool-owned request preview contract.
   The run loop calls it before execution and stores bounded text on
@@ -373,6 +377,14 @@ Does not own:
   guard and trace diagnostics.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: added atomic terminal/closing-aware run command acceptance and
+  idempotent terminal cancellation.
+- Read: Core run command queue, terminal transitions, abort handling, Host
+  injection adapter, and focused tests.
+- Tests: Core run 129/129; Core and Host typecheck; Host protocol integration.
 
 - Status: Verified
 - Date: 2026-07-14

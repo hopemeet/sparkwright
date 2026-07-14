@@ -875,9 +875,6 @@ export async function runHostAgentTask(
 
 export class HostRuntime {
   private opts: RuntimeOptions;
-  // Latest per-run spawn deps for the registered `agent` background task kind.
-  // Overwritten each run; the runner reads it once at execution start.
-  private agentSpawnDeps: HostAgentTaskRunnerDeps | null = null;
   private readonly taskNotifications: FileTaskNotificationOutbox;
   private readonly workflowNotifications: FileWorkflowNotificationOutbox;
   private readonly workflowControls: FileWorkflowControlInbox;
@@ -888,11 +885,9 @@ export class HostRuntime {
   // both pass the "is a run active?" guard before `this.active` is populated
   // (which only happens after `await createModel(...)`).
   private startingRun = false;
-  // Set when the client cancels the current turn. Unlike run.cancel (which
-  // targets one run and can lose a race against natural completion), this
-  // aborts the whole todo-supervised chain so a single cancel stops every
-  // continuation. Reset at the start of each new turn.
-  private runChainCancelled = false;
+  // One abort for the complete interactive execution, including assembly and
+  // every todo/workflow episode. Core run cancellation remains run-scoped.
+  private executionAbortController: AbortController | null = null;
   private pendingApprovals = new Map<string, PendingApproval>();
   private lastCapabilitySnapshot: CapabilitySnapshot | null = null;
 
@@ -923,12 +918,6 @@ export class HostRuntime {
       }),
       notificationSink: this.taskNotifications,
     });
-    // Background agent jobs are a task `kind` whose runner drives a read-only
-    // child run. Registered once; the runner reads the latest per-run spawn
-    // deps published by prepareRun. See runAgentTask.
-    this.taskManager.registerKind("agent", (controller, payload) =>
-      this.runAgentTask(controller, payload),
-    );
   }
 
   hasActiveRun(): boolean {
@@ -945,22 +934,6 @@ export class HostRuntime {
 
   private workflowStoreRootDir(): string {
     return workspaceWorkflowRunsDir({ workspaceRoot: this.opts.workspaceRoot });
-  }
-
-  private async runAgentTask(
-    controller: TaskRunnerController,
-    payload: unknown,
-  ): Promise<unknown> {
-    const deps = this.agentSpawnDeps;
-    if (!deps) {
-      throw Object.assign(
-        new Error(
-          "Agent task runner is not available until a run has prepared agent dependencies.",
-        ),
-        { code: "AGENT_TASK_UNAVAILABLE" },
-      );
-    }
-    return runHostAgentTask(controller, payload, deps);
   }
 
   private createTaskRevivalBridge(getRunId: () => RunId | undefined): {
@@ -1474,10 +1447,15 @@ export class HostRuntime {
       };
     }
     this.startingRun = true;
+    const executionAbort = new AbortController();
+    this.executionAbortController = executionAbort;
     try {
       return await this.startRunInner(payload);
     } finally {
       this.startingRun = false;
+      if (!this.active && this.executionAbortController === executionAbort) {
+        this.executionAbortController = null;
+      }
     }
   }
 
@@ -1541,10 +1519,15 @@ export class HostRuntime {
       };
     }
     this.startingRun = true;
+    const executionAbort = new AbortController();
+    this.executionAbortController = executionAbort;
     try {
       return await this.resumeRunInner(payload);
     } finally {
       this.startingRun = false;
+      if (!this.active && this.executionAbortController === executionAbort) {
+        this.executionAbortController = null;
+      }
     }
   }
 
@@ -2313,10 +2296,11 @@ export class HostRuntime {
       workspaceRoot,
       workspaceLeaseCoordinator,
     });
-    // Publish spawn deps for the registered `agent` background task kind so a
-    // `task_create(kind:"agent")` call can drive a child run that the task,
-    // not the foreground turn, owns the lifecycle of.
-    this.agentSpawnDeps = {
+    // This tool bundle captures one immutable execution context. The inline
+    // runner is stored on the Task at creation, so a later run preparation
+    // cannot replace the model, policy, session, store, or lease dependencies
+    // observed by delayed background Agent work.
+    const agentTaskDeps: HostAgentTaskRunnerDeps = {
       getParent: () => parentRunRef.current,
       model: model.adapter,
       modelForSpawn: dynamicSpawnModel,
@@ -2337,6 +2321,10 @@ export class HostRuntime {
       skillRoots: [...skillRoots],
       toolConfig,
       taskManager: this.taskManager,
+      taskRunners: {
+        agent: (controller, payload) =>
+          runHostAgentTask(controller, payload, agentTaskDeps),
+      },
       getParentRunId: () => requireActiveRunId(runIdHolder.value),
       getRunEvents: () => parentRunRef.current?.events,
       todoPath: join(sessionRootDir, input.sessionId, "todo.md"),
@@ -2949,6 +2937,19 @@ export class HostRuntime {
     { ok: true; runId: string } | { ok: false; error: ProtocolError }
   > {
     const { env, sessionId, todoPath } = input;
+    const executionAbort =
+      this.executionAbortController ?? new AbortController();
+    this.executionAbortController = executionAbort;
+    if (executionAbort.signal.aborted) {
+      await env.preparedMcp?.close().catch(() => {});
+      return {
+        ok: false,
+        error: {
+          code: "internal_error",
+          message: "interactive execution was cancelled during assembly",
+        },
+      };
+    }
     const runCleanups: Array<() => void> = [];
     const stopWorkflowLeaseRefresh = startWorkflowLeaseRefresh(
       env.workflowLease,
@@ -3083,7 +3084,6 @@ export class HostRuntime {
     let firstRunStarted = false;
     let previousRunId: string | undefined;
     let lastRunId = "";
-    this.runChainCancelled = false;
 
     const supervised = runTodoSupervised({
       todoPath,
@@ -3091,6 +3091,11 @@ export class HostRuntime {
       maxContinuations: MAIN_TODO_MAX_CONTINUATIONS,
       maxStalledContinuations: MAIN_TODO_MAX_STALLED_CONTINUATIONS,
       runOnce: async (supervisedInput) => {
+        if (executionAbort.signal.aborted) {
+          throw Object.assign(new Error("Interactive execution cancelled."), {
+            name: "AbortError",
+          });
+        }
         const run = input.buildRun(supervisedInput);
         const runId = run.record.id;
         lastRunId = runId;
@@ -3117,7 +3122,7 @@ export class HostRuntime {
         previousRunId = runId;
         await input.afterRun?.(supervisedInput, run, result);
         await this.recordWorkflowActorEpisodeUsage(env, run, result);
-        if (this.runChainCancelled) {
+        if (executionAbort.signal.aborted) {
           return {
             result: {
               ...result,
@@ -3134,7 +3139,7 @@ export class HostRuntime {
     supervised
       .then(async (outcome) => {
         const handoff =
-          !this.runChainCancelled && outcome.decision.kind === "handoff"
+          !executionAbort.signal.aborted && outcome.decision.kind === "handoff"
             ? {
                 reason: outcome.decision.reason,
                 message: outcome.decision.message,
@@ -3200,6 +3205,9 @@ export class HostRuntime {
         for (const cleanup of runCleanups.splice(0)) cleanup();
         void env.preparedMcp?.close().catch(() => {});
         this.active = null;
+        if (this.executionAbortController === executionAbort) {
+          this.executionAbortController = null;
+        }
         for (const [id, p] of this.pendingApprovals) {
           p.resolve({ decision: "denied" });
           this.pendingApprovals.delete(id);
@@ -4588,7 +4596,9 @@ export class HostRuntime {
     }
     // Stop the whole supervised chain, not just this run: a cancel that races
     // a run's natural completion must still prevent further continuations.
-    this.runChainCancelled = true;
+    if (!this.executionAbortController?.signal.aborted) {
+      this.executionAbortController?.abort(reason ?? "client requested cancel");
+    }
     this.active.run.cancel({ reason: reason ?? "client requested cancel" });
     return { ok: true };
   }
@@ -4620,11 +4630,21 @@ export class HostRuntime {
       };
     }
     const parts = inputPartsFromPayload(input.parts);
-    this.active.run.injectUserMessage({
+    const acceptance = this.active.run.tryEnqueueCommand({
+      type: "user_message",
       content: input.content,
       parts,
       metadata: input.metadata,
     });
+    if (!acceptance.accepted) {
+      return {
+        ok: false,
+        error: {
+          code: "run_not_found",
+          message: `run ${runId} is no longer accepting messages (${acceptance.reason})`,
+        },
+      };
+    }
     return { ok: true };
   }
 
@@ -4658,6 +4678,9 @@ export class HostRuntime {
    * core does not leak file handles or hang on never-arriving decisions.
    */
   cleanup(): void {
+    if (!this.executionAbortController?.signal.aborted) {
+      this.executionAbortController?.abort("client_disconnected");
+    }
     for (const p of this.pendingApprovals.values()) {
       p.resolve({ decision: "denied" });
     }

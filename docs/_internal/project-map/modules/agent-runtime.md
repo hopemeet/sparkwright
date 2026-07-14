@@ -65,6 +65,10 @@ Does not own:
   task lifecycle execution, but embedders can classify kind-specific payload
   grants (for example host `agent` workspace-write grants) before approval
   without moving kind execution into agent-runtime.
+- `createTaskCreate()` also accepts execution-scoped `taskRunners`. The chosen
+  runner is stored inline on the Task at creation and takes precedence over a
+  workspace/process registered runner, preventing delayed startup from reading
+  mutable dependencies prepared for a later execution.
 - Host-owned promoted shell tasks keep durable output in `TaskStore`; host trace
   integration mirrors task output/events without making agent-runtime depend on
   host process runners.
@@ -392,6 +396,15 @@ Does not own:
   not authorize a generic actor bus or nested background lifecycle.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: added execution-scoped Task runner capture for Host background Agent
+  tasks without changing TaskManager lifecycle ownership.
+- Read: Task tool dispatch, TaskManager inline runner storage, Host task
+  catalog/runtime assembly, and tests.
+- Tests: agent-runtime Task/Workflow 94/94; agent-runtime/Host typecheck; Host
+  Agent-task and protocol integration.
 
 - Status: Verified
 - Date: 2026-07-14

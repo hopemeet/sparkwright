@@ -42,6 +42,9 @@ createRun/resumeRunFromCheckpoint
   keep the existing selected-session history behavior.
 
 - Terminal states are `completed`, `failed`, and `cancelled`.
+- Interactive commands enter through one atomic acceptance operation. Terminal
+  or abort-closing runs reject before queue mutation, so a successful Host
+  inject response always means the command reached the consumable Core queue.
 - `cancel()` emits `run.cancelled` synchronously and kicks the `RunEnd`
   workflow-hook phase with `state:"cancelled"` / `reason:"manual_cancelled"`.
   `RunEnd` remains fire-and-forget.
@@ -268,6 +271,13 @@ createRun/resumeRunFromCheckpoint
   handling can still be noisy.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: verified atomic run command acceptance against terminal and external
+  abort races and the Host inject adapter.
+- Read: Core run queue/state/abort paths, Host injection, and focused tests.
+- Tests: Core run 129/129; Host protocol focused/full suites and typecheck.
 
 - Status: Verified
 - Date: 2026-07-14

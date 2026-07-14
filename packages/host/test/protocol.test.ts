@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { PROTOCOL_VERSION, type HostMessage } from "@sparkwright/protocol";
 import {
   asSessionId,
+  createRun,
   type ContextItem,
   FileSessionStore,
   SESSION_COMPACT_SCHEMA_VERSION,
@@ -4898,6 +4899,134 @@ describe("host protocol", () => {
       runtime = undefined;
     } finally {
       runtime?.cleanup();
+      await rmWhenReady(workspace);
+    }
+  });
+
+  it("characterizes two connections starting the same session without shared coordination", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-runtime-"));
+    const first = createConnectionPair();
+    const second = createConnectionPair();
+    try {
+      for (const pair of [first, second]) {
+        serveConnection(pair.hostSide, {
+          workspaceRoot: workspace,
+          defaultModel: "deterministic",
+        });
+        pair.clientSend({
+          envelope: "request",
+          id: "handshake",
+          kind: "handshake",
+          timestamp: TIMESTAMP,
+          payload: {
+            protocolVersion: PROTOCOL_VERSION,
+            client: { name: "test", version: "0.0.0" },
+          },
+        });
+      }
+      await Promise.all(
+        [first, second].map((pair) =>
+          pair.waitFor(
+            (message) =>
+              message.envelope === "response" && message.id === "handshake",
+          ),
+        ),
+      );
+
+      for (const [index, pair] of [first, second].entries()) {
+        pair.clientSend({
+          envelope: "request",
+          id: `start_${index}`,
+          kind: "run.start",
+          timestamp: TIMESTAMP,
+          payload: {
+            goal: `connection ${index}`,
+            sessionId: "shared_session",
+          },
+        });
+      }
+      const responses = await Promise.all([
+        first.waitFor(
+          (message) =>
+            message.envelope === "response" && message.id === "start_0",
+        ),
+        second.waitFor(
+          (message) =>
+            message.envelope === "response" && message.id === "start_1",
+        ),
+      ]);
+
+      // P0 fact: the reservation lives on each per-connection HostRuntime, so
+      // both starts are admitted. P4 replaces this assertion with same-lane
+      // serialization through the process coordinator.
+      expect(responses).toEqual([
+        expect.objectContaining({ envelope: "response", ok: true }),
+        expect.objectContaining({ envelope: "response", ok: true }),
+      ]);
+    } finally {
+      first.close();
+      second.close();
+      await rmWhenReady(workspace);
+    }
+  });
+
+  it("rejects Host injection when the current Core run is already terminal", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-runtime-"));
+    const runtime = new HostRuntime({
+      workspaceRoot: workspace,
+      emit: () => {},
+    });
+    try {
+      const run = createRun({ goal: "already complete" });
+      await run.start();
+      (runtime as unknown as { active: unknown }).active = {
+        runId: run.record.id,
+        run,
+        trace: { append() {} },
+        sessionId: "terminal_inject",
+      };
+
+      expect(
+        runtime.injectRunMessage(run.record.id, { content: "too late" }),
+      ).toMatchObject({
+        ok: false,
+        error: { code: "run_not_found", message: expect.stringContaining("terminal") },
+      });
+      expect(
+        run.events.all().filter((event) => event.type === "run.command.enqueued"),
+      ).toHaveLength(0);
+    } finally {
+      runtime.cleanup();
+      await rmWhenReady(workspace);
+    }
+  });
+
+  it("disconnect aborts an execution that is still assembling", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-runtime-"));
+    const events: HostMessage[] = [];
+    const runtime = new HostRuntime({
+      workspaceRoot: workspace,
+      defaultModel: "deterministic",
+      emit: (event) => events.push(event),
+    });
+    try {
+      const starting = runtime.startRun({ goal: "cancel during assembly" });
+      runtime.cleanup();
+      const result = await starting;
+
+      expect(result).toMatchObject({
+        ok: false,
+        error: { message: expect.stringContaining("cancelled during assembly") },
+      });
+      expect(runtime.hasActiveRun()).toBe(false);
+      expect(
+        events.some(
+          (event) =>
+            event.envelope === "event" && event.kind === "run.continuation",
+        ),
+      ).toBe(false);
+    } finally {
+      runtime.cleanup();
       await rmWhenReady(workspace);
     }
   });
