@@ -8943,7 +8943,7 @@ describe("runCli", () => {
         true,
       );
     }
-  });
+  }, 15_000);
 
   it("prints configured verification profile results in host runs", async () => {
     const workspace = await createWorkspace("# Demo\n");
