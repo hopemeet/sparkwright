@@ -9,9 +9,9 @@ ACP, external-command, and direct-CLI Agent paths onto one invocation and
 lifecycle substrate without moving Host governance into core or creating a
 generic actor bus.
 
-This design is below the future session-turn coordinator. A session turn may
-own many child invocations; an Agent supervisor must not become a second
-session scheduler or run-chain driver.
+This design is below the future interactive execution-lane coordinator. One
+interactive execution may own many child invocations; an Agent supervisor must
+not become a second lane scheduler or run-chain driver.
 
 ## Frozen Ownership
 
@@ -23,8 +23,9 @@ session scheduler or run-chain driver.
   construction.
 - `@sparkwright/core` owns one run loop, policy/approval execution, event schema,
   budgets, and workspace-write facts. It does not gain Agent adapter branches.
-- `@sparkwright/server-runtime` remains the future owner of session-turn
-  scheduling. Agent supervision does not coordinate different sessions.
+- `@sparkwright/server-runtime` remains the future owner of interactive
+  execution-lane queueing, idempotency, capacity, and active-execution
+  handoff. Agent supervision does not coordinate different sessions.
 
 ## Invariants
 
@@ -98,12 +99,15 @@ second lifecycle event family.
 TTL is an availability lease, not a fencing generation. The current slice has
 no durable expiry audit, cannot exclude a stale holder after takeover, does not
 coordinate other OS processes, and does not serialize non-Agent parent tools.
-Those boundaries must remain explicit until the session coordinator owns a
+Those boundaries must remain explicit until Host workspace admission gains a
 fenced cross-process protocol.
 
-This Agent lease is compatible with the future session-turn workspace lock but
-must not create a second permanent owner. The session coordinator remains the
-target place to hold logical turn leases once wired.
+This Agent lease is the starting point for a generalized Host
+`WorkspaceLeaseCoordinator`; it must not remain as a second permanent owner.
+The future execution-lane coordinator owns scheduling capacity, not workspace
+mutation exclusion. Concrete tool, Agent invocation, and external-process
+mutation windows acquire Host workspace leases independently so a waiting
+lease does not consume a lane worker for the lifetime of a model execution.
 
 ## Communication Boundary
 
@@ -137,12 +141,25 @@ the migration oracle.
 
 ## Known Migration Debts
 
-- Workspace exclusion is process-local and unfenced; cross-process/session-turn
-  ownership remains future session-coordinator work.
+- Workspace exclusion is process-local, Agent-only, and unfenced. Generalizing
+  it across Host mutation paths and adding cross-process fencing remain future
+  Host workspace-admission work, independent of execution-lane scheduling.
 - ACP/external-command process-internal model/tool usage remains opaque to Core
   descendant-tree accounts; only their parent tool call is budget-visible.
 
 ## Last Verified
+
+- Status: Read-only
+- Date: 2026-07-14
+- Scope: aligned the completed Agent supervision boundary with the re-baselined
+  execution-lane proposal. Agent lifecycle remains below the lane coordinator;
+  the current Agent arbiter is the migration source for a separate Host
+  workspace lease service rather than a scheduler-owned turn lock.
+- Read: `packages/agent-runtime/src/agents/supervisor.ts`,
+  `packages/host/src/workspace-agent-arbiter.ts`,
+  `packages/host/src/runtime.ts`, and
+  `docs/_internal/proposals/session-agent-host-coordinator.md`.
+- Tests: not run; proposal/map-only review.
 
 - Status: Verified
 - Date: 2026-07-14

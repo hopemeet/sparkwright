@@ -96,11 +96,13 @@ contracts, and focused checklists that no longer fit here.
 - These packages need focused module pages if their contracts grow beyond edge
   adapters. Highest candidates: ACP, SDK, provider edge, and server/streaming
   runtime.
-- `@sparkwright/server-runtime` is the intended home for future session
-  coordination primitives (`SessionTurnScheduler`, turn/run-chain,
-  run/session/approval/event orchestration), but current host/CLI paths do not
-  wire it as the main process coordinator; source currently uses host-owned
-  per-connection `HostRuntime` directly.
+- `@sparkwright/server-runtime` is the intended home for the future
+  transport-neutral `ExecutionLaneCoordinator`, which owns bounded interactive
+  lane queueing, idempotency, capacity, and active-execution handoff. It already
+  provides Workflow service/supervisor/channel coordination and Host durable
+  command dispatch primitives, but ordinary Host execution still runs through
+  host-owned per-connection `HostRuntime`. The future lane coordinator must not
+  absorb Workflow/Task/Agent lifecycle ownership or workspace mutation leases.
 - The workflow job session route now stages durable supervisor/worker ownership
   and multi-channel control after session isolation, write fencing, and a typed
   durable workflow control inbox. `server-runtime` owns coordination; IM/Web/API
@@ -110,6 +112,18 @@ contracts, and focused checklists that no longer fit here.
   source exports. It should not be used as the sole authority for behavior.
 
 ## Last Verified
+
+- Status: Read-only
+- Date: 2026-07-14
+- Scope: re-baselined the session coordination proposal after Workflow, Task,
+  Agent supervision, and workspace Agent arbitration refactors. Recorded
+  `server-runtime` as the future interactive execution-lane coordination home,
+  not a universal run-chain or workspace-lock owner.
+- Read: `packages/server-runtime/src/index.ts`, Workflow service/supervisor,
+  `packages/host/src/runtime.ts`, `packages/host/src/server.ts`,
+  `packages/host/src/workspace-agent-arbiter.ts`, and
+  `docs/_internal/proposals/session-agent-host-coordinator.md`.
+- Tests: not run; proposal/map-only review.
 
 - Status: Verified
 - Date: 2026-07-13T22:30:00+0800
