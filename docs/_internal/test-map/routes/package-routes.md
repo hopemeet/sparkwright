@@ -34,6 +34,10 @@ npm --workspace @sparkwright/core test -- test/runtime-guardrails.test.ts
 Broaden to `test/trace.test.ts` when run terminal payloads, tool outcomes,
 verification summaries, or trace snapshots change.
 
+Apply the same route to `packages/core/src/runtime/tool-result-analysis.ts` and
+add Host protocol/tools downstream tests. The leaf must not receive a mutable
+run-state bag or import the `run.ts` facade.
+
 ### `packages/core/src/trace-diagnostics.ts`
 
 Run:

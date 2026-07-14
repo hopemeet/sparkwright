@@ -12,6 +12,7 @@ See [../safety/workspace-writes.md](../safety/workspace-writes.md), [../safety/s
 - `packages/core/src/run.ts`
 - `packages/core/src/run-budget.ts`
 - `packages/core/src/tool-orchestration.ts`
+- `packages/core/src/runtime/tool-result-analysis.ts`
 - `packages/core/src/tools.ts`
 - `packages/host/src/tool-catalog.ts`
 - `packages/host/src/run-security-plan.ts`
@@ -365,6 +366,14 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
 - TUI live rendering and transcript export now share presentation summaries, but trace/model-context result compaction is still a separate backend concern.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: duplicate/repeated-call, failure-context, no-op, and compaction request
+  analysis moved intact to a pure leaf; validation, policy, approval, execution,
+  observation, recovery, and event ordering are unchanged.
+- Read: Core run tool phases and tool-result-analysis.
+- Tests: Core run/runtime-guardrails/trace and Host tools/protocol.
 
 - Status: Read-only
 - Date: 2026-07-15

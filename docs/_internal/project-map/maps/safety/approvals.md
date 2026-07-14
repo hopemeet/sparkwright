@@ -130,6 +130,14 @@ policy requires approval
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-07-15
+- Scope: expected approval/policy denial classification moved to a pure result
+  analysis leaf; resolver ownership, request/resolution order, and approval
+  behavior are unchanged.
+- Read: Core run approval path and tool-result-analysis.
+- Tests: Core run/runtime guardrails and Host protocol/tools.
+
 - Status: Read-only
 - Date: 2026-07-15
 - Scope: config/doctor read diagnostics moved mechanically; permission,

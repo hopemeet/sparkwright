@@ -10,6 +10,7 @@ See [tool-orchestration.md](tool-orchestration.md) and [../trace/raw-trace.md](.
 ## Main Files
 
 - `packages/core/src/run.ts`
+- `packages/core/src/runtime/tool-result-analysis.ts`
 - `packages/core/src/run-budget.ts`
 - `packages/core/src/events.ts`
 - `packages/core/src/run-validation.ts`
@@ -280,6 +281,14 @@ createRun/resumeRunFromCheckpoint
   handling can still be noisy.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: stateless tool-result/repeat/compaction classifiers moved to a leaf;
+  SparkwrightRun loop state, transitions, event/tool observation order, budgets,
+  commands, checkpoints, and terminal behavior are unchanged.
+- Read: Core run loop and tool-result-analysis.
+- Tests: Core run/runtime-guardrails/trace and downstream Host tools/protocol.
 
 - Status: Verified
 - Date: 2026-07-15

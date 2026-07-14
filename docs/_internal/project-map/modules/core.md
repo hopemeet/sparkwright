@@ -13,6 +13,7 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md),
 ## Main Files
 
 - `packages/core/src/run.ts`
+- `packages/core/src/runtime/tool-result-analysis.ts` — pure duplicate/repeat/failure/no-op/compaction classifiers
 - `packages/core/src/run-budget.ts`
 - `packages/core/src/context.ts`
 - `packages/core/src/pipeline.ts`
@@ -377,6 +378,16 @@ Does not own:
   guard and trace diagnostics.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: moved pure tool-result duplicate, repeat-target, failure-context,
+  idempotent-noop, nudge, and compaction-request analysis to a dependency leaf.
+  SparkwrightRun retains RunRecord, loop state, events, commands, budgets,
+  tools/models, and checkpoint ownership.
+- Read: Core run loop and tool-result-analysis leaf.
+- Tests: Core run/runtime-guardrails/trace, Core build/typecheck, Agent Runtime
+  downstream, Host protocol/tools, repo-pilot, import/boundary, and map drift.
 
 - Status: Verified
 - Date: 2026-07-14T14:35:00+0800
