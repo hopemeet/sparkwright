@@ -398,6 +398,12 @@ Does not own:
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-14T14:35:00+0800
+- Scope: P6 routed review; workspace lease imports were renamed only. Agent
+  invocation, supervision, Task revival, and Workflow ownership are unchanged.
+- Tests: Host 571/571 and affected ACP/CLI suites passed.
+
+- Status: Verified
 - Date: 2026-07-14
 - Scope: added execution-scoped Task runner capture for Host background Agent
   tasks without changing TaskManager lifecycle ownership.

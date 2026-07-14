@@ -120,6 +120,12 @@ Manual compact
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-07-14T14:35:00+0800
+- Scope: P6 routed review; FileSessionStore remains canonical session truth and
+  extracted query/compaction functions use the same store and artifact format.
+- Tests: Host session/compaction coverage passed.
+
 - Status: Verified (no persisted-format change)
 - Date: 2026-07-14
 - Scope: reviewed Host-owned IM retention/replay; ordinary IM control state is

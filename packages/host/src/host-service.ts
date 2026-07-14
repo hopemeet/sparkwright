@@ -22,7 +22,7 @@ import {
   type RuntimeOptions,
 } from "./runtime.js";
 import { WorkspaceContext, workspaceContextKey } from "./workspace-context.js";
-import { WorkspaceLeaseCoordinator } from "./workspace-agent-arbiter.js";
+import { WorkspaceLeaseCoordinator } from "./workspace-lease-coordinator.js";
 import {
   acknowledgeHostImDeliveries,
   associateHostImRuntime,

@@ -386,6 +386,12 @@ configured profiles/delegates
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-07-14T14:35:00+0800
+- Scope: P6 routed review; Agent admission and lifecycle semantics are
+  unchanged by the workspace lease module rename.
+- Tests: Host Agent and full suites passed.
+
 - Status: Verified (no contract change)
 - Date: 2026-07-14
 - Scope: reviewed immutable Task runner capture and Host lanes; AgentSupervisor

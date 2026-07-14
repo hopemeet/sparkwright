@@ -138,6 +138,12 @@ tool proposes write
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-07-14T14:35:00+0800
+- Scope: P6 renamed the process-local workspace lease implementation without
+  changing admission scope, fairness, or the non-fencing limitation.
+- Tests: Workspace lease tests and Host 571/571 passed.
+
 - Status: Verified (no write-admission change)
 - Date: 2026-07-14
 - Scope: reviewed IM principal/binding permissions; they authorize session

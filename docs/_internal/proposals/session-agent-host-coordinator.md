@@ -67,7 +67,7 @@ Change:
 - [`packages/server-runtime/src/workflow-supervisor.ts`](../../../packages/server-runtime/src/workflow-supervisor.ts)
 - [`packages/agent-runtime/src/workflows/run-chain.ts`](../../../packages/agent-runtime/src/workflows/run-chain.ts)
 - [`packages/agent-runtime/src/agents/supervisor.ts`](../../../packages/agent-runtime/src/agents/supervisor.ts)
-- [`packages/host/src/workspace-agent-arbiter.ts`](../../../packages/host/src/workspace-agent-arbiter.ts)
+- [`packages/host/src/workspace-lease-coordinator.ts`](../../../packages/host/src/workspace-lease-coordinator.ts)
 - [`packages/im-gateway/src/gateway.ts`](../../../packages/im-gateway/src/gateway.ts)
 - [`packages/agent-runtime/src/workflows/channels.ts`](../../../packages/agent-runtime/src/workflows/channels.ts)
 
@@ -88,7 +88,7 @@ Change:
 - Agent invocation identity and lifecycle are now owned by
   `PreparedAgentInvocation` and `AgentSupervisor`. Host owns Agent admission,
   workspace leases, tools/models/policy, and adapter construction.
-- `WorkspaceAgentArbiter` is already a process-local fair read/write lease
+- `WorkspaceLeaseCoordinator` is the process-local fair read/write lease
   coordinator keyed by canonical workspace realpath. It protects Agent
   executions only; it does not serialize ordinary parent-run tool writes or
   coordinate across processes.
@@ -100,13 +100,12 @@ Change:
   its in-flight command dispatcher. Its older `RunManager`, `SessionManager`,
   `ApprovalBroker`, and `ConnectionHub` convenience stack is still not the
   canonical Host execution path.
-- `DurableCommandDispatcher` only coalesces concurrent in-flight calls in
-  memory. Durable Workflow command truth lives in command/outcome files; the
-  class name must not be interpreted as durable persistence.
-- IM gateway still owns ordinary session routing, active-session maps, queued
-  messages, run targets, approval-to-run routing, and message dedupe. Workflow
-  channel bindings and delivery receipts already provide a stronger host-side
-  precedent.
+- `InFlightCommandDispatcher` only coalesces concurrent calls in memory. The
+  former `DurableCommandDispatcher` name remains a deprecated alias. Durable
+  Workflow command truth lives in command/outcome files.
+- HostService now owns ordinary IM session bindings, retained executions,
+  approval routing, and bounded replay outboxes. IM gateway retains transport
+  verification, formatting, inbound dedupe, and delivery-attempt state.
 - Core already exposes `enqueueCommand()` and `injectUserMessage()`, and consumes
   commands at a run-loop boundary. It still does not expose a public read-only
   command-acceptance predicate.

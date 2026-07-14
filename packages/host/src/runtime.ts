@@ -2,11 +2,9 @@ import { readdir, stat, readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import {
-  buildTraceTimelineFile,
   asSessionId,
   createBufferedEmitter,
   createContextItemId,
-  createDeterministicSessionSummarizer,
   createRunId,
   createDefaultPolicy,
   createLayeredPolicy,
@@ -19,20 +17,12 @@ import {
   defineTool,
   FileSessionStore,
   EventLog,
-  forkSessionFromEvent,
   loadCheckpointFromRunDir,
   resumeRunFromCheckpoint,
-  summarizeTraceFile,
-  compactSessionTurns,
   sessionCompactArtifactToContextItem,
   sessionTurnToContextItems,
-  SESSION_COMPACT_FILENAME,
-  SESSION_COMPACT_SCHEMA_VERSION,
-  validateSessionTraceConsistency,
-  writeSessionCompactArtifact,
   type ApprovalResolver,
   type BackgroundTaskPolicy,
-  type CompactionWarning,
   type ContentPart,
   type ContextItem,
   type EventEmitter,
@@ -46,11 +36,6 @@ import {
   type RunResult,
   type RuntimeContext,
   type RunAccessMode,
-  type ContextUsageHint,
-  type SessionCompactArtifact,
-  type SessionCompactionMeasurement,
-  type SessionCompactionOptions,
-  type SessionEvent,
   type SparkwrightEvent,
   type TaskRevivalSource,
   type SessionTraceFacts,
@@ -127,14 +112,14 @@ import {
 import { CronStore, defaultCronRoot } from "@sparkwright/cron";
 import { RECOMMENDED_FOREGROUND_TIMEOUT_MS } from "@sparkwright/shell-tool";
 import {
-  DurableCommandDispatcher,
+  InFlightCommandDispatcher,
   type ExecutionHandle,
 } from "@sparkwright/server-runtime";
 import {
   createWorkspaceMutationAdmission,
   processWorkspaceLeaseCoordinator,
   type WorkspaceLeaseCoordinator,
-} from "./workspace-agent-arbiter.js";
+} from "./workspace-lease-coordinator.js";
 import {
   type ResolvedShellSandboxConfig,
   type ShellSandboxStatus,
@@ -148,7 +133,6 @@ import type {
   CapabilityVerificationConfig,
   CapabilityWorkflowHookConfig,
   ShellConfig,
-  TaskConfig,
   WriteGuardrailsConfig,
 } from "./config.js";
 import {
@@ -170,8 +154,6 @@ import {
   type WorkflowResumeRequestPayload,
   type WorkflowRunSnapshot,
   type RunInputPart,
-  type SessionCompactionInspectArtifact,
-  type SessionCompactionInspectEvent,
   type SessionCompactionInspectReport,
   type TaskOutputChunkSnapshot,
   type TaskRecordSnapshot,
@@ -185,11 +167,7 @@ import {
   type CapabilityWorkflowAssetSummary,
 } from "@sparkwright/protocol";
 import { buildAgentPromptBuilder } from "@sparkwright/project-context";
-import {
-  DETERMINISTIC_PROVIDER,
-  loadHostConfig,
-  type CapabilityMcpConfig,
-} from "./config.js";
+import { loadHostConfig, type CapabilityMcpConfig } from "./config.js";
 import {
   resolveAgentProfiles,
   type AgentProfileCollision,
@@ -210,13 +188,24 @@ import {
 } from "./host-execution.js";
 import { resolveExecutionPlan } from "./execution-plan.js";
 import { createExecutionResources } from "./execution-resources.js";
+import {
+  forkHostSession,
+  inspectHostSession,
+  inspectHostSessionCompaction,
+  listHostSessions,
+  type SessionInspectOptions,
+} from "./session-queries.js";
+import {
+  compactHostSession,
+  type SessionCompactResult,
+} from "./session-compaction.js";
+export { sessionPreviewFromTranscriptLine } from "./session-queries.js";
 import { WorkspaceContext } from "./workspace-context.js";
 import {
   createModel,
   inspectResolvedModelConfig,
   type ResolvedModelConfig,
 } from "./model-factory.js";
-import { createModelSessionSummarizer } from "./session-summarizer.js";
 import {
   catalogEntryOrigin,
   catalogToolDefinitions,
@@ -577,14 +566,6 @@ function defaultSessionRootDir(workspaceRoot: string): string {
  * `packages/core/src/context.ts`). Collapses whitespace so the result is a clean
  * single-line preview.
  */
-function stripGoalDecorations(content: string): string {
-  return content
-    .replace(/<env>[\s\S]*?<\/env>/g, "")
-    .replace(/^\s*User request:\s*/i, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
 function inputPartsFromPayload(
   parts: readonly RunInputPart[] | undefined,
 ): ContentPart[] {
@@ -646,31 +627,6 @@ function userInputContextItem(input: {
  * (last user message). We surface the goal. Falls back to a top-level `content`
  * string, then the raw line, for other/legacy shapes.
  */
-export function sessionPreviewFromTranscriptLine(firstLine: string): string {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(firstLine);
-  } catch {
-    return firstLine;
-  }
-  const obj = parsed as {
-    content?: unknown;
-    messages?: Array<{ role?: unknown; content?: unknown }>;
-  };
-  if (Array.isArray(obj.messages)) {
-    for (let i = obj.messages.length - 1; i >= 0; i--) {
-      const m = obj.messages[i];
-      if (!m || m.role !== "user" || typeof m.content !== "string") continue;
-      const goal = stripGoalDecorations(m.content);
-      if (goal) return goal;
-    }
-  }
-  if (typeof obj.content === "string" && obj.content.trim()) {
-    return stripGoalDecorations(obj.content);
-  }
-  return firstLine;
-}
-
 function extractSkillSourcePath(message: string): string | undefined {
   return message.match(/(?:^|\s)(\/[^\n:]+SKILL\.md)\b/)?.[1];
 }
@@ -778,36 +734,11 @@ const DELEGATED_AGENT_CONTRACT = [
   "- For clear delegated goals, complete the task and return the result to the parent.",
 ].join("\n");
 
-type SessionInspectOptions = {
-  compaction?: boolean;
-};
-
-type SessionCompactSuccessResult = {
-  ok: true;
-  sessionId: string;
-  compactedRunCount: number;
-  throughRunId: string | null;
-  originalCharCount: number;
-  summaryCharCount: number;
-  freedChars: number;
-  measurement: SessionCompactionMeasurement;
-  skippedReason?: string;
-  warnings?: CompactionWarning[];
-  artifactPath: string | null;
-};
-
-type SessionCompactResult =
-  | SessionCompactSuccessResult
-  | { ok: false; error: ProtocolError };
-
 /**
- * Per-connection runtime. Maps protocol verbs onto core.createRun(),
- * threading events back out through `emit` as host events.
- *
- * A single connection runs at most one run at a time. Concurrent run.start
- * requests while another run is active reject with internal_error
- * (`run_already_active`); promoting to multiple parallel runs per
- * connection would be a v1.1 addition.
+ * Compatibility facade over one HostExecution attachment. Production starts,
+ * resumes, injection, cancellation, and terminal handoff are admitted by the
+ * process HostService and its ExecutionLaneCoordinator before reaching this
+ * runtime.
  */
 /**
  * @internal Per-run spawn dependencies the registered `agent` task kind needs
@@ -901,7 +832,7 @@ export class HostRuntime {
   private readonly taskNotifications: FileTaskNotificationOutbox;
   private readonly workflowNotifications: FileWorkflowNotificationOutbox;
   private readonly workflowControls: FileWorkflowControlInbox;
-  private readonly workflowControlDispatcher: DurableCommandDispatcher;
+  private readonly workflowControlDispatcher: InFlightCommandDispatcher;
   private readonly taskManager: TaskManager;
   private currentExecution: HostExecution | null = null;
   // One abort for the complete interactive execution, including assembly and
@@ -4877,48 +4808,7 @@ export class HostRuntime {
   async listSessions(
     limit = 20,
   ): Promise<Array<{ id: string; mtimeMs: number; preview: string }>> {
-    const root =
-      this.opts.sessionRootDir ??
-      defaultSessionRootDir(this.opts.workspaceRoot);
-    let entries: string[];
-    try {
-      entries = await readdir(root);
-    } catch {
-      return [];
-    }
-    const results = await Promise.all(
-      entries.map(async (id) => {
-        const dir = join(root, id);
-        try {
-          const st = await stat(dir);
-          if (!st.isDirectory()) return null;
-          let preview = "";
-          try {
-            const transcript = await readFile(
-              join(dir, "transcript.jsonl"),
-              "utf8",
-            );
-            const firstLine = transcript.split("\n").find((l) => l.trim());
-            if (firstLine) {
-              preview = sessionPreviewFromTranscriptLine(firstLine);
-            }
-          } catch {
-            // no transcript yet
-          }
-          return {
-            id,
-            mtimeMs: st.mtimeMs,
-            preview: preview.slice(0, 80),
-          };
-        } catch {
-          return null;
-        }
-      }),
-    );
-    return results
-      .filter((r): r is NonNullable<typeof r> => r !== null)
-      .sort((a, b) => b.mtimeMs - a.mtimeMs)
-      .slice(0, limit);
+    return await listHostSessions(this.opts, limit);
   }
 
   async inspectSession(
@@ -4935,74 +4825,7 @@ export class HostRuntime {
       }
     | { ok: false; error: ProtocolError }
   > {
-    let safeSessionId: ReturnType<typeof asSessionId>;
-    try {
-      safeSessionId = asSessionId(sessionId);
-    } catch (error) {
-      return {
-        ok: false,
-        error: {
-          code: "invalid_payload",
-          message: error instanceof Error ? error.message : String(error),
-        },
-      };
-    }
-
-    const sessionRootDir =
-      this.opts.sessionRootDir ??
-      defaultSessionRootDir(this.opts.workspaceRoot);
-    const sessionDir = join(sessionRootDir, safeSessionId);
-    try {
-      const st = await stat(sessionDir);
-      if (!st.isDirectory()) {
-        return {
-          ok: false,
-          error: {
-            code: "session_not_found",
-            message: `session not found: ${sessionId}`,
-          },
-        };
-      }
-    } catch {
-      return {
-        ok: false,
-        error: {
-          code: "session_not_found",
-          message: `session not found: ${sessionId}`,
-        },
-      };
-    }
-
-    try {
-      const tracePath = join(sessionDir, "trace.jsonl");
-      const [summary, consistency, timeline, compaction] = await Promise.all([
-        summarizeTraceFile(tracePath),
-        validateSessionTraceConsistency({ sessionDir }),
-        buildTraceTimelineFile(tracePath),
-        options.compaction
-          ? this.buildSessionCompactionInspectReport(
-              sessionRootDir,
-              safeSessionId,
-            )
-          : Promise.resolve(undefined),
-      ]);
-      return {
-        ok: true,
-        sessionId: safeSessionId,
-        summary: summary as unknown as Record<string, unknown>,
-        consistency: consistency as unknown as Record<string, unknown>,
-        timeline: timeline as unknown as Record<string, unknown>,
-        ...(compaction ? { compaction } : {}),
-      };
-    } catch (error) {
-      return {
-        ok: false,
-        error: {
-          code: "internal_error",
-          message: error instanceof Error ? error.message : String(error),
-        },
-      };
-    }
+    return await inspectHostSession(this.opts, sessionId, options);
   }
 
   async inspectSessionCompaction(sessionId: string): Promise<
@@ -5013,123 +4836,7 @@ export class HostRuntime {
       }
     | { ok: false; error: ProtocolError }
   > {
-    let safeSessionId: ReturnType<typeof asSessionId>;
-    try {
-      safeSessionId = asSessionId(sessionId);
-    } catch (error) {
-      return {
-        ok: false,
-        error: {
-          code: "invalid_payload",
-          message: error instanceof Error ? error.message : String(error),
-        },
-      };
-    }
-
-    const sessionRootDir =
-      this.opts.sessionRootDir ??
-      defaultSessionRootDir(this.opts.workspaceRoot);
-    const sessionDir = join(sessionRootDir, safeSessionId);
-    try {
-      const st = await stat(sessionDir);
-      if (!st.isDirectory()) {
-        return {
-          ok: false,
-          error: {
-            code: "session_not_found",
-            message: `session not found: ${sessionId}`,
-          },
-        };
-      }
-    } catch {
-      return {
-        ok: false,
-        error: {
-          code: "session_not_found",
-          message: `session not found: ${sessionId}`,
-        },
-      };
-    }
-
-    return {
-      ok: true,
-      sessionId: safeSessionId,
-      compaction: await this.buildSessionCompactionInspectReport(
-        sessionRootDir,
-        safeSessionId,
-      ),
-    };
-  }
-
-  private async buildSessionCompactionInspectReport(
-    sessionRootDir: string,
-    sessionId: string,
-  ): Promise<SessionCompactionInspectReport> {
-    const store = new FileSessionStore({ rootDir: sessionRootDir });
-    const artifactPath = join(
-      sessionRootDir,
-      sessionId,
-      SESSION_COMPACT_FILENAME,
-    );
-    const [artifact, events] = await Promise.all([
-      loadSessionCompactArtifact({ sessionRootDir, sessionId }),
-      loadSessionCompactionEvents(store, sessionId),
-    ]);
-    const artifactSummary = artifact
-      ? sessionCompactionArtifactInspectSummary(artifact, artifactPath)
-      : null;
-    const latestEvent = events.at(-1) ?? null;
-    const latestCompleted =
-      [...events]
-        .reverse()
-        .find((event) => event.type === "session.compaction.completed") ?? null;
-    const findings: string[] = [];
-    const artifactMatchesLatestCompletedEvent =
-      artifactSummary && latestCompleted
-        ? sessionCompactionArtifactMatchesEvent(
-            artifactSummary,
-            latestCompleted,
-          )
-        : null;
-
-    if (
-      artifactSummary &&
-      latestCompleted &&
-      !artifactMatchesLatestCompletedEvent
-    ) {
-      findings.push(
-        "compact.json does not match the latest completed session compaction event",
-      );
-    }
-    if (artifactSummary && latestEvent?.type === "session.compaction.skipped") {
-      findings.push(
-        "latest compaction attempt was skipped; compact.json is from an earlier completed attempt",
-      );
-    }
-    if (!artifactSummary && latestCompleted) {
-      findings.push(
-        "latest completed session compaction event references an artifact that is missing or invalid",
-      );
-    }
-
-    return {
-      status: sessionCompactionInspectStatus({
-        artifact: artifactSummary,
-        latestEvent,
-        latestCompleted,
-        artifactMatchesLatestCompletedEvent,
-      }),
-      artifact: artifactSummary,
-      events,
-      latestEvent,
-      consistency: {
-        ok:
-          artifactMatchesLatestCompletedEvent !== false &&
-          !(latestCompleted && !artifactSummary),
-        artifactMatchesLatestCompletedEvent,
-        findings,
-      },
-    };
+    return await inspectHostSessionCompaction(this.opts, sessionId);
   }
 
   async compactSession(
@@ -5142,278 +4849,29 @@ export class HostRuntime {
     let safeSessionId: string;
     try {
       safeSessionId = asSessionId(sessionId);
-    } catch (error) {
-      return {
-        ok: false,
-        error: {
-          code: "invalid_payload",
-          message: error instanceof Error ? error.message : String(error),
-        },
-      };
+    } catch {
+      return await compactHostSession({
+        context: this.opts,
+        sessionId,
+        reason,
+        manualLlm: options.llm === true,
+        turns: [],
+      });
     }
-
     const sessionRootDir =
       this.opts.sessionRootDir ??
       defaultSessionRootDir(this.opts.workspaceRoot);
-    const sessionDir = join(sessionRootDir, safeSessionId);
-    try {
-      const st = await stat(sessionDir);
-      if (!st.isDirectory()) {
-        return {
-          ok: false,
-          error: {
-            code: "session_not_found",
-            message: `session not found: ${sessionId}`,
-          },
-        };
-      }
-    } catch {
-      return {
-        ok: false,
-        error: {
-          code: "session_not_found",
-          message: `session not found: ${sessionId}`,
-        },
-      };
-    }
-
     const turns = await this.loadCompletedConversationTurns(
       sessionRootDir,
       safeSessionId,
     );
-    const taskConfig = await this.loadTaskConfig("compaction");
-    const preparedCompaction = await this.sessionCompactionOptionsForTask({
+    return await compactHostSession({
+      context: this.opts,
+      sessionId,
       reason,
-      taskConfig,
       manualLlm: options.llm === true,
+      turns,
     });
-    const sessionCompactionOptions = preparedCompaction.options;
-
-    let compacted: Awaited<ReturnType<typeof compactSessionTurns>>;
-    try {
-      compacted = await compactSessionTurns(turns, sessionCompactionOptions);
-    } catch (error) {
-      const warnings = mergeCompactionWarnings(preparedCompaction.warnings, [
-        {
-          code: "SESSION_COMPACTION_FAILED",
-          message: error instanceof Error ? error.message : String(error),
-        },
-      ]);
-      const originalCharCount = turns.reduce(
-        (sum, turn) => sum + turn.goal.length + turn.message.length,
-        0,
-      );
-      return await this.recordSessionCompactionEvent(sessionRootDir, reason, {
-        ok: true,
-        sessionId: safeSessionId,
-        compactedRunCount: 0,
-        throughRunId: null,
-        originalCharCount,
-        summaryCharCount: originalCharCount,
-        freedChars: 0,
-        measurement: emptySessionCompactionMeasurement({
-          sourceRunCount: turns.length,
-          originalCharCount,
-        }),
-        artifactPath: null,
-        skippedReason: "compaction_failed",
-        warnings,
-      });
-    }
-
-    const warnings = mergeCompactionWarnings(
-      preparedCompaction.warnings,
-      compacted.warnings,
-    );
-
-    if (compacted.skippedReason !== undefined) {
-      return await this.recordSessionCompactionEvent(sessionRootDir, reason, {
-        ok: true,
-        sessionId: safeSessionId,
-        compactedRunCount: compacted.compactedRunCount,
-        throughRunId: compacted.throughRunId,
-        originalCharCount: compacted.originalCharCount,
-        summaryCharCount: compacted.summaryCharCount,
-        freedChars: compacted.freedChars,
-        measurement: compacted.measurement,
-        artifactPath: null,
-        skippedReason: compacted.skippedReason,
-        warnings,
-      });
-    }
-
-    const throughRunId = compacted.throughRunId;
-    try {
-      const artifactPath = await writeSessionCompactArtifact({
-        sessionRootDir,
-        artifact: {
-          schemaVersion: SESSION_COMPACT_SCHEMA_VERSION,
-          sessionId: asSessionId(safeSessionId),
-          createdAt: new Date().toISOString(),
-          throughRunId,
-          compactedRunCount: compacted.compactedRunCount,
-          sourceRunIds: compacted.sourceRunIds,
-          content: compacted.content,
-          originalCharCount: compacted.originalCharCount,
-          summaryCharCount: compacted.summaryCharCount,
-          freedChars: compacted.freedChars,
-          metadata: sessionCompactArtifactMetadata({
-            compacted,
-            warnings,
-            reason,
-          }),
-        },
-      });
-      return await this.recordSessionCompactionEvent(sessionRootDir, reason, {
-        ok: true,
-        sessionId: safeSessionId,
-        compactedRunCount: compacted.compactedRunCount,
-        throughRunId,
-        originalCharCount: compacted.originalCharCount,
-        summaryCharCount: compacted.summaryCharCount,
-        freedChars: compacted.freedChars,
-        measurement: compacted.measurement,
-        artifactPath,
-        warnings,
-      });
-    } catch (error) {
-      return await this.recordSessionCompactionEvent(sessionRootDir, reason, {
-        ok: true,
-        sessionId: safeSessionId,
-        compactedRunCount: 0,
-        throughRunId: null,
-        originalCharCount: compacted.originalCharCount,
-        summaryCharCount: compacted.originalCharCount,
-        freedChars: 0,
-        measurement: {
-          ...compacted.measurement,
-          summaryCharCount: compacted.originalCharCount,
-          freedChars: 0,
-          savingsRatio: 0,
-          regime: "no_savings",
-        },
-        artifactPath: null,
-        skippedReason: "artifact_write_failed",
-        warnings: [
-          ...(warnings ?? []),
-          {
-            code: "SESSION_COMPACT_ARTIFACT_WRITE_FAILED",
-            message: error instanceof Error ? error.message : String(error),
-          },
-        ],
-      });
-    }
-  }
-
-  private async recordSessionCompactionEvent(
-    sessionRootDir: string,
-    reason: string | undefined,
-    result: SessionCompactSuccessResult,
-  ): Promise<SessionCompactSuccessResult> {
-    const eventType = result.skippedReason
-      ? "session.compaction.skipped"
-      : "session.compaction.completed";
-    const store = new FileSessionStore({ rootDir: sessionRootDir });
-    try {
-      await store.appendEvent(result.sessionId, {
-        type: eventType,
-        payload: {
-          compactedRunCount: result.compactedRunCount,
-          throughRunId: result.throughRunId,
-          originalCharCount: result.originalCharCount,
-          summaryCharCount: result.summaryCharCount,
-          freedChars: result.freedChars,
-          measurement: result.measurement,
-          artifactPath: result.artifactPath,
-          ...(result.skippedReason
-            ? { skippedReason: result.skippedReason }
-            : {}),
-          ...(result.warnings
-            ? { warningCodes: result.warnings.map((warning) => warning.code) }
-            : {}),
-        },
-        metadata: {
-          source: "host",
-          ...(reason ? { reason } : {}),
-        },
-      });
-      return result;
-    } catch (error) {
-      return {
-        ...result,
-        warnings: mergeCompactionWarnings(result.warnings, [
-          {
-            code: "SESSION_COMPACTION_EVENT_WRITE_FAILED",
-            message: error instanceof Error ? error.message : String(error),
-          },
-        ]),
-      };
-    }
-  }
-
-  private async loadTaskConfig(name: string): Promise<TaskConfig | undefined> {
-    const loaded = await loadHostConfig(this.opts.workspaceRoot);
-    return loaded.config.tasks?.[name];
-  }
-
-  private async sessionCompactionOptionsForTask(input: {
-    reason?: string;
-    taskConfig?: TaskConfig;
-    manualLlm: boolean;
-  }): Promise<{
-    options: SessionCompactionOptions;
-    warnings?: CompactionWarning[];
-  }> {
-    const enabled = input.manualLlm || input.taskConfig?.enabled === true;
-    const options: SessionCompactionOptions = { reason: input.reason };
-    if (!enabled) return { options };
-
-    const modelRef = input.taskConfig?.model ?? this.opts.defaultModel;
-    const model = await createModel({
-      modelRef,
-      goal: "Summarize completed session history for future context.",
-      workspaceRoot: this.opts.workspaceRoot,
-    });
-    if (!model.ok) {
-      return {
-        options,
-        warnings: [
-          {
-            code: "SESSION_SUMMARIZER_MODEL_UNAVAILABLE",
-            message: model.message,
-          },
-        ],
-      };
-    }
-
-    const modelId = model.resolved.modelRef;
-    const deterministicPreview =
-      model.resolved.providerKey === DETERMINISTIC_PROVIDER;
-    return {
-      options: {
-        ...options,
-        summarizer: deterministicPreview
-          ? createDeterministicSessionSummarizer()
-          : createModelSessionSummarizer({
-              model: model.adapter,
-              modelId,
-            }),
-        summarizerTrigger: input.manualLlm ? "manual" : "auto",
-        summarizerBudget: input.taskConfig?.budget,
-        summarizerUsage: sessionSummarizerUsageHint(model.resolved),
-        summarizerModelId: modelId,
-      },
-      warnings:
-        deterministicPreview && input.manualLlm
-          ? [
-              {
-                code: "SESSION_SUMMARIZER_DETERMINISTIC_PREVIEW",
-                message:
-                  "Session compaction used the deterministic summarizer preview because the resolved compaction model is deterministic.",
-              },
-            ]
-          : undefined,
-    };
   }
 
   /**
@@ -5434,45 +4892,7 @@ export class HostRuntime {
       }
     | { ok: false; error: ProtocolError }
   > {
-    let safeSource: string;
-    try {
-      safeSource = asSessionId(sourceSessionId);
-    } catch (error) {
-      return {
-        ok: false,
-        error: {
-          code: "invalid_payload",
-          message: error instanceof Error ? error.message : String(error),
-        },
-      };
-    }
-
-    const sessionRootDir =
-      this.opts.sessionRootDir ??
-      defaultSessionRootDir(this.opts.workspaceRoot);
-    try {
-      const store = new FileSessionStore({ rootDir: sessionRootDir });
-      const result = await forkSessionFromEvent({
-        sourceSessionId: safeSource,
-        forkAtSequence,
-        store,
-        metadata: { forkedVia: "tui" },
-      });
-      return {
-        ok: true,
-        forkedSessionId: result.forked.id,
-        copiedEventCount: result.copiedEventCount,
-        truncatedAtSequence: result.truncatedAtSequence,
-      };
-    } catch (error) {
-      return {
-        ok: false,
-        error: {
-          code: "internal_error",
-          message: error instanceof Error ? error.message : String(error),
-        },
-      };
-    }
+    return await forkHostSession(this.opts, sourceSessionId, forkAtSequence);
   }
 }
 
@@ -8430,230 +7850,6 @@ function addSessionSubagentFact(
   facts.subagents = [...existing.values()];
 }
 
-function mergeCompactionWarnings(
-  ...groups: Array<CompactionWarning[] | undefined>
-): CompactionWarning[] | undefined {
-  const warnings = groups.flatMap((group) => group ?? []);
-  return warnings.length > 0 ? warnings : undefined;
-}
-
-async function loadSessionCompactionEvents(
-  store: FileSessionStore,
-  sessionId: string,
-): Promise<SessionCompactionInspectEvent[]> {
-  const events: SessionCompactionInspectEvent[] = [];
-  for await (const event of store.loadEvents(sessionId)) {
-    const projected = sessionCompactionInspectEvent(event);
-    if (projected) events.push(projected);
-  }
-  return events;
-}
-
-function sessionCompactionInspectEvent(
-  event: SessionEvent,
-): SessionCompactionInspectEvent | null {
-  if (
-    event.type !== "session.compaction.completed" &&
-    event.type !== "session.compaction.skipped"
-  ) {
-    return null;
-  }
-  const payload = isPlainRecord(event.payload) ? event.payload : {};
-  return {
-    sequence: event.sequence,
-    timestamp: event.timestamp,
-    type: event.type,
-    compactedRunCount: recordNumber(payload, "compactedRunCount") ?? 0,
-    throughRunId: recordNullableString(payload, "throughRunId"),
-    originalCharCount: recordNumber(payload, "originalCharCount") ?? 0,
-    summaryCharCount: recordNumber(payload, "summaryCharCount") ?? 0,
-    freedChars: recordNumber(payload, "freedChars") ?? 0,
-    ...(sessionCompactionMeasurementFromUnknown(payload.measurement)
-      ? {
-          measurement: sessionCompactionMeasurementFromUnknown(
-            payload.measurement,
-          ),
-        }
-      : {}),
-    artifactPath: recordNullableString(payload, "artifactPath"),
-    ...(recordString(payload, "skippedReason")
-      ? { skippedReason: recordString(payload, "skippedReason") }
-      : {}),
-    ...(recordStringArray(payload, "warningCodes")
-      ? { warningCodes: recordStringArray(payload, "warningCodes") }
-      : {}),
-    ...(recordString(event.metadata, "reason")
-      ? { reason: recordString(event.metadata, "reason") }
-      : {}),
-    ...(recordString(event.metadata, "source")
-      ? { source: recordString(event.metadata, "source") }
-      : {}),
-  };
-}
-
-function sessionCompactionArtifactInspectSummary(
-  artifact: SessionCompactArtifact,
-  path: string,
-): SessionCompactionInspectArtifact {
-  const metadata = artifact.metadata ?? {};
-  return {
-    path,
-    schemaVersion: artifact.schemaVersion,
-    createdAt: artifact.createdAt,
-    throughRunId: artifact.throughRunId,
-    compactedRunCount: artifact.compactedRunCount,
-    sourceRunIds: [...artifact.sourceRunIds],
-    originalCharCount: artifact.originalCharCount,
-    summaryCharCount: artifact.summaryCharCount,
-    freedChars: artifact.freedChars,
-    ...(sessionCompactionMeasurementFromUnknown(metadata.measurement)
-      ? {
-          measurement: sessionCompactionMeasurementFromUnknown(
-            metadata.measurement,
-          ),
-        }
-      : {}),
-    ...(recordString(metadata, "mode")
-      ? { mode: recordString(metadata, "mode") }
-      : {}),
-    ...(recordString(metadata, "reason")
-      ? { reason: recordString(metadata, "reason") }
-      : {}),
-    ...(sessionCompactionWarningCodes(metadata)
-      ? { warningCodes: sessionCompactionWarningCodes(metadata) }
-      : {}),
-    ...(isPlainRecord(metadata.summaryFingerprint)
-      ? { summaryFingerprint: { ...metadata.summaryFingerprint } }
-      : {}),
-  };
-}
-
-function sessionCompactionArtifactMatchesEvent(
-  artifact: SessionCompactionInspectArtifact,
-  event: SessionCompactionInspectEvent,
-): boolean {
-  return (
-    event.type === "session.compaction.completed" &&
-    artifact.path === event.artifactPath &&
-    artifact.throughRunId === event.throughRunId &&
-    artifact.compactedRunCount === event.compactedRunCount &&
-    artifact.originalCharCount === event.originalCharCount &&
-    artifact.summaryCharCount === event.summaryCharCount &&
-    artifact.freedChars === event.freedChars
-  );
-}
-
-function sessionCompactionInspectStatus(input: {
-  artifact: SessionCompactionInspectArtifact | null;
-  latestEvent: SessionCompactionInspectEvent | null;
-  latestCompleted: SessionCompactionInspectEvent | null;
-  artifactMatchesLatestCompletedEvent: boolean | null;
-}): SessionCompactionInspectReport["status"] {
-  if (!input.artifact && !input.latestEvent) return "not_compacted";
-  if (input.latestEvent?.type === "session.compaction.skipped") {
-    return "skipped";
-  }
-  if (input.artifact && input.latestCompleted) {
-    return input.artifactMatchesLatestCompletedEvent === false
-      ? "stale_artifact"
-      : "compacted";
-  }
-  if (input.artifact) return "artifact_only";
-  return "event_only";
-}
-
-function sessionCompactionWarningCodes(
-  metadata: Record<string, unknown>,
-): string[] | undefined {
-  const warnings = metadata.warnings;
-  if (!Array.isArray(warnings)) return undefined;
-  const codes = warnings
-    .map((warning) => recordString(warning, "code"))
-    .filter((code): code is string => Boolean(code));
-  return codes.length > 0 ? codes : undefined;
-}
-
-function sessionCompactionMeasurementFromUnknown(
-  value: unknown,
-): SessionCompactionMeasurement | undefined {
-  if (!isPlainRecord(value)) return undefined;
-  return value as unknown as SessionCompactionMeasurement;
-}
-
-function sessionSummarizerUsageHint(
-  resolved: ResolvedModelConfig,
-): ContextUsageHint {
-  const costUnavailable = resolved.pricingSource === "unavailable";
-  return {
-    inputTokens: 0,
-    outputTokens: 0,
-    totalTokens: 0,
-    costUsd: 0,
-    modelCalls: 0,
-    costStatus: costUnavailable ? "unavailable" : "estimated",
-    ...(costUnavailable
-      ? { costUnavailableReasons: { missing_pricing: 1 } }
-      : {}),
-  };
-}
-
-function sessionCompactArtifactMetadata(input: {
-  compacted: {
-    appliedStages: Array<{
-      tier: string;
-      metadata?: Record<string, unknown>;
-    }>;
-    skippedStages: Array<Record<string, unknown>>;
-    measurement: SessionCompactionMeasurement;
-  };
-  warnings?: CompactionWarning[];
-  reason?: string;
-}): Record<string, unknown> {
-  const summarizeMetadata = input.compacted.appliedStages.find(
-    (stage) => stage.tier === "summarize",
-  )?.metadata;
-  const mode =
-    recordString(summarizeMetadata, "mode") === "llm"
-      ? "llm"
-      : "deterministic-v2";
-  const summaryFingerprint = isPlainRecord(
-    summarizeMetadata?.summaryFingerprint,
-  )
-    ? { ...summarizeMetadata.summaryFingerprint }
-    : undefined;
-  return {
-    source: "host",
-    mode,
-    appliedStages: input.compacted.appliedStages,
-    skippedStages: input.compacted.skippedStages,
-    measurement: input.compacted.measurement,
-    ...(summaryFingerprint ? { summaryFingerprint } : {}),
-    ...(input.warnings ? { warnings: input.warnings } : {}),
-    ...(input.reason ? { reason: input.reason } : {}),
-  };
-}
-
-function emptySessionCompactionMeasurement(input: {
-  sourceRunCount: number;
-  originalCharCount: number;
-}): SessionCompactionMeasurement {
-  return {
-    sourceRunCount: input.sourceRunCount,
-    originalCharCount: input.originalCharCount,
-    summaryCharCount: input.originalCharCount,
-    freedChars: 0,
-    savingsRatio: 0,
-    freedByTier: {
-      dedup: 0,
-      extract: 0,
-      evict: 0,
-      summarize: 0,
-    },
-    regime: "no_savings",
-    signalCount: 0,
-  };
-}
-
 function recordString(value: unknown, key: string): string | undefined {
   return isPlainRecord(value) && typeof value[key] === "string"
     ? (value[key] as string)
@@ -9543,26 +8739,6 @@ function workflowLeaseOwner(): string {
 
 function cloneJsonLike<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
-}
-
-function recordNumber(value: unknown, key: string): number | undefined {
-  return isPlainRecord(value) && typeof value[key] === "number"
-    ? (value[key] as number)
-    : undefined;
-}
-
-function recordNullableString(value: unknown, key: string): string | null {
-  if (!isPlainRecord(value)) return null;
-  const candidate = value[key];
-  return typeof candidate === "string" ? candidate : null;
-}
-
-function recordStringArray(value: unknown, key: string): string[] | undefined {
-  if (!isPlainRecord(value) || !Array.isArray(value[key])) return undefined;
-  const strings = value[key].filter((item): item is string => {
-    return typeof item === "string";
-  });
-  return strings.length > 0 ? strings : undefined;
 }
 
 function findNestedString(value: unknown, key: string): string | undefined {

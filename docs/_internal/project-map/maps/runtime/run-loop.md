@@ -280,6 +280,13 @@ createRun/resumeRunFromCheckpoint
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-07-14T14:35:00+0800
+- Scope: P6 routed review; session operations were mechanically extracted and
+  canonical HostService -> lane coordinator -> HostExecution behavior is
+  unchanged.
+- Tests: Host 571/571; server-runtime 30/30; ACP/CLI focused suites passed.
+
 - Status: Verified (no Core loop change)
 - Date: 2026-07-14
 - Scope: reviewed Host-owned IM dispatch/retention; messages still enter through

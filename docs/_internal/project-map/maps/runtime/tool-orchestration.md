@@ -363,6 +363,12 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-07-14T14:35:00+0800
+- Scope: P6 routed review; tool orchestration and lease admission semantics are
+  unchanged by module renaming.
+- Tests: Host full suite passed.
+
 - Status: Verified (no tool contract change)
 - Date: 2026-07-14
 - Scope: reviewed Host IM message and approval routing; tool execution and

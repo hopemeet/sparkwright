@@ -211,6 +211,12 @@ EventLog emits full event
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-07-14T14:35:00+0800
+- Scope: P6 routed review; session trace inspection moved to a function module
+  but raw trace remains canonical and no duplicate event store was introduced.
+- Tests: Host session inspection/full suite passed.
+
 - Status: Verified (no canonical trace change)
 - Date: 2026-07-14
 - Scope: reviewed IM delivery replay; Host outbox entries are bounded delivery

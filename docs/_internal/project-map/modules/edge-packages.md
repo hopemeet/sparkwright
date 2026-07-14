@@ -46,10 +46,14 @@ contracts, and focused checklists that no longer fit here.
 - Server, streaming, memory-store, and trace-perfetto packages are reusable
   runtime/storage/diagnostic adapters around core contracts. Treat core events,
   run/session stores, and trace maps as the active contracts.
-- `server-runtime`'s `DurableCommandDispatcher` only coalesces concurrent local
-  dispatch of the same durable command id. Agent-runtime storage and the
+- `server-runtime`'s `InFlightCommandDispatcher` only coalesces concurrent local
+  dispatch of the same command id. `DurableCommandDispatcher` remains a
+  deprecated naming alias and is not durable. Agent-runtime storage and the
   workflow journal remain command/outcome/apply truth; Host remains the adapter
   that assembles a fenced writer and execution behavior.
+- `ConnectionHub`, `RunManager`, `SessionManager`, `ApprovalBroker`, and
+  `createServerRuntime` remain deprecated compatibility utilities isolated from
+  the canonical HostService -> ExecutionLaneCoordinator path.
 - `WorkflowSupervisor` coordinates bounded inventory scans, Package C claim
   competition, claimed-adapter invocation, heartbeat, and drain reporting. It
   has no process launcher and is not a daemon; F remains responsible for the
@@ -120,6 +124,15 @@ contracts, and focused checklists that no longer fit here.
   source exports. It should not be used as the sole authority for behavior.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14T14:35:00+0800
+- Scope: P6 gave in-flight command coalescing its accurate name and isolated
+  the legacy server-runtime convenience stack as deprecated compatibility API;
+  the execution-lane coordinator remains independent of that stack.
+- Read: server-runtime source, tests, README, Host consumers, and coordinator
+  proposal.
+- Tests: server-runtime 30/30; typecheck/build; Host and edge focused suites.
 
 - Status: Verified
 - Date: 2026-07-14

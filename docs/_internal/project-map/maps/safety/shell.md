@@ -186,6 +186,12 @@ args` without rewriting requests, while the latter parses Host command text
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-14T14:35:00+0800
+- Scope: P6 routed review; shell sandbox and mutation-window semantics are
+  unchanged by the workspace lease import rename.
+- Tests: Host shell/Agent/full suites passed.
+
+- Status: Verified
 - Date: 2026-07-14
 - Scope: granted sandboxed stdio MCP servers only their generated neutral cwd
   as writable scratch; Linux still requires explicit read grants for runtime

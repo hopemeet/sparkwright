@@ -6,7 +6,7 @@ import {
   WorkspaceLeaseLostError,
   WorkspaceLeaseRunChainConflictError,
   withWorkspaceMutationLease,
-} from "../src/workspace-agent-arbiter.js";
+} from "../src/workspace-lease-coordinator.js";
 
 afterEach(() => vi.useRealTimers());
 

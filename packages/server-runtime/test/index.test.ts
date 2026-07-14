@@ -8,6 +8,7 @@ import {
   SessionManager,
   createServerRuntime,
   DurableCommandDispatcher,
+  InFlightCommandDispatcher,
   WorkflowSupervisor,
 } from "../src/index.js";
 import {
@@ -20,8 +21,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 describe("server-runtime", () => {
-  it("coalesces concurrent consumption of one durable command id", async () => {
-    const dispatcher = new DurableCommandDispatcher();
+  it("coalesces concurrent in-flight consumption without claiming durability", async () => {
+    const dispatcher = new InFlightCommandDispatcher();
     let calls = 0;
     let release!: () => void;
     const barrier = new Promise<void>((resolve) => {
@@ -43,6 +44,10 @@ describe("server-runtime", () => {
     ]);
     expect(calls).toBe(1);
     expect(dispatcher.isInFlight("workflow_command_one")).toBe(false);
+  });
+
+  it("keeps the former durable name as the same compatibility constructor", () => {
+    expect(DurableCommandDispatcher).toBe(InFlightCommandDispatcher);
   });
 
   it("fans out run events through filtered subscriptions", async () => {

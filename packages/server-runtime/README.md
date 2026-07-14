@@ -1,14 +1,22 @@
 # @sparkwright/server-runtime
 
-Transport-neutral backend control plane helpers for SparkWright. The package is optional and has no HTTP framework dependency; hosts can adapt the protocol messages to WebSocket, SSE, IPC, queues, CLIs, or tests.
+Transport-neutral backend coordination for SparkWright. `ExecutionLaneCoordinator`
+is the canonical Host scheduling primitive: it coordinates opaque execution
+drivers and does not own Core, Workflow, Task, Agent, workspace lease, or
+protocol event state.
 
-The initial surface provides:
+The following older convenience APIs remain as deprecated compatibility exports
+only. HostService and the execution-lane path do not use them:
 
 - `RunManager` for creating, starting, cancelling, and looking up core `RunHandle`s.
 - `SessionManager` for creating sessions and associating runs with them.
 - `ConnectionHub` for in-process event subscriptions and protocol fan-out.
 - `ApprovalBroker` for bridging core `InteractionChannel` approvals, questions, and notifications to subscribers.
 - `ServerCapabilityRegistry` for registering model, tool, policy, workspace, context, and custom runtime capabilities.
+
+`InFlightCommandDispatcher` only coalesces concurrent calls while the process is
+alive. `DurableCommandDispatcher` is a deprecated naming alias; neither API is a
+durable journal or restart-recovery mechanism.
 
 ## Sketch
 

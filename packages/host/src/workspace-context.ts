@@ -7,8 +7,8 @@ import {
   TaskManager,
   workspaceWorkflowRunsDir,
 } from "@sparkwright/agent-runtime";
-import { DurableCommandDispatcher } from "@sparkwright/server-runtime";
-import type { WorkspaceLeaseCoordinator } from "./workspace-agent-arbiter.js";
+import { InFlightCommandDispatcher } from "@sparkwright/server-runtime";
+import type { WorkspaceLeaseCoordinator } from "./workspace-lease-coordinator.js";
 
 export interface WorkspaceContextIdentity {
   workspaceRoot: string;
@@ -22,7 +22,7 @@ export class WorkspaceContext {
   readonly taskNotifications: FileTaskNotificationOutbox;
   readonly workflowNotifications: FileWorkflowNotificationOutbox;
   readonly workflowControls: FileWorkflowControlInbox;
-  readonly workflowControlDispatcher = new DurableCommandDispatcher();
+  readonly workflowControlDispatcher = new InFlightCommandDispatcher();
   readonly taskManager: TaskManager;
   readonly workspaceLeaseCoordinator: WorkspaceLeaseCoordinator;
 

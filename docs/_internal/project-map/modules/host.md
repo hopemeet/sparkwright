@@ -12,6 +12,8 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 ## Main Files
 
 - `packages/host/src/runtime.ts`
+- `packages/host/src/session-queries.ts`
+- `packages/host/src/session-compaction.ts`
 - `packages/host/src/run-access.ts`
 - `packages/host/src/run-security-plan.ts`
 - `packages/host/src/run-policy.ts`
@@ -23,7 +25,8 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 - `packages/host/src/tools.ts`
 - `packages/host/src/shell.ts`
 - `packages/host/src/workspace-snapshot.ts`
-- `packages/host/src/workspace-agent-arbiter.ts`
+- `packages/host/src/workspace-lease-coordinator.ts`
+- `packages/host/src/workspace-agent-arbiter.ts` (compatibility re-export)
 - `packages/host/src/workflow-hooks.ts`
 - `packages/host/src/invariant-projection.ts`
 - `packages/host/src/workflows.ts`
@@ -752,14 +755,22 @@ Does not own:
   invocation entrypoint so direct aliases remain `delegate` while
   `delegate_agent` lifecycle records the real indexed surface. Model-authored
   string fields cannot override this attribution marker.
-- `workspace-agent-arbiter.ts` now owns the process-local Host workspace lease
-  primitive (the legacy filename/export remains for compatibility). One
+- `workspace-lease-coordinator.ts` owns the process-local Host workspace lease
+  primitive; `workspace-agent-arbiter.ts` is only a compatibility re-export. One
   `WorkspaceLeaseCoordinator` singleton is shared by HostRuntime connections
   and keyed by realpath-canonical workspace root. Host wraps actual parent and
   child coding/Shell/capability mutation windows, while write-capable
   in-process, ACP, and external delegates retain a lease for their full
   execution. Dynamic Agent grant/delegate dispatch tools are not themselves
   wrapped because their child owns the mutation window.
+- `session-queries.ts` owns session listing, trace inspection, compaction
+  inspection, transcript previews, and session fork queries. `runtime.ts`
+  delegates those protocol-compatible operations without retaining duplicate
+  implementations.
+- `session-compaction.ts` owns manual compaction preparation, optional
+  summarizer model assembly, artifact writes, and compaction event recording.
+  Runtime supplies completed immutable turns and does not retain a second
+  compaction implementation.
 - Same-owner acquisition is reference-counted and reentrant, so a child holding
   its execution lease can call managed write tools. A descendant request that
   would wait on an ancestor fails fast instead of entering a run-chain
@@ -900,6 +911,15 @@ Does not own:
   remain adapter-native and need continued cross-entrypoint characterization.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14T14:35:00+0800
+- Scope: P6 split session query and compaction behavior out of `runtime.ts`,
+  moved the workspace lease implementation to its canonical filename, and kept
+  the old arbiter module as a state-free compatibility re-export.
+- Read: Host runtime, session modules, workspace lease coordinator, production
+  imports, and focused tests.
+- Tests: Host 571/571; Host typecheck/build; project-map drift check.
 
 - Status: Verified
 - Date: 2026-07-14

@@ -56,7 +56,7 @@ import {
 import {
   withWorkspaceMutationLease,
   type WorkspaceLeaseCoordinator,
-} from "./workspace-agent-arbiter.js";
+} from "./workspace-lease-coordinator.js";
 
 const MAIN_TODO_MAX_WRITES_PER_RUN = 4;
 export const AGENT_TASK_CREATE_PAYLOAD_DESCRIPTION =

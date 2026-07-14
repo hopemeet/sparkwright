@@ -207,6 +207,12 @@ config + workspace capability roots
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-07-14T14:35:00+0800
+- Scope: P6 routed review; capability inspection and catalog semantics are
+  unchanged by session-module extraction and lease import renaming.
+- Tests: Host full suite/typecheck passed.
+
 - Status: Verified (no capability activation change)
 - Date: 2026-07-14
 - Scope: reviewed Host IM control integration; it adds protocol/session control

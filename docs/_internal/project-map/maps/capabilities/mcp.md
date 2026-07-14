@@ -87,6 +87,12 @@ host config MCP servers
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-07-14T14:35:00+0800
+- Scope: P6 routed review; live MCP remains execution-scoped and was not moved
+  into session query/compaction modules.
+- Tests: Host full suite passed.
+
 - Status: Verified (no MCP ownership change)
 - Date: 2026-07-14
 - Scope: reviewed retained IM executions; live MCP remains execution-scoped and
