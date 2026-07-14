@@ -3438,6 +3438,7 @@ describe("runCli", () => {
     await writeFile(
       join(workspace, ".sparkwright", "config.json"),
       JSON.stringify({
+        shell: mcpFixtureShellConfig(),
         capabilities: {
           mcp: {
             namePrefix: "mcp",
@@ -8179,6 +8180,7 @@ describe("runCli", () => {
     await writeFile(
       join(workspace, ".sparkwright", "config.json"),
       JSON.stringify({
+        shell: mcpFixtureShellConfig(),
         capabilities: {
           mcp: {
             namePrefix: "mcp",
@@ -8244,6 +8246,7 @@ describe("runCli", () => {
     await writeFile(
       join(workspace, ".sparkwright", "config.json"),
       JSON.stringify({
+        shell: mcpFixtureShellConfig(),
         capabilities: {
           mcp: {
             namePrefix: "mcp",
@@ -8337,6 +8340,7 @@ describe("runCli", () => {
     await writeFile(
       join(workspace, ".sparkwright", "config.json"),
       JSON.stringify({
+        shell: mcpFixtureShellConfig(),
         capabilities: {
           mcp: {
             namePrefix: "mcp",
@@ -8426,6 +8430,7 @@ describe("runCli", () => {
     await writeFile(
       join(workspace, ".sparkwright", "config.json"),
       JSON.stringify({
+        shell: mcpFixtureShellConfig(),
         capabilities: {
           mcp: {
             namePrefix: "mcp",
@@ -8943,7 +8948,7 @@ describe("runCli", () => {
         true,
       );
     }
-  });
+  }, 15_000);
 
   it("prints configured verification profile results in host runs", async () => {
     const workspace = await createWorkspace("# Demo\n");
@@ -10127,6 +10132,7 @@ describe("runCli", () => {
       output: { exitCode: number; stdout: string };
       events: Array<{
         type: string;
+        payload?: Record<string, unknown>;
         metadata?: Record<string, unknown>;
       }>;
     };
@@ -10140,6 +10146,29 @@ describe("runCli", () => {
       argv: ["--goal", "inspect readme"],
       stdin: "",
     });
+    const delegateLifecycle = parsed.events.filter((event) =>
+      event.type.startsWith("subagent."),
+    );
+    expect(delegateLifecycle.map((event) => event.type)).toEqual([
+      "subagent.requested",
+      "subagent.started",
+      "subagent.completed",
+    ]);
+    expect(
+      delegateLifecycle.every(
+        (event) =>
+          event.metadata?.entrypoint === "delegates_run" &&
+          event.metadata?.childAgentId === "external_cli_fixture" &&
+          event.metadata?.childRunId === event.payload?.childRunId,
+      ),
+    ).toBe(true);
+    expect(
+      delegateLifecycle.filter(
+        (event) =>
+          event.type === "subagent.completed" ||
+          event.type === "subagent.failed",
+      ),
+    ).toHaveLength(1);
     const trace = await readFile(parsed.tracePath, "utf8");
     expect(trace).toContain('"type":"approval.requested"');
     expect(trace).toContain('"type":"subagent.completed"');
@@ -10504,6 +10533,16 @@ describe("runCli", () => {
       // runner has room to connect (not a delay on fast machines).
       timeoutMs: 15000,
       ...(options.cwd ? { cwd: options.cwd } : {}),
+    };
+  }
+
+  function mcpFixtureShellConfig() {
+    return {
+      sandbox: {
+        filesystem: {
+          allowRead: [join(findRepoRoot(process.cwd()), "node_modules")],
+        },
+      },
     };
   }
 

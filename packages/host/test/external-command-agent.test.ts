@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createRun } from "@sparkwright/core";
 import type { AgentProfile } from "@sparkwright/agent-runtime";
 import {
@@ -14,6 +14,12 @@ import {
   isSecretEnvKey,
   redactSecretEnv,
 } from "../src/external-command-agent.js";
+import {
+  lifecycleTypes,
+  projectAgentLifecycle,
+  terminalLifecycleCount,
+} from "./helpers/agent-lifecycle.js";
+import { WorkspaceLeaseCoordinator } from "../src/workspace-agent-arbiter.js";
 
 describe("external command delegate tool", () => {
   it("parses external command config from agent profile metadata", () => {
@@ -45,6 +51,59 @@ describe("external command delegate tool", () => {
       envMode: "explicit",
       workspaceAccess: "read_write",
     });
+  });
+
+  it("mints unique child run ids for same-millisecond invocations", async () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
+    let randomValue = 0;
+    const random = vi
+      .spyOn(Math, "random")
+      .mockImplementation(() => ((randomValue += 1) % 1000) / 1000);
+    try {
+      const parent = createRun({
+        goal: "parent",
+        model: {
+          async complete() {
+            return { message: "parent" };
+          },
+        },
+        maxSteps: 1,
+      });
+      const profile: AgentProfile = {
+        id: "external_reviewer",
+        metadata: {
+          externalCommand: {
+            command: "unused",
+            workspaceAccess: "read_write",
+          },
+        },
+      };
+      const tool = createExternalCommandDelegateTool({
+        getParent: () => parent,
+        profile,
+        toolName: "delegate_external_reviewer",
+        description: "Blocked before process launch.",
+        workspaceRoot: process.cwd(),
+        allowReadWriteWorkspaceAccess: false,
+      });
+
+      await expect(
+        tool.execute({ goal: "first" }, { run: parent.record } as never),
+      ).rejects.toBeDefined();
+      await expect(
+        tool.execute({ goal: "second" }, { run: parent.record } as never),
+      ).rejects.toBeDefined();
+
+      const childRunIds = parent.events
+        .all()
+        .filter((event) => event.type === "subagent.requested")
+        .map((event) => (event.payload as { childRunId: string }).childRunId);
+      expect(childRunIds).toHaveLength(2);
+      expect(new Set(childRunIds).size).toBe(2);
+    } finally {
+      random.mockRestore();
+      now.mockRestore();
+    }
   });
 
   it("runs an argument-based command and mirrors subagent lifecycle events", async () => {
@@ -80,6 +139,7 @@ describe("external command delegate tool", () => {
     const result = (await tool.execute({ goal: "review the patch" }, {
       run: parent.record,
     } as never)) as {
+      childRunId: string;
       protocol: string;
       stdout: string;
       exitCode: number;
@@ -100,6 +160,33 @@ describe("external command delegate tool", () => {
       stdoutBytes: result.stdout.length,
       stdoutPreview: result.stdout,
     });
+    expect(
+      projectAgentLifecycle(parent.events.all(), result.childRunId),
+    ).toEqual([
+      expect.objectContaining({
+        type: "subagent.requested",
+        childRunId: result.childRunId,
+        parentRunId: parent.record.id,
+        childAgentId: "external_reviewer",
+        agentProfileId: "external_reviewer",
+        entrypoint: "external_command",
+        identityConsistent: true,
+      }),
+      expect.objectContaining({
+        type: "subagent.started",
+        identityConsistent: true,
+      }),
+      expect.objectContaining({
+        type: "subagent.completed",
+        identityConsistent: true,
+      }),
+    ]);
+    expect(
+      projectAgentLifecycle(parent.events.all(), result.childRunId).at(-1),
+    ).toMatchObject({ terminalState: "completed" });
+    expect(terminalLifecycleCount(parent.events.all(), result.childRunId)).toBe(
+      1,
+    );
     expect(parent.events.all().map((event) => event.type)).toEqual(
       expect.arrayContaining([
         "subagent.requested",
@@ -118,6 +205,8 @@ describe("external command delegate tool", () => {
             agentId: "main",
             childAgentId: "external_reviewer",
             agentProfileId: "external_reviewer",
+            protocol: "external_command",
+            workspaceAccess: "none",
           }),
           payload: expect.objectContaining({
             result: expect.objectContaining({
@@ -133,6 +222,129 @@ describe("external command delegate tool", () => {
         }),
       ]),
     );
+  });
+
+  it("serializes read-write delegates across parents sharing one workspace", async () => {
+    const fixture = await createFixtureCommand("setTimeout(() => {}, 250);");
+    const arbiter = new WorkspaceLeaseCoordinator();
+    const makeParent = () =>
+      createRun({
+        goal: "parent",
+        model: {
+          async complete() {
+            return { message: "parent" };
+          },
+        },
+        maxSteps: 1,
+      });
+    const profile: AgentProfile = {
+      id: "external_writer",
+      metadata: {
+        externalCommand: {
+          command: process.execPath,
+          args: [fixture.commandPath],
+          input: "none",
+          workspaceAccess: "read_write",
+        },
+      },
+    };
+    const firstParent = makeParent();
+    const secondParent = makeParent();
+    const makeTool = (parent: ReturnType<typeof createRun>) =>
+      createExternalCommandDelegateTool({
+        getParent: () => parent,
+        profile,
+        toolName: "delegate_external_writer",
+        description: "Delegate to a serialized writer.",
+        workspaceRoot: fixture.cwd,
+        allowReadWriteWorkspaceAccess: true,
+        workspaceLeaseCoordinator: arbiter,
+      });
+
+    const first = makeTool(firstParent).execute({ goal: "first" }, {
+      run: firstParent.record,
+    } as never);
+    await vi.waitFor(() =>
+      expect(arbiter.inspect(fixture.cwd).writer).toBeDefined(),
+    );
+    const second = makeTool(secondParent).execute({ goal: "second" }, {
+      run: secondParent.record,
+    } as never);
+    await vi.waitFor(() =>
+      expect(arbiter.inspect(fixture.cwd).queued).toHaveLength(1),
+    );
+
+    expect(lifecycleTypes(secondParent.events.all())).toEqual([
+      "subagent.requested",
+    ]);
+    await Promise.all([first, second]);
+    expect(lifecycleTypes(secondParent.events.all())).toEqual([
+      "subagent.requested",
+      "subagent.started",
+      "subagent.completed",
+    ]);
+    expect(arbiter.inspect(fixture.cwd)).toMatchObject({
+      readers: [],
+      queued: [],
+    });
+  });
+
+  it("terminates a read-write delegate when its workspace lease is revoked", async () => {
+    const fixture = await createFixtureCommand("setInterval(() => {}, 1000);");
+    const coordinator = new WorkspaceLeaseCoordinator();
+    const parent = createRun({
+      goal: "parent",
+      model: {
+        async complete() {
+          return { message: "parent" };
+        },
+      },
+      maxSteps: 1,
+    });
+    const profile: AgentProfile = {
+      id: "external_writer",
+      metadata: {
+        externalCommand: {
+          command: process.execPath,
+          args: [fixture.commandPath],
+          input: "none",
+          workspaceAccess: "read_write",
+        },
+      },
+    };
+    const tool = createExternalCommandDelegateTool({
+      getParent: () => parent,
+      profile,
+      toolName: "delegate_external_writer",
+      description: "Delegate to a revocable writer.",
+      workspaceRoot: fixture.cwd,
+      allowReadWriteWorkspaceAccess: true,
+      workspaceLeaseCoordinator: coordinator,
+    });
+
+    const pending = tool.execute({ goal: "write until revoked" }, {
+      run: parent.record,
+    } as never);
+    await vi.waitFor(() =>
+      expect(lifecycleTypes(parent.events.all())).toContain("subagent.started"),
+    );
+    const ownerId = coordinator.inspect(fixture.cwd).writer?.ownerId;
+    expect(ownerId).toBeDefined();
+    expect(coordinator.revoke(fixture.cwd, ownerId!)).toBe(true);
+
+    await expect(pending).rejects.toMatchObject({
+      code: "DELEGATE_NONZERO_EXIT",
+    });
+    const requested = parent.events
+      .all()
+      .find((event) => event.type === "subagent.requested");
+    const childRunId = (requested?.payload as { childRunId: string })
+      .childRunId;
+    expect(
+      projectAgentLifecycle(parent.events.all(), childRunId).at(-1),
+    ).toMatchObject({ terminalState: "failed" });
+    expect(terminalLifecycleCount(parent.events.all(), childRunId)).toBe(1);
+    expect(coordinator.inspect(fixture.cwd).writer).toBeUndefined();
   });
 
   it("summarizes stderr token progress on the external delegate result", async () => {
@@ -295,12 +507,18 @@ describe("external command delegate tool", () => {
         run: parent.record,
       } as never),
     ).rejects.toThrow("parent run has not enabled workspace writes");
+    expect(lifecycleTypes(parent.events.all())).toEqual([
+      "subagent.requested",
+      "subagent.failed",
+    ]);
+    expect(terminalLifecycleCount(parent.events.all())).toBe(1);
     expect(parent.events.all()).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           type: "subagent.failed",
           payload: expect.objectContaining({
             errorCode: "DELEGATE_WORKSPACE_ACCESS_DENIED",
+            terminalState: "failed",
           }),
         }),
       ]),
@@ -693,9 +911,13 @@ describe("external command delegate tool", () => {
     await expect(
       tool.execute({ goal: "inspect docs" }, { run: parent.record } as never),
     ).rejects.toThrow("test-unavailable");
+    expect(lifecycleTypes(parent.events.all())).toEqual([
+      "subagent.requested",
+      "subagent.failed",
+    ]);
   });
 
-  it("falls back in warn mode and returns sandbox metadata", async () => {
+  it("fails closed for workspaceAccess none even when sandbox mode is warn", async () => {
     const fixture = await createFixtureCommand();
     const parent = createRun({
       goal: "parent",
@@ -726,28 +948,92 @@ describe("external command delegate tool", () => {
       sandboxRuntime: unavailableRuntime(),
     });
 
-    const result = (await tool.execute({ goal: "inspect docs" }, {
-      run: parent.record,
-    } as never)) as { stdout: string; sandbox?: Record<string, unknown> };
+    await expect(
+      tool.execute({ goal: "inspect docs" }, { run: parent.record } as never),
+    ).rejects.toMatchObject({ code: "DELEGATE_EXECUTION_FAILED" });
+    expect(lifecycleTypes(parent.events.all())).toEqual([
+      "subagent.requested",
+      "subagent.failed",
+    ]);
+  });
 
-    expect(JSON.parse(result.stdout)).toMatchObject({ argv: [] });
-    expect(result.sandbox).toEqual({
-      sandboxed: false,
-      mode: "warn",
-      runtime: "test-unavailable",
-      networkMode: "deny",
-      unavailable: expect.stringContaining("test-unavailable"),
-      available: false,
-      fallbackReason: expect.stringContaining("test-unavailable"),
-      enforced: false,
+  it("blocks workspace writes but keeps the private delegate cwd writable", async () => {
+    const runtime = createPlatformShellSandboxRuntime();
+    if (!(await runtime.isAvailable())) return;
+    const fixture = await createFixtureCommand(
+      'writeFileSync("scratch.txt", "scratch\\n");',
+    );
+    const parent = createRun({
+      goal: "parent",
+      model: {
+        async complete() {
+          return { message: "parent" };
+        },
+      },
+      maxSteps: 1,
     });
+    const profile: AgentProfile = {
+      id: "external_private_scratch",
+      metadata: {
+        externalCommand: {
+          command: process.execPath,
+          args: [fixture.commandPath],
+          input: "none",
+        },
+      },
+    };
+    const tool = createExternalCommandDelegateTool({
+      getParent: () => parent,
+      profile,
+      toolName: "delegate_external_private_scratch",
+      description: "Exercise private delegate scratch writes.",
+      workspaceRoot: fixture.cwd,
+      sandbox: { mode: "enforce" },
+      sandboxRuntime: runtime,
+    });
+
+    await expect(
+      tool.execute({ goal: "inspect docs" }, { run: parent.record } as never),
+    ).resolves.toMatchObject({ exitCode: 0 });
+
+    const workspaceWriteFixture = await createFixtureCommand(
+      'writeFileSync(new URL("workspace-write.txt", import.meta.url), "bad\\n");',
+    );
+    const blockedProfile: AgentProfile = {
+      id: "external_workspace_write",
+      metadata: {
+        externalCommand: {
+          command: process.execPath,
+          args: [workspaceWriteFixture.commandPath],
+          input: "none",
+        },
+      },
+    };
+    const blockedTool = createExternalCommandDelegateTool({
+      getParent: () => parent,
+      profile: blockedProfile,
+      toolName: "delegate_external_workspace_write",
+      description: "Attempt a workspace write without access.",
+      workspaceRoot: workspaceWriteFixture.cwd,
+      sandbox: { mode: "enforce" },
+      sandboxRuntime: runtime,
+    });
+
+    await expect(
+      blockedTool.execute({ goal: "inspect docs" }, {
+        run: parent.record,
+      } as never),
+    ).rejects.toThrow("exited with exit code");
+    await expect(
+      readFile(join(workspaceWriteFixture.cwd, "workspace-write.txt"), "utf8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("prevents read_write delegates from changing forced deny paths when runtime is available", async () => {
     const runtime = createPlatformShellSandboxRuntime();
     if (!(await runtime.isAvailable())) return;
     const fixture = await createFixtureCommand(
-      "require('node:fs').writeFileSync('.sparkwright/config.json', 'bad\\n');",
+      'writeFileSync(".sparkwright/config.json", "bad\\n");',
     );
     const configPath = join(fixture.cwd, ".sparkwright", "config.json");
     await mkdir(join(fixture.cwd, ".sparkwright"), { recursive: true });
@@ -819,6 +1105,8 @@ async function createFixtureCommand(extraCode = ""): Promise<{
   await writeFile(
     commandPath,
     `
+import { writeFileSync } from "node:fs";
+
 const chunks = [];
 process.stdin.on("data", (chunk) => chunks.push(chunk));
 process.stdin.on("end", () => {

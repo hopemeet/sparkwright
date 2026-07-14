@@ -51,6 +51,8 @@ skill roots
   snippets in `SKILL.md` execute. Execution is host-owned, forces sandbox
   enforcement, disables workspace writes, fails closed when the OS sandbox is
   unavailable, and traces as `extension.process.*` with `kind: skill_script`.
+  The platform-specific no-write/read-grant profile is compiled by
+  `shell-sandbox`; Host retains process, timeout, output, and trace ownership.
   `skill_script` command arguments are redacted in lifecycle previews; failed
   stderr stays in trace summaries but is not inserted into model-facing Skill
   content.
@@ -143,6 +145,13 @@ skill roots
 - Self-evolution design exists, but automatic learning should remain clearly opt-in/reviewed.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-13
+- Scope: centralized Skill inline-shell no-write/read filesystem grants in
+  shell-sandbox without changing opt-in, fail-closed, or trace behavior.
+- Read: Host Skill inline-shell adapter and shell-sandbox compiler.
+- Tests: Host Skill inline-shell tests 5/5 and shell-sandbox tests 14/14.
 
 - Status: Verified
 - Date: 2026-07-12T23:45:00+0800

@@ -10,9 +10,11 @@ See [../safety/workspace-writes.md](../safety/workspace-writes.md), [../safety/s
 ## Main Files
 
 - `packages/core/src/run.ts`
+- `packages/core/src/run-budget.ts`
 - `packages/core/src/tool-orchestration.ts`
 - `packages/core/src/tools.ts`
 - `packages/host/src/tool-catalog.ts`
+- `packages/host/src/run-security-plan.ts`
 - `packages/host/src/tools.ts`
 - `packages/host/src/shell.ts`
 
@@ -39,6 +41,12 @@ model tool calls
   path and bind the in-execute request to durable effect identity.
 
 - Tool requests are trace-visible before execution.
+- A tool call reserves the run-local and all inherited ancestor-tree
+  `maxToolCalls` counters before execution. Core first checks every account and
+  commits only after all checks pass, so concurrent in-process sibling Agents
+  cannot oversubscribe a shared descendant ceiling and a refused call never
+  reaches the tool implementation. Policy/approval ordering and evidence remain
+  unchanged.
 - `ToolDefinition.previewArgs()` is the source of truth for one-line request
   display. Core writes its bounded output to `tool.requested.payload.preview`;
   TUI/transcript renderers consume that field before falling back to legacy
@@ -83,6 +91,28 @@ true` records a mutation index for its target (`mutatedByTarget`). A
   `ToolDefinition[]`; capability snapshots use catalog source metadata and
   identity metadata (`canonicalName`, `legacyNames`, `defaultExposureTier`,
   `relatedTools`, `requiresTool`, and per-run `effectiveLoading`).
+- Live Host catalogs wrap tools whose effective argument-level governance
+  declares workspace `write` with a process-local mutation lease. The wrapper
+  is applied after tool filtering and before flattening, so parent and child
+  coding/Shell/capability mutations share one execution boundary. Agent
+  dispatch/delegate tools that admit a child are excluded from parent wrapping;
+  the child execution owns the lease and its managed write tools reenter by run
+  id. Capability inspection builds inert catalogs and does not acquire leases.
+- Host run preparation and configured capability inspection share one immutable
+  security plan for resolved access and filesystem/sandbox inputs, then build
+  separate stateful lifecycles on top. The plan must not retain prepared MCP
+  handles, tool instances, approval state, or Core mutation-policy state.
+- Host runtime and CLI direct-core start/resume call the same Host-owned
+  run-policy factory, but each call receives a new stateful policy instance.
+  This keeps target/write defaults aligned without leaking the mutation
+  policy's per-run `writtenPaths` into immutable preparation state.
+- That plan reports configured main-Shell sandbox status separately from the
+  effective extension-process sandbox. Read-only runs strengthen the latter for
+  MCP/Skill preparation; Workflow Script and explicit run-bound command hooks
+  apply their capability-specific no-write clamp at their execution boundary.
+- CLI capability inspection consumes the Host snapshot as the effective tool,
+  delegate, and sandbox source. CLI-only report sections may enrich it, but
+  must not synthesize a second effective catalog when Host inspection fails.
 - Host-owned task creation schema belongs at the catalog boundary: the main
   catalog can describe registered task kinds and kind-specific payloads for
   model/tool validation, while `TaskManager` remains the execution registry and
@@ -234,6 +264,13 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
   converted into structured `tool.failed` results with
   `TOOL_ARGUMENTS_INVALID` and `metadata.phase: "policyForArgs"`; they do not
   escape the tool span as runtime crashes.
+- Batch admission must not infer concurrency safety from static governance when
+  `policyForArgs()` can strengthen it. Such tools are serial by default and may
+  opt back into argument-specific concurrency only through a pure,
+  invalid-input-tolerant `isConcurrencySafe(args)` classifier. Policy and
+  approval still execute at the ordinary per-call gate; this rule prevents
+  separately authorized mutations from being scheduled concurrently, not an
+  approval bypass.
 - Tool input validation has two layers: JSON schema first, then optional
   `ToolDefinition.validateInput(args, ctx)`, then `policyForArgs()`, policy /
   approval, execute, and output validation. `validateInput()` is a runtime-level
@@ -325,6 +362,68 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
 - TUI live rendering and transcript export now share presentation summaries, but trace/model-context result compaction is still a separate backend concern.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: added catalog-level mutation lease wrapping around actual Host
+  parent/child write execution without moving policy, approval, or concurrency
+  classification out of Core.
+- Read: Host tool catalog/runtime, effective argument governance, Agent spawn
+  grants, Shell background handoff, and coordinator wrapper.
+- Tests: focused Host tool/Agent/coordinator suites, all workspace tests, and
+  release smokes passed. Touched files are format-clean; the global format scan
+  is blocked only by pre-existing dirty proposal docs outside this change.
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: added atomic tool-call reservation across local and inherited
+  descendant-tree work-budget accounts.
+- Read: Core tool reservation/execution order and agent-runtime inheritance.
+- Tests: Core budget/run 130/130; agent-runtime Agent suites 65/65; Host
+  Agent/process/arbiter integration 102/102.
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: aligned concurrent batch admission with dynamic tool governance and
+  added Agent-specific argument/target classifiers.
+- Read: Core tool orchestration/tools/run and Host dynamic/indexed/configured
+  Agent tools.
+- Tests: Core run 127/127; Host Agent/tool suites 155/155; affected typechecks
+  passed.
+
+- Status: Verified
+- Date: 2026-07-13T22:42:00+0800
+- Scope: centralized Host-shaped run policy construction across Host and
+  direct-core while preserving fresh per-run state and existing catalogs.
+- Read: Host run policy/runtime, CLI direct runner/resume, and Core policy.
+- Tests: Host focused 155/155; CLI 152/152; Core environment/policy 35/35;
+  shell-tool 42/42; affected typechecks/builds passed.
+
+- Status: Verified
+- Date: 2026-07-13T22:21:00+0800
+- Scope: separated configured Shell status from the read-only effective process
+  sandbox and applied capability-specific no-write clamps at Workflow/Hook
+  execution boundaries; tool policy, approval, and trace lifecycles are unchanged.
+- Read: Host security plan/runtime, Workflow node API/hooks, and capability
+  inspection assembly.
+- Tests: Host focused 263/263; MCP adapter 34/34; CLI inspect 11/11.
+
+- Status: Read-only
+- Date: 2026-07-13
+- Scope: ACP delegate kept its existing tool descriptor, policy, approval, and
+  subagent lifecycle while adding sandbox/access enforcement at execution.
+- Read: Host ACP delegate/runtime catalog assembly.
+- Tests: Host ACP/external/tool suites 122/122; CLI delegate tests 7/7.
+
+- Status: Verified
+- Date: 2026-07-13
+- Scope: unified Host run/inspect security derivation and removed the CLI
+  snapshot-less effective catalog/delegate/sandbox fallback without changing
+  protocol snapshot shape.
+- Read: Host runtime/security plan/tool catalog, CLI capability inspection, and
+  protocol capability snapshot types.
+- Tests: Host focused suite 222/222; Host and CLI typechecks; Host build; CLI
+  capability-inspect tests 13/13.
 
 - Status: Verified
 - Date: 2026-07-12T23:45:00+0800

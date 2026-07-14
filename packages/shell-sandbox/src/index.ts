@@ -147,6 +147,35 @@ export interface SandboxedProcessInvocation {
 }
 
 /**
+ * One argv-process launch decision. Callers keep ownership of process I/O and
+ * lifecycle, while this package owns the platform availability/fallback rule
+ * and the concrete invocation.
+ */
+export type SandboxedProcessLaunchDecision =
+  | {
+      status: "sandboxed";
+      invocation: SandboxedProcessInvocation;
+      runtimeId: string;
+      available: true;
+      enforced: boolean;
+    }
+  | {
+      status: "unsandboxed";
+      invocation: SandboxedProcessInvocation;
+      runtimeId: string;
+      available: false;
+      enforced: false;
+      reason?: string;
+    }
+  | {
+      status: "unavailable";
+      runtimeId: string;
+      available: false;
+      enforced: true;
+      reason: string;
+    };
+
+/**
  * OS-level sandbox adapter.
  *
  * @public
@@ -175,6 +204,10 @@ export interface ShellSandboxStatus {
   platform: NodeJS.Platform | "unsupported";
   available: boolean;
   networkMode: ShellSandboxNetworkMode;
+  /**
+   * Backend filesystem model, independent of mode/fallback strictness.
+   * In particular, `enforce` + `deny-list-guard` is not a workspace allowlist.
+   */
   filesystemIsolation: "bind-allowlist" | "deny-list-guard" | "unsupported";
 }
 
@@ -296,6 +329,143 @@ export function filesystemIsolationForRuntime(
   return "unsupported";
 }
 
+/** Replace the positive filesystem scope while preserving configured denies. */
+export function scopeShellSandboxFilesystem(
+  config: ResolvedShellSandboxConfig,
+  input: { allowRead: readonly string[]; allowWrite: readonly string[] },
+): ResolvedShellSandboxConfig {
+  return {
+    ...config,
+    filesystem: {
+      ...config.filesystem,
+      allowRead: uniquePaths(input.allowRead),
+      allowWrite: uniquePaths(input.allowWrite),
+    },
+  };
+}
+
+/** Add stable lexical/realpath read grants without changing write access. */
+export async function extendShellSandboxReadAccess(
+  config: ResolvedShellSandboxConfig,
+  paths: readonly string[],
+): Promise<ResolvedShellSandboxConfig> {
+  const variants = [...config.filesystem.allowRead];
+  for (const path of paths) {
+    const resolved = resolve(path);
+    variants.push(resolved);
+    try {
+      variants.push(await realpath(resolved));
+    } catch {
+      // Missing paths remain represented by their stable lexical form.
+    }
+  }
+  return {
+    ...config,
+    filesystem: {
+      ...config.filesystem,
+      allowRead: uniquePaths(variants),
+    },
+  };
+}
+
+/**
+ * Compile a fail-closed no-write profile for the selected OS backend. Bind
+ * allowlists deny writes by having no writable roots; macOS deny-list guards
+ * need explicit lexical, realpath, and /private alias variants.
+ */
+export async function enforceNoWriteShellSandbox(
+  config: ResolvedShellSandboxConfig,
+  input: {
+    runtime: Pick<ShellSandboxRuntime, "id" | "platform">;
+    denyWriteRoots?: readonly string[];
+  },
+): Promise<ResolvedShellSandboxConfig> {
+  const isolation = filesystemIsolationForRuntime(input.runtime);
+  const denyWrite =
+    isolation === "bind-allowlist"
+      ? []
+      : isolation === "deny-list-guard"
+        ? uniquePaths([
+            ...config.filesystem.denyWrite,
+            ...(await sandboxPathVariants(input.denyWriteRoots ?? [])),
+          ])
+        : config.filesystem.denyWrite;
+  return {
+    ...config,
+    mode: "enforce",
+    failIfUnavailable: true,
+    filesystem: {
+      ...config.filesystem,
+      allowWrite: [],
+      denyWrite,
+      tmp: true,
+    },
+  };
+}
+
+/**
+ * Compile a fail-closed write boundary for processes that may write to their
+ * explicitly scoped scratch roots but must not write protected roots. Bind
+ * allowlist backends keep the caller's positive write scope; deny-list guards
+ * receive explicit lexical, realpath, and platform-alias denies.
+ */
+export async function enforceProtectedWriteRootsShellSandbox(
+  config: ResolvedShellSandboxConfig,
+  input: {
+    runtime: Pick<ShellSandboxRuntime, "id" | "platform">;
+    protectedRoots: readonly string[];
+  },
+): Promise<ResolvedShellSandboxConfig> {
+  const isolation = filesystemIsolationForRuntime(input.runtime);
+  const denyWrite =
+    isolation === "deny-list-guard"
+      ? uniquePaths([
+          ...config.filesystem.denyWrite,
+          ...(await sandboxPathVariants(input.protectedRoots)),
+        ])
+      : config.filesystem.denyWrite;
+  return {
+    ...config,
+    mode: "enforce",
+    failIfUnavailable: true,
+    filesystem: {
+      ...config.filesystem,
+      denyWrite,
+    },
+  };
+}
+
+async function sandboxPathVariants(
+  paths: readonly string[],
+): Promise<string[]> {
+  const variants: string[] = [];
+  for (const path of paths) {
+    const resolved = resolve(path);
+    variants.push(resolved, ...macOSPrivatePathVariants(resolved));
+    try {
+      const real = await realpath(resolved);
+      variants.push(real, ...macOSPrivatePathVariants(real));
+    } catch {
+      // Nonexistent roots are still denied by their stable lexical form.
+    }
+  }
+  return variants;
+}
+
+function macOSPrivatePathVariants(path: string): string[] {
+  const variants: string[] = [];
+  for (const alias of ["/var", "/tmp", "/etc"]) {
+    const privateAlias = `/private${alias}`;
+    if (path === alias || path.startsWith(`${alias}/`)) {
+      variants.push(`/private${path}`);
+    }
+    if (path === privateAlias || path.startsWith(`${privateAlias}/`)) {
+      variants.push(path.slice("/private".length));
+    }
+  }
+  return variants;
+}
+
 export class ShellSandboxExecutor {
   constructor(private readonly runtime: ShellSandboxRuntime) {}
 
@@ -378,10 +548,11 @@ export async function prepareSandboxedProcessInvocation(
         ? runtime.executablePath()
         : "bwrap";
     const tmpRoot = await mkdtemp(join(tmpdir(), "sparkwright-sandbox-"));
-    const denyMounts = await prepareBubblewrapDenyMounts(tmpRoot, [
-      ...config.filesystem.denyRead,
-      ...config.filesystem.denyWrite,
-    ]);
+    const denyMounts = await prepareBubblewrapDenyMounts(
+      tmpRoot,
+      config.filesystem.denyRead,
+      config.filesystem.denyWrite,
+    );
     const invocation = buildBubblewrapInvocation({
       executable,
       request: {
@@ -429,6 +600,70 @@ export async function prepareSandboxedProcessInvocation(
   throw new Error(`Shell sandbox runtime "${runtime.id}" cannot spawn.`);
 }
 
+/**
+ * Compile sandbox mode + runtime availability into a launch decision for an
+ * argv-owned process. This deliberately does not spawn: MCP, Workflow JSON-RPC,
+ * and other transports retain their distinct I/O and shutdown protocols.
+ */
+export async function prepareSandboxedProcessLaunch(
+  runtime: ShellSandboxRuntime,
+  request: SandboxedProcessRequest,
+  config: ResolvedShellSandboxConfig,
+): Promise<SandboxedProcessLaunchDecision> {
+  if (config.mode === "off") {
+    return {
+      status: "unsandboxed",
+      invocation: rawProcessInvocation(request),
+      runtimeId: runtime.id,
+      available: false,
+      enforced: false,
+    };
+  }
+  if (!(await runtime.isAvailable())) {
+    const reason = `Shell sandbox runtime "${runtime.id}" is unavailable on ${runtime.platform}.`;
+    if (config.failIfUnavailable) {
+      return {
+        status: "unavailable",
+        runtimeId: runtime.id,
+        available: false,
+        enforced: true,
+        reason,
+      };
+    }
+    return {
+      status: "unsandboxed",
+      invocation: rawProcessInvocation(request),
+      runtimeId: runtime.id,
+      available: false,
+      enforced: false,
+      reason,
+    };
+  }
+  return {
+    status: "sandboxed",
+    invocation: await prepareSandboxedProcessInvocation(
+      runtime,
+      request,
+      config,
+    ),
+    runtimeId: runtime.id,
+    available: true,
+    enforced: config.failIfUnavailable,
+  };
+}
+
+function rawProcessInvocation(
+  request: SandboxedProcessRequest,
+): SandboxedProcessInvocation {
+  return {
+    command: request.command,
+    args: request.args ?? [],
+    cwd: request.cwd,
+    env: request.env,
+    metadata: request.metadata,
+  };
+}
+
 export class LinuxBubblewrapShellSandboxRuntime implements ShellSandboxRuntime {
   readonly id = "bubblewrap";
   readonly platform = "linux" as const;
@@ -448,10 +683,11 @@ export class LinuxBubblewrapShellSandboxRuntime implements ShellSandboxRuntime {
     config: ResolvedShellSandboxConfig,
   ): Promise<ShellStreamingResult> {
     const tmpRoot = await mkdtemp(join(tmpdir(), "sparkwright-sandbox-"));
-    const denyMounts = await prepareBubblewrapDenyMounts(tmpRoot, [
-      ...config.filesystem.denyRead,
-      ...config.filesystem.denyWrite,
-    ]);
+    const denyMounts = await prepareBubblewrapDenyMounts(
+      tmpRoot,
+      config.filesystem.denyRead,
+      config.filesystem.denyWrite,
+    );
     const { command, args } = buildBubblewrapInvocation({
       executable: this.executable,
       request,
@@ -571,41 +807,72 @@ export function buildBubblewrapInvocation(
     args.push("--unshare-net");
   }
 
-  for (const path of config.filesystem.allowRead) {
-    args.push("--ro-bind-try", path, path);
-  }
   if (config.filesystem.tmp) {
     args.push("--bind", options.tmpRoot, "/tmp");
   }
-  // Bind writable paths AFTER the private /tmp overlay so an explicitly
-  // allowed path under /tmp is not shadowed by the empty tmpRoot mounted over
-  // /tmp.
+  // Bind explicit grants AFTER the private /tmp overlay so allowed paths under
+  // /tmp are not shadowed by the empty tmpRoot mounted over /tmp.
+  for (const path of config.filesystem.allowRead) {
+    args.push("--ro-bind-try", path, path);
+  }
   for (const path of config.filesystem.allowWrite) {
     args.push("--bind-try", path, path);
   }
 
   // bwrap has no deny-after-bind primitive. Hide explicit deny paths by
   // overlaying an empty read-only file or directory over each target.
-  for (const mount of options.denyMounts ??
-    heuristicBubblewrapDenyMounts(config)) {
+  for (const mount of minimalBubblewrapDenyMounts(
+    options.denyMounts ?? heuristicBubblewrapDenyMounts(config),
+  )) {
     args.push("--ro-bind-try", mount.source, mount.path);
+  }
+
+  // Keep the private /tmp parent read-only while preserving explicitly bound
+  // writable descendants. bubblewrap's remount is intentionally
+  // non-recursive, so scratch/workspace grants remain writable without making
+  // every unbound sibling below /tmp writable.
+  if (config.filesystem.tmp) {
+    args.push("--remount-ro", "/tmp");
   }
 
   args.push("bash", "-c", options.request.command);
   return { command: executable, args };
 }
 
+function minimalBubblewrapDenyMounts(
+  mounts: readonly BubblewrapDenyMount[],
+): BubblewrapDenyMount[] {
+  const unique = new Map<string, BubblewrapDenyMount>();
+  for (const mount of mounts) {
+    const path = resolve(mount.path);
+    if (!unique.has(path)) unique.set(path, { ...mount, path });
+  }
+  const candidates = [...unique.values()];
+  return candidates.filter(
+    (candidate) =>
+      !candidates.some((ancestor) => {
+        if (ancestor.path === candidate.path) return false;
+        const rel = relative(ancestor.path, candidate.path);
+        return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
+      }),
+  );
+}
+
 async function prepareBubblewrapDenyMounts(
   tmpRoot: string,
-  paths: readonly string[],
+  denyRead: readonly string[],
+  denyWrite: readonly string[],
 ): Promise<BubblewrapDenyMount[]> {
   const emptyDir = join(tmpRoot, "deny-empty-dir");
   const emptyFile = join(tmpRoot, "deny-empty-file");
   await mkdir(emptyDir, { recursive: true });
   await writeFile(emptyFile, "");
   const mounts: BubblewrapDenyMount[] = [];
-  for (const path of uniquePaths(paths)) {
+  const existingRead = await existingPaths(denyRead);
+  const existingWrite = await existingPaths(denyWrite);
+  for (const path of uniquePaths([...existingRead, ...existingWrite])) {
     const stat = await lstat(path).catch(() => undefined);
+    if (!stat) continue;
     mounts.push({
       path,
       source: stat?.isDirectory() ? emptyDir : emptyFile,
@@ -613,6 +880,14 @@ async function prepareBubblewrapDenyMounts(
     });
   }
   return mounts;
+}
+
+async function existingPaths(paths: readonly string[]): Promise<string[]> {
+  const existing: string[] = [];
+  for (const path of uniquePaths(paths)) {
+    if (await lstat(path).catch(() => undefined)) existing.push(path);
+  }
+  return existing;
 }
 
 function heuristicBubblewrapDenyMounts(

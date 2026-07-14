@@ -13,6 +13,7 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md),
 ## Main Files
 
 - `packages/core/src/run.ts`
+- `packages/core/src/run-budget.ts`
 - `packages/core/src/context.ts`
 - `packages/core/src/pipeline.ts`
 - `packages/core/src/session-compaction.ts`
@@ -30,8 +31,10 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md),
 - `packages/core/src/fact-ledger.ts`
 - `packages/core/src/run-outcome.ts`
 - `packages/core/src/policy.ts`
+- `packages/core/src/environment.ts`
 - `packages/core/src/workspace.ts`
 - `packages/core/test/run.test.ts`
+- `packages/core/test/run-budget.test.ts`
 - `packages/core/test/trace.test.ts`
 - `packages/core/test/session.test.ts`
 
@@ -46,6 +49,7 @@ Owns:
 - trace summary, timeline, report, and verification primitives
 - `SessionStore` interfaces and file/memory implementations
 - checkpoint save/load and best-effort reconstruction from trace
+- synchronous run-local and inherited descendant-tree work-budget accounts
 
 Does not own:
 
@@ -110,9 +114,38 @@ Does not own:
 - Concurrent tool batches preserve real-time event emission and after-tool hook
   execution, while deferring only the next-turn `tool_result` context append so
   model observations are ordered by the original tool-call order.
+- Tool concurrency classification is argument-aware only through an explicit
+  `ToolDefinition.isConcurrencySafe(args)` implementation. A tool that declares
+  `policyForArgs()` without that classifier fails closed to serial batching, so
+  argument-level risk or side effects cannot be discovered only after Core has
+  already admitted the call to a concurrent batch.
+- `RunBudgetAccount` is an internal orchestration primitive owned by Core. Each
+  run consumes one local account plus any ancestor-owned descendant-tree
+  accounts; model/tool reservations synchronously check every account before
+  committing any counter, while provider token/cost and duration limits remain
+  reactive checks. A run's configured budget creates a separate account for its
+  descendants, so siblings and deeper descendants share that ceiling without
+  changing the parent run's established local-budget semantics.
+- Work-budget inheritance is separate from `maxSteps`, per-source forced-
+  continuation budgets, and host run-chain ceilings. Checkpoint resume restores
+  consumable counters but intentionally restarts elapsed duration for the new
+  active execution segment, matching the prior local run-budget behavior.
 - `SessionEvent.sequence` is session-local. Host-level session compaction
   writes `session.compaction.completed` / `session.compaction.skipped` events
   to the append-only session event stream for durable audit.
+- `LocalWorkspace` owns managed workspace path containment. It combines
+  realpath containment with inspection of the original lexical path and denies
+  stable symlink segments for writes, including symlinks whose target remains
+  inside the workspace. `removeFile()` rejects symlink ancestors but may unlink
+  a symlink leaf without following its target; Host rollback uses the internal
+  binary write path so restoration shares these guards. Callers must not weaken
+  this by pre-resolving paths before passing them to the workspace API.
+- Core `createWorkspaceShellPolicy` is a structured `command + args` embedder
+  policy, not the Host shell-tool command parser. Relative `cwd` is evaluated
+  against its configured workspace root, while the original request remains
+  unchanged for the embedder executor. Host shell-tool separately owns parsing
+  a command string, heredoc stripping, and execution-time `cwd` normalization;
+  do not merge these different input contracts into a generic path helper.
 - Trace levels are `standard` and `debug`; `minimal` is not a valid mode.
 - Standard trace stream folding emits one `model.stream.text` marker per
   contiguous run-local chunk segment. A same-run non-chunk event flushes the
@@ -340,6 +373,55 @@ Does not own:
   guard and trace diagnostics.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: extracted reusable Core work-budget accounts and made child runs
+  consume local plus ancestor descendant-tree ceilings atomically.
+- Read: `run-budget.ts`, run-loop reservations/usage/checkpoint paths, and
+  agent-runtime child inheritance.
+- Tests: Core budget/run/resume/trace 275/275; Core typecheck/build;
+  agent-runtime Agent suites 65/65; Host integration 102/102.
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: made dynamic-policy tool batching fail closed unless the tool supplies
+  an explicit argument-level concurrency classifier.
+- Read: Core tool registry/orchestration and Host Agent consumers.
+- Tests: Core run 127/127; affected package and test typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-13T22:42:00+0800
+- Scope: corrected the standalone workspace Shell policy's relative-cwd anchor
+  without changing its non-transforming embedder request contract.
+- Read: Core environment policy/tests and Host shell-tool path-scope boundary.
+- Tests: Core environment/policy 35/35; Core typecheck/build; shell-tool 42/42.
+
+- Status: Verified
+- Date: 2026-07-13T22:30:00+0800
+- Scope: added guarded binary restoration and safe symlink-leaf unlinking for
+  Host snapshot rollback while preserving managed text-write semantics.
+- Read: Core LocalWorkspace and checkpoint/workspace tests; Host snapshot
+  consumer.
+- Tests: Core workspace/checkpoint 31/31; Core typecheck/build; Host snapshot
+  and tools 102/102.
+
+- Status: Read-only
+- Date: 2026-07-13
+- Scope: checked shared argv sandbox launch decision in Host/MCP; Core process
+  events, spans, sandbox summary types, and run semantics did not change.
+- Read: Host traced process runner and Core process/trace type boundary.
+- Tests: Host traced-process focused tests passed; no Core contract changed.
+
+- Status: Verified
+- Date: 2026-07-13
+- Scope: hardened `LocalWorkspace` managed writes so same-workspace directory
+  and file symlink segments are denied without changing per-run policy state or
+  read semantics.
+- Read: `packages/core/src/workspace.ts`, `packages/core/src/policy.ts`, and
+  focused workspace/policy tests.
+- Tests: Core workspace/checkpoint/policy tests 59/59 passed; Core typecheck
+  passed.
 
 - Status: Verified
 - Date: 2026-07-12T23:45:00+0800

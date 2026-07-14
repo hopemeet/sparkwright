@@ -1,5 +1,12 @@
 import { existsSync } from "node:fs";
-import { mkdtemp, readdir, readFile, writeFile, rm } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  writeFile,
+  rm,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -263,6 +270,20 @@ describe("ACP round trip", () => {
     const cwd = await mkdtemp(join(tmpdir(), "sparkwright-acp-mcp-"));
     isolateRuntimeEnv(cwd);
     await writeFile(join(cwd, "README.md"), "# Demo\n", "utf8");
+    await mkdir(join(cwd, ".sparkwright"), { recursive: true });
+    await writeFile(
+      join(cwd, ".sparkwright", "config.json"),
+      JSON.stringify({
+        shell: {
+          sandbox: {
+            filesystem: {
+              allowRead: [join(findRepoRoot(process.cwd()), "node_modules")],
+            },
+          },
+        },
+      }),
+      "utf8",
+    );
     const markerPath = join(cwd, "mcp-started.txt");
     process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON = JSON.stringify([
       {
@@ -300,6 +321,10 @@ describe("ACP round trip", () => {
         defaultWorkspaceRoot: cwd,
         defaultModel: "scripted",
         defaultTraceLevel: "debug",
+        // This fixture writes a workspace marker when the MCP process starts;
+        // opt into a write run so the test exercises ACP MCP injection rather
+        // than the read-only extension-process guard.
+        defaultShouldWrite: true,
       }),
       ndJsonStream(agentToClient.writable, clientToAgent.readable),
     );

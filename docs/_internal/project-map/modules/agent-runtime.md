@@ -9,6 +9,7 @@ See also [../maps/capabilities/agents.md](../maps/capabilities/agents.md), [../m
 ## Main Files
 
 - `packages/agent-runtime/src/index.ts`
+- `packages/agent-runtime/src/agents/*`
 - `packages/agent-runtime/src/tasks/*`
 - `packages/agent-runtime/src/doc-store/*`
 - `packages/agent-runtime/src/todo/*`
@@ -25,6 +26,7 @@ Owns:
 - todo ledger parsing and continuation supervision helpers
 - worktree/concurrency coordination utilities
 - child/delegate policy helpers used by host integrations
+- parent-run delegation result contracts and ledger ownership
 - portable workflow type declarations
 
 Does not own:
@@ -88,6 +90,9 @@ Does not own:
   host-owned parallel fan-out can preserve parent-visible lifecycle attribution.
   Agent-runtime does not own the fan-out policy; it only projects the supplied
   entrypoint into `subagent.*` metadata.
+- `delegate_agent` is the indexed single-target `SubAgentEntrypoint`. The Host
+  wrapper carries it on a non-JSON internal argument marker so an LLM cannot
+  spoof lifecycle attribution through ordinary tool arguments.
 - Spawn helpers project one `MultiAgentFacts` snapshot onto parent-visible
   `subagent.*` lifecycle events: `parentRunId`, `childRunId`, parent
   `agentId`, optional `sessionId`, child/delegate `childAgentId`, optional
@@ -95,6 +100,12 @@ Does not own:
   `subagentDepth`. Spawned child run metadata also carries the resolved
   `sessionId` when the parent/input metadata has one, so child-owned EventLog
   events and parent-visible lifecycle events agree after persistence.
+- The in-process `spawnSubAgent` substrate emits `subagent.requested`
+  synchronously when the child is created, then `subagent.started`, then exactly
+  one `subagent.completed` or `subagent.failed` projection from the child run.
+  Host process adapters retain native execution but report the same
+  requested/admitted/started/terminal sequence through `AgentSupervisor`, with
+  shared terminal state/finality fields.
 - Workflow types in agent-runtime are portable runtime/store declarations.
   `WorkflowRunRecord` is now a durable P2 state document with five-value
   status, version pinning, attempts, evidence refs, verdict/transition logs,
@@ -204,6 +215,12 @@ Does not own:
   sink; consumers use predicate `peek()`/`drain()` plus non-consuming
   `waitUntilAvailable()`. The legacy `TaskNotificationSink` and task
   notification API remain compatible for existing embedders.
+- `InternalActorKind` names only notification sources with implemented typed
+  producer and consumer semantics: `task | workflow`. Agent work may still be a
+  task payload `kind:"agent"`, but Agent lifecycle communication remains on
+  `subagent.*` and bounded tool results; `run` and `agent` are not reserved
+  actor-notification kinds. Add a new kind only with its concrete notification
+  union, delivery adapter, and receiver policy in the same change.
 - `InMemoryTaskNotificationQueue.waitUntilAvailable({ signal, predicate })` is
   non-consuming and abortable. The actor adapter has the same non-consuming wait
   contract and does not expose `waitForNext()` as part of `ActorInbox`.
@@ -289,12 +306,51 @@ Does not own:
   inherit the parent run's effective `maxSteps` when no child/profile override
   is provided; explicit child `maxSteps` still wins, while `runBudget` remains
   tightened through parent/child intersection.
+- `spawnSubAgent()` passes the parent's opaque child-budget accounts into every
+  in-process child run. Siblings and deeper descendants therefore compete for
+  each ancestor's descendant-tree model/tool/token/cost/duration ceiling while
+  retaining their own local `runBudget`. Agent-runtime transports the accounts;
+  Core owns reservation, accounting, failure projection, and checkpoint state.
 - Completed delegation result reuse is backed by a shared, parent-run-scoped
   ledger rather than a `createAgentTool` closure-local cache. Ledger keys include
   the delegation surface identity (`agent_tool`, configured delegate, or dynamic
   spawn) plus the stable child/profile/scope fields needed to avoid reusing a
   different agent's answer. Only completed, non-`stepLimitReached`,
-  non-truncated results are reusable.
+  non-truncated results are reusable. Goal reuse requires equality of a narrow
+  normalized fingerprint (Unicode normalization, case folding, trim, and
+  whitespace collapse); fuzzy intent or character-overlap scoring must not
+  reuse results across different paths or targets.
+- `src/agents/types.ts` owns portable AgentTool/delegation result contracts and
+  `src/agents/delegation-ledger.ts` owns the parent-scoped reuse state. The root
+  `src/index.ts` keeps compatibility exports and consumes those modules; ledger
+  state or fingerprint logic must not be duplicated back into the root file.
+- `src/agents/invocation.ts` owns the serializable
+  `PreparedAgentInvocation` identity and its parent-event projections. The
+  contract starts at `admission_pending` and contains no run/process handles,
+  models, tools, policies, emitters, or callbacks. `spawnSubAgent` consumes it
+  for lifecycle identity; `AgentSupervisor` now owns the parent-visible phase
+  transitions while native adapters keep execution.
+- `src/agents/supervisor.ts` owns parent-visible Agent lifecycle transitions.
+  It requires requested -> admitted before `started`, supplies terminal
+  state/finality parity, and makes repeated phases/terminal attempts
+  idempotent. Execution adapters retain native run/process mechanics and report
+  their phases through this one supervisor.
+- `spawnSubAgent` accepts an optional embedder-owned asynchronous `admission`
+  gate and returns `SpawnedSubAgent.start()`. The child identity and
+  `subagent.requested` exist before the gate; the supervisor becomes admitted
+  and the Core run starts only after the gate resolves. Its release callback is
+  held across the child execution and invoked once in `finally`. The returned
+  `RunHandle.start()` is replaced with that same one-shot guarded start, so
+  embedders cannot bypass admission through `SpawnedSubAgent.run`; `stream()`
+  observes the guarded instance method as well.
+- Prepared invocation metadata projects optional `workspaceAccess` and
+  `agentConcurrency` governance facts onto every parent-visible lifecycle
+  phase. Agent-runtime carries those facts but does not choose workspace lease
+  policy.
+- `createAgentTool` accepts an optional argument-level concurrency classifier.
+  Host uses it to keep write-capable, shell-capable, or spawn-approval-bound
+  configured children out of Core concurrent batches while preserving
+  concurrency for unapproved read-only children.
 - `createAgentTool` accepts synchronous or asynchronous `buildSpawnInput`.
   Embedders still own provider/model construction, but async spawn input lets
   host resolve child-scope model adapters on demand before calling
@@ -336,6 +392,104 @@ Does not own:
   not authorize a generic actor bus or nested background lifecycle.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: closed the public `SpawnedSubAgent.run.start()` admission bypass and
+  propagated ancestor run ids into child metadata for Host lease ownership.
+- Read: portable spawn substrate, RunHandle start/stream behavior, Host
+  workspace admission, and Agent lifecycle tests.
+- Tests: agent-runtime index 45/45, all workspace tests, and release smokes
+  passed. Touched files are format-clean; the global format scan is blocked
+  only by pre-existing dirty proposal docs outside this change.
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: narrowed actor-notification source kinds to the implemented task and
+  workflow lanes while preserving runtime rejection of forged future kinds.
+- Read: actor notification unions/validation, task/workflow durable adapters,
+  Host receiver boundary, and internal actor inbox design.
+- Tests: agent-runtime task/workflow/channel 99/99; downstream focused suites;
+  full `npm run release:check`.
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: propagated Core descendant-tree budget accounts through the portable
+  in-process spawn substrate, including siblings, nested descendants, tools,
+  provider usage, and checkpoint resume.
+- Read: spawn substrate, Core budget protocol, Agent tests, and Host consumers.
+- Tests: agent-runtime Agent/invocation/supervisor/ledger 65/65; typecheck/build;
+  Host Agent/process/arbiter suites 102/102.
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: added the portable asynchronous child-admission seam used by Host
+  workspace arbitration, including one-shot start/release and admission-failure
+  lifecycle behavior.
+- Read: spawn substrate, prepared invocation/supervisor projections, Host lease
+  integration, and Agent lifecycle tests.
+- Tests: agent-runtime Agent/invocation/supervisor/ledger 60/60; typecheck and
+  build passed.
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: introduced `AgentSupervisor` and migrated in-process, ACP, and
+  external-command parent lifecycle emission onto its admission and exactly-one
+  terminal state machine.
+- Read: invocation/supervisor/spawn source, all Host Agent adapters, traced
+  process start callback, and characterization tests.
+- Tests: supervisor 4/4; invocation 11/11; agent-runtime Agent 38/38; Host Agent
+  and process lifecycle 173/173.
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: introduced the pure-data `PreparedAgentInvocation` boundary and
+  migrated in-process lifecycle identity off the private `MultiAgentFacts`
+  implementation.
+- Read: `src/agents/invocation.ts`, root spawn path, Host process adapters, and
+  lifecycle characterization tests.
+- Tests: prepared invocation 10/10; agent-runtime Agent tests 38/38; Host
+  lifecycle suites 157/157; affected typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: mechanically extracted AgentTool/delegation contracts and the exact
+  parent-scoped delegation ledger into `src/agents/`, preserving root exports.
+- Read: agent-runtime root, `src/agents/*`, AgentTool tests, and Host ledger
+  consumers.
+- Tests: delegation ledger 5/5; agent-runtime Agent tests 38/38; typecheck and
+  build passed.
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: added lifecycle characterization for the in-process Agent substrate,
+  including ordered success/failure phases and one terminal projection.
+- Read: `spawnSubAgent`, `createAgentTool`, and Host lifecycle consumers.
+- Tests: agent-runtime Agent tests 38/38; Host lifecycle suites 157/157; direct
+  CLI delegate focused test 1/1; test typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: replaced fuzzy delegation reuse with exact normalized fingerprints and
+  added the portable configured-child concurrency-classifier seam.
+- Read: agent-runtime AgentTool/ledger, Host configured delegate assembly, and
+  Core concurrency classification.
+- Tests: agent-runtime Agent tests 38/38; Host Agent tests 155/155; affected
+  typechecks passed.
+
+- Status: Read-only
+- Date: 2026-07-13
+- Scope: ACP process delegates gained Host sandbox/access parity; agent-runtime
+  in-process child, depth, task, and rollup semantics did not change.
+- Read: Host ACP delegate/runtime assembly and agent-runtime boundary.
+- Tests: Host ACP/external/tool focused suites passed.
+
+- Status: Read-only
+- Date: 2026-07-13
+- Scope: checked external Delegate sandbox/grant refactor; agent runtime child
+  lifecycle, depth, task, and write-rollup contracts did not change.
+- Read: Host external command adapter boundary and agent-runtime contracts.
+- Tests: Host external command focused tests passed.
 
 - Status: Verified
 - Date: 2026-07-12T20:12:00+0800

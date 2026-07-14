@@ -13,6 +13,7 @@ import {
   createWorkspaceReadScopePolicy,
   defineTool,
   FileSessionStore,
+  isToolConcurrencySafe,
   LocalWorkspace,
   type ModelAdapter,
   type ToolDefinition,
@@ -30,6 +31,12 @@ import {
 } from "../src/runtime.js";
 import { createReadFileTool } from "../src/tools.js";
 import { createDynamicChildToolCatalog } from "../src/tool-catalog.js";
+import { WorkspaceLeaseCoordinator } from "../src/workspace-agent-arbiter.js";
+import {
+  lifecycleTypes,
+  projectAgentLifecycle,
+  terminalLifecycleCount,
+} from "./helpers/agent-lifecycle.js";
 
 /**
  * The session run store flushes to disk asynchronously, so a trace/session file
@@ -75,6 +82,42 @@ async function readFileWhenReady(
  * scripted child model and asserts both fixes hold.
  */
 describe("host spawn_agent wiring", () => {
+  it("allows read-only spawn calls to batch but serializes write grants", () => {
+    const spawnTool = createDynamicSpawnAgentTool({
+      getParent: () => undefined,
+      model: {
+        async complete() {
+          return { message: "unused" };
+        },
+      },
+      childTools: [],
+      parentRunPolicy: createDefaultPolicy(),
+      childRunStoreFactory: () => undefined as never,
+    });
+    const base = {
+      goal: "Inspect the project.",
+      role: "reader",
+      prompt: "Read and report.",
+    };
+
+    expect(isToolConcurrencySafe(spawnTool, base)).toBe(true);
+    expect(
+      isToolConcurrencySafe(spawnTool, {
+        ...base,
+        grant: { workspaceWrite: true },
+      }),
+    ).toBe(false);
+    expect(
+      isToolConcurrencySafe(spawnTool, {
+        ...base,
+        allowedTools: ["edit"],
+      }),
+    ).toBe(false);
+    expect(isToolConcurrencySafe(spawnTool, { ...base, grant: "write" })).toBe(
+      false,
+    );
+  });
+
   it("persists the child trace into the session and rolls usage into the parent", async () => {
     const root = await mkdtemp(join(tmpdir(), "sparkwright-host-spawn-"));
     try {
@@ -262,8 +305,10 @@ describe("host spawn_agent wiring", () => {
         createWorkspaceMutationPolicy({ allowWorkspaceWrites: true }),
       ]);
       const parentRef: { current?: ReturnType<typeof createRun> } = {};
+      const workspaceLeaseCoordinator = new WorkspaceLeaseCoordinator();
       const childTools = createDynamicChildToolCatalog({
         workspaceRoot: root,
+        workspaceLeaseCoordinator,
       }).map((entry) => entry.definition);
       const spawnTool = createDynamicSpawnAgentTool({
         getParent: () => parentRef.current,
@@ -271,6 +316,8 @@ describe("host spawn_agent wiring", () => {
         childTools,
         parentRunPolicy: policy,
         childRunStoreFactory: () => undefined as never,
+        workspaceRoot: root,
+        workspaceLeaseCoordinator,
       });
       let parentCalls = 0;
       let approvalCalls = 0;
@@ -329,6 +376,11 @@ describe("host spawn_agent wiring", () => {
         "written after approval\n",
       );
       expect(parent.record.state).toBe("completed");
+      expect(workspaceLeaseCoordinator.inspect(root)).toMatchObject({
+        readers: [],
+        queued: [],
+      });
+      expect(workspaceLeaseCoordinator.inspect(root).writer).toBeUndefined();
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -712,6 +764,7 @@ describe("host spawn_agent wiring", () => {
           createWorkspaceMutationPolicy({ allowWorkspaceWrites: true }),
         ]),
         childRunStoreFactory: () => undefined as never,
+        workspaceRoot: root,
       });
 
       expect(
@@ -755,7 +808,7 @@ describe("host spawn_agent wiring", () => {
           maxSteps: 3,
         },
         { run: parent.record } as never,
-      )) as { signal: string; message?: string };
+      )) as { childRunId: string; signal: string; message?: string };
 
       expect(output).toMatchObject({
         signal: "completed",
@@ -769,6 +822,19 @@ describe("host spawn_agent wiring", () => {
           ?.payload,
       ).toMatchObject({
         workspaceWrites: 1,
+      });
+      expect(
+        parent.events
+          .all()
+          .find(
+            (event) =>
+              event.type === "subagent.requested" &&
+              (event.payload as { childRunId?: string }).childRunId ===
+                output.childRunId,
+          )?.metadata,
+      ).toMatchObject({
+        workspaceAccess: "read_write",
+        agentConcurrency: "serial",
       });
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -1090,6 +1156,19 @@ describe("host spawn_agent wiring", () => {
       terminalState: "completed",
       finality: "complete",
     });
+    expect(lifecycleTypes(parent.events.all(), ticket.childRunId)).toEqual([
+      "subagent.requested",
+      "subagent.started",
+      "subagent.completed",
+    ]);
+    expect(
+      projectAgentLifecycle(parent.events.all(), ticket.childRunId).every(
+        (event) => event.identityConsistent,
+      ),
+    ).toBe(true);
+    expect(terminalLifecycleCount(parent.events.all(), ticket.childRunId)).toBe(
+      1,
+    );
     expect(parent.usage().modelCalls).toBeGreaterThanOrEqual(1);
 
     const cached = (await spawnTool.execute(args, {
@@ -1157,7 +1236,7 @@ describe("host spawn_agent wiring", () => {
         maxSteps: 2,
       },
       { run: parent.record } as never,
-    )) as { taskId: string };
+    )) as { taskId: string; childRunId: string };
 
     const handle = taskManager.handle(ticket.taskId as unknown as TaskId);
     await handle?.cancel();
@@ -1171,6 +1250,14 @@ describe("host spawn_agent wiring", () => {
       terminalState: "cancelled",
       finality: "partial",
     });
+    expect(lifecycleTypes(parent.events.all(), ticket.childRunId)).toEqual([
+      "subagent.requested",
+      "subagent.started",
+      "subagent.failed",
+    ]);
+    expect(terminalLifecycleCount(parent.events.all(), ticket.childRunId)).toBe(
+      1,
+    );
   });
 
   it("foreground-only background policy keeps dynamic spawn_agent inline", async () => {

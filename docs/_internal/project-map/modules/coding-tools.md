@@ -132,6 +132,16 @@ Does not own:
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-07-14
+- Scope: live Host catalogs now wrap managed coding mutation execution in the
+  process-local workspace lease; tool-owned Core policy, containment, and
+  `workspace.write.*` event semantics are unchanged.
+- Read: Host catalog/coordinator wrapper and coding tool write boundaries.
+- Tests: focused Host coding/Agent/coordinator suites, all workspace tests, and
+  release smokes passed. Touched files are format-clean; the global format scan
+  is blocked only by pre-existing dirty proposal docs outside this change.
+
 - Status: Read-only
 - Date: 2026-07-12T20:00:00+0800
 - Scope: checked Markdown Agent write/remove compatibility; it uses the existing

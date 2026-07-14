@@ -1,11 +1,29 @@
 import {
+  createId,
   createSpanId,
   defineTool,
+  type SandboxSummary,
   type RunHandle,
   type ToolDefinition,
 } from "@sparkwright/core";
-import type { AgentProfile } from "@sparkwright/agent-runtime";
+import {
+  agentInvocationEntrypointFromArgs,
+  agentInvocationMetadata,
+  createAgentSupervisor,
+  prepareAgentInvocation,
+  type AgentProfile,
+} from "@sparkwright/agent-runtime";
 import { ExternalAcpWorker } from "@sparkwright/acp-client-adapter";
+import {
+  createPlatformShellSandboxRuntime,
+  enforceProtectedWriteRootsShellSandbox,
+  prepareSandboxedProcessLaunch,
+  resolveShellSandboxConfig,
+  scopeShellSandboxFilesystem,
+  type ResolvedShellSandboxConfig,
+  type ShellSandboxConfig,
+  type ShellSandboxRuntime,
+} from "@sparkwright/shell-sandbox";
 import {
   assertReadWriteWorkspaceAccessAllowed,
   assertSubagentDepthAllowed,
@@ -17,6 +35,11 @@ import {
   workspaceAccessField,
   type DelegateWorkspaceAccess,
 } from "./delegate-capability.js";
+import {
+  createWorkspaceLeaseAbortController,
+  createWorkspaceMutationAdmission,
+  type WorkspaceLeaseCoordinator,
+} from "./workspace-agent-arbiter.js";
 
 export interface AcpChildAgentConfig {
   transport: "stdio";
@@ -40,6 +63,11 @@ export interface CreateAcpDelegateToolInput {
   maxDepth?: number;
   entrypoint?: "acp" | "delegates_run";
   allowReadWriteWorkspaceAccess?: boolean;
+  sandbox?: ShellSandboxConfig | ResolvedShellSandboxConfig;
+  sandboxRuntime?: ShellSandboxRuntime;
+  skillRoots?: readonly string[];
+  configPaths?: readonly string[];
+  workspaceLeaseCoordinator?: WorkspaceLeaseCoordinator;
 }
 
 export interface AcpDelegateToolResult {
@@ -54,6 +82,7 @@ export interface AcpDelegateToolResult {
   message?: string;
   toolCalls: number;
   updates: unknown[];
+  sandbox?: SandboxSummary;
 }
 
 export function acpConfigFromAgentProfile(
@@ -157,13 +186,7 @@ export function createAcpDelegateTool(
       });
       const parsed = parseDelegateArgs(args);
       const spanId = createSpanId();
-      const childRunId = `acp_${sanitizeSegment(input.profile.id)}_${Date.now().toString(36)}`;
-      const base = {
-        childRunId,
-        parentRunId: parent.record.id,
-        spanId,
-        goal: parsed.goal,
-      };
+      const childRunId = createId(`acp_${sanitizeSegment(input.profile.id)}`);
       const parentAgentId =
         typeof parent.record.metadata?.agentId === "string"
           ? parent.record.metadata.agentId
@@ -172,45 +195,100 @@ export function createAcpDelegateTool(
         typeof parent.record.metadata?.sessionId === "string"
           ? parent.record.metadata.sessionId
           : undefined;
-      const meta = {
-        ...(parentSessionId ? { sessionId: parentSessionId } : {}),
+      const invocation = prepareAgentInvocation({
+        goal: parsed.goal,
+        protocol: "acp",
+        sessionId: parentSessionId,
+        parentRunId: parent.record.id,
+        childRunId,
+        spanId,
         agentId: parentAgentId,
         childAgentId: input.profile.id,
         agentProfileId: input.profile.id,
         agentName: input.profile.name,
+        agentAssetIdentity: input.profile.assetIdentity,
         delegateTool: input.toolName,
-        childRunId,
-        parentRunId: parent.record.id,
-        entrypoint: input.entrypoint ?? "acp",
-        protocol: "acp",
-        workspaceAccess,
+        entrypoint: agentInvocationEntrypointFromArgs(
+          args,
+          input.entrypoint ?? "acp",
+        ),
         subagentDepth,
-      };
-      parent.events.emit("subagent.requested", base, meta);
-      parent.events.emit("subagent.started", base, meta);
+        governance: { workspaceAccess },
+      });
+      const meta = agentInvocationMetadata(invocation);
+      const supervisor = createAgentSupervisor({
+        invocation,
+        emitter: parent.events,
+      });
+      supervisor.requested();
       let executionWorkspace:
         | Awaited<ReturnType<typeof resolveDelegateProcessWorkspace>>
         | undefined;
+      let releaseWorkspaceLease: (() => void) | undefined;
+      const leaseAbort = createWorkspaceLeaseAbortController(
+        parent.abortSignal,
+      );
       try {
         assertReadWriteWorkspaceAccessAllowed({
           workspaceAccess,
           toolName: input.toolName,
           allowed: input.allowReadWriteWorkspaceAccess === true,
         });
+        if (workspaceAccess === "read_write") {
+          releaseWorkspaceLease = await createWorkspaceMutationAdmission({
+            coordinator: input.workspaceLeaseCoordinator,
+            workspaceRoot: input.workspaceRoot,
+            mode: "write",
+          })({
+            invocation,
+            abortSignal: leaseAbort.signal,
+            cancel: leaseAbort.cancel,
+          });
+        }
+        if (workspaceAccess === "read_write") {
+          parent.events.emit(
+            "workspace.write.untracked_access_granted",
+            {
+              childRunId,
+              parentRunId: parent.record.id,
+              toolName: input.toolName,
+              agentProfileId: input.profile.id,
+              protocol: "acp",
+              marker: "untracked-write-capable",
+              access: "granted",
+            },
+            meta,
+          );
+        }
         executionWorkspace = await resolveDelegateProcessWorkspace({
           workspaceRoot: input.workspaceRoot,
           configuredCwd: config.cwd,
           workspaceAccess,
           toolName: input.toolName,
         });
-        const worker = new ExternalAcpWorker({
-          name: input.profile.name ?? input.profile.id,
+        const workerLaunch = await prepareAcpWorkerLaunch({
           command: config.command,
           args: config.args,
           cwd: executionWorkspace.cwd,
           env: resolveAcpWorkerEnv(config),
+          workspaceRoot: input.workspaceRoot,
+          workspaceAccess,
+          sandbox: input.sandbox,
+          sandboxRuntime: input.sandboxRuntime,
+          skillRoots: input.skillRoots,
+          configPaths: input.configPaths,
+        });
+        const worker = new ExternalAcpWorker({
+          name: input.profile.name ?? input.profile.id,
+          command: workerLaunch.command,
+          args: [...workerLaunch.args],
+          cwd: workerLaunch.cwd,
+          env: workerLaunch.env,
+          cleanup: workerLaunch.cleanup,
           timeoutMs: config.timeoutMs,
         });
+        supervisor.admit();
+        supervisor.started();
         const result = await worker.run({
           cwd:
             workspaceAccess === "read_write"
@@ -218,6 +296,7 @@ export function createAcpDelegateTool(
               : executionWorkspace.cwd,
           goal: parsed.goal,
           metadata: parsed.metadata,
+          signal: leaseAbort.signal,
         });
         const output: AcpDelegateToolResult = {
           childRunId,
@@ -229,41 +308,126 @@ export function createAcpDelegateTool(
           message: result.text,
           toolCalls: result.toolCallCount,
           updates: result.updates.slice(-20),
+          sandbox: workerLaunch.sandbox,
         };
-        parent.events.emit(
-          "subagent.completed",
-          {
-            ...base,
+        supervisor.completed({
+          stopReason: result.stopReason,
+          result: {
+            protocol: "acp",
+            agentProfileId: input.profile.id,
             stopReason: result.stopReason,
-            result: {
-              protocol: "acp",
-              agentProfileId: input.profile.id,
-              stopReason: result.stopReason,
-              messageChars: result.text.length,
-              toolCalls: result.toolCallCount,
-            },
+            messageChars: result.text.length,
+            toolCalls: result.toolCallCount,
+            sandbox: workerLaunch.sandbox,
           },
-          meta,
-        );
+        });
         return output;
       } catch (error) {
         const wrapped = wrapAcpDelegateError(error);
-        parent.events.emit(
-          "subagent.failed",
-          {
-            ...base,
-            reason: "failed",
-            errorCode: errorCode(wrapped),
-            error: wrapped.message,
-          },
-          meta,
-        );
+        supervisor.failed({
+          reason: "failed",
+          errorCode: errorCode(wrapped),
+          error: wrapped.message,
+        });
         throw wrapped;
       } finally {
+        releaseWorkspaceLease?.();
+        leaseAbort.dispose();
         await executionWorkspace?.cleanup();
       }
     },
   });
+}
+
+async function prepareAcpWorkerLaunch(input: {
+  command: string;
+  args?: readonly string[];
+  cwd: string;
+  env?: NodeJS.ProcessEnv;
+  workspaceRoot: string;
+  workspaceAccess: DelegateWorkspaceAccess;
+  sandbox?: ShellSandboxConfig | ResolvedShellSandboxConfig;
+  sandboxRuntime?: ShellSandboxRuntime;
+  skillRoots?: readonly string[];
+  configPaths?: readonly string[];
+}): Promise<{
+  command: string;
+  args: readonly string[];
+  cwd: string;
+  env?: NodeJS.ProcessEnv;
+  cleanup?: () => Promise<void>;
+  sandbox: SandboxSummary;
+}> {
+  const baseSandbox =
+    input.sandbox && "forcedDenyWrite" in input.sandbox
+      ? input.sandbox
+      : resolveShellSandboxConfig({
+          workspaceRoot: input.workspaceRoot,
+          config: input.sandbox,
+          skillRoots: input.skillRoots,
+          extraForcedDenyWrite: input.configPaths,
+        });
+  const runtime = input.sandboxRuntime ?? createPlatformShellSandboxRuntime();
+  const sandbox =
+    input.workspaceAccess === "read_write"
+      ? baseSandbox
+      : await enforceProtectedWriteRootsShellSandbox(
+          scopeShellSandboxFilesystem(baseSandbox, {
+            allowRead: [
+              input.cwd,
+              ...[input.command, ...(input.args ?? [])].filter((value) =>
+                value.startsWith("/"),
+              ),
+            ],
+            allowWrite: [input.cwd],
+          }),
+          {
+            runtime,
+            protectedRoots: [input.workspaceRoot],
+          },
+        );
+  const decision = await prepareSandboxedProcessLaunch(
+    runtime,
+    {
+      command: input.command,
+      args: input.args,
+      cwd: input.cwd,
+      env: input.env,
+      metadata: { protocol: "acp" },
+    },
+    sandbox,
+  );
+  if (decision.status === "unavailable") {
+    throw new DelegateExecutionError(
+      "DELEGATE_EXECUTION_FAILED",
+      decision.reason,
+      {
+        sandbox: {
+          sandboxed: false,
+          mode: sandbox.mode,
+          runtime: decision.runtimeId,
+          networkMode: sandbox.network.mode,
+          available: false,
+          fallbackReason: decision.reason,
+          enforced: true,
+        },
+      },
+    );
+  }
+  return {
+    ...decision.invocation,
+    sandbox: {
+      sandboxed: decision.status === "sandboxed",
+      mode: sandbox.mode,
+      runtime: decision.runtimeId,
+      networkMode: sandbox.network.mode,
+      available: decision.available,
+      ...(decision.status === "unsandboxed" && decision.reason
+        ? { fallbackReason: decision.reason }
+        : {}),
+      enforced: decision.enforced,
+    },
+  };
 }
 
 function wrapAcpDelegateError(error: unknown): Error {

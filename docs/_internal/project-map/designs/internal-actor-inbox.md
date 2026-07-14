@@ -71,8 +71,9 @@ notification shape just enough for another internal actor to use it.
 - Keep trace as an audit projection, not a communication bus.
 - Keep external transports outside the internal actor model. MCP, ACP, and
   process stderr remain adapter ports with their own capabilities and limits.
-- Support lifecycle-style notifications for internal actors: task, workflow,
-  run, and agent.
+- Support lifecycle-style notifications for the concrete internal actors with
+  producers and consumers today: task and workflow. Run or Agent kinds may be
+  added later only with a typed union and receiver semantics in the same slice.
 - Keep sender-side and receiver-side contracts separate: producer sink vs
   consumer inbox.
 - Make model-context injection explicit and receiver-controlled.
@@ -217,10 +218,11 @@ the type boundary must remain split.
 
 ### Internal Actors
 
-Only SparkWright-owned lifecycle entities are internal actors:
+Only SparkWright-owned lifecycle entities with implemented notification
+producer/consumer semantics are actor-notification sources:
 
 ```ts
-type InternalActorKind = "run" | "agent" | "task" | "workflow";
+type InternalActorKind = "task" | "workflow";
 
 interface ActorRef {
   kind: InternalActorKind;
@@ -230,6 +232,10 @@ interface ActorRef {
   sessionId?: string;
 }
 ```
+
+This deliberately does not reserve `run` or `agent`. Agent lifecycle remains on
+`subagent.*` and bounded tool results. A task payload's `kind:"agent"` selects a
+task runner and is distinct from `ActorRef.kind`.
 
 For the current task path, `TaskNotification.parentRunId` is the receiver/owner
 run scope used by host filtering. The generic envelope must preserve that
@@ -619,6 +625,8 @@ handling, and GC should be driven by that concrete workflow need.
 ## 8. Contracts
 
 - Internal actor refs identify SparkWright-owned lifecycle entities only.
+- The current source-kind union is exactly `task | workflow`; future kinds must
+  arrive with typed inputs/outputs, a delivery adapter, and receiver policy.
 - External transports use typed adapter ports rather than the internal actor
   enum.
 - Notifications are lifecycle/observation records, not arbitrary commands.
@@ -827,6 +835,15 @@ Likely touched source:
   projection changes
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: aligned the actor source-kind type with the implemented task/workflow
+  notification unions and removed speculative run/Agent routing capacity.
+- Read: actor types and runtime validation, task/workflow adapters and tests,
+  Host task receiver, and multi-Agent communication boundary.
+- Tests: agent-runtime task/workflow/channel 99/99; downstream focused suites;
+  full `npm run release:check`.
 
 - Status: Verified
 - Date: 2026-07-05T00:42:02+0800

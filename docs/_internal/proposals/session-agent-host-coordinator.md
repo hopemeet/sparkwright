@@ -1,1032 +1,893 @@
-# Session Agent Host Coordinator
+# Host Execution Lane Coordinator
 
-Status: Draft for review (v3)
-Date: 2026-06-29
+Status: Draft for review (v4)
+Date: 2026-07-14
 
-> Internal planning document. This proposal does not change runtime behavior by
-> itself. It defines the target shape for making sessions first-class host-owned
-> agent control units that can be driven from IM, WebSocket, CLI/TUI, API, or
-> future gateways.
+> Internal architecture proposal. This document does not change runtime
+> behavior by itself.
 >
-> v3 changes vs v2: the scheduler's active unit is now a `SessionTurn`
-> / run-chain handle, not a single `RunHandle`; the old `RunFactory` idea
-> becomes a turn-level factory port so host can preserve todo-supervised
-> continuations and child/delegate runs; workspace resource-pool keys are split
-> from workspace write-lock scopes; workspace resource pools gain explicit
-> lifecycle rules; core `canAcceptCommand()` is promoted to a P1 deliverable;
-> async turn creation, in-flight idempotency, multi-link approvals, lock wakeups,
-> and host-minted `system` sources are written as design rules.
+> v4 re-baselines the former Session Agent Host Coordinator after the Workflow
+> actor, durable Workflow service/channel, Agent invocation supervision,
+> descendant-tree budget, run-security-plan, and workspace Agent arbitration
+> refactors. The product goal remains multi-session main-agent concurrency and
+> host-owned IM control. The implementation model changes from a
+> `SessionTurnScheduler` wrapped around `HostRuntime` to a process-scoped
+> `ExecutionLaneCoordinator` behind a decomposed Host service.
 
-## Purpose
+## Decision Summary
 
-SparkWright already has the right lower-level pieces for governed agent runs:
-core run state, host protocol, sessions, approval routing, trace, resume,
-background tasks, cron, SDK clients, WebSocket transport, `server-runtime`, and
-an IM gateway.
+The v3 proposal must not be implemented as written.
 
-The missing product/runtime primitive is a shared session concurrency layer.
-Today a host connection owns one `HostRuntime`, and one connection has at most
-one active host turn at a time. Different connections can run in parallel, but
-there is no shared coordinator that treats each `sessionId` as a durable main
-agent with its own queue, active turn, linked external controls, event
-subscribers, idempotency, and delivery state.
+Keep:
 
-The target shape:
+- Gateway is a protocol/delivery adapter; Host owns authorization and execution
+  control.
+- Core owns one run loop and its command queue.
+- Ordinary interactive work for one session is serial by default; different
+  sessions may run concurrently.
+- Idempotency, bounded queues, authenticated principals, control bindings,
+  approval authorization, and replayable delivery are required.
+- `@sparkwright/server-runtime` remains the transport-neutral process
+  coordination package.
 
-```txt
-Gateway / CLI / TUI / SDK / IM
-  -> host protocol / adapter layer
-  -> shared @sparkwright/server-runtime coordinator
-      -> SessionTurnScheduler
-      -> SessionLinkStore
-      -> SessionAccessPolicy
-      -> WorkerPool
-      -> RunManager / SessionManager / ApprovalBroker / ConnectionHub
-      -> SessionTurnFactory port
-          -> host-owned HostSessionTurnFactory
-              -> per-workspace resource pool
-              -> parent/child/continuation core runs
-```
+Change:
 
-The core stance: **Gateway adapts external identity and protocol; host owns
-session binding, permissions, scheduling, and logical turn lifecycle; core owns
-one run loop.**
+- `sessionId` is not the universal actor or execution identity. It remains a
+  conversation/history/storage identity. Interactive sessions map to an
+  execution lane, while Workflow, Task, and Agent invocation identities stay
+  separate.
+- The coordinator schedules opaque executions, not run trees. Workflow episode
+  advancement, Task revival, and Agent invocation lifecycles keep their current
+  owners.
+- Existing `RunManager` remains a thin core-run convenience API. The new
+  coordinator uses an independent `ExecutionDriver` port.
+- Scheduler capacity and workspace mutation exclusion are separate. The
+  scheduler must not hold a workspace write lock for an entire model turn or
+  execution.
+- `HostRuntime` compatibility means protocol compatibility over the same
+  process Host service, not a second direct execution path that bypasses the
+  coordinator.
+- Host decomposition precedes scheduler implementation.
 
 ## Read Before Reviewing
 
 - [project map: host](../project-map/modules/host.md)
-- [project map: protocol](../project-map/modules/protocol.md)
-- [project map: session store](../project-map/maps/session/session-store.md)
+- [project map: agent runtime](../project-map/modules/agent-runtime.md)
 - [project map: edge packages](../project-map/modules/edge-packages.md)
-- [internal design: actor inbox](../project-map/designs/internal-actor-inbox.md)
+- [run loop](../project-map/maps/runtime/run-loop.md)
+- [session store](../project-map/maps/session/session-store.md)
+- [resume and replay](../project-map/maps/session/resume-replay.md)
+- [Agent supervision](../project-map/designs/multi-agent-supervision.md)
+- [internal actor inbox](../project-map/designs/internal-actor-inbox.md)
+- [substrate sequencing](substrate-sequencing.md)
 - [`packages/host/src/runtime.ts`](../../../packages/host/src/runtime.ts)
 - [`packages/host/src/server.ts`](../../../packages/host/src/server.ts)
-- [`packages/host/src/transport-ws.ts`](../../../packages/host/src/transport-ws.ts)
 - [`packages/server-runtime/src/index.ts`](../../../packages/server-runtime/src/index.ts)
+- [`packages/server-runtime/src/workflow-service.ts`](../../../packages/server-runtime/src/workflow-service.ts)
+- [`packages/server-runtime/src/workflow-supervisor.ts`](../../../packages/server-runtime/src/workflow-supervisor.ts)
+- [`packages/agent-runtime/src/workflows/run-chain.ts`](../../../packages/agent-runtime/src/workflows/run-chain.ts)
+- [`packages/agent-runtime/src/agents/supervisor.ts`](../../../packages/agent-runtime/src/agents/supervisor.ts)
+- [`packages/host/src/workspace-agent-arbiter.ts`](../../../packages/host/src/workspace-agent-arbiter.ts)
 - [`packages/im-gateway/src/gateway.ts`](../../../packages/im-gateway/src/gateway.ts)
-- [`packages/im-gateway/src/store.ts`](../../../packages/im-gateway/src/store.ts)
-- [`packages/core/src/run.ts`](../../../packages/core/src/run.ts)
-- [`packages/core/src/session.ts`](../../../packages/core/src/session.ts)
-- [`packages/core/src/storage-lock.ts`](../../../packages/core/src/storage-lock.ts)
+- [`packages/agent-runtime/src/workflows/channels.ts`](../../../packages/agent-runtime/src/workflows/channels.ts)
 
-## Current Facts
+## Current Source Facts
 
-- Host is already the composition boundary around core. It loads config,
-  providers, skills, MCP, agents, shell settings, workflow hooks, session
-  stores, and protocol-facing runtime methods.
-- Current host runtime is per connection. The host map and source both state
-  that a single connection runs at most one active run at a time.
-- That single active host turn is not always a single core run. Host has
-  `runChainCancelled` for todo-supervised chains, can create continuation runs,
-  and can spawn in-process child/delegate runs. A logical session turn may
-  therefore contain a root run, delegated child runs, and continuation runs
-  under one cancellation/terminal-lifecycle scope.
-- WebSocket transport accepts concurrent clients, but each connection receives a
-  fresh `HostRuntime` via `serveConnection()`.
-- `@sparkwright/server-runtime` has reusable `ConnectionHub`, `RunManager`,
-  `SessionManager`, `ApprovalBroker`, and capability registry primitives. It is
-  currently optional and not wired into host/CLI as the main process
-  coordinator.
-- `RunManager.createRun()` currently calls core `createRun()` directly. It does
-  not know how to perform host-specific assembly such as config loading, skill
-  loading, MCP preparation, shell sandbox resolution, agent profiles, or
-  workspace-scoped stores.
-- Host-specific resources are workspace-keyed, not process-global:
-  `loadHostConfig(workspaceRoot)`, skill roots, MCP server cwd validation, and
-  shell sandbox config all depend on the resolved workspace root.
-- Core already has a run command queue. `RunHandle.injectUserMessage()` calls
-  `enqueueCommand()`, and the run loop consumes queued commands at the beginning
-  of each turn. `waiting_approval` and `waiting_credentials` are non-terminal.
-- Core does not currently expose a public read-only `canAcceptCommand()`
-  predicate. P1 should add one instead of duplicating terminal-state checks in
-  host/server-runtime.
-- IM gateway currently owns platform routing state such as session key to
-  session id, run targets, approval routing, and processed-message dedupe. This
-  works for the first Telegram bridge, but it should not become the canonical
-  owner of turn lifecycle semantics.
-- File-backed session/run storage is best-effort. `FileRunStore` is explicitly
-  not safe for multiple processes appending to the same root without an
-  external lock or database-backed coordination.
+- `serveConnection()` creates one `HostRuntime` per connection. Disconnect
+  cleanup denies that runtime's approvals and cancels its active run.
+- `HostRuntime` is still the dominant composition object. It owns connection
+  event emission, active-run state, cancellation, approvals, Task stores and
+  runners, Workflow stores/inboxes/outboxes, capability inspection, session
+  inspection, run preparation, Workflow projection, and episode driving.
+- `prepareHostRunEnvironment()` builds a large mutable environment containing
+  model, policy, workspace, skills, MCP, tools, Agent profiles/delegates,
+  Workflow state/hooks, stores, metadata, event emitters, and close hooks.
+- Main todo continuation already uses the Workflow-owned generic run-chain
+  driver. Host creates transient core runs; Workflow/todo logic decides whether
+  another episode is needed.
+- Agent invocation identity and lifecycle are now owned by
+  `PreparedAgentInvocation` and `AgentSupervisor`. Host owns Agent admission,
+  workspace leases, tools/models/policy, and adapter construction.
+- `WorkspaceAgentArbiter` is already a process-local fair read/write lease
+  coordinator keyed by canonical workspace realpath. It protects Agent
+  executions only; it does not serialize ordinary parent-run tool writes or
+  coordinate across processes.
+- Workflow jobs use a unique job `sessionId`; `controlSessionId` is attribution
+  only. Multiple jobs controlled from one user session must not become one
+  serialized interactive lane accidentally.
+- `server-runtime` is no longer unused. CLI uses its Workflow service/carrier
+  and supervisor; IM gateway uses its Workflow channel coordinator; Host uses
+  its in-flight command dispatcher. Its older `RunManager`, `SessionManager`,
+  `ApprovalBroker`, and `ConnectionHub` convenience stack is still not the
+  canonical Host execution path.
+- `DurableCommandDispatcher` only coalesces concurrent in-flight calls in
+  memory. Durable Workflow command truth lives in command/outcome files; the
+  class name must not be interpreted as durable persistence.
+- IM gateway still owns ordinary session routing, active-session maps, queued
+  messages, run targets, approval-to-run routing, and message dedupe. Workflow
+  channel bindings and delivery receipts already provide a stronger host-side
+  precedent.
+- Core already exposes `enqueueCommand()` and `injectUserMessage()`, and consumes
+  commands at a run-loop boundary. It still does not expose a public read-only
+  command-acceptance predicate.
+- File session/run storage remains best-effort for concurrent processes.
+  Workflow stores have stronger lease/journal behavior, but that does not make
+  all session and trace stores multi-process safe.
 
 ## Product Model
 
-Treat every session as a long-lived main agent control unit:
+An ordinary interactive session is a long-lived main-agent control surface:
 
 ```txt
-session_A -> main agent A -> queue -> active turn/run-chain -> trace/events
-session_B -> main agent B -> queue -> active turn/run-chain -> trace/events
-session_C -> main agent C -> queue -> active turn/run-chain -> trace/events
+conversation session
+  -> interactive execution lane
+      -> queued user work
+      -> at most one active execution
+          -> one or more core runs/episodes
+          -> child Agent invocations
+          -> awaited/background Tasks
 ```
 
-IM, Web, CLI, TUI, or API clients are control surfaces for these session agents.
-They do not own the session agent.
+This mapping is a product default, not a universal identity equation:
 
-Default concurrency semantics:
+```txt
+sessionId       = conversation/history/store identity
+laneId          = serial scheduling identity
+executionId     = one accepted unit of interactive work
+runId           = one core run
+workflowRunId   = one durable Workflow actor
+taskId          = one Task actor
+childRunId      = one Agent invocation execution identity
+connectionId    = one transport client
+principalId     = one authenticated caller identity
+```
 
-- Same session: one active turn; additional user messages are injected into the
-  active turn when it can still accept commands, otherwise queued for the next
-  turn.
-- Different sessions: may run concurrently up to host/global limits.
-- Same workspace across multiple sessions: reads may run concurrently, but
-  workspace mutations require the shared workspace lock/conflict policy.
+For ordinary interactive work:
+
+```txt
+laneId = interactive-session:<workspaceId>:<sessionId>
+```
+
+Workflow jobs keep their current independent job sessions and
+`workflowRunId`. Their `controlSessionId` does not become a lane key. Task
+revival and Agent invocation are nested execution mechanisms, not sibling
+session queues.
 
 ## Goals
 
-- Make `sessionId` the runtime concurrency boundary for main-agent work.
-- Let multiple sessions run concurrently inside one host process.
-- Keep same-session execution deterministic through a serial queue.
-- Let IM sources link to sessions without moving turn lifecycle into gateway.
-- Route approvals, cancellation, injection, and terminal turn events through a
-  host-owned session registry.
-- Preserve existing core run semantics and keep core focused on one run loop.
-- Reuse `@sparkwright/server-runtime` instead of creating another parallel
-  run/session/approval/event stack.
-- Start with an in-process implementation that can later gain DB-backed stores,
-  distributed locks, worker leases, and multi-host routing.
+- Run many interactive session agents concurrently in one Host process.
+- Keep one interactive session deterministic through a bounded serial lane.
+- Move ordinary IM session queueing, active execution routing, approval routing,
+  and canonical session bindings into the Host control plane.
+- Preserve Core, Workflow, Task, and Agent supervisor ownership.
+- Reduce Host complexity while introducing coordination; each migration phase
+  must retire a parallel state holder or execution path.
+- Establish ports that can later gain durable command stores, worker leases,
+  fencing, and database-backed coordination.
 
 ## Non-Goals
 
-- Do not make same-session parallel runs the default.
-- Do not turn the gateway into the canonical owner of session/run state.
-- Do not add a generic actor message bus.
-- Do not require a database for the first increment.
-- Do not change core run state machine semantics.
-- Do not solve full multi-region or Kubernetes high availability in the first
-  increment.
-- Do not share workspace-scoped resources across different workspaces.
+- Do not turn `sessionId` into a universal actor id.
+- Do not route Workflow advancement, Task revival, or child Agent lifecycle
+  through the interactive lane scheduler.
+- Do not add a generic actor bus or arbitrary actor-to-actor messages.
+- Do not merge Core and Workflow run loops.
+- Do not pool live MCP clients or other mutable resources before they have
+  explicit multiplexing, lease, event-routing, and shutdown contracts.
+- Do not claim high availability from an in-memory coordinator or file locks.
+- Do not preserve a long-lived coordinator-bypass execution path for
+  compatibility.
 
-## Package Placement
+## Frozen Ownership Matrix
 
-### `@sparkwright/server-runtime`
+| Boundary                                                                         | Owner                                                       | Coordinator rule                                                                                                  |
+| -------------------------------------------------------------------------------- | ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| Conversation history and session run membership                                  | Core session store, composed by Host                        | Lane references `sessionId`; it does not redefine session persistence.                                            |
+| Interactive lane queue, idempotency, fairness, capacity, atomic terminal handoff | `server-runtime` `ExecutionLaneCoordinator`                 | One active execution per interactive lane by default.                                                             |
+| Authentication, principal derivation, session binding policy                     | Host control plane                                          | Do not trust caller-authored `verified` source fields.                                                            |
+| Host execution assembly                                                          | Host `ExecutionDriver` implementation                       | Builds models, tools, policy, workspace, hooks, stores, and adapters.                                             |
+| In-run command consumption and terminal run facts                                | Core                                                        | Reuse the existing command queue; do not create a second run-internal queue.                                      |
+| Todo/Workflow episode continuation                                               | Agent-runtime Workflow/todo driver                          | Coordinator waits for the execution driver's terminal signal; it does not inspect individual run terminal events. |
+| Durable Workflow adoption, waiting, control, recovery                            | Workflow store/supervisor/service                           | `controlSessionId` is attribution only and never an interactive lane lock.                                        |
+| Task terminal/revival readiness                                                  | `TaskManager`, Task outbox, Core notification/revival ports | Background Tasks may outlive an interactive execution; awaited Task behavior remains run-owned.                   |
+| Child Agent invocation identity/lifecycle                                        | `AgentSupervisor`                                           | Child runs are not enumerated or supervised by the lane coordinator.                                              |
+| Workspace mutation admission                                                     | Host `WorkspaceLeaseCoordinator`                            | Independent from lane scheduling; acquire at concrete mutation/invocation/process boundaries.                     |
+| Run interaction approval/question broker                                         | Process Host interaction service                            | Approval is execution-scoped and authorized against principal/binding policy.                                     |
+| External channel binding and delivery receipts                                   | Host/server-runtime control-channel service                 | Gateway stores transport delivery facts only.                                                                     |
+| Protocol event projection                                                        | Host protocol adapter                                       | Core/Workflow/Task facts remain canonical; protocol events are projections.                                       |
 
-Owns the transport-neutral session coordination substrate:
-
-- `SessionTurnScheduler`
-- `SessionQueue`
-- `SessionTurnState` and `SessionRuntimeState`
-- `SessionTurnFactory` / `SessionTurnHandle` ports
-- `SessionLinkStore` interfaces and in-memory implementation
-- `SessionAccessPolicy` interface
-- scheduler integration with `RunManager`, `SessionManager`,
-  `ApprovalBroker`, and `ConnectionHub`
-
-It must not import `@sparkwright/host`.
-
-### `@sparkwright/host`
-
-Owns product assembly:
-
-- implements `HostSessionTurnFactory`
-- owns `WorkspaceResourcePool`
-- resolves host config, models, skills, MCP, shell sandbox, workflow hooks,
-  agent profiles, workspace stores, and capability diagnostics
-- adapts host protocol requests into server-runtime scheduler calls
-
-Host remains the place that knows how SparkWright runs inside a workspace.
-
-### `@sparkwright/core`
-
-Owns only single-run semantics:
-
-- run loop
-- tool dispatch
-- policy and approvals
-- workspace write events
-- command queue
-- public read-only command-acceptance predicate
-- trace/checkpoint/result/budget semantics
-
-### Gateway / IM Packages
-
-Own external protocol and delivery adaptation only. They provide authenticated
-source claims to host and deliver host events back to external surfaces.
-
-## Resource Ownership
-
-The resource tiers are part of the design, not implementation detail.
+## Target Shape
 
 ```txt
-per-process:
-  scheduler
-  event hub
-  server capability type registry
-  provider package registry / model factory helpers
-  metrics and process health
+CLI / TUI / SDK / Web / IM
+  -> ConnectionAdapter
+      -> authenticated PrincipalContext
+      -> protocol request/response projection
+  -> HostControlPlane                         per process
+      -> typed command acceptance
+      -> control bindings / permissions
+      -> interaction routing
+      -> subscriptions / delivery projection
+  -> ExecutionLaneCoordinator                server-runtime
+      -> bounded per-lane FIFO
+      -> in-flight idempotency
+      -> fairness / global capacity
+      -> active execution registry
+      -> atomic terminal handoff
+  -> HostExecutionDriver                     host
+      -> HostExecutionAssembler
+      -> todo/Workflow episode driver
+      -> ordinary Core RunHandle(s)
+          -> AgentSupervisor for child invocations
+          -> TaskManager for Tasks
 
-per-workspace resource pool
-  key = canonical workspaceRoot + config fingerprint
-  loaded host config
-  skill roots and prepared skill index/cache
-  MCP server pool and lazy-tool preparation state
-  shell sandbox runtime/config
-  workspace capability snapshot/cache
-
-per-workspace write lock
-  scope = canonical workspaceRoot
-  waiter queue / release wakeup state
-
-per-session:
-  queue
-  activeTurnId
-  links
-  subscribers
-  session access policy state
-  delivery cursor / pending outbox metadata
-  coalescing and idempotency windows
-
-per-turn:
-  SessionTurnHandle
-  rootRunId
-  currentRunId
-  childRunIds / continuation run ids
-  turn terminal signal
-  turn cancellation scope
-  initiating source
-
-per-run:
-  RunHandle
-  approval waiters
-  run store
-  LocalWorkspace / controlled workspace runtime
-  run event stream
+WorkspaceContextRegistry                     per process
+  -> immutable workspace snapshots/caches
+  -> workspace Task/Workflow stores and services
+  -> WorkspaceLeaseCoordinator
 ```
 
-The resource-pool key and write-lock scope are related but not identical. Both
-derive from the canonical workspace root, but the pool key also includes the
-config fingerprint because config, skills, MCP, and shell sandbox may change.
-The write-lock scope must not include the config fingerprint because two
-different config views of the same root still mutate the same files.
+`server-runtime` must not import Host. Host implements the driver port and
+injects it into the coordinator.
 
-`WorkspaceResourcePool` entries need explicit lifecycle:
+## Core Coordination Types
 
-- reference count or lease per active turn;
-- no eviction while referenced by active turns;
-- idle TTL eviction after the final release;
-- explicit MCP server shutdown and sandbox/resource close hooks on eviction;
-- config-fingerprint invalidation creates a new pool entry without killing the
-  old entry until active turns release it.
-
-Provider package registration can be process-global, but resolved model config
-and model adapters may be workspace- or run-sensitive because workspace config,
-model override, pricing, and credentials can differ.
-
-## P0 Boundary Matrix (Frozen 2026-07-06)
-
-This matrix is the C3 P0 deliverable. It freezes ownership before any
-`SessionTurnScheduler` implementation so the coordinator does not become a
-fourth ambiguous owner of "the next execution".
-
-| Boundary                                 | Frozen owner                                                                                                                                                                                                                                       | Current / compatibility path                                                                                                             | Rule                                                                                                                                 |
-| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| Create a session turn                    | `server-runtime` `SessionTurnScheduler` allocates `queueEntryId` / `turnId`; host-owned `SessionTurnFactory` assembles the logical turn/run-chain.                                                                                                 | Per-connection `HostRuntime.startRun()` may continue to create runs directly until the coordinator path becomes default.                 | Core creates runs, not session turns. Once P1 is default, new durable session turns enter through the scheduler.                     |
-| Continue execution inside an active turn | Core owns in-run command consumption and continuation. Workflow owns workflow episode advancement. `TaskManager` owns task terminal/revival signals. Scheduler owns only selecting the next queued session turn after the active turn is terminal. | Existing todo-supervised continuations and child/delegate runs remain host run-chain behavior wrapped by one future `SessionTurnHandle`. | No component outside the active turn may drain the session queue or declare the turn terminal.                                       |
-| Inject user commands/messages            | `SessionTurnScheduler` routes same-session messages to the active `SessionTurnHandle`; the handle delegates to the current/root `RunHandle.injectUserMessage()`.                                                                                   | Current `HostRuntime.injectRunMessage()` checks the active run id and calls core's command queue directly.                               | Do not create a second in-run command queue in server-runtime. Injection reuses core `enqueueCommand()`.                             |
-| Emit terminal and wakeup notifications   | Core emits run terminal facts; task/workflow outboxes emit task/workflow terminal and wakeup facts; host/coordinator routes and fans out those facts.                                                                                              | Current host runtime forwards buffered run, task, and workflow notifications to the connected client.                                    | Coordinator may wake parked queues and subscribers, but it must not invent terminal facts.                                           |
-| Hold workspace lock and resource pool    | Host owns `WorkspaceResourcePool` and workspace write-lock implementation; scheduler holds a logical lease while a turn is runnable/active.                                                                                                        | Current per-connection host runtime resolves workspace-scoped config, stores, MCP, sandbox, and write policy inline.                     | Pool key is workspace root plus config fingerprint; write-lock scope is workspace root only. Leases release on turn terminal/cancel. |
-| Coordinate across processes              | No P0/P1 component coordinates across processes. P3 owns DB/Redis-backed queues, locks, leases, stores, and outboxes.                                                                                                                              | File stores remain best-effort and must not be treated as multi-process-safe.                                                            | In-process success is not evidence of distributed safety. Cross-process coordination requires a dedicated store/lock backend.        |
-| Preserve per-connection `HostRuntime`    | Host keeps per-connection `HostRuntime` as the compatibility adapter while the scheduler rolls out.                                                                                                                                                | `serveConnection()` still creates a fresh `HostRuntime`; one connection has one active runtime/run-chain.                                | Compatibility mode may bypass cross-session coordination. It is not the target owner and must not be cited as P1 completion.         |
-
-## SessionTurnFactory Port
-
-`server-runtime` needs a turn creation port because it cannot import host, and
-host-specific turn assembly cannot be reproduced inside server-runtime. The
-port must represent a logical host turn/run-chain, not only a single core run.
-
-Draft shape:
+Names are draft but ownership is not.
 
 ```ts
-interface SessionTurnFactoryContext {
-  sessionId: string;
-  workspaceRoot: string;
-  workspacePoolKey: string;
-  workspaceLockScope: string;
-  source?: VerifiedSourceIdentity;
-  metadata?: Record<string, unknown>;
-}
-
-interface SessionTurnFactory<TInput = CreateManagedRunOptions> {
-  createTurn(
-    input: TInput,
-    context: SessionTurnFactoryContext,
-  ): Promise<SessionTurnHandle>;
-}
-
-interface SessionTurnHandle {
-  turnId: string;
-  sessionId: string;
-  rootRunId?: string;
-  currentRunId?: string;
-  childRunIds: readonly string[];
-  state: SessionTurnState["state"];
-  terminal: boolean;
-
-  canAcceptMessage(): boolean;
-  injectUserMessage(input: InjectSessionMessageInput): Promise<void> | void;
-  cancelTurn(input?: {
-    reason?: string;
-    metadata?: Record<string, unknown>;
-  }): Promise<void> | void;
-  subscribe(listener: SessionTurnEventListener): Unsubscribe;
-}
-```
-
-`RunManager` should call an injected factory path instead of assuming all work
-is a direct core `createRun()` call. The default factory remains the current
-thin behavior for embedders that only need one core run:
-
-```txt
-default SessionTurnFactory
-  -> core createRun(resolveRunOptions(options))
-  -> single-run SessionTurnHandle wrapper
-```
-
-Host injects:
-
-```txt
-HostSessionTurnFactory
-  -> resolve workspace pool key and workspace lock scope
-  -> get/create WorkspaceResourcePool entry
-  -> assemble model/tools/policy/workspace/runStore/hooks/delegates
-  -> create root core run
-  -> create child/delegate/continuation runs as host semantics require
-  -> expose one SessionTurnHandle to server-runtime
-```
-
-This keeps the coordination center in server-runtime without creating a
-server-runtime -> host dependency cycle, while preserving current host
-todo-supervised cancellation and continuation behavior.
-
-`createTurn()` is async. P1 must account for the gap between accepting a queue
-entry and receiving the root run id:
-
-- scheduler allocates `queueEntryId` and `turnId` under the session mutex before
-  awaiting host assembly;
-- in-flight idempotency records point at that entry/turn immediately;
-- duplicate submissions during assembly return the existing accepted entry/turn
-  state instead of starting a second turn;
-- protocol compatibility can continue returning the root `runId` once factory
-  resolution completes, but the internal scheduling contract is turn-first.
-
-## Core Types
-
-Names are intentionally draft names.
-
-```ts
-type SourceKind = "host_client" | "im" | "api" | "system";
-
-interface SourceIdentity {
-  kind: SourceKind;
+interface PrincipalContext {
+  principalId: string;
+  kind: "host_client" | "gateway" | "system";
+  authenticatedBy: string;
   gatewayId?: string;
-  platform?: string;
-  chatId?: string;
+  claims?: Record<string, unknown>;
+}
+
+interface InteractiveSessionLaneRef {
+  laneId: string;
+  workspaceId: string;
+  sessionId: string;
+}
+
+interface CommandSource {
+  sourceId: string;
+  transport: "local" | "websocket" | "gateway" | "internal";
+  connectionId?: string;
+  gatewayId?: string;
+  bindingId?: string;
+  channelId?: string;
   threadId?: string;
-  userId?: string;
-  userName?: string;
-  tenantId?: string;
-  clientId?: string;
-  metadata?: Record<string, unknown>;
+  platformUserId?: string;
 }
 
-interface VerifiedSourceIdentity extends SourceIdentity {
-  verifiedBy: "host" | "gateway";
-  verifiedAt: string;
-}
+type ExecutionRetention = "connection" | "session" | "durable";
 
-interface SessionLinkRecord {
-  id: string;
-  sessionId: string;
-  source: SourceIdentity;
-  permissions: SessionPermission[];
-  createdAt: string;
-  updatedAt: string;
-  metadata?: Record<string, unknown>;
-}
+type InteractiveLaneCommand =
+  | { kind: "start"; input: unknown }
+  | { kind: "resume"; input: unknown }
+  | { kind: "message"; content: string; parts?: unknown[] };
 
-type SessionPermission =
-  | "message"
-  | "inspect"
-  | "approve"
-  | "cancel_turn"
-  | "cancel_session"
-  | "link"
-  | "unlink";
-
-interface SessionQueueEntry {
-  id: string;
-  sessionId: string;
-  turnId?: string;
+interface ExecutionCommandEnvelope {
+  commandId: string;
   idempotencyKey?: string;
-  coalesceKey?: string;
-  kind: "start" | "resume" | "message";
-  source: VerifiedSourceIdentity;
-  payload: unknown;
-  createdAt: string;
+  lane: InteractiveSessionLaneRef;
+  principal: PrincipalContext;
+  source: CommandSource;
+  retention: ExecutionRetention;
+  command: InteractiveLaneCommand;
+  receivedAt: string;
+  metadata?: Record<string, unknown>;
+}
+```
+
+`PrincipalContext` is created by Host from connection authentication and
+trusted gateway configuration. A gateway may provide bounded platform claims,
+but it cannot mint `kind:"system"` or mark itself verified.
+
+`CommandSource` is normalized by Host after validating the connection,
+gateway claim namespace, and control binding. It is attribution and reply
+routing, not authority; authorization always uses `PrincipalContext` plus the
+binding policy. Message coalescing keys on `sourceId`, never on unvalidated
+gateway payload fields.
+
+### Execution Driver Port
+
+```ts
+interface StartExecutionContext {
+  executionId: string;
+  lane: InteractiveSessionLaneRef;
+  principal: PrincipalContext;
+  retention: ExecutionRetention;
+  signal: AbortSignal;
   metadata?: Record<string, unknown>;
 }
 
-interface SessionTurnState {
-  turnId: string;
+interface ExecutionDriver<TStartInput = unknown> {
+  start(
+    input: TStartInput,
+    context: StartExecutionContext,
+  ): Promise<ExecutionHandle>;
+}
+
+type ExecutionState =
+  | "starting"
+  | "active"
+  | "waiting_approval"
+  | "waiting_credentials"
+  | "cancelling"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+interface ExecutionSnapshot {
+  executionId: string;
+  laneId: string;
   sessionId: string;
-  workspaceRoot: string;
-  workspacePoolKey: string;
-  workspaceLockScope: string;
-  state:
-    | "queued"
-    | "starting"
-    | "running"
-    | "waiting_approval"
-    | "waiting_credentials"
-    | "cancelling"
-    | "completed"
-    | "failed"
-    | "cancelled";
+  state: ExecutionState;
+  currentRunId?: string;
   rootRunId?: string;
-  currentRunId?: string;
-  childRunIds: string[];
-  submittedBy: VerifiedSourceIdentity;
-  terminalReason?: unknown;
+  terminal: boolean;
   updatedAt: string;
 }
 
-interface SessionRuntimeState {
-  sessionId: string;
-  status:
-    | "idle"
-    | "queued"
-    | "running"
-    | "waiting_approval"
-    | "cancelling"
-    | "draining"
-    | "blocked"
-    | "error";
-  activeTurnId?: string;
-  currentRunId?: string;
-  workspaceRoot?: string;
-  workspacePoolKey?: string;
-  workspaceLockScope?: string;
-  queueDepth: number;
-  linkedSourceCount: number;
-  updatedAt: string;
+interface ExecutionHandle {
+  snapshot(): ExecutionSnapshot;
+  canAccept(command: InteractiveLaneCommand): boolean;
+  dispatch(command: InteractiveLaneCommand): Promise<void> | void;
+  cancel(input?: { reason?: string }): Promise<void> | void;
+  subscribe(listener: (event: ExecutionEvent) => void): () => void;
+  completion: Promise<ExecutionSnapshot>;
 }
 ```
 
-`coalesceKey` should include source identity by default. Only consecutive
-messages from the same source should merge automatically; cross-source messages
-must remain distinct so attribution is preserved.
+The coordinator treats the handle as opaque. It does not maintain
+`childRunIds`, infer execution terminal state from a core run event, or know
+whether the driver used one run, todo continuations, or another Host-owned
+episode shape.
 
-## Coordinator Surface
+Existing `RunManager` remains unchanged and is not the factory port for Host
+executions. A thin single-run driver may compose it for simple embedders, but
+Host uses its own `HostExecutionDriver`.
 
-P1 should keep the public surface narrow:
+### Async Start And Idempotency
 
-```ts
-interface SessionCoordinator {
-  submit(input: SubmitSessionWorkInput): Promise<SubmitSessionWorkResult>;
-  inject(input: InjectSessionMessageInput): Promise<InjectSessionMessageResult>;
-  cancelTurn(input: CancelSessionTurnInput): Promise<void>;
-  cancelSession(input: CancelSessionInput): Promise<void>;
-  resolveApproval(input: ResolveSessionApprovalInput): Promise<void>;
-  inspectSessionState(sessionId: string): Promise<SessionRuntimeState>;
-}
-```
+Driver start is async. Under the lane mutex, coordinator must:
 
-Existing protocol paths that address cancellation by `runId` should become a
-compatibility adapter: resolve `runId -> turnId -> sessionId`, then apply
-turn-level cancellation policy. Cancelling an arbitrary child run must not
-accidentally leave the parent turn free to continue unless an explicit internal
-policy says so.
+1. validate lane limits and access;
+2. allocate `commandId` and `executionId`;
+3. publish the in-flight idempotency record;
+4. transition the lane to `starting`;
+5. release the mutex before awaiting expensive Host assembly;
+6. re-enter the mutex to attach the handle or record a start failure.
 
-P2 can add:
+A duplicate arriving during `starting` returns the existing command/execution
+result. It never starts another driver.
 
-```ts
-interface SessionLinkCoordinator {
-  linkSession(input: LinkSessionInput): Promise<SessionLinkRecord>;
-  unlinkSession(input: UnlinkSessionInput): Promise<void>;
-  listSessionLinks(sessionId: string): Promise<SessionLinkRecord[]>;
-  subscribe(input: SubscribeSessionEventsInput): HostEventSubscription;
-}
-```
+An idempotency key is scoped to lane plus normalized source. Reusing it with a
+different command digest is a conflict, not a cache hit. P2 retains accepted
+records through terminal completion plus a bounded replay window; P4 persists
+the same contract in the command/outcome journal.
 
-Do not pull link/unlink/subscribe into P1. Those require explicit protocol and
-trust-boundary decisions.
+`DurableCommandDispatcher` should be renamed to reflect its current in-memory
+behavior, for example `InFlightCommandCoalescer`, or hidden behind a broader
+command-store abstraction. Persistence belongs to a command/outcome store, not
+that class.
 
 ## Scheduling Semantics
 
-### Submission
+### Ordinary Interactive Lane
 
-1. Caller submits work with `sessionId`, `workspaceRoot` or equivalent routing
-   context, `source`, and optional `idempotencyKey`.
-2. Host verifies the source claim and session access policy.
-3. Scheduler takes the session mutex and records any idempotency entry before
-   awaiting async host assembly.
-4. If the session has no active turn, scheduler starts a turn when global
-   capacity and workspace lock requirements allow.
-5. If the session has an active turn that can accept messages:
-   - message input is forwarded through `SessionTurnHandle.injectUserMessage()`;
-   - a new start/resume request is queued or rejected depending on policy.
-6. If the active turn is terminal or terminal handoff has begun, message input
-   is queued for the next turn.
-7. Turn terminal event and queue drain run under the same session mutex, so
-   there is no window where a message can be injected into a dying turn.
+- One active execution per lane.
+- Different lanes may run concurrently up to `maxConcurrentExecutions`.
+- A `message` is dispatched to the active handle only when
+  `handle.canAccept(message)` is true and terminal handoff has not begun.
+- Otherwise the message is queued for the next execution.
+- A new `start`/`resume` while active is queued or rejected by explicit policy;
+  it is never silently merged into the active execution.
+- Execution completion and queue drain are serialized under the lane mutex.
+- Core run completion is not lane completion. Only `handle.completion` is.
+- Same-source adjacent queued messages may coalesce under bounded age/count/
+  size limits while preserving the ordered original command/source parts.
+  Cross-source messages do not coalesce by default.
+- `cancel_execution` targets only the active execution; queued commands remain.
+- `cancel_session` closes the lane by policy, cancels the active execution, and
+  explicitly resolves every cleared queued command as cancelled to its source.
+  Queue entries are never silently dropped.
 
-The scheduler must not treat every core run terminal event as session terminal.
-Child/delegate/continuation runs are members of a `SessionTurn`. Only the
-turn-level terminal signal can release the session mutex for queue drain.
+### Fairness And Capacity
 
-### Injection
-
-Do not invent a second run-internal queue. Injection reuses core:
-
-```txt
-SessionTurnScheduler
-  -> active SessionTurnHandle.injectUserMessage()
-  -> current/root RunHandle.injectUserMessage()
-  -> core RunHandle.enqueueCommand()
-  -> run loop consumes commands at next turn boundary
-```
-
-This means:
-
-- mid-tool-call messages do not interrupt the tool; they are consumed at the
-  next core run turn;
-- `waiting_approval` and `waiting_credentials` are non-terminal and can accept
-  queued user messages;
-- the scheduler's "can inject" predicate is turn-level
-  `SessionTurnHandle.canAcceptMessage()`.
-
-P1 should add a public read-only `RunHandle.canAcceptCommand()` helper in core.
-The default turn handle can implement `canAcceptMessage()` from that helper plus
-the scheduler's own terminal-handoff guard. Host's turn handle can additionally
-guard broader run-chain cancellation/terminal state.
-
-### Capacity
-
-Initial in-process config:
+Initial process-local policy:
 
 ```ts
-interface SessionTurnSchedulerConfig {
-  maxConcurrentTurns: number;
-  maxQueueDepthPerSession: number;
-  maxQueuedSessions: number;
-  sameSessionPolicy: "inject_or_queue" | "queue_only" | "reject";
+interface ExecutionLaneCoordinatorConfig {
+  maxConcurrentExecutions: number;
+  maxQueueDepthPerLane: number;
+  maxQueuedLanes: number;
+  activeMessagePolicy: "inject_or_queue" | "queue_only" | "reject";
   messageCoalescing: "same_source" | "off";
 }
 ```
 
-Default recommendation:
+Use session-round-robin among runnable lane heads. Global capacity admission
+is a bounded active-execution count in P2; an admitted execution keeps that
+slot until terminal even while awaiting a model, approval, or workspace lease.
+Model, process, and workspace adapters own separate resource limits, so they do
+not consume mutation permits before admission and unrelated already-admitted
+lanes can continue. Yielding/reacquiring execution capacity would require an
+explicit driver parking protocol and is deferred rather than inferred from
+internal run state. Weighted tenant fairness and quotas wait until tenant
+identity is real.
 
-- `maxConcurrentTurns`: small configurable value, for example `4`.
-- `maxQueueDepthPerSession`: bounded, for example `20`.
-- `sameSessionPolicy`: `inject_or_queue`.
-- `messageCoalescing`: `same_source`.
+### Disconnect And Retention
 
-### Fairness
+Disconnect behavior is explicit per accepted execution:
 
-The first scheduler should use a simple session-round-robin queue:
+- `connection`: cancel when the owning connection disappears and no transfer
+  policy applies. This preserves current CLI/TUI behavior where desired.
+- `session`: execution remains Host-owned while session subscribers or bindings
+  may reconnect.
+- `durable`: execution is backed by durable actor/worker state; ordinary P1
+  interactive executions do not claim this level.
 
-- one active turn per session;
-- choose next runnable session from a FIFO of sessions with queued work;
-- do not let one noisy session monopolize all workers.
+Do not preserve the current global rule that every connection close always
+cancels its work once session-owned control is introduced.
 
-If a session is blocked on a workspace lock, park it and release the worker
-slot. Do not repeatedly pick and re-block the same session in a busy loop.
+### Workflow, Task, And Agent Boundaries
 
-Weighted tenant fairness can wait until tenant quotas exist.
+- Workflow service/supervisor continues to claim and advance
+  `workflowRunId`. It does not queue behind `controlSessionId`.
+- A Workflow worker episode may use Host execution assembly, but Workflow owns
+  waiting, resumption, adoption, and terminal status.
+- Awaited Task revival stays inside Core's current notification/revival seam.
+- Background Tasks may outlive the interactive execution and do not keep the
+  lane active merely because their process remains alive.
+- Child Agent invocation lifecycle stays under `AgentSupervisor`; its workspace
+  lease and descendant budget are not lane scheduler state.
 
-## Source Trust And IM Session Links
+## Host Decomposition Before Coordination
 
-`SourceIdentity` is not trusted by default. A gateway supplies raw platform
-facts; host must verify that the gateway itself is trusted before turning those
-facts into `VerifiedSourceIdentity`.
+Adding a scheduler around the current `HostRuntime` would retain its ownership
+mix and introduce another state registry. The first implementation phase is an
+equivalent-behavior decomposition.
 
-Minimum trust posture:
+### Process Scope: `HostService`
 
-- Host registers trusted gateways by token, mTLS identity, or signed-claim key.
-- Gateway claims carry gateway id, issue time, source identity, and optionally
-  idempotency key.
-- Host rejects `kind: "system"` from gateways. `system` is host-generated only.
-- Cron-triggered runs, supervised continuations, and other internal automation
-  should route through coordinator-minted `system` sources instead of bypassing
-  session access policy and event attribution.
-- `session.link` creation is allowed only from an authenticated host client or
-  project/user allowlist. IM self-link is disabled by default.
-- IM source with `message` permission does not automatically get `approve`,
-  `cancel_session`, `link`, or `unlink`.
+Created once by `runHostMain()` and injected into all connections:
 
-IM-session binding stays host-owned:
+- `WorkspaceContextRegistry`;
+- interaction/approval registry;
+- connection/subscription registry;
+- principal and control-binding policy;
+- process health and graceful drain.
+
+From P2 onward `HostService` also composes exactly one
+`ExecutionLaneCoordinator`. The coordinator owns its active-execution
+registry; `HostService` must not mirror that state.
+
+`serveConnection()` must stop constructing the canonical execution engine per
+connection. A connection controller keeps handshake, request validation,
+principal, subscriptions, and response projection only.
+
+### Workspace Scope: `WorkspaceContext`
+
+Keyed by canonical workspace root. It owns:
+
+- workspace identity and config/capability snapshot cache;
+- Task manager and Task stores/outbox;
+- Workflow stores/control inbox/notification outbox adapters;
+- workspace lease coordinator;
+- immutable or safely shareable capability indexes;
+- idle lifecycle and shutdown.
+
+The workspace registry key may include a config/capability fingerprint for
+immutable snapshots, but the mutation-lock scope is canonical workspace root
+only.
+
+### Execution Scope
+
+Split the current prepared environment into explicit parts:
 
 ```txt
-telegram chat/thread/user
-  -> gateway verifies platform token/webhook
-  -> gateway sends signed or authenticated source claims
-  -> host verifies gateway
-  -> host checks SessionLinkStore
-  -> host schedules work for sessionId
+ExecutionPlan
+  immutable resolved access/config/model/capability identity
+
+ExecutionResources
+  live model adapter, MCP preparation, event bindings, workspace instance,
+  run stores, policy instances, close/dispose hooks
+
+ExecutionDriverState
+  abort controller, current/root run projection, episode completion,
+  interaction ownership, event projection
 ```
 
-A session can link multiple external sources:
+Fresh stateful policies, `LocalWorkspace`, event emitters, run stores, and
+run-bound references stay execution/run scoped.
 
-```txt
-session_123
-  -> telegram chat A
-  -> slack thread B
-  -> web client C
+### Conservative Resource Pooling
+
+P1 may cache:
+
+- loaded config and its fingerprint;
+- parsed Agent/Workflow/Skill indexes where their APIs support invalidation;
+- provider registry/model factory metadata;
+- immutable security-plan inputs and capability descriptions.
+
+P1 must not pool by default:
+
+- `LocalWorkspace` instances;
+- stateful policy instances;
+- run/event emitters;
+- approval resolvers;
+- run stores;
+- live MCP clients currently bound to run emitters and close hooks;
+- mutable Workflow lease writers.
+
+Live MCP pooling is a separate change requiring multiplexed event routing,
+per-execution policy/sandbox context, ref-counted shutdown, config invalidation,
+and failure isolation.
+
+### Remove Mutable Latest-Run Slots
+
+`HostRuntime.agentSpawnDeps` cannot survive multi-execution Host ownership. A
+Task runner must resolve immutable, execution-specific context by
+`executionId`/`parentRunId`, or capture a self-contained Task execution lease at
+Task creation. It must never read "the latest run" dependencies.
+
+Likewise:
+
+- replace process-shared `runChainCancelled` booleans with execution-owned
+  abort/cancellation state;
+- move pending approval ownership into the process interaction registry;
+- move `lastCapabilitySnapshot` into workspace/execution projections rather
+  than one connection's last run.
+
+## Workspace Concurrency
+
+Lane serialization and filesystem mutation serialization are different
+problems.
+
+Generalize the current `WorkspaceAgentArbiter` into one Host-owned
+`WorkspaceLeaseCoordinator` with a backend port:
+
+```ts
+interface WorkspaceLeaseCoordinator {
+  acquire(input: {
+    workspaceRoot: string;
+    owner: WorkspaceLeaseOwner;
+    mode: "read" | "write";
+    signal?: AbortSignal;
+  }): Promise<WorkspaceLease>;
+}
 ```
-
-## Idempotency And Coalescing
-
-IM and webhook retries are normal. Queue entries should carry
-`idempotencyKey` when the source can provide one.
-
-P1 in-memory dedupe:
-
-- scope: `sessionId + source + idempotencyKey`;
-- window: bounded count or TTL;
-- duplicate `start`/`resume`/`message` returns the prior accepted queue/turn
-  result when available.
-- if the first accepted entry is still queued, starting, or running, duplicate
-  delivery returns that existing entry/turn status rather than enqueueing a new
-  entry;
-- the dedupe record is written while holding the session mutex before any async
-  `createTurn()` work begins.
-
-Message coalescing:
-
-- default is same-source only;
-- preserve the original source metadata for each merged message part;
-- cap merged content by count, age, and character budget;
-- do not merge across different IM users/chats/sources by default.
-
-## Protocol Direction
-
-P1 can avoid wire churn by keeping current protocol calls and using internal
-metadata for source claims where only trusted local clients participate.
-
-P2 should make the contract explicit:
-
-- add optional verified/claim-bearing source envelope to relevant request
-  payloads:
-  - `run.start`
-  - `run.resume`
-  - `run.inject_message`
-  - `run.cancel`
-  - `approval.resolve`
-  - `session.inspect`
-- add session link requests:
-  - `session.link`
-  - `session.unlink`
-  - `session.links`
-- add queue/active-turn inspection:
-  - `session.state`
-  - optional `session.queue.list`
-
-Backward compatibility:
-
-- Existing clients with no `source` are treated as `host_client` for their
-  connection.
-- Existing direct host behavior can remain available until the coordinator path
-  is the default.
-
-## Event Routing And Delivery
-
-Host should maintain:
-
-- `runId -> turnId -> sessionId`
-- `approvalId -> runId -> turnId -> sessionId`
-- `sessionId -> linked sources`
-- `connectionId -> subscribed sessions`
-
-Events from a run should be routed to:
-
-- the client that submitted the run;
-- any active subscribers to the session;
-- linked external sources whose permissions/subscription rules allow the event.
-
-Gateway delivery failure must not affect run execution. It should be surfaced
-as a delivery diagnostic, not as a core run failure.
-
-However, IM is a user-facing control plane. The design must reserve an outbox
-seam:
-
-- session events get a monotonic delivery sequence for each interested link or
-  a replayable cursor over session events;
-- each link may have a bounded pending outbox in P2;
-- reconnecting gateways can replay from cursor;
-- dropping due to retention limits emits a delivery diagnostic.
-
-P1 does not need durable delivery, but it must not choose an event model that
-makes P2 outbox/replay impossible.
-
-Approval resolution is first-writer-wins. A second resolution of the same
-approval should be idempotently rejected or reported as already resolved, not
-applied again. Approval timeout should be configurable per source/link class.
-
-Approval visibility and authority must be policy-gated. Default policy:
-
-- the source that initiated the active turn can resolve approvals it is allowed
-  to see;
-- other linked sources can resolve only when their link has `approve`;
-- linked sources without `approve` may receive redacted progress events but not
-  actionable approval prompts;
-- all approval decisions must still be routed through host policy before
-  reaching core.
-
-## Storage And Locks
-
-### P1 In-Process
-
-Use existing `FileSessionStore` / `FileRunStore` and in-memory scheduler state.
-This supports local multi-session concurrency in one host process.
-
-Required safeguards:
-
-- same-session serial queue;
-- one active turn per session inside the process;
-- workspace write lock before mutating shared workspaces;
-- workspace lock waiters are parked and woken on lock release;
-- bounded queue sizes;
-- idempotency window;
-- no cross-workspace resource sharing.
-
-### P2 Durable Single Host
-
-Add file-backed or lightweight durable queue state:
-
-- pending queue entries survive host restart;
-- active turn recovery uses checkpoint/resume where possible;
-- stale active turns can be marked interrupted;
-- per-link outbox/cursor survives gateway reconnect.
-
-### P3 Multi-Process / Multi-Host
-
-Do not scale the file store directly. Add DB/Redis-backed implementations:
-
-- `SessionStore`
-- `RunStore`
-- `SessionLinkStore`
-- `SessionQueueStore`
-- `LockStore`
-- delivery outbox
-- worker lease / heartbeat table
-
-At this point gateway can route by `sessionId` to a host shard, but host
-coordinator remains the runtime owner.
-
-## Workspace Isolation
-
-Session isolation is not enough when sessions share a workspace.
 
 Rules:
 
-- Reads can run concurrently unless confidential path policy denies them.
-- Writes to the same workspace should be serialized unless a conflict detector
-  proves they do not overlap.
-- `workspacePoolKey` is derived from canonical `workspaceRoot` plus config
-  fingerprint.
-- `workspaceLockScope` is derived from canonical `workspaceRoot` only.
-- Same root with different config fingerprints may use different resource pool
-  entries, but must still contend on the same workspace write lock.
-- Workspace locks must not be held across model turns.
-- Lock acquisition order is fixed:
+- key by canonical workspace realpath;
+- process-local backend first; fenced distributed backend later;
+- fair queue, abortable wait, TTL/heartbeat where holders may outlive a call,
+  idempotent release, inspection;
+- acquire around concrete write-capable tool calls, Agent invocations, hooks,
+  scripts, and opaque processes according to their mutation window;
+- do not hold a workspace write lease while waiting on model output or human
+  approval;
+- do not have the lane coordinator hold a write lease for the entire
+  execution;
+- nested owners must use explicit owner lineage/reentrancy or release before
+  invoking a child that needs the same scope, preventing parent/child deadlock;
+- authorization remains separate: an approved write can still wait for a
+  concurrency lease.
 
-```txt
-session lock -> workspace lock -> store lock
-```
+The generalized coordinator must replace `WorkspaceAgentArbiter`; it must not
+be added beside it as a second permanent workspace lock owner.
 
-- If a session cannot acquire a workspace lock, park it and release its worker
-  slot until the lock can be retried.
-- Lock retry should be driven by a waiter queue signaled on lock release, not by
-  scheduler polling.
-- Approval UI should show when a session is waiting on workspace contention.
+## Principal, Bindings, And Approvals
 
-Future shape:
+### Principal Derivation
 
-```txt
-session lock: session:<sessionId>         // same-session run serialization
-workspace lock: workspace:<canonicalRoot> // write conflict prevention
-store lock: store:<root/sessionId>        // multi-process trace safety
-```
+- Local stdio connection receives a Host-created local principal.
+- WebSocket bearer/mTLS/auth adapters create a connection principal.
+- A trusted gateway principal may submit bounded platform claims such as
+  platform/chat/thread/user identity.
+- Host configuration defines which gateway may claim which namespace.
+- Gateway input cannot claim `system`; internal cron/supervisor work receives a
+  Host-minted system principal.
 
-## Actor-Inbox Boundary
+### Session Control Binding
 
-This proposal intentionally does not add a generic actor bus. The session queue
-is a constrained per-session FIFO for user/control work:
+The existing Workflow channel binding is the nearest implemented precedent.
+Extract or reuse its underlying binding/revocation/delivery-receipt substrate
+without turning it into a generic message bus.
 
-- accepted entry types are start, resume, and message;
-- routing key is session id;
-- same-session ordering is owned by the scheduler;
-- delivery into model context still happens through core run commands or new
-  run creation.
+A session binding contains:
 
-The internal actor inbox design remains the right shape for asynchronous
-lifecycle/progress notifications. If a future session agent needs internal
-notifications, it should align with `ActorNotificationSink` rather than turning
-the session queue into a generic message bus.
+- session/lane subject;
+- principal and authenticated gateway/channel identity;
+- allowed typed commands (`message`, `inspect`, `approve`, `cancel_execution`,
+  `cancel_session`);
+- creation, expiry, and revocation facts;
+- delivery cursor/receipts.
 
-## Cancellation
+IM self-binding is disabled by default. Binding creation requires an
+authenticated Host client, admin command, or explicit allowlist policy.
 
-Keep cancellation granular:
+### Approval Routing
 
-```ts
-cancelTurn({ sessionId, turnId, reason });
-cancelSession({ sessionId, reason, clearQueue });
-```
+- approval maps to `runId -> executionId -> laneId/sessionId`;
+- first valid resolution wins;
+- initiating principal may resolve only when policy grants it;
+- another bound principal requires `approve` permission;
+- unauthorized links do not receive actionable approval payloads;
+- timeout policy may vary by control surface;
+- Workflow durable human/approval waits keep their Workflow control-store
+  semantics rather than being forced into a live run approval map.
 
-`cancelTurn` targets the active logical turn/run-chain. `cancelSession` may
-cancel the active turn and optionally clear queued work. Existing protocol calls
-that only provide `runId` should resolve the owning turn before applying
-cancellation policy.
+Adopting the process interaction registry must delete the duplicate
+`HostRuntime.pendingApprovals` ownership. Existing `ApprovalBroker` may be
+evolved or replaced, but two canonical pending maps are not acceptable.
 
-Host should preserve the existing distinction between a single core
-`run.cancel()` and the broader `runChainCancelled` behavior for supervised
-chains. User-facing cancellation of a main-agent turn should stop the whole
-turn chain, including continuations that have not started yet.
+## Events And Delivery
 
-If `clearQueue` removes queued entries, each removed entry must receive a
-delivery notification or queue-dropped event for its source. Do not silently
-drop IM/user-submitted work.
+Keep canonical facts distinct:
 
-## Failure Handling
+- Core event log: run/tool/policy/workspace facts.
+- Execution lifecycle: lane acceptance, queued/starting/active/terminal,
+  current-run projection, cancellation.
+- Workflow/Task actor stores and outboxes: their own lifecycle and wake facts.
+- Delivery receipts: external-channel delivery attempts and outcomes.
+- Host protocol events: projections for clients.
 
-- Client disconnect: detach that subscriber; do not necessarily cancel the turn
-  if the turn is owned by the session actor and other subscribers/links remain.
-- Gateway disconnect: external source becomes temporarily undeliverable; queued
-  and active work remain host-owned.
-- Approval timeout: deny safely, with timeout configurable by source/link class.
-- Queue overflow: reject or summarize with a clear host error and source
-  delivery notification.
-- Host shutdown: cancel active in-process turns in P1; P2+ records interrupted
-  state and attempts resume.
-- Duplicate IM messages: dedupe by `sessionId + source + idempotencyKey`.
-- Workspace lock contention: park session without consuming a worker slot.
+Do not create a second canonical copy of core events in `ConnectionHub` or an
+execution store. An in-memory hub may retain bounded replay for active
+subscribers, but durable recovery must read canonical stores/journals.
+
+IM delivery failure never fails the execution. P3 must provide bounded outbox
+and reconnect replay using stable delivery keys. Retention overflow emits a
+diagnostic and advances an explicit cursor; it does not silently pretend full
+delivery.
+
+## Package Placement
+
+### `@sparkwright/core`
+
+- Keep single-run loop, command queue, policy, approvals, events, run store and
+  checkpoint semantics.
+- Add a public read-only command-acceptance predicate if the coordinator needs
+  it. Do not add lane/session scheduling.
+
+### `@sparkwright/agent-runtime`
+
+- Keep Workflow/todo run-chain driver, durable Workflow/Task stores, actor
+  notifications, and Agent invocation/supervisor contracts.
+- Do not add interactive session scheduling or external control bindings.
+
+### `@sparkwright/server-runtime`
+
+- Own `ExecutionLaneCoordinator`, in-memory queue/idempotency implementation,
+  execution registry ports, process interaction/control-channel coordination,
+  and future durable worker coordination.
+- Keep Workflow service/supervisor/channel modules explicit.
+- Split the large root `index.ts` into focused modules and re-export public API;
+  do not create another package unless a real dependency-cycle pressure appears.
+- Keep existing `RunManager` as a simple core-run utility rather than mutating it
+  into Host's execution factory.
+
+### `@sparkwright/host`
+
+- Own `HostService`, connection adapter, workspace registry, execution
+  assembler/driver, resource lifecycle, workspace lease implementation,
+  authentication policy, and protocol projection.
+- Retain product-specific config/model/Skill/MCP/Agent/Workflow/tool assembly.
+
+### Protocol, SDK, Gateway
+
+- Protocol adds typed execution/session-control operations only when the Host
+  service is ready to own them.
+- SDK exposes attach/subscribe/inspect/cancel using execution identity while
+  preserving run-oriented compatibility fields.
+- Gateway owns platform verification, formatting, and transport delivery only.
+  After migration it no longer owns canonical active session queue, run target,
+  approval target, or session-link policy.
+
+## Compatibility Policy
+
+Compatibility preserves wire behavior, not duplicate runtime ownership.
+
+- Existing `run.start` may continue returning the first/root `runId` and add
+  optional `executionId`.
+- Existing `run.inject_message`/`run.cancel` resolve `runId` to its owning
+  execution before dispatch/cancel.
+- Existing clients without explicit source use their authenticated connection
+  principal.
+- `HostRuntime` may remain as a facade during migration, but its methods must
+  delegate to the same process Host service once the coordinator is active.
+- A compatibility path that constructs independent runs and bypasses lane,
+  interaction, or workspace coordination is temporary only and cannot remain
+  after P2 completion.
 
 ## Delivery Plan
 
-### P0: Document And Freeze The Boundary
+### P0: V4 Re-Baseline And Characterization
 
-- Land this v3 proposal.
-- Land the P0 boundary matrix above, including the per-connection
-  `HostRuntime` compatibility path.
-- Record in project map that `server-runtime` is the intended session
-  coordination center, with a turn/run-chain scheduler rather than a
-  single-run scheduler, but is not yet wired into host/CLI.
+- Land this ownership model.
+- Add characterization coverage for current start/resume/inject/cancel/
+  approval/disconnect behavior, todo continuation, Workflow waiting/resume,
+  Task revival, and IM queueing.
 - No runtime behavior change.
 
-### P1: In-Process SessionTurnScheduler In `server-runtime`
+### P1: Decompose Host Without Changing Behavior
 
-Goal: useful local multi-session concurrency without database dependencies.
+- Extract `HostExecutionAssembler` from run preparation.
+- Extract `HostExecutionDriver` from episode driving and cancellation state.
+- Extract session query/compaction and capability inspection services.
+- Introduce process `HostService` and workspace registry.
+- Replace latest-run `agentSpawnDeps` with execution-specific Task context.
+- Keep per-connection behavior through a facade while characterization tests
+  stay green.
 
-Implementation candidates:
+Deletion boundary:
 
-- `packages/server-runtime/src/session-turn-scheduler.ts`
-- `packages/server-runtime/src/session-links.ts`
-- `packages/server-runtime/src/session-turn-factory.ts`
-- `packages/server-runtime/test/session-turn-scheduler.test.ts`
-- host-side `HostSessionTurnFactory` and `WorkspaceResourcePool` under
-  `packages/host/src/*`
-- core-side `RunHandle.canAcceptCommand()`
+- `HostRuntime` no longer constructs Task/Workflow stores or owns run assembly
+  details directly;
+- latest-run mutable Task dependency slot is removed;
+- workflow/session/capability method clusters move out of the giant class.
 
-Behavior:
+### P2: In-Process Interactive Execution Lanes
 
-- shared scheduler per host process;
-- one active turn per session;
-- different sessions run concurrently up to `maxConcurrentTurns`;
-- same-session injection-or-queue using core command queue;
-- approval/cancel route through coordinator;
-- workspace write lock for mutating work;
-- workspace lock waiters park and wake on release;
-- workspace resource pool refcount/idle eviction and MCP shutdown hooks;
-- same-source message coalescing;
-- idempotency window, including in-flight duplicate submissions;
-- host-minted `system` sources for internal automation paths that enter the
-  scheduler;
-- no public protocol changes required yet.
+- Add `ExecutionLaneCoordinator` and `ExecutionDriver` port in server-runtime.
+- Create one process coordinator and route ordinary `run.start`/resume/message/
+  cancel through it.
+- Implement bounded queue, in-flight idempotency, lane-round-robin fairness,
+  atomic terminal handoff, and explicit retention.
+- Keep Workflow service, Task revival, and Agent supervision outside the lane
+  scheduler.
 
-### P2: Protocol, Session Links, And IM Delivery
+Deletion boundary:
 
-Goal: make IM/session binding and event delivery first-class.
+- per-connection `active`, `startingRun`, and `runChainCancelled` ownership is
+  replaced by execution-owned state;
+- compatibility facade no longer bypasses the coordinator;
+- duplicate Host and server-runtime pending approval ownership is reduced to one
+  process interaction registry.
 
-Implementation candidates:
+### P3: Host-Owned Session Control And IM Migration
 
-- protocol request types for session link/state operations;
-- host protocol docs and schema fixtures;
-- trusted gateway/source claim verification;
-- IM gateway sends authenticated source claims instead of owning canonical
-  session-link policy;
-- gateway store keeps transport delivery state only;
-- bounded per-link outbox/cursor.
+- Add authenticated principals and trusted gateway claim policy.
+- Add session control bindings, typed permissions, subscriptions, approval
+  routing, bounded outbox, and delivery receipts.
+- Route IM ordinary messages through Host lane commands.
 
-### P3: Durable Queue And Restart Recovery
+Deletion boundary:
 
-Goal: host restarts do not lose queued session work.
+- remove IM gateway `activeSessions`, `queuedMessages`, canonical `runTargets`,
+  and `approvalRuns` state;
+- gateway store retains delivery/dedupe facts only;
+- ordinary session binding policy no longer lives in gateway.
 
-Add:
+### P4: Durable Single-Host Coordination
 
-- durable queue records;
-- startup recovery pass;
-- active-turn interruption/resume policy;
-- queue inspection commands;
-- delivery outbox persistence.
+- Add command/outcome journal and durable lane queue store.
+- Persist accepted execution records and interrupted recovery decisions.
+- Reuse document-store and proven Workflow journal/lease patterns where their
+  semantics match; do not alias different schemas merely to reduce file count.
+- Add graceful process drain and restart recovery.
 
-### P4: Distributed Runtime
+Deletion boundary:
 
-Goal: high-concurrency/high-availability deployment.
+- in-memory-only accepted-command truth is removed;
+- recovery no longer depends on gateway retries recreating lost work.
 
-Add:
+### P5: Multi-Process / Multi-Host
 
-- DB/Redis-backed stores;
-- worker leases and heartbeats;
-- distributed lock implementation for `StorageLock`;
-- gateway/session affinity;
-- queue backpressure and tenant quotas;
-- health/readiness/metrics.
+- Replace file session/run coordination where concurrent writers are possible.
+- Add worker leases, fencing generations, heartbeat/expiry, assignment, and
+  tenant/backpressure policy.
+- Add DB/Redis implementations behind existing queue/lease/outbox ports.
+- Add gateway/session affinity only as routing optimization, not ownership.
+
+Do not claim high availability until fencing, durable accepted-command truth,
+idempotent execution adoption, and delivery replay are tested under process
+failure.
 
 ## Test Plan
 
-P1 tests:
+### P1 Characterization And Decomposition
 
-- two different sessions can run concurrently;
-- same session queues second start while first is active;
-- same session injects a message into active non-terminal turn through
-  `SessionTurnHandle.injectUserMessage()` and core
-  `RunHandle.injectUserMessage()`;
-- terminal handoff and queue drain are atomic under the session mutex;
-- `waiting_approval` / `waiting_credentials` runs can accept queued messages;
-- child/delegate run terminal events do not drain the session queue until the
-  owning turn is terminal;
-- terminal turn receives no new injected message; message queues for next turn;
-- cancel targets the active turn for the correct session and stops supervised
-  continuations;
-- compatibility cancel by `runId` maps to the owning turn;
-- cancel session with `clearQueue` emits queue-dropped notifications;
-- queue depth limit rejects new work deterministically;
-- same-source queued messages coalesce; cross-source messages do not;
-- idempotency key dedupes repeated IM delivery, including duplicates while
-  `createTurn()` is still pending;
-- workspace lock contention parks the session, releases worker capacity, and
-  wakes on lock release;
-- workspace resource pool entries are not evicted while active turns reference
-  them and close MCP/sandbox resources on idle eviction;
-- same root with different config fingerprints uses different resource pools
-  but the same workspace write lock scope;
-- core `RunHandle.canAcceptCommand()` reports false for terminal runs and true
-  for non-terminal waiting states;
-- coordinator-minted `system` source is used for internal automation paths that
-  enter the scheduler;
-- client disconnect does not cancel session-owned runs unless configured.
+- one connection still rejects or queues concurrent starts according to the
+  current compatibility behavior before P2;
+- disconnect cancellation and approval denial remain characterized;
+- todo continuation uses multiple core runs but one driver completion;
+- Workflow waiting may finish a worker run without making the Workflow actor
+  terminal;
+- background Task and Agent Task context never resolves through another run's
+  latest mutable dependencies;
+- capability/session/workflow inspection output is unchanged after extraction.
 
-P2 tests:
+### P2 Coordinator
 
-- `session.link` / `session.unlink` protocol validation;
-- untrusted gateway source claims are rejected;
-- IM self-link is disabled unless explicitly allowed;
-- IM source can message only linked session;
-- linked source without `approve` cannot resolve approval;
-- linked source with `approve` can resolve an approval for the same session;
-- duplicate approval resolution is first-writer-wins;
-- event fan-out reaches linked source and current host client;
-- gateway reconnect can replay bounded outbox/cursor.
+- two interactive sessions execute concurrently;
+- one lane serializes two starts;
+- message injection and terminal handoff race is atomic;
+- duplicate command during async start returns the same execution;
+- child run terminal does not drain the lane;
+- todo continuation run terminal does not drain the lane before driver terminal;
+- Workflow `controlSessionId` does not serialize independent job sessions;
+- background Task may outlive execution without blocking the next lane item;
+- retention policy controls disconnect cancellation;
+- queue bounds and fairness are deterministic.
 
-P3/P4 tests:
+### Workspace Concurrency
 
-- restart with queued work;
-- interrupted active turn recovery;
-- durable outbox replay;
-- distributed lock contention;
-- same workspace write contention across sessions;
-- worker lease expiry and reassignment.
+- same canonical root aliases contend on one scope;
+- write tool calls and write-capable Agent/process invocations serialize;
+- read leases may share;
+- lease wait is abortable, does not acquire a mutation permit before grant,
+  and does not block unrelated already-admitted lanes;
+- abort removes a waiter;
+- nested parent/child access cannot deadlock;
+- authorization denial is distinct from lease contention;
+- config fingerprint changes do not split write-lock scope.
 
-## Open Questions
+### P3 Control And Delivery
 
-- Should P2 source claims be encoded as a protocol-owned typed object, or as a
-  signed gateway claim envelope whose contents are host-owned?
-- Which session links can be authored from project config versus host admin
-  commands?
-- Should event fan-out default to all linked sources, only subscribed links, or
-  only the source that initiated the current turn?
-- Resolved by C3 P0 on 2026-07-06: host keeps the current per-connection
-  `HostRuntime` as a compatibility adapter, but it is not the target
-  coordination owner and may bypass cross-session scheduling.
-- What is the smallest useful DB-backed store: Postgres-only first, or an
-  interface plus file/SQLite/Postgres implementations?
+- untrusted gateway claims are rejected;
+- gateway cannot mint system principal;
+- session self-binding is disabled unless configured;
+- command permissions are binding-scoped;
+- approval is first-writer-wins and execution-scoped;
+- unauthorized links do not receive actionable approval details;
+- same-source message coalescing preserves each part's attribution;
+- delivery failure does not fail execution;
+- reconnect replays bounded outbox exactly once per delivery key where the
+  transport supports idempotency.
+
+### P4/P5 Failure Tests
+
+- restart after accepted but not started command;
+- restart during async Host assembly;
+- interrupted active execution adoption policy;
+- stale worker lease and fencing takeover;
+- duplicate adoption cannot execute one command twice;
+- multi-process same-session and same-workspace contention;
+- outbox replay after gateway and Host restart;
+- graceful drain rejects new work and completes/cancels owned work by policy.
+
+## Risks And Open Questions
+
+- Exact public names: keep `SessionTurn` as product language while using
+  `Execution` internally, or expose `executionId` directly?
+- Should P2 return `executionId` immediately and `runId` later, or preserve the
+  current response timing until protocol P3?
+- Which immutable workspace indexes have reliable invalidation contracts today?
+- What is the minimum self-contained context a background Agent Task must own
+  after its parent execution becomes terminal?
+- Should the process interaction registry evolve existing `ApprovalBroker` or
+  replace it with a typed broker that also models connection principal and
+  execution ownership?
+- Can Workflow channel binding storage be generalized without weakening its
+  current workflow-specific expected-generation checks? Shared primitives are
+  preferred; forced schema unification is not.
+- Which execution retention should be default for CLI, TUI, Web, and IM?
+- P4 store choice should follow failure/recovery requirements. Do not choose
+  Postgres/Redis/SQLite before the command, lease, and fencing contracts are
+  frozen.
 
 ## Recommendation
 
-Build P1 in `@sparkwright/server-runtime` first, with a `SessionTurnFactory`
-port and host-owned `HostSessionTurnFactory` implementation. Keep gateway thin.
-Do not invest more in same-session tool concurrency as the primary scaling
-story.
+Approve v4 as the new design baseline and retire v3's direct implementation
+plan.
 
-The first valuable milestone is:
+The first code slice is Host decomposition plus characterization, not
+`session-turn-scheduler.ts`. The first concurrency milestone is:
 
 ```txt
-one host process
-  -> server-runtime SessionTurnScheduler
-  -> per-workspace resource pools
-  -> many session agents
-  -> one active turn/run-chain per session
-  -> different sessions run concurrently
-  -> IM/Web/CLI/TUI can all control the same session model
+one Host process
+  -> one HostService
+  -> one in-process ExecutionLaneCoordinator
+  -> many interactive session lanes
+  -> one active opaque execution per lane
+  -> existing Workflow/Task/Agent supervisors remain authoritative
+  -> all clients control executions through one Host control plane
 ```
 
-That milestone preserves today's local runtime while creating the path toward
-future high-concurrency and high-availability deployments.
+This reaches useful multi-session concurrency while reducing, rather than
+adding to, SparkWright's current runtime complexity.

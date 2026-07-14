@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   compileAgentProfileRunOptions,
   createAgentProfilePolicy,
@@ -19,6 +19,7 @@ import {
   defineTool,
   FileRunStore,
   LocalWorkspace,
+  resumeRunFromCheckpoint,
   type CreateRunOptions,
   type ModelAdapter,
   type WorkflowHook,
@@ -882,6 +883,245 @@ describe("spawnSubAgent", () => {
       agents: ["reviewer"],
     });
   });
+
+  it("shares the parent child-tree model budget across concurrent siblings", async () => {
+    const parent = createRun({
+      goal: "parent",
+      model: {
+        async complete() {
+          return { message: "parent done" };
+        },
+      },
+      runBudget: { maxModelCalls: 1 },
+    });
+    let childModelCalls = 0;
+    const childModel: ModelAdapter = {
+      async complete() {
+        childModelCalls += 1;
+        await Promise.resolve();
+        return { message: "child done" };
+      },
+    };
+    const first = spawnSubAgent({ parent, goal: "first", model: childModel });
+    const second = spawnSubAgent({
+      parent,
+      goal: "second",
+      model: childModel,
+    });
+
+    const results = await Promise.all([first.start(), second.start()]);
+    expect(childModelCalls).toBe(1);
+    expect(results.map((result) => result.stopReason).sort()).toEqual([
+      "final_answer",
+      "max_model_calls_exceeded",
+    ]);
+    const failed = results.find(
+      (result) => result.stopReason === "max_model_calls_exceeded",
+    );
+    expect(failed?.failure).toMatchObject({
+      code: "MAX_MODEL_CALLS_EXCEEDED",
+      metadata: { budgetScope: "ancestor_tree" },
+    });
+  });
+
+  it("shares the parent child-tree tool budget before sibling execution", async () => {
+    const parent = createRun({
+      goal: "parent",
+      model: {
+        async complete() {
+          return { message: "parent done" };
+        },
+      },
+      runBudget: { maxToolCalls: 1 },
+    });
+    let toolExecutions = 0;
+    const probe = defineTool({
+      name: "budget_probe",
+      description: "count executions",
+      inputSchema: { type: "object", properties: {} },
+      policy: { risk: "safe" },
+      execute() {
+        toolExecutions += 1;
+        return "ok";
+      },
+    });
+    const childModel = (): ModelAdapter => {
+      let calls = 0;
+      return {
+        async complete() {
+          calls += 1;
+          return calls === 1
+            ? {
+                toolCalls: [{ toolName: "budget_probe", arguments: {} }],
+              }
+            : { message: "child done" };
+        },
+      };
+    };
+
+    const first = spawnSubAgent({
+      parent,
+      goal: "first",
+      model: childModel(),
+      tools: [probe],
+    });
+    expect(await first.start()).toMatchObject({ stopReason: "final_answer" });
+    const second = spawnSubAgent({
+      parent,
+      goal: "second",
+      model: childModel(),
+      tools: [probe],
+    });
+    expect(await second.start()).toMatchObject({
+      stopReason: "max_tool_calls_exceeded",
+      failure: {
+        code: "MAX_TOOL_CALLS_EXCEEDED",
+        metadata: { budgetScope: "ancestor_tree" },
+      },
+    });
+    expect(toolExecutions).toBe(1);
+  });
+
+  it("applies every ancestor tree budget to deeper descendants", async () => {
+    const root = createRun({
+      goal: "root",
+      model: {
+        async complete() {
+          return { message: "root done" };
+        },
+      },
+      runBudget: { maxModelCalls: 1 },
+    });
+    const child = spawnSubAgent({
+      parent: root,
+      goal: "child",
+      model: {
+        async complete() {
+          return { message: "child done" };
+        },
+      },
+      runBudget: { maxModelCalls: 5 },
+    });
+    let grandchildCalls = 0;
+    const grandchildModel: ModelAdapter = {
+      async complete() {
+        grandchildCalls += 1;
+        return { message: "grandchild done" };
+      },
+    };
+    const first = spawnSubAgent({
+      parent: child.run,
+      goal: "first grandchild",
+      model: grandchildModel,
+    });
+    const second = spawnSubAgent({
+      parent: child.run,
+      goal: "second grandchild",
+      model: grandchildModel,
+    });
+
+    const results = await Promise.all([first.start(), second.start()]);
+    expect(grandchildCalls).toBe(1);
+    expect(results.map((result) => result.stopReason).sort()).toEqual([
+      "final_answer",
+      "max_model_calls_exceeded",
+    ]);
+    expect(
+      results.find((result) => result.stopReason === "max_model_calls_exceeded")
+        ?.failure,
+    ).toMatchObject({
+      metadata: { budgetScope: "ancestor_tree", ancestorIndex: 0 },
+    });
+  });
+
+  it("aggregates descendant token usage across sequential siblings", async () => {
+    const parent = createRun({
+      goal: "parent",
+      model: {
+        async complete() {
+          return { message: "parent done" };
+        },
+      },
+      runBudget: { maxTokens: 5 },
+    });
+    const childModel: ModelAdapter = {
+      async complete() {
+        return {
+          message: "child done",
+          usage: { inputTokens: 2, outputTokens: 1 },
+        };
+      },
+    };
+
+    const first = spawnSubAgent({ parent, goal: "first", model: childModel });
+    expect(await first.start()).toMatchObject({ stopReason: "final_answer" });
+    const second = spawnSubAgent({
+      parent,
+      goal: "second",
+      model: childModel,
+    });
+    expect(await second.start()).toMatchObject({
+      stopReason: "token_budget_exceeded",
+      failure: {
+        code: "TOKEN_BUDGET_EXCEEDED",
+        metadata: {
+          budgetScope: "ancestor_tree",
+          usage: { tokens: 6 },
+        },
+      },
+    });
+  });
+
+  it("preserves child-tree budget usage across parent checkpoint resume", async () => {
+    const runBudget = { maxModelCalls: 1 };
+    const parent = createRun({
+      goal: "parent",
+      model: {
+        async complete() {
+          return { message: "parent done" };
+        },
+      },
+      runBudget,
+    });
+    const first = spawnSubAgent({
+      parent,
+      goal: "first",
+      model: {
+        async complete() {
+          return { message: "first done" };
+        },
+      },
+    });
+    await first.start();
+    const checkpoint = parent.checkpoint();
+    expect(checkpoint.budget.childTreeUsage).toMatchObject({ modelCalls: 1 });
+
+    const resumedParent = resumeRunFromCheckpoint(checkpoint, {
+      model: {
+        async complete() {
+          return { message: "parent done" };
+        },
+      },
+      runBudget,
+    });
+    let secondCalls = 0;
+    const second = spawnSubAgent({
+      parent: resumedParent,
+      goal: "second",
+      model: {
+        async complete() {
+          secondCalls += 1;
+          return { message: "not reached" };
+        },
+      },
+    });
+
+    expect(await second.start()).toMatchObject({
+      stopReason: "max_model_calls_exceeded",
+      failure: { metadata: { budgetScope: "ancestor_tree" } },
+    });
+    expect(secondCalls).toBe(0);
+  });
 });
 
 describe("createAgentTool / mountAgentTool", () => {
@@ -1000,7 +1240,7 @@ describe("createAgentTool / mountAgentTool", () => {
     });
   });
 
-  it("short-circuits similar repeated delegate calls after success", async () => {
+  it("short-circuits exactly equivalent normalized delegate calls after success", async () => {
     let childCalls = 0;
     const parent = createRun({
       goal: "parent",
@@ -1024,14 +1264,12 @@ describe("createAgentTool / mountAgentTool", () => {
       }),
     });
 
-    const first = await tool.execute(
-      { goal: "查看当前 workspace root 下有哪些文件和目录" },
-      { run: parent.record } as never,
-    );
-    const second = await tool.execute(
-      { goal: "查看当前工作区根目录有哪些文件/文件夹，并列出顶层条目" },
-      { run: parent.record } as never,
-    );
+    const first = await tool.execute({ goal: "Inspect README.md" }, {
+      run: parent.record,
+    } as never);
+    const second = await tool.execute({ goal: "  inspect   readme.md  " }, {
+      run: parent.record,
+    } as never);
 
     expect(first).toMatchObject({ signal: "completed" });
     expect(second).toMatchObject({
@@ -1040,6 +1278,51 @@ describe("createAgentTool / mountAgentTool", () => {
       message: "root entries: README.md, packages/",
     });
     expect(childCalls).toBe(1);
+  });
+
+  it("does not reuse directory-listing results across different target paths", async () => {
+    let childCalls = 0;
+    const parent = createRun({
+      goal: "parent",
+      model: {
+        async complete() {
+          return { message: "parent done" };
+        },
+      },
+      maxSteps: 1,
+    });
+    const tool = createAgentTool(() => parent, {
+      buildSpawnInput: (input) => ({
+        goal: input.goal,
+        model: {
+          async complete() {
+            childCalls += 1;
+            return { message: `directory result ${childCalls}` };
+          },
+        },
+        maxSteps: 2,
+      }),
+    });
+
+    const first = await tool.execute(
+      { goal: "列出 packages/host 目录的文件" },
+      { run: parent.record } as never,
+    );
+    const second = await tool.execute(
+      { goal: "列出 packages/core 目录的文件" },
+      { run: parent.record } as never,
+    );
+
+    expect(first).toMatchObject({
+      signal: "completed",
+      message: "directory result 1",
+    });
+    expect(second).toMatchObject({
+      signal: "completed",
+      message: "directory result 2",
+    });
+    expect(second).not.toMatchObject({ alreadyCompleted: true });
+    expect(childCalls).toBe(2);
   });
 
   it("does not cache delegate results completed on the child step limit", async () => {
@@ -1138,6 +1421,93 @@ describe("createAgentTool / mountAgentTool", () => {
     });
   });
 
+  it("waits for embedder admission before starting and releases afterwards", async () => {
+    const parent = createRun({
+      goal: "parent",
+      model: {
+        async complete() {
+          return { message: "parent done" };
+        },
+      },
+      maxSteps: 1,
+    });
+    let admit: (() => void) | undefined;
+    const release = vi.fn();
+    let childCalls = 0;
+    const spawned = spawnSubAgent({
+      parent,
+      goal: "queued child",
+      model: {
+        async complete() {
+          childCalls += 1;
+          return { message: "child done" };
+        },
+      },
+      admission: () =>
+        new Promise((resolve) => {
+          admit = () => resolve(release);
+        }),
+    });
+
+    // The public RunHandle route is guarded too; embedders cannot bypass the
+    // admission gate by reaching through SpawnedSubAgent.run.
+    const completion = spawned.run.start();
+    expect(spawned.start()).toBe(completion);
+    await Promise.resolve();
+    expect(childCalls).toBe(0);
+    expect(
+      parent.events
+        .all()
+        .filter((event) => event.type.startsWith("subagent."))
+        .map((event) => event.type),
+    ).toEqual(["subagent.requested"]);
+
+    admit?.();
+    await completion;
+    expect(childCalls).toBe(1);
+    expect(release).toHaveBeenCalledTimes(1);
+    expect(
+      parent.events
+        .all()
+        .filter((event) => event.type.startsWith("subagent."))
+        .map((event) => event.type),
+    ).toEqual(["subagent.requested", "subagent.started", "subagent.completed"]);
+  });
+
+  it("fails without starting when embedder admission rejects", async () => {
+    const parent = createRun({
+      goal: "parent",
+      model: {
+        async complete() {
+          return { message: "parent done" };
+        },
+      },
+      maxSteps: 1,
+    });
+    const spawned = spawnSubAgent({
+      parent,
+      goal: "rejected child",
+      model: {
+        async complete() {
+          return { message: "not reached" };
+        },
+      },
+      admission: async () => {
+        throw new Error("workspace lease unavailable");
+      },
+    });
+
+    await expect(spawned.start()).rejects.toThrow(
+      "workspace lease unavailable",
+    );
+    expect(
+      parent.events
+        .all()
+        .filter((event) => event.type.startsWith("subagent."))
+        .map((event) => event.type),
+    ).toEqual(["subagent.requested", "subagent.failed"]);
+  });
+
   it("carries the child's agentName/agentProfileId on every subagent phase", async () => {
     const parent = createRun({
       goal: "parent",
@@ -1182,7 +1552,7 @@ describe("createAgentTool / mountAgentTool", () => {
     }
   });
 
-  it("projects multi-agent facts onto every subagent phase", async () => {
+  it("projects prepared invocation facts onto every subagent phase", async () => {
     const parent = createRun({
       goal: "parent",
       model: {
@@ -1232,6 +1602,7 @@ describe("createAgentTool / mountAgentTool", () => {
         agentProfileId: "reviewer",
         delegateTool: "delegate_reviewer",
         entrypoint: "delegate",
+        protocol: "in_process",
         subagentDepth: 1,
       });
     }
@@ -1326,9 +1697,20 @@ describe("createAgentTool / mountAgentTool", () => {
 
     await spawned.run.start();
 
-    expect(parentEvents).toContain("subagent.requested");
-    expect(parentEvents).toContain("subagent.failed");
-    expect(parentEvents).not.toContain("subagent.completed");
+    expect(parentEvents).toEqual([
+      "subagent.requested",
+      "subagent.started",
+      "subagent.failed",
+    ]);
+    expect(
+      parent.events
+        .all()
+        .filter(
+          (event) =>
+            event.type === "subagent.completed" ||
+            event.type === "subagent.failed",
+        ),
+    ).toHaveLength(1);
   });
 
   it("refuses nested spawn when forbidNesting is set", async () => {

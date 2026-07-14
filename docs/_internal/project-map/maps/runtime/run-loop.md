@@ -10,6 +10,7 @@ See [tool-orchestration.md](tool-orchestration.md) and [../trace/raw-trace.md](.
 ## Main Files
 
 - `packages/core/src/run.ts`
+- `packages/core/src/run-budget.ts`
 - `packages/core/src/events.ts`
 - `packages/core/src/run-validation.ts`
 - `packages/core/src/run-outcome.ts`
@@ -47,6 +48,13 @@ createRun/resumeRunFromCheckpoint
 - Do not infer terminal run outcome from `model.completed` or `tool.completed`.
 - State transitions emit diagnostics when rejected.
 - Budget and max-step behavior are part of runtime semantics.
+- Ordinary work budgets use a synchronous Core account protocol. A run reserves
+  model/tool calls against its local account and every inherited ancestor-tree
+  account before work starts, then records provider token/cost usage into the
+  same accounts. `run.budget.checked` identifies `budgetScope:"run"` or
+  `"ancestor_tree"`; violations retain the existing stop reasons/codes and add
+  scope/index metadata. This does not merge work budgets with `maxSteps`,
+  forced-continuation source budgets, or run-chain ceilings.
 - Runtime compaction stages run before prompt-bound model calls when configured.
   Stage results with no net savings are reported as skipped rather than applied,
   and compaction failures preserve partial progress and continue.
@@ -106,6 +114,11 @@ createRun/resumeRunFromCheckpoint
   order, but model-visible tool observations are appended after the batch in
   original request order. This keeps trace fidelity while stabilizing the next
   model call's context.
+- Batch partitioning happens before the per-call policy gate. Tools with
+  `policyForArgs()` therefore default to serial unless they explicitly provide
+  a pure `isConcurrencySafe(args)` classifier; Host Agent tools use that seam
+  to keep write-granted or write/shell-capable children out of the same
+  concurrent batch without changing their later approval lifecycle.
 - `fail()` is the terminal failure boundary for payload hygiene. It sanitizes
   `metadata.cause` to a bounded diagnostic summary before emitting
   `run.failed`, returning `RunResult`, or invoking `RunEnd` hooks; raw
@@ -255,6 +268,39 @@ createRun/resumeRunFromCheckpoint
   handling can still be noisy.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: replaced run-local counter duplication with reusable work-budget
+  accounts and added inherited descendant-tree enforcement.
+- Read: Core reservation, provider usage, failure/event, checkpoint, and resume
+  paths plus agent-runtime inheritance.
+- Tests: Core budget/run/resume/trace 275/275; agent-runtime Agent suites 65/65;
+  Host integration 102/102.
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: made pre-gate batch partitioning fail closed for dynamic-policy tools
+  and verified Host Agent argument-level classifiers.
+- Read: Core run/tool orchestration and Host Agent tool assembly.
+- Tests: Core run 127/127; Host Agent/tool suites 155/155; affected typechecks
+  passed.
+
+- Status: Read-only
+- Date: 2026-07-13
+- Scope: ACP sandbox/access validation occurs inside the existing delegate tool
+  execution after normal policy/approval; Core run-loop ordering is unchanged.
+- Read: Host ACP tool and Core tool execution boundary.
+- Tests: Host tool/ACP focused suites passed.
+
+- Status: Read-only
+- Date: 2026-07-13
+- Scope: checked Host security-plan and CLI inspect refactor; Core run-loop
+  ordering, policy evaluation, approvals, execution, and terminal events did
+  not change.
+- Read: Host runtime/security plan and Core run-loop boundary.
+- Tests: Host tools/protocol focused tests passed; no Core run-loop behavior
+  changed.
 
 - Status: Verified
 - Date: 2026-07-12T23:45:00+0800

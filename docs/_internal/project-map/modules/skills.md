@@ -125,7 +125,8 @@ Does not own:
   metadata and trace events.
 - Inline shell preprocessing is opt-in. `@sparkwright/skills` only exposes the
   `preprocess.inlineShellRunner` injection point; host owns execution,
-  sandboxing, and trace events. Failed inline shell expansion should insert a
+  sandbox invocation, and trace events; `shell-sandbox` owns OS-specific
+  no-write/read-grant compilation. Failed inline shell expansion should insert a
   short marker into Skill content rather than raw stderr; host trace summaries
   carry the bounded diagnostic output.
 - Experimental Skill bundle helpers are retired. `@sparkwright/skills` no
@@ -195,6 +196,13 @@ list --run/--session`); failed drafts self-clean. See
   [../maps/capabilities/skill-evolution.md](../maps/capabilities/skill-evolution.md#known-debts).
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-13
+- Scope: moved inline-shell OS-specific no-write/read-grant compilation into
+  shell-sandbox; Skills injection and Host process/trace ownership are unchanged.
+- Read: Skill inline-shell contract, Host adapter, and shell-sandbox compiler.
+- Tests: Host Skill inline-shell focused tests and shell-sandbox tests passed.
 
 - Status: Verified
 - Date: 2026-07-12T23:45:00+0800

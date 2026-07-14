@@ -16,6 +16,7 @@ See [approvals.md](approvals.md) and [../runtime/tool-orchestration.md](../runti
 - `packages/host/src/tools.ts`
 - `packages/host/src/shell.ts`
 - `packages/host/src/workspace-snapshot.ts`
+- `packages/host/src/workspace-agent-arbiter.ts`
 
 ## Data Flow
 
@@ -36,6 +37,9 @@ tool proposes write
   Interactive clients that need write approvals should send `shouldWrite: true`;
   managed coding tools then defer to the normal `workspace.write` diff approval
   path and guardrails.
+- Host and internal direct-core start/resume construct this mutation layer from
+  one Host factory. Every invocation is fresh: its `writtenPaths` file-budget
+  state must never be cached or shared through the immutable security plan.
 - Shell writes, managed capability mutations, and delegate child writes must
   still leave trace evidence. In-process delegate child writes are surfaced to
   the parent summary by rolling up the child run's own
@@ -47,13 +51,33 @@ tool proposes write
   parent run policy is still layered into the child, so `shouldWrite:false`,
   target-path restrictions, file budgets, and diff budgets deny before the
   grant resolver can approve.
+- Same-turn Agent tool batching treats a requested dynamic workspace-write grant
+  or a configured child write/shell capability as serial. This prevents two
+  independently policy-checked and approved child writers from being admitted
+  to the same Core concurrent batch; this remains the early argument-level
+  classifier rather than the workspace lock itself.
+- Host additionally uses one process-local fair workspace lease coordinator
+  keyed by the realpath-canonical workspace root. It wraps actual mutation
+  windows for parent and child managed coding tools, Shell, Skill/Agent
+  capability files, and holds write-capable in-process/ACP/external delegates
+  for their full execution across HostRuntime connections. Background Shell
+  transfers its lease to the returned Task until terminal state. Agent dispatch
+  tools are not parent-locked; their admitted child owns the mutation window.
+- Same-run write leases reenter with reference counting, and descendant waits
+  on ancestor owners fail fast. Acquisitions auto-renew by default; involuntary
+  loss is observable and starts child/process abort before the queue drains.
+  This does not replace policy or approval, coordinate other Node processes or
+  distributed hosts, or provide a fencing generation/termination
+  acknowledgement. Managed writes still use normal Core policy/events;
+  process delegates still emit the untracked write-capable marker after lease
+  admission.
 - Trace report may lower the severity of an incomplete child only at the
   report layer, and only when raw events prove the ordered chain: child
   `workspace.write.completed`, parent-visible `subagent.*.workspaceWrites > 0`,
   later successful verification, and no later workspace write. Raw write events
   and raw child finality are not rewritten.
 - Untracked write-capable process boundaries are explicit audit boundaries:
-  read/write external command delegates emit
+  read/write ACP and external command delegates emit
   `workspace.write.untracked_access_granted` when direct access is granted, and
   background shell tasks emit the same marker with
   `protocol: "background_shell"`, `backgroundOrigin`, and sandbox status. The
@@ -71,7 +95,22 @@ tool proposes write
 - MCP tools are normal external tools. If they write files without using
   managed `workspace.write.*`, those writes are not counted as managed
   workspace writes; stdio MCP servers default to neutral cwd to avoid accidental
-  relative-path project writes.
+  relative-path project writes. In Host read-only runs, local stdio MCP
+  processes additionally receive a fail-closed no-write OS sandbox; this does
+  not turn MCP writes in write-enabled runs into managed write attribution.
+- Workflow Script processes require both write-enabled run access and a
+  declared `write` capability before their sandbox receives write grants.
+  Read-only command hooks are also forced into a fail-closed no-write sandbox
+  when Host run metadata explicitly records `shouldWrite:false`.
+- Managed `LocalWorkspace` writes use realpath containment and reject stable
+  symlink segments in the caller's original workspace-relative path, even when
+  the symlink target stays inside the workspace. Missing parent chains are
+  checked again after creation and before the file write. Removal rejects
+  symlink ancestors but can unlink a symlink leaf without following its target.
+  Foreground Shell snapshot rollback detects symlink entries and restores
+  captured binary content through this boundary. These checks narrow but cannot
+  eliminate filesystem TOCTOU races; they are not an OS-level sandbox for
+  arbitrary processes or a detector for writes outside the workspace.
 
 ## Consumers
 
@@ -98,6 +137,96 @@ tool proposes write
   from managed workspace writes.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: extended Host workspace arbitration from child-only admission to
+  actual parent/child mutation windows, including background lease transfer,
+  reentrant ownership, run-chain fail-fast, and loss-triggered cancellation.
+- Read: coordinator, Host catalog/runtime, coding/Shell tools, all Agent
+  adapters, and workspace-write event boundaries.
+- Tests: focused coordinator/Agent/process suites, all workspace tests, and
+  release smokes passed. Touched files are format-clean; the global format scan
+  is blocked only by pre-existing dirty proposal docs outside this change.
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: added Host process-local Agent workspace RW admission without changing
+  write authorization or managed/untracked write attribution.
+- Read: arbiter, in-process/dynamic/process Agent entrypoints, Core write event
+  contracts, and active supervision design.
+- Tests: Host arbiter/Agent/process focused suites 162/162; agent-runtime
+  Agent/invocation/supervisor/ledger 60/60; affected typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: added fail-closed same-turn Agent concurrency classification for
+  workspace-write capability without changing write approval semantics.
+- Read: Core concurrency classifier, Host Agent spawn/delegate capability, and
+  workspace-write policy boundary.
+- Tests: Core run 127/127; Host Agent/tool suites 155/155; affected typechecks
+  passed.
+
+- Status: Verified
+- Date: 2026-07-13T22:42:00+0800
+- Scope: aligned Host/direct-core start/resume target and write-budget policy
+  construction while preserving fresh mutation state per run.
+- Read: Host run policy/runtime, CLI direct-core/resume, Core mutation policy.
+- Tests: Host focused 155/155; CLI 152/152; Core policy/environment 35/35;
+  affected typechecks/builds passed.
+
+- Status: Verified
+- Date: 2026-07-13T22:30:00+0800
+- Scope: foreground Shell audit now detects created/replacement symlinks and
+  uses Core containment for rollback restoration; outside-workspace writes
+  remain beyond snapshot coverage.
+- Read: Core LocalWorkspace, Host workspace snapshot/Shell integration, and
+  focused tests.
+- Tests: Core workspace/checkpoint 31/31; Host snapshot/tools 102/102; affected
+  typechecks/build passed.
+
+- Status: Verified
+- Date: 2026-07-13T22:21:00+0800
+- Scope: read-only extension-process boundaries now compile fail-closed
+  no-write sandbox inputs for local MCP, Workflow Script, and explicit
+  run-bound command hooks; managed write event/counting semantics are unchanged.
+- Read: Host security plan, Workflow node API/hooks, MCP assembly, and
+  shell-sandbox no-write compiler.
+- Tests: Host focused 263/263; MCP adapter 34/34; CLI capability inspect 11/11.
+
+- Status: Verified
+- Date: 2026-07-13
+- Scope: ACP `workspaceAccess:read_write` now emits the same
+  untracked-access-granted marker as external commands after the parent write
+  gate; no managed write is inferred.
+- Read: Host ACP/external delegate tools and workspace-write event contract.
+- Tests: Host ACP/external/tool focused suites 122/122.
+
+- Status: Read-only
+- Date: 2026-07-13
+- Scope: filesystem grant compilation moved to shell-sandbox; managed write
+  events, untracked-access markers, snapshot ownership, and rollback semantics
+  did not change.
+- Read: external Delegate, Skill inline shell, MCP, and shell-sandbox boundaries.
+- Tests: focused Host/MCP/shell-sandbox suites passed.
+
+- Status: Read-only
+- Date: 2026-07-13
+- Scope: checked Host security-plan extraction. It freezes access/path inputs
+  only; managed mutation policy instances and their `writtenPaths` state remain
+  fresh per run, and workspace-write events/counting are unchanged.
+- Read: Host runtime/security plan and Core mutation policy.
+- Tests: Host focused suite 222/222; no workspace-write event contract changed.
+
+- Status: Verified
+- Date: 2026-07-13
+- Scope: verified and hardened managed workspace symlink containment. Added
+  regressions for directory and file symlinks targeting paths inside the same
+  workspace; both are denied before mutation.
+- Read: `packages/core/src/workspace.ts`, workspace checkpoint and mutation
+  policy tests.
+- Tests: Core workspace/checkpoint/policy tests 59/59 passed; Core typecheck
+  passed.
 
 - Status: Read-only
 - Date: 2026-07-12T20:12:00+0800

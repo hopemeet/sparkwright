@@ -8,7 +8,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 import type { RunId, RuntimeContext, ToolDefinition } from "@sparkwright/core";
 import {
   ActorNotificationCapacityError,
@@ -29,6 +29,8 @@ import {
   recoverRunningTasks,
   type ActorInbox,
   type AnyActorNotification,
+  type AnyActorNotificationInput,
+  type InternalActorKind,
   type TaskId,
   type TaskCompletedNotificationInput,
   type TaskNotification,
@@ -670,6 +672,22 @@ describe("ActorNotificationSink and ActorInbox adapters", () => {
 
     expect(await peekActorInbox(queue.asActorInbox())).toHaveLength(0);
     expect(queue.peek()).toHaveLength(0);
+  });
+
+  it("exposes only implemented actor kinds and rejects forged future kinds", () => {
+    expectTypeOf<InternalActorKind>().toEqualTypeOf<"task" | "workflow">();
+    const forged = {
+      ...taskCompletedActorInput("task_forged_kind"),
+      source: {
+        kind: "agent",
+        id: "task_forged_kind",
+        runId: PARENT_RUN_ID,
+      },
+    } as unknown as AnyActorNotificationInput;
+
+    expect(() =>
+      new InMemoryTaskNotificationQueue().asActorSink().deliver(forged),
+    ).toThrow(ActorNotificationInvalidError);
   });
 
   it("keeps reliable notifications out of drop-oldest capacity loss", async () => {

@@ -3,7 +3,7 @@
 ## Current Confidence
 
 - Status: `Partially Verified`
-- Last reviewed: 2026-07-11
+- Last reviewed: 2026-07-14
 - Evidence source: 2026-06-22 focused host/agent tests passed and real
   `openai/gpt-5.4-mini` read-only dynamic `spawn_agent` canaries produced valid
   trace/session structure. A configured read/write delegate canary wrote through
@@ -36,7 +36,10 @@
   completion semantics, and nested awaited `task_create(kind:"agent")`
   result delivery. The 2026-07-11 closure audit treated that nested run as QA
   evidence rather than a user requirement and removed the incomplete opt-in;
-  current v1 lifecycle is flat.
+  current v1 lifecycle is flat. 2026-07-14 deterministic verification covered
+  argument-level Agent concurrency admission, exact delegation fingerprints,
+  and same-millisecond ACP/external child-id uniqueness across Core,
+  agent-runtime, and Host focused suites.
 
 ## Covered
 
@@ -61,9 +64,13 @@
   subagent lifecycle events, writes a session trace, and honors `maxDepth`.
 - Configured in-process delegates can write through the parent approval path and
   the parent can verify after `subagent.completed` with a later `read_file`.
-- External-command delegates with `workspaceAccess: read_write` disclose
+- ACP and external-command delegates with `workspaceAccess: read_write` disclose
   untracked write-capable boundaries; without parent `--write`, they fail before
   process execution and are counted as expected denials.
+- ACP and external-command delegates with `workspaceAccess: none` keep a private
+  cwd writable but fail closed when sandboxing is unavailable and cannot write
+  a known absolute workspace path. Installed-runtime tests exercise the current
+  OS backend; shell-sandbox unit coverage checks both Linux and macOS compilation.
 - CLI `agents create` can create a project-local child profile with a callable
   in-process delegate, and `capabilities inspect` / TUI `/capabilities` surface
   the configured agent and delegate.
@@ -114,6 +121,21 @@
   `alreadyCompleted: true`; the trace had two `subagent.completed` events
   instead of four and passed trace verify/session check
   (`session_mqvxzwjy7x1ixlvu`).
+- 2026-07-14 hardening narrowed that ledger to exact conservative normalized
+  goal fingerprints, with regression coverage proving `packages/host` directory
+  results are not reused for `packages/core`. Core now serializes tools that
+  declare dynamic policy without an explicit argument-level classifier;
+  dynamic read-only spawn remains concurrent, while write-granted, configured
+  write/shell, approval-bound, invalid, and unresolved Agent calls are serial.
+  ACP/external adapters also mint distinct child ids under a frozen timestamp.
+- 2026-07-14 lifecycle characterization projects stable identity, entrypoint,
+  phase ordering, and terminal cardinality across configured direct/indexed/
+  parallel delegates, dynamic promotion/cancellation, background Agent tasks,
+  ACP, external-command, and direct CLI delegation. It deliberately leaves
+  timestamps, sequence, spans, prose, and adapter result bodies out of the
+  golden shape. Known adapter differences remain visible: ACP/external start
+  before access admission and omit successful `terminalState`; indexed
+  delegation currently reports the hidden direct `delegate` entrypoint.
 - 2026-06-27 indexed delegation verification covered the new default agent
   exposure surface: capability snapshots expose `delegate_agent` instead of
   every configured `delegate_*` alias, `delegate_agent(agentId)` preserves
@@ -258,8 +280,10 @@
 - Real-model delegation decisions are prompt- and model-sensitive.
 - Multiple similar delegate calls in one batch can make event pairing and
   repeated-delegate diagnosis harder.
-- ACP direct delegate behavior still deserves a live command/fixture route when
-  ACP delegate transport changes.
+- ACP has a deterministic fixture route covering protocol completion, env
+  inheritance, parent write denial, read-write untracked audit, and enforce-mode
+  sandbox unavailability. Real external ACP binaries remain environment- and
+  installation-sensitive.
 - Dynamic `spawn_agent` is read-only by contract; child-write scenarios must use
   configured delegates rather than dynamic spawn.
 - Real configured delegates can recover from repeated identical tool calls; keep

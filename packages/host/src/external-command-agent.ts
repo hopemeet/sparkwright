@@ -1,4 +1,5 @@
 import {
+  createId,
   createSpanId,
   defineTool,
   type EventEmitter,
@@ -8,9 +9,18 @@ import {
   type RunId,
   type ToolDefinition,
 } from "@sparkwright/core";
-import type { AgentProfile } from "@sparkwright/agent-runtime";
 import {
+  agentInvocationEntrypointFromArgs,
+  agentInvocationMetadata,
+  createAgentSupervisor,
+  prepareAgentInvocation,
+  type AgentProfile,
+} from "@sparkwright/agent-runtime";
+import {
+  createPlatformShellSandboxRuntime,
+  enforceProtectedWriteRootsShellSandbox,
   resolveShellSandboxConfig,
+  scopeShellSandboxFilesystem,
   type ResolvedShellSandboxConfig,
   type ShellSandboxConfig,
   type ShellSandboxRuntime,
@@ -33,6 +43,11 @@ import {
   TracedProcessRunner,
   type ProgressChunk,
 } from "./traced-process-runner.js";
+import {
+  createWorkspaceLeaseAbortController,
+  createWorkspaceMutationAdmission,
+  type WorkspaceLeaseCoordinator,
+} from "./workspace-agent-arbiter.js";
 
 export interface ExternalCommandAgentConfig {
   command: string;
@@ -64,6 +79,7 @@ export interface CreateExternalCommandDelegateToolInput {
   sandboxRuntime?: ShellSandboxRuntime;
   skillRoots?: readonly string[];
   configPaths?: readonly string[];
+  workspaceLeaseCoordinator?: WorkspaceLeaseCoordinator;
 }
 
 export interface ExternalCommandDelegateToolResult {
@@ -220,13 +236,7 @@ export function createExternalCommandDelegateTool(
 
       const parsed = parseDelegateArgs(args);
       const spanId = createSpanId();
-      const childRunId = `cmd_${sanitizeSegment(input.profile.id)}_${Date.now().toString(36)}`;
-      const base = {
-        childRunId,
-        parentRunId: parent.record.id,
-        spanId,
-        goal: parsed.goal,
-      };
+      const childRunId = createId(`cmd_${sanitizeSegment(input.profile.id)}`);
       const parentAgentId =
         typeof parent.record.metadata?.agentId === "string"
           ? parent.record.metadata.agentId
@@ -235,28 +245,53 @@ export function createExternalCommandDelegateTool(
         typeof parent.record.metadata?.sessionId === "string"
           ? parent.record.metadata.sessionId
           : undefined;
-      const meta = {
-        ...(parentSessionId ? { sessionId: parentSessionId } : {}),
+      const invocation = prepareAgentInvocation({
+        goal: parsed.goal,
+        protocol: "external_command",
+        sessionId: parentSessionId,
+        parentRunId: parent.record.id,
+        childRunId,
+        spanId,
         agentId: parentAgentId,
         childAgentId: input.profile.id,
         agentProfileId: input.profile.id,
         agentName: input.profile.name,
+        agentAssetIdentity: input.profile.assetIdentity,
         delegateTool: input.toolName,
-        childRunId,
-        parentRunId: parent.record.id,
-        entrypoint: input.entrypoint ?? "external_command",
-        protocol: "external_command",
-        workspaceAccess,
+        entrypoint: agentInvocationEntrypointFromArgs(
+          args,
+          input.entrypoint ?? "external_command",
+        ),
         subagentDepth,
-      };
-      parent.events.emit("subagent.requested", base, meta);
-      parent.events.emit("subagent.started", base, meta);
+        governance: { workspaceAccess },
+      });
+      const meta = agentInvocationMetadata(invocation);
+      const supervisor = createAgentSupervisor({
+        invocation,
+        emitter: parent.events,
+      });
+      supervisor.requested();
+      let releaseWorkspaceLease: (() => void) | undefined;
+      const leaseAbort = createWorkspaceLeaseAbortController(
+        parent.abortSignal,
+      );
       try {
         assertReadWriteWorkspaceAccessAllowed({
           workspaceAccess,
           toolName: input.toolName,
           allowed: input.allowReadWriteWorkspaceAccess === true,
         });
+        if (workspaceAccess === "read_write") {
+          releaseWorkspaceLease = await createWorkspaceMutationAdmission({
+            coordinator: input.workspaceLeaseCoordinator,
+            workspaceRoot: input.workspaceRoot,
+            mode: "write",
+          })({
+            invocation,
+            abortSignal: leaseAbort.signal,
+            cancel: leaseAbort.cancel,
+          });
+        }
         if (workspaceAccess === "read_write") {
           parent.events.emit(
             "workspace.write.untracked_access_granted",
@@ -284,6 +319,11 @@ export function createExternalCommandDelegateTool(
           configPaths: input.configPaths,
           emitter: parent.events,
           runId: parent.record.id,
+          abortSignal: leaseAbort.signal,
+          onStarted() {
+            supervisor.admit();
+            supervisor.started();
+          },
         });
         const successExitCodes = config.successExitCodes ?? [0];
         if (
@@ -304,31 +344,26 @@ export function createExternalCommandDelegateTool(
             },
           );
         }
-        parent.events.emit(
-          "subagent.completed",
-          {
-            ...base,
-            stopReason: "completed",
-            result: {
-              protocol: "external_command",
-              agentProfileId: input.profile.id,
-              exitCode: result.exitCode,
-              signal: result.signal,
-              stdoutChars: result.stdout.length,
-              stderrChars: result.stderr.length,
-              stdoutTruncated: result.stdoutTruncated,
-              stderrTruncated: result.stderrTruncated,
-              outputTruncated: result.outputTruncated,
-              output: result.output,
-              sandbox: result.sandbox,
-              progressCount: result.progressCount,
-              progressDropped: result.progressDropped,
-              progressHead: result.progressHead,
-              progressTail: result.progressTail,
-            },
+        supervisor.completed({
+          stopReason: "completed",
+          result: {
+            protocol: "external_command",
+            agentProfileId: input.profile.id,
+            exitCode: result.exitCode,
+            signal: result.signal,
+            stdoutChars: result.stdout.length,
+            stderrChars: result.stderr.length,
+            stdoutTruncated: result.stdoutTruncated,
+            stderrTruncated: result.stderrTruncated,
+            outputTruncated: result.outputTruncated,
+            output: result.output,
+            sandbox: result.sandbox,
+            progressCount: result.progressCount,
+            progressDropped: result.progressDropped,
+            progressHead: result.progressHead,
+            progressTail: result.progressTail,
           },
-          meta,
-        );
+        });
         return {
           childRunId,
           spanId,
@@ -338,17 +373,15 @@ export function createExternalCommandDelegateTool(
           ...result,
         };
       } catch (error) {
-        parent.events.emit(
-          "subagent.failed",
-          {
-            ...base,
-            reason: "failed",
-            errorCode: errorCode(error),
-            error: error instanceof Error ? error.message : String(error),
-          },
-          meta,
-        );
+        supervisor.failed({
+          reason: "failed",
+          errorCode: errorCode(error),
+          error: error instanceof Error ? error.message : String(error),
+        });
         throw error;
+      } finally {
+        releaseWorkspaceLease?.();
+        leaseAbort.dispose();
       }
     },
   });
@@ -366,6 +399,8 @@ async function runExternalCommand(input: {
   configPaths?: readonly string[];
   emitter: EventEmitter;
   runId: RunId;
+  abortSignal?: AbortSignal;
+  onStarted?: () => void;
 }): Promise<
   Pick<
     ExternalCommandDelegateToolResult,
@@ -431,12 +466,16 @@ async function runExternalCommand(input: {
             skillRoots: input.skillRoots,
             extraForcedDenyWrite: input.configPaths,
           });
-    const effectiveSandboxConfig = delegateSandboxConfig({
+    const sandboxRuntime =
+      input.sandboxRuntime ?? createPlatformShellSandboxRuntime();
+    const effectiveSandboxConfig = await delegateSandboxConfig({
       config: sandboxConfig,
       workspaceAccess,
+      workspaceRoot: input.workspaceRoot,
       executionCwd: executionWorkspace.cwd,
       command: input.config.command,
       args,
+      runtime: sandboxRuntime,
     });
     const stdin =
       inputMode === "stdin"
@@ -457,8 +496,10 @@ async function runExternalCommand(input: {
       stdin,
       timeoutMs: input.config.timeoutMs,
       sandbox: effectiveSandboxConfig,
-      sandboxRuntime: input.sandboxRuntime,
+      sandboxRuntime,
       emitLifecycle: false,
+      abortSignal: input.abortSignal,
+      onStarted: input.onStarted,
       onProgress: (chunk) => {
         progress.record(chunk);
       },
@@ -527,27 +568,29 @@ async function runExternalCommand(input: {
   }
 }
 
-function delegateSandboxConfig(input: {
+async function delegateSandboxConfig(input: {
   config: ResolvedShellSandboxConfig;
   workspaceAccess: DelegateWorkspaceAccess;
+  workspaceRoot: string;
   executionCwd: string;
   command: string;
   args: readonly string[];
-}): ResolvedShellSandboxConfig {
-  if (input.config.mode === "off" || input.workspaceAccess === "read_write") {
+  runtime: Pick<ShellSandboxRuntime, "id" | "platform">;
+}): Promise<ResolvedShellSandboxConfig> {
+  if (input.workspaceAccess === "read_write") {
     return input.config;
   }
-  return {
-    ...input.config,
-    filesystem: {
-      ...input.config.filesystem,
-      allowRead: [
-        input.executionCwd,
-        ...absoluteArgPaths([input.command, ...input.args]),
-      ],
-      allowWrite: [input.executionCwd],
-    },
-  };
+  const scoped = scopeShellSandboxFilesystem(input.config, {
+    allowRead: [
+      input.executionCwd,
+      ...absoluteArgPaths([input.command, ...input.args]),
+    ],
+    allowWrite: [input.executionCwd],
+  });
+  return enforceProtectedWriteRootsShellSandbox(scoped, {
+    runtime: input.runtime,
+    protectedRoots: [input.workspaceRoot],
+  });
 }
 
 function absoluteArgPaths(values: readonly string[]): string[] {

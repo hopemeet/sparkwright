@@ -20,7 +20,7 @@ import {
 import {
   ShellSandboxExecutor,
   createPlatformShellSandboxRuntime,
-  prepareSandboxedProcessInvocation,
+  prepareSandboxedProcessLaunch,
   type ResolvedShellSandboxConfig,
   type ShellSandboxRuntime,
 } from "@sparkwright/shell-sandbox";
@@ -165,6 +165,10 @@ export interface TracedProcessInput {
     chunk: ProgressChunk,
     context: ProgressContext,
   ) => void | Promise<void>;
+  /** Called once after the child process is actually admitted and started. */
+  onStarted?: () => void;
+  /** Abort an admitted process and report PROCESS_ABORTED. */
+  abortSignal?: AbortSignal;
 }
 
 export interface TracedStreamingProcessInput {
@@ -611,6 +615,14 @@ export class TracedProcessRunner {
     stderr: OutputCollector,
     progress: ProgressEmitter,
   ): Promise<RawProcessResult> {
+    if (input.abortSignal?.aborted) {
+      return {
+        exitCode: null,
+        signal: null,
+        timedOut: false,
+        error: { code: "PROCESS_ABORTED", message: "Process aborted." },
+      };
+    }
     if (input.sandbox && input.sandbox.mode !== "off") {
       const sandboxed = await this.executeSandboxed(
         input,
@@ -690,15 +702,28 @@ export class TracedProcessRunner {
         },
       };
     }
-    return {
-      status: "completed",
-      result: await collectStreamingResult(
+    input.onStarted?.();
+    const abort = () => started.result.handle.abort("process aborted");
+    input.abortSignal?.addEventListener("abort", abort, { once: true });
+    try {
+      const result = await collectStreamingResult(
         started.result,
         stdout,
         stderr,
         progress,
-      ),
-    };
+      );
+      return {
+        status: "completed",
+        result: input.abortSignal?.aborted
+          ? {
+              ...result,
+              error: { code: "PROCESS_ABORTED", message: "Process aborted." },
+            }
+          : result,
+      };
+    } finally {
+      input.abortSignal?.removeEventListener("abort", abort);
+    }
   }
 
   private async executeRaw(
@@ -712,6 +737,7 @@ export class TracedProcessRunner {
     return new Promise<RawProcessResult>((resolve) => {
       let settled = false;
       let timedOut = false;
+      let aborted = false;
       // eslint-disable-next-line prefer-const -- assigned after spawn; finish closes over it.
       let timer: NodeJS.Timeout | undefined;
       let killTimer: NodeJS.Timeout | undefined;
@@ -732,6 +758,7 @@ export class TracedProcessRunner {
       const finish = (result: RawProcessResult): void => {
         if (settled) return;
         settled = true;
+        input.abortSignal?.removeEventListener("abort", abort);
         if (timer) clearTimeout(timer);
         if (killTimer) clearTimeout(killTimer);
         stderrChain = stderrChain
@@ -754,6 +781,20 @@ export class TracedProcessRunner {
           });
       };
       let child: ReturnType<typeof spawn>;
+      const abort = (): void => {
+        if (settled || aborted) return;
+        aborted = true;
+        child?.kill("SIGTERM");
+        killTimer = setTimeout(() => {
+          child?.kill("SIGKILL");
+          finish({
+            exitCode: null,
+            signal: "SIGKILL",
+            timedOut: false,
+            error: { code: "PROCESS_ABORTED", message: "Process aborted." },
+          });
+        }, TIMEOUT_KILL_GRACE_MS);
+      };
       try {
         child = spawn(input.command, [...(input.args ?? [])], {
           cwd: input.cwd,
@@ -776,6 +817,9 @@ export class TracedProcessRunner {
         });
         return;
       }
+
+      input.abortSignal?.addEventListener("abort", abort, { once: true });
+      if (input.abortSignal?.aborted) abort();
 
       timer =
         input.timeoutMs && input.timeoutMs > 0
@@ -840,19 +884,27 @@ export class TracedProcessRunner {
           },
         });
       });
+      child.once("spawn", () => input.onStarted?.());
       child.once("close", (code, signal) => {
         finish({
           exitCode: code,
           signal,
           timedOut,
-          ...(timedOut
+          ...(aborted
             ? {
                 error: {
-                  code: "PROCESS_TIMEOUT",
-                  message: "Process timed out.",
+                  code: "PROCESS_ABORTED",
+                  message: "Process aborted.",
                 },
               }
-            : {}),
+            : timedOut
+              ? {
+                  error: {
+                    code: "PROCESS_TIMEOUT",
+                    message: "Process timed out.",
+                  },
+                }
+              : {}),
         });
       });
     });
@@ -876,43 +928,27 @@ export class TracedProcessRunner {
           sandbox?: SandboxSummary;
         }
       | undefined;
-    if (input.sandbox && input.sandbox.mode !== "off") {
+    if (input.sandbox) {
       const runtime =
         input.sandboxRuntime ?? createPlatformShellSandboxRuntime();
-      if (await runtime.isAvailable()) {
-        const invocation = await prepareSandboxedProcessInvocation(
-          runtime,
-          {
-            command: input.command,
-            args: input.args,
-            cwd: input.cwd,
-            env,
-            metadata: {
-              sandboxMode: input.sandbox.mode,
-              sandboxNetworkMode: input.sandbox.network.mode,
-              sandboxAvailable: true,
-              sandboxEnforced: input.sandbox.failIfUnavailable,
-            },
+      const decision = await prepareSandboxedProcessLaunch(
+        runtime,
+        {
+          command: input.command,
+          args: input.args,
+          cwd: input.cwd,
+          env,
+          metadata: {
+            sandboxMode: input.sandbox.mode,
+            sandboxNetworkMode: input.sandbox.network.mode,
+            sandboxAvailable: true,
+            sandboxEnforced: input.sandbox.failIfUnavailable,
           },
-          input.sandbox,
-        );
-        prepared = {
-          command: invocation.command,
-          args: invocation.args,
-          cwd: invocation.cwd,
-          env: invocation.env,
-          cleanup: invocation.cleanup,
-          sandbox: {
-            sandboxed: true,
-            mode: input.sandbox.mode,
-            runtime: runtime.id,
-            networkMode: input.sandbox.network.mode,
-            available: true,
-            enforced: input.sandbox.failIfUnavailable,
-          },
-        };
-      } else if (input.sandbox.failIfUnavailable) {
-        const message = `Shell sandbox runtime "${runtime.id}" is unavailable on ${runtime.platform}.`;
+        },
+        input.sandbox,
+      );
+      if (decision.status === "unavailable") {
+        const message = decision.reason;
         stderr.append(`${message}\n`);
         return {
           exitCode: null,
@@ -923,7 +959,7 @@ export class TracedProcessRunner {
           sandbox: {
             sandboxed: false,
             mode: input.sandbox.mode,
-            runtime: runtime.id,
+            runtime: decision.runtimeId,
             networkMode: input.sandbox.network.mode,
             available: false,
             fallbackReason: message,
@@ -934,24 +970,30 @@ export class TracedProcessRunner {
             message,
           },
         };
-      } else {
-        const message = `Shell sandbox runtime "${runtime.id}" is unavailable on ${runtime.platform}.`;
-        prepared = {
-          command: input.command,
-          args: input.args ?? [],
-          cwd: input.cwd,
-          env,
-          sandbox: {
-            sandboxed: false,
-            mode: input.sandbox.mode,
-            runtime: runtime.id,
-            networkMode: input.sandbox.network.mode,
-            available: false,
-            fallbackReason: message,
-            enforced: false,
-          },
-        };
       }
+      const invocation = decision.invocation;
+      prepared = {
+        command: invocation.command,
+        args: invocation.args,
+        cwd: invocation.cwd,
+        env: invocation.env,
+        cleanup: invocation.cleanup,
+        ...(input.sandbox.mode !== "off"
+          ? {
+              sandbox: {
+                sandboxed: decision.status === "sandboxed",
+                mode: input.sandbox.mode,
+                runtime: decision.runtimeId,
+                networkMode: input.sandbox.network.mode,
+                available: decision.available,
+                ...(decision.status === "unsandboxed" && decision.reason
+                  ? { fallbackReason: decision.reason }
+                  : {}),
+                enforced: decision.enforced,
+              },
+            }
+          : {}),
+      };
     } else {
       prepared = {
         command: input.command,

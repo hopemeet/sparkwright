@@ -231,13 +231,18 @@ export function createWorkspaceShellPolicy(
   options: WorkspaceShellPolicyOptions,
 ): LocalProcessEnvironmentOptions["policy"] {
   return async (request) => {
+    const workspaceRoot = await resolveRealPath(options.workspaceRoot);
     const allowedRoots = await Promise.all(
-      [options.workspaceRoot, ...(options.allowedRoots ?? [])].map((root) =>
+      [workspaceRoot, ...(options.allowedRoots ?? [])].map((root) =>
         resolveRealPath(root),
       ),
     );
     const effectiveCwd = await resolveRealPath(
-      request.cwd ?? options.workspaceRoot,
+      request.cwd === undefined
+        ? workspaceRoot
+        : isAbsolute(request.cwd)
+          ? request.cwd
+          : resolve(workspaceRoot, request.cwd),
     );
 
     if (!isInsideAnyRoot(allowedRoots, effectiveCwd)) {

@@ -32,6 +32,10 @@ contracts, and focused checklists that no longer fit here.
 - ACP packages bridge the host/runtime/protocol world to ACP sessions and
   external ACP workers. Route ACP server changes through host/protocol/session
   maps; route external worker tool changes through agents and tool orchestration.
+- `acp-client-adapter` owns ACP worker JSON-RPC, permission rejection, session
+  lifecycle, timeout, child termination, and optional prepared-invocation
+  cleanup. Host compiles workspace access and sandbox launch before constructing
+  the worker; the adapter does not decide filesystem authority.
 - SDK packages are host protocol clients. `sdk-core` owns transport-agnostic
   client behavior; `sdk-node` and `sdk-browser` add environment-specific
   transports. Protocol schema and host-client behavior remain the source of
@@ -51,8 +55,13 @@ contracts, and focused checklists that no longer fit here.
   has no process launcher and is not a daemon; F remains responsible for the
   long-running service carrier.
 - Project commands and shell sandbox packages are edge helpers consumed by TUI,
-  host, CLI, and MCP/shell paths. Route safety-sensitive changes through shell
-  and workspace-write maps.
+  host, CLI, and MCP/shell paths. `shell-sandbox` owns OS-specific filesystem
+  grant compilation plus the availability/enforce/fallback launch decision for
+  argv processes; callers still own transport I/O, timeout, shutdown, and trace
+  lifecycle. Route safety-sensitive changes through shell and workspace-write
+  maps. Its status explicitly distinguishes Linux `bind-allowlist` from macOS
+  `deny-list-guard`; `enforce` controls fallback and must not be interpreted as
+  a portable workspace allowlist.
 - IM gateway is an application bridge over `sdk-node` and host events. Route
   protocol shape changes through protocol/host maps before updating gateway
   renderers or state.
@@ -87,11 +96,13 @@ contracts, and focused checklists that no longer fit here.
 - These packages need focused module pages if their contracts grow beyond edge
   adapters. Highest candidates: ACP, SDK, provider edge, and server/streaming
   runtime.
-- `@sparkwright/server-runtime` is the intended home for future session
-  coordination primitives (`SessionTurnScheduler`, turn/run-chain,
-  run/session/approval/event orchestration), but current host/CLI paths do not
-  wire it as the main process coordinator; source currently uses host-owned
-  per-connection `HostRuntime` directly.
+- `@sparkwright/server-runtime` is the intended home for the future
+  transport-neutral `ExecutionLaneCoordinator`, which owns bounded interactive
+  lane queueing, idempotency, capacity, and active-execution handoff. It already
+  provides Workflow service/supervisor/channel coordination and Host durable
+  command dispatch primitives, but ordinary Host execution still runs through
+  host-owned per-connection `HostRuntime`. The future lane coordinator must not
+  absorb Workflow/Task/Agent lifecycle ownership or workspace mutation leases.
 - The workflow job session route now stages durable supervisor/worker ownership
   and multi-channel control after session isolation, write fencing, and a typed
   durable workflow control inbox. `server-runtime` owns coordination; IM/Web/API
@@ -101,6 +112,63 @@ contracts, and focused checklists that no longer fit here.
   source exports. It should not be used as the sole authority for behavior.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: kept sandboxed stdio MCP servers without an explicit cwd in their
+  writable neutral scratch directory while preserving the Linux read
+  allow-list; external fixture/runtime dependencies must be granted explicitly.
+- Read: MCP adapter sandbox launch assembly, shell-sandbox positive scope, and
+  MCP/CLI/ACP integration fixtures.
+- Tests: focused MCP adapter, CLI, ACP, and shell-sandbox suites; CI covers the
+  real Linux bubblewrap runtime.
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: collapsed overlapping Linux bubblewrap deny mounts to their minimal
+  ancestor roots and restored explicit read/write grants after the private
+  `/tmp` overlay. The private parent is remounted read-only, and nonexistent
+  read-deny targets no longer create host-workspace mount-point artifacts.
+- Read: shell-sandbox bubblewrap invocation compiler and platform tests.
+- Tests: shell-sandbox 16/16 on Node 20 and Node 22; the CI matrix covers the
+  Linux runtime.
+
+- Status: Read-only
+- Date: 2026-07-14
+- Scope: re-baselined the session coordination proposal after Workflow, Task,
+  Agent supervision, and workspace Agent arbitration refactors. Recorded
+  `server-runtime` as the future interactive execution-lane coordination home,
+  not a universal run-chain or workspace-lock owner.
+- Read: `packages/server-runtime/src/index.ts`, Workflow service/supervisor,
+  `packages/host/src/runtime.ts`, `packages/host/src/server.ts`,
+  `packages/host/src/workspace-agent-arbiter.ts`, and
+  `docs/_internal/proposals/session-agent-host-coordinator.md`.
+- Tests: not run; proposal/map-only review.
+
+- Status: Verified
+- Date: 2026-07-13T22:30:00+0800
+- Scope: verified platform profile compilation and clarified the public status
+  contract: Linux is bind-allowlist, macOS is allow-default deny-list guard,
+  and enforce means no unsandboxed fallback.
+- Read: shell-sandbox status/profile compiler, config schema/guide, and tests.
+- Tests: shell-sandbox 14/14; typecheck/build; Host config/schema checks passed.
+
+- Status: Verified
+- Date: 2026-07-13
+- Scope: ACP workers now accept and clean up Host-prepared sandbox invocations;
+  ACP protocol/session ownership remains in the adapter.
+- Read: ACP client worker, Host ACP delegate, and shared sandbox launch compiler.
+- Tests: ACP client adapter 2/2; Host ACP/delegate/tool suites 122/122;
+  typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-13
+- Scope: centralized resolved filesystem grants and argv sandbox launch
+  decisions in `shell-sandbox` without moving process lifecycle ownership.
+- Read: shell-sandbox, Host traced/delegate/Skill adapters, and MCP stdio
+  transport.
+- Tests: shell-sandbox 14/14; Host focused process tests 37/37; MCP 34/34;
+  affected typechecks passed.
 
 - Status: Verified
 - Date: 2026-07-11T15:30:00+0800

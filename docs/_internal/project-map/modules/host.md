@@ -12,6 +12,9 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 ## Main Files
 
 - `packages/host/src/runtime.ts`
+- `packages/host/src/run-access.ts`
+- `packages/host/src/run-security-plan.ts`
+- `packages/host/src/run-policy.ts`
 - `packages/host/src/server.ts`
 - `packages/host/src/connection.ts`
 - `packages/host/src/agent-spawn-grants.ts`
@@ -20,6 +23,7 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 - `packages/host/src/tools.ts`
 - `packages/host/src/shell.ts`
 - `packages/host/src/workspace-snapshot.ts`
+- `packages/host/src/workspace-agent-arbiter.ts`
 - `packages/host/src/workflow-hooks.ts`
 - `packages/host/src/invariant-projection.ts`
 - `packages/host/src/workflows.ts`
@@ -34,6 +38,7 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 - `packages/host/src/skill-inline-shell.ts`
 - `packages/host/src/external-command-agent.ts`
 - `packages/host/src/delegate-capability.ts`
+- `packages/host/src/indexed-delegate-tool.ts`
 - `packages/host/src/agent-profiles.ts`
 - `packages/host/src/crash-log.ts`
 - `packages/host/src/model-builder.ts`
@@ -54,6 +59,8 @@ Owns:
   and `capability.inspect` diagnostics
 - skill, MCP, shell, cron, and agent capability preparation
 - host tool catalog entries that preserve runtime tool source metadata
+- immutable per-run/per-inspect derivation of resolved access, workspace,
+  confidential path inputs, skill/config roots, and shell sandbox status
 - host-level approval resolver and pending approval routing
 - host-client approval helpers used by frontends that must not import core directly
 - session diagnostics bundle composition
@@ -88,6 +95,28 @@ Does not own:
   readable, and new files omit inferred child mode and inherited budgets.
 
 - One active run per host connection.
+- `run-security-plan.ts` is the immutable boundary between config/access
+  parsing and runtime assembly. A run and `capability.inspect` derive the same
+  workspace, access, confidential paths, skill/config roots, and resolved shell
+  sandbox inputs there. It must not own prepared tools/processes, approval
+  resolvers, traces, Workflow state, or Core's mutable per-run mutation policy.
+- `run-policy.ts` is the stateful companion factory. Every call creates a fresh
+  layered policy and fresh mutation `writtenPaths` state. Host runtime and the
+  internal CLI direct-core start/resume paths share its target/default
+  guardrails, but never share a returned policy instance.
+- The security plan keeps configured shell-sandbox status separate from the
+  process sandbox passed to local extension adapters. Read-only run access
+  strengthens that adapter input to fail-closed no-write without misreporting
+  the main Shell tool's configured sandbox mode in capability inspection.
+- Workflow Script execution receives write access only when both the resolved
+  run access and the script's declared capabilities allow `write`. Command
+  hooks are likewise strengthened to fail-closed no-write when run metadata
+  explicitly carries `shouldWrite:false`; missing metadata retains the legacy
+  embedder contract.
+- CLI `capabilities inspect` treats the Host `CapabilitySnapshot` as required
+  for effective tool, delegate, and sandbox facts. It may add CLI-only config
+  diagnostics and optional MCP resolution detail, but it no longer reconstructs
+  a fallback Host tool catalog or independently reports sandbox availability.
 - Session root defaults to `<workspace>/.sparkwright/sessions`.
 - Host protocol `run.failed` events emitted by runtime carry canonical
   `failure` and deprecated compatibility `error`; failed core completions remain
@@ -430,6 +459,17 @@ Does not own:
 - Host-owned task tools pass default concurrency caps to agent-runtime
   (`global=4`, `agent=1`) unless configured. Cap violations are recoverable
   tool errors and must not become an internal host queue.
+- Host Agent tools classify Core same-turn concurrency from effective call
+  capability rather than their static read-shaped wrapper. Dynamic
+  `spawn_agent` remains concurrent only without a workspace-write grant;
+  configured direct/indexed delegates remain concurrent only when their child
+  catalog is read-only, shell-free, and does not require spawn approval.
+  Invalid or unresolved Agent arguments fail closed to serial execution; the
+  normal validation/policy path still owns their user-visible failure.
+- `indexed-delegate-tool.ts` owns the generic `delegate_agent` argument parsing,
+  target routing, preview, target policy projection, and target concurrency
+  delegation. `runtime.ts` assembles its resolved profiles/tools and retains a
+  compatibility re-export; it must not grow a second indexed-router copy.
 - Host-facing task controls `task.join` and `task.promote` are protocol/runtime
   controls for TUI and other clients. They do not reuse model-facing task tool
   JSON: join marks a task awaited, while promote forwards a manual foreground
@@ -664,6 +704,39 @@ Does not own:
   before spawning, and dynamic `spawn_agent` stores/reuses completed dynamic
   scope results under a prompt/role/tools key. Failed, step-limited, or
   truncated children remain non-reusable.
+- Host in-process, ACP, and external-command Agent adapters now construct the
+  same agent-runtime `PreparedAgentInvocation` data before projecting parent
+  lifecycle identity. Host still owns governance admission and adapter
+  execution; agent-runtime Supervisor owns the parent-visible transitions.
+- Agent adapters delegate parent-visible lifecycle transitions to
+  agent-runtime `AgentSupervisor`. ACP emits `started` only after access,
+  workspace, sandbox, and worker-launch preparation; external commands use the
+  traced-process `onStarted` signal after sandbox/process admission. Admission
+  failures therefore terminate as requested -> failed, and process successes
+  carry the same terminal state/finality fields as in-process children.
+- The indexed router marks internal tool-to-tool arguments with a non-JSON
+  invocation entrypoint so direct aliases remain `delegate` while
+  `delegate_agent` lifecycle records the real indexed surface. Model-authored
+  string fields cannot override this attribution marker.
+- `workspace-agent-arbiter.ts` now owns the process-local Host workspace lease
+  primitive (the legacy filename/export remains for compatibility). One
+  `WorkspaceLeaseCoordinator` singleton is shared by HostRuntime connections
+  and keyed by realpath-canonical workspace root. Host wraps actual parent and
+  child coding/Shell/capability mutation windows, while write-capable
+  in-process, ACP, and external delegates retain a lease for their full
+  execution. Dynamic Agent grant/delegate dispatch tools are not themselves
+  wrapped because their child owns the mutation window.
+- Same-owner acquisition is reference-counted and reentrant, so a child holding
+  its execution lease can call managed write tools. A descendant request that
+  would wait on an ancestor fails fast instead of entering a run-chain
+  deadlock. FIFO admission prevents later readers from starving a queued
+  writer. Acquisitions auto-renew by default; waits are abortable, release is
+  idempotent, and involuntary loss is observable and initiates adapter abort.
+- This coordinator remains narrower than a workspace transaction manager: it
+  does not coordinate other Node processes or distributed hosts, and TTL/loss
+  notification is not a fencing generation or proof that a stale process has
+  stopped writing. A future session coordinator remains the target long-lived
+  owner.
 - `capabilities.agents.maxDepth` is enforced before dynamic spawn, LLM child
   delegates, ACP delegates, and external-command delegates start; sub-agent
   events carry `subagentDepth` metadata so nested runs share one depth budget.
@@ -680,7 +753,11 @@ Does not own:
   `.sparkwright/skills`, `.sparkwright/agents`, and `.sparkwright/command`; cron
   state is not project-authored.
 - `workspace-snapshot.ts` owns host-side workspace snapshot/diff/rollback
-  primitives used by shell mutation rollback.
+  primitives used by foreground shell mutation rollback. Snapshots record
+  regular files and symlinks; rollback removes created/replacement symlinks and
+  restores captured bytes through Core `LocalWorkspace` rather than direct
+  filesystem writes. The audit remains whole-tree and does not observe writes
+  outside the workspace.
 - Runtime exposes MCP tools as normal tools. Stdio MCP servers without explicit
   `cwd` run from the adapter's neutral temporary cwd; host run metadata records
   configured MCP servers whose explicit `cwd` resolves inside the workspace so
@@ -699,6 +776,11 @@ Does not own:
   output surfaces, and lets callers override progress routing (for example,
   task progress to `task.output`) without hard-coding business event families
   in the runner.
+- `TracedProcessRunner.runJsonRpc()`, external command delegates, and Skill
+  inline shell consume shell-sandbox's compiled launch/grant decisions. Host
+  retains stdout/stderr protocols, timeout/kill, progress, artifacts, cleanup,
+  and boundary-specific trace events; the sandbox package does not become a
+  universal process runner.
 - Configured workflow command hooks keep their `workflow_hook.*` lifecycle and
   use `TracedProcessRunner` internally for process spans, output summaries, and
   artifact materialization.
@@ -709,12 +791,19 @@ Does not own:
   bounded `progressCount` / `progressDropped` / `progressHead` /
   `progressTail` summaries on the delegate tool result and
   `subagent.completed.payload.result`, not routed as `extension.process.*`.
-  Read/write external command delegates emit
+  Read/write ACP and external command delegates emit
   `workspace.write.untracked_access_granted` when direct workspace access is
   granted; this is a boundary marker, not a managed write event.
   Parent-visible lifecycle metadata uses parent `agentId`, inherited
   `sessionId`, plus `childAgentId`/`agentProfileId` for the external profile
   identity so direct CLI JSON output and persisted trace attribution agree.
+- ACP delegates use the same `workspaceAccess:none|read_write` sandbox/access
+  compilation as external command delegates. `none` runs from a private
+  writable execution cwd but forces a fail-closed sandbox that protects the
+  workspace from writes: bind allowlisting owns the Linux boundary and explicit
+  protected-root denies own the macOS boundary. `read_write` requires the parent
+  run write gate and emits the untracked-access marker. ACP JSON-RPC, permission,
+  timeout, and session shutdown stay in `acp-client-adapter`.
 - Background shell tasks adopt the already-started shell stream through
   `TracedProcessRunner.observeStreaming`, keep `task.*` as the lifecycle, emit
   `task.created` before opening the task span with `task.started`, write full
@@ -771,8 +860,149 @@ Does not own:
 
 - Host is a large composition point; changes can look local while affecting trace, sessions, and capabilities.
 - Capability snapshot fields are useful but can become stale if new tools bypass `tool-catalog.ts`; direct-core/cron should add tools by catalog profile, not local factories.
+- Agent lifecycle is assembled separately by in-process, dynamic/task,
+  ACP, external-command, and direct CLI execution paths. Parent-visible phase
+  transitions now share `AgentSupervisor`, but execution/cancellation handles
+  remain adapter-native and need continued cross-entrypoint characterization.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: generalized child-only Agent admission into one Host process-local
+  parent/child workspace mutation coordinator with reentrancy, run-chain
+  fail-fast, auto-renewal, loss notification, and adapter termination.
+- Read: runtime/catalog assembly, Agent admission, Shell/background transfer,
+  ACP/external adapters, and traced process cleanup.
+- Tests: focused suites 235/235; all workspaces/tests and release smokes passed.
+  Touched files are format-clean; the global format scan is blocked only by
+  pre-existing dirty proposal docs outside this change.
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: wired process-local workspace Agent RW admission through configured,
+  indexed, parallel, dynamic/task-owned, ACP, and external-command paths.
+- Read: Host runtime assembly, process adapters, agent-runtime admission seam,
+  workspace-write safety map, and active supervision design.
+- Tests: Host arbiter/Agent/process focused suites 162/162; Host typecheck
+  passed after rebuilding agent-runtime.
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: migrated all production `subagent.*` emitters to `AgentSupervisor`,
+  moved process `started` after admission, added terminal parity, and corrected
+  indexed entrypoint attribution.
+- Read: Host indexed/process adapters, traced process runner, agent-runtime
+  supervisor, and lifecycle tests.
+- Tests: Host Agent/process lifecycle 173/173 with files serialized; Host
+  typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: migrated ACP/external-command lifecycle identity and governance facts
+  onto `PreparedAgentInvocation`, removing two hand-built metadata copies while
+  retaining adapter execution/event order.
+- Read: ACP/external-command adapters, agent-runtime invocation projection, and
+  cross-entrypoint lifecycle tests.
+- Tests: Host Agent lifecycle suites 157/157 with test files serialized; Host
+  typecheck passed after rebuilding agent-runtime.
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: mechanically extracted the indexed `delegate_agent` router from the
+  Host composition file without changing its target, policy, concurrency, or
+  execution behavior.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/host/src/indexed-delegate-tool.ts`, and Host Agent tool tests.
+- Tests: Host tools 100/100; Host typecheck passed after rebuilding
+  agent-runtime.
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: established normalized lifecycle characterization across configured
+  direct/indexed/parallel delegates, dynamic/promoted Agent runs, background
+  Agent tasks, ACP/external adapters, and direct CLI delegates.
+- Read: Host Agent tools/adapters/task runner/direct delegate runner and
+  parent-visible lifecycle events.
+- Tests: Host lifecycle suites 157/157; agent-runtime Agent tests 38/38; direct
+  CLI delegate 1/1; test typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: closed Agent argument-level concurrency gaps, removed fuzzy delegation
+  reuse, and added collision-resistant ACP/external child run ids.
+- Read: Host dynamic/configured/indexed delegate assembly, spawn grants, ACP and
+  external-command adapters, plus Core/agent-runtime boundaries.
+- Tests: Host Agent/tool focused suites 155/155; Core run 127/127;
+  agent-runtime Agent tests 38/38; affected typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: enforced workspace-write protection for ACP/external delegates with
+  `workspaceAccess:none`, including macOS deny-list compilation and unavailable
+  runtime failure, while retaining private cwd scratch writes.
+- Read: Host ACP/external delegate adapters and shell-sandbox source/tests.
+- Tests: shell-sandbox plus Host ACP/external focused suites 40/40; Host
+  typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-13T22:42:00+0800
+- Scope: extracted the fresh Host run-policy factory and reused it in runtime
+  plus direct-core start/resume, removing duplicated/default-drifted policy
+  assembly without moving mutable state into the security plan.
+- Read: Host run policy/runtime/config, CLI direct-core start/resume, Core
+  mutation policy, and focused tests.
+- Tests: Host policy/security-plan/tools/protocol 155/155; CLI 152/152; Core
+  environment/policy 35/35; shell-tool 42/42; affected typechecks/builds passed.
+
+- Status: Verified
+- Date: 2026-07-13T22:30:00+0800
+- Scope: foreground Shell snapshots now detect symlink mutations and rollback
+  reuses Core containment for binary restoration. Sandbox config/schema wording
+  now distinguishes no-fallback enforcement from OS filesystem guarantees.
+- Read: Host snapshot/shell/config schema, Core LocalWorkspace, shell-sandbox,
+  generated config schema, and configuration guide.
+- Tests: Host config/snapshot/tools 161/161; Host typecheck; schema check;
+  shell-sandbox 14/14 and build; Core workspace/checkpoint 31/31 and build.
+
+- Status: Verified
+- Date: 2026-07-13T22:21:00+0800
+- Scope: read-only run access now strengthens local extension, Workflow Script,
+  and explicit run-bound command-hook process sandboxes without changing the
+  configured main-Shell status reported by capability inspection.
+- Read: Host security plan, runtime assembly, Workflow node API/hooks, MCP
+  preparation boundary, and focused tests.
+- Tests: Host typecheck; security-plan/workflow-hooks 78/78;
+  protocol/tools/workflows 185/185; MCP adapter 34/34; CLI inspect 11/11.
+
+- Status: Verified
+- Date: 2026-07-13
+- Scope: brought ACP child delegates under the configured sandbox launch path
+  and added read-write untracked-access audit parity with external commands.
+- Read: Host ACP/external delegate assembly, delegate runner, runtime, and ACP
+  client worker.
+- Tests: Host ACP/external/tool tests 122/122; ACP adapter 2/2; typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-13
+- Scope: moved OS-specific no-write/positive-root compilation and argv sandbox
+  availability/fallback decisions out of Host adapters while retaining their
+  distinct process lifecycles.
+- Read: Host traced process runner, external command agent, Skill inline shell,
+  and shell-sandbox source/tests.
+- Tests: Host focused process suites 37/37 and Host typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-13
+- Scope: extracted the immutable Host run security plan shared by run
+  preparation and capability inspection; removed CLI's snapshot-less effective
+  tool/delegate/sandbox fallback.
+- Read: `packages/host/src/runtime.ts`, `packages/host/src/run-access.ts`,
+  `packages/host/src/run-security-plan.ts`, `packages/cli/src/cli.ts`, and
+  focused Host/CLI tests.
+- Tests: Host run-security/client/config/tools/protocol tests 222/222 passed;
+  Host and CLI typechecks passed; Host build passed; CLI capability-inspect
+  tests 13/13 passed.
 
 - Status: Verified
 - Date: 2026-07-12T23:35:00+0800

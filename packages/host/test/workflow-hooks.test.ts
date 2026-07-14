@@ -1862,6 +1862,50 @@ describe("createWorkflowProjectionHooks", () => {
     }
   });
 
+  it("fails closed before launching read-only script nodes when sandboxing is unavailable", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-workflow-"));
+    try {
+      await writeFile(join(workspace, "node.mjs"), "process.exit(0);\n");
+      const run = runRecord();
+      const events = new EventLog(run.id);
+      const projection = createWorkflowProjectionHooks({
+        workspaceRoot: workspace,
+        workflowRunId: "wf_script_read_only",
+        allowScriptWrite: false,
+        sandboxRuntime: unavailableRuntime(),
+        definition: {
+          assetName: "scripted",
+          contentHash: "hash",
+          sourceDir: workspace,
+          nodes: [
+            {
+              id: "script",
+              execute: "script",
+              body: "",
+              script: { path: "node.mjs", capabilities: ["read"] },
+            },
+          ],
+        },
+      });
+
+      const turn = await runWorkflowHooks({
+        hooks: projection.hooks,
+        hook: "TurnStart",
+        run,
+        payload: {},
+        events,
+      });
+
+      expect(turn.status).toBe("blocked");
+      expect(projection.getState()).toMatchObject({
+        status: "failed",
+        failure: { reason: expect.stringContaining("sandbox") },
+      });
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
   it("fails closed when script nodes declare unsupported capabilities", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "sparkwright-workflow-"));
     try {
@@ -4179,6 +4223,58 @@ describe("createConfiguredWorkflowHooks", () => {
           runtime: "test-unavailable",
           available: false,
           fallbackReason: expect.stringContaining("test-unavailable"),
+          enforced: true,
+        },
+      });
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed for read-only command hooks even when configured sandbox mode is off", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-hook-"));
+    try {
+      const run = {
+        ...runRecord(),
+        metadata: { shouldWrite: false },
+      };
+      const events = new EventLog(run.id);
+      const hooks = createConfiguredWorkflowHooks({
+        workspaceRoot: workspace,
+        sandbox: { mode: "off" },
+        sandboxRuntime: unavailableRuntime(),
+        hooks: [
+          {
+            name: "read-only-check",
+            hook: "Stop",
+            action: {
+              type: "command",
+              command: process.execPath,
+              args: ["-e", "console.log('should not run')"],
+              blockOnFailure: true,
+            },
+          },
+        ],
+      });
+
+      const result = await runWorkflowHooks({
+        hooks,
+        hook: "Stop",
+        run,
+        payload: {},
+        events,
+      });
+
+      expect(result.status).toBe("blocked");
+      if (result.status !== "blocked") {
+        throw new Error("expected blocked workflow hook result");
+      }
+      expect(result.block.metadata).toMatchObject({
+        sandbox: {
+          sandboxed: false,
+          mode: "enforce",
+          runtime: "test-unavailable",
+          available: false,
           enforced: true,
         },
       });

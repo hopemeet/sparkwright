@@ -185,6 +185,22 @@ describe("LocalProcessEnvironment", () => {
       status: "completed",
       stdout: "/workspace",
     });
+
+    await expect(
+      environment.executeShell({ command: "cat", cwd: "packages/core" }),
+    ).resolves.toMatchObject({
+      status: "completed",
+      // The policy resolves against the workspace for its decision but does
+      // not rewrite the public request passed to an embedder executor.
+      stdout: "packages/core",
+    });
+
+    await expect(
+      environment.executeShell({ command: "cat", cwd: "../outside" }),
+    ).resolves.toMatchObject({
+      status: "denied",
+      stderr: "Shell cwd escapes allowed roots: ../outside",
+    });
   });
 
   it("exposes shell execution as a governed tool", async () => {

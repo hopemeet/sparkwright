@@ -51,6 +51,10 @@ policy requires approval
   clients that need write approvals should start write-enabled runs
   (`shouldWrite: true`) and rely on `permissionMode` plus normal approval
   policy for auto/manual responses.
+- Host freezes resolved access fields into a run-local security plan before
+  assembling policies and process capabilities. This does not share the Core
+  mutation policy: approval state and `writtenPaths` remain newly constructed
+  for each run.
 - Trace verification checks that resolutions do not exceed requests.
 - `approvals.cronMode` is a config default for cron command permission mode;
   named approval behavior remains owned by the normal core/host approval path,
@@ -113,6 +117,14 @@ policy requires approval
 - Approval UX and diagnostic reporting are split across CLI, TUI, host, and core trace.
 
 ## Last Verified
+
+- Status: Read-only
+- Date: 2026-07-13
+- Scope: checked Host security-plan extraction; access values are reused within
+  one run, while approval routing and Core per-run mutation-policy state remain
+  unchanged.
+- Read: Host run access/security plan/runtime and Core policy construction.
+- Tests: Host focused suite 222/222; Host typecheck passed.
 
 - Status: Read-only
 - Date: 2026-07-12T20:00:00+0800

@@ -475,6 +475,13 @@ Each agent should have explicit context, tools, policy, and trace attribution. A
 
 Early multi-agent orchestration can live outside core by composing runs or child runs. Core should only absorb multi-agent primitives after trace, budgeting, cancellation, and parent-child semantics are clear.
 
+The in-process child helper now passes opaque accounts returned by
+`RunHandle.getChildRunBudgetAccounts()` into child `CreateRunOptions`. Embedders
+should propagate this protocol through `spawnSubAgent()` instead of inspecting
+or recreating counters. It makes siblings and deeper descendants share each
+ancestor's descendant-tree work ceiling while preserving each run's local
+budget; it does not account for work hidden inside external processes.
+
 Agent profiles that affect prompt behavior should become `ContextItem` values
 or named prompt sections. Agent runtimes should compose runs or use child-run
 helpers; they should not fork the core run loop to create a private prompt
@@ -822,8 +829,18 @@ async function runChildAgent(
 `@sparkwright/agent-runtime` ships the runnable helpers that enforce this
 contract. Use them directly rather than rewriting the wiring:
 
+Before lifecycle execution, all built-in transports construct a serializable
+`PreparedAgentInvocation`. Its `admissionState:"admission_pending"` is a
+pre-start data state for governance/supervisor migration; it is not yet a new
+raw event. The structure intentionally excludes live models, tools, policies,
+emitters, run handles, and process handles.
+`AgentSupervisor` consumes that data and owns requested/admitted/started plus
+exactly-one-terminal projection. Adapters must complete governance admission
+before reporting started; an admission failure is requested -> failed.
+
 ```ts
 import {
+  prepareAgentInvocation,
   spawnSubAgent,
   createAgentTool,
   mountAgentTool,

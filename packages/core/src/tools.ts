@@ -628,6 +628,13 @@ export function isToolConcurrencySafe(
   ) {
     return tool.isConcurrencySafe(args as never);
   }
+  // Argument-dependent policy can strengthen a statically read-only tool into
+  // a risky or mutating call. Without an explicit per-argument concurrency
+  // classifier, scheduling it concurrently would happen before that stronger
+  // policy is resolved by the execution gate. Fail closed to serial execution.
+  if ("policyForArgs" in tool && typeof tool.policyForArgs === "function") {
+    return false;
+  }
   if (tool.policy?.risk === "risky" || tool.policy?.risk === "denied") {
     return false;
   }

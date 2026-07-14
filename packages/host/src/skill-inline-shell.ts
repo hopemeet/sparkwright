@@ -1,10 +1,10 @@
-import { realpath } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { EventEmitter, RunId } from "@sparkwright/core";
 import type { InlineShellRunner } from "@sparkwright/skills";
 import {
   createPlatformShellSandboxRuntime,
-  filesystemIsolationForRuntime,
+  enforceNoWriteShellSandbox,
+  extendShellSandboxReadAccess,
   ResolvedShellSandboxConfig,
   type ShellSandboxRuntime,
 } from "@sparkwright/shell-sandbox";
@@ -131,54 +131,10 @@ async function restrictSkillScriptSandbox(
   runtime: ShellSandboxRuntime,
 ): Promise<ResolvedShellSandboxConfig | undefined> {
   if (!sandbox) return undefined;
-  const workspaceDenyWrite =
-    workspaceRoot === undefined ? [] : await resolvePathVariants(workspaceRoot);
-  const isolation = filesystemIsolationForRuntime(runtime);
-  const denyWrite =
-    workspaceDenyWrite.length > 0 && isolation === "deny-list-guard"
-      ? uniquePaths([...sandbox.filesystem.denyWrite, ...workspaceDenyWrite])
-      : isolation === "bind-allowlist"
-        ? []
-        : sandbox.filesystem.denyWrite;
-
-  return {
-    ...sandbox,
-    mode: "enforce",
-    failIfUnavailable: true,
-    filesystem: {
-      ...sandbox.filesystem,
-      allowWrite: [],
-      denyWrite,
-      tmp: true,
-    },
-  };
-}
-
-async function resolvePathVariants(path: string): Promise<string[]> {
-  const resolved = resolve(path);
-  const variants = [resolved, ...macOSPrivatePathVariants(resolved)];
-  try {
-    const real = await realpath(resolved);
-    variants.push(real, ...macOSPrivatePathVariants(real));
-  } catch {
-    /* Non-existent paths are still normalized above and denied by prefix. */
-  }
-  return uniquePaths(variants);
-}
-
-function macOSPrivatePathVariants(path: string): string[] {
-  const aliases = ["/var", "/tmp", "/etc"];
-  const variants: string[] = [];
-  for (const alias of aliases) {
-    const privateAlias = `/private${alias}`;
-    if (path === alias || path.startsWith(`${alias}/`)) {
-      variants.push(`/private${path}`);
-    }
-    if (path === privateAlias || path.startsWith(`${privateAlias}/`)) {
-      variants.push(path.slice("/private".length));
-    }
-  }
-  return variants;
+  return enforceNoWriteShellSandbox(sandbox, {
+    runtime,
+    denyWriteRoots: workspaceRoot ? [workspaceRoot] : [],
+  });
 }
 
 async function sandboxWithSkillRead(
@@ -186,19 +142,7 @@ async function sandboxWithSkillRead(
   skillDir: string,
 ): Promise<ResolvedShellSandboxConfig | undefined> {
   if (!sandbox) return undefined;
-  const allowRead = [...sandbox.filesystem.allowRead, resolve(skillDir)];
-  try {
-    allowRead.push(await realpath(skillDir));
-  } catch {
-    /* Missing directories fail later in the process runner. */
-  }
-  return {
-    ...sandbox,
-    filesystem: {
-      ...sandbox.filesystem,
-      allowRead: uniquePaths(allowRead),
-    },
-  };
+  return extendShellSandboxReadAccess(sandbox, [skillDir]);
 }
 
 function normalizeInlineShellOutput(
@@ -212,16 +156,4 @@ function normalizeInlineShellOutput(
     truncated = true;
   }
   return truncated ? `${normalized}...[truncated]` : normalized;
-}
-
-function uniquePaths(paths: readonly string[]): string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const path of paths) {
-    const resolved = resolve(path);
-    if (seen.has(resolved)) continue;
-    seen.add(resolved);
-    out.push(resolved);
-  }
-  return out;
 }

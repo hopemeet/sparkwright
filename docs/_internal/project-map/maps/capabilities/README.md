@@ -33,6 +33,14 @@ config + workspace capability roots
 
 - Capabilities affect model input, tool availability, policy, or side effects and must be trace-visible.
 - Capability inspection is diagnostic; it does not replace run trace.
+- Live Host capability catalogs may wrap actual workspace mutation execution in
+  a process-local lease after filtering. This is runtime coordination, not a
+  new capability or inspection field; inert `capability.inspect` catalogs do
+  not acquire ownership.
+- Effective tool, delegate, access, and shell sandbox facts in CLI inspection
+  come from Host `CapabilitySnapshot`. CLI may add layered/config diagnostics,
+  but Host inspection failure is not permission to synthesize a second
+  effective runtime inventory.
 - `CapabilitySnapshot.rules.workflow` and `rules.events` are diagnostic only.
   Host builds workflow descriptors from configured workflow hooks, verification
   invariants, and documented-command built-in invariants, and event descriptors
@@ -198,6 +206,38 @@ config + workspace capability roots
 - Do not add one-off direct-core/cron tools for capability smokes; exercise the same coding tools used by host runs.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: checked catalog-level workspace mutation coordination; exposed tools,
+  descriptors, selectors, and capability inspection payloads are unchanged.
+- Read: Host catalog/runtime assembly, capability snapshot construction, and
+  mutation lease wrapper.
+- Tests: focused Host tools/coordinator suites, all workspace tests, and release
+  smokes passed. Touched files are format-clean; the global format scan is
+  blocked only by pre-existing dirty proposal docs outside this change.
+
+- Status: Read-only
+- Date: 2026-07-13
+- Scope: ACP execution gained sandbox/access parity; configured capability
+  membership and `CapabilitySnapshot` shape did not change.
+- Read: Host ACP delegate descriptor/runtime assembly and capability snapshot.
+- Tests: Host focused suites and CLI delegate tests passed.
+
+- Status: Read-only
+- Date: 2026-07-13
+- Scope: checked filesystem grant/launch decision extraction; capability
+  membership and protocol snapshot fields did not change.
+- Read: Host/MCP adapters and shell-sandbox public decision types.
+- Tests: focused Host, MCP, and shell-sandbox tests passed.
+
+- Status: Verified
+- Date: 2026-07-13
+- Scope: confirmed Host snapshot ownership for effective CLI capability facts;
+  no protocol field or runtime capability membership changed.
+- Read: Host capability inspection/security plan, CLI report assembly, and
+  protocol `CapabilitySnapshot`.
+- Tests: Host focused suite 222/222; CLI capability-inspect tests 13/13.
 
 - Status: Verified
 - Date: 2026-07-12T23:45:00+0800

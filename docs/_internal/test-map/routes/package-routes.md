@@ -6,6 +6,22 @@ contracts, public schema, package exports, or generated `dist`.
 
 ## Core
 
+### `packages/core/src/workspace.ts` or `workspace-checkpoint.ts`
+
+Run:
+
+```bash
+npm --workspace @sparkwright/core test -- test/workspace.test.ts test/workspace-checkpoint.test.ts test/policy.test.ts
+npm --workspace @sparkwright/core run typecheck
+```
+
+Sensitivity:
+
+- Cover symlinks that escape the workspace and symlinks whose targets remain
+  inside it; realpath containment alone does not distinguish the latter.
+- Nonexistent descendants and the workspace root have different semantics.
+  Do not replace focused cases with one generic path-helper assertion.
+
 ### `packages/core/src/run.ts`
 
 Run:
@@ -40,6 +56,22 @@ Sensitivity:
 
 ## Shell Tool
 
+### `packages/shell-sandbox/src/*`
+
+Run:
+
+```bash
+npm --workspace @sparkwright/shell-sandbox test
+npm --workspace @sparkwright/shell-sandbox run typecheck
+npm --workspace @sparkwright/shell-sandbox run build
+npm --workspace @sparkwright/host test -- test/traced-process-runner.test.ts test/external-command-agent.test.ts test/skill-inline-shell.test.ts
+npm --workspace @sparkwright/mcp-adapter test
+```
+
+Downstream packages import shell-sandbox through `dist`; build it before Host
+or MCP tests. Treat current-platform integration as environment-specific and
+keep warn/enforce fallback assertions on injected runtimes.
+
 ### `packages/shell-tool/src/*`
 
 Run:
@@ -60,6 +92,35 @@ Reason: downstream packages import `@sparkwright/shell-tool` through package
 exports, which point at `dist`.
 
 ## Host
+
+### `packages/host/src/acp-child-agent.ts` or ACP worker launch
+
+Run:
+
+```bash
+npm --workspace @sparkwright/acp-client-adapter test
+npm --workspace @sparkwright/acp-client-adapter run build
+npm --workspace @sparkwright/host test -- test/acp-child-agent.test.ts test/external-command-agent.test.ts test/tools.test.ts
+npm --workspace @sparkwright/host run typecheck
+```
+
+Assert parent write denial before launch, sandbox enforce failure, private-cwd
+behavior, and the untracked-access marker for approved read-write delegates.
+Do not require a real installed ACP binary for deterministic focused coverage.
+
+### `packages/host/src/run-access.ts` or `run-security-plan.ts`
+
+Run:
+
+```bash
+npm --workspace @sparkwright/host test -- test/run-security-plan.test.ts test/client-run.test.ts test/protocol.test.ts
+npm --workspace @sparkwright/host run typecheck
+```
+
+Add the capability-inspect route when effective access, sandbox status, or tool
+inventory consumption changes. Keep mutable policy-state tests separate: a
+frozen security plan must never share Core mutation-policy instances between
+runs.
 
 ### `packages/host/src/config.ts` or `config-zod-schema.ts`
 

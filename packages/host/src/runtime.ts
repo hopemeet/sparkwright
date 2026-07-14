@@ -14,12 +14,8 @@ import {
   createSessionRunStoreFactory,
   loadSessionCompactArtifact,
   loadTraceEventsFile,
-  createPermissionModePolicy,
   createRun,
   createToolSearchTool,
-  createWorkspaceMutationPolicy,
-  createWorkspaceReadScopePolicy,
-  resolveRunConfidentialPaths,
   defineTool,
   FileSessionStore,
   EventLog,
@@ -133,9 +129,11 @@ import { CronStore, defaultCronRoot } from "@sparkwright/cron";
 import { RECOMMENDED_FOREGROUND_TIMEOUT_MS } from "@sparkwright/shell-tool";
 import { DurableCommandDispatcher } from "@sparkwright/server-runtime";
 import {
-  createPlatformShellSandboxRuntime,
-  describeShellSandboxStatus,
-  resolveShellSandboxConfig,
+  createWorkspaceMutationAdmission,
+  processWorkspaceLeaseCoordinator,
+  type WorkspaceLeaseCoordinator,
+} from "./workspace-agent-arbiter.js";
+import {
   type ResolvedShellSandboxConfig,
   type ShellSandboxStatus,
 } from "@sparkwright/shell-sandbox";
@@ -200,10 +198,9 @@ import {
   resolveRunAccessFields,
   type ResolvedRunAccess,
 } from "./run-access.js";
-import {
-  existingSkillRoots,
-  resolveSkillRootsForRuntime,
-} from "./skill-roots.js";
+import { prepareHostRunSecurityPlan } from "./run-security-plan.js";
+import { createHostRunPolicy } from "./run-policy.js";
+import { existingSkillRoots } from "./skill-roots.js";
 import { nextMessageId, nowIso } from "./connection.js";
 import {
   createModel,
@@ -224,6 +221,7 @@ import {
   AGENT_WORKSPACE_WRITE_CHILD_TOOLS,
   agentWorkspaceWriteGrantApprovalSummaryForPayload,
   agentWorkspaceWriteGrantPolicyForPayload,
+  isAgentSpawnRequestConcurrencySafe,
   parseAgentAllowedToolsFromRecord,
   parseAgentWorkspaceWriteGrantFromRecord,
   resolveAgentSpawnToolRequest,
@@ -238,6 +236,8 @@ import {
   createExternalCommandDelegateTool,
   externalCommandConfigFromAgentProfile,
 } from "./external-command-agent.js";
+import { createDelegateAgentTool } from "./indexed-delegate-tool.js";
+export { createDelegateAgentTool } from "./indexed-delegate-tool.js";
 import { createSkillInlineShellRunner } from "./skill-inline-shell.js";
 import {
   createSkillUsageRecorder,
@@ -302,45 +302,6 @@ function devSkillsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
 const WORKFLOW_SCOPED_TOOL_SEARCH_ORIGIN =
   "@sparkwright/host.workflow-scoped-tool-search";
 
-function createHostRunPolicy(input: {
-  permissionMode: PermissionMode;
-  shouldWrite: boolean;
-  targetPath?: string;
-  confidentialPaths?: readonly string[];
-  confidentialDefaults?: boolean;
-  writeGuardrails?: WriteGuardrailsConfig;
-}): Policy {
-  // Config write guardrails override the built-in defaults when present. The
-  // defaults: explicit --target runs stay bounded to that single file, while
-  // untargeted write runs get a small multi-file budget so real code+test
-  // changes can complete. In-place edits (edit_anchored_text / apply_patch)
-  // need to remove the lines they replace, so deletions default to permitted.
-  return createLayeredPolicy([
-    createPermissionModePolicy({ mode: input.permissionMode }),
-    createWorkspaceMutationPolicy({
-      allowWorkspaceWrites: input.shouldWrite,
-      allowedPaths: input.targetPath ? [input.targetPath] : undefined,
-      maxWriteFiles:
-        input.writeGuardrails?.maxFiles ?? (input.targetPath ? 1 : 4),
-      maxDiffLines: input.writeGuardrails?.maxDiffLines ?? 200,
-      allowDeletions: input.writeGuardrails?.allowDeletions ?? true,
-    }),
-    createWorkspaceReadScopePolicy({
-      confidentialPaths: resolveRunConfidentialPaths({
-        confidentialDefaults: input.confidentialDefaults,
-        confidentialPaths: input.confidentialPaths,
-      }),
-    }),
-  ]);
-}
-
-function mergeConfidentialPaths(
-  ...groups: Array<readonly string[] | undefined>
-): string[] | undefined {
-  const merged = groups.flatMap((group) => group ?? []);
-  return merged.length > 0 ? [...new Set(merged)] : undefined;
-}
-
 type RuntimeMcpConfig = Omit<CapabilityMcpConfig, "servers"> & {
   servers?: McpServerConfig[];
 };
@@ -385,7 +346,7 @@ async function createRuntimeMcpTools(input: {
   workspaceRoot: string;
   emitter?: EventEmitter;
   agentId?: string;
-  shellSandbox?: ReturnType<typeof resolveShellSandboxConfig>;
+  shellSandbox?: ResolvedShellSandboxConfig;
 }): Promise<PreparedMcp | null> {
   const config = input.config;
   if (!config?.servers?.length) return null;
@@ -464,6 +425,8 @@ export interface RuntimeOptions {
   extraMcpServers?: readonly McpServerConfig[];
   /** Called to deliver host events to the client. */
   emit: (event: HostEvent) => void;
+  /** @internal Process-scoped workspace mutation coordinator override. */
+  workspaceLeaseCoordinator?: WorkspaceLeaseCoordinator;
 }
 
 interface PendingApproval {
@@ -844,6 +807,8 @@ export interface HostAgentTaskRunnerDeps {
   ) => ReturnType<typeof createSessionRunStoreFactory>;
   maxDepth?: number;
   sessionId?: string;
+  workspaceRoot?: string;
+  workspaceLeaseCoordinator?: WorkspaceLeaseCoordinator;
 }
 
 /**
@@ -888,6 +853,8 @@ export async function runHostAgentTask(
     backgroundTasks: deps.backgroundTasks,
     foregroundTimeoutMs: deps.foregroundTimeoutMs,
     taskId: String(controller.taskId),
+    workspaceRoot: deps.workspaceRoot,
+    workspaceLeaseCoordinator: deps.workspaceLeaseCoordinator,
   });
   const ctx: RuntimeContext = {
     run: parent.record,
@@ -2018,10 +1985,7 @@ export class HostRuntime {
   private async prepareHostRunEnvironment(input: {
     goal: string;
     modelRef?: string;
-    access?: ResolvedRunAccess;
-    permissionMode: PermissionMode;
-    shouldWrite: boolean;
-    backgroundTasks: BackgroundTaskPolicy;
+    access: ResolvedRunAccess;
     sessionId: string;
     targetPath?: string;
     confidentialPaths?: readonly string[];
@@ -2054,6 +2018,8 @@ export class HostRuntime {
     }
 
     const workspaceRoot = this.opts.workspaceRoot;
+    const workspaceLeaseCoordinator =
+      this.opts.workspaceLeaseCoordinator ?? processWorkspaceLeaseCoordinator;
     const workspace = new LocalWorkspace(workspaceRoot);
     const sessionRootDir =
       this.opts.sessionRootDir ?? defaultSessionRootDir(workspaceRoot);
@@ -2073,28 +2039,19 @@ export class HostRuntime {
     );
     const agentConfig = loadedConfig.config.capabilities?.agents;
     const writeGuardrails = loadedConfig.config.write;
-    const confidentialPaths = mergeConfidentialPaths(
-      loadedConfig.config.confidentialPaths,
-      input.confidentialPaths,
-    );
-    const confidentialDefaults =
-      input.confidentialDefaults ?? loadedConfig.config.confidentialDefaults;
-    const skillRoots = resolveSkillRootsForRuntime(
+    const securityPlan = await prepareHostRunSecurityPlan({
       workspaceRoot,
-      skillConfig?.roots,
-    );
-    const shellSandbox = await inspectShellSandboxStatus({
-      workspaceRoot,
-      shellConfig,
-      skillRoots: skillRoots.map((root) => root.root),
-      configPaths: loadedConfig.attempted.map((entry) => entry.path),
+      access: input.access,
+      loadedConfig,
+      requestConfidentialPaths: input.confidentialPaths,
+      requestConfidentialDefaults: input.confidentialDefaults,
     });
-    const mcpShellSandbox = resolveShellSandboxConfig({
-      workspaceRoot,
-      config: shellConfig?.sandbox,
-      skillRoots: skillRoots.map((root) => root.root),
-      extraForcedDenyWrite: loadedConfig.attempted.map((entry) => entry.path),
-    });
+    const runAccess = securityPlan.access;
+    const confidentialPaths = securityPlan.confidentialPaths;
+    const confidentialDefaults = securityPlan.confidentialDefaults;
+    const skillRoots = securityPlan.skillRoots;
+    const shellSandbox = securityPlan.shellSandboxStatus;
+    const mcpShellSandbox = securityPlan.shellSandbox;
     const skillPreprocess = createSkillPreprocessOptions({
       skillConfig,
       emitter: pendingExtensionEvents,
@@ -2206,8 +2163,8 @@ export class HostRuntime {
     );
     const toolConfig = applyMainAgentToolUse(baseToolConfig, mainAgent);
     const parentRunPolicy = createHostRunPolicy({
-      permissionMode: input.permissionMode,
-      shouldWrite: input.shouldWrite,
+      permissionMode: runAccess.permissionMode,
+      shouldWrite: runAccess.shouldWrite,
       targetPath: input.targetPath,
       confidentialPaths,
       confidentialDefaults,
@@ -2216,6 +2173,7 @@ export class HostRuntime {
     const dynamicChildToolCatalog = createDynamicChildToolCatalog({
       workspaceRoot,
       toolConfig,
+      workspaceLeaseCoordinator,
     });
     const delegateChildToolCatalog = createConfiguredDelegateChildToolCatalog({
       workspaceRoot,
@@ -2223,6 +2181,7 @@ export class HostRuntime {
       shell: shellConfig,
       skillRoots: skillRoots.map((root) => root.root),
       configPaths: loadedConfig.attempted.map((entry) => entry.path),
+      workspaceLeaseCoordinator,
     });
     const derivedAgents = deriveConfiguredAgents(
       mainAgent,
@@ -2289,8 +2248,9 @@ export class HostRuntime {
       skillRoots: skillRoots.map((root) => root.root),
       configPaths: loadedConfig.attempted.map((entry) => entry.path),
       childRunStoreFactory,
-      allowReadWriteWorkspaceAccess: input.shouldWrite,
+      allowReadWriteWorkspaceAccess: runAccess.shouldWrite,
       maxDepth: agentConfig?.maxDepth,
+      workspaceLeaseCoordinator,
     });
     const directDelegates = filterDirectDelegatesForExposure(
       delegateRouting.delegates,
@@ -2324,15 +2284,17 @@ export class HostRuntime {
           parentRunPolicy,
           approvalResolver,
           childRunStoreFactory,
-          allowReadWriteWorkspaceAccess: input.shouldWrite,
+          allowReadWriteWorkspaceAccess: runAccess.shouldWrite,
           maxDepth: agentConfig?.maxDepth,
+          workspaceRoot,
+          workspaceLeaseCoordinator,
         })
       : undefined;
     const delegateDescriptors = describeConfiguredDelegateTools({
       delegates: delegateRouting.delegates,
       derivedAgents,
       delegateChildToolCatalog,
-      allowReadWriteWorkspaceAccess: input.shouldWrite,
+      allowReadWriteWorkspaceAccess: runAccess.shouldWrite,
       routingByProfileId: delegateRouting.routingByProfileId,
     });
     const subagentMaxDepth = agentConfig?.maxDepth;
@@ -2347,7 +2309,9 @@ export class HostRuntime {
       foregroundTimeoutMs:
         shellConfig?.foregroundTimeoutMs ?? RECOMMENDED_FOREGROUND_TIMEOUT_MS,
       taskManager: this.taskManager,
-      backgroundTasks: input.backgroundTasks,
+      backgroundTasks: runAccess.backgroundTasks,
+      workspaceRoot,
+      workspaceLeaseCoordinator,
     });
     // Publish spawn deps for the registered `agent` background task kind so a
     // `task_create(kind:"agent")` call can drive a child run that the task,
@@ -2361,14 +2325,16 @@ export class HostRuntime {
       childRunStoreFactory,
       maxDepth: subagentMaxDepth,
       sessionId: input.sessionId,
+      workspaceRoot,
       taskManager: this.taskManager,
-      backgroundTasks: input.backgroundTasks,
+      backgroundTasks: runAccess.backgroundTasks,
       foregroundTimeoutMs:
         shellConfig?.foregroundTimeoutMs ?? RECOMMENDED_FOREGROUND_TIMEOUT_MS,
+      workspaceLeaseCoordinator,
     };
     const toolCatalog = createMainHostToolCatalog({
       workspaceRoot,
-      skillRoots,
+      skillRoots: [...skillRoots],
       toolConfig,
       taskManager: this.taskManager,
       getParentRunId: () => requireActiveRunId(runIdHolder.value),
@@ -2381,8 +2347,9 @@ export class HostRuntime {
       delegateParallelTool,
       dynamicSpawnTool,
       shell: shellConfig,
-      backgroundTasks: input.backgroundTasks,
+      backgroundTasks: runAccess.backgroundTasks,
       configPaths: loadedConfig.attempted.map((entry) => entry.path),
+      workspaceLeaseCoordinator,
     });
     const tools = catalogToolDefinitions(toolCatalog);
     const workflows = await loadLayeredWorkflowAssets(workspaceRoot);
@@ -2553,7 +2520,7 @@ export class HostRuntime {
               ),
             readTodoLedger: () =>
               readTodoLedger(join(sessionRootDir, input.sessionId, "todo.md")),
-            allowScriptWrite: input.shouldWrite,
+            allowScriptWrite: runAccess.shouldWrite,
             agentTool: delegateAgentTool,
             delegateParallelTool: tools.find(
               (tool) => tool.name === DELEGATE_PARALLEL_TOOL_NAME,
@@ -2620,14 +2587,14 @@ export class HostRuntime {
               ...(input.targetPath ? { targetPath: input.targetPath } : {}),
               confidentialPaths: [...(confidentialPaths ?? [])],
               confidentialDefaults: confidentialDefaults ?? true,
-              shouldWrite: input.shouldWrite,
+              shouldWrite: runAccess.shouldWrite,
               accessMode:
-                input.access?.accessMode ??
+                runAccess.accessMode ??
                 accessModeFromResolvedFields(
-                  input.permissionMode,
-                  input.shouldWrite,
+                  runAccess.permissionMode,
+                  runAccess.shouldWrite,
                 ),
-              backgroundTasks: input.backgroundTasks,
+              backgroundTasks: runAccess.backgroundTasks,
             },
             definitionSnapshot: workflowDefinition,
             metadata: {
@@ -2681,7 +2648,7 @@ export class HostRuntime {
       agentTool: delegateAgentTool,
       documentedCommand: {
         goal: input.goal,
-        shouldWrite: input.shouldWrite,
+        shouldWrite: runAccess.shouldWrite,
       },
     });
     const workflowRules = describeActiveWorkflowRules({
@@ -2689,7 +2656,7 @@ export class HostRuntime {
       verification: loadedConfig.config.capabilities?.verification,
       documentedCommand: {
         goal: input.goal,
-        shouldWrite: input.shouldWrite,
+        shouldWrite: runAccess.shouldWrite,
       },
     });
     const eventRules = describeActiveEventRules({
@@ -2715,7 +2682,7 @@ export class HostRuntime {
       shellSandbox,
       shellForegroundTimeoutMs:
         shellConfig?.foregroundTimeoutMs ?? RECOMMENDED_FOREGROUND_TIMEOUT_MS,
-      shellPromotionAvailable: input.backgroundTasks === "enabled",
+      shellPromotionAvailable: runAccess.backgroundTasks === "enabled",
       workflowRules,
       eventRules,
       workflows: workflowCapabilitySummary(workflows),
@@ -2730,7 +2697,7 @@ export class HostRuntime {
       ...(input.runMetadata ?? {}),
       sessionId: input.sessionId,
       workspaceRoot,
-      permissionMode: input.permissionMode,
+      permissionMode: runAccess.permissionMode,
       traceLevel,
       ...(mcpWorkspaceCwdServers.length > 0 ? { mcpWorkspaceCwdServers } : {}),
       ...(input.modelRef ? { requestedModel: input.modelRef } : {}),
@@ -3339,9 +3306,6 @@ export class HostRuntime {
       goal: checkpoint.run.goal,
       modelRef,
       access,
-      permissionMode,
-      shouldWrite,
-      backgroundTasks: access.backgroundTasks,
       sessionId: resumeSessionId,
       targetPath: payload.targetPath,
       confidentialPaths: payload.confidentialPaths,
@@ -3616,9 +3580,6 @@ export class HostRuntime {
           : `Resume workflow ${record.assetName}`,
       modelRef: payload.model ?? this.opts.defaultModel,
       access,
-      permissionMode,
-      shouldWrite,
-      backgroundTasks: access.backgroundTasks,
       sessionId,
       targetPath: effectiveResumePayload.targetPath,
       confidentialPaths: effectiveResumePayload.confidentialPaths,
@@ -3935,9 +3896,6 @@ export class HostRuntime {
       goal: payload.goal,
       modelRef,
       access,
-      permissionMode,
-      shouldWrite,
-      backgroundTasks: access.backgroundTasks,
       sessionId,
       targetPath: payload.targetPath,
       confidentialPaths: payload.confidentialPaths,
@@ -4382,22 +4340,14 @@ export class HostRuntime {
         includeAllChildProfiles: true,
       },
     );
-    const skillRoots = resolveSkillRootsForRuntime(
-      this.opts.workspaceRoot,
-      skillConfig?.roots,
-    );
-    const shellSandbox = await inspectShellSandboxStatus({
+    const securityPlan = await prepareHostRunSecurityPlan({
       workspaceRoot: this.opts.workspaceRoot,
-      shellConfig,
-      skillRoots: skillRoots.map((root) => root.root),
-      configPaths: loadedConfig.attempted.map((entry) => entry.path),
+      access: input.access,
+      loadedConfig,
     });
-    const mcpShellSandbox = resolveShellSandboxConfig({
-      workspaceRoot: this.opts.workspaceRoot,
-      config: shellConfig?.sandbox,
-      skillRoots: skillRoots.map((root) => root.root),
-      extraForcedDenyWrite: loadedConfig.attempted.map((entry) => entry.path),
-    });
+    const skillRoots = securityPlan.skillRoots;
+    const shellSandbox = securityPlan.shellSandboxStatus;
+    const mcpShellSandbox = securityPlan.shellSandbox;
     const existingPreparedSkillRoots = await existingSkillRoots(skillRoots);
     const preparedSkills =
       existingPreparedSkillRoots.length > 0
@@ -4500,6 +4450,7 @@ export class HostRuntime {
             childRunStoreFactory: snapshotOnlyChildRunStoreFactory,
             allowReadWriteWorkspaceAccess: input.access.shouldWrite,
             maxDepth: agentConfig?.maxDepth,
+            workspaceRoot: this.opts.workspaceRoot,
           })
         : undefined;
       const dynamicSpawnTool = createDynamicSpawnAgentTool({
@@ -4513,10 +4464,11 @@ export class HostRuntime {
         parentRunPolicy: createDefaultPolicy(),
         childRunStoreFactory: snapshotOnlyChildRunStoreFactory,
         maxDepth: agentConfig?.maxDepth,
+        workspaceRoot: this.opts.workspaceRoot,
       });
       const toolCatalog = createMainHostToolCatalog({
         workspaceRoot: this.opts.workspaceRoot,
-        skillRoots,
+        skillRoots: [...skillRoots],
         toolConfig,
         taskManager: this.taskManager,
         getParentRunId: () => "run_capability_snapshot" as RunId,
@@ -5555,24 +5507,6 @@ function inlineShellCapabilitySummary(
   };
 }
 
-async function inspectShellSandboxStatus(input: {
-  workspaceRoot: string;
-  shellConfig?: ShellConfig;
-  skillRoots: readonly string[];
-  configPaths: readonly string[];
-}): Promise<ShellSandboxStatus> {
-  const config = resolveShellSandboxConfig({
-    workspaceRoot: input.workspaceRoot,
-    config: input.shellConfig?.sandbox,
-    skillRoots: input.skillRoots,
-    extraForcedDenyWrite: input.configPaths,
-  });
-  return describeShellSandboxStatus(
-    config,
-    createPlatformShellSandboxRuntime(),
-  );
-}
-
 function createSkillPreprocessOptions(input: {
   skillConfig?: CapabilitySkillsConfig;
   emitter: EventEmitter;
@@ -6340,7 +6274,6 @@ const snapshotOnlyChildRunStoreFactory = (): ReturnType<
 };
 
 const DELEGATE_PARALLEL_TOOL_NAME = "delegate_parallel";
-const DELEGATE_AGENT_TOOL_NAME = "delegate_agent";
 const DELEGATE_PARALLEL_MAX_TASKS = 8;
 
 function withDelegatedAgentContract(profile: AgentProfile): AgentProfile {
@@ -6366,13 +6299,6 @@ interface DelegateParallelSpec {
 }
 
 interface DelegateParallelTask {
-  toolName?: string;
-  agentId?: string;
-  goal: string;
-  metadata?: Record<string, unknown>;
-}
-
-interface DelegateAgentTask {
   toolName?: string;
   agentId?: string;
   goal: string;
@@ -6463,6 +6389,7 @@ export function createConfiguredDelegateTools(input: {
   configPaths?: readonly string[];
   allowReadWriteWorkspaceAccess: boolean;
   maxDepth?: number;
+  workspaceLeaseCoordinator?: WorkspaceLeaseCoordinator;
   /** Builds a session-scoped run store for the child, keyed by its agent id. */
   childRunStoreFactory: (
     childAgentId: string,
@@ -6492,6 +6419,10 @@ export function createConfiguredDelegateTools(input: {
           forbidNesting: delegate.forbidNesting ?? true,
           maxDepth: input.maxDepth,
           allowReadWriteWorkspaceAccess: input.allowReadWriteWorkspaceAccess,
+          sandbox: input.sandbox,
+          skillRoots: input.skillRoots,
+          configPaths: input.configPaths,
+          workspaceLeaseCoordinator: input.workspaceLeaseCoordinator,
         }),
       );
       continue;
@@ -6513,6 +6444,7 @@ export function createConfiguredDelegateTools(input: {
           sandbox: input.sandbox,
           skillRoots: input.skillRoots,
           configPaths: input.configPaths,
+          workspaceLeaseCoordinator: input.workspaceLeaseCoordinator,
         }),
       );
       continue;
@@ -6533,6 +6465,11 @@ export function createConfiguredDelegateTools(input: {
       description: delegateToolDescription(delegate, profile),
       requiresApproval: delegate.requiresApproval,
       policy: capabilityFacts.policyProfile.policy,
+      isConcurrencySafe: () =>
+        capabilityFacts.workspaceAccess === "none" &&
+        capabilityFacts.shellAccess === false &&
+        capabilityFacts.policyProfile.policy.risk === "safe" &&
+        capabilityFacts.policyProfile.policy.requiresApproval === false,
       forbidNesting: delegate.forbidNesting ?? true,
       delegationLedgerKey: configuredDelegateLedgerKey(profile.id, toolName),
       buildSpawnInput: async (args, parent) => {
@@ -6558,6 +6495,14 @@ export function createConfiguredDelegateTools(input: {
           ]),
           maxSteps: delegate.maxSteps ?? profile.maxSteps,
           runBudget: profile.runBudget,
+          admission: createWorkspaceMutationAdmission({
+            coordinator: input.workspaceLeaseCoordinator,
+            workspaceRoot: input.workspaceRoot,
+            mode:
+              capabilityFacts.workspaceAccess === "read_write"
+                ? "write"
+                : "read",
+          }),
           ...childWorkflowHookSpawnOptions(
             profile.id,
             input.workflowHooksForProfile,
@@ -6580,6 +6525,14 @@ export function createConfiguredDelegateTools(input: {
             agentName: profile.name,
             delegateTool: toolName,
             entrypoint: "delegate",
+            workspaceAccess:
+              capabilityFacts.workspaceAccess === "read_write"
+                ? "read_write"
+                : "read_only",
+            agentConcurrency:
+              capabilityFacts.workspaceAccess === "read_write"
+                ? "serial"
+                : "concurrent",
           },
         };
       },
@@ -6596,135 +6549,6 @@ export function createConfiguredDelegateTools(input: {
   return tools;
 }
 
-export function createDelegateAgentTool(input: {
-  delegates: CapabilityDelegateToolConfig[];
-  derivedAgents: DerivedChildAgentProfile[];
-  delegateTools: ToolDefinition[];
-}): ToolDefinition {
-  const byProfile = new Map(
-    input.derivedAgents.map((derived) => [
-      derived.effectiveProfile.id,
-      derived.effectiveProfile,
-    ]),
-  );
-  const toolByName = new Map(
-    input.delegateTools.map((tool) => [tool.name, tool]),
-  );
-  const targetByToolName = new Map<
-    string,
-    {
-      delegate: CapabilityDelegateToolConfig;
-      profile: AgentProfile;
-      toolName: string;
-      tool: ToolDefinition;
-    }
-  >();
-  const targetByAgentId = new Map<
-    string,
-    {
-      delegate: CapabilityDelegateToolConfig;
-      profile: AgentProfile;
-      toolName: string;
-      tool: ToolDefinition;
-    }
-  >();
-  for (const delegate of input.delegates) {
-    const profile = byProfile.get(delegate.profileId);
-    if (!profile) continue;
-    const toolName = delegateToolName(delegate);
-    const tool = toolByName.get(toolName);
-    if (!tool) continue;
-    const target = { delegate, profile, toolName, tool };
-    targetByToolName.set(toolName, target);
-    targetByAgentId.set(profile.id, target);
-  }
-  const availableAgentIds = [...targetByAgentId.keys()];
-  const availableToolNames = [...targetByToolName.keys()];
-  const availableHint =
-    availableAgentIds.length > 0
-      ? availableAgentIds
-          .map((agentId) => {
-            const target = targetByAgentId.get(agentId);
-            return target ? `${agentId} (${target.toolName})` : agentId;
-          })
-          .join(", ")
-      : "(none)";
-
-  const resolveTarget = (task: DelegateAgentTask) => {
-    const target = task.agentId
-      ? targetByAgentId.get(task.agentId)
-      : task.toolName
-        ? targetByToolName.get(task.toolName)
-        : undefined;
-    if (target) return target;
-    const targetName = task.agentId ?? task.toolName ?? "(missing)";
-    throw new Error(
-      `${DELEGATE_AGENT_TOOL_NAME} cannot find delegate target "${targetName}". Available agentId targets: ${availableHint}. Available toolName targets: ${availableToolNames.join(", ") || "(none)"}.`,
-    );
-  };
-
-  return defineTool({
-    name: DELEGATE_AGENT_TOOL_NAME,
-    description:
-      availableAgentIds.length > 0
-        ? `Delegate one bounded sub-task to a configured agent by agentId. Use delegate_parallel instead when multiple read-only agents should run together. Available agents: ${availableHint}.`
-        : "Delegate one bounded sub-task to a configured agent by agentId. No configured child agents are currently available.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        agentId: {
-          type: "string",
-          description:
-            "Configured agent profile id to run, for example reviewer. Prefer this and leave toolName unset.",
-        },
-        toolName: {
-          type: "string",
-          description:
-            "Legacy delegate tool name to run. Prefer agentId unless the target is only known by tool name.",
-        },
-        goal: {
-          type: "string",
-          description: "Self-contained goal for that agent.",
-        },
-        metadata: {
-          type: "object",
-          description:
-            "Optional structured metadata to attach to the child run.",
-        },
-      },
-      required: ["goal"],
-    },
-    policy: { risk: "safe" },
-    governance: {
-      origin: { kind: "local", name: "sparkwright" },
-      sideEffects: ["read"],
-      idempotency: "conditional",
-    },
-    previewArgs(args) {
-      const task = previewDelegateAgentArgs(args);
-      if (!task) return undefined;
-      const target = task.agentId ?? task.toolName;
-      return target && task.goal ? `${target}: ${task.goal}` : undefined;
-    },
-    policyForArgs(args) {
-      const task = parseDelegateAgentArgs(args);
-      const target = resolveTarget(task);
-      const delegatedArgs = delegateAgentToolArgs(task);
-      const perTarget = target.tool.policyForArgs?.(delegatedArgs);
-      return {
-        policy: perTarget?.policy ?? target.tool.policy,
-        governance: perTarget?.governance ?? target.tool.governance,
-      };
-    },
-    isReplaySafe: false,
-    async execute(args: unknown, ctx): Promise<unknown> {
-      const task = parseDelegateAgentArgs(args);
-      const target = resolveTarget(task);
-      return target.tool.execute(delegateAgentToolArgs(task), ctx);
-    },
-  });
-}
-
 export function createDelegateParallelTool(input: {
   getParent: () => ReturnType<typeof createRun> | undefined;
   delegates: CapabilityDelegateToolConfig[];
@@ -6739,6 +6563,8 @@ export function createDelegateParallelTool(input: {
   approvalResolver?: ApprovalResolver;
   allowReadWriteWorkspaceAccess: boolean;
   maxDepth?: number;
+  workspaceRoot?: string;
+  workspaceLeaseCoordinator?: WorkspaceLeaseCoordinator;
   childRunStoreFactory: (
     childAgentId: string,
   ) => ReturnType<typeof createSessionRunStoreFactory>;
@@ -6972,6 +6798,15 @@ export function createDelegateParallelTool(input: {
             ]),
             maxSteps: spec.delegate.maxSteps ?? spec.profile.maxSteps,
             runBudget: spec.profile.runBudget,
+            ...(input.workspaceRoot
+              ? {
+                  admission: createWorkspaceMutationAdmission({
+                    coordinator: input.workspaceLeaseCoordinator,
+                    workspaceRoot: input.workspaceRoot,
+                    mode: "read",
+                  }),
+                }
+              : {}),
             ...childWorkflowHookSpawnOptions(
               spec.profile.id,
               input.workflowHooksForProfile,
@@ -6994,6 +6829,8 @@ export function createDelegateParallelTool(input: {
               entrypoint: "delegate_parallel",
               parallelTool: DELEGATE_PARALLEL_TOOL_NAME,
               parallelIndex: index,
+              workspaceAccess: "read_only",
+              agentConcurrency: "concurrent",
             },
           }),
         };
@@ -7004,7 +6841,7 @@ export function createDelegateParallelTool(input: {
           if (item.mode === "cached") return item.cached;
           const { task, index, spec, spawned: child, ledgerKey } = item;
           try {
-            const result = await child.run.start();
+            const result = await child.start();
             const usage = child.run.usage();
             const summary = summarizeDelegateParallelChild({
               index,
@@ -7379,6 +7216,8 @@ export function createDynamicSpawnAgentTool(input: {
   entrypoint?: "spawn_agent" | "agent_task";
   delegateToolName?: string;
   taskId?: string;
+  workspaceRoot?: string;
+  workspaceLeaseCoordinator?: WorkspaceLeaseCoordinator;
   /**
    * When set with `taskManager`, inline spawn_agent runs in foreground up to
    * this budget and then promotes the same child run into an awaited task.
@@ -7461,6 +7300,12 @@ export function createDynamicSpawnAgentTool(input: {
           args,
           input.entrypoint ?? "spawn_agent",
         ) ?? {}
+      );
+    },
+    isConcurrencySafe(args: unknown) {
+      return isAgentSpawnRequestConcurrencySafe(
+        args,
+        input.entrypoint ?? "spawn_agent",
       );
     },
     approvalSummaryForArgs(args: unknown, options: ToolRequestPreviewOptions) {
@@ -7609,6 +7454,15 @@ export function createDynamicSpawnAgentTool(input: {
         }),
         maxSteps: childMaxSteps,
         abortSignal: childAbort.controller.signal,
+        ...(input.workspaceRoot
+          ? {
+              admission: createWorkspaceMutationAdmission({
+                coordinator: input.workspaceLeaseCoordinator,
+                workspaceRoot: input.workspaceRoot,
+                mode: toolRequest.workspaceWriteGrant ? "write" : "read",
+              }),
+            }
+          : {}),
         interactionChannel: null,
         // Persist the child's own trace/transcript under
         // `sessions/<id>/agents/<agentId>/` and register it in session.json,
@@ -7632,6 +7486,12 @@ export function createDynamicSpawnAgentTool(input: {
           capabilityGrants: {
             workspaceWrite: toolRequest.workspaceWriteGrant,
           },
+          workspaceAccess: toolRequest.workspaceWriteGrant
+            ? "read_write"
+            : "read_only",
+          agentConcurrency: toolRequest.workspaceWriteGrant
+            ? "serial"
+            : "concurrent",
         },
       });
       const completion = completeDynamicSpawnAgent({
@@ -7704,7 +7564,7 @@ async function completeDynamicSpawnAgent(
     childTools,
     childMaxSteps,
   } = input;
-  const result = await spawned.run.start();
+  const result = await spawned.start();
   const usage = spawned.run.usage();
   // A child that answered on its last allowed step may have wrapped up early
   // under the step budget; tell the parent so it can caveat rather than
@@ -8015,64 +7875,6 @@ function parseDelegateParallelArgs(args: unknown): DelegateParallelTask[] {
       ...(metadata ? { metadata } : {}),
     };
   });
-}
-
-function parseDelegateAgentArgs(args: unknown): DelegateAgentTask {
-  if (!args || typeof args !== "object") {
-    throw new Error(`${DELEGATE_AGENT_TOOL_NAME} expects an object argument.`);
-  }
-  const record = args as Record<string, unknown>;
-  const agentId = optionalTargetStringField(
-    record,
-    "agentId",
-    DELEGATE_AGENT_TOOL_NAME,
-  );
-  const toolName = optionalTargetStringField(
-    record,
-    "toolName",
-    DELEGATE_AGENT_TOOL_NAME,
-  );
-  if (!agentId && !toolName) {
-    throw new Error(
-      `${DELEGATE_AGENT_TOOL_NAME} requires agentId or toolName.`,
-    );
-  }
-  const metadata =
-    record.metadata === undefined
-      ? undefined
-      : objectField(record, "metadata", DELEGATE_AGENT_TOOL_NAME);
-  return {
-    ...(agentId ? { agentId } : {}),
-    ...(toolName ? { toolName } : {}),
-    goal: stringField(record, "goal", DELEGATE_AGENT_TOOL_NAME),
-    ...(metadata ? { metadata } : {}),
-  };
-}
-
-function previewDelegateAgentArgs(
-  args: unknown,
-): Pick<DelegateAgentTask, "agentId" | "toolName" | "goal"> | undefined {
-  const record = previewRecord(args);
-  const agentId = previewString(record.agentId).trim();
-  const toolName = previewString(record.toolName).trim();
-  const goal = previewString(record.goal).trim();
-  return goal && (agentId || toolName)
-    ? {
-        ...(agentId ? { agentId } : {}),
-        ...(toolName ? { toolName } : {}),
-        goal,
-      }
-    : undefined;
-}
-
-function delegateAgentToolArgs(task: DelegateAgentTask): {
-  goal: string;
-  metadata?: Record<string, unknown>;
-} {
-  return {
-    goal: task.goal,
-    ...(task.metadata ? { metadata: task.metadata } : {}),
-  };
 }
 
 function optionalTargetStringField(

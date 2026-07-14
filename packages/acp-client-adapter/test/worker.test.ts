@@ -13,11 +13,15 @@ import type { RuntimeContext } from "@sparkwright/core";
 describe("ExternalAcpWorker", () => {
   it("runs an external ACP agent process", async () => {
     const fixture = await createFixtureAgent();
+    let cleaned = false;
     const worker = new ExternalAcpWorker({
       command: process.execPath,
       args: [fixture.agentPath],
       cwd: fixture.cwd,
       env: process.env,
+      cleanup: async () => {
+        cleaned = true;
+      },
     });
 
     const result = await worker.run({
@@ -30,6 +34,7 @@ describe("ExternalAcpWorker", () => {
     expect(result.sessionId).toBe("session_fixture");
     expect(result.text).toContain("fixture handled: delegate this");
     expect(result.toolCallCount).toBe(1);
+    expect(cleaned).toBe(true);
   });
 
   it("wraps an external ACP agent as a governed SparkWright tool", async () => {
@@ -63,9 +68,36 @@ describe("ExternalAcpWorker", () => {
       metadata: { protocol: "acp" },
     });
   });
+
+  it("terminates the worker before returning after an ownership abort", async () => {
+    const fixture = await createFixtureAgent({
+      promptDelayMs: 10_000,
+      ignoreSigterm: true,
+    });
+    const worker = new ExternalAcpWorker({
+      command: process.execPath,
+      args: [fixture.agentPath],
+      cwd: fixture.cwd,
+      env: process.env,
+    });
+    const abort = new AbortController();
+    const pending = worker.run({
+      cwd: fixture.cwd,
+      goal: "wait until aborted",
+      signal: abort.signal,
+    });
+    setTimeout(() => abort.abort(new Error("workspace lease lost")), 50);
+
+    await expect(pending).rejects.toThrow("External ACP worker aborted");
+  });
 });
 
-async function createFixtureAgent(): Promise<{
+async function createFixtureAgent(
+  options: {
+    promptDelayMs?: number;
+    ignoreSigterm?: boolean;
+  } = {},
+): Promise<{
   cwd: string;
   agentPath: string;
 }> {
@@ -80,6 +112,8 @@ async function createFixtureAgent(): Promise<{
     `
 import { AgentSideConnection, ndJsonStream } from ${JSON.stringify(sdkUrl)};
 
+${options.ignoreSigterm ? 'process.on("SIGTERM", () => {});' : ""}
+
 class FixtureAgent {
   async initialize() {
     return { protocolVersion: 1, agentInfo: { name: "Fixture", version: "1.0.0" }, authMethods: [] };
@@ -89,6 +123,7 @@ class FixtureAgent {
   async closeSession() { return {}; }
   async cancel() {}
   async prompt(params) {
+    await new Promise((resolve) => setTimeout(resolve, ${options.promptDelayMs ?? 0}));
     const text = params.prompt.find((block) => block.type === "text")?.text ?? "";
     await this.connection.sessionUpdate({
       sessionId: params.sessionId,

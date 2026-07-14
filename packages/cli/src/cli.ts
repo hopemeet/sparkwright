@@ -12,8 +12,6 @@ import {
   FileWorkflowWorkerRegistry,
   FileWorkflowControlInbox,
   FileWorkflowChannelStore,
-  InMemoryTaskStore,
-  TaskManager,
   type TaskId,
   type TaskOutputChunk,
   type TaskRecord,
@@ -25,10 +23,6 @@ import {
   buildTraceReportFile,
   buildTraceTimelineFile,
   createSessionId,
-  createLayeredPolicy,
-  createPermissionModePolicy,
-  createWorkspaceReadScopePolicy,
-  resolveRunConfidentialPaths,
   createContextItemId,
   createRunId,
   FileSessionStore,
@@ -108,6 +102,7 @@ import {
   loadLayeredWorkflowAssets,
   loadHostConfig,
   createWorkflowJobSessionId,
+  createHostRunPolicy,
   configResolutionOrder,
   DEFAULT_DEFERRED_TOOLS,
   MAX_RUN_IMAGE_INPUT_BYTES,
@@ -124,20 +119,14 @@ import {
   delegateToolName,
   filterDirectDelegatesForExposure,
   summarizeRunInputParts,
-  describeExternalDelegateCapability,
   distillWorkflowFromSession,
   shadowWorkflowFromSession,
   existingSkillRoots,
   HostRuntime,
   createHostStartRunRequest,
-  catalogEntryOrigin,
-  canonicalToolName,
-  createMainHostToolCatalog,
   resolveCapabilityDirs,
-  resolveConfiguredToolAllowlist,
   resolveSkillRootsForRuntime,
   runConfiguredDelegate,
-  shouldAppendDiscoveryTool,
   userConfigCandidatePaths,
   userConfigPath,
   validateRunInput,
@@ -169,11 +158,7 @@ import {
   type WorkflowServiceHandoff,
 } from "@sparkwright/server-runtime";
 import { prepareMcpToolsForRun } from "@sparkwright/mcp-adapter";
-import {
-  createPlatformShellSandboxRuntime,
-  describeShellSandboxStatus,
-  resolveShellSandboxConfig,
-} from "@sparkwright/shell-sandbox";
+import { resolveShellSandboxConfig } from "@sparkwright/shell-sandbox";
 import { RECOMMENDED_FOREGROUND_TIMEOUT_MS } from "@sparkwright/shell-tool";
 import { createCliApprovalResolver } from "./cli-approval.js";
 import { createLiveEventFormatter, formatEvent } from "./event-format.js";
@@ -443,6 +428,10 @@ export async function runCli(
     ? startDirectCoreRun(
         {
           ...runInput,
+          policyTargetPath:
+            runInput.targetPathSource === "cli"
+              ? runInput.targetPath
+              : undefined,
           contextItems: contextItemsForCliInput(
             runInput.goal,
             loadedInput.input,
@@ -2997,10 +2986,6 @@ async function loadCapabilityInspectReport(
     skillRoots: skillRoots.map((root) => root.root),
     extraForcedDenyWrite: loaded.attempted.map((entry) => entry.path),
   });
-  const shellSandbox = await describeShellSandboxStatus(
-    shellSandboxConfig,
-    createPlatformShellSandboxRuntime(),
-  );
   const skills = await loadLayeredSkillReport(skillRoots, {
     includeMissingRoots: "configured",
   });
@@ -3013,7 +2998,6 @@ async function loadCapabilityInspectReport(
     workspaceRoot,
     capabilities?.agents?.profiles,
   );
-  const profileById = new Map(profiles.map((profile) => [profile.id, profile]));
 
   const commandDirs = await Promise.all(
     resolveCapabilityDirs("command", { cwd: workspaceRoot, env }).map(
@@ -3069,9 +3053,6 @@ async function loadCapabilityInspectReport(
     }
   }
 
-  // External descriptors are retained as the snapshot-less fallback. When a
-  // host runtime is available, it is the authoritative source for configured
-  // delegate descriptors, including in-process child-agent delegates.
   const delegateToolCollisions: DelegateToolCollision[] = [];
   const delegationTargets = resolveAgentDelegateTools(
     profiles,
@@ -3091,64 +3072,35 @@ async function loadCapabilityInspectReport(
     delegates: directDelegates,
     collisions: delegateToolCollisions,
   });
-  const externalDelegateDescriptors = delegationTargets.flatMap((delegate) => {
-    const profile = profileById.get(delegate.profileId);
-    if (!profile) return [];
-    const descriptor = describeExternalDelegateCapability({
-      delegate,
-      profile,
-    });
-    return descriptor ? [descriptor] : [];
-  });
-  const directExternalDelegateDescriptors = directDelegates.flatMap(
-    (delegate) => {
-      const profile = profileById.get(delegate.profileId);
-      if (!profile) return [];
-      const descriptor = describeExternalDelegateCapability({
-        delegate,
-        profile,
-      });
-      return descriptor ? [descriptor] : [];
-    },
-  );
   const runtime = await inspectRuntimeCapabilities(workspaceRoot, {
     modelName: options.modelName,
     runAccess: options.runAccess,
   });
-  const delegateDescriptors =
-    runtime?.agents.delegateTools ?? externalDelegateDescriptors;
-  const toolInventoryDelegateDescriptors =
-    runtime?.agents.delegateTools ?? directExternalDelegateDescriptors;
+  if (!runtime.shell) {
+    throw new Error("Host capability inspection did not return shell status.");
+  }
+  const delegateDescriptors = runtime.agents.delegateTools;
 
   return {
     workspace: workspaceRoot,
-    ...(runtime ? { runtime } : {}),
+    runtime,
     config: { errors: loaded.errors },
     tools: {
       ...(loaded.config.tools ?? {}),
       available: buildCapabilityToolInventory({
-        workspaceRoot,
-        config: loaded.config.tools ?? {},
         runtime,
-        mcpServers,
-        delegateTools: toolInventoryDelegateDescriptors,
+        delegateTools: delegateDescriptors,
       }),
     },
     shell: {
       foregroundTimeoutMs:
-        runtime?.shell?.foregroundTimeoutMs ??
+        runtime.shell.foregroundTimeoutMs ??
         loaded.config.shell?.foregroundTimeoutMs ??
         RECOMMENDED_FOREGROUND_TIMEOUT_MS,
-      promotionAvailable: runtime?.shell?.promotionAvailable ?? true,
+      promotionAvailable: runtime.shell.promotionAvailable ?? true,
       sandbox: {
-        mode: shellSandbox.mode,
-        failIfUnavailable: shellSandbox.failIfUnavailable,
-        runtimeId: shellSandbox.runtimeId,
-        platform: shellSandbox.platform,
-        available: shellSandbox.available,
-        networkMode: shellSandbox.networkMode,
-        filesystemIsolation: shellSandbox.filesystemIsolation,
-        effective: shellSandboxEffective(shellSandbox),
+        ...runtime.shell.sandbox,
+        effective: shellSandboxEffective(runtime.shell.sandbox),
       },
     },
     skills: {
@@ -3181,7 +3133,7 @@ async function loadCapabilityInspectReport(
 async function inspectRuntimeCapabilities(
   workspaceRoot: string,
   options: { modelName?: string; runAccess?: CliRunAccess } = {},
-): Promise<CapabilitySnapshot | undefined> {
+): Promise<CapabilitySnapshot> {
   const runtime = new HostRuntime({
     workspaceRoot,
     defaultModel: options.modelName,
@@ -3194,7 +3146,12 @@ async function inspectRuntimeCapabilities(
     permissionMode: options.runAccess?.permissionMode,
     shouldWrite: options.runAccess?.shouldWrite,
   });
-  return inspected.ok ? inspected.snapshot : undefined;
+  if (!inspected.ok) {
+    throw new Error(
+      `Host capability inspection failed: ${inspected.error.message}`,
+    );
+  }
+  return inspected.snapshot;
 }
 
 function shellSandboxEffective(input: {
@@ -3232,10 +3189,7 @@ function buildSkillInlineShellInspect(
 }
 
 function buildCapabilityToolInventory(input: {
-  workspaceRoot: string;
-  config: ToolsConfigShape;
-  runtime?: CapabilitySnapshot;
-  mcpServers: CapabilityInspectReport["mcp"]["servers"];
+  runtime: CapabilitySnapshot;
   delegateTools: Array<
     DelegateCapabilityDescriptor | CapabilityDelegateToolSummary
   >;
@@ -3243,140 +3197,14 @@ function buildCapabilityToolInventory(input: {
   const delegateByName = new Map(
     input.delegateTools.map((tool) => [tool.toolName, tool]),
   );
-  if (input.runtime) {
-    return input.runtime.tools
-      .map((tool) =>
-        runtimeToolToInspectEntry({
-          tool,
-          delegateByName,
-        }),
-      )
-      .sort((a, b) => a.name.localeCompare(b.name));
-  }
-
-  const mcpTools: CapabilityToolInspectEntry[] = input.mcpServers.flatMap(
-    (server) =>
-      (server.tools ?? []).map((tool) => ({
-        name: tool.toolName,
-        source: "mcp" as const,
-        risk: "safe" as const,
-        origin: `mcp:${server.name}`,
-        defaultExposureTier: "advanced",
-        effectiveLoading:
-          server.toolSchemaLoad === "defer" ? "deferred" : "eager",
-        ...(server.toolSchemaLoad === "defer" ? { deferred: true } : {}),
-      })),
-  );
-  const delegateTools: CapabilityToolInspectEntry[] = input.delegateTools.map(
-    (tool) => ({
-      name: tool.toolName,
-      source: "delegate" as const,
-      risk: tool.risk,
-      origin: `${tool.protocol}:${tool.profileId}`,
-      defaultExposureTier: "advanced",
-      effectiveLoading: "deferred",
-      deferred: true,
-    }),
-  );
-  // Resolve `tools.use` selectors (and `tools.allowed`) into a concrete-name
-  // allowlist using the real host catalog as the source of name→source truth, so
-  // this snapshot-less fallback applies the same selector semantics as a run
-  // instead of being selector-blind.
-  const effectiveAllowed = resolveConfiguredToolAllowlist({
-    workspaceRoot: input.workspaceRoot,
-    toolConfig: input.config,
-    mcpTools: input.mcpServers.flatMap((server) =>
-      (server.tools ?? []).map((tool) => ({
-        name: tool.toolName,
-        serverName: server.name,
-      })),
-    ),
-  });
-  const effectiveConfig: ToolsConfigShape = {
-    ...input.config,
-    allowed: effectiveAllowed,
-  };
-  const builtinTools = buildBuiltinCapabilityTools({
-    workspaceRoot: input.workspaceRoot,
-    config: effectiveConfig,
-  });
-  const available = [...builtinTools, ...mcpTools, ...delegateTools]
-    .filter((tool) => toolAllowedByConfig(tool.name, effectiveConfig))
-    .map((tool) => ({
-      ...tool,
-      ...(tool.deferred === true ||
-      toolDeferredByConfig(tool.name, input.config)
-        ? { deferred: true }
-        : {}),
-      effectiveLoading:
-        tool.deferred === true || toolDeferredByConfig(tool.name, input.config)
-          ? "deferred"
-          : (tool.effectiveLoading ?? "eager"),
-    }));
-  // tool_search is derived infrastructure (see shouldAppendDiscoveryTool): it is
-  // appended when a deferred tool survived and is exempt from allow/selector
-  // filtering — only an explicit `tools.disabled` entry opts out.
-  if (
-    shouldAppendDiscoveryTool({
-      hasDeferredTool: available.some((tool) => tool.deferred === true),
-      disabled: input.config.disabled,
-    })
-  ) {
-    available.push({
-      name: "tool_search",
-      source: "builtin",
-      risk: "safe",
-      origin: "local:@sparkwright/core",
-      defaultExposureTier: "infrastructure",
-      effectiveLoading: "eager",
-    });
-  }
-  return available.sort((a, b) => a.name.localeCompare(b.name));
-}
-
-function buildBuiltinCapabilityTools(input: {
-  workspaceRoot: string;
-  config: ToolsConfigShape;
-}): CapabilityToolInspectEntry[] {
-  const catalog = createMainHostToolCatalog({
-    workspaceRoot: input.workspaceRoot,
-    skillRoots: [],
-    taskManager: new TaskManager({ store: new InMemoryTaskStore() }),
-    getParentRunId: () => createRunId(),
-    todoPath: join(input.workspaceRoot, ".sparkwright", "inspect-todo.md"),
-    toolConfig: {
-      ...input.config,
-      disabled: [...(input.config.disabled ?? []), "tool_search"],
-    },
-  });
-  return catalog.map((entry) => ({
-    name: entry.definition.name,
-    source: "builtin",
-    ...(entry.definition.policy?.risk === "safe" ||
-    entry.definition.policy?.risk === "risky" ||
-    entry.definition.policy?.risk === "denied"
-      ? { risk: entry.definition.policy.risk }
-      : {}),
-    ...(catalogEntryOrigin(entry) ? { origin: catalogEntryOrigin(entry) } : {}),
-    canonicalName: entry.definition.canonicalName ?? entry.definition.name,
-    ...(entry.definition.legacyNames && entry.definition.legacyNames.length > 0
-      ? { legacyNames: entry.definition.legacyNames }
-      : {}),
-    ...(entry.definition.defaultExposureTier
-      ? { defaultExposureTier: entry.definition.defaultExposureTier }
-      : {}),
-    effectiveLoading:
-      entry.definition.deferLoading === true ? "deferred" : "eager",
-    ...(entry.definition.deferLoading === true ? { deferred: true } : {}),
-    ...(entry.definition.relatedTools &&
-    entry.definition.relatedTools.length > 0
-      ? { relatedTools: entry.definition.relatedTools }
-      : {}),
-    ...(entry.definition.requiresTool &&
-    entry.definition.requiresTool.length > 0
-      ? { requiresTool: entry.definition.requiresTool }
-      : {}),
-  }));
+  return input.runtime.tools
+    .map((tool) =>
+      runtimeToolToInspectEntry({
+        tool,
+        delegateByName,
+      }),
+    )
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 function runtimeToolToInspectEntry(input: {
@@ -3448,27 +3276,7 @@ function runtimeToolToInspectEntry(input: {
   };
 }
 
-function toolAllowedByConfig(name: string, config: ToolsConfigShape): boolean {
-  return (
-    (config.allowed === undefined || isToolNameListed(name, config.allowed)) &&
-    !isToolNameListed(name, config.disabled)
-  );
-}
-
-function toolDeferredByConfig(name: string, config: ToolsConfigShape): boolean {
-  return isToolNameListed(name, config.defer ?? DEFAULT_DEFERRED_TOOLS);
-}
-
 const PROJECT_CONFIG_DEFERRED_TOOLS = [...DEFAULT_DEFERRED_TOOLS];
-
-function isToolNameListed(
-  toolName: string,
-  names: readonly string[] | undefined,
-): boolean {
-  if (!names) return false;
-  const canonical = canonicalToolName(toolName);
-  return names.some((name) => canonicalToolName(name) === canonical);
-}
 
 async function pathExists(path: string): Promise<boolean> {
   const { stat } = await import("node:fs/promises");
@@ -7339,6 +7147,8 @@ async function handleSessionResumeCommand(
     ...parsed,
     sessionId: session.id,
     contextItems,
+    policyTargetPath:
+      parsed.targetPathSource === "cli" ? parsed.targetPath : undefined,
   };
   return parsed.directCore
     ? startDirectCoreRun(runInput, io, env)
@@ -7497,15 +7307,16 @@ async function handleRunResumeCommand(
     permissionMode: parsed.runAccess.permissionMode,
     io,
   });
-  const policy = createLayeredPolicy([
-    createPermissionModePolicy({ mode: parsed.runAccess.permissionMode }),
-    createWorkspaceReadScopePolicy({
-      confidentialPaths: resolveRunConfidentialPaths({
-        confidentialDefaults: parsed.confidentialDefaults,
-        confidentialPaths: parsed.confidentialPaths,
-      }),
-    }),
-  ]);
+  const loadedConfig = await loadHostConfig(parsed.workspaceRoot, env);
+  const policy = createHostRunPolicy({
+    permissionMode: parsed.runAccess.permissionMode,
+    shouldWrite: parsed.runAccess.shouldWrite,
+    targetPath:
+      parsed.targetPathSource === "cli" ? parsed.targetPath : undefined,
+    writeGuardrails: loadedConfig.config.write,
+    confidentialDefaults: parsed.confidentialDefaults,
+    confidentialPaths: parsed.confidentialPaths,
+  });
   const tools = await createConfiguredCliTools(parsed.workspaceRoot, env);
 
   // Wire a FileRunStore pointing at the same run dir so the resumed run's

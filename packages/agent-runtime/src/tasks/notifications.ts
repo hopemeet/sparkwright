@@ -21,7 +21,12 @@ import type {
 } from "./types.js";
 import type { WorkflowWaitState } from "../workflows/types.js";
 
-export type InternalActorKind = "run" | "agent" | "task" | "workflow";
+/**
+ * Actor kinds with implemented notification producers and consumers. Add a
+ * kind only in the same change that adds its typed notification union and
+ * delivery semantics; this is not a reservation for a generic actor bus.
+ */
+export type InternalActorKind = "task" | "workflow";
 
 export interface ActorRef {
   kind: InternalActorKind;
@@ -843,15 +848,16 @@ function validateActorNotificationInput(
   routeHint?: ActorRouteHint,
 ): void {
   const source = input.source as ActorRef;
+  const sourceKind: unknown = (source as { kind?: unknown }).kind;
   assertActorFieldId(source.id, "source.id");
-  if (source.kind === "task") {
+  if (sourceKind === "task") {
     validateTaskActorNotificationInput(
       input as TaskActorNotificationInput,
       routeHint,
     );
     return;
   }
-  if (source.kind === "workflow") {
+  if (sourceKind === "workflow") {
     validateWorkflowActorNotificationInput(
       input as WorkflowActorNotificationInput,
       routeHint,
@@ -859,7 +865,7 @@ function validateActorNotificationInput(
     return;
   }
   throw new ActorNotificationInvalidError(
-    `Actor notification source kind ${String(source.kind)} is not supported by the current actor notification input union.`,
+    `Actor notification source kind ${String(sourceKind)} is not supported by the current actor notification input union.`,
   );
 }
 

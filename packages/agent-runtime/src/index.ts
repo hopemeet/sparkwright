@@ -47,6 +47,66 @@ import {
   DefaultPromptBuilder,
   defineTool,
 } from "@sparkwright/core";
+import type {
+  AgentToolInvocationInput,
+  AgentToolResult,
+  AgentToolSummarizeInput,
+  DelegationLedgerKey,
+  DelegationLedgerResult,
+} from "./agents/types.js";
+import {
+  findSimilarSuccessfulDelegation,
+  rememberSuccessfulDelegation,
+  withAlreadyCompletedNote,
+} from "./agents/delegation-ledger.js";
+import type {
+  AgentAssetIdentity,
+  PreparedAgentInvocation,
+  SubAgentEntrypoint,
+} from "./agents/invocation.js";
+import { createAgentSupervisor } from "./agents/supervisor.js";
+import {
+  agentInvocationEntrypointFromArgs,
+  isSubAgentEntrypoint,
+  prepareAgentInvocation,
+} from "./agents/invocation.js";
+
+export type {
+  AgentToolInvocationInput,
+  AgentToolResult,
+  AgentToolSummarizeInput,
+  DelegationLedgerHit,
+  DelegationLedgerKey,
+  DelegationLedgerResult,
+} from "./agents/types.js";
+export {
+  findSimilarSuccessfulDelegation,
+  rememberSuccessfulDelegation,
+  withAlreadyCompletedNote,
+} from "./agents/delegation-ledger.js";
+export type {
+  AgentAssetIdentity,
+  AgentInvocationProtocol,
+  AgentInvocationWorkspaceAccess,
+  PreparedAgentInvocation,
+  PreparedAgentInvocationGovernance,
+  PrepareAgentInvocationInput,
+  SubAgentEntrypoint,
+} from "./agents/invocation.js";
+export type {
+  AgentSupervisor,
+  AgentSupervisorState,
+} from "./agents/supervisor.js";
+export { createAgentSupervisor } from "./agents/supervisor.js";
+export {
+  agentInvocationEventBase,
+  agentInvocationEntrypointFromArgs,
+  agentInvocationMetadata,
+  isSubAgentEntrypoint,
+  markAgentInvocationEntrypoint,
+  PREPARED_AGENT_INVOCATION_SCHEMA_VERSION,
+  prepareAgentInvocation,
+} from "./agents/invocation.js";
 
 export type PermissionEffect = "allow" | "deny" | "requires_approval";
 export type AgentMode = "primary" | "child" | "all";
@@ -196,13 +256,7 @@ export interface AgentProfile {
    * @reserved Host-resolved Markdown package identity consumed by trace-derived
    * attribution and statistics; it must be captured at invocation time.
    */
-  assetIdentity?: {
-    artifactKind: "agent";
-    layer: string;
-    logicalName: string;
-    packageHashPolicyVersion: 2;
-    packageHash: string;
-  };
+  assetIdentity?: AgentAssetIdentity;
 }
 
 export interface DerivedChildAgentProfile {
@@ -506,6 +560,19 @@ function stringMetadata(
   return typeof value === "string" ? value : undefined;
 }
 
+function stringArrayMetadata(
+  metadata: Record<string, unknown> | undefined,
+  key: string,
+): string[] {
+  const value = metadata?.[key];
+  return Array.isArray(value)
+    ? value.filter(
+        (entry): entry is string =>
+          typeof entry === "string" && entry.length > 0,
+      )
+    : [];
+}
+
 function numberMetadata(
   metadata: Record<string, unknown> | undefined,
   key: string,
@@ -743,13 +810,31 @@ export interface SpawnSubAgentInput {
    * parent-turn interrupt does not kill a background child.
    */
   abortSignal?: AbortSignal;
+  /**
+   * Optional embedder-owned admission gate. The child is created and
+   * `subagent.requested` is emitted before this gate runs; the internal
+   * supervisor enters its admitted state only after it resolves. The returned
+   * release callback is held for the full child execution and invoked exactly
+   * once afterwards.
+   *
+   * Callers that provide a gate must start the child through the returned
+   * {@link SpawnedSubAgent.start} method so the gate cannot be bypassed.
+   */
+  admission?(input: {
+    invocation: PreparedAgentInvocation;
+    abortSignal: AbortSignal;
+    /** Abort the created child if admitted ownership is later lost. */
+    cancel(reason: string, metadata?: Record<string, unknown>): void;
+  }): Promise<(() => void) | void>;
   /** Override for testing. Defaults to the core `createRun`. */
   createRun?: typeof defaultCreateRun;
 }
 
 export interface SpawnedSubAgent {
-  /** The child RunHandle. Call `.start()` to execute. */
+  /** The child RunHandle. Prefer {@link start} to honor optional admission. */
   run: RunHandle;
+  /** Admit and execute the child once, returning the shared start promise. */
+  start(): Promise<RunResult>;
   parentRunId: string;
   childRunId: string;
   /** Stable span id stamped on the child's metadata for trace stitching. */
@@ -763,16 +848,6 @@ export interface SpawnedSubAgent {
   detachUsageRollup(): void;
 }
 
-export type SubAgentEntrypoint =
-  | "run"
-  | "spawn_agent"
-  | "agent_task"
-  | "delegate"
-  | "delegate_parallel"
-  | "delegates_run"
-  | "acp"
-  | "external_command";
-
 export type SubAgentTerminalState =
   | "completed"
   | "failed"
@@ -780,23 +855,6 @@ export type SubAgentTerminalState =
   | "blocked"
   | "step_limit"
   | "truncated";
-
-interface MultiAgentFacts {
-  sessionId?: string;
-  parentRunId: string;
-  childRunId: string;
-  spanId: string;
-  taskId?: string;
-  childAgentId?: string;
-  agentId?: string;
-  agentProfileId?: string;
-  agentName?: string;
-  /** @reserved Parent-visible trace attribution for the invoked Markdown Agent. */
-  agentAssetIdentity?: AgentProfile["assetIdentity"];
-  delegateTool?: string;
-  subagentDepth: number;
-  entrypoint: SubAgentEntrypoint;
-}
 
 /**
  * Spawn a child run under `parent`. Does NOT call `child.start()` — the
@@ -823,6 +881,10 @@ export function spawnSubAgent(input: SpawnSubAgentInput): SpawnedSubAgent {
     nextSubagentDepth(parent.record.metadata);
   const childRunMetadata = removeUndefinedMetadata({
     ...(input.metadata ?? {}),
+    ancestorRunIds: [
+      ...stringArrayMetadata(parent.record.metadata, "ancestorRunIds"),
+      parent.record.id,
+    ],
     parentRunId: parent.record.id,
     parentSpanId: parent.record.metadata?.spanId as string | undefined,
     sessionId,
@@ -873,12 +935,14 @@ export function spawnSubAgent(input: SpawnSubAgentInput): SpawnedSubAgent {
     workflowHooks: input.workflowHooks,
     maxSteps: input.maxSteps ?? parent.maxSteps,
     runBudget: input.runBudget,
+    ancestorRunBudgetAccounts: parent.getChildRunBudgetAccounts(),
     abortSignal: input.abortSignal ?? parent.abortSignal,
     metadata: childRunMetadata,
     runStore: input.runStore,
   };
 
   const child = createRunFn(createOptions);
+  const startChild = child.start.bind(child);
 
   let detach: () => void = () => {};
   if (input.parentUsageTracker) {
@@ -892,14 +956,9 @@ export function spawnSubAgent(input: SpawnSubAgentInput): SpawnedSubAgent {
   // started gap is observable when the embedder queues `.start()` behind a
   // concurrency limit.
   const taskId = stringMetadata(input.metadata, "taskId");
-  const subagentBase = {
-    childRunId: child.record.id,
-    parentRunId: parent.record.id,
-    spanId,
+  const invocation: PreparedAgentInvocation = prepareAgentInvocation({
     goal: input.goal,
-    ...(taskId ? { taskId } : {}),
-  };
-  const facts: MultiAgentFacts = removeUndefinedMetadata({
+    protocol: "in_process",
     sessionId,
     parentRunId: parent.record.id,
     childRunId: child.record.id,
@@ -913,12 +972,14 @@ export function spawnSubAgent(input: SpawnSubAgentInput): SpawnedSubAgent {
     delegateTool: stringMetadata(input.metadata, "delegateTool"),
     subagentDepth,
     entrypoint: subagentEntrypointFromMetadata(input.metadata),
-  }) as unknown as MultiAgentFacts;
-  parent.events.emit(
-    "subagent.requested",
-    subagentBase,
-    multiAgentMetadata(facts),
-  );
+    governance: agentInvocationGovernanceFromMetadata(input.metadata),
+  });
+  const supervisor = createAgentSupervisor({
+    invocation,
+    emitter: parent.events,
+  });
+  supervisor.requested();
+  if (!input.admission) supervisor.admit();
 
   // Roll up the child's own workspace writes onto the parent-visible terminal
   // event. The child run records each `apply_patch`/`edit_anchored_text` as a
@@ -934,50 +995,75 @@ export function spawnSubAgent(input: SpawnSubAgentInput): SpawnedSubAgent {
       return;
     }
     if (event.type === "run.started") {
-      parent.events.emit(
-        "subagent.started",
-        subagentBase,
-        multiAgentMetadata(facts),
-      );
+      supervisor.started();
     } else if (event.type === "run.completed") {
       const terminal = subagentTerminalProjection("run.completed", event);
-      parent.events.emit(
-        "subagent.completed",
-        {
-          ...subagentBase,
-          stopReason: childStopReason(event.payload),
-          ...terminal,
-          ...(childWorkspaceWrites > 0
-            ? { workspaceWrites: childWorkspaceWrites }
-            : {}),
-        },
-        multiAgentMetadata(facts),
-      );
+      supervisor.completed({
+        stopReason: childStopReason(event.payload),
+        ...terminal,
+        ...(childWorkspaceWrites > 0
+          ? { workspaceWrites: childWorkspaceWrites }
+          : {}),
+      });
       detach();
       unsubscribeBridge();
     } else if (event.type === "run.failed" || event.type === "run.cancelled") {
       const terminal = subagentTerminalProjection(event.type, event);
-      parent.events.emit(
-        "subagent.failed",
-        {
-          ...subagentBase,
-          reason:
-            terminal.terminalState === "cancelled" ? "cancelled" : "failed",
-          error: (event.payload as { error?: unknown } | undefined)?.error,
-          ...terminal,
-          ...(childWorkspaceWrites > 0
-            ? { workspaceWrites: childWorkspaceWrites }
-            : {}),
-        },
-        multiAgentMetadata(facts),
-      );
+      supervisor.failed({
+        reason: terminal.terminalState === "cancelled" ? "cancelled" : "failed",
+        error: (event.payload as { error?: unknown } | undefined)?.error,
+        ...terminal,
+        ...(childWorkspaceWrites > 0
+          ? { workspaceWrites: childWorkspaceWrites }
+          : {}),
+      });
       detach();
       unsubscribeBridge();
     }
   });
 
+  let startPromise: Promise<RunResult> | undefined;
+  const start = (): Promise<RunResult> => {
+    if (startPromise) return startPromise;
+    startPromise = (async () => {
+      let releaseAdmission: (() => void) | undefined;
+      try {
+        if (input.admission) {
+          const admitted = await input.admission({
+            invocation,
+            abortSignal: createOptions.abortSignal ?? parent.abortSignal,
+            cancel: (reason, metadata) => {
+              child.cancel({ reason, metadata });
+            },
+          });
+          releaseAdmission = admitted || undefined;
+          supervisor.admit();
+        }
+        return await startChild();
+      } catch (error) {
+        supervisor.failed({
+          reason:
+            error instanceof Error && error.name === "AbortError"
+              ? "cancelled"
+              : "failed",
+          error: error instanceof Error ? error.message : String(error),
+        });
+        throw error;
+      } finally {
+        releaseAdmission?.();
+      }
+    })();
+    return startPromise;
+  };
+
+  // Preserve the public RunHandle inspection surface without leaving a second
+  // executable path that can bypass admission. `stream()` also observes this
+  // instance method, so every start route shares the same one-shot promise.
+  child.start = start;
+
   return {
     run: child,
+    start,
     parentRunId: parent.record.id,
     childRunId: child.record.id,
     spanId,
@@ -993,23 +1079,6 @@ function childStopReason(payload: unknown): string | undefined {
   return typeof stopReason === "string" ? stopReason : undefined;
 }
 
-function multiAgentMetadata(facts: MultiAgentFacts): Record<string, unknown> {
-  return removeUndefinedMetadata({
-    sessionId: facts.sessionId,
-    agentId: facts.agentId,
-    taskId: facts.taskId,
-    childAgentId: facts.childAgentId,
-    agentProfileId: facts.agentProfileId,
-    agentName: facts.agentName,
-    agentAssetIdentity: facts.agentAssetIdentity,
-    delegateTool: facts.delegateTool,
-    subagentDepth: facts.subagentDepth,
-    entrypoint: facts.entrypoint,
-    childRunId: facts.childRunId,
-    parentRunId: facts.parentRunId,
-  });
-}
-
 function subagentEntrypointFromMetadata(
   metadata: Record<string, unknown> | undefined,
 ): SubAgentEntrypoint {
@@ -1017,17 +1086,24 @@ function subagentEntrypointFromMetadata(
   return isSubAgentEntrypoint(entrypoint) ? entrypoint : "run";
 }
 
-function isSubAgentEntrypoint(value: unknown): value is SubAgentEntrypoint {
-  return (
-    value === "run" ||
-    value === "spawn_agent" ||
-    value === "agent_task" ||
-    value === "delegate" ||
-    value === "delegate_parallel" ||
-    value === "delegates_run" ||
-    value === "acp" ||
-    value === "external_command"
-  );
+function agentInvocationGovernanceFromMetadata(
+  metadata: Record<string, unknown> | undefined,
+): PreparedAgentInvocation["governance"] {
+  const workspaceAccess = metadata?.workspaceAccess;
+  const concurrency = metadata?.agentConcurrency;
+  if (
+    workspaceAccess !== "none" &&
+    workspaceAccess !== "read_only" &&
+    workspaceAccess !== "read_write"
+  ) {
+    return undefined;
+  }
+  return {
+    workspaceAccess,
+    ...(concurrency === "serial" || concurrency === "concurrent"
+      ? { concurrency }
+      : {}),
+  };
 }
 
 function subagentTerminalProjection(
@@ -1174,76 +1250,6 @@ function stringOrUndefined(value: unknown): string | undefined {
 // AgentTool: a ToolDefinition that delegates to spawnSubAgent.
 // ----------------------------------------------------------------------------
 
-export interface AgentToolInvocationInput {
-  /** The goal forwarded to the child run. */
-  goal: string;
-  /** Optional free-form metadata supplied by the LLM. */
-  metadata?: Record<string, unknown>;
-}
-
-export interface AgentToolSummarizeInput {
-  childRunId: string;
-  spanId: string;
-  result: RunResult;
-  /** Child's final usage snapshot at termination. */
-  usage: UsageSnapshot;
-}
-
-export interface AgentToolResult {
-  childRunId: string;
-  spanId: string;
-  signal: RunResult["signal"];
-  stopReason: RunResult["stopReason"];
-  message?: string;
-  tokens: number;
-  costUsd: number;
-  toolCalls: number;
-  modelCalls: number;
-  /**
-   * True when the child answered on its last allowed step (`stepLimitReached`
-   * in the run result metadata). A `final_answer` produced under an exhausted
-   * step budget may be truncated; the parent should caveat rather than treat it
-   * as exhaustive.
-   *
-   * @reserved Public delegate-tool output field consumed by parent agents and UIs.
-   */
-  stepLimitReached?: boolean;
-  /** @reserved Public delegate-tool output field consumed by parent agents and UIs. */
-  alreadyCompleted?: boolean;
-  note?: string;
-}
-
-export interface DelegationLedgerKey {
-  kind: "agent_tool" | "configured_delegate" | "dynamic_spawn";
-  agentProfileId?: string;
-  delegateTool?: string;
-  role?: string;
-  prompt?: string;
-  allowedTools?: readonly string[];
-}
-
-export interface DelegationLedgerResult extends AgentToolResult {
-  truncated?: boolean;
-  output?: Record<string, unknown>;
-}
-
-interface DelegationLedgerEntry {
-  key: string;
-  goal: string;
-  result: DelegationLedgerResult;
-}
-
-export interface DelegationLedgerHit {
-  goal: string;
-  result: DelegationLedgerResult;
-}
-
-const DELEGATION_LEDGER_MAX_RESULTS = 24;
-const delegationLedgersByParent = new WeakMap<
-  RunHandle,
-  DelegationLedgerEntry[]
->();
-
 export interface CreateAgentToolOptions {
   /** Tool name registered with the parent. Default: "delegate". */
   name?: string;
@@ -1288,6 +1294,12 @@ export interface CreateAgentToolOptions {
    * remains safe and only `requiresApproval` can force approval on spawn.
    */
   policy?: ToolDefinition["policy"];
+  /**
+   * Optional host-derived admission classifier for the child capability set.
+   * Return true only when concurrent child execution cannot mutate shared
+   * resources and does not require a serialized spawn approval.
+   */
+  isConcurrencySafe?(input: AgentToolInvocationInput): boolean;
 }
 
 const DEFAULT_AGENT_TOOL_NAME = "delegate";
@@ -1334,6 +1346,9 @@ export function createAgentTool(
       risk: "safe",
       requiresApproval: options.requiresApproval === true,
     },
+    ...(options.isConcurrencySafe
+      ? { isConcurrencySafe: options.isConcurrencySafe }
+      : {}),
     async execute(args: unknown, _ctx: RuntimeContext): Promise<unknown> {
       const parent = getParent();
       if (!parent) {
@@ -1359,8 +1374,20 @@ export function createAgentTool(
         return withAlreadyCompletedNote(prior.result);
       }
       const spawnOverrides = await options.buildSpawnInput(parsed, parent);
-      const spawned = spawnSubAgent({ ...spawnOverrides, parent });
-      const result = await spawned.run.start();
+      const invocationEntrypoint = agentInvocationEntrypointFromArgs(args);
+      const spawned = spawnSubAgent({
+        ...spawnOverrides,
+        parent,
+        ...(invocationEntrypoint
+          ? {
+              metadata: {
+                ...(spawnOverrides.metadata ?? {}),
+                entrypoint: invocationEntrypoint,
+              },
+            }
+          : {}),
+      });
+      const result = await spawned.start();
       const usage = spawned.run.usage();
       const output = summarize({
         childRunId: spawned.childRunId,
@@ -1463,76 +1490,6 @@ function runResultTruncated(result: RunResult): boolean {
   );
 }
 
-export function findSimilarSuccessfulDelegation(
-  parent: RunHandle,
-  key: DelegationLedgerKey,
-  goal: string,
-): DelegationLedgerHit | undefined {
-  const entries = delegationLedgersByParent.get(parent) ?? [];
-  const normalizedKey = delegationLedgerKeyString(key);
-  for (let i = entries.length - 1; i >= 0; i -= 1) {
-    const candidate = entries[i];
-    if (!candidate || candidate.key !== normalizedKey) continue;
-    if (similarGoalScore(candidate.goal, goal) >= 0.35) {
-      return { goal: candidate.goal, result: candidate.result };
-    }
-  }
-  return undefined;
-}
-
-export function rememberSuccessfulDelegation(
-  parent: RunHandle,
-  key: DelegationLedgerKey,
-  goal: string,
-  result: DelegationLedgerResult,
-): boolean {
-  if (!isReusableDelegationResult(result)) return false;
-  const entries = delegationLedgersByParent.get(parent) ?? [];
-  entries.push({
-    key: delegationLedgerKeyString(key),
-    goal,
-    result: { ...result },
-  });
-  delegationLedgersByParent.set(
-    parent,
-    entries.slice(-DELEGATION_LEDGER_MAX_RESULTS),
-  );
-  return true;
-}
-
-function isReusableDelegationResult(result: DelegationLedgerResult): boolean {
-  return (
-    result.signal === "completed" &&
-    result.stepLimitReached !== true &&
-    result.truncated !== true
-  );
-}
-
-export function withAlreadyCompletedNote(
-  result: DelegationLedgerResult,
-): DelegationLedgerResult {
-  return {
-    ...result,
-    alreadyCompleted: true,
-    note: "A similar delegation already completed in this parent run; summarize the previous child result instead of spawning another child agent.",
-  };
-}
-
-function delegationLedgerKeyString(key: DelegationLedgerKey): string {
-  const allowedTools =
-    key.allowedTools && key.allowedTools.length > 0
-      ? [...new Set(key.allowedTools)].sort()
-      : undefined;
-  return JSON.stringify({
-    kind: key.kind,
-    ...(key.agentProfileId ? { agentProfileId: key.agentProfileId } : {}),
-    ...(key.delegateTool ? { delegateTool: key.delegateTool } : {}),
-    ...(key.role ? { role: key.role } : {}),
-    ...(key.prompt ? { prompt: key.prompt } : {}),
-    ...(allowedTools ? { allowedTools } : {}),
-  });
-}
-
 function withStepLimitReachedNote(
   output: unknown,
   structured: AgentToolResult,
@@ -1579,48 +1536,4 @@ function isAgentToolResult(value: unknown): value is AgentToolResult {
     typeof (value as { spanId?: unknown }).spanId === "string" &&
     typeof (value as { signal?: unknown }).signal === "string"
   );
-}
-
-function similarGoalScore(a: string, b: string): number {
-  if (hasDirectoryListingIntent(a) && hasDirectoryListingIntent(b)) return 0.7;
-  const left = normalizeGoalForSimilarity(a);
-  const right = normalizeGoalForSimilarity(b);
-  if (left.length === 0 || right.length === 0) return 0;
-  if (left === right) return 1;
-  if (left.includes(right) || right.includes(left)) return 0.85;
-  const leftBigrams = charBigrams(left);
-  const rightBigrams = charBigrams(right);
-  if (leftBigrams.size === 0 || rightBigrams.size === 0) return 0;
-  let overlap = 0;
-  for (const item of leftBigrams) {
-    if (rightBigrams.has(item)) overlap += 1;
-  }
-  return (2 * overlap) / (leftBigrams.size + rightBigrams.size);
-}
-
-function hasDirectoryListingIntent(goal: string): boolean {
-  const normalized = goal.toLowerCase();
-  const asksToList = /列出|清单|有哪些|查看|list|show|inspect/.test(normalized);
-  const mentionsFiles =
-    /文件|目录|文件夹|条目|file|files|dir|directory|entries/.test(normalized);
-  const scopesWorkspace =
-    /当前|工作区|根目录|workspace|root|directory|cwd|\./.test(normalized);
-  return asksToList && mentionsFiles && scopesWorkspace;
-}
-
-function normalizeGoalForSimilarity(goal: string): string {
-  return goal
-    .toLowerCase()
-    .replace(/[`"'“”‘’（）()[\]{}，。；;：:、,.!?！？\s]+/g, "")
-    .replace(/\/applications\/xgw\/projects\/ai-native\/sparkwright/g, "")
-    .replace(/workspace|sparkwright|当前|目录|文件|文件夹|清单/g, "");
-}
-
-function charBigrams(value: string): Set<string> {
-  if (value.length < 2) return new Set(value ? [value] : []);
-  const out = new Set<string>();
-  for (let i = 0; i < value.length - 1; i += 1) {
-    out.add(value.slice(i, i + 2));
-  }
-  return out;
 }

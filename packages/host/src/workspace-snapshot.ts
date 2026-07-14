@@ -1,13 +1,7 @@
 import { createHash } from "node:crypto";
-import {
-  lstat,
-  mkdir,
-  readFile,
-  readdir,
-  rm,
-  writeFile,
-} from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { lstat, readFile, readlink, readdir } from "node:fs/promises";
+import { join } from "node:path";
+import { LocalWorkspace } from "@sparkwright/core";
 
 const SNAPSHOT_FILE_CAPTURE_LIMIT_BYTES = 2 * 1024 * 1024;
 const SNAPSHOT_TOTAL_CAPTURE_LIMIT_BYTES = 25 * 1024 * 1024;
@@ -39,6 +33,7 @@ const MANAGED_CAPABILITY_PREFIXES = [
 ];
 
 export interface WorkspaceSnapshotEntry {
+  kind: "file" | "symlink";
   hash: string;
   content?: Buffer;
 }
@@ -82,11 +77,20 @@ export async function snapshotWorkspace(
         await visit(relativePath);
         continue;
       }
-      if (!entry.isFile()) continue;
       if (AUDIT_EXCLUDED_FILES.has(relativePath)) continue;
 
       const absolutePath = join(root, relativePath);
       const stat = await lstat(absolutePath).catch(() => undefined);
+      if (stat?.isSymbolicLink()) {
+        const target = await readlink(absolutePath).catch(() => undefined);
+        if (target !== undefined) {
+          snapshot.set(relativePath, {
+            kind: "symlink",
+            hash: hashBuffer(Buffer.from(`symlink\0${target}`)),
+          });
+        }
+        continue;
+      }
       if (!stat?.isFile()) continue;
       const content = await readFile(absolutePath).catch(() => undefined);
       if (content === undefined) continue;
@@ -97,6 +101,7 @@ export async function snapshotWorkspace(
           SNAPSHOT_TOTAL_CAPTURE_LIMIT_BYTES;
       if (canCapture) capturedBytes += content.byteLength;
       snapshot.set(relativePath, {
+        kind: "file",
         hash: hashBuffer(content),
         ...(canCapture ? { content } : {}),
       });
@@ -122,7 +127,11 @@ export function diffWorkspaceSnapshots(
     const next = after.get(path);
     if (!prior && next) changes.push({ path, kind: "created" });
     else if (prior && !next) changes.push({ path, kind: "deleted" });
-    else if (prior && next && prior.hash !== next.hash) {
+    else if (
+      prior &&
+      next &&
+      (prior.kind !== next.kind || prior.hash !== next.hash)
+    ) {
       changes.push({ path, kind: "modified" });
     }
   }
@@ -134,6 +143,7 @@ export async function rollbackWorkspaceSnapshot(
   before: WorkspaceSnapshot,
   after: WorkspaceSnapshot,
 ): Promise<WorkspaceRollbackResult> {
+  const workspace = new LocalWorkspace(root);
   const restored: string[] = [];
   const removed: string[] = [];
   const failed: WorkspaceRollbackResult["failed"] = [];
@@ -145,7 +155,7 @@ export async function rollbackWorkspaceSnapshot(
     const next = after.get(path);
     if (!prior && next) {
       try {
-        await rm(join(root, path), { force: true });
+        await workspace.removeFile(path);
         removed.push(path);
       } catch (error) {
         failed.push({ path, error: formatError(error) });
@@ -153,15 +163,16 @@ export async function rollbackWorkspaceSnapshot(
       continue;
     }
     if (!prior) continue;
-    if (next && next.hash === prior.hash) continue;
-    if (!prior.content) {
+    if (next && next.kind === prior.kind && next.hash === prior.hash) {
+      continue;
+    }
+    if (prior.kind !== "file" || !prior.content) {
       incomplete.push(path);
       continue;
     }
     try {
-      const absolutePath = join(root, path);
-      await mkdir(dirname(absolutePath), { recursive: true });
-      await writeFile(absolutePath, prior.content);
+      if (next?.kind === "symlink") await workspace.removeFile(path);
+      await workspace.writeBytes(path, prior.content);
       restored.push(path);
     } catch (error) {
       failed.push({ path, error: formatError(error) });

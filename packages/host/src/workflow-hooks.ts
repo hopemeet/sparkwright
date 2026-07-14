@@ -28,6 +28,7 @@ import {
 } from "@sparkwright/core";
 import {
   createPlatformShellSandboxRuntime,
+  enforceNoWriteShellSandbox,
   resolveShellSandboxConfig,
   type ResolvedShellSandboxConfig,
   type ShellSandboxConfig,
@@ -761,6 +762,13 @@ async function runCommandAction(
     action.stdin === "json"
       ? `${JSON.stringify(hookActionStdin(input))}\n`
       : undefined;
+  const sandbox =
+    input.run.metadata?.shouldWrite === false
+      ? await enforceNoWriteShellSandbox(options.sandboxConfig, {
+          runtime: options.sandboxRuntime,
+          denyWriteRoots: [options.workspaceRoot],
+        })
+      : options.sandboxConfig;
   const runner = new TracedProcessRunner();
   const result = await runner.run({
     emitter: input.events ?? createBufferedEmitter(),
@@ -774,7 +782,7 @@ async function runCommandAction(
     env: options.env,
     stdin,
     timeoutMs: action.timeoutMs,
-    sandbox: options.sandboxConfig,
+    sandbox,
     sandboxRuntime: options.sandboxRuntime,
     outputLimits: {
       previewBytes: maxOutputBytes,

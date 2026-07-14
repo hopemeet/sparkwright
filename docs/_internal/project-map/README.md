@@ -59,6 +59,13 @@ Design docs in [designs/](designs/) are catalog entries, not routing targets —
 read them for the shape and rationale of a planned or completed change, then
 follow the active maps below for the current contract.
 
+- [designs/multi-agent-supervision.md](designs/multi-agent-supervision.md) —
+  Active staged refactor for converging Agent invocation identity, lifecycle,
+  resource admission, and adapter ownership without adding a generic actor bus.
+  Active contracts: [modules/agent-runtime.md](modules/agent-runtime.md),
+  [modules/host.md](modules/host.md), and
+  [maps/capabilities/agents.md](maps/capabilities/agents.md).
+
 - [designs/asset-package-governance-redirection-review.md](designs/asset-package-governance-redirection-review.md) —
   Adjudicated review handoff: records the frozen scope redirection that keeps
   managed change Skill-only, separates filesystem reconciliation, establishes
@@ -119,20 +126,23 @@ follow the active maps below for the current contract.
 - `packages/core/src/trace.ts`, `packages/core/src/trace-codec.ts`, `packages/core/src/trace-diagnostics.ts`, `packages/core/src/run-health.ts`, `packages/core/src/trace-session-consistency.ts`, or `packages/core/src/trace-store.ts`: [modules/core.md](modules/core.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md), [maps/trace/summary-timeline-verify.md](maps/trace/summary-timeline-verify.md), [maps/session/session-store.md](maps/session/session-store.md)
 - `packages/core/src/context.ts` or `packages/core/src/path-display.ts`: [modules/core.md](modules/core.md), [maps/runtime/context-compaction.md](maps/runtime/context-compaction.md), [maps/trace/summary-timeline-verify.md](maps/trace/summary-timeline-verify.md)
 - `packages/core/src/events.ts` or `packages/core/src/workflow-hooks.ts`: [modules/core.md](modules/core.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md), [maps/trace/summary-timeline-verify.md](maps/trace/summary-timeline-verify.md)
+- `packages/core/src/environment.ts`: [modules/core.md](modules/core.md), [maps/safety/shell.md](maps/safety/shell.md)
 - `packages/core/src/fact-ledger.ts`, `packages/core/src/fact-classifier.ts`, or `packages/core/src/run-outcome.ts`: [modules/core.md](modules/core.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md), [maps/trace/summary-timeline-verify.md](maps/trace/summary-timeline-verify.md)
 - `packages/core/src/file-atomic.ts`: [modules/core.md](modules/core.md), [modules/agent-runtime.md](modules/agent-runtime.md), [maps/session/session-store.md](maps/session/session-store.md)
 - `packages/core/src/session.ts`: [modules/core.md](modules/core.md), [maps/session/session-store.md](maps/session/session-store.md), [maps/session/resume-replay.md](maps/session/resume-replay.md), [maps/runtime/context-compaction.md](maps/runtime/context-compaction.md)
+- `packages/core/src/run-budget.ts`: [modules/core.md](modules/core.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/session/resume-replay.md](maps/session/resume-replay.md), [maps/capabilities/agents.md](maps/capabilities/agents.md)
 - `packages/core/src/run.ts`: [modules/core.md](modules/core.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md), [maps/safety/approvals.md](maps/safety/approvals.md)
 - `packages/core/src/policy.ts` or `packages/core/src/approval-policy.ts`: [modules/core.md](modules/core.md), [maps/safety/approvals.md](maps/safety/approvals.md), [maps/safety/workspace-writes.md](maps/safety/workspace-writes.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md)
+- `packages/core/src/workspace.ts` or `packages/core/src/workspace-checkpoint.ts`: [modules/core.md](modules/core.md), [maps/safety/workspace-writes.md](maps/safety/workspace-writes.md)
 - `packages/core/src/usage.ts`: [modules/core.md](modules/core.md), [maps/trace/summary-timeline-verify.md](maps/trace/summary-timeline-verify.md)
 - `packages/host/src/config.ts` or `packages/host/src/config-zod-schema.ts`: [modules/host.md](modules/host.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md)
 - `packages/host/src/tool-identities.ts`, `packages/host/src/tool-catalog.ts`, or `packages/host/src/tool-selectors.ts`: [modules/host.md](modules/host.md), [modules/coding-tools.md](modules/coding-tools.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md), [maps/capabilities/README.md](maps/capabilities/README.md)
 - `packages/host/src/model-builder.ts` or `packages/host/src/model-factory.ts`: [modules/host.md](modules/host.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/trace/summary-timeline-verify.md](maps/trace/summary-timeline-verify.md), [maps/runtime/context-compaction.md](maps/runtime/context-compaction.md)
-- `packages/host/src/runtime.ts` or `packages/host/src/run-access.ts`: [modules/host.md](modules/host.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/session/resume-replay.md](maps/session/resume-replay.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/capabilities/mcp.md](maps/capabilities/mcp.md), [maps/safety/workspace-writes.md](maps/safety/workspace-writes.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md)
+- `packages/host/src/runtime.ts`, `packages/host/src/run-access.ts`, `packages/host/src/run-security-plan.ts`, or `packages/host/src/run-policy.ts`: [modules/host.md](modules/host.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md), [maps/session/resume-replay.md](maps/session/resume-replay.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/capabilities/mcp.md](maps/capabilities/mcp.md), [maps/safety/workspace-writes.md](maps/safety/workspace-writes.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md)
 - `packages/host/src/client-input.ts`: [modules/host.md](modules/host.md), [modules/cli.md](modules/cli.md), [modules/tui.md](modules/tui.md), [modules/protocol.md](modules/protocol.md)
 - `packages/core/src/access-mode.ts` (`run.accessMode` -> `permissionMode`/`shouldWrite` compile + clamp): [modules/host.md](modules/host.md), [modules/protocol.md](modules/protocol.md), [maps/safety/approvals.md](maps/safety/approvals.md)
 - `packages/host/src/workflow-hooks.ts`, `packages/host/src/active-rules.ts`, or `packages/host/src/traced-process-runner.ts`: [modules/host.md](modules/host.md), [modules/core.md](modules/core.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/safety/shell.md](maps/safety/shell.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md), [maps/trace/summary-timeline-verify.md](maps/trace/summary-timeline-verify.md)
-- `packages/host/src/acp-child-agent.ts`, `packages/host/src/external-command-agent.ts`, `packages/host/src/delegate-capability.ts`, `packages/host/src/delegate-runner.ts`, or `packages/host/src/agent-profiles.ts`: [modules/host.md](modules/host.md), [modules/agent-runtime.md](modules/agent-runtime.md), [maps/capabilities/agents.md](maps/capabilities/agents.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md)
+- `packages/acp-client-adapter/src/worker.ts`, `packages/host/src/acp-child-agent.ts`, `packages/host/src/external-command-agent.ts`, `packages/host/src/workspace-agent-arbiter.ts`, `packages/host/src/delegate-capability.ts`, `packages/host/src/delegate-runner.ts`, `packages/host/src/indexed-delegate-tool.ts`, or `packages/host/src/agent-profiles.ts`: [modules/host.md](modules/host.md), [modules/agent-runtime.md](modules/agent-runtime.md), [maps/capabilities/agents.md](maps/capabilities/agents.md), [maps/safety/workspace-writes.md](maps/safety/workspace-writes.md), [maps/safety/shell.md](maps/safety/shell.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md)
 - `packages/host/src/workflows.ts`, `packages/host/src/workflow-projection.ts`, `packages/host/src/workflow-node-api.ts`, `packages/host/src/workflow-distill.ts`, `packages/host/src/workflow-shadow.ts`, `packages/host/src/workflow-trace-observation.ts`, `sparkwright workflow list|inspect|distill|shadow`, or `sparkwright run --workflow`: [modules/host.md](modules/host.md), [modules/cli.md](modules/cli.md), [modules/protocol.md](modules/protocol.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/safety/shell.md](maps/safety/shell.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md)
 - `packages/cli/src/cli.ts`, `packages/cli/src/runners/direct-core-runner.ts`, or `packages/cli/src/runners/host-runner.ts`: [modules/cli.md](modules/cli.md), [maps/trace/summary-timeline-verify.md](maps/trace/summary-timeline-verify.md), [maps/session/session-store.md](maps/session/session-store.md), [maps/safety/approvals.md](maps/safety/approvals.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md)
 - `packages/cli/src/event-format.ts`: [modules/cli.md](modules/cli.md), [modules/protocol.md](modules/protocol.md), [maps/trace/summary-timeline-verify.md](maps/trace/summary-timeline-verify.md)
@@ -189,6 +199,81 @@ TUI events; it is not a trace diagnostic report and must not replace
 trace/session inspection.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: routed actor-notification kind narrowing through agent-runtime, Agent
+  communication, and the internal actor inbox/supervision designs.
+- Read: typed actor unions, all production task/workflow sources and consumers,
+  durable adapters, Host receiver bridge, and linked maps.
+- Checked with no contract update needed: `maps/capabilities/cron.md`, Core
+  `NotificationSource`, Host task revival, workflow durable formats, protocol,
+  trace, and external transports are unchanged.
+- Tests: agent-runtime task/workflow/channel 99/99; downstream Host,
+  server-runtime, and IM gateway focused suites; full `npm run release:check`.
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: routed Core descendant-tree budget accounts, Agent inheritance, and
+  checkpoint preservation through the run-loop, Agent, and resume maps.
+- Read: affected Core/agent-runtime source, active supervision design, extension
+  interface, and linked project-map pages.
+- Checked with no contract update needed: Host workspace admission,
+  `maps/safety/approvals.md`, forced-continuation budgets, Workflow run-chain
+  budgets, protocol event families, process delegate execution, and
+  `maps/capabilities/cron.md` remain unchanged. Tool-call reservation was
+  updated in `maps/runtime/tool-orchestration.md`.
+- Tests: Core budget/run/resume/trace 275/275; agent-runtime Agent suites 65/65;
+  Host Agent/process/arbiter suites 102/102; affected typechecks/build passed.
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: routed the process-local Agent workspace arbiter and portable
+  asynchronous admission seam through Host, agent-runtime, Agents, workspace
+  safety, and the active supervision design.
+- Read: all affected implementation paths and linked project-map pages.
+- Checked with no contract update needed: protocol payloads, raw event schema,
+  trace/session/resume derivation, run-loop/tool orchestration, capability
+  overview, MCP, Cron, shell sandbox semantics, and Core write authorization
+  remain unchanged.
+- Tests: agent-runtime Agent/invocation/supervisor/ledger 60/60; Host focused
+  Agent/process suites 162/162; affected typechecks/build passed.
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: routed the AgentSupervisor lifecycle convergence through
+  agent-runtime, Host/indexed/process adapters, raw trace, and protocol docs.
+- Read: active design, all production `subagent.*` emitters, traced process
+  start signaling, and linked maps.
+- Checked with no contract update needed: the Core module, capability overview,
+  shell/process execution semantics, trace summary derivation, session replay,
+  MCP, Cron, and workspace-write authorization; only Agent lifecycle
+  admission/projection changed.
+- Tests: agent-runtime supervisor/invocation/Agent and Host Agent/process
+  lifecycle focused suites passed.
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: cataloged the active multi-Agent supervision refactor and routed its
+  prepared invocation boundary through agent-runtime, Host, Agents, and raw
+  trace maps.
+- Read: active design, implementation/adapters, protocol event docs, and all
+  linked map pages.
+- Checked with no contract update needed: Cron consumes task/runtime exports but
+  does not construct or observe child Agent invocation lifecycles.
+- Tests: prepared invocation/Agent and Host lifecycle focused suites passed.
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: routed the first multi-Agent mechanical split through the Host indexed
+  delegate module and agent-runtime `agents/` contracts/ledger boundary.
+- Read: Host and agent-runtime module maps plus the Agents capability map.
+- Checked with no contract update needed: Cron, run-loop, tool orchestration,
+  resume/replay, capability overview, MCP, workspace writes, and raw trace; this
+  stage only relocates existing implementations and keeps runtime assembly and
+  observable behavior unchanged.
+- Tests: focused agent-runtime ledger/AgentTool and Host indexed delegate suites;
+  affected typechecks and builds passed.
 
 - Status: Verified
 - Date: 2026-07-12T08:25:00+0800

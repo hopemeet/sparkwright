@@ -563,6 +563,47 @@ describe("TracedProcessRunner", () => {
     });
   });
 
+  it("terminates a raw process when its owner loses the execution lease", async () => {
+    const runId = createRunId();
+    const events = new EventLog(runId);
+    const runner = new TracedProcessRunner();
+    const abort = new AbortController();
+    const startedAt = Date.now();
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+
+    const pending = runner.run({
+      emitter: events,
+      runId,
+      name: "lease-owned",
+      kind: "custom",
+      command: process.execPath,
+      args: [
+        "-e",
+        "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000);",
+      ],
+      cwd: process.cwd(),
+      abortSignal: abort.signal,
+      onStarted: markStarted,
+    });
+    await started;
+    abort.abort(new Error("workspace lease lost"));
+
+    const result = await pending;
+    expect(Date.now() - startedAt).toBeLessThan(2_000);
+    expect(result).toMatchObject({
+      timedOut: false,
+      error: { code: "PROCESS_ABORTED" },
+    });
+    expect(
+      events.all().find((event) => event.type === "extension.process.failed"),
+    ).toMatchObject({
+      payload: expect.objectContaining({ errorCode: "PROCESS_ABORTED" }),
+    });
+  });
+
   it("marks content truncated and stores the capped output in the artifact", async () => {
     const root = await mkdtemp(join(tmpdir(), "sparkwright-runner-"));
     try {

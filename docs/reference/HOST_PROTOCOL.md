@@ -882,8 +882,11 @@ scanning files or interpreting local config.
 ```
 
 `workspaceAccess: "none"` means the external delegate is not handed the project
-cwd or `{{workspaceRoot}}`. Use `"read_write"` only for explicitly trusted
-delegates that should inspect or mutate the workspace directly.
+cwd or `{{workspaceRoot}}`; its private cwd remains writable, but process launch
+fails closed unless the sandbox can protect the project workspace from writes.
+This is not a macOS filesystem-read allowlist. Use `"read_write"` only for
+explicitly trusted delegates that should inspect or mutate the workspace
+directly.
 Delegate summaries may include `model` when a profile declares a preferred
 model; omitted means the delegate inherits the parent run model.
 Delegate summaries may also include `routing`. When present, `keywords` echo the

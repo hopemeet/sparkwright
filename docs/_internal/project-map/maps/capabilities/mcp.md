@@ -32,7 +32,12 @@ host config MCP servers
 - ACP `session/new` may supply session-scoped MCP servers; those merge with
   configured user/project MCP servers for that session and are not written to
   config files.
-- Stdio server launch can be sandboxed.
+- Stdio server launch consumes the Host-provided effective process sandbox.
+  Read-only Host runs strengthen it to fail-closed no-write even when the
+  configured main-Shell sandbox is off.
+- Stdio sandbox availability/enforce/fallback and argv invocation compilation
+  use the same shell-sandbox decision as Host JSON-RPC processes. MCP retains
+  its own transport, neutral-cwd, stderr, close, and cleanup lifecycle.
 - Capability inspect can optionally resolve MCP servers and tools.
 - Stdio MCP servers without explicit `cwd` run from a neutral temporary
   directory, not the workspace. Servers that intentionally need project files
@@ -81,6 +86,38 @@ host config MCP servers
   trusted opt-ins and are not counted as managed workspace writes.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-13T22:21:00+0800
+- Scope: read-only Host run access now supplies stdio MCP with a fail-closed
+  no-write sandbox while configured Shell status remains separately reported.
+  Neutral cwd, transport lifecycle, and managed-write attribution are unchanged.
+- Read: Host security plan/runtime and MCP adapter launch boundary.
+- Tests: MCP adapter 34/34; Host focused 263/263; CLI inspect selection 11/11.
+
+- Status: Read-only
+- Date: 2026-07-13
+- Scope: ACP child worker sandbox launch changed independently of MCP; MCP
+  server merging, transport, neutral cwd, and tool behavior are unchanged.
+- Read: Host delegate assembly and MCP runtime assembly boundary.
+- Tests: no MCP behavior changed; prior Stage 3 MCP suite remained green.
+
+- Status: Verified
+- Date: 2026-07-13
+- Scope: MCP stdio adopted the shared argv sandbox launch decision; neutral cwd
+  and MCP transport semantics are unchanged.
+- Read: MCP adapter and shell-sandbox launch compiler.
+- Tests: MCP adapter 34/34; shell-sandbox 14/14; typechecks passed.
+
+- Status: Read-only
+- Date: 2026-07-13
+- Scope: Host run and configured inspection now receive the same resolved
+  sandbox input from the security plan. MCP startup, neutral cwd, optional CLI
+  resolution, transport lifecycle, and tool policy behavior are unchanged.
+- Read: Host runtime/security plan, CLI capability report, and MCP adapter
+  boundary.
+- Tests: Host tools/protocol focused tests and CLI capability-inspect tests
+  passed; MCP-specific behavior did not change.
 
 - Status: Read-only
 - Date: 2026-07-12T20:12:00+0800

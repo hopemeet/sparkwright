@@ -8,6 +8,7 @@ import {
 import type { WorkflowHookInput, WorkflowHookResult } from "@sparkwright/core";
 import {
   createPlatformShellSandboxRuntime,
+  enforceNoWriteShellSandbox,
   resolveShellSandboxConfig,
   type ResolvedShellSandboxConfig,
   type ShellSandboxConfig,
@@ -69,6 +70,9 @@ export async function runWorkflowScriptNode(
   if (!authorization.ok) return runtimeError(input, authorization.message);
   const resolved = resolveWorkflowScriptInvocation(input.sourceDir, script);
   if (!resolved.ok) return runtimeError(input, resolved.message);
+  const sandboxRuntime =
+    input.sandboxRuntime ?? createPlatformShellSandboxRuntime();
+  const sandbox = await resolveScriptSandbox(input, sandboxRuntime);
 
   let completion: ScriptCompletion | undefined;
   const runner = new TracedProcessRunner();
@@ -88,8 +92,8 @@ export async function runWorkflowScriptNode(
       SPARKWRIGHT_WORKFLOW_ASSET: input.assetName,
     },
     timeoutMs: script.timeoutMs,
-    sandbox: resolveScriptSandbox(input),
-    sandboxRuntime: input.sandboxRuntime ?? createPlatformShellSandboxRuntime(),
+    sandbox,
+    sandboxRuntime,
     outputLimits: {
       previewBytes: script.maxOutputBytes,
       artifactBytes: script.maxOutputBytes,
@@ -356,18 +360,27 @@ function authorizeScript(
   return { ok: true };
 }
 
-function resolveScriptSandbox(
+async function resolveScriptSandbox(
   input: WorkflowScriptNodeRunInput,
-): ResolvedShellSandboxConfig {
-  if (input.sandbox && "forcedDenyWrite" in input.sandbox) {
-    return input.sandbox;
-  }
-  return resolveShellSandboxConfig({
-    workspaceRoot: input.workspaceRoot,
-    config: input.sandbox,
-    skillRoots: input.skillRoots,
-    extraForcedDenyWrite: input.configPaths,
-  });
+  runtime: ShellSandboxRuntime,
+): Promise<ResolvedShellSandboxConfig> {
+  const sandbox =
+    input.sandbox && "forcedDenyWrite" in input.sandbox
+      ? input.sandbox
+      : resolveShellSandboxConfig({
+          workspaceRoot: input.workspaceRoot,
+          config: input.sandbox,
+          skillRoots: input.skillRoots,
+          extraForcedDenyWrite: input.configPaths,
+        });
+  const canWrite =
+    input.allowWrite && input.node.script?.capabilities?.includes("write");
+  return canWrite
+    ? sandbox
+    : enforceNoWriteShellSandbox(sandbox, {
+        runtime,
+        denyWriteRoots: [input.workspaceRoot],
+      });
 }
 
 function runtimeError(

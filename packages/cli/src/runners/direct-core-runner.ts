@@ -1,11 +1,6 @@
 import {
-  createPermissionModePolicy,
-  createLayeredPolicy,
   createRun,
   createSessionRunStoreFactory,
-  createWorkspaceMutationPolicy,
-  createWorkspaceReadScopePolicy,
-  resolveRunConfidentialPaths,
   FileSessionStore,
   type ContextItem,
   type ModelAdapter,
@@ -25,6 +20,7 @@ import {
   createDocumentedCommandWorkflowHooks,
   bindConfiguredEventHooks,
   createConfiguredWorkflowHooks,
+  createHostRunPolicy,
   DETERMINISTIC_PROVIDER,
   loadHostConfig,
   resolveSkillRootsForRuntime,
@@ -57,6 +53,11 @@ export interface DirectCoreRunInput {
   workspaceRoot: string;
   sessionRootDir: string;
   targetPath: string;
+  /**
+   * @reserved Internal diagnostic policy scope consumed by CLI fresh/session
+   * resume routing. Absent uses the Host untargeted default.
+   */
+  policyTargetPath?: string;
   confidentialPaths?: readonly string[];
   confidentialDefaults?: boolean;
   runAccess: CliRunAccess;
@@ -86,6 +87,7 @@ export async function startDirectCoreRun(
     workspaceRoot,
     sessionRootDir,
     targetPath,
+    policyTargetPath,
     confidentialPaths,
     confidentialDefaults,
     runAccess,
@@ -118,25 +120,15 @@ export async function startDirectCoreRun(
     io,
   });
   const loadedConfig = await loadHostConfig(workspaceRoot, env);
-  // Config write guardrails override the direct-core defaults (single file, no
-  // deletions). loadHostConfig has already merged them conservatively.
   const writeGuardrails = loadedConfig.config.write;
-  const policy = createLayeredPolicy([
-    createPermissionModePolicy({ mode: permissionMode }),
-    createWorkspaceMutationPolicy({
-      allowWorkspaceWrites: shouldWrite,
-      allowedPaths: [targetPath],
-      maxWriteFiles: writeGuardrails?.maxFiles ?? 1,
-      maxDiffLines: writeGuardrails?.maxDiffLines ?? 200,
-      allowDeletions: writeGuardrails?.allowDeletions ?? false,
-    }),
-    createWorkspaceReadScopePolicy({
-      confidentialPaths: resolveRunConfidentialPaths({
-        confidentialDefaults,
-        confidentialPaths,
-      }),
-    }),
-  ]);
+  const policy = createHostRunPolicy({
+    permissionMode,
+    shouldWrite,
+    targetPath: policyTargetPath,
+    writeGuardrails,
+    confidentialDefaults,
+    confidentialPaths,
+  });
   const tools = await createConfiguredCliTools(workspaceRoot, env);
   const skillRoots = resolveSkillRootsForRuntime(
     workspaceRoot,

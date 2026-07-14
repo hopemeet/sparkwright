@@ -236,6 +236,21 @@ trace.jsonl
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-07-13
+- Scope: checked shared sandbox launch decisions; trace summary/timeline/report
+  projection logic and sandbox summary fields did not change.
+- Read: Host traced process sandbox summaries and MCP sandbox summaries.
+- Tests: focused Host/MCP tests passed; trace projection code unchanged.
+
+- Status: Read-only
+- Date: 2026-07-13
+- Scope: checked Host security-plan and CLI capability-inspect refactor;
+  summary, timeline, report, and verify projections are unchanged.
+- Read: CLI capability command boundary and Host capability snapshot assembly.
+- Tests: CLI capability-inspect tests passed; trace diagnostic code was not
+  changed.
+
+- Status: Read-only
 - Date: 2026-07-12T20:00:00+0800
 - Scope: checked new Agent/Workflow stats CLI routing; it scans canonical trace
   and Workflow records without changing summary/timeline/verify contracts.

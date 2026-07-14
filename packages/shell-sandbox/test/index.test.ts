@@ -7,10 +7,15 @@ import {
   buildMacOSSandboxProfile,
   createPlatformShellSandboxRuntime,
   describeShellSandboxStatus,
+  enforceNoWriteShellSandbox,
+  enforceProtectedWriteRootsShellSandbox,
+  extendShellSandboxReadAccess,
   LinuxBubblewrapShellSandboxRuntime,
   MacOSShellSandboxRuntime,
   prepareSandboxedProcessInvocation,
+  prepareSandboxedProcessLaunch,
   resolveShellSandboxConfig,
+  scopeShellSandboxFilesystem,
   shellJoin,
   shellQuoteArg,
 } from "../src/index.js";
@@ -91,6 +96,145 @@ describe("resolveShellSandboxConfig", () => {
   });
 });
 
+describe("prepareSandboxedProcessLaunch", () => {
+  const request = {
+    command: "node",
+    args: ["server.js"],
+    cwd: ROOT,
+  };
+
+  it("returns an unsandboxed argv invocation when warn mode is unavailable", async () => {
+    const config = resolveShellSandboxConfig({ workspaceRoot: ROOT });
+    const decision = await prepareSandboxedProcessLaunch(
+      {
+        id: "missing",
+        platform: "linux",
+        isAvailable: async () => false,
+        execute: async () => {
+          throw new Error("unused");
+        },
+      },
+      request,
+      config,
+    );
+
+    expect(decision).toMatchObject({
+      status: "unsandboxed",
+      available: false,
+      enforced: false,
+      runtimeId: "missing",
+      invocation: request,
+    });
+    expect(decision.status === "unsandboxed" && decision.reason).toMatch(
+      /unavailable/,
+    );
+  });
+
+  it("returns unavailable without an invocation when enforce mode cannot start", async () => {
+    const config = resolveShellSandboxConfig({
+      workspaceRoot: ROOT,
+      config: { mode: "enforce" },
+    });
+    const decision = await prepareSandboxedProcessLaunch(
+      {
+        id: "missing",
+        platform: "darwin",
+        isAvailable: async () => false,
+        execute: async () => {
+          throw new Error("unused");
+        },
+      },
+      request,
+      config,
+    );
+
+    expect(decision).toMatchObject({
+      status: "unavailable",
+      available: false,
+      enforced: true,
+      runtimeId: "missing",
+    });
+    expect(decision).not.toHaveProperty("invocation");
+  });
+});
+
+describe("resolved filesystem grants", () => {
+  it("scopes positive roots without discarding configured denies", () => {
+    const config = resolveShellSandboxConfig({
+      workspaceRoot: ROOT,
+      config: { filesystem: { denyWrite: ["protected"] } },
+    });
+    const scoped = scopeShellSandboxFilesystem(config, {
+      allowRead: [join(ROOT, "input")],
+      allowWrite: [join(ROOT, "scratch")],
+    });
+
+    expect(scoped.filesystem.allowRead).toEqual([join(ROOT, "input")]);
+    expect(scoped.filesystem.allowWrite).toEqual([join(ROOT, "scratch")]);
+    expect(scoped.filesystem.denyWrite).toContain(join(ROOT, "protected"));
+  });
+
+  it("compiles no-write semantics for bind and deny-list backends", async () => {
+    const config = resolveShellSandboxConfig({ workspaceRoot: ROOT });
+    const linux = await enforceNoWriteShellSandbox(config, {
+      runtime: { id: "bubblewrap", platform: "linux" },
+      denyWriteRoots: [ROOT],
+    });
+    const mac = await enforceNoWriteShellSandbox(config, {
+      runtime: { id: "sandbox-exec", platform: "darwin" },
+      denyWriteRoots: [ROOT],
+    });
+
+    expect(linux).toMatchObject({
+      mode: "enforce",
+      failIfUnavailable: true,
+      filesystem: { allowWrite: [], denyWrite: [], tmp: true },
+    });
+    expect(mac.filesystem.allowWrite).toEqual([]);
+    expect(mac.filesystem.denyWrite).toContain(ROOT);
+  });
+
+  it("protects workspace writes while preserving delegate scratch writes", async () => {
+    const scratch = resolve("/tmp/sparkwright-delegate");
+    const scoped = scopeShellSandboxFilesystem(
+      resolveShellSandboxConfig({ workspaceRoot: ROOT }),
+      {
+        allowRead: [scratch],
+        allowWrite: [scratch],
+      },
+    );
+    const linux = await enforceProtectedWriteRootsShellSandbox(scoped, {
+      runtime: { id: "bubblewrap", platform: "linux" },
+      protectedRoots: [ROOT],
+    });
+    const mac = await enforceProtectedWriteRootsShellSandbox(scoped, {
+      runtime: { id: "sandbox-exec", platform: "darwin" },
+      protectedRoots: [ROOT],
+    });
+
+    expect(linux).toMatchObject({
+      mode: "enforce",
+      failIfUnavailable: true,
+      filesystem: { allowWrite: [scratch] },
+    });
+    expect(linux.filesystem.denyWrite).not.toContain(ROOT);
+    expect(mac.filesystem.allowWrite).toEqual([scratch]);
+    expect(mac.filesystem.denyWrite).toContain(ROOT);
+  });
+
+  it("extends read access with a stable resolved path", async () => {
+    const config = resolveShellSandboxConfig({ workspaceRoot: ROOT });
+    const extended = await extendShellSandboxReadAccess(config, [
+      join(ROOT, "skills"),
+    ]);
+
+    expect(extended.filesystem.allowRead).toContain(join(ROOT, "skills"));
+    expect(extended.filesystem.allowWrite).toEqual(
+      config.filesystem.allowWrite,
+    );
+  });
+});
+
 describe("platform invocation builders", () => {
   it("builds bubblewrap argv with network and filesystem controls", () => {
     const config = resolveShellSandboxConfig({
@@ -124,12 +268,15 @@ describe("platform invocation builders", () => {
     );
   });
 
-  it("binds writable paths after the private /tmp overlay so they are not shadowed", () => {
+  it("binds allowed paths after the private /tmp overlay so they are not shadowed", () => {
     if (process.platform === "win32") return;
     const config = resolveShellSandboxConfig({
       workspaceRoot: "/repo",
       config: {
-        filesystem: { allowWrite: ["/tmp/sparkwright-trace-x"] },
+        filesystem: {
+          allowRead: ["/tmp/sparkwright-read-x"],
+          allowWrite: ["/tmp/sparkwright-trace-x"],
+        },
         network: { mode: "allow" },
       },
     });
@@ -151,8 +298,43 @@ describe("platform invocation builders", () => {
         arg === "--bind-try" &&
         invocation.args[i + 1] === "/tmp/sparkwright-trace-x",
     );
+    const readBind = invocation.args.findIndex(
+      (arg, i) =>
+        arg === "--ro-bind-try" &&
+        invocation.args[i + 1] === "/tmp/sparkwright-read-x",
+    );
     expect(tmpBind).toBeGreaterThanOrEqual(0);
+    expect(readBind).toBeGreaterThan(tmpBind);
     expect(writeBind).toBeGreaterThan(tmpBind);
+    const remount = invocation.args.findIndex(
+      (arg, i) => arg === "--remount-ro" && invocation.args[i + 1] === "/tmp",
+    );
+    expect(remount).toBeGreaterThan(readBind);
+    expect(remount).toBeGreaterThan(writeBind);
+  });
+
+  it("omits descendant deny mounts covered by an ancestor", () => {
+    const config = resolveShellSandboxConfig({
+      workspaceRoot: "/repo",
+      config: { network: { mode: "allow" } },
+    });
+
+    const invocation = buildBubblewrapInvocation({
+      request: { command: "true", cwd: "/repo", env: {} },
+      config,
+      tmpRoot: "/tmp/sw",
+      denyMounts: [
+        { path: "/repo/.sparkwright", source: "/tmp/empty-dir", kind: "dir" },
+        {
+          path: "/repo/.sparkwright/config.json",
+          source: "/tmp/empty-file",
+          kind: "file",
+        },
+      ],
+    });
+
+    expect(invocation.args).toContain("/repo/.sparkwright");
+    expect(invocation.args).not.toContain("/repo/.sparkwright/config.json");
   });
 
   it("builds macOS sandbox profiles with explicit deny-list controls", () => {
@@ -275,6 +457,43 @@ describe("platform sandbox integration", () => {
       stdout: "ok\n",
     });
 
+    const readOnlyConfig = await enforceNoWriteShellSandbox(config, {
+      runtime,
+      denyWriteRoots: [workspace],
+    });
+    const readOnly = await runtime.execute(
+      {
+        command: "cat allowed.txt",
+        cwd: workspace,
+        env: process.env,
+      },
+      readOnlyConfig,
+    );
+    await expect(readOnly.completed).resolves.toMatchObject({
+      status: "completed",
+      exitCode: 0,
+      stdout: "ok\n",
+    });
+
+    const fileOnlyConfig = scopeShellSandboxFilesystem(readOnlyConfig, {
+      allowRead: [join(workspace, "allowed.txt")],
+      allowWrite: [],
+    });
+    const shadowWrite = await runtime.execute(
+      {
+        command: "cat allowed.txt && echo bad > shadow.txt",
+        cwd: workspace,
+        env: process.env,
+      },
+      fileOnlyConfig,
+    );
+    await expect(shadowWrite.completed).resolves.toMatchObject({
+      status: "failed",
+    });
+    await expect(
+      readFile(join(workspace, "shadow.txt"), "utf8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+
     const denied = await runtime.execute(
       {
         command: "echo blocked > .sparkwright/config.json",
@@ -307,5 +526,8 @@ describe("platform sandbox integration", () => {
         "utf8",
       ),
     ).resolves.toBe("original skill\n");
+    await expect(
+      readFile(join(workspace, ".env"), "utf8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
   });
 });

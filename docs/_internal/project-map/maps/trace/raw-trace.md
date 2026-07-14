@@ -111,8 +111,14 @@ EventLog emits full event
   parent/child run ids, and `taskId` when the child is owned by an
   `agent_task`). SparkWright child-run terminal payloads carry
   `terminalState` and `stepLimitReached`/`truncated` when derived from the child
-  `run.*` outcome; external-process parent events must not invent those fields
-  without a child `run.*` source.
+  `run.*` outcome. Process adapters project `completed`/`failed` only from their
+  native worker/process result.
+- Parent-visible Agent lifecycle identity is projected from the portable
+  `PreparedAgentInvocation` data contract. Its `admission_pending` state is not
+  a raw event phase; `AgentSupervisor` requires admission before `started` and
+  emits at most one terminal event. Metadata
+  identifies `protocol` as `in_process`, `acp`, or `external_command`, with
+  process workspace access included when known.
   Derived trace reports may downgrade the severity of an incomplete child when
   later parent verification covers the current workspace state, but they must
   not rewrite these raw terminal facts.
@@ -204,6 +210,58 @@ EventLog emits full event
   double-spilling tool-owned artifacts and honor `resultSize.neverPersist`.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: workspace lease loss now surfaces bounded tool progress/cancellation
+  diagnostics and `PROCESS_ABORTED` process failure evidence without changing
+  event envelopes, lifecycle families, or managed-write attribution.
+- Read: workspace lease wrapper, Agent supervisors, traced process runner, ACP
+  worker, and raw event projections.
+- Tests: focused coordinator/Agent/process suites, all workspace tests, and
+  release smokes passed. Touched files are format-clean; the global format scan
+  is blocked only by pre-existing dirty proposal docs outside this change.
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: unified parent Agent lifecycle projection under `AgentSupervisor`;
+  admission failures no longer emit `started`, process terminals have parity,
+  and indexed calls expose their real entrypoint.
+- Read: supervisor, all production subagent emitters, traced process start
+  signal, protocol docs, and lifecycle tests.
+- Tests: agent-runtime supervisor/Agent and Host Agent/process lifecycle suites
+  passed.
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: verified the prepared Agent invocation metadata projection; no event
+  family, ordering, or terminal payload semantics changed.
+- Read: agent-runtime invocation/spawn projection, Host process adapters, and
+  raw trace Agent contracts.
+- Tests: agent-runtime invocation/Agent tests and Host lifecycle suites passed.
+
+- Status: Verified
+- Date: 2026-07-13
+- Scope: ACP read-write delegates now emit the existing
+  `workspace.write.untracked_access_granted` event; no new event name or payload
+  family was introduced.
+- Read: Host ACP/external subagent lifecycle and workspace-write marker events.
+- Tests: Host ACP/external/tool focused suites 122/122.
+
+- Status: Read-only
+- Date: 2026-07-13
+- Scope: sandbox launch/grant ownership moved, but process/delegate/MCP event
+  names, payloads, span nesting, and redaction are unchanged.
+- Read: Host traced process/delegate adapters and MCP preparation boundary.
+- Tests: Host process and MCP focused tests passed.
+
+- Status: Read-only
+- Date: 2026-07-13
+- Scope: checked Host security-plan and CLI inspect refactor; raw event names,
+  payloads, ordering, redaction, and trace storage did not change.
+- Read: Host prepared environment metadata/capability snapshot and CLI inspect
+  path.
+- Tests: Host tools/protocol focused tests passed; no trace contract changed.
 
 - Status: Read-only
 - Date: 2026-07-12T20:12:00+0800

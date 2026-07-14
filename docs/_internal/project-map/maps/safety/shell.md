@@ -33,6 +33,11 @@ model calls shell tool
 ## Contracts
 
 - Shell is a normal tool and must not bypass core policy or trace.
+- Core `createWorkspaceShellPolicy` and shell-tool path scope are intentionally
+  not one fact source: the former validates structured embedder `command +
+args` without rewriting requests, while the latter parses Host command text
+  and normalizes execution cwd. They share workspace-relative cwd semantics,
+  but command parsing stays shell-tool-owned.
 - Shell `previewArgs()` only formats `tool.requested.payload.preview` for UI
   display; safety classification, path-scope checks, policy, and approval still
   use the parsed command arguments at execution/gating time.
@@ -55,8 +60,14 @@ model calls shell tool
   cwd. Denial reasons include the given path, resolution anchor, resolved path,
   and allowed roots so "wrong semantic anchor" and real escape attempts are
   distinguishable.
-- Shell mutation audit uses `workspace-snapshot.ts` for snapshot/diff/rollback;
-  the same host primitive is reused by MCP side-effect detection.
+- Foreground Host shell mutation audit uses `workspace-snapshot.ts` for
+  snapshot/diff/rollback. It records regular files and symlinks, removes a
+  created/replacement symlink before restoration, and routes captured binary
+  writes through Core `LocalWorkspace` containment. It is still a whole-tree
+  workspace audit, not protection for writes outside the workspace. MCP
+  execution does not reuse this primitive: local stdio servers use their own
+  transport lifecycle and a neutral cwd only avoids accidental relative-path
+  project writes; it is not mutation detection or filesystem isolation.
 - Shell mutation audit excludes SparkWright runtime control-plane state such as
   `.sparkwright/sessions/` and `.sparkwright/workflow-runs/` so host-owned
   session traces and durable workflow state are not reported as model shell
@@ -109,6 +120,11 @@ model calls shell tool
 - Background shell tasks keep `task.*` as their trace lifecycle; stdout/stderr are
   buffered in `TaskStore`, mirrored as `task.output`, and summarized on the
   terminal task event through `ProcessOutputSummary`.
+- Host acquires a process-local workspace mutation lease only for Shell calls
+  whose effective argument-level governance includes `write`. Foreground calls
+  release after execution; explicit/promoted background calls transfer the same
+  lease to the returned Task and release at terminal state. A lease-loss signal
+  aborts/cancels the live task, but is not an OS fencing guarantee.
 - Workflow P4 script processes reuse the host process/sandbox substrate rather
   than defining a second runner. `workflow-node-api.ts` maps script execution
   into `TracedProcessRunner.runJsonRpc()` with shell-sandbox policy inputs,
@@ -116,6 +132,38 @@ model calls shell tool
   progress/telemetry. Script requests for governed command side effects go back
   through the host node API (`invoke(type:"command")`) instead of granting the
   script a raw shell capability.
+- Workflow Script process writes require two independent grants: write-enabled
+  run access and an explicit script `write` capability. Otherwise Host compiles
+  a fail-closed no-write sandbox that denies the workspace. Command hooks do the
+  same when the run explicitly records `shouldWrite:false`; legacy hook
+  embedders with no access metadata keep their prior behavior.
+- Host run security planning distinguishes the configured main-Shell sandbox
+  status used by capability inspection from the effective extension-process
+  sandbox. Read-only runs may strengthen the latter for MCP and Skill process
+  launch without claiming that the configured Shell mode changed.
+- `shell-sandbox` owns the shared argv launch decision
+  (`sandboxed`/`unsandboxed` fallback/`unavailable`) and OS-specific resolved
+  filesystem grant compilation. Host JSON-RPC, MCP stdio, Delegate, and Skill
+  adapters keep separate I/O, timeout, trace, and cleanup lifecycles; this seam
+  is not a general-purpose runner.
+- ACP child workers also consume the shared launch decision, but keep ACP
+  JSON-RPC/session/permission lifecycle in `acp-client-adapter`; they do not use
+  Host shell parsing, shell mutation snapshots, or `TracedProcessRunner`.
+- External-command and ACP write delegates hold the same workspace lease for
+  their complete process/session window. Lease loss reaches their native abort
+  path; raw processes use TERM then KILL escalation, and ACP cleanup waits for
+  worker exit before its adapter releases the lease.
+- ACP and external-command delegates with `workspaceAccess:none` force the
+  sandbox launch decision to fail closed and protect the workspace from writes
+  while keeping their private execution cwd writable. Linux enforces this with
+  its positive bind scope; macOS needs explicit workspace lexical/realpath deny
+  rules because its allow-default profile ignores positive filesystem grants.
+  This is a workspace-write guarantee, not a claim that macOS becomes a full
+  read/write allowlist.
+- Sandbox `enforce` means fail closed when the selected runtime is unavailable;
+  it does not imply workspace allowlisting. Linux bubblewrap reports
+  `bind-allowlist`; macOS sandbox-exec uses an allow-default profile and reports
+  `deny-list-guard`. Capability inspection must preserve that distinction.
 
 ## Consumers
 
@@ -136,6 +184,98 @@ model calls shell tool
 - Shell is powerful and cross-cuts workspace, tasks, trace, and capability state.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: granted sandboxed stdio MCP servers only their generated neutral cwd
+  as writable scratch; Linux still requires explicit read grants for runtime
+  dependencies outside the configured workspace.
+- Read: MCP adapter cwd lifecycle and shared shell-sandbox scope compiler.
+- Tests: focused MCP adapter, CLI, ACP, and shell-sandbox suites; CI covers the
+  real Linux bubblewrap runtime.
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: fixed Linux bubblewrap launch when protected configuration paths
+  overlap and when explicit read/write grants live beneath the private `/tmp`
+  overlay; the private parent is read-only outside explicit writable grants,
+  and missing secret paths no longer materialize in the host workspace.
+- Read: shell-sandbox bubblewrap compiler and platform integration coverage.
+- Tests: shell-sandbox 16/16 on Node 20 and Node 22; the CI matrix covers the
+  Linux runtime.
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: tied mutating foreground/background Shell and write-capable process
+  delegates to Host workspace lease lifetimes, including loss-triggered process
+  termination and ACP exit acknowledgement.
+- Read: Host Shell catalog/wrapper, Task handoff, traced process runner,
+  external-command adapter, and ACP worker.
+- Tests: focused Shell/process/ACP suites, all workspace tests, and release
+  smokes passed. Touched files are format-clean; the global format scan is
+  blocked only by pre-existing dirty proposal docs outside this change.
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: closed the macOS delegate positive-scope gap and warn-mode fallback for
+  `workspaceAccess:none` without removing private scratch writes.
+- Read: shell-sandbox protected-root compiler and Host ACP/external delegate
+  launch assembly.
+- Tests: shell-sandbox plus Host ACP/external focused suites 40/40.
+
+- Status: Verified
+- Date: 2026-07-13T22:42:00+0800
+- Scope: source review rejected a forced Core/shell-tool policy merge and fixed
+  the actual Core relative-cwd anchor drift.
+- Read: Core environment policy/tests and shell-tool path parsing/scope tests.
+- Tests: Core environment/policy 35/35; shell-tool 42/42; no shell-tool behavior
+  changed.
+
+- Status: Verified
+- Date: 2026-07-13T22:30:00+0800
+- Scope: hardened foreground snapshot rollback against symlink replacement and
+  aligned schema/user wording with the backend-specific filesystem guarantee.
+- Read: Host Shell/snapshot/config, Core LocalWorkspace, shell-sandbox profile
+  compiler/status, configuration guide, and focused tests.
+- Tests: Host config/snapshot/tools 161/161; Core workspace/checkpoint 31/31;
+  shell-sandbox 14/14; schema check; affected typechecks/builds passed.
+
+- Status: Verified
+- Date: 2026-07-13T22:21:00+0800
+- Scope: read-only MCP/Skill adapter inputs, Workflow Scripts, and explicit
+  run-bound command hooks now use fail-closed no-write sandbox compilation;
+  their distinct process lifecycles remain intact.
+- Read: Host security plan, Workflow node API/hooks, runtime assembly, and
+  shell-sandbox no-write compiler.
+- Tests: Host focused 263/263; MCP adapter 34/34; CLI inspect 11/11.
+
+- Status: Verified
+- Date: 2026-07-13
+- Scope: added configured sandbox launch to ACP child workers while preserving
+  their distinct protocol lifecycle and workspaceAccess gate.
+- Read: Host ACP delegate, ACP client worker, and shell-sandbox compiler.
+- Tests: ACP adapter 2/2 and Host ACP/external/tool suites 122/122.
+
+- Status: Verified
+- Date: 2026-07-13
+- Scope: unified argv sandbox fallback decisions and filesystem grant
+  compilation across Host JSON-RPC, MCP stdio, external Delegate isolation,
+  and Skill inline no-write execution.
+- Read: shell-sandbox, Host process/Delegate/Skill adapters, and MCP adapter.
+- Tests: shell-sandbox 14/14; Host focused process tests 37/37; MCP 34/34;
+  affected typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-13
+- Scope: corrected the execution-boundary map after source review: workspace
+  snapshot/diff/rollback belongs to foreground Host shell and is not reused by
+  MCP stdio transport.
+- Read: `packages/host/src/shell.ts`,
+  `packages/host/src/workspace-snapshot.ts`, and
+  `packages/mcp-adapter/src/index.ts`.
+- Tests: documentation correction supported by source inspection; Core
+  workspace/checkpoint/policy tests 59/59 passed for the behavior changed in
+  this stage.
 
 - Status: Read-only
 - Date: 2026-07-12

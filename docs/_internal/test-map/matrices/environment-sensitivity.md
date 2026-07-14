@@ -11,11 +11,23 @@ setup behavior. Record environment assumptions in scenarios.
 | sandbox runtime     | Linux bind allow-list and macOS deny-list guard have different evidence |
 | network             | real MCP/provider tests may depend on network availability              |
 | workspace dirtiness | unrelated files can affect snapshot/diff/audit tests                    |
+| symlink support     | snapshot rollback tests require local symlink creation                  |
 | cwd                 | relative cwd/path bugs often depend on process cwd vs workspace root    |
 | XDG config/state    | user config can leak into tests unless isolated                         |
 | generated `dist`    | downstream packages may import stale built output                       |
 | trace level         | `standard` folds/suppresses high-volume events; `debug` preserves more  |
 | timing              | foreground timeout/promotion tests should use tiny injected budgets     |
+
+Sandbox launch-decision unit tests should inject a runtime with deterministic
+`isAvailable()`. Installed-runtime tests prove backend integration only for the
+current OS; do not infer macOS deny-list behavior from a Linux bind-allowlist
+pass, or vice versa.
+
+`workspaceAccess:none` process delegates are fail-closed when the runtime is
+unavailable. Their tests must separately assert that the private delegate cwd
+remains writable and that a known absolute workspace path is not: Linux derives
+that boundary from positive writable binds, while macOS requires explicit
+protected-root deny rules.
 
 ## Dist Freshness Rule
 

@@ -212,6 +212,8 @@ export interface RunCheckpointV1 {
   budget: {
     configured?: RunBudget;
     usage: RunBudgetUsage;
+    /** @reserved Aggregate descendant work usage consumed by child-run budget inheritance on resume. */
+    childTreeUsage?: RunBudgetUsage;
     forcedContinuation?: ForcedContinuationBudgetSnapshot;
   };
   /** @reserved Public checkpoint payload consumed by resume/fork tooling. */

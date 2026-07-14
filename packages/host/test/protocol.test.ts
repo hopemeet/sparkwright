@@ -1992,7 +1992,12 @@ describe("host protocol", () => {
         },
       });
     } finally {
-      await rm(workspace, { recursive: true, force: true });
+      await rm(workspace, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 50,
+      });
     }
   });
 
@@ -3421,7 +3426,7 @@ describe("host protocol", () => {
         childAgentId: "writer",
         agentProfileId: "writer",
         delegateTool: "delegate_writer",
-        entrypoint: "delegate",
+        entrypoint: "delegate_agent",
         subagentDepth: 1,
       });
     } finally {

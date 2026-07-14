@@ -15,11 +15,14 @@ See [../../modules/agent-runtime.md](../../modules/agent-runtime.md) and [../../
 - `packages/host/src/agent-profiles.ts`
 - `packages/host/src/delegate-runner.ts`
 - `packages/host/src/delegate-capability.ts`
+- `packages/host/src/indexed-delegate-tool.ts`
 - `packages/host/src/config.ts`
 - `packages/host/src/config-zod-schema.ts`
 - `packages/host/src/external-command-agent.ts`
 - `packages/host/src/traced-process-runner.ts`
+- `packages/host/src/workspace-agent-arbiter.ts`
 - `packages/agent-runtime/src/index.ts`
+- `packages/agent-runtime/src/agents/*`
 - `packages/agent-runtime/src/concurrency/*`
 
 ## Data Flow
@@ -27,7 +30,7 @@ See [../../modules/agent-runtime.md](../../modules/agent-runtime.md) and [../../
 ```txt
 configured profiles/delegates
   -> host derives agent profiles
-  -> delegate/spawn tools
+  -> delegate/spawn tools prepare one Agent invocation identity
   -> child run store factory
   -> session/agent trace attribution
 ```
@@ -95,6 +98,14 @@ configured profiles/delegates
 - External ACP and external-command delegates are config-declared agent profile
   metadata exposed through inline profile `delegateTool` or
   `capabilities.agents.delegateTools`.
+- Both process delegate protocols compile `workspaceAccess:none|read_write`
+  through Host before launch. `none` uses a private writable cwd and a
+  fail-closed protected-root sandbox: Linux keeps that cwd as its positive
+  writable bind, while macOS adds lexical/realpath workspace deny-write rules.
+  This prevents workspace writes without claiming a macOS filesystem allowlist
+  or denying every possible workspace read. `read_write` requires the parent
+  run write gate and emits an untracked write-capable marker. ACP retains its
+  own JSON-RPC/session lifecycle instead of entering `TracedProcessRunner`.
 - Configured in-process delegates are also exposed through
   `capabilities.agents.delegateTools` with `protocol: "in_process"`, so host
   snapshots, CLI inspect, and TUI capability views use one descriptor source.
@@ -163,6 +174,12 @@ configured profiles/delegates
   metadata so trace diagnostics can join child terminal evidence back to
   `task_create`. `task_create(kind:"agent")` uses the same workspace-write
   grant parsing and child grant consumption as inline `spawn_agent`.
+- `kind:"agent"` on a `TaskRecord`/task payload identifies the registered task
+  runner, not an actor-notification source kind. Agent lifecycle and bounded
+  results remain on `subagent.*`/tool results. The typed actor inbox accepts
+  only task/workflow notification sources; introducing an Agent notification
+  lane requires a concrete producer and receiver rather than widening a shared
+  enum in advance.
 - Main-run `task_create` advertises the host-registered `agent` kind and its
   required child-agent payload fields so real models can create background
   agent tasks without guessing runner kind names from roles. Detached/promoted
@@ -247,7 +264,62 @@ configured profiles/delegates
   dynamic `spawn_agent` all read and write this ledger so a later equivalent
   delegation can return the previous child result with `alreadyCompleted: true`
   instead of spawning a duplicate child. The ledger does not reuse failed,
-  step-limited, or truncated children.
+  step-limited, or truncated children. Equivalence is exact after conservative
+  Unicode/case/whitespace normalization; fuzzy directory-listing or text
+  similarity must not cross target paths.
+- The indexed `delegate_agent` router is a Host-owned adapter in
+  `indexed-delegate-tool.ts`; portable result identity and parent-scoped reuse
+  live under agent-runtime `src/agents/`. Host runtime composes these pieces but
+  does not own a duplicate router or ledger implementation.
+- All current Agent transports prepare the same serializable invocation
+  identity before projecting parent lifecycle metadata. The data contract
+  reserves `admission_pending`, includes optional governance facts, and excludes
+  execution handles. In-process paths now report `protocol:"in_process"` in
+  lifecycle metadata; ACP/external retain their protocol and workspace-access
+  facts. `AgentSupervisor` now owns parent-visible sequencing and terminal
+  dedupe; adapters keep only native execution.
+- Agent lifecycle requires requested -> admitted before `started`. ACP and
+  external-command access/sandbox admission failures emit requested -> failed,
+  process completions carry `terminalState`/`finality`, and indexed calls record
+  `entrypoint:"delegate_agent"` without exposing a spoofable model JSON field.
+- Host Agent execution and actual Host parent/child mutation tools share one
+  process-local fair workspace lease coordinator keyed by workspace realpath.
+  Read-only Agent children may share; write-capable in-process, ACP, and
+  external-command children serialize with parent coding/Shell/capability
+  mutations across HostRuntime connections. `subagent.requested` remains
+  visible while queued, while `started` cannot appear before lease acquisition.
+  Lifecycle metadata carries `workspaceAccess` and `agentConcurrency` so the
+  requested-to-started gap is interpretable.
+- Child execution leases and child write tools reenter under the same run id.
+  Descendant requests blocked by an ancestor fail fast; opening nested
+  delegation beyond current Host catalogs must preserve full run-chain
+  ancestry. Acquisitions auto-renew, queue removal is abortable, release is
+  reference-counted/idempotent, and loss signals child/process cancellation.
+  The guarantee ends at the Node process boundary and has no fencing generation
+  or termination acknowledgement, so it does not claim distributed or stale-
+  writer exclusion.
+- In-process Agent runs inherit opaque Core descendant-tree budget accounts.
+  A configured run budget still governs the run locally and also creates a
+  separate shared ceiling for all of its descendants; nested children consume
+  every ancestor account, so sibling or deeper fan-out cannot multiply model
+  calls, tool calls, provider tokens, cost, or active duration independently.
+  Exact model/tool counters are reserved before execution; token/cost/duration
+  remain post-usage/time checks as in ordinary Core runs.
+- This tree accounting covers Core-backed in-process children only. ACP and
+  external-command delegates expose one parent tool call and lifecycle result,
+  but their process-internal model/tool usage is not observable as Core run
+  usage and therefore cannot be charged to these accounts. This budget layer is
+  independent of Agent workspace leases, approval, `maxDepth`, forced
+  continuations, and Workflow/session run-chain ceilings.
+- Core same-turn concurrency follows the effective Agent invocation: dynamic
+  write grants, configured child write/shell capability, spawn approval, invalid
+  inputs, and unresolved indexed targets are serial. Read-only dynamic and
+  configured children may remain concurrent. This is separate from policy and
+  approval, which still run for every tool call.
+- ACP and external-command child run ids retain their protocol/profile prefix
+  and use the shared entropy-bearing Core id generator rather than a bare
+  millisecond suffix, so same-profile concurrent invocations cannot collide
+  merely because they start in the same millisecond.
 - In-process delegate and granted dynamic-spawn workspace writes are surfaced
   to the parent run-end summary by rolling up the child run's own
   `workspace.write.completed` events onto the parent-visible
@@ -283,8 +355,8 @@ configured profiles/delegates
   delegate tool result and `subagent.completed.payload.result` as
   `progressCount`, `progressDropped`, `progressHead`, and `progressTail`; it
   does not create `extension.process.*` lifecycle rows. When a read/write
-  external command delegate is granted direct workspace access it emits an
-  untracked write-capable marker, not managed write events.
+  ACP or external command delegate is granted direct workspace access it emits
+  an untracked write-capable marker, not managed write events.
 
 ## Consumers
 
@@ -302,13 +374,132 @@ configured profiles/delegates
 ## Known Debts
 
 - Multi-agent semantics are still edge/composition behavior, not fully absorbed core primitives.
-- Audited MCP and shell filesystem snapshots remain O(tree) when enabled (the
-  in-process delegate path no longer snapshots — it rolls up child write
-  events); MCP stdio servers outside the workspace skip snapshots unless args
-  reference workspace paths, but large repositories may still need scoped roots
-  or mtime prefilters.
+- Execution and cancellation handles remain transport-specific even though
+  parent-visible phase transitions are supervised uniformly. Preserve the
+  cross-entrypoint characterization suite while resource/cancellation ownership
+  converges.
+- Foreground Host shell filesystem snapshots remain O(tree) when enabled. The
+  in-process delegate path rolls up child write events, external processes use
+  untracked-access markers, and MCP stdio does not run a workspace snapshot;
+  neutral MCP cwd and sandbox posture must not be described as mutation
+  detection.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: unified Agent execution admission with parent/child mutation leases,
+  closed raw child-start admission bypass, and connected lease loss to native
+  in-process, ACP, and external-command cancellation.
+- Read: coordinator, all Host Agent entrypoints, portable spawn substrate,
+  process adapters, and lifecycle projections.
+- Tests: focused Agent/coordinator/process suites, all workspace tests, and
+  release smokes passed. Touched files are format-clean; the global format scan
+  is blocked only by pre-existing dirty proposal docs outside this change.
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: removed the unused `run|agent` actor-notification kind promise while
+  retaining task-owned Agent execution and existing `subagent.*` communication.
+- Read: actor inbox unions, task-owned Agent path, Supervisor lifecycle, and
+  active supervision communication boundary.
+- Tests: agent-runtime task/workflow/channel 99/99; downstream focused suites;
+  full `npm run release:check`.
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: enforced shared descendant-tree work budgets for in-process Agent
+  siblings and nested descendants without changing process adapters or Host
+  admission policy.
+- Read: Core budget accounts, agent-runtime spawn inheritance, all Agent entry
+  surfaces, active supervision design, and checkpoint behavior.
+- Tests: Core budget/run/resume/trace 275/275; agent-runtime Agent suites 65/65;
+  Host Agent/process/arbiter suites 102/102.
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: added process-local workspace RW arbitration across every Host Agent
+  entrypoint and projected its workspace/concurrency facts into lifecycle
+  metadata.
+- Read: arbiter, all Host Agent execution paths, portable admission seam,
+  workspace-write map, and active supervision design.
+- Tests: agent-runtime Agent/invocation/supervisor/ledger 60/60; Host focused
+  Agent/process suites 162/162; affected typechecks/build passed.
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: unified all production Agent lifecycle emitters under
+  `AgentSupervisor`, fixed pre-admission process starts and terminal parity,
+  and attributed indexed delegation to its real entry surface.
+- Read: supervisor/invocation, in-process/process/indexed adapters, trace docs,
+  and characterization tests.
+- Tests: agent-runtime supervisor/invocation/Agent 53/53; Host Agent/process
+  lifecycle 173/173.
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: converged lifecycle identity construction for in-process, ACP, and
+  external-command Agent transports on `PreparedAgentInvocation`; lifecycle
+  execution remains unchanged.
+- Read: all Agent adapters, invocation projections, active supervision design,
+  protocol event docs, and characterization tests.
+- Tests: prepared invocation 10/10; agent-runtime Agent tests 38/38; Host Agent
+  lifecycle suites 157/157.
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: established explicit module ownership for indexed Agent routing and
+  delegation result contracts/ledger while retaining existing root/runtime
+  compatibility exports.
+- Read: Host indexed router, agent-runtime `src/agents/*`, both compatibility
+  entrypoints, and focused tests.
+- Tests: agent-runtime ledger/AgentTool 43/43; Host tools 100/100; affected
+  typechecks and agent-runtime build passed.
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: added cross-entrypoint Agent lifecycle characterization and a normalized
+  test projection that excludes timestamps, spans, sequence, prose, and
+  adapter-specific result bodies.
+- Read: in-process/direct/indexed/parallel/dynamic/task/ACP/external/direct-CLI
+  Agent paths.
+- Tests: Host lifecycle suites 157/157; agent-runtime Agent tests 38/38; direct
+  CLI delegate 1/1; test typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: hardened Agent concurrency admission, delegation result identity, and
+  process-child run identity without changing approval semantics.
+- Read: Core batching, agent-runtime ledger/AgentTool, Host spawn/delegate tools,
+  and ACP/external adapters.
+- Tests: Core run 127/127; agent-runtime Agent tests 38/38; Host Agent/tool suites
+  155/155; affected typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: made `workspaceAccess:none` a fail-closed workspace-write boundary for
+  ACP and external-command delegates while preserving their private cwd writes.
+- Read: Host ACP/external delegate adapters and shell-sandbox protected-root
+  compiler.
+- Tests: shell-sandbox plus Host ACP/external focused suites 40/40.
+
+- Status: Verified
+- Date: 2026-07-13
+- Scope: ACP child delegates gained sandbox/access and untracked-write audit
+  parity with external command delegates without merging their process
+  lifecycles.
+- Read: Host ACP/external delegate tools, runtime assembly, direct delegate
+  runner, and ACP client adapter.
+- Tests: Host ACP/external/tool tests 122/122; ACP adapter tests 2/2.
+
+- Status: Verified
+- Date: 2026-07-13
+- Scope: external Delegate positive filesystem scope now compiles in
+  shell-sandbox; corrected the stale debt that incorrectly attributed
+  workspace snapshotting to MCP stdio.
+- Read: external command agent, MCP adapter, workspace snapshot, and
+  shell-sandbox.
+- Tests: Host external delegate focused tests and MCP adapter tests passed.
 
 - Status: Verified
 - Date: 2026-07-12T23:45:00+0800

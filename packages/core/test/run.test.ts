@@ -5185,6 +5185,55 @@ describe("SparkwrightRun", () => {
     });
   });
 
+  it("serializes tools with argument-dependent policy unless they classify concurrency explicitly", async () => {
+    let modelCalls = 0;
+    const dynamicPolicyTool = (name: string) =>
+      defineTool({
+        name,
+        description: "Statically read-only with argument-dependent policy.",
+        inputSchema: { type: "object" },
+        policy: { risk: "safe" },
+        governance: { sideEffects: ["read"], idempotency: "conditional" },
+        policyForArgs() {
+          return {};
+        },
+        execute() {
+          return { ok: true };
+        },
+      });
+
+    const run = createRun({
+      goal: "serialize dynamic policy tools",
+      tools: [dynamicPolicyTool("dynamic_a"), dynamicPolicyTool("dynamic_b")],
+      maxToolConcurrency: 2,
+      model: {
+        async complete() {
+          modelCalls += 1;
+          if (modelCalls === 1) {
+            return {
+              toolCalls: [
+                { toolName: "dynamic_a", arguments: {} },
+                { toolName: "dynamic_b", arguments: {} },
+              ],
+            };
+          }
+          return { message: "done" };
+        },
+      },
+    });
+
+    await expect(run.start()).resolves.toMatchObject({ signal: "completed" });
+    expect(
+      run.events
+        .all()
+        .filter((event) => event.type === "tool.batch.requested")
+        .map((event) => event.payload),
+    ).toMatchObject([
+      { mode: "serial", toolCallCount: 1, toolNames: ["dynamic_a"] },
+      { mode: "serial", toolCallCount: 1, toolNames: ["dynamic_b"] },
+    ]);
+  });
+
   it("keeps concurrent tool observations in request order while trace follows completion order", async () => {
     let modelCalls = 0;
     let secondTurnToolResultOrder: string[] = [];

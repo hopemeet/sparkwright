@@ -43,6 +43,9 @@
 - Long foreground commands fall back to abort plus `timedOut: true` when
   promotion is unavailable.
 - Host shell mutation audits roll back unmanaged writes on non-promoted paths.
+- Snapshot audit records symlink entries; focused tests cover created symlink
+  cleanup and parent-directory symlink replacement without writing through to
+  the external target.
 - Configured delegate child shell tools can inherit workspace anchoring.
 
 ## Weak Or Untested
@@ -54,6 +57,17 @@
   shows a false terminal claim; use focused contract tests as the stable gate.
   Do not change global tool exposure solely to make that weak-model canary pass.
 - Platform-specific sandbox evidence differs across macOS and Linux.
+- Shared argv launch-decision tests deterministically cover unavailable
+  warn/enforce behavior, but installed-runtime integration remains
+  environment-sensitive and may exercise only the current OS backend.
+- Read-only Workflow Script and local extension process execution is
+  fail-closed when the platform sandbox is unavailable. The deterministic
+  security-plan test covers compilation; successful real process launch remains
+  platform/runtime-sensitive.
+- `workspaceAccess:none` delegate tests cover protected workspace writes and
+  preserved private-cwd scratch writes on the installed backend. Cross-OS
+  confidence still requires the shell-sandbox compiler tests plus Linux CI and
+  macOS integration evidence; one platform pass is not evidence for the other.
 - Stale `dist` can make host/CLI tests miss shell-tool source behavior.
 - Timing-sensitive timeout tests need tiny injected budgets and should avoid
   depending on wall-clock precision.
@@ -83,7 +97,9 @@
 ```bash
 npm --workspace @sparkwright/shell-tool test -- test/shell-tool.test.ts
 npm --workspace @sparkwright/shell-tool run build
-npm --workspace @sparkwright/host test -- test/tools.test.ts
+npm --workspace @sparkwright/shell-sandbox test
+npm --workspace @sparkwright/shell-sandbox run build
+npm --workspace @sparkwright/host test -- test/workspace-snapshot.test.ts test/tools.test.ts
 ```
 
 Add CLI route checks for user-facing run outcomes:

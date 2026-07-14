@@ -220,6 +220,9 @@ export async function runConfiguredDelegate(
           maxDepth: agentConfig?.maxDepth,
           entrypoint: "delegates_run",
           allowReadWriteWorkspaceAccess: input.shouldWrite === true,
+          sandbox: loaded.config.shell?.sandbox,
+          skillRoots: skillRoots.map((root) => root.root),
+          configPaths: loaded.attempted.map((entry) => entry.path),
         })
       : createExternalCommandDelegateTool({
           getParent: () => parent,

@@ -6,9 +6,7 @@
 import type { ModelOutput, ModelOutputTrace } from "./types.js";
 
 export interface StreamTraceTiming {
-  startedAtMs: number;
   firstChunkAtMs?: number;
-  completedAtMs?: number;
 }
 
 export function mergeModelUsage(
