@@ -1992,7 +1992,12 @@ describe("host protocol", () => {
         },
       });
     } finally {
-      await rm(workspace, { recursive: true, force: true });
+      await rm(workspace, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 50,
+      });
     }
   });
 

@@ -1127,6 +1127,7 @@ describe("mcp-adapter", () => {
     await writeFile(configPath, "original\n", "utf8");
     await writeFile(skillPath, "original skill\n", "utf8");
 
+    const stderr: string[] = [];
     const prepared = await prepareMcpServer(
       mcpEchoServerConfig("guarded", {
         prelude: [
@@ -1137,6 +1138,7 @@ describe("mcp-adapter", () => {
         cwd: workspace,
       }),
       {
+        onStdioStderr: ({ chunk }) => stderr.push(chunk),
         shellSandbox: resolveShellSandboxConfig({
           workspaceRoot: workspace,
           config: { mode: "enforce", network: { mode: "deny" } },
@@ -1147,7 +1149,9 @@ describe("mcp-adapter", () => {
       },
     );
     try {
-      expect(prepared.status).toEqual({ status: "connected" });
+      expect(prepared.status, stderr.join("")).toEqual({
+        status: "connected",
+      });
       await expect(readFile(configPath, "utf8")).resolves.toBe("original\n");
       await expect(readFile(skillPath, "utf8")).resolves.toBe(
         "original skill\n",
