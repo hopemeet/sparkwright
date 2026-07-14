@@ -97,6 +97,10 @@ For `packages/host/src/runtime/capability-assembly.ts`, keep HostRuntime as the
 snapshot-cache owner and run the import graph/facade gate in addition to this
 route.
 
+For `packages/cli/src/commands/capabilities.ts`, run `capabilities
+inspect|delegates run` focused slices plus the full CLI golden. Assert the
+existing HostService is passed in and MCP inspection always closes preparation.
+
 Add TUI panel tests when visible panel rendering changes:
 
 ```bash

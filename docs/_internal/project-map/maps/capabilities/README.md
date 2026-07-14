@@ -209,6 +209,14 @@ config + workspace capability roots
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-07-15
+- Scope: CLI capability/delegate diagnostics moved intact to a domain module;
+  Host remains the capability snapshot/cache owner and inspect protocol/text/JSON
+  fields, delegate collision semantics, and effective access reporting are unchanged.
+- Read: CLI capability command, facade, Host capability assembly and delegate APIs.
+- Tests: CLI capability/delegate focused slices and full golden.
+
 - Status: Read-only
 - Date: 2026-07-15
 - Scope: CLI trace/session command extraction does not change capability

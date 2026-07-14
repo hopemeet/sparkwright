@@ -131,6 +131,13 @@ Future run in compacted session
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-15
+- Scope: capability/delegate command relocation preserves delegate session-id
+  creation and trace routing; resume/replay behavior is unchanged.
+- Read: CLI capability command and facade routing.
+- Tests: full CLI golden.
+
 - Status: Verified
 - Date: 2026-07-15
 - Scope: CLI session and run-resume handlers moved to one domain module;

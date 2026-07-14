@@ -122,6 +122,13 @@ Manual compact
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-15
+- Scope: capability/delegate command relocation reuses the composition-root
+  HostService and preserves session roots, stores, persistence, and cleanup.
+- Read: CLI facade and capability command HostService parameter.
+- Tests: full CLI golden.
+
 - Status: Verified
 - Date: 2026-07-15
 - Scope: CLI session diagnostics moved to a domain module while reusing the

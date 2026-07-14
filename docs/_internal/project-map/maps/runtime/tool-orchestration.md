@@ -366,6 +366,14 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-07-15
+- Scope: CLI tool capability inventory and delegate diagnostics moved to a
+  domain module; catalog assembly, policy, approval, invocation, observation,
+  and event order are unchanged.
+- Read: CLI capability command and Host tool/delegate APIs.
+- Tests: CLI capability/delegate focused slices, full golden, and repo-pilot.
+
 - Status: Read-only
 - Date: 2026-07-15
 - Scope: CLI trace/session handler relocation preserves direct-core resume tool

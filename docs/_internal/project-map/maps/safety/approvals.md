@@ -132,6 +132,13 @@ policy requires approval
 
 - Status: Verified
 - Date: 2026-07-15
+- Scope: configured delegate CLI handler relocation preserves approval option
+  mapping, permission mode, write gate, resolver, and Host execution behavior.
+- Read: CLI capability command and approval adapter.
+- Tests: CLI delegate focused slice and full CLI golden.
+
+- Status: Verified
+- Date: 2026-07-15
 - Scope: direct-core run-resume handler relocation preserves approval options,
   resolver creation, permission mode, policy, and host-path routing.
 - Read: CLI trace-session module, approval adapter, host/direct-core runners.

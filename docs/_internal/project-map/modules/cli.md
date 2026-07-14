@@ -11,7 +11,9 @@ See also [../maps/trace/summary-timeline-verify.md](../maps/trace/summary-timeli
 - `packages/cli/src/cli.ts`
 - `packages/cli/src/commands/contracts.ts` — shared parsed-command and result contracts
 - `packages/cli/src/commands/trace-session.ts` — trace, session, and run-resume diagnostics/lifecycle handlers
+- `packages/cli/src/commands/capabilities.ts` — capability inspection and configured delegate diagnostics
 - `packages/cli/src/parser/numbers.ts` — shared pure integer flag parsing
+- `packages/cli/src/parser/values.ts` — shared pure record/list/word parsing
 - `packages/cli/src/event-format.ts`
 - `packages/cli/src/run-outcome.ts`
 - `packages/cli/src/runners/direct-core-runner.ts`
@@ -329,6 +331,17 @@ Does not own:
 - The direct-core deterministic model is a diagnostics harness; it should keep exercising real catalog tools (`read_file`, `read_anchored_text`, `write_file`, `edit_anchored_text`/`apply_patch`) rather than reintroducing test-only write tools.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: moved capability inspect, MCP status projection, delegate diagnostics,
+  and their text/JSON formatters into one domain module. The module receives the
+  existing HostService explicitly; CLI parsing/help/output and service singleton
+  count are unchanged.
+- Read: CLI facade, capability command module, parser value leaf, Host
+  capability/delegate APIs, and CLI golden tests.
+- Tests: capability/delegate focused and full CLI golden, config/entry/outcome,
+  build/typecheck, repo-pilot, import/boundary, and map drift.
 
 - Status: Verified
 - Date: 2026-07-15

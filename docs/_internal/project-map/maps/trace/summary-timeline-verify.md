@@ -236,6 +236,13 @@ trace.jsonl
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-15
+- Scope: capability/delegate command relocation preserves delegate trace path
+  reporting and does not change trace summaries, timelines, reports, or verify.
+- Read: CLI capability command and existing trace-session module.
+- Tests: full CLI golden and repo-pilot trace smoke.
+
 - Status: Verified
 - Date: 2026-07-15
 - Scope: CLI trace/session diagnostic handlers and formatters moved intact to

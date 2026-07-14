@@ -89,6 +89,14 @@ host config MCP servers
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-07-15
+- Scope: CLI `--resolve-mcp` inspection moved mechanically with its close-finally
+  cleanup intact; MCP preparation, transport, lazy startup, reconnect, process,
+  and runtime cleanup behavior are unchanged.
+- Read: CLI capability command and MCP preparation API.
+- Tests: CLI capability inspect focused/full golden; no MCP lifecycle split.
+
 - Status: Read-only
 - Date: 2026-07-15
 - Scope: task projection extraction does not touch MCP preparation, status,
