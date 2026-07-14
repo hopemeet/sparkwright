@@ -1,6 +1,6 @@
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
 import { describe, expect, it, vi } from "vitest";
@@ -593,7 +593,7 @@ process.stdin.resume();
 `,
     "utf8",
   );
-  return { cwd, agentPath, dependencyRoot: dirname(dirname(sdkPath)) };
+  return { cwd, agentPath, dependencyRoot: fixtureNodeModulesRoot(sdkPath) };
 }
 
 async function createEnvProbeAgent(): Promise<{
@@ -653,7 +653,18 @@ process.stdin.resume();
 `,
     "utf8",
   );
-  return { cwd, agentPath, dependencyRoot: dirname(dirname(sdkPath)) };
+  return { cwd, agentPath, dependencyRoot: fixtureNodeModulesRoot(sdkPath) };
+}
+
+function fixtureNodeModulesRoot(resolvedDependency: string): string {
+  const marker = `${sep}node_modules${sep}`;
+  const markerIndex = resolvedDependency.lastIndexOf(marker);
+  if (markerIndex < 0) {
+    throw new Error(
+      `Fixture dependency is not under node_modules: ${resolvedDependency}`,
+    );
+  }
+  return resolvedDependency.slice(0, markerIndex + `${sep}node_modules`.length);
 }
 
 function fixtureAgentArgs(fixture: {
@@ -661,6 +672,6 @@ function fixtureAgentArgs(fixture: {
   dependencyRoot: string;
 }): string[] {
   // workspaceAccess:none exposes only absolute argv paths on Linux. Passing the
-  // SDK package root makes this fixture's external dependency explicit.
+  // node_modules root makes the fixture SDK and its peer dependencies explicit.
   return [fixture.agentPath, fixture.dependencyRoot];
 }
