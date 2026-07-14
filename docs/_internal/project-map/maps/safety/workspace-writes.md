@@ -143,6 +143,13 @@ tool proposes write
 
 - Status: Read-only
 - Date: 2026-07-15
+- Scope: task projection extraction does not change WorkspaceContext, mutation
+  admission, policy, approvals, containment, or write events.
+- Read: concrete runtime and task-projections boundary.
+- Tests: Host tools/agent focused suites and repo-pilot.
+
+- Status: Read-only
+- Date: 2026-07-15
 - Scope: access/capability projection moved to a stateless collaborator;
   WorkspaceContext, policy, mutation admission, approvals, containment, and
   write-event ownership are unchanged.

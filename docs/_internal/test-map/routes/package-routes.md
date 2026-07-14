@@ -188,6 +188,10 @@ For `runtime/contracts.ts`, also run Host execution/service and the import graph
 gate; coordinator ports must not derive their signatures from `HostRuntime`
 class methods.
 
+For `runtime/task-projections.ts`, run Host service/protocol and agent-task
+focused tests; keep TaskManager/store/outbox ownership outside the projection
+leaf.
+
 ## Server Runtime
 
 ### Durable workflow channels and adapters

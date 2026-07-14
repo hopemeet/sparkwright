@@ -131,6 +131,13 @@ Future run in compacted session
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-07-15
+- Scope: task notification/snapshot conversion moved to a leaf; task revival,
+  persisted lookup, checkpoint replay, run identity, and ordering are unchanged.
+- Read: concrete runtime revival path and task-projections.
+- Tests: Host service/protocol/agent and CLI host-resume focused suites.
+
 - Status: Read-only
 - Date: 2026-07-15
 - Scope: capability snapshot merge moved to a stateless collaborator; resume

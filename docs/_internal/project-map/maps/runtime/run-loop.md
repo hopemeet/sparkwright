@@ -283,6 +283,14 @@ createRun/resumeRunFromCheckpoint
 
 - Status: Verified
 - Date: 2026-07-15
+- Scope: stateless task projections and notification conversion moved to a
+  leaf; run supervision, revival waits, run-loop state, events, and execution
+  ownership are unchanged.
+- Read: concrete runtime task paths and task-projections.
+- Tests: Host execution/service/protocol/agent focused suites and repo-pilot.
+
+- Status: Verified
+- Date: 2026-07-15
 - Scope: moved stateless capability projection/preparation helpers out of the
   concrete runtime; start/resume supervision, run-loop state, events, and
   HostExecution ownership are unchanged.

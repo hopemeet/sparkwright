@@ -366,6 +366,13 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-15
+- Scope: task value conversion moved to a leaf; tool selection, policy,
+  approval, invocation, observation, and event order are unchanged.
+- Read: concrete runtime and task-projections boundary.
+- Tests: Host tools/agent focused suites and repo-pilot.
+
 - Status: Verified
 - Date: 2026-07-15
 - Scope: tool capability projection and configured/live snapshot merge moved

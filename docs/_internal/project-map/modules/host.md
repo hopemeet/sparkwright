@@ -14,6 +14,7 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 - `packages/host/src/runtime.ts` — stable named compatibility facade
 - `packages/host/src/runtime/host-runtime.ts` — concrete HostRuntime composition and execution orchestration
 - `packages/host/src/runtime/capability-assembly.ts` — capability snapshot projection, summaries, automation reads, and merge
+- `packages/host/src/runtime/task-projections.ts` — task snapshots, notifications, terminal classification, and bounded output reads
 - `packages/host/src/runtime/contracts.ts` — runtime construction and execution coordination ports
 - `packages/host/src/session-queries.ts`
 - `packages/host/src/session-compaction.ts`
@@ -928,6 +929,16 @@ Does not own:
   remain adapter-native and need continued cross-entrypoint characterization.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: moved stateless task record/output projections, notification summary,
+  terminal classification, protocol not-found conversion, and one-shot iterator
+  polling into a dependency leaf. TaskManager/store/outbox ownership remains in
+  WorkspaceContext and HostRuntime holds no new task truth.
+- Read: concrete runtime, task-projections, WorkspaceContext.
+- Tests: Host execution/service/protocol/tools/agent focused suites, build,
+  typecheck, CLI host paths, repo-pilot, import gates, and map drift.
 
 - Status: Verified
 - Date: 2026-07-15

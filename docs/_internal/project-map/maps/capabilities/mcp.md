@@ -89,6 +89,13 @@ host config MCP servers
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-15
+- Scope: task projection extraction does not touch MCP preparation, status,
+  transport, reconnect, process, or cleanup behavior.
+- Read: concrete runtime/task leaf import boundary and existing MCP path.
+- Tests: Host protocol/tools focused suites; no MCP lifecycle code changed.
+
 - Status: Verified
 - Date: 2026-07-15
 - Scope: MCP status-to-capability projection moved into the stateless

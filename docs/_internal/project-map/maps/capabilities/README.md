@@ -211,6 +211,13 @@ config + workspace capability roots
 
 - Status: Verified
 - Date: 2026-07-15
+- Scope: task automation protocol projection now uses a stateless leaf; the
+  capability snapshot cache, TaskManager/store, and outbox ownership are unchanged.
+- Read: task-projections, capability-assembly, concrete runtime.
+- Tests: Host protocol/client/tools and CLI capability inspect focused suites.
+
+- Status: Verified
+- Date: 2026-07-15
 - Scope: capability snapshot projection, model/access/workflow/skill summaries,
   automation inspection, and configured/live snapshot merge moved into a
   stateless collaborator; protocol shape and snapshot cache ownership remain
