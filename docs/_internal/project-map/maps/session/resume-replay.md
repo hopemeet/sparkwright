@@ -133,6 +133,14 @@ Future run in compacted session
 
 - Status: Verified
 - Date: 2026-07-15
+- Scope: CLI session and run-resume handlers moved to one domain module;
+  HostService reuse, session lookup, checkpoint reconstruction, direct-core
+  diagnostic gate, replay order, identity, and output are unchanged.
+- Read: CLI trace-session module, host/direct-core runners, CLI facade.
+- Tests: CLI session/run-resume focused slices and full CLI golden.
+
+- Status: Verified
+- Date: 2026-07-15
 - Scope: task notification/snapshot conversion moved to a leaf; task revival,
   persisted lookup, checkpoint replay, run identity, and ordering are unchanged.
 - Read: concrete runtime revival path and task-projections.

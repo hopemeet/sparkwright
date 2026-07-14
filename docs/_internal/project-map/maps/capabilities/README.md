@@ -209,6 +209,13 @@ config + workspace capability roots
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-15
+- Scope: CLI trace/session command extraction does not change capability
+  assembly, snapshot cache, inspect output, tools, models, skills, or MCP facts.
+- Read: CLI command routing and trace-session module.
+- Tests: full CLI golden and deterministic repo-pilot.
+
 - Status: Verified
 - Date: 2026-07-15
 - Scope: task automation protocol projection now uses a stateless leaf; the

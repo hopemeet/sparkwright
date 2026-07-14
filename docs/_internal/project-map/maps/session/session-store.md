@@ -124,6 +124,14 @@ Manual compact
 
 - Status: Verified
 - Date: 2026-07-15
+- Scope: CLI session diagnostics moved to a domain module while reusing the
+  single composition-root HostService; store paths, compact/inspect behavior,
+  persistence, and cleanup are unchanged.
+- Read: CLI trace-session module, CLI facade, Host session APIs.
+- Tests: CLI session focused slice and full CLI golden.
+
+- Status: Verified
+- Date: 2026-07-15
 - Scope: HostRuntime relocation leaves session-root resolution, stores,
   WorkspaceContext ownership, and persistence unchanged.
 - Read: runtime facade, concrete runtime constructor, WorkspaceContext.

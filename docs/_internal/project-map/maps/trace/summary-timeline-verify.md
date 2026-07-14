@@ -15,6 +15,7 @@ See [raw-trace.md](raw-trace.md) for source data and [export-diagnostics.md](exp
 - `packages/core/src/trace-session-consistency.ts`
 - `packages/core/src/trace-codec.ts`
 - `packages/cli/src/cli.ts`
+- `packages/cli/src/commands/trace-session.ts`
 - `packages/cli/test/fixtures/trace-diagnostics/*`
 - `packages/host/src/runtime.ts`
 - `docs/reference/STATE_AND_TRACE_MODEL.md`
@@ -234,6 +235,14 @@ trace.jsonl
   guard.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: CLI trace/session diagnostic handlers and formatters moved intact to
+  a domain module; summary, events, timeline, report, verify, consistency,
+  repair, compact, inspect, and text/JSON output are unchanged.
+- Read: trace-session command module, CLI facade, Core trace diagnostics.
+- Tests: CLI trace/session focused slices and full CLI golden.
 
 - Status: Verified
 - Date: 2026-07-14

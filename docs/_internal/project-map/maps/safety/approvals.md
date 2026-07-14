@@ -132,6 +132,13 @@ policy requires approval
 
 - Status: Verified
 - Date: 2026-07-15
+- Scope: direct-core run-resume handler relocation preserves approval options,
+  resolver creation, permission mode, policy, and host-path routing.
+- Read: CLI trace-session module, approval adapter, host/direct-core runners.
+- Tests: CLI run-resume focused slice and full CLI golden.
+
+- Status: Verified
+- Date: 2026-07-15
 - Scope: HostRuntime relocation preserves approval routing, timeout, resolver,
   cancellation, and HostExecution cleanup behavior.
 - Read: runtime facade, concrete runtime, HostExecution, HostService.

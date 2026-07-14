@@ -9,6 +9,9 @@ See also [../maps/trace/summary-timeline-verify.md](../maps/trace/summary-timeli
 ## Main Files
 
 - `packages/cli/src/cli.ts`
+- `packages/cli/src/commands/contracts.ts` — shared parsed-command and result contracts
+- `packages/cli/src/commands/trace-session.ts` — trace, session, and run-resume diagnostics/lifecycle handlers
+- `packages/cli/src/parser/numbers.ts` — shared pure integer flag parsing
 - `packages/cli/src/event-format.ts`
 - `packages/cli/src/run-outcome.ts`
 - `packages/cli/src/runners/direct-core-runner.ts`
@@ -326,6 +329,17 @@ Does not own:
 - The direct-core deterministic model is a diagnostics harness; it should keep exercising real catalog tools (`read_file`, `read_anchored_text`, `write_file`, `edit_anchored_text`/`apply_patch`) rather than reintroducing test-only write tools.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: moved trace/session/run-resume handlers and their text/JSON formatting
+  into one domain module. `cli.ts` remains the composition facade,
+  `cliHostService` is still created once and passed explicitly, and parseArgs,
+  help, stdout/stderr, exit codes, direct-core, and lazy entry loading are unchanged.
+- Read: CLI facade, command contracts, trace-session module, number parser,
+  host/direct-core runners, and CLI golden tests.
+- Tests: focused and full CLI golden, config/entry/outcome suites,
+  typecheck/build, repo-pilot, import/boundary gates, and map drift.
 
 - Status: Verified
 - Date: 2026-07-15

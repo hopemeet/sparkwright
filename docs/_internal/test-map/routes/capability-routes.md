@@ -48,6 +48,10 @@ Add CLI trace fixtures when text/JSON output changes:
 npm --workspace @sparkwright/cli test -- test/cli.test.ts -t "trace"
 ```
 
+When `commands/trace-session.ts` moves mechanically, also run the `session|run
+resume` CLI slices and the full CLI golden to freeze stderr, exit codes, Host
+reuse, and direct-core behavior.
+
 Scenario refs:
 
 - [../scenarios/trace-subagent-write-verify.yaml](../scenarios/trace-subagent-write-verify.yaml)

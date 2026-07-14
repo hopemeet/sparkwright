@@ -239,7 +239,7 @@ npm --workspace @sparkwright/cli test -- test/run-outcome-consistency.test.ts
 
 If terminal text changes, run the specific CLI test slice that renders it.
 
-### `packages/cli/src/cli.ts`
+### `packages/cli/src/cli.ts` or `packages/cli/src/commands/*`
 
 Choose a focused slice first:
 
@@ -251,6 +251,10 @@ npm --workspace @sparkwright/cli test -- test/cli.test.ts -t "session"
 
 Then broaden to the full CLI test file when command parsing or shared helpers
 are touched.
+
+For `commands/trace-session.ts`, run all `trace|session|run resume` slices and
+the full CLI golden. Assert that the module receives the existing HostService;
+it must not create a second one.
 
 ### `packages/cli/test/support/*`
 
