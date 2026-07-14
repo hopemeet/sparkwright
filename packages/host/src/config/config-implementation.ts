@@ -25,17 +25,11 @@ import {
   clampBackgroundTaskPolicy,
   clampAccessMode,
   compileRunAccessMode,
-  type BackgroundTaskPolicy,
-  type RunAccessMode,
   type RunBudget,
   type WorkflowHookMatcher,
   type WorkflowHookName,
 } from "@sparkwright/core";
-import {
-  PERMISSION_MODES,
-  type PermissionMode,
-  type TraceLevel,
-} from "@sparkwright/protocol";
+import { PERMISSION_MODES } from "@sparkwright/protocol";
 import type {
   AgentProfile,
   AgentProfileWorkflowHookConfig,
@@ -167,7 +161,6 @@ import {
 } from "../config-zod-schema.js";
 import type {
   ApprovalDefaults,
-  AgentExposureMode,
   CapabilityDelegateToolConfig,
   CapabilityEventHookConfig,
   CapabilityHookActionConfig,

@@ -28,7 +28,6 @@ import {
   type EventEmitter,
   type ModelAdapter,
   type NotificationSource,
-  type PendingNotification,
   type Policy,
   type RunId,
   type RunBudget,
@@ -41,23 +40,17 @@ import {
   type SessionTraceFacts,
   type ToolDefinition,
   type ToolDescriptor,
-  type ToolOrigin,
   type ToolRequestPreviewOptions,
   type WorkflowHook,
 } from "@sparkwright/core";
 import {
   prepareSkillsForRun,
-  type LoadedSkill,
-  type SkillIndexEntry,
-  type SkillPreprocessOptions,
   type SkillUsageRecorder,
 } from "@sparkwright/skills";
 import {
   createLazyMcpToolsForRun,
   prepareMcpToolsForRun,
   type McpServerConfig,
-  type McpStatus,
-  type McpToolNameMapping,
 } from "@sparkwright/mcp-adapter";
 import {
   FileTaskNotificationOutbox,
@@ -71,7 +64,6 @@ import {
   advanceWorkflowState,
   assertSafeWorkflowRunId,
   type WorkflowLeaseBoundWriter,
-  FileTaskStore,
   TaskManager,
   createAgentTool,
   createAgentProfilePolicy,
@@ -109,17 +101,13 @@ import {
   workspaceWorkflowRunsDir,
   workflowRunsDir,
 } from "@sparkwright/agent-runtime";
-import { CronStore, defaultCronRoot } from "@sparkwright/cron";
+import { defaultCronRoot } from "@sparkwright/cron";
 import { RECOMMENDED_FOREGROUND_TIMEOUT_MS } from "@sparkwright/shell-tool";
 import {
   InFlightCommandDispatcher,
   type ExecutionHandle,
 } from "@sparkwright/server-runtime";
-import type {
-  HostExecutionCoordinatorPort,
-  HostExecutionMessage,
-  RuntimeOptions,
-} from "./contracts.js";
+import type { HostExecutionMessage, RuntimeOptions } from "./contracts.js";
 import {
   buildCapabilitySnapshot,
   createSkillPreprocessOptions,
@@ -150,12 +138,8 @@ import {
   processWorkspaceLeaseCoordinator,
   type WorkspaceLeaseCoordinator,
 } from "../workspace-lease-coordinator.js";
-import {
-  type ResolvedShellSandboxConfig,
-  type ShellSandboxStatus,
-} from "@sparkwright/shell-sandbox";
+import { type ResolvedShellSandboxConfig } from "@sparkwright/shell-sandbox";
 import type {
-  CapabilitySkillsConfig,
   CapabilityDelegateToolConfig,
   CapabilityEventHookConfig,
   CapabilityHooksConfig,
@@ -174,7 +158,6 @@ import {
   isTraceLevel,
   type PermissionMode,
   type TraceLevel,
-  type HostEvent,
   type ProtocolError,
   type CapabilityInspectRequestPayload,
   type RunFailureEnvelope,
@@ -189,12 +172,6 @@ import {
   type TaskRecordSnapshot,
   type CapabilitySnapshot,
   type CapabilityAutomationSummary,
-  type CapabilityModelSummary,
-  type CapabilitySkillInlineShellSummary,
-  type CapabilityEventRuleSummary,
-  type CapabilityWorkflowRuleSummary,
-  type CapabilityWorkflowAssetErrorSummary,
-  type CapabilityWorkflowAssetSummary,
 } from "@sparkwright/protocol";
 import { buildAgentPromptBuilder } from "@sparkwright/project-context";
 import { loadHostConfig } from "../config/config-implementation.js";
@@ -238,7 +215,6 @@ import {
   type ResolvedModelConfig,
 } from "../model-factory.js";
 import {
-  catalogEntryOrigin,
   catalogToolDefinitions,
   createConfiguredDelegateChildToolCatalog,
   createDynamicChildToolCatalog,
@@ -267,7 +243,6 @@ import {
 } from "../external-command-agent.js";
 import { createDelegateAgentTool } from "../indexed-delegate-tool.js";
 export { createDelegateAgentTool } from "../indexed-delegate-tool.js";
-import { createSkillInlineShellRunner } from "../skill-inline-shell.js";
 import {
   createSkillUsageRecorder,
   observeSkillUsageEvent,

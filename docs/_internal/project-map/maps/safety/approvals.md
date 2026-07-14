@@ -131,7 +131,7 @@ policy requires approval
 ## Last Verified
 
 - Status: Verified
-- Date: 2026-07-15
+- Date: 2026-07-15T07:35:27+0800
 - Scope: expected approval/policy denial classification moved to a pure result
   analysis leaf; resolver ownership, request/resolution order, and approval
   behavior are unchanged.

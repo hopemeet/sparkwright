@@ -90,16 +90,12 @@ import {
   toolBatchEventPayload,
   partitionToolCalls,
   runToolBatch,
-  type ToolCallBatch,
   type RequestedToolCall,
 } from "./tool-orchestration.js";
 import {
-  classifyToolFailure,
   commandOutcomeSnapshotFromFactLedger,
   completedRunOutcomeFromEvents,
-  stableRefTarget,
   toolOutcomeSnapshot,
-  type ToolFailureCategory,
 } from "./run-outcome.js";
 import { FactLedger } from "./fact-ledger.js";
 import { ControlledWorkspace } from "./workspace.js";

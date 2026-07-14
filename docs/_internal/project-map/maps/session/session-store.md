@@ -123,7 +123,7 @@ Manual compact
 ## Last Verified
 
 - Status: Verified
-- Date: 2026-07-15
+- Date: 2026-07-15T07:35:27+0800
 - Scope: doctor session/task path reporting now uses a shared resolution leaf;
   store roots, persistence, cleanup, and Host ownership are unchanged.
 - Read: CLI config-doctor/config-paths and facade callers.

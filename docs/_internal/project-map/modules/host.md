@@ -934,7 +934,7 @@ Does not own:
 ## Last Verified
 
 - Status: Verified
-- Date: 2026-07-15T07:31:13+0800
+- Date: 2026-07-15T07:35:27+0800
 - Scope: moved config candidate discovery, resolution ordering, JSON/YAML
   parsing/serialization, private-file writes, and sibling write-target selection
   into a cohesive dependency leaf. Validation and conservative merge semantics

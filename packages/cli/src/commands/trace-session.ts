@@ -43,10 +43,6 @@ import {
 } from "../runners/direct-core-runner.js";
 import { resumeHostRun, startHostRun } from "../runners/host-runner.js";
 import type { CliRunResult, ParsedArgs } from "./contracts.js";
-import {
-  parseNonNegativeInteger,
-  parsePositiveInteger,
-} from "../parser/numbers.js";
 
 export async function handleTraceCommand(
   parsed: ParsedArgs,

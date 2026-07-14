@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import path from "node:path";
 import ts from "typescript";
 
 const targets = process.argv.slice(2);

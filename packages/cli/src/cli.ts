@@ -1,11 +1,8 @@
-import { existsSync, readdirSync, readFileSync, readlinkSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { createHash } from "node:crypto";
-import { homedir } from "node:os";
-import { basename, dirname, join, resolve, sep } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
-import { Ajv2020 } from "ajv/dist/2020.js";
-import type { AnySchema, ErrorObject, ValidateFunction } from "ajv";
+import { join, resolve, sep } from "node:path";
+import { pathToFileURL } from "node:url";
 import {
   FileTaskStore,
   FileWorkflowStore,
@@ -20,19 +17,9 @@ import {
 } from "@sparkwright/agent-runtime";
 import {
   asSessionId,
-  buildTraceReportFile,
-  buildTraceTimelineFile,
   createSessionId,
   createContextItemId,
   createRunId,
-  FileSessionStore,
-  loadCheckpointFromRunDir,
-  loadTraceEventsFile,
-  projectSessionReplayToContextItems,
-  repairSessionTraceConsistency,
-  resumeRunFromCheckpoint,
-  summarizeTraceFile,
-  validateSessionTraceConsistency,
   compileRunAccessMode,
   clampAccessMode,
   isRunAccessMode,
@@ -41,22 +28,12 @@ import {
   type RunAccessMode,
   type RunRecord,
   type ContextItem,
-  type SessionTraceConsistencyReport,
-  type SessionTraceRepairReport,
-  type TraceReport,
-  type TraceSummary,
-  type TraceVerificationReport,
-  type TraceTimeline,
   EventLog,
-  verifyTraceFile,
 } from "@sparkwright/core";
 import {
   isTraceLevel,
-  type CapabilityDelegateToolSummary,
-  type CapabilitySnapshot,
   type PermissionMode,
   type RunInputPayload,
-  type SessionCompactionInspectReport,
   type TraceLevel,
   type WorkflowRunSnapshot,
 } from "@sparkwright/protocol";
@@ -98,9 +75,6 @@ import {
   loadLayeredWorkflowAssets,
   loadHostConfig,
   createWorkflowJobSessionId,
-  createHostRunPolicy,
-  configResolutionOrder,
-  DEFAULT_DEFERRED_TOOLS,
   MAX_RUN_IMAGE_INPUT_BYTES,
   SUPPORTED_RUN_IMAGE_INPUT_TYPES,
   buildImageRunInputPart,
@@ -109,11 +83,8 @@ import {
   isToolUseSelector,
   projectConfigCandidatePaths,
   readConfigFileObject,
-  resolveAgentProfiles,
-  resolveAgentDelegateTools,
   resolveConfigWriteTarget,
   delegateToolName,
-  filterDirectDelegatesForExposure,
   summarizeRunInputParts,
   distillWorkflowFromSession,
   shadowWorkflowFromSession,
@@ -121,16 +92,12 @@ import {
   HostRuntime,
   createHostService,
   createHostStartRunRequest,
-  resolveCapabilityDirs,
   resolveSkillRootsForRuntime,
-  runConfiguredDelegate,
   userConfigCandidatePaths,
   userConfigPath,
   validateRunInput,
   writeConfigFileObject,
   type AgentReport,
-  type DelegateCapabilityDescriptor,
-  type DelegateToolCollision,
   type ApplySkillProposalResult,
   type SkillDoctorReport,
   type SkillHistoryEntry,
@@ -154,11 +121,7 @@ import {
   WorkflowSupervisor,
   type WorkflowServiceHandoff,
 } from "@sparkwright/server-runtime";
-import { prepareMcpToolsForRun } from "@sparkwright/mcp-adapter";
-import { resolveShellSandboxConfig } from "@sparkwright/shell-sandbox";
-import { RECOMMENDED_FOREGROUND_TIMEOUT_MS } from "@sparkwright/shell-tool";
 import { createCliApprovalResolver } from "./cli-approval.js";
-import { createLiveEventFormatter, formatEvent } from "./event-format.js";
 import type { CliIO } from "./io.js";
 import { writeLine } from "./io.js";
 import type { CliApprovalOptions, CliRunAccess } from "./run-access.js";
@@ -167,11 +130,7 @@ import {
   createConfiguredCliTools,
   startDirectCoreRun,
 } from "./runners/direct-core-runner.js";
-import {
-  resumeHostRun,
-  resumeHostWorkflowRun,
-  startHostRun,
-} from "./runners/host-runner.js";
+import { resumeHostWorkflowRun, startHostRun } from "./runners/host-runner.js";
 import type { CliRunResult, ParsedArgs } from "./commands/contracts.js";
 export type { CliRunResult } from "./commands/contracts.js";
 import {

@@ -132,7 +132,7 @@ Future run in compacted session
 ## Last Verified
 
 - Status: Read-only
-- Date: 2026-07-15T07:26:47+0800
+- Date: 2026-07-15T07:35:27+0800
 - Scope: doctor session-root path reporting moved to a domain module; resume,
   checkpoint, replay, identity, and session behavior are unchanged.
 - Read: CLI config-doctor path report and trace-session module.

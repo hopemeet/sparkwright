@@ -368,7 +368,7 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
 ## Last Verified
 
 - Status: Verified
-- Date: 2026-07-15T07:31:13+0800
+- Date: 2026-07-15T07:35:27+0800
 - Scope: duplicate/repeated-call, failure-context, no-op, and compaction request
   analysis moved intact to a pure leaf; validation, policy, approval, execution,
   observation, recovery, and event ordering are unchanged.
