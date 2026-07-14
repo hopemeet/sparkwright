@@ -114,6 +114,12 @@ Does not own:
   session-store roots, shares one workspace mutation lease coordinator per
   canonical workspace, attaches runtime facades, provides execution/run alias
   lookup without copying execution truth, and drains attached runtimes.
+- `HostService` owns one in-memory `ExecutionLaneCoordinator` and is the
+  canonical production path for ordinary start, resume, inject, and cancel.
+  Lane identity is canonical session-store root plus persisted session id.
+  Same-lane executions serialize; different lanes may consume the bounded
+  process capacity concurrently. Core episode terminal does not release the
+  lane until `HostExecution.completion` settles.
 - `WorkspaceContext` owns the shared TaskManager/store/outbox and Workflow
   notification/control adapters. It never owns live MCP, LocalWorkspace,
   mutable policy, event emitter, approval resolver, or active execution.
@@ -888,6 +894,15 @@ Does not own:
   remain adapter-native and need continued cross-entrypoint characterization.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: routed ordinary interactive execution through the process HostService
+  and transport-neutral single-process execution lanes.
+- Read: HostService/runtime/HostExecution, server-runtime execution lanes,
+  protocol adapters, ACP/CLI callers, and focused tests.
+- Tests: server-runtime 29/29; Host 563/563; ACP 15/15; CLI 37/37;
+  agent-runtime 94/94; full `npm run release:check`.
 
 - Status: Verified
 - Date: 2026-07-14

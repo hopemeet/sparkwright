@@ -1,8 +1,4 @@
-import {
-  createId,
-  type ContentPart,
-  type RunHandle,
-} from "@sparkwright/core";
+import { createId, type ContentPart, type RunHandle } from "@sparkwright/core";
 import type { MemoryTrace } from "@sparkwright/core";
 import type { WorkflowRunId } from "@sparkwright/agent-runtime";
 import {
@@ -25,6 +21,7 @@ export interface HostExecutionTerminal {
   executionId: string;
   sessionId?: string;
   rootRunId?: string;
+  /** @reserved Public execution terminal alias consumed by future control surfaces. */
   finalRunId?: string;
   state: "completed" | "failed" | "cancelled";
 }
@@ -45,7 +42,7 @@ interface PendingExecutionApproval {
  * the entire episode chain.
  */
 export class HostExecution {
-  readonly executionId = createId("execution") as string;
+  readonly executionId: string;
   readonly abortController: AbortController;
   readonly completion: Promise<HostExecutionTerminal>;
 
@@ -64,7 +61,10 @@ export class HostExecution {
   private resolveCompletion!: (terminal: HostExecutionTerminal) => void;
   private terminal?: HostExecutionTerminal;
 
-  constructor(options: { abortController?: AbortController } = {}) {
+  constructor(
+    options: { abortController?: AbortController; executionId?: string } = {},
+  ) {
+    this.executionId = options.executionId ?? (createId("execution") as string);
     this.abortController = options.abortController ?? new AbortController();
     this.completion = new Promise((resolve) => {
       this.resolveCompletion = resolve;
@@ -232,6 +232,5 @@ export class HostExecution {
     this.denyPendingApprovals();
     void this.disposeResources().catch(() => {});
     this.detachRun();
-    this.finish("cancelled");
   }
 }

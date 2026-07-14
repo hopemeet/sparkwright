@@ -53,6 +53,8 @@ export class WorkspaceContext {
   }
 }
 
-export function workspaceContextKey(identity: WorkspaceContextIdentity): string {
+export function workspaceContextKey(
+  identity: WorkspaceContextIdentity,
+): string {
   return `${resolve(identity.workspaceRoot)}\0${resolve(identity.sessionRootDir)}`;
 }

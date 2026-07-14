@@ -138,6 +138,11 @@ tool proposes write
 
 ## Last Verified
 
+- Status: Verified (no lease semantic change)
+- Date: 2026-07-14
+- Scope: reviewed WorkspaceContext and lane capacity; canonical workspace lease
+  admission remains independent from execution scheduling capacity.
+
 - Status: Verified
 - Date: 2026-07-14
 - Scope: extended Host workspace arbitration from child-only admission to

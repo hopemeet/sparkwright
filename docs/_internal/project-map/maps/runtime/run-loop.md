@@ -48,6 +48,11 @@ createRun/resumeRunFromCheckpoint
 - A Host interactive execution may contain multiple Core runs. HostExecution
   retains the stable root alias and current/final episode ids; only its
   completion drains execution ownership. Core terminal remains a per-run fact.
+- Ordinary Host execution is admitted by server-runtime's in-memory lane
+  coordinator. Its opaque driver sees execution/session identity, atomic
+  message injection, cancellation, and whole-execution completion only. It does
+  not interpret run trees, Workflow actors, Tasks, Agents, Core events, MCP, or
+  workspace leases.
 - `cancel()` emits `run.cancelled` synchronously and kicks the `RunEnd`
   workflow-hook phase with `state:"cancelled"` / `reason:"manual_cancelled"`.
   `RunEnd` remains fire-and-forget.
@@ -274,6 +279,14 @@ createRun/resumeRunFromCheckpoint
   handling can still be noisy.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: made HostExecution completion the lane handoff fact and added bounded
+  same-session serialization with cross-session process concurrency.
+- Read: server-runtime execution lanes, HostService driver, HostExecution, and
+  Core atomic command acceptance.
+- Tests: server-runtime 29/29; Host 563/563; full release check.
 
 - Status: Verified
 - Date: 2026-07-14

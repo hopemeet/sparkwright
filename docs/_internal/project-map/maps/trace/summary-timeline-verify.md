@@ -235,6 +235,11 @@ trace.jsonl
 
 ## Last Verified
 
+- Status: Verified (no trace-view change)
+- Date: 2026-07-14
+- Scope: reviewed CLI/Host assembly migration; trace summary, timeline, and
+  verification derivation remain unchanged.
+
 - Status: Read-only
 - Date: 2026-07-13
 - Scope: checked shared sandbox launch decisions; trace summary/timeline/report

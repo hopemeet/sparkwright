@@ -599,7 +599,6 @@ export interface RunHandle {
     metadata?: Record<string, unknown>;
   }): RunResult;
   tryEnqueueCommand(command: RunCommand): RunCommandAcceptance;
-  enqueueCommand(command: RunCommand): RunCommandAcceptance;
   /**
    * @reserved Public run-control helper consumed by embedders and frontends.
    */
@@ -2775,10 +2774,6 @@ export class SparkwrightRun implements RunHandle {
       metadata: command.metadata ?? {},
     });
     return { accepted: true };
-  }
-
-  enqueueCommand(command: RunCommand): RunCommandAcceptance {
-    return this.tryEnqueueCommand(command);
   }
 
   injectUserMessage(input: {

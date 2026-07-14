@@ -102,6 +102,11 @@ cron config/state
 
 ## Last Verified
 
+- Status: Verified (no contract change)
+- Date: 2026-07-14
+- Scope: reviewed execution-scoped background Task dependencies; cron ownership
+  and durable Task revival remain unchanged.
+
 - Status: Read-only
 - Date: 2026-07-12T20:12:00+0800
 - Scope: checked shared Workflow record layer addition; cron contracts and

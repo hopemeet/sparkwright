@@ -126,7 +126,10 @@ import {
 } from "@sparkwright/agent-runtime";
 import { CronStore, defaultCronRoot } from "@sparkwright/cron";
 import { RECOMMENDED_FOREGROUND_TIMEOUT_MS } from "@sparkwright/shell-tool";
-import { DurableCommandDispatcher } from "@sparkwright/server-runtime";
+import {
+  DurableCommandDispatcher,
+  type ExecutionHandle,
+} from "@sparkwright/server-runtime";
 import {
   createWorkspaceMutationAdmission,
   processWorkspaceLeaseCoordinator,
@@ -435,6 +438,38 @@ export interface RuntimeOptions {
   workspaceLeaseCoordinator?: WorkspaceLeaseCoordinator;
   /** @internal Workspace-scoped durable owner injected by HostService. */
   workspaceContext?: WorkspaceContext;
+  /** @internal Canonical process lane path injected by HostService. */
+  executionCoordinator?: HostExecutionCoordinatorPort;
+  /** @internal Finite live approval wait; defaults to five minutes. */
+  approvalTimeoutMs?: number;
+}
+
+export interface HostExecutionCoordinatorPort {
+  startRun(
+    runtime: HostRuntime,
+    payload: RunStartRequestPayload,
+  ): ReturnType<HostRuntime["startRunDirect"]>;
+  resumeRun(
+    runtime: HostRuntime,
+    payload: RunResumeRequestPayload,
+  ): ReturnType<HostRuntime["resumeRunDirect"]>;
+  injectRunMessage(
+    runtime: HostRuntime,
+    runId: string,
+    input: Parameters<HostRuntime["injectRunMessageDirect"]>[1],
+  ): ReturnType<HostRuntime["injectRunMessageDirect"]>;
+  cancelRun(
+    runtime: HostRuntime,
+    runId: string,
+    reason?: string,
+  ): ReturnType<HostRuntime["cancelRunDirect"]>;
+}
+
+export interface HostExecutionMessage {
+  runId: string;
+  content: string;
+  parts?: readonly RunInputPart[];
+  metadata?: Record<string, unknown>;
 }
 
 interface CompletedConversationTurn {
@@ -917,6 +952,38 @@ export class HostRuntime {
       : undefined;
   }
 
+  /** @internal Canonical lane scope used by the process HostService. */
+  executionLaneKey(sessionId: string): string {
+    return `${
+      this.opts.sessionRootDir ?? defaultSessionRootDir(this.opts.workspaceRoot)
+    }\0${sessionId}`;
+  }
+
+  executionDriverHandle(
+    executionId: string,
+  ): ExecutionHandle<HostExecutionMessage, unknown> | undefined {
+    const execution = this.currentExecution;
+    if (
+      !execution ||
+      execution.executionId !== executionId ||
+      !execution.rootRunId
+    ) {
+      return undefined;
+    }
+    return {
+      rootRunId: execution.rootRunId,
+      currentRunId: () => execution.currentRunId() ?? execution.rootRunId!,
+      tryInject: (message) =>
+        this.injectRunMessageDirect(message.runId, message).ok
+          ? "accepted"
+          : "closed",
+      cancel: (reason) => {
+        execution.cancel(reason);
+      },
+      completion: execution.completion,
+    };
+  }
+
   private get active(): HostExecutionActiveRun | null {
     return this.currentExecution?.activeRun ?? null;
   }
@@ -930,8 +997,11 @@ export class HostRuntime {
     }
   }
 
-  private beginExecution(abortController?: AbortController): HostExecution {
-    const execution = new HostExecution({ abortController });
+  private beginExecution(
+    abortController?: AbortController,
+    executionId?: string,
+  ): HostExecution {
+    const execution = new HostExecution({ abortController, executionId });
     this.currentExecution = execution;
     return execution;
   }
@@ -1457,6 +1527,24 @@ export class HostRuntime {
       }
     | { ok: false; error: ProtocolError }
   > {
+    if (this.opts.executionCoordinator) {
+      return this.opts.executionCoordinator.startRun(this, payload);
+    }
+    return this.startRunDirect(payload);
+  }
+
+  async startRunDirect(
+    payload: RunStartRequestPayload,
+    executionId?: string,
+  ): Promise<
+    | {
+        ok: true;
+        runId: string;
+        sessionId: string;
+        workflowRunId?: string;
+      }
+    | { ok: false; error: ProtocolError }
+  > {
     if (this.currentExecution) {
       return {
         ok: false,
@@ -1467,7 +1555,7 @@ export class HostRuntime {
       };
     }
     const executionAbort = new AbortController();
-    const execution = this.beginExecution(executionAbort);
+    const execution = this.beginExecution(executionAbort, executionId);
     try {
       return await this.startRunInner(payload);
     } finally {
@@ -1525,6 +1613,31 @@ export class HostRuntime {
     | { ok: true; runId: string; resumedFromRunId: string; sessionId?: string }
     | { ok: false; error: ProtocolError }
   > {
+    if (this.opts.executionCoordinator) {
+      return this.opts.executionCoordinator.resumeRun(this, payload);
+    }
+    return this.resumeRunDirect(payload);
+  }
+
+  /** @internal Resolve the persisted session before HostService chooses a lane. */
+  async resolveResumeSession(
+    payload: RunResumeRequestPayload,
+  ): Promise<
+    { ok: true; sessionId: string } | { ok: false; error: ProtocolError }
+  > {
+    const located = await this.findRunDir(payload.runId, payload.sessionId);
+    if (!located.ok) return located;
+    return { ok: true, sessionId: located.sessionId ?? createSessionId() };
+  }
+
+  async resumeRunDirect(
+    payload: RunResumeRequestPayload,
+    executionId?: string,
+    resolvedSessionId?: string,
+  ): Promise<
+    | { ok: true; runId: string; resumedFromRunId: string; sessionId?: string }
+    | { ok: false; error: ProtocolError }
+  > {
     if (this.currentExecution) {
       return {
         ok: false,
@@ -1535,9 +1648,9 @@ export class HostRuntime {
       };
     }
     const executionAbort = new AbortController();
-    const execution = this.beginExecution(executionAbort);
+    const execution = this.beginExecution(executionAbort, executionId);
     try {
-      return await this.resumeRunInner(payload);
+      return await this.resumeRunInner(payload, resolvedSessionId);
     } finally {
       this.releaseUnstartedExecution(execution);
     }
@@ -2915,10 +3028,20 @@ export class HostRuntime {
           resolve({ approvalId, decision: "denied" });
           return;
         }
+        const timeout = setTimeout(() => {
+          execution.resolveApproval(approvalId, {
+            decision: "denied",
+            message: "Approval timed out.",
+          });
+        }, this.opts.approvalTimeoutMs ?? 300_000);
+        timeout.unref?.();
         execution.addApproval({
           approvalId,
           runId: currentRunId,
-          resolve: (response) => resolve({ approvalId, ...response }),
+          resolve: (response) => {
+            clearTimeout(timeout);
+            resolve({ approvalId, ...response });
+          },
         });
         const details = request.details as { path?: unknown } | undefined;
         this.opts.emit({
@@ -3116,8 +3239,7 @@ export class HostRuntime {
     let firstRunStarted = false;
     let previousRunId: string | undefined;
     let lastRunId = "";
-    let executionTerminalState: "completed" | "failed" | "cancelled" =
-      "failed";
+    let executionTerminalState: "completed" | "failed" | "cancelled" = "failed";
 
     const supervised = execution.runEpisodeChain({
       todoPath,
@@ -3237,9 +3359,7 @@ export class HostRuntime {
         await execution.disposeResources();
         this.active = null;
         execution.finish(
-          executionAbort.signal.aborted
-            ? "cancelled"
-            : executionTerminalState,
+          executionAbort.signal.aborted ? "cancelled" : executionTerminalState,
         );
         if (this.currentExecution === execution) {
           this.currentExecution = null;
@@ -3283,6 +3403,7 @@ export class HostRuntime {
 
   private async resumeRunInner(
     payload: RunResumeRequestPayload,
+    resolvedSessionId?: string,
   ): Promise<
     | { ok: true; runId: string; resumedFromRunId: string; sessionId?: string }
     | { ok: false; error: ProtocolError }
@@ -3342,7 +3463,8 @@ export class HostRuntime {
     );
     const { permissionMode, shouldWrite } = access;
     const accessMetadata = buildAccessMetadata(access);
-    const resumeSessionId = located.sessionId ?? createSessionId();
+    const resumeSessionId =
+      located.sessionId ?? resolvedSessionId ?? createSessionId();
     const prepared = await this.prepareHostRunEnvironment({
       goal: checkpoint.run.goal,
       modelRef,
@@ -4618,6 +4740,16 @@ export class HostRuntime {
     runId: string,
     reason?: string,
   ): { ok: true } | { ok: false; error: ProtocolError } {
+    if (this.opts.executionCoordinator) {
+      return this.opts.executionCoordinator.cancelRun(this, runId, reason);
+    }
+    return this.cancelRunDirect(runId, reason);
+  }
+
+  cancelRunDirect(
+    runId: string,
+    reason?: string,
+  ): { ok: true } | { ok: false; error: ProtocolError } {
     if (!this.currentExecution?.ownsRun(runId)) {
       return {
         ok: false,
@@ -4634,6 +4766,24 @@ export class HostRuntime {
   }
 
   injectRunMessage(
+    runId: string,
+    input: {
+      content: string;
+      parts?: readonly RunInputPart[];
+      metadata?: Record<string, unknown>;
+    },
+  ): { ok: true } | { ok: false; error: ProtocolError } {
+    if (this.opts.executionCoordinator) {
+      return this.opts.executionCoordinator.injectRunMessage(
+        this,
+        runId,
+        input,
+      );
+    }
+    return this.injectRunMessageDirect(runId, input);
+  }
+
+  injectRunMessageDirect(
     runId: string,
     input: {
       content: string;
@@ -4706,6 +4856,14 @@ export class HostRuntime {
    */
   cleanup(): void {
     this.currentExecution?.cleanup("client_disconnected");
+  }
+
+  async drain(): Promise<void> {
+    const execution = this.currentExecution;
+    if (!execution) return;
+    execution.cleanup("host_service_drain");
+    await execution.completion;
+    await execution.disposeResources();
   }
 
   async listSessions(

@@ -110,6 +110,7 @@ export interface StreamingRunHandle {
     reason?: string;
     metadata?: Record<string, unknown>;
   }): RunResult;
+  /** @reserved Public streaming control method consumed by external embedders. */
   enqueueCommand(command: RunCommand): void;
   checkPolicy(
     action: string,

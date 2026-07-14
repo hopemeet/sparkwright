@@ -211,6 +211,11 @@ EventLog emits full event
 
 ## Last Verified
 
+- Status: Verified (no canonical-event change)
+- Date: 2026-07-14
+- Scope: reviewed Host lanes; the coordinator neither subscribes to nor copies
+  Core canonical events, and trace storage remains unchanged.
+
 - Status: Verified
 - Date: 2026-07-14
 - Scope: workspace lease loss now surfaces bounded tool progress/cancellation

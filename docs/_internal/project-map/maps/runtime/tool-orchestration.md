@@ -363,6 +363,11 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
 
 ## Last Verified
 
+- Status: Verified (no tool ownership change)
+- Date: 2026-07-14
+- Scope: reviewed atomic interactive command acceptance and Host lanes; tool
+  preparation, policy gates, and Core tool execution remain existing owners.
+
 - Status: Verified
 - Date: 2026-07-14
 - Scope: added catalog-level mutation lease wrapping around actual Host

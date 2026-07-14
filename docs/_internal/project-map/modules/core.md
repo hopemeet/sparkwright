@@ -378,6 +378,11 @@ Does not own:
 
 ## Last Verified
 
+- Status: Verified (no ownership change)
+- Date: 2026-07-14
+- Scope: reviewed Host execution lanes and atomic command acceptance; Core
+  remains the per-run state machine and canonical run-event owner.
+
 - Status: Verified
 - Date: 2026-07-14
 - Scope: added atomic terminal/closing-aware run command acceptance and

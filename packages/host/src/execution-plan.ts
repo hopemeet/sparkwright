@@ -28,8 +28,7 @@ export function resolveExecutionPlan(input: {
   return Object.freeze({
     workspaceRoot,
     sessionRootDir: resolve(
-      input.sessionRootDir ??
-        join(workspaceRoot, ".sparkwright", "sessions"),
+      input.sessionRootDir ?? join(workspaceRoot, ".sparkwright", "sessions"),
     ),
     sessionId: input.sessionId,
     goal: input.goal,

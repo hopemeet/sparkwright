@@ -125,6 +125,11 @@ Future run in compacted session
 
 - Status: Verified
 - Date: 2026-07-14
+- Scope: resume resolves its persisted session before lane admission; legacy
+  run directories receive one new session identity shared by lane and execution.
+
+- Status: Verified
+- Date: 2026-07-14
 - Scope: added backward-compatible descendant-tree budget usage to Core
   checkpoints and verified child refusal after parent resume.
 - Read: checkpoint schema, create/resume seeds, trace reconstruction boundary,

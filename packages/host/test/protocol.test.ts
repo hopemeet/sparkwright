@@ -4990,10 +4990,15 @@ describe("host protocol", () => {
         runtime.injectRunMessage(run.record.id, { content: "too late" }),
       ).toMatchObject({
         ok: false,
-        error: { code: "run_not_found", message: expect.stringContaining("closed") },
+        error: {
+          code: "run_not_found",
+          message: expect.stringContaining("closed"),
+        },
       });
       expect(
-        run.events.all().filter((event) => event.type === "run.command.enqueued"),
+        run.events
+          .all()
+          .filter((event) => event.type === "run.command.enqueued"),
       ).toHaveLength(0);
     } finally {
       runtime.cleanup();
@@ -5016,7 +5021,9 @@ describe("host protocol", () => {
 
       expect(result).toMatchObject({
         ok: false,
-        error: { message: expect.stringContaining("cancelled during assembly") },
+        error: {
+          message: expect.stringContaining("cancelled during assembly"),
+        },
       });
       expect(runtime.hasActiveRun()).toBe(false);
       expect(

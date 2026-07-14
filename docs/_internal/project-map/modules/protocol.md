@@ -198,6 +198,11 @@ Does not own:
 
 ## Last Verified
 
+- Status: Verified (no contract change)
+- Date: 2026-07-14
+- Scope: reviewed HostService/lane migration; existing run request and response
+  shapes remain compatible and root run ids remain legacy execution aliases.
+
 - Status: Read-only
 - Date: 2026-07-13
 - Scope: ACP worker invocation cleanup and Host sandbox/access parity changed no

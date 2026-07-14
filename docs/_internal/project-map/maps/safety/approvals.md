@@ -118,6 +118,12 @@ policy requires approval
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-07-14
+- Scope: live Host approval waiters remain execution-owned, are denied on
+  cancellation, and now have a finite timeout; durable Workflow waits remain
+  separate.
+
 - Status: Read-only
 - Date: 2026-07-13
 - Scope: checked Host security-plan extraction; access values are reused within

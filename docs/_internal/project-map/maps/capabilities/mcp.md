@@ -88,6 +88,11 @@ host config MCP servers
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-14
+- Scope: reviewed HostExecution resource ownership; live MCP clients remain
+  execution-scoped, close idempotently, and are never pooled by lanes.
+
+- Status: Verified
 - Date: 2026-07-13T22:21:00+0800
 - Scope: read-only Host run access now supplies stdio MCP with a fail-closed
   no-write sandbox while configured Shell status remains separately reported.

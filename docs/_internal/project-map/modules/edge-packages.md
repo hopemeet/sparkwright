@@ -96,13 +96,12 @@ contracts, and focused checklists that no longer fit here.
 - These packages need focused module pages if their contracts grow beyond edge
   adapters. Highest candidates: ACP, SDK, provider edge, and server/streaming
   runtime.
-- `@sparkwright/server-runtime` is the intended home for the future
-  transport-neutral `ExecutionLaneCoordinator`, which owns bounded interactive
-  lane queueing, idempotency, capacity, and active-execution handoff. It already
-  provides Workflow service/supervisor/channel coordination and Host durable
-  command dispatch primitives, but ordinary Host execution still runs through
-  host-owned per-connection `HostRuntime`. The future lane coordinator must not
-  absorb Workflow/Task/Agent lifecycle ownership or workspace mutation leases.
+- `@sparkwright/server-runtime` owns the transport-neutral, in-memory
+  `ExecutionLaneCoordinator`: bounded interactive lane queues, in-flight
+  idempotency, process capacity, fairness, and opaque execution handoff. It does
+  not absorb Workflow/Task/Agent lifecycle ownership, Core events, or workspace
+  mutation leases. This is a single-process contract; queues and outcomes are
+  not restart-durable.
 - Host stdio/WS, ACP, and CLI/Workflow-service production adapters now create
   runtime facades through one process-scoped HostService. The adapters retain
   protocol/transport ownership; workspace Task/Workflow durable owners live in
@@ -116,6 +115,13 @@ contracts, and focused checklists that no longer fit here.
   source exports. It should not be used as the sole authority for behavior.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: added the transport-neutral single-process ExecutionLaneCoordinator
+  and made HostService its only production interactive assembly caller.
+- Read: server-runtime coordinator/tests and Host driver integration.
+- Tests: server-runtime 29/29; Host 563/563; full release check.
 
 - Status: Verified
 - Date: 2026-07-14

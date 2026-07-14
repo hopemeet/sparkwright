@@ -8,7 +8,9 @@ const tempDirs: string[] = [];
 
 afterEach(async () => {
   await Promise.all(
-    tempDirs.splice(0).map((path) => rm(path, { recursive: true, force: true })),
+    tempDirs
+      .splice(0)
+      .map((path) => rm(path, { recursive: true, force: true })),
   );
 });
 
@@ -29,9 +31,9 @@ describe("HostService", () => {
     });
 
     expect(service.workspaceContextCount()).toBe(1);
-    expect(
-      (first as unknown as { taskManager: unknown }).taskManager,
-    ).toBe((second as unknown as { taskManager: unknown }).taskManager);
+    expect((first as unknown as { taskManager: unknown }).taskManager).toBe(
+      (second as unknown as { taskManager: unknown }).taskManager,
+    );
 
     const firstStarting = first.startRun({
       goal: "first",
@@ -56,7 +58,9 @@ describe("HostService", () => {
       expect(service.findExecutionByRunId(firstStart.runId)).toBe(first);
     }
     if (secondIdentity) {
-      expect(service.findExecutionById(secondIdentity.executionId)).toBe(second);
+      expect(service.findExecutionById(secondIdentity.executionId)).toBe(
+        second,
+      );
     }
 
     await service.shutdown();

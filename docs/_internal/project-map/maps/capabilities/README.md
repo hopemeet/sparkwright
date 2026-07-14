@@ -207,6 +207,11 @@ config + workspace capability roots
 
 ## Last Verified
 
+- Status: Verified (no capability contract change)
+- Date: 2026-07-14
+- Scope: reviewed Host execution planning/resource extraction and tool catalog;
+  capability discovery and activation remain unchanged.
+
 - Status: Verified
 - Date: 2026-07-14
 - Scope: checked catalog-level workspace mutation coordination; exposed tools,

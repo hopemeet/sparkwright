@@ -25,13 +25,13 @@ and approval-to-run routing.
 
 ## Current Ownership
 
-| Scope | Current owner/facts before P1 | Known problem for target shape |
-| --- | --- | --- |
-| Process | global workspace lease coordinator; WS listener | no process Host service or execution index |
-| Workspace | filesystem stores exist under workspace/session roots | each runtime constructs its own Task manager/store/outbox and Workflow adapters |
-| Connection | `HostRuntime`, `active`, `startingRun`, `runChainCancelled`, pending approvals | connection lifetime is also execution/store assembly lifetime |
-| Execution | todo/workflow episode loop and resource cleanup are methods/locals of `HostRuntime` | no independent execution identity/completion owner |
-| Run | Core run state, event/store facts, command queue, mutable policy | correct canonical altitude, but command acceptance is not terminal-aware |
+| Scope      | Current owner/facts before P1                                                       | Known problem for target shape                                                  |
+| ---------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| Process    | global workspace lease coordinator; WS listener                                     | no process Host service or execution index                                      |
+| Workspace  | filesystem stores exist under workspace/session roots                               | each runtime constructs its own Task manager/store/outbox and Workflow adapters |
+| Connection | `HostRuntime`, `active`, `startingRun`, `runChainCancelled`, pending approvals      | connection lifetime is also execution/store assembly lifetime                   |
+| Execution  | todo/workflow episode loop and resource cleanup are methods/locals of `HostRuntime` | no independent execution identity/completion owner                              |
+| Run        | Core run state, event/store facts, command queue, mutable policy                    | correct canonical altitude, but command acceptance is not terminal-aware        |
 
 Existing domain owners remain: `TaskManager` owns Task terminal/cancellation and
 notification delivery; Workflow store/supervisor/service own Workflow actor
@@ -41,21 +41,21 @@ run state machine and canonical event/store facts.
 
 ## Characterization Matrix
 
-| Scenario | Current evidence | Classification |
-| --- | --- | --- |
-| same runtime concurrent start during async assembly | `host/test/protocol.test.ts` rejects exactly one via `startingRun` | intended compatibility until lanes |
-| two connections, same `sessionId` | per-connection runtime construction; no shared guard | known missing coordination, P4 target |
-| todo multi-episode and root/current/final run ids | Host protocol todo handoff tests and `startWorkflowActorEpisodeChain` | preserve; Core terminal is not execution terminal |
-| inject during episode handoff | active run id changes in Host locals | explicit P0 gap; covered when `HostExecution` exposes aliases |
-| run terminal versus inject | Core enqueue is unconditional | known bug; P1 atomic acceptance regression |
-| cancel versus natural completion/continuation | Core terminal-race tests plus Host `runChainCancelled` | partial fix exists; move to execution abort in P1/P2 |
-| disconnect versus continuation | cleanup cancels only current active run and does not set chain cancellation | known bug; P1 regression |
-| pending approval then disconnect | `cleanup()` denies all pending approvals | preserve, later move to execution/process interaction owner |
-| background Agent Task starts after later prepare | registered runner reads mutable latest `agentSpawnDeps` | known bug; P1 immutable task context regression |
-| Workflow waiting versus actor terminal | Workflow projection/service tests distinguish waiting snapshots | preserve |
-| Task revival | Core awaited-task revival and Host task-revival suites | preserve |
-| child Agent terminal versus interactive terminal | Agent/task tests plus Host episode driver ownership | explicit coordinator integration assertion in P4 |
-| ACP/CLI/WS construction and cleanup | construction inventory above plus adapter/CLI/Host suites | migrate together in P3 |
+| Scenario                                            | Current evidence                                                            | Classification                                                |
+| --------------------------------------------------- | --------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| same runtime concurrent start during async assembly | `host/test/protocol.test.ts` rejects exactly one via `startingRun`          | intended compatibility until lanes                            |
+| two connections, same `sessionId`                   | per-connection runtime construction; no shared guard                        | known missing coordination, P4 target                         |
+| todo multi-episode and root/current/final run ids   | Host protocol todo handoff tests and `startWorkflowActorEpisodeChain`       | preserve; Core terminal is not execution terminal             |
+| inject during episode handoff                       | active run id changes in Host locals                                        | explicit P0 gap; covered when `HostExecution` exposes aliases |
+| run terminal versus inject                          | Core enqueue is unconditional                                               | known bug; P1 atomic acceptance regression                    |
+| cancel versus natural completion/continuation       | Core terminal-race tests plus Host `runChainCancelled`                      | partial fix exists; move to execution abort in P1/P2          |
+| disconnect versus continuation                      | cleanup cancels only current active run and does not set chain cancellation | known bug; P1 regression                                      |
+| pending approval then disconnect                    | `cleanup()` denies all pending approvals                                    | preserve, later move to execution/process interaction owner   |
+| background Agent Task starts after later prepare    | registered runner reads mutable latest `agentSpawnDeps`                     | known bug; P1 immutable task context regression               |
+| Workflow waiting versus actor terminal              | Workflow projection/service tests distinguish waiting snapshots             | preserve                                                      |
+| Task revival                                        | Core awaited-task revival and Host task-revival suites                      | preserve                                                      |
+| child Agent terminal versus interactive terminal    | Agent/task tests plus Host episode driver ownership                         | explicit coordinator integration assertion in P4              |
+| ACP/CLI/WS construction and cleanup                 | construction inventory above plus adapter/CLI/Host suites                   | migrate together in P3                                        |
 
 The explicitly deferred P0 gaps are not compatibility promises. Each is tied to
 the phase where the needed lifecycle seam first exists, so tests can assert the

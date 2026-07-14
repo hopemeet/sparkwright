@@ -117,6 +117,11 @@ Manual compact
 
 ## Last Verified
 
+- Status: Verified (no storage contract change)
+- Date: 2026-07-14
+- Scope: reviewed Host workspace contexts and session lane keys; session stores
+  remain per execution and in-memory lane queues are not durable state.
+
 - Status: Read-only
 - Date: 2026-07-13
 - Scope: checked ACP prepared invocation cleanup; session ids, run persistence,

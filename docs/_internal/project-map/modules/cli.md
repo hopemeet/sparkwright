@@ -318,6 +318,11 @@ Does not own:
 
 ## Last Verified
 
+- Status: Verified (adapter-only change)
+- Date: 2026-07-14
+- Scope: CLI Host-backed entrypoints now use the shared HostService assembly;
+  CLI command and output contracts remain unchanged.
+
 - Status: Verified
 - Date: 2026-07-13T22:42:00+0800
 - Scope: direct-core start/resume now share Host run-policy defaults and clamps;
