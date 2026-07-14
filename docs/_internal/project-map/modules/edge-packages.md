@@ -46,10 +46,14 @@ contracts, and focused checklists that no longer fit here.
 - Server, streaming, memory-store, and trace-perfetto packages are reusable
   runtime/storage/diagnostic adapters around core contracts. Treat core events,
   run/session stores, and trace maps as the active contracts.
-- `server-runtime`'s `DurableCommandDispatcher` only coalesces concurrent local
-  dispatch of the same durable command id. Agent-runtime storage and the
+- `server-runtime`'s `InFlightCommandDispatcher` only coalesces concurrent local
+  dispatch of the same command id. `DurableCommandDispatcher` remains a
+  deprecated naming alias and is not durable. Agent-runtime storage and the
   workflow journal remain command/outcome/apply truth; Host remains the adapter
   that assembles a fenced writer and execution behavior.
+- `ConnectionHub`, `RunManager`, `SessionManager`, `ApprovalBroker`, and
+  `createServerRuntime` remain deprecated compatibility utilities isolated from
+  the canonical HostService -> ExecutionLaneCoordinator path.
 - `WorkflowSupervisor` coordinates bounded inventory scans, Package C claim
   competition, claimed-adapter invocation, heartbeat, and drain reporting. It
   has no process launcher and is not a daemon; F remains responsible for the
@@ -65,6 +69,12 @@ contracts, and focused checklists that no longer fit here.
 - IM gateway is an application bridge over `sdk-node` and host events. Route
   protocol shape changes through protocol/host maps before updating gateway
   renderers or state.
+- IM Gateway handshake name is client-type/display metadata only. Host WS
+  bearer authentication supplies the stable ordinary-IM principal; Gateway
+  platform claims remain exact bounded subject claims and cannot mint Host
+  trust or system identity. Gateway also cannot select a session for a new
+  self-binding; Host returns the assigned session and reconnect reuses only the
+  existing exact binding.
 
 ## Does Not Own
 
@@ -96,13 +106,21 @@ contracts, and focused checklists that no longer fit here.
 - These packages need focused module pages if their contracts grow beyond edge
   adapters. Highest candidates: ACP, SDK, provider edge, and server/streaming
   runtime.
-- `@sparkwright/server-runtime` is the intended home for the future
-  transport-neutral `ExecutionLaneCoordinator`, which owns bounded interactive
-  lane queueing, idempotency, capacity, and active-execution handoff. It already
-  provides Workflow service/supervisor/channel coordination and Host durable
-  command dispatch primitives, but ordinary Host execution still runs through
-  host-owned per-connection `HostRuntime`. The future lane coordinator must not
-  absorb Workflow/Task/Agent lifecycle ownership or workspace mutation leases.
+- `@sparkwright/server-runtime` owns the transport-neutral, in-memory
+  `ExecutionLaneCoordinator`: bounded interactive lane queues, in-flight
+  idempotency, process capacity, fairness, and opaque execution handoff. It does
+  not absorb Workflow/Task/Agent lifecycle ownership, Core events, or workspace
+  mutation leases. This is a single-process contract; queues and outcomes are
+  not restart-durable.
+- Host stdio/WS, ACP, and CLI/Workflow-service production adapters now create
+  runtime facades through one process-scoped HostService. The adapters retain
+  protocol/transport ownership; workspace Task/Workflow durable owners live in
+  Host WorkspaceContext rather than each connection/session facade.
+- Ordinary IM Gateway traffic now uses typed `im.*` Host control requests.
+  Gateway retains platform verification, formatting, inbound message dedupe,
+  outbound delivery attempts, and the existing durable Workflow channel
+  adapter. It no longer stores active sessions/runs, ordinary message queues,
+  canonical run targets, approval routes, or session-routing policy.
 - The workflow job session route now stages durable supervisor/worker ownership
   and multi-channel control after session isolation, write fencing, and a typed
   durable workflow control inbox. `server-runtime` owns coordination; IM/Web/API
@@ -112,6 +130,48 @@ contracts, and focused checklists that no longer fit here.
   source exports. It should not be used as the sole authority for behavior.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: checked SDK/Gateway consumers after Host principal isolation. Existing
+  wire methods and Gateway reconnect/rebind flow remain compatible; stable
+  identity now comes from the Host bearer credential slot, not client name, and
+  new ordinary-IM binding sessions are Host-assigned.
+- Tests: Host transport/IM/protocol focused suites passed; no Gateway ownership
+  or durable Workflow channel change.
+
+- Status: Verified
+- Date: 2026-07-14T14:35:00+0800
+- Scope: P6 gave in-flight command coalescing its accurate name and isolated
+  the legacy server-runtime convenience stack as deprecated compatibility API;
+  the execution-lane coordinator remains independent of that stack.
+- Read: server-runtime source, tests, README, Host consumers, and coordinator
+  proposal.
+- Tests: server-runtime 30/30; typecheck/build; Host and edge focused suites.
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: migrated ordinary IM control to Host-owned exact bindings,
+  subscriptions, approval routing, and bounded replay.
+- Read: IM Gateway bridge/gateway/store/Telegram adapter, Host control methods,
+  protocol/SDK, and Workflow channel separation.
+- Tests: IM Gateway 9/9; Host 571/571; protocol/SDK focused suites; schema and
+  affected typecheck/build.
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: added the transport-neutral single-process ExecutionLaneCoordinator
+  and made HostService its only production interactive assembly caller.
+- Read: server-runtime coordinator/tests and Host driver integration.
+- Tests: server-runtime 29/29; Host 563/563; full release check.
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: migrated Host stdio/WS, ACP, CLI, and Workflow-service carriers to the
+  process HostService assembly path without changing their transport contracts.
+- Read: edge entrypoints, Host service/context/runtime, package manifests, and
+  focused tests.
+- Tests: Host 58/58; ACP 15/15; CLI 31 focused; affected typecheck/build.
 
 - Status: Verified
 - Date: 2026-07-14

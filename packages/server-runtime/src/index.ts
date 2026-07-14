@@ -83,28 +83,12 @@ export type ServerRuntimeSubscriber = (
   message: ServerRuntimeMessage,
 ) => void | Promise<void>;
 
-export class DurableCommandDispatcher {
-  private readonly inFlight = new Map<string, Promise<unknown>>();
-
-  dispatch<TResult>(
-    commandId: string,
-    consume: () => Promise<TResult>,
-  ): Promise<TResult> {
-    const existing = this.inFlight.get(commandId);
-    if (existing) return existing as Promise<TResult>;
-    const pending = consume().finally(() => {
-      if (this.inFlight.get(commandId) === pending) {
-        this.inFlight.delete(commandId);
-      }
-    });
-    this.inFlight.set(commandId, pending);
-    return pending;
-  }
-
-  isInFlight(commandId: string): boolean {
-    return this.inFlight.has(commandId);
-  }
-}
+export {
+  InFlightCommandDispatcher,
+  /** @deprecated Use InFlightCommandDispatcher; this helper is not durable. */
+  InFlightCommandDispatcher as DurableCommandDispatcher,
+} from "./in-flight-command-dispatcher.js";
+import { InFlightCommandDispatcher } from "./in-flight-command-dispatcher.js";
 
 export interface PublishMessageInput<TPayload = unknown> {
   type: ServerRuntimeMessageType;
@@ -112,6 +96,7 @@ export interface PublishMessageInput<TPayload = unknown> {
   metadata?: Record<string, unknown>;
 }
 
+/** @deprecated Compatibility event fan-out; Host execution lanes do not use it. */
 export class ConnectionHub {
   private readonly subscribers = new Map<
     string,
@@ -241,6 +226,7 @@ export interface ApprovalBrokerOptions {
   defaultApprovalTimeoutMs?: number;
 }
 
+/** @deprecated Compatibility interaction bridge; HostService owns live approvals. */
 export class ApprovalBroker {
   private readonly hub?: ConnectionHub;
   private readonly defaultApprovalTimeoutMs?: number;
@@ -667,6 +653,7 @@ export interface RunManagerOptions {
   defaults?: Partial<CreateRunOptions>;
 }
 
+/** @deprecated Core-run convenience API; not an interactive execution owner. */
 export class RunManager {
   private readonly runs = new Map<string, RunHandle>();
   private readonly runResults = new Map<string, Promise<RunResult>>();
@@ -830,6 +817,7 @@ export interface SessionManagerOptions {
   hub?: ConnectionHub;
 }
 
+/** @deprecated Compatibility session helper; HostService owns execution assembly. */
 export class SessionManager {
   private readonly store: SessionStore | AppendOnlySessionStore;
   private readonly hub?: ConnectionHub;
@@ -907,9 +895,10 @@ export interface ServerRuntime {
   sessions: SessionManager;
   capabilities: ServerCapabilityRegistry;
   runs: RunManager;
-  commands: DurableCommandDispatcher;
+  commands: InFlightCommandDispatcher;
 }
 
+/** @deprecated Compatibility assembly for the legacy convenience stack. */
 export function createServerRuntime(
   options: CreateServerRuntimeOptions = {},
 ): ServerRuntime {
@@ -925,7 +914,7 @@ export function createServerRuntime(
     capabilities,
     defaults: options.runDefaults,
   });
-  const commands = new DurableCommandDispatcher();
+  const commands = new InFlightCommandDispatcher();
 
   hub.publish({
     type: "runtime.ready",
@@ -1026,3 +1015,4 @@ function stringMetadata(
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
+export * from "./execution-lanes.js";

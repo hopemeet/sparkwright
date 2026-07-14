@@ -33,6 +33,19 @@ non-loopback address, they should either set `--auth-token <token>` (or
 `SPARKWRIGHT_HOST_TOKEN`) and connect with `Authorization: Bearer <token>` or
 `?token=<token>`, or put the host behind trusted network/auth controls.
 
+The configured bearer token represents one shared Host principal. Its stable
+server-side principal id does not contain the token. Handshake client name is
+metadata only and cannot change identity. Connections without transport
+authentication may use ordinary Host requests but cannot create IM self-
+bindings, even when the operator enables the self-binding policy. Handshake is
+single-use; duplicate handshakes are rejected.
+
+For ordinary IM control, Host assigns the session id of every new `im.bind`.
+Clients should omit `sessionId` when creating a binding. A reconnect may echo
+the previously returned session id only when the same transport principal and
+exact platform/chat/thread/user subject still owns that live binding. A session
+id alone cannot create or join a binding.
+
 The host's stderr is **never** part of the protocol. On stdio transport,
 hosts route all stderr lines and uncaught exception summaries through
 the `host.log` event so they cannot corrupt the JSON stream on stdout.

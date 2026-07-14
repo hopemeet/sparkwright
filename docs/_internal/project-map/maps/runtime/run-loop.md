@@ -42,6 +42,17 @@ createRun/resumeRunFromCheckpoint
   keep the existing selected-session history behavior.
 
 - Terminal states are `completed`, `failed`, and `cancelled`.
+- Interactive commands enter through one atomic acceptance operation. Terminal
+  or abort-closing runs reject before queue mutation, so a successful Host
+  inject response always means the command reached the consumable Core queue.
+- A Host interactive execution may contain multiple Core runs. HostExecution
+  retains the stable root alias and current/final episode ids; only its
+  completion drains execution ownership. Core terminal remains a per-run fact.
+- Ordinary Host execution is admitted by server-runtime's in-memory lane
+  coordinator. Its opaque driver sees execution/session identity, atomic
+  message injection, cancellation, and whole-execution completion only. It does
+  not interpret run trees, Workflow actors, Tasks, Agents, Core events, MCP, or
+  workspace leases.
 - `cancel()` emits `run.cancelled` synchronously and kicks the `RunEnd`
   workflow-hook phase with `state:"cancelled"` / `reason:"manual_cancelled"`.
   `RunEnd` remains fire-and-forget.
@@ -268,6 +279,47 @@ createRun/resumeRunFromCheckpoint
   handling can still be noisy.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: checked Host Workflow resume source attribution; execution assembly,
+  episode driving, lane completion, and Core run-loop behavior are unchanged.
+- Tests: Host workflow/protocol focused suites passed.
+
+- Status: Verified
+- Date: 2026-07-14T14:35:00+0800
+- Scope: P6 routed review; session operations were mechanically extracted and
+  canonical HostService -> lane coordinator -> HostExecution behavior is
+  unchanged.
+- Tests: Host 571/571; server-runtime 30/30; ACP/CLI focused suites passed.
+
+- Status: Verified (no Core loop change)
+- Date: 2026-07-14
+- Scope: reviewed Host-owned IM dispatch/retention; messages still enter through
+  atomic Core acceptance and lane release still follows HostExecution completion.
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: made HostExecution completion the lane handoff fact and added bounded
+  same-session serialization with cross-session process concurrency.
+- Read: server-runtime execution lanes, HostService driver, HostExecution, and
+  Core atomic command acceptance.
+- Tests: server-runtime 29/29; Host 563/563; full release check.
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: separated Core episode terminal from HostExecution terminal and moved
+  todo-chain admission/cancellation to the execution lifecycle owner.
+- Read: HostExecution/runtime episode assembly and agent-runtime run-chain/todo
+  supervisor.
+- Tests: Host full 562/562; agent-runtime affected 107/107; Core run 129/129.
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: verified atomic run command acceptance against terminal and external
+  abort races and the Host inject adapter.
+- Read: Core run queue/state/abort paths, Host injection, and focused tests.
+- Tests: Core run 129/129; Host protocol focused/full suites and typecheck.
 
 - Status: Verified
 - Date: 2026-07-14

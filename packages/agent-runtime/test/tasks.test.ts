@@ -1067,6 +1067,32 @@ describe("task tools", () => {
     expect(manager.store.get(created.taskId as TaskId)?.awaited).toBe(false);
   });
 
+  it("task_create keeps the execution-scoped runner captured by its tool bundle", async () => {
+    const manager = makeManager();
+    manager.registerKind("agent", async () => "workspace-default");
+    const firstExecutionTools = createTaskTools({
+      manager,
+      getParentRunId: () => PARENT_RUN_ID,
+      taskRunners: { agent: async () => "first-execution" },
+      taskCreateKinds: [{ kind: "agent" }],
+    });
+
+    // Simulate a later execution preparing a different bundle before the
+    // earlier tool is invoked. Its immutable runner must still win.
+    createTaskTools({
+      manager,
+      getParentRunId: () => PARENT_RUN_ID,
+      taskRunners: { agent: async () => "later-execution" },
+      taskCreateKinds: [{ kind: "agent" }],
+    });
+    const created = await exec<{ result: string }>(
+      firstExecutionTools.taskCreate,
+      { kind: "agent" },
+    );
+
+    expect(created.result).toBe("first-execution");
+  });
+
   it("task_create can detach fire-and-forget tasks with awaited=false", async () => {
     const manager = makeManager();
     manager.registerKind("hello", async () => "hi");

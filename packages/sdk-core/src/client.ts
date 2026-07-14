@@ -7,6 +7,13 @@ import {
   type HostEvent,
   type HostMessage,
   type HostRequest,
+  type ImApprovalResolveRequestPayload,
+  type ImBindRequestPayload,
+  type ImCancelRequestPayload,
+  type ImDeliveryAckRequestPayload,
+  type ImInspectRequestPayload,
+  type ImMessageRequestPayload,
+  type ImSubscribeRequestPayload,
   type ProtocolError,
   type RequestKind,
   type ResponseResults,
@@ -370,6 +377,69 @@ export class Client extends TypedEmitter<ClientEventMap> {
     return this.request("approval.resolve", payload) as Promise<
       ResponseResults["approval.resolve"]
     >;
+  }
+
+  bindImSession(
+    payload: ImBindRequestPayload,
+  ): Promise<ResponseResults["im.bind"]> {
+    return this.request(
+      "im.bind",
+      payload as unknown as Record<string, unknown>,
+    ) as Promise<ResponseResults["im.bind"]>;
+  }
+
+  dispatchImMessage(
+    payload: ImMessageRequestPayload,
+  ): Promise<ResponseResults["im.message"]> {
+    return this.request(
+      "im.message",
+      payload as unknown as Record<string, unknown>,
+    ) as Promise<ResponseResults["im.message"]>;
+  }
+
+  subscribeImSession(
+    payload: ImSubscribeRequestPayload,
+  ): Promise<ResponseResults["im.subscribe"]> {
+    return this.request(
+      "im.subscribe",
+      payload as unknown as Record<string, unknown>,
+    ) as Promise<ResponseResults["im.subscribe"]>;
+  }
+
+  acknowledgeImDeliveries(
+    payload: ImDeliveryAckRequestPayload,
+  ): Promise<ResponseResults["im.delivery.ack"]> {
+    return this.request(
+      "im.delivery.ack",
+      payload as unknown as Record<string, unknown>,
+    ) as Promise<ResponseResults["im.delivery.ack"]>;
+  }
+
+  resolveImApproval(
+    payload: ImApprovalResolveRequestPayload,
+  ): Promise<ResponseResults["im.approval.resolve"]> {
+    return this.request(
+      "im.approval.resolve",
+      payload as unknown as Record<string, unknown>,
+    ) as Promise<ResponseResults["im.approval.resolve"]>;
+  }
+
+  cancelImSession(
+    payload: ImCancelRequestPayload,
+  ): Promise<ResponseResults["im.cancel"]> {
+    return this.request(
+      "im.cancel",
+      payload as unknown as Record<string, unknown>,
+    ) as Promise<ResponseResults["im.cancel"]>;
+  }
+
+  inspectImSession(
+    payload: ImInspectRequestPayload,
+  ): Promise<ResponseResults["im.inspect"]> {
+    return this.request(
+      "im.inspect",
+      payload as unknown as Record<string, unknown>,
+    ) as Promise<ResponseResults["im.inspect"]>;
   }
 
   listSessions(

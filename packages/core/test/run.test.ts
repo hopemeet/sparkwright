@@ -3334,6 +3334,42 @@ describe("SparkwrightRun", () => {
     ]);
   });
 
+  it("atomically rejects commands after the run is terminal", async () => {
+    const run = createRun({
+      goal: "finish before injection",
+      model: {
+        async complete() {
+          return { message: "done" };
+        },
+      },
+    });
+    await run.start();
+
+    expect(
+      run.tryEnqueueCommand({ type: "user_message", content: "too late" }),
+    ).toEqual({ accepted: false, reason: "terminal" });
+    expect(
+      run.events.all().filter((event) => event.type === "run.command.enqueued"),
+    ).toHaveLength(0);
+  });
+
+  it("rejects commands while an externally aborted run is closing", () => {
+    const controller = new AbortController();
+    const run = createRun({
+      goal: "closing run",
+      abortSignal: controller.signal,
+    });
+    controller.abort();
+
+    expect(run.injectUserMessage({ content: "too late" })).toEqual({
+      accepted: false,
+      reason: "closing",
+    });
+    expect(
+      run.events.all().filter((event) => event.type === "run.command.enqueued"),
+    ).toHaveLength(0);
+  });
+
   it("kicks RunEnd hooks when cancelled", async () => {
     const payloads: unknown[] = [];
     const run = createRun({
@@ -5058,7 +5094,7 @@ describe("SparkwrightRun", () => {
         },
       },
     });
-    run.enqueueCommand({ type: "cancel", reason: "stop now" });
+    run.tryEnqueueCommand({ type: "cancel", reason: "stop now" });
 
     const result = await run.start();
 

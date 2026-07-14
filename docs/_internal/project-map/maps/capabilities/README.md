@@ -209,6 +209,28 @@ config + workspace capability roots
 
 - Status: Verified
 - Date: 2026-07-14
+- Scope: checked Host connection principal and Workflow control attribution;
+  capability snapshot shapes and resolution behavior are unchanged.
+- Tests: Host focused suites and typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-14T14:35:00+0800
+- Scope: P6 routed review; capability inspection and catalog semantics are
+  unchanged by session-module extraction and lease import renaming.
+- Tests: Host full suite/typecheck passed.
+
+- Status: Verified (no capability activation change)
+- Date: 2026-07-14
+- Scope: reviewed Host IM control integration; it adds protocol/session control
+  and does not alter tool or capability discovery.
+
+- Status: Verified (no capability contract change)
+- Date: 2026-07-14
+- Scope: reviewed Host execution planning/resource extraction and tool catalog;
+  capability discovery and activation remain unchanged.
+
+- Status: Verified
+- Date: 2026-07-14
 - Scope: checked catalog-level workspace mutation coordination; exposed tools,
   descriptors, selectors, and capability inspection payloads are unchanged.
 - Read: Host catalog/runtime assembly, capability snapshot construction, and

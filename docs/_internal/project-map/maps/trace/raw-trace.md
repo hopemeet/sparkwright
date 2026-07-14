@@ -213,6 +213,29 @@ EventLog emits full event
 
 - Status: Verified
 - Date: 2026-07-14
+- Scope: checked Workflow API principal attribution; no Core trace event or file
+  trace schema changed. Durable Workflow control envelopes now retain the real
+  Host connection source.
+- Tests: Host workflow/protocol focused suites passed.
+
+- Status: Verified
+- Date: 2026-07-14T14:35:00+0800
+- Scope: P6 routed review; session trace inspection moved to a function module
+  but raw trace remains canonical and no duplicate event store was introduced.
+- Tests: Host session inspection/full suite passed.
+
+- Status: Verified (no canonical trace change)
+- Date: 2026-07-14
+- Scope: reviewed IM delivery replay; Host outbox entries are bounded delivery
+  projections and do not replace or duplicate canonical trace storage.
+
+- Status: Verified (no canonical-event change)
+- Date: 2026-07-14
+- Scope: reviewed Host lanes; the coordinator neither subscribes to nor copies
+  Core canonical events, and trace storage remains unchanged.
+
+- Status: Verified
+- Date: 2026-07-14
 - Scope: workspace lease loss now surfaces bounded tool progress/cancellation
   diagnostics and `PROCESS_ABORTED` process failure evidence without changing
   event envelopes, lifecycle families, or managed-write attribution.

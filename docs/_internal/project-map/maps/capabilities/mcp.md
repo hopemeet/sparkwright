@@ -88,6 +88,28 @@ host config MCP servers
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-14
+- Scope: checked Host runtime source-attribution signature change; MCP
+  preparation, transport, policy, and lifecycle contracts are unchanged.
+- Tests: Host focused suites and typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-14T14:35:00+0800
+- Scope: P6 routed review; live MCP remains execution-scoped and was not moved
+  into session query/compaction modules.
+- Tests: Host full suite passed.
+
+- Status: Verified (no MCP ownership change)
+- Date: 2026-07-14
+- Scope: reviewed retained IM executions; live MCP remains execution-scoped and
+  is disposed by HostExecution, never the subscription/outbox control state.
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: reviewed HostExecution resource ownership; live MCP clients remain
+  execution-scoped, close idempotently, and are never pooled by lanes.
+
+- Status: Verified
 - Date: 2026-07-13T22:21:00+0800
 - Scope: read-only Host run access now supplies stdio MCP with a fail-closed
   no-write sandbox while configured Shell status remains separately reported.

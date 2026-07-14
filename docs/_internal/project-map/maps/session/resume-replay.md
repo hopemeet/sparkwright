@@ -96,6 +96,13 @@ Future run in compacted session
   that it is not durable; resume must not claim to reconstruct awaited task
   revival until a durable waiting-state/outbox design exists.
 - TUI session switch replays persisted events for display and filters stream-only events.
+- Ordinary IM reconnect replay is process-local and keyed by an exact binding.
+  A configured single WS bearer credential maps to one stable non-secret Host
+  principal, so reconnect can recover the existing binding/cursor without
+  trusting handshake client name. Different credentials remain isolated;
+  unauthenticated connection-scoped principals cannot self-bind. Reconnect may
+  echo the existing exact binding's Host-issued session id, but a new binding
+  cannot select a session or attach to another binding's replay state.
 
 ## Consumers
 
@@ -122,6 +129,29 @@ Future run in compacted session
   run-loop integration.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: corrected IM reconnect identity to use stable authenticated credential
+  context and Host-issued new-binding sessions while preserving bounded
+  in-memory replay and restart loss.
+- Tests: Host IM replay and WS stable-principal focused coverage passed.
+
+- Status: Verified
+- Date: 2026-07-14T14:35:00+0800
+- Scope: P6 routed review; session query/compaction extraction preserves
+  resume and replay contracts and adds no durable lane recovery claim.
+- Tests: Host session/compaction coverage in the 571-test suite passed.
+
+- Status: Verified (no durable resume change)
+- Date: 2026-07-14
+- Scope: reviewed IM reconnect replay; it replays bounded Host event
+  projections only and does not add execution restart adoption.
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: resume resolves its persisted session before lane admission; legacy
+  run directories receive one new session identity shared by lane and execution.
 
 - Status: Verified
 - Date: 2026-07-14

@@ -365,6 +365,28 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
 
 - Status: Verified
 - Date: 2026-07-14
+- Scope: checked Host connection principal and Workflow control attribution;
+  tool preparation, selection, policy, and invocation contracts are unchanged.
+- Tests: Host focused suites and typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-14T14:35:00+0800
+- Scope: P6 routed review; tool orchestration and lease admission semantics are
+  unchanged by module renaming.
+- Tests: Host full suite passed.
+
+- Status: Verified (no tool contract change)
+- Date: 2026-07-14
+- Scope: reviewed Host IM message and approval routing; tool execution and
+  approval policy remain Core/Host execution concerns.
+
+- Status: Verified (no tool ownership change)
+- Date: 2026-07-14
+- Scope: reviewed atomic interactive command acceptance and Host lanes; tool
+  preparation, policy gates, and Core tool execution remain existing owners.
+
+- Status: Verified
+- Date: 2026-07-14
 - Scope: added catalog-level mutation lease wrapping around actual Host
   parent/child write execution without moving policy, approval, or concurrency
   classification out of Core.

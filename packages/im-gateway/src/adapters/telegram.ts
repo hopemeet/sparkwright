@@ -112,7 +112,7 @@ export class TelegramAdapter implements PlatformAdapter {
     target: OutboundTarget,
     approval: ApprovalPrompt,
   ): Promise<void> {
-    const token = randomUUID().slice(0, 12);
+    const token = stableCallbackToken(approval.deliveryKey ?? randomUUID());
     this.approvalTokens.set(token, approval.approvalId);
     await this.api("sendMessage", {
       chat_id: target.chatId,
@@ -231,7 +231,15 @@ export class TelegramAdapter implements PlatformAdapter {
       return;
     }
     this.approvalTokens.delete(token);
-    await this.handlers?.onApprovalDecision({ approvalId, decision });
+    if (!inbound) return;
+    await this.handlers?.onApprovalDecision({
+      approvalId,
+      decision,
+      platform: this.platform,
+      chatId: inbound.chatId,
+      ...(inbound.threadId ? { threadId: inbound.threadId } : {}),
+      userId: String(query.from.id),
+    });
     await this.api("answerCallbackQuery", {
       callback_query_id: query.id,
       text: decision === "approved" ? "Approved" : "Denied",
@@ -301,7 +309,6 @@ export class TelegramAdapter implements PlatformAdapter {
         : undefined,
       userId,
       userName: displayName(msg.from),
-      chatType: msg.chat.type === "private" ? "dm" : "group",
       messageId: String(msg.message_id),
       text,
       metadata: {
@@ -363,6 +370,15 @@ function splitTelegramText(text: string): string[] {
     chunks.push(text.slice(i, i + max));
   }
   return chunks;
+}
+
+function stableCallbackToken(value: string): string {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `a${(hash >>> 0).toString(36)}`;
 }
 
 function sleep(ms: number): Promise<void> {

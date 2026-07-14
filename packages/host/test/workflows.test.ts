@@ -30,6 +30,12 @@ import {
 import { HostRuntime } from "../src/runtime.js";
 import type { HostEvent } from "@sparkwright/protocol";
 
+const TEST_WORKFLOW_SOURCE = {
+  kind: "api" as const,
+  principalId: "workflow-test-client",
+  authenticatedBy: "host-test",
+};
+
 async function tempWorkspace(): Promise<string> {
   return mkdtemp(join(tmpdir(), "sparkwright-workflows-"));
 }
@@ -1551,17 +1557,26 @@ describe("workflow assets", () => {
     });
 
     events.length = 0;
-    const resumed = await runtime.resumeWorkflowRun({
-      workflowRunId: waitingRecord.id,
-      sessionId,
-      metadata: { humanDecision: "approved" },
-    });
+    const resumed = await runtime.resumeWorkflowRun(
+      {
+        workflowRunId: waitingRecord.id,
+        sessionId,
+        metadata: { humanDecision: "approved" },
+      },
+      TEST_WORKFLOW_SOURCE,
+    );
 
     expect(resumed).toMatchObject({
       ok: true,
       workflowRunId: waitingRecord.id,
       sessionId,
     });
+    expect(
+      new FileWorkflowControlInbox({
+        rootDir: workflowStoreRoot(workspace),
+        createRoot: false,
+      }).snapshot(waitingRecord.id).commands[0]?.source,
+    ).toEqual(TEST_WORKFLOW_SOURCE);
     await waitForHostEvent(events, (event) => event.kind === "run.completed");
     const store = new FileWorkflowStore({
       rootDir: workflowStoreRoot(workspace, sessionId),
@@ -1638,11 +1653,14 @@ describe("workflow assets", () => {
       emit: () => {},
     });
 
-    const resumed = await runtime.resumeWorkflowRun({
-      workflowRunId,
-      sessionId,
-      model: "missing-provider/model",
-    });
+    const resumed = await runtime.resumeWorkflowRun(
+      {
+        workflowRunId,
+        sessionId,
+        model: "missing-provider/model",
+      },
+      TEST_WORKFLOW_SOURCE,
+    );
 
     expect(resumed).toMatchObject({ ok: false });
     expect(store.get(workflowRunId)).toMatchObject({
@@ -1711,10 +1729,13 @@ describe("workflow assets", () => {
       defaultModel: "deterministic",
       emit: () => {},
     });
-    const resumed = await competingRuntime.resumeWorkflowRun({
-      workflowRunId: record.id,
-      sessionId,
-    });
+    const resumed = await competingRuntime.resumeWorkflowRun(
+      {
+        workflowRunId: record.id,
+        sessionId,
+      },
+      TEST_WORKFLOW_SOURCE,
+    );
     expect(resumed).toMatchObject({
       ok: false,
       error: {
@@ -1797,10 +1818,13 @@ describe("workflow assets", () => {
       workspaceRoot: workspace,
       defaultModel: "deterministic",
       emit: () => {},
-    }).resumeWorkflowRun({
-      workflowRunId: record.id,
-      sessionId,
-    });
+    }).resumeWorkflowRun(
+      {
+        workflowRunId: record.id,
+        sessionId,
+      },
+      TEST_WORKFLOW_SOURCE,
+    );
     expect(resumed).toMatchObject({
       ok: false,
       error: {
@@ -1852,10 +1876,13 @@ describe("workflow assets", () => {
       expect.objectContaining({ id: workflowRunId, sessionId }),
     ]);
 
-    const resumed = await runtime.resumeWorkflowRun({
-      workflowRunId,
-      sessionId,
-    });
+    const resumed = await runtime.resumeWorkflowRun(
+      {
+        workflowRunId,
+        sessionId,
+      },
+      TEST_WORKFLOW_SOURCE,
+    );
 
     expect(resumed).toMatchObject({ ok: true, workflowRunId, sessionId });
     await waitForHostEvent(events, (event) => event.kind === "run.completed");
@@ -1994,10 +2021,13 @@ describe("workflow assets", () => {
       emit: (event) => events.push(event),
     });
 
-    const resumed = await runtime.resumeWorkflowRun({
-      workflowRunId,
-      sessionId,
-    });
+    const resumed = await runtime.resumeWorkflowRun(
+      {
+        workflowRunId,
+        sessionId,
+      },
+      TEST_WORKFLOW_SOURCE,
+    );
 
     expect(resumed).toMatchObject({ ok: true });
     await waitForHostEvent(events, (event) => event.kind === "run.completed");
@@ -2046,10 +2076,13 @@ describe("workflow assets", () => {
       emit: (event) => events.push(event),
     });
 
-    const resumed = await runtime.resumeWorkflowRun({
-      workflowRunId,
-      sessionId,
-    });
+    const resumed = await runtime.resumeWorkflowRun(
+      {
+        workflowRunId,
+        sessionId,
+      },
+      TEST_WORKFLOW_SOURCE,
+    );
 
     expect(resumed).toMatchObject({ ok: true });
     await waitForHostEvent(events, (event) => event.kind === "run.completed");
@@ -2097,10 +2130,13 @@ describe("workflow assets", () => {
       emit: () => {},
     });
 
-    const resumed = await runtime.resumeWorkflowRun({
-      workflowRunId,
-      sessionId,
-    });
+    const resumed = await runtime.resumeWorkflowRun(
+      {
+        workflowRunId,
+        sessionId,
+      },
+      TEST_WORKFLOW_SOURCE,
+    );
 
     expect(resumed).toMatchObject({
       ok: false,
@@ -2237,13 +2273,19 @@ describe("workflow assets", () => {
       emit: () => {},
     });
 
-    const unsafeRun = await runtime.resumeWorkflowRun({
-      workflowRunId: "../escape" as WorkflowRunId,
-    });
-    const unsafeSession = await runtime.resumeWorkflowRun({
-      workflowRunId: "workflow_safe" as WorkflowRunId,
-      sessionId: "../escape",
-    });
+    const unsafeRun = await runtime.resumeWorkflowRun(
+      {
+        workflowRunId: "../escape" as WorkflowRunId,
+      },
+      TEST_WORKFLOW_SOURCE,
+    );
+    const unsafeSession = await runtime.resumeWorkflowRun(
+      {
+        workflowRunId: "workflow_safe" as WorkflowRunId,
+        sessionId: "../escape",
+      },
+      TEST_WORKFLOW_SOURCE,
+    );
 
     expect(unsafeRun).toMatchObject({
       ok: false,

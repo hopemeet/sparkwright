@@ -111,12 +111,43 @@ policy requires approval
 - Check non-interactive CLI behavior.
 - Check duplicate rendering between `approval.*` and `interaction.*`.
 - Keep approval payloads free of secrets.
+- Ordinary IM approvals are indexed by Host to execution/session and filtered
+  per exact binding. The initiating principal or a binding with `approve` may
+  resolve; the first valid resolution wins. Inspect-only subscribers do not
+  receive actionable approval payloads. Durable Workflow approvals remain on
+  the Workflow channel/control path.
+- The initiating principal is transport/auth-derived and immutable across the
+  connection handshake. Unauthenticated connections cannot self-bind, and a
+  different authenticated credential cannot reuse approval, subscription, or
+  cancellation authority even when client name and IM subject claims match.
+  New self-bindings always receive a Host-assigned session, so a binding cannot
+  gain approval authority by presenting another binding's session id.
 
 ## Known Debts
 
 - Approval UX and diagnostic reporting are split across CLI, TUI, host, and core trace.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: bound IM approval/subscription/cancel authorization to immutable
+  authenticated principals and Host-assigned new-binding sessions while
+  retaining exact subject and scoped permission checks.
+- Tests: Host IM/protocol focused authorization and replay coverage passed.
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: added Host-owned IM approval routing, exact-principal authorization,
+  first-writer resolution, subscriber filtering, and finite timeout coverage.
+- Tests: Host IM control 5/5, Host protocol timeout/binding coverage, Gateway
+  approval routing, and full Host suite 571/571.
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: live Host approval waiters remain execution-owned, are denied on
+  cancellation, and now have a finite timeout; durable Workflow waits remain
+  separate.
 
 - Status: Read-only
 - Date: 2026-07-13

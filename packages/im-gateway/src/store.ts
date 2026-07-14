@@ -1,25 +1,22 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { randomUUID } from "node:crypto";
-import type { OutboundTarget } from "./types.js";
+
+interface DeliveryAttempt {
+  status: "delivered" | "failed";
+  attemptedAt: number;
+  error?: string;
+}
 
 interface StoreData {
-  sessions: Record<string, string>;
-  runTargets: Record<string, StoredTarget>;
-  approvalRuns: Record<string, string>;
   processedMessages: Record<string, number>;
+  deliveryAttempts: Record<string, DeliveryAttempt[]>;
 }
 
-interface StoredTarget extends OutboundTarget {
-  sessionKey: string;
-}
-
+/** Gateway-owned transport dedupe and delivery-attempt facts only. */
 export class GatewayStore {
   private data: StoreData = {
-    sessions: {},
-    runTargets: {},
-    approvalRuns: {},
     processedMessages: {},
+    deliveryAttempts: {},
   };
   private loaded = false;
 
@@ -31,51 +28,13 @@ export class GatewayStore {
       const raw = await readFile(this.path, "utf8");
       const parsed = JSON.parse(raw) as Partial<StoreData>;
       this.data = {
-        sessions: parsed.sessions ?? {},
-        runTargets: parsed.runTargets ?? {},
-        approvalRuns: parsed.approvalRuns ?? {},
         processedMessages: parsed.processedMessages ?? {},
+        deliveryAttempts: parsed.deliveryAttempts ?? {},
       };
     } catch {
-      // Missing or corrupt state should not prevent the daemon from starting.
+      // Missing or corrupt transport state does not prevent daemon startup.
     }
     this.loaded = true;
-  }
-
-  async getOrCreateSessionId(sessionKey: string): Promise<string> {
-    await this.load();
-    const existing = this.data.sessions[sessionKey];
-    if (existing) return existing;
-    const created = `im_${randomUUID()}`;
-    this.data.sessions[sessionKey] = created;
-    await this.save();
-    return created;
-  }
-
-  async rememberRun(
-    runId: string,
-    sessionKey: string,
-    target: OutboundTarget,
-  ): Promise<void> {
-    await this.load();
-    this.data.runTargets[runId] = { ...target, sessionKey };
-    await this.save();
-  }
-
-  async targetForRun(runId: string): Promise<StoredTarget | undefined> {
-    await this.load();
-    return this.data.runTargets[runId];
-  }
-
-  async rememberApproval(approvalId: string, runId: string): Promise<void> {
-    await this.load();
-    this.data.approvalRuns[approvalId] = runId;
-    await this.save();
-  }
-
-  async runForApproval(approvalId: string): Promise<string | undefined> {
-    await this.load();
-    return this.data.approvalRuns[approvalId];
   }
 
   async hasProcessedMessage(key: string): Promise<boolean> {
@@ -89,14 +48,37 @@ export class GatewayStore {
   async markProcessedMessage(key: string): Promise<void> {
     await this.load();
     this.data.processedMessages[key] = Date.now();
-    const entries = Object.entries(this.data.processedMessages);
-    if (entries.length > 2000) {
-      entries
-        .sort((a, b) => a[1] - b[1])
-        .slice(0, entries.length - 2000)
-        .forEach(([oldKey]) => delete this.data.processedMessages[oldKey]);
-    }
+    trimOldest(this.data.processedMessages, 2_000);
     await this.save();
+  }
+
+  async recordDeliveryAttempt(
+    deliveryKey: string,
+    status: DeliveryAttempt["status"],
+    error?: string,
+  ): Promise<void> {
+    await this.load();
+    const attempts = this.data.deliveryAttempts[deliveryKey] ?? [];
+    attempts.push({
+      status,
+      attemptedAt: Date.now(),
+      ...(error ? { error } : {}),
+    });
+    this.data.deliveryAttempts[deliveryKey] = attempts.slice(-10);
+    const latest = Object.fromEntries(
+      Object.entries(this.data.deliveryAttempts).map(([key, values]) => [
+        key,
+        values.at(-1)?.attemptedAt ?? 0,
+      ]),
+    );
+    const removed = trimOldest(latest, 2_000);
+    for (const key of removed) delete this.data.deliveryAttempts[key];
+    await this.save();
+  }
+
+  async deliveryAttempts(deliveryKey: string): Promise<DeliveryAttempt[]> {
+    await this.load();
+    return [...(this.data.deliveryAttempts[deliveryKey] ?? [])];
   }
 
   private async save(): Promise<void> {
@@ -105,4 +87,15 @@ export class GatewayStore {
     await writeFile(tmp, JSON.stringify(this.data, null, 2), "utf8");
     await rename(tmp, this.path);
   }
+}
+
+function trimOldest(entries: Record<string, number>, limit: number): string[] {
+  const values = Object.entries(entries);
+  if (values.length <= limit) return [];
+  const removed = values
+    .sort((left, right) => left[1] - right[1])
+    .slice(0, values.length - limit)
+    .map(([key]) => key);
+  for (const key of removed) delete entries[key];
+  return removed;
 }

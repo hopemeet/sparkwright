@@ -12,7 +12,6 @@ export interface InboundMessage {
   threadId?: string;
   userId?: string;
   userName?: string;
-  chatType?: "dm" | "group" | "channel" | "thread";
   metadata?: Record<string, unknown>;
 }
 
@@ -36,6 +35,7 @@ export interface OutboundMessage {
 export interface ApprovalPrompt {
   approvalId: string;
   runId: string;
+  deliveryKey?: string;
   summary: string;
   action: string;
   details?: Record<string, unknown>;
@@ -68,6 +68,10 @@ export interface PlatformHandlers {
     approvalId: string;
     decision: "approved" | "denied";
     message?: string;
+    platform: string;
+    chatId: string;
+    threadId?: string;
+    userId: string;
   }): Promise<void>;
   onWorkflowResponse(input: WorkflowChannelResponse): Promise<void>;
 }

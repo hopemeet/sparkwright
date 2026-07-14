@@ -47,7 +47,7 @@ import {
   createWorkspaceLeaseAbortController,
   createWorkspaceMutationAdmission,
   type WorkspaceLeaseCoordinator,
-} from "./workspace-agent-arbiter.js";
+} from "./workspace-lease-coordinator.js";
 
 export interface ExternalCommandAgentConfig {
   command: string;

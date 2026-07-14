@@ -94,6 +94,17 @@ Does not own:
   Successful start responses may include the authoritative `sessionId` and
   `workflowRunId`; ordinary non-workflow clients remain compatible with the
   required `runId` field alone.
+- Ordinary IM control uses additive `im.bind`, `im.message`, `im.subscribe`,
+  `im.delivery.ack`, `im.approval.resolve`, `im.cancel`, and `im.inspect`
+  requests. Subjects contain bounded platform/chat/thread/user claims only;
+  principal identity and trust are Host-derived. Binding permissions are
+  explicit and self-binding remains a Host policy decision. For `im.bind`, a
+  session id may only echo the Host-issued session of an existing live exact
+  binding; new self-bindings omit it and receive a Host-assigned session.
+- Handshake client name/version are metadata, not authentication fields.
+  Principal/auth/system/verified/trusted identity is never accepted from a wire
+  request or free-form request metadata; Host derives Workflow control source
+  attribution from the completed connection context. Handshake is single-use.
 - `run.start` and `run.resume` may include `backgroundTasks`
   (`disabled`, `foreground-only`, `enabled`). Host validates and clamps it; the
   protocol only carries the requested run policy.
@@ -197,6 +208,27 @@ Does not own:
 - Protocol and file trace contracts are related but separate; avoid documenting one as the other.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: Host principal isolation keeps existing handshake/IM/Workflow request
+  types while rejecting identity spoof metadata, duplicate handshake, and new
+  self-binding attempts that select a caller-provided session.
+- Tests: Host protocol/IM/Workflow focused coverage passed; SDK request methods
+  require no compatibility change.
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: added typed Host-owned IM binding, dispatch, subscription, delivery,
+  approval, cancel, and inspect requests plus SDK methods.
+- Read: protocol types/schema/fixture, Host validation/dispatch, SDK client,
+  and Gateway bridge.
+- Tests: protocol 8/8; SDK 12/12; Host protocol focused; schema check passed.
+
+- Status: Verified (no contract change)
+- Date: 2026-07-14
+- Scope: reviewed HostService/lane migration; existing run request and response
+  shapes remain compatible and root run ids remain legacy execution aliases.
 
 - Status: Read-only
 - Date: 2026-07-13

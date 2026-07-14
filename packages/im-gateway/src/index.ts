@@ -11,10 +11,6 @@ export {
   type ImGatewayConfig,
   type TelegramGatewayConfig,
 } from "./config.js";
-export {
-  buildSessionKey,
-  type SessionRoutingOptions,
-} from "./session-router.js";
 export type {
   ApprovalPrompt,
   GatewayLogger,

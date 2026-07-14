@@ -63,6 +63,10 @@ Does not own:
 
 - Facts enter append-only event streams before derived stores or views.
 - `runId` routes kernel work; `sessionId` groups runs at the edge.
+- Run command admission is a single lifecycle-aware operation:
+  `tryEnqueueCommand()` either enqueues and emits `run.command.enqueued`, or
+  rejects with `terminal`/`closing`. Embedders must not split acceptance into a
+  state probe followed by dispatch.
 - `event.sequence` is per run, not per session.
 - `ToolDefinition.previewArgs()` is the tool-owned request preview contract.
   The run loop calls it before execution and stores bounded text on
@@ -373,6 +377,25 @@ Does not own:
   guard and trace diagnostics.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14T14:35:00+0800
+- Scope: P6 routed review; deprecated server-runtime convenience APIs remain
+  isolated and Core run/session/event ownership is unchanged.
+- Tests: server-runtime 30/30 and Host 571/571 passed.
+
+- Status: Verified (no ownership change)
+- Date: 2026-07-14
+- Scope: reviewed Host execution lanes and atomic command acceptance; Core
+  remains the per-run state machine and canonical run-event owner.
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: added atomic terminal/closing-aware run command acceptance and
+  idempotent terminal cancellation.
+- Read: Core run command queue, terminal transitions, abort handling, Host
+  injection adapter, and focused tests.
+- Tests: Core run 129/129; Core and Host typecheck; Host protocol integration.
 
 - Status: Verified
 - Date: 2026-07-14

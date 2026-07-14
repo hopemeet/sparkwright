@@ -140,6 +140,28 @@ tool proposes write
 
 - Status: Verified
 - Date: 2026-07-14
+- Scope: checked Host principal isolation and Workflow control attribution;
+  workspace-write policy, approval, and lease behavior are unchanged.
+- Tests: Host focused suites and typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-14T14:35:00+0800
+- Scope: P6 renamed the process-local workspace lease implementation without
+  changing admission scope, fairness, or the non-fencing limitation.
+- Tests: Workspace lease tests and Host 571/571 passed.
+
+- Status: Verified (no write-admission change)
+- Date: 2026-07-14
+- Scope: reviewed IM principal/binding permissions; they authorize session
+  control only and do not grant workspace mutation or replace existing leases.
+
+- Status: Verified (no lease semantic change)
+- Date: 2026-07-14
+- Scope: reviewed WorkspaceContext and lane capacity; canonical workspace lease
+  admission remains independent from execution scheduling capacity.
+
+- Status: Verified
+- Date: 2026-07-14
 - Scope: extended Host workspace arbitration from child-only admission to
   actual parent/child mutation windows, including background lease transfer,
   reentrant ownership, run-chain fail-fast, and loss-triggered cancellation.

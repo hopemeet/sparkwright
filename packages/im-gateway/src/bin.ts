@@ -86,7 +86,6 @@ async function run(args: string[]): Promise<void> {
     ],
     bridge: new SparkwrightBridge({ hostUrl: config.hostUrl }),
     store: new GatewayStore(join(dataDir, "state.json")),
-    sessionRouting: config.sessionRouting,
     model: config.model,
     ...(workspaceRoot && workflowRoot
       ? {

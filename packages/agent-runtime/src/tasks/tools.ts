@@ -17,7 +17,7 @@ import {
   type ToolRequestPreviewOptions,
 } from "@sparkwright/core";
 import type { RunId } from "@sparkwright/core";
-import type { TaskManager } from "./manager.js";
+import type { TaskManager, TaskRunner } from "./manager.js";
 import type {
   TaskId,
   TaskOutputChunk,
@@ -63,6 +63,12 @@ export interface TaskCreateKindCall {
  */
 export interface CreateTaskToolsOptions {
   manager: TaskManager;
+  /**
+   * Execution-scoped runners captured by this tool bundle. These take
+   * precedence over process/workspace registered runners so delayed task
+   * startup cannot observe dependencies from a later run.
+   */
+  taskRunners?: Readonly<Record<string, TaskRunner>>;
   /**
    * Resolver for the active run id. Tools call this on every invocation so
    * the same tool bundle can be shared across runs.
@@ -180,7 +186,9 @@ export function createTaskCreate(
       }
       const mode =
         backgroundTasks === "foreground-only" ? "foreground" : parsed.mode;
-      const runner = options.manager.getRunner(parsed.kind);
+      const runner =
+        options.taskRunners?.[parsed.kind] ??
+        options.manager.getRunner(parsed.kind);
       if (!runner) {
         const available = options.manager.registeredKinds();
         const availableText =
@@ -223,6 +231,7 @@ export function createTaskCreate(
         kind: parsed.kind,
         title: parsed.title,
         awaited: parsed.awaited,
+        runner,
         payload: parsed.payload,
       });
       if (mode !== "foreground") {

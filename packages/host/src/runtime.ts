@@ -2,11 +2,9 @@ import { readdir, stat, readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import {
-  buildTraceTimelineFile,
   asSessionId,
   createBufferedEmitter,
   createContextItemId,
-  createDeterministicSessionSummarizer,
   createRunId,
   createDefaultPolicy,
   createLayeredPolicy,
@@ -19,20 +17,12 @@ import {
   defineTool,
   FileSessionStore,
   EventLog,
-  forkSessionFromEvent,
   loadCheckpointFromRunDir,
   resumeRunFromCheckpoint,
-  summarizeTraceFile,
-  compactSessionTurns,
   sessionCompactArtifactToContextItem,
   sessionTurnToContextItems,
-  SESSION_COMPACT_FILENAME,
-  SESSION_COMPACT_SCHEMA_VERSION,
-  validateSessionTraceConsistency,
-  writeSessionCompactArtifact,
   type ApprovalResolver,
   type BackgroundTaskPolicy,
-  type CompactionWarning,
   type ContentPart,
   type ContextItem,
   type EventEmitter,
@@ -46,11 +36,6 @@ import {
   type RunResult,
   type RuntimeContext,
   type RunAccessMode,
-  type ContextUsageHint,
-  type SessionCompactArtifact,
-  type SessionCompactionMeasurement,
-  type SessionCompactionOptions,
-  type SessionEvent,
   type SparkwrightEvent,
   type TaskRevivalSource,
   type SessionTraceFacts,
@@ -95,7 +80,6 @@ import {
   notificationFromRecord,
   rememberSuccessfulDelegation,
   readTodoLedger,
-  runTodoSupervised,
   spawnSubAgent,
   summarizeDelegationResult,
   withAlreadyCompletedNote,
@@ -127,12 +111,15 @@ import {
 } from "@sparkwright/agent-runtime";
 import { CronStore, defaultCronRoot } from "@sparkwright/cron";
 import { RECOMMENDED_FOREGROUND_TIMEOUT_MS } from "@sparkwright/shell-tool";
-import { DurableCommandDispatcher } from "@sparkwright/server-runtime";
+import {
+  InFlightCommandDispatcher,
+  type ExecutionHandle,
+} from "@sparkwright/server-runtime";
 import {
   createWorkspaceMutationAdmission,
   processWorkspaceLeaseCoordinator,
   type WorkspaceLeaseCoordinator,
-} from "./workspace-agent-arbiter.js";
+} from "./workspace-lease-coordinator.js";
 import {
   type ResolvedShellSandboxConfig,
   type ShellSandboxStatus,
@@ -146,7 +133,6 @@ import type {
   CapabilityVerificationConfig,
   CapabilityWorkflowHookConfig,
   ShellConfig,
-  TaskConfig,
   WriteGuardrailsConfig,
 } from "./config.js";
 import {
@@ -168,8 +154,6 @@ import {
   type WorkflowResumeRequestPayload,
   type WorkflowRunSnapshot,
   type RunInputPart,
-  type SessionCompactionInspectArtifact,
-  type SessionCompactionInspectEvent,
   type SessionCompactionInspectReport,
   type TaskOutputChunkSnapshot,
   type TaskRecordSnapshot,
@@ -183,11 +167,7 @@ import {
   type CapabilityWorkflowAssetSummary,
 } from "@sparkwright/protocol";
 import { buildAgentPromptBuilder } from "@sparkwright/project-context";
-import {
-  DETERMINISTIC_PROVIDER,
-  loadHostConfig,
-  type CapabilityMcpConfig,
-} from "./config.js";
+import { loadHostConfig, type CapabilityMcpConfig } from "./config.js";
 import {
   resolveAgentProfiles,
   type AgentProfileCollision,
@@ -203,11 +183,29 @@ import { createHostRunPolicy } from "./run-policy.js";
 import { existingSkillRoots } from "./skill-roots.js";
 import { nextMessageId, nowIso } from "./connection.js";
 import {
+  HostExecution,
+  type HostExecutionActiveRun,
+} from "./host-execution.js";
+import { resolveExecutionPlan } from "./execution-plan.js";
+import { createExecutionResources } from "./execution-resources.js";
+import {
+  forkHostSession,
+  inspectHostSession,
+  inspectHostSessionCompaction,
+  listHostSessions,
+  type SessionInspectOptions,
+} from "./session-queries.js";
+import {
+  compactHostSession,
+  type SessionCompactResult,
+} from "./session-compaction.js";
+export { sessionPreviewFromTranscriptLine } from "./session-queries.js";
+import { WorkspaceContext } from "./workspace-context.js";
+import {
   createModel,
   inspectResolvedModelConfig,
   type ResolvedModelConfig,
 } from "./model-factory.js";
-import { createModelSessionSummarizer } from "./session-summarizer.js";
 import {
   catalogEntryOrigin,
   catalogToolDefinitions,
@@ -427,26 +425,40 @@ export interface RuntimeOptions {
   emit: (event: HostEvent) => void;
   /** @internal Process-scoped workspace mutation coordinator override. */
   workspaceLeaseCoordinator?: WorkspaceLeaseCoordinator;
+  /** @internal Workspace-scoped durable owner injected by HostService. */
+  workspaceContext?: WorkspaceContext;
+  /** @internal Canonical process lane path injected by HostService. */
+  executionCoordinator?: HostExecutionCoordinatorPort;
+  /** @internal Finite live approval wait; defaults to five minutes. */
+  approvalTimeoutMs?: number;
 }
 
-interface PendingApproval {
-  approvalId: string;
-  runId: string;
-  resolve: (response: {
-    decision: "approved" | "denied";
-    message?: string;
-    autoApproved?: boolean;
-  }) => void;
+export interface HostExecutionCoordinatorPort {
+  startRun(
+    runtime: HostRuntime,
+    payload: RunStartRequestPayload,
+  ): ReturnType<HostRuntime["startRunDirect"]>;
+  resumeRun(
+    runtime: HostRuntime,
+    payload: RunResumeRequestPayload,
+  ): ReturnType<HostRuntime["resumeRunDirect"]>;
+  injectRunMessage(
+    runtime: HostRuntime,
+    runId: string,
+    input: Parameters<HostRuntime["injectRunMessageDirect"]>[1],
+  ): ReturnType<HostRuntime["injectRunMessageDirect"]>;
+  cancelRun(
+    runtime: HostRuntime,
+    runId: string,
+    reason?: string,
+  ): ReturnType<HostRuntime["cancelRunDirect"]>;
 }
 
-interface ActiveRun {
+export interface HostExecutionMessage {
   runId: string;
-  run: ReturnType<typeof createRun>;
-  trace: MemoryTrace;
-  sessionId: string;
-  closeCapabilities?: () => Promise<void>;
-  workflowRunId?: WorkflowRunId;
-  processWorkflowControls?: () => Promise<void>;
+  content: string;
+  parts?: readonly RunInputPart[];
+  metadata?: Record<string, unknown>;
 }
 
 interface CompletedConversationTurn {
@@ -554,14 +566,6 @@ function defaultSessionRootDir(workspaceRoot: string): string {
  * `packages/core/src/context.ts`). Collapses whitespace so the result is a clean
  * single-line preview.
  */
-function stripGoalDecorations(content: string): string {
-  return content
-    .replace(/<env>[\s\S]*?<\/env>/g, "")
-    .replace(/^\s*User request:\s*/i, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
 function inputPartsFromPayload(
   parts: readonly RunInputPart[] | undefined,
 ): ContentPart[] {
@@ -623,31 +627,6 @@ function userInputContextItem(input: {
  * (last user message). We surface the goal. Falls back to a top-level `content`
  * string, then the raw line, for other/legacy shapes.
  */
-export function sessionPreviewFromTranscriptLine(firstLine: string): string {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(firstLine);
-  } catch {
-    return firstLine;
-  }
-  const obj = parsed as {
-    content?: unknown;
-    messages?: Array<{ role?: unknown; content?: unknown }>;
-  };
-  if (Array.isArray(obj.messages)) {
-    for (let i = obj.messages.length - 1; i >= 0; i--) {
-      const m = obj.messages[i];
-      if (!m || m.role !== "user" || typeof m.content !== "string") continue;
-      const goal = stripGoalDecorations(m.content);
-      if (goal) return goal;
-    }
-  }
-  if (typeof obj.content === "string" && obj.content.trim()) {
-    return stripGoalDecorations(obj.content);
-  }
-  return firstLine;
-}
-
 function extractSkillSourcePath(message: string): string | undefined {
   return message.match(/(?:^|\s)(\/[^\n:]+SKILL\.md)\b/)?.[1];
 }
@@ -755,36 +734,11 @@ const DELEGATED_AGENT_CONTRACT = [
   "- For clear delegated goals, complete the task and return the result to the parent.",
 ].join("\n");
 
-type SessionInspectOptions = {
-  compaction?: boolean;
-};
-
-type SessionCompactSuccessResult = {
-  ok: true;
-  sessionId: string;
-  compactedRunCount: number;
-  throughRunId: string | null;
-  originalCharCount: number;
-  summaryCharCount: number;
-  freedChars: number;
-  measurement: SessionCompactionMeasurement;
-  skippedReason?: string;
-  warnings?: CompactionWarning[];
-  artifactPath: string | null;
-};
-
-type SessionCompactResult =
-  | SessionCompactSuccessResult
-  | { ok: false; error: ProtocolError };
-
 /**
- * Per-connection runtime. Maps protocol verbs onto core.createRun(),
- * threading events back out through `emit` as host events.
- *
- * A single connection runs at most one run at a time. Concurrent run.start
- * requests while another run is active reject with internal_error
- * (`run_already_active`); promoting to multiple parallel runs per
- * connection would be a v1.1 addition.
+ * Compatibility facade over one HostExecution attachment. Production starts,
+ * resumes, injection, cancellation, and terminal handoff are admitted by the
+ * process HostService and its ExecutionLaneCoordinator before reaching this
+ * runtime.
  */
 /**
  * @internal Per-run spawn dependencies the registered `agent` task kind needs
@@ -875,25 +829,14 @@ export async function runHostAgentTask(
 
 export class HostRuntime {
   private opts: RuntimeOptions;
-  // Latest per-run spawn deps for the registered `agent` background task kind.
-  // Overwritten each run; the runner reads it once at execution start.
-  private agentSpawnDeps: HostAgentTaskRunnerDeps | null = null;
   private readonly taskNotifications: FileTaskNotificationOutbox;
   private readonly workflowNotifications: FileWorkflowNotificationOutbox;
   private readonly workflowControls: FileWorkflowControlInbox;
-  private readonly workflowControlDispatcher = new DurableCommandDispatcher();
+  private readonly workflowControlDispatcher: InFlightCommandDispatcher;
   private readonly taskManager: TaskManager;
-  private active: ActiveRun | null = null;
-  // Synchronously-set reservation so two concurrent startRun() calls cannot
-  // both pass the "is a run active?" guard before `this.active` is populated
-  // (which only happens after `await createModel(...)`).
-  private startingRun = false;
-  // Set when the client cancels the current turn. Unlike run.cancel (which
-  // targets one run and can lose a race against natural completion), this
-  // aborts the whole todo-supervised chain so a single cancel stops every
-  // continuation. Reset at the start of each new turn.
-  private runChainCancelled = false;
-  private pendingApprovals = new Map<string, PendingApproval>();
+  private currentExecution: HostExecution | null = null;
+  // One abort for the complete interactive execution, including assembly and
+  // every todo/workflow episode. Core run cancellation remains run-scoped.
   private lastCapabilitySnapshot: CapabilitySnapshot | null = null;
 
   constructor(opts: RuntimeOptions) {
@@ -904,35 +847,110 @@ export class HostRuntime {
         ? { sessionRootDir: resolve(opts.sessionRootDir) }
         : {}),
     };
-    this.taskNotifications = new FileTaskNotificationOutbox({
-      rootDir: this.taskRootDir(),
-      createRoot: false,
-    });
-    this.workflowNotifications = new FileWorkflowNotificationOutbox({
-      rootDir: this.workflowNotificationRootDir(),
-      createRoot: false,
-    });
-    this.workflowControls = new FileWorkflowControlInbox({
-      rootDir: this.workflowStoreRootDir(),
-      createRoot: false,
-    });
-    this.taskManager = new TaskManager({
-      store: new FileTaskStore({
-        rootDir: this.taskRootDir(),
-        createRoot: false,
-      }),
-      notificationSink: this.taskNotifications,
-    });
-    // Background agent jobs are a task `kind` whose runner drives a read-only
-    // child run. Registered once; the runner reads the latest per-run spawn
-    // deps published by prepareRun. See runAgentTask.
-    this.taskManager.registerKind("agent", (controller, payload) =>
-      this.runAgentTask(controller, payload),
-    );
+    const context =
+      opts.workspaceContext ??
+      new WorkspaceContext(
+        {
+          workspaceRoot: this.opts.workspaceRoot,
+          sessionRootDir:
+            this.opts.sessionRootDir ??
+            defaultSessionRootDir(this.opts.workspaceRoot),
+        },
+        opts.workspaceLeaseCoordinator ?? processWorkspaceLeaseCoordinator,
+      );
+    this.taskNotifications = context.taskNotifications;
+    this.workflowNotifications = context.workflowNotifications;
+    this.workflowControls = context.workflowControls;
+    this.workflowControlDispatcher = context.workflowControlDispatcher;
+    this.taskManager = context.taskManager;
   }
 
   hasActiveRun(): boolean {
-    return this.active !== null;
+    return this.currentExecution?.activeRun != null;
+  }
+
+  /** @internal HostService lookup without mirroring execution truth. */
+  executionIdentity():
+    | {
+        executionId: string;
+        sessionId?: string;
+        currentRunId?: string;
+        runIds: readonly string[];
+      }
+    | undefined {
+    const execution = this.currentExecution;
+    return execution
+      ? {
+          executionId: execution.executionId,
+          ...(execution.sessionId ? { sessionId: execution.sessionId } : {}),
+          ...(execution.currentRunId()
+            ? { currentRunId: execution.currentRunId() }
+            : {}),
+          runIds: execution.runIdAliases(),
+        }
+      : undefined;
+  }
+
+  /** @internal Canonical lane scope used by the process HostService. */
+  executionLaneKey(sessionId: string): string {
+    return `${
+      this.opts.sessionRootDir ?? defaultSessionRootDir(this.opts.workspaceRoot)
+    }\0${sessionId}`;
+  }
+
+  executionDriverHandle(
+    executionId: string,
+  ): ExecutionHandle<HostExecutionMessage, unknown> | undefined {
+    const execution = this.currentExecution;
+    if (
+      !execution ||
+      execution.executionId !== executionId ||
+      !execution.rootRunId
+    ) {
+      return undefined;
+    }
+    return {
+      rootRunId: execution.rootRunId,
+      currentRunId: () => execution.currentRunId() ?? execution.rootRunId!,
+      tryInject: (message) =>
+        this.injectRunMessageDirect(message.runId, message).ok
+          ? "accepted"
+          : "closed",
+      cancel: (reason) => {
+        execution.cancel(reason);
+      },
+      completion: execution.completion,
+    };
+  }
+
+  private get active(): HostExecutionActiveRun | null {
+    return this.currentExecution?.activeRun ?? null;
+  }
+
+  private set active(value: HostExecutionActiveRun | null) {
+    if (value) {
+      if (!this.currentExecution) this.currentExecution = new HostExecution();
+      this.currentExecution.attachRun(value);
+    } else {
+      this.currentExecution?.detachRun();
+    }
+  }
+
+  private beginExecution(
+    abortController?: AbortController,
+    executionId?: string,
+  ): HostExecution {
+    const execution = new HostExecution({ abortController, executionId });
+    this.currentExecution = execution;
+    return execution;
+  }
+
+  private releaseUnstartedExecution(execution: HostExecution): void {
+    if (this.currentExecution !== execution || execution.activeRun) return;
+    execution.finish(
+      execution.abortController.signal.aborted ? "cancelled" : "failed",
+    );
+    this.currentExecution = null;
   }
 
   private taskRootDir(): string {
@@ -945,22 +963,6 @@ export class HostRuntime {
 
   private workflowStoreRootDir(): string {
     return workspaceWorkflowRunsDir({ workspaceRoot: this.opts.workspaceRoot });
-  }
-
-  private async runAgentTask(
-    controller: TaskRunnerController,
-    payload: unknown,
-  ): Promise<unknown> {
-    const deps = this.agentSpawnDeps;
-    if (!deps) {
-      throw Object.assign(
-        new Error(
-          "Agent task runner is not available until a run has prepared agent dependencies.",
-        ),
-        { code: "AGENT_TASK_UNAVAILABLE" },
-      );
-    }
-    return runHostAgentTask(controller, payload, deps);
   }
 
   private createTaskRevivalBridge(getRunId: () => RunId | undefined): {
@@ -1464,7 +1466,25 @@ export class HostRuntime {
       }
     | { ok: false; error: ProtocolError }
   > {
-    if (this.active || this.startingRun) {
+    if (this.opts.executionCoordinator) {
+      return this.opts.executionCoordinator.startRun(this, payload);
+    }
+    return this.startRunDirect(payload);
+  }
+
+  async startRunDirect(
+    payload: RunStartRequestPayload,
+    executionId?: string,
+  ): Promise<
+    | {
+        ok: true;
+        runId: string;
+        sessionId: string;
+        workflowRunId?: string;
+      }
+    | { ok: false; error: ProtocolError }
+  > {
+    if (this.currentExecution) {
       return {
         ok: false,
         error: {
@@ -1473,11 +1493,12 @@ export class HostRuntime {
         },
       };
     }
-    this.startingRun = true;
+    const executionAbort = new AbortController();
+    const execution = this.beginExecution(executionAbort, executionId);
     try {
       return await this.startRunInner(payload);
     } finally {
-      this.startingRun = false;
+      this.releaseUnstartedExecution(execution);
     }
   }
 
@@ -1508,7 +1529,7 @@ export class HostRuntime {
         },
       };
     }
-    if (this.active || this.startingRun) {
+    if (this.currentExecution) {
       return {
         ok: false,
         error: {
@@ -1517,11 +1538,11 @@ export class HostRuntime {
         },
       };
     }
-    this.startingRun = true;
+    const execution = this.beginExecution();
     try {
       return await this.startRunInner(payload, workflowRunId);
     } finally {
-      this.startingRun = false;
+      this.releaseUnstartedExecution(execution);
     }
   }
 
@@ -1531,7 +1552,32 @@ export class HostRuntime {
     | { ok: true; runId: string; resumedFromRunId: string; sessionId?: string }
     | { ok: false; error: ProtocolError }
   > {
-    if (this.active || this.startingRun) {
+    if (this.opts.executionCoordinator) {
+      return this.opts.executionCoordinator.resumeRun(this, payload);
+    }
+    return this.resumeRunDirect(payload);
+  }
+
+  /** @internal Resolve the persisted session before HostService chooses a lane. */
+  async resolveResumeSession(
+    payload: RunResumeRequestPayload,
+  ): Promise<
+    { ok: true; sessionId: string } | { ok: false; error: ProtocolError }
+  > {
+    const located = await this.findRunDir(payload.runId, payload.sessionId);
+    if (!located.ok) return located;
+    return { ok: true, sessionId: located.sessionId ?? createSessionId() };
+  }
+
+  async resumeRunDirect(
+    payload: RunResumeRequestPayload,
+    executionId?: string,
+    resolvedSessionId?: string,
+  ): Promise<
+    | { ok: true; runId: string; resumedFromRunId: string; sessionId?: string }
+    | { ok: false; error: ProtocolError }
+  > {
+    if (this.currentExecution) {
       return {
         ok: false,
         error: {
@@ -1540,11 +1586,12 @@ export class HostRuntime {
         },
       };
     }
-    this.startingRun = true;
+    const executionAbort = new AbortController();
+    const execution = this.beginExecution(executionAbort, executionId);
     try {
-      return await this.resumeRunInner(payload);
+      return await this.resumeRunInner(payload, resolvedSessionId);
     } finally {
-      this.startingRun = false;
+      this.releaseUnstartedExecution(execution);
     }
   }
 
@@ -1746,7 +1793,7 @@ export class HostRuntime {
           envelope.commandId,
         );
         if (processed.status === "dispatch_required") {
-          if (this.active || this.startingRun) {
+          if (this.currentExecution) {
             return {
               ok: true,
               status: "accepted",
@@ -1754,7 +1801,7 @@ export class HostRuntime {
               code: "dispatch_waiting",
             };
           }
-          this.startingRun = true;
+          const execution = this.beginExecution();
           try {
             const resumed = await this.resumeWorkflowRunInner({
               workflowRunId: record.id,
@@ -1775,7 +1822,7 @@ export class HostRuntime {
                 }
               : resumed;
           } finally {
-            this.startingRun = false;
+            this.releaseUnstartedExecution(execution);
           }
         }
         if (processed.status === "terminal") {
@@ -1832,11 +1879,12 @@ export class HostRuntime {
 
   async resumeWorkflowRun(
     payload: WorkflowResumeRequestPayload,
+    source: WorkflowControlSourceIdentity,
   ): Promise<
     | { ok: true; runId: string; workflowRunId: string; sessionId?: string }
     | { ok: false; error: ProtocolError }
   > {
-    if (this.active || this.startingRun) {
+    if (this.currentExecution) {
       return {
         ok: false,
         error: {
@@ -1845,11 +1893,11 @@ export class HostRuntime {
         },
       };
     }
-    this.startingRun = true;
+    const execution = this.beginExecution();
     try {
-      return await this.resumeWorkflowRunThroughControl(payload);
+      return await this.resumeWorkflowRunThroughControl(payload, source);
     } finally {
-      this.startingRun = false;
+      this.releaseUnstartedExecution(execution);
     }
   }
 
@@ -1870,7 +1918,7 @@ export class HostRuntime {
         },
       };
     }
-    if (this.active || this.startingRun) {
+    if (this.currentExecution) {
       return {
         ok: false,
         error: {
@@ -1879,16 +1927,17 @@ export class HostRuntime {
         },
       };
     }
-    this.startingRun = true;
+    const execution = this.beginExecution();
     try {
       return await this.resumeWorkflowRunInner(payload, writer);
     } finally {
-      this.startingRun = false;
+      this.releaseUnstartedExecution(execution);
     }
   }
 
   private async resumeWorkflowRunThroughControl(
     payload: WorkflowResumeRequestPayload,
+    source: WorkflowControlSourceIdentity,
   ): Promise<
     | { ok: true; runId: string; workflowRunId: string; sessionId?: string }
     | { ok: false; error: ProtocolError }
@@ -1906,11 +1955,7 @@ export class HostRuntime {
     const accepted = await this.workflowControls.accept({
       workflowRunId: record.id,
       idempotencyKey,
-      source: {
-        kind: "api",
-        principalId: "host-protocol-client",
-        authenticatedBy: "host-connection",
-      },
+      source,
       authorization: {
         workspaceId: this.opts.workspaceRoot,
         sessionId,
@@ -2004,11 +2049,21 @@ export class HostRuntime {
     | { ok: true; env: PreparedHostRunEnvironment }
     | { ok: false; error: ProtocolError }
   > {
-    const model = await createModel({
-      modelRef: input.modelRef,
-      goal: input.goal,
+    const plan = resolveExecutionPlan({
       workspaceRoot: this.opts.workspaceRoot,
+      sessionRootDir: this.opts.sessionRootDir,
+      sessionId: input.sessionId,
+      goal: input.goal,
+      modelRef: input.modelRef,
       targetPath: input.targetPath,
+      traceLevel: input.traceLevel,
+      access: input.access,
+    });
+    const model = await createModel({
+      modelRef: plan.modelRef,
+      goal: plan.goal,
+      workspaceRoot: plan.workspaceRoot,
+      targetPath: plan.targetPath,
     });
     if (!model.ok) {
       return {
@@ -2017,14 +2072,12 @@ export class HostRuntime {
       };
     }
 
-    const workspaceRoot = this.opts.workspaceRoot;
+    const workspaceRoot = plan.workspaceRoot;
     const workspaceLeaseCoordinator =
       this.opts.workspaceLeaseCoordinator ?? processWorkspaceLeaseCoordinator;
-    const workspace = new LocalWorkspace(workspaceRoot);
-    const sessionRootDir =
-      this.opts.sessionRootDir ?? defaultSessionRootDir(workspaceRoot);
-    const trace = new MemoryTrace();
-    const pendingExtensionEvents = createBufferedEmitter();
+    const resources = createExecutionResources(plan);
+    const { workspace, trace, pendingExtensionEvents } = resources;
+    const sessionRootDir = plan.sessionRootDir;
     const skillUsageRecorder = createSkillUsageRecorder(workspaceRoot);
     const runIdHolder: { value: string | null } = { value: null };
     const approvalResolver = this.createApprovalResolver(runIdHolder);
@@ -2189,7 +2242,7 @@ export class HostRuntime {
       delegateChildToolCatalog,
       pendingExtensionEvents,
     );
-    const sessionStore = new FileSessionStore({ rootDir: sessionRootDir });
+    const sessionStore = resources.sessionStore;
     const childRunStoreFactory = (childAgentId: string) =>
       createSessionRunStoreFactory({
         sessionStore,
@@ -2313,10 +2366,11 @@ export class HostRuntime {
       workspaceRoot,
       workspaceLeaseCoordinator,
     });
-    // Publish spawn deps for the registered `agent` background task kind so a
-    // `task_create(kind:"agent")` call can drive a child run that the task,
-    // not the foreground turn, owns the lifecycle of.
-    this.agentSpawnDeps = {
+    // This tool bundle captures one immutable execution context. The inline
+    // runner is stored on the Task at creation, so a later run preparation
+    // cannot replace the model, policy, session, store, or lease dependencies
+    // observed by delayed background Agent work.
+    const agentTaskDeps: HostAgentTaskRunnerDeps = {
       getParent: () => parentRunRef.current,
       model: model.adapter,
       modelForSpawn: dynamicSpawnModel,
@@ -2337,6 +2391,10 @@ export class HostRuntime {
       skillRoots: [...skillRoots],
       toolConfig,
       taskManager: this.taskManager,
+      taskRunners: {
+        agent: (controller, payload) =>
+          runHostAgentTask(controller, payload, agentTaskDeps),
+      },
       getParentRunId: () => requireActiveRunId(runIdHolder.value),
       getRunEvents: () => parentRunRef.current?.events,
       todoPath: join(sessionRootDir, input.sessionId, "todo.md"),
@@ -2902,10 +2960,25 @@ export class HostRuntime {
           resolve({ approvalId, decision: "denied" });
           return;
         }
-        this.pendingApprovals.set(approvalId, {
+        const execution = this.currentExecution;
+        if (!execution) {
+          resolve({ approvalId, decision: "denied" });
+          return;
+        }
+        const timeout = setTimeout(() => {
+          execution.resolveApproval(approvalId, {
+            decision: "denied",
+            message: "Approval timed out.",
+          });
+        }, this.opts.approvalTimeoutMs ?? 300_000);
+        timeout.unref?.();
+        execution.addApproval({
           approvalId,
           runId: currentRunId,
-          resolve: (response) => resolve({ approvalId, ...response }),
+          resolve: (response) => {
+            clearTimeout(timeout);
+            resolve({ approvalId, ...response });
+          },
         });
         const details = request.details as { path?: unknown } | undefined;
         this.opts.emit({
@@ -2949,10 +3022,30 @@ export class HostRuntime {
     { ok: true; runId: string } | { ok: false; error: ProtocolError }
   > {
     const { env, sessionId, todoPath } = input;
+    const execution = this.currentExecution ?? this.beginExecution();
+    const executionAbort = execution.abortController;
+    execution.bindSession(sessionId);
     const runCleanups: Array<() => void> = [];
     const stopWorkflowLeaseRefresh = startWorkflowLeaseRefresh(
       env.workflowLease,
     );
+    execution.addCleanup(async () => {
+      stopWorkflowLeaseRefresh();
+      await env.workflowLease?.release().catch(() => {});
+      env.workflowLease = undefined;
+      for (const cleanup of runCleanups.splice(0)) cleanup();
+      await env.preparedMcp?.close().catch(() => {});
+    });
+    if (executionAbort.signal.aborted) {
+      await execution.disposeResources();
+      return {
+        ok: false,
+        error: {
+          code: "internal_error",
+          message: "interactive execution was cancelled during assembly",
+        },
+      };
+    }
     const registerActiveRun = async (
       run: ReturnType<typeof createRun>,
       runId: string,
@@ -3083,9 +3176,9 @@ export class HostRuntime {
     let firstRunStarted = false;
     let previousRunId: string | undefined;
     let lastRunId = "";
-    this.runChainCancelled = false;
+    let executionTerminalState: "completed" | "failed" | "cancelled" = "failed";
 
-    const supervised = runTodoSupervised({
+    const supervised = execution.runEpisodeChain({
       todoPath,
       sessionId,
       maxContinuations: MAIN_TODO_MAX_CONTINUATIONS,
@@ -3117,7 +3210,7 @@ export class HostRuntime {
         previousRunId = runId;
         await input.afterRun?.(supervisedInput, run, result);
         await this.recordWorkflowActorEpisodeUsage(env, run, result);
-        if (this.runChainCancelled) {
+        if (executionAbort.signal.aborted) {
           return {
             result: {
               ...result,
@@ -3133,8 +3226,14 @@ export class HostRuntime {
 
     supervised
       .then(async (outcome) => {
+        executionTerminalState =
+          outcome.result.state === "cancelled"
+            ? "cancelled"
+            : outcome.result.state === "failed"
+              ? "failed"
+              : "completed";
         const handoff =
-          !this.runChainCancelled && outcome.decision.kind === "handoff"
+          !executionAbort.signal.aborted && outcome.decision.kind === "handoff"
             ? {
                 reason: outcome.decision.reason,
                 message: outcome.decision.message,
@@ -3193,17 +3292,16 @@ export class HostRuntime {
           });
         });
       })
-      .finally(() => {
-        stopWorkflowLeaseRefresh();
-        void env.workflowLease?.release().catch(() => {});
-        env.workflowLease = undefined;
-        for (const cleanup of runCleanups.splice(0)) cleanup();
-        void env.preparedMcp?.close().catch(() => {});
+      .finally(async () => {
+        await execution.disposeResources();
         this.active = null;
-        for (const [id, p] of this.pendingApprovals) {
-          p.resolve({ decision: "denied" });
-          this.pendingApprovals.delete(id);
+        execution.finish(
+          executionAbort.signal.aborted ? "cancelled" : executionTerminalState,
+        );
+        if (this.currentExecution === execution) {
+          this.currentExecution = null;
         }
+        execution.denyPendingApprovals();
       });
 
     try {
@@ -3242,6 +3340,7 @@ export class HostRuntime {
 
   private async resumeRunInner(
     payload: RunResumeRequestPayload,
+    resolvedSessionId?: string,
   ): Promise<
     | { ok: true; runId: string; resumedFromRunId: string; sessionId?: string }
     | { ok: false; error: ProtocolError }
@@ -3301,7 +3400,8 @@ export class HostRuntime {
     );
     const { permissionMode, shouldWrite } = access;
     const accessMetadata = buildAccessMetadata(access);
-    const resumeSessionId = located.sessionId ?? createSessionId();
+    const resumeSessionId =
+      located.sessionId ?? resolvedSessionId ?? createSessionId();
     const prepared = await this.prepareHostRunEnvironment({
       goal: checkpoint.run.goal,
       modelRef,
@@ -4577,7 +4677,17 @@ export class HostRuntime {
     runId: string,
     reason?: string,
   ): { ok: true } | { ok: false; error: ProtocolError } {
-    if (!this.active || this.active.runId !== runId) {
+    if (this.opts.executionCoordinator) {
+      return this.opts.executionCoordinator.cancelRun(this, runId, reason);
+    }
+    return this.cancelRunDirect(runId, reason);
+  }
+
+  cancelRunDirect(
+    runId: string,
+    reason?: string,
+  ): { ok: true } | { ok: false; error: ProtocolError } {
+    if (!this.currentExecution?.ownsRun(runId)) {
       return {
         ok: false,
         error: {
@@ -4588,8 +4698,7 @@ export class HostRuntime {
     }
     // Stop the whole supervised chain, not just this run: a cancel that races
     // a run's natural completion must still prevent further continuations.
-    this.runChainCancelled = true;
-    this.active.run.cancel({ reason: reason ?? "client requested cancel" });
+    this.currentExecution.cancel(reason ?? "client requested cancel");
     return { ok: true };
   }
 
@@ -4601,7 +4710,25 @@ export class HostRuntime {
       metadata?: Record<string, unknown>;
     },
   ): { ok: true } | { ok: false; error: ProtocolError } {
-    if (!this.active || this.active.runId !== runId) {
+    if (this.opts.executionCoordinator) {
+      return this.opts.executionCoordinator.injectRunMessage(
+        this,
+        runId,
+        input,
+      );
+    }
+    return this.injectRunMessageDirect(runId, input);
+  }
+
+  injectRunMessageDirect(
+    runId: string,
+    input: {
+      content: string;
+      parts?: readonly RunInputPart[];
+      metadata?: Record<string, unknown>;
+    },
+  ): { ok: true } | { ok: false; error: ProtocolError } {
+    if (!this.currentExecution?.ownsRun(runId)) {
       return {
         ok: false,
         error: {
@@ -4620,11 +4747,20 @@ export class HostRuntime {
       };
     }
     const parts = inputPartsFromPayload(input.parts);
-    this.active.run.injectUserMessage({
+    const acceptance = this.currentExecution.tryInject(runId, {
       content: input.content,
       parts,
       metadata: input.metadata,
     });
+    if (acceptance !== "accepted") {
+      return {
+        ok: false,
+        error: {
+          code: "run_not_found",
+          message: `run ${runId} is no longer accepting messages (${acceptance})`,
+        },
+      };
+    }
     return { ok: true };
   }
 
@@ -4634,8 +4770,12 @@ export class HostRuntime {
     message?: string,
     autoApproved?: boolean,
   ): { ok: true } | { ok: false; error: ProtocolError } {
-    const pending = this.pendingApprovals.get(approvalId);
-    if (!pending) {
+    const resolved = this.currentExecution?.resolveApproval(approvalId, {
+      decision,
+      ...(message !== undefined ? { message } : {}),
+      ...(autoApproved !== undefined ? { autoApproved } : {}),
+    });
+    if (!resolved) {
       return {
         ok: false,
         error: {
@@ -4644,12 +4784,6 @@ export class HostRuntime {
         },
       };
     }
-    this.pendingApprovals.delete(approvalId);
-    pending.resolve({
-      decision,
-      ...(message !== undefined ? { message } : {}),
-      ...(autoApproved !== undefined ? { autoApproved } : {}),
-    });
     return { ok: true };
   }
 
@@ -4658,66 +4792,21 @@ export class HostRuntime {
    * core does not leak file handles or hang on never-arriving decisions.
    */
   cleanup(): void {
-    for (const p of this.pendingApprovals.values()) {
-      p.resolve({ decision: "denied" });
-    }
-    this.pendingApprovals.clear();
-    if (this.active) {
-      try {
-        this.active.run.cancel({ reason: "client_disconnected" });
-        void this.active.closeCapabilities?.().catch(() => {});
-      } catch {
-        // already cancelled
-      }
-      this.active = null;
-    }
+    this.currentExecution?.cleanup("client_disconnected");
+  }
+
+  async drain(): Promise<void> {
+    const execution = this.currentExecution;
+    if (!execution) return;
+    execution.cleanup("host_service_drain");
+    await execution.completion;
+    await execution.disposeResources();
   }
 
   async listSessions(
     limit = 20,
   ): Promise<Array<{ id: string; mtimeMs: number; preview: string }>> {
-    const root =
-      this.opts.sessionRootDir ??
-      defaultSessionRootDir(this.opts.workspaceRoot);
-    let entries: string[];
-    try {
-      entries = await readdir(root);
-    } catch {
-      return [];
-    }
-    const results = await Promise.all(
-      entries.map(async (id) => {
-        const dir = join(root, id);
-        try {
-          const st = await stat(dir);
-          if (!st.isDirectory()) return null;
-          let preview = "";
-          try {
-            const transcript = await readFile(
-              join(dir, "transcript.jsonl"),
-              "utf8",
-            );
-            const firstLine = transcript.split("\n").find((l) => l.trim());
-            if (firstLine) {
-              preview = sessionPreviewFromTranscriptLine(firstLine);
-            }
-          } catch {
-            // no transcript yet
-          }
-          return {
-            id,
-            mtimeMs: st.mtimeMs,
-            preview: preview.slice(0, 80),
-          };
-        } catch {
-          return null;
-        }
-      }),
-    );
-    return results
-      .filter((r): r is NonNullable<typeof r> => r !== null)
-      .sort((a, b) => b.mtimeMs - a.mtimeMs)
-      .slice(0, limit);
+    return await listHostSessions(this.opts, limit);
   }
 
   async inspectSession(
@@ -4734,74 +4823,7 @@ export class HostRuntime {
       }
     | { ok: false; error: ProtocolError }
   > {
-    let safeSessionId: ReturnType<typeof asSessionId>;
-    try {
-      safeSessionId = asSessionId(sessionId);
-    } catch (error) {
-      return {
-        ok: false,
-        error: {
-          code: "invalid_payload",
-          message: error instanceof Error ? error.message : String(error),
-        },
-      };
-    }
-
-    const sessionRootDir =
-      this.opts.sessionRootDir ??
-      defaultSessionRootDir(this.opts.workspaceRoot);
-    const sessionDir = join(sessionRootDir, safeSessionId);
-    try {
-      const st = await stat(sessionDir);
-      if (!st.isDirectory()) {
-        return {
-          ok: false,
-          error: {
-            code: "session_not_found",
-            message: `session not found: ${sessionId}`,
-          },
-        };
-      }
-    } catch {
-      return {
-        ok: false,
-        error: {
-          code: "session_not_found",
-          message: `session not found: ${sessionId}`,
-        },
-      };
-    }
-
-    try {
-      const tracePath = join(sessionDir, "trace.jsonl");
-      const [summary, consistency, timeline, compaction] = await Promise.all([
-        summarizeTraceFile(tracePath),
-        validateSessionTraceConsistency({ sessionDir }),
-        buildTraceTimelineFile(tracePath),
-        options.compaction
-          ? this.buildSessionCompactionInspectReport(
-              sessionRootDir,
-              safeSessionId,
-            )
-          : Promise.resolve(undefined),
-      ]);
-      return {
-        ok: true,
-        sessionId: safeSessionId,
-        summary: summary as unknown as Record<string, unknown>,
-        consistency: consistency as unknown as Record<string, unknown>,
-        timeline: timeline as unknown as Record<string, unknown>,
-        ...(compaction ? { compaction } : {}),
-      };
-    } catch (error) {
-      return {
-        ok: false,
-        error: {
-          code: "internal_error",
-          message: error instanceof Error ? error.message : String(error),
-        },
-      };
-    }
+    return await inspectHostSession(this.opts, sessionId, options);
   }
 
   async inspectSessionCompaction(sessionId: string): Promise<
@@ -4812,123 +4834,7 @@ export class HostRuntime {
       }
     | { ok: false; error: ProtocolError }
   > {
-    let safeSessionId: ReturnType<typeof asSessionId>;
-    try {
-      safeSessionId = asSessionId(sessionId);
-    } catch (error) {
-      return {
-        ok: false,
-        error: {
-          code: "invalid_payload",
-          message: error instanceof Error ? error.message : String(error),
-        },
-      };
-    }
-
-    const sessionRootDir =
-      this.opts.sessionRootDir ??
-      defaultSessionRootDir(this.opts.workspaceRoot);
-    const sessionDir = join(sessionRootDir, safeSessionId);
-    try {
-      const st = await stat(sessionDir);
-      if (!st.isDirectory()) {
-        return {
-          ok: false,
-          error: {
-            code: "session_not_found",
-            message: `session not found: ${sessionId}`,
-          },
-        };
-      }
-    } catch {
-      return {
-        ok: false,
-        error: {
-          code: "session_not_found",
-          message: `session not found: ${sessionId}`,
-        },
-      };
-    }
-
-    return {
-      ok: true,
-      sessionId: safeSessionId,
-      compaction: await this.buildSessionCompactionInspectReport(
-        sessionRootDir,
-        safeSessionId,
-      ),
-    };
-  }
-
-  private async buildSessionCompactionInspectReport(
-    sessionRootDir: string,
-    sessionId: string,
-  ): Promise<SessionCompactionInspectReport> {
-    const store = new FileSessionStore({ rootDir: sessionRootDir });
-    const artifactPath = join(
-      sessionRootDir,
-      sessionId,
-      SESSION_COMPACT_FILENAME,
-    );
-    const [artifact, events] = await Promise.all([
-      loadSessionCompactArtifact({ sessionRootDir, sessionId }),
-      loadSessionCompactionEvents(store, sessionId),
-    ]);
-    const artifactSummary = artifact
-      ? sessionCompactionArtifactInspectSummary(artifact, artifactPath)
-      : null;
-    const latestEvent = events.at(-1) ?? null;
-    const latestCompleted =
-      [...events]
-        .reverse()
-        .find((event) => event.type === "session.compaction.completed") ?? null;
-    const findings: string[] = [];
-    const artifactMatchesLatestCompletedEvent =
-      artifactSummary && latestCompleted
-        ? sessionCompactionArtifactMatchesEvent(
-            artifactSummary,
-            latestCompleted,
-          )
-        : null;
-
-    if (
-      artifactSummary &&
-      latestCompleted &&
-      !artifactMatchesLatestCompletedEvent
-    ) {
-      findings.push(
-        "compact.json does not match the latest completed session compaction event",
-      );
-    }
-    if (artifactSummary && latestEvent?.type === "session.compaction.skipped") {
-      findings.push(
-        "latest compaction attempt was skipped; compact.json is from an earlier completed attempt",
-      );
-    }
-    if (!artifactSummary && latestCompleted) {
-      findings.push(
-        "latest completed session compaction event references an artifact that is missing or invalid",
-      );
-    }
-
-    return {
-      status: sessionCompactionInspectStatus({
-        artifact: artifactSummary,
-        latestEvent,
-        latestCompleted,
-        artifactMatchesLatestCompletedEvent,
-      }),
-      artifact: artifactSummary,
-      events,
-      latestEvent,
-      consistency: {
-        ok:
-          artifactMatchesLatestCompletedEvent !== false &&
-          !(latestCompleted && !artifactSummary),
-        artifactMatchesLatestCompletedEvent,
-        findings,
-      },
-    };
+    return await inspectHostSessionCompaction(this.opts, sessionId);
   }
 
   async compactSession(
@@ -4941,278 +4847,29 @@ export class HostRuntime {
     let safeSessionId: string;
     try {
       safeSessionId = asSessionId(sessionId);
-    } catch (error) {
-      return {
-        ok: false,
-        error: {
-          code: "invalid_payload",
-          message: error instanceof Error ? error.message : String(error),
-        },
-      };
+    } catch {
+      return await compactHostSession({
+        context: this.opts,
+        sessionId,
+        reason,
+        manualLlm: options.llm === true,
+        turns: [],
+      });
     }
-
     const sessionRootDir =
       this.opts.sessionRootDir ??
       defaultSessionRootDir(this.opts.workspaceRoot);
-    const sessionDir = join(sessionRootDir, safeSessionId);
-    try {
-      const st = await stat(sessionDir);
-      if (!st.isDirectory()) {
-        return {
-          ok: false,
-          error: {
-            code: "session_not_found",
-            message: `session not found: ${sessionId}`,
-          },
-        };
-      }
-    } catch {
-      return {
-        ok: false,
-        error: {
-          code: "session_not_found",
-          message: `session not found: ${sessionId}`,
-        },
-      };
-    }
-
     const turns = await this.loadCompletedConversationTurns(
       sessionRootDir,
       safeSessionId,
     );
-    const taskConfig = await this.loadTaskConfig("compaction");
-    const preparedCompaction = await this.sessionCompactionOptionsForTask({
+    return await compactHostSession({
+      context: this.opts,
+      sessionId,
       reason,
-      taskConfig,
       manualLlm: options.llm === true,
+      turns,
     });
-    const sessionCompactionOptions = preparedCompaction.options;
-
-    let compacted: Awaited<ReturnType<typeof compactSessionTurns>>;
-    try {
-      compacted = await compactSessionTurns(turns, sessionCompactionOptions);
-    } catch (error) {
-      const warnings = mergeCompactionWarnings(preparedCompaction.warnings, [
-        {
-          code: "SESSION_COMPACTION_FAILED",
-          message: error instanceof Error ? error.message : String(error),
-        },
-      ]);
-      const originalCharCount = turns.reduce(
-        (sum, turn) => sum + turn.goal.length + turn.message.length,
-        0,
-      );
-      return await this.recordSessionCompactionEvent(sessionRootDir, reason, {
-        ok: true,
-        sessionId: safeSessionId,
-        compactedRunCount: 0,
-        throughRunId: null,
-        originalCharCount,
-        summaryCharCount: originalCharCount,
-        freedChars: 0,
-        measurement: emptySessionCompactionMeasurement({
-          sourceRunCount: turns.length,
-          originalCharCount,
-        }),
-        artifactPath: null,
-        skippedReason: "compaction_failed",
-        warnings,
-      });
-    }
-
-    const warnings = mergeCompactionWarnings(
-      preparedCompaction.warnings,
-      compacted.warnings,
-    );
-
-    if (compacted.skippedReason !== undefined) {
-      return await this.recordSessionCompactionEvent(sessionRootDir, reason, {
-        ok: true,
-        sessionId: safeSessionId,
-        compactedRunCount: compacted.compactedRunCount,
-        throughRunId: compacted.throughRunId,
-        originalCharCount: compacted.originalCharCount,
-        summaryCharCount: compacted.summaryCharCount,
-        freedChars: compacted.freedChars,
-        measurement: compacted.measurement,
-        artifactPath: null,
-        skippedReason: compacted.skippedReason,
-        warnings,
-      });
-    }
-
-    const throughRunId = compacted.throughRunId;
-    try {
-      const artifactPath = await writeSessionCompactArtifact({
-        sessionRootDir,
-        artifact: {
-          schemaVersion: SESSION_COMPACT_SCHEMA_VERSION,
-          sessionId: asSessionId(safeSessionId),
-          createdAt: new Date().toISOString(),
-          throughRunId,
-          compactedRunCount: compacted.compactedRunCount,
-          sourceRunIds: compacted.sourceRunIds,
-          content: compacted.content,
-          originalCharCount: compacted.originalCharCount,
-          summaryCharCount: compacted.summaryCharCount,
-          freedChars: compacted.freedChars,
-          metadata: sessionCompactArtifactMetadata({
-            compacted,
-            warnings,
-            reason,
-          }),
-        },
-      });
-      return await this.recordSessionCompactionEvent(sessionRootDir, reason, {
-        ok: true,
-        sessionId: safeSessionId,
-        compactedRunCount: compacted.compactedRunCount,
-        throughRunId,
-        originalCharCount: compacted.originalCharCount,
-        summaryCharCount: compacted.summaryCharCount,
-        freedChars: compacted.freedChars,
-        measurement: compacted.measurement,
-        artifactPath,
-        warnings,
-      });
-    } catch (error) {
-      return await this.recordSessionCompactionEvent(sessionRootDir, reason, {
-        ok: true,
-        sessionId: safeSessionId,
-        compactedRunCount: 0,
-        throughRunId: null,
-        originalCharCount: compacted.originalCharCount,
-        summaryCharCount: compacted.originalCharCount,
-        freedChars: 0,
-        measurement: {
-          ...compacted.measurement,
-          summaryCharCount: compacted.originalCharCount,
-          freedChars: 0,
-          savingsRatio: 0,
-          regime: "no_savings",
-        },
-        artifactPath: null,
-        skippedReason: "artifact_write_failed",
-        warnings: [
-          ...(warnings ?? []),
-          {
-            code: "SESSION_COMPACT_ARTIFACT_WRITE_FAILED",
-            message: error instanceof Error ? error.message : String(error),
-          },
-        ],
-      });
-    }
-  }
-
-  private async recordSessionCompactionEvent(
-    sessionRootDir: string,
-    reason: string | undefined,
-    result: SessionCompactSuccessResult,
-  ): Promise<SessionCompactSuccessResult> {
-    const eventType = result.skippedReason
-      ? "session.compaction.skipped"
-      : "session.compaction.completed";
-    const store = new FileSessionStore({ rootDir: sessionRootDir });
-    try {
-      await store.appendEvent(result.sessionId, {
-        type: eventType,
-        payload: {
-          compactedRunCount: result.compactedRunCount,
-          throughRunId: result.throughRunId,
-          originalCharCount: result.originalCharCount,
-          summaryCharCount: result.summaryCharCount,
-          freedChars: result.freedChars,
-          measurement: result.measurement,
-          artifactPath: result.artifactPath,
-          ...(result.skippedReason
-            ? { skippedReason: result.skippedReason }
-            : {}),
-          ...(result.warnings
-            ? { warningCodes: result.warnings.map((warning) => warning.code) }
-            : {}),
-        },
-        metadata: {
-          source: "host",
-          ...(reason ? { reason } : {}),
-        },
-      });
-      return result;
-    } catch (error) {
-      return {
-        ...result,
-        warnings: mergeCompactionWarnings(result.warnings, [
-          {
-            code: "SESSION_COMPACTION_EVENT_WRITE_FAILED",
-            message: error instanceof Error ? error.message : String(error),
-          },
-        ]),
-      };
-    }
-  }
-
-  private async loadTaskConfig(name: string): Promise<TaskConfig | undefined> {
-    const loaded = await loadHostConfig(this.opts.workspaceRoot);
-    return loaded.config.tasks?.[name];
-  }
-
-  private async sessionCompactionOptionsForTask(input: {
-    reason?: string;
-    taskConfig?: TaskConfig;
-    manualLlm: boolean;
-  }): Promise<{
-    options: SessionCompactionOptions;
-    warnings?: CompactionWarning[];
-  }> {
-    const enabled = input.manualLlm || input.taskConfig?.enabled === true;
-    const options: SessionCompactionOptions = { reason: input.reason };
-    if (!enabled) return { options };
-
-    const modelRef = input.taskConfig?.model ?? this.opts.defaultModel;
-    const model = await createModel({
-      modelRef,
-      goal: "Summarize completed session history for future context.",
-      workspaceRoot: this.opts.workspaceRoot,
-    });
-    if (!model.ok) {
-      return {
-        options,
-        warnings: [
-          {
-            code: "SESSION_SUMMARIZER_MODEL_UNAVAILABLE",
-            message: model.message,
-          },
-        ],
-      };
-    }
-
-    const modelId = model.resolved.modelRef;
-    const deterministicPreview =
-      model.resolved.providerKey === DETERMINISTIC_PROVIDER;
-    return {
-      options: {
-        ...options,
-        summarizer: deterministicPreview
-          ? createDeterministicSessionSummarizer()
-          : createModelSessionSummarizer({
-              model: model.adapter,
-              modelId,
-            }),
-        summarizerTrigger: input.manualLlm ? "manual" : "auto",
-        summarizerBudget: input.taskConfig?.budget,
-        summarizerUsage: sessionSummarizerUsageHint(model.resolved),
-        summarizerModelId: modelId,
-      },
-      warnings:
-        deterministicPreview && input.manualLlm
-          ? [
-              {
-                code: "SESSION_SUMMARIZER_DETERMINISTIC_PREVIEW",
-                message:
-                  "Session compaction used the deterministic summarizer preview because the resolved compaction model is deterministic.",
-              },
-            ]
-          : undefined,
-    };
   }
 
   /**
@@ -5233,45 +4890,7 @@ export class HostRuntime {
       }
     | { ok: false; error: ProtocolError }
   > {
-    let safeSource: string;
-    try {
-      safeSource = asSessionId(sourceSessionId);
-    } catch (error) {
-      return {
-        ok: false,
-        error: {
-          code: "invalid_payload",
-          message: error instanceof Error ? error.message : String(error),
-        },
-      };
-    }
-
-    const sessionRootDir =
-      this.opts.sessionRootDir ??
-      defaultSessionRootDir(this.opts.workspaceRoot);
-    try {
-      const store = new FileSessionStore({ rootDir: sessionRootDir });
-      const result = await forkSessionFromEvent({
-        sourceSessionId: safeSource,
-        forkAtSequence,
-        store,
-        metadata: { forkedVia: "tui" },
-      });
-      return {
-        ok: true,
-        forkedSessionId: result.forked.id,
-        copiedEventCount: result.copiedEventCount,
-        truncatedAtSequence: result.truncatedAtSequence,
-      };
-    } catch (error) {
-      return {
-        ok: false,
-        error: {
-          code: "internal_error",
-          message: error instanceof Error ? error.message : String(error),
-        },
-      };
-    }
+    return await forkHostSession(this.opts, sourceSessionId, forkAtSequence);
   }
 }
 
@@ -8229,230 +7848,6 @@ function addSessionSubagentFact(
   facts.subagents = [...existing.values()];
 }
 
-function mergeCompactionWarnings(
-  ...groups: Array<CompactionWarning[] | undefined>
-): CompactionWarning[] | undefined {
-  const warnings = groups.flatMap((group) => group ?? []);
-  return warnings.length > 0 ? warnings : undefined;
-}
-
-async function loadSessionCompactionEvents(
-  store: FileSessionStore,
-  sessionId: string,
-): Promise<SessionCompactionInspectEvent[]> {
-  const events: SessionCompactionInspectEvent[] = [];
-  for await (const event of store.loadEvents(sessionId)) {
-    const projected = sessionCompactionInspectEvent(event);
-    if (projected) events.push(projected);
-  }
-  return events;
-}
-
-function sessionCompactionInspectEvent(
-  event: SessionEvent,
-): SessionCompactionInspectEvent | null {
-  if (
-    event.type !== "session.compaction.completed" &&
-    event.type !== "session.compaction.skipped"
-  ) {
-    return null;
-  }
-  const payload = isPlainRecord(event.payload) ? event.payload : {};
-  return {
-    sequence: event.sequence,
-    timestamp: event.timestamp,
-    type: event.type,
-    compactedRunCount: recordNumber(payload, "compactedRunCount") ?? 0,
-    throughRunId: recordNullableString(payload, "throughRunId"),
-    originalCharCount: recordNumber(payload, "originalCharCount") ?? 0,
-    summaryCharCount: recordNumber(payload, "summaryCharCount") ?? 0,
-    freedChars: recordNumber(payload, "freedChars") ?? 0,
-    ...(sessionCompactionMeasurementFromUnknown(payload.measurement)
-      ? {
-          measurement: sessionCompactionMeasurementFromUnknown(
-            payload.measurement,
-          ),
-        }
-      : {}),
-    artifactPath: recordNullableString(payload, "artifactPath"),
-    ...(recordString(payload, "skippedReason")
-      ? { skippedReason: recordString(payload, "skippedReason") }
-      : {}),
-    ...(recordStringArray(payload, "warningCodes")
-      ? { warningCodes: recordStringArray(payload, "warningCodes") }
-      : {}),
-    ...(recordString(event.metadata, "reason")
-      ? { reason: recordString(event.metadata, "reason") }
-      : {}),
-    ...(recordString(event.metadata, "source")
-      ? { source: recordString(event.metadata, "source") }
-      : {}),
-  };
-}
-
-function sessionCompactionArtifactInspectSummary(
-  artifact: SessionCompactArtifact,
-  path: string,
-): SessionCompactionInspectArtifact {
-  const metadata = artifact.metadata ?? {};
-  return {
-    path,
-    schemaVersion: artifact.schemaVersion,
-    createdAt: artifact.createdAt,
-    throughRunId: artifact.throughRunId,
-    compactedRunCount: artifact.compactedRunCount,
-    sourceRunIds: [...artifact.sourceRunIds],
-    originalCharCount: artifact.originalCharCount,
-    summaryCharCount: artifact.summaryCharCount,
-    freedChars: artifact.freedChars,
-    ...(sessionCompactionMeasurementFromUnknown(metadata.measurement)
-      ? {
-          measurement: sessionCompactionMeasurementFromUnknown(
-            metadata.measurement,
-          ),
-        }
-      : {}),
-    ...(recordString(metadata, "mode")
-      ? { mode: recordString(metadata, "mode") }
-      : {}),
-    ...(recordString(metadata, "reason")
-      ? { reason: recordString(metadata, "reason") }
-      : {}),
-    ...(sessionCompactionWarningCodes(metadata)
-      ? { warningCodes: sessionCompactionWarningCodes(metadata) }
-      : {}),
-    ...(isPlainRecord(metadata.summaryFingerprint)
-      ? { summaryFingerprint: { ...metadata.summaryFingerprint } }
-      : {}),
-  };
-}
-
-function sessionCompactionArtifactMatchesEvent(
-  artifact: SessionCompactionInspectArtifact,
-  event: SessionCompactionInspectEvent,
-): boolean {
-  return (
-    event.type === "session.compaction.completed" &&
-    artifact.path === event.artifactPath &&
-    artifact.throughRunId === event.throughRunId &&
-    artifact.compactedRunCount === event.compactedRunCount &&
-    artifact.originalCharCount === event.originalCharCount &&
-    artifact.summaryCharCount === event.summaryCharCount &&
-    artifact.freedChars === event.freedChars
-  );
-}
-
-function sessionCompactionInspectStatus(input: {
-  artifact: SessionCompactionInspectArtifact | null;
-  latestEvent: SessionCompactionInspectEvent | null;
-  latestCompleted: SessionCompactionInspectEvent | null;
-  artifactMatchesLatestCompletedEvent: boolean | null;
-}): SessionCompactionInspectReport["status"] {
-  if (!input.artifact && !input.latestEvent) return "not_compacted";
-  if (input.latestEvent?.type === "session.compaction.skipped") {
-    return "skipped";
-  }
-  if (input.artifact && input.latestCompleted) {
-    return input.artifactMatchesLatestCompletedEvent === false
-      ? "stale_artifact"
-      : "compacted";
-  }
-  if (input.artifact) return "artifact_only";
-  return "event_only";
-}
-
-function sessionCompactionWarningCodes(
-  metadata: Record<string, unknown>,
-): string[] | undefined {
-  const warnings = metadata.warnings;
-  if (!Array.isArray(warnings)) return undefined;
-  const codes = warnings
-    .map((warning) => recordString(warning, "code"))
-    .filter((code): code is string => Boolean(code));
-  return codes.length > 0 ? codes : undefined;
-}
-
-function sessionCompactionMeasurementFromUnknown(
-  value: unknown,
-): SessionCompactionMeasurement | undefined {
-  if (!isPlainRecord(value)) return undefined;
-  return value as unknown as SessionCompactionMeasurement;
-}
-
-function sessionSummarizerUsageHint(
-  resolved: ResolvedModelConfig,
-): ContextUsageHint {
-  const costUnavailable = resolved.pricingSource === "unavailable";
-  return {
-    inputTokens: 0,
-    outputTokens: 0,
-    totalTokens: 0,
-    costUsd: 0,
-    modelCalls: 0,
-    costStatus: costUnavailable ? "unavailable" : "estimated",
-    ...(costUnavailable
-      ? { costUnavailableReasons: { missing_pricing: 1 } }
-      : {}),
-  };
-}
-
-function sessionCompactArtifactMetadata(input: {
-  compacted: {
-    appliedStages: Array<{
-      tier: string;
-      metadata?: Record<string, unknown>;
-    }>;
-    skippedStages: Array<Record<string, unknown>>;
-    measurement: SessionCompactionMeasurement;
-  };
-  warnings?: CompactionWarning[];
-  reason?: string;
-}): Record<string, unknown> {
-  const summarizeMetadata = input.compacted.appliedStages.find(
-    (stage) => stage.tier === "summarize",
-  )?.metadata;
-  const mode =
-    recordString(summarizeMetadata, "mode") === "llm"
-      ? "llm"
-      : "deterministic-v2";
-  const summaryFingerprint = isPlainRecord(
-    summarizeMetadata?.summaryFingerprint,
-  )
-    ? { ...summarizeMetadata.summaryFingerprint }
-    : undefined;
-  return {
-    source: "host",
-    mode,
-    appliedStages: input.compacted.appliedStages,
-    skippedStages: input.compacted.skippedStages,
-    measurement: input.compacted.measurement,
-    ...(summaryFingerprint ? { summaryFingerprint } : {}),
-    ...(input.warnings ? { warnings: input.warnings } : {}),
-    ...(input.reason ? { reason: input.reason } : {}),
-  };
-}
-
-function emptySessionCompactionMeasurement(input: {
-  sourceRunCount: number;
-  originalCharCount: number;
-}): SessionCompactionMeasurement {
-  return {
-    sourceRunCount: input.sourceRunCount,
-    originalCharCount: input.originalCharCount,
-    summaryCharCount: input.originalCharCount,
-    freedChars: 0,
-    savingsRatio: 0,
-    freedByTier: {
-      dedup: 0,
-      extract: 0,
-      evict: 0,
-      summarize: 0,
-    },
-    regime: "no_savings",
-    signalCount: 0,
-  };
-}
-
 function recordString(value: unknown, key: string): string | undefined {
   return isPlainRecord(value) && typeof value[key] === "string"
     ? (value[key] as string)
@@ -9342,26 +8737,6 @@ function workflowLeaseOwner(): string {
 
 function cloneJsonLike<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
-}
-
-function recordNumber(value: unknown, key: string): number | undefined {
-  return isPlainRecord(value) && typeof value[key] === "number"
-    ? (value[key] as number)
-    : undefined;
-}
-
-function recordNullableString(value: unknown, key: string): string | null {
-  if (!isPlainRecord(value)) return null;
-  const candidate = value[key];
-  return typeof candidate === "string" ? candidate : null;
-}
-
-function recordStringArray(value: unknown, key: string): string[] | undefined {
-  if (!isPlainRecord(value) || !Array.isArray(value[key])) return undefined;
-  const strings = value[key].filter((item): item is string => {
-    return typeof item === "string";
-  });
-  return strings.length > 0 ? strings : undefined;
 }
 
 function findNestedString(value: unknown, key: string): string | undefined {

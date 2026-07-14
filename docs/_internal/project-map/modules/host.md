@@ -12,6 +12,8 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 ## Main Files
 
 - `packages/host/src/runtime.ts`
+- `packages/host/src/session-queries.ts`
+- `packages/host/src/session-compaction.ts`
 - `packages/host/src/run-access.ts`
 - `packages/host/src/run-security-plan.ts`
 - `packages/host/src/run-policy.ts`
@@ -23,7 +25,8 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 - `packages/host/src/tools.ts`
 - `packages/host/src/shell.ts`
 - `packages/host/src/workspace-snapshot.ts`
-- `packages/host/src/workspace-agent-arbiter.ts`
+- `packages/host/src/workspace-lease-coordinator.ts`
+- `packages/host/src/workspace-agent-arbiter.ts` (compatibility re-export)
 - `packages/host/src/workflow-hooks.ts`
 - `packages/host/src/invariant-projection.ts`
 - `packages/host/src/workflows.ts`
@@ -94,7 +97,55 @@ Does not own:
   internal compatibility field, legacy Markdown `id` overrides remain
   readable, and new files omit inferred child mode and inherited budgets.
 
-- One active run per host connection.
+- One active HostExecution per compatibility runtime facade.
+- One execution-wide abort spans assembly
+  and all todo/workflow episodes on that connection. Disconnect and legacy
+  cancel trip the same abort; Core run cancellation remains run-scoped.
+- Background Agent `task_create` tools capture their model, policy, session,
+  child-store, permission, and workspace-lease dependencies in an inline Task
+  runner. Host has no mutable latest-run Agent dependency slot.
+- `HostExecution` is the lifecycle owner for one interactive execution. It owns
+  execution/session/root/current/final identity, run aliases, the episode-chain
+  abort, live approval waiters, completion, and idempotent resource disposal.
+  Core terminal for an episode does not complete the execution while the
+  Workflow/todo run-chain driver selects a continuation.
+- `resolveExecutionPlan()` freezes workspace/session/model/access identity
+  before `createExecutionResources()` creates a fresh LocalWorkspace, trace
+  emitter, and session store handles. Live execution resources are not pooled.
+- `HostService` is the process composition root and the only production
+  `HostRuntime` factory. It keys `WorkspaceContext` by canonical workspace and
+  session-store roots, shares one workspace mutation lease coordinator per
+  canonical workspace, attaches runtime facades, provides execution/run alias
+  lookup without copying execution truth, and drains attached runtimes.
+- `HostService` owns one in-memory `ExecutionLaneCoordinator` and is the
+  canonical production path for ordinary start, resume, inject, and cancel.
+  Lane identity is canonical session-store root plus persisted session id.
+  Same-lane executions serialize; different lanes may consume the bounded
+  process capacity concurrently. Core episode terminal does not release the
+  lane until `HostExecution.completion` settles.
+- `HostService` also owns ordinary IM session bindings, exact subject
+  authorization, approval-to-execution routing, retained runtime attachment,
+  and per-binding delivery cursors over a bounded event-projection outbox.
+  Self-binding requires both an authenticated transport principal and explicit
+  operator enablement. Handshake `client.name` is frozen client metadata and an
+  authenticated-only additional allowlist input; it never derives principal
+  identity. Host assigns every new binding's session; a caller-supplied session
+  id can only echo the session of an existing live exact principal+subject
+  binding during reconnect. This live control state is process memory and is separate from
+  durable Workflow channel bindings and Core's canonical event log.
+- Host connection principals are derived before handshake from transport/auth
+  context. The configured single WS bearer credential maps to a stable,
+  non-secret server-side credential-slot id so reconnect can reuse an exact
+  binding and replay unacknowledged deliveries. Unauthenticated WS/stdio uses a
+  connection-scoped principal and cannot self-bind. External connections cannot
+  mint `system`, `verified`, `trusted`, `principalId`, or `authenticatedBy`.
+- Host handshake is single-use. Duplicate or concurrent handshakes are rejected
+  and cannot mutate principal or client metadata. Workflow protocol control and
+  resume commands record the real connection principal/auth method rather than
+  a fixed protocol-client attribution.
+- `WorkspaceContext` owns the shared TaskManager/store/outbox and Workflow
+  notification/control adapters. It never owns live MCP, LocalWorkspace,
+  mutable policy, event emitter, approval resolver, or active execution.
 - `run-security-plan.ts` is the immutable boundary between config/access
   parsing and runtime assembly. A run and `capability.inspect` derive the same
   workspace, access, confidential paths, skill/config roots, and resolved shell
@@ -718,14 +769,22 @@ Does not own:
   invocation entrypoint so direct aliases remain `delegate` while
   `delegate_agent` lifecycle records the real indexed surface. Model-authored
   string fields cannot override this attribution marker.
-- `workspace-agent-arbiter.ts` now owns the process-local Host workspace lease
-  primitive (the legacy filename/export remains for compatibility). One
+- `workspace-lease-coordinator.ts` owns the process-local Host workspace lease
+  primitive; `workspace-agent-arbiter.ts` is only a compatibility re-export. One
   `WorkspaceLeaseCoordinator` singleton is shared by HostRuntime connections
   and keyed by realpath-canonical workspace root. Host wraps actual parent and
   child coding/Shell/capability mutation windows, while write-capable
   in-process, ACP, and external delegates retain a lease for their full
   execution. Dynamic Agent grant/delegate dispatch tools are not themselves
   wrapped because their child owns the mutation window.
+- `session-queries.ts` owns session listing, trace inspection, compaction
+  inspection, transcript previews, and session fork queries. `runtime.ts`
+  delegates those protocol-compatible operations without retaining duplicate
+  implementations.
+- `session-compaction.ts` owns manual compaction preparation, optional
+  summarizer model assembly, artifact writes, and compaction event recording.
+  Runtime supplies completed immutable turns and does not retain a second
+  compaction implementation.
 - Same-owner acquisition is reference-counted and reentrant, so a child holding
   its execution lease can call managed write tools. A descendant request that
   would wait on an ancestor fails fast instead of entering a run-chain
@@ -866,6 +925,71 @@ Does not own:
   remain adapter-native and need continued cross-entrypoint characterization.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: isolated Host connection principals from handshake metadata, required
+  authenticated IM self-binding, stabilized single-bearer reconnect identity,
+  prohibited new self-bindings from selecting another session, froze handshake,
+  and corrected Workflow API attribution.
+- Read: Host connection/WS/stdio/main/server, IM control/service/runtime, tests,
+  protocol/SDK/Gateway consumers.
+- Tests: Host IM/WS/protocol/workflow/service focused suites 111/111; affected
+  typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-14T14:35:00+0800
+- Scope: P6 split session query and compaction behavior out of `runtime.ts`,
+  moved the workspace lease implementation to its canonical filename, and kept
+  the old arbiter module as a state-free compatibility re-export.
+- Read: Host runtime, session modules, workspace lease coordinator, production
+  imports, and focused tests.
+- Tests: Host 571/571; Host typecheck/build; project-map drift check.
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: moved ordinary IM session execution, binding, approval routing,
+  subscription retention, and bounded replay into HostService.
+- Read: Host IM control, HostService/server/runtime integration, protocol/SDK,
+  Gateway bridge/store/adapters, and focused tests.
+- Tests: Host 571/571; server-runtime 29/29; protocol 8/8; SDK 12/12; IM
+  Gateway 9/9; affected typecheck/build and schema checks.
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: routed ordinary interactive execution through the process HostService
+  and transport-neutral single-process execution lanes.
+- Read: HostService/runtime/HostExecution, server-runtime execution lanes,
+  protocol adapters, ACP/CLI callers, and focused tests.
+- Tests: server-runtime 29/29; Host 563/563; ACP 15/15; CLI 37/37;
+  agent-runtime 94/94; full `npm run release:check`.
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: introduced process HostService/workspace contexts and migrated all
+  production HostRuntime construction through the service.
+- Read: Host stdio/WS server/main, ACP session/inspection, CLI Workflow/session/
+  capability paths, Workflow service/supervisor adapters, manifests, and tests.
+- Tests: Host service/protocol/WS 58/58 plus typecheck/build; ACP 15/15 plus
+  typecheck; CLI focused 31/31 plus typecheck.
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: extracted HostExecution, immutable execution planning, and live
+  execution resource creation while retaining protocol compatibility.
+- Read: Host start/resume/Workflow episode driver, approval/inject/cancel,
+  resource cleanup, Core run, agent-runtime todo/Workflow drivers, and tests.
+- Tests: Host full 562/562; agent-runtime Task/Workflow/control 107/107; Core
+  run 129/129; Host typecheck/build.
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: Host execution-coordinator P1 prerequisites: atomic inject rejection,
+  immutable Agent Task context, and execution-wide assembly/episode abort.
+- Read: Host runtime protocol/start/resume/inject/cancel/cleanup and task tool
+  assembly plus Core and agent-runtime contracts.
+- Tests: Host protocol/Agent-task/revival 57/57; Core run 129/129;
+  agent-runtime Task/Workflow 94/94; affected typecheck and Host build.
 
 - Status: Verified
 - Date: 2026-07-14

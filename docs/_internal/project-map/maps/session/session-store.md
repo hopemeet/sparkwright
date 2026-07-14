@@ -114,8 +114,36 @@ Manual compact
 
 - File-backed session updates are best-effort and not a full database transaction model.
 - Session metadata should make terminal run state easier to inspect.
+- Ordinary IM bindings, subscriptions, outbox cursors, and lane commands remain
+  in-memory Host control state; they are not part of the session store and are
+  not restart-recovered in this phase. New IM self-bindings receive Host-issued
+  session ids rather than selecting arbitrary existing session-store records.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: Host principal/auth isolation changes only process-memory ordinary IM
+  bindings and replay authorization; new bindings cannot select arbitrary
+  session-store records, and session/Workflow storage formats are unchanged.
+- Tests: Host focused suites passed; no session-store migration required.
+
+- Status: Verified
+- Date: 2026-07-14T14:35:00+0800
+- Scope: P6 routed review; FileSessionStore remains canonical session truth and
+  extracted query/compaction functions use the same store and artifact format.
+- Tests: Host session/compaction coverage passed.
+
+- Status: Verified (no persisted-format change)
+- Date: 2026-07-14
+- Scope: reviewed Host-owned IM retention/replay; ordinary IM control state is
+  explicitly process-local while existing session and Workflow stores remain
+  unchanged.
+
+- Status: Verified (no storage contract change)
+- Date: 2026-07-14
+- Scope: reviewed Host workspace contexts and session lane keys; session stores
+  remain per execution and in-memory lane queues are not durable state.
 
 - Status: Read-only
 - Date: 2026-07-13
