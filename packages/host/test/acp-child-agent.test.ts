@@ -1,6 +1,6 @@
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
 import { describe, expect, it, vi } from "vitest";
@@ -115,7 +115,7 @@ describe("ACP child agent delegate tool", () => {
         acp: {
           transport: "stdio",
           command: process.execPath,
-          args: [fixture.agentPath],
+          args: fixtureAgentArgs(fixture),
         },
       },
     };
@@ -218,7 +218,7 @@ describe("ACP child agent delegate tool", () => {
         acp: {
           transport: "stdio",
           command: process.execPath,
-          args: [fixture.agentPath],
+          args: fixtureAgentArgs(fixture),
           workspaceAccess: "read_write",
         },
       },
@@ -271,7 +271,7 @@ describe("ACP child agent delegate tool", () => {
         acp: {
           transport: "stdio",
           command: process.execPath,
-          args: [fixture.agentPath],
+          args: fixtureAgentArgs(fixture),
           workspaceAccess: "read_write",
         },
       },
@@ -321,7 +321,7 @@ describe("ACP child agent delegate tool", () => {
         acp: {
           transport: "stdio",
           command: process.execPath,
-          args: [fixture.agentPath],
+          args: fixtureAgentArgs(fixture),
           workspaceAccess: "read_write",
         },
       },
@@ -377,7 +377,7 @@ describe("ACP child agent delegate tool", () => {
         acp: {
           transport: "stdio",
           command: process.execPath,
-          args: [fixture.agentPath],
+          args: fixtureAgentArgs(fixture),
         },
       },
     };
@@ -431,7 +431,7 @@ describe("ACP child agent delegate tool", () => {
         acp: {
           transport: "stdio",
           command: process.execPath,
-          args: [fixture.agentPath],
+          args: fixtureAgentArgs(fixture),
         },
       },
     };
@@ -496,7 +496,7 @@ function unavailableRuntime(): ShellSandboxRuntime {
 }
 
 async function runEnvProbeDelegate(
-  fixture: { cwd: string; agentPath: string },
+  fixture: { cwd: string; agentPath: string; dependencyRoot: string },
   acpOptions: Record<string, unknown>,
 ): Promise<{ message?: string }> {
   const parent = createRun({
@@ -515,7 +515,7 @@ async function runEnvProbeDelegate(
       acp: {
         transport: "stdio",
         command: process.execPath,
-        args: [fixture.agentPath],
+        args: fixtureAgentArgs(fixture),
         ...acpOptions,
       },
     },
@@ -535,13 +535,13 @@ async function runEnvProbeDelegate(
 async function createFixtureAgent(startupCode = ""): Promise<{
   cwd: string;
   agentPath: string;
+  dependencyRoot: string;
 }> {
   const cwd = await mkdtemp(join(tmpdir(), "sparkwright-host-acp-worker-"));
   const agentPath = join(cwd, "agent.mjs");
   const require = createRequire(import.meta.url);
-  const sdkUrl = pathToFileURL(
-    require.resolve("@agentclientprotocol/sdk"),
-  ).href;
+  const sdkPath = require.resolve("@agentclientprotocol/sdk");
+  const sdkUrl = pathToFileURL(sdkPath).href;
   await writeFile(
     agentPath,
     `
@@ -593,19 +593,19 @@ process.stdin.resume();
 `,
     "utf8",
   );
-  return { cwd, agentPath };
+  return { cwd, agentPath, dependencyRoot: dirname(dirname(sdkPath)) };
 }
 
 async function createEnvProbeAgent(): Promise<{
   cwd: string;
   agentPath: string;
+  dependencyRoot: string;
 }> {
   const cwd = await mkdtemp(join(tmpdir(), "sparkwright-host-acp-env-"));
   const agentPath = join(cwd, "env-agent.mjs");
   const require = createRequire(import.meta.url);
-  const sdkUrl = pathToFileURL(
-    require.resolve("@agentclientprotocol/sdk"),
-  ).href;
+  const sdkPath = require.resolve("@agentclientprotocol/sdk");
+  const sdkUrl = pathToFileURL(sdkPath).href;
   await writeFile(
     agentPath,
     `
@@ -653,5 +653,14 @@ process.stdin.resume();
 `,
     "utf8",
   );
-  return { cwd, agentPath };
+  return { cwd, agentPath, dependencyRoot: dirname(dirname(sdkPath)) };
+}
+
+function fixtureAgentArgs(fixture: {
+  agentPath: string;
+  dependencyRoot: string;
+}): string[] {
+  // workspaceAccess:none exposes only absolute argv paths on Linux. Passing the
+  // SDK package root makes this fixture's external dependency explicit.
+  return [fixture.agentPath, fixture.dependencyRoot];
 }

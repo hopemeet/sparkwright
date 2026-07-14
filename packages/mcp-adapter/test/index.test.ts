@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { createRun, createRunId } from "@sparkwright/core";
@@ -1142,7 +1142,13 @@ describe("mcp-adapter", () => {
           workspaceRoot: workspace,
           config: {
             mode: "enforce",
-            filesystem: { allowRead: [process.cwd()] },
+            filesystem: {
+              allowRead: [
+                fixtureNodeModulesRoot(
+                  "@modelcontextprotocol/sdk/server/mcp.js",
+                ),
+              ],
+            },
             network: { mode: "deny" },
           },
           projectConfigPath: configPath,
@@ -1221,4 +1227,16 @@ function mcpEchoServerConfig(
     enabled: true,
     timeoutMs: 15_000,
   };
+}
+
+function fixtureNodeModulesRoot(moduleId: string): string {
+  const resolved = createRequire(import.meta.url).resolve(moduleId);
+  const marker = `${sep}node_modules${sep}`;
+  const markerIndex = resolved.lastIndexOf(marker);
+  if (markerIndex < 0) {
+    throw new Error(
+      `Fixture dependency is not under node_modules: ${resolved}`,
+    );
+  }
+  return resolved.slice(0, markerIndex + `${sep}node_modules`.length);
 }

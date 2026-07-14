@@ -276,7 +276,9 @@ describe("ACP round trip", () => {
       JSON.stringify({
         shell: {
           sandbox: {
-            filesystem: { allowRead: [findRepoRoot(process.cwd())] },
+            filesystem: {
+              allowRead: [join(findRepoRoot(process.cwd()), "node_modules")],
+            },
           },
         },
       }),
