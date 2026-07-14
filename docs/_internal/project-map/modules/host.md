@@ -52,6 +52,7 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 - `packages/host/src/model-factory.ts`
 - `packages/host/src/config.ts`
 - `packages/host/src/config/contracts.ts`
+- `packages/host/src/config/file-io.ts`
 - `packages/host/src/config/config-implementation.ts`
 - `packages/host/src/config-zod-schema.ts`
 - `packages/host/src/client-input.ts`
@@ -931,6 +932,17 @@ Does not own:
   remain adapter-native and need continued cross-entrypoint characterization.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-15T07:31:13+0800
+- Scope: moved config candidate discovery, resolution ordering, JSON/YAML
+  parsing/serialization, private-file writes, and sibling write-target selection
+  into a cohesive dependency leaf. Validation and conservative merge semantics
+  remain in the loader implementation.
+- Read: config facade, contracts, file I/O leaf, loader, CLI config consumers,
+  and focused config tests.
+- Tests: Host config 59/59, CLI schema 5/5, CLI config/first-run 29/29,
+  schema parity, Host typecheck/build, CLI build, import gates, and map drift.
 
 - Status: Verified
 - Date: 2026-07-15T07:26:47+0800

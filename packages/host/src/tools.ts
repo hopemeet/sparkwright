@@ -33,8 +33,8 @@ import {
   readConfigFileObject,
   resolveConfigWriteTarget,
   serializeConfigFileObject,
-  type CapabilityToolsConfig,
-} from "./config/config-implementation.js";
+} from "./config/file-io.js";
+import type { CapabilityToolsConfig } from "./config-zod-schema.js";
 import {
   formatToolUseSelectorList,
   isToolUseSelector,

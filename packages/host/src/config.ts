@@ -1,20 +1,22 @@
 export {
-  configFileFormatForPath,
-  configResolutionOrder,
   costToPricing,
   loadHostConfig,
   normalizeGroupedConfig,
   parseModelRef,
+  resolveModelSelection,
+} from "./config/config-implementation.js";
+export {
+  configFileFormatForPath,
+  configResolutionOrder,
   projectConfigCandidatePaths,
   projectConfigPath,
   readConfigFileObject,
   resolveConfigWriteTarget,
-  resolveModelSelection,
   serializeConfigFileObject,
   userConfigCandidatePaths,
   userConfigPath,
   writeConfigFileObject,
-} from "./config/config-implementation.js";
+} from "./config/file-io.js";
 export {
   CONFIG_ENV_VAR,
   CONFIG_FILE_BASENAMES,
@@ -24,10 +26,7 @@ export {
   DETERMINISTIC_PROVIDER,
   SUPPORTED_PROVIDER_NPMS,
 } from "./config/contracts.js";
-export type {
-  ConfigFileFormat,
-  ConfigFileObject,
-} from "./config/config-implementation.js";
+export type { ConfigFileFormat, ConfigFileObject } from "./config/file-io.js";
 export type {
   CapabilityAgentsConfig,
   CapabilityConfig,
