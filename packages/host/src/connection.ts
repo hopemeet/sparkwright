@@ -20,6 +20,39 @@ export interface Connection {
   close(reason?: string): void;
 }
 
+export type HostConnectionPrincipalKind = "host_client" | "gateway";
+
+export type HostConnectionAuthContext =
+  | {
+      state: "authenticated";
+      principalId: string;
+      principalKind: HostConnectionPrincipalKind;
+      authenticatedBy: string;
+    }
+  | {
+      state: "unauthenticated";
+      authenticatedBy: string;
+    };
+
+export function authenticatedConnection(
+  principalId: string,
+  authenticatedBy: string,
+  principalKind: HostConnectionPrincipalKind = "host_client",
+): HostConnectionAuthContext {
+  return {
+    state: "authenticated",
+    principalId,
+    principalKind,
+    authenticatedBy,
+  };
+}
+
+export function unauthenticatedConnection(
+  authenticatedBy: string,
+): HostConnectionAuthContext {
+  return { state: "unauthenticated", authenticatedBy };
+}
+
 let counter = 0;
 export function nextConnectionId(prefix: string): string {
   counter += 1;

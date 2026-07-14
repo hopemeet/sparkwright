@@ -69,6 +69,12 @@ contracts, and focused checklists that no longer fit here.
 - IM gateway is an application bridge over `sdk-node` and host events. Route
   protocol shape changes through protocol/host maps before updating gateway
   renderers or state.
+- IM Gateway handshake name is client-type/display metadata only. Host WS
+  bearer authentication supplies the stable ordinary-IM principal; Gateway
+  platform claims remain exact bounded subject claims and cannot mint Host
+  trust or system identity. Gateway also cannot select a session for a new
+  self-binding; Host returns the assigned session and reconnect reuses only the
+  existing exact binding.
 
 ## Does Not Own
 
@@ -124,6 +130,15 @@ contracts, and focused checklists that no longer fit here.
   source exports. It should not be used as the sole authority for behavior.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: checked SDK/Gateway consumers after Host principal isolation. Existing
+  wire methods and Gateway reconnect/rebind flow remain compatible; stable
+  identity now comes from the Host bearer credential slot, not client name, and
+  new ordinary-IM binding sessions are Host-assigned.
+- Tests: Host transport/IM/protocol focused suites passed; no Gateway ownership
+  or durable Workflow channel change.
 
 - Status: Verified
 - Date: 2026-07-14T14:35:00+0800

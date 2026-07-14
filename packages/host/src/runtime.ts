@@ -1879,6 +1879,7 @@ export class HostRuntime {
 
   async resumeWorkflowRun(
     payload: WorkflowResumeRequestPayload,
+    source: WorkflowControlSourceIdentity,
   ): Promise<
     | { ok: true; runId: string; workflowRunId: string; sessionId?: string }
     | { ok: false; error: ProtocolError }
@@ -1894,7 +1895,7 @@ export class HostRuntime {
     }
     const execution = this.beginExecution();
     try {
-      return await this.resumeWorkflowRunThroughControl(payload);
+      return await this.resumeWorkflowRunThroughControl(payload, source);
     } finally {
       this.releaseUnstartedExecution(execution);
     }
@@ -1936,6 +1937,7 @@ export class HostRuntime {
 
   private async resumeWorkflowRunThroughControl(
     payload: WorkflowResumeRequestPayload,
+    source: WorkflowControlSourceIdentity,
   ): Promise<
     | { ok: true; runId: string; workflowRunId: string; sessionId?: string }
     | { ok: false; error: ProtocolError }
@@ -1953,11 +1955,7 @@ export class HostRuntime {
     const accepted = await this.workflowControls.accept({
       workflowRunId: record.id,
       idempotencyKey,
-      source: {
-        kind: "api",
-        principalId: "host-protocol-client",
-        authenticatedBy: "host-connection",
-      },
+      source,
       authorization: {
         workspaceId: this.opts.workspaceRoot,
         sessionId,

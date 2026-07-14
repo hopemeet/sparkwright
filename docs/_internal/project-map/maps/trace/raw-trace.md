@@ -212,6 +212,13 @@ EventLog emits full event
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-14
+- Scope: checked Workflow API principal attribution; no Core trace event or file
+  trace schema changed. Durable Workflow control envelopes now retain the real
+  Host connection source.
+- Tests: Host workflow/protocol focused suites passed.
+
+- Status: Verified
 - Date: 2026-07-14T14:35:00+0800
 - Scope: P6 routed review; session trace inspection moved to a function module
   but raw trace remains canonical and no duplicate event store was introduced.

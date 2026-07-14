@@ -106,6 +106,10 @@ Change:
 - HostService now owns ordinary IM session bindings, retained executions,
   approval routing, and bounded replay outboxes. IM gateway retains transport
   verification, formatting, inbound dedupe, and delivery-attempt state.
+- Host WS/stdio connection adapters now pass explicit auth context into
+  `serveConnection()`. A single configured bearer credential has one stable,
+  non-secret principal id; unauthenticated connections remain connection-scoped
+  and cannot self-bind. Handshake metadata no longer mutates principal identity.
 - Core already exposes `enqueueCommand()` and `injectUserMessage()`, and consumes
   commands at a run-loop boundary. It still does not expose a public read-only
   command-acceptance predicate.
@@ -768,6 +772,10 @@ approval routing, bounded outbox projection, and per-binding delivery cursors.
 Gateway keeps only platform verification/formatting, transport dedupe and
 delivery-attempt facts, plus its pre-existing durable Workflow channel adapter.
 The state is intentionally non-durable; Host restart adoption remains P4 debt.
+The P3 security follow-up also isolates principal derivation from handshake
+client name, requires authenticated self-binding, freezes handshake, and uses
+real connection attribution for Workflow API control/resume commands. Multi-
+credential configuration remains an extension point rather than a P3 claim.
 
 ### P4: Durable Single-Host Coordination
 

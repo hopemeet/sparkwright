@@ -311,6 +311,10 @@ export interface ImSubjectClaims {
 export interface ImBindRequestPayload {
   subject: ImSubjectClaims;
   permissions: ImSessionPermission[];
+  /**
+   * An existing Host-issued session id may be echoed only when reconnecting
+   * the same live principal + subject binding. Omit it for a new self-binding.
+   */
   sessionId?: string;
   expiresAt?: string;
 }

@@ -16,7 +16,13 @@ import {
   isRequest,
 } from "@sparkwright/protocol";
 import type { Connection } from "./connection.js";
-import { nextMessageId, nowIso } from "./connection.js";
+import {
+  authenticatedConnection,
+  nextMessageId,
+  nowIso,
+  unauthenticatedConnection,
+  type HostConnectionAuthContext,
+} from "./connection.js";
 import { HostRuntime, type RuntimeOptions } from "./runtime.js";
 import { createHostService, type HostService } from "./host-service.js";
 import type { HostImPrincipal } from "./im-control.js";
@@ -39,6 +45,8 @@ export interface ServeConnectionOptions {
   imControlSelfBinding?: boolean;
   /** Stable transport/auth-derived principal id for this connection. */
   principalId?: string;
+  /** Verified transport/auth result. Request payloads cannot supply it. */
+  authContext?: HostConnectionAuthContext;
   /** Finite live approval timeout override used by bounded surfaces/tests. */
   approvalTimeoutMs?: number;
 }
@@ -53,14 +61,28 @@ export function serveConnection(
   conn: Connection,
   opts: ServeConnectionOptions,
 ): void {
-  let handshakeDone = false;
+  let handshakeState: "pending" | "processing" | "complete" = "pending";
   const hostService =
     opts.hostService ??
     createHostService({
       imControl: { allowSelfBinding: opts.imControlSelfBinding === true },
     });
+  const authContext =
+    opts.authContext ??
+    (opts.principalId
+      ? authenticatedConnection(opts.principalId, "trusted-embedder")
+      : unauthenticatedConnection("unspecified-transport"));
   const principal: HostImPrincipal = {
-    id: opts.principalId ?? `connection:${conn.id}`,
+    id:
+      authContext.state === "authenticated"
+        ? authContext.principalId
+        : `connection:${conn.id}`,
+    kind:
+      authContext.state === "authenticated"
+        ? authContext.principalKind
+        : "host_client",
+    authenticated: authContext.state === "authenticated",
+    authenticatedBy: authContext.authenticatedBy,
     clientName: "pending-handshake",
   };
   const runtime = hostService.createRuntime({
@@ -93,8 +115,17 @@ export function serveConnection(
       // Clients SHOULD NOT send responses or events; ignore silently.
       return;
     }
-    // Gate everything behind a successful handshake.
-    if (!handshakeDone && message.kind !== "handshake") {
+    if (message.kind === "handshake" && handshakeState !== "pending") {
+      respondError(conn, message.id, {
+        code: "conflict",
+        message: "handshake is already in progress or complete",
+      });
+      return;
+    }
+    if (message.kind === "handshake") handshakeState = "processing";
+
+    // Gate everything behind a successful, frozen handshake.
+    if (message.kind !== "handshake" && handshakeState !== "complete") {
       respondError(conn, message.id, {
         code: "protocol_version_mismatch",
         message:
@@ -106,9 +137,11 @@ export function serveConnection(
 
     handleRequest(conn, runtime, hostService, principal, message, opts)
       .then((didHandshake) => {
-        if (didHandshake) handshakeDone = true;
+        if (didHandshake) handshakeState = "complete";
+        else if (message.kind === "handshake") handshakeState = "pending";
       })
       .catch((error: unknown) => {
+        if (message.kind === "handshake") handshakeState = "pending";
         respondError(conn, message.id, {
           code: "internal_error",
           message: error instanceof Error ? error.message : String(error),
@@ -147,7 +180,7 @@ async function handleRequest(
         return false;
       }
       principal.clientName = req.payload.client.name;
-      if (!opts.principalId) principal.id = `client:${req.payload.client.name}`;
+      Object.freeze(principal);
       respondOk(conn, req.id, {});
       conn.send({
         envelope: "event",
@@ -453,7 +486,10 @@ async function handleRequest(
       return false;
     }
     case "workflow.resume": {
-      const r = await runtime.resumeWorkflowRun(req.payload);
+      const r = await runtime.resumeWorkflowRun(
+        req.payload,
+        workflowControlSource(principal, conn.id),
+      );
       if (r.ok) {
         respondOk(conn, req.id, {
           runId: r.runId,
@@ -469,10 +505,7 @@ async function handleRequest(
       const r = await runtime.controlWorkflow({
         ...req.payload,
         source: {
-          kind: "api",
-          principalId: "host-protocol-client",
-          authenticatedBy: "host-handshake",
-          connectionId: req.id,
+          ...workflowControlSource(principal, conn.id),
         },
       });
       if (r.ok) {
@@ -574,7 +607,7 @@ function validateRequestPayload(req: HostRequest): string | undefined {
         optionalEnum(req.payload, "permissionMode", [...PERMISSION_MODES]) ??
         optionalEnum(req.payload, "traceLevel", [...TRACE_LEVELS]) ??
         optionalString(req.payload, "workflow") ??
-        optionalRecord(req.payload, "metadata")
+        optionalIdentitySafeMetadata(req.payload, "metadata")
       );
     case "run.resume":
       return (
@@ -609,14 +642,14 @@ function validateRequestPayload(req: HostRequest): string | undefined {
         ]) ??
         optionalEnum(req.payload, "permissionMode", [...PERMISSION_MODES]) ??
         optionalEnum(req.payload, "traceLevel", [...TRACE_LEVELS]) ??
-        optionalRecord(req.payload, "metadata")
+        optionalIdentitySafeMetadata(req.payload, "metadata")
       );
     case "run.inject_message":
       return (
         requireOnly(req.payload, ["runId", "content", "metadata"]) ??
         requireString(req.payload, "runId") ??
         requireString(req.payload, "content") ??
-        optionalRecord(req.payload, "metadata")
+        optionalIdentitySafeMetadata(req.payload, "metadata")
       );
     case "run.cancel":
       return (
@@ -669,7 +702,7 @@ function validateRequestPayload(req: HostRequest): string | undefined {
         requireString(req.payload, "text") ??
         optionalString(req.payload, "messageId") ??
         optionalString(req.payload, "model") ??
-        optionalRecord(req.payload, "metadata")
+        optionalIdentitySafeMetadata(req.payload, "metadata")
       );
     case "im.subscribe":
       return (
@@ -817,7 +850,7 @@ function validateRequestPayload(req: HostRequest): string | undefined {
         ]) ??
         optionalEnum(req.payload, "permissionMode", [...PERMISSION_MODES]) ??
         optionalEnum(req.payload, "traceLevel", [...TRACE_LEVELS]) ??
-        optionalRecord(req.payload, "metadata")
+        optionalIdentitySafeMetadata(req.payload, "metadata")
       );
     case "workflow.control":
       return (
@@ -941,6 +974,42 @@ function optionalRecord(
   const value = record[key];
   if (value === undefined) return undefined;
   return isRecord(value) ? undefined : `${key} must be an object`;
+}
+
+const RESERVED_IDENTITY_FIELDS = new Set([
+  "principalId",
+  "authenticatedBy",
+  "system",
+  "verified",
+  "trusted",
+]);
+
+function optionalIdentitySafeMetadata(
+  record: Record<string, unknown>,
+  key: string,
+): string | undefined {
+  const recordError = optionalRecord(record, key);
+  if (recordError) return recordError;
+  const value = record[key];
+  if (value === undefined) return undefined;
+  const spoofed = Object.keys(value as Record<string, unknown>).filter(
+    (field) => RESERVED_IDENTITY_FIELDS.has(field),
+  );
+  return spoofed.length > 0
+    ? `${key} cannot contain identity field(s): ${spoofed.join(", ")}`
+    : undefined;
+}
+
+function workflowControlSource(
+  principal: HostImPrincipal,
+  connectionId: string,
+) {
+  return {
+    kind: "api" as const,
+    principalId: principal.id,
+    authenticatedBy: principal.authenticatedBy,
+    connectionId,
+  };
 }
 
 function optionalBoolean(

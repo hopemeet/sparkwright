@@ -88,6 +88,12 @@ host config MCP servers
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-14
+- Scope: checked Host runtime source-attribution signature change; MCP
+  preparation, transport, policy, and lifecycle contracts are unchanged.
+- Tests: Host focused suites and typecheck passed.
+
+- Status: Verified
 - Date: 2026-07-14T14:35:00+0800
 - Scope: P6 routed review; live MCP remains execution-scoped and was not moved
   into session query/compaction modules.

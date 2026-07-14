@@ -192,6 +192,7 @@ follow the active maps below for the current contract.
 - Other `packages/server-runtime/src/*`, `packages/streaming-runtime/src/*`, or `packages/memory-file-store/src/*`: [modules/edge-packages.md](modules/edge-packages.md), [modules/core.md](modules/core.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/session/session-store.md](maps/session/session-store.md)
 - `packages/trace-perfetto/src/*`: [modules/edge-packages.md](modules/edge-packages.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md)
 - `packages/host/src/im-control.ts`, `packages/im-gateway/src/*`, or ordinary IM session control: [modules/edge-packages.md](modules/edge-packages.md), [modules/protocol.md](modules/protocol.md), [modules/host.md](modules/host.md), [maps/safety/approvals.md](maps/safety/approvals.md), [maps/session/session-store.md](maps/session/session-store.md)
+- `packages/host/src/connection.ts`, `packages/host/src/transport-ws.ts`, `packages/host/src/transport-stdio.ts`, `packages/host/src/server.ts`, or Host connection authentication/principal derivation: [modules/host.md](modules/host.md), [modules/protocol.md](modules/protocol.md), [modules/edge-packages.md](modules/edge-packages.md), [maps/safety/approvals.md](maps/safety/approvals.md), [maps/session/resume-replay.md](maps/session/resume-replay.md)
 
 ## Trace / Session / Export Rule
 

@@ -17,6 +17,7 @@ import {
   type TraceLevel,
 } from "@sparkwright/protocol";
 import { join } from "node:path";
+import { unauthenticatedConnection } from "./connection.js";
 
 interface ParsedArgs {
   mode: "stdio" | "ws";
@@ -167,6 +168,7 @@ export async function runHostMain(argv: string[]): Promise<void> {
       defaultPermissionMode: args.permissionMode,
       defaultTraceLevel: args.traceLevel,
       defaultShouldWrite: args.shouldWrite,
+      authContext: unauthenticatedConnection("local-stdio"),
     });
     return;
   }
@@ -188,7 +190,7 @@ export async function runHostMain(argv: string[]): Promise<void> {
     port: args.port,
     host: args.host,
     authToken: args.authToken,
-    onConnection: (conn) => {
+    onConnection: (conn, authContext) => {
       const detach = attachLogSink((event) => {
         try {
           conn.send(event);
@@ -206,6 +208,7 @@ export async function runHostMain(argv: string[]): Promise<void> {
         defaultPermissionMode: args.permissionMode,
         defaultTraceLevel: args.traceLevel,
         defaultShouldWrite: args.shouldWrite,
+        authContext,
       });
     },
   });

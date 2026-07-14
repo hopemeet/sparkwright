@@ -4,13 +4,20 @@ import { Buffer } from "node:buffer";
 import type { IncomingMessage } from "node:http";
 import type { HostMessage } from "@sparkwright/protocol";
 import type { Connection } from "./connection.js";
-import { nextConnectionId } from "./connection.js";
+import {
+  authenticatedConnection,
+  nextConnectionId,
+  unauthenticatedConnection,
+  type HostConnectionAuthContext,
+} from "./connection.js";
 
 export interface WsServerOptions {
   port: number;
   host?: string;
   maxPayloadBytes?: number;
   authToken?: string;
+  /** Non-secret server-side identity of the configured bearer credential. */
+  authPrincipalId?: string;
   /**
    * Allow non-loopback binds without an `authToken`. Off by default: binding
    * to `0.0.0.0` or a public address without authentication exposes the host
@@ -18,10 +25,14 @@ export interface WsServerOptions {
    * isolated network can set this to `true`.
    */
   allowUnauthenticatedNonLoopback?: boolean;
-  onConnection: (conn: Connection) => void;
+  onConnection: (
+    conn: Connection,
+    authContext: HostConnectionAuthContext,
+  ) => void;
 }
 
 const DEFAULT_MAX_PAYLOAD_BYTES = 1024 * 1024;
+const DEFAULT_BEARER_PRINCIPAL_ID = "auth:ws-bearer:default";
 const LOOPBACK_HOSTS = new Set([
   undefined,
   "",
@@ -59,7 +70,16 @@ export function startWsServer(opts: WsServerOptions): { close: () => void } {
       ws.close(1008, "unauthorized");
       return;
     }
-    opts.onConnection(wrapWebSocket(ws));
+    opts.onConnection(
+      wrapWebSocket(ws),
+      opts.authToken?.trim()
+        ? authenticatedConnection(
+            opts.authPrincipalId ?? DEFAULT_BEARER_PRINCIPAL_ID,
+            "ws-bearer",
+            "gateway",
+          )
+        : unauthenticatedConnection("ws-no-auth"),
+    );
   });
 
   return {

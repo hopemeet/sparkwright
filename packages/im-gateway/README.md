@@ -30,6 +30,15 @@ Run the daemon:
 sparkwright-im-gateway run
 ```
 
+The Host bearer credential, not the handshake client name, is the ordinary IM
+principal. Reconnects using the same credential recover the same live binding
+and unacknowledged delivery cursor. One configured token is one shared
+principal; deployments that require isolated gateways need distinct future
+credential mappings rather than different client names.
+The Gateway does not select a session for a new ordinary-IM binding. It omits
+`sessionId`, accepts the Host-issued value, and reconnects through the existing
+exact principal+subject binding.
+
 The gateway stores config in `~/.config/sparkwright/im-gateway.json` and only
 transport message dedupe plus delivery-attempt facts in
 `~/.local/state/sparkwright/im-gateway/state.json` by default.

@@ -208,6 +208,12 @@ config + workspace capability roots
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-14
+- Scope: checked Host connection principal and Workflow control attribution;
+  capability snapshot shapes and resolution behavior are unchanged.
+- Tests: Host focused suites and typecheck passed.
+
+- Status: Verified
 - Date: 2026-07-14T14:35:00+0800
 - Scope: P6 routed review; capability inspection and catalog semantics are
   unchanged by session-module extraction and lease import renaming.

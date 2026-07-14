@@ -281,6 +281,12 @@ createRun/resumeRunFromCheckpoint
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-14
+- Scope: checked Host Workflow resume source attribution; execution assembly,
+  episode driving, lane completion, and Core run-loop behavior are unchanged.
+- Tests: Host workflow/protocol focused suites passed.
+
+- Status: Verified
 - Date: 2026-07-14T14:35:00+0800
 - Scope: P6 routed review; session operations were mechanically extracted and
   canonical HostService -> lane coordinator -> HostExecution behavior is

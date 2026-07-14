@@ -126,9 +126,23 @@ Does not own:
 - `HostService` also owns ordinary IM session bindings, exact subject
   authorization, approval-to-execution routing, retained runtime attachment,
   and per-binding delivery cursors over a bounded event-projection outbox.
-  Self-binding is disabled unless the operator explicitly enables it. This
-  live control state is process memory and is separate from durable Workflow
-  channel bindings and Core's canonical event log.
+  Self-binding requires both an authenticated transport principal and explicit
+  operator enablement. Handshake `client.name` is frozen client metadata and an
+  authenticated-only additional allowlist input; it never derives principal
+  identity. Host assigns every new binding's session; a caller-supplied session
+  id can only echo the session of an existing live exact principal+subject
+  binding during reconnect. This live control state is process memory and is separate from
+  durable Workflow channel bindings and Core's canonical event log.
+- Host connection principals are derived before handshake from transport/auth
+  context. The configured single WS bearer credential maps to a stable,
+  non-secret server-side credential-slot id so reconnect can reuse an exact
+  binding and replay unacknowledged deliveries. Unauthenticated WS/stdio uses a
+  connection-scoped principal and cannot self-bind. External connections cannot
+  mint `system`, `verified`, `trusted`, `principalId`, or `authenticatedBy`.
+- Host handshake is single-use. Duplicate or concurrent handshakes are rejected
+  and cannot mutate principal or client metadata. Workflow protocol control and
+  resume commands record the real connection principal/auth method rather than
+  a fixed protocol-client attribution.
 - `WorkspaceContext` owns the shared TaskManager/store/outbox and Workflow
   notification/control adapters. It never owns live MCP, LocalWorkspace,
   mutable policy, event emitter, approval resolver, or active execution.
@@ -911,6 +925,17 @@ Does not own:
   remain adapter-native and need continued cross-entrypoint characterization.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-14
+- Scope: isolated Host connection principals from handshake metadata, required
+  authenticated IM self-binding, stabilized single-bearer reconnect identity,
+  prohibited new self-bindings from selecting another session, froze handshake,
+  and corrected Workflow API attribution.
+- Read: Host connection/WS/stdio/main/server, IM control/service/runtime, tests,
+  protocol/SDK/Gateway consumers.
+- Tests: Host IM/WS/protocol/workflow/service focused suites 111/111; affected
+  typechecks passed.
 
 - Status: Verified
 - Date: 2026-07-14T14:35:00+0800

@@ -9,7 +9,10 @@ import type {
 import type { HostRuntime } from "./runtime.js";
 
 export interface HostImPrincipal {
-  id: string;
+  readonly id: string;
+  readonly kind: "host_client" | "gateway";
+  readonly authenticated: boolean;
+  readonly authenticatedBy: string;
   clientName: string;
 }
 
@@ -100,6 +103,9 @@ export function bindHostImSession(
   if (!state.policy.allowSelfBinding) {
     return denied("IM self-binding is disabled by Host policy.");
   }
+  if (!principal.authenticated) {
+    return denied("Authenticated transport is required for IM self-binding.");
+  }
   if (!state.policy.allowedClientNames.includes(principal.clientName)) {
     return denied("Authenticated client is not allowed to create IM bindings.");
   }
@@ -127,9 +133,20 @@ export function bindHostImSession(
   const existingId = state.bindingsBySubject.get(subjectKey);
   const existing = existingId ? state.bindings.get(existingId) : undefined;
   if (existing && bindingIsLive(existing)) {
+    if (
+      input.sessionId !== undefined &&
+      input.sessionId !== existing.sessionId
+    ) {
+      return denied(
+        "Requested session does not match the existing exact IM binding.",
+      );
+    }
     return { ok: true, binding: existing };
   }
-  const sessionId = input.sessionId ?? createSessionId();
+  if (input.sessionId !== undefined) {
+    return denied("New IM self-bindings must use a Host-assigned session.");
+  }
+  const sessionId = createSessionId();
   const binding: HostImBinding = {
     bindingId: createId("binding") as string,
     principalId: principal.id,

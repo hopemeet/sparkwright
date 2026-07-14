@@ -364,6 +364,12 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-14
+- Scope: checked Host connection principal and Workflow control attribution;
+  tool preparation, selection, policy, and invocation contracts are unchanged.
+- Tests: Host focused suites and typecheck passed.
+
+- Status: Verified
 - Date: 2026-07-14T14:35:00+0800
 - Scope: P6 routed review; tool orchestration and lease admission semantics are
   unchanged by module renaming.

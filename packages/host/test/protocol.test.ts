@@ -15,16 +15,18 @@ import {
 } from "@sparkwright/core";
 import {
   FileTaskStore,
+  FileWorkflowControlInbox,
   FileWorkflowStore,
   createTaskId,
   type WorkflowRunId,
 } from "@sparkwright/agent-runtime";
 import { CronStore, defaultCronRoot } from "@sparkwright/cron";
 import { FileSkillUsageRecorder } from "@sparkwright/skills";
-import type { Connection } from "../src/connection.js";
+import { authenticatedConnection, type Connection } from "../src/connection.js";
 import { skillUsagePath } from "../src/index.js";
 import { serveConnection } from "../src/server.js";
 import { HostRuntime } from "../src/runtime.js";
+import { createHostService } from "../src/host-service.js";
 
 /**
  * Tiny in-process Connection pair: two ends sharing two queues. Lets the
@@ -47,7 +49,7 @@ function createConnectionPair(): {
   }[] = [];
 
   const hostSide: Connection = {
-    id: "test_host",
+    id: `test_host_${++testConnectionSequence}`,
     send(m) {
       messages.push(m);
       // notify watchers
@@ -84,6 +86,8 @@ function createConnectionPair(): {
     close: () => onClose?.("test close"),
   };
 }
+
+let testConnectionSequence = 0;
 
 const TIMESTAMP = "2026-05-24T12:00:00.000Z";
 
@@ -197,6 +201,117 @@ async function waitForAgentTaskTerminal(
 }
 
 describe("host protocol", () => {
+  it("isolates Host IM principal identity per authenticated connection", async () => {
+    const workspace = await mkdtemp(
+      join(tmpdir(), "sparkwright-im-principal-"),
+    );
+    const service = createHostService({
+      imControl: { allowSelfBinding: true },
+    });
+    const owner = createConnectionPair();
+    const attacker = createConnectionPair();
+    const subject = {
+      platform: "telegram",
+      chatId: "chat_shared",
+      userId: "user_shared",
+    };
+    try {
+      for (const [index, pair] of [owner, attacker].entries()) {
+        serveConnection(pair.hostSide, {
+          hostService: service,
+          workspaceRoot: workspace,
+          imControlSelfBinding: true,
+          authContext: authenticatedConnection(
+            `gateway:credential:${index}`,
+            "test-credential",
+            "gateway",
+          ),
+        });
+        pair.clientSend({
+          envelope: "request",
+          id: "handshake",
+          kind: "handshake",
+          timestamp: TIMESTAMP,
+          payload: {
+            protocolVersion: PROTOCOL_VERSION,
+            client: { name: "sparkwright-im-gateway", version: "0.1.0" },
+          },
+        });
+      }
+      await Promise.all(
+        [owner, attacker].map((pair) =>
+          pair.waitFor(
+            (message) =>
+              message.envelope === "response" && message.id === "handshake",
+          ),
+        ),
+      );
+
+      owner.clientSend({
+        envelope: "request",
+        id: "bind_owner",
+        kind: "im.bind",
+        timestamp: TIMESTAMP,
+        payload: { subject, permissions: ["message", "inspect"] },
+      });
+      const bound = await owner.waitFor(
+        (message) =>
+          message.envelope === "response" && message.id === "bind_owner",
+      );
+      if (bound.envelope !== "response" || !bound.ok) {
+        throw new Error("owner binding was not created");
+      }
+      const bindingId = String(bound.result.bindingId);
+      const sessionId = String(bound.result.sessionId);
+
+      attacker.clientSend({
+        envelope: "request",
+        id: "bind_owner_session",
+        kind: "im.bind",
+        timestamp: TIMESTAMP,
+        payload: {
+          subject,
+          permissions: ["message", "inspect", "approve"],
+          sessionId,
+        },
+      });
+      expect(
+        await attacker.waitFor(
+          (message) =>
+            message.envelope === "response" &&
+            message.id === "bind_owner_session",
+        ),
+      ).toMatchObject({
+        envelope: "response",
+        ok: false,
+        error: { code: "unauthorized" },
+      });
+
+      attacker.clientSend({
+        envelope: "request",
+        id: "inspect_stolen_binding",
+        kind: "im.inspect",
+        timestamp: TIMESTAMP,
+        payload: { bindingId, subject },
+      });
+      const inspected = await attacker.waitFor(
+        (message) =>
+          message.envelope === "response" &&
+          message.id === "inspect_stolen_binding",
+      );
+      expect(inspected).toMatchObject({
+        envelope: "response",
+        ok: false,
+        error: { code: "unauthorized" },
+      });
+    } finally {
+      owner.close();
+      attacker.close();
+      await service.shutdown();
+      await rmWhenReady(workspace);
+    }
+  });
+
   it("denies live approvals on timeout so execution capacity can drain", async () => {
     const workspace = await mkdtemp(
       join(tmpdir(), "sparkwright-host-approval-timeout-"),
@@ -338,6 +453,11 @@ describe("host protocol", () => {
       serveConnection(enabledPair.hostSide, {
         workspaceRoot: workspace,
         imControlSelfBinding: true,
+        authContext: authenticatedConnection(
+          "gateway:enabled",
+          "test-credential",
+          "gateway",
+        ),
       });
       await handshake(enabledPair);
       enabledPair.clientSend({
@@ -426,6 +546,91 @@ describe("host protocol", () => {
       ok: false,
       error: { code: "protocol_version_mismatch" },
     });
+  });
+
+  it("freezes handshake metadata and rejects a duplicate handshake", async () => {
+    const pair = createConnectionPair();
+    serveConnection(pair.hostSide, {
+      workspaceRoot: process.cwd(),
+      authContext: authenticatedConnection(
+        "gateway:stable",
+        "test-credential",
+        "gateway",
+      ),
+    });
+    for (const [id, name] of [
+      ["first", "sparkwright-im-gateway"],
+      ["duplicate", "attacker"],
+    ] as const) {
+      pair.clientSend({
+        envelope: "request",
+        id,
+        kind: "handshake",
+        timestamp: TIMESTAMP,
+        payload: {
+          protocolVersion: PROTOCOL_VERSION,
+          client: { name, version: "0.1.0" },
+        },
+      });
+      await pair.waitFor(
+        (message) => message.envelope === "response" && message.id === id,
+      );
+    }
+    expect(
+      pair
+        .clientMessages()
+        .find(
+          (message) =>
+            message.envelope === "response" && message.id === "duplicate",
+        ),
+    ).toMatchObject({ ok: false, error: { code: "conflict" } });
+    expect(
+      pair
+        .clientMessages()
+        .filter(
+          (message) =>
+            message.envelope === "event" && message.kind === "host.ready",
+        ),
+    ).toHaveLength(1);
+  });
+
+  it("rejects reserved identity fields in request metadata", async () => {
+    const pair = createConnectionPair();
+    serveConnection(pair.hostSide, { workspaceRoot: process.cwd() });
+    pair.clientSend({
+      envelope: "request",
+      id: "h",
+      kind: "handshake",
+      timestamp: TIMESTAMP,
+      payload: {
+        protocolVersion: PROTOCOL_VERSION,
+        client: { name: "test", version: "0.0.0" },
+      },
+    });
+    await pair.waitFor(
+      (message) => message.envelope === "response" && message.id === "h",
+    );
+    for (const field of [
+      "principalId",
+      "authenticatedBy",
+      "system",
+      "verified",
+      "trusted",
+    ]) {
+      const id = `spoof-${field}`;
+      pair.clientSend({
+        envelope: "request",
+        id,
+        kind: "run.start",
+        timestamp: TIMESTAMP,
+        payload: { goal: "spoof", metadata: { [field]: true } },
+      } as unknown as HostMessage);
+      expect(
+        await pair.waitFor(
+          (message) => message.envelope === "response" && message.id === id,
+        ),
+      ).toMatchObject({ ok: false, error: { code: "invalid_payload" } });
+    }
   });
 
   it("rejects request payloads with unexpected fields", async () => {
@@ -872,6 +1077,17 @@ describe("host protocol", () => {
         envelope: "response",
         ok: true,
         result: { status: "applied", code: "applied" },
+      });
+      expect(
+        new FileWorkflowControlInbox({
+          rootDir: join(workspace, ".sparkwright", "workflow-runs"),
+          createRoot: false,
+        }).snapshot(workflowRunId).commands[0]?.source,
+      ).toEqual({
+        kind: "api",
+        principalId: `connection:${pair.hostSide.id}`,
+        authenticatedBy: "unspecified-transport",
+        connectionId: pair.hostSide.id,
       });
       expect(
         new FileWorkflowStore({

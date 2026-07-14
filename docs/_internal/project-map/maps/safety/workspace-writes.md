@@ -139,6 +139,12 @@ tool proposes write
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-14
+- Scope: checked Host principal isolation and Workflow control attribution;
+  workspace-write policy, approval, and lease behavior are unchanged.
+- Tests: Host focused suites and typecheck passed.
+
+- Status: Verified
 - Date: 2026-07-14T14:35:00+0800
 - Scope: P6 renamed the process-local workspace lease implementation without
   changing admission scope, fairness, or the non-fencing limitation.
