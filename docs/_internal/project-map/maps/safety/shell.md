@@ -189,7 +189,8 @@ args` without rewriting requests, while the latter parses Host command text
 - Date: 2026-07-14
 - Scope: fixed Linux bubblewrap launch when protected configuration paths
   overlap and when explicit read/write grants live beneath the private `/tmp`
-  overlay; policy scope is unchanged.
+  overlay; the private parent is read-only outside explicit writable grants,
+  and missing secret paths no longer materialize in the host workspace.
 - Read: shell-sandbox bubblewrap compiler and platform integration coverage.
 - Tests: shell-sandbox 16/16 on Node 20 and Node 22; the CI matrix covers the
   Linux runtime.

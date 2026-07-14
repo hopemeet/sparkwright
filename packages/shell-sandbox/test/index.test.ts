@@ -306,6 +306,11 @@ describe("platform invocation builders", () => {
     expect(tmpBind).toBeGreaterThanOrEqual(0);
     expect(readBind).toBeGreaterThan(tmpBind);
     expect(writeBind).toBeGreaterThan(tmpBind);
+    const remount = invocation.args.findIndex(
+      (arg, i) => arg === "--remount-ro" && invocation.args[i + 1] === "/tmp",
+    );
+    expect(remount).toBeGreaterThan(readBind);
+    expect(remount).toBeGreaterThan(writeBind);
   });
 
   it("omits descendant deny mounts covered by an ancestor", () => {
@@ -470,6 +475,25 @@ describe("platform sandbox integration", () => {
       stdout: "ok\n",
     });
 
+    const fileOnlyConfig = scopeShellSandboxFilesystem(readOnlyConfig, {
+      allowRead: [join(workspace, "allowed.txt")],
+      allowWrite: [],
+    });
+    const shadowWrite = await runtime.execute(
+      {
+        command: "cat allowed.txt && echo bad > shadow.txt",
+        cwd: workspace,
+        env: process.env,
+      },
+      fileOnlyConfig,
+    );
+    await expect(shadowWrite.completed).resolves.toMatchObject({
+      status: "failed",
+    });
+    await expect(
+      readFile(join(workspace, "shadow.txt"), "utf8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+
     const denied = await runtime.execute(
       {
         command: "echo blocked > .sparkwright/config.json",
@@ -502,5 +526,8 @@ describe("platform sandbox integration", () => {
         "utf8",
       ),
     ).resolves.toBe("original skill\n");
+    await expect(
+      readFile(join(workspace, ".env"), "utf8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
   });
 });

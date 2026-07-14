@@ -548,10 +548,11 @@ export async function prepareSandboxedProcessInvocation(
         ? runtime.executablePath()
         : "bwrap";
     const tmpRoot = await mkdtemp(join(tmpdir(), "sparkwright-sandbox-"));
-    const denyMounts = await prepareBubblewrapDenyMounts(tmpRoot, [
-      ...config.filesystem.denyRead,
-      ...config.filesystem.denyWrite,
-    ]);
+    const denyMounts = await prepareBubblewrapDenyMounts(
+      tmpRoot,
+      config.filesystem.denyRead,
+      config.filesystem.denyWrite,
+    );
     const invocation = buildBubblewrapInvocation({
       executable,
       request: {
@@ -682,10 +683,11 @@ export class LinuxBubblewrapShellSandboxRuntime implements ShellSandboxRuntime {
     config: ResolvedShellSandboxConfig,
   ): Promise<ShellStreamingResult> {
     const tmpRoot = await mkdtemp(join(tmpdir(), "sparkwright-sandbox-"));
-    const denyMounts = await prepareBubblewrapDenyMounts(tmpRoot, [
-      ...config.filesystem.denyRead,
-      ...config.filesystem.denyWrite,
-    ]);
+    const denyMounts = await prepareBubblewrapDenyMounts(
+      tmpRoot,
+      config.filesystem.denyRead,
+      config.filesystem.denyWrite,
+    );
     const { command, args } = buildBubblewrapInvocation({
       executable: this.executable,
       request,
@@ -825,6 +827,14 @@ export function buildBubblewrapInvocation(
     args.push("--ro-bind-try", mount.source, mount.path);
   }
 
+  // Keep the private /tmp parent read-only while preserving explicitly bound
+  // writable descendants. bubblewrap's remount is intentionally
+  // non-recursive, so scratch/workspace grants remain writable without making
+  // every unbound sibling below /tmp writable.
+  if (config.filesystem.tmp) {
+    args.push("--remount-ro", "/tmp");
+  }
+
   args.push("bash", "-c", options.request.command);
   return { command: executable, args };
 }
@@ -850,15 +860,19 @@ function minimalBubblewrapDenyMounts(
 
 async function prepareBubblewrapDenyMounts(
   tmpRoot: string,
-  paths: readonly string[],
+  denyRead: readonly string[],
+  denyWrite: readonly string[],
 ): Promise<BubblewrapDenyMount[]> {
   const emptyDir = join(tmpRoot, "deny-empty-dir");
   const emptyFile = join(tmpRoot, "deny-empty-file");
   await mkdir(emptyDir, { recursive: true });
   await writeFile(emptyFile, "");
   const mounts: BubblewrapDenyMount[] = [];
-  for (const path of uniquePaths(paths)) {
+  const existingRead = await existingPaths(denyRead);
+  const existingWrite = await existingPaths(denyWrite);
+  for (const path of uniquePaths([...existingRead, ...existingWrite])) {
     const stat = await lstat(path).catch(() => undefined);
+    if (!stat) continue;
     mounts.push({
       path,
       source: stat?.isDirectory() ? emptyDir : emptyFile,
@@ -866,6 +880,14 @@ async function prepareBubblewrapDenyMounts(
     });
   }
   return mounts;
+}
+
+async function existingPaths(paths: readonly string[]): Promise<string[]> {
+  const existing: string[] = [];
+  for (const path of uniquePaths(paths)) {
+    if (await lstat(path).catch(() => undefined)) existing.push(path);
+  }
+  return existing;
 }
 
 function heuristicBubblewrapDenyMounts(
