@@ -210,7 +210,7 @@ Does not own:
 ## Last Verified
 
 - Status: Verified
-- Date: 2026-07-15
+- Date: 2026-07-15T23:53:45+0800
 - Scope: Host principal isolation keeps existing handshake/IM/Workflow request
   types while rejecting identity spoof metadata, duplicate handshake, and new
   self-binding attempts that select a caller-provided session.

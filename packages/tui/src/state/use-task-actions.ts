@@ -8,6 +8,7 @@ import {
   summarizeTaskActivity,
   summarizeUnreadTaskActivity,
   type ActivityTab,
+  type UnreadTaskActivitySummary,
 } from "../lib/task-activity.js";
 import type { RunController } from "./run-controller.js";
 import type { LayerStack } from "./layer-stack.js";
@@ -27,9 +28,7 @@ export interface TaskActions {
   taskOutputs: Record<string, TaskOutputChunkSnapshot[]>;
   loadingTasks: boolean;
   taskActivity: TaskActivitySummary;
-  unreadTaskCount: number;
-  unreadFailedTaskCount: number;
-  unreadCancelledTaskCount: number;
+  unreadTasks: UnreadTaskActivitySummary;
   refreshTaskSnapshots: () => Promise<void>;
   handleActivityTabChange: (tab: ActivityTab) => void;
   stopActivityTask: (taskId: string) => void;
@@ -61,9 +60,6 @@ export function useTaskActions(deps: {
     taskActivity.tasks,
     lastSeenTaskSequence,
   );
-  const unreadTaskCount = unreadTasks.total;
-  const unreadFailedTaskCount = unreadTasks.failed;
-  const unreadCancelledTaskCount = unreadTasks.cancelled;
 
   async function loadSessionTaskRecords(): Promise<TaskRecordSnapshot[]> {
     const runIds = runIdsFromEvents(events);
@@ -160,9 +156,7 @@ export function useTaskActions(deps: {
     taskOutputs,
     loadingTasks,
     taskActivity,
-    unreadTaskCount,
-    unreadFailedTaskCount,
-    unreadCancelledTaskCount,
+    unreadTasks,
     refreshTaskSnapshots,
     handleActivityTabChange,
     stopActivityTask,

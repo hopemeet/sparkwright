@@ -1013,9 +1013,7 @@ function AppReady(
           permissionMode={effTuiPermissionMode}
           focused={focused}
           runningTaskCount={taskActions.taskActivity.running}
-          unreadTaskCount={taskActions.unreadTaskCount}
-          unreadFailedTaskCount={taskActions.unreadFailedTaskCount}
-          unreadCancelledTaskCount={taskActions.unreadCancelledTaskCount}
+          unreadTasks={taskActions.unreadTasks}
           waitingWorkflowCount={workflowActions.waitingWorkflowCount}
           streamingMax={streamingMax}
           sidebarWidth={sidebarWidth}

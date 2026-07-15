@@ -158,8 +158,7 @@ describe("StatusBar", () => {
         modelLabel="openai/gpt-5.4-mini"
         permissionMode="ask"
         focused={true}
-        unreadCompletedTasks={2}
-        unreadFailedTasks={1}
+        unreadTasks={{ total: 3, completed: 2, failed: 1, cancelled: 0 }}
       />,
     );
 
@@ -174,7 +173,7 @@ describe("StatusBar", () => {
         modelLabel="openai/gpt-5.4-mini"
         permissionMode="ask"
         focused={true}
-        unreadCancelledTasks={1}
+        unreadTasks={{ total: 1, completed: 0, failed: 0, cancelled: 1 }}
       />,
     );
 
@@ -199,7 +198,7 @@ describe("StatusBar", () => {
         modelLabel="anthropic/claude-sonnet-4-6"
         permissionMode="read-only"
         focused={true}
-        unreadCancelledTasks={1}
+        unreadTasks={{ total: 1, completed: 0, failed: 0, cancelled: 1 }}
       />,
       80,
     );

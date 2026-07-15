@@ -401,7 +401,7 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
 ## Last Verified
 
 - Status: Verified
-- Date: 2026-07-15T23:51:43+0800
+- Date: 2026-07-15T23:53:45+0800
 - Scope: replaced separate Profile admission, episode planning, and scoped
   discovery modules with one monotonic tool surface; removed redundant
   `run.started` visibility projection while preserving call-time gates.

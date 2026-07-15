@@ -2,6 +2,7 @@ import React from "react";
 import { Box, Text } from "ink";
 import type { StoreState } from "../state/event-store.js";
 import type { ValidationError } from "../lib/config.js";
+import type { UnreadTaskActivitySummary } from "../lib/task-activity.js";
 import { useTheme } from "../lib/theme-context.js";
 import { QueuedMessages } from "./queued-messages.js";
 import { Sidebar, UsageSummaryLine } from "./sidebar.js";
@@ -17,9 +18,7 @@ export function LiveFrame(props: {
   permissionMode: string;
   focused: boolean;
   runningTaskCount: number;
-  unreadTaskCount: number;
-  unreadFailedTaskCount: number;
-  unreadCancelledTaskCount: number;
+  unreadTasks: UnreadTaskActivitySummary;
   waitingWorkflowCount: number;
   streamingMax: number;
   sidebarWidth: number;
@@ -38,7 +37,7 @@ export function LiveFrame(props: {
     props.state.status === "running" ||
     props.state.status === "awaiting-approval" ||
     props.runningTaskCount > 0 ||
-    props.unreadTaskCount > 0;
+    props.unreadTasks.total > 0;
   const showWorkflowStatus = props.waitingWorkflowCount > 0;
 
   return (
@@ -49,14 +48,7 @@ export function LiveFrame(props: {
           modelLabel={props.modelLabel}
           permissionMode={props.permissionMode}
           focused={props.focused}
-          unreadCompletedTasks={Math.max(
-            0,
-            props.unreadTaskCount -
-              props.unreadFailedTaskCount -
-              props.unreadCancelledTaskCount,
-          )}
-          unreadFailedTasks={props.unreadFailedTaskCount}
-          unreadCancelledTasks={props.unreadCancelledTaskCount}
+          unreadTasks={props.unreadTasks}
           waitingWorkflowCount={props.waitingWorkflowCount}
         />
       ) : null}

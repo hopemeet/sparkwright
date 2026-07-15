@@ -91,7 +91,7 @@ session trace.jsonl
 ## Last Verified
 
 - Status: Read-only
-- Date: 2026-07-15
+- Date: 2026-07-15T23:53:45+0800
 - Scope: route check for TUI input P0-P2 work. App/input/keybinding changes,
   InputBox hook extraction, LiveFrame extraction, hidden help command discovery,
   slash command frecency, and removal of the dead standalone events layer do

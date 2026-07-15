@@ -202,6 +202,9 @@ Does not own:
 - `StatusBar` surfaces currently running background tasks with a Ctrl+O hint
   and an "untracked writes possible" disclosure when the `background_shell`
   boundary marker is present; historical `promoted_shell` markers still render.
+- Unread terminal task state crosses `useTaskActions` -> `LiveFrame` ->
+  `StatusBar` as one `UnreadTaskActivitySummary`; consumers do not reconstruct
+  completed counts from parallel total/failed/cancelled props.
 - Workflow job status in `StatusBar` is derived from durable workflow snapshots
   plus current TUI-owned waiting jobs. `/workflow stop` is limited to TUI-owned
   live job connections and matches durable workflow ids, active run ids,
@@ -345,14 +348,16 @@ Does not own:
 ## Last Verified
 
 - Status: Verified
-- Date: 2026-07-15
-- Scope: background task notifications keep `cancelled` separate from `failed`,
-  and narrow StatusBar rendering uses deliberate identity/task rows instead of
-  accidental Ink wrapping. Wide status ownership is unchanged.
+- Date: 2026-07-15T23:53:45+0800
+- Scope: background task notifications keep `cancelled` separate from `failed`
+  in one end-to-end unread summary, and narrow StatusBar rendering uses
+  deliberate identity/task rows instead of accidental Ink wrapping. Wide
+  status ownership is unchanged.
 - Read: task activity summarization, task-action unread projection, LiveFrame,
   StatusBar, focused render tests, and 80x24 PTY captures.
-- Tests: task activity/status rendering 7/7, TUI typecheck/build, and real PTY
-  verification on `session_mrlkn469h2ylznbk`.
+- Tests: task activity/status rendering 7/7, TUI 415/415, TUI typecheck/build,
+  and full `npm run release:check` passed; prior real PTY verification remains
+  `session_mrlkn469h2ylznbk`.
 
 - Status: Verified
 - Date: 2026-07-12T08:36:00+0800

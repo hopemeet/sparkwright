@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Box, Text, useStdout } from "ink";
 import type { StoreState } from "../state/event-store.js";
+import type { UnreadTaskActivitySummary } from "../lib/task-activity.js";
 import { useTheme } from "../lib/theme-context.js";
 import { Spinner } from "./spinner.js";
 import { summarizeTaskActivity } from "../lib/task-activity.js";
@@ -16,9 +17,7 @@ export function StatusBar(props: {
   modelLabel: string;
   permissionMode: string;
   focused: boolean;
-  unreadCompletedTasks?: number;
-  unreadFailedTasks?: number;
-  unreadCancelledTasks?: number;
+  unreadTasks?: UnreadTaskActivitySummary;
   waitingWorkflowCount?: number;
 }): React.ReactElement {
   const theme = useTheme();
@@ -52,9 +51,9 @@ export function StatusBar(props: {
   const cost = props.state.usage?.estimatedCostUsd;
   const isRunning = props.state.status === "running";
   const tasks = summarizeTaskActivity(props.state.events);
-  const unreadCompleted = props.unreadCompletedTasks ?? 0;
-  const unreadFailed = props.unreadFailedTasks ?? 0;
-  const unreadCancelled = props.unreadCancelledTasks ?? 0;
+  const unreadCompleted = props.unreadTasks?.completed ?? 0;
+  const unreadFailed = props.unreadTasks?.failed ?? 0;
+  const unreadCancelled = props.unreadTasks?.cancelled ?? 0;
   const taskParts = [
     tasks.running > 0 ? `${tasks.running} running` : "",
     unreadFailed > 0 ? `${unreadFailed} failed unread` : "",

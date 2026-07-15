@@ -8,9 +8,10 @@ StatusBar displayed `tasks: 1 failed unread`.
 ## Root Cause And Fix
 
 The unread projection intentionally counted all terminal tasks but folded both
-`failed` and `cancelled` into `unreadFailedTaskCount`. Task activity now returns
-separate completed, failed, and cancelled unread counts; the StatusBar renders
-cancelled with warning rather than error semantics.
+`failed` and `cancelled` into one failed count. Task activity now returns one
+summary containing separate completed, failed, and cancelled counts; that
+summary reaches the StatusBar without parallel props or subtraction-based
+reconstruction. Cancelled tasks render with warning rather than error semantics.
 
 ## Regression Evidence
 

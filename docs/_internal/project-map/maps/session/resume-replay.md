@@ -131,7 +131,7 @@ Future run in compacted session
 ## Last Verified
 
 - Status: Verified
-- Date: 2026-07-15T23:51:43+0800
+- Date: 2026-07-15T23:53:45+0800
 - Scope: fresh/session resume/Workflow continuation derive a new visibility
   snapshot from the same admitted definitions; old prompt/session context does
   not restore removed tools, and call-time gates remain authoritative.
