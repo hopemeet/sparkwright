@@ -14,6 +14,7 @@ See [../safety/workspace-writes.md](../safety/workspace-writes.md), [../safety/s
 - `packages/core/src/tool-orchestration.ts`
 - `packages/core/src/tools.ts`
 - `packages/host/src/tool-catalog.ts`
+- `packages/host/src/run-tool-plan.ts`
 - `packages/host/src/run-security-plan.ts`
 - `packages/host/src/tools.ts`
 - `packages/host/src/shell.ts`
@@ -23,16 +24,54 @@ See [../safety/workspace-writes.md](../safety/workspace-writes.md), [../safety/s
 ```txt
 model tool calls
   -> host tool catalog assembly
+  -> canonical Agent/Profile admission
+  -> Workflow narrowing + deferred/eager model surface
   -> CLI diagnostic catalog profile for direct-core/cron when not using a live host
-  -> validation/gating
+  -> alias canonicalization + validation + call-time availability
   -> tool.batch/tool.requested events
-  -> policy and approval where needed
+  -> policy, then approval where needed
   -> tool execution
   -> tool.completed/tool.failed
   -> model observation + trace summaries
 ```
 
 ## Contracts
+
+- Tool decisions are monotonic across separate concerns. Host catalog and
+  shared Agent Profile admission decide the candidate set; `resolveRunToolPlan()` may
+  only apply Workflow narrowing, scope an already-admitted `tool_search`, and
+  promote an already-admitted prompt-required schema; Core policy/approval then
+  decides each concrete execution. Deferred/eager is exposure only, approval
+  confirms an authorized call, and neither mechanism can recover a removed
+  tool.
+- Fresh runs, session/run resume, Workflow resume, and Todo continuations all
+  derive their episode tools through `workflowActorEpisodePlan()` and
+  `resolveRunToolPlan()`. Todo continuation is the declarative
+  `purpose:"todo_continuation"` input, not a separate tool-array helper.
+- Workflow-scoped discovery may replace an admitted parent `tool_search`, but
+  must not synthesize discovery when upstream config/Profile admission removed
+  it. Its descriptor source contains only the narrowed episode definitions.
+- Profile and dynamic-spawn discovery use the same scoped-search constructor.
+  Retaining the original discovery implementation after definitions are
+  removed would leak denied descriptors even if direct execution remained
+  blocked, so filtered catalogs must rebuild rather than retain it.
+- Core canonicalizes a legacy callable name through `ToolRegistry` before
+  Workflow hooks, repeat detection, policy, approval, and execution. A tool
+  whose dynamic `available()` probe is false is also rejected with
+  `TOOL_UNAVAILABLE` before policy or handler execution, even when a model
+  guesses its registered name. Public lifecycle events and approval details
+  retain the model-requested name for protocol compatibility and add
+  `canonicalToolName` when it differs.
+- `run.started.payload.toolPlan` records a post-admission episode visibility
+  snapshot: exposed, deferred-discoverable, deferred-undiscoverable, or omitted
+  by Workflow narrowing, plus prompt-required promotion and missing required
+  names. It does not claim dynamic availability, approval need, or execution
+  authorization. The eventual policy, `approval.*`, and `tool.*` events are the
+  final evidence.
+- Read-only policy treats absent side-effect governance conservatively. Known
+  wrappers must classify the strongest underlying capability they can invoke;
+  ACP and external-command delegates include `write` when granted read-write
+  workspace access. Approval follows policy and cannot widen read-only access.
 
 - Prepared-change tools may call `RuntimeContext.requestApproval()` during
   execute after persisting a final effect. This is not a second approval bus:
@@ -362,6 +401,40 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
 - TUI live rendering and transcript export now share presentation summaries, but trace/model-context result compaction is still a separate backend concern.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: independent review removed eight stale/duplicated plan fields,
+  consolidated five Profile-admission call sites and four scoped-discovery
+  consumers, made unknown read-only governance fail closed, and verified
+  approval cannot widen policy.
+- Read: end-to-end config/catalog -> Profile -> Workflow -> prompt ->
+  availability -> policy -> approval -> execution -> trace/resume chain.
+- Tests: Core 670/670, agent-runtime 255/255, Host 601/601, CLI 195/195, TUI
+  415/415, ACP/MCP 49/49, real-model 6/6, TUI PTY and Workflow two-run traces.
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: unified episode tool planning, non-restoring Workflow discovery,
+  pre-policy alias canonicalization, availability execution gate, Profile
+  physical admission, read-only diagnostics, and Todo prompt/tool consistency.
+- Read: Host catalog/Profile/episode assembly, Core registry/run gate,
+  agent-runtime Todo supervisor, CLI/TUI traces, and focused combination tests.
+- Tests: Host 597/597, Core 667/667, agent-runtime 255/255, TUI 415/415;
+  full `npm run release:check`; real mini coding,
+  read-only, deferred discovery, Todo continuation, resume, Profile, Workflow,
+  Skill, MCP, and TUI PTY runs. See
+  `docs/_internal/test-map/runs/2026-07-15-tool-decision-architecture-audit.md`.
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: Todo-supervisor continuations eagerly expose only the `todo_write`
+  definition that survived normal catalog and Workflow-node admission. Other
+  deferred tools and fresh main runs keep normal `tool_search` loading.
+- Read: Host episode catalog helpers, Core deferred loading, Todo continuation
+  prompt, and focused Host tests.
+- Tests: Host continuation loading 2/2, focused resume protocol, Host typecheck,
+  and real Sonnet continuation evidence.
 
 - Status: Verified
 - Date: 2026-07-14

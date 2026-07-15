@@ -9,13 +9,11 @@ import {
 } from "@sparkwright/agent-runtime";
 import {
   createRunId,
-  createToolSearchTool,
   type BackgroundTaskPolicy,
   type EventEmitter,
   type RunId,
   type RuntimeContext,
   type ToolDefinition,
-  type ToolDescriptor,
   type ToolOrigin,
 } from "@sparkwright/core";
 import type { SkillRoot } from "@sparkwright/skills";
@@ -57,6 +55,7 @@ import {
   withWorkspaceMutationLease,
   type WorkspaceLeaseCoordinator,
 } from "./workspace-lease-coordinator.js";
+import { createScopedToolSearch } from "./scoped-tool-search.js";
 
 const MAIN_TODO_MAX_WRITES_PER_RUN = 4;
 export const AGENT_TASK_CREATE_PAYLOAD_DESCRIPTION =
@@ -284,15 +283,10 @@ function withDeferredToolSearch(
     return entries;
   }
 
-  const deferredCatalog = entries.map((entry) => entry.definition);
   return [
     ...entries,
     catalogEntry(
-      createToolSearchTool({
-        source: {
-          listDescriptors: () => deferredCatalog.map(toolToDescriptor),
-        },
-      }),
+      createScopedToolSearch(entries.map((entry) => entry.definition)),
       "core",
     ),
   ];
@@ -574,29 +568,6 @@ function catalogEntry(
   source: HostToolCatalogSource,
 ): HostToolCatalogEntry {
   return { definition: applyBuiltinToolIdentity(definition, source), source };
-}
-
-function toolToDescriptor(tool: ToolDefinition): ToolDescriptor {
-  return {
-    name: tool.name,
-    description: tool.description,
-    inputSchema: tool.inputSchema,
-    outputSchema: tool.outputSchema,
-    canonicalName: tool.canonicalName,
-    legacyNames: tool.legacyNames,
-    defaultExposureTier: tool.defaultExposureTier,
-    relatedTools: tool.relatedTools,
-    requiresTool: tool.requiresTool,
-    timeoutMs: tool.timeoutMs,
-    loading: {
-      defer: tool.deferLoading,
-      alwaysLoad: tool.alwaysLoad,
-    },
-    resultSize: tool.resultSize,
-    resultPresentation: tool.resultPresentation,
-    policy: tool.policy,
-    governance: tool.governance,
-  };
 }
 
 function formatToolOrigin(origin: ToolOrigin): string {

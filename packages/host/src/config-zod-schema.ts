@@ -873,8 +873,10 @@ export const providersSchema = z
     'Named model providers. The reserved name "deterministic" is built in and must not be declared here.',
   );
 export const modelSchema = nonEmptyString
-  .regex(/^[^/]+(\/.+)?$/)
-  .describe('Active model in the form "provider/model".');
+  .regex(/^(?:deterministic|[^/\s]+\/[^\s]+)$/)
+  .describe(
+    'Active model in the form "provider/model", or the built-in "deterministic" model.',
+  );
 
 export const agentsConfigSchema = z
   .object({

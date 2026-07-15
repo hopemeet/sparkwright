@@ -417,6 +417,13 @@ export function createWorkspaceMutationPolicy(
       }
 
       const sideEffects = sideEffectsFromInput(input);
+      if (sideEffects.length === 0) {
+        return denyDecision(
+          input,
+          "Unclassified tools cannot execute in a read-only run.",
+          { reason: "missing_side_effect_classification" },
+        );
+      }
       if (!sideEffects.includes("write")) {
         return allowDecision(input, "Tool has no declared write side effect.");
       }

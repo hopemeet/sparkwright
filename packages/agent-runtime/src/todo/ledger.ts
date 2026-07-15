@@ -29,6 +29,26 @@ const DEFAULT_RESUMABLE_STOP_REASONS: ReadonlySet<RunStopReason> = new Set([
   "model_output_invalid",
 ]);
 
+/** Tool named by the built-in Todo reconciliation continuation prompt. */
+export const TODO_CONTINUATION_REQUIRED_TOOL = "todo_write";
+
+/**
+ * Whether a Core stop reason can hand control to a Todo episode supervisor.
+ * Workflow projections use the same predicate so they do not claim terminal
+ * ownership before the supervisor has decided whether to continue or hand off.
+ *
+ * @public
+ * @stability experimental v0.1
+ */
+export function isTodoResumableStopReason(
+  reason: string | undefined,
+): reason is RunStopReason {
+  return (
+    reason !== undefined &&
+    DEFAULT_RESUMABLE_STOP_REASONS.has(reason as RunStopReason)
+  );
+}
+
 export interface TodoTerminalAuditOptions {
   /**
    * Terminal result from the run that just ended.
@@ -75,7 +95,8 @@ export type TodoTerminalAuditDecision =
         | "unfinished_todo"
         | "non_resumable_stop_reason"
         | "continuation_limit"
-        | "stalled_without_progress";
+        | "stalled_without_progress"
+        | "required_tool_unavailable";
       message: string;
     };
 
@@ -272,9 +293,9 @@ export function auditTodoAfterTerminal(
     hasProgress;
   const resumable =
     options.result.stopReason !== undefined &&
-    ((options.resumableStopReasons ?? DEFAULT_RESUMABLE_STOP_REASONS).has(
-      options.result.stopReason,
-    ) ||
+    ((options.resumableStopReasons
+      ? options.resumableStopReasons.has(options.result.stopReason)
+      : isTodoResumableStopReason(options.result.stopReason)) ||
       finalAnswerNeedsReconciliation);
   if (!resumable) {
     return {
@@ -350,8 +371,7 @@ export function buildTodoContinuationPrompt(
   // an open item's work is actually done (and just unmarked) versus still
   // pending. Stated once, here — cadence ("when to touch the list") lives in the
   // durable todo_planning contract and is not restated.
-  const reconcileLine =
-    "First reconcile the list with what the conversation above already shows you finished: in a single todo_write, mark every item whose work is actually done as completed.";
+  const reconcileLine = `First reconcile the list with what the conversation above already shows you finished: in a single ${TODO_CONTINUATION_REQUIRED_TOOL}, mark every item whose work is actually done as completed.`;
   // The variable "what next" branch, derived mechanically from the ledger.
   const directiveLine =
     directive.kind === "next_open_item"

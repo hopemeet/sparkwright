@@ -19,6 +19,7 @@ export function LiveFrame(props: {
   runningTaskCount: number;
   unreadTaskCount: number;
   unreadFailedTaskCount: number;
+  unreadCancelledTaskCount: number;
   waitingWorkflowCount: number;
   streamingMax: number;
   sidebarWidth: number;
@@ -50,9 +51,12 @@ export function LiveFrame(props: {
           focused={props.focused}
           unreadCompletedTasks={Math.max(
             0,
-            props.unreadTaskCount - props.unreadFailedTaskCount,
+            props.unreadTaskCount -
+              props.unreadFailedTaskCount -
+              props.unreadCancelledTaskCount,
           )}
           unreadFailedTasks={props.unreadFailedTaskCount}
+          unreadCancelledTasks={props.unreadCancelledTaskCount}
           waitingWorkflowCount={props.waitingWorkflowCount}
         />
       ) : null}

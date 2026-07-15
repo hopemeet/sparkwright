@@ -131,6 +131,28 @@ Future run in compacted session
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-15
+- Scope: fresh/session resume/Workflow continuation derive a new visibility
+  snapshot from the same admitted definitions; old prompt/session context does
+  not restore removed tools, and call-time gates remain authoritative.
+- Read: Host session resume and Workflow episode chain, Todo continuation,
+  trace/session stores, and real resumed session `session_mrlx0rjg30mzf6z4`.
+- Tests: CLI resume/full suites, Host Workflow two-run integration, trace
+  verify and session check passed.
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: fresh, run-resume, and workflow-resume Todo continuation builders now
+  align the reconciliation prompt with an immediately callable admitted
+  `todo_write`. Session identity, replay context, and configured tool narrowing
+  are unchanged.
+- Read: Host run start/resume/workflow-resume episode builders, Todo supervisor,
+  session trace `session_mrlkn469h2ylznbk`, and focused protocol tests.
+- Tests: Host continuation loading 2/2, resumed-Todo protocol 1/1, Host
+  typecheck, trace verify/session check, and real same-session background task
+  resume.
+
+- Status: Verified
 - Date: 2026-07-14
 - Scope: corrected IM reconnect identity to use stable authenticated credential
   context and Host-issued new-binding sessions while preserving bounded

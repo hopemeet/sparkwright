@@ -43,6 +43,19 @@
 
 ## Covered
 
+- 2026-07-15 tool-decision audit physically applied main/child Profile allow
+  and deny after upstream catalog admission, normalized exact built-in aliases,
+  and retained MCP wildcard matching. A real restricted main Profile exposed
+  only `read`/`grep`; session `session_mrlmpwmud4y4ghev` used one read with no
+  failures, approvals, or writes, and its trace tool plan contained only those
+  two admitted tools.
+- 2026-07-15 independent follow-up unified main, configured child, parallel
+  delegate, and dynamic-spawn Profile admission. A failure-first test proved
+  that merely retaining upstream `tool_search` leaked denied deferred
+  descriptors; all filtered paths now rebuild discovery over retained tools.
+  Real session `session_mrlx0rjs943j3rgy` confirmed the denied descriptor was
+  absent from both search results.
+
 - Real `openai/gpt-5.6-terra` foreground-only governance QA verified a denied
   explicit background shell can recover, `task_create(mode:"background")` is
   forced to `mode:"foreground"` with no promotion, and a multi-second
@@ -274,6 +287,22 @@
   model-visible body text. Focused agent-runtime/host tests, typecheck, builds,
   and `check:dist-fresh` passed. See
   [../failures/task-create-agent-low-signal-result-feedback.md](../failures/task-create-agent-low-signal-result-feedback.md).
+
+- 2026-07-15 root fix after real mini Markdown Agent authoring exposed a
+  callability gap:
+  `create_agent` accepted and persisted `model: "default"`, rediscovery reported
+  the Agent as callable, but both real and scripted `delegate_agent` calls
+  failed because model refs must be `provider/model`. Removing only that field
+  restored parent-model inheritance and produced a clean two-run child trace.
+  Shared model-ref syntax, actual layered-config resolution before write,
+  explicit authoring inheritance aliases that normalize to omission, config
+  validation, and fail-closed Markdown discovery now cover the root invariant.
+  Focused Host suites passed. Keep the corrected create/delegate flow in the
+  real Agent rotation; see
+  [../runs/2026-07-15-real-model-broad-code-qa.md](../runs/2026-07-15-real-model-broad-code-qa.md).
+  Post-fix real mini create `session_mrlgk00tz82eptt0` and delegated child
+  `session_mrlgk7y8p7t3jmxo` both passed; the latter contained 2 completed runs,
+  one child read, correct `main` / `mini_reviewer` attribution, and no failures.
 
 ## Weak Or Untested
 

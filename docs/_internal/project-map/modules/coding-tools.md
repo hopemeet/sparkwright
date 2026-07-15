@@ -86,6 +86,11 @@ Does not own:
   string entries before normalization, so model-produced `include:[""]` does
   not collapse a search into a match-nothing filter. Required glob patterns
   still reject empty strings.
+- Absolute discovery/search inputs are translated back to workspace-relative
+  paths by canonical realpath identity when lexical containment fails. This
+  accepts equivalent aliases such as macOS `/tmp` and `/private/tmp`, including
+  glob or not-yet-existing suffixes, while `WorkspaceWalker` retains the final
+  realpath containment check and rejects aliases that resolve outside the root.
 - Tool request previews belong on the concrete `ToolDefinition.previewArgs()`
   next to the argument schema. Read/search/write coding tools, shell, skills,
   and dynamic `spawn_agent` provide one-line previews that the core run loop
@@ -131,6 +136,20 @@ Does not own:
   smokes should use `write`, `edit_anchored_text`, or `edit`.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-15T10:29:00+0800
+- Scope: discovery path normalization now recognizes symlink/canonical aliases
+  of the workspace root without weakening the walker containment boundary.
+- Read: `packages/coding-tools/src/index.ts`,
+  `packages/coding-tools/test/index.test.ts`,
+  `docs/_internal/project-map/modules/coding-tools.md`.
+- Tests: coding-tools build and 37/37 focused tests passed; the new portable
+  symlink-alias case covers `validateInput` plus absolute glob, grep, and
+  `list_dir` inputs. Real mini session `session_mrlgnkbp0mufyzhu` passed the
+  original `/tmp` absolute glob through canonical `/private/tmp`, followed by
+  one read; trace report/verify/session check were clean. Full
+  `npm run release:check` passed.
 
 - Status: Verified
 - Date: 2026-07-14T14:35:00+0800

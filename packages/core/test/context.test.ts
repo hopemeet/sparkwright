@@ -472,7 +472,7 @@ describe("DefaultPromptBuilder", () => {
     const messages = await builder.build({
       run: createRunRecord(),
       step: 1,
-      tools: [],
+      tools: [{ ...toolDescriptor(), name: "skill_load" }],
       context: [
         skillIndexContext([
           {
@@ -510,6 +510,31 @@ describe("DefaultPromptBuilder", () => {
     expect(skillIndex?.content).not.toContain("contentHash");
     expect(selected?.content).toContain("current working note");
     expect(selected?.content).not.toContain("spark-tester");
+  });
+
+  it("does not require skill_load when that tool is absent from the model surface", async () => {
+    const builder = new DefaultPromptBuilder();
+    const messages = await builder.build({
+      run: createRunRecord(),
+      step: 1,
+      tools: [],
+      context: [
+        skillIndexContext([
+          {
+            name: "spark-tester",
+            description: "Run focused SparkWright test workflows.",
+            sourcePath: "/repo/skills/spark-tester/SKILL.md",
+            contentHash: "hash-test",
+          },
+        ]),
+      ],
+    });
+
+    expect(
+      messages.find(
+        (message) => message.metadata?.sectionName === "skill_index",
+      ),
+    ).toBeUndefined();
   });
 
   it("projects model-visible context sources without host absolute paths", async () => {

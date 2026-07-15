@@ -1015,6 +1015,7 @@ function AppReady(
           runningTaskCount={taskActions.taskActivity.running}
           unreadTaskCount={taskActions.unreadTaskCount}
           unreadFailedTaskCount={taskActions.unreadFailedTaskCount}
+          unreadCancelledTaskCount={taskActions.unreadCancelledTaskCount}
           waitingWorkflowCount={workflowActions.waitingWorkflowCount}
           streamingMax={streamingMax}
           sidebarWidth={sidebarWidth}

@@ -1346,6 +1346,11 @@ export function createAgentTool(
       risk: "safe",
       requiresApproval: options.requiresApproval === true,
     },
+    governance: {
+      origin: { kind: "local", name: "@sparkwright/agent-runtime" },
+      sideEffects: ["external"],
+      idempotency: "conditional",
+    },
     ...(options.isConcurrencySafe
       ? { isConcurrencySafe: options.isConcurrencySafe }
       : {}),

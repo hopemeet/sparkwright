@@ -18,6 +18,7 @@ export function StatusBar(props: {
   focused: boolean;
   unreadCompletedTasks?: number;
   unreadFailedTasks?: number;
+  unreadCancelledTasks?: number;
   waitingWorkflowCount?: number;
 }): React.ReactElement {
   const theme = useTheme();
@@ -53,18 +54,17 @@ export function StatusBar(props: {
   const tasks = summarizeTaskActivity(props.state.events);
   const unreadCompleted = props.unreadCompletedTasks ?? 0;
   const unreadFailed = props.unreadFailedTasks ?? 0;
+  const unreadCancelled = props.unreadCancelledTasks ?? 0;
   const taskParts = [
     tasks.running > 0 ? `${tasks.running} running` : "",
     unreadFailed > 0 ? `${unreadFailed} failed unread` : "",
+    unreadCancelled > 0 ? `${unreadCancelled} cancelled unread` : "",
     unreadCompleted > 0 ? `${unreadCompleted} completed unread` : "",
     tasks.failed > 0 && unreadFailed === 0 ? `${tasks.failed} failed` : "",
   ].filter(Boolean);
   const waitingWorkflowCount = props.waitingWorkflowCount ?? 0;
-  // Single compact line pinned above the input. Only the fields you actually
-  // watch while working live here; static context (cwd, session id) is shown
-  // once in the welcome area and via /config, so it doesn't squat on-screen.
-  return (
-    <Box paddingX={1}>
+  const statusNode = (
+    <>
       {isRunning ? (
         <>
           <Spinner color={statusColor} />
@@ -73,38 +73,79 @@ export function StatusBar(props: {
       ) : (
         <Text color={statusColor}>● {statusLabel}</Text>
       )}
-      {props.state.stopReason ? (
+      {props.state.stopReason &&
+      (!compact || props.state.stopReason !== "final_answer") ? (
         <Text color={theme.muted}> ({props.state.stopReason})</Text>
       ) : null}
       {elapsedMs !== null ? (
         <Text color={theme.muted}> · {formatDuration(elapsedMs)}</Text>
       ) : null}
-      {total ? <Text color={theme.muted}> · {formatTokens(total)}</Text> : null}
-      {typeof cost === "number" && cost > 0 ? (
+      {!compact && total ? (
+        <Text color={theme.muted}> · {formatTokens(total)}</Text>
+      ) : null}
+      {!compact && typeof cost === "number" && cost > 0 ? (
         <Text color={theme.muted}> · ${cost.toFixed(cost < 1 ? 4 : 2)}</Text>
       ) : null}
       {!props.focused ? <Text color={theme.muted}> · ⊙ blurred</Text> : null}
-      {taskParts.length > 0 ? (
-        <Text
-          color={
-            tasks.failed > 0 || unreadFailed > 0 ? theme.error : theme.muted
-          }
-        >
-          {" "}
-          · tasks: {taskParts.join(", ")}
-          {tasks.untrackedWritePossible ? " · untracked writes possible" : ""}
-          {" · ctrl+o"}
-        </Text>
-      ) : null}
-      {waitingWorkflowCount > 0 ? (
-        <Text color={theme.statusAwaiting}>
-          {" "}
-          · workflows: {waitingWorkflowCount} waiting · /workflow
-        </Text>
-      ) : null}
-      <Box flexGrow={1} />
+    </>
+  );
+  const taskNode =
+    taskParts.length > 0 ? (
+      <Text
+        color={
+          tasks.failed > 0 || unreadFailed > 0
+            ? theme.error
+            : unreadCancelled > 0
+              ? theme.warning
+              : theme.muted
+        }
+      >
+        {compact ? "tasks: " : " · tasks: "}
+        {taskParts.join(", ")}
+        {tasks.untrackedWritePossible ? " · untracked writes possible" : ""}
+        {" · ctrl+o"}
+      </Text>
+    ) : null;
+  const workflowNode =
+    waitingWorkflowCount > 0 ? (
+      <Text color={theme.statusAwaiting}>
+        {compact ? "workflows: " : " · workflows: "}
+        {waitingWorkflowCount} waiting · /workflow
+      </Text>
+    ) : null;
+  const identityNode = (
+    <>
       <Text color={theme.accent}>{modelLabel}</Text>
       <Text color={theme.muted}> · {props.permissionMode}</Text>
+    </>
+  );
+  // Single compact line pinned above the input. Only the fields you actually
+  // watch while working live here; static context (cwd, session id) is shown
+  // once in the welcome area and via /config, so it doesn't squat on-screen.
+  if (compact) {
+    return (
+      <Box flexDirection="column">
+        <Box paddingX={1}>
+          {statusNode}
+          <Box flexGrow={1} />
+          {identityNode}
+        </Box>
+        {taskNode || workflowNode ? (
+          <Box paddingX={1} gap={2}>
+            {taskNode}
+            {workflowNode}
+          </Box>
+        ) : null}
+      </Box>
+    );
+  }
+  return (
+    <Box paddingX={1}>
+      {statusNode}
+      {taskNode}
+      {workflowNode}
+      <Box flexGrow={1} />
+      {identityNode}
     </Box>
   );
 }

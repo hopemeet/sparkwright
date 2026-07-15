@@ -31,6 +31,13 @@
 
 ## Covered
 
+- 2026-07-15 real Sonnet same-session resume started `npm run dev` exactly once
+  as an explicit background service, observed `READY inventory-heartbeat`, and
+  stopped the same `task_mrlks7qe33taeoxt`. Trace recorded `task.cancelled`
+  with exit 0 and `STOPPED` output, no managed file writes, and passing
+  trace/session consistency. `UNTRACKED_WRITE_CAPABLE_BOUNDARY` remained the
+  expected safety advisory.
+
 - Shell tool construction requires `foregroundTimeoutMs`.
 - `foregroundTimeoutMs` is the sole per-call foreground budget field; legacy
   `timeoutMs` is rejected by the closed input schema.

@@ -60,7 +60,7 @@ describe("parseAgentProfileFile", () => {
     expect(profile.id).toBe("triage");
     expect(profile.name).toBe("Triage");
     expect(profile.use).toEqual(["workspace.read"]);
-    expect(profile.allowedTools).toEqual(["read_file", "glob"]);
+    expect(profile.allowedTools).toEqual(["read", "glob"]);
     expect(profile.maxSteps).toBe(5);
     expect(profile.mode).toBe("child");
     expect(profile.model).toBe("openai/m");
@@ -123,8 +123,8 @@ describe("parseAgentProfileFile", () => {
       ].join("\n"),
     );
 
-    expect(profile.allowedTools).toEqual(["read_file", "grep"]);
-    expect(profile.deniedTools).toEqual(["shell"]);
+    expect(profile.allowedTools).toEqual(["read", "grep"]);
+    expect(profile.deniedTools).toEqual(["bash"]);
     expect(profile.delegateTool).toEqual({
       toolName: "delegate_reviewer",
       requiresApproval: false,
@@ -428,6 +428,25 @@ describe("loadLayeredAgentReport", () => {
         id: "security",
         name: "Security Review",
         layer: "project",
+      }),
+    ]);
+  });
+
+  it("fails closed and reports a markdown profile with an invalid model reference", async () => {
+    const root = await tempWorkspace();
+    await writeAgent(
+      root,
+      "reviewer",
+      "---\nmodel: default\n---\nreview prompt",
+    );
+
+    const report = await loadLayeredAgentReport(root, undefined, {});
+
+    expect(report.profiles).toEqual([]);
+    expect(report.errors).toEqual([
+      expect.objectContaining({
+        source: expect.stringContaining("reviewer.md"),
+        message: expect.stringContaining('model "default" must be in'),
       }),
     ]);
   });

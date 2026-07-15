@@ -29,11 +29,13 @@ export type {
   TodoTerminalAuditOptions,
 } from "./ledger.js";
 export {
+  TODO_CONTINUATION_REQUIRED_TOOL,
   auditTodoAfterTerminal,
   buildTodoContinuationPrompt,
   computeTodoDirective,
   hasExternalProgressEvidence,
   hasUnfinishedTodo,
+  isTodoResumableStopReason,
   readTodoLedger,
   renderTodoLedgerContext,
   summarizeTodoLedger,

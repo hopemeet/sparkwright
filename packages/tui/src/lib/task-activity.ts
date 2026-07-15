@@ -46,6 +46,13 @@ export interface TaskActivitySummary {
   untrackedWritePossible: boolean;
 }
 
+export interface UnreadTaskActivitySummary {
+  total: number;
+  completed: number;
+  failed: number;
+  cancelled: number;
+}
+
 const MAX_TAIL_LINES = 80;
 
 export function summarizeTaskActivity(
@@ -127,6 +134,22 @@ export function summarizeTaskActivity(
     failed: tasks.filter((task) => task.status === "failed").length,
     cancelled: tasks.filter((task) => task.status === "cancelled").length,
     untrackedWritePossible: tasks.some((task) => task.untrackedWritePossible),
+  };
+}
+
+export function summarizeUnreadTaskActivity(
+  tasks: readonly TaskActivityItem[],
+  lastSeenSequence: number,
+): UnreadTaskActivitySummary {
+  const unread = tasks.filter(
+    (task) =>
+      task.lastSequence > lastSeenSequence && terminalStatus(task.status),
+  );
+  return {
+    total: unread.length,
+    completed: unread.filter((task) => task.status === "completed").length,
+    failed: unread.filter((task) => task.status === "failed").length,
+    cancelled: unread.filter((task) => task.status === "cancelled").length,
   };
 }
 

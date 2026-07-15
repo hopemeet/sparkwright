@@ -30,6 +30,17 @@
 
 ## Covered
 
+- 2026-07-15 real 80x24 PTY QA on a resumed coding/background-task session
+  exposed two related presentation defects: a normal `task.cancelled` was
+  labelled `failed unread`, and the one-line compact StatusBar split status,
+  model, and permission fragments across rows. Unread terminal counts now keep
+  cancelled separate from failed, while narrow mode owns deliberate identity
+  and task rows. Post-fix PTY showed `● idle ... claude-sonnet-4-6 · read-only`
+  and `tasks: 1 cancelled unread ...` as stable rows. See
+  [../failures/tui-cancelled-task-failed-unread.md](../failures/tui-cancelled-task-failed-unread.md)
+  and
+  [../failures/tui-narrow-status-bar-wrap.md](../failures/tui-narrow-status-bar-wrap.md).
+
 - Event stream owns the committed first-screen header.
 - Status bar owns changing run state and should not repeat the static brand
   header.

@@ -1,5 +1,13 @@
+import { realpathSync } from "node:fs";
 import { opendir, realpath, stat } from "node:fs/promises";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  relative,
+  resolve,
+  sep,
+} from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   defineTool,
@@ -927,7 +935,16 @@ export function createGrepTextTool(
         .join(" ");
     },
     async validateInput(args, ctx) {
-      const input = normalizeGrepTextInput(args, options, undefined);
+      const root =
+        ctx.workspace || options.workspaceRoot
+          ? await resolveWorkspaceRoot(ctx, options).catch(() => undefined)
+          : undefined;
+      let input: Required<GrepTextInput>;
+      try {
+        input = normalizeGrepTextInput(args, options, root);
+      } catch (cause) {
+        return validationFailureFromCause(cause, "grep");
+      }
       if (input.regex) {
         try {
           new RegExp(input.pattern);
@@ -941,18 +958,6 @@ export function createGrepTextTool(
                 : "Invalid grep regex pattern.",
             metadata: { reason: "invalid_regex", pattern: input.pattern },
           };
-        }
-      }
-      if (ctx.workspace || options.workspaceRoot) {
-        const root = await resolveWorkspaceRoot(ctx, options).catch(
-          () => undefined,
-        );
-        if (root) {
-          try {
-            normalizeGrepTextInput(args, options, root);
-          } catch (cause) {
-            return validationFailureFromCause(cause, "grep");
-          }
         }
       }
       return { ok: true };
@@ -1061,11 +1066,14 @@ export function createGlobPathsTool(
       return patterns.length > 0 ? patterns.slice(0, 3).join(", ") : undefined;
     },
     async validateInput(args, ctx) {
-      const input = normalizeGlobPathsInput(args, options, undefined);
-      const emptyPattern = input.patterns.find(
-        (pattern) => pattern.trim().length === 0,
-      );
-      if (emptyPattern !== undefined) {
+      const rawPatterns =
+        typeof args?.patterns === "string"
+          ? [args.patterns]
+          : Array.isArray(args?.patterns) &&
+              args.patterns.every((pattern) => typeof pattern === "string")
+            ? args.patterns
+            : undefined;
+      if (rawPatterns?.some((pattern) => pattern.trim().length === 0)) {
         return {
           ok: false,
           code: "TOOL_ARGUMENTS_INVALID",
@@ -1073,17 +1081,14 @@ export function createGlobPathsTool(
           metadata: { reason: "empty_pattern" },
         };
       }
-      if (ctx.workspace || options.workspaceRoot) {
-        const root = await resolveWorkspaceRoot(ctx, options).catch(
-          () => undefined,
-        );
-        if (root) {
-          try {
-            normalizeGlobPathsInput(args, options, root);
-          } catch (cause) {
-            return validationFailureFromCause(cause, "glob");
-          }
-        }
+      const root =
+        ctx.workspace || options.workspaceRoot
+          ? await resolveWorkspaceRoot(ctx, options).catch(() => undefined)
+          : undefined;
+      try {
+        normalizeGlobPathsInput(args, options, root);
+      } catch (cause) {
+        return validationFailureFromCause(cause, "glob");
       }
       return { ok: true };
     },
@@ -1712,11 +1717,15 @@ function toolArgumentsInvalid(message: string): Error & { code: string } {
 function normalizeWorkspacePath(path: string, workspaceRoot?: string): string {
   const decoded = normalizeFileUrlPath(path);
   if (workspaceRoot && (isAbsolute(decoded) || /^[A-Za-z]:/.test(decoded))) {
-    const rel = relative(workspaceRoot, decoded);
-    if (
-      rel === "" ||
-      (!rel.startsWith("..") && rel !== ".." && !isAbsolute(rel))
-    ) {
+    let rel = relative(workspaceRoot, decoded);
+    if (!isContainedRelativePath(rel)) {
+      const canonicalRoot = canonicalPathAllowMissing(workspaceRoot);
+      const canonicalInput = canonicalPathAllowMissing(decoded);
+      if (canonicalRoot && canonicalInput) {
+        rel = relative(canonicalRoot, canonicalInput);
+      }
+    }
+    if (isContainedRelativePath(rel)) {
       return normalizeWorkspacePath(rel || ".");
     }
   }
@@ -1738,6 +1747,34 @@ function normalizeWorkspacePath(path: string, workspaceRoot?: string): string {
     output.push(part);
   }
   return output.length > 0 ? output.join("/") : ".";
+}
+
+function isContainedRelativePath(path: string): boolean {
+  return (
+    path === "" ||
+    (!path.startsWith("..") && path !== ".." && !isAbsolute(path))
+  );
+}
+
+/**
+ * Resolve symlinked aliases even when the final suffix is a glob or does not
+ * exist yet. This is used only to translate an absolute model-supplied path
+ * back to a workspace-relative path; WorkspaceWalker still performs its own
+ * realpath containment checks before reading anything.
+ */
+function canonicalPathAllowMissing(path: string): string | undefined {
+  let cursor = resolve(path);
+  const suffix: string[] = [];
+  while (true) {
+    try {
+      return resolve(realpathSync(cursor), ...suffix.reverse());
+    } catch {
+      const parent = dirname(cursor);
+      if (parent === cursor) return undefined;
+      suffix.push(basename(cursor));
+      cursor = parent;
+    }
+  }
 }
 
 function normalizeFileUrlPath(path: string): string {

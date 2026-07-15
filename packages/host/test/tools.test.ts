@@ -186,6 +186,58 @@ describe("host tools", () => {
     ]);
   });
 
+  it("normalizes Markdown Agent inheritance aliases without persisting model", async () => {
+    const ctx = await createWorkspace({});
+    const tool = createMarkdownAgentManagerTool(ctx.workspaceRoot);
+
+    await expect(
+      tool.execute(
+        {
+          action: "create",
+          name: "reviewer",
+          prompt: "Review changes.",
+          model: "default",
+        },
+        ctx,
+      ),
+    ).resolves.toMatchObject({
+      profile: { name: "reviewer" },
+      semanticSummary: { model: undefined },
+    });
+    const document = await readFile(
+      join(ctx.workspaceRoot, ".sparkwright", "agents", "reviewer.md"),
+      "utf8",
+    );
+    expect(document).not.toContain("\nmodel:");
+  });
+
+  it("rejects a syntactically valid but unconfigured Markdown Agent model before writing", async () => {
+    const ctx = await createWorkspace({});
+    const tool = createMarkdownAgentManagerTool(ctx.workspaceRoot);
+
+    await expect(
+      tool.execute(
+        {
+          action: "create",
+          name: "reviewer",
+          prompt: "Review changes.",
+          model: "inherit/not-a-real-model",
+        },
+        ctx,
+      ),
+    ).rejects.toMatchObject({
+      code: "TOOL_ARGUMENTS_INVALID",
+      message: expect.stringContaining("Unknown provider"),
+    });
+    await expect(
+      readFile(
+        join(ctx.workspaceRoot, ".sparkwright", "agents", "reviewer.md"),
+        "utf8",
+      ),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    expect(ctx.capabilityMutations).toEqual([]);
+  });
+
   it("fails post-write validation when another Markdown file owns the same logical id", async () => {
     const ctx = await createWorkspace({
       ".sparkwright/agents/a/owner.md":

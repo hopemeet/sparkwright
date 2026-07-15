@@ -424,6 +424,16 @@ export class ToolRegistry {
     return this.tools.get(name) ?? this.tools.get(this.aliases.get(name) ?? "");
   }
 
+  /**
+   * Resolve a callable legacy name to the registered tool name. Unknown names
+   * are returned unchanged so callers can report the original lookup failure.
+   * Policy and workflow layers should consume this value instead of each
+   * implementing their own alias table.
+   */
+  canonicalName(name: string): string {
+    return this.aliases.get(name) ?? name;
+  }
+
   list(): ToolDefinition[] {
     return [...this.tools.values()];
   }

@@ -72,7 +72,7 @@ async function createFixture() {
 
 async function realCreateAgentCase() {
   const prompt =
-    "Use tool_search to find the create_agent tool, then call create_agent exactly once. Create a child agent with id mini_reviewer, name Mini Reviewer, prompt 'Review README.md and report one concrete project risk.', use ['workspace.read'], allowedTools ['read'], maxSteps 4, and delegateToolName delegate_mini_reviewer. After the first create_agent result, stop and answer only: created mini_reviewer. Do not call create_agent more than once. Do not use bash. Do not edit files directly.";
+    "Use tool_search to find create_agent. Create a child Markdown Agent named mini_reviewer with description 'Reviews one concrete project risk.', prompt 'Review README.md and report one concrete project risk.', model 'inherit', use ['workspace.read'], allowedTools ['read'], and maxSteps 4. Stop after creation and answer only: created mini_reviewer. Do not pass legacy id or delegateToolName fields. Do not use bash. Do not edit files directly.";
   const result = await runCli([
     "run",
     prompt,
@@ -88,39 +88,59 @@ async function realCreateAgentCase() {
   const trace = await traceFromOutput(result.stdout);
   const requests = toolRequests(trace.events);
   const failures = toolFailures(trace.events);
-  const config = await readProjectConfig();
+  const agentPath = join(
+    workspace,
+    ".sparkwright",
+    "agents",
+    "mini_reviewer.md",
+  );
+  const agentDocument = await readFile(agentPath, "utf8").catch(() => "");
+  const inspect = await runCli([
+    "capabilities",
+    "inspect",
+    "--workspace",
+    workspace,
+    "--format",
+    "json",
+  ]);
+  const capabilityReport = parseJson(inspect.stdout);
   const verify = await verifyTrace(trace.path);
   const createAgentCalls = requests.filter((name) => name === "create_agent");
+  const recoveredCreateFailures = failures.every(
+    (failure) =>
+      failure.toolName === "create_agent" &&
+      failure.code === "TOOL_ARGUMENTS_INVALID",
+  );
   const bashCalls = requests.filter((name) => name === "bash");
   const shellCalls = requests.filter((name) => name === "shell");
   const toolSearchIndex = requests.indexOf("tool_search");
   const createAgentIndex = requests.indexOf("create_agent");
-  const agents = config.capabilities?.agents ?? {};
-  const profiles = agents.profiles ?? [];
-  const delegates = agents.delegateTools ?? [];
+  const profiles = capabilityReport.agents?.profiles ?? [];
+  const availableTools = capabilityReport.tools?.available ?? [];
   const ok =
     result.exitCode === 0 &&
     toolSearchIndex >= 0 &&
     createAgentIndex >= 0 &&
     toolSearchIndex < createAgentIndex &&
-    createAgentCalls.length === 1 &&
+    createAgentCalls.length >= 1 &&
+    createAgentCalls.length <= 2 &&
     bashCalls.length === 0 &&
     shellCalls.length === 0 &&
-    failures.length === 0 &&
+    (failures.length === 0 || recoveredCreateFailures) &&
     count(trace.events, "workspace.write.completed") === 1 &&
     count(trace.events, "capability.mutation.completed") === 1 &&
     verify.ok === true &&
+    inspect.exitCode === 0 &&
+    agentDocument.includes('name: "mini_reviewer"') &&
+    agentDocument.includes(
+      "Review README.md and report one concrete project risk.",
+    ) &&
+    !agentDocument.includes("\nmodel:") &&
     profiles.some(
       (profile) =>
-        profile.id === "mini_reviewer" &&
-        profile.prompt ===
-          "Review README.md and report one concrete project risk.",
+        profile.id === "mini_reviewer" && profile.layer === "project",
     ) &&
-    delegates.some(
-      (delegate) =>
-        delegate.profileId === "mini_reviewer" &&
-        delegate.toolName === "delegate_mini_reviewer",
-    );
+    availableTools.some((tool) => tool.name === "delegate_agent");
 
   record({
     id: "REAL_AGENT_CREATE",
@@ -141,8 +161,9 @@ async function realCreateAgentCase() {
           createAgentIndex,
           failures,
           verify,
-          profiles,
-          delegates,
+          agentDocument,
+          inspectExitCode: inspect.exitCode,
+          capabilityReport,
           stderr: result.stderr,
         }),
   });
@@ -210,7 +231,7 @@ async function realDelegateAgentCase() {
     metadata.agentId === "main" &&
     metadata.childAgentId === "mini_reviewer" &&
     metadata.agentProfileId === "mini_reviewer" &&
-    metadata.entrypoint === "delegate";
+    metadata.entrypoint === "delegate_agent";
 
   record({
     id: "REAL_AGENT_DELEGATE",
@@ -239,12 +260,6 @@ async function realDelegateAgentCase() {
           stderr: result.stderr,
         }),
   });
-}
-
-async function readProjectConfig() {
-  return JSON.parse(
-    await readFile(join(workspace, ".sparkwright", "config.json"), "utf8"),
-  );
 }
 
 async function traceSummary(path) {

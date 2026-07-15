@@ -1250,6 +1250,123 @@ describe("workflow assets", () => {
     }
   });
 
+  it("continues a bounded workflow episode without letting RunEnd claim terminal ownership", async () => {
+    const workspace = await tempWorkspace();
+    const sessionId = "sess_workflow_todo_continuation";
+    await writeFile(join(workspace, "README.md"), "# Demo\n", "utf8");
+    await writeWorkflow(
+      workspace,
+      "todo-continuation",
+      [
+        "---",
+        "nodes:",
+        "  - id: main",
+        "    execute: model",
+        "    tools: [read, todo_write]",
+        "    runBudget:",
+        "      maxToolCalls: 2",
+        "---",
+        "## main",
+        "Finish the tracked review.",
+      ].join("\n"),
+    );
+    const previousScript = process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON;
+    process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON = JSON.stringify([
+      {
+        toolCalls: [
+          {
+            toolName: "tool_search",
+            arguments: { query: "select:todo_write" },
+          },
+        ],
+      },
+      {
+        toolCalls: [
+          {
+            toolName: "todo_write",
+            arguments: {
+              items: [{ title: "review", status: "pending" }],
+            },
+          },
+        ],
+      },
+      {
+        toolCalls: [{ toolName: "read", arguments: { path: "README.md" } }],
+      },
+      {
+        toolCalls: [
+          {
+            toolName: "todo_write",
+            arguments: {
+              items: [{ title: "review", status: "completed" }],
+            },
+          },
+        ],
+      },
+      { message: "done" },
+    ]);
+    const events: HostEvent[] = [];
+    const runtime = new HostRuntime({
+      workspaceRoot: workspace,
+      defaultModel: "scripted",
+      emit: (event) => events.push(event),
+    });
+
+    try {
+      const started = await runtime.startRun({
+        goal: "run bounded todo continuation workflow",
+        sessionId,
+        workflow: "todo-continuation",
+      });
+
+      expect(started).toMatchObject({ ok: true });
+      const terminal = await waitForHostEvent(
+        events,
+        (event) => event.kind === "run.completed",
+      );
+      expect(terminal.payload).toMatchObject({
+        state: "completed",
+        stopReason: "final_answer",
+      });
+      expect(
+        events.filter((event) => event.kind === "run.continuation"),
+      ).toHaveLength(1);
+      const startedPlans = events
+        .map(runEventPayload)
+        .filter((event) => event?.type === "run.started")
+        .map((event) => event?.payload as Record<string, unknown>);
+      expect(startedPlans).toHaveLength(2);
+      expect(startedPlans[1]).toMatchObject({
+        toolPlan: {
+          purpose: "todo_continuation",
+          decisions: expect.arrayContaining([
+            {
+              name: "todo_write",
+              visibility: "exposed",
+              reason: "prompt_required",
+            },
+          ]),
+        },
+      });
+      expect(
+        events
+          .map(runEventPayload)
+          .filter((event) => event?.type === "workflow.failed"),
+      ).toEqual([]);
+      const record = await waitForWorkflowRecord(
+        workflowStoreRoot(workspace, sessionId),
+      );
+      expect(record.status).toBe("completed");
+      expect(record.runIds).toHaveLength(2);
+    } finally {
+      if (previousScript === undefined) {
+        delete process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON;
+      } else {
+        process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON = previousScript;
+      }
+    }
+  });
+
   it("blocks parent catalog tools after a script node transitions to a narrowed model node", async () => {
     const workspace = await tempWorkspace();
     const sessionId = "sess_workflow_script_catalog_clamp";

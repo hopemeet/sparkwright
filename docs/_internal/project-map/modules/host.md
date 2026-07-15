@@ -21,6 +21,9 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 - `packages/host/src/connection.ts`
 - `packages/host/src/agent-spawn-grants.ts`
 - `packages/host/src/tool-catalog.ts`
+- `packages/host/src/agent-tool-admission.ts`
+- `packages/host/src/scoped-tool-search.ts`
+- `packages/host/src/run-tool-plan.ts`
 - `packages/host/src/tool-identities.ts`
 - `packages/host/src/tools.ts`
 - `packages/host/src/shell.ts`
@@ -79,6 +82,31 @@ Does not own:
 
 ## Contracts
 
+- `createMainHostToolCatalog()` owns config/source admission. Main, configured
+  child, parallel delegate, and dynamic-spawn Profile paths all use
+  `admitToolsForAgentProfile()` for canonical alias/wildcard matching and
+  deny-after-allow physical narrowing. When a retained catalog has deferred
+  tools, `createScopedToolSearch()` rebuilds discovery from only those retained
+  definitions; it never reuses a broader upstream search index. Child policy
+  remains defense in depth, not the physical filter.
+- `resolveRunToolPlan()` is the one final episode planner shared by fresh,
+  resume, Workflow resume, and Todo continuation entrypoints. It never reads a
+  full catalog after narrowing. Workflow and continuation inputs can narrow or
+  promote visibility only within the admitted set.
+- A Todo continuation first proves `todo_write` survived admission and current
+  Workflow narrowing. If absent, `runTodoSupervised()` hands off with
+  `required_tool_unavailable` before emitting the directive that requires that
+  tool.
+- `run.started.toolPlan` is a post-admission, episode-time visibility snapshot.
+  It records exposed/deferred/Workflow-omitted status and prompt-required
+  promotion only. It deliberately does not cache dynamic availability, final
+  authorization, or approval conclusions; `tool.*`, policy, and `approval.*`
+  remain call-time evidence.
+- Workflow `RunEnd` must not terminalize Todo-resumable Core stop reasons.
+  `isTodoResumableStopReason()` is shared with the Todo audit so the episode
+  chain alone decides continuation versus handoff, then Host finalization owns
+  the durable Workflow terminal state.
+
 - `SkillCommandService` owns create preparation, session/run draft dedupe,
   approval preparation, receipt persistence, and approved apply. CLI/TUI/model
   adapters must not reproduce those transitions. Low-level proposal/history
@@ -96,6 +124,11 @@ Does not own:
   the filename stem and public identity. Runtime `AgentProfile.id` remains an
   internal compatibility field, legacy Markdown `id` overrides remain
   readable, and new files omit inferred child mode and inherited budgets.
+  Explicit model refs are resolved against current layered config before write.
+  Authoring aliases `inherit` / `default` normalize to omission, the sole
+  persisted inheritance form. Markdown discovery drops and reports invalid
+  model-ref syntax instead of advertising profiles that fail only when
+  delegated.
 
 - One active HostExecution per compatibility runtime facade.
 - One execution-wide abort spans assembly
@@ -925,6 +958,50 @@ Does not own:
   remain adapter-native and need continued cross-entrypoint characterization.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: independent tool-decision follow-up unified Profile admission and
+  scoped discovery, reduced episode diagnostics to visibility-only facts, and
+  removed duplicate Workflow/Todo terminal ownership for resumable stops.
+- Read: Host catalog/Profile/delegate/spawn assembly, episode planner,
+  Workflow projection/finalization, real CLI/TUI/Workflow traces, and linked
+  maps/test-map failures.
+- Tests: Host 601/601; CLI 195/195; TUI 415/415; ACP 15/15; MCP 34/34;
+  real-model regression 6/6; workspace build/typecheck/lint/schema/boundaries
+  passed.
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: structural tool-decision audit and unified Host episode planning.
+- Read: catalog construction, Profile resolution, Workflow actor paths,
+  run/session resume, Todo supervision, capability inspect, trace output.
+- Tests: Host full suite 597/597 plus real mini sessions
+  `audit_todo`, `session_mrlmpwmud4y4ghev`,
+  `session_workflow_f8250519447d491c929868a1e06ca410`, and TUI
+  `session_tui_mrlmxc7z`; trace verify/session check passed.
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: Todo-supervisor continuation episodes now promote an already-admitted
+  deferred `todo_write` definition to `alwaysLoad`, matching the synthetic
+  reconciliation directive without widening configured or Workflow-node tool
+  scope. Fresh main episodes retain the normal deferred catalog.
+- Read: `packages/host/src/runtime.ts`, todo supervisor/ledger, Host protocol
+  continuation tests, and the real Sonnet continuation trace.
+- Tests: Host continuation loading 2/2, focused resume protocol 1/1, Host
+  typecheck, and real session `session_mrlkn469h2ylznbk` reconciled in one
+  continuation with no extra workspace file or budget failure.
+
+- Status: Verified
+- Date: 2026-07-15T10:29:00+0800
+- Scope: closed the Markdown Agent lazy model-ref failure at schema, semantic
+  authoring, config loading, and layered discovery boundaries.
+- Read: Host config/schema, Markdown Agent tooling/discovery/report paths, and
+  focused tests.
+- Tests: Host build; tools, Agent profile, and config suites 200/200 passed;
+  real mini Agent create/delegate regression passed 2/2; full
+  `npm run release:check` passed.
 
 - Status: Verified
 - Date: 2026-07-14

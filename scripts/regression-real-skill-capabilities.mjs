@@ -197,6 +197,30 @@ async function realCreateSkillCase() {
     proposals.length === 1
       ? await proposalSkillEntries(workspace, proposals[0], "release-reviewer")
       : [];
+  const proposalMetadata =
+    proposals.length === 1
+      ? await readJsonIfExists(
+          join(
+            workspace,
+            ".sparkwright",
+            "skill-evolution",
+            "proposals",
+            proposals[0],
+            "metadata.json",
+          ),
+        )
+      : undefined;
+  const proposalPath =
+    proposals.length === 1
+      ? join(
+          workspace,
+          ".sparkwright",
+          "skill-evolution",
+          "proposals",
+          proposals[0],
+        )
+      : undefined;
+  const historyIds = await listHistoryIds(workspace, "release-reviewer");
   const failures = toolFailures(trace.events);
   const outcome = runOutcome(trace.events);
   const recoveredCreateSkillFailures =
@@ -218,16 +242,24 @@ async function realCreateSkillCase() {
     !requests.includes("bash") &&
     !requests.includes("shell") &&
     (failures.length === 0 || recoveredCreateSkillFailures) &&
-    skillEntries.length === 0 &&
+    skillEntries.includes("SKILL.md") &&
     proposals.length === 1 &&
     proposedEntries.includes("SKILL.md") &&
     !proposedEntries.includes("skill.md") &&
+    proposalMetadata?.state === "applied" &&
+    proposalMetadata?.preparedState === "applied" &&
+    Boolean(proposalPath && existsSync(join(proposalPath, "approval.json"))) &&
+    Boolean(
+      proposalPath && existsSync(join(proposalPath, "mutation-receipt.json")),
+    ) &&
+    historyIds.length === 1 &&
+    has(trace.events, "approval.requested") &&
     count(trace.events, "capability.mutation.completed") > 0 &&
     count(trace.events, "workspace.write.completed") === 0;
 
   record({
     id: "REAL_SKILL_CREATE",
-    name: "real model drafts a skill create proposal through create_skill",
+    name: "real model safely creates and applies an authored skill",
     status: ok ? "passed" : "failed",
     command: commandString(result.command),
     trace: trace.path,
@@ -235,6 +267,7 @@ async function realCreateSkillCase() {
     evidence:
       `tools=${requests.join(",")}; appliedEntries=${skillEntries.join(",")}; ` +
       `proposals=${proposals.join(",")}; proposedEntries=${proposedEntries.join(",")}; ` +
+      `proposalState=${proposalMetadata?.state}; history=${historyIds.join(",")}; ` +
       `capabilityMutations=${count(trace.events, "capability.mutation.completed")}; ` +
       `writes=${count(trace.events, "workspace.write.completed")}`,
     reason: ok
@@ -245,6 +278,8 @@ async function realCreateSkillCase() {
           skillEntries,
           proposals,
           proposedEntries,
+          proposalMetadata,
+          historyIds,
           failures,
           outcome,
           capabilityMutations: count(
@@ -396,6 +431,24 @@ async function proposalSkillEntries(workspace, proposalId, name) {
     );
   } catch {
     return [];
+  }
+}
+
+async function listHistoryIds(workspace, name) {
+  try {
+    return await readdir(
+      join(workspace, ".sparkwright", "skill-evolution", "history", name),
+    );
+  } catch {
+    return [];
+  }
+}
+
+async function readJsonIfExists(path) {
+  try {
+    return JSON.parse(await readFile(path, "utf8"));
+  } catch {
+    return undefined;
   }
 }
 

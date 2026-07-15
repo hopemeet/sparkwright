@@ -6,6 +6,7 @@ import type {
 import type { RunEvent } from "../lib/event-type.js";
 import {
   summarizeTaskActivity,
+  summarizeUnreadTaskActivity,
   type ActivityTab,
 } from "../lib/task-activity.js";
 import type { RunController } from "./run-controller.js";
@@ -28,6 +29,7 @@ export interface TaskActions {
   taskActivity: TaskActivitySummary;
   unreadTaskCount: number;
   unreadFailedTaskCount: number;
+  unreadCancelledTaskCount: number;
   refreshTaskSnapshots: () => Promise<void>;
   handleActivityTabChange: (tab: ActivityTab) => void;
   stopActivityTask: (taskId: string) => void;
@@ -55,18 +57,13 @@ export function useTaskActions(deps: {
     () => summarizeTaskActivity(events, taskRecords, taskOutputs),
     [events, taskRecords, taskOutputs],
   );
-  const unreadTaskCount = taskActivity.tasks.filter(
-    (task) =>
-      task.lastSequence > lastSeenTaskSequence &&
-      (task.status === "completed" ||
-        task.status === "failed" ||
-        task.status === "cancelled"),
-  ).length;
-  const unreadFailedTaskCount = taskActivity.tasks.filter(
-    (task) =>
-      task.lastSequence > lastSeenTaskSequence &&
-      (task.status === "failed" || task.status === "cancelled"),
-  ).length;
+  const unreadTasks = summarizeUnreadTaskActivity(
+    taskActivity.tasks,
+    lastSeenTaskSequence,
+  );
+  const unreadTaskCount = unreadTasks.total;
+  const unreadFailedTaskCount = unreadTasks.failed;
+  const unreadCancelledTaskCount = unreadTasks.cancelled;
 
   async function loadSessionTaskRecords(): Promise<TaskRecordSnapshot[]> {
     const runIds = runIdsFromEvents(events);
@@ -165,6 +162,7 @@ export function useTaskActions(deps: {
     taskActivity,
     unreadTaskCount,
     unreadFailedTaskCount,
+    unreadCancelledTaskCount,
     refreshTaskSnapshots,
     handleActivityTabChange,
     stopActivityTask,

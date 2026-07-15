@@ -13,8 +13,8 @@
     "model": {
       "type": "string",
       "minLength": 1,
-      "pattern": "^[^/]+(\\/.+)?$",
-      "description": "Active model in the form \"provider/model\"."
+      "pattern": "^(?:deterministic|[^/\\s]+\\/[^\\s]+)$",
+      "description": "Active model in the form \"provider/model\", or the built-in \"deterministic\" model."
     },
     "providers": {
       "type": "object",
@@ -368,8 +368,8 @@
           "model": {
             "type": "string",
             "minLength": 1,
-            "pattern": "^[^/]+(\\/.+)?$",
-            "description": "Active model in the form \"provider/model\"."
+            "pattern": "^(?:deterministic|[^/\\s]+\\/[^\\s]+)$",
+            "description": "Active model in the form \"provider/model\", or the built-in \"deterministic\" model."
           },
           "budget": {
             "type": "object",
@@ -1275,13 +1275,13 @@
             "spawnModel": {
               "type": "string",
               "minLength": 1,
-              "pattern": "^[^/]+(\\/.+)?$",
+              "pattern": "^(?:deterministic|[^/\\s]+\\/[^\\s]+)$",
               "description": "Optional raw model ref for dynamic spawn_agent children. If unset, they inherit the parent run model."
             },
             "delegateModel": {
               "type": "string",
               "minLength": 1,
-              "pattern": "^[^/]+(\\/.+)?$",
+              "pattern": "^(?:deterministic|[^/\\s]+\\/[^\\s]+)$",
               "description": "Optional raw model ref for configured in-process delegates when the profile does not set model. ACP and external-command delegates resolve outside the parent process."
             },
             "exposure": {
@@ -1356,8 +1356,8 @@
         "model": {
           "type": "string",
           "minLength": 1,
-          "pattern": "^[^/]+(\\/.+)?$",
-          "description": "Active model in the form \"provider/model\"."
+          "pattern": "^(?:deterministic|[^/\\s]+\\/[^\\s]+)$",
+          "description": "Active model in the form \"provider/model\", or the built-in \"deterministic\" model."
         },
         "providers": {
           "type": "object",

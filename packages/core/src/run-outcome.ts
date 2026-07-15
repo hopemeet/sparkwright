@@ -1305,11 +1305,17 @@ function analyzeUnsupportedFinalAnswerClaims(
   const claims: Array<{ kind: "command_success"; command: string }> = [];
   const seen = new Set<string>();
 
-  for (const command of extractClaimedSuccessfulCommands(finalMessage)) {
+  for (const claim of extractClaimedSuccessfulCommands(finalMessage)) {
+    const { command } = claim;
     const key = commandIdentity(command);
     if (!key || seen.has(key)) continue;
     seen.add(key);
-    if (!successfulCommandKeys.has(key)) {
+    const derivedFromKey = commandIdentity(claim.derivedFrom);
+    const supportedPackageScriptExpansion =
+      derivedFromKey !== undefined &&
+      successfulCommandKeys.has(derivedFromKey) &&
+      isPackageScriptInvocation(derivedFromKey);
+    if (!successfulCommandKeys.has(key) && !supportedPackageScriptExpansion) {
       claims.push({ kind: "command_success", command });
     }
   }
@@ -1317,8 +1323,15 @@ function analyzeUnsupportedFinalAnswerClaims(
   return claims;
 }
 
-function extractClaimedSuccessfulCommands(message: string): string[] {
-  const commands: string[] = [];
+interface ClaimedSuccessfulCommand {
+  command: string;
+  derivedFrom?: string;
+}
+
+function extractClaimedSuccessfulCommands(
+  message: string,
+): ClaimedSuccessfulCommand[] {
+  const commands: ClaimedSuccessfulCommand[] = [];
   const commandPattern = /`([^`\n]+)`/g;
   for (const line of message.split(/\r?\n/)) {
     const lower = line.toLowerCase();
@@ -1326,22 +1339,36 @@ function extractClaimedSuccessfulCommands(message: string): string[] {
     if (isFailureClaimContext(lower)) continue;
     commandPattern.lastIndex = 0;
     let match: RegExpExecArray | null;
+    let previous: { command: string; end: number } | undefined;
     while ((match = commandPattern.exec(line)) !== null) {
       const command = match[1]?.trim();
       if (!command) continue;
       if (!looksLikeCommandSnippet(command)) continue;
       if (isVerificationRelevantCommand(command, { verificationGoal: true })) {
-        commands.push(command);
+        const separator = previous ? line.slice(previous.end, match.index) : "";
+        commands.push({
+          command,
+          ...(/(?:->|→|⇒)/u.test(separator) && previous
+            ? { derivedFrom: previous.command }
+            : {}),
+        });
+        previous = { command, end: commandPattern.lastIndex };
       }
     }
     const unquotedLine = line.replace(/`[^`\n]*`/g, " ");
     for (const command of extractInlineVerificationCommandClaims(
       unquotedLine,
     )) {
-      commands.push(command);
+      commands.push({ command });
     }
   }
   return commands;
+}
+
+function isPackageScriptInvocation(command: string): boolean {
+  return /^(?:npm|pnpm|yarn)\s+(?:run\s+)?[a-z0-9:_-]+(?:\s+--(?:\s|$).*)?$/i.test(
+    command,
+  );
 }
 
 function extractInlineVerificationCommandClaims(line: string): string[] {

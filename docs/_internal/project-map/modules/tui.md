@@ -345,6 +345,16 @@ Does not own:
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-15
+- Scope: background task notifications keep `cancelled` separate from `failed`,
+  and narrow StatusBar rendering uses deliberate identity/task rows instead of
+  accidental Ink wrapping. Wide status ownership is unchanged.
+- Read: task activity summarization, task-action unread projection, LiveFrame,
+  StatusBar, focused render tests, and 80x24 PTY captures.
+- Tests: task activity/status rendering 7/7, TUI typecheck/build, and real PTY
+  verification on `session_mrlkn469h2ylznbk`.
+
+- Status: Verified
 - Date: 2026-07-12T08:36:00+0800
 - Scope: replaced the transient Skill action band with a persisted-inbox
   completion card and wired both TUI creation paths to refresh it.

@@ -281,6 +281,27 @@ createRun/resumeRunFromCheckpoint
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-15
+- Scope: Workflow `RunEnd` now defers Todo-resumable Core stop reasons to the
+  Host episode-chain supervisor; no new loop state, retry lane, or terminal
+  event family was added.
+- Read: Core stop reasons, Todo audit/run-chain, Host Workflow projection,
+  durable finalization, and pre/post-fix traces.
+- Tests: Workflow hook 77/77 and Host Workflow 36/36, including a deterministic
+  two-episode completion; real post-fix two-run traces verify clean structure.
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: host-owned Todo continuation assembly now makes an admitted
+  `todo_write` schema eager for the synthetic reconciliation episode; Core
+  run-outcome also treats a successful package-script arrow expansion as the
+  same command evidence while retaining strict unrelated-claim detection.
+- Read: Host actor episode assembly, agent-runtime Todo supervisor/ledger, Core
+  run-outcome/fact classifier, and focused tests.
+- Tests: Host continuation 3 focused tests, Core run-outcome 30/30, affected
+  typechecks, and a real Sonnet forced-reconciliation canary.
+
+- Status: Verified
 - Date: 2026-07-14
 - Scope: checked Host Workflow resume source attribution; execution assembly,
   episode driving, lane completion, and Core run-loop behavior are unchanged.

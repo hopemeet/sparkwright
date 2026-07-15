@@ -205,7 +205,8 @@ export function createExternalCommandDelegateTool(
     },
     policy: policyProfile.policy,
     governance: {
-      sideEffects: ["external"],
+      sideEffects:
+        workspaceAccess === "read_write" ? ["external", "write"] : ["external"],
       idempotency: "non_idempotent",
       origin: {
         kind: "hosted",

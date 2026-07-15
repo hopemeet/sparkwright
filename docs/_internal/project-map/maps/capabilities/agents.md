@@ -55,6 +55,12 @@ configured profiles/delegates
   and persist that same value as the canonical frontmatter `name`; the
   `create_agent` surface does not expose or write a second `id`. It omits the
   default child mode and other inherited fields unless explicitly requested.
+  An explicit persisted model must be `provider/model` or `deterministic`.
+  Model-facing authoring also accepts `inherit` / `default` as inheritance
+  aliases and normalizes them to omission before serialization. Semantic
+  validation resolves explicit refs against the current layered config before
+  any write, while file discovery fails closed and reports manually authored
+  invalid syntax.
   Legacy Markdown `id` overrides remain readable during migration.
   Runtime discovery and CLI/capability reports share the same source-aware
   scanner so recursive walk, parse, and same-layer collision behavior stay in
@@ -385,6 +391,29 @@ configured profiles/delegates
   detection.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: Agent/Profile tools now physically narrow admitted Host/child catalogs;
+  deny wins over allow, exact built-in aliases normalize, and MCP wildcard
+  patterns remain supported without exposing denied matches.
+- Read: Markdown/config Profile normalization, derived child Profiles, main and
+  child catalog clamps, Core alias policy ordering, capability inspection.
+- Tests: focused Profile admission 4/4 and Agent Profile 39/39; real restricted
+  main Profile exposed only `read` and `grep` in
+  `session_mrlmpwmud4y4ghev` with no approval or write.
+
+- Status: Verified
+- Date: 2026-07-15T10:29:00+0800
+- Scope: unified Agent model-ref syntax at config/authoring/discovery boundaries;
+  invalid placeholder refs no longer persist or enter the callable profile set.
+- Read: `packages/host/src/config-zod-schema.ts`,
+  `packages/host/src/config.ts`, `packages/host/src/tools.ts`,
+  `packages/host/src/agent-profiles.ts`, Host focused tests.
+- Tests: Host build; tools, Agent profile, and config suites 200/200 passed.
+  Real mini regression passed create (`session_mrlgk00tz82eptt0`) and inherited
+  child delegation (`session_mrlgk7y8p7t3jmxo`) with clean attribution. Full
+  `npm run release:check` passed.
 
 - Status: Verified
 - Date: 2026-07-14T14:35:00+0800

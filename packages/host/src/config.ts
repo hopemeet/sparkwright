@@ -3354,7 +3354,17 @@ function validateAgentProfile(
         message: "must be primary, child, or all",
       });
   }
-  if (raw.model !== undefined) profile.model = raw.model;
+  if (raw.model !== undefined) {
+    const model = validateZodValue(
+      modelSchema,
+      raw.model,
+      `${field}.model`,
+      filePath,
+      errors,
+      'must be "provider/model" or "deterministic"',
+    );
+    if (model !== undefined) profile.model = model;
+  }
   if (raw.use !== undefined) {
     profile.use = validateToolUseSelectorArray(
       raw.use,
@@ -4732,6 +4742,13 @@ export function parseModelRef(ref: string): ParsedModelRef {
   const i = ref.indexOf("/");
   if (i < 0) return { providerKey: ref, modelId: "" };
   return { providerKey: ref.slice(0, i), modelId: ref.slice(i + 1) };
+}
+
+/** True when a raw model reference can be resolved without a syntax failure. */
+export function isValidModelRefSyntax(ref: string): boolean {
+  if (ref === DETERMINISTIC_PROVIDER) return true;
+  const { providerKey, modelId } = parseModelRef(ref);
+  return providerKey.length > 0 && modelId.length > 0 && !/\s/.test(ref);
 }
 
 export type ModelSelection =

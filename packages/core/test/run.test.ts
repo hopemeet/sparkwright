@@ -60,6 +60,29 @@ describe("SparkwrightRun", () => {
     });
   }
 
+  it("surfaces the final tool decision plan on run.started", async () => {
+    const toolPlan = {
+      purpose: "main_agent",
+      decisions: [
+        {
+          name: "read",
+          visibility: "exposed",
+        },
+      ],
+    };
+    const run = createRun({
+      goal: "trace tool plan",
+      metadata: { workflowEpisode: { toolPlan } },
+      model: { complete: async () => ({ message: "done" }) },
+    });
+
+    await run.start();
+
+    expect(
+      run.events.all().find((event) => event.type === "run.started")?.payload,
+    ).toMatchObject({ toolPlan });
+  });
+
   it("classifies custom tool argument error codes as model argument errors", () => {
     expect(classifyToolFailure("TASK_ARGUMENTS_INVALID")).toBe(
       "model_arg_error",
@@ -3309,6 +3332,56 @@ describe("SparkwrightRun", () => {
     expect(run.record.state).toBe("completed");
   });
 
+  it("denies unclassified tools in read-only runs before approval", async () => {
+    let executed = false;
+    let approvalRequested = false;
+    let modelCalls = 0;
+    const tool = defineTool({
+      name: "custom_external_tool",
+      description: "Unclassified extension tool.",
+      inputSchema: { type: "object" },
+      policy: { risk: "risky", requiresApproval: true },
+      execute() {
+        executed = true;
+        return { ok: true };
+      },
+    });
+    const run = createRun({
+      goal: "do not let approval widen read-only",
+      tools: [tool],
+      policy: createWorkspaceMutationPolicy({ allowWorkspaceWrites: false }),
+      approvalResolver(request) {
+        approvalRequested = true;
+        return { approvalId: request.id, decision: "approved" };
+      },
+      model: {
+        async complete() {
+          modelCalls += 1;
+          return modelCalls === 1
+            ? {
+                toolCalls: [
+                  { toolName: "custom_external_tool", arguments: {} },
+                ],
+              }
+            : { message: "blocked" };
+        },
+      },
+    });
+
+    await run.start();
+
+    expect(approvalRequested).toBe(false);
+    expect(executed).toBe(false);
+    expect(
+      run.events.all().find((event) => event.type === "tool.failed")?.payload,
+    ).toMatchObject({
+      error: {
+        code: "TOOL_DENIED",
+        metadata: { reason: "missing_side_effect_classification" },
+      },
+    });
+  });
+
   it("can be cancelled before it starts", () => {
     const run = createRun({ goal: "cancel me" });
 
@@ -3692,6 +3765,103 @@ describe("SparkwrightRun", () => {
     expect(eventTypes).not.toContain("tool.started");
     expect(toolFailed?.payload).toMatchObject({
       error: { code: "TOOL_DENIED" },
+    });
+  });
+
+  it("canonicalizes a legacy tool name before policy evaluation", async () => {
+    let executed = false;
+    let modelCalls = 0;
+    const seenResources: Array<string | undefined> = [];
+    const read = defineTool({
+      name: "read",
+      legacyNames: ["read_file"],
+      description: "Read a file.",
+      inputSchema: { type: "object" },
+      execute() {
+        executed = true;
+      },
+    });
+    const run = createRun({
+      goal: "deny canonical read",
+      tools: [read],
+      policy: {
+        decide({ action, resource, metadata = {} }) {
+          seenResources.push(resource?.name);
+          return {
+            action,
+            decision: resource?.name === "read" ? "deny" : "allow",
+            reason: "canonical deny",
+            metadata,
+          };
+        },
+      },
+      model: {
+        async complete() {
+          modelCalls += 1;
+          return modelCalls === 1
+            ? { toolCalls: [{ toolName: "read_file", arguments: {} }] }
+            : { message: "denied" };
+        },
+      },
+    });
+
+    await run.start();
+
+    expect(executed).toBe(false);
+    expect(seenResources).toContain("read");
+    expect(
+      run.events.all().find((event) => event.type === "tool.failed")?.payload,
+    ).toMatchObject({
+      toolName: "read_file",
+      canonicalToolName: "read",
+      error: { code: "TOOL_DENIED" },
+    });
+  });
+
+  it("rejects a guessed unavailable tool before policy or execution", async () => {
+    let executed = false;
+    let policyCalls = 0;
+    let modelCalls = 0;
+    const hidden = defineTool({
+      name: "hidden_tool",
+      description: "Temporarily unavailable.",
+      inputSchema: { type: "object" },
+      available: () => false,
+      execute() {
+        executed = true;
+      },
+    });
+    const run = createRun({
+      goal: "guess hidden tool",
+      tools: [hidden],
+      policy: {
+        decide({ action, metadata = {} }) {
+          policyCalls += 1;
+          return { action, decision: "allow", reason: "test", metadata };
+        },
+      },
+      model: {
+        async complete() {
+          modelCalls += 1;
+          return modelCalls === 1
+            ? { toolCalls: [{ toolName: "hidden_tool", arguments: {} }] }
+            : { message: "unavailable" };
+        },
+      },
+    });
+
+    await run.start();
+
+    expect(executed).toBe(false);
+    expect(policyCalls).toBe(0);
+    expect(
+      run.events.all().find((event) => event.type === "tool.failed")?.payload,
+    ).toMatchObject({
+      toolName: "hidden_tool",
+      error: {
+        code: "TOOL_UNAVAILABLE",
+        metadata: { reason: "availability_probe_false" },
+      },
     });
   });
 

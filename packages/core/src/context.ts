@@ -934,6 +934,7 @@ export function createDefaultPromptSections(
       stability: "session",
       cachePolicy: "session",
       build(input) {
+        if (!hasCallableTool(input.tools, "skill_load")) return null;
         const items = input.context.filter(isSkillIndexContextItem);
         if (items.length === 0) return null;
         return {
@@ -1590,7 +1591,11 @@ function deferredTools(tools: ToolDescriptor[]): ToolDescriptor[] {
 }
 
 function hasCallableToolSearch(tools: ToolDescriptor[]): boolean {
-  return eagerTools(tools).some((tool) => tool.name === "tool_search");
+  return hasCallableTool(tools, "tool_search");
+}
+
+function hasCallableTool(tools: ToolDescriptor[], toolName: string): boolean {
+  return eagerTools(tools).some((tool) => tool.name === toolName);
 }
 
 function formatToolDescriptors(tools: ToolDescriptor[]): string {

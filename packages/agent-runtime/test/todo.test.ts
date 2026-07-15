@@ -581,6 +581,46 @@ describe("TodoLedger helpers", () => {
 });
 
 describe("runTodoSupervised", () => {
+  it("hands off before emitting an impossible continuation prompt", async () => {
+    const ledger: TodoLedger = {
+      schemaVersion: "todo-ledger.v1",
+      metadata: {},
+      items: [{ title: "finish work", status: "pending", depth: 0 }],
+    };
+    let runs = 0;
+    const result = await runTodoSupervised({
+      readLedger: () => ledger,
+      maxContinuations: 2,
+      continuationToolAvailability: (toolName) => ({
+        available: false,
+        toolName,
+        reason: "workflow_narrowed",
+      }),
+      runOnce() {
+        runs += 1;
+        return {
+          result: {
+            signal: "failed",
+            state: "failed",
+            stopReason: "max_steps_exceeded",
+            metadata: {},
+          },
+          events: [{ type: "workspace.write.completed" } as never],
+        };
+      },
+    });
+
+    expect(runs).toBe(1);
+    expect(result.decision).toMatchObject({
+      kind: "handoff",
+      reason: "required_tool_unavailable",
+    });
+    expect(result.decision).toHaveProperty(
+      "message",
+      expect.stringContaining("todo_write"),
+    );
+  });
+
   it("uses one reconciliation continuation when a final answer leaves progressed work open", async () => {
     let ledger: TodoLedger = {
       schemaVersion: "todo-ledger.v1",

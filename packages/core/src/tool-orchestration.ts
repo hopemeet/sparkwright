@@ -7,6 +7,8 @@ import {
 export interface RequestedToolCall {
   toolName: string;
   arguments: unknown;
+  /** Original model-supplied alias when toolName has been canonicalized. */
+  requestedToolName?: string;
 }
 
 export interface ToolCallBatch {

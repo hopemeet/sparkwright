@@ -2879,6 +2879,42 @@ describe("createWorkflowProjectionHooks", () => {
     });
   });
 
+  it("leaves resumable Core failures for the Todo episode supervisor", async () => {
+    const projection = createWorkflowProjectionHooks({
+      workspaceRoot: process.cwd(),
+      workflowRunId: "wf_resumable_episode",
+      definition: {
+        assetName: "resumable-episode",
+        contentHash: "hash",
+        nodes: [{ id: "main", execute: "model", body: "Run." }],
+      },
+    });
+    const run = runRecord();
+    const events = new EventLog(run.id);
+    const facts = new FactLedger();
+    events.subscribe((event) => facts.observeEvent(event));
+
+    const result = await runWorkflowHooks({
+      hooks: projection.hooks,
+      hook: "RunEnd",
+      run,
+      payload: { state: "failed", reason: "max_tool_calls_exceeded" },
+      events,
+      facts,
+    });
+
+    expect(result.status).toBe("continued");
+    expect(
+      events
+        .all()
+        .filter(
+          (event) =>
+            event.type === "workflow.interrupted" ||
+            event.type === "workflow.failed",
+        ),
+    ).toEqual([]);
+  });
+
   it("bounds persistent Stop projection errors before maxSteps", async () => {
     let modelCalls = 0;
     const projection = createWorkflowProjectionHooks({

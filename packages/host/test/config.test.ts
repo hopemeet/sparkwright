@@ -2279,6 +2279,7 @@ describe("loadHostConfig", () => {
                 id: "reviewer",
                 owner: "runtime",
                 mode: "other",
+                model: "default",
                 prompt: 42,
               },
             ],
@@ -2296,6 +2297,9 @@ describe("loadHostConfig", () => {
           }),
           expect.objectContaining({
             field: "capabilities.agents.profiles.0.prompt",
+          }),
+          expect.objectContaining({
+            field: "capabilities.agents.profiles.0.model",
           }),
           expect.objectContaining({
             field: "capabilities.agents.profiles.0.owner",

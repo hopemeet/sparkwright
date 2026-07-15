@@ -16,6 +16,7 @@ import {
   assertWorkflowRuntimeDefinition,
   createInitialWorkflowRuntimeState,
   hasUnfinishedTodo,
+  isTodoResumableStopReason,
   summarizeTodoLedger,
   type TodoLedger,
   type WorkflowCommandVerifierDefinition,
@@ -1411,6 +1412,12 @@ export function createWorkflowProjectionHooks(
           return { status: "continue", metadata: { workflowRunId } };
         }
         if (runState === "failed") {
+          // A Todo episode supervisor owns the decision to continue or hand
+          // off after a bounded Core run. Persisting a terminal workflow here
+          // would race that owner and make a valid continuation stale.
+          if (isTodoResumableStopReason(reason)) {
+            return { status: "continue", metadata: { workflowRunId } };
+          }
           emitInterrupted(input, "run_failed", { reason });
           if (!terminalEmitted) {
             emitRuntimeFailure(

@@ -14,6 +14,37 @@
 
 ## Covered
 
+- 2026-07-15 independent follow-up reduced `run.started.payload.toolPlan` to a
+  post-admission episode visibility snapshot. It records exposed/deferred/
+  Workflow-omitted status, prompt-required promotion, and missing required
+  names, but no static approval, execution, or dynamic-availability conclusion.
+  Real fresh, Todo
+  continuation, session resume, Profile, Workflow, deferred discovery, and TUI
+  traces all passed verify/session check. See
+  [../runs/2026-07-15-tool-decision-architecture-audit.md](../runs/2026-07-15-tool-decision-architecture-audit.md)
+  and
+  [../failures/tool-decision-pipeline-divergence.md](../failures/tool-decision-pipeline-divergence.md).
+- The follow-up also proved and fixed two residual product bugs: retained
+  Profile search closures could reveal denied deferred descriptors, and
+  Workflow `RunEnd` could terminalize a Todo-resumable budget stop before the
+  episode supervisor. See
+  [../failures/profile-scoped-discovery-leaks-denied-tools.md](../failures/profile-scoped-discovery-leaks-denied-tools.md)
+  and
+  [../failures/workflow-resumable-runend-terminal-race.md](../failures/workflow-resumable-runend-terminal-race.md).
+
+- 2026-07-15 expanded real coding QA exposed a Todo-supervisor tool-surface
+  mismatch: the synthetic continuation required `todo_write` while its schema
+  remained deferred, allowing a model to emulate it with ordinary `write` and
+  create `TODO.md`. The Host now eagerly loads only an already-admitted
+  `todo_write` for continuation episodes. Real Sonnet reconciled in one direct
+  call with no extra file, third run, or budget failure. See
+  [../failures/todo-continuation-deferred-tool-mismatch.md](../failures/todo-continuation-deferred-tool-mismatch.md).
+- The same real trace exposed a false unsupported final claim for
+  ``npm test` → `node --test``. Core now recognizes only same-line arrow
+  expansions from successful npm/pnpm/yarn script commands and retains strict
+  detection for unrelated claims. See
+  [../failures/package-script-expansion-unsupported-claim.md](../failures/package-script-expansion-unsupported-claim.md).
+
 - Raw trace events are the canonical source for summary, timeline, report, and
   verify views.
 - Trace reports sort findings by severity and code.
@@ -105,6 +136,21 @@
   a prior same-payload task completed with reusable task evidence. Focused core
   coverage asserts the finding ignores failed prior tasks and keys equivalence
   on `kind` plus stable payload fingerprint rather than scheduling fields.
+
+- A 2026-07-15 macOS temp-fixture run passed `/tmp/<workspace>` back to `glob`
+  while the runtime held the equivalent canonical `/private/tmp/<workspace>`
+  root. Discovery normalization compared them lexically, emitted
+  `TOOL_ARGUMENTS_INVALID` / `WORKSPACE_PATH_ESCAPE_ATTEMPT`, and kept the
+  otherwise successful verified code repair in `completed_with_issues`.
+  Discovery normalization now canonicalizes the deepest existing ancestor and
+  reattaches missing/glob suffixes before containment, with the walker retaining
+  final realpath enforcement. A portable symlink-alias regression covers the
+  same identity mismatch. Keep a `/tmp` alias fixture in rotation; see
+  [../runs/2026-07-15-real-model-broad-code-qa.md](../runs/2026-07-15-real-model-broad-code-qa.md).
+  Post-fix real mini session `session_mrlgnkbp0mufyzhu` used the original
+  `/tmp/sparkwright-code-qa-20260715` absolute path and glob against the
+  canonical `/private/tmp` root, then read `src/cart.js`; trace report/verify
+  and session check were clean with zero failures.
 
 ## Weak Or Untested
 

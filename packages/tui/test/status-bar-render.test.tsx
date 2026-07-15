@@ -4,10 +4,13 @@ import { render } from "ink";
 import { StatusBar } from "../src/components/status-bar.js";
 import type { StoreState } from "../src/state/event-store.js";
 
-async function renderToText(element: React.ReactElement): Promise<string> {
+async function renderToText(
+  element: React.ReactElement,
+  columns = 120,
+): Promise<string> {
   const writes: string[] = [];
   const fakeStdout = {
-    columns: 120,
+    columns,
     rows: 10,
     write: (s: string) => {
       writes.push(s);
@@ -162,5 +165,52 @@ describe("StatusBar", () => {
 
     expect(text).toContain("tasks: 1 failed unread, 2 completed unread");
     expect(text).toContain("ctrl+o");
+  });
+
+  it("does not present a cancelled task as failed", async () => {
+    const text = await renderToText(
+      <StatusBar
+        state={state({ status: "done" })}
+        modelLabel="openai/gpt-5.4-mini"
+        permissionMode="ask"
+        focused={true}
+        unreadCancelledTasks={1}
+      />,
+    );
+
+    expect(text).toContain("tasks: 1 cancelled unread");
+    expect(text).not.toContain("failed unread");
+  });
+
+  it("uses deliberate status and task rows on narrow terminals", async () => {
+    const text = await renderToText(
+      <StatusBar
+        state={state({
+          status: "done",
+          stopReason: "final_answer",
+          usage: {
+            totalTokens: 153_600,
+            inputTokens: 150_000,
+            outputTokens: 3_600,
+            modelCalls: 17,
+            toolCalls: 18,
+          },
+        })}
+        modelLabel="anthropic/claude-sonnet-4-6"
+        permissionMode="read-only"
+        focused={true}
+        unreadCancelledTasks={1}
+      />,
+      80,
+    );
+
+    const lines = text.split("\n");
+    expect(lines.some((line) => line.includes("● done"))).toBe(true);
+    expect(lines.some((line) => line.includes("claude-sonnet-4-6"))).toBe(true);
+    expect(
+      lines.some((line) => line.includes("tasks: 1 cancelled unread")),
+    ).toBe(true);
+    expect(text).not.toContain("final_answer");
+    expect(text).not.toContain("153.6k");
   });
 });

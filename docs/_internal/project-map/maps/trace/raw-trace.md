@@ -212,6 +212,25 @@ EventLog emits full event
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-15
+- Scope: `run.started.toolPlan` was reduced in place to post-admission episode
+  visibility; final authorization/availability/approval remain derivable from
+  existing tool and approval events, with no new event or correlation id.
+- Read: real alias/Profile/read-only/approval/resume/Workflow traces and trace
+  summary/verify/session consistency consumers.
+- Tests: Core/CLI/TUI trace suites, real trace verify/session checks, and
+  schema/protocol consistency passed.
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: checked Todo continuation, package-script outcome, background service,
+  and TUI fixes against existing trace events; no raw event family or payload
+  contract changed.
+- Read: real session `session_mrlkn469h2ylznbk`, Core run-outcome, Host Todo
+  assembly, and TUI task projection.
+- Tests: trace verify/session check passed; Core/Host/TUI focused gates passed.
+
+- Status: Verified
 - Date: 2026-07-14
 - Scope: checked Workflow API principal attribution; no Core trace event or file
   trace schema changed. Durable Workflow control envelopes now retain the real

@@ -13,7 +13,6 @@ import {
   loadSessionCompactArtifact,
   loadTraceEventsFile,
   createRun,
-  createToolSearchTool,
   defineTool,
   FileSessionStore,
   EventLog,
@@ -40,7 +39,6 @@ import {
   type TaskRevivalSource,
   type SessionTraceFacts,
   type ToolDefinition,
-  type ToolDescriptor,
   type ToolOrigin,
   type ToolRequestPreviewOptions,
   type WorkflowHook,
@@ -80,6 +78,7 @@ import {
   notificationFromRecord,
   rememberSuccessfulDelegation,
   readTodoLedger,
+  TODO_CONTINUATION_REQUIRED_TOOL,
   spawnSubAgent,
   summarizeDelegationResult,
   withAlreadyCompletedNote,
@@ -286,6 +285,18 @@ import {
   intersectToolUseSelectors,
   resolveSelectorAllowlist,
 } from "./tool-selectors.js";
+import {
+  isWorkflowScopedToolSearch,
+  resolveRunToolPlan,
+  type RunEpisodePurpose,
+  type RunToolPlan,
+} from "./run-tool-plan.js";
+import { createScopedToolSearch } from "./scoped-tool-search.js";
+import {
+  admitToolsForAgentProfile,
+  agentProfileAdmitsTool,
+  matchesAgentToolName,
+} from "./agent-tool-admission.js";
 
 /**
  * Skills flagged `metadata.devOnly: true` (test/development fixtures) are kept
@@ -296,9 +307,6 @@ function devSkillsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   const value = env.SPARKWRIGHT_DEV_SKILLS;
   return value === "1" || value === "true";
 }
-
-const WORKFLOW_SCOPED_TOOL_SEARCH_ORIGIN =
-  "@sparkwright/host.workflow-scoped-tool-search";
 
 type RuntimeMcpConfig = Omit<CapabilityMcpConfig, "servers"> & {
   servers?: McpServerConfig[];
@@ -2386,7 +2394,7 @@ export class HostRuntime {
         shellConfig?.foregroundTimeoutMs ?? RECOMMENDED_FOREGROUND_TIMEOUT_MS,
       workspaceLeaseCoordinator,
     };
-    const toolCatalog = createMainHostToolCatalog({
+    const baseMainToolCatalog = createMainHostToolCatalog({
       workspaceRoot,
       skillRoots: [...skillRoots],
       toolConfig,
@@ -2409,6 +2417,12 @@ export class HostRuntime {
       configPaths: loadedConfig.attempted.map((entry) => entry.path),
       workspaceLeaseCoordinator,
     });
+    const toolCatalog = admitToolsForAgentProfile(
+      baseMainToolCatalog,
+      mainAgent,
+      (entry) => entry.definition,
+      (entry, definition) => ({ ...entry, definition }),
+    );
     const tools = catalogToolDefinitions(toolCatalog);
     const workflows = await loadLayeredWorkflowAssets(workspaceRoot);
     const selectedWorkflow = input.workflowRecord
@@ -3059,7 +3073,7 @@ export class HostRuntime {
         const episodeMetadata =
           workflowEpisodeMetadataFromRun(run) ??
           workflowActorEpisodeMetadata(
-            workflowActorEpisodePlan(env, { budgetScope: "main_agent" }),
+            workflowActorEpisodePlan(env, { purpose: "main_agent" }),
           );
         env.workflowRecord = await mutateWorkflowRecord(
           env.workflowLease,
@@ -3183,6 +3197,22 @@ export class HostRuntime {
       sessionId,
       maxContinuations: MAIN_TODO_MAX_CONTINUATIONS,
       maxStalledContinuations: MAIN_TODO_MAX_STALLED_CONTINUATIONS,
+      continuationToolAvailability: (requiredTool) => {
+        const plan = workflowActorEpisodePlan(env, {
+          fallbackRunBudget: resolveTodoContinuationRunBudget(env.mainAgent),
+          purpose: "todo_continuation",
+        }).toolPlan;
+        const toolName = plan.missingRequiredTools.find(
+          (name) => name === canonicalToolName(requiredTool),
+        );
+        return toolName
+          ? {
+              available: false as const,
+              toolName,
+              reason: "not admitted for this run episode",
+            }
+          : { available: true as const };
+      },
       runOnce: async (supervisedInput) => {
         const run = input.buildRun(supervisedInput);
         const runId = run.record.id;
@@ -3437,7 +3467,7 @@ export class HostRuntime {
     ) => {
       const episode = workflowActorEpisodePlan(env, {
         fallbackRunBudget: resolveTodoContinuationRunBudget(env.mainAgent),
-        budgetScope: "todo_continuation",
+        purpose: "todo_continuation",
       });
       const runRef: { current?: ReturnType<typeof createRun> } = {};
       const taskBridge = this.createTaskRevivalBridge(
@@ -3460,7 +3490,7 @@ export class HostRuntime {
           cwd: env.workspaceRoot,
           sessionId: resumeSessionId,
         }),
-        tools: toolsForWorkflowActorEpisode(env),
+        tools: episode.toolPlan.tools,
         workflowHooks: env.workflowHooks,
         model: episode.model,
         maxSteps: resolveTodoContinuationMaxSteps(env.mainAgent),
@@ -3513,7 +3543,7 @@ export class HostRuntime {
           : (() => {
               const episode = workflowActorEpisodePlan(env, {
                 fallbackRunBudget: env.mainAgent.runBudget,
-                budgetScope: "main_agent",
+                purpose: "main_agent",
               });
               const runRef: {
                 current?: ReturnType<typeof resumeRunFromCheckpoint>;
@@ -3537,7 +3567,7 @@ export class HostRuntime {
                   cwd: env.workspaceRoot,
                   sessionId: resumeSessionId,
                 }),
-                tools: toolsForWorkflowActorEpisode(env),
+                tools: episode.toolPlan.tools,
                 model: episode.model,
                 maxSteps: resolveWorkflowEpisodeMaxSteps(
                   env.mainAgent,
@@ -3719,10 +3749,16 @@ export class HostRuntime {
       env.sessionRootDir,
       sessionId,
     );
-    const buildRun = (goal: string, extraContext: ContextItem[]) => {
+    const buildRun = (
+      goal: string,
+      extraContext: ContextItem[],
+      todoContinuation = false,
+    ) => {
       const episode = workflowActorEpisodePlan(env, {
-        fallbackRunBudget: env.mainAgent.runBudget,
-        budgetScope: "main_agent",
+        fallbackRunBudget: todoContinuation
+          ? resolveTodoContinuationRunBudget(env.mainAgent)
+          : env.mainAgent.runBudget,
+        purpose: todoContinuation ? "todo_continuation" : "main_agent",
       });
       const runRef: { current?: ReturnType<typeof createRun> } = {};
       const taskBridge = this.createTaskRevivalBridge(
@@ -3749,7 +3785,7 @@ export class HostRuntime {
           cwd: env.workspaceRoot,
           sessionId,
         }),
-        tools: toolsForWorkflowActorEpisode(env),
+        tools: episode.toolPlan.tools,
         workflowHooks: env.workflowHooks,
         model: episode.model,
         maxSteps: resolveWorkflowEpisodeMaxSteps(
@@ -3788,9 +3824,11 @@ export class HostRuntime {
       sessionId,
       buildRun: (supervisedInput) =>
         supervisedInput.continuation
-          ? buildRun(supervisedInput.continuation.prompt, [
-              supervisedInput.continuation.context,
-            ])
+          ? buildRun(
+              supervisedInput.continuation.prompt,
+              [supervisedInput.continuation.context],
+              true,
+            )
           : buildRun(
               `Resume workflow ${record.assetName} at node ${record.currentNodeId ?? "(unknown)"}.`,
               [],
@@ -4051,7 +4089,7 @@ export class HostRuntime {
     ) => {
       const episode = workflowActorEpisodePlan(env, {
         fallbackRunBudget: overrides.runBudget ?? env.mainAgent.runBudget,
-        budgetScope: overrides.runBudget ? "todo_continuation" : "main_agent",
+        purpose: overrides.runBudget ? "todo_continuation" : "main_agent",
       });
       const runRef: { current?: ReturnType<typeof createRun> } = {};
       const taskBridge = this.createTaskRevivalBridge(
@@ -4078,7 +4116,7 @@ export class HostRuntime {
           cwd: env.workspaceRoot,
           sessionId,
         }),
-        tools: toolsForWorkflowActorEpisode(env),
+        tools: episode.toolPlan.tools,
         workflowHooks: env.workflowHooks,
         model: episode.model,
         // Bind the main agent on resources, not a leaked step count of 8: honor
@@ -4566,7 +4604,7 @@ export class HostRuntime {
         maxDepth: agentConfig?.maxDepth,
         workspaceRoot: this.opts.workspaceRoot,
       });
-      const toolCatalog = createMainHostToolCatalog({
+      const baseMainToolCatalog = createMainHostToolCatalog({
         workspaceRoot: this.opts.workspaceRoot,
         skillRoots: [...skillRoots],
         toolConfig,
@@ -4588,6 +4626,12 @@ export class HostRuntime {
         backgroundTasks: input.access.backgroundTasks,
         configPaths: loadedConfig.attempted.map((entry) => entry.path),
       });
+      const toolCatalog = admitToolsForAgentProfile(
+        baseMainToolCatalog,
+        mainAgent,
+        (entry) => entry.definition,
+        (entry, definition) => ({ ...entry, definition }),
+      );
       return buildCapabilitySnapshot({
         ...(model.ok ? { model: modelCapabilitySummary(model.resolved) } : {}),
         access: input.access,
@@ -5832,6 +5876,11 @@ function applyAgentProfileToolUse(
     allowedTools,
     childToolCatalog,
   );
+  if (allowedTools !== undefined && profile.deniedTools?.length) {
+    allowedTools = allowedTools.filter(
+      (name) => !matchesAgentToolName(name, profile.deniedTools!),
+    );
+  }
   if (allowedTools === profile.allowedTools) return profile;
   return {
     ...profile,
@@ -6069,9 +6118,10 @@ export function createConfiguredDelegateTools(input: {
       continue;
     }
     const childProfile = withDelegatedAgentContract(profile);
-    const profileChildTools = childToolsForAgentProfile(
+    const profileChildTools = admitToolsForAgentProfile(
       input.childTools,
       profile,
+      (tool) => tool,
     );
     const capabilityFacts = inProcessDelegateCapabilityFacts({
       delegate,
@@ -6239,7 +6289,11 @@ export function createDelegateParallelTool(input: {
       profile,
       childProfile: withDelegatedAgentContract(profile),
       toolName,
-      profileChildTools: childToolsForAgentProfile(input.childTools, profile),
+      profileChildTools: admitToolsForAgentProfile(
+        input.childTools,
+        profile,
+        (tool) => tool,
+      ),
     };
     eligibleByToolName.set(toolName, spec);
     eligibleByAgentId.set(profile.id, spec);
@@ -6677,21 +6731,7 @@ function inProcessDelegateCanUseTool(
   profile: AgentProfile,
   tool: Pick<ToolDefinition, "name">,
 ): boolean {
-  return (
-    profile.allowedTools === undefined ||
-    profile.allowedTools.some(
-      (name) => canonicalToolName(name) === canonicalToolName(tool.name),
-    )
-  );
-}
-
-function childToolsForAgentProfile(
-  childTools: readonly ToolDefinition[],
-  profile: AgentProfile,
-): ToolDefinition[] {
-  if (profile.allowedTools === undefined) return [...childTools];
-  const allowed = new Set(profile.allowedTools.map(canonicalToolName));
-  return childTools.filter((tool) => allowed.has(canonicalToolName(tool.name)));
+  return agentProfileAdmitsTool(tool.name, profile);
 }
 
 /**
@@ -6999,7 +7039,13 @@ export function createDynamicSpawnAgentTool(input: {
           discovery &&
           !childTools.some((tool) => tool.name === discovery.name)
         ) {
-          childTools.push(discovery);
+          childTools.push(
+            createScopedToolSearch(childTools, {
+              kind: "local",
+              name: "@sparkwright/host.dynamic-child-scoped-tool-search",
+              metadata: { dynamicChildScoped: true },
+            }),
+          );
         }
       }
       if (childTools.length === 0) {
@@ -7893,7 +7939,8 @@ interface WorkflowActorEpisodePlan {
   nodeId?: string;
   attempt?: number;
   runBudget?: RunBudget;
-  budgetScope: "main_agent" | "todo_continuation";
+  budgetScope: RunEpisodePurpose;
+  toolPlan: RunToolPlan;
 }
 
 async function resolveWorkflowModelAdapters(input: {
@@ -7946,7 +7993,7 @@ function workflowActorEpisodePlan(
   env: PreparedHostRunEnvironment,
   options: {
     fallbackRunBudget?: RunBudget;
-    budgetScope: WorkflowActorEpisodePlan["budgetScope"];
+    purpose: RunEpisodePurpose;
   },
 ): WorkflowActorEpisodePlan {
   const node = currentWorkflowRecordNode(env.workflowRecord);
@@ -7959,6 +8006,19 @@ function workflowActorEpisodePlan(
     nodeModelRef && env.workflowModelAdapters.has(modelRef)
       ? env.workflowModelAdapters.get(modelRef)!
       : { adapter: env.model, resolved: env.resolvedModel };
+  const workflowAllowedTools = workflowEpisodeAllowedTools(env.workflowRecord);
+  const toolPlan = resolveRunToolPlan({
+    tools: env.tools,
+    workflowAllowedTools: workflowAllowedTools?.normalized,
+    purpose: options.purpose,
+    ...(options.purpose === "todo_continuation"
+      ? { requiredTools: [TODO_CONTINUATION_REQUIRED_TOOL] }
+      : {}),
+  });
+  const runBudget = narrowRunBudgets(
+    options.fallbackRunBudget,
+    node?.runBudget,
+  );
   return {
     model: model.adapter,
     modelRef,
@@ -7967,10 +8027,32 @@ function workflowActorEpisodePlan(
     ...(node && env.workflowRecord
       ? { attempt: env.workflowRecord.attempts[node.id] ?? 1 }
       : {}),
-    ...((node?.runBudget ?? options.fallbackRunBudget)
-      ? { runBudget: { ...(node?.runBudget ?? options.fallbackRunBudget) } }
-      : {}),
-    budgetScope: options.budgetScope,
+    ...(runBudget ? { runBudget } : {}),
+    budgetScope: options.purpose,
+    toolPlan,
+  };
+}
+
+function narrowRunBudgets(
+  upstream: RunBudget | undefined,
+  downstream: RunBudget | undefined,
+): RunBudget | undefined {
+  if (!upstream) return downstream ? { ...downstream } : undefined;
+  if (!downstream) return { ...upstream };
+  const minimum = (
+    left: number | undefined,
+    right: number | undefined,
+  ): number | undefined => {
+    if (left === undefined) return right;
+    if (right === undefined) return left;
+    return Math.min(left, right);
+  };
+  return {
+    maxDurationMs: minimum(upstream.maxDurationMs, downstream.maxDurationMs),
+    maxModelCalls: minimum(upstream.maxModelCalls, downstream.maxModelCalls),
+    maxToolCalls: minimum(upstream.maxToolCalls, downstream.maxToolCalls),
+    maxTokens: minimum(upstream.maxTokens, downstream.maxTokens),
+    maxCostUsd: minimum(upstream.maxCostUsd, downstream.maxCostUsd),
   };
 }
 
@@ -7994,6 +8076,15 @@ function workflowActorEpisodeMetadata(
     ...(episode.nodeId ? { nodeId: episode.nodeId } : {}),
     ...(episode.attempt !== undefined ? { attempt: episode.attempt } : {}),
     ...(episode.runBudget ? { runBudget: { ...episode.runBudget } } : {}),
+    toolPlan: {
+      purpose: episode.toolPlan.purpose,
+      decisions: episode.toolPlan.decisions.map((decision) => ({
+        ...decision,
+      })),
+      ...(episode.toolPlan.missingRequiredTools.length > 0
+        ? { missingRequiredTools: [...episode.toolPlan.missingRequiredTools] }
+        : {}),
+    },
   };
 }
 
@@ -8138,91 +8229,6 @@ function workflowEpisodeAllowedTools(
   return {
     nodeId: node.id,
     normalized: [...new Set(node.tools.map(canonicalToolName))],
-  };
-}
-
-function toolsForWorkflowActorEpisode(
-  env: PreparedHostRunEnvironment,
-): ToolDefinition[] {
-  return toolsForWorkflowRecord(env.tools, env.workflowRecord);
-}
-
-function toolsForWorkflowRecord(
-  tools: readonly ToolDefinition[],
-  record: WorkflowRunRecord | undefined,
-): ToolDefinition[] {
-  const allowedTools = workflowEpisodeAllowedTools(record);
-  if (!allowedTools) return [...tools];
-  const allowed = new Set(allowedTools.normalized);
-  const filtered = tools.filter((tool) =>
-    allowed.has(canonicalToolName(tool.name)),
-  );
-  if (
-    filtered.some(
-      (tool) => tool.deferLoading === true && tool.alwaysLoad !== true,
-    ) &&
-    !filtered.some((tool) => canonicalToolName(tool.name) === "tool_search")
-  ) {
-    return [...filtered, workflowScopedToolSearch(filtered)];
-  }
-  return filtered;
-}
-
-function workflowScopedToolSearch(
-  tools: readonly ToolDefinition[],
-): ToolDefinition {
-  const descriptors = tools.map(workflowToolDescriptor);
-  const toolSearch = createToolSearchTool({
-    source: {
-      listDescriptors: () => descriptors,
-    },
-  });
-  return {
-    ...toolSearch,
-    governance: {
-      ...toolSearch.governance,
-      origin: {
-        kind: "local",
-        name: WORKFLOW_SCOPED_TOOL_SEARCH_ORIGIN,
-        metadata: { workflowScoped: true },
-      },
-    },
-  };
-}
-
-function isWorkflowScopedToolSearch(tool: ToolDefinition | undefined): boolean {
-  return (
-    tool?.governance?.origin?.kind === "local" &&
-    tool.governance.origin.name === WORKFLOW_SCOPED_TOOL_SEARCH_ORIGIN
-  );
-}
-
-function workflowToolDescriptor(tool: ToolDefinition): ToolDescriptor {
-  return {
-    name: tool.name,
-    description: tool.description,
-    inputSchema: tool.inputSchema,
-    ...(tool.outputSchema !== undefined
-      ? { outputSchema: tool.outputSchema }
-      : {}),
-    ...(tool.canonicalName ? { canonicalName: tool.canonicalName } : {}),
-    ...(tool.legacyNames ? { legacyNames: [...tool.legacyNames] } : {}),
-    ...(tool.defaultExposureTier
-      ? { defaultExposureTier: tool.defaultExposureTier }
-      : {}),
-    ...(tool.relatedTools ? { relatedTools: [...tool.relatedTools] } : {}),
-    ...(tool.requiresTool ? { requiresTool: [...tool.requiresTool] } : {}),
-    ...(tool.timeoutMs !== undefined ? { timeoutMs: tool.timeoutMs } : {}),
-    loading: {
-      defer: tool.deferLoading,
-      alwaysLoad: tool.alwaysLoad,
-    },
-    ...(tool.resultSize ? { resultSize: { ...tool.resultSize } } : {}),
-    ...(tool.resultPresentation
-      ? { resultPresentation: { ...tool.resultPresentation } }
-      : {}),
-    ...(tool.policy ? { policy: { ...tool.policy } } : {}),
-    ...(tool.governance ? { governance: { ...tool.governance } } : {}),
   };
 }
 

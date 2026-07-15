@@ -946,6 +946,49 @@ describe("coding tools", () => {
     expect(result.path).toBe(".");
     expect(result.entries.map((entry) => entry.path)).toContain("README.md");
   });
+
+  it("normalizes an equivalent absolute workspace path through a symlink alias", async () => {
+    const { root, ctx } = await createWorkspace({
+      "src/index.ts": "export const value = 1;\n",
+    });
+    const aliasParent = await mkdtemp(
+      join(tmpdir(), "sparkwright-coding-tools-alias-"),
+    );
+    const aliasRoot = join(aliasParent, "workspace");
+    await symlink(root, aliasRoot, "dir");
+    const tools = createCodingTools({ workspaceRoot: root });
+    const glob = getTool<GlobPathsInput, GlobPathsResult>(tools, "glob");
+    const grep = getTool<GrepTextInput, GrepTextResult>(tools, "grep");
+    const list = getTool<ListDirInput, ListDirResult>(tools, "list_dir");
+
+    await expect(
+      glob.validateInput!(
+        {
+          path: aliasRoot,
+          patterns: [`${aliasRoot}/src/**/*.ts`],
+        },
+        ctx,
+      ),
+    ).resolves.toMatchObject({ ok: true });
+    await expect(
+      grep.validateInput!({ pattern: "value", path: `${aliasRoot}/src` }, ctx),
+    ).resolves.toMatchObject({ ok: true });
+
+    const globResult = await glob.execute(
+      { patterns: [`${aliasRoot}/src/**/*.ts`] },
+      ctx,
+    );
+    const listResult = await list.execute({ path: `${aliasRoot}/src` }, ctx);
+
+    expect(globResult).toMatchObject({
+      patterns: ["src/**/*.ts"],
+      paths: ["src/index.ts"],
+    });
+    expect(listResult.path).toBe("src");
+    expect(listResult.entries.map((entry) => entry.path)).toContain(
+      "src/index.ts",
+    );
+  });
 });
 
 async function createWorkspace(files: Record<string, string>) {

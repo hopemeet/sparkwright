@@ -9,6 +9,7 @@ import {
   readTodoLedger,
   renderTodoLedgerContext,
   summarizeTodoLedger,
+  TODO_CONTINUATION_REQUIRED_TOOL,
   type TodoTerminalAuditDecision,
 } from "./ledger.js";
 import type { TodoLedger } from "./types.js";
@@ -45,6 +46,11 @@ export interface RunTodoSupervisedOptions {
   maxContinuations?: number;
   maxStalledContinuations?: number;
   sessionId?: string;
+  continuationToolAvailability?(
+    toolName: string,
+  ):
+    | { available: true }
+    | { available: false; toolName: string; reason?: string };
   onDecision?(decision: TodoTerminalAuditDecision): void | Promise<void>;
 }
 
@@ -93,7 +99,7 @@ export async function runTodoSupervised(
       const progressed =
         hasExternalProgressEvidence(output.events ?? []) ||
         completed > prevCompleted;
-      const decision = auditTodoAfterTerminal(ledger, {
+      let decision = auditTodoAfterTerminal(ledger, {
         result: output.result,
         events: output.events,
         hasProgress: progressed,
@@ -102,6 +108,22 @@ export async function runTodoSupervised(
         stalledContinuationCount,
         maxStalledContinuations: options.maxStalledContinuations,
       });
+      if (decision.kind === "continue") {
+        const availability = options.continuationToolAvailability?.(
+          TODO_CONTINUATION_REQUIRED_TOOL,
+        );
+        if (availability?.available === false) {
+          decision = {
+            kind: "handoff",
+            summary: decision.summary,
+            reason: "required_tool_unavailable",
+            message:
+              `Todo ledger is unfinished, but continuation requires unavailable tool ` +
+              `\`${availability.toolName}\`` +
+              (availability.reason ? ` (${availability.reason}).` : "."),
+          };
+        }
+      }
       await options.onDecision?.(decision);
 
       if (decision.kind !== "continue") {

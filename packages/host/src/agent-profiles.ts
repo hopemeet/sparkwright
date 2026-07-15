@@ -14,6 +14,8 @@ import type { AgentMode, AgentProfile } from "@sparkwright/agent-runtime";
 import { splitMarkdownFrontmatter } from "@sparkwright/skills";
 import { parse as parseYaml } from "yaml";
 import { resolveCapabilityDirs } from "./layers.js";
+import { isValidModelRefSyntax } from "./config.js";
+import { normalizeToolNameList } from "./tool-identities.js";
 
 const AGENT_MODES = new Set<AgentMode>(["primary", "child", "all"]);
 type AgentProfileWorkflowHook = NonNullable<AgentProfile["hooks"]>[number];
@@ -212,6 +214,20 @@ async function collectAgentProfileFileEntriesInDir(
     });
     if (raw === undefined) continue;
     const profile = parseAgentProfileFile(basename(entry.name, ".md"), raw);
+    if (
+      profile.model !== undefined &&
+      (typeof profile.model !== "string" ||
+        !isValidModelRefSyntax(profile.model))
+    ) {
+      options.onError?.(
+        fullPath,
+        new Error(
+          `Agent "${profile.id}" model "${String(profile.model)}" must be in ` +
+            '"provider/model" form, or "deterministic". Omit model to inherit.',
+        ),
+      );
+      continue;
+    }
     const existing = byId.get(profile.id);
     if (existing) {
       const dropped = {
@@ -318,9 +334,13 @@ export function parseAgentProfileFile(
   const use = list(frontmatter, "use");
   if (use.length > 0) profile.use = use;
   const allowedTools = firstList(frontmatter, "allowedtools", "tools");
-  if (allowedTools.length > 0) profile.allowedTools = allowedTools;
+  if (allowedTools.length > 0) {
+    profile.allowedTools = normalizeToolNameList(allowedTools);
+  }
   const deniedTools = firstList(frontmatter, "deniedtools", "disallowedtools");
-  if (deniedTools.length > 0) profile.deniedTools = deniedTools;
+  if (deniedTools.length > 0) {
+    profile.deniedTools = normalizeToolNameList(deniedTools);
+  }
   const triggers = list(frontmatter, "triggers");
   if (triggers.length > 0) profile.triggers = triggers;
   const when = profileWhen(frontmatter);

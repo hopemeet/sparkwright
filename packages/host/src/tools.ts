@@ -29,9 +29,12 @@ import {
   type CapabilityWriteResult,
 } from "./capability-mutation.js";
 import {
+  isValidModelRefSyntax,
+  loadHostConfig,
   projectConfigPath,
   readConfigFileObject,
   resolveConfigWriteTarget,
+  resolveModelSelection,
   serializeConfigFileObject,
   type CapabilityToolsConfig,
 } from "./config.js";
@@ -700,7 +703,17 @@ export function createMarkdownAgentManagerTool(workspaceRoot: string) {
         description: { type: "string" },
         mode: { type: "string", enum: ["primary", "child", "all"] },
         prompt: { type: "string" },
-        model: { type: "string" },
+        model: {
+          oneOf: [
+            { type: "string", enum: ["inherit", "default"] },
+            {
+              type: "string",
+              pattern: "^(deterministic|[^/\\s]+/[^\\s]+)$",
+            },
+          ],
+          description:
+            'Use "inherit" (or legacy authoring alias "default") to inherit the effective parent/default model; these aliases are normalized away and never persisted. Otherwise pass an explicit "provider/model" ref or "deterministic".',
+        },
         use: { type: "array", items: { type: "string" } },
         allowedTools: { type: "array", items: { type: "string" } },
         deniedTools: { type: "array", items: { type: "string" } },
@@ -1889,6 +1902,14 @@ function parseMarkdownAgentArgs(args: unknown): MarkdownAgentInput {
       "create_agent maxSteps must be a positive integer.",
     );
   }
+  const requestedModel =
+    typeof args.model === "string" && args.model.trim()
+      ? args.model.trim()
+      : undefined;
+  const model = isMarkdownAgentModelInheritanceAlias(requestedModel)
+    ? undefined
+    : requestedModel;
+  assertMarkdownAgentModelRef(model);
   return {
     action,
     id,
@@ -1897,9 +1918,7 @@ function parseMarkdownAgentArgs(args: unknown): MarkdownAgentInput {
       ? { description: args.description.trim() }
       : {}),
     ...(mode ? { mode } : {}),
-    ...(typeof args.model === "string" && args.model.trim()
-      ? { model: args.model.trim() }
-      : {}),
+    ...(model ? { model } : {}),
     ...(args.use !== undefined
       ? { use: toolUseSelectorArrayArg(args.use, "use") }
       : {}),
@@ -1936,6 +1955,16 @@ async function writeMarkdownAgent(
   if (profile.id !== input.id || !profile.prompt) {
     throw new Error("create_agent produced an invalid Markdown Agent profile.");
   }
+  if (profile.model !== undefined && typeof profile.model !== "string") {
+    throw toolArgumentsInvalid(
+      "create_agent produced a non-string Markdown Agent model reference.",
+    );
+  }
+  assertMarkdownAgentModelRef(profile.model as string | undefined);
+  await assertMarkdownAgentModelResolvable(
+    workspaceRoot,
+    profile.model as string | undefined,
+  );
   const config = await readProjectConfig(workspaceRoot);
   if (
     getAgentConfigShape(config.data).profiles.some(
@@ -1998,6 +2027,35 @@ async function writeMarkdownAgent(
     diffArtifactId: write.diffArtifactId,
     writeSummary: write.summary,
   };
+}
+
+function assertMarkdownAgentModelRef(model: string | undefined): void {
+  if (!model) return;
+  if (isValidModelRefSyntax(model)) return;
+  throw toolArgumentsInvalid(
+    `create_agent model "${model}" must be in "provider/model" form. ` +
+      'Pass model="inherit" (or omit model) to inherit the parent/default model.',
+  );
+}
+
+function isMarkdownAgentModelInheritanceAlias(
+  model: string | undefined,
+): boolean {
+  return model === "inherit" || model === "default";
+}
+
+async function assertMarkdownAgentModelResolvable(
+  workspaceRoot: string,
+  model: string | undefined,
+): Promise<void> {
+  if (!model) return;
+  const loaded = await loadHostConfig(workspaceRoot);
+  const selection = resolveModelSelection(loaded.config, model);
+  if (selection.kind !== "error") return;
+  throw toolArgumentsInvalid(
+    `create_agent model "${model}" is not callable in the current configuration: ${selection.message} ` +
+      'Pass model="inherit" (or omit model) to inherit the parent/default model.',
+  );
 }
 
 function markdownAgentResult(

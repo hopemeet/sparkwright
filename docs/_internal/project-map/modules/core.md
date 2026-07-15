@@ -83,6 +83,11 @@ Does not own:
   args, write the workspace, create artifacts, or call external networks.
   Failures produce model-visible `tool.failed` observations with
   `metadata.phase: "validateInput"`.
+- In a read-only run, `createWorkspaceMutationPolicy(false)` denies a
+  `tool.execute` resource whose governance omits side-effect classification.
+  Missing metadata is not evidence of safety. Approval is reached only after
+  this policy gate and therefore cannot upgrade an unclassified or write-side
+  tool into read-only authority.
 - Tool outcome recovery can classify empty `task` monitor placeholder argument
   failures as recovered only when a later same-action concrete `task` monitor
   call succeeds. This is a narrow recovery rule for model batching artifacts,
@@ -377,6 +382,40 @@ Does not own:
   guard and trace diagnostics.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: read-only policy now fails closed for missing side-effect governance;
+  approval remains after authorization, Skill prompt requirements follow the
+  active descriptor surface, and tool-plan metadata no longer claims static
+  approval/execution outcomes.
+- Read: Core context, policy, registry/run gate, tool lifecycle traces, and
+  failure-first plus full tests.
+- Tests: Core 670/670, test/workspace typechecks, lint, and real CLI/TUI
+  read-only denials with zero approvals/writes.
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: runtime tool aliases now canonicalize before hooks/policy and dynamic
+  availability is an execution gate as well as a model-descriptor filter.
+  Public tool events/approvals retain the requested alias and expose the
+  canonical identity separately. Episode tool decisions are exposed on
+  `run.started` for trace diagnosis.
+- Read: `packages/core/src/tools.ts`, `packages/core/src/run.ts`, policy and
+  approval ordering, deferred loading, and focused run tests.
+- Tests: Core full suite 667/667; alias-deny, guessed-unavailable, and
+  `run.started.toolPlan` regressions passed.
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: unsupported final-answer command analysis now recognizes only a
+  same-line arrow expansion from a successful npm/pnpm/yarn script invocation.
+  Unrelated, semicolon-separated, or non-package command claims remain
+  unsupported.
+- Read: `packages/core/src/run-outcome.ts`, FactLedger command classification,
+  focused outcome tests, and the real Sonnet package-script trace.
+- Tests: Core run-outcome 30/30 and typecheck; the historical real trace now
+  recomputes without the false `node --test` unsupported claim.
 
 - Status: Verified
 - Date: 2026-07-14T14:35:00+0800

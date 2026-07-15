@@ -388,6 +388,25 @@ describe("createWorkspaceMutationPolicy", () => {
     expect(decision.decision).toBe("allow");
   });
 
+  it("denies unclassified tools when the run is read-only", async () => {
+    const policy = createWorkspaceMutationPolicy({
+      allowWorkspaceWrites: false,
+    });
+
+    const decision = await policy.decide({
+      action: "tool.execute",
+      metadata: { toolName: "custom_external_tool" },
+    });
+
+    expect(decision).toMatchObject({
+      decision: "deny",
+      metadata: {
+        toolName: "custom_external_tool",
+        reason: "missing_side_effect_classification",
+      },
+    });
+  });
+
   it("denies writes outside the allowed target scope", async () => {
     const policy = createWorkspaceMutationPolicy({
       allowWorkspaceWrites: true,
