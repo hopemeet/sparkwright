@@ -212,9 +212,9 @@ EventLog emits full event
 ## Last Verified
 
 - Status: Verified
-- Date: 2026-07-15
-- Scope: `run.started.toolPlan` was reduced in place to post-admission episode
-  visibility; final authorization/availability/approval remain derivable from
+- Date: 2026-07-15T23:51:43+0800
+- Scope: removed the redundant `run.started.toolPlan` projection; final
+  authorization, availability, approval, and execution remain derivable from
   existing tool and approval events, with no new event or correlation id.
 - Read: real alias/Profile/read-only/approval/resume/Workflow traces and trace
   summary/verify/session consistency consumers.
@@ -223,9 +223,8 @@ EventLog emits full event
 
 - Status: Verified
 - Date: 2026-07-15
-- Scope: checked Todo continuation, package-script outcome, background service,
-  and TUI fixes against existing trace events; no raw event family or payload
-  contract changed.
+- Scope: checked Todo continuation, background service, and TUI fixes against
+  existing trace events; no raw event family changed.
 - Read: real session `session_mrlkn469h2ylznbk`, Core run-outcome, Host Todo
   assembly, and TUI task projection.
 - Tests: trace verify/session check passed; Core/Host/TUI focused gates passed.
@@ -315,7 +314,7 @@ EventLog emits full event
 - Status: Read-only
 - Date: 2026-07-12
 - Scope: checked event-time Agent and Workflow package identity metadata; trace encoding contract is otherwise unchanged.
-- Tests: focused host/agent-runtime tests passed; release gate pending.
+- Tests: focused host/agent-runtime tests and the 2026-07-15 release gate passed.
 
 - Status: Read-only
 - Date: 2026-07-12T16:36:08+0800

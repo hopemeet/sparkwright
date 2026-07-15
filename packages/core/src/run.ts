@@ -5419,13 +5419,6 @@ function runStartedPayload(
   metadata: Record<string, unknown>,
 ): Record<string, unknown> {
   const resolvedModel = metadata.resolvedModel;
-  const workflowEpisode = isRecord(metadata.workflowEpisode)
-    ? metadata.workflowEpisode
-    : undefined;
-  const toolPlan =
-    workflowEpisode && isRecord(workflowEpisode.toolPlan)
-      ? workflowEpisode.toolPlan
-      : undefined;
   const mcpWorkspaceCwdServers = Array.isArray(metadata.mcpWorkspaceCwdServers)
     ? metadata.mcpWorkspaceCwdServers.filter(
         (value): value is string => typeof value === "string",
@@ -5433,7 +5426,6 @@ function runStartedPayload(
     : [];
   return {
     ...(isRecord(resolvedModel) ? { resolvedModel } : {}),
-    ...(toolPlan ? { toolPlan } : {}),
     ...(mcpWorkspaceCwdServers.length > 0 ? { mcpWorkspaceCwdServers } : {}),
   };
 }

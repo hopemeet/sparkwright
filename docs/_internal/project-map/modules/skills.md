@@ -230,7 +230,7 @@ list --run/--session`); failed drafts self-clean. See
 - Status: Read-only
 - Date: 2026-07-12
 - Scope: checked v2 package consumers, registry reconciliation, and advisory evidence suggestions.
-- Tests: focused host/CLI tests passed; release gate pending.
+- Tests: focused host/CLI tests and the 2026-07-15 release gate passed.
 
 - Status: Verified
 - Date: 2026-07-12T14:03:23+0800

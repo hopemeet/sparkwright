@@ -24,8 +24,9 @@ own arrays.
 - Shared Profile admission applies aliases/wildcards and deny-after-allow, and
   rebuilds scoped discovery from retained definitions rather than retaining a
   broader captured index.
-- One pure `resolveRunToolPlan()` applies Workflow narrowing, scoped discovery,
-  prompt-required eager promotion, and visibility diagnostics without widening.
+- One pure `resolveRunToolSurface()` applies Workflow narrowing, scoped
+  discovery, and prompt-required eager promotion without widening or creating
+  a parallel diagnostic decision model.
 - Fresh, resume, Workflow resume, and Todo continuation use that same planner.
 - Core canonicalizes aliases before hooks/policy and checks availability before
   policy/handler execution. Public lifecycle/approval payloads keep the
@@ -44,4 +45,4 @@ execution, continuation promotion, and removed-tool continuation. Core tests
 cover alias policy denial and guessed unavailable tools. Real mini traces in
 `2026-07-15-tool-decision-architecture-audit.md` show Profile/Workflow clamps,
 Todo promotion, deferred discovery, read-only call-time denial, and CLI/TUI
-parity. The episode plan no longer stores static approval or execution claims.
+parity. Episode visibility is not persisted as a second permission model.

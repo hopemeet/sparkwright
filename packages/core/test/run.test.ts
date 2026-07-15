@@ -60,29 +60,6 @@ describe("SparkwrightRun", () => {
     });
   }
 
-  it("surfaces the final tool decision plan on run.started", async () => {
-    const toolPlan = {
-      purpose: "main_agent",
-      decisions: [
-        {
-          name: "read",
-          visibility: "exposed",
-        },
-      ],
-    };
-    const run = createRun({
-      goal: "trace tool plan",
-      metadata: { workflowEpisode: { toolPlan } },
-      model: { complete: async () => ({ message: "done" }) },
-    });
-
-    await run.start();
-
-    expect(
-      run.events.all().find((event) => event.type === "run.started")?.payload,
-    ).toMatchObject({ toolPlan });
-  });
-
   it("classifies custom tool argument error codes as model argument errors", () => {
     expect(classifyToolFailure("TASK_ARGUMENTS_INVALID")).toBe(
       "model_arg_error",

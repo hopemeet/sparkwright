@@ -210,7 +210,7 @@ Does not own:
 ## Last Verified
 
 - Status: Verified
-- Date: 2026-07-14
+- Date: 2026-07-15
 - Scope: Host principal isolation keeps existing handshake/IM/Workflow request
   types while rejecting identity spoof metadata, duplicate handshake, and new
   self-binding attempts that select a caller-provided session.
@@ -247,7 +247,7 @@ Does not own:
 - Status: Read-only
 - Date: 2026-07-12
 - Scope: checked Workflow package-pin fields; no protocol schema change in this slice.
-- Tests: focused Workflow tests passed; release gate pending.
+- Tests: focused Workflow tests and the 2026-07-15 release gate passed.
 
 - Status: Read-only
 - Date: 2026-07-12T16:36:08+0800

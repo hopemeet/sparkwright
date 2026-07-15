@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { defineTool, type ToolDefinition } from "@sparkwright/core";
-import { resolveRunToolPlan } from "../src/run-tool-plan.js";
+import { resolveRunToolSurface } from "../src/tool-surface.js";
 
 function tool(name: string, deferLoading = false): ToolDefinition {
   return defineTool({
@@ -21,9 +21,8 @@ describe("todo continuation tool loading", () => {
     const todo = tool("todo_write", true);
     const read = tool("read");
 
-    const plan = resolveRunToolPlan({
+    const plan = resolveRunToolSurface({
       tools: [read, todo],
-      purpose: "todo_continuation",
       requiredTools: ["todo_write"],
     });
 
@@ -41,9 +40,8 @@ describe("todo continuation tool loading", () => {
   it("does not widen an already narrowed or denied tool catalog", () => {
     const task = tool("task", true);
 
-    const plan = resolveRunToolPlan({
+    const plan = resolveRunToolSurface({
       tools: [task],
-      purpose: "todo_continuation",
       requiredTools: ["todo_write"],
     });
 

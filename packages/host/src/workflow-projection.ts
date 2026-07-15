@@ -16,7 +16,6 @@ import {
   assertWorkflowRuntimeDefinition,
   createInitialWorkflowRuntimeState,
   hasUnfinishedTodo,
-  isTodoResumableStopReason,
   summarizeTodoLedger,
   type TodoLedger,
   type WorkflowCommandVerifierDefinition,
@@ -65,6 +64,8 @@ export interface CreateWorkflowProjectionHooksOptions extends Omit<
   allowScriptWrite?: boolean;
   isToolAvailable?: (toolName: string) => boolean;
   isScopedToolSearchAvailable?: () => boolean;
+  /** Owner that persists cancellation/failure after a Core episode ends. */
+  runEndTerminalOwner?: "projection" | "episode_chain";
   /** @internal Test-only fault injection for D23 fail-closed gate assertions. */
   faultInjection?: Partial<Record<WorkflowHookName, string>>;
 }
@@ -1389,6 +1390,9 @@ export function createWorkflowProjectionHooks(
       hook: "RunEnd",
       onError: "continue",
       async handle(input) {
+        if (options.runEndTerminalOwner === "episode_chain") {
+          return { status: "continue", metadata: { workflowRunId } };
+        }
         const payload = isRecord(input.payload) ? input.payload : {};
         const runState = stringValue(payload.state);
         const reason = stringValue(payload.reason);
@@ -1412,12 +1416,6 @@ export function createWorkflowProjectionHooks(
           return { status: "continue", metadata: { workflowRunId } };
         }
         if (runState === "failed") {
-          // A Todo episode supervisor owns the decision to continue or hand
-          // off after a bounded Core run. Persisting a terminal workflow here
-          // would race that owner and make a valid continuation stale.
-          if (isTodoResumableStopReason(reason)) {
-            return { status: "continue", metadata: { workflowRunId } };
-          }
           emitInterrupted(input, "run_failed", { reason });
           if (!terminalEmitted) {
             emitRuntimeFailure(

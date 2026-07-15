@@ -14,7 +14,7 @@ See [../safety/workspace-writes.md](../safety/workspace-writes.md), [../safety/s
 - `packages/core/src/tool-orchestration.ts`
 - `packages/core/src/tools.ts`
 - `packages/host/src/tool-catalog.ts`
-- `packages/host/src/run-tool-plan.ts`
+- `packages/host/src/tool-surface.ts`
 - `packages/host/src/run-security-plan.ts`
 - `packages/host/src/tools.ts`
 - `packages/host/src/shell.ts`
@@ -38,16 +38,17 @@ model tool calls
 ## Contracts
 
 - Tool decisions are monotonic across separate concerns. Host catalog and
-  shared Agent Profile admission decide the candidate set; `resolveRunToolPlan()` may
-  only apply Workflow narrowing, scope an already-admitted `tool_search`, and
+  shared Agent Profile admission decide the candidate set;
+  `resolveRunToolSurface()` may only apply Workflow narrowing, scope an
+  already-admitted `tool_search`, and
   promote an already-admitted prompt-required schema; Core policy/approval then
   decides each concrete execution. Deferred/eager is exposure only, approval
   confirms an authorized call, and neither mechanism can recover a removed
   tool.
 - Fresh runs, session/run resume, Workflow resume, and Todo continuations all
   derive their episode tools through `workflowActorEpisodePlan()` and
-  `resolveRunToolPlan()`. Todo continuation is the declarative
-  `purpose:"todo_continuation"` input, not a separate tool-array helper.
+  `resolveRunToolSurface()`. Todo continuation requests eager `todo_write`
+  from that same surface and hands off if admission removed it.
 - Workflow-scoped discovery may replace an admitted parent `tool_search`, but
   must not synthesize discovery when upstream config/Profile admission removed
   it. Its descriptor source contains only the narrowed episode definitions.
@@ -62,12 +63,9 @@ model tool calls
   guesses its registered name. Public lifecycle events and approval details
   retain the model-requested name for protocol compatibility and add
   `canonicalToolName` when it differs.
-- `run.started.payload.toolPlan` records a post-admission episode visibility
-  snapshot: exposed, deferred-discoverable, deferred-undiscoverable, or omitted
-  by Workflow narrowing, plus prompt-required promotion and missing required
-  names. It does not claim dynamic availability, approval need, or execution
-  authorization. The eventual policy, `approval.*`, and `tool.*` events are the
-  final evidence.
+- Episode visibility is not persisted as a second decision model. Policy,
+  `approval.*`, and `tool.*` events remain the final evidence for availability,
+  authorization, and execution.
 - Read-only policy treats absent side-effect governance conservatively. Known
   wrappers must classify the strongest underlying capability they can invoke;
   ACP and external-command delegates include `write` when granted read-write
@@ -403,15 +401,15 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
 ## Last Verified
 
 - Status: Verified
-- Date: 2026-07-15
-- Scope: independent review removed eight stale/duplicated plan fields,
-  consolidated five Profile-admission call sites and four scoped-discovery
-  consumers, made unknown read-only governance fail closed, and verified
-  approval cannot widen policy.
-- Read: end-to-end config/catalog -> Profile -> Workflow -> prompt ->
-  availability -> policy -> approval -> execution -> trace/resume chain.
-- Tests: Core 670/670, agent-runtime 255/255, Host 601/601, CLI 195/195, TUI
-  415/415, ACP/MCP 49/49, real-model 6/6, TUI PTY and Workflow two-run traces.
+- Date: 2026-07-15T23:51:43+0800
+- Scope: replaced separate Profile admission, episode planning, and scoped
+  discovery modules with one monotonic tool surface; removed redundant
+  `run.started` visibility projection while preserving call-time gates.
+- Read: config/catalog -> Profile -> Workflow -> prompt -> availability ->
+  policy -> approval -> execution and Todo continuation paths.
+- Tests: Core run/outcome 160/160, Host tool-surface/Workflow 127/127,
+  agent-runtime Todo 31/31, affected typechecks, and full
+  `npm run release:check` passed.
 
 - Status: Verified
 - Date: 2026-07-15
@@ -538,7 +536,7 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
 - Status: Read-only
 - Date: 2026-07-12
 - Scope: checked Markdown Agent workspace-write authoring and Skill reconciliation CLI; no orchestration policy change.
-- Tests: focused host/CLI tests passed; release gate pending.
+- Tests: focused host/CLI tests and the 2026-07-15 release gate passed.
 
 - Status: Verified
 - Date: 2026-07-12T02:12:00+0800

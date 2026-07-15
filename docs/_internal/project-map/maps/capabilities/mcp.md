@@ -88,7 +88,7 @@ host config MCP servers
 ## Last Verified
 
 - Status: Verified
-- Date: 2026-07-14
+- Date: 2026-07-15
 - Scope: checked Host runtime source-attribution signature change; MCP
   preparation, transport, policy, and lifecycle contracts are unchanged.
 - Tests: Host focused suites and typecheck passed.
@@ -151,7 +151,7 @@ host config MCP servers
 - Status: Read-only
 - Date: 2026-07-12
 - Scope: checked Workflow run package-identity metadata; MCP capability behavior is unchanged.
-- Tests: focused Workflow tests passed; release gate pending.
+- Tests: focused Workflow tests and the 2026-07-15 release gate passed.
 
 - Status: Read-only
 - Date: 2026-07-12T16:36:08+0800

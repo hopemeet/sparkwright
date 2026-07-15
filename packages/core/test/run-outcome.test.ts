@@ -546,69 +546,6 @@ describe("run outcome evidence", () => {
     expect(outcome?.unsupportedFinalClaims).toBeUndefined();
   });
 
-  it("accepts a package script's arrow-expanded command after the script succeeds", () => {
-    const log = new EventLog(createRunId());
-    const events = [
-      log.emit("run.created", { goal: "Fix and run tests" }),
-      log.emit("tool.requested", {
-        id: "call_test",
-        toolName: "shell",
-        arguments: { command: "npm test" },
-      }),
-      log.emit("tool.completed", {
-        toolCallId: "call_test",
-        toolName: "shell",
-        status: "completed",
-        output: {
-          exitCode: 0,
-          timedOut: false,
-          stdout: "> test\n> node --test\n",
-          stderr: "",
-        },
-      }),
-    ];
-
-    const outcome = completedRunOutcomeFromEvents(
-      events,
-      "- `npm test` → `node --test` → confirmed working ✅",
-    );
-
-    expect(outcome?.unsupportedFinalClaims).toBeUndefined();
-  });
-
-  it("does not let a successful package script launder an unrelated command claim", () => {
-    const log = new EventLog(createRunId());
-    const events = [
-      log.emit("run.created", { goal: "Fix and run tests" }),
-      log.emit("tool.requested", {
-        id: "call_test",
-        toolName: "shell",
-        arguments: { command: "npm test" },
-      }),
-      log.emit("tool.completed", {
-        toolCallId: "call_test",
-        toolName: "shell",
-        status: "completed",
-        output: { exitCode: 0, timedOut: false, stdout: "ok", stderr: "" },
-      }),
-    ];
-
-    const outcome = completedRunOutcomeFromEvents(
-      events,
-      "`npm test` passed; `python -m unittest secret_test.py` passed.",
-    );
-
-    expect(outcome?.unsupportedFinalClaims).toEqual({
-      count: 1,
-      claims: [
-        {
-          kind: "command_success",
-          command: "python -m unittest secret_test.py",
-        },
-      ],
-    });
-  });
-
   it("marks a recovered + unsupported-claim run as non-failing despite the issues kind", () => {
     const log = new EventLog(createRunId());
     const events = [

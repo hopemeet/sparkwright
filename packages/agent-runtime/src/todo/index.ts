@@ -35,7 +35,6 @@ export {
   computeTodoDirective,
   hasExternalProgressEvidence,
   hasUnfinishedTodo,
-  isTodoResumableStopReason,
   readTodoLedger,
   renderTodoLedgerContext,
   summarizeTodoLedger,

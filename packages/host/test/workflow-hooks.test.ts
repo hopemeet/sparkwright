@@ -2879,10 +2879,11 @@ describe("createWorkflowProjectionHooks", () => {
     });
   });
 
-  it("leaves resumable Core failures for the Todo episode supervisor", async () => {
+  it("leaves Core terminalization to the configured episode-chain owner", async () => {
     const projection = createWorkflowProjectionHooks({
       workspaceRoot: process.cwd(),
       workflowRunId: "wf_resumable_episode",
+      runEndTerminalOwner: "episode_chain",
       definition: {
         assetName: "resumable-episode",
         contentHash: "hash",
@@ -2898,7 +2899,7 @@ describe("createWorkflowProjectionHooks", () => {
       hooks: projection.hooks,
       hook: "RunEnd",
       run,
-      payload: { state: "failed", reason: "max_tool_calls_exceeded" },
+      payload: { state: "failed", reason: "provider_error" },
       events,
       facts,
     });

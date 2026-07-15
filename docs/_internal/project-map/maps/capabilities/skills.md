@@ -174,7 +174,7 @@ skill roots
 - Status: Read-only
 - Date: 2026-07-12
 - Scope: checked v2 Skill package identity, reconciliation, and evidence-review consumers.
-- Tests: focused Skill/host tests passed; release gate pending.
+- Tests: focused Skill/host tests and the 2026-07-15 release gate passed.
 
 - Status: Verified
 - Date: 2026-07-12T14:05:58+0800

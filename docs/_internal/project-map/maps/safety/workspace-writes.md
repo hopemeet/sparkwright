@@ -139,7 +139,7 @@ tool proposes write
 ## Last Verified
 
 - Status: Verified
-- Date: 2026-07-14
+- Date: 2026-07-15
 - Scope: checked Host principal isolation and Workflow control attribution;
   workspace-write policy, approval, and lease behavior are unchanged.
 - Tests: Host focused suites and typecheck passed.
@@ -260,7 +260,7 @@ tool proposes write
 - Status: Read-only
 - Date: 2026-07-12
 - Scope: checked Markdown Agent atomic workspace-write path; no workspace-write policy change.
-- Tests: focused host tests passed; release gate pending.
+- Tests: focused host tests and the 2026-07-15 release gate passed.
 
 - Status: Read-only
 - Date: 2026-07-12T16:36:08+0800

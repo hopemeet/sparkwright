@@ -40,7 +40,7 @@ export const TODO_CONTINUATION_REQUIRED_TOOL = "todo_write";
  * @public
  * @stability experimental v0.1
  */
-export function isTodoResumableStopReason(
+function isTodoResumableStopReason(
   reason: string | undefined,
 ): reason is RunStopReason {
   return (

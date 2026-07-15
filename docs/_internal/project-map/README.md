@@ -136,7 +136,7 @@ follow the active maps below for the current contract.
 - `packages/core/src/workspace.ts` or `packages/core/src/workspace-checkpoint.ts`: [modules/core.md](modules/core.md), [maps/safety/workspace-writes.md](maps/safety/workspace-writes.md)
 - `packages/core/src/usage.ts`: [modules/core.md](modules/core.md), [maps/trace/summary-timeline-verify.md](maps/trace/summary-timeline-verify.md)
 - `packages/host/src/config.ts` or `packages/host/src/config-zod-schema.ts`: [modules/host.md](modules/host.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md)
-- `packages/host/src/tool-identities.ts`, `packages/host/src/tool-catalog.ts`, `packages/host/src/tool-selectors.ts`, `packages/host/src/agent-tool-admission.ts`, `packages/host/src/scoped-tool-search.ts`, or `packages/host/src/run-tool-plan.ts`: [modules/host.md](modules/host.md), [modules/coding-tools.md](modules/coding-tools.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md), [maps/capabilities/README.md](maps/capabilities/README.md)
+- `packages/host/src/tool-identities.ts`, `packages/host/src/tool-catalog.ts`, `packages/host/src/tool-selectors.ts`, or `packages/host/src/tool-surface.ts`: [modules/host.md](modules/host.md), [modules/coding-tools.md](modules/coding-tools.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md), [maps/capabilities/README.md](maps/capabilities/README.md)
 - `packages/host/src/model-builder.ts` or `packages/host/src/model-factory.ts`: [modules/host.md](modules/host.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/trace/summary-timeline-verify.md](maps/trace/summary-timeline-verify.md), [maps/runtime/context-compaction.md](maps/runtime/context-compaction.md)
 - `packages/host/src/runtime.ts`, `packages/host/src/run-access.ts`, `packages/host/src/run-security-plan.ts`, or `packages/host/src/run-policy.ts`: [modules/host.md](modules/host.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md), [maps/session/resume-replay.md](maps/session/resume-replay.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/capabilities/mcp.md](maps/capabilities/mcp.md), [maps/safety/workspace-writes.md](maps/safety/workspace-writes.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md)
 - `packages/host/src/host-execution.ts`, `packages/host/src/execution-plan.ts`, or `packages/host/src/execution-resources.ts`: [modules/host.md](modules/host.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/session/session-store.md](maps/session/session-store.md), [maps/safety/workspace-writes.md](maps/safety/workspace-writes.md)
@@ -206,14 +206,13 @@ trace/session inspection.
 
 - Status: Verified
 - Date: 2026-07-15
-- Scope: routed the independent tool-decision follow-up through Host/Core,
-  tool orchestration, run loop, resume, raw trace, Agent, and test-map pages;
-  added new Profile admission/scoped discovery files to touch-file routing.
-- Read: actual catalog-to-execution chain, failure-first tests, real
-  CLI/TUI/Workflow/MCP/Agent traces, and all linked ownership boundaries.
-- Tests: affected package suites, all workspace static checks, project-map
-  drift, and real-model regression passed; final release gate recorded in the
-  linked run note.
+- Scope: routed the consolidated `tool-surface.ts`, exact command-evidence
+  rule, removed `run.started` visibility projection, and explicit Workflow
+  terminal ownership through Host/Core/run-loop/trace/test-map pages.
+- Read: catalog-to-execution chain, Todo continuation, Workflow projection and
+  finalization, raw trace consumers, and linked ownership boundaries.
+- Tests: Core/Host/agent-runtime focused suites, affected typechecks, and full
+  `npm run release:check` passed.
 
 - Status: Verified
 - Date: 2026-07-14

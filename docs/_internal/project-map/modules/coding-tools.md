@@ -138,7 +138,7 @@ Does not own:
 ## Last Verified
 
 - Status: Verified
-- Date: 2026-07-15T10:29:00+0800
+- Date: 2026-07-15T23:51:43+0800
 - Scope: discovery path normalization now recognizes symlink/canonical aliases
   of the workspace root without weakening the walker containment boundary.
 - Read: `packages/coding-tools/src/index.ts`,
@@ -182,7 +182,7 @@ Does not own:
 - Status: Read-only
 - Date: 2026-07-12
 - Scope: checked Markdown Agent write routing; existing workspace-write tooling contract remains unchanged.
-- Tests: focused host tool tests passed; release gate pending.
+- Tests: focused host tool tests and the 2026-07-15 release gate passed.
 
 - Status: Verified
 - Date: 2026-07-11T22:55:00+0800

@@ -169,7 +169,7 @@ Manual compact
 - Status: Read-only
 - Date: 2026-07-12
 - Scope: checked CLI reconciliation routing; session-store contract is unchanged.
-- Tests: focused CLI tests passed; release gate pending.
+- Tests: focused CLI tests and the 2026-07-15 release gate passed.
 
 - Status: Read-only
 - Date: 2026-07-12T16:36:08+0800

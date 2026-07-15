@@ -286,17 +286,14 @@ import {
   resolveSelectorAllowlist,
 } from "./tool-selectors.js";
 import {
-  isWorkflowScopedToolSearch,
-  resolveRunToolPlan,
-  type RunEpisodePurpose,
-  type RunToolPlan,
-} from "./run-tool-plan.js";
-import { createScopedToolSearch } from "./scoped-tool-search.js";
-import {
   admitToolsForAgentProfile,
   agentProfileAdmitsTool,
+  createScopedToolSearch,
+  isWorkflowScopedToolSearch,
   matchesAgentToolName,
-} from "./agent-tool-admission.js";
+  resolveRunToolSurface,
+  type ResolvedToolSurface,
+} from "./tool-surface.js";
 
 /**
  * Skills flagged `metadata.devOnly: true` (test/development fixtures) are kept
@@ -2592,6 +2589,7 @@ export class HostRuntime {
               ),
             readTodoLedger: () =>
               readTodoLedger(join(sessionRootDir, input.sessionId, "todo.md")),
+            runEndTerminalOwner: "episode_chain",
             allowScriptWrite: runAccess.shouldWrite,
             agentTool: delegateAgentTool,
             delegateParallelTool: tools.find(
@@ -3201,7 +3199,7 @@ export class HostRuntime {
         const plan = workflowActorEpisodePlan(env, {
           fallbackRunBudget: resolveTodoContinuationRunBudget(env.mainAgent),
           purpose: "todo_continuation",
-        }).toolPlan;
+        }).toolSurface;
         const toolName = plan.missingRequiredTools.find(
           (name) => name === canonicalToolName(requiredTool),
         );
@@ -3490,7 +3488,7 @@ export class HostRuntime {
           cwd: env.workspaceRoot,
           sessionId: resumeSessionId,
         }),
-        tools: episode.toolPlan.tools,
+        tools: episode.toolSurface.tools,
         workflowHooks: env.workflowHooks,
         model: episode.model,
         maxSteps: resolveTodoContinuationMaxSteps(env.mainAgent),
@@ -3567,7 +3565,7 @@ export class HostRuntime {
                   cwd: env.workspaceRoot,
                   sessionId: resumeSessionId,
                 }),
-                tools: episode.toolPlan.tools,
+                tools: episode.toolSurface.tools,
                 model: episode.model,
                 maxSteps: resolveWorkflowEpisodeMaxSteps(
                   env.mainAgent,
@@ -3785,7 +3783,7 @@ export class HostRuntime {
           cwd: env.workspaceRoot,
           sessionId,
         }),
-        tools: episode.toolPlan.tools,
+        tools: episode.toolSurface.tools,
         workflowHooks: env.workflowHooks,
         model: episode.model,
         maxSteps: resolveWorkflowEpisodeMaxSteps(
@@ -4116,7 +4114,7 @@ export class HostRuntime {
           cwd: env.workspaceRoot,
           sessionId,
         }),
-        tools: episode.toolPlan.tools,
+        tools: episode.toolSurface.tools,
         workflowHooks: env.workflowHooks,
         model: episode.model,
         // Bind the main agent on resources, not a leaked step count of 8: honor
@@ -7939,8 +7937,8 @@ interface WorkflowActorEpisodePlan {
   nodeId?: string;
   attempt?: number;
   runBudget?: RunBudget;
-  budgetScope: RunEpisodePurpose;
-  toolPlan: RunToolPlan;
+  budgetScope: "main_agent" | "todo_continuation";
+  toolSurface: ResolvedToolSurface;
 }
 
 async function resolveWorkflowModelAdapters(input: {
@@ -7993,7 +7991,7 @@ function workflowActorEpisodePlan(
   env: PreparedHostRunEnvironment,
   options: {
     fallbackRunBudget?: RunBudget;
-    purpose: RunEpisodePurpose;
+    purpose: WorkflowActorEpisodePlan["budgetScope"];
   },
 ): WorkflowActorEpisodePlan {
   const node = currentWorkflowRecordNode(env.workflowRecord);
@@ -8007,10 +8005,9 @@ function workflowActorEpisodePlan(
       ? env.workflowModelAdapters.get(modelRef)!
       : { adapter: env.model, resolved: env.resolvedModel };
   const workflowAllowedTools = workflowEpisodeAllowedTools(env.workflowRecord);
-  const toolPlan = resolveRunToolPlan({
+  const toolSurface = resolveRunToolSurface({
     tools: env.tools,
     workflowAllowedTools: workflowAllowedTools?.normalized,
-    purpose: options.purpose,
     ...(options.purpose === "todo_continuation"
       ? { requiredTools: [TODO_CONTINUATION_REQUIRED_TOOL] }
       : {}),
@@ -8029,7 +8026,7 @@ function workflowActorEpisodePlan(
       : {}),
     ...(runBudget ? { runBudget } : {}),
     budgetScope: options.purpose,
-    toolPlan,
+    toolSurface,
   };
 }
 
@@ -8076,15 +8073,6 @@ function workflowActorEpisodeMetadata(
     ...(episode.nodeId ? { nodeId: episode.nodeId } : {}),
     ...(episode.attempt !== undefined ? { attempt: episode.attempt } : {}),
     ...(episode.runBudget ? { runBudget: { ...episode.runBudget } } : {}),
-    toolPlan: {
-      purpose: episode.toolPlan.purpose,
-      decisions: episode.toolPlan.decisions.map((decision) => ({
-        ...decision,
-      })),
-      ...(episode.toolPlan.missingRequiredTools.length > 0
-        ? { missingRequiredTools: [...episode.toolPlan.missingRequiredTools] }
-        : {}),
-    },
   };
 }
 

@@ -135,7 +135,7 @@ completed prior turns
 ## Last Verified
 
 - Status: Read-only
-- Date: 2026-07-06T19:24:51+0800
+- Date: 2026-07-15
 - Scope: C9 S1 migration touched only the atomic writer used by
   `FileSessionStore` `session.json` saves. Runtime compaction stages, session
   compaction artifact schema, summary acceptance, and context projection are

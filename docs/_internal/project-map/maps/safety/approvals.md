@@ -130,7 +130,7 @@ policy requires approval
 ## Last Verified
 
 - Status: Verified
-- Date: 2026-07-14
+- Date: 2026-07-15
 - Scope: bound IM approval/subscription/cancel authorization to immutable
   authenticated principals and Host-assigned new-binding sessions while
   retaining exact subject and scoped permission checks.
@@ -167,7 +167,7 @@ policy requires approval
 - Status: Read-only
 - Date: 2026-07-12
 - Scope: checked Markdown Agent final-write approval; reconciliation remains outside managed approval semantics.
-- Tests: focused host tests passed; release gate pending.
+- Tests: focused host tests and the 2026-07-15 release gate passed.
 
 - Status: Verified
 - Date: 2026-07-12T02:12:00+0800

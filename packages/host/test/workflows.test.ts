@@ -1331,23 +1331,11 @@ describe("workflow assets", () => {
       expect(
         events.filter((event) => event.kind === "run.continuation"),
       ).toHaveLength(1);
-      const startedPlans = events
+      const startedEpisodes = events
         .map(runEventPayload)
         .filter((event) => event?.type === "run.started")
         .map((event) => event?.payload as Record<string, unknown>);
-      expect(startedPlans).toHaveLength(2);
-      expect(startedPlans[1]).toMatchObject({
-        toolPlan: {
-          purpose: "todo_continuation",
-          decisions: expect.arrayContaining([
-            {
-              name: "todo_write",
-              visibility: "exposed",
-              reason: "prompt_required",
-            },
-          ]),
-        },
-      });
+      expect(startedEpisodes).toHaveLength(2);
       expect(
         events
           .map(runEventPayload)

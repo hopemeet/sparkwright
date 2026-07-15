@@ -208,7 +208,7 @@ config + workspace capability roots
 ## Last Verified
 
 - Status: Verified
-- Date: 2026-07-14
+- Date: 2026-07-15
 - Scope: checked Host connection principal and Workflow control attribution;
   capability snapshot shapes and resolution behavior are unchanged.
 - Tests: Host focused suites and typecheck passed.
@@ -280,7 +280,7 @@ config + workspace capability roots
 - Status: Read-only
 - Date: 2026-07-12
 - Scope: checked capability catalog routing for Markdown Agent authoring; no generic capability contract changed.
-- Tests: focused host tool tests passed; release gate pending.
+- Tests: focused host tool tests and the 2026-07-15 release gate passed.
 
 - Status: Read-only
 - Date: 2026-07-12T16:36:08+0800

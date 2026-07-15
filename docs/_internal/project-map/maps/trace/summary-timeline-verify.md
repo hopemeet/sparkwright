@@ -236,14 +236,12 @@ trace.jsonl
 ## Last Verified
 
 - Status: Verified
-- Date: 2026-07-15
-- Scope: completed-run unsupported-claim analysis now accepts a same-line
-  package-script arrow expansion backed by a successful npm/pnpm/yarn command;
-  trace summary/timeline/verify formats are unchanged.
-- Read: Core run-outcome/fact classifier, CLI outcome projection, focused tests,
-  and historical real trace recomputation.
-- Tests: Core run-outcome 30/30 and typecheck; real trace verify/session check
-  passed and its first run now recomputes with no unsupported command claim.
+- Date: 2026-07-15T23:51:43+0800
+- Scope: completed-run unsupported-claim analysis requires exact successful
+  command evidence and does not infer package-script expansion from final
+  prose; trace summary/timeline/verify formats are unchanged.
+- Read: Core run-outcome/fact classifier and CLI outcome projection.
+- Tests: Core run/outcome 160/160 and typecheck.
 
 - Status: Verified (no trace-view change)
 - Date: 2026-07-14
@@ -275,7 +273,7 @@ trace.jsonl
 - Status: Read-only
 - Date: 2026-07-12
 - Scope: checked CLI reconciliation routing; trace summary/timeline/verify semantics need no update.
-- Tests: focused CLI tests passed; release gate pending.
+- Tests: focused CLI tests and the 2026-07-15 release gate passed.
 
 - Status: Verified
 - Date: 2026-07-11T21:45:00+0800

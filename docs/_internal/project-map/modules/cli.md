@@ -319,7 +319,7 @@ Does not own:
 ## Last Verified
 
 - Status: Verified (adapter-only change)
-- Date: 2026-07-14
+- Date: 2026-07-15
 - Scope: CLI Host-backed entrypoints now use the shared HostService assembly;
   CLI command and output contracts remain unchanged.
 
@@ -353,7 +353,7 @@ Does not own:
 - Status: Read-only
 - Date: 2026-07-12
 - Scope: checked Skill reconciliation CLI routing; no CLI run/session/trace contract changed.
-- Tests: focused CLI reconciliation/review tests passed; release gate pending.
+- Tests: focused CLI reconciliation/review tests and the 2026-07-15 release gate passed.
 
 - Status: Read-only
 - Date: 2026-07-12T16:36:08+0800

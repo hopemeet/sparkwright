@@ -21,9 +21,7 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 - `packages/host/src/connection.ts`
 - `packages/host/src/agent-spawn-grants.ts`
 - `packages/host/src/tool-catalog.ts`
-- `packages/host/src/agent-tool-admission.ts`
-- `packages/host/src/scoped-tool-search.ts`
-- `packages/host/src/run-tool-plan.ts`
+- `packages/host/src/tool-surface.ts`
 - `packages/host/src/tool-identities.ts`
 - `packages/host/src/tools.ts`
 - `packages/host/src/shell.ts`
@@ -82,30 +80,21 @@ Does not own:
 
 ## Contracts
 
-- `createMainHostToolCatalog()` owns config/source admission. Main, configured
-  child, parallel delegate, and dynamic-spawn Profile paths all use
-  `admitToolsForAgentProfile()` for canonical alias/wildcard matching and
-  deny-after-allow physical narrowing. When a retained catalog has deferred
-  tools, `createScopedToolSearch()` rebuilds discovery from only those retained
-  definitions; it never reuses a broader upstream search index. Child policy
-  remains defense in depth, not the physical filter.
-- `resolveRunToolPlan()` is the one final episode planner shared by fresh,
-  resume, Workflow resume, and Todo continuation entrypoints. It never reads a
-  full catalog after narrowing. Workflow and continuation inputs can narrow or
-  promote visibility only within the admitted set.
+- `createMainHostToolCatalog()` owns config/source admission.
+  `tool-surface.ts` then owns canonical Profile allow/deny narrowing, Workflow
+  narrowing, required-schema promotion, and scoped discovery for main,
+  delegate, dynamic child, fresh, resume, and continuation paths. Each step is
+  monotonic: it cannot restore a removed tool, and every retained
+  `tool_search` is rebuilt over exactly the final definitions instead of
+  reusing a broader captured index. Child policy remains defense in depth.
 - A Todo continuation first proves `todo_write` survived admission and current
   Workflow narrowing. If absent, `runTodoSupervised()` hands off with
   `required_tool_unavailable` before emitting the directive that requires that
   tool.
-- `run.started.toolPlan` is a post-admission, episode-time visibility snapshot.
-  It records exposed/deferred/Workflow-omitted status and prompt-required
-  promotion only. It deliberately does not cache dynamic availability, final
-  authorization, or approval conclusions; `tool.*`, policy, and `approval.*`
-  remain call-time evidence.
-- Workflow `RunEnd` must not terminalize Todo-resumable Core stop reasons.
-  `isTodoResumableStopReason()` is shared with the Todo audit so the episode
-  chain alone decides continuation versus handoff, then Host finalization owns
-  the durable Workflow terminal state.
+- Workflow projection selects its `RunEnd` terminal owner once at construction.
+  Host-supervised Workflow runs use `episode_chain`, so projection never races
+  Todo continuation/handoff and Host finalization owns the durable terminal
+  state for every Core stop reason.
 
 - `SkillCommandService` owns create preparation, session/run draft dedupe,
   approval preparation, receipt persistence, and approved apply. CLI/TUI/model
@@ -960,16 +949,15 @@ Does not own:
 ## Last Verified
 
 - Status: Verified
-- Date: 2026-07-15
-- Scope: independent tool-decision follow-up unified Profile admission and
-  scoped discovery, reduced episode diagnostics to visibility-only facts, and
-  removed duplicate Workflow/Todo terminal ownership for resumable stops.
-- Read: Host catalog/Profile/delegate/spawn assembly, episode planner,
-  Workflow projection/finalization, real CLI/TUI/Workflow traces, and linked
-  maps/test-map failures.
-- Tests: Host 601/601; CLI 195/195; TUI 415/415; ACP 15/15; MCP 34/34;
-  real-model regression 6/6; workspace build/typecheck/lint/schema/boundaries
-  passed.
+- Date: 2026-07-15T23:51:43+0800
+- Scope: consolidated Profile admission, Workflow narrowing, required-schema
+  promotion, and scoped discovery in `tool-surface.ts`; removed the parallel
+  episode visibility model; selected Workflow `RunEnd` terminal ownership once
+  at hook construction.
+- Read: Host catalog/Profile/delegate/spawn assembly, fresh/resume/continuation
+  episode construction, Workflow projection and Host finalization.
+- Tests: Host focused tool-surface/Workflow 127/127 and typecheck; full release
+  gate pending below.
 
 - Status: Verified
 - Date: 2026-07-15

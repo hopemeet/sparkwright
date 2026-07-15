@@ -186,7 +186,7 @@ args` without rewriting requests, while the latter parses Host command text
 ## Last Verified
 
 - Status: Verified
-- Date: 2026-07-14T14:35:00+0800
+- Date: 2026-07-15
 - Scope: P6 routed review; shell sandbox and mutation-window semantics are
   unchanged by the workspace lease import rename.
 - Tests: Host shell/Agent/full suites passed.
@@ -286,7 +286,7 @@ args` without rewriting requests, while the latter parses Host command text
 - Status: Read-only
 - Date: 2026-07-12
 - Scope: checked Workflow v2 package source path; shell policy is unchanged.
-- Tests: focused Workflow tests passed; release gate pending.
+- Tests: focused Workflow tests and the 2026-07-15 release gate passed.
 
 - Status: Read-only
 - Date: 2026-07-12T16:36:08+0800

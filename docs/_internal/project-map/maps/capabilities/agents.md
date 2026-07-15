@@ -393,7 +393,7 @@ configured profiles/delegates
 ## Last Verified
 
 - Status: Verified
-- Date: 2026-07-15
+- Date: 2026-07-15T23:51:43+0800
 - Scope: Agent/Profile tools now physically narrow admitted Host/child catalogs;
   deny wins over allow, exact built-in aliases normalize, and MCP wildcard
   patterns remain supported without exposing denied matches.

@@ -384,7 +384,7 @@ Does not own:
 ## Last Verified
 
 - Status: Verified
-- Date: 2026-07-15
+- Date: 2026-07-15T23:51:43+0800
 - Scope: read-only policy now fails closed for missing side-effect governance;
   approval remains after authorization, Skill prompt requirements follow the
   active descriptor surface, and tool-plan metadata no longer claims static
@@ -399,23 +399,19 @@ Does not own:
 - Scope: runtime tool aliases now canonicalize before hooks/policy and dynamic
   availability is an execution gate as well as a model-descriptor filter.
   Public tool events/approvals retain the requested alias and expose the
-  canonical identity separately. Episode tool decisions are exposed on
-  `run.started` for trace diagnosis.
+  canonical identity separately. Episode visibility is not duplicated on
+  `run.started`; call-time events remain authoritative.
 - Read: `packages/core/src/tools.ts`, `packages/core/src/run.ts`, policy and
   approval ordering, deferred loading, and focused run tests.
-- Tests: Core full suite 667/667; alias-deny, guessed-unavailable, and
-  `run.started.toolPlan` regressions passed.
+- Tests: Core focused run/outcome 160/160 plus typecheck; alias-deny and
+  guessed-unavailable regressions passed.
 
 - Status: Verified
 - Date: 2026-07-15
-- Scope: unsupported final-answer command analysis now recognizes only a
-  same-line arrow expansion from a successful npm/pnpm/yarn script invocation.
-  Unrelated, semicolon-separated, or non-package command claims remain
-  unsupported.
-- Read: `packages/core/src/run-outcome.ts`, FactLedger command classification,
-  focused outcome tests, and the real Sonnet package-script trace.
-- Tests: Core run-outcome 30/30 and typecheck; the historical real trace now
-  recomputes without the false `node --test` unsupported claim.
+- Scope: unsupported final-answer command analysis requires exact successful
+  command evidence and does not infer package-script expansion from prose.
+- Read: `packages/core/src/run-outcome.ts` and focused outcome tests.
+- Tests: Core run/run-outcome 160/160 and typecheck.
 
 - Status: Verified
 - Date: 2026-07-14T14:35:00+0800

@@ -6,7 +6,7 @@ import {
   type ToolDefinition,
 } from "@sparkwright/core";
 import type { AgentProfile } from "@sparkwright/agent-runtime";
-import { admitToolsForAgentProfile } from "../src/agent-tool-admission.js";
+import { admitToolsForAgentProfile } from "../src/tool-surface.js";
 import type { HostToolCatalogEntry } from "../src/tool-catalog.js";
 
 function tool(

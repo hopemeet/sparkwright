@@ -103,7 +103,7 @@ cron config/state
 ## Last Verified
 
 - Status: Verified (no contract change)
-- Date: 2026-07-14
+- Date: 2026-07-15
 - Scope: reviewed execution-scoped background Task dependencies; cron ownership
   and durable Task revival remain unchanged.
 
@@ -117,7 +117,7 @@ cron config/state
 - Status: Read-only
 - Date: 2026-07-12
 - Scope: checked Agent runtime attribution change; cron Agent contracts need no update.
-- Tests: focused agent-runtime tests passed; release gate pending.
+- Tests: focused agent-runtime tests and the 2026-07-15 release gate passed.
 
 - Status: Read-only
 - Date: 2026-07-12T16:36:08+0800

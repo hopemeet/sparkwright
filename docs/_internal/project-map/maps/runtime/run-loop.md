@@ -281,10 +281,10 @@ createRun/resumeRunFromCheckpoint
 ## Last Verified
 
 - Status: Verified
-- Date: 2026-07-15
-- Scope: Workflow `RunEnd` now defers Todo-resumable Core stop reasons to the
-  Host episode-chain supervisor; no new loop state, retry lane, or terminal
-  event family was added.
+- Date: 2026-07-15T23:51:43+0800
+- Scope: Workflow `RunEnd` terminal ownership is chosen once when projection
+  hooks are built. Host runs choose the episode chain for every Core stop
+  reason, eliminating reason-specific terminal exceptions.
 - Read: Core stop reasons, Todo audit/run-chain, Host Workflow projection,
   durable finalization, and pre/post-fix traces.
 - Tests: Workflow hook 77/77 and Host Workflow 36/36, including a deterministic
@@ -293,13 +293,13 @@ createRun/resumeRunFromCheckpoint
 - Status: Verified
 - Date: 2026-07-15
 - Scope: host-owned Todo continuation assembly now makes an admitted
-  `todo_write` schema eager for the synthetic reconciliation episode; Core
-  run-outcome also treats a successful package-script arrow expansion as the
-  same command evidence while retaining strict unrelated-claim detection.
-- Read: Host actor episode assembly, agent-runtime Todo supervisor/ledger, Core
-  run-outcome/fact classifier, and focused tests.
-- Tests: Host continuation 3 focused tests, Core run-outcome 30/30, affected
-  typechecks, and a real Sonnet forced-reconciliation canary.
+  `todo_write` schema eager for the synthetic reconciliation episode and hands
+  off when admission removed it. Core outcome analysis continues to require
+  exact successful command evidence.
+- Read: Host actor episode assembly, agent-runtime Todo supervisor/ledger, and
+  Core run-outcome.
+- Tests: Host Workflow/tool-surface 127/127, Core run/outcome 160/160,
+  agent-runtime Todo 31/31, and affected typechecks.
 
 - Status: Verified
 - Date: 2026-07-14
@@ -393,7 +393,7 @@ createRun/resumeRunFromCheckpoint
 - Status: Read-only
 - Date: 2026-07-12
 - Scope: checked Workflow run metadata now includes package identity; run-loop ownership is unchanged.
-- Tests: focused Workflow tests passed; release gate pending.
+- Tests: focused Workflow tests and the 2026-07-15 release gate passed.
 
 - Status: Read-only
 - Date: 2026-07-12T16:36:08+0800
