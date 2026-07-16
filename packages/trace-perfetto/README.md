@@ -23,7 +23,7 @@ const run = createRun({
 
 const sink = attachPerfettoSink({
   source: run.events, // anything exposing subscribe((event) => void)
-  outPath: ".sparkwright/runs/" + run.id + "/trace.perfetto.json",
+  outPath: ".sparkwright/trace-perfetto/" + run.id + ".json",
 });
 
 try {

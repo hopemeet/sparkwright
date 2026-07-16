@@ -9,6 +9,11 @@ See also [../maps/trace/summary-timeline-verify.md](../maps/trace/summary-timeli
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T14:10:00+0800
+- Scope: Direct-core run resume searches only `sessions/*/agents/*/runs/<run-id>` and reconstructs from canonical aggregate traces; the legacy workspace run root is no longer accepted.
+- Read: CLI trace/session command module, Core trace store, CLI resume tests, and protocol references.
+- Tests: CLI run-resume focused tests; npm run build; npm run typecheck:test; npm run release:check.
+
 - Date: 2026-07-16T13:21:00+0800
 - Scope: CLI constructs one `InteractionChannel` from access mode and IO; direct-core, delegate, Cron, and Host-client approval paths no longer expose a resolver API.
 - Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.

@@ -12,6 +12,11 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T14:10:00+0800
+- Scope: Host run resume resolves runs only from canonical session storage; the workspace `.sparkwright/runs/<run-id>` lookup and attach-to-new-session compatibility path were removed.
+- Read: Host run lookup/resume, Core trace storage, protocol tests, and Host protocol reference.
+- Tests: Host protocol focused tests; npm run build; npm run typecheck:test; npm run release:check.
+
 - Date: 2026-07-16T13:50:10+0800
 - Scope: Workflow list/resume now resolve only workspace `.sparkwright/workflow-runs/`; session enumeration, duplicate precedence, and located-store fallback were removed.
 - Read: Host workflow list/resume/control paths, Agent Runtime store helpers, protocol fixtures, focused tests, and current docs.

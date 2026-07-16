@@ -693,7 +693,8 @@ describe("coding tools", () => {
       "src/index.ts": "export const marker = 'source-only';\n",
       ".sparkwright/sessions/session_1/trace.jsonl":
         '{"type":"tool.completed","payload":"source-only"}\n',
-      ".sparkwright/runs/run_1/result.json": '{"summary":"source-only"}\n',
+      ".sparkwright/sessions/session_1/agents/main/runs/run_1/result.json":
+        '{"summary":"source-only"}\n',
     });
     const tools = createCodingTools({ workspaceRoot: root });
     const glob = getTool<GlobPathsInput, GlobPathsResult>(tools, "glob");
@@ -712,9 +713,8 @@ describe("coding tools", () => {
     expect(globResult.paths).not.toContain(
       ".sparkwright/sessions/session_1/trace.jsonl",
     );
-    expect(globResult.paths).not.toContain(".sparkwright/runs");
     expect(globResult.paths).not.toContain(
-      ".sparkwright/runs/run_1/result.json",
+      ".sparkwright/sessions/session_1/agents/main/runs/run_1/result.json",
     );
 
     const result = await grep.execute(

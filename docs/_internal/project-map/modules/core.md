@@ -13,6 +13,11 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md),
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T14:10:00+0800
+- Scope: `FileRunStore` is session-only; standalone per-run roots and per-run trace reconstruction were removed, while checkpoint reconstruction reads canonical agent/session aggregate traces.
+- Read: Core trace store/facade, trace and interface tests, session layout reference, and downstream Host/CLI lookup consumers.
+- Tests: Core trace/interfaces focused tests; npm run build; npm run typecheck:test; npm run release:check.
+
 - Date: 2026-07-16T13:36:30+0800
 - Scope: Removed the public `ValidationHook` stage executor and `CreateRunOptions.validationHooks`; `WorkflowHook` is the sole deterministic run-policy surface, while workspace policy/approval enforcement remains intact.
 - Read: core run/workspace/workflow/event sources, focused tests, protocol schema, and current reference documentation.
@@ -83,6 +88,9 @@ Does not own:
 
 - Facts enter append-only event streams before derived stores or views.
 - `runId` routes kernel work; `sessionId` groups runs at the edge.
+- `FileRunStore` requires `sessionId` and writes only beneath the session root:
+  aggregate session/agent traces plus per-run state under
+  `agents/<agent-id>/runs/<run-id>/`. There is no standalone per-run root.
 - Run command admission is a single lifecycle-aware operation:
   `tryEnqueueCommand()` either enqueues and emits `run.command.enqueued`, or
   rejects with `terminal`/`closing`. Embedders must not split acceptance into a

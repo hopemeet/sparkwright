@@ -111,14 +111,23 @@ def _resolve_cli_cmd(project_root: Path) -> list[str]:
 
 
 def _find_latest_run_dir(workspace: Path) -> Optional[Path]:
-    """Return the most recently modified run directory under the workspace."""
-    runs_dir = workspace / ".sparkwright" / "runs"
-    if not runs_dir.is_dir():
+    """Return the most recently modified canonical session run directory."""
+    sessions_dir = workspace / ".sparkwright" / "sessions"
+    if not sessions_dir.is_dir():
         return None
-    candidates = [d for d in runs_dir.iterdir() if d.is_dir()]
+    candidates = [
+        path
+        for path in sessions_dir.glob("*/agents/*/runs/*")
+        if path.is_dir()
+    ]
     if not candidates:
         return None
     return max(candidates, key=lambda d: d.stat().st_mtime)
+
+
+def _trace_path_for_run_dir(run_dir: Path) -> Path:
+    """Return the aggregate session trace for a canonical run directory."""
+    return run_dir.parents[3] / "trace.jsonl"
 
 
 def _read_jsonl(path: Path) -> list[dict]:
@@ -209,7 +218,7 @@ def _print_result(result_data: dict, run_dir: Path) -> None:
     if message:
         print(f"  message:     {message}")
     print(f"  run dir:     {run_dir}")
-    print(f"  trace:       {run_dir / 'trace.jsonl'}")
+    print(f"  trace:       {_trace_path_for_run_dir(run_dir)}")
     print(f"  result.json: {run_dir / 'result.json'}")
 
 
@@ -363,7 +372,7 @@ def main(argv: list[str]) -> int:
     run_dir = _find_latest_run_dir(workspace)
     if run_dir is None:
         print(
-            f"\nERROR: No run output found under {workspace / '.sparkwright' / 'runs'}.\n"
+            f"\nERROR: No run output found under {workspace / '.sparkwright' / 'sessions'}.\n"
             "The CLI may have failed before creating the run directory.\n"
             "Check the output above for clues.",
             file=sys.stderr,
@@ -371,7 +380,7 @@ def main(argv: list[str]) -> int:
         return EXIT_SETUP_ERROR
 
     result_path = run_dir / "result.json"
-    trace_path = run_dir / "trace.jsonl"
+    trace_path = _trace_path_for_run_dir(run_dir)
 
     result_data: dict = {}
     if result_path.exists():

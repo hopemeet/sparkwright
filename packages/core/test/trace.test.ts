@@ -21,6 +21,7 @@ import {
   buildTraceTimelineJsonl,
   createTraceRedactor,
   FileRunStore,
+  type FileRunStoreOptions,
   filterTraceEvent,
   loadTraceEventsJsonl,
   MemoryTrace,
@@ -31,6 +32,23 @@ import {
   validateSessionTraceConsistency,
   verifyTraceJsonl,
 } from "../src/trace.js";
+
+const TEST_SESSION_ID = "session_trace_test";
+
+function sessionStoreOptions(
+  sessionRootDir: string,
+  options: Omit<FileRunStoreOptions, "sessionRootDir" | "sessionId"> = {},
+): FileRunStoreOptions {
+  return {
+    sessionRootDir,
+    sessionId: TEST_SESSION_ID,
+    ...options,
+  };
+}
+
+function sessionRunDir(sessionRootDir: string, runId: string): string {
+  return join(sessionRootDir, TEST_SESSION_ID, "agents", "main", "runs", runId);
+}
 
 describe("trace", () => {
   let tempDirs: string[] = [];
@@ -118,7 +136,7 @@ describe("trace", () => {
     tempDirs.push(root);
     const run = createRunRecord();
     const log = new EventLog(run.id);
-    const store = new FileRunStore(run, { rootDir: root });
+    const store = new FileRunStore(run, sessionStoreOptions(root));
 
     store.append(log.emit("run.created", { goal: run.goal }));
     store.append(log.emit("run.started", {}));
@@ -141,7 +159,7 @@ describe("trace", () => {
     tempDirs.push(root);
     const run = createRunRecord();
     const log = new EventLog(run.id);
-    const store = new FileRunStore(run, { rootDir: root });
+    const store = new FileRunStore(run, sessionStoreOptions(root));
 
     store.append(log.emit("model.stream.started", { step: 1 }));
     store.append(
@@ -241,7 +259,10 @@ describe("trace", () => {
     tempDirs.push(root);
     const run = createRunRecord();
     const log = new EventLog(run.id);
-    const store = new FileRunStore(run, { rootDir: root, traceLevel: "debug" });
+    const store = new FileRunStore(
+      run,
+      sessionStoreOptions(root, { traceLevel: "debug" }),
+    );
 
     store.append(log.emit("model.stream.started", { step: 1 }));
     store.append(
@@ -270,7 +291,7 @@ describe("trace", () => {
     tempDirs.push(root);
     const run = createRunRecord();
     const log = new EventLog(run.id);
-    const store = new FileRunStore(run, { rootDir: root });
+    const store = new FileRunStore(run, sessionStoreOptions(root));
 
     store.append(
       log.emit("extension.process.started", {
@@ -334,7 +355,10 @@ describe("trace", () => {
     tempDirs.push(root);
     const run = createRunRecord();
     const log = new EventLog(run.id);
-    const store = new FileRunStore(run, { rootDir: root, traceLevel: "debug" });
+    const store = new FileRunStore(
+      run,
+      sessionStoreOptions(root, { traceLevel: "debug" }),
+    );
 
     store.append(
       log.emit("extension.process.started", {
@@ -376,7 +400,7 @@ describe("trace", () => {
     tempDirs.push(root);
     const run = createRunRecord();
     const log = new EventLog(run.id);
-    const store = new FileRunStore(run, { rootDir: root });
+    const store = new FileRunStore(run, sessionStoreOptions(root));
 
     store.append(log.emit("run.started", {}));
     store.append(
@@ -489,7 +513,10 @@ describe("trace", () => {
     tempDirs.push(root);
     const run = createRunRecord();
     const log = new EventLog(run.id);
-    const store = new FileRunStore(run, { rootDir: root, traceLevel: "debug" });
+    const store = new FileRunStore(
+      run,
+      sessionStoreOptions(root, { traceLevel: "debug" }),
+    );
 
     store.append(
       log.emit("extension.process.started", {
@@ -567,7 +594,7 @@ describe("trace", () => {
 
     const errors: unknown[] = [];
     const store = new FileRunStore(run, {
-      rootDir: root,
+      ...sessionStoreOptions(root),
       degradationBufferLimit: 10,
       onAppendError: (info) => errors.push(info),
     });
@@ -769,7 +796,7 @@ describe("trace", () => {
     const { bindStorageDegradationEvents } = await import("../src/trace.js");
     const hooks = bindStorageDegradationEvents({ events: log });
     const store = new FileRunStore(run, {
-      rootDir: root,
+      ...sessionStoreOptions(root),
       degradationBufferLimit: 10,
       ...hooks,
     });
@@ -824,7 +851,7 @@ describe("trace", () => {
     const root = await mkdtemp(join(tmpdir(), "sparkwright-checkpoint-"));
     tempDirs.push(root);
     const run = createRunRecord();
-    const store = new FileRunStore(run, { rootDir: root });
+    const store = new FileRunStore(run, sessionStoreOptions(root));
     const { loadCheckpointFromRunDir } = await import("../src/trace.js");
 
     // Loading from a pristine run dir returns undefined.
@@ -899,12 +926,14 @@ describe("trace", () => {
           return { toolCalls: [{ toolName: "noop", arguments: {} }] };
         },
       },
-      runStore: (record) => new FileRunStore(record, { rootDir: root }),
+      runStore: (record) => new FileRunStore(record, sessionStoreOptions(root)),
     });
 
     await run.start();
 
-    const reloaded = loadCheckpointFromRunDir(join(root, run.record.id));
+    const reloaded = loadCheckpointFromRunDir(
+      sessionRunDir(root, run.record.id),
+    );
     expect(reloaded).toBeDefined();
     expect(reloaded?.metadata).toMatchObject({ auto: true });
     // At least one auto-checkpoint cycle should have fired by step 2.
@@ -945,11 +974,11 @@ describe("trace", () => {
           return { toolCalls: [{ toolName: "noop", arguments: {} }] };
         },
       },
-      runStore: (record) => new FileRunStore(record, { rootDir: root }),
+      runStore: (record) => new FileRunStore(record, sessionStoreOptions(root)),
     });
     await run.start();
 
-    const runDir = join(root, run.record.id);
+    const runDir = sessionRunDir(root, run.record.id);
     // No explicit checkpoint persisted.
     expect(loadCheckpointFromRunDir(runDir)).toBeUndefined();
 
@@ -985,9 +1014,16 @@ describe("trace", () => {
     const { loadCheckpointFromRunDir, resumeRunFromCheckpoint } =
       await import("../src/index.js");
 
-    // Build a run dir from scratch with a non-terminal run.json and trace.
+    // Build a canonical session run with a non-terminal run.json and agent trace.
     const runId = createRunId();
-    const runDir = join(root, runId);
+    const runDir = sessionRunDir(root, runId);
+    const agentTracePath = join(
+      root,
+      TEST_SESSION_ID,
+      "agents",
+      "main",
+      "trace.jsonl",
+    );
     const { mkdir, writeFile } = await import("node:fs/promises");
     await mkdir(runDir, { recursive: true });
     const runRecord = {
@@ -1004,7 +1040,7 @@ describe("trace", () => {
       "utf8",
     );
     await writeFile(
-      join(runDir, "trace.jsonl"),
+      agentTracePath,
       [
         JSON.stringify({
           id: "evt_1",
@@ -1038,7 +1074,7 @@ describe("trace", () => {
     let observedStep = 0;
     const run = resumeRunFromCheckpoint(reconstructed!, {
       force: true,
-      runStore: (record) => new FileRunStore(record, { rootDir: root }),
+      runStore: (record) => new FileRunStore(record, sessionStoreOptions(root)),
       model: {
         async complete(input) {
           observedStep = input.step;
@@ -1050,9 +1086,7 @@ describe("trace", () => {
     expect(result.signal).toBe("completed");
     expect(observedStep).toBe(2);
     expect(run.record.id).toBe(runId);
-    const report = verifyTraceJsonl(
-      await readFile(join(runDir, "trace.jsonl"), "utf8"),
-    );
+    const report = verifyTraceJsonl(await readFile(agentTracePath, "utf8"));
     expect(report.findings).toEqual([]);
   });
 
@@ -1071,7 +1105,7 @@ describe("trace", () => {
           return { message: "done" };
         },
       },
-      runStore: (record) => new FileRunStore(record, { rootDir: root }),
+      runStore: (record) => new FileRunStore(record, sessionStoreOptions(root)),
     });
 
     // Persist a checkpoint mid-flight (here: pre-start; loop.step=0). Just
@@ -1081,7 +1115,7 @@ describe("trace", () => {
 
     await run.start();
 
-    const runDir = join(root, run.record.id);
+    const runDir = sessionRunDir(root, run.record.id);
     const reloaded = loadCheckpointFromRunDir(runDir);
     expect(reloaded?.run.id).toBe(run.record.id);
     expect(reloaded?.metadata).toEqual({ marker: "pre-start" });
@@ -1112,7 +1146,7 @@ describe("trace", () => {
 
     const errors: { droppedCount: number }[] = [];
     const store = new FileRunStore(run, {
-      rootDir: root,
+      ...sessionStoreOptions(root),
       degradationBufferLimit: 2,
       onAppendError: (info) => errors.push(info),
     });
@@ -1303,7 +1337,7 @@ describe("trace", () => {
     const run = createRunRecord();
     const log = new EventLog(run.id);
     const store = new FileRunStore(run, {
-      rootDir: root,
+      ...sessionStoreOptions(root),
       traceLevel: "debug",
       redact: false,
     });
@@ -5115,7 +5149,7 @@ describe("trace", () => {
     const root = await mkdtemp(join(tmpdir(), "sparkwright-store-"));
     tempDirs.push(root);
     const run = createRunRecord();
-    const store = new FileRunStore(run, { rootDir: root });
+    const store = new FileRunStore(run, sessionStoreOptions(root));
 
     run.state = "completed";
     run.stopReason = "final_answer";
@@ -5155,7 +5189,7 @@ describe("trace", () => {
     tempDirs.push(root);
     const run = createRunRecord();
     const log = new EventLog(run.id);
-    const store = new FileRunStore(run, { rootDir: root });
+    const store = new FileRunStore(run, sessionStoreOptions(root));
     const artifactId = createArtifactId();
 
     store.append(
@@ -5189,7 +5223,7 @@ describe("trace", () => {
     tempDirs.push(root);
     const run = createRunRecord();
     const log = new EventLog(run.id);
-    const store = new FileRunStore(run, { rootDir: root });
+    const store = new FileRunStore(run, sessionStoreOptions(root));
 
     expect(() =>
       store.append(
@@ -5210,7 +5244,7 @@ describe("trace", () => {
     tempDirs.push(root);
     const run = createRunRecord();
     const log = new EventLog(run.id);
-    const store = new FileRunStore(run, { rootDir: root });
+    const store = new FileRunStore(run, sessionStoreOptions(root));
     const artifactId = createArtifactId();
 
     store.append(
@@ -5332,7 +5366,7 @@ describe("trace", () => {
     const run = createRunRecord();
     const log = new EventLog(run.id);
     const store = new FileRunStore(run, {
-      rootDir: root,
+      ...sessionStoreOptions(root),
       traceLevel: "standard",
       redact: false,
     });
@@ -5508,7 +5542,7 @@ describe("trace", () => {
     const run = createRunRecord();
     const log = new EventLog(run.id);
     const store = new FileRunStore(run, {
-      rootDir: root,
+      ...sessionStoreOptions(root),
       traceLevel: "debug",
       redactor(event) {
         return {
@@ -5537,7 +5571,7 @@ describe("trace", () => {
     const run = createRunRecord();
     const log = new EventLog(run.id);
     const store = new FileRunStore(run, {
-      rootDir: root,
+      ...sessionStoreOptions(root),
       traceLevel: "debug",
     });
 
@@ -5576,7 +5610,7 @@ describe("trace", () => {
     tempDirs.push(root);
     const run = createRunRecord();
     const log = new EventLog(run.id);
-    const store = new FileRunStore(run, { rootDir: root });
+    const store = new FileRunStore(run, sessionStoreOptions(root));
 
     store.append(
       log.emit("usage.updated", {
@@ -5612,7 +5646,7 @@ describe("trace", () => {
     const run = createRunRecord();
     const log = new EventLog(run.id);
     const store = new FileRunStore(run, {
-      rootDir: root,
+      ...sessionStoreOptions(root),
       traceLevel: "debug",
     });
 
@@ -5822,7 +5856,7 @@ describe("trace", () => {
     tempDirs.push(root);
     const run = createRunRecord();
     const log = new EventLog(run.id);
-    const store = new FileRunStore(run, { rootDir: root });
+    const store = new FileRunStore(run, sessionStoreOptions(root));
 
     store.append(log.emit("run.created", { goal: run.goal }));
     store.append(log.emit("run.started", {}));

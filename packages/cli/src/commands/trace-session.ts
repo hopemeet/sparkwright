@@ -13,7 +13,6 @@ import {
   summarizeTraceFile,
   validateSessionTraceConsistency,
   verifyTraceFile,
-  type RunRecord,
   type SessionTraceConsistencyReport,
   type SessionTraceRepairReport,
   type TraceReport,
@@ -349,66 +348,48 @@ export async function handleRunResumeCommand(
     );
   }
 
-  // Locate the run directory. Two layouts are supported:
-  //   - session-scoped: <workspace>/.sparkwright/sessions/<sid>/agents/main/runs/<rid>/
-  //   - legacy:        <workspace>/.sparkwright/runs/<rid>/
+  // Locate the canonical session-scoped run directory.
   const sessionsRoot = parsed.sessionRootDir;
-  const legacyRunDir = join(
-    parsed.workspaceRoot,
-    ".sparkwright",
-    "runs",
-    parsed.runId,
-  );
   let runDir: string | undefined;
   let resolvedSessionId: string | undefined;
+  let resolvedAgentId: string | undefined;
 
-  if (parsed.sessionId) {
-    runDir = join(
-      sessionsRoot,
-      parsed.sessionId,
-      "agents",
-      "main",
-      "runs",
-      parsed.runId,
-    );
-    resolvedSessionId = parsed.sessionId;
-  } else {
-    // Scan sessions/*/agents/*/runs/<runId>/ for a match.
-    const { readdir } = await import("node:fs/promises");
-    const { existsSync } = await import("node:fs");
-    if (existsSync(sessionsRoot)) {
-      const sessions = await readdir(sessionsRoot, { withFileTypes: true });
-      for (const sessionEntry of sessions) {
-        if (!sessionEntry.isDirectory()) continue;
-        const agentsDir = join(sessionsRoot, sessionEntry.name, "agents");
-        if (!existsSync(agentsDir)) continue;
-        const agents = await readdir(agentsDir, { withFileTypes: true });
-        for (const agentEntry of agents) {
-          if (!agentEntry.isDirectory()) continue;
-          const candidate = join(
-            agentsDir,
-            agentEntry.name,
-            "runs",
-            parsed.runId,
-          );
-          if (existsSync(candidate)) {
-            runDir = candidate;
-            resolvedSessionId = sessionEntry.name;
-            break;
-          }
+  // Scan the selected session, or all sessions, across every persisted agent.
+  const { readdir } = await import("node:fs/promises");
+  const { existsSync } = await import("node:fs");
+  if (existsSync(sessionsRoot)) {
+    const sessionIds = parsed.sessionId
+      ? [parsed.sessionId]
+      : (await readdir(sessionsRoot, { withFileTypes: true }))
+          .filter((entry) => entry.isDirectory())
+          .map((entry) => entry.name);
+    for (const sessionId of sessionIds) {
+      const agentsDir = join(sessionsRoot, sessionId, "agents");
+      if (!existsSync(agentsDir)) continue;
+      const agents = await readdir(agentsDir, { withFileTypes: true });
+      for (const agentEntry of agents) {
+        if (!agentEntry.isDirectory()) continue;
+        const candidate = join(
+          agentsDir,
+          agentEntry.name,
+          "runs",
+          parsed.runId,
+        );
+        if (existsSync(candidate)) {
+          runDir = candidate;
+          resolvedSessionId = sessionId;
+          resolvedAgentId = agentEntry.name;
+          break;
         }
-        if (runDir) break;
       }
-    }
-    if (!runDir && existsSync(legacyRunDir)) {
-      runDir = legacyRunDir;
+      if (runDir) break;
     }
   }
 
-  if (!runDir) {
+  if (!runDir || !resolvedSessionId || !resolvedAgentId) {
     writeLine(
       io.stderr,
-      `Could not find run directory for ${parsed.runId} under ${parsed.sessionRootDir} or ${parsed.workspaceRoot}/.sparkwright/runs. ` +
+      `Could not find run directory for ${parsed.runId} under ${parsed.sessionRootDir}. ` +
         `Pass --session <session-id> to disambiguate.`,
     );
     return { exitCode: 1 };
@@ -470,19 +451,12 @@ export async function handleRunResumeCommand(
   // Wire a FileRunStore pointing at the same run dir so the resumed run's
   // new events append to the existing trace (keeps replay/inspection coherent).
   let store: FileRunStore | undefined;
-  const runStoreFactory =
-    resolvedSessionId !== undefined
-      ? createSessionFileRunStoreFactory({
-          sessionRootDir: sessionsRoot,
-          sessionId: resolvedSessionId,
-          agentId: "main",
-          traceLevel: parsed.traceLevel,
-        })
-      : (record: RunRecord) =>
-          new FileRunStore(record, {
-            rootDir: join(parsed.workspaceRoot, ".sparkwright", "runs"),
-            traceLevel: parsed.traceLevel,
-          });
+  const runStoreFactory = createSessionFileRunStoreFactory({
+    sessionRootDir: sessionsRoot,
+    sessionId: resolvedSessionId,
+    agentId: resolvedAgentId,
+    traceLevel: parsed.traceLevel,
+  });
 
   let run;
   try {

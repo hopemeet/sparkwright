@@ -110,7 +110,7 @@ Two new optional packages subscribe to `EventLog` and translate. Core takes
 no dependency on either.
 
 - **`@sparkwright/trace-perfetto`** — Writes Chrome Trace Event format JSON
-  to `.sparkwright/runs/<run-id>/trace.perfetto.json`. Each `*.started` /
+  to a caller-selected path such as `.sparkwright/trace-perfetto/<run-id>.json`. Each `*.started` /
   `*.completed` pair becomes a `ph: "X"` complete event with `dur`; each
   emitted run / task gets its own `pid`, each sub-agent its own `tid`.
   Drop the file into `ui.perfetto.dev` to visualize. Local-only; no network

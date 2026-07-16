@@ -24,7 +24,8 @@ describe("extension interfaces (compile-time)", () => {
       metadata: {},
     };
     const store = new FileRunStore(run, {
-      rootDir: ".sparkwright/test-iface-runs",
+      sessionRootDir: ".sparkwright/test-iface-sessions",
+      sessionId: "session_iface_test",
     });
     assignable<RunStore>(store);
     expect(typeof store.append).toBe("function");

@@ -939,7 +939,7 @@ Older traces may only expose this fact through message text.
   "runId": "run_01h",
   "type": "diff",
   "name": "README.md diff",
-  "path": ".sparkwright/runs/run_01h/artifacts/readme.diff",
+  "path": ".sparkwright/sessions/session_01h/artifacts/readme.diff",
   "metadata": {
     "targetPath": "README.md"
   }
@@ -998,21 +998,30 @@ Current local run store layout:
 
 ```txt
 .sparkwright/
-  runs/
-    <run-id>/
-      run.json
+  sessions/
+    <session-id>/
       trace.jsonl
-      result.json
+      transcript.jsonl
       artifacts/
         <artifact-id>.json
         <artifact-id>.<ext>
+      agents/
+        <agent-id>/
+          trace.jsonl
+          transcript.jsonl
+          runs/
+            <run-id>/
+              run.json
+              result.json
+              checkpoint.json
+              trace-pointer.json
 ```
 
-`run.json` stores the latest persisted run record and is rewritten with terminal state when a run finishes. `result.json` stores the terminal `RunResult`. `trace.jsonl` is append-only and contains filtered events according to the selected trace level.
-
-Session-scoped stores aggregate trace events at
-`.sparkwright/sessions/<session-id>/trace.jsonl` and also write an agent trace
-under `agents/<agent-id>/trace.jsonl`. Each
+`run.json` stores the latest persisted run record and is rewritten with terminal
+state when a run finishes. `result.json` stores the terminal `RunResult`.
+Session `trace.jsonl` is append-only and contains filtered events according to
+the selected trace level; `agents/<agent-id>/trace.jsonl` is the corresponding
+agent projection. Each
 `agents/<agent-id>/runs/<run-id>/` directory stores per-run state plus
 `trace-pointer.json`, whose relative paths point back to those aggregate trace
 files.

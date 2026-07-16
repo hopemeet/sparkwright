@@ -10,6 +10,11 @@ See [session-store.md](session-store.md) and [../runtime/context-compaction.md](
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T14:10:00+0800
+- Scope: Checkpoint resume locates runs only under canonical session storage; best-effort trace reconstruction reads the session or agent aggregate trace, never a run-local trace.
+- Read: Core checkpoint reconstruction, Host/CLI run lookup, focused resume tests, and protocol references.
+- Tests: Core trace focused tests; Host/CLI run-resume focused tests; npm run build; npm run typecheck:test; npm run release:check.
+
 - Date: 2026-07-16T13:50:10+0800
 - Scope: Workflow resume is single-layout: only the workspace workflow store is searched and returned to the resumed projection.
 - Read: Host lookup/resume paths, Agent Runtime workflow store, focused tests, and protocol docs.
@@ -39,7 +44,7 @@ See [session-store.md](session-store.md) and [../runtime/context-compaction.md](
 
 ```txt
 Normal run
-  -> checkpoint.json + trace.jsonl + run/result files
+  -> session/agent trace.jsonl + per-run checkpoint/run/result files
   -> run resume uses checkpoint
 
 Missing checkpoint
@@ -81,6 +86,9 @@ Future run in compacted session
   mutable client defaults.
 
 - Checkpoint resume is the normal path.
+- Run lookup is session-only. Host and CLI search
+  `<sessionRoot>/<sessionId>/agents/<agentId>/runs/<runId>`; there is no
+  workspace-level per-run fallback.
 - Run checkpoints optionally persist `budget.childTreeUsage` alongside the
   existing local `budget.usage`. Old checkpoints without the field remain
   valid; resumed parents seed descendant consumable counters so later children

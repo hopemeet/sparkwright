@@ -10,6 +10,11 @@ See [../trace/raw-trace.md](../trace/raw-trace.md) for raw event evidence.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T14:10:00+0800
+- Scope: Run persistence is single-layout: `FileRunStore`, Host lookup, CLI lookup, examples, and tests now use only the canonical session/agent/run tree.
+- Read: Core trace store/tests, Host and CLI resume lookup, coding-tools state exclusion, protocol references, and subprocess examples.
+- Tests: Core trace/interfaces focused tests; Host/CLI/coding-tools focused tests; npm run build; npm run typecheck:test; npm run release:check.
+
 - Date: 2026-07-16T13:50:10+0800
 - Scope: Workflow state is no longer a session-directory child; canonical records live only under workspace `.sparkwright/workflow-runs/` and retain `sessionId` as record attribution.
 - Read: workflow store helpers, Host list/resume consumers, focused tests, and current layout docs.
@@ -84,10 +89,11 @@ Manual compact
 - TUI keeps the selected session immutable while its main run is starting or
   active. New-session, switch, and fork-and-switch entrypoints fail at the
   controller boundary; read-only list/inspect/export flows remain available.
-- Session-scoped `FileRunStore` writes session `trace.jsonl` /
+- `FileRunStore` always writes session `trace.jsonl` /
   `transcript.jsonl`, `agents/<agent-id>/trace.jsonl`, per-run `run.json` /
   `result.json`, and `trace-pointer.json` files that point from each run
-  directory back to the aggregate session and agent traces.
+  directory back to the aggregate session and agent traces. It requires a
+  session identity and has no standalone `.sparkwright/runs/` layout.
 - `FileSessionStore` writes `session.json` through core `file-atomic`, the same
   lower-level atomic text writer wrapped by `agent-runtime` doc-store, because
   core cannot depend upward on runtime packages.

@@ -117,9 +117,9 @@ Workspace: /path/to/repo-pilot
   state:       completed
   stopReason:  final_answer
   message:     Read README.md. Re-run with --access-mode ask to exercise approval-gated workspace mutation.
-  run dir:     /path/to/repo-pilot/.sparkwright/runs/run_abc123
-  trace:       /path/to/repo-pilot/.sparkwright/runs/run_abc123/trace.jsonl
-  result.json: /path/to/repo-pilot/.sparkwright/runs/run_abc123/result.json
+  run dir:     /path/to/repo-pilot/.sparkwright/sessions/session_abc/agents/main/runs/run_abc123
+  trace:       /path/to/repo-pilot/.sparkwright/sessions/session_abc/trace.jsonl
+  result.json: /path/to/repo-pilot/.sparkwright/sessions/session_abc/agents/main/runs/run_abc123/result.json
 
 --- Key trace events ---
   [1] run.created  run_id=run_abc123
@@ -130,7 +130,10 @@ Workspace: /path/to/repo-pilot
 
 ## Trace and result file format
 
-Each run writes two key files under `.sparkwright/runs/<run-id>/`:
+Each run writes state under
+`.sparkwright/sessions/<session-id>/agents/<agent-id>/runs/<run-id>/`, while
+events are appended to the aggregate session trace at
+`.sparkwright/sessions/<session-id>/trace.jsonl`.
 
 ### `trace.jsonl`
 
@@ -183,7 +186,9 @@ Structured summary of the terminal run state:
 
 ### Artifacts
 
-Any diff or file artifact produced during the run is written to `.sparkwright/runs/<run-id>/artifacts/`. The `artifact.created` trace events reference the artifact ID and type.
+Any diff or file artifact produced during the run is written to
+`.sparkwright/sessions/<session-id>/artifacts/`. The `artifact.created` trace
+events reference the artifact ID and type.
 
 ## Limitations
 

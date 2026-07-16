@@ -4149,27 +4149,14 @@ export class HostRuntime {
         }
       }
     } catch {
-      // Fall through to legacy layout and then not-found.
-    }
-
-    const legacyRunDir = join(
-      this.opts.workspaceRoot,
-      ".sparkwright",
-      "runs",
-      runId,
-    );
-    if (await isDirectory(legacyRunDir)) {
-      return { ok: true, runDir: legacyRunDir, agentId: MAIN_AGENT_ID };
+      // handled by not-found below
     }
 
     return {
       ok: false,
       error: {
         code: "run_not_found",
-        message:
-          `Could not find run directory for ${runId} under ` +
-          `${this.opts.sessionRootDir ?? defaultSessionRootDir(this.opts.workspaceRoot)} ` +
-          `or ${this.opts.workspaceRoot}/.sparkwright/runs.`,
+        message: `Could not find run directory for ${runId} under ${this.opts.sessionRootDir ?? defaultSessionRootDir(this.opts.workspaceRoot)}.`,
       },
     };
   }

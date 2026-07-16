@@ -11,6 +11,11 @@ and [../session/session-store.md](../session/session-store.md) for session layou
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T14:10:00+0800
+- Scope: File-backed raw trace persistence is session-only; each event is appended to canonical session and agent aggregate traces, and run directories retain only state plus trace pointers.
+- Read: Core trace store/codec/tests, session layout maps, protocol references, and trace sink examples.
+- Tests: Core trace/interfaces focused tests; npm run build; npm run typecheck:test; npm run release:check.
+
 - Date: 2026-07-16T13:36:30+0800
 - Scope: Raw trace vocabulary dropped dead validation-hook start/completed events and result-validation timing; `validation.failed` remains for current run-input and extension failure evidence.
 - Read: Core event/trace codecs, schema, CLI producer, TUI consumer, and trace tests.
@@ -44,7 +49,7 @@ EventLog emits full event
   -> FileRunStore.prepareTraceEvent() in trace-store.ts
   -> filterTraceEvent(level) in trace-codec.ts
   -> redactor
-  -> append trace.jsonl
+  -> append session and agent trace.jsonl
   -> materialize artifact files when needed
 ```
 
@@ -53,6 +58,8 @@ EventLog emits full event
 - JSONL: one serialized `SparkwrightEvent` per line.
 - Events are ordered by run-local `sequence`.
 - `trace.jsonl` is append-only.
+- Durable file traces live only at session and agent scope. Per-run directories
+  contain state/checkpoint files and a `trace-pointer.json`, not another trace.
 - Cross-run append order is not a chronological invariant: multi-agent traces
   may append a child run block before the parent's later tail. Timeline readers
   can project aggregate order, but `trace verify` must preserve the append-only
