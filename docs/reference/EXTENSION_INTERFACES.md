@@ -910,7 +910,7 @@ those APIs.
 ```
 
 Async dispatch and completion notification reuse `TaskManager` +
-`TaskNotificationSink` from the [Sub-agents](#sub-agents) layer — no new
+`ActorNotificationSink` / `ActorInbox` from the [Sub-agents](#sub-agents) layer — no new
 notification channel.
 
 ### ConcurrencyCoordinator (declarative partitioning)

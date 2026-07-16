@@ -1,9 +1,7 @@
-// AI maintenance note: TaskNotificationSink is the bridge that turns a
-// background task's terminal transition into something the *agent loop* can
-// observe on its next turn. The runtime intentionally does not couple this to
-// any specific transport — hosts wire the sink to whatever they use to inject
-// "user-role" content (e.g. message-queue attachment in streaming-runtime,
-// XML-tag injection in a CLI-style frontend).
+// AI maintenance note: ActorNotificationSink is the bridge that turns a
+// background actor transition into something the *agent loop* can observe on
+// its next turn. The runtime intentionally does not couple this to any specific
+// transport.
 //
 // Lifecycle: TaskManager calls sink.deliver(...) exactly once per task, AFTER
 // the record has been moved to a terminal status. Deliveries are best-effort at
@@ -154,6 +152,11 @@ export type TaskActorNotificationInput =
   | TaskProgressNotificationInput
   | TaskOutputNotificationInput;
 
+export type TaskTerminalActorNotificationInput =
+  | TaskCompletedNotificationInput
+  | TaskFailedNotificationInput
+  | TaskCancelledNotificationInput;
+
 export type TaskCompletedActorNotification =
   ActorNotificationBase<TaskCompletedNotificationPayload> & {
     source: TaskActorRef;
@@ -195,6 +198,11 @@ export type TaskActorNotification =
   | TaskCancelledActorNotification
   | TaskProgressActorNotification
   | TaskOutputActorNotification;
+
+export type TaskTerminalActorNotification =
+  | TaskCompletedActorNotification
+  | TaskFailedActorNotification
+  | TaskCancelledActorNotification;
 
 export interface WorkflowNotificationPayloadBase {
   /** @reserved Public workflow actor identity carried for the future workflow runtime. */
@@ -376,58 +384,12 @@ export class ActorNotificationCapacityError extends Error {
 export type TaskTerminalStatus = "completed" | "failed" | "cancelled";
 
 /**
- * Payload handed to {@link TaskNotificationSink.deliver}. Everything the agent
- * needs to construct a follow-up turn without re-fetching the record.
- *
- * `outputRef` is intentionally string-typed and opaque — hosts that spill
- * output to disk pass a file path; hosts that keep output in memory pass a
- * `taskId` the agent will hand to `task(action="output")`.
+ * Options for {@link InMemoryActorNotificationQueue}.
  *
  * @public
  * @stability experimental v0.1
  */
-export interface TaskNotification {
-  taskId: TaskId;
-  parentRunId: TaskRecord["parentRunId"];
-  /**
-   * Optional routing hint for sub-agent fan-out: when set, the notification
-   * is targeted at a specific child run / agent loop rather than the parent.
-   */
-  targetRunId?: string;
-  status: TaskTerminalStatus;
-  kind: string;
-  title?: string;
-  /** Human-readable one-line summary suitable for embedding in a turn. */
-  summary: string;
-  /** Final result, present when status === "completed". */
-  result?: unknown;
-  /** Error descriptor, present when status === "failed". */
-  error?: TaskError;
-  /** Opaque pointer to buffered output (file path, taskId, URL — host's choice). */
-  outputRef?: string;
-  /** ISO-8601 timestamp of the terminal transition. */
-  deliveredAt: string;
-}
-
-/**
- * Delivery surface for terminal task notifications. Implementations decide
- * how to surface the notification to the agent loop — queue it for the next
- * turn, render as XML, push over a websocket, etc.
- *
- * @public
- * @stability experimental v0.1
- */
-export interface TaskNotificationSink {
-  deliver(notification: TaskNotification): void | Promise<void>;
-}
-
-/**
- * Options for {@link InMemoryTaskNotificationQueue}.
- *
- * @public
- * @stability experimental v0.1
- */
-export interface InMemoryTaskNotificationQueueOptions {
+export interface InMemoryActorNotificationQueueOptions {
   /**
    * Optional bounded capacity. Reliable terminal notifications are never
    * silently dropped; lossy actor notifications may drop the oldest lossy
@@ -436,35 +398,17 @@ export interface InMemoryTaskNotificationQueueOptions {
   maxBufferedNotifications?: number;
 }
 
-export interface TaskNotificationReadyWaitOptions {
-  signal?: AbortSignal;
-  predicate?: (notification: TaskNotification) => boolean;
-}
-
 /**
- * Default sink implementation: buffers notifications in memory until a
- * consumer (the agent loop) calls {@link InMemoryTaskNotificationQueue.drain}.
- * Suitable for single-process hosts. Multi-process / distributed hosts should
- * implement their own {@link TaskNotificationSink}.
+ * In-memory actor sink/inbox used by single-process hosts and tests.
  *
  * @public
  * @stability experimental v0.1
  */
-export class InMemoryTaskNotificationQueue implements TaskNotificationSink {
-  private readonly taskBuffer: Array<{
-    notification: TaskNotification;
-    actorId: string;
-  }> = [];
+export class InMemoryActorNotificationQueue
+  implements ActorNotificationSink, ActorInbox
+{
   private readonly actorBuffer: AnyActorNotification[] = [];
   private nextActorSequence = 1;
-  private readonly waiters: Array<(items: TaskNotification[]) => void> = [];
-  private readonly readyWaiters: Array<{
-    predicate?: (notification: TaskNotification) => boolean;
-    resolve: () => void;
-    reject: (cause: unknown) => void;
-    signal?: AbortSignal;
-    onAbort?: () => void;
-  }> = [];
   private readonly actorReadyWaiters: Array<{
     predicate?: ActorNotificationPredicate;
     resolve: () => void;
@@ -473,16 +417,8 @@ export class InMemoryTaskNotificationQueue implements TaskNotificationSink {
     onAbort?: () => void;
   }> = [];
   private readonly cap?: number;
-  private readonly actorSink: ActorNotificationSink = {
-    deliver: (input) => this.deliverActor(input),
-  };
-  private readonly actorInbox: ActorInbox = {
-    peek: (predicate) => this.peekActor(predicate),
-    drain: (predicate) => this.drainActor(predicate),
-    waitUntilAvailable: (options = {}) => this.waitUntilActorAvailable(options),
-  };
 
-  constructor(options: InMemoryTaskNotificationQueueOptions = {}) {
+  constructor(options: InMemoryActorNotificationQueueOptions = {}) {
     if (options.maxBufferedNotifications !== undefined) {
       if (
         !Number.isInteger(options.maxBufferedNotifications) ||
@@ -496,118 +432,18 @@ export class InMemoryTaskNotificationQueue implements TaskNotificationSink {
     }
   }
 
-  asActorSink(): ActorNotificationSink {
-    return this.actorSink;
-  }
-
-  asActorInbox(): ActorInbox {
-    return this.actorInbox;
-  }
-
-  deliver(notification: TaskNotification): void {
-    const accepted = acceptActorNotificationInput(
-      actorNotificationInputFromTaskNotification(notification),
-      {
-        id: createInMemoryActorNotificationId(),
-        sequence: this.nextActorSequence++,
-      },
-    );
-    this.pushAcceptedActor(accepted);
-    this.taskBuffer.push({ notification, actorId: accepted.id });
-    this.resolveAllReadyWaiters();
-    const waiter = this.waiters.shift();
-    if (waiter) waiter(this.drainAll());
+  deliver(input: AnyActorNotificationInput): DeliveryResult {
+    const accepted = acceptActorNotificationInput(input, {
+      id: createInMemoryActorNotificationId(),
+      sequence: this.nextActorSequence++,
+    });
+    const result = this.pushAcceptedActor(accepted);
+    this.resolveActorReadyWaiters();
+    return result;
   }
 
   /** Snapshot of currently-buffered notifications without consuming them. */
-  peek(): readonly TaskNotification[] {
-    return this.taskBuffer.map((entry) => entry.notification);
-  }
-
-  /** Atomically remove and return buffered notifications. */
-  drain(
-    predicate?: (notification: TaskNotification) => boolean,
-  ): TaskNotification[] {
-    return this.drainAll(predicate);
-  }
-
-  /**
-   * Resolve as soon as at least one notification is buffered. Used by agent
-   * loops that block between turns waiting for background work.
-   */
-  waitForNext(): Promise<TaskNotification[]> {
-    if (this.taskBuffer.length > 0) {
-      return Promise.resolve(this.drainAll());
-    }
-    return new Promise((resolve) => this.waiters.push(resolve));
-  }
-
-  /**
-   * Resolve when at least one buffered notification is available, without
-   * consuming it. This is the revival wait primitive; `drain()` remains the
-   * single consumer used at step-start injection.
-   */
-  waitUntilAvailable(
-    options: TaskNotificationReadyWaitOptions = {},
-  ): Promise<void> {
-    if (this.hasBuffered(options.predicate)) return Promise.resolve();
-    if (options.signal?.aborted) return Promise.reject(makeAbortError());
-
-    return new Promise((resolve, reject) => {
-      const waiter = {
-        predicate: options.predicate,
-        resolve,
-        reject,
-        signal: options.signal,
-        onAbort: undefined as (() => void) | undefined,
-      };
-      waiter.onAbort = () => {
-        this.removeReadyWaiter(waiter);
-        reject(makeAbortError());
-      };
-      options.signal?.addEventListener("abort", waiter.onAbort, {
-        once: true,
-      });
-      this.readyWaiters.push(waiter);
-    });
-  }
-
-  private drainAll(
-    predicate?: (notification: TaskNotification) => boolean,
-  ): TaskNotification[] {
-    if (!predicate) {
-      const entries = [...this.taskBuffer];
-      this.taskBuffer.length = 0;
-      this.removeActorsById(new Set(entries.map((entry) => entry.actorId)));
-      return entries.map((entry) => entry.notification);
-    }
-    const matched: Array<{
-      notification: TaskNotification;
-      actorId: string;
-    }> = [];
-    const remaining: Array<{
-      notification: TaskNotification;
-      actorId: string;
-    }> = [];
-    for (const item of this.taskBuffer) {
-      if (predicate(item.notification)) matched.push(item);
-      else remaining.push(item);
-    }
-    this.taskBuffer.length = 0;
-    this.taskBuffer.push(...remaining);
-    this.removeActorsById(new Set(matched.map((entry) => entry.actorId)));
-    return matched.map((entry) => entry.notification);
-  }
-
-  private hasBuffered(
-    predicate?: (notification: TaskNotification) => boolean,
-  ): boolean {
-    return predicate
-      ? this.taskBuffer.some((entry) => predicate(entry.notification))
-      : this.taskBuffer.length > 0;
-  }
-
-  private peekActor(
+  peek(
     predicate?: ActorNotificationPredicate,
   ): readonly AnyActorNotification[] {
     return this.actorBuffer.filter(
@@ -615,9 +451,8 @@ export class InMemoryTaskNotificationQueue implements TaskNotificationSink {
     );
   }
 
-  private drainActor(
-    predicate?: ActorNotificationPredicate,
-  ): AnyActorNotification[] {
+  /** Atomically remove and return buffered notifications. */
+  drain(predicate?: ActorNotificationPredicate): AnyActorNotification[] {
     const matched: AnyActorNotification[] = [];
     const remaining: AnyActorNotification[] = [];
     for (const notification of this.actorBuffer) {
@@ -626,13 +461,10 @@ export class InMemoryTaskNotificationQueue implements TaskNotificationSink {
     }
     this.actorBuffer.length = 0;
     this.actorBuffer.push(...remaining);
-    this.removeTaskNotificationsByActorId(
-      new Set(matched.map((notification) => notification.id)),
-    );
     return matched;
   }
 
-  private waitUntilActorAvailable(
+  waitUntilAvailable(
     options: {
       signal?: AbortSignal;
       predicate?: ActorNotificationPredicate;
@@ -658,28 +490,6 @@ export class InMemoryTaskNotificationQueue implements TaskNotificationSink {
       });
       this.actorReadyWaiters.push(waiter);
     });
-  }
-
-  private deliverActor(input: AnyActorNotificationInput): DeliveryResult {
-    const accepted = acceptActorNotificationInput(input, {
-      id: createInMemoryActorNotificationId(),
-      sequence: this.nextActorSequence++,
-    });
-    const result = this.pushAcceptedActor(accepted);
-    if (result.status === "dropped") return result;
-    const taskNotification = taskNotificationFromActorNotification(accepted);
-    if (taskNotification) {
-      this.taskBuffer.push({
-        notification: taskNotification,
-        actorId: accepted.id,
-      });
-      this.resolveAllReadyWaiters();
-      const waiter = this.waiters.shift();
-      if (waiter) waiter(this.drainAll());
-    } else {
-      this.resolveAllReadyWaiters();
-    }
-    return result;
   }
 
   private pushAcceptedActor(
@@ -717,7 +527,6 @@ export class InMemoryTaskNotificationQueue implements TaskNotificationSink {
       const [removed] = this.actorBuffer.splice(index, 1);
       if (removed) {
         dropped += 1;
-        this.removeTaskNotificationsByActorId(new Set([removed.id]));
       }
     }
     return dropped;
@@ -729,37 +538,11 @@ export class InMemoryTaskNotificationQueue implements TaskNotificationSink {
       : this.actorBuffer.length > 0;
   }
 
-  private resolveReadyWaiters(): void {
-    for (const waiter of [...this.readyWaiters]) {
-      if (!this.hasBuffered(waiter.predicate)) continue;
-      this.removeReadyWaiter(waiter);
-      waiter.resolve();
-    }
-  }
-
   private resolveActorReadyWaiters(): void {
     for (const waiter of [...this.actorReadyWaiters]) {
       if (!this.hasActorBuffered(waiter.predicate)) continue;
       this.removeActorReadyWaiter(waiter);
       waiter.resolve();
-    }
-  }
-
-  private resolveAllReadyWaiters(): void {
-    this.resolveReadyWaiters();
-    this.resolveActorReadyWaiters();
-  }
-
-  private removeReadyWaiter(waiter: {
-    signal?: AbortSignal;
-    onAbort?: () => void;
-  }): void {
-    const index = this.readyWaiters.indexOf(
-      waiter as (typeof this.readyWaiters)[number],
-    );
-    if (index >= 0) this.readyWaiters.splice(index, 1);
-    if (waiter.signal && waiter.onAbort) {
-      waiter.signal.removeEventListener("abort", waiter.onAbort);
     }
   }
 
@@ -781,15 +564,6 @@ export class InMemoryTaskNotificationQueue implements TaskNotificationSink {
     for (let index = this.actorBuffer.length - 1; index >= 0; index -= 1) {
       if (ids.has(this.actorBuffer[index]!.id)) {
         this.actorBuffer.splice(index, 1);
-      }
-    }
-  }
-
-  private removeTaskNotificationsByActorId(ids: Set<string>): void {
-    if (ids.size === 0) return;
-    for (let index = this.taskBuffer.length - 1; index >= 0; index -= 1) {
-      if (ids.has(this.taskBuffer[index]!.actorId)) {
-        this.taskBuffer.splice(index, 1);
       }
     }
   }
@@ -966,132 +740,6 @@ function assertActorFieldId(value: unknown, field: string): string {
   return value;
 }
 
-export function actorNotificationInputFromTaskNotification(
-  notification: TaskNotification,
-):
-  | TaskCompletedNotificationInput
-  | TaskFailedNotificationInput
-  | TaskCancelledNotificationInput {
-  const source: TaskActorRef = {
-    kind: "task",
-    id: notification.taskId,
-    runId: notification.parentRunId,
-  };
-  const routeHint: ActorRouteHint = {
-    parentRunId: notification.parentRunId,
-    ...(notification.targetRunId
-      ? { targetRunId: notification.targetRunId }
-      : {}),
-  };
-  const basePayload: TaskNotificationPayloadBase = {
-    taskId: notification.taskId,
-    parentRunId: notification.parentRunId,
-    kind: notification.kind,
-    ...(notification.title ? { title: notification.title } : {}),
-    summary: notification.summary,
-    deliveredAt: notification.deliveredAt,
-  };
-  if (notification.status === "completed") {
-    return {
-      source,
-      routeHint,
-      type: "completed",
-      payload: {
-        ...basePayload,
-        status: "completed",
-        ...(notification.result !== undefined
-          ? { result: notification.result }
-          : {}),
-      },
-      ...(notification.outputRef ? { outputRef: notification.outputRef } : {}),
-    };
-  }
-  if (notification.status === "failed") {
-    return {
-      source,
-      routeHint,
-      type: "failed",
-      payload: {
-        ...basePayload,
-        status: "failed",
-        error: notification.error ?? {
-          code: "TASK_FAILED",
-          message: "Task failed without an error payload.",
-        },
-      },
-      ...(notification.outputRef ? { outputRef: notification.outputRef } : {}),
-    };
-  }
-  return {
-    source,
-    routeHint,
-    type: "cancelled",
-    payload: {
-      ...basePayload,
-      status: "cancelled",
-    },
-    ...(notification.outputRef ? { outputRef: notification.outputRef } : {}),
-  };
-}
-
-export function taskNotificationFromActorNotification(
-  notification: AnyActorNotification,
-): TaskNotification | undefined {
-  if (notification.source.kind !== "task") return undefined;
-  if (
-    notification.type !== "completed" &&
-    notification.type !== "failed" &&
-    notification.type !== "cancelled"
-  ) {
-    return undefined;
-  }
-  const payload = notification.payload as
-    | TaskCompletedNotificationPayload
-    | TaskFailedNotificationPayload
-    | TaskCancelledNotificationPayload;
-  const parentRunId = (notification.routeHint?.parentRunId ??
-    payload.parentRunId) as TaskRecord["parentRunId"];
-  if (notification.type === "completed") {
-    return {
-      taskId: payload.taskId,
-      parentRunId,
-      targetRunId: notification.routeHint?.targetRunId,
-      status: "completed",
-      kind: payload.kind,
-      title: payload.title,
-      summary: payload.summary,
-      result: (payload as TaskCompletedNotificationPayload).result,
-      outputRef: notification.outputRef,
-      deliveredAt: payload.deliveredAt,
-    };
-  }
-  if (notification.type === "failed") {
-    return {
-      taskId: payload.taskId,
-      parentRunId,
-      targetRunId: notification.routeHint?.targetRunId,
-      status: "failed",
-      kind: payload.kind,
-      title: payload.title,
-      summary: payload.summary,
-      error: (payload as TaskFailedNotificationPayload).error,
-      outputRef: notification.outputRef,
-      deliveredAt: payload.deliveredAt,
-    };
-  }
-  return {
-    taskId: payload.taskId,
-    parentRunId,
-    targetRunId: notification.routeHint?.targetRunId,
-    status: "cancelled",
-    kind: payload.kind,
-    title: payload.title,
-    summary: payload.summary,
-    outputRef: notification.outputRef,
-    deliveredAt: payload.deliveredAt,
-  };
-}
-
 function normalizeActorRoute(
   input: AnyActorNotificationInput,
 ): ActorRouteHint | undefined {
@@ -1149,34 +797,76 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * Build a {@link TaskNotification} from a terminal {@link TaskRecord}. The
- * runtime uses this helper internally; it is exported so custom sinks can
- * reconstruct the payload from stored records during replay.
+ * Build a terminal task actor input from a terminal {@link TaskRecord}.
  *
  * @public
  * @stability experimental v0.1
  */
-export function notificationFromRecord(
+export function taskNotificationInputFromRecord(
   record: TaskRecord,
   options: { targetRunId?: string; outputRef?: string } = {},
-): TaskNotification {
+): TaskTerminalActorNotificationInput {
   if (!isTerminalStatus(record.status)) {
     throw new Error(
-      `notificationFromRecord: record is not terminal (status=${record.status}).`,
+      `taskNotificationInputFromRecord: record is not terminal (status=${record.status}).`,
     );
   }
-  return {
+  const source: TaskActorRef = {
+    kind: "task",
+    id: record.id,
+    runId: record.parentRunId,
+  };
+  const routeHint: ActorRouteHint = {
+    parentRunId: record.parentRunId,
+    ...(options.targetRunId ? { targetRunId: options.targetRunId } : {}),
+  };
+  const basePayload: TaskNotificationPayloadBase = {
     taskId: record.id,
     parentRunId: record.parentRunId,
-    targetRunId: options.targetRunId,
-    status: record.status,
     kind: record.kind,
-    title: record.title,
+    ...(record.title ? { title: record.title } : {}),
     summary: summarize(record),
-    result: record.result,
-    error: record.error,
-    outputRef: options.outputRef,
     deliveredAt: new Date().toISOString(),
+  };
+  const outputRef = options.outputRef ? { outputRef: options.outputRef } : {};
+  if (record.status === "completed") {
+    return {
+      source,
+      routeHint,
+      type: "completed",
+      payload: {
+        ...basePayload,
+        status: "completed",
+        ...(record.result !== undefined ? { result: record.result } : {}),
+      },
+      ...outputRef,
+    };
+  }
+  if (record.status === "failed") {
+    return {
+      source,
+      routeHint,
+      type: "failed",
+      payload: {
+        ...basePayload,
+        status: "failed",
+        error: record.error ?? {
+          code: "TASK_FAILED",
+          message: "Task failed without an error payload.",
+        },
+      },
+      ...outputRef,
+    };
+  }
+  return {
+    source,
+    routeHint,
+    type: "cancelled",
+    payload: {
+      ...basePayload,
+      status: "cancelled",
+    },
+    ...outputRef,
   };
 }
 

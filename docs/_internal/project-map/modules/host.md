@@ -12,6 +12,17 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T23:05:00+0800
+- Scope: Host task revival and workflow notification delivery consume the
+  direct actor sink/inbox surfaces; task projection reads canonical terminal
+  actor payload/route facts with no task notification conversion layer.
+- Read: Host workspace/runtime/task projections, Agent Runtime inboxes,
+  workflow channel consumers, and focused tests.
+- Tests: Host task/workflow/protocol/Agent 122/122; Agent Runtime task/workflow 90/90;
+  server-runtime 3/3; IM gateway 6/6; repository test typecheck; full release
+  gate.
+
+- Status: Verified
 - Date: 2026-07-16T22:26:54+0800
 - Scope: audited every Host workflow list/get/resume/control/event consumer
   after Agent Runtime made the workspace workflow journal the only durable
@@ -393,8 +404,8 @@ Does not own:
   agent-runtime, including action-specific non-empty id constraints, so
   `tool_search select:task` gives the provider the same guidance the runtime
   validates.
-- Host wires the shared `TaskManager` notification sink into a durable
-  `FileTaskNotificationOutbox` that backs per-run core notification/revival
+- Host wires the shared `TaskManager` actor sink into a durable
+  `FileTaskNotificationOutbox` whose direct actor inbox backs per-run core notification/revival
   sources. All terminal task notifications for the run can be injected through
   `run.notification.injected`; only awaited tasks wake core's internal
   `waiting_tasks` state. Injected terminal task notification body text includes
@@ -442,8 +453,9 @@ Does not own:
 - Host delivers completed/failed workflow terminal notifications and P3
   `waiting` notifications through the workflow actor inbox with
   `payload.workflowId === WorkflowRunRecord.id`; waiting notifications are
-  backed by `FileWorkflowNotificationOutbox`, not the legacy task notification
-  format. Durable truth lives in `WorkflowRunRecord` / store events.
+  backed by `FileWorkflowNotificationOutbox`. Task and workflow outboxes use
+  distinct typed durable entries but implement the same direct actor ports.
+  Durable truth lives in `WorkflowRunRecord` / store events.
 - P3 Step 4a retired `startSupervisedRunChain()`. Fresh run, `run.resume`, and
   `workflow.resume` now enter `startWorkflowActorEpisodeChain()`: the
   workflow/todo actor owns the chain shape through agent-runtime's

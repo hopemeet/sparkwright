@@ -198,6 +198,26 @@ leaf.
 
 ## Agent Runtime
 
+### `packages/agent-runtime/src/tasks/notifications.ts`, `file-notifications.ts`, or `manager.ts`
+
+Run:
+
+```bash
+npm --workspace @sparkwright/agent-runtime test -- test/tasks.test.ts test/workflows.test.ts
+npm --workspace @sparkwright/agent-runtime run typecheck
+npm --workspace @sparkwright/agent-runtime run build
+npm --workspace @sparkwright/host test -- test/task-revival.test.ts test/workflows.test.ts test/protocol.test.ts
+npm --workspace @sparkwright/host run typecheck
+```
+
+When the shared workflow inbox implementation or its direct consumers change,
+also run the server-runtime workflow channel coordinator and IM gateway focused
+suites. Preserve reliable/lossy capacity behavior, route and identity
+validation, durable actor-only fields, invalid-entry diagnostics, restart
+ordering, non-consuming readiness, Host result projection, and pending sink
+retry classification. Run repository test typecheck and the full release gate
+when the durable inbox layout changes.
+
 ### `packages/agent-runtime/src/workflows/store.ts` or `journal.ts`
 
 Run:

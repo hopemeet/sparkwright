@@ -53,14 +53,14 @@ persist that origin for diagnostics and execute the supplied
 `lifetime:"service"` input only adds a short immediate-exit grace check; it is
 not a readiness or health-check protocol.
 
-Pair the promotion bridge with `TaskNotificationSink`
+Pair the promotion bridge with `ActorNotificationSink`
 (`@sparkwright/agent-runtime`) so the agent's next turn observes terminal
 state instead of polling — see [`examples/promote-shell-to-task`](../../examples/promote-shell-to-task).
 
 ### Durable Background Task Wiring
 
 Single-process hosts can use `InMemoryTaskStore` and
-`InMemoryTaskNotificationQueue`, but durable hosts should persist both task
+`InMemoryActorNotificationQueue`, but durable hosts should persist both task
 state and terminal notifications:
 
 ```ts

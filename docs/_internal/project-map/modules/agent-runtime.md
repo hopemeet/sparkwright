@@ -9,6 +9,18 @@ See also [../maps/capabilities/agents.md](../maps/capabilities/agents.md), [../m
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T23:05:00+0800
+- Scope: task terminal delivery is actor-native end to end. `TaskManager`
+  produces typed task actor inputs, in-memory/file implementations directly
+  satisfy sink/inbox, and task-specific buffers, adapters, conversion helpers,
+  and the old durable entry shape are gone.
+- Read: task notification types, manager, in-memory/file inboxes, Host revival
+  consumers, workflow notification consumers, examples, and focused tests.
+- Tests: Agent Runtime task/workflow 90/90; Host task/workflow/protocol/Agent 122/122;
+  server-runtime 3/3; IM gateway 6/6; repository test typecheck; full release
+  gate.
+
+- Status: Verified
 - Date: 2026-07-16T22:26:54+0800
 - Scope: `FileWorkflowStore` now reads records and events only by replaying
   `<id>.journal/`; snapshot/JSONL mirrors and sidecar-to-journal lazy migration
@@ -223,7 +235,7 @@ Does not own:
   for actor-native workflow notifications. It persists workflow notification
   inputs under `workflow-notifications/*.json`, revalidates them through the
   actor inbox contract on peek/drain, and supports reliable `waiting`
-  notifications without changing the legacy task notification file format.
+  notifications through the same direct sink/inbox interface.
 - `subagent.*` terminal fields (`terminalState`, `stepLimitReached`,
   `truncated`, `stopReason`) are derived from the child run's real `run.*`
   outcome and payload flags; parent emit sites must not set a separate terminal
@@ -246,38 +258,34 @@ Does not own:
   `FileTaskStore`, `TaskManager`, protocol snapshots, and UI projections should
   preserve it so terminal awaited tasks can wake a run once and then be detached
   after an explicit wait/join consumes them.
-- Task notification types now sit beside workflow notification input probes in
-  the `ActorNotificationSink` / `ActorInbox` split. Producers use the actor
-  sink; consumers use predicate `peek()`/`drain()` plus non-consuming
-  `waitUntilAvailable()`. The legacy `TaskNotificationSink` and task
-  notification API remain compatible for existing embedders.
+- Task and workflow notification types share the canonical
+  `ActorNotificationSink` / `ActorInbox` split. `TaskManager` produces terminal
+  task actor inputs directly; consumers use predicate `peek()`/`drain()` plus
+  non-consuming `waitUntilAvailable()`. There is no task-specific sink or
+  parallel task notification API.
 - `InternalActorKind` names only notification sources with implemented typed
   producer and consumer semantics: `task | workflow`. Agent work may still be a
   task payload `kind:"agent"`, but Agent lifecycle communication remains on
   `subagent.*` and bounded tool results; `run` and `agent` are not reserved
   actor-notification kinds. Add a new kind only with its concrete notification
   union, delivery adapter, and receiver policy in the same change.
-- `InMemoryTaskNotificationQueue.waitUntilAvailable({ signal, predicate })` is
-  non-consuming and abortable. The actor adapter has the same non-consuming wait
-  contract and does not expose `waitForNext()` as part of `ActorInbox`.
+- `InMemoryActorNotificationQueue.waitUntilAvailable({ signal, predicate })` is
+  non-consuming and abortable. The queue implements the actor producer and
+  consumer ports directly and has no consuming wait convenience.
   Reliable terminal notifications are not silently dropped under a bounded
   queue; drop-oldest/drop-self is limited to lossy actor notifications.
 - `FileTaskNotificationOutbox` is the durable counterpart for terminal task
   notifications. It supports non-consuming `peek()`/`waitUntilAvailable()` and
   predicate `drain()` so hosts can replay only notifications for the resumed
-  run. Its JSON entry writes compose the shared `doc-store`
-  `atomicWriteTextSync()` primitive, while preserving the existing
-  `task-notifications/*.json` format. Its actor adapter derives inbox-scoped
-  monotonic sequence from stable file ordering with an in-process high-water
-  mark, without changing the existing format. Because that format stores legacy
-  `TaskNotification` entries, the file-backed actor sink accepts only terminal
-  task actor notifications that can round-trip through that shape; it rejects
-  workflow/progress/output inputs and actor-only envelope fields with a typed
-  non-retryable `UNSUPPORTED_ACTOR_NOTIFICATION`. It stores
-  notifications, not task execution. The actor inbox view skips unreadable or
-  actor-invalid file entries and exposes them through `invalidActorEntries()`
-  so a single stale/bad file cannot wedge actor `peek()`/`drain()`/readiness
-  waits; the legacy task listing path remains strict for corrupt JSON.
+  run. Canonical `sparkwright-task-notification.v1` entries persist
+  `{schemaVersion,id,createdAt,input}` under `task-notifications/*.json`, so
+  source/session routing, correlation, output refs, and context hints round-trip
+  without a lossy task-shaped mirror. The outbox derives inbox-scoped monotonic
+  sequence from stable file ordering with an in-process high-water mark. It
+  accepts terminal task actors only; other kinds or non-terminal task inputs
+  reject with typed non-retryable `UNSUPPORTED_ACTOR_NOTIFICATION`. Unreadable
+  or actor-invalid entries are skipped and reported by `invalidEntries()` so
+  one bad file cannot wedge peek/drain/readiness.
 - Actor notification acceptance normalizes `source.runId` into
   `routeHint.parentRunId` and `source.sessionId` into `routeHint.sessionId`.
   Explicit source/route contradictions or empty route ids reject with

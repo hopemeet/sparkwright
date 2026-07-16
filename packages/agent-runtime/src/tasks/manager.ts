@@ -13,9 +13,9 @@
 import type { RunId } from "@sparkwright/core";
 import {
   isNonRetryableActorNotificationError,
-  notificationFromRecord,
-  type TaskNotification,
-  type TaskNotificationSink,
+  taskNotificationInputFromRecord,
+  type ActorNotificationSink,
+  type TaskTerminalActorNotificationInput,
 } from "./notifications.js";
 import { InMemoryTaskStore, type TaskStore } from "./store.js";
 import {
@@ -117,7 +117,7 @@ export interface TaskManagerOptions {
    * notification back into the agent loop (in-memory queue, websocket, XML
    * tag, etc.).
    */
-  notificationSink?: TaskNotificationSink;
+  notificationSink?: ActorNotificationSink;
   /**
    * Called when {@link TaskManagerOptions.notificationSink}.deliver throws.
    * Defaults to a silent swallow — sinks are best-effort; task state in the
@@ -151,14 +151,15 @@ export class TaskManager {
     taskId: TaskId,
     progress: TaskProgressUpdate,
   ) => void;
-  private readonly notificationSink?: TaskNotificationSink;
+  private readonly notificationSink?: ActorNotificationSink;
   private readonly onSinkError?: (taskId: TaskId, cause: unknown) => void;
   private readonly terminalResolvers = new Map<
     TaskId,
     (record: TaskRecord) => void
   >();
   private readonly promotionWaiters = new Map<TaskId, Set<() => void>>();
-  private readonly notificationOutbox: TaskNotification[] = [];
+  private readonly notificationOutbox: TaskTerminalActorNotificationInput[] =
+    [];
 
   constructor(options: TaskManagerOptions = {}) {
     this.store = options.store ?? new InMemoryTaskStore();
@@ -269,12 +270,12 @@ export class TaskManager {
   }
 
   /** Snapshot notifications that failed delivery and are waiting for retry. */
-  pendingNotifications(): readonly TaskNotification[] {
+  pendingNotifications(): readonly TaskTerminalActorNotificationInput[] {
     return [...this.notificationOutbox];
   }
 
   /** Drop and return pending notifications without retrying delivery. */
-  drainPendingNotifications(): TaskNotification[] {
+  drainPendingNotifications(): TaskTerminalActorNotificationInput[] {
     const items = [...this.notificationOutbox];
     this.notificationOutbox.length = 0;
     return items;
@@ -302,7 +303,7 @@ export class TaskManager {
         if (!isNonRetryableActorNotificationError(cause)) {
           this.notificationOutbox.push(notification);
         }
-        this.onSinkError?.(notification.taskId, cause);
+        this.onSinkError?.(notification.payload.taskId, cause);
       }
     }
     return { delivered, pending: this.notificationOutbox.length };
@@ -533,7 +534,7 @@ export class TaskManager {
 
   private async notify(record: TaskRecord): Promise<void> {
     if (!this.notificationSink) return;
-    const notification = notificationFromRecord(record);
+    const notification = taskNotificationInputFromRecord(record);
     try {
       await this.notificationSink.deliver(notification);
     } catch (cause) {

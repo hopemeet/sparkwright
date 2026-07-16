@@ -188,6 +188,7 @@ follow the active maps below for the current contract.
 - `packages/core/src/runtime/*`: [modules/core.md](modules/core.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md), [maps/safety/approvals.md](maps/safety/approvals.md)
 - `packages/cron/src/*`: [maps/capabilities/cron.md](maps/capabilities/cron.md), [modules/cli.md](modules/cli.md), [modules/tui.md](modules/tui.md), [modules/host.md](modules/host.md)
 - `packages/agent-runtime/src/*`: [modules/agent-runtime.md](modules/agent-runtime.md), [maps/capabilities/agents.md](maps/capabilities/agents.md), [maps/capabilities/cron.md](maps/capabilities/cron.md)
+- `packages/agent-runtime/src/tasks/notifications.ts`, `packages/agent-runtime/src/tasks/file-notifications.ts`, or `packages/agent-runtime/src/tasks/manager.ts` notification delivery: [modules/agent-runtime.md](modules/agent-runtime.md), [modules/host.md](modules/host.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/capabilities/agents.md](maps/capabilities/agents.md)
 - `packages/agent-runtime/src/workflows/*`: [modules/agent-runtime.md](modules/agent-runtime.md), [modules/protocol.md](modules/protocol.md), [maps/capabilities/README.md](maps/capabilities/README.md)
 - `packages/agent-runtime/src/workflows/store.ts`, `packages/agent-runtime/src/workflows/journal.ts`, or `packages/agent-runtime/src/doc-store/index.ts` workflow persistence changes: [modules/agent-runtime.md](modules/agent-runtime.md), [modules/host.md](modules/host.md), [maps/session/session-store.md](maps/session/session-store.md), [maps/session/resume-replay.md](maps/session/resume-replay.md)
 - `packages/agent-runtime/src/workflows/control.ts`, `packages/agent-runtime/src/workflows/control-processor.ts`, or `workflow.control`: [modules/agent-runtime.md](modules/agent-runtime.md), [modules/host.md](modules/host.md), [modules/protocol.md](modules/protocol.md), [modules/edge-packages.md](modules/edge-packages.md), [maps/session/session-store.md](maps/session/session-store.md), [maps/session/resume-replay.md](maps/session/resume-replay.md)
@@ -210,6 +211,22 @@ TUI events; it is not a trace diagnostic report and must not replace
 trace/session inspection.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-16T23:05:00+0800
+- Scope: Task and Workflow notification producers/consumers now use the
+  canonical `ActorNotificationSink` / `ActorInbox` interfaces directly; the
+  task-specific sink, duplicate queue view, adapter accessors, and legacy task
+  notification durable shape were removed.
+- Read: Agent Runtime notification implementations/manager/tests, Host revival
+  and projection, workflow channel consumers, examples/reference docs, and
+  routed runtime/Agent/Cron maps.
+- Checked with no contract update needed: Core `NotificationSource`, protocol,
+  trace, Cron scheduling, workflow record/control persistence, and external
+  transport semantics are unchanged.
+- Tests: Agent Runtime task/workflow 90/90; Host task/workflow/protocol/Agent 122/122;
+  server-runtime 3/3; IM gateway 6/6; repository test typecheck; full release
+  gate.
 
 - Status: Verified
 - Date: 2026-07-16T22:26:54+0800

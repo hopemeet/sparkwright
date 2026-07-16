@@ -45,13 +45,12 @@ export type {
   AnyActorNotificationInput,
   DeliveryResult,
   InternalActorKind,
-  TaskNotification,
-  TaskNotificationReadyWaitOptions,
-  TaskNotificationSink,
   TaskTerminalStatus,
-  InMemoryTaskNotificationQueueOptions,
+  InMemoryActorNotificationQueueOptions,
   TaskActorNotification,
   TaskActorNotificationInput,
+  TaskTerminalActorNotification,
+  TaskTerminalActorNotificationInput,
   TaskCancelledActorNotification,
   TaskCancelledNotificationInput,
   TaskCancelledNotificationPayload,
@@ -87,13 +86,11 @@ export {
   ActorNotificationInvalidError,
   ActorNotificationUnsupportedError,
   ActorNotificationValidationError,
-  InMemoryTaskNotificationQueue,
+  InMemoryActorNotificationQueue,
   acceptActorNotificationInput,
-  actorNotificationInputFromTaskNotification,
   isNonRetryableActorNotificationError,
-  notificationFromRecord,
   qosForActorNotificationType,
-  taskNotificationFromActorNotification,
+  taskNotificationInputFromRecord,
 } from "./notifications.js";
 
 export type {
@@ -124,7 +121,7 @@ export { FileTaskStore } from "./file-store.js";
 
 export type {
   FileTaskNotificationEntry,
-  FileTaskNotificationInvalidActorEntry,
+  FileTaskNotificationInvalidEntry,
   FileTaskNotificationOutboxOptions,
 } from "./file-notifications.js";
 export { FileTaskNotificationOutbox } from "./file-notifications.js";

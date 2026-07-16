@@ -1,5 +1,5 @@
 // End-to-end demo: shell-tool foreground→background promotion + TaskManager
-// + TaskNotificationSink. Run with `npm run -w @sparkwright/example-promote-shell-to-task test`.
+// + ActorNotificationSink. Run with `npm run -w @sparkwright/example-promote-shell-to-task test`.
 //
 // The script wires three SparkWright pieces together so the model surface is
 // realistic:
@@ -8,7 +8,7 @@
 //        ▲                              │
 //        │                              ▼
 //   short cmd: returns synchronously    long cmd: returns { promoted, taskId },
-//                                       then InMemoryTaskNotificationQueue
+//                                       then InMemoryActorNotificationQueue
 //                                       delivers the terminal notification the
 //                                       agent loop would read on its next turn.
 //
@@ -16,10 +16,9 @@
 // stands in for the host's executor so the example doubles as a smoke test.
 
 import {
-  InMemoryTaskNotificationQueue,
+  InMemoryActorNotificationQueue,
   InMemoryTaskStore,
   TaskManager,
-  type TaskNotification,
 } from "@sparkwright/agent-runtime";
 import {
   createRunId,
@@ -188,7 +187,7 @@ function makeBackgroundHandoff(
 
 async function main(): Promise<void> {
   const parentRunId = createRunId();
-  const notifications = new InMemoryTaskNotificationQueue();
+  const notifications = new InMemoryActorNotificationQueue();
   const manager = new TaskManager({
     store: new InMemoryTaskStore(),
     notificationSink: notifications,
@@ -241,12 +240,13 @@ async function main(): Promise<void> {
 
   // The agent loop would now continue with other work. Here we wait for the
   // background task to finish so the notification can be observed.
-  const arrived: TaskNotification[] = await notifications.waitForNext();
+  await notifications.waitUntilAvailable();
+  const arrived = notifications.drain();
   log("notification delivered", arrived[0]);
   assert(arrived.length === 1, "exactly one notification expected");
-  assert(arrived[0]!.status === "completed", "task should complete cleanly");
+  assert(arrived[0]!.type === "completed", "task should complete cleanly");
   assert(
-    arrived[0]!.taskId === longResult.taskId,
+    arrived[0]!.source.id === longResult.taskId,
     "notification taskId must match promotion taskId",
   );
 

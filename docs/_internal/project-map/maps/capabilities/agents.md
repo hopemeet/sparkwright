@@ -11,6 +11,16 @@ See [../../modules/agent-runtime.md](../../modules/agent-runtime.md) and [../../
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T23:05:00+0800
+- Scope: background Agent tasks deliver terminal results through the canonical
+  task actor sink/inbox; Agent lifecycle remains on `subagent.*` and no Agent
+  actor kind was added.
+- Read: TaskManager notification production, Host Agent-task runner/revival,
+  typed actor unions, and focused tests.
+- Tests: Agent Runtime task/workflow 90/90; Host task/workflow/protocol/Agent 122/122;
+  repository test typecheck; full release gate.
+
+- Status: Verified
 - Date: 2026-07-16T13:21:00+0800
 - Scope: Agent/delegate child runs receive only `InteractionChannel`; configured children use approval-only channels and dynamic write grants use scoped approval-only channels.
 - Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.

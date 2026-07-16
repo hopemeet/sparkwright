@@ -1,9 +1,11 @@
 import type { PendingNotification } from "@sparkwright/core";
 import type {
-  TaskNotification,
   TaskOutputChunk,
   TaskRecord,
   TaskStatus,
+  TaskCompletedActorNotification,
+  TaskFailedActorNotification,
+  TaskTerminalActorNotification,
 } from "@sparkwright/agent-runtime";
 import type {
   ProtocolError,
@@ -75,48 +77,55 @@ export function isTerminalTaskStatus(status: TaskStatus): boolean {
   );
 }
 
-export function pendingNotificationFromTask(
-  notification: TaskNotification,
+export function pendingNotificationFromTaskActor(
+  notification: TaskTerminalActorNotification,
 ): PendingNotification {
-  const title = notification.title ?? notification.kind;
+  const payload = notification.payload;
+  const title = payload.title ?? payload.kind;
   const resultSummary =
-    notification.result !== undefined
-      ? summarizeNotificationValue(notification.result)
+    notification.type === "completed" &&
+    (notification as TaskCompletedActorNotification).payload.result !==
+      undefined
+      ? summarizeNotificationValue(
+          (notification as TaskCompletedActorNotification).payload.result,
+        )
+      : undefined;
+  const error =
+    notification.type === "failed"
+      ? (notification as TaskFailedActorNotification).payload.error
       : undefined;
   return {
     content: [
-      `Task ${notification.taskId} (${title}) ${notification.status}.`,
-      notification.summary,
+      `Task ${payload.taskId} (${title}) ${notification.type}.`,
+      payload.summary,
       resultSummary ? `Result summary: ${resultSummary}` : undefined,
       notification.outputRef
         ? `Output ref: ${notification.outputRef}`
         : undefined,
-      notification.error ? `Error: ${notification.error.message}` : undefined,
+      error ? `Error: ${error.message}` : undefined,
     ]
       .filter(Boolean)
       .join("\n"),
-    source: { kind: "task", uri: `task:${notification.taskId}` },
+    source: { kind: "task", uri: `task:${payload.taskId}` },
     metadata: {
-      taskId: notification.taskId,
-      parentRunId: notification.parentRunId,
-      status: notification.status,
-      kind: notification.kind,
-      ...(notification.title ? { title: notification.title } : {}),
-      ...(notification.targetRunId
-        ? { targetRunId: notification.targetRunId }
+      taskId: payload.taskId,
+      parentRunId: payload.parentRunId,
+      status: notification.type,
+      kind: payload.kind,
+      ...(payload.title ? { title: payload.title } : {}),
+      ...(notification.routeHint?.targetRunId
+        ? { targetRunId: notification.routeHint.targetRunId }
         : {}),
-      deliveredAt: notification.deliveredAt,
+      deliveredAt: payload.deliveredAt,
       ...(notification.outputRef ? { outputRef: notification.outputRef } : {}),
       ...(resultSummary !== undefined ? { resultSummary } : {}),
-      ...(notification.error
+      ...(error
         ? {
-            errorCode: notification.error.code,
-            errorMessage: notification.error.message,
-            ...(notification.error.metadata
+            errorCode: error.code,
+            errorMessage: error.message,
+            ...(error.metadata
               ? {
-                  errorSummary: summarizeNotificationValue(
-                    notification.error.metadata,
-                  ),
+                  errorSummary: summarizeNotificationValue(error.metadata),
                 }
               : {}),
           }

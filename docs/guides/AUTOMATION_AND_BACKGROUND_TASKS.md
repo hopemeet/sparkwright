@@ -53,7 +53,7 @@ A durable host should wire:
 
 - `TaskManager` for task lifecycle
 - `TaskStore` for task state
-- `TaskNotificationSink` for terminal events
+- `ActorNotificationSink` / `ActorInbox` for terminal events
 - a watchdog for idle and wall-clock timeouts
 - recovery on startup before accepting new work
 

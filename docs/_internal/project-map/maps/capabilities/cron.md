@@ -9,6 +9,16 @@ See [../../modules/agent-runtime.md](../../modules/agent-runtime.md) for related
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-16T23:05:00+0800
+- Scope: checked the routed Task notification consolidation; Cron stores,
+  scheduling, run success, and tool contracts do not consume the removed
+  task-specific notification surface and are unchanged.
+- Read: Agent Runtime task notification consumers and Cron capability boundary.
+- Tests: no Cron-specific behavior rerun; cross-package focused suites and
+  repository test typecheck and the full release gate covered changed
+  consumers.
+
 - Status: Verified
 - Date: 2026-07-16T13:21:00+0800
 - Scope: Cron accepts only `InteractionChannel`; unattended default is `ask` plus a deny-only approval handler, while CLI omission stays read-only.

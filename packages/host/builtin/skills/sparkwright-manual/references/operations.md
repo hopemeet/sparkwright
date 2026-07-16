@@ -116,7 +116,7 @@ Durable hosts should wire:
 
 - `TaskManager`
 - `TaskStore`
-- `TaskNotificationSink`
+- `ActorNotificationSink` / `ActorInbox`
 - watchdog health checks
 - startup recovery before accepting new work
 

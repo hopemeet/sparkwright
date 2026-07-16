@@ -19,7 +19,7 @@ import {
   type ToolDefinition,
 } from "@sparkwright/core";
 import {
-  InMemoryTaskNotificationQueue,
+  InMemoryActorNotificationQueue,
   InMemoryTaskStore,
   TaskManager,
   type TaskId,
@@ -1074,7 +1074,7 @@ describe("host spawn_agent wiring", () => {
   });
 
   it("promotes slow dynamic spawn_agent work while preserving projection and ledger", async () => {
-    const sink = new InMemoryTaskNotificationQueue();
+    const sink = new InMemoryActorNotificationQueue();
     const taskManager = new TaskManager({
       store: new InMemoryTaskStore(),
       notificationSink: sink,
@@ -1154,10 +1154,14 @@ describe("host spawn_agent wiring", () => {
     });
     expect(sink.drain()).toMatchObject([
       {
-        taskId: ticket.taskId,
-        status: "completed",
-        kind: "agent",
-        title: "spawn_agent: slow reader",
+        source: { kind: "task", id: ticket.taskId },
+        type: "completed",
+        payload: {
+          taskId: ticket.taskId,
+          status: "completed",
+          kind: "agent",
+          title: "spawn_agent: slow reader",
+        },
       },
     ]);
     const parentEventTypes = parent.events.all().map((event) => event.type);

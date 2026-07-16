@@ -40,7 +40,9 @@ export interface FileWorkflowNotificationInvalidEntry {
   reason: string;
 }
 
-export class FileWorkflowNotificationOutbox {
+export class FileWorkflowNotificationOutbox
+  implements ActorNotificationSink, ActorInbox
+{
   readonly rootDir: string;
   private nextActorSequence = 1;
   private readonly actorSequenceByEntryId = new Map<string, number>();
@@ -56,14 +58,6 @@ export class FileWorkflowNotificationOutbox {
     signal?: AbortSignal;
     onAbort?: () => void;
   }> = [];
-  private readonly actorSink: ActorNotificationSink = {
-    deliver: (input) => this.deliverActor(input),
-  };
-  private readonly actorInbox: ActorInbox = {
-    peek: (predicate) => this.peekActor(predicate),
-    drain: (predicate) => this.drainActor(predicate),
-    waitUntilAvailable: (options = {}) => this.waitUntilActorAvailable(options),
-  };
 
   constructor(options: FileWorkflowNotificationOutboxOptions) {
     this.rootDir = resolve(options.rootDir);
@@ -72,21 +66,13 @@ export class FileWorkflowNotificationOutbox {
     }
   }
 
-  asActorSink(): ActorNotificationSink {
-    return this.actorSink;
-  }
-
-  asActorInbox(): ActorInbox {
-    return this.actorInbox;
-  }
-
   invalidEntries(): readonly FileWorkflowNotificationInvalidEntry[] {
     return [...this.invalidActorEntryByPath.values()].map((entry) => ({
       ...entry,
     }));
   }
 
-  private deliverActor(input: AnyActorNotificationInput): DeliveryResult {
+  deliver(input: AnyActorNotificationInput): DeliveryResult {
     if (input.source.kind !== "workflow") {
       throw new ActorNotificationUnsupportedError(
         "FileWorkflowNotificationOutbox only supports workflow actor notifications.",
@@ -111,7 +97,7 @@ export class FileWorkflowNotificationOutbox {
     return { status: "accepted", acceptedCount: 1 };
   }
 
-  private peekActor(
+  peek(
     predicate?: ActorNotificationPredicate,
   ): readonly AnyActorNotification[] {
     return this.listActorEntries()
@@ -119,9 +105,7 @@ export class FileWorkflowNotificationOutbox {
       .filter((notification) => !predicate || predicate(notification));
   }
 
-  private drainActor(
-    predicate?: ActorNotificationPredicate,
-  ): AnyActorNotification[] {
+  drain(predicate?: ActorNotificationPredicate): AnyActorNotification[] {
     const matched: Array<{
       id: string;
       notification: AnyActorNotification;
@@ -134,13 +118,13 @@ export class FileWorkflowNotificationOutbox {
     return matched.map((entry) => entry.notification);
   }
 
-  private waitUntilActorAvailable(
+  waitUntilAvailable(
     options: {
       signal?: AbortSignal;
       predicate?: ActorNotificationPredicate;
     } = {},
   ): Promise<void> {
-    if (this.hasActorBuffered(options.predicate)) return Promise.resolve();
+    if (this.hasBuffered(options.predicate)) return Promise.resolve();
     if (options.signal?.aborted) return Promise.reject(makeAbortError());
 
     return new Promise((resolve, reject) => {
@@ -162,13 +146,13 @@ export class FileWorkflowNotificationOutbox {
     });
   }
 
-  private hasActorBuffered(predicate?: ActorNotificationPredicate): boolean {
-    return this.peekActor(predicate).length > 0;
+  private hasBuffered(predicate?: ActorNotificationPredicate): boolean {
+    return this.peek(predicate).length > 0;
   }
 
   private resolveActorReadyWaiters(): void {
     for (const waiter of [...this.actorReadyWaiters]) {
-      if (!this.hasActorBuffered(waiter.predicate)) continue;
+      if (!this.hasBuffered(waiter.predicate)) continue;
       this.removeActorReadyWaiter(waiter);
       waiter.resolve();
     }

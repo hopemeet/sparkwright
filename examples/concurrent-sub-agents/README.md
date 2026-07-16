@@ -50,7 +50,7 @@ npm run -w @sparkwright/example-concurrent-sub-agents test
 This demo simulates sub-agent execution in-process (no model adapter, no
 tools) to keep the moving parts focused on concurrency control. For the
 sub-agent dispatch surface (`spawnSubAgent`, `mountAgentTool`,
-`TaskNotificationSink`), see:
+`ActorNotificationSink` / `ActorInbox`), see:
 
 - [`docs/reference/EXTENSION_INTERFACES.md` § Sub-agents](../../docs/reference/EXTENSION_INTERFACES.md#sub-agents)
 - [`examples/promote-shell-to-task`](../promote-shell-to-task)
@@ -58,4 +58,4 @@ sub-agent dispatch surface (`spawnSubAgent`, `mountAgentTool`,
 In a production setup, the Leader would call `spawnSubAgent` (or a
 `mountAgentTool` exposed to its own model) and pass the worktree path as
 the child's workspace. The async completion path reuses `TaskManager` +
-`TaskNotificationSink` from that existing demo — no new transport.
+the canonical actor notification sink/inbox from that existing demo — no new transport.

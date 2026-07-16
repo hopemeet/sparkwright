@@ -1,41 +1,26 @@
-// AI maintenance note: durable task-notification outbox. This is deliberately
-// transport-agnostic: deliver() appends a pending notification to disk; hosts
-// call drain()/ack() or map drain() into streaming-runtime NotificationSource.
-
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-  statSync,
-} from "node:fs";
+import { mkdirSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { atomicWriteTextSync } from "../doc-store/index.js";
+import {
+  readJsonDocumentDirSync,
+  writeJsonDocumentSync,
+  type JsonDocumentInvalidEntry,
+} from "../doc-store/index.js";
 import {
   ActorNotificationUnsupportedError,
   acceptActorNotificationInput,
-  actorNotificationInputFromTaskNotification,
-  taskNotificationFromActorNotification,
-} from "./notifications.js";
-import type {
-  ActorInbox,
-  ActorNotificationPredicate,
-  ActorNotificationSink,
-  AnyActorNotification,
-  AnyActorNotificationInput,
-  DeliveryResult,
-  TaskNotification,
-  TaskNotificationReadyWaitOptions,
-  TaskNotificationSink,
+  type ActorInbox,
+  type ActorNotificationPredicate,
+  type ActorNotificationSink,
+  type AnyActorNotificationInput,
+  type DeliveryResult,
+  type TaskTerminalActorNotification,
+  type TaskTerminalActorNotificationInput,
 } from "./notifications.js";
 
-/**
- * Options accepted by {@link FileTaskNotificationOutbox}.
- *
- * @public
- * @stability experimental v0.1
- */
+const TASK_NOTIFICATION_ENTRY_SCHEMA_VERSION =
+  "sparkwright-task-notification.v1" as const;
+
+/** Options accepted by {@link FileTaskNotificationOutbox}. */
 export interface FileTaskNotificationOutboxOptions {
   /** Root directory for `task-notifications/*.json`. */
   rootDir: string;
@@ -43,64 +28,39 @@ export interface FileTaskNotificationOutboxOptions {
   createRoot?: boolean;
 }
 
-/**
- * One durable notification entry.
- *
- * @public
- * @stability experimental v0.1
- */
+/** One canonical durable task actor notification input. */
 export interface FileTaskNotificationEntry {
+  schemaVersion: typeof TASK_NOTIFICATION_ENTRY_SCHEMA_VERSION;
   id: string;
-  notification: TaskNotification;
+  createdAt: string;
+  input: TaskTerminalActorNotificationInput;
 }
 
-export interface FileTaskNotificationInvalidActorEntry {
-  /** Entry id when the JSON envelope could be parsed far enough to read it. */
+export interface FileTaskNotificationInvalidEntry {
   id?: string;
-  /** Absolute path to the invalid notification file. */
   path: string;
-  /** Human-readable parse or actor-acceptance failure reason. */
+  code: "read_failed" | "invalid_json" | "invalid_document";
   reason: string;
 }
 
-/**
- * Durable {@link TaskNotificationSink} that stores one JSON file per pending
- * notification.
- *
- * @public
- * @stability experimental v0.1
- */
-export class FileTaskNotificationOutbox implements TaskNotificationSink {
+/** Durable task-terminal implementation of the canonical actor sink/inbox. */
+export class FileTaskNotificationOutbox
+  implements ActorNotificationSink, ActorInbox
+{
   readonly rootDir: string;
   private nextActorSequence = 1;
   private readonly actorSequenceByEntryId = new Map<string, number>();
-  private readonly actorCreatedAtByEntryId = new Map<string, string>();
-  private readonly invalidActorEntryByPath = new Map<
+  private readonly invalidEntryByPath = new Map<
     string,
-    FileTaskNotificationInvalidActorEntry
+    FileTaskNotificationInvalidEntry
   >();
   private readonly readyWaiters: Array<{
-    predicate?: (notification: TaskNotification) => boolean;
-    resolve: () => void;
-    reject: (cause: unknown) => void;
-    signal?: AbortSignal;
-    onAbort?: () => void;
-  }> = [];
-  private readonly actorReadyWaiters: Array<{
     predicate?: ActorNotificationPredicate;
     resolve: () => void;
     reject: (cause: unknown) => void;
     signal?: AbortSignal;
     onAbort?: () => void;
   }> = [];
-  private readonly actorSink: ActorNotificationSink = {
-    deliver: (input) => this.deliverActor(input),
-  };
-  private readonly actorInbox: ActorInbox = {
-    peek: (predicate) => this.peekActor(predicate),
-    drain: (predicate) => this.drainActor(predicate),
-    waitUntilAvailable: (options = {}) => this.waitUntilActorAvailable(options),
-  };
 
   constructor(options: FileTaskNotificationOutboxOptions) {
     this.rootDir = resolve(options.rootDir);
@@ -109,163 +69,44 @@ export class FileTaskNotificationOutbox implements TaskNotificationSink {
     }
   }
 
-  asActorSink(): ActorNotificationSink {
-    return this.actorSink;
+  invalidEntries(): readonly FileTaskNotificationInvalidEntry[] {
+    return [...this.invalidEntryByPath.values()].map((entry) => ({ ...entry }));
   }
 
-  asActorInbox(): ActorInbox {
-    return this.actorInbox;
-  }
-
-  /**
-   * Diagnostics from the most recent outbox scan. Parse-stage failures
-   * (unreadable/unparsable JSON, unsafe entry id) are skipped by BOTH the
-   * legacy and actor views; actor-acceptance failures remain visible to the
-   * legacy view and are skipped by the actor view only.
-   */
-  invalidActorEntries(): readonly FileTaskNotificationInvalidActorEntry[] {
-    return [...this.invalidActorEntryByPath.values()].map((entry) => ({
-      ...entry,
-    }));
-  }
-
-  deliver(notification: TaskNotification): void {
-    const accepted = acceptActorNotificationInput(
-      actorNotificationInputFromTaskNotification(notification),
-      {
-        id: "pending-file-task-notification",
-        sequence: 0,
-      },
-    );
-    this.writeNotification(notification, accepted.createdAt);
-  }
-
-  private writeNotification(
-    notification: TaskNotification,
-    createdAt: string,
-  ): FileTaskNotificationEntry {
-    const entry: FileTaskNotificationEntry = {
-      id: createNotificationEntryId(notification),
-      notification,
-    };
-    atomicWriteTextSync(
-      this.entryPath(entry.id),
-      `${JSON.stringify(entry, null, 2)}\n`,
-    );
-    this.actorCreatedAtByEntryId.set(entry.id, createdAt);
-    this.resolveAllReadyWaiters();
-    return entry;
-  }
-
-  list(): FileTaskNotificationEntry[] {
-    return this.listWithPaths().map(({ entry }) => entry);
-  }
-
-  /** Snapshot pending notifications without consuming them. */
-  peek(
-    predicate?: (notification: TaskNotification) => boolean,
-  ): TaskNotification[] {
-    return this.list()
-      .map((entry) => entry.notification)
-      .filter((notification) => !predicate || predicate(notification));
-  }
-
-  drain(
-    predicate?: (notification: TaskNotification) => boolean,
-  ): TaskNotification[] {
-    const entries = this.list();
-    const matched: TaskNotification[] = [];
-    for (const entry of entries) {
-      if (predicate && !predicate(entry.notification)) continue;
-      this.ack(entry.id);
-      matched.push(entry.notification);
-    }
-    return matched;
-  }
-
-  ack(id: string): void {
-    assertSafeEntryId(id);
-    rmSync(this.entryPath(id), { force: true });
-    this.actorSequenceByEntryId.delete(id);
-    this.actorCreatedAtByEntryId.delete(id);
-    this.invalidActorEntryByPath.delete(this.entryPath(id));
-  }
-
-  /**
-   * Resolve when at least one matching durable notification is available,
-   * without consuming it. Cross-process producers should use polling or a
-   * host-specific watcher; this wait covers same-process task completions and
-   * already-persisted resume replay.
-   */
-  waitUntilAvailable(
-    options: TaskNotificationReadyWaitOptions = {},
-  ): Promise<void> {
-    if (this.hasBuffered(options.predicate)) return Promise.resolve();
-    if (options.signal?.aborted) return Promise.reject(makeAbortError());
-
-    return new Promise((resolve, reject) => {
-      const waiter = {
-        predicate: options.predicate,
-        resolve,
-        reject,
-        signal: options.signal,
-        onAbort: undefined as (() => void) | undefined,
-      };
-      waiter.onAbort = () => {
-        this.removeReadyWaiter(waiter);
-        reject(makeAbortError());
-      };
-      options.signal?.addEventListener("abort", waiter.onAbort, {
-        once: true,
-      });
-      this.readyWaiters.push(waiter);
-    });
-  }
-
-  private outboxDir(): string {
-    return join(this.rootDir, "task-notifications");
-  }
-
-  private entryPath(id: string): string {
-    return join(this.outboxDir(), `${id}.json`);
-  }
-
-  private hasBuffered(
-    predicate?: (notification: TaskNotification) => boolean,
-  ): boolean {
-    return this.peek(predicate).length > 0;
-  }
-
-  private deliverActor(input: AnyActorNotificationInput): DeliveryResult {
-    const accepted = acceptActorNotificationInput(input, {
+  deliver(input: AnyActorNotificationInput): DeliveryResult {
+    assertTerminalTaskInput(input);
+    const createdAt = new Date().toISOString();
+    acceptActorNotificationInput(input, {
       id: "pending-file-task-notification",
       sequence: 0,
+      createdAt,
     });
-    const taskNotification = taskNotificationFromActorNotification(accepted);
-    if (!taskNotification) {
-      throw new ActorNotificationUnsupportedError(
-        "FileTaskNotificationOutbox only supports terminal task actor notifications.",
-      );
-    }
-    assertPersistableLegacyTaskActorNotification(accepted);
-    this.writeNotification(taskNotification, accepted.createdAt);
+    const id = createTaskNotificationEntryId(input, createdAt);
+    const entry: FileTaskNotificationEntry = {
+      schemaVersion: TASK_NOTIFICATION_ENTRY_SCHEMA_VERSION,
+      id,
+      createdAt,
+      input: cloneJsonLike(input),
+    };
+    writeJsonDocumentSync(this.entryPath(id), entry);
+    this.resolveReadyWaiters();
     return { status: "accepted", acceptedCount: 1 };
   }
 
-  private peekActor(
+  peek(
     predicate?: ActorNotificationPredicate,
-  ): readonly AnyActorNotification[] {
+  ): readonly TaskTerminalActorNotification[] {
     return this.listActorEntries()
       .map(({ notification }) => notification)
       .filter((notification) => !predicate || predicate(notification));
   }
 
-  private drainActor(
+  drain(
     predicate?: ActorNotificationPredicate,
-  ): AnyActorNotification[] {
+  ): TaskTerminalActorNotification[] {
     const matched: Array<{
       id: string;
-      notification: AnyActorNotification;
+      notification: TaskTerminalActorNotification;
     }> = [];
     for (const entry of this.listActorEntries()) {
       if (predicate && !predicate(entry.notification)) continue;
@@ -275,36 +116,34 @@ export class FileTaskNotificationOutbox implements TaskNotificationSink {
     return matched.map((entry) => entry.notification);
   }
 
-  private waitUntilActorAvailable(
+  waitUntilAvailable(
     options: {
       signal?: AbortSignal;
       predicate?: ActorNotificationPredicate;
     } = {},
   ): Promise<void> {
-    if (this.hasActorBuffered(options.predicate)) return Promise.resolve();
+    if (this.hasBuffered(options.predicate)) return Promise.resolve();
     if (options.signal?.aborted) return Promise.reject(makeAbortError());
 
-    return new Promise((resolve, reject) => {
+    return new Promise((resolveWait, reject) => {
       const waiter = {
         predicate: options.predicate,
-        resolve,
+        resolve: resolveWait,
         reject,
         signal: options.signal,
         onAbort: undefined as (() => void) | undefined,
       };
       waiter.onAbort = () => {
-        this.removeActorReadyWaiter(waiter);
+        this.removeReadyWaiter(waiter);
         reject(makeAbortError());
       };
-      options.signal?.addEventListener("abort", waiter.onAbort, {
-        once: true,
-      });
-      this.actorReadyWaiters.push(waiter);
+      options.signal?.addEventListener("abort", waiter.onAbort, { once: true });
+      this.readyWaiters.push(waiter);
     });
   }
 
-  private hasActorBuffered(predicate?: ActorNotificationPredicate): boolean {
-    return this.peekActor(predicate).length > 0;
+  private hasBuffered(predicate?: ActorNotificationPredicate): boolean {
+    return this.peek(predicate).length > 0;
   }
 
   private resolveReadyWaiters(): void {
@@ -313,19 +152,6 @@ export class FileTaskNotificationOutbox implements TaskNotificationSink {
       this.removeReadyWaiter(waiter);
       waiter.resolve();
     }
-  }
-
-  private resolveActorReadyWaiters(): void {
-    for (const waiter of [...this.actorReadyWaiters]) {
-      if (!this.hasActorBuffered(waiter.predicate)) continue;
-      this.removeActorReadyWaiter(waiter);
-      waiter.resolve();
-    }
-  }
-
-  private resolveAllReadyWaiters(): void {
-    this.resolveReadyWaiters();
-    this.resolveActorReadyWaiters();
   }
 
   private removeReadyWaiter(waiter: {
@@ -341,104 +167,70 @@ export class FileTaskNotificationOutbox implements TaskNotificationSink {
     }
   }
 
-  private removeActorReadyWaiter(waiter: {
-    signal?: AbortSignal;
-    onAbort?: () => void;
-  }): void {
-    const index = this.actorReadyWaiters.indexOf(
-      waiter as (typeof this.actorReadyWaiters)[number],
-    );
-    if (index >= 0) this.actorReadyWaiters.splice(index, 1);
-    if (waiter.signal && waiter.onAbort) {
-      waiter.signal.removeEventListener("abort", waiter.onAbort);
-    }
-  }
-
-  private listWithPaths(): Array<{
-    entry: FileTaskNotificationEntry;
-    path: string;
-  }> {
-    const paths = this.listEntryPaths();
-    this.pruneInvalidActorEntryDiagnostics(paths);
-    return this.parseEntries(paths);
-  }
-
   private listActorEntries(): Array<{
     id: string;
-    notification: AnyActorNotification;
+    notification: TaskTerminalActorNotification;
   }> {
-    const paths = this.listEntryPaths();
-    this.pruneInvalidActorEntryDiagnostics(paths);
+    const listed = readJsonDocumentDirSync<FileTaskNotificationEntry>({
+      dir: this.outboxDir(),
+      extension: ".json",
+      parse: parseTaskNotificationEntry,
+    });
+    this.pruneInvalidEntryDiagnostics(
+      new Set([
+        ...listed.entries.map((entry) => entry.path),
+        ...listed.invalidEntries.map((entry) => entry.path),
+      ]),
+    );
+    for (const invalid of listed.invalidEntries) {
+      this.rememberInvalidEntry(invalid);
+    }
+
     const entries: Array<{
       id: string;
-      notification: AnyActorNotification;
+      notification: TaskTerminalActorNotification;
     }> = [];
-    for (const { entry, path } of this.parseEntries(paths)) {
+    for (const { value, path } of listed.entries) {
       try {
         entries.push({
-          id: entry.id,
-          notification: this.actorNotificationForEntry(entry, path),
+          id: value.id,
+          notification: acceptActorNotificationInput(value.input, {
+            id: value.id,
+            sequence: this.sequenceForEntryId(value.id),
+            createdAt: value.createdAt,
+          }) as TaskTerminalActorNotification,
         });
-        this.invalidActorEntryByPath.delete(path);
+        this.invalidEntryByPath.delete(path);
       } catch (cause) {
-        this.rememberInvalidActorEntry({ id: entry.id, path, cause });
+        this.rememberInvalidEntry({
+          id: value.id,
+          path,
+          code: "invalid_document",
+          reason: cause instanceof Error ? cause.message : String(cause),
+        });
       }
     }
     return entries.sort(
-      (a, b) => a.notification.sequence - b.notification.sequence,
+      (left, right) => left.notification.sequence - right.notification.sequence,
     );
   }
 
-  /**
-   * Parse and id-sort entry files, skipping (and remembering) unreadable,
-   * unparsable, or id-less files instead of wedging every consumer view.
-   * Sorting by entry id BEFORE lazy sequence assignment keeps derived actor
-   * sequences aligned with stable storage order rather than readdir order.
-   */
-  private parseEntries(
-    paths: readonly string[],
-  ): Array<{ entry: FileTaskNotificationEntry; path: string }> {
-    const parsed: Array<{ entry: FileTaskNotificationEntry; path: string }> =
-      [];
-    for (const path of paths) {
-      try {
-        const entry = parseJson<FileTaskNotificationEntry>(
-          readFileSync(path, "utf8"),
-          path,
-        );
-        if (typeof entry.id !== "string" || !isSafeEntryId(entry.id)) {
-          throw new Error(
-            `Invalid task notification entry id at ${path}: expected a safe non-empty string.`,
-          );
-        }
-        parsed.push({ entry, path });
-        if (this.invalidActorEntryByPath.get(path)?.id === undefined) {
-          this.invalidActorEntryByPath.delete(path);
-        }
-      } catch (cause) {
-        this.rememberInvalidActorEntry({ path, cause });
-      }
-    }
-    return parsed.sort((a, b) => a.entry.id.localeCompare(b.entry.id));
+  private ack(id: string): void {
+    assertSafeTaskNotificationEntryId(id);
+    rmSync(this.entryPath(id), { force: true });
+    this.actorSequenceByEntryId.delete(id);
+    this.invalidEntryByPath.delete(this.entryPath(id));
   }
 
-  private actorNotificationForEntry(
-    entry: FileTaskNotificationEntry,
-    path: string,
-  ): AnyActorNotification {
-    return acceptActorNotificationInput(
-      actorNotificationInputFromTaskNotification(entry.notification),
-      {
-        id: entry.id,
-        sequence: this.sequenceForEntryId(entry.id),
-        createdAt: this.createdAtForEntryId(entry.id, path),
-      },
-    );
+  private outboxDir(): string {
+    return join(this.rootDir, "task-notifications");
+  }
+
+  private entryPath(id: string): string {
+    return join(this.outboxDir(), `${id}.json`);
   }
 
   private sequenceForEntryId(id: string): number {
-    // File-backed actor peek/drain assign sequence lazily. The map is the
-    // high-water mark that prevents later older filenames from going backwards.
     const existing = this.actorSequenceByEntryId.get(id);
     if (existing !== undefined) return existing;
     const sequence = this.nextActorSequence;
@@ -447,99 +239,102 @@ export class FileTaskNotificationOutbox implements TaskNotificationSink {
     return sequence;
   }
 
-  private createdAtForEntryId(id: string, path: string): string {
-    const existing = this.actorCreatedAtByEntryId.get(id);
-    if (existing !== undefined) return existing;
-    const stats = statSync(path);
-    const createdAt = new Date(
-      stats.birthtimeMs > 0 ? stats.birthtimeMs : stats.mtimeMs,
-    ).toISOString();
-    this.actorCreatedAtByEntryId.set(id, createdAt);
-    return createdAt;
+  private rememberInvalidEntry(
+    entry: FileTaskNotificationInvalidEntry | JsonDocumentInvalidEntry,
+  ): void {
+    this.invalidEntryByPath.set(entry.path, { ...entry });
   }
 
-  private listEntryPaths(): string[] {
-    if (!existsSync(this.outboxDir())) return [];
-    return readdirSync(this.outboxDir(), { withFileTypes: true })
-      .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
-      .map((entry) => join(this.outboxDir(), entry.name));
-  }
-
-  private rememberInvalidActorEntry(input: {
-    id?: string;
-    path: string;
-    cause: unknown;
-  }): void {
-    const reason =
-      input.cause instanceof Error ? input.cause.message : String(input.cause);
-    const diagnostic: FileTaskNotificationInvalidActorEntry = {
-      path: input.path,
-      reason,
-    };
-    if (input.id !== undefined) diagnostic.id = input.id;
-    this.invalidActorEntryByPath.set(input.path, diagnostic);
-  }
-
-  private pruneInvalidActorEntryDiagnostics(paths: readonly string[]): void {
-    const currentPaths = new Set(paths);
-    for (const path of this.invalidActorEntryByPath.keys()) {
-      if (!currentPaths.has(path)) {
-        this.invalidActorEntryByPath.delete(path);
-      }
+  private pruneInvalidEntryDiagnostics(paths: ReadonlySet<string>): void {
+    for (const path of this.invalidEntryByPath.keys()) {
+      if (!paths.has(path)) this.invalidEntryByPath.delete(path);
     }
   }
 }
 
-function createNotificationEntryId(notification: TaskNotification): string {
-  const stamp = notification.deliveredAt.replace(/[^0-9A-Za-z]/g, "");
-  return `${stamp}-${notification.taskId}-${Math.random().toString(36).slice(2)}`;
+function parseTaskNotificationEntry(raw: unknown): FileTaskNotificationEntry {
+  if (!isRecord(raw)) throw new Error("entry must be an object");
+  if (raw.schemaVersion !== TASK_NOTIFICATION_ENTRY_SCHEMA_VERSION) {
+    throw new Error("unsupported task notification schemaVersion");
+  }
+  const id = stringField(raw, "id");
+  assertSafeTaskNotificationEntryId(id);
+  const createdAt = stringField(raw, "createdAt");
+  const input = raw.input;
+  if (!isRecord(input)) throw new Error("task notification input missing");
+  assertTerminalTaskInput(input as unknown as AnyActorNotificationInput);
+  return {
+    schemaVersion: TASK_NOTIFICATION_ENTRY_SCHEMA_VERSION,
+    id,
+    createdAt,
+    input: cloneJsonLike(
+      input as unknown as TaskTerminalActorNotificationInput,
+    ),
+  };
 }
 
-function assertPersistableLegacyTaskActorNotification(
-  notification: AnyActorNotification,
-): void {
-  const unsupportedFields: string[] = [];
-  if (notification.source.sessionId !== undefined) {
-    unsupportedFields.push("source.sessionId");
+function assertTerminalTaskInput(
+  input: AnyActorNotificationInput,
+): asserts input is TaskTerminalActorNotificationInput {
+  if (input.source?.kind !== "task") {
+    throw new ActorNotificationUnsupportedError(
+      "FileTaskNotificationOutbox only supports task actor notifications.",
+    );
   }
-  if (notification.routeHint?.sessionId !== undefined) {
-    unsupportedFields.push("routeHint.sessionId");
+  if (
+    input.type !== "completed" &&
+    input.type !== "failed" &&
+    input.type !== "cancelled"
+  ) {
+    throw new ActorNotificationUnsupportedError(
+      "FileTaskNotificationOutbox only supports terminal task actor notifications.",
+    );
   }
-  if (notification.correlationId !== undefined) {
-    unsupportedFields.push("correlationId");
+}
+
+function createTaskNotificationEntryId(
+  input: TaskTerminalActorNotificationInput,
+  createdAt: string,
+): string {
+  const stamp = createdAt.replace(/[^0-9A-Za-z]/g, "");
+  return [
+    stamp,
+    safeTaskNotificationSegment(input.source.id),
+    safeTaskNotificationSegment(input.type),
+    Math.random().toString(36).slice(2),
+  ]
+    .join("-")
+    .slice(0, 180);
+}
+
+function safeTaskNotificationSegment(value: string): string {
+  return value.replace(/[^0-9A-Za-z_-]/g, "_").slice(0, 80) || "entry";
+}
+
+function assertSafeTaskNotificationEntryId(id: string): void {
+  if (!/^[A-Za-z0-9_-]+(?:-[A-Za-z0-9_-]+)*$/.test(id)) {
+    throw new Error(`Unsafe task notification entry id: ${id}`);
   }
-  if (notification.suggestedContext !== undefined) {
-    unsupportedFields.push("suggestedContext");
-  }
-  if (unsupportedFields.length === 0) return;
-  throw new ActorNotificationUnsupportedError(
-    `FileTaskNotificationOutbox cannot persist actor-only fields without changing the task notification file format: ${unsupportedFields.join(
-      ", ",
-    )}.`,
-  );
 }
 
 function makeAbortError(): Error {
-  const error = new Error("Task notification wait aborted.");
+  const error = new Error("Task actor notification wait aborted.");
   error.name = "AbortError";
   return error;
 }
 
-function parseJson<T>(text: string, path: string): T {
-  try {
-    return JSON.parse(text) as T;
-  } catch (cause) {
-    const message = cause instanceof Error ? cause.message : "invalid JSON";
-    throw new Error(`Invalid task notification JSON at ${path}: ${message}`);
+function stringField(record: Record<string, unknown>, field: string): string {
+  const value = record[field];
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`${field} must be a non-empty string`);
   }
+  return value;
 }
 
-function isSafeEntryId(id: string): boolean {
-  return /^[A-Za-z0-9_-]+$/.test(id);
+function cloneJsonLike<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
 }
 
-function assertSafeEntryId(id: string): void {
-  if (!isSafeEntryId(id)) {
-    throw new Error(`Unsafe notification entry id: ${id}`);
-  }
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

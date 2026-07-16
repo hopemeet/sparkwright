@@ -17,15 +17,14 @@ import {
   ActorNotificationValidationError,
   FileTaskNotificationOutbox,
   FileTaskStore,
-  InMemoryTaskNotificationQueue,
+  InMemoryActorNotificationQueue,
   InMemoryTaskStore,
   TaskManager,
   TaskWatchdog,
   createTaskId,
   createTaskControl,
   createTaskCreate,
-  isNonRetryableActorNotificationError,
-  notificationFromRecord,
+  taskNotificationInputFromRecord,
   pidTaskHealthProbe,
   recoverRunningTasks,
   type ActorInbox,
@@ -34,8 +33,9 @@ import {
   type InternalActorKind,
   type TaskId,
   type TaskCompletedNotificationInput,
+  type TaskFailedNotificationInput,
   type TaskToolOptions,
-  type TaskNotification,
+  type TaskTerminalActorNotificationInput,
   type TaskOutputChunk,
   type WorkflowProgressNotificationInput,
   type WorkflowWaitingNotificationInput,
@@ -104,21 +104,6 @@ async function drainActorInbox(
   return Promise.resolve(inbox.drain());
 }
 
-function legacyTaskNotification(
-  taskId: string,
-  overrides: Partial<TaskNotification> = {},
-): TaskNotification {
-  return {
-    taskId: taskId as unknown as TaskNotification["taskId"],
-    parentRunId: PARENT_RUN_ID,
-    status: "completed",
-    kind: "agent",
-    summary: `${taskId} completed.`,
-    deliveredAt: new Date().toISOString(),
-    ...overrides,
-  };
-}
-
 function taskCompletedActorInput(
   taskId: string,
   overrides: Partial<TaskCompletedNotificationInput> = {},
@@ -139,6 +124,30 @@ function taskCompletedActorInput(
       summary: `${taskId} completed.`,
       deliveredAt,
       result: "ok",
+    },
+    ...overrides,
+  };
+}
+
+function taskFailedActorInput(
+  taskId: string,
+  overrides: Partial<TaskFailedNotificationInput> = {},
+): TaskFailedNotificationInput {
+  return {
+    source: {
+      kind: "task",
+      id: taskId,
+      runId: PARENT_RUN_ID,
+    },
+    type: "failed",
+    payload: {
+      taskId: taskId as unknown as TaskId,
+      parentRunId: PARENT_RUN_ID,
+      status: "failed",
+      kind: "agent",
+      summary: `${taskId} failed.`,
+      deliveredAt: "2026-01-01T00:00:00.000Z",
+      error: { code: "TASK_FAILED", message: "failed" },
     },
     ...overrides,
   };
@@ -244,7 +253,7 @@ describe("TaskManager", () => {
   });
 
   it("lets external adapters fail a running task and notifies once", async () => {
-    const sink = new InMemoryTaskNotificationQueue();
+    const sink = new InMemoryActorNotificationQueue();
     const manager = new TaskManager({
       store: new InMemoryTaskStore(),
       notificationSink: sink,
@@ -270,7 +279,7 @@ describe("TaskManager", () => {
   });
 
   it("adopts externally started tasks with cancellation and terminal notification", async () => {
-    const sink = new InMemoryTaskNotificationQueue();
+    const sink = new InMemoryActorNotificationQueue();
     const controller = new AbortController();
     const manager = new TaskManager({
       store: new InMemoryTaskStore(),
@@ -295,12 +304,16 @@ describe("TaskManager", () => {
 
     expect(handle.record.status).toBe("cancelled");
     expect(sink.drain()).toMatchObject([
-      { taskId: handle.record.id, status: "cancelled", title: "adopted child" },
+      {
+        source: { id: handle.record.id },
+        type: "cancelled",
+        payload: { title: "adopted child" },
+      },
     ]);
   });
 
   it("waits until notifications are available without consuming them", async () => {
-    const sink = new InMemoryTaskNotificationQueue();
+    const sink = new InMemoryActorNotificationQueue();
     const manager = new TaskManager({
       store: new InMemoryTaskStore(),
       notificationSink: sink,
@@ -321,7 +334,7 @@ describe("TaskManager", () => {
   });
 
   it("aborts notification readiness waits without consuming later notifications", async () => {
-    const sink = new InMemoryTaskNotificationQueue();
+    const sink = new InMemoryActorNotificationQueue();
     const controller = new AbortController();
     const ready = sink.waitUntilAvailable({ signal: controller.signal });
 
@@ -409,7 +422,7 @@ describe("FileTaskStore", () => {
     const root = await tempDir();
     const store = new FileTaskStore({ rootDir: root });
     const tombstone = store.writeTombstone({
-      id: "task_deleted" as unknown as TaskNotification["taskId"],
+      id: "task_deleted" as unknown as TaskId,
       parentRunId: PARENT_RUN_ID,
       kind: "external",
       awaited: true,
@@ -431,49 +444,53 @@ describe("FileTaskNotificationOutbox", () => {
   it("persists notifications until drained", async () => {
     const root = await tempDir();
     const outbox = new FileTaskNotificationOutbox({ rootDir: root });
-    const notification: TaskNotification = {
-      taskId: "task_notice" as unknown as TaskNotification["taskId"],
-      parentRunId: PARENT_RUN_ID,
-      status: "failed",
-      kind: "shell",
-      summary: "Task failed.",
-      error: { code: "TASK_PROCESS_MISSING", message: "missing" },
-      deliveredAt: new Date(0).toISOString(),
-    };
+    const notification = taskFailedActorInput("task_notice", {
+      payload: {
+        taskId: "task_notice" as unknown as TaskId,
+        parentRunId: PARENT_RUN_ID,
+        status: "failed",
+        kind: "shell",
+        summary: "Task failed.",
+        error: { code: "TASK_PROCESS_MISSING", message: "missing" },
+        deliveredAt: new Date(0).toISOString(),
+      },
+    });
 
     outbox.deliver(notification);
     const reopened = new FileTaskNotificationOutbox({ rootDir: root });
-    expect(reopened.list()).toHaveLength(1);
+    expect(reopened.peek()).toHaveLength(1);
     expect(reopened.drain()[0]).toMatchObject({
-      taskId: notification.taskId,
-      status: "failed",
+      source: { id: notification.source.id },
+      type: "failed",
     });
-    expect(reopened.list()).toHaveLength(0);
+    expect(reopened.peek()).toHaveLength(0);
   });
 
   it("drains matching notifications and waits without consuming", async () => {
     const root = await tempDir();
     const outbox = new FileTaskNotificationOutbox({ rootDir: root });
-    const first: TaskNotification = {
-      taskId: "task_first" as unknown as TaskNotification["taskId"],
-      parentRunId: PARENT_RUN_ID,
-      status: "completed",
-      kind: "agent",
-      summary: "First done.",
-      deliveredAt: new Date(1).toISOString(),
-    };
-    const second: TaskNotification = {
-      taskId: "task_second" as unknown as TaskNotification["taskId"],
-      parentRunId: "run_other" as typeof PARENT_RUN_ID,
-      status: "failed",
-      kind: "agent",
-      summary: "Second failed.",
-      error: { code: "TASK_FAILED", message: "failed" },
-      deliveredAt: new Date(2).toISOString(),
-    };
+    const first = taskCompletedActorInput("task_first");
+    const otherRun = "run_other" as typeof PARENT_RUN_ID;
+    const second = taskFailedActorInput("task_second", {
+      source: {
+        kind: "task",
+        id: "task_second",
+        runId: otherRun,
+      },
+      payload: {
+        taskId: "task_second" as unknown as TaskId,
+        parentRunId: otherRun,
+        status: "failed",
+        kind: "agent",
+        summary: "Second failed.",
+        error: { code: "TASK_FAILED", message: "failed" },
+        deliveredAt: new Date(2).toISOString(),
+      },
+    });
 
     const ready = outbox.waitUntilAvailable({
-      predicate: (notification) => notification.parentRunId === PARENT_RUN_ID,
+      predicate: (notification) =>
+        notification.routeHint?.parentRunId === PARENT_RUN_ID,
     });
     outbox.deliver(second);
     await Promise.resolve();
@@ -484,19 +501,19 @@ describe("FileTaskNotificationOutbox", () => {
     expect(outbox.peek()).toHaveLength(2);
     expect(
       outbox.drain(
-        (notification) => notification.parentRunId === PARENT_RUN_ID,
+        (notification) => notification.routeHint?.parentRunId === PARENT_RUN_ID,
       ),
-    ).toMatchObject([{ taskId: first.taskId }]);
-    expect(outbox.peek()).toMatchObject([{ taskId: second.taskId }]);
+    ).toMatchObject([{ source: { id: first.source.id } }]);
+    expect(outbox.peek()).toMatchObject([{ source: { id: second.source.id } }]);
   });
 });
 
-describe("ActorNotificationSink and ActorInbox adapters", () => {
-  it("accepts task actor notifications with normalized routes and legacy task compatibility", async () => {
-    const queue = new InMemoryTaskNotificationQueue();
+describe("ActorNotificationSink and ActorInbox", () => {
+  it("accepts task actor notifications with normalized routes", async () => {
+    const queue = new InMemoryActorNotificationQueue();
     const deliveredAt = "2026-01-01T00:00:00.000Z";
 
-    const result = queue.asActorSink().deliver({
+    const result = queue.deliver({
       ...taskCompletedActorInput("task_actor", {
         source: {
           kind: "task",
@@ -519,7 +536,7 @@ describe("ActorNotificationSink and ActorInbox adapters", () => {
 
     expect(result).toEqual({ status: "accepted", acceptedCount: 1 });
     expect("sequence" in result).toBe(false);
-    const [actor] = await peekActorInbox(queue.asActorInbox());
+    const [actor] = await peekActorInbox(queue);
     expect(actor).toMatchObject({
       source: {
         kind: "task",
@@ -542,27 +559,22 @@ describe("ActorNotificationSink and ActorInbox adapters", () => {
     expect(actor?.createdAt).not.toBe(deliveredAt);
     expect(queue.peek()).toMatchObject([
       {
-        taskId: "task_actor",
-        parentRunId: PARENT_RUN_ID,
-        status: "completed",
-        deliveredAt,
+        source: { id: "task_actor" },
+        type: "completed",
+        payload: { parentRunId: PARENT_RUN_ID, deliveredAt },
       },
     ]);
   });
 
   it("uses workflow notification inputs as the extraction probe", async () => {
-    const queue = new InMemoryTaskNotificationQueue();
+    const queue = new InMemoryActorNotificationQueue();
 
-    const first = queue
-      .asActorSink()
-      .deliver(workflowProgressInput("workflow_probe"));
-    const second = queue
-      .asActorSink()
-      .deliver(workflowProgressInput("workflow_probe"));
+    const first = queue.deliver(workflowProgressInput("workflow_probe"));
+    const second = queue.deliver(workflowProgressInput("workflow_probe"));
 
     expect(first).toEqual({ status: "accepted", acceptedCount: 1 });
     expect(second).toEqual({ status: "accepted", acceptedCount: 1 });
-    const actors = await peekActorInbox(queue.asActorInbox());
+    const actors = await peekActorInbox(queue);
     expect(actors).toHaveLength(2);
     expect(new Set(actors.map((actor) => actor.id)).size).toBe(2);
     expect(actors[0]).toMatchObject({
@@ -580,18 +592,16 @@ describe("ActorNotificationSink and ActorInbox adapters", () => {
       qos: "lossy",
       correlationId: "same-correlation",
     });
-    expect(queue.peek()).toHaveLength(0);
+    expect(queue.peek()).toHaveLength(2);
   });
 
   it("accepts reliable workflow waiting notifications with wait kind", async () => {
-    const queue = new InMemoryTaskNotificationQueue();
+    const queue = new InMemoryActorNotificationQueue();
 
-    const result = queue
-      .asActorSink()
-      .deliver(workflowWaitingInput("workflow_waiting"));
+    const result = queue.deliver(workflowWaitingInput("workflow_waiting"));
 
     expect(result).toEqual({ status: "accepted", acceptedCount: 1 });
-    expect(await peekActorInbox(queue.asActorInbox())).toMatchObject([
+    expect(await peekActorInbox(queue)).toMatchObject([
       {
         source: {
           kind: "workflow",
@@ -608,10 +618,10 @@ describe("ActorNotificationSink and ActorInbox adapters", () => {
   });
 
   it("rejects invalid source routes but allows targetRunId to differ", async () => {
-    const queue = new InMemoryTaskNotificationQueue();
+    const queue = new InMemoryActorNotificationQueue();
 
     expect(() =>
-      queue.asActorSink().deliver(
+      queue.deliver(
         taskCompletedActorInput("task_bad_route", {
           routeHint: {
             parentRunId: "run_other",
@@ -621,7 +631,7 @@ describe("ActorNotificationSink and ActorInbox adapters", () => {
     ).toThrow(ActorNotificationValidationError);
 
     expect(() =>
-      queue.asActorSink().deliver(
+      queue.deliver(
         taskCompletedActorInput("task_empty_route", {
           routeHint: {
             parentRunId: "",
@@ -630,7 +640,7 @@ describe("ActorNotificationSink and ActorInbox adapters", () => {
       ),
     ).toThrow(ActorNotificationValidationError);
 
-    const result = queue.asActorSink().deliver(
+    const result = queue.deliver(
       taskCompletedActorInput("task_targeted", {
         routeHint: {
           targetRunId: "run_child_target",
@@ -638,7 +648,7 @@ describe("ActorNotificationSink and ActorInbox adapters", () => {
       }),
     );
     expect(result).toEqual({ status: "accepted", acceptedCount: 1 });
-    expect((await peekActorInbox(queue.asActorInbox()))[0]).toMatchObject({
+    expect((await peekActorInbox(queue))[0]).toMatchObject({
       routeHint: {
         parentRunId: PARENT_RUN_ID,
         targetRunId: "run_child_target",
@@ -647,10 +657,10 @@ describe("ActorNotificationSink and ActorInbox adapters", () => {
   });
 
   it("rejects task actor notifications whose source and payload identities split", async () => {
-    const queue = new InMemoryTaskNotificationQueue();
+    const queue = new InMemoryActorNotificationQueue();
 
     expect(() =>
-      queue.asActorSink().deliver(
+      queue.deliver(
         taskCompletedActorInput("task_source", {
           payload: {
             taskId: "task_payload" as unknown as TaskId,
@@ -665,7 +675,7 @@ describe("ActorNotificationSink and ActorInbox adapters", () => {
     ).toThrow(ActorNotificationInvalidError);
 
     expect(() =>
-      queue.asActorSink().deliver(
+      queue.deliver(
         taskCompletedActorInput("task_bad_parent", {
           payload: {
             taskId: "task_bad_parent" as unknown as TaskId,
@@ -679,7 +689,7 @@ describe("ActorNotificationSink and ActorInbox adapters", () => {
       ),
     ).toThrow(ActorNotificationInvalidError);
 
-    expect(await peekActorInbox(queue.asActorInbox())).toHaveLength(0);
+    expect(await peekActorInbox(queue)).toHaveLength(0);
     expect(queue.peek()).toHaveLength(0);
   });
 
@@ -694,89 +704,90 @@ describe("ActorNotificationSink and ActorInbox adapters", () => {
       },
     } as unknown as AnyActorNotificationInput;
 
-    expect(() =>
-      new InMemoryTaskNotificationQueue().asActorSink().deliver(forged),
-    ).toThrow(ActorNotificationInvalidError);
+    expect(() => new InMemoryActorNotificationQueue().deliver(forged)).toThrow(
+      ActorNotificationInvalidError,
+    );
   });
 
   it("keeps reliable notifications out of drop-oldest capacity loss", async () => {
-    const reliable = new InMemoryTaskNotificationQueue({
+    const reliable = new InMemoryActorNotificationQueue({
       maxBufferedNotifications: 1,
     });
-    reliable.deliver(legacyTaskNotification("task_reliable_one"));
+    reliable.deliver(taskCompletedActorInput("task_reliable_one"));
 
     expect(() =>
-      reliable.deliver(legacyTaskNotification("task_reliable_two")),
+      reliable.deliver(taskCompletedActorInput("task_reliable_two")),
     ).toThrow(ActorNotificationCapacityError);
-    expect(reliable.drain()).toMatchObject([{ taskId: "task_reliable_one" }]);
+    expect(reliable.drain()).toMatchObject([
+      { source: { id: "task_reliable_one" } },
+    ]);
 
-    const lossy = new InMemoryTaskNotificationQueue({
+    const lossy = new InMemoryActorNotificationQueue({
       maxBufferedNotifications: 1,
     });
-    expect(
-      lossy.asActorSink().deliver(workflowProgressInput("workflow_lossy_one")),
-    ).toEqual({ status: "accepted", acceptedCount: 1 });
-    expect(
-      lossy.asActorSink().deliver(workflowProgressInput("workflow_lossy_two")),
-    ).toEqual({
+    expect(lossy.deliver(workflowProgressInput("workflow_lossy_one"))).toEqual({
+      status: "accepted",
+      acceptedCount: 1,
+    });
+    expect(lossy.deliver(workflowProgressInput("workflow_lossy_two"))).toEqual({
       status: "accepted",
       acceptedCount: 1,
       droppedCount: 1,
     });
-    expect(await peekActorInbox(lossy.asActorInbox())).toMatchObject([
+    expect(await peekActorInbox(lossy)).toMatchObject([
       { source: { id: "workflow_lossy_two" } },
     ]);
 
-    const mixed = new InMemoryTaskNotificationQueue({
+    const mixed = new InMemoryActorNotificationQueue({
       maxBufferedNotifications: 1,
     });
-    mixed.deliver(legacyTaskNotification("task_kept"));
-    expect(
-      mixed.asActorSink().deliver(workflowProgressInput("workflow_dropped")),
-    ).toEqual({
+    mixed.deliver(taskCompletedActorInput("task_kept"));
+    expect(mixed.deliver(workflowProgressInput("workflow_dropped"))).toEqual({
       status: "dropped",
       reason: "capacity",
       droppedCount: 1,
     });
-    expect(await peekActorInbox(mixed.asActorInbox())).toMatchObject([
+    expect(await peekActorInbox(mixed)).toMatchObject([
       { source: { id: "task_kept" } },
     ]);
 
-    const lossyThenReliable = new InMemoryTaskNotificationQueue({
+    const lossyThenReliable = new InMemoryActorNotificationQueue({
       maxBufferedNotifications: 1,
     });
-    lossyThenReliable
-      .asActorSink()
-      .deliver(workflowProgressInput("workflow_replaceable"));
-    lossyThenReliable.deliver(legacyTaskNotification("task_reliable_wins"));
-    expect(
-      await peekActorInbox(lossyThenReliable.asActorInbox()),
-    ).toMatchObject([
+    lossyThenReliable.deliver(workflowProgressInput("workflow_replaceable"));
+    lossyThenReliable.deliver(taskCompletedActorInput("task_reliable_wins"));
+    expect(await peekActorInbox(lossyThenReliable)).toMatchObject([
       { source: { id: "task_reliable_wins" }, qos: "reliable" },
     ]);
     expect(lossyThenReliable.drain()).toMatchObject([
-      { taskId: "task_reliable_wins" },
+      { source: { id: "task_reliable_wins" } },
     ]);
   });
 
-  it("derives file-backed actor sequence without changing notification file format", async () => {
+  it("derives file-backed actor sequence from canonical durable inputs", async () => {
     const root = await tempDir();
     const outbox = new FileTaskNotificationOutbox({ rootDir: root });
     outbox.deliver(
-      legacyTaskNotification("task_later", {
-        deliveredAt: "2026-01-02T00:00:00.000Z",
+      taskCompletedActorInput("task_later", {
+        payload: {
+          ...taskCompletedActorInput("task_later").payload,
+          deliveredAt: "2026-01-02T00:00:00.000Z",
+        },
       }),
     );
 
-    const firstPeek = await peekActorInbox(outbox.asActorInbox());
+    const firstPeek = await peekActorInbox(outbox);
     expect(firstPeek).toMatchObject([{ sequence: 1 }]);
 
     outbox.deliver(
-      legacyTaskNotification("task_earlier", {
-        deliveredAt: "2026-01-01T00:00:00.000Z",
+      taskCompletedActorInput("task_earlier", {
+        payload: {
+          ...taskCompletedActorInput("task_earlier").payload,
+          deliveredAt: "2026-01-01T00:00:00.000Z",
+        },
       }),
     );
-    const secondPeek = await peekActorInbox(outbox.asActorInbox());
+    const secondPeek = await peekActorInbox(outbox);
     expect(secondPeek.map((notification) => notification.sequence)).toEqual([
       1, 2,
     ]);
@@ -796,22 +807,22 @@ describe("ActorNotificationSink and ActorInbox adapters", () => {
       sequence?: unknown;
       createdAt?: unknown;
       qos?: unknown;
-      notification?: Record<string, unknown>;
+      input?: Record<string, unknown>;
     };
     expect(raw.sequence).toBeUndefined();
-    expect(raw.createdAt).toBeUndefined();
+    expect(raw.createdAt).toEqual(expect.any(String));
     expect(raw.qos).toBeUndefined();
-    expect(raw.notification?.sequence).toBeUndefined();
-    expect(raw.notification?.createdAt).toBeUndefined();
-    expect(raw.notification?.qos).toBeUndefined();
+    expect(raw.input?.sequence).toBeUndefined();
+    expect(raw.input?.createdAt).toBeUndefined();
+    expect(raw.input?.qos).toBeUndefined();
   });
 
-  it("accepts only legacy-persistable terminal task actor notifications in the file-backed sink", async () => {
+  it("persists complete terminal task actor inputs", async () => {
     const root = await tempDir();
     const outbox = new FileTaskNotificationOutbox({ rootDir: root });
 
     expect(
-      outbox.asActorSink().deliver(
+      outbox.deliver(
         taskCompletedActorInput("task_file_actor", {
           routeHint: {
             targetRunId: "run_child_target",
@@ -821,7 +832,7 @@ describe("ActorNotificationSink and ActorInbox adapters", () => {
       ),
     ).toEqual({ status: "accepted", acceptedCount: 1 });
 
-    const [actor] = await peekActorInbox(outbox.asActorInbox());
+    const [actor] = await peekActorInbox(outbox);
     expect(actor).toMatchObject({
       source: {
         kind: "task",
@@ -842,58 +853,56 @@ describe("ActorNotificationSink and ActorInbox adapters", () => {
     });
     expect(outbox.peek()).toMatchObject([
       {
-        taskId: "task_file_actor",
-        parentRunId: PARENT_RUN_ID,
-        targetRunId: "run_child_target",
+        source: { id: "task_file_actor" },
+        routeHint: {
+          parentRunId: PARENT_RUN_ID,
+          targetRunId: "run_child_target",
+        },
         outputRef: "task-output://task_file_actor",
       },
     ]);
   });
 
-  it("rejects non-persistable actor sink inputs with non-retryable file-backed errors", async () => {
+  it("rejects non-task actor inputs but preserves actor-only task fields", async () => {
     const root = await tempDir();
     const outbox = new FileTaskNotificationOutbox({ rootDir: root });
 
     expect(() =>
-      outbox.asActorSink().deliver(workflowProgressInput("workflow_file")),
+      outbox.deliver(workflowProgressInput("workflow_file")),
     ).toThrow(ActorNotificationUnsupportedError);
 
-    try {
-      outbox.asActorSink().deliver(
-        taskCompletedActorInput("task_actor_only", {
-          source: {
-            kind: "task",
-            id: "task_actor_only",
-            runId: PARENT_RUN_ID,
-            sessionId: "session_actor_test",
-          },
-          correlationId: "correlation_actor_only",
-          suggestedContext: true,
-        }),
-      );
-      throw new Error("expected actor-only field rejection");
-    } catch (cause) {
-      expect(cause).toBeInstanceOf(ActorNotificationUnsupportedError);
-      expect(cause).toMatchObject({
-        code: "UNSUPPORTED_ACTOR_NOTIFICATION",
-        retryable: false,
-      });
-      expect(isNonRetryableActorNotificationError(cause)).toBe(true);
-    }
-    expect(outbox.peek()).toHaveLength(0);
-    expect(await peekActorInbox(outbox.asActorInbox())).toHaveLength(0);
+    outbox.deliver(
+      taskCompletedActorInput("task_actor_only", {
+        source: {
+          kind: "task",
+          id: "task_actor_only",
+          runId: PARENT_RUN_ID,
+          sessionId: "session_actor_test",
+        },
+        correlationId: "correlation_actor_only",
+        suggestedContext: true,
+      }),
+    );
+    expect(outbox.peek()).toMatchObject([
+      {
+        source: { sessionId: "session_actor_test" },
+        routeHint: { sessionId: "session_actor_test" },
+        correlationId: "correlation_actor_only",
+        suggestedContext: true,
+      },
+    ]);
   });
 
   it("waits for actor notifications without consuming file-backed entries", async () => {
     const root = await tempDir();
     const outbox = new FileTaskNotificationOutbox({ rootDir: root });
-    const inbox = outbox.asActorInbox();
+    const inbox = outbox;
     const ready = inbox.waitUntilAvailable({
       predicate: (notification) =>
         notification.routeHint?.parentRunId === PARENT_RUN_ID,
     });
 
-    outbox.deliver(legacyTaskNotification("task_ready"));
+    outbox.deliver(taskCompletedActorInput("task_ready"));
     await ready;
 
     expect(await peekActorInbox(inbox)).toHaveLength(1);
@@ -904,7 +913,7 @@ describe("ActorNotificationSink and ActorInbox adapters", () => {
   it("skips invalid file-backed actor entries without wedging the actor inbox", async () => {
     const root = await tempDir();
     const outbox = new FileTaskNotificationOutbox({ rootDir: root });
-    outbox.deliver(legacyTaskNotification("task_valid_actor_file"));
+    outbox.deliver(taskCompletedActorInput("task_valid_actor_file"));
 
     const outboxDir = join(root, "task-notifications");
     await mkdir(outboxDir, { recursive: true });
@@ -912,14 +921,24 @@ describe("ActorNotificationSink and ActorInbox adapters", () => {
       join(outboxDir, "bad-empty-parent.json"),
       `${JSON.stringify(
         {
+          schemaVersion: "sparkwright-task-notification.v1",
           id: "bad-empty-parent",
-          notification: {
-            taskId: "task_bad_empty_parent",
-            parentRunId: "",
-            status: "completed",
-            kind: "agent",
-            summary: "Bad actor notification.",
-            deliveredAt: "2026-01-01T00:00:00.000Z",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          input: {
+            source: {
+              kind: "task",
+              id: "task_bad_empty_parent",
+              runId: "",
+            },
+            type: "completed",
+            payload: {
+              taskId: "task_bad_empty_parent",
+              parentRunId: "",
+              status: "completed",
+              kind: "agent",
+              summary: "Bad actor notification.",
+              deliveredAt: "2026-01-01T00:00:00.000Z",
+            },
           },
         },
         null,
@@ -929,14 +948,14 @@ describe("ActorNotificationSink and ActorInbox adapters", () => {
     );
     await writeFile(join(outboxDir, "bad-json.json"), "{", "utf8");
 
-    const actors = await peekActorInbox(outbox.asActorInbox());
+    const actors = await peekActorInbox(outbox);
     expect(actors).toMatchObject([
       {
         source: { id: "task_valid_actor_file" },
         routeHint: { parentRunId: PARENT_RUN_ID },
       },
     ]);
-    expect(outbox.invalidActorEntries()).toEqual(
+    expect(outbox.invalidEntries()).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           id: "bad-empty-parent",
@@ -947,46 +966,48 @@ describe("ActorNotificationSink and ActorInbox adapters", () => {
         }),
       ]),
     );
-    expect(outbox.invalidActorEntries()).toHaveLength(2);
+    expect(outbox.invalidEntries()).toHaveLength(2);
 
-    expect(await drainActorInbox(outbox.asActorInbox())).toMatchObject([
+    expect(await drainActorInbox(outbox)).toMatchObject([
       { source: { id: "task_valid_actor_file" } },
     ]);
-    expect(await peekActorInbox(outbox.asActorInbox())).toHaveLength(0);
+    expect(await peekActorInbox(outbox)).toHaveLength(0);
 
-    // Parse-stage failures are skipped by the legacy view too (host revival
-    // walks legacy peek/drain today), while actor-acceptance failures stay
-    // legacy-visible: their files are still well-formed task notifications.
-    expect(outbox.list().map((entry) => entry.id)).toEqual([
-      "bad-empty-parent",
-    ]);
-    expect(outbox.peek()).toMatchObject([{ taskId: "task_bad_empty_parent" }]);
-    expect(outbox.drain()).toMatchObject([{ taskId: "task_bad_empty_parent" }]);
-    expect(outbox.invalidActorEntries()).toMatchObject([
-      { path: expect.stringContaining("bad-json.json") },
-    ]);
+    expect(outbox.invalidEntries()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: expect.stringContaining("bad-empty-parent.json"),
+        }),
+        expect.objectContaining({
+          path: expect.stringContaining("bad-json.json"),
+        }),
+      ]),
+    );
   });
 
   it("derives resumed file-backed actor sequence from stable id order, not readdir order", async () => {
     const root = await tempDir();
     const seed = new FileTaskNotificationOutbox({ rootDir: root });
+    vi.useFakeTimers();
     // Persist the later entry first so directory insertion order disagrees
     // with entry-id (timestamp) order.
+    vi.setSystemTime(new Date("2026-01-02T00:00:00.000Z"));
     seed.deliver(
-      legacyTaskNotification("task_b_later", {
-        deliveredAt: "2026-01-02T00:00:00.000Z",
+      taskCompletedActorInput("task_b_later", {
+        correlationId: "b",
       }),
     );
+    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
     seed.deliver(
-      legacyTaskNotification("task_a_earlier", {
-        deliveredAt: "2026-01-01T00:00:00.000Z",
+      taskCompletedActorInput("task_a_earlier", {
+        correlationId: "a",
       }),
     );
 
     // A fresh instance (resume replay) has no cached sequences; lazy
     // derivation must follow sorted storage ids.
     const resumed = new FileTaskNotificationOutbox({ rootDir: root });
-    const actors = await peekActorInbox(resumed.asActorInbox());
+    const actors = await peekActorInbox(resumed);
     expect(actors.map((notification) => notification.source.id)).toEqual([
       "task_a_earlier",
       "task_b_later",
@@ -1877,7 +1898,7 @@ describe("TaskManager retention", () => {
 
 describe("TaskWatchdog", () => {
   it("fails tasks that exceed wall timeout", async () => {
-    const sink = new InMemoryTaskNotificationQueue();
+    const sink = new InMemoryActorNotificationQueue();
     const manager = new TaskManager({
       store: new InMemoryTaskStore(),
       notificationSink: sink,
@@ -1902,7 +1923,7 @@ describe("TaskWatchdog", () => {
     expect(manager.store.get(handle.record.id)?.error?.code).toBe(
       "TASK_WALL_TIMEOUT",
     );
-    expect(sink.drain()[0]?.status).toBe("failed");
+    expect(sink.drain()[0]?.type).toBe("failed");
   });
 
   it("probes idle tasks and fails only on failed probe", async () => {
@@ -2034,7 +2055,7 @@ describe("TaskWatchdog", () => {
   it("checks pid liveness from task metadata", () => {
     expect(
       pidTaskHealthProbe({
-        id: "task_pid" as unknown as TaskNotification["taskId"],
+        id: "task_pid" as unknown as TaskId,
         parentRunId: PARENT_RUN_ID,
         kind: "pid",
         status: "running",
@@ -2045,7 +2066,7 @@ describe("TaskWatchdog", () => {
     ).toMatchObject({ ok: true });
     expect(
       pidTaskHealthProbe({
-        id: "task_pid_missing" as unknown as TaskNotification["taskId"],
+        id: "task_pid_missing" as unknown as TaskId,
         parentRunId: PARENT_RUN_ID,
         kind: "pid",
         status: "running",
@@ -2060,9 +2081,9 @@ describe("TaskWatchdog", () => {
   });
 });
 
-describe("TaskNotificationSink", () => {
+describe("TaskManager actor notification delivery", () => {
   it("delivers a completion notification when the task succeeds", async () => {
-    const sink = new InMemoryTaskNotificationQueue();
+    const sink = new InMemoryActorNotificationQueue();
     const manager = new TaskManager({
       store: new InMemoryTaskStore(),
       notificationSink: sink,
@@ -2075,14 +2096,17 @@ describe("TaskNotificationSink", () => {
     await handle.wait();
     const drained = sink.drain();
     expect(drained).toHaveLength(1);
-    expect(drained[0]!.status).toBe("completed");
-    expect(drained[0]!.taskId).toBe(handle.record.id);
-    expect(drained[0]!.result).toBe("done");
-    expect(drained[0]!.summary).toContain("completed");
+    expect(drained[0]!.type).toBe("completed");
+    expect(drained[0]!.source.id).toBe(handle.record.id);
+    expect(drained[0]!.payload).toMatchObject({
+      taskId: handle.record.id,
+      result: "done",
+      summary: expect.stringContaining("completed"),
+    });
   });
 
   it("delivers a failure notification with error payload", async () => {
-    const sink = new InMemoryTaskNotificationQueue();
+    const sink = new InMemoryActorNotificationQueue();
     const manager = new TaskManager({
       store: new InMemoryTaskStore(),
       notificationSink: sink,
@@ -2096,13 +2120,15 @@ describe("TaskNotificationSink", () => {
     });
     await handle.wait();
     const [notification] = sink.drain();
-    expect(notification?.status).toBe("failed");
-    expect(notification?.error?.message).toBe("boom");
-    expect(notification?.summary).toContain("boom");
+    expect(notification?.type).toBe("failed");
+    expect(notification?.payload).toMatchObject({
+      error: { message: "boom" },
+      summary: expect.stringContaining("boom"),
+    });
   });
 
   it("delivers a cancellation notification", async () => {
-    const sink = new InMemoryTaskNotificationQueue();
+    const sink = new InMemoryActorNotificationQueue();
     const manager = new TaskManager({
       store: new InMemoryTaskStore(),
       notificationSink: sink,
@@ -2119,7 +2145,7 @@ describe("TaskNotificationSink", () => {
     });
     await handle.cancel();
     const [notification] = sink.drain();
-    expect(notification?.status).toBe("cancelled");
+    expect(notification?.type).toBe("cancelled");
   });
 
   it("swallows sink errors via onSinkError hook", async () => {
@@ -2205,13 +2231,14 @@ describe("TaskNotificationSink", () => {
 
   it("retries pending notifications after sink failures", async () => {
     let fail = true;
-    const delivered: TaskNotification[] = [];
+    const delivered: TaskTerminalActorNotificationInput[] = [];
     const manager = new TaskManager({
       store: new InMemoryTaskStore(),
       notificationSink: {
         deliver: (notification) => {
           if (fail) throw new Error("queue unavailable");
-          delivered.push(notification);
+          delivered.push(notification as TaskTerminalActorNotificationInput);
+          return { status: "accepted", acceptedCount: 1 };
         },
       },
     });
@@ -2229,7 +2256,7 @@ describe("TaskNotificationSink", () => {
       pending: 0,
     });
     expect(delivered).toHaveLength(1);
-    expect(delivered[0]?.taskId).toBe(handle.record.id);
+    expect(delivered[0]?.payload.taskId).toBe(handle.record.id);
     expect(manager.pendingNotifications()).toHaveLength(0);
   });
 
@@ -2251,30 +2278,14 @@ describe("TaskNotificationSink", () => {
 
     const drained = manager.drainPendingNotifications();
     expect(drained).toHaveLength(1);
-    expect(drained[0]?.taskId).toBe(handle.record.id);
+    expect(drained[0]?.payload.taskId).toBe(handle.record.id);
     expect(manager.pendingNotifications()).toHaveLength(0);
   });
 
-  it("waitForNext resolves once a delivery arrives", async () => {
-    const sink = new InMemoryTaskNotificationQueue();
-    const waiter = sink.waitForNext();
-    sink.deliver({
-      taskId: "task_x" as unknown as TaskNotification["taskId"],
-      parentRunId: PARENT_RUN_ID,
-      status: "completed",
-      kind: "k",
-      summary: "s",
-      deliveredAt: new Date().toISOString(),
-    });
-    const got = await waiter;
-    expect(got).toHaveLength(1);
-    expect(sink.peek()).toHaveLength(0);
-  });
-
-  it("notificationFromRecord rejects non-terminal records", () => {
+  it("taskNotificationInputFromRecord rejects non-terminal records", () => {
     expect(() =>
-      notificationFromRecord({
-        id: "task_x" as unknown as TaskNotification["taskId"],
+      taskNotificationInputFromRecord({
+        id: "task_x" as unknown as TaskId,
         parentRunId: PARENT_RUN_ID,
         kind: "k",
         status: "running",

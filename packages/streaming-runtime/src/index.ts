@@ -91,7 +91,7 @@ export interface CreateStreamingRunOptions {
    * Out-of-band notification sources. Drained at the start of every step
    * before any pending commands are applied; results land as user-role
    * context items in the working layer. Use for background-task completion
-   * signals (`TaskNotificationSink`), inbound chat messages, etc.
+   * signals (`ActorNotificationSink`), inbound chat messages, etc.
    */
   notificationSources?: NotificationSource[];
 }

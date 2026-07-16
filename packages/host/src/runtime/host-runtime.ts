@@ -66,7 +66,7 @@ import {
   createAgentProfilePolicy,
   deriveChildAgentProfile,
   findSimilarSuccessfulDelegation,
-  notificationFromRecord,
+  taskNotificationInputFromRecord,
   rememberSuccessfulDelegation,
   readTodoLedger,
   TODO_CONTINUATION_REQUIRED_TOOL,
@@ -80,7 +80,7 @@ import {
   type DelegationLedgerKey,
   type DerivedChildAgentProfile,
   type TaskId,
-  type TaskNotification,
+  type AnyActorNotification,
   type TaskOutputChunk,
   type TaskRecord,
   type TaskRunnerController,
@@ -119,7 +119,7 @@ import {
   IMMEDIATE_NONE,
   compareTaskRecordsNewestFirst,
   isTerminalTaskStatus,
-  pendingNotificationFromTask,
+  pendingNotificationFromTaskActor,
   raceWithImmediate,
   taskNotFoundError,
   taskOutputChunkSnapshot,
@@ -913,13 +913,19 @@ export class HostRuntime {
     notificationSource: NotificationSource;
     taskRevivalSource: TaskRevivalSource;
   } {
-    const matchesRun = (notification: TaskNotification): boolean => {
+    const matchesRun = (notification: AnyActorNotification): boolean => {
       const runId = getRunId();
-      return runId !== undefined && notification.parentRunId === runId;
+      return (
+        runId !== undefined &&
+        notification.source.kind === "task" &&
+        "parentRunId" in notification.payload &&
+        notification.payload.parentRunId === runId
+      );
     };
-    const matchesAwaitedRun = (notification: TaskNotification): boolean => {
+    const matchesAwaitedRun = (notification: AnyActorNotification): boolean => {
       if (!matchesRun(notification)) return false;
-      const record = this.taskManager.store.get(notification.taskId);
+      if (!("taskId" in notification.payload)) return false;
+      const record = this.taskManager.store.get(notification.payload.taskId);
       return record?.awaited !== false;
     };
     const hasAwaitedPending = (): boolean => {
@@ -936,7 +942,9 @@ export class HostRuntime {
       drain: () =>
         this.taskNotifications
           .drain(matchesRun)
-          .map((notification) => pendingNotificationFromTask(notification)),
+          .map((notification) =>
+            pendingNotificationFromTaskActor(notification),
+          ),
     };
     const taskRevivalSource: TaskRevivalSource = {
       hasAwaitedPending,
@@ -1102,7 +1110,7 @@ export class HostRuntime {
       ...(record.sessionId ? { sessionId: record.sessionId } : {}),
     };
     if (record.status === "waiting") {
-      this.workflowNotifications.asActorSink().deliver({
+      this.workflowNotifications.deliver({
         source,
         routeHint,
         type: "waiting",
@@ -1130,7 +1138,7 @@ export class HostRuntime {
       return;
     }
     if (record.status === "completed") {
-      this.workflowNotifications.asActorSink().deliver({
+      this.workflowNotifications.deliver({
         source,
         routeHint,
         type: "completed",
@@ -1153,7 +1161,7 @@ export class HostRuntime {
       code: "workflow.runtime",
       message: "Workflow failed.",
     };
-    this.workflowNotifications.asActorSink().deliver({
+    this.workflowNotifications.deliver({
       source,
       routeHint,
       type: "failed",
@@ -1323,10 +1331,15 @@ export class HostRuntime {
     if (
       isTerminalTaskStatus(joined.status) &&
       !this.taskNotifications
-        .peek((notification) => notification.taskId === joined.id)
+        .peek(
+          (notification) =>
+            notification.source.kind === "task" &&
+            "taskId" in notification.payload &&
+            notification.payload.taskId === joined.id,
+        )
         .some(Boolean)
     ) {
-      this.taskNotifications.deliver(notificationFromRecord(joined));
+      this.taskNotifications.deliver(taskNotificationInputFromRecord(joined));
     }
     return {
       ok: true,
@@ -1599,7 +1612,7 @@ export class HostRuntime {
   }
 
   workflowActorInbox(): ActorInbox {
-    return this.workflowNotifications.asActorInbox();
+    return this.workflowNotifications;
   }
 
   async controlWorkflow(input: {

@@ -10,6 +10,17 @@ See [tool-orchestration.md](tool-orchestration.md) and [../trace/raw-trace.md](.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T23:05:00+0800
+- Scope: Host task revival now filters and projects canonical task actor
+  notifications directly; Core still drains the unchanged
+  `NotificationSource` and waits through the unchanged non-consuming revival
+  contract.
+- Read: Agent Runtime actor inboxes, Host revival/projection, Core notification
+  contracts, and focused Task/Host tests.
+- Tests: Agent Runtime task/workflow 90/90; Host task/workflow/protocol/Agent 122/122;
+  repository test typecheck; full release gate.
+
+- Status: Verified
 - Date: 2026-07-16T13:50:10+0800
 - Scope: Resumed workflow episodes receive the single canonical workspace store; removing session-local lookup does not change Core run-loop execution.
 - Read: Host workflow lookup/episode paths, Core workflow entry, and focused tests.

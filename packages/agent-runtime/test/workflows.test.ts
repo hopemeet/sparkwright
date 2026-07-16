@@ -1042,7 +1042,7 @@ describe("FileWorkflowStore", () => {
     const root = await tempDir();
     const outbox = new FileWorkflowNotificationOutbox({ rootDir: root });
 
-    outbox.asActorSink().deliver({
+    outbox.deliver({
       source: {
         kind: "workflow",
         id: "workflow_wait_notice",
@@ -1063,7 +1063,7 @@ describe("FileWorkflowStore", () => {
     });
 
     const reopened = new FileWorkflowNotificationOutbox({ rootDir: root });
-    const inbox = reopened.asActorInbox();
+    const inbox = reopened;
     await inbox.waitUntilAvailable({
       predicate: (notification) => notification.type === "waiting",
     });
