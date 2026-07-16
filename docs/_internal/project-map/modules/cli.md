@@ -9,6 +9,16 @@ See also [../maps/trace/summary-timeline-verify.md](../maps/trace/summary-timeli
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T18:55:00+0800
+- Scope: Inline trace-command test fixtures use the required canonical event
+  envelope, including object `metadata`; trace diagnostics no longer exercise
+  the removed missing-metadata normalization path.
+- Read: CLI trace command tests, Core trace parser, raw trace map, and run-event
+  reference.
+- Tests: focused CLI timeline/report/events tests; CLI full workspace tests;
+  npm run release:check; project-map drift check.
+
+- Status: Verified
 - Date: 2026-07-16T15:30:00+0800
 - Scope: Live tool-failure formatting consumes only the canonical nested
   `payload.error.code` envelope; the root `errorCode` compatibility alias is

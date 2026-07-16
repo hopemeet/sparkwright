@@ -7291,6 +7291,7 @@ describe.sequential("runCli", () => {
         timestamp: "2026-01-01T00:00:00.000Z",
         sequence: 1,
         payload: { goal: "alpha" },
+        metadata: {},
       },
       {
         id: "evt_alpha_2",
@@ -7299,6 +7300,7 @@ describe.sequential("runCli", () => {
         timestamp: "2026-01-01T00:00:01.000Z",
         sequence: 2,
         payload: { reason: "final_answer" },
+        metadata: {},
       },
       {
         id: "evt_beta_1",
@@ -7307,6 +7309,7 @@ describe.sequential("runCli", () => {
         timestamp: "2026-01-01T00:00:02.000Z",
         sequence: 1,
         payload: { goal: "beta" },
+        metadata: {},
       },
       {
         id: "evt_beta_2",
@@ -7319,6 +7322,7 @@ describe.sequential("runCli", () => {
           code: "MODEL_COMPLETION_FAILED",
           message: "auth failed",
         },
+        metadata: {},
       },
     ];
     await writeFile(
@@ -7393,6 +7397,7 @@ describe.sequential("runCli", () => {
         timestamp: "2026-01-01T00:00:00.000Z",
         sequence: 1,
         payload: { goal: "inspect" },
+        metadata: {},
       },
       ...Array.from({ length: 85 }, (_, index) => ({
         id: `evt_tool_${index}`,
@@ -7405,6 +7410,7 @@ describe.sequential("runCli", () => {
           toolName: index % 2 === 0 ? "read" : "grep",
           arguments: { path: "README.md" },
         },
+        metadata: {},
       })),
       ...Array.from({ length: 20 }, (_, index) => ({
         id: `evt_read_${index}`,
@@ -7413,6 +7419,7 @@ describe.sequential("runCli", () => {
         timestamp: "2026-01-01T00:00:02.000Z",
         sequence: index + 87,
         payload: { path: "README.md" },
+        metadata: {},
       })),
       {
         id: "evt_done",
@@ -7421,6 +7428,7 @@ describe.sequential("runCli", () => {
         timestamp: "2026-01-01T00:00:03.000Z",
         sequence: 107,
         payload: { state: "completed" },
+        metadata: {},
       },
     ];
     await writeFile(
@@ -7620,6 +7628,7 @@ describe.sequential("runCli", () => {
             usage: { totalTokens: 12 },
             trace: { adapterId: "openai:test-model" },
           },
+          metadata: {},
         },
         {
           id: "evt_2",
@@ -7632,6 +7641,7 @@ describe.sequential("runCli", () => {
             output: { path: "README.md" },
             artifacts: [],
           },
+          metadata: {},
         },
       ]
         .map((event) => `${JSON.stringify(event)}\n`)
