@@ -10,6 +10,11 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md),
 [../maps/trace/raw-trace.md](../maps/trace/raw-trace.md), and
 [../maps/session/session-store.md](../maps/session/session-store.md).
 
+## Last Verified
+
+- Date: 2026-07-16
+- Scope: reviewed configured hook compilation after delegate target selection became `agentId`-only; Core hook execution contracts are unchanged.
+
 ## Main Files
 
 - `packages/core/src/run.ts`

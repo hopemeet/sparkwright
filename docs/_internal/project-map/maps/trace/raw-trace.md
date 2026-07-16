@@ -8,6 +8,11 @@ what happened without relying on product UI state.
 See [summary-timeline-verify.md](summary-timeline-verify.md) for derived views
 and [../session/session-store.md](../session/session-store.md) for session layout.
 
+## Last Verified
+
+- Date: 2026-07-16
+- Scope: reviewed delegate identity single-tracking; configured tool names remain valid trace metadata while model-facing target selection uses only `agentId`.
+
 ## Main Files
 
 - `packages/core/src/trace.ts`

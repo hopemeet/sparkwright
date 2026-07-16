@@ -1041,7 +1041,6 @@ function agentActionIdentity(
     hookName,
     hook,
     agentId: action.agentId,
-    toolName: action.toolName,
     goal: action.goal,
   });
 }
@@ -1058,8 +1057,7 @@ async function runAgentAction(
     );
   }
   const args = {
-    ...(action.agentId ? { agentId: action.agentId } : {}),
-    ...(action.toolName ? { toolName: action.toolName } : {}),
+    agentId: action.agentId,
     goal: action.goal,
     metadata: {
       ...(action.metadata ?? {}),
@@ -1146,8 +1144,7 @@ function agentResultMetadata(
     hookName,
     ...(input.hook ? { hook: input.hook } : {}),
     ...input.metadata,
-    ...(action.agentId ? { agentId: action.agentId } : {}),
-    ...(action.toolName ? { toolName: action.toolName } : {}),
+    agentId: action.agentId,
     goal: action.goal,
     output,
   };

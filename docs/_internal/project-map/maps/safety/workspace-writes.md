@@ -7,6 +7,11 @@ policy-checked, approval-gated when needed, trace-visible, and artifact-backed.
 
 See [approvals.md](approvals.md) and [../runtime/tool-orchestration.md](../runtime/tool-orchestration.md).
 
+## Last Verified
+
+- Date: 2026-07-16
+- Scope: reviewed delegate routing simplification; per-agent workspace admission and write policy remain unchanged.
+
 ## Main Files
 
 - `packages/core/src/run.ts`

@@ -1579,7 +1579,7 @@ describe("loadHostConfig", () => {
                 trigger: ["run.completed", "tool.failed"],
                 action: {
                   type: "agent",
-                  toolName: "delegate_parallel",
+                  agentId: "reviewer",
                   goal: "summarize failure",
                 },
               },
@@ -1602,7 +1602,7 @@ describe("loadHostConfig", () => {
           }),
           expect.objectContaining({
             field: "capabilities.hooks.events.2.action.agentId",
-            message: "agent actions require agentId or toolName",
+            message: "agent actions require agentId",
           }),
           expect.objectContaining({
             field: "capabilities.hooks.events.3.action.url",

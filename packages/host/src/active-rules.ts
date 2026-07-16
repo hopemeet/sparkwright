@@ -263,13 +263,10 @@ function summarizeAction(
       action.resultMode === "responseJson" ? "; resultMode=responseJson" : "";
     return `http: ${action.method ?? "POST"} ${action.url}${httpBlock}${httpInject}${httpResultMode}${suffix}`;
   }
-  const target = action.agentId
-    ? `agentId=${action.agentId}`
-    : `toolName=${action.toolName}`;
   const agentInject = `; injectOutput=${action.injectOutput ?? "always"}`;
   const agentResultMode =
     action.resultMode === "workflowResult" ? "; resultMode=workflowResult" : "";
-  return `agent: ${target}; goal=${truncate(action.goal)}${agentInject}${agentResultMode}${suffix}`;
+  return `agent: agentId=${action.agentId}; goal=${truncate(action.goal)}${agentInject}${agentResultMode}${suffix}`;
 }
 
 function actionCanBlock(

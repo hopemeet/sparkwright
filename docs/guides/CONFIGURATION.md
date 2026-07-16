@@ -474,7 +474,7 @@ sets `capabilities.hooks.http.enabled: true` and an explicit `allow` rule. By
 default HTTP hook bodies contain only hook/run summary metadata, not the full
 run record or event payload. Private-network destinations require
 `allowPrivateNetwork: true`; link-local and cloud metadata addresses remain
-blocked. Agent actions call `delegate_agent` by `agentId` or `toolName`;
+blocked. Agent actions call `delegate_agent` by `agentId`;
 `resultMode: "workflowResult"` lets the delegate return a workflow result.
 Non-blocking `capabilities.hooks.events` rules support `command`, `http`, and
 `agent` actions, emit `user_hook.*` evidence, and never block or inject workflow
@@ -1045,7 +1045,7 @@ do not use this parent-process model selection.
 
 `capabilities.agents.enableParallelDelegates: true` exposes `delegate_parallel`
 as an `agents` selector tool. It is off by default. Calls target configured
-agents by `agentId` (preferred) or legacy delegate `toolName`. Profiles with
+agents by `agentId`. Profiles with
 `exposeAsDelegate: false` are omitted from the automatic delegation index unless
 they are explicitly listed with `delegateTool` / `delegateTools`. The first
 version only runs configured in-process delegates that are read-only

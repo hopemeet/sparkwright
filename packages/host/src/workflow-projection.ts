@@ -555,8 +555,7 @@ export function createWorkflowProjectionHooks(
     }
     const result = await runConfiguredNodeAction(input, node.id, {
       type: "agent",
-      ...(delegate.agentId ? { agentId: delegate.agentId } : {}),
-      ...(delegate.toolName ? { toolName: delegate.toolName } : {}),
+      agentId: delegate.agentId,
       goal: delegate.goal,
       ...(delegate.metadata ? { metadata: delegate.metadata } : {}),
       injectOutput: "never",
@@ -579,7 +578,6 @@ export function createWorkflowProjectionHooks(
             attempt,
             execute: "delegate",
             agentId: delegate.agentId,
-            toolName: delegate.toolName,
           },
         },
       ],
@@ -949,12 +947,7 @@ export function createWorkflowProjectionHooks(
       output = await options.delegateParallelTool.execute(
         {
           delegates: branches.map((branch) => ({
-            ...(branch.delegate?.agentId
-              ? { agentId: branch.delegate.agentId }
-              : {}),
-            ...(branch.delegate?.toolName
-              ? { toolName: branch.delegate.toolName }
-              : {}),
+            agentId: branch.delegate?.agentId,
             goal: branch.delegate?.goal ?? branch.body,
             metadata: {
               ...(branch.delegate?.metadata ?? {}),
@@ -2087,10 +2080,8 @@ function assertDelegateNodeRunnable(node: WorkflowNodeDefinition): void {
       `Workflow delegate node "${node.id}" requires a delegate definition.`,
     );
   }
-  if (!node.delegate.agentId && !node.delegate.toolName) {
-    throw new Error(
-      `Workflow delegate node "${node.id}" requires agentId or toolName.`,
-    );
+  if (!node.delegate.agentId) {
+    throw new Error(`Workflow delegate node "${node.id}" requires agentId.`);
   }
 }
 

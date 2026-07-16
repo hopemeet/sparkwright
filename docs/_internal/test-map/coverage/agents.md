@@ -158,7 +158,7 @@
   `exposure: "all"` / pins / `exposeAsDelegate`.
 - 2026-06-27 real `openai/gpt-5.4-mini` indexed delegation QA verified that
   hidden named delegates are no longer model-facing, generic target parsing
-  tolerates model-supplied legacy `toolName` noise, `delegate_parallel`
+  selects delegates by canonical `agentId`, `delegate_parallel`
   completes after prior `delegate_agent` calls by reusing ledger results, and
   trace/session checks pass with no duplicate sub-agent spawns. See
   [../runs/2026-06-27-indexed-agent-real-mini-qa.md](../runs/2026-06-27-indexed-agent-real-mini-qa.md).

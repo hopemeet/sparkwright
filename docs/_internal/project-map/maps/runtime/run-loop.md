@@ -7,6 +7,11 @@ events, policy checks, approvals, artifacts, and terminal results.
 
 See [tool-orchestration.md](tool-orchestration.md) and [../trace/raw-trace.md](../trace/raw-trace.md).
 
+## Last Verified
+
+- Date: 2026-07-16
+- Scope: reviewed Host delegate and workflow routing after canonical `agentId` selection; run-loop lifecycle and terminal ownership are unchanged.
+
 ## Main Files
 
 - `packages/core/src/run.ts`

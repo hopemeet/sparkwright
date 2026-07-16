@@ -5,6 +5,11 @@
 Capability maps explain how optional power enters a run: skills, MCP, agents,
 cron, shell/task tools, and capability inspection.
 
+## Last Verified
+
+- Date: 2026-07-16
+- Scope: reviewed Host capability and workflow action assembly after delegate target selection became `agentId`-only; the agents map owns the detailed contract.
+
 ## Main Files
 
 - `packages/host/src/runtime.ts`

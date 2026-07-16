@@ -6,6 +6,11 @@
 
 See also [../maps/trace/summary-timeline-verify.md](../maps/trace/summary-timeline-verify.md) and [../maps/session/resume-replay.md](../maps/session/resume-replay.md).
 
+## Last Verified
+
+- Date: 2026-07-16
+- Scope: reviewed workflow delegate identity changes; CLI workflow lifecycle and capability presentation require no code changes.
+
 ## Main Files
 
 - `packages/cli/src/cli.ts`

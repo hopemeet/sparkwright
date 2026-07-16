@@ -454,7 +454,7 @@ current goal (`relevant` / `low`) and are recorded in trace as
 
 Set `capabilities.agents.enableParallelDelegates: true` to expose the opt-in
 `delegate_parallel` tool. It runs multiple configured in-process delegates in
-foreground parallel by `agentId` (preferred) or legacy `toolName`, but only
+foreground parallel by `agentId`, but only
 when those delegates are read-only
 (`workspaceAccess: "none"`) and have no shell access. ACP, external-command,
 workspace-writing, and shell-capable delegates fail closed with a diagnostic.

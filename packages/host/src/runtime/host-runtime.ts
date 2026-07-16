@@ -5446,8 +5446,7 @@ interface DelegateParallelSpec {
 }
 
 interface DelegateParallelTask {
-  toolName?: string;
-  agentId?: string;
+  agentId: string;
   goal: string;
   metadata?: Record<string, unknown>;
 }
@@ -5503,13 +5502,6 @@ function childWorkflowHookSpawnOptions(
       return child;
     },
   };
-}
-
-function delegateTaskTargetName(task: {
-  agentId?: string;
-  toolName?: string;
-}): string {
-  return task.agentId ?? task.toolName ?? "(missing)";
 }
 
 export function createConfiguredDelegateTools(input: {
@@ -5722,9 +5714,7 @@ export function createDelegateParallelTool(input: {
       derived.effectiveProfile,
     ]),
   );
-  const eligibleByToolName = new Map<string, DelegateParallelSpec>();
   const eligibleByAgentId = new Map<string, DelegateParallelSpec>();
-  const rejectionByToolName = new Map<string, string>();
   const rejectionByAgentId = new Map<string, string>();
 
   for (const delegate of input.delegates) {
@@ -5733,14 +5723,12 @@ export function createDelegateParallelTool(input: {
     const toolName = delegateToolName(delegate);
     if (acpConfigFromAgentProfile(profile)) {
       const reason = "protocol acp is not supported by delegate_parallel v1";
-      rejectionByToolName.set(toolName, reason);
       rejectionByAgentId.set(profile.id, reason);
       continue;
     }
     if (externalCommandConfigFromAgentProfile(profile)) {
       const reason =
         "protocol external_command is not supported by delegate_parallel v1";
-      rejectionByToolName.set(toolName, reason);
       rejectionByAgentId.set(profile.id, reason);
       continue;
     }
@@ -5752,13 +5740,11 @@ export function createDelegateParallelTool(input: {
     });
     if (capabilityFacts.workspaceAccess !== "none") {
       const reason = `workspaceAccess ${capabilityFacts.workspaceAccess} is not allowed; delegate_parallel v1 only accepts workspaceAccess none`;
-      rejectionByToolName.set(toolName, reason);
       rejectionByAgentId.set(profile.id, reason);
       continue;
     }
     if (capabilityFacts.shellAccess) {
       const reason = "shell access is not allowed by delegate_parallel v1";
-      rejectionByToolName.set(toolName, reason);
       rejectionByAgentId.set(profile.id, reason);
       continue;
     }
@@ -5773,7 +5759,6 @@ export function createDelegateParallelTool(input: {
         (tool) => tool,
       ),
     };
-    eligibleByToolName.set(toolName, spec);
     eligibleByAgentId.set(profile.id, spec);
   }
 
@@ -5783,7 +5768,7 @@ export function createDelegateParallelTool(input: {
   });
   const description =
     eligibleNames.length > 0
-      ? `Run multiple read-only configured delegates concurrently and return their combined results. Prefer this when a request needs more than one configured agent. Target delegates by agentId; legacy toolName also works. Only delegates with workspaceAccess none are accepted. Eligible delegates: ${eligibleNames.join(", ")}.`
+      ? `Run multiple read-only configured delegates concurrently and return their combined results. Prefer this when a request needs more than one configured agent. Target delegates by agentId. Only delegates with workspaceAccess none are accepted. Eligible delegates: ${eligibleNames.join(", ")}.`
       : "Run multiple read-only configured delegates concurrently. No eligible read-only delegates are currently configured; calls will fail with a diagnostic.";
 
   return defineTool({
@@ -5797,19 +5782,14 @@ export function createDelegateParallelTool(input: {
           minItems: 1,
           maxItems: DELEGATE_PARALLEL_MAX_TASKS,
           description:
-            "Delegates to run in foreground parallel. Each entry targets one configured agent by agentId (preferred) or one legacy delegate tool by toolName and supplies an isolated goal.",
+            "Delegates to run in foreground parallel. Each entry targets one configured agent by agentId and supplies an isolated goal.",
           items: {
             type: "object",
             properties: {
               agentId: {
                 type: "string",
                 description:
-                  "Configured agent profile id to run, for example reviewer. Prefer this and leave toolName unset.",
-              },
-              toolName: {
-                type: "string",
-                description:
-                  "Legacy configured delegate tool name to run, for example delegate_review.",
+                  "Configured agent profile id to run, for example reviewer.",
               },
               goal: {
                 type: "string",
@@ -5821,7 +5801,7 @@ export function createDelegateParallelTool(input: {
                   "Optional structured metadata to attach to that child run.",
               },
             },
-            required: ["goal"],
+            required: ["agentId", "goal"],
           },
         },
       },
@@ -5836,9 +5816,7 @@ export function createDelegateParallelTool(input: {
     previewArgs(args) {
       const parsed = previewDelegateParallelArgs(args);
       return parsed.length > 0
-        ? parsed
-            .map((task) => `${delegateTaskTargetName(task)}: ${task.goal}`)
-            .join(" | ")
+        ? parsed.map((task) => `${task.agentId}: ${task.goal}`).join(" | ")
         : undefined;
     },
     isReplaySafe: false,
@@ -5851,21 +5829,13 @@ export function createDelegateParallelTool(input: {
       }
       const tasks = parseDelegateParallelArgs(args);
       const spawnInputs = tasks.map((task, index) => {
-        const spec = task.agentId
-          ? eligibleByAgentId.get(task.agentId)
-          : task.toolName
-            ? eligibleByToolName.get(task.toolName)
-            : undefined;
+        const spec = eligibleByAgentId.get(task.agentId);
         if (!spec) {
           const reason =
-            (task.agentId
-              ? rejectionByAgentId.get(task.agentId)
-              : task.toolName
-                ? rejectionByToolName.get(task.toolName)
-                : undefined) ??
+            rejectionByAgentId.get(task.agentId) ??
             `unknown delegate; eligible delegates: ${eligibleNames.join(", ") || "(none)"}`;
           throw new Error(
-            `delegate_parallel cannot run "${delegateTaskTargetName(task)}": ${reason}.`,
+            `delegate_parallel cannot run "${task.agentId}": ${reason}.`,
           );
         }
         if (
@@ -5873,7 +5843,7 @@ export function createDelegateParallelTool(input: {
           typeof parent.record.metadata?.parentRunId === "string"
         ) {
           throw new Error(
-            `delegate_parallel refused to nest "${delegateTaskTargetName(task)}": parent run is itself a sub-agent.`,
+            `delegate_parallel refused to nest "${task.agentId}": parent run is itself a sub-agent.`,
           );
         }
         const ledgerKey = configuredDelegateLedgerKey(
@@ -6996,42 +6966,12 @@ function parseDelegateParallelArgs(args: unknown): DelegateParallelTask[] {
       task.metadata === undefined
         ? undefined
         : objectField(task, "metadata", DELEGATE_PARALLEL_TOOL_NAME);
-    const toolName = optionalTargetStringField(
-      task,
-      "toolName",
-      DELEGATE_PARALLEL_TOOL_NAME,
-    );
-    const agentId = optionalTargetStringField(
-      task,
-      "agentId",
-      DELEGATE_PARALLEL_TOOL_NAME,
-    );
-    if (!toolName && !agentId) {
-      throw new Error(
-        `delegate_parallel delegates.${index} requires agentId or toolName.`,
-      );
-    }
     return {
-      ...(toolName ? { toolName } : {}),
-      ...(agentId ? { agentId } : {}),
+      agentId: stringField(task, "agentId", DELEGATE_PARALLEL_TOOL_NAME),
       goal: stringField(task, "goal", DELEGATE_PARALLEL_TOOL_NAME),
       ...(metadata ? { metadata } : {}),
     };
   });
-}
-
-function optionalTargetStringField(
-  record: Record<string, unknown>,
-  field: string,
-  toolName: string,
-): string | undefined {
-  const value = record[field];
-  if (value === undefined) return undefined;
-  if (typeof value !== "string") {
-    throw new Error(`${toolName} ${field} must be a string.`);
-  }
-  const trimmed = value.trim();
-  return trimmed ? trimmed : undefined;
 }
 
 function previewDelegateParallelArgs(args: unknown): DelegateParallelTask[] {
@@ -7040,16 +6980,9 @@ function previewDelegateParallelArgs(args: unknown): DelegateParallelTask[] {
   return record.delegates
     .map((entry): DelegateParallelTask | undefined => {
       const task = previewRecord(entry);
-      const toolName = previewString(task.toolName).trim();
       const agentId = previewString(task.agentId).trim();
       const goal = previewString(task.goal).trim();
-      return goal && (toolName || agentId)
-        ? {
-            ...(toolName ? { toolName } : {}),
-            ...(agentId ? { agentId } : {}),
-            goal,
-          }
-        : undefined;
+      return goal && agentId ? { agentId, goal } : undefined;
     })
     .filter((task): task is DelegateParallelTask => task !== undefined);
 }

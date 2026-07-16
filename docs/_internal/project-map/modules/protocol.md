@@ -8,6 +8,11 @@ inspection shapes.
 
 See also [../maps/safety/approvals.md](../maps/safety/approvals.md) and [../maps/session/session-store.md](../maps/session/session-store.md).
 
+## Last Verified
+
+- Date: 2026-07-16
+- Scope: reviewed after workflow delegate identity became `agentId`-only; no protocol wire contract changed.
+
 ## Main Files
 
 - `packages/protocol/src/index.ts`

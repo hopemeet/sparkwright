@@ -9,6 +9,11 @@ session stores, and protocol-facing runtime methods.
 See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 [../maps/capabilities/README.md](../maps/capabilities/README.md).
 
+## Last Verified
+
+- Date: 2026-07-16
+- Scope: Host delegate tools, workflow nodes, and hook agent actions now resolve only canonical `agentId` inputs; configured tool names remain internal execution/diagnostic facts.
+
 ## Main Files
 
 - `packages/host/src/runtime.ts` — stable named compatibility facade
@@ -648,8 +653,8 @@ Does not own:
 - `capabilities.agents.enableParallelDelegates` is a host-owned opt-in that
   appends `delegate_parallel` to the main host tool catalog as an `agents`
   source tool. Version 1 is foreground/blocking, starts all accepted children
-  before awaiting them, targets configured delegates by `agentId` (preferred) or
-  legacy `toolName`, and only accepts configured in-process delegates whose
+  before awaiting them, targets configured delegates by `agentId`, and only
+  accepts configured in-process delegates whose
   effective child tool set has `workspaceAccess: "none"` and no `shell`.
   ACP, external-command, workspace-writing, and shell-capable delegates fail
   closed before any child is spawned. If a directly exposed delegate already

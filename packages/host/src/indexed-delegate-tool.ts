@@ -14,8 +14,7 @@ import { delegateToolName } from "./delegate-capability.js";
 export const DELEGATE_AGENT_TOOL_NAME = "delegate_agent";
 
 interface DelegateAgentTask {
-  toolName?: string;
-  agentId?: string;
+  agentId: string;
   goal: string;
   metadata?: Record<string, unknown>;
 }
@@ -41,7 +40,6 @@ export function createDelegateAgentTool(input: {
   const toolByName = new Map(
     input.delegateTools.map((tool) => [tool.name, tool]),
   );
-  const targetByToolName = new Map<string, DelegateAgentTarget>();
   const targetByAgentId = new Map<string, DelegateAgentTarget>();
   for (const delegate of input.delegates) {
     const profile = byProfile.get(delegate.profileId);
@@ -50,11 +48,9 @@ export function createDelegateAgentTool(input: {
     const tool = toolByName.get(toolName);
     if (!tool) continue;
     const target = { delegate, profile, toolName, tool };
-    targetByToolName.set(toolName, target);
     targetByAgentId.set(profile.id, target);
   }
   const availableAgentIds = [...targetByAgentId.keys()];
-  const availableToolNames = [...targetByToolName.keys()];
   const availableHint =
     availableAgentIds.length > 0
       ? availableAgentIds
@@ -66,15 +62,10 @@ export function createDelegateAgentTool(input: {
       : "(none)";
 
   const resolveTarget = (task: DelegateAgentTask) => {
-    const target = task.agentId
-      ? targetByAgentId.get(task.agentId)
-      : task.toolName
-        ? targetByToolName.get(task.toolName)
-        : undefined;
+    const target = targetByAgentId.get(task.agentId);
     if (target) return target;
-    const targetName = task.agentId ?? task.toolName ?? "(missing)";
     throw new Error(
-      `${DELEGATE_AGENT_TOOL_NAME} cannot find delegate target "${targetName}". Available agentId targets: ${availableHint}. Available toolName targets: ${availableToolNames.join(", ") || "(none)"}.`,
+      `${DELEGATE_AGENT_TOOL_NAME} cannot find agentId target "${task.agentId}". Available agents: ${availableHint}.`,
     );
   };
 
@@ -90,12 +81,7 @@ export function createDelegateAgentTool(input: {
         agentId: {
           type: "string",
           description:
-            "Configured agent profile id to run, for example reviewer. Prefer this and leave toolName unset.",
-        },
-        toolName: {
-          type: "string",
-          description:
-            "Legacy delegate tool name to run. Prefer agentId unless the target is only known by tool name.",
+            "Configured agent profile id to run, for example reviewer.",
         },
         goal: {
           type: "string",
@@ -107,7 +93,7 @@ export function createDelegateAgentTool(input: {
             "Optional structured metadata to attach to the child run.",
         },
       },
-      required: ["goal"],
+      required: ["agentId", "goal"],
     },
     policy: { risk: "safe" },
     governance: {
@@ -118,8 +104,7 @@ export function createDelegateAgentTool(input: {
     previewArgs(args) {
       const task = previewDelegateAgentArgs(args);
       if (!task) return undefined;
-      const target = task.agentId ?? task.toolName;
-      return target && task.goal ? `${target}: ${task.goal}` : undefined;
+      return `${task.agentId}: ${task.goal}`;
     },
     policyForArgs(args) {
       const task = parseDelegateAgentArgs(args);
@@ -154,18 +139,10 @@ function parseDelegateAgentArgs(args: unknown): DelegateAgentTask {
     throw new Error(`${DELEGATE_AGENT_TOOL_NAME} expects an object argument.`);
   }
   const record = args as Record<string, unknown>;
-  const agentId = optionalTargetStringField(record, "agentId");
-  const toolName = optionalTargetStringField(record, "toolName");
-  if (!agentId && !toolName) {
-    throw new Error(
-      `${DELEGATE_AGENT_TOOL_NAME} requires agentId or toolName.`,
-    );
-  }
   const metadata =
     record.metadata === undefined ? undefined : objectField(record, "metadata");
   return {
-    ...(agentId ? { agentId } : {}),
-    ...(toolName ? { toolName } : {}),
+    agentId: stringField(record, "agentId"),
     goal: stringField(record, "goal"),
     ...(metadata ? { metadata } : {}),
   };
@@ -173,18 +150,11 @@ function parseDelegateAgentArgs(args: unknown): DelegateAgentTask {
 
 function previewDelegateAgentArgs(
   args: unknown,
-): Pick<DelegateAgentTask, "agentId" | "toolName" | "goal"> | undefined {
+): Pick<DelegateAgentTask, "agentId" | "goal"> | undefined {
   const record = previewRecord(args);
   const agentId = previewString(record.agentId).trim();
-  const toolName = previewString(record.toolName).trim();
   const goal = previewString(record.goal).trim();
-  return goal && (agentId || toolName)
-    ? {
-        ...(agentId ? { agentId } : {}),
-        ...(toolName ? { toolName } : {}),
-        goal,
-      }
-    : undefined;
+  return goal && agentId ? { agentId, goal } : undefined;
 }
 
 function delegateAgentToolArgs(task: DelegateAgentTask): {
@@ -198,19 +168,6 @@ function delegateAgentToolArgs(task: DelegateAgentTask): {
     },
     "delegate_agent",
   );
-}
-
-function optionalTargetStringField(
-  record: Record<string, unknown>,
-  field: "agentId" | "toolName",
-): string | undefined {
-  const value = record[field];
-  if (value === undefined) return undefined;
-  if (typeof value !== "string") {
-    throw new Error(`${DELEGATE_AGENT_TOOL_NAME} ${field} must be a string.`);
-  }
-  const trimmed = value.trim();
-  return trimmed ? trimmed : undefined;
 }
 
 function stringField(record: Record<string, unknown>, field: string): string {

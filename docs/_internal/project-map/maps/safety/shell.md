@@ -7,6 +7,11 @@ classification, policy, approval, sandboxing, trace, and task promotion.
 
 See [workspace-writes.md](workspace-writes.md) and [../../modules/coding-tools.md](../../modules/coding-tools.md).
 
+## Last Verified
+
+- Date: 2026-07-16
+- Scope: reviewed routed Host workflow and delegate changes; shell admission, sandboxing, and safety boundaries are unchanged.
+
 ## Main Files
 
 - `packages/host/src/shell.ts`

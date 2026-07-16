@@ -718,10 +718,6 @@
                             "type": "string",
                             "minLength": 1
                           },
-                          "toolName": {
-                            "type": "string",
-                            "minLength": 1
-                          },
                           "goal": {
                             "type": "string",
                             "minLength": 1
@@ -742,7 +738,7 @@
                             "enum": ["always", "onFailure", "never"]
                           }
                         },
-                        "required": ["type", "goal"],
+                        "required": ["type", "agentId", "goal"],
                         "additionalProperties": false
                       }
                     ]
@@ -1000,10 +996,6 @@
                             "type": "string",
                             "minLength": 1
                           },
-                          "toolName": {
-                            "type": "string",
-                            "minLength": 1
-                          },
                           "goal": {
                             "type": "string",
                             "minLength": 1
@@ -1024,7 +1016,7 @@
                             "enum": ["always", "onFailure", "never"]
                           }
                         },
-                        "required": ["type", "goal"],
+                        "required": ["type", "agentId", "goal"],
                         "additionalProperties": false
                       }
                     ]

@@ -112,6 +112,14 @@ describe("host tools", () => {
       delegateTools,
     });
 
+    expect(indexed.inputSchema).toMatchObject({
+      required: ["agentId", "goal"],
+    });
+    expect(
+      (indexed.inputSchema as { properties: Record<string, unknown> })
+        .properties,
+    ).not.toHaveProperty("toolName");
+
     expect(
       isToolConcurrencySafe(indexed, {
         agentId: "reader",
@@ -1337,7 +1345,6 @@ describe("host tools", () => {
     expect(
       delegateAgent.policyForArgs?.({
         agentId: "reader",
-        toolName: "delegate_reader",
         goal: "Inspect README.md.",
       }),
     ).toMatchObject({
@@ -1345,7 +1352,7 @@ describe("host tools", () => {
     });
 
     const indexedResult = (await delegateAgent.execute(
-      { agentId: "reader", toolName: "", goal: "Inspect README.md." },
+      { agentId: "reader", goal: "Inspect README.md." },
       {
         run: parent.record,
       } as never,
@@ -1518,15 +1525,30 @@ describe("host tools", () => {
       childRunStoreFactory: () => undefined as never,
     });
 
+    expect(parallel.inputSchema).toMatchObject({
+      properties: {
+        delegates: {
+          items: { required: ["agentId", "goal"] },
+        },
+      },
+    });
+    const delegateItemSchema = (
+      parallel.inputSchema as {
+        properties: {
+          delegates: { items: { properties: Record<string, unknown> } };
+        };
+      }
+    ).properties.delegates.items;
+    expect(delegateItemSchema.properties).not.toHaveProperty("toolName");
+
     const output = (await parallel.execute(
       {
         delegates: [
           {
             agentId: "reviewer",
-            toolName: "delegate_reviewer",
             goal: "Review the patch.",
           },
-          { agentId: "auditor", toolName: "", goal: "Audit the risks." },
+          { agentId: "auditor", goal: "Audit the risks." },
         ],
       },
       { run: parent.record } as never,
@@ -1922,8 +1944,8 @@ describe("host tools", () => {
     const parallelOutput = (await parallel.execute(
       {
         delegates: [
-          { toolName: "delegate_reviewer", goal: "Review README.md." },
-          { toolName: "delegate_auditor", goal: "Audit README.md." },
+          { agentId: "reviewer", goal: "Review README.md." },
+          { agentId: "auditor", goal: "Audit README.md." },
         ],
       },
       { run: parent.record } as never,
@@ -2225,12 +2247,12 @@ describe("host tools", () => {
     await expect(
       parallel.execute(
         {
-          delegates: [{ toolName: "delegate_writer", goal: "Write a file." }],
+          delegates: [{ agentId: "writer", goal: "Write a file." }],
         },
         { run: parent.record } as never,
       ),
     ).rejects.toThrow(
-      /delegate_parallel cannot run "delegate_writer": workspaceAccess read_write is not allowed/,
+      /delegate_parallel cannot run "writer": workspaceAccess read_write is not allowed/,
     );
   });
 

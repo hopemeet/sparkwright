@@ -6,6 +6,11 @@
 
 See also [../maps/capabilities/agents.md](../maps/capabilities/agents.md), [../maps/capabilities/cron.md](../maps/capabilities/cron.md), and [../maps/runtime/tool-orchestration.md](../maps/runtime/tool-orchestration.md).
 
+## Last Verified
+
+- Date: 2026-07-16
+- Scope: workflow delegate identity now requires the canonical `agentId`; the portable workflow type no longer carries a delegate tool-name selector.
+
 ## Main Files
 
 - `packages/agent-runtime/src/index.ts`

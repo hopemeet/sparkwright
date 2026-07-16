@@ -138,8 +138,7 @@ export interface WorkflowCommandNodeDefinition {
 }
 
 export interface WorkflowDelegateNodeDefinition {
-  agentId?: string;
-  toolName?: string;
+  agentId: string;
   goal: string;
   metadata?: Record<string, unknown>;
 }

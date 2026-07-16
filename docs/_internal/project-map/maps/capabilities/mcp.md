@@ -7,6 +7,11 @@ prompts, and diagnostic status.
 
 See [../../modules/mcp-adapter.md](../../modules/mcp-adapter.md).
 
+## Last Verified
+
+- Date: 2026-07-16
+- Scope: reviewed Host runtime routing changes; MCP tool-name mapping and capability contracts are independent and unchanged.
+
 ## Main Files
 
 - `packages/mcp-adapter/src/index.ts`

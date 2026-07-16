@@ -477,8 +477,7 @@ export const WORKFLOW_HOOK_HTTP_ACTION_CONFIG_KEYS =
 export const workflowHookAgentActionSchema = z
   .object({
     type: z.literal("agent"),
-    agentId: nonEmptyString.optional(),
-    toolName: nonEmptyString.optional(),
+    agentId: nonEmptyString,
     goal: nonEmptyString,
     metadata: z.record(z.string(), z.unknown()).optional(),
     resultMode: workflowHookAgentResultModeSchema.optional(),

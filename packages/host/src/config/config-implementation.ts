@@ -1415,15 +1415,11 @@ function validateHookAction(
       typeof raw.agentId === "string" && raw.agentId.length > 0
         ? raw.agentId
         : undefined;
-    const toolName =
-      typeof raw.toolName === "string" && raw.toolName.length > 0
-        ? raw.toolName
-        : undefined;
-    if (!agentId && !toolName) {
+    if (!agentId) {
       errors.push({
         file: filePath,
         field: `${field}.agentId`,
-        message: "agent actions require agentId or toolName",
+        message: "agent actions require agentId",
       });
       return undefined;
     }
@@ -1451,8 +1447,7 @@ function validateHookAction(
     }
     return {
       type,
-      ...(agentId ? { agentId } : {}),
-      ...(toolName ? { toolName } : {}),
+      agentId,
       goal: raw.goal,
       ...(metadata ? { metadata } : {}),
       ...(raw.resultMode !== undefined

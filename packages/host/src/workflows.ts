@@ -552,25 +552,19 @@ function parseWorkflowDelegateNode(
 ): WorkflowDelegateNodeDefinition | undefined {
   const execute = optionalString(raw.execute) ?? optionalString(raw.type);
   const source = isRecord(raw.delegate) ? raw.delegate : raw;
-  const agentId =
-    optionalString(source.agentId) ?? optionalString(source.agent_id);
-  const toolName =
-    optionalString(source.toolName) ?? optionalString(source.tool_name);
+  const agentId = optionalString(source.agentId);
   const goal = optionalString(source.goal);
-  if (execute !== "delegate" && !agentId && !toolName && !goal) {
+  if (execute !== "delegate" && !agentId && !goal) {
     return undefined;
   }
-  if (!agentId && !toolName) {
-    throw new Error(
-      `Workflow delegate node ${nodeId} requires agentId or toolName.`,
-    );
+  if (!agentId) {
+    throw new Error(`Workflow delegate node ${nodeId} requires agentId.`);
   }
   if (!goal) {
     throw new Error(`Workflow delegate node ${nodeId} requires goal.`);
   }
   return {
-    ...(agentId ? { agentId } : {}),
-    ...(toolName ? { toolName } : {}),
+    agentId,
     goal,
     ...(optionalRecord(source.metadata)
       ? { metadata: optionalRecord(source.metadata) }

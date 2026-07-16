@@ -248,7 +248,7 @@ first implementation keeps every delegate visible and leaves policy unchanged.
 
 `capabilities.agents.enableParallelDelegates: true` exposes
 `delegate_parallel`, a foreground fan-out tool for configured in-process
-delegates. It targets agents by `agentId` (preferred) or legacy `toolName`,
+delegates. It targets agents by `agentId`,
 starts multiple read-only delegates concurrently, and waits for all children to
 finish. Version 1 rejects ACP delegates, external-command delegates,
 workspace-writing delegates, and delegates with shell access.

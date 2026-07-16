@@ -7,6 +7,11 @@ and creation/update flows through CLI/TUI/host tooling.
 
 See [../../modules/agent-runtime.md](../../modules/agent-runtime.md) for related task execution concepts.
 
+## Last Verified
+
+- Date: 2026-07-16
+- Scope: reviewed after the portable workflow delegate identity change; cron contracts and execution paths are unaffected.
+
 ## Main Files
 
 - `packages/cron/src/*`

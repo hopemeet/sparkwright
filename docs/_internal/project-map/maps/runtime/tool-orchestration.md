@@ -7,6 +7,11 @@ policy-checked, approved, executed, traced, and summarized.
 
 See [../safety/workspace-writes.md](../safety/workspace-writes.md), [../safety/shell.md](../safety/shell.md), and [../../modules/coding-tools.md](../../modules/coding-tools.md).
 
+## Last Verified
+
+- Date: 2026-07-16
+- Scope: indexed and parallel delegate model schemas now require `agentId`; their configured target tool names remain private execution details.
+
 ## Main Files
 
 - `packages/core/src/run.ts`
@@ -223,8 +228,8 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
   approval, and ledger behavior stay shared.
 - `delegate_parallel` is catalogued only when
   `capabilities.agents.enableParallelDelegates` is true. It uses the same
-  catalog filtering as other `agents` tools, accepts `agentId` (preferred) or
-  legacy `toolName` targets, reports read-only side effects, and runs as one
+  catalog filtering as other `agents` tools, accepts only `agentId` targets,
+  reports read-only side effects, and runs as one
   foreground tool call that launches multiple eligible in-process/read-only
   delegate children before awaiting all results.
 - Dynamic `spawn_agent` separates tool transport completion from child-answer

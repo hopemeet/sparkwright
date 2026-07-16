@@ -8,6 +8,11 @@ health, and structural validity without replacing the raw trace.
 
 See [raw-trace.md](raw-trace.md) for source data and [export-diagnostics.md](export-diagnostics.md) for product-facing export distinctions.
 
+## Last Verified
+
+- Date: 2026-07-16
+- Scope: reviewed delegate identity single-tracking; derived trace summaries retain configured tool names as diagnostics and require no shape change.
+
 ## Main Files
 
 - `packages/core/src/trace.ts`

@@ -8,6 +8,11 @@ session attribution.
 
 See [../../modules/agent-runtime.md](../../modules/agent-runtime.md) and [../../modules/host.md](../../modules/host.md).
 
+## Last Verified
+
+- Date: 2026-07-16
+- Scope: `delegate_agent`, `delegate_parallel`, workflow delegate nodes, and hook agent actions select targets only by `agentId`; configured tool names remain diagnostics and direct-tool identities.
+
 ## Main Files
 
 - `packages/host/src/runtime.ts`
@@ -135,7 +140,7 @@ configured profiles/delegates
   delegation surfaces.
 - `capabilities.agents.enableParallelDelegates` exposes the opt-in
   `delegate_parallel` main-run tool. It fans out across configured in-process
-  delegates only, targets them by `agentId` (preferred) or legacy `toolName`,
+  delegates only, targets them by `agentId`,
   rejects ACP/external-command delegates, rejects any delegate whose effective
   child tool set implies workspace write or shell access, and runs as a
   foreground blocking tool with a bounded delegate list. Each child uses the

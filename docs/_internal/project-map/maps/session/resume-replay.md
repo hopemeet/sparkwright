@@ -7,6 +7,11 @@ state without pretending all live process state is durable.
 
 See [session-store.md](session-store.md) and [../runtime/context-compaction.md](../runtime/context-compaction.md).
 
+## Last Verified
+
+- Date: 2026-07-16
+- Scope: reviewed delegate target identity changes; persisted run/session resume semantics are unaffected.
+
 ## Main Files
 
 - `packages/core/src/run.ts`
