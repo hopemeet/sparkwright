@@ -91,6 +91,11 @@ session trace.jsonl
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T13:36:30+0800
+- Scope: TUI/export no longer projects a validation-hook active phase; durable `validation.failed` evidence remains available in raw trace and diagnostics.
+- Read: TUI event store/export paths, Core trace vocabulary, and current trace documentation.
+- Tests: focused TUI/trace tests; npm run build; npm run typecheck:test; npm run release:check.
+
 - Date: 2026-07-16T12:45:00+0800
 - Scope: TUI diagnostics display canonical access mode and no longer expose compiled permission/write fields.
 - Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.

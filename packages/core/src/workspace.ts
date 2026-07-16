@@ -35,11 +35,6 @@ import type {
   WorkspaceWriteProposal,
   WorkspaceWriteResult,
 } from "./types.js";
-import {
-  runValidationHooks,
-  validationFailureMessage,
-  type ValidationHook,
-} from "./validation.js";
 
 /** @internal Reference local filesystem workspace with realpath containment. */
 export class LocalWorkspace {
@@ -227,7 +222,6 @@ export interface ControlledWorkspaceOptions {
   events: EventLog;
   policy?: Policy;
   interactionChannel?: InteractionChannel;
-  validationHooks?: ValidationHook[];
   /**
    * Optional setState callback used to mutate run state through the run's
    * legal-transition guard. When omitted, falls back to a minimal in-place
@@ -242,7 +236,7 @@ export interface ControlledWorkspaceOptions {
   checkpointStore?: WorkspaceCheckpointStore;
 }
 
-/** @internal Reference `WorkspaceRuntime` with policy + approval + validation. */
+/** @internal Reference `WorkspaceRuntime` with policy and approval enforcement. */
 export class ControlledWorkspace implements WorkspaceRuntime {
   private readonly policy: Policy;
 
@@ -391,38 +385,6 @@ export class ControlledWorkspace implements WorkspaceRuntime {
       operation,
     );
     this.options.events.emit("workspace.write.requested", proposal);
-
-    const validationFailure = await runValidationHooks({
-      hooks: this.options.validationHooks ?? [],
-      stage: "workspace_write",
-      run: this.options.run,
-      subject: proposal,
-      metadata: {
-        path: workspacePath,
-        reason: options.reason,
-        proposalId: proposal.id,
-        operation,
-      },
-      events: this.options.events,
-    });
-
-    if (validationFailure) {
-      this.options.events.emit("workspace.write.denied", {
-        proposalId: proposal.id,
-        path: workspacePath,
-        reason: validationFailureMessage(validationFailure),
-        validation: validationFailure,
-      });
-      throw new WorkspaceRuntimeError(
-        "VALIDATION_FAILED",
-        `Workspace write validation failed: ${workspacePath}`,
-        {
-          path: workspacePath,
-          proposalId: proposal.id,
-          validation: validationFailure,
-        },
-      );
-    }
 
     const decision = await this.policy.decide({
       action: "workspace.write",

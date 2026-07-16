@@ -290,7 +290,6 @@ describe("SparkwrightRun", () => {
       policyForArgsMs: expect.any(Number),
       policyDecisionMs: expect.any(Number),
       executionMs: expect.any(Number),
-      resultValidationMs: expect.any(Number),
     });
     expect(events.map((event) => event.type)).toContain("context.assembled");
     expect(events.map((event) => event.type)).toContain("prompt.built");
@@ -2744,139 +2743,6 @@ describe("SparkwrightRun", () => {
     expect(types).toContain("tool.failed");
   });
 
-  it("turns tool validation failures into observations the model can correct from", async () => {
-    let modelCalls = 0;
-
-    const unchecked = defineTool({
-      name: "unchecked",
-      description: "Return unchecked output.",
-      inputSchema: { type: "object" },
-      execute() {
-        return { text: "bad output" };
-      },
-    });
-
-    const run = createRun({
-      goal: "validate tool result",
-      tools: [unchecked],
-      validationHooks: [
-        {
-          name: "tool-output-policy",
-          stages: ["tool_result"],
-          validate(input) {
-            const result = input.subject as { output?: { text?: string } };
-            if (result.output?.text === "bad output") {
-              return {
-                status: "failed",
-                findings: [
-                  {
-                    code: "BAD_TOOL_OUTPUT",
-                    message: "Tool output cannot be bad.",
-                    severity: "error",
-                  },
-                ],
-              };
-            }
-          },
-        },
-      ],
-      model: {
-        async complete(input) {
-          modelCalls += 1;
-
-          if (modelCalls === 1) {
-            return { toolCalls: [{ toolName: "unchecked", arguments: {} }] };
-          }
-
-          expect(input.context[0]?.content).toContain("VALIDATION_FAILED");
-          expect(input.context[0]?.content).toContain("BAD_TOOL_OUTPUT");
-          return { message: "corrected" };
-        },
-      },
-    });
-
-    const result = await run.start();
-    const eventTypes = run.events.all().map((event) => event.type);
-
-    expect(result).toMatchObject({
-      signal: "completed",
-      stopReason: "final_answer",
-      message: "corrected",
-    });
-    expect(eventTypes).toEqual(
-      expect.arrayContaining(["validation.started", "validation.failed"]),
-    );
-    expect(eventTypes).not.toContain("tool.completed");
-    expect(
-      run.events.all().find((event) => event.type === "tool.failed")?.payload,
-    ).toMatchObject({
-      error: {
-        code: "VALIDATION_FAILED",
-        metadata: {
-          validation: {
-            hookName: "tool-output-policy",
-          },
-        },
-      },
-    });
-  });
-
-  it("fails the run when final output validation fails", async () => {
-    const run = createRun({
-      goal: "validate final answer",
-      validationHooks: [
-        {
-          name: "final-answer-policy",
-          stages: ["final_output"],
-          validate(input) {
-            if (input.subject === "ship it") {
-              return {
-                status: "failed",
-                findings: [
-                  {
-                    code: "FINAL_TOO_LOOSE",
-                    message: "Final answer is not specific enough.",
-                    severity: "error",
-                  },
-                ],
-              };
-            }
-          },
-        },
-      ],
-      model: {
-        async complete() {
-          return { message: "ship it" };
-        },
-      },
-    });
-
-    const result = await run.start();
-    const failed = run.events
-      .all()
-      .find((event) => event.type === "run.failed");
-
-    expect(result).toMatchObject({
-      signal: "failed",
-      state: "failed",
-      stopReason: "validation_failed",
-      failure: {
-        category: "validation",
-        code: "VALIDATION_FAILED",
-      },
-    });
-    expect(failed?.payload).toMatchObject({
-      reason: "validation_failed",
-      code: "VALIDATION_FAILED",
-      metadata: {
-        stage: "final_output",
-        validation: {
-          hookName: "final-answer-policy",
-        },
-      },
-    });
-  });
-
   it("requires approval for risky tools", async () => {
     let executed = false;
     let modelCalls = 0;
@@ -5228,50 +5094,6 @@ describe("SparkwrightRun", () => {
     expect(run.events.all().map((event) => event.type)).toEqual(
       expect.arrayContaining(["run.cancel_requested", "run.cancelled"]),
     );
-  });
-
-  it("can continue after final output validation failure", async () => {
-    let modelCalls = 0;
-    const run = createRun({
-      goal: "continue validation",
-      finalOutputValidation: "continue",
-      maxSteps: 3,
-      validationHooks: [
-        {
-          name: "final-answer-policy",
-          stages: ["final_output"],
-          validate(input) {
-            if (input.subject === "bad final") {
-              return {
-                status: "failed",
-                findings: [
-                  {
-                    code: "BAD_FINAL",
-                    message: "Try again with a better final answer.",
-                  },
-                ],
-              };
-            }
-          },
-        },
-      ],
-      model: {
-        async complete(input) {
-          modelCalls += 1;
-          if (modelCalls === 1) return { message: "bad final" };
-          expect(input.context[0]?.content).toContain("BAD_FINAL");
-          return { message: "better final" };
-        },
-      },
-    });
-
-    const result = await run.start();
-
-    expect(result).toMatchObject({
-      signal: "completed",
-      message: "better final",
-    });
-    expect(modelCalls).toBe(2);
   });
 
   it("batches concurrency-safe tools before serial side-effecting tools", async () => {

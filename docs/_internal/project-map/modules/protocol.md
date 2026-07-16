@@ -11,6 +11,11 @@ See also [../maps/safety/approvals.md](../maps/safety/approvals.md) and [../maps
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T13:36:30+0800
+- Scope: Event vocabulary no longer publishes dead `validation.started`/`validation.completed` values; `validation.failed` remains canonical for run-input and recoverable extension diagnostics.
+- Read: Core event/trace codecs, JSON schema, CLI producer, TUI consumer, and protocol docs.
+- Tests: focused protocol tests; npm run build; npm run typecheck:test; npm run schema:check; npm run release:check.
+
 - Date: 2026-07-16T12:45:00+0800
 - Scope: Protocol 2.0 run autonomy is single-track: accessMode is the only wire input and capability access summary; Workflow authorization snapshots use it directly.
 - Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.

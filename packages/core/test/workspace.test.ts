@@ -519,66 +519,6 @@ describe("LocalWorkspace", () => {
     );
   });
 
-  it("does not write when workspace write validation fails", async () => {
-    await writeFile(join(root, "README.md"), "before\n", "utf8");
-    const run = createRunRecord();
-    const events = new EventLog(run.id);
-    const workspace = new ControlledWorkspace({
-      run,
-      events,
-      workspace: new LocalWorkspace(root),
-      interactionChannel: {
-        approve() {
-          throw new Error("approval should not be requested");
-        },
-      },
-      validationHooks: [
-        {
-          name: "write-policy",
-          stages: ["workspace_write"],
-          validate(input) {
-            const proposal = input.subject as { path: string };
-            if (proposal.path === "README.md") {
-              return {
-                status: "failed",
-                findings: [
-                  {
-                    code: "README_LOCKED",
-                    message: "README writes are locked.",
-                    severity: "error",
-                  },
-                ],
-              };
-            }
-          },
-        },
-      ],
-    });
-
-    await expect(workspace.writeText("README.md", "after\n")).rejects.toThrow(
-      "Workspace write validation failed",
-    );
-
-    await expect(readFile(join(root, "README.md"), "utf8")).resolves.toBe(
-      "before\n",
-    );
-    expect(events.all().map((event) => event.type)).toEqual([
-      "workspace.write.requested",
-      "validation.started",
-      "validation.failed",
-      "workspace.write.denied",
-    ]);
-    expect(
-      events.all().find((event) => event.type === "workspace.write.denied")
-        ?.payload,
-    ).toMatchObject({
-      path: "README.md",
-      validation: {
-        hookName: "write-policy",
-      },
-    });
-  });
-
   it("routes approval-driven state transitions through the setState callback", async () => {
     await writeFile(join(root, "README.md"), "before\n", "utf8");
     const run = createRunRecord();

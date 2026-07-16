@@ -327,8 +327,8 @@ remember a rule.
 
 Use workflow hooks for checked-in project rules: block forbidden paths, inject
 project context, run tests after writes, or prevent final answers until required
-verification has happened. Lower-level `RunHook`, `ValidationHook`, and
-`UserHookRunner` APIs remain available for SDK embedders and host integrations,
+verification has happened. Lower-level `RunHook` and `UserHookRunner` APIs
+remain available for SDK embedders and host integrations,
 but they are not the recommended project configuration surface.
 For guardrails that should apply only to one configured delegate profile, use
 `capabilities.agents.profiles[].hooks` instead of global workflow hooks.

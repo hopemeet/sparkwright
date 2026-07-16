@@ -11,6 +11,11 @@ See [raw-trace.md](raw-trace.md) for source data and [export-diagnostics.md](exp
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T13:36:30+0800
+- Scope: Trace projections retain `validation.failed` finding-code diagnostics but no longer expect validation-hook lifecycle spans.
+- Read: trace codecs/diagnostics/consistency checks, schemas, and focused trace tests.
+- Tests: focused trace tests; npm run build; npm run typecheck:test; npm run release:check.
+
 - Date: 2026-07-16T12:45:00+0800
 - Scope: Trace summaries keep approval/write outcome facts; run metadata now records canonical accessMode only.
 - Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.

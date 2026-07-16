@@ -18,7 +18,7 @@ import {
   type UserHookOutcome,
   type UserHookRunner,
   type UserHookTrigger,
-  type ValidationFinding,
+  type WorkflowHookFinding,
   type WorkflowHook,
   type WorkflowHookInput,
   type WorkflowHookName,
@@ -666,7 +666,7 @@ function parseUnknownWorkflowHookResult(
       status: "block",
       reason: parsed.reason,
       ...(Array.isArray(parsed.findings)
-        ? { findings: parsed.findings as ValidationFinding[] }
+        ? { findings: parsed.findings as WorkflowHookFinding[] }
         : {}),
       metadata,
     };

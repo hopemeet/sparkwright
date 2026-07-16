@@ -344,6 +344,11 @@ Does not own:
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T13:36:30+0800
+- Scope: Removed the dead validation-hook active phase and its start/completed compatibility events; TUI still renders current `validation.failed` diagnostics.
+- Read: TUI event store, active-phase tests, Core event vocabulary, and event schema.
+- Tests: focused TUI tests; npm run build; npm run typecheck:test; npm run release:check.
+
 - Date: 2026-07-16T12:45:00+0800
 - Scope: TUI startup, runtime switching, Host requests, metadata, and capability views use canonical access modes without deprecated flag aliases.
 - Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.

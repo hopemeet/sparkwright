@@ -10,6 +10,11 @@ See [approvals.md](approvals.md) and [../runtime/tool-orchestration.md](../runti
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T13:36:30+0800
+- Scope: Removed the unused public workspace-write validation-hook seam; containment, write policy, interaction-channel approval, checkpoints, mutation budgets, and artifact evidence remain canonical and unchanged.
+- Read: ControlledWorkspace, run assembly, focused workspace tests, and current safety docs.
+- Tests: focused workspace tests; npm run build; npm run typecheck:test; npm run release:check.
+
 - Date: 2026-07-16T12:45:00+0800
 - Scope: Write capability is derived from canonical accessMode; managed write policy, containment, budgets, and event evidence remain unchanged.
 - Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.

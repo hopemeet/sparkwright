@@ -168,14 +168,14 @@ Read the linked entry file first, then the linked docs, then make the change. Do
 - **Wire in via**: a custom `ContextAssembler` that runs the compactor before returning items
 - **Notes**: Compaction is not memory; long-term recall belongs in `MemoryStore`.
 
-### Task: Add a hook (pre-model-call, after-tool-result)
+### Task: Add a workflow hook
 
-- **Entry point**: `packages/core/src/run.ts` (validation hooks are the closest existing primitive)
-- **Interface to implement**: `ValidationHook` for tool/workspace stages; for model-call hooks, wrap the `ModelAdapter`
-- **Must read**: `docs/reference/EXTENSION_INTERFACES.md` (Hook Extensions), `docs/reference/RUN_EVENTS.md`
-- **Must update on change**: emit `validation.started` / `validation.completed` / `validation.failed` (already in `EventType`); no schema change
-- **Wire in via**: `createRun({ validationHooks: [...] })`
-- **Notes**: Hooks must be deterministic and serializable in failure mode so trace can explain rejections.
+- **Entry point**: `packages/core/src/workflow-hooks.ts` for execution and `packages/host/src/workflow-hooks.ts` for configured actions
+- **Interface to implement**: `WorkflowHook` with a canonical lifecycle name, matcher, and deterministic result
+- **Must read**: `docs/reference/EXTENSION_INTERFACES.md` (Workflow Hooks), `docs/reference/RUN_EVENTS.md`
+- **Must update on change**: emit the appropriate `workflow_hook.*` events and update the config schema for new configured shapes
+- **Wire in via**: `createRun({ workflowHooks: [...] })` or `capabilities.hooks.workflow`
+- **Notes**: Blocking and rewrite results must remain serializable so traces explain every policy decision.
 
 ### Task: Add an artifact type
 

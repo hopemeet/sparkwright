@@ -11,6 +11,11 @@ and [../session/session-store.md](../session/session-store.md) for session layou
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T13:36:30+0800
+- Scope: Raw trace vocabulary dropped dead validation-hook start/completed events and result-validation timing; `validation.failed` remains for current run-input and extension failure evidence.
+- Read: Core event/trace codecs, schema, CLI producer, TUI consumer, and trace tests.
+- Tests: focused trace/schema tests; npm run build; npm run typecheck:test; npm run release:check.
+
 - Date: 2026-07-16T12:45:00+0800
 - Scope: Raw run metadata records canonical accessMode; approval and workspace-write events are unchanged.
 - Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.
@@ -64,8 +69,7 @@ EventLog emits full event
   input; preview must not become a policy or replay source.
 - Terminal `tool.completed` / `tool.failed` metadata may include stage timing
   fields (`schemaValidationMs`, `inputValidationMs`, `policyForArgsMs`,
-  `policyDecisionMs`, `approvalWaitMs`, `executionMs`,
-  `resultValidationMs`). These are diagnostics on existing terminal events;
+  `policyDecisionMs`, `approvalWaitMs`, `executionMs`). These are diagnostics on existing terminal events;
   they do not change span closure or event-family semantics.
 - `workspace.read.denied` is the raw trace evidence for read-scope policy
   denial. It pairs with the enclosing read tool's `tool.failed`

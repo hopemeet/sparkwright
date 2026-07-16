@@ -118,13 +118,16 @@ describe("withSpanSync", () => {
     const log = new EventLog(createRunId());
     const result = withSpanSync(
       log,
-      { startType: "validation.started", endType: "validation.completed" },
+      {
+        startType: "context.compaction.started",
+        endType: "context.compaction.completed",
+      },
       () => 7,
     );
     expect(result).toBe(7);
     expect(log.all().map((e) => e.type)).toEqual([
-      "validation.started",
-      "validation.completed",
+      "context.compaction.started",
+      "context.compaction.completed",
     ]);
   });
 });

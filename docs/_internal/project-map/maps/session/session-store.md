@@ -10,6 +10,11 @@ See [../trace/raw-trace.md](../trace/raw-trace.md) for raw event evidence.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T13:36:30+0800
+- Scope: Session traces no longer contain validation-hook lifecycle spans; current `validation.failed` diagnostics remain persisted without layout changes.
+- Read: Core event/trace codecs, session storage, schemas, and trace tests.
+- Tests: focused trace/session tests; npm run build; npm run typecheck:test; npm run release:check.
+
 - Date: 2026-07-16T12:45:00+0800
 - Scope: Run metadata and Workflow authorization snapshots persist canonical accessMode rather than duplicate permission/write fields.
 - Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.

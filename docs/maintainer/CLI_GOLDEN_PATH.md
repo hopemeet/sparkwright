@@ -57,7 +57,6 @@ The write path should include these high-signal events:
 - `artifact.created`
 - `workspace.write.completed` or `workspace.write.denied`
 
-Validation hooks, when configured by a caller, should emit
-`validation.started`, `validation.completed`, and `validation.failed`. CLI
-progress output should include the validation stage, hook name, and first
-finding code for failed validations.
+Run-input and extension validation failures emit `validation.failed`. CLI
+progress output should include the validation stage, source name, and first
+finding code.

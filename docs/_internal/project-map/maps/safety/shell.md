@@ -10,6 +10,11 @@ See [workspace-writes.md](workspace-writes.md) and [../../modules/coding-tools.m
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T13:36:30+0800
+- Scope: Shell workflow rules continue through canonical `WorkflowHook` matching and effects; removing `ValidationHook` did not change shell classification, policy, approval, or sandbox boundaries.
+- Read: host workflow hooks, shell policy/sandbox paths, and focused tests.
+- Tests: focused Host/shell workflow tests; npm run build; npm run typecheck:test; npm run release:check.
+
 - Date: 2026-07-16T12:45:00+0800
 - Scope: Shell and Workflow process sandbox write grants derive from canonical access mode; shell policy and containment remain unchanged.
 - Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.

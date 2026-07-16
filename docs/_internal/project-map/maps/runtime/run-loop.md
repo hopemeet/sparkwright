@@ -10,6 +10,11 @@ See [tool-orchestration.md](tool-orchestration.md) and [../trace/raw-trace.md](.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T13:36:30+0800
+- Scope: Run-loop policy is single-track through `WorkflowHook`; legacy tool-result, post-sampling, pre-terminal, and final-output validation stages were removed.
+- Read: Core run/workflow hook sources, focused run-loop tests, and current extension/protocol docs.
+- Tests: focused Core workflow tests; npm run build; npm run typecheck:test; npm run release:check.
+
 - Date: 2026-07-16T12:45:00+0800
 - Scope: Run start/resume compile canonical accessMode once before policy/tool assembly; Core still executes the derived immutable fields.
 - Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.

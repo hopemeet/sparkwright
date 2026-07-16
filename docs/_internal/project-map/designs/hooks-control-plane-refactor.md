@@ -1,14 +1,15 @@
 # Design: Hooks Control Plane Refactor
 
-> Proposed design with P0 active-rule inspection plus the first P1/P2
-> compatibility slices implemented. This is not the active routing map. Current
+> Historical design. The 2026-07-16 simplification removed `ValidationHook`
+> and its stage executor after confirming there were no production consumers;
+> `WorkflowHook` is now the only deterministic policy surface. This is not the active routing map. Current
 > hook contracts still live in
 > [../modules/core.md](../modules/core.md),
 > [../modules/host.md](../modules/host.md),
 > [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md),
 > [../maps/runtime/tool-orchestration.md](../maps/runtime/tool-orchestration.md),
 > `packages/core/src/workflow-hooks.ts`,
-> `packages/core/src/hooks.ts`, `packages/core/src/validation.ts`,
+> `packages/core/src/hooks.ts`,
 > `packages/core/src/user-hooks.ts`, and `packages/host/src/workflow-hooks.ts`.
 
 ## 1. Problem Statement

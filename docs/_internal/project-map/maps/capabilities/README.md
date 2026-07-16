@@ -8,6 +8,11 @@ cron, shell/task tools, and capability inspection.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T13:36:30+0800
+- Scope: Configured deterministic rules compile only to `WorkflowHook`; the removed Core validation-hook lane had no capability/config producer.
+- Read: host capability assembly and workflow hook compiler plus Core run contracts.
+- Tests: focused Host capability/workflow tests; npm run build; npm run typecheck:test; npm run release:check.
+
 - Date: 2026-07-16T12:45:00+0800
 - Scope: Capability inspection accepts and reports only accessMode plus backgroundTasks; compiled permission/write diagnostics were removed.
 - Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.

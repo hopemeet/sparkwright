@@ -233,8 +233,6 @@ Current event types:
 - `agent.profile.derived`
 - `agent.routing.evaluated`
 - `prompt.built`: provider-neutral prompt messages were rendered. Payloads include message/section counts, section metadata, and cache block summaries (`cacheBlocks`, `stablePrefixBlockCount`) so provider adapters and trace sinks can reason about prompt-cache reuse.
-- `validation.started`
-- `validation.completed`
 - `validation.failed`
 - `tool.requested`
 - `tool.batch.requested`
@@ -641,54 +639,28 @@ Before re-issuing a retryable call the loop waits `delayMs` (also recorded on th
 
 Provider adapters should avoid hidden internal retries when possible. The AI SDK adapter defaults provider-level retries to `0` so SparkWright can emit each `model.requested` and `model.retrying` event itself. Non-recoverable provider errors such as OpenAI-compatible `insufficient_quota`, `invalid_api_key`, and `model_not_found` are treated as non-retryable even when the HTTP status is `429`.
 
-### Validation Events
+### Validation Failure Events
 
-Validation hooks let applications turn code-owned checks into first-class
-harness evidence. v0 hooks can run at `tool_result`, `workspace_write`,
-`pre_terminal`, `post_sampling`, and `final_output`.
-
-For project-facing workflow rules, prefer `workflow_hook.*` through
-`capabilities.hooks.workflow` or `createRun({ workflowHooks })`: use
-`PreToolUse` for tool gates, `PostToolUse` for checks after actions, and
-`Stop` for "do not finish yet" gates. Keep validation hooks for embedder-owned
-proposal/content validation that needs code access to the subject.
-
-`validation.started` payload:
+`validation.failed` records fail-closed run-input checks and recoverable
+extension failures such as prefetch or observation-summary errors. Project
+workflow policy uses `workflow_hook.*` through
+`capabilities.hooks.workflow` or `createRun({ workflowHooks })`.
 
 ```json
 {
-  "hookName": "final-answer-policy",
-  "stage": "final_output",
-  "metadata": {
-    "step": 3
-  }
-}
-```
-
-`validation.completed` and `validation.failed` payloads include the hook result:
-
-```json
-{
-  "hookName": "write-policy",
-  "stage": "workspace_write",
+  "hookName": "run_input",
+  "stage": "input",
   "result": {
-    "status": "failed",
     "findings": [
       {
-        "code": "README_LOCKED",
-        "message": "README writes are locked.",
+        "code": "WORKSPACE_NOT_FOUND",
+        "message": "Workspace does not exist.",
         "severity": "error"
       }
     ]
-  },
-  "metadata": {
-    "path": "README.md",
-    "proposalId": "write_01h"
   }
 }
 ```
-
-Tool-result validation failures are returned to the model as failed tool observations so the model can recover. Workspace-write validation failures emit `workspace.write.denied` and prevent mutation. `pre_terminal` validation failures inject continuation context and keep the loop running for compatibility with older stop-hook integrations. Final-output validation failures fail the run with `stopReason: "validation_failed"` and failure category `validation`. For new project-facing policy, prefer `WorkflowHook` / `capabilities.hooks.workflow`; keep `ValidationHook` for embedder-owned validation and workspace-write internals.
 
 ### Context Compaction Request
 

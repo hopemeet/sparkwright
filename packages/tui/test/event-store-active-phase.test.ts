@@ -170,28 +170,6 @@ describe("EventStore active phase projection", () => {
     expect(store.getSnapshot().activePhase).toBeNull();
   });
 
-  it("shows validation above a quiet model phase", () => {
-    const store = new EventStore();
-
-    store.appendEvent(
-      ev("model.turn.started", 1, {}, { runId: "r1", spanId: "m1" }),
-    );
-    store.appendEvent(
-      ev("validation.started", 2, {}, { runId: "r1", spanId: "v1" }),
-    );
-
-    expect(store.getSnapshot().activePhase).toMatchObject({
-      kind: "validation",
-      message: "validating",
-    });
-
-    store.appendEvent(
-      ev("validation.completed", 3, {}, { runId: "r1", spanId: "v1" }),
-    );
-
-    expect(store.getSnapshot().activePhase?.message).toBe("thinking");
-  });
-
   it("shows the running subagent over the delegate tool that launched it", () => {
     const store = new EventStore();
 

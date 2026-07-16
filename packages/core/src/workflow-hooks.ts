@@ -3,14 +3,20 @@
 //
 // WorkflowHook is the deterministic, user-facing hook layer over the agent
 // lifecycle. Keep the public lifecycle vocabulary small; add matcher fields and
-// payload metadata before adding new hook names. Legacy RunHook and
-// ValidationHook remain supported for embedders that need lower-level seams.
+// payload metadata before adding new hook names. RunHook remains available for
+// embedders that need low-level instrumentation.
 // =============================================================================
 
 import type { EventEmitter, EventLog } from "./events.js";
 import type { FactLedgerReader } from "./fact-ledger.js";
 import type { ContextItem, RunRecord } from "./types.js";
-import type { ValidationFinding } from "./validation.js";
+
+export interface WorkflowHookFinding {
+  code: string;
+  message: string;
+  severity?: "info" | "warning" | "error";
+  metadata?: Record<string, unknown>;
+}
 
 export type WorkflowHookName =
   | "RunStart"
@@ -63,7 +69,7 @@ export type WorkflowHookResult =
   | {
       status: "block";
       reason: string;
-      findings?: ValidationFinding[];
+      findings?: WorkflowHookFinding[];
       metadata?: Record<string, unknown>;
     }
   | {
@@ -128,7 +134,7 @@ export interface WorkflowHookBlock {
   hookName: string;
   hookId?: string;
   reason: string;
-  findings?: ValidationFinding[];
+  findings?: WorkflowHookFinding[];
   metadata?: Record<string, unknown>;
 }
 

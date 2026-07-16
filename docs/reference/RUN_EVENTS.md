@@ -137,8 +137,8 @@ arguments.
 `tool.completed` and `tool.failed` are the terminal tool events. Their metadata
 may include diagnostic stage timings such as `schemaValidationMs`,
 `inputValidationMs`, `policyForArgsMs`, `policyDecisionMs`, `approvalWaitMs`,
-`executionMs`, and `resultValidationMs`. Treat these as optional observability
-fields; do not infer success/failure from their presence.
+and `executionMs`. Treat these as optional observability fields; do not infer
+success/failure from their presence.
 
 When a deferred tool call fails argument schema validation before its schema has
 been loaded into the model request, the `tool.failed` error metadata may include

@@ -1,6 +1,6 @@
 // =============================================================================
 // pipeline.ts — Loop-adjacent extension points (compaction, summarization,
-// prefetch, stop hooks, post-sampling hooks). These are the "edges" the
+// prefetch). These are the "edges" the
 // reference run loop talks to in addition to the model adapter and tool
 // registry. Each interface is optional; the loop degrades gracefully when
 // nothing is wired up.
@@ -10,11 +10,6 @@
 //   relieved or all stages are exhausted). The reference sequence is
 //   cheap edits first, model-backed last:
 //   `applyToolResultBudget → snip → micro → collapse → auto`.
-// - Legacy stop hooks are a stage of ValidationHook (`pre_terminal`) that can
-//   block run completion and inject a continuation note. New project-facing
-//   stop gates should use WorkflowHook `Stop`.
-// - Post-sampling hooks are explicitly fire-and-forget — they observe model
-//   output but cannot influence the loop. Errors are surfaced as events.
 // - The summarizer is opt-in async; the loop awaits it just before the next
 //   model call and inserts the summary as a `summary` ContextItem.
 // =============================================================================

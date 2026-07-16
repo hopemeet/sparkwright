@@ -232,8 +232,8 @@ transport exists.
 
 Use `capabilities.hooks.workflow` for checked-in project rules: block
 forbidden paths, inject project context, run tests after writes, or prevent
-final answers until verification has happened. Lower-level `RunHook`,
-`ValidationHook`, and `UserHookRunner` APIs are for SDK embedders and host
+final answers until verification has happened. Lower-level `RunHook` and
+`UserHookRunner` APIs are for SDK embedders and host
 integrations, not the usual project config surface.
 For guardrails that should apply only to one configured delegate profile, use
 `capabilities.agents.profiles[].hooks` instead of global workflow hooks.

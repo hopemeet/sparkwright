@@ -13,6 +13,11 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md),
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T13:36:30+0800
+- Scope: Removed the public `ValidationHook` stage executor and `CreateRunOptions.validationHooks`; `WorkflowHook` is the sole deterministic run-policy surface, while workspace policy/approval enforcement remains intact.
+- Read: core run/workspace/workflow/event sources, focused tests, protocol schema, and current reference documentation.
+- Tests: focused Core/Host/TUI tests; npm run build; npm run typecheck:test; npm run release:check.
+
 - Date: 2026-07-16T13:21:00+0800
 - Scope: Core accepts only `InteractionChannel` for outbound approvals, questions, and notifications; resolver compatibility adapters and precedence fallback were removed.
 - Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.
@@ -113,8 +118,7 @@ Does not own:
   derivative, not an unresolved model argument error.
 - Terminal tool events can include stage timing metadata
   (`schemaValidationMs`, `inputValidationMs`, `policyForArgsMs`,
-  `policyDecisionMs`, `approvalWaitMs`, `executionMs`,
-  `resultValidationMs`). These are diagnostic metadata on existing
+  `policyDecisionMs`, `approvalWaitMs`, `executionMs`). These are diagnostic metadata on existing
   `tool.completed` / `tool.failed` events, not a new event family.
 - `workflow.*` event names in `events.ts` are trace vocabulary used by
   host-owned workflow projections and host-owned built-in invariant
@@ -338,10 +342,10 @@ Does not own:
   see the rewritten payload before budget, repeat, policy, approval, and
   execution. Host-owned
   `capabilities.hooks.events` uses the user-hook event lane outside the awaited
-  workflow hook executor. `RunHook.beforeToolCall.skip` and `ValidationHook`
-  remain supported lower-level seams for embedders, telemetry, workspace-write
-  internals, and compatibility, not the recommended surface for new project
-  policy.
+  workflow hook executor. `RunHook.beforeToolCall.skip` remains a lower-level
+  embedder/instrumentation seam, not the recommended surface for project
+  policy. The parallel `ValidationHook` stage executor has been removed;
+  deterministic policy belongs to `WorkflowHook`.
 - Trace safety summaries count `workspace.write.untracked_access_granted` as
   `untrackedWriteCapableProcesses` for compatibility, separate from managed
   `workspace.write.completed` counts.

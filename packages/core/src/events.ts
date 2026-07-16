@@ -95,8 +95,6 @@ export type EventType =
   | "agent.profile.derived"
   | "agent.routing.evaluated"
   | "prompt.built"
-  | "validation.started"
-  | "validation.completed"
   | "validation.failed"
   | "tool.requested"
   | "tool.batch.requested"

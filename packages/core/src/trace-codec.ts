@@ -131,9 +131,6 @@ function standardPayload(event: SparkwrightEvent): unknown {
         "reasons",
         "metadata",
       ]);
-    case "validation.started":
-      return pick(event.payload, ["hookName", "stage", "metadata"]);
-    case "validation.completed":
     case "validation.failed":
       return summarizeValidationEvent(event.payload);
     case "tool.completed":

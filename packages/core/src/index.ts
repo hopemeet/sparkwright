@@ -334,13 +334,6 @@ export {
   applyAnchoredEdits,
 } from "./anchored-edit.js";
 
-// Validation
-export type * from "./validation.js";
-export {
-  validationFailureMessage,
-  kickPostSamplingHooks,
-} from "./validation.js";
-
 // Loop pipeline extensions (compaction, prefetch, summarizer)
 export type {
   CompactionTrigger,
@@ -672,6 +665,7 @@ export { combineRunHooks, createDynamicHookSet } from "./hooks.js";
 // Deterministic workflow hooks over the standard agent lifecycle.
 export type {
   WorkflowHookName,
+  WorkflowHookFinding,
   WorkflowPreToolUseStage,
   WorkflowRuntimeSignal,
   WorkflowHookMatchValue,

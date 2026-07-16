@@ -10,6 +10,11 @@ See [../safety/workspace-writes.md](../safety/workspace-writes.md), [../safety/s
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T13:36:30+0800
+- Scope: Removed the parallel post-execution `ValidationHook` result gate and its `resultValidationMs` timing; canonical `PostToolUse` workflow hooks remain the post-action policy path.
+- Read: tool execution/recording paths, workflow hooks, trace timing docs, and focused tests.
+- Tests: focused Core tool/workflow tests; npm run build; npm run typecheck:test; npm run release:check.
+
 - Date: 2026-07-16T12:45:00+0800
 - Scope: Tool orchestration consumes one frozen access plan compiled from accessMode; catalog membership and tool-specific safety gates remain unchanged.
 - Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.
@@ -347,9 +352,9 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
   soft-recovery phase.
 - Terminal `tool.completed` / `tool.failed` events carry stage timing metadata
   when those phases ran: `schemaValidationMs`, `inputValidationMs`,
-  `policyForArgsMs`, `policyDecisionMs`, `approvalWaitMs`, `executionMs`, and
-  `resultValidationMs`. `approvalWaitMs` covers only the approval resolver wait,
-  not policy decision time.
+  `policyForArgsMs`, `policyDecisionMs`, `approvalWaitMs`, and `executionMs`.
+  `approvalWaitMs` covers only the interaction-channel approval wait, not
+  policy decision time.
 - Core duplicate diagnostics distinguish same-concurrent-batch
   `in_flight_duplicate` calls from completed-result repeats. In-flight
   duplicates receive an accurate skipped tool result and do not mark the target

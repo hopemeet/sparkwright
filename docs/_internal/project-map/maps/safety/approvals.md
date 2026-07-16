@@ -10,6 +10,11 @@ See [workspace-writes.md](workspace-writes.md) and [shell.md](shell.md).
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T13:36:30+0800
+- Scope: Removing `ValidationHook` does not weaken approval ordering: policy still runs before the canonical interaction-channel approval, and managed workspace writes remain approval-gated.
+- Read: Core run/workspace policy and approval paths plus focused safety tests.
+- Tests: focused approval/workspace tests; npm run build; npm run typecheck:test; npm run release:check.
+
 - Date: 2026-07-16T13:21:00+0800
 - Scope: `InteractionChannel` is the only Core outbound approval/question/notification boundary; the direct approval resolver option and adapter bridges were removed.
 - Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.

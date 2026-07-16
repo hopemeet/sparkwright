@@ -106,13 +106,6 @@ import {
   type ToolDefinition,
   type ToolDescriptor,
 } from "./tools.js";
-import {
-  kickPostSamplingHooks,
-  runValidationHooks,
-  validationFailureMessage,
-  type ValidationFailure,
-  type ValidationHook,
-} from "./validation.js";
 import type {
   ContextItem,
   ModelAdapter,
@@ -307,7 +300,6 @@ interface ToolStageTimings {
   policyDecisionMs?: number;
   approvalWaitMs?: number;
   executionMs?: number;
-  resultValidationMs?: number;
 }
 
 interface DeferredToolObservation {
@@ -370,8 +362,7 @@ export interface CreateRunOptions {
    * higher-level than RunHook and are intended for rules that must happen at
    * known lifecycle points (tool gates, post-tool checks, stop gates, runtime
    * signals). This is the preferred surface for project-facing workflow
-   * policy. Legacy `hooks` and `validationHooks` remain supported for
-   * embedders and compatibility.
+   * policy. Low-level `hooks` remain available for instrumentation.
    */
   workflowHooks?: WorkflowHook[];
   /**
@@ -414,7 +405,6 @@ export interface CreateRunOptions {
   observationSummarizer?: ObservationSummarizer;
   observationFormatter?: ObservationFormatter;
   promptBuilder?: PromptBuilder<PromptMessage[]>;
-  validationHooks?: ValidationHook[];
   runBudget?: RunBudget;
   /**
    * Ancestor-owned work-budget accounts consumed by this run. Orchestrators
@@ -428,7 +418,6 @@ export interface CreateRunOptions {
   toolTimeoutMs?: number;
   maxToolConcurrency?: number;
   doomLoopRepeatLimit?: number;
-  finalOutputValidation?: "fail" | "continue";
   /**
    * Maximum number of `extend_output` recoveries the loop will attempt per
    * run. Default 3.
@@ -718,7 +707,6 @@ export class SparkwrightRun implements RunHandle {
   private readonly contextBudget?: ContextBudget;
   private readonly observationFormatter: ObservationFormatter;
   private readonly promptBuilder: PromptBuilder<PromptMessage[]>;
-  private readonly validationHooks: ValidationHook[];
   private readonly workflowHooks: WorkflowHook[];
   private readonly factLedger = new FactLedger();
   private readonly runHealth = new RunHealthAnalyzer();
@@ -735,7 +723,6 @@ export class SparkwrightRun implements RunHandle {
   private readonly toolTimeoutMs?: number;
   private readonly maxToolConcurrency: number;
   private readonly doomLoopRepeatLimit: number;
-  private readonly finalOutputValidation: "fail" | "continue";
   private readonly maxOutputRecoveries: number;
   private outputRecoveriesUsed = 0;
   private readonly forcedContinuationBudget: ForcedContinuationBudgetLedger;
@@ -842,7 +829,6 @@ export class SparkwrightRun implements RunHandle {
           events: this.events,
           policy: this.policy,
           interactionChannel: this.interactionChannel,
-          validationHooks: options.validationHooks,
           setState: (state) => this.setState(state),
           checkpointStore: options.workspaceCheckpointStore,
         })
@@ -854,7 +840,6 @@ export class SparkwrightRun implements RunHandle {
     this.observationFormatter =
       options.observationFormatter ?? new DefaultObservationFormatter();
     this.promptBuilder = options.promptBuilder ?? new DefaultPromptBuilder();
-    this.validationHooks = [...(options.validationHooks ?? [])];
     this.workflowHooks = [...(options.workflowHooks ?? [])];
     // Default to deterministic, self-gating stages when the embedder does not
     // configure their own. An explicit empty array disables compaction.
@@ -885,7 +870,6 @@ export class SparkwrightRun implements RunHandle {
     this.maxToolConcurrency = options.maxToolConcurrency ?? 10;
     this.doomLoopRepeatLimit =
       options.doomLoopRepeatLimit ?? DEFAULT_DOOM_LOOP_TOOL_CALL_REPEAT_LIMIT;
-    this.finalOutputValidation = options.finalOutputValidation ?? "fail";
     this.maxOutputRecoveries = options.maxOutputRecoveries ?? 3;
     this.forcedContinuationBudget = new ForcedContinuationBudgetLedger(
       resolveForcedContinuationBudgetConfig(options),
@@ -1538,16 +1522,6 @@ export class SparkwrightRun implements RunHandle {
         };
         this.lastLoopState = cloneLoopState(state);
       }
-      // Fire post_sampling hooks fire-and-forget so they observe model output
-      // without blocking the loop. Failures are logged via validation events.
-      kickPostSamplingHooks({
-        hooks: this.validationHooks,
-        stage: "post_sampling",
-        run: this.record,
-        subject: output,
-        metadata: { step: state.step },
-        events: this.events,
-      });
       const outputBudgetFailure = this.checkRunBudget("model_completed", {
         step: state.step,
       });
@@ -1557,76 +1531,6 @@ export class SparkwrightRun implements RunHandle {
 
       // --- Phase 6: terminal branch ---------------------------------------
       if (toolCalls.length === 0) {
-        // pre_terminal stop hook: a failed hook here BLOCKS termination and
-        // converts itself into a continuation context item.
-        const stopHookFailure = await this.runValidation(
-          "pre_terminal",
-          output.message,
-          { step: state.step },
-        );
-        if (stopHookFailure) {
-          const continuation = this.formatStopHookContinuation(
-            stopHookFailure,
-            state.step,
-          );
-          this.events.emit("validation.failed", {
-            hookName: stopHookFailure.hookName,
-            stage: "pre_terminal",
-            result: stopHookFailure.result,
-            metadata: { step: state.step, blockedTermination: true },
-          });
-          state = {
-            ...state,
-            context: [...state.context, continuation],
-            step: state.step + 1,
-            turnCount: state.turnCount + 1,
-            transition: {
-              reason: "stop_hook_blocked",
-              metadata: { hookName: stopHookFailure.hookName },
-            },
-          };
-          this.lastLoopState = cloneLoopState(state);
-          continue;
-        }
-
-        const validationFailure = await this.runValidation(
-          "final_output",
-          output.message,
-          { step: state.step },
-        );
-        if (validationFailure) {
-          if (this.finalOutputValidation === "continue") {
-            state = {
-              ...state,
-              context: [
-                ...state.context,
-                this.formatValidationFailureContext(
-                  validationFailure,
-                  state.step,
-                ),
-              ],
-              step: state.step + 1,
-              turnCount: state.turnCount + 1,
-              transition: {
-                reason: "validation_continuation",
-                metadata: { hookName: validationFailure.hookName },
-              },
-            };
-            this.lastLoopState = cloneLoopState(state);
-            continue;
-          }
-
-          return this.fail(
-            "validation_failed",
-            "VALIDATION_FAILED",
-            validationFailureMessage(validationFailure),
-            {
-              stage: "final_output",
-              validation: validationFailure,
-            },
-          );
-        }
-
         const stopHooks = await this.runWorkflowHookPhase(
           "Stop",
           {
@@ -2384,33 +2288,6 @@ export class SparkwrightRun implements RunHandle {
     return new Promise((resolve) => {
       signal.addEventListener("abort", () => resolve(), { once: true });
     });
-  }
-
-  private formatStopHookContinuation(
-    failure: ValidationFailure,
-    step: number,
-  ): ContextItem {
-    return {
-      id: (this.loopServices.createContextItemId ?? createContextItemId)(),
-      type: "summary",
-      source: { kind: "validation", uri: failure.hookName },
-      content: JSON.stringify({
-        stage: "pre_terminal",
-        status: "blocked_termination",
-        hookName: failure.hookName,
-        message: validationFailureMessage(failure),
-        result: failure.result,
-        guidance:
-          "A stop hook prevented this run from terminating. Address the finding and continue.",
-      }),
-      metadata: {
-        layer: "working",
-        stability: "turn",
-        step,
-        stopHookContinuation: true,
-        hookName: failure.hookName,
-      },
-    };
   }
 
   private formatWorkflowHookBlockContinuation(
@@ -3560,18 +3437,10 @@ export class SparkwrightRun implements RunHandle {
       },
     );
     timings.executionMs = elapsedMs(executionStartedAt);
-    const checkedResult = await this.applyToolResultValidation(
-      requestedCall.toolName,
-      result,
-      {
-        step: state.step,
-      },
-      timings,
-    );
     const normalizedResult =
       requestedCall.toolName === "skill_load"
-        ? this.normalizeSkillLoadResult(checkedResult)
-        : checkedResult;
+        ? this.normalizeSkillLoadResult(result)
+        : result;
     const annotatedResult =
       normalizedResult.status === "failed"
         ? this.annotateReplayRiskOnFailure(call.toolName, normalizedResult)
@@ -4259,36 +4128,8 @@ export class SparkwrightRun implements RunHandle {
       policyDecisionMs: timings.policyDecisionMs,
       approvalWaitMs: timings.approvalWaitMs,
       executionMs: timings.executionMs,
-      resultValidationMs: timings.resultValidationMs,
     });
     return Object.keys(metadata).length > 0 ? metadata : undefined;
-  }
-
-  private formatValidationFailureContext(
-    validationFailure: ValidationFailure,
-    step: number,
-  ): ContextItem {
-    return {
-      id: (this.loopServices.createContextItemId ?? createContextItemId)(),
-      type: "summary",
-      source: {
-        kind: "validation",
-        uri: validationFailure.hookName,
-      },
-      content: JSON.stringify({
-        stage: "final_output",
-        status: "failed",
-        message: validationFailureMessage(validationFailure),
-        result: validationFailure.result,
-      }),
-      metadata: {
-        layer: "working",
-        stability: "turn",
-        step,
-        validationContinuation: true,
-        hookName: validationFailure.hookName,
-      },
-    };
   }
 
   private formatRunHealthFeedbackContext(
@@ -4323,52 +4164,6 @@ export class SparkwrightRun implements RunHandle {
           : {}),
       },
     };
-  }
-
-  private async applyToolResultValidation(
-    toolName: string,
-    result: ToolResult,
-    metadata: Record<string, unknown>,
-    timings?: ToolStageTimings,
-  ): Promise<ToolResult> {
-    const startedAt = Date.now();
-    const validationFailure = await this.runValidation("tool_result", result, {
-      ...metadata,
-      toolName,
-      toolCallId: result.toolCallId,
-      status: result.status,
-    });
-    if (timings) timings.resultValidationMs = elapsedMs(startedAt);
-    if (!validationFailure) return result;
-
-    return {
-      toolCallId: result.toolCallId,
-      status: "failed",
-      error: {
-        code: "VALIDATION_FAILED",
-        message: validationFailureMessage(validationFailure),
-        metadata: {
-          stage: "tool_result",
-          validation: validationFailure,
-        },
-      },
-      artifacts: result.artifacts,
-    };
-  }
-
-  private runValidation(
-    stage: Parameters<typeof runValidationHooks>[0]["stage"],
-    subject: unknown,
-    metadata: Record<string, unknown>,
-  ): Promise<ValidationFailure | undefined> {
-    return runValidationHooks({
-      hooks: this.validationHooks,
-      stage,
-      run: this.record,
-      subject,
-      metadata,
-      events: this.events,
-    });
   }
 
   private runWorkflowHookPhase<TPayload>(

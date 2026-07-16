@@ -12,6 +12,11 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T13:36:30+0800
+- Scope: Host workflow actions now use the workflow-owned `WorkflowHookFinding` type; no host production path supplied the removed Core validation-hook lane.
+- Read: host workflow hook compiler/executor, core workflow contracts, focused tests, and current hook documentation.
+- Tests: focused Host workflow tests; npm run build; npm run typecheck:test; npm run release:check.
+
 - Date: 2026-07-16T13:21:00+0800
 - Scope: Host routes pending approvals through an approval-only `InteractionChannel`; main runs, configured delegates, and dynamic child grants no longer carry a parallel resolver field.
 - Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.

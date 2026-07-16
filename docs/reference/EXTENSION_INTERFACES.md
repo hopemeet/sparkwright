@@ -494,7 +494,7 @@ in-process observability around the run loop. Prefer `WorkflowHook` or
 `capabilities.hooks.workflow` for project-facing rules such as "do not edit
 generated files", "run tests after writes", or "do not stop until verification
 has happened". Keep `RunHook` for SDK, plugin, telemetry, and narrow
-compatibility cases where code needs direct access to model/tool boundaries.
+in-process integrations that need direct access to model/tool boundaries.
 
 Supported callbacks:
 
@@ -542,9 +542,6 @@ Use this decision rule:
   `capabilities.hooks.workflow`.
 - Code-level deterministic workflow policy:
   `createRun({ workflowHooks })`.
-- Proposal/content validation owned by an embedder:
-  low-level `ValidationHook`. New project-facing validation should compile into
-  workflow hooks or rule packs.
 - In-process telemetry or loop instrumentation:
   `RunHook`.
 - External event subscribers owned by a host:
