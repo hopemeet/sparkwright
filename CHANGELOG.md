@@ -111,6 +111,9 @@ All notable changes to Sparkwright will be documented in this file.
 
 ### Changed
 
+- Markdown Agent identity now comes only from the `.md` filename stem.
+  Frontmatter `id` and the hidden `create_agent` `id` argument are no longer
+  read; model-facing authoring uses canonical `name`.
 - `@sparkwright/agent-runtime` `InMemoryActorNotificationQueue` bounded
   capacity semantics changed for reliable task notifications. When
   `maxBufferedNotifications` is set, lossy actor notifications may still be

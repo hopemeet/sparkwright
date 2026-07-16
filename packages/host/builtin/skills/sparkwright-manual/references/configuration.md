@@ -427,8 +427,9 @@ spawning. Sub-agents cannot create background tasks; `task_create` remains a
 top-level run capability.
 Non-`main` profiles that omit `mode` default to child/delegate agents and are
 callable through `delegate_agent` by `agentId` unless they set
-`exposeAsDelegate: false`; `id: main` or `mode: primary` marks the primary
-profile and is excluded from delegate targets. Profile `model` wins, then
+`exposeAsDelegate: false`; a Markdown file named `main.md`, a config profile
+whose id is `main`, or `mode: primary` marks the primary profile and is
+excluded from delegate targets. Profile `model` wins, then
 `capabilities.agents.delegateModel`, then the parent run model for in-process
 delegates. Inline profile `delegateTool` blocks and explicit `delegateTools`
 entries define optional direct aliases; `exposure`, `pinnedDelegates`, and

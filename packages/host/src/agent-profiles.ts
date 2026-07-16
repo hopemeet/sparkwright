@@ -83,11 +83,6 @@ const AGENT_PROFILE_HOOK_FREQUENCIES = new Set<
   NonNullable<AgentProfileWorkflowHook["frequency"]>
 >(["always", "oncePerTurn"]);
 
-// Agent id charset. `:` is accepted so authors can write explicit namespaced
-// ids (e.g. `review:foo`); ids are still flat by default (path is never
-// auto-derived into the id). Mirrors isAgentId in cli.ts / tools.ts.
-const AGENT_ID_PATTERN = /^[A-Za-z0-9_.:-]{1,64}$/;
-
 /** A within-layer id collision discovered while scanning an agents tree. */
 export interface AgentProfileCollision {
   id: string;
@@ -237,7 +232,7 @@ async function collectAgentProfileFileEntriesInDir(
       };
       // Fail closed: keep the first file for this id and drop the rest, instead
       // of silently last-wins. The dropped file is reported so authors can fix
-      // the ambiguity (or move to an explicit namespaced id).
+      // the ambiguous basename.
       options.onCollision?.({
         id: profile.id,
         keptSource: existing.source,
@@ -309,22 +304,18 @@ export async function resolveAgentProfiles(
 }
 
 /**
- * Parse one agent markdown file into an AgentProfile. The id defaults to the
- * filename (`fallbackId`); a frontmatter `id` may override it with an explicit
- * (possibly namespaced, e.g. `review:foo`) id. The path is never auto-derived
- * into the id.
+ * Parse one agent markdown file into an AgentProfile. The filename stem is the
+ * sole profile id; frontmatter cannot redirect identity to another file name.
+ * The parent path is never folded into the id.
  */
 export function parseAgentProfileFile(
-  fallbackId: string,
+  fileId: string,
   raw: string,
 ): AgentProfile {
   const { frontmatter, body } = splitMarkdownFrontmatter(raw, {
     parseFrontmatter: parseAgentFrontmatterBlock,
   });
-  const explicitId = scalar(frontmatter, "id");
-  const id =
-    explicitId && AGENT_ID_PATTERN.test(explicitId) ? explicitId : fallbackId;
-  const profile: AgentProfile = { id };
+  const profile: AgentProfile = { id: fileId };
 
   const name = scalar(frontmatter, "name");
   if (name) profile.name = name;
@@ -345,7 +336,7 @@ export function parseAgentProfileFile(
   if (triggers.length > 0) profile.triggers = triggers;
   const when = profileWhen(frontmatter);
   if (when) profile.when = when;
-  const hooks = parseAgentProfileWorkflowHooks(frontmatter.hooks, id);
+  const hooks = parseAgentProfileWorkflowHooks(frontmatter.hooks, fileId);
   if (hooks) profile.hooks = hooks;
 
   const maxSteps = integer(frontmatter, "maxsteps");

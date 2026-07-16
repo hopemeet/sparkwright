@@ -151,6 +151,16 @@ describe("host tools", () => {
     expect(
       (tool.inputSchema as { properties: Record<string, unknown> }).properties,
     ).not.toHaveProperty("id");
+    await expect(
+      tool.execute(
+        {
+          action: "create",
+          id: "legacy-reviewer",
+          prompt: "Review changes.",
+        },
+        ctx,
+      ),
+    ).rejects.toMatchObject({ code: "TOOL_ARGUMENTS_INVALID" });
     const created = await tool.execute(
       {
         action: "create",
@@ -244,10 +254,9 @@ describe("host tools", () => {
     expect(ctx.capabilityMutations).toEqual([]);
   });
 
-  it("fails post-write validation when another Markdown file owns the same logical id", async () => {
+  it("fails post-write validation when another Markdown file owns the same basename", async () => {
     const ctx = await createWorkspace({
-      ".sparkwright/agents/a/owner.md":
-        "---\nid: reviewer\n---\nExisting reviewer.\n",
+      ".sparkwright/agents/a/reviewer.md": "Existing reviewer.\n",
     });
     const tool = createMarkdownAgentManagerTool(ctx.workspaceRoot);
     await expect(

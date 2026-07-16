@@ -248,12 +248,12 @@ Phase 5 generates only the single Markdown file. Folder Agent packages are
 deferred until references/scripts/templates have explicit runtime contracts.
 Before introducing an `AGENT.md` sentinel, doctor must warn that current
 recursive discovery parses files such as `reviewer/AGENT.md` as an ordinary
-Markdown profile whose fallback id is `AGENT`; migration must never silently
-change that meaning.
+Markdown profile whose filename-derived id is `AGENT`; migration must never
+silently change that meaning.
 
-In a future folder form, the folder name supplies only the default id. A valid
-frontmatter `id` may supply a namespaced logical id, and collisions are judged
-by logical id rather than basename or folder path.
+In a future folder form, the folder name remains the sole id. Frontmatter does
+not redirect identity; collisions are judged by that canonical folder or
+single-file name.
 
 Agent spawn/delegate events must capture the resolved Agent identity and package
 identity at the event boundary. Stats must not infer an older invocation's
@@ -406,6 +406,16 @@ history, receipt, recovery, and four-entry command-service convergence.
   projection caches?
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-16T23:38:00+0800
+- Scope: aligned Phase 5 and the future folder form with filename-only Markdown
+  Agent identity; frontmatter no longer redirects logical identity.
+- Read: Host Markdown parser/authoring, Agent capability/module maps, public
+  Agent docs, and focused tests.
+- Tests: Host Agent profile/tools 125/125; focused Host protocol collision 1/1;
+  CLI Agent/capability routes 7/7; Host, Agent Runtime, and CLI typechecks;
+  repository test typecheck; project-map drift; full release gate.
 
 - Status: Verified
 - Date: 2026-07-12T20:00:00+0800

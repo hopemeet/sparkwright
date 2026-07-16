@@ -67,18 +67,10 @@ describe("parseAgentProfileFile", () => {
     expect(profile.prompt).toBe("You triage issues.");
   });
 
-  it("honors an explicit namespaced frontmatter id over the filename", () => {
+  it("uses the filename when frontmatter declares another id", () => {
     const profile = parseAgentProfileFile(
       "foo",
       ["---", "id: review:foo", "mode: child", "---", "body"].join("\n"),
-    );
-    expect(profile.id).toBe("review:foo");
-  });
-
-  it("falls back to the filename when the frontmatter id is invalid", () => {
-    const profile = parseAgentProfileFile(
-      "foo",
-      ["---", "id: not a valid id!", "---", "body"].join("\n"),
     );
     expect(profile.id).toBe("foo");
   });
@@ -486,24 +478,6 @@ describe("discoverProjectAgentProfiles collisions", () => {
     // "audit" sorts before "review", so the audit file is kept (first wins).
     expect(foos[0]!.name).toBe("AuditFoo");
     expect(collisions).toEqual([expect.objectContaining({ id: "foo" })]);
-  });
-});
-
-describe("resolveAgentProfiles namespacing", () => {
-  it("lets a flat config id and a namespaced markdown id coexist", async () => {
-    const root = await tempWorkspace();
-    await writeAgent(
-      root,
-      "scoped",
-      "---\nid: review:foo\nmode: child\n---\nscoped",
-    );
-
-    const profiles = await resolveAgentProfiles(root, [
-      { id: "reviewer", mode: "child" },
-    ]);
-
-    const ids = profiles.map((p) => p.id).sort();
-    expect(ids).toEqual(["review:foo", "reviewer"]);
   });
 });
 

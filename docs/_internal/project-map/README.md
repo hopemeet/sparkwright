@@ -213,6 +213,20 @@ trace/session inspection.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T23:38:00+0800
+- Scope: Markdown Agent identity is filename-only. Host no longer reads a
+  frontmatter `id` override or the hidden model-tool `id` argument; config
+  profile ids remain the canonical configured-profile route.
+- Read: Host Agent profile discovery/authoring, Agent Runtime profile carrier,
+  Agent capability docs, collision/report consumers, and focused tests.
+- Checked with no contract update needed: workspace-write approval, Shell
+  capability protection, raw trace collision events, protocol payloads, and
+  config profile identity are unchanged.
+- Tests: Host Agent profile/tools 125/125; focused Host protocol collision 1/1;
+  CLI Agent/capability routes 7/7; Host, Agent Runtime, and CLI typechecks;
+  repository test typecheck; project-map drift; full release gate.
+
+- Status: Verified
 - Date: 2026-07-16T23:05:00+0800
 - Scope: Task and Workflow notification producers/consumers now use the
   canonical `ActorNotificationSink` / `ActorInbox` interfaces directly; the

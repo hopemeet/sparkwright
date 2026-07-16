@@ -635,8 +635,8 @@ tests. Report findings with file references.
 
 Profiles describe role guidance and constraints. They do not grant authority by
 themselves. Non-`main` profiles that omit `mode` default to child/delegate
-agents and are indexed for `delegate_agent`; `id: main` or `mode: primary`
-marks the primary profile. Inline profile `delegateTool` blocks and entries
+agents and are indexed for `delegate_agent`; a Markdown file named `main.md` or
+`mode: primary` marks the primary profile. Inline profile `delegateTool` blocks and entries
 listed in `capabilities.agents.delegateTools` define optional direct aliases,
 and those tools still go through policy, approval, validation, and trace.
 Explicit `delegateTools` entries win over inline delegate hints for the same
@@ -1016,7 +1016,7 @@ Markdown profiles are folded under `capabilities.agents.profiles`; if the same
 id exists in a config file, the config entry wins. `use` accepts the same broad
 tool selectors as top-level `tools.use` and is the recommended capability axis.
 Non-`main` profiles that omit `mode` default to child/delegate agents, while
-`id: main` or `mode: primary` marks the primary profile. `allowedTools` remains
+profile id `main` or `mode: primary` marks the primary profile. `allowedTools` remains
 an advanced concrete-name allowlist and only narrows the tools selected by
 `use`. `capabilities.agents.maxDepth` can cap nested child/delegate spawning
 globally. Sub-agents cannot create background tasks; `task_create` remains a

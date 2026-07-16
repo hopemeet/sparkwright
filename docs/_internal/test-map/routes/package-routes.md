@@ -114,6 +114,20 @@ exports, which point at `dist`.
 
 ## Host
 
+### `packages/host/src/agent-profiles.ts` or Markdown Agent authoring
+
+Run:
+
+```bash
+npm --workspace @sparkwright/host test -- test/agent-profiles.test.ts test/tools.test.ts
+npm --workspace @sparkwright/host test -- test/protocol.test.ts -t "agent profile id collision|inspect reports inline agent profiles"
+npm --workspace @sparkwright/host run typecheck
+```
+
+Preserve filename-derived Markdown identity, same-layer basename collision
+diagnostics, config-over-Markdown shadowing, exact-file post-write callability,
+and the model-facing `name`-only authoring schema.
+
 ### `packages/host/src/acp-child-agent.ts` or ACP worker launch
 
 Run:

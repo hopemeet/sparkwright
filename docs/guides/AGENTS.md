@@ -75,7 +75,7 @@ run model. The child's cost rolls up into the parent run under that model's
 pricing. ACP and external-command delegates run their own process, so their
 model comes from `metadata.acp`/`metadata.externalCommand`, not this field.
 
-Non-`main` markdown profiles default to child agents. `id: main` or
+Non-`main` markdown profiles default to child agents. A file named `main.md` or
 `mode: primary` marks the primary profile and is excluded from delegate targets.
 `mode: child` is accepted but no longer needed; use `mode: all` only when a
 profile should be both primary and child-eligible.
@@ -99,8 +99,9 @@ find anchors before they can produce safe patches.
 
 ## Make It Callable
 
-Non-`main` profiles that omit `mode` default to child/delegate agents. `id: main`
-and `mode: primary` profiles are excluded. Child/delegate profiles are indexed
+Non-`main` profiles that omit `mode` default to child/delegate agents. A
+Markdown file named `main.md` and profiles with `mode: primary` are excluded.
+Child/delegate profiles are indexed
 for the main agent and callable through the generic `delegate_agent` tool by
 `agentId`, unless the profile sets `exposeAsDelegate: false`. Add a
 `delegateTool` / `delegateTools` entry only when you also want a stable legacy
@@ -313,19 +314,15 @@ tool call plus child `subagent.*` events whose metadata has
 
 ## Ids And Collisions
 
-Ids are flat by default: a nested file `review/foo.md` and `audit/foo.md` both
-resolve to id `foo`. Within one layer that is an **ambiguous collision** — the
+Markdown ids come only from the filename stem: a nested file `review/foo.md`
+and `audit/foo.md` both resolve to id `foo`. Within one layer that is an
+**ambiguous collision** — the
 first file wins and the rest are dropped (fail-closed) and reported as
 `agent id collisions` in `capabilities inspect`. The same id across different
 layers (user vs project vs config) is legitimate shadowing, not a collision.
 
-To name agents explicitly, write a namespaced id (the `:` character is allowed):
-
-```yaml
----
-id: review:foo
----
-```
+Frontmatter cannot override this identity. Use distinct basenames such as
+`review-foo.md` and `audit-foo.md` when nested profiles must coexist.
 
 If two delegate tools sanitize to the same tool name (e.g. `review:foo` and
 `review/foo` both become `delegate_review_foo`), the collision is reported as

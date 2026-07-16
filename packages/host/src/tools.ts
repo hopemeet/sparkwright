@@ -1467,12 +1467,7 @@ function parseMarkdownAgentArgs(args: unknown): MarkdownAgentInput {
       "create_agent action must be create, update, or replace.",
     );
   }
-  const id =
-    typeof args.id === "string" && args.id.trim()
-      ? args.id.trim()
-      : typeof args.name === "string"
-        ? args.name.trim()
-        : "";
+  const id = typeof args.name === "string" ? args.name.trim() : "";
   const prompt = typeof args.prompt === "string" ? args.prompt.trim() : "";
   if (!isAgentId(id) || !prompt) {
     throw toolArgumentsInvalid(

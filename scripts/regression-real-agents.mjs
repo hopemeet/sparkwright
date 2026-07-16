@@ -72,7 +72,7 @@ async function createFixture() {
 
 async function realCreateAgentCase() {
   const prompt =
-    "Use tool_search to find create_agent. Create a child Markdown Agent named mini_reviewer with description 'Reviews one concrete project risk.', prompt 'Review README.md and report one concrete project risk.', model 'inherit', use ['workspace.read'], allowedTools ['read'], and maxSteps 4. Stop after creation and answer only: created mini_reviewer. Do not pass legacy id or delegateToolName fields. Do not use bash. Do not edit files directly.";
+    "Use tool_search to find create_agent. Create a child Markdown Agent named mini_reviewer with description 'Reviews one concrete project risk.', prompt 'Review README.md and report one concrete project risk.', model 'inherit', use ['workspace.read'], allowedTools ['read'], and maxSteps 4. Stop after creation and answer only: created mini_reviewer. Do not pass id or delegateToolName fields. Do not use bash. Do not edit files directly.";
   const result = await runCli([
     "run",
     prompt,

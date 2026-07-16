@@ -12,6 +12,17 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T23:38:00+0800
+- Scope: Agent.md discovery derives `AgentProfile.id` only from the `.md`
+  filename stem; frontmatter cannot redirect identity, and `create_agent`
+  accepts only its canonical `name` input.
+- Read: Agent profile scanner/parser, Markdown authoring tool, collision/report
+  paths, public guides/manual, and focused tests.
+- Tests: Agent profile/tools 125/125; protocol collision 1/1; CLI
+  Agent/capability routes 7/7; Host, Agent Runtime, and CLI typechecks;
+  repository test typecheck; project-map drift; full release gate.
+
+- Status: Verified
 - Date: 2026-07-16T23:05:00+0800
 - Scope: Host task revival and workflow notification delivery consume the
   direct actor sink/inbox surfaces; task projection reads canonical terminal
@@ -184,9 +195,9 @@ Does not own:
   presentation. Other Skill entrypoints are not unified yet.
 
 - Host's model-facing Markdown Agent authoring surface uses canonical `name` as
-  the filename stem and public identity. Runtime `AgentProfile.id` remains an
-  internal compatibility field, legacy Markdown `id` overrides remain
-  readable, and new files omit inferred child mode and inherited budgets.
+  the filename stem and public identity. Markdown discovery derives runtime
+  `AgentProfile.id` from that filename stem only; frontmatter does not override
+  it. New files omit inferred child mode and inherited budgets.
   Explicit model refs are resolved against current layered config before write.
   Authoring aliases `inherit` / `default` normalize to omission, the sole
   persisted inheritance form. Markdown discovery drops and reports invalid

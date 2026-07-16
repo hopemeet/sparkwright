@@ -9,6 +9,17 @@ See also [../maps/capabilities/agents.md](../maps/capabilities/agents.md), [../m
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T23:38:00+0800
+- Scope: checked the Host Markdown identity consolidation. Agent Runtime still
+  carries the already-resolved `AgentProfile.id`; it does not parse files or
+  choose between filename/frontmatter identity.
+- Read: portable Agent profile/invocation contracts, Host parser/authoring
+  ownership, Agent capability map, and focused Host tests.
+- Tests: Host Agent profile/tools 125/125; focused Host protocol collision 1/1;
+  CLI Agent/capability routes 7/7; Host, Agent Runtime, and CLI typechecks;
+  repository test typecheck; project-map drift; full release gate.
+
+- Status: Verified
 - Date: 2026-07-16T23:05:00+0800
 - Scope: task terminal delivery is actor-native end to end. `TaskManager`
   produces typed task actor inputs, in-memory/file implementations directly

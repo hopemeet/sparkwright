@@ -11,6 +11,17 @@ See [../../modules/agent-runtime.md](../../modules/agent-runtime.md) and [../../
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T23:38:00+0800
+- Scope: Markdown Agent identity now has one source: the `.md` filename stem.
+  The frontmatter override and hidden `create_agent.id` reader were removed;
+  basename collision diagnostics and config-profile ids remain unchanged.
+- Read: Host scanner/parser/authoring/report paths, portable Agent profile
+  consumers, public docs/manual, and focused tests.
+- Tests: Host Agent profile/tools 125/125; focused Host protocol collision 1/1;
+  CLI Agent/capability routes 7/7; Host, Agent Runtime, and CLI typechecks;
+  repository test typecheck; project-map drift; full release gate.
+
+- Status: Verified
 - Date: 2026-07-16T23:05:00+0800
 - Scope: background Agent tasks deliver terminal results through the canonical
   task actor sink/inbox; Agent lifecycle remains on `subagent.*` and no Agent
@@ -82,7 +93,8 @@ configured profiles/delegates
   validation resolves explicit refs against the current layered config before
   any write, while file discovery fails closed and reports manually authored
   invalid syntax.
-  Legacy Markdown `id` overrides remain readable during migration.
+  Frontmatter does not carry a second logical id; nested paths are likewise not
+  folded into identity.
   Runtime discovery and CLI/capability reports share the same source-aware
   scanner so recursive walk, parse, and same-layer collision behavior stay in
   one place.
