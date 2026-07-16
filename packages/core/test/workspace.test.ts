@@ -219,6 +219,70 @@ describe("LocalWorkspace", () => {
     });
   });
 
+  it("routes file removal through the controlled workspace write boundary", async () => {
+    await writeFile(join(root, "obsolete.md"), "remove me\n", "utf8");
+    const run = createRunRecord();
+    const events = new EventLog(run.id);
+    const workspace = new ControlledWorkspace({
+      run,
+      events,
+      workspace: new LocalWorkspace(root),
+      approvalResolver(request) {
+        expect(request.action).toBe("workspace.write");
+        expect(request.summary).toBe("Remove obsolete.md");
+        expect(request.details).toMatchObject({
+          path: "obsolete.md",
+          operation: "remove",
+        });
+        expect(String(request.details.diff)).toContain("-remove me");
+        return { approvalId: request.id, decision: "approved" };
+      },
+    });
+
+    const result = await workspace.removeFile("obsolete.md", {
+      reason: "remove obsolete file",
+    });
+
+    await expect(readFile(join(root, "obsolete.md"), "utf8")).rejects.toThrow();
+    expect(result.summary).toEqual({ lineCount: 0, lastLines: [] });
+    expect(events.all().map((event) => event.type)).toEqual([
+      "workspace.write.requested",
+      "approval.requested",
+      "approval.resolved",
+      "artifact.created",
+      "workspace.write.completed",
+    ]);
+    expect(
+      events.all().find((event) => event.type === "workspace.write.completed")
+        ?.payload,
+    ).toMatchObject({
+      path: "obsolete.md",
+      operation: "remove",
+      diffArtifactId: result.diffArtifactId,
+    });
+  });
+
+  it("keeps a file when controlled removal approval is denied", async () => {
+    await writeFile(join(root, "keep.md"), "keep me\n", "utf8");
+    const run = createRunRecord();
+    const events = new EventLog(run.id);
+    const workspace = new ControlledWorkspace({
+      run,
+      events,
+      workspace: new LocalWorkspace(root),
+      approvalResolver(request) {
+        return { approvalId: request.id, decision: "denied" };
+      },
+    });
+
+    await expect(workspace.removeFile("keep.md")).rejects.toThrow(
+      "Workspace write approval denied",
+    );
+    await expect(readFile(join(root, "keep.md"), "utf8")).resolves.toBe(
+      "keep me\n",
+    );
+  });
+
   it("canonicalizes absolute paths through controlled workspace", async () => {
     await writeFile(join(root, "README.md"), "public\n", "utf8");
     const run = createRunRecord();

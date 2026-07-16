@@ -208,6 +208,14 @@ config + workspace capability roots
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T08:47:59+0800
+- Scope: checked Agent capability mutation after retiring the model-side config
+  manager; capability inspection remains read-only and explicit config profiles
+  remain human/CLI/config-owned.
+- Tests: Host tools 89/89, full Host 587/587, affected typechecks, and the full
+  release gate passed.
+
+- Status: Verified
 - Date: 2026-07-15
 - Scope: checked Host connection principal and Workflow control attribution;
   capability snapshot shapes and resolution behavior are unchanged.

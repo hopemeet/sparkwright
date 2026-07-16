@@ -149,6 +149,12 @@ Does not own:
   a symlink leaf without following its target; Host rollback uses the internal
   binary write path so restoration shares these guards. Callers must not weaken
   this by pre-resolving paths before passing them to the workspace API.
+- `ControlledWorkspace.removeFile()` treats deletion as a managed
+  `workspace.write` mutation: it proposes a deletion diff, runs validation and
+  policy, requests approval when required, captures the checkpoint pre-image,
+  emits the normal write lifecycle, and only then calls the contained workspace
+  remover. `operation:"remove"` distinguishes deletion in approval/event
+  metadata without creating a second authorization action.
 - Core `createWorkspaceShellPolicy` is a structured `command + args` embedder
   policy, not the Host shell-tool command parser. Relative `cwd` is evaluated
   against its configured workspace root, while the original request remains
@@ -382,6 +388,15 @@ Does not own:
   guard and trace diagnostics.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-16T08:47:59+0800
+- Scope: added managed file removal by sharing the existing controlled
+  workspace-write authorization, diff, checkpoint, and event path.
+- Read: Workspace runtime types, Local/Controlled workspace, checkpoint
+  rollback, Host capability removal helper, and focused workspace tests.
+- Tests: Core workspace 25/25, full Core 669/669, affected Core/Host/test
+  typechecks, and the full release gate passed.
 
 - Status: Verified
 - Date: 2026-07-15T23:51:43+0800

@@ -36,6 +36,23 @@ export async function writeCapabilityJson(
   );
 }
 
+export async function removeCapabilityFile(
+  ctx: RuntimeContext,
+  path: string,
+  reason: string,
+): Promise<CapabilityWriteResult> {
+  if (!ctx.workspace?.removeFile) {
+    throw new Error("Workspace does not support managed file removal.");
+  }
+  const write = await ctx.workspace.removeFile(path, { reason });
+  if (write?.diffArtifact) ctx.reportToolArtifact?.(write.diffArtifact);
+  return {
+    path: write?.path ?? (await canonicalWorkspacePath(ctx, path)),
+    diffArtifactId: write?.diffArtifactId,
+    summary: write?.summary,
+  };
+}
+
 export async function canonicalWorkspacePath(
   ctx: RuntimeContext,
   path: string,

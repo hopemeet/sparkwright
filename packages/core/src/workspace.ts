@@ -360,8 +360,36 @@ export class ControlledWorkspace implements WorkspaceRuntime {
     content: string,
     options: { reason?: string } = {},
   ): Promise<WorkspaceWriteResult> {
+    return this.mutateFile(path, content, options);
+  }
+
+  async removeFile(
+    path: string,
+    options: { reason?: string } = {},
+  ): Promise<WorkspaceWriteResult> {
+    if (typeof this.options.workspace.removeFile !== "function") {
+      throw new WorkspaceRuntimeError(
+        "WORKSPACE_REMOVE_UNAVAILABLE",
+        "Workspace runtime does not support managed file removal.",
+        { path },
+      );
+    }
+    return this.mutateFile(path, undefined, options);
+  }
+
+  private async mutateFile(
+    path: string,
+    content: string | undefined,
+    options: { reason?: string },
+  ): Promise<WorkspaceWriteResult> {
     const workspacePath = await this.canonicalizePath(path);
-    const proposal = await this.proposeWrite(workspacePath, content, options);
+    const operation = content === undefined ? "remove" : "write";
+    const proposal = await this.proposeWrite(
+      workspacePath,
+      content ?? "",
+      options,
+      operation,
+    );
     this.options.events.emit("workspace.write.requested", proposal);
 
     const validationFailure = await runValidationHooks({
@@ -373,6 +401,7 @@ export class ControlledWorkspace implements WorkspaceRuntime {
         path: workspacePath,
         reason: options.reason,
         proposalId: proposal.id,
+        operation,
       },
       events: this.options.events,
     });
@@ -403,6 +432,7 @@ export class ControlledWorkspace implements WorkspaceRuntime {
         reason: options.reason,
         proposalId: proposal.id,
         diff: proposal.diff,
+        operation,
       },
     });
 
@@ -445,12 +475,13 @@ export class ControlledWorkspace implements WorkspaceRuntime {
       const request = createApprovalRequest({
         runId: this.options.run.id,
         action: "workspace.write",
-        summary: `Write ${workspacePath}`,
+        summary: `${operation === "remove" ? "Remove" : "Write"} ${workspacePath}`,
         details: {
           path: workspacePath,
           reason: options.reason,
           proposalId: proposal.id,
           diff: proposal.diff,
+          operation,
           policy: decision,
         },
       });
@@ -498,13 +529,18 @@ export class ControlledWorkspace implements WorkspaceRuntime {
         content: prior,
       });
     }
-    await this.options.workspace.writeText(workspacePath, content, options);
-    const summary = summarizeWrittenContent(content);
+    if (content === undefined) {
+      await this.options.workspace.removeFile!(workspacePath, options);
+    } else {
+      await this.options.workspace.writeText(workspacePath, content, options);
+    }
+    const summary = summarizeWrittenContent(content ?? "");
     this.options.events.emit("workspace.write.completed", {
       proposalId: proposal.id,
       path: workspacePath,
       diffArtifactId: artifact.id,
       summary,
+      ...(operation === "remove" ? { operation } : {}),
     });
     return {
       proposalId: proposal.id,
@@ -519,6 +555,7 @@ export class ControlledWorkspace implements WorkspaceRuntime {
     path: string,
     content: string,
     options: { reason?: string } = {},
+    operation: "write" | "remove" = "write",
   ): Promise<WorkspaceWriteProposal> {
     const current = await this.options.workspace.readText(path).catch(() => "");
     const diff = createSimpleTextDiff(path, current, content);
@@ -533,6 +570,7 @@ export class ControlledWorkspace implements WorkspaceRuntime {
       createdAt: new Date().toISOString(),
       metadata: {
         baselineHash: hashText(current),
+        ...(operation === "remove" ? { operation } : {}),
       },
     };
   }

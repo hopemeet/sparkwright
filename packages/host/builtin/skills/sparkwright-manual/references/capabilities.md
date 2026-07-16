@@ -208,9 +208,11 @@ In-run, agent profile capabilities are split across two tools so read-only
 inspection never triggers an approval prompt:
 
 - `list_agents` — `list` / `validate`. Read-only, no approval.
-- `create_agent` — `create` / `remove`. Writes the project
-  `.sparkwright/config.{json,yaml,yml}` file, preserving an existing YAML config,
-  so it requires approval. `create` needs an `id` and a `prompt`.
+- `create_agent` — `create` / `update` / `replace` / `remove`. Manages one
+  `.sparkwright/agents/<name>.md` file through the normal workspace-write
+  approval path. Create/update/replace require a prompt; replace also requires a
+  reason. Remove deletes that exact Markdown Agent. Explicit config profiles
+  remain human/CLI-owned governance and are not mutated by this model tool.
 
 Skills follow the same split: `list_skills` (`list` / `validate`, read-only)
 and `create_skill` (`create`, writes a SKILL.md, requires approval).

@@ -755,22 +755,11 @@ Does not own:
   metadata, `run.started.payload.resolvedModel`, and
   `capability.inspect.model.pricing` consume that same status instead of
   recomputing cost availability.
-- `create_agent` returns callability feedback for create/duplicate-create
-  results. Child/all profiles are callable by `agentId` through
-  `delegate_agent`; a direct `delegate_*` alias is optional exposure. Primary
-  profiles remain inspectable main-run templates, not configured child
-  delegates.
-- The model-facing `create_agent` schema does not advertise legacy `force`.
-  Equivalent requested profile state is idempotent and returns
-  `changed:false` even if a legacy/direct caller passes `force:true`; replacing
-  a different existing profile must remain an explicit choice rather than an
-  accidental repeated create. `action:"update"` patches supplied profile fields,
-  can set/remove the delegate tool, and keeps delegate `maxSteps` in sync when
-  that field changes. `action:"replace"` requires a non-empty `replaceReason`,
-  requires a replacement prompt, removes stale delegate tools for the profile,
-  and records a replace mutation. Agent profile writes must preserve sibling
-  `capabilities.agents` fields such as `maxDepth`; the manager only replaces
-  `profiles` / `delegateTools`.
+- Model-facing `create_agent` manages only project Markdown Agents. Create,
+  update, and replace validate and write one `.sparkwright/agents/<name>.md`;
+  remove deletes that exact file through managed workspace mutation. Explicit
+  config profiles/delegate policy remain human/CLI/config-owned and no legacy
+  model-side config mutation branch remains.
 - Host configured-delegate entrypoints use the agent-runtime shared delegation
   ledger: direct `delegate_*` tools and generic `delegate_agent` share the same
   hidden configured delegate tools, `delegate_parallel` reuses those results
@@ -947,6 +936,15 @@ Does not own:
   remain adapter-native and need continued cross-entrypoint characterization.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-16T08:47:59+0800
+- Scope: removed the internal config-profile `create_agent` manager and routed
+  Markdown removal through Core controlled workspace mutation.
+- Read: Host tool catalog/Markdown manager/capability mutation helper, Core
+  workspace contract, public capability manual, and focused tests.
+- Tests: Core workspace 25/25, Host tools 89/89, full Host 587/587, affected
+  typechecks, and the full release gate passed.
 
 - Status: Verified
 - Date: 2026-07-15T23:51:43+0800

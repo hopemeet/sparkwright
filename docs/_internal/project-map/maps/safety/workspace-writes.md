@@ -111,6 +111,10 @@ tool proposes write
   captured binary content through this boundary. These checks narrow but cannot
   eliminate filesystem TOCTOU races; they are not an OS-level sandbox for
   arbitrary processes or a detector for writes outside the workspace.
+- Managed file deletion uses the same `workspace.write` policy/approval/event
+  boundary as content replacement. The proposal carries the deletion diff and
+  `operation:"remove"`; checkpoint capture happens before unlink so rollback
+  can restore the prior file. No separate delete authorization rule exists.
 
 ## Consumers
 
@@ -137,6 +141,15 @@ tool proposes write
   from managed workspace writes.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-16T08:47:59+0800
+- Scope: managed deletion now shares workspace-write validation, policy,
+  approval, diff artifacts, checkpoint capture, and lifecycle events.
+- Read: Core workspace runtime/implementation/tests and Host Markdown Agent
+  removal integration.
+- Tests: Core workspace 25/25, full Core 669/669, Host tools 89/89, affected
+  typechecks, and the full release gate passed.
 
 - Status: Verified
 - Date: 2026-07-15

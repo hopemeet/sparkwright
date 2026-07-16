@@ -746,6 +746,10 @@ export interface WorkspaceRuntime {
     content: string,
     options?: { reason?: string },
   ): Promise<WorkspaceWriteResult | void>;
+  removeFile?(
+    path: string,
+    options?: { reason?: string },
+  ): Promise<WorkspaceWriteResult | void>;
   diffText(path: string, nextContent: string): Promise<string>;
 }
 

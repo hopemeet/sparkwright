@@ -81,22 +81,15 @@ configured profiles/delegates
   callable, CLI `capabilities inspect` reports `delegateToolCollisions`, runtime
   preparation emits warning-severity `capability.index.failed`, and direct
   `delegates run` fails clearly when the requested tool name is ambiguous.
-- Agent profile create/update/replace/remove tools are managed capability
-  mutations and emit `capability.mutation.completed` when the project config
-  change is applied. Mutation action names distinguish
-  `create_agent_profile`, `update_agent_profile`, and `replace_agent_profile`.
-- `create_agent` create results include a `callable` boolean and `callability`
-  detail object. Profiles without an effective delegate tool are inspectable but
-  not callable through a direct alias unless exposed separately; mode-less
-  non-main profiles are still indexed child/delegate targets by default.
-  `id=main` and `mode=primary` profiles shape the main run and are not eligible
-  configured child delegates.
-- The model-facing `create_agent` schema does not advertise legacy `force`.
-  Equivalent repeated creates are idempotent. Different existing profiles must
-  use `action:"update"` for patch semantics or `action:"replace"` with a
-  non-empty `replaceReason`; replace removes stale delegate tools for the
-  profile before optionally adding a new delegate. These managed writes preserve
-  sibling `capabilities.agents` policy fields such as `maxDepth`.
+- Model-facing `create_agent` owns one project Markdown file only. Create,
+  update, and replace write `.sparkwright/agents/<name>.md`; remove deletes that
+  exact file through the same managed `workspace.write` diff/approval boundary.
+  Mutation actions are `create_markdown_agent`, `update_markdown_agent`,
+  `replace_markdown_agent`, and `remove_markdown_agent`.
+- Explicit config profiles and delegate-tool policy remain human/CLI/config
+  governance. The model tool neither mutates `.sparkwright/config.*` nor exposes
+  the retired `id`, `force`, `delegateToolName`, or `removeDelegateTool` patch
+  vocabulary.
 - The builtin capability-builder Skill declares `create_agent` as an expected
   tool dependency. A successful Skill body load makes that already-registered
   deferred schema available on the next model turn, avoiding a second
@@ -393,6 +386,16 @@ configured profiles/delegates
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T08:47:59+0800
+- Scope: `create_agent remove` now deletes its exact Markdown Agent through the
+  managed workspace-write boundary; the internal config-profile mutation tool
+  and its compatibility branch were removed.
+- Read: Host Markdown Agent tool/parser/removal, Core controlled workspace
+  mutation path, capability manual, and focused Core/Host tests.
+- Tests: Core workspace 25/25, Host tools 89/89, full Host 587/587, affected
+  typechecks, and the full release gate passed.
+
+- Status: Verified
 - Date: 2026-07-15T23:51:43+0800
 - Scope: Agent/Profile tools now physically narrow admitted Host/child catalogs;
   deny wins over allow, exact built-in aliases normalize, and MCP wildcard
@@ -561,8 +564,9 @@ configured profiles/delegates
 
 - Status: Verified
 - Date: 2026-07-12T20:00:00+0800
-- Scope: Markdown authoring validates the exact written source under collision,
-  preserves legacy config-profile removal, and exposes trace-derived stats.
+- Scope: Markdown authoring validates the exact written source under collision;
+  the then-current legacy config-profile removal path was superseded by the
+  2026-07-16 Markdown removal contract above. Trace-derived stats were checked.
 - Read: agent profiles, host tools, asset stats, CLI and focused tests.
 - Tests: focused host Agent/tool and CLI stats suites passed.
 

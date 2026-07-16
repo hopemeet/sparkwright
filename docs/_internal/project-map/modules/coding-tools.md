@@ -67,6 +67,9 @@ Does not own:
   early output as launch confirmation; it points to wait/output/stop only when
   those operations are actually needed.
 - Managed capability files should use dedicated tools instead of raw shell writes.
+- Dedicated capability removal must use `WorkspaceRuntime.removeFile()` so
+  deletion retains the same managed write approval, diff, checkpoint, and trace
+  semantics as file content writes.
 - Tool results should be compact enough for model context and trace summaries.
 - Read/discovery/search tools should declare thin `resultPresentation` hints
   (`file_read`, `file_discovery`, `text_search`) plus factual output fields
@@ -138,6 +141,16 @@ Does not own:
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T08:47:59+0800
+- Scope: `create_agent remove` now deletes the authored Markdown Agent through
+  managed workspace mutation; the model-side config-profile compatibility
+  manager was removed.
+- Read: Host Markdown Agent tool, capability mutation helper, Core controlled
+  workspace, capability manual, and focused tests.
+- Tests: Core workspace 25/25, Host tools 89/89, affected typechecks, and the
+  full release gate passed.
+
+- Status: Verified
 - Date: 2026-07-15T23:51:43+0800
 - Scope: discovery path normalization now recognizes symlink/canonical aliases
   of the workspace root without weakening the walker containment boundary.
@@ -174,8 +187,8 @@ Does not own:
 
 - Status: Read-only
 - Date: 2026-07-12T20:00:00+0800
-- Scope: checked Markdown Agent write/remove compatibility; it uses the existing
-  workspace capability-write boundary and does not change coding-tool ownership.
+- Scope: historical Markdown Agent write/remove compatibility review;
+  superseded by the 2026-07-16 single Markdown removal contract above.
 - Read: host Agent manager and capability mutation helper.
 - Tests: focused host tools and full release gate; no module contract change.
 

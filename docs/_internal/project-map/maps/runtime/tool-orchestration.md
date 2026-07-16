@@ -401,6 +401,14 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T08:47:59+0800
+- Scope: model-facing Agent mutation keeps one `create_agent` definition;
+  removal now targets the authored Markdown file through managed workspace
+  mutation, with no parallel config-manager execution branch.
+- Tests: Core workspace 25/25, Host tools 89/89, affected typechecks, and the
+  full release gate passed.
+
+- Status: Verified
 - Date: 2026-07-15T23:53:45+0800
 - Scope: replaced separate Profile admission, episode planning, and scoped
   discovery modules with one monotonic tool surface; removed redundant
