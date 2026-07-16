@@ -212,6 +212,16 @@ trace/session inspection.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T10:13:52+0800
+- Scope: retired the unused server-runtime compatibility composition stack and
+  misleading durable dispatcher alias, leaving only production execution-lane,
+  in-flight dispatch, and Workflow coordination exports.
+- Read: server-runtime exports/tests/README, all workspace source consumers,
+  edge-package ownership, run-loop/session routing, and package test routes.
+- Tests: server-runtime 23/23 focused tests, all downstream typechecks, and the
+  full `npm run release:check` gate passed.
+
+- Status: Verified
 - Date: 2026-07-16T09:29:05+0800
 - Scope: integrated the progressive large-file split with the five post-fork
   main refactors; preserved current behavior behind config/runtime facades and

@@ -47,13 +47,14 @@ contracts, and focused checklists that no longer fit here.
   runtime/storage/diagnostic adapters around core contracts. Treat core events,
   run/session stores, and trace maps as the active contracts.
 - `server-runtime`'s `InFlightCommandDispatcher` only coalesces concurrent local
-  dispatch of the same command id. `DurableCommandDispatcher` remains a
-  deprecated naming alias and is not durable. Agent-runtime storage and the
-  workflow journal remain command/outcome/apply truth; Host remains the adapter
-  that assembles a fenced writer and execution behavior.
-- `ConnectionHub`, `RunManager`, `SessionManager`, `ApprovalBroker`, and
-  `createServerRuntime` remain deprecated compatibility utilities isolated from
-  the canonical HostService -> ExecutionLaneCoordinator path.
+  dispatch of the same command id. Agent-runtime storage and the workflow
+  journal remain command/outcome/apply truth; Host remains the adapter that
+  assembles a fenced writer and execution behavior. The misleading
+  `DurableCommandDispatcher` alias and the parallel `ConnectionHub` /
+  `RunManager` / `SessionManager` / `ApprovalBroker` /
+  `ServerCapabilityRegistry` / `createServerRuntime` convenience stack have
+  been removed; new runtime composition belongs on the canonical HostService
+  -> ExecutionLaneCoordinator path.
 - `WorkflowSupervisor` coordinates bounded inventory scans, Package C claim
   competition, claimed-adapter invocation, heartbeat, and drain reporting. It
   has no process launcher and is not a daemon; F remains responsible for the
@@ -130,6 +131,18 @@ contracts, and focused checklists that no longer fit here.
   source exports. It should not be used as the sole authority for behavior.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-16T10:13:52+0800
+- Scope: removed the deprecated server-runtime convenience stack and durable
+  dispatcher alias after confirming that only package-local compatibility tests
+  and README examples consumed them; retained the production lane, Workflow,
+  and in-flight dispatch exports.
+- Read: server-runtime source exports, package tests/README, all workspace
+  source imports, Host lane/workspace-context consumers, and routed run/session
+  maps.
+- Tests: server-runtime 23/23 focused tests, all downstream typechecks, and the
+  full `npm run release:check` gate passed.
 
 - Status: Read-only
 - Date: 2026-07-16T08:56:29+0800
