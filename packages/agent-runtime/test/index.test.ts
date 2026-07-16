@@ -97,7 +97,7 @@ describe("agent-runtime", () => {
       runOptions.policy.decide({
         action: "tool.execute",
         metadata: {
-          toolName: "shell",
+          toolName: "bash",
         },
       }),
     ).resolves.toMatchObject({
@@ -152,7 +152,7 @@ describe("agent-runtime", () => {
     const child: AgentProfile = {
       id: "explore",
       use: ["workspace.read", "mcp:demo", "skills"],
-      allowedTools: ["read", "grep", "shell"],
+      allowedTools: ["read", "grep", "bash"],
       maxSteps: 12,
       runBudget: {
         maxToolCalls: 20,
@@ -289,7 +289,7 @@ describe("agent-runtime", () => {
       policy.decide({
         action: "tool.execute",
         metadata: {
-          toolName: "shell",
+          toolName: "bash",
         },
       }),
     ).resolves.toMatchObject({
@@ -332,7 +332,7 @@ describe("agent-runtime", () => {
           name: "read",
         },
         metadata: {
-          toolName: "shell",
+          toolName: "bash",
         },
       }),
     ).resolves.toMatchObject({
@@ -669,7 +669,7 @@ describe("spawnSubAgent", () => {
 
     // A child tool that captures whether `ctx.workspace` was populated at
     // execution time — the exact thing that was undefined before inheritance,
-    // making `read_file` throw "Workspace is not configured" in sub-agents.
+    // making `read` throw "Workspace is not configured" in sub-agents.
     let childCtxHadWorkspace: boolean | undefined;
     const probe = defineTool({
       name: "probe",

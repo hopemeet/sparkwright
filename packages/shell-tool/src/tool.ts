@@ -182,7 +182,7 @@ export interface ShellToolOptions {
   /** Additional trusted filesystem roots for cwd and absolute path arguments. */
   allowedRoots?: readonly string[];
   /**
-   * Override the registered tool name (defaults to `"shell"`).
+   * Override the registered tool name (defaults to `"bash"`).
    */
   name?: string;
   /**
@@ -313,7 +313,7 @@ export interface ShellToolSandboxOutput {
   enforced?: boolean;
 }
 
-const DEFAULT_NAME = "shell";
+const DEFAULT_NAME = "bash";
 const DEFAULT_DESCRIPTION =
   "Execute a shell command after safety classification and policy approval. " +
   "Pass background:true to launch it directly as a non-blocking background task " +

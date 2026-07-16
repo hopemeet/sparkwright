@@ -13,7 +13,9 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md),
 ## Last Verified
 
 - Date: 2026-07-16
-- Scope: reviewed configured hook compilation after delegate target selection became `agentId`-only; Core hook execution contracts are unchanged.
+- Scope: ToolRegistry now resolves exact names only; hooks, policy, approval,
+  repeat detection, execution, and public events all consume the same callable
+  identity. Delegate hook compilation remains `agentId`-only.
 
 ## Main Files
 
@@ -264,7 +266,7 @@ Does not own:
   reusable completed terminal state before the later create request, and skips
   failed, cancelled, partial, or truncated prior tasks.
 - The run loop subscribes `RunHealthAnalyzer` to its event log and appends
-  model-visible `run.health` context when `read_file`/read-like tools return the
+  model-visible `run.health` context when `read`/read-like tools return the
   same unchanged file window again; workspace writes clear prior read snapshots
   for that path.
 - Awaited task revival is budgeted by the core per-source
@@ -432,18 +434,6 @@ Does not own:
   failure-first plus full tests.
 - Tests: Core 670/670, test/workspace typechecks, lint, and real CLI/TUI
   read-only denials with zero approvals/writes.
-
-- Status: Verified
-- Date: 2026-07-15
-- Scope: runtime tool aliases now canonicalize before hooks/policy and dynamic
-  availability is an execution gate as well as a model-descriptor filter.
-  Public tool events/approvals retain the requested alias and expose the
-  canonical identity separately. Episode visibility is not duplicated on
-  `run.started`; call-time events remain authoritative.
-- Read: `packages/core/src/tools.ts`, `packages/core/src/run.ts`, policy and
-  approval ordering, deferred loading, and focused run tests.
-- Tests: Core focused run/outcome 160/160 plus typecheck; alias-deny and
-  guessed-unavailable regressions passed.
 
 - Status: Verified
 - Date: 2026-07-15

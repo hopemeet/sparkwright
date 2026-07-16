@@ -332,7 +332,6 @@ function readResultFingerprint(
 function isFileReadLikeTool(toolName: string): boolean {
   return (
     toolName === "read" ||
-    toolName === "read_file" ||
     toolName === "read_text" ||
     toolName === "read_anchored_text"
   );

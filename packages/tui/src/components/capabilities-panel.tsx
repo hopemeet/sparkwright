@@ -339,12 +339,6 @@ function addToolGroupRows(
         {isDeferredTool(tool) ? (
           <Text color={theme.muted}> · load on demand</Text>
         ) : null}
-        {tool.legacyNames && tool.legacyNames.length > 0 ? (
-          <Text color={theme.muted}>
-            {" "}
-            · legacy {tool.legacyNames.join(",")}
-          </Text>
-        ) : null}
         {tool.origin ? <Text color={theme.muted}> · {tool.origin}</Text> : null}
       </Text>,
     );

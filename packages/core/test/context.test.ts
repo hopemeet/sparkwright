@@ -1264,7 +1264,7 @@ describe("DefaultObservationFormatter", () => {
     const content = `${"x".repeat(40)}NEEDLE${"y".repeat(40)}`;
 
     const item = formatter.format({
-      toolName: "read_file",
+      toolName: "read",
       run: createRunRecord(),
       result: {
         toolCallId: "call_test" as never,
@@ -1322,7 +1322,7 @@ describe("DefaultObservationFormatter", () => {
     const formatter = new DefaultObservationFormatter();
 
     const item = formatter.format({
-      toolName: "read_file",
+      toolName: "read",
       run: createRunRecord(),
       result: {
         toolCallId: "call_test" as never,
@@ -1340,7 +1340,7 @@ describe("DefaultObservationFormatter", () => {
     });
 
     expect(item.metadata).toMatchObject({
-      toolName: "read_file",
+      toolName: "read",
       status: "completed",
       path: "packages/core/src/context.ts",
       filePath: "packages/core/src/context.ts",

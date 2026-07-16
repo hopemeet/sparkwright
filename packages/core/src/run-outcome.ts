@@ -1141,12 +1141,12 @@ function classifyToolFailureFromPayload(
 
 /**
  * Read/discovery tools whose later success signals that the model worked around
- * an earlier not-found probe (for example: `read_file` of a guessed path fails,
- * then `glob` + `read_file` of the real path succeed).
+ * an earlier not-found probe (for example: `read` of a guessed path fails,
+ * then `glob` + `read` of the real path succeed).
  */
 function isReadFamilyTool(toolName: string | undefined): boolean {
   return (
-    toolName === "read_file" ||
+    toolName === "read" ||
     toolName === "read_anchored_text" ||
     toolName === "glob" ||
     toolName === "grep"

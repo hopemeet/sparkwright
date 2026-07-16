@@ -111,7 +111,7 @@ describe("createPermissionModePolicy", () => {
       policy.decide({
         action: "tool.execute",
         metadata: {
-          toolName: "read_file",
+          toolName: "read",
           risk: "safe",
           governance: { sideEffects: ["read"] },
         },
@@ -149,7 +149,7 @@ describe("createPermissionModePolicy", () => {
       policy.decide({
         action: "tool.execute",
         metadata: {
-          toolName: "read_file",
+          toolName: "read",
           risk: "safe",
         },
       }),
@@ -161,7 +161,7 @@ describe("createPermissionModePolicy", () => {
       policy.decide({
         action: "tool.execute",
         metadata: {
-          toolName: "shell",
+          toolName: "bash",
           risk: "risky",
           governance: { sideEffects: ["read"] },
         },
@@ -174,7 +174,7 @@ describe("createPermissionModePolicy", () => {
       policy.decide({
         action: "tool.execute",
         metadata: {
-          toolName: "apply_patch",
+          toolName: "edit",
           risk: "safe",
           governance: { sideEffects: ["write"] },
         },
@@ -348,7 +348,7 @@ describe("createWorkspaceMutationPolicy", () => {
     const decision = await policy.decide({
       action: "tool.execute",
       metadata: {
-        toolName: "apply_patch",
+        toolName: "edit",
         governance: {
           sideEffects: ["write"],
           origin: {
@@ -365,7 +365,7 @@ describe("createWorkspaceMutationPolicy", () => {
       reason:
         "Tools with write side effects require an explicit write-enabled run.",
       metadata: {
-        toolName: "apply_patch",
+        toolName: "edit",
         sideEffects: ["write"],
       },
     });

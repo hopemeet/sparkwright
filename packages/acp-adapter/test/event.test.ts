@@ -178,7 +178,7 @@ describe("ACP event mapping", () => {
           type: "tool.completed",
           payload: {
             toolCallId: "tool_1",
-            toolName: "read_file",
+            toolName: "read",
             output: "contents",
           },
         },
@@ -189,7 +189,7 @@ describe("ACP event mapping", () => {
       {
         sessionUpdate: "tool_call_update",
         toolCallId: "tool_1",
-        title: "read_file",
+        title: "read",
         status: "completed",
         kind: "read",
         rawOutput: "contents",

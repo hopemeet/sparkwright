@@ -44,7 +44,7 @@ metadata:
   version: 1.0.0
 license: MIT
 compatibility: generic
-allowed-tools: read shell
+allowed-tools: read bash
 ---
 # DingTalk
 
@@ -55,7 +55,7 @@ Use the DingTalk webhook only when asked.
     expect(skill.description).toBe("Sends DingTalk group notifications.");
     expect(skill.license).toBe("MIT");
     expect(skill.compatibility).toEqual(["generic"]);
-    expect(skill.allowedTools).toEqual(["read", "shell"]);
+    expect(skill.allowedTools).toEqual(["read", "bash"]);
     expect(skill.metadata.version).toBe("1.0.0");
     expect(skill.body).toContain("Use the DingTalk webhook");
     expect(skill.contentHash).toHaveLength(64);

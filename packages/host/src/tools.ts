@@ -45,7 +45,6 @@ import {
 } from "./tool-selectors.js";
 import {
   DEFAULT_ADVANCED_TOOL_NAMES,
-  canonicalToolName,
   normalizeToolNameList,
   shouldDeferToolByDefault,
 } from "./tool-identities.js";
@@ -67,7 +66,7 @@ import {
 } from "./agent-profiles.js";
 
 /** Built-in tool: read a UTF-8 file from the workspace. Safe (no approval). */
-// read_file paging defaults. The old tool returned a fixed 400-char preview,
+// read paging defaults. The old tool returned a fixed 400-char preview,
 // which made the model loop (it never saw past the stub, so it re-read the same
 // file). We now return real content, but the returned window must still fit the
 // model-visible observation budget in core. So the tool pages by line — default
@@ -78,7 +77,7 @@ const READ_MAX_CHARS = 6_000;
 
 export function createReadFileTool() {
   return defineTool({
-    name: "read_file",
+    name: "read",
     description:
       "Read a UTF-8 text file from the workspace. Returns up to `limit` lines " +
       "(default 2000), bounded by an internal character budget, starting at " +
@@ -341,7 +340,7 @@ export function createGlobPathsTool(workspaceRoot: string) {
  * workspace path. `glob` matches paths by pattern, but a model that just
  * wants to see "what is in this directory" had to glob `*` and over-fetch;
  * list_dir answers that directly and belongs in the same read-only discovery
- * set as read_file + glob + grep.
+ * set as read + glob + grep.
  */
 export function createListDirTool(workspaceRoot: string) {
   return createListDirToolBase({ workspaceRoot });
@@ -352,7 +351,7 @@ export function createListDirTool(workspaceRoot: string) {
  * `glob` only matches paths, so finding a symbol by name (e.g. "a
  * function named frobnicate") is impossible by globbing alone — it degenerates
  * into reading every file. grep answers that in one call, and belongs in
- * the same read-only discovery set as read_file + glob.
+ * the same read-only discovery set as read + glob.
  */
 export function createGrepTextTool(workspaceRoot: string) {
   return createGrepTextToolBase({ workspaceRoot });
@@ -361,7 +360,7 @@ export function createGrepTextTool(workspaceRoot: string) {
 /**
  * Built-in read-only tool: read a file with stable line anchors used by
  * edit_anchored_text. Expose both tools together so models do not invent
- * anchors from plain read_file output.
+ * anchors from plain read output.
  */
 export function createReadAnchoredTextTool() {
   return createReadAnchoredTextToolBase();
@@ -796,8 +795,7 @@ function isToolNameListed(
   names: readonly string[] | undefined,
 ): boolean {
   if (!names) return false;
-  const canonical = canonicalToolName(toolName);
-  return names.some((name) => canonicalToolName(name) === canonical);
+  return names.includes(toolName);
 }
 
 function isToolNameAllowed(

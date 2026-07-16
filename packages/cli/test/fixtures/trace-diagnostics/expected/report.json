@@ -15,7 +15,7 @@
     "recoveredToolFailures": 0
   },
   "topTools": {
-    "read_file": 1
+    "read": 1
   },
   "topDuplicateReads": {
     "README.md": 10

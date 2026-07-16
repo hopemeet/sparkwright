@@ -236,9 +236,9 @@ describe("createObservationOneLineStage", () => {
       minCharsToCollapse: 10,
     });
     const items = [
-      toolResultWithMeta("a".repeat(300), { toolName: "shell", exitCode: 0 }),
-      toolResultWithMeta("b".repeat(300), { toolName: "shell", exitCode: 1 }),
-      toolResultWithMeta("c".repeat(300), { toolName: "shell" }),
+      toolResultWithMeta("a".repeat(300), { toolName: "bash", exitCode: 0 }),
+      toolResultWithMeta("b".repeat(300), { toolName: "bash", exitCode: 1 }),
+      toolResultWithMeta("c".repeat(300), { toolName: "bash" }),
     ];
     const result = await stage.apply({
       items,
@@ -249,7 +249,7 @@ describe("createObservationOneLineStage", () => {
     expect(result.items[0]!.metadata.oneLineCollapsed).toBe(true);
     expect(result.items[1]!.metadata.oneLineCollapsed).toBe(true);
     expect(result.items[2]!.content.length).toBe(300);
-    expect(result.items[0]!.content).toContain("shell");
+    expect(result.items[0]!.content).toContain("bash");
     expect(result.items[0]!.content).toContain("collapsed");
   });
 

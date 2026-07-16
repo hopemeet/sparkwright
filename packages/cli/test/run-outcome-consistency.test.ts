@@ -60,12 +60,12 @@ describe("run-outcome consistency (CLI exit vs core outcome)", () => {
       log.emit("run.created", { goal: "Inspect the workspace" }),
       log.emit("tool.requested", {
         id: "call_1",
-        toolName: "read_file",
+        toolName: "read",
         arguments: { path: "README.md" },
       }),
       log.emit("tool.completed", {
         toolCallId: "call_1",
-        toolName: "read_file",
+        toolName: "read",
         status: "completed",
         output: { path: "README.md", content: "# Demo\n" },
       }),
@@ -84,12 +84,12 @@ describe("run-outcome consistency (CLI exit vs core outcome)", () => {
       log.emit("run.created", { goal: "Fix the CLI and verify by running it" }),
       log.emit("tool.requested", {
         id: "call_1",
-        toolName: "shell",
+        toolName: "bash",
         arguments: { command: "python3 -m greettool.cli --name Ada" },
       }),
       log.emit("tool.completed", {
         toolCallId: "call_1",
-        toolName: "shell",
+        toolName: "bash",
         status: "completed",
         output: { exitCode: 1, timedOut: false },
       }),
@@ -164,23 +164,23 @@ describe("run-outcome consistency (CLI exit vs core outcome)", () => {
       log.emit("run.created", { goal: "Report VALUE from the config file" }),
       log.emit("tool.requested", {
         id: "call_miss",
-        toolName: "read_file",
+        toolName: "read",
         arguments: { path: "config.conf" },
       }),
       log.emit("tool.failed", {
         toolCallId: "call_miss",
-        toolName: "read_file",
+        toolName: "read",
         status: "failed",
         error: { code: "ENOENT", message: "ENOENT: no such file" },
       }),
       log.emit("tool.requested", {
         id: "call_read",
-        toolName: "read_file",
+        toolName: "read",
         arguments: { path: "settings.conf" },
       }),
       log.emit("tool.completed", {
         toolCallId: "call_read",
-        toolName: "read_file",
+        toolName: "read",
         status: "completed",
         output: { path: "settings.conf", content: "VALUE=42\n" },
       }),

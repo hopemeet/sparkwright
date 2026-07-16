@@ -112,7 +112,6 @@ async function realCreateAgentCase() {
       failure.code === "TOOL_ARGUMENTS_INVALID",
   );
   const bashCalls = requests.filter((name) => name === "bash");
-  const shellCalls = requests.filter((name) => name === "shell");
   const toolSearchIndex = requests.indexOf("tool_search");
   const createAgentIndex = requests.indexOf("create_agent");
   const profiles = capabilityReport.agents?.profiles ?? [];
@@ -125,7 +124,6 @@ async function realCreateAgentCase() {
     createAgentCalls.length >= 1 &&
     createAgentCalls.length <= 2 &&
     bashCalls.length === 0 &&
-    shellCalls.length === 0 &&
     (failures.length === 0 || recoveredCreateFailures) &&
     count(trace.events, "workspace.write.completed") === 1 &&
     count(trace.events, "capability.mutation.completed") === 1 &&
@@ -219,7 +217,6 @@ async function realDelegateAgentCase() {
     delegateAgentTarget?.agentId === "mini_reviewer" &&
     !requests.includes("create_agent") &&
     !requests.includes("bash") &&
-    !requests.includes("shell") &&
     failures.length === 0 &&
     count(trace.events, "workspace.write.completed") === 0 &&
     verify.ok === true &&

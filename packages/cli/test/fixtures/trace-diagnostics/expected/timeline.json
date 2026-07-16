@@ -97,7 +97,7 @@
       "runId": "run_fixture",
       "agentId": "main",
       "category": "tool",
-      "label": "tool read_file",
+      "label": "tool read",
       "status": "completed",
       "startedAt": "2026-01-01T00:00:06.000Z",
       "startSequence": 7,

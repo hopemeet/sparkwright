@@ -49,7 +49,7 @@ describe("workflow distill", () => {
         event(1, "run.created", { goal: "fix docs and verify" }),
         event(2, "tool.requested", {
           id: "read_1",
-          toolName: "read_file",
+          toolName: "read",
           arguments: { path: "README.md" },
         }),
         event(3, "workspace.read", { path: "README.md" }),

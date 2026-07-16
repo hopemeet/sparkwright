@@ -11,7 +11,7 @@ export function formatToolRequestPreview(
     const command = str(r.command);
     return command ? truncatePlain(`$ ${command}`, max) : "";
   }
-  if (r && (name === "read" || name === "read_file")) {
+  if (r && name === "read") {
     const path = str(r.path);
     const offset = typeof r.offset === "number" ? `:${r.offset}` : "";
     const limit = typeof r.limit === "number" ? ` +${r.limit}` : "";
@@ -65,7 +65,7 @@ export function formatToolRequestPreview(
 }
 
 function isShellToolName(name: string): boolean {
-  return name === "bash" || name === "shell";
+  return name === "bash";
 }
 
 /** Best-effort one-line preview of a value (object -> compact JSON). */

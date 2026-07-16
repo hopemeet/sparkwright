@@ -53,7 +53,7 @@ disagree:
 | approval required    | descriptor `requiresApproval` (config)        | tool `risk: "risky"` (constant) → runtime gate   | [host/src/delegate-capability.ts:142](../../../../packages/host/src/delegate-capability.ts) |
 | depth ceiling        | `capabilities.agents.maxDepth` (run path)     | not loaded (CLI `delegates run` path)            | [host/src/delegate-runner.ts:179](../../../../packages/host/src/delegate-runner.ts)         |
 | child terminal state | child `run.completed` payload (rich)          | `subagent.completed` payload (only `stopReason`) | [agent-runtime/src/index.ts:753](../../../../packages/agent-runtime/src/index.ts)           |
-| usable child tools   | effective policy (`read_file` only)           | prompt descriptors (`glob/list_dir/tool_search`) | [host/src/tool-selectors.ts](../../../../packages/host/src/tool-selectors.ts)               |
+| usable child tools   | effective policy (`read` only)                | prompt descriptors (`glob/list_dir/tool_search`) | [host/src/tool-selectors.ts](../../../../packages/host/src/tool-selectors.ts)               |
 | duplicate tool call  | sequential `previousToolCall` (completed)     | no in-flight signal consulted                    | [core/src/run.ts:2346](../../../../packages/core/src/run.ts)                                |
 
 This invariant covers findings #1, #2, #3, #4, #6, #7. The invariant is _self-
@@ -244,7 +244,7 @@ ceiling check.
 
 ### 7 — prompt descriptors expose policy-denied tools
 
-The child's effective policy allows `read_file` only, but the prompt descriptors
+The child's effective policy allows `read` only, but the prompt descriptors
 still advertise `glob/list_dir/tool_search`; the model calls `tool_search` and
 the runtime rejects it with `TOOL_DENIED`. Descriptors and effective policy are
 computed on separate paths in

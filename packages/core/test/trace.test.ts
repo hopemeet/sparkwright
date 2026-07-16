@@ -631,7 +631,7 @@ describe("trace", () => {
 
     const system = [
       { role: "system", content: "Contract A", stability: "stable" },
-      { role: "system", content: "Tools: read_file", stability: "session" },
+      { role: "system", content: "Tools: read", stability: "session" },
     ];
     const promptEvent = (step: number, goal: string) =>
       log.emit("prompt.built", {
@@ -697,7 +697,7 @@ describe("trace", () => {
 
     const system = [
       { role: "system", content: "Contract A", stability: "stable" },
-      { role: "system", content: "Tools: read_file", stability: "session" },
+      { role: "system", content: "Tools: read", stability: "session" },
     ];
     const promptEvent = (log: EventLog, step: number, goal: string) =>
       log.emit("prompt.built", {
@@ -1330,7 +1330,7 @@ describe("trace", () => {
     const log = new EventLog(run.id);
     const jsonl = [
       log.emit("run.created", { goal: run.goal }, { sessionId: "s1" }),
-      log.emit("tool.requested", { toolName: "read_file" }),
+      log.emit("tool.requested", { toolName: "read" }),
       log.emit("model.completed", {
         usage: {
           inputTokens: 3,
@@ -1364,7 +1364,7 @@ describe("trace", () => {
         "run.completed": 1,
       },
       terminalStates: { completed: 1 },
-      toolCalls: { read_file: 1 },
+      toolCalls: { read: 1 },
       artifactCount: 1,
       errorCount: 0,
       errorCodes: {},
@@ -1400,7 +1400,7 @@ describe("trace", () => {
       events.push(
         log.emit("tool.requested", {
           id: `call_${i}`,
-          toolName: i % 2 === 0 ? "read_file" : "grep",
+          toolName: i % 2 === 0 ? "read" : "grep",
           arguments: { path: i % 2 === 0 ? "README.md" : "packages" },
         }),
       );
@@ -1524,7 +1524,7 @@ describe("trace", () => {
       log.emit("run.created", { goal: "missing terminal" }),
       log.emit("tool.requested", {
         id: "call_1",
-        toolName: "shell",
+        toolName: "bash",
         arguments: { command: "pwd", timeoutMs: 0 },
       }),
     ];
@@ -1559,7 +1559,7 @@ describe("trace", () => {
       events.push(
         log.emit("tool.requested", {
           id: `read_${i}`,
-          toolName: "read_file",
+          toolName: "read",
           arguments: { path: "README.md" },
         }),
       );
@@ -1704,12 +1704,12 @@ describe("trace", () => {
       ),
       parentLog.emit("tool.requested", {
         id: "verify",
-        toolName: "shell",
+        toolName: "bash",
         arguments: { command: "npm test" },
       }),
       parentLog.emit("tool.completed", {
         toolCallId: "verify",
-        toolName: "shell",
+        toolName: "bash",
         status: "completed",
         output: { exitCode: 0, timedOut: false },
       }),
@@ -1756,12 +1756,12 @@ describe("trace", () => {
       parentLog.emit("run.created", { goal: "delegate and verify" }),
       parentLog.emit("tool.requested", {
         id: "verify",
-        toolName: "shell",
+        toolName: "bash",
         arguments: { command: "npm test" },
       }),
       parentLog.emit("tool.completed", {
         toolCallId: "verify",
-        toolName: "shell",
+        toolName: "bash",
         status: "completed",
         output: { exitCode: 0, timedOut: false },
       }),
@@ -1809,7 +1809,7 @@ describe("trace", () => {
       log.emit("workspace.write.untracked_access_granted", {
         taskId: "task_writer",
         parentRunId: "run_parent",
-        toolName: "shell",
+        toolName: "bash",
         protocol: "promoted_shell",
         marker: "untracked-write-capable",
         access: "granted",
@@ -1844,7 +1844,7 @@ describe("trace", () => {
       log.emit("run.created", { goal: "one duplicate" }),
       log.emit("tool.failed", {
         toolCallId: "dup_1",
-        toolName: "read_file",
+        toolName: "read",
         status: "failed",
         error: {
           code: "DUPLICATE_TOOL_CALL_SKIPPED",
@@ -1985,10 +1985,10 @@ describe("trace", () => {
     // remains authoritative and the report must not invent an unresolved failure.
     const jsonl = [
       log.emit("run.created", { goal: "Read a busy file" }),
-      log.emit("tool.requested", { id: "call_read", toolName: "read_file" }),
+      log.emit("tool.requested", { id: "call_read", toolName: "read" }),
       log.emit("tool.failed", {
         toolCallId: "call_read",
-        toolName: "read_file",
+        toolName: "read",
         status: "failed",
         error: { code: "EBUSY", message: "resource busy" },
       }),
@@ -2022,22 +2022,22 @@ describe("trace", () => {
       log.emit("run.created", { goal: "newer run with args" }),
       log.emit("tool.requested", {
         id: "call_ok",
-        toolName: "read_file",
+        toolName: "read",
         arguments: { path: "x.txt" },
       }),
       log.emit("tool.completed", {
         toolCallId: "call_ok",
-        toolName: "read_file",
+        toolName: "read",
         status: "completed",
         output: { path: "x.txt" },
       }),
       log.emit("run.completed", { reason: "final_answer" }),
       // Older/compacted run: request args stripped, persisted snapshot recovered.
       log.emit("run.created", { goal: "older compacted run" }),
-      log.emit("tool.requested", { id: "call_busy", toolName: "read_file" }),
+      log.emit("tool.requested", { id: "call_busy", toolName: "read" }),
       log.emit("tool.failed", {
         toolCallId: "call_busy",
-        toolName: "read_file",
+        toolName: "read",
         status: "failed",
         error: { code: "EBUSY", message: "resource busy" },
       }),
@@ -2070,12 +2070,12 @@ describe("trace", () => {
       events.push(
         log.emit("tool.requested", {
           id: `call_${i}`,
-          toolName: "shell",
+          toolName: "bash",
           arguments: { command: "npm test -- --runInBand" },
         }),
         log.emit("tool.completed", {
           toolCallId: `call_${i}`,
-          toolName: "shell",
+          toolName: "bash",
           status: "completed",
           output: { exitCode: 1, timedOut: false },
         }),
@@ -2114,12 +2114,12 @@ describe("trace", () => {
         log.emit("model.completed", { step: i, message: `step ${i}` }),
         log.emit("tool.requested", {
           id: `read_${i}`,
-          toolName: "read_file",
+          toolName: "read",
           arguments: { path: "src/foo.ts" },
         }),
         log.emit("tool.completed", {
           toolCallId: `read_${i}`,
-          toolName: "read_file",
+          toolName: "read",
           status: "completed",
           output: { path: "src/foo.ts" },
         }),
@@ -2202,7 +2202,7 @@ describe("trace", () => {
           "tool.requested",
           {
             id: `parent_read_${i}`,
-            toolName: "read_file",
+            toolName: "read",
             arguments: { path: `docs/${i}.md` },
           },
           {
@@ -2214,7 +2214,7 @@ describe("trace", () => {
           "tool.completed",
           {
             toolCallId: `parent_read_${i}`,
-            toolName: "read_file",
+            toolName: "read",
             status: "completed",
             output: { path: `docs/${i}.md` },
           },
@@ -2248,7 +2248,7 @@ describe("trace", () => {
           "tool.requested",
           {
             id: `child_read_${i}`,
-            toolName: "read_file",
+            toolName: "read",
             arguments: { path: `docs/${i}.md` },
           },
           {
@@ -2260,7 +2260,7 @@ describe("trace", () => {
           "tool.completed",
           {
             toolCallId: `child_read_${i}`,
-            toolName: "read_file",
+            toolName: "read",
             status: "completed",
             output: { path: `docs/${i}.md` },
           },
@@ -2854,7 +2854,7 @@ describe("trace", () => {
           "tool.requested",
           {
             id: `child_read_${i}`,
-            toolName: "read_file",
+            toolName: "read",
             arguments: { path: `src/file-${i}.ts` },
           },
           {
@@ -2866,7 +2866,7 @@ describe("trace", () => {
           "tool.completed",
           {
             toolCallId: `child_read_${i}`,
-            toolName: "read_file",
+            toolName: "read",
             status: "completed",
             output: { path: `src/file-${i}.ts` },
           },
@@ -2952,12 +2952,12 @@ describe("trace", () => {
       events.push(
         log.emit("tool.requested", {
           id: `read_${i}`,
-          toolName: "read_file",
+          toolName: "read",
           arguments: { path: "PROJECT_NOTES.md", offset: startLine },
         }),
         log.emit("tool.completed", {
           toolCallId: `read_${i}`,
-          toolName: "read_file",
+          toolName: "read",
           status: "completed",
           output: {
             path: "PROJECT_NOTES.md",
@@ -3005,7 +3005,7 @@ describe("trace", () => {
         log.emit("model.completed", { step: i, message: `read ${i}` }),
         log.emit("tool.completed", {
           toolCallId: `read_${i}`,
-          toolName: "read_file",
+          toolName: "read",
           status: "completed",
           output: { path: `src/bar${i}.ts` },
         }),
@@ -3016,12 +3016,12 @@ describe("trace", () => {
       log.emit("model.completed", { step: 3, message: "verify" }),
       log.emit("tool.requested", {
         id: "verify",
-        toolName: "shell",
+        toolName: "bash",
         arguments: { command: "make test" },
       }),
       log.emit("tool.completed", {
         toolCallId: "verify",
-        toolName: "shell",
+        toolName: "bash",
         status: "completed",
         output: { exitCode: 0, timedOut: false },
       }),
@@ -3058,7 +3058,7 @@ describe("trace", () => {
         log.emit("model.completed", { step: i, message: `read ${i}` }),
         log.emit("tool.completed", {
           toolCallId: `read_${i}`,
-          toolName: "read_file",
+          toolName: "read",
           status: "completed",
           output: { path: `src/bar${i}.ts` },
         }),
@@ -3069,12 +3069,12 @@ describe("trace", () => {
       log.emit("model.completed", { step: 5, message: "verify" }),
       log.emit("tool.requested", {
         id: "verify",
-        toolName: "shell",
+        toolName: "bash",
         arguments: { command: "make test" },
       }),
       log.emit("tool.completed", {
         toolCallId: "verify",
-        toolName: "shell",
+        toolName: "bash",
         status: "completed",
         output: { exitCode: 0, timedOut: false },
       }),
@@ -3104,7 +3104,7 @@ describe("trace", () => {
       log.emit("run.created", { goal: "fix and verify" }, { sessionId: "s1" }),
       log.emit("tool.completed", {
         toolCallId: "call_shell",
-        toolName: "shell",
+        toolName: "bash",
         status: "completed",
         output: { exitCode: 1, timedOut: false },
       }),
@@ -3152,13 +3152,13 @@ describe("trace", () => {
       log.emit("run.created", { goal: "fix and verify" }, { sessionId: "s1" }),
       log.emit("tool.completed", {
         toolCallId: "call_fail",
-        toolName: "shell",
+        toolName: "bash",
         status: "completed",
         output: { exitCode: 1, timedOut: false },
       }),
       log.emit("tool.completed", {
         toolCallId: "call_pass",
-        toolName: "shell",
+        toolName: "bash",
         status: "completed",
         output: { exitCode: 0, timedOut: false },
       }),
@@ -3200,7 +3200,7 @@ describe("trace", () => {
       ),
       log.emit("tool.requested", {
         id: "probe",
-        toolName: "shell",
+        toolName: "bash",
         arguments: {
           command:
             'node -e "console.error(\\"probe failed\\"); process.exit(7)"',
@@ -3208,7 +3208,7 @@ describe("trace", () => {
       }),
       log.emit("tool.completed", {
         toolCallId: "probe",
-        toolName: "shell",
+        toolName: "bash",
         status: "completed",
         output: {
           exitCode: 7,
@@ -3219,23 +3219,23 @@ describe("trace", () => {
       }),
       log.emit("tool.requested", {
         id: "fail",
-        toolName: "shell",
+        toolName: "bash",
         arguments: { command: "npm test" },
       }),
       log.emit("tool.completed", {
         toolCallId: "fail",
-        toolName: "shell",
+        toolName: "bash",
         status: "completed",
         output: { exitCode: 1, timedOut: false, stdout: "", stderr: "fail" },
       }),
       log.emit("tool.requested", {
         id: "pass",
-        toolName: "shell",
+        toolName: "bash",
         arguments: { command: "npm test" },
       }),
       log.emit("tool.completed", {
         toolCallId: "pass",
-        toolName: "shell",
+        toolName: "bash",
         status: "completed",
         output: { exitCode: 0, timedOut: false, stdout: "ok", stderr: "" },
       }),
@@ -3345,12 +3345,12 @@ describe("trace", () => {
       log.emit("run.created", { goal: "recover from a bad read" }),
       log.emit("tool.requested", {
         id: "call_bad_read",
-        toolName: "read_file",
+        toolName: "read",
         arguments: { path: "missing.md" },
       }),
       log.emit("tool.failed", {
         toolCallId: "call_bad_read",
-        toolName: "read_file",
+        toolName: "read",
         status: "failed",
         error: { code: "ENOENT", message: "missing" },
       }),
@@ -3361,12 +3361,12 @@ describe("trace", () => {
       }),
       log.emit("tool.requested", {
         id: "call_good_read",
-        toolName: "read_file",
+        toolName: "read",
         arguments: { path: "README.md" },
       }),
       log.emit("tool.completed", {
         toolCallId: "call_good_read",
-        toolName: "read_file",
+        toolName: "read",
         status: "completed",
         output: { path: "README.md" },
       }),
@@ -3425,12 +3425,12 @@ describe("trace", () => {
       log.emit("run.created", { goal: "foreground shell guard" }),
       log.emit("tool.requested", {
         id: "call_shell",
-        toolName: "shell",
+        toolName: "bash",
         arguments: { command: "echo x > leak.txt" },
       }),
       log.emit("tool.failed", {
         toolCallId: "call_shell",
-        toolName: "shell",
+        toolName: "bash",
         status: "failed",
         error: {
           code: "UNTRACKED_WORKSPACE_MUTATION",
@@ -3494,23 +3494,23 @@ describe("trace", () => {
         log.emit("run.created", { goal: run.goal }, { sessionId: "s1" }),
         log.emit("tool.requested", {
           id: "call_fail",
-          toolName: "read_file",
+          toolName: "read",
           arguments: { path: "a.txt" },
         }),
         log.emit("tool.failed", {
           toolCallId: "call_fail",
-          toolName: "read_file",
+          toolName: "read",
           status: "failed",
           error: { code: "EBUSY", message: "resource busy" },
         }),
         log.emit("tool.requested", {
           id: "call_ok",
-          toolName: "read_file",
+          toolName: "read",
           arguments: { path: "b.txt" },
         }),
         log.emit("tool.completed", {
           toolCallId: "call_ok",
-          toolName: "read_file",
+          toolName: "read",
           status: "completed",
           output: { path: "b.txt", content: "ok" },
         }),
@@ -3557,7 +3557,7 @@ describe("trace", () => {
       log.emit("run.created", { goal: run.goal }, { sessionId: "s1" }),
       log.emit("tool.completed", {
         toolCallId: "call_1",
-        toolName: "shell",
+        toolName: "bash",
         status: "completed",
         output: { exitCode: 254, stdout: "EXIT:254\n", timedOut: false },
       }),
@@ -3605,7 +3605,7 @@ describe("trace", () => {
               writeEpoch: 0,
               stale: true,
               toolCallId: "call_1",
-              toolName: "shell",
+              toolName: "bash",
               command: "npm test",
               commandKey: "npm test",
               exitCode: 1,
@@ -3644,7 +3644,7 @@ describe("trace", () => {
               writeEpoch: 0,
               stale: false,
               toolCallId: "call_1",
-              toolName: "shell",
+              toolName: "bash",
               command: "npm test",
               commandKey: "npm test",
               exitCode: 1,
@@ -3793,7 +3793,7 @@ describe("trace", () => {
       log.emit("run.created", { goal: "verify" }, { sessionId: "s1" }),
       log.emit("tool.completed", {
         toolCallId: "call_1",
-        toolName: "shell",
+        toolName: "bash",
         status: "completed",
         output: { exitCode: 254, stdout: "EXIT:254\n", timedOut: false },
       }),
@@ -3880,9 +3880,9 @@ describe("trace", () => {
     const log = new EventLog(run.id);
     const jsonl = [
       log.emit("run.created", { goal: run.goal }, { sessionId: "s1" }),
-      log.emit("tool.requested", { toolName: "read_file" }),
-      log.emit("tool.started", { toolName: "read_file" }),
-      log.emit("tool.completed", { toolName: "read_file" }),
+      log.emit("tool.requested", { toolName: "read" }),
+      log.emit("tool.started", { toolName: "read" }),
+      log.emit("tool.completed", { toolName: "read" }),
       log.emit("run.completed", { state: "completed" }),
     ]
       .map(serializeEventJsonl)
@@ -3890,7 +3890,7 @@ describe("trace", () => {
 
     const summary = summarizeTraceJsonl(jsonl);
 
-    expect(summary.toolCalls).toEqual({ read_file: 1 });
+    expect(summary.toolCalls).toEqual({ read: 1 });
   });
 
   it("summarizes shell command failures and verification failures", () => {
@@ -3902,23 +3902,23 @@ describe("trace", () => {
       }),
       log.emit("tool.requested", {
         id: "call_probe",
-        toolName: "shell",
+        toolName: "bash",
         arguments: { command: "python3 --version" },
       }),
       log.emit("tool.completed", {
         toolCallId: "call_probe",
-        toolName: "shell",
+        toolName: "bash",
         status: "completed",
         output: { exitCode: 0, timedOut: false },
       }),
       log.emit("tool.requested", {
         id: "call_verify",
-        toolName: "shell",
+        toolName: "bash",
         arguments: { command: "python3 -m greettool.cli --name Ada" },
       }),
       log.emit("tool.completed", {
         toolCallId: "call_verify",
-        toolName: "shell",
+        toolName: "bash",
         status: "completed",
         output: { exitCode: 1, timedOut: false },
       }),
@@ -3961,8 +3961,8 @@ describe("trace", () => {
       log.emit("approval.requested", {
         id: "approval_shell",
         action: "tool.execute",
-        summary: "Run tool shell",
-        details: { toolName: "shell" },
+        summary: "Run tool bash",
+        details: { toolName: "bash" },
       }),
       log.emit("approval.resolved", {
         approvalId: "approval_shell",
@@ -3983,12 +3983,12 @@ describe("trace", () => {
       }),
       log.emit("tool.requested", {
         id: "call_shell",
-        toolName: "shell",
+        toolName: "bash",
         arguments: { command: "python -m venv .venv" },
       }),
       log.emit("tool.failed", {
         toolCallId: "call_shell",
-        toolName: "shell",
+        toolName: "bash",
         status: "failed",
         error: {
           code: "UNTRACKED_WORKSPACE_MUTATION",
@@ -4128,7 +4128,7 @@ describe("trace", () => {
     const jsonl = [
       log.emit("tool.requested", {
         id: "call_1",
-        toolName: "read_file",
+        toolName: "read",
         arguments: { path: "README.md" },
       }),
       log.emit("tool.completed", {
@@ -4138,7 +4138,7 @@ describe("trace", () => {
       }),
       log.emit("tool.requested", {
         id: "call_2",
-        toolName: "read_file",
+        toolName: "read",
         arguments: { path: "README.md" },
       }),
       log.emit("tool.failed", {
@@ -4243,7 +4243,7 @@ describe("trace", () => {
       }),
       log.emit("tool.requested", {
         id: "call_patch",
-        toolName: "apply_patch",
+        toolName: "edit",
         arguments: { path: "NOTES.md", patch: "@@\n+fixed\n" },
       }),
       log.emit("workspace.write.requested", {
@@ -4360,7 +4360,7 @@ describe("trace", () => {
     const log = new EventLog(run.id);
     const jsonl = [
       log.emit("run.created", { goal: run.goal }),
-      log.emit("tool.failed", { toolName: "read_file", error: "boom" }),
+      log.emit("tool.failed", { toolName: "read", error: "boom" }),
     ]
       .map(serializeEventJsonl)
       .join("");
@@ -4394,7 +4394,7 @@ describe("trace", () => {
       ),
       log.emit(
         "tool.started",
-        { toolCallId: "tool_1", toolName: "read_file" },
+        { toolCallId: "tool_1", toolName: "read" },
         { sessionId: "s1", agentId: "main" },
       ),
       log.emit(
@@ -4430,7 +4430,7 @@ describe("trace", () => {
         expect.objectContaining({
           category: "tool",
           status: "completed",
-          label: "tool read_file",
+          label: "tool read",
         }),
       ]),
     );
@@ -4672,7 +4672,7 @@ describe("trace", () => {
           id: "approval_1",
           runId: run.id,
           action: "tool.execute",
-          summary: "Run tool shell",
+          summary: "Run tool bash",
           details: {},
           createdAt: "2026-06-11T00:00:00.000Z",
           status: "pending",
@@ -4769,7 +4769,7 @@ describe("trace", () => {
     await store.append(
       log.emit("tool.requested", {
         id: "call_escape",
-        toolName: "read_file",
+        toolName: "read",
         arguments: { path: "link.txt" },
       }),
     );
@@ -4777,7 +4777,7 @@ describe("trace", () => {
     await store.append(
       log.emit("tool.failed", {
         toolCallId: "call_escape",
-        toolName: "read_file",
+        toolName: "read",
         status: "failed",
         error: {
           code: "WORKSPACE_PATH_ESCAPED",
@@ -4839,7 +4839,7 @@ describe("trace", () => {
     await store.append(
       log.emit("tool.requested", {
         id: "call_enoent",
-        toolName: "read_file",
+        toolName: "read",
         arguments: { path: "missing.txt" },
       }),
     );
@@ -4847,7 +4847,7 @@ describe("trace", () => {
     await store.append(
       log.emit("tool.failed", {
         toolCallId: "call_enoent",
-        toolName: "read_file",
+        toolName: "read",
         status: "failed",
         error: { code: "ENOENT", message: "ENOENT: no such file" },
       }),

@@ -105,7 +105,7 @@ feed that into the existing `applyToolConfig`.
 tools:
   # Primary: high-level selector whitelist. Unset = current behavior (all tools);
   # set = tightening whitelist by source/capability group.
-  use: [workspace.read, workspace.write, shell, planning, skills, agents, mcp]
+  use: [workspace.read, workspace.write, bash, planning, skills, agents, mcp]
   # or exclusive to one MCP server:
   # use: [mcp:demo]
 
@@ -121,18 +121,18 @@ and `use:[mcp]` produce identical results; two fields only create ambiguity.
 
 ### 4.4 Selector vocabulary
 
-| selector          | match rule                              | tools                                               |
-| ----------------- | --------------------------------------- | --------------------------------------------------- |
-| `workspace.read`  | source=`coding` ∩ static read list      | read_file, glob, grep, list_dir, read_anchored_text |
-| `workspace.write` | source=`coding` ∩ static write list     | edit_anchored_text, apply_patch                     |
-| `shell`           | source=`shell`                          | shell                                               |
-| `planning`        | source=`todo`                           | todo_write                                          |
-| `skills`          | source=`skill`                          | skill inspect/manage/dynamic                        |
-| `agents`          | source=`agent` ∪ `delegate`             | agent + delegate tools                              |
-| `tasks`           | source=`task`                           | task                                                |
-| `cron`            | source=`cron`                           | cron                                                |
-| `mcp`             | source=`mcp` (all)                      | all MCP-source tools                                |
-| `mcp:<server>`    | source=`mcp` ∧ `origin.name===<server>` | that server's lazy gateway + real tools             |
+| selector          | match rule                              | tools                                          |
+| ----------------- | --------------------------------------- | ---------------------------------------------- |
+| `workspace.read`  | source=`coding` ∩ static read list      | read, glob, grep, list_dir, read_anchored_text |
+| `workspace.write` | source=`coding` ∩ static write list     | write, edit_anchored_text, edit                |
+| `bash`            | source=`shell`                          | bash                                           |
+| `planning`        | source=`todo`                           | todo_write                                     |
+| `skills`          | source=`skill`                          | skill inspect/manage/dynamic                   |
+| `agents`          | source=`agent` ∪ `delegate`             | agent + delegate tools                         |
+| `tasks`           | source=`task`                           | task                                           |
+| `cron`            | source=`cron`                           | cron                                           |
+| `mcp`             | source=`mcp` (all)                      | all MCP-source tools                           |
+| `mcp:<server>`    | source=`mcp` ∧ `origin.name===<server>` | that server's lazy gateway + real tools        |
 
 - `coding` covers both read and write, so `workspace.read/write` need a static
   name sub-list. Add a guard test asserting every `coding` tool is covered by
@@ -222,9 +222,9 @@ identity:
 
 ```yaml
 # ② what the agent may use (unset = all; set = tightening whitelist)
-#    options: workspace.read workspace.write shell planning skills agents mcp  mcp:<server>
+#    options: workspace.read workspace.write bash planning skills agents mcp  mcp:<server>
 tools:
-  use: [workspace.read, workspace.write, shell, planning, skills]
+  use: [workspace.read, workspace.write, bash, planning, skills]
 
 policy:
   # ③ autonomy level (one named dial)

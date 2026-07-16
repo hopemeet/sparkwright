@@ -209,9 +209,8 @@ constraints. Substrate references (S1–S4) resolve to
   `tool_search` whose search source is only the narrowed catalog, and the
   PreToolUse clamp treats that available infrastructure tool as allowed. This
   preserves deferred schema loading without reopening the full parent catalog.
-  The same follow-up keeps the clamp's allowlist comparison canonicalized, so
-  legacy workflow declarations such as `tools: [read_file]` continue to allow
-  the canonical worker tool `read`.
+  Workflow declarations and the clamp now compare the same exact callable
+  names; `tools: [read]` allows `read` without a normalization layer.
   Treat "landed" here as implementation status, not a PR-ready correctness
   claim; this follow-up belongs to P3 acceptance hardening before merge.
 - 2026-07-05 — P3 Step 4b.2 D6 worker-entry budget/model facts landed:

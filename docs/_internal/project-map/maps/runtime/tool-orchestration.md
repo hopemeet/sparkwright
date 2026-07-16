@@ -10,7 +10,11 @@ See [../safety/workspace-writes.md](../safety/workspace-writes.md), [../safety/s
 ## Last Verified
 
 - Date: 2026-07-16
-- Scope: indexed and parallel delegate model schemas now require `agentId`; their configured target tool names remain private execution details.
+- Scope: built-in callable identity is single-track: Core registers and traces
+  exact names, Host configuration and selectors do not normalize removed names,
+  and capability inspection no longer emits alias metadata. Indexed and parallel
+  delegate model schemas also require `agentId`; their configured target tool
+  names remain private execution details.
 
 ## Main Files
 
@@ -36,7 +40,7 @@ model tool calls
   -> canonical Agent/Profile admission
   -> Workflow narrowing + deferred/eager model surface
   -> CLI diagnostic catalog profile for direct-core/cron when not using a live host
-  -> alias canonicalization + validation + call-time availability
+  -> exact-name validation + call-time availability
   -> tool.batch/tool.requested events
   -> policy, then approval where needed
   -> tool execution
@@ -65,13 +69,11 @@ model tool calls
   Retaining the original discovery implementation after definitions are
   removed would leak denied descriptors even if direct execution remained
   blocked, so filtered catalogs must rebuild rather than retain it.
-- Core canonicalizes a legacy callable name through `ToolRegistry` before
-  Workflow hooks, repeat detection, policy, approval, and execution. A tool
-  whose dynamic `available()` probe is false is also rejected with
-  `TOOL_UNAVAILABLE` before policy or handler execution, even when a model
-  guesses its registered name. Public lifecycle events and approval details
-  retain the model-requested name for protocol compatibility and add
-  `canonicalToolName` when it differs.
+- Core resolves only exact registered callable names before Workflow hooks,
+  repeat detection, policy, approval, and execution. A tool whose dynamic
+  `available()` probe is false is rejected with `TOOL_UNAVAILABLE` before policy
+  or handler execution, even when a model guesses its registered name. Public
+  lifecycle events and approval details use that same exact name.
 - Episode visibility is not persisted as a second decision model. Policy,
   `approval.*`, and `tool.*` events remain the final evidence for availability,
   authorization, and execution.
@@ -135,8 +137,8 @@ true` records a mutation index for its target (`mutatedByTarget`). A
 - Tool progress is advisory; terminal tool state comes from `tool.completed` or `tool.failed`.
 - Host runtime tool surfaces should be catalogued before being flattened to
   `ToolDefinition[]`; capability snapshots use catalog source metadata and
-  identity metadata (`canonicalName`, `legacyNames`, `defaultExposureTier`,
-  `relatedTools`, `requiresTool`, and per-run `effectiveLoading`).
+  identity metadata (`canonicalName`, `defaultExposureTier`, `relatedTools`,
+  `requiresTool`, and per-run `effectiveLoading`).
 - Live Host catalogs wrap tools whose effective argument-level governance
   declares workspace `write` with a process-local mutation lease. The wrapper
   is applied after tool filtering and before flattening, so parent and child
@@ -253,7 +255,7 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
   excludes it. When the narrowed catalog contains deferred tools, host appends a
   scoped `tool_search` over the narrowed catalog only, and the clamp permits only
   that marked scoped discovery tool. The clamp canonicalizes tool-name
-  comparisons, so legacy declarations such as `tools: [read_file]` permit the
+  comparisons, so legacy declarations such as `tools: [read]` permit the
   canonical worker tool `read`. In the P10a two-stage `PreToolUse` path, the
   clamp runs in the governance pass after configured argument rewrites, so
   rewritten paths/tool arguments are checked before budget, repeat, policy,
@@ -1129,7 +1131,7 @@ test/trace.test.ts`; `npm --workspace @sparkwright/host run typecheck`;
 - Status: Verified
 - Date: 2026-06-28T20:30:50+0800
 - Scope: foreground tool execution now reaches core approval policy with
-  explicit `read_file` read-only governance metadata; plan/read-only mode
+  explicit `read` read-only governance metadata; plan/read-only mode
   allows only safe tools whose side effects are declared read-only/no-op while
   repeated-read loop handling stays unchanged.
 - Read: `packages/core/src/run.ts`,

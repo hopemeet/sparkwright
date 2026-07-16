@@ -741,7 +741,7 @@ export interface SpawnSubAgentInput {
   /**
    * Workspace for the child's {@link RuntimeContext}. Defaults to the parent's
    * workspace (`parent.getWorkspace()`) so workspace-backed child tools like
-   * `read_file` resolve against the same root the parent uses, instead of
+   * `read` resolve against the same root the parent uses, instead of
    * throwing "Workspace is not configured". Pass an explicit value to override,
    * or `null` to deliberately run the child without a workspace.
    */
@@ -982,7 +982,7 @@ export function spawnSubAgent(input: SpawnSubAgentInput): SpawnedSubAgent {
   if (!input.admission) supervisor.admit();
 
   // Roll up the child's own workspace writes onto the parent-visible terminal
-  // event. The child run records each `apply_patch`/`edit_anchored_text` as a
+  // event. The child run records each `edit`/`edit_anchored_text` as a
   // `workspace.write.completed` on its OWN trace; the parent run-end summary is
   // parent-scoped and never sees those. Counting the child's real write events
   // here (rather than re-detecting changes with a parent-side filesystem

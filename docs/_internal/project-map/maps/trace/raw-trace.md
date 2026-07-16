@@ -11,7 +11,9 @@ and [../session/session-store.md](../session/session-store.md) for session layou
 ## Last Verified
 
 - Date: 2026-07-16
-- Scope: reviewed delegate identity single-tracking; configured tool names remain valid trace metadata while model-facing target selection uses only `agentId`.
+- Scope: built-in tool events record the one exact callable identity and no
+  requested/canonical alias pair. Configured delegate tool names remain valid
+  trace metadata while model-facing target selection uses only `agentId`.
 
 ## Main Files
 

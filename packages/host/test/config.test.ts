@@ -397,7 +397,7 @@ describe("loadHostConfig", () => {
       await writeUserConfig(xdg, {
         capabilities: {
           tools: {
-            disabled: ["shell"],
+            disabled: ["bash"],
           },
         },
       });
@@ -471,8 +471,8 @@ describe("loadHostConfig", () => {
       await writeUserConfig(xdg, {
         tools: {
           use: ["workspace.read", "mcp"],
-          allowed: ["read_file", "shell", "edit_anchored_text"],
-          disabled: ["shell"],
+          allowed: ["read", "bash", "edit_anchored_text"],
+          disabled: ["bash"],
           defer: ["todo_write", "read_anchored_text"],
         },
       });
@@ -482,7 +482,7 @@ describe("loadHostConfig", () => {
         JSON.stringify({
           tools: {
             use: ["workspace.read", "mcp:demo"],
-            allowed: ["read_file", "grep", "edit_anchored_text"],
+            allowed: ["read", "grep", "edit_anchored_text"],
             disabled: ["grep"],
             defer: ["edit_anchored_text"],
           },
@@ -1202,7 +1202,7 @@ describe("loadHostConfig", () => {
                 hook: "PreToolUse",
                 frequency: "always",
                 matcher: {
-                  toolName: "write_file",
+                  toolName: "write",
                   pathGlob: "generated/**",
                   excludePathGlob: "generated/fixtures/**",
                 },
@@ -1214,7 +1214,7 @@ describe("loadHostConfig", () => {
               {
                 name: "test-after-write",
                 hook: "PostToolUse",
-                matcher: { toolName: ["write_file", "apply_patch"] },
+                matcher: { toolName: ["write", "edit"] },
                 action: {
                   type: "command",
                   command: "npm",
@@ -1267,7 +1267,7 @@ describe("loadHostConfig", () => {
           hook: "PreToolUse",
           frequency: "always",
           matcher: {
-            toolName: "write_file",
+            toolName: "write",
             pathGlob: "generated/**",
             excludePathGlob: "generated/fixtures/**",
           },
@@ -1279,7 +1279,7 @@ describe("loadHostConfig", () => {
         {
           name: "test-after-write",
           hook: "PostToolUse",
-          matcher: { toolName: ["write_file", "apply_patch"] },
+          matcher: { toolName: ["write", "edit"] },
           action: {
             type: "command",
             command: "npm",
@@ -1884,7 +1884,7 @@ describe("loadHostConfig", () => {
     try {
       await writeUserConfig(xdg, {
         tools: {
-          enabled: ["read_file"],
+          enabled: ["read"],
           allowed: [false],
           disabled: [false],
           defer: ["read_anchored_text"],
@@ -2037,18 +2037,18 @@ describe("loadHostConfig", () => {
               {
                 id: "main",
                 mode: "primary",
-                allowedTools: ["read_file", "delegate_reviewer"],
+                allowedTools: ["read", "delegate_reviewer"],
               },
               {
                 id: "reviewer",
                 name: "Reviewer",
                 mode: "child",
                 prompt: "Review the current run.",
-                allowedTools: ["read_file"],
+                allowedTools: ["read"],
                 hooks: {
                   PreToolUse: [
                     {
-                      matcher: "shell",
+                      matcher: "bash",
                       action: {
                         type: "block",
                         reason: "reviewer cannot use shell",
@@ -2099,7 +2099,7 @@ describe("loadHostConfig", () => {
             {
               name: "reviewer.PreToolUse.0",
               hook: "PreToolUse",
-              matcher: { toolName: "shell" },
+              matcher: { toolName: "bash" },
               action: {
                 type: "block",
                 reason: "reviewer cannot use shell",
@@ -2391,7 +2391,7 @@ describe("loadHostConfig", () => {
                       },
                     },
                     {
-                      matcher: "shell",
+                      matcher: "bash",
                       action: {
                         type: "agent",
                         goal: "nested delegate",
@@ -2399,7 +2399,7 @@ describe("loadHostConfig", () => {
                     },
                     "not-an-object",
                     {
-                      matcher: "shell",
+                      matcher: "bash",
                       action: {
                         type: "block",
                         reason: "valid block",
@@ -2420,7 +2420,7 @@ describe("loadHostConfig", () => {
           {
             name: "reviewer.PreToolUse.3",
             hook: "PreToolUse",
-            matcher: { toolName: "shell" },
+            matcher: { toolName: "bash" },
             action: {
               type: "block",
               reason: "valid block",
@@ -2551,7 +2551,7 @@ describe("loadHostConfig", () => {
                 name: "Reviewer",
                 mode: "child",
                 prompt: "Inspect files and summarize.",
-                allowedTools: ["read_file"],
+                allowedTools: ["read"],
                 maxSteps: 4,
               },
             ],

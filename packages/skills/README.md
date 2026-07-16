@@ -93,7 +93,7 @@ name: code-reviewer
 description: Reviews code changes when users ask for review, risk analysis, or test coverage.
 license: Apache-2.0
 compatibility: generic
-allowed-tools: read shell
+allowed-tools: read bash
 metadata:
   version: 1.0.0
 ---

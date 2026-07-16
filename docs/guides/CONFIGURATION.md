@@ -654,11 +654,11 @@ profile's in-process child run:
           "id": "db-reader",
           "name": "DB Reader",
           "description": "Execute read-only database queries.",
-          "use": ["workspace.read", "shell"],
+          "use": ["workspace.read", "bash"],
           "hooks": {
             "PreToolUse": [
               {
-                "matcher": "shell",
+                "matcher": "bash",
                 "action": {
                   "type": "command",
                   "command": "./scripts/validate-readonly-query.sh",

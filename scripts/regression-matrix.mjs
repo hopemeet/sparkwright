@@ -857,12 +857,9 @@ async function spawnFinalityCase() {
           event.payload?.output?.promotionHint?.suggestedProfile?.maxSteps ===
             20,
       ) &&
-      !traceText.includes('"toolName":"read_file"') &&
-      !traceText.includes('"toolName":"shell"') &&
+      traceText.includes('"toolName":"read"') &&
       !traceText.includes('"toolName":"bash"') &&
-      !traceText.includes('"toolName":"write_file"') &&
       !traceText.includes('"toolName":"write"') &&
-      !traceText.includes('"toolName":"apply_patch"') &&
       !traceText.includes('"toolName":"edit"'),
   });
 }

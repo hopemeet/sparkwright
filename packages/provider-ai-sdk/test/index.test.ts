@@ -47,7 +47,7 @@ describe("createAiSdkModelAdapter", () => {
             {
               type: "tool-call",
               toolCallId: "call_1",
-              toolName: "read_file",
+              toolName: "read",
               input: JSON.stringify({ path: "README.md" }),
             },
           ],
@@ -68,7 +68,7 @@ describe("createAiSdkModelAdapter", () => {
       message: undefined,
       toolCalls: [
         {
-          toolName: "read_file",
+          toolName: "read",
           arguments: { path: "README.md" },
         },
       ],
@@ -351,7 +351,7 @@ describe("createAiSdkModelAdapter streaming", () => {
               {
                 type: "tool-input-start",
                 id: "tc_1",
-                toolName: "read_file",
+                toolName: "read",
                 providerExecuted: false,
               },
               { type: "tool-input-delta", id: "tc_1", delta: '{"pa' },
@@ -364,7 +364,7 @@ describe("createAiSdkModelAdapter streaming", () => {
               {
                 type: "tool-call",
                 toolCallId: "tc_1",
-                toolName: "read_file",
+                toolName: "read",
                 input: JSON.stringify({ path: "README.md" }),
               },
               {
@@ -397,7 +397,7 @@ describe("createAiSdkModelAdapter streaming", () => {
 
     expect(chunks.find((c) => c.type === "tool_call_start")).toMatchObject({
       type: "tool_call_start",
-      toolName: "read_file",
+      toolName: "read",
       toolCallIndex: 0,
     });
 
@@ -520,8 +520,8 @@ describe("toAiSdkTools", () => {
   it("converts tool descriptors to AI SDK tool definitions", () => {
     const tools = toAiSdkTools([readFileDescriptor()]);
 
-    expect(Object.keys(tools ?? {})).toEqual(["read_file"]);
-    expect(tools?.read_file).toMatchObject({
+    expect(Object.keys(tools ?? {})).toEqual(["read"]);
+    expect(tools?.read).toMatchObject({
       description: "Read a file.",
       metadata: {
         risk: "safe",
@@ -557,7 +557,7 @@ function modelInput(overrides: Partial<ModelInput> = {}): ModelInput {
 
 function readFileDescriptor(): ToolDescriptor {
   return {
-    name: "read_file",
+    name: "read",
     description: "Read a file.",
     inputSchema: {
       type: "object",

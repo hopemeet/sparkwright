@@ -112,7 +112,7 @@ describe("run inspector facts", () => {
       event("run.started"),
       event("model.completed"),
       event("tool.requested", {
-        toolName: "shell",
+        toolName: "bash",
         arguments: { command: "npm test" },
       }),
       event("approval.requested"),

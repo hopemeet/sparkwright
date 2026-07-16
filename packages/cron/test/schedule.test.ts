@@ -386,7 +386,7 @@ describe("CronStore", () => {
     let modelAdapters = 0;
     let readFileCalls = 0;
     const readFileTool = defineTool({
-      name: "read_file",
+      name: "read",
       description: "Read a file.",
       inputSchema: { type: "object" },
       async execute() {
@@ -416,7 +416,7 @@ describe("CronStore", () => {
               return {
                 toolCalls: [
                   {
-                    toolName: "read_file",
+                    toolName: "read",
                     arguments: { path: "README.md" },
                   },
                 ],

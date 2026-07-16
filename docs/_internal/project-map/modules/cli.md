@@ -9,7 +9,9 @@ See also [../maps/trace/summary-timeline-verify.md](../maps/trace/summary-timeli
 ## Last Verified
 
 - Date: 2026-07-16
-- Scope: reviewed workflow delegate identity changes; CLI workflow lifecycle and capability presentation require no code changes.
+- Scope: capability inspection and approval/trace fixtures now present exact
+  canonical built-in names and no alias metadata. Workflow delegate identity
+  remains `agentId`-only.
 
 ## Main Files
 
@@ -205,7 +207,7 @@ Does not own:
   product-surface contract. `cron create` keeps the created job JSON on stdout
   and writes a stderr notice when unique-name storage creates a suffixed name
   such as `name 2`.
-- direct-core and cron run paths call `createConfiguredCliTools`, which now flattens the host `createCliDiagnosticToolCatalog` profile; do not add ad hoc CLI-only tools there. The deterministic direct-core write fallback uses `write_file` when the target file does not exist.
+- direct-core and cron run paths call `createConfiguredCliTools`, which now flattens the host `createCliDiagnosticToolCatalog` profile; do not add ad hoc CLI-only tools there. The deterministic direct-core write fallback uses `write` when the target file does not exist.
 - Direct-core remains an opt-in internal diagnostic path, but its fresh run and
   run-resume mutation/read/permission policy comes from Host
   `createHostRunPolicy`. Untargeted writes therefore use the Host default
@@ -228,7 +230,7 @@ Does not own:
   Setup-time config inspection must run outside the script's isolated XDG
   fixture; actual regression cases run against the copied isolated config.
   Real-model prompt canaries should target current catalog tools such as
-  `write_file`, not retired harness-only tool names.
+  `write`, not retired harness-only tool names.
 - Run completion summaries separate controlled workspace writes, capability
   mutations, tool-reported capability changes, and sub-agent write rollups.
   They also separate untracked write-capable process boundaries from
@@ -335,7 +337,7 @@ Does not own:
 
 - `packages/cli/src/cli.ts` is broad; feature changes often share one large file.
 - Some diagnostics are formatted in CLI even though the source contracts live in core.
-- The direct-core deterministic model is a diagnostics harness; it should keep exercising real catalog tools (`read_file`, `read_anchored_text`, `write_file`, `edit_anchored_text`/`apply_patch`) rather than reintroducing test-only write tools.
+- The direct-core deterministic model is a diagnostics harness; it should keep exercising real catalog tools (`read`, `read_anchored_text`, `write`, `edit_anchored_text`/`edit`) rather than reintroducing test-only write tools.
 
 ## Last Verified
 

@@ -214,7 +214,7 @@ function isPathLikeSemanticTarget(key: string): boolean {
 }
 
 function isShellToolName(toolName: string): boolean {
-  return toolName === "bash" || toolName === "shell";
+  return toolName === "bash";
 }
 
 export function isIdempotentNoopToolResult(result: ToolResult): boolean {

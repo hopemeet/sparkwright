@@ -560,7 +560,7 @@ describe("workflow assets", () => {
         "nodes:",
         "  - id: reproduce",
         "    execute: model",
-        "    tools: [read_file, shell]",
+        "    tools: [read, bash]",
         "    verify:",
         "      - id: failing-test",
         "        kind: command",
@@ -583,7 +583,7 @@ describe("workflow assets", () => {
 
     expect(detail.definition.nodes[0]).toMatchObject({
       id: "reproduce",
-      tools: ["read_file", "shell"],
+      tools: ["read", "bash"],
       verify: [
         {
           id: "failing-test",
@@ -1078,7 +1078,7 @@ describe("workflow assets", () => {
         "nodes:",
         "  - id: main",
         "    execute: model",
-        "    tools: [read_file]",
+        "    tools: [read]",
         "---",
         "## main",
         "Only read tools are available.",

@@ -21,12 +21,12 @@ describe("CLI run outcome", () => {
       log.emit("run.created", { goal: "Fix the CLI and verify by running it" }),
       log.emit("tool.requested", {
         id: "call_1",
-        toolName: "shell",
+        toolName: "bash",
         arguments: { command: "python3 -m greettool.cli --name Ada" },
       }),
       log.emit("tool.completed", {
         toolCallId: "call_1",
-        toolName: "shell",
+        toolName: "bash",
         status: "completed",
         output: { exitCode: 1, timedOut: false },
       }),
@@ -53,12 +53,12 @@ describe("CLI run outcome", () => {
       log.emit("run.created", { goal: "Inspect the workspace" }),
       log.emit("tool.requested", {
         id: "call_1",
-        toolName: "shell",
+        toolName: "bash",
         arguments: { command: "grep missing README.md" },
       }),
       log.emit("tool.completed", {
         toolCallId: "call_1",
-        toolName: "shell",
+        toolName: "bash",
         status: "completed",
         output: { exitCode: 1, timedOut: false },
       }),
@@ -140,7 +140,7 @@ describe("CLI run outcome", () => {
     updateCliRunEventSummary(
       summary,
       log.emit("workspace.write.untracked_access_granted", {
-        toolName: "shell",
+        toolName: "bash",
         protocol: "promoted_shell",
         marker: "untracked-write-capable",
         access: "granted",
@@ -365,12 +365,12 @@ describe("CLI run outcome", () => {
       log.emit("run.created", { goal: "Fix and verify" }),
       log.emit("tool.requested", {
         id: "call_1",
-        toolName: "shell",
+        toolName: "bash",
         arguments: { command: "npm run verify" },
       }),
       log.emit("tool.completed", {
         toolCallId: "call_1",
-        toolName: "shell",
+        toolName: "bash",
         status: "completed",
         output: { exitCode: 0, timedOut: false },
       }),

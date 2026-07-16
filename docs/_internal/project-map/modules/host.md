@@ -12,7 +12,9 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 ## Last Verified
 
 - Date: 2026-07-16
-- Scope: Host delegate tools, workflow nodes, and hook agent actions now resolve only canonical `agentId` inputs; configured tool names remain internal execution/diagnostic facts.
+- Scope: Host built-in catalog entries, selectors, Profile admission, Workflow
+  clamps, policy checks, and capability inspection now use exact canonical tool
+  names without alias normalization. Delegate target inputs remain `agentId`-only.
 
 ## Main Files
 
@@ -322,8 +324,8 @@ Does not own:
   filters. `tools.use` is a selector whitelist expanded at the host catalog
   layer where source metadata is still available, `allowed`/`disabled` trim the
   prepared catalog by concrete name, and `defer` only changes schema loading
-  for tools that remain. The effective config canonicalizes legacy selector and
-  tool aliases.
+  for tools that remain. Selectors and concrete tool names are exact; removed
+  built-in names fail validation instead of being normalized.
 - Main, dynamic-spawn child, configured-delegate child, and diagnostic tool
   lists are derived from `tool-catalog.ts`; dynamic `spawn_agent` uses a
   dynamic child catalog that defaults to read-only tools but can expose managed
@@ -421,7 +423,7 @@ Does not own:
   contains deferred tools, host appends a scoped `tool_search` whose descriptor
   source is the narrowed catalog only; PreToolUse allows only that marked scoped
   tool_search without reopening the parent catalog. The clamp compares allowed
-  tool names canonically, so legacy declarations such as `tools: [read_file]`
+  tool names canonically, so legacy declarations such as `tools: [read]`
   still allow the canonical worker tool `read`.
 - P3 Step 4b.2 routes active model-node `model` and `runBudget` at worker
   entry: `workflows.ts` parses the node fields, `runtime.ts` resolves model
@@ -558,10 +560,10 @@ Does not own:
   controls for TUI and other clients. They do not reuse model-facing task tool
   JSON: join marks a task awaited, while promote forwards a manual foreground
   promotion signal into `TaskManager`.
-- `tool-identities.ts` maps implementation names to the canonical public
-  model-facing surface (`read`, `write`, `edit`, `bash`, `glob`, `grep`),
-  records legacy aliases, classifies default exposure tier, and records related
-  or required tools such as the anchored verified-edit pair.
+- `tool-identities.ts` records the canonical public model-facing surface
+  (`read`, `write`, `edit`, `bash`, `glob`, `grep`), classifies default exposure
+  tier, and records related or required tools such as the anchored verified-edit
+  pair. The callable definitions use those exact names.
 - Dynamic `spawn_agent` output includes child identity/finality facts for the
   parent (`childRunId`, `role`, `stepLimitReached`, `truncated`, and
   `finality`). A child answer produced on the last allowed step remains a
@@ -2405,7 +2407,7 @@ test/shell-tool.test.ts`;
 
 - Status: Verified
 - Date: 2026-06-29T17:40:00+0800
-- Scope: host `read_file` pagination now returns structured `nextOffset` for
+- Scope: host `read` pagination now returns structured `nextOffset` for
   valid line-window continuation, while preserving prose guidance and the
   non-recoverable long-line mid-cut behavior.
 - Read: `packages/host/src/tools.ts`, `packages/host/test/tools.test.ts`,
@@ -2430,7 +2432,7 @@ test/shell-tool.test.ts`;
 
 - Status: Verified
 - Date: 2026-06-28T20:30:50+0800
-- Scope: `read_file` now declares explicit read-only governance metadata
+- Scope: `read` now declares explicit read-only governance metadata
   (`sideEffects: ["read"]`) with the coding-tools origin so core read-only
   approval policy can trust tool metadata instead of using a tool-name special
   case; catalog/capability origin snapshots remain stable.

@@ -59,7 +59,7 @@ name: compat-skill
 description: Exercises compatibility fields.
 license: MIT
 compatibility: generic, cli
-allowed-tools: read_file shell,skill_load
+allowed-tools: read bash,skill_load
 triggers: review, diff
 ---
 Follow the compatibility contract.
@@ -74,7 +74,7 @@ Follow the compatibility contract.
       instructions: "Follow the compatibility contract.",
       license: "MIT",
       compatibility: ["generic", "cli"],
-      allowedTools: ["read_file", "shell", "skill_load"],
+      allowedTools: ["read", "bash", "skill_load"],
       triggers: ["review", "diff"],
       source: "/skills/compat/SKILL.md",
     });

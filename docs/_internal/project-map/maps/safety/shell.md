@@ -10,7 +10,9 @@ See [workspace-writes.md](workspace-writes.md) and [../../modules/coding-tools.m
 ## Last Verified
 
 - Date: 2026-07-16
-- Scope: reviewed routed Host workflow and delegate changes; shell admission, sandboxing, and safety boundaries are unchanged.
+- Scope: the model-facing shell tool and tool selector are exactly `bash`; the
+  internal catalog source/runtime/resource category remains `shell`. Admission,
+  sandboxing, approval, rollback, and background safety boundaries are unchanged.
 
 ## Main Files
 
@@ -26,7 +28,7 @@ See [workspace-writes.md](workspace-writes.md) and [../../modules/coding-tools.m
 ## Data Flow
 
 ```txt
-model calls shell tool
+model calls bash tool
   -> shell-tool classification
   -> core policy/approval
   -> sandbox/runtime execution
@@ -77,7 +79,7 @@ args` without rewriting requests, while the latter parses Host command text
   `.sparkwright/sessions/` and `.sparkwright/workflow-runs/` so host-owned
   session traces and durable workflow state are not reported as model shell
   mutations.
-- Configured in-process delegates can select `shell`, but shell remains gated
+- Configured in-process delegates can select `bash`, but shell remains gated
   by the parent run's write-enabled policy; capability descriptors should mark
   this with `gatedByRunWrite` rather than attempting command-specific read-only
   downgrades.

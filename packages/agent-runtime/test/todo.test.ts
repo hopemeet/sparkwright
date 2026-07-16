@@ -801,7 +801,7 @@ describe("policy denies todo_write for child agents", () => {
     // Recipe: deny on action="tool.execute" with resource="todo_write".
     const childPolicy = createAgentProfilePolicy({
       id: "worker",
-      allowedTools: ["read_file", "todo_write"],
+      allowedTools: ["read", "todo_write"],
       policy: [
         {
           action: "tool.execute",
@@ -820,7 +820,7 @@ describe("policy denies todo_write for child agents", () => {
     await expect(
       childPolicy.decide({
         action: "tool.execute",
-        resource: { kind: "tool", name: "read_file" },
+        resource: { kind: "tool", name: "read" },
       }),
     ).resolves.toMatchObject({ decision: "allow" });
   });

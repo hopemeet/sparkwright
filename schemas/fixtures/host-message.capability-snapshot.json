@@ -14,7 +14,6 @@
     {
       "name": "read",
       "canonicalName": "read",
-      "legacyNames": ["read_file"],
       "defaultExposureTier": "public",
       "source": "coding",
       "governance": {

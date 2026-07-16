@@ -2584,8 +2584,8 @@ describe("createWorkflowProjectionHooks", () => {
           {
             id: "limited",
             execute: "model",
-            body: "Use only read_file.",
-            tools: ["read_file"],
+            body: "Use only read.",
+            tools: ["read"],
           },
         ],
       },
@@ -2598,7 +2598,7 @@ describe("createWorkflowProjectionHooks", () => {
       hook: "PreToolUse",
       preToolUseStage: "rewrite",
       run,
-      payload: { toolName: "shell", arguments: {} },
+      payload: { toolName: "bash", arguments: {} },
       events,
     });
     expect(rewrite.status).toBe("continued");
@@ -2608,7 +2608,7 @@ describe("createWorkflowProjectionHooks", () => {
       hook: "PreToolUse",
       preToolUseStage: "governance",
       run,
-      payload: { toolName: "shell", arguments: {} },
+      payload: { toolName: "bash", arguments: {} },
       events,
     });
 
@@ -2619,8 +2619,8 @@ describe("createWorkflowProjectionHooks", () => {
     expect(blocked.block.metadata).toMatchObject({
       workflowRunId: "wf_tools",
       nodeId: "limited",
-      toolName: "shell",
-      allowedTools: ["read_file"],
+      toolName: "bash",
+      allowedTools: ["read"],
     });
   });
 
@@ -2659,8 +2659,8 @@ describe("createWorkflowProjectionHooks", () => {
             {
               id: "limited",
               execute: "model",
-              body: "Use only read_file.",
-              tools: ["read_file"],
+              body: "Use only read.",
+              tools: ["read"],
             },
           ],
         },
@@ -2670,7 +2670,7 @@ describe("createWorkflowProjectionHooks", () => {
         workflowHooks: [...configured, ...projection.hooks],
         tools: [
           defineTool({
-            name: "shell",
+            name: "bash",
             description: "Shell.",
             inputSchema: {
               type: "object",
@@ -2693,7 +2693,7 @@ describe("createWorkflowProjectionHooks", () => {
               return {
                 toolCalls: [
                   {
-                    toolName: "shell",
+                    toolName: "bash",
                     arguments: { command: "echo hi", path: "draft.ts" },
                   },
                 ],
@@ -2722,12 +2722,12 @@ describe("createWorkflowProjectionHooks", () => {
                 "workflow-tool-clamp",
           )?.payload,
       ).toMatchObject({
-        reason: 'Workflow node "limited" does not allow tool "shell".',
+        reason: 'Workflow node "limited" does not allow tool "bash".',
         resultMetadata: {
           workflowRunId: "wf_rewrite_clamp",
           nodeId: "limited",
-          toolName: "shell",
-          allowedTools: ["read_file"],
+          toolName: "bash",
+          allowedTools: ["read"],
           path: "generated/a.ts",
         },
       });
@@ -2786,7 +2786,7 @@ describe("createWorkflowProjectionHooks", () => {
       workflowHooks: projection.hooks,
       tools: [
         defineTool({
-          name: "read_file",
+          name: "read",
           description: "Read.",
           inputSchema: { type: "object" },
           execute() {
@@ -2798,7 +2798,7 @@ describe("createWorkflowProjectionHooks", () => {
         async complete() {
           modelCalls += 1;
           return modelCalls === 1
-            ? { toolCalls: [{ toolName: "read_file", arguments: {} }] }
+            ? { toolCalls: [{ toolName: "read", arguments: {} }] }
             : { message: "done" };
         },
       },
@@ -2811,7 +2811,7 @@ describe("createWorkflowProjectionHooks", () => {
     expect(
       run.events.all().find((event) => event.type === "tool.failed")?.payload,
     ).toMatchObject({
-      toolName: "read_file",
+      toolName: "read",
       error: { code: "TOOL_BLOCKED_BY_WORKFLOW_HOOK" },
     });
   });
@@ -3005,7 +3005,7 @@ describe("createConfiguredWorkflowHooks", () => {
           {
             name: "record-write",
             trigger: "tool.completed",
-            matcher: { toolName: "apply_patch", status: "completed" },
+            matcher: { toolName: "edit", status: "completed" },
             action: {
               type: "command",
               command: process.execPath,
@@ -3016,7 +3016,7 @@ describe("createConfiguredWorkflowHooks", () => {
       });
 
       events.emit("tool.completed", {
-        toolName: "apply_patch",
+        toolName: "edit",
         toolCallId: "call_1",
       });
       await waitForEvent(events, "user_hook.completed");
@@ -3051,7 +3051,7 @@ describe("createConfiguredWorkflowHooks", () => {
         {
           name: "block-generated",
           hook: "PreToolUse",
-          matcher: { toolName: "write_file", pathGlob: "generated/**" },
+          matcher: { toolName: "write", pathGlob: "generated/**" },
           action: { type: "block", reason: "Generated files are locked." },
         },
       ],
@@ -3061,7 +3061,7 @@ describe("createConfiguredWorkflowHooks", () => {
       hooks,
       hook: "PreToolUse",
       run,
-      payload: { toolName: "write_file", path: "generated/a.ts" },
+      payload: { toolName: "write", path: "generated/a.ts" },
       events,
     });
 
@@ -3693,7 +3693,7 @@ describe("createConfiguredWorkflowHooks", () => {
         hooks,
         hook: "PreToolUse",
         run,
-        payload: { toolName: "shell", arguments: { command: "npm t" } },
+        payload: { toolName: "bash", arguments: { command: "npm t" } },
         events,
       });
 
@@ -3732,7 +3732,7 @@ describe("createConfiguredWorkflowHooks", () => {
           {
             name: "generated-block",
             hook: "PreToolUse",
-            matcher: { toolName: "write_file", pathGlob: "generated/**" },
+            matcher: { toolName: "write", pathGlob: "generated/**" },
             action: { type: "block", reason: "generated files are locked" },
           },
         ],
@@ -3742,7 +3742,7 @@ describe("createConfiguredWorkflowHooks", () => {
         workflowHooks: configured,
         tools: [
           defineTool({
-            name: "write_file",
+            name: "write",
             description: "Write.",
             inputSchema: {
               type: "object",
@@ -3761,7 +3761,7 @@ describe("createConfiguredWorkflowHooks", () => {
             if (modelCalls === 1) {
               return {
                 toolCalls: [
-                  { toolName: "write_file", arguments: { path: "draft.ts" } },
+                  { toolName: "write", arguments: { path: "draft.ts" } },
                 ],
               };
             }

@@ -212,6 +212,15 @@ trace/session inspection.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16
+- Scope: built-in model-facing tools now have one exact callable/configuration
+  identity (`read`, `write`, `edit`, `bash`); the Core alias registry, Host
+  normalization, protocol alias metadata, and old documentation paths were
+  removed together.
+- Read: tool orchestration, Host catalogs/selectors/inspection, coding and shell
+  factories, CLI/TUI consumers, schemas, fixtures, and routed tests.
+
+- Status: Verified
 - Date: 2026-07-16T10:13:52+0800
 - Scope: retired the unused server-runtime compatibility composition stack and
   misleading durable dispatcher alias, leaving only production execution-lane,
@@ -474,7 +483,7 @@ test/traced-process-runner.test.ts test/external-command-agent.test.ts`;
 - Scope: P3 review follow-up routing update: workflow Step 4b.1 catalog
   narrowing now preserves deferred-tool discovery via scoped `tool_search` over
   the filtered worker catalog, and the workflow PreToolUse fallback compares
-  allowed tools canonically (`read_file` permits worker tool `read`). Routed
+  allowed tools canonically (`read` permits worker tool `read`). Routed
   through host, tool-orchestration, and capability maps; no public
   protocol/schema change.
 - Read: `docs/_internal/proposals/workflow-runtime-v1.md`,
@@ -889,7 +898,7 @@ test/capabilities-panel-render.test.tsx`; typecheck/build for core, host,
 - Status: Verified
 - Date: 2026-06-28T20:30:50+0800
 - Scope: added routing for core approval/policy hot path after fixing
-  read-only access-mode safe read approvals, explicit `read_file` read-only
+  read-only access-mode safe read approvals, explicit `read` read-only
   governance metadata, and real regression canary drift.
 - Read: `docs/_internal/project-map/README.md`,
   `docs/_internal/project-map/modules/core.md`,

@@ -51,7 +51,7 @@ describe("parseAgentProfileFile", () => {
         "mode: child",
         "model: openai/m",
         "use: [workspace.read]",
-        "allowedTools: [read_file, glob]",
+        "allowedTools: [read, glob]",
         "maxSteps: 5",
         "---",
         "You triage issues.",
@@ -109,10 +109,10 @@ describe("parseAgentProfileFile", () => {
         "name: Reviewer",
         "description: Review changes proactively.",
         "tools:",
-        "  - read_file",
+        "  - read",
         "  - grep",
         "disallowedTools:",
-        "  - shell",
+        "  - bash",
         "delegateTool:",
         "  toolName: delegate_reviewer",
         "  requiresApproval: false",
@@ -160,7 +160,7 @@ describe("parseAgentProfileFile", () => {
         "---",
         "hooks:",
         "  PreToolUse:",
-        "    - matcher: shell",
+        "    - matcher: bash",
         "      action:",
         "        type: command",
         "        command: ./scripts/validate-readonly-query.sh",
@@ -180,7 +180,7 @@ describe("parseAgentProfileFile", () => {
       {
         name: "db-reader.PreToolUse.0",
         hook: "PreToolUse",
-        matcher: { toolName: "shell" },
+        matcher: { toolName: "bash" },
         action: {
           type: "command",
           command: "./scripts/validate-readonly-query.sh",
@@ -207,7 +207,7 @@ describe("parseAgentProfileFile", () => {
         "---",
         "hooks:",
         "  PreToolUse:",
-        "    - matcher: shell",
+        "    - matcher: bash",
         "      action:",
         "        type: agent",
         "        goal: nested delegate",
@@ -217,7 +217,7 @@ describe("parseAgentProfileFile", () => {
         "        type: block",
         "        reason: no matcher",
         "    - matcher:",
-        "        toolName: read_file",
+        "        toolName: read",
         "      action:",
         "        type: block",
         "        reason: stop reads",
@@ -230,7 +230,7 @@ describe("parseAgentProfileFile", () => {
       {
         name: "reviewer.PreToolUse.2",
         hook: "PreToolUse",
-        matcher: { toolName: "read_file" },
+        matcher: { toolName: "read" },
         action: { type: "block", reason: "stop reads" },
       },
     ]);
@@ -654,7 +654,7 @@ describe("delegateToolDescription enrichment (3a)", () => {
     expect(
       delegateToolDescription(
         { profileId: "r", description: "Custom text." },
-        { id: "r", model: "openai/x", use: ["shell"] },
+        { id: "r", model: "openai/x", use: ["bash"] },
       ),
     ).toBe("Custom text.");
   });
@@ -668,11 +668,11 @@ describe("delegateToolDescription enrichment (3a)", () => {
           name: "Reviewer",
           description: "reviews code",
           model: "openai/x",
-          use: ["workspace.read", "shell"],
+          use: ["workspace.read", "bash"],
         },
       ),
     ).toBe(
-      "Delegate to Reviewer: reviews code (model openai/x; capabilities workspace.read, shell)",
+      "Delegate to Reviewer: reviews code (model openai/x; capabilities workspace.read, bash)",
     );
   });
 

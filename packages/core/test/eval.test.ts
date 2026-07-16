@@ -11,11 +11,11 @@ describe("evaluateTrajectory", () => {
     events.emit("run.started", {});
     events.emit("model.requested", { step: 1, attempt: 1 });
     events.emit("model.completed", {
-      toolCalls: [{ toolName: "read_file", arguments: { path: "README.md" } }],
+      toolCalls: [{ toolName: "read", arguments: { path: "README.md" } }],
     });
     events.emit("tool.requested", {
       id: "call_1",
-      toolName: "read_file",
+      toolName: "read",
       arguments: { path: "README.md" },
     });
     events.emit("tool.completed", {
@@ -29,7 +29,7 @@ describe("evaluateTrajectory", () => {
 
     expect(
       evaluateTrajectory(events.all(), {
-        allowedTools: ["read_file"],
+        allowedTools: ["read"],
         maxModelCalls: 2,
         maxToolCalls: 1,
       }),
@@ -58,7 +58,7 @@ describe("evaluateTrajectory", () => {
     }
 
     const result = evaluateTrajectory(events.all(), {
-      allowedTools: ["read_file"],
+      allowedTools: ["read"],
       repeatedToolCallLimit: 3,
     });
 

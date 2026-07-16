@@ -765,7 +765,7 @@ describe("TUI ↔ host via sdk-node", () => {
         message: "read README",
         toolCalls: [
           {
-            toolName: "read_file",
+            toolName: "read",
             arguments: { path: "README.md", offset: 1, limit: 20 },
           },
         ],
@@ -797,7 +797,7 @@ describe("TUI ↔ host via sdk-node", () => {
         snap.events.some((event) => {
           const payload = event.payload as { toolName?: string } | undefined;
           return (
-            event.type === "tool.completed" && payload?.toolName === "read_file"
+            event.type === "tool.completed" && payload?.toolName === "read"
           );
         }),
       ).toBe(true);
@@ -820,7 +820,7 @@ describe("TUI ↔ host via sdk-node", () => {
         message: "run a short shell command",
         toolCalls: [
           {
-            toolName: "shell",
+            toolName: "bash",
             arguments: { command: "sleep 0" },
           },
         ],
@@ -841,7 +841,7 @@ describe("TUI ↔ host via sdk-node", () => {
       const pending = store.getSnapshot().pendingApproval;
       expect(pending).toMatchObject({
         action: "tool.execute",
-        toolName: "shell",
+        toolName: "bash",
         toolArgs: { command: "sleep 0" },
         policy: {
           reason: "Allowed by default policy.",
@@ -856,7 +856,7 @@ describe("TUI ↔ host via sdk-node", () => {
         snap.events.some((event) => {
           const payload = event.payload as { toolName?: string } | undefined;
           return (
-            event.type === "tool.completed" && payload?.toolName === "shell"
+            event.type === "tool.completed" && payload?.toolName === "bash"
           );
         }),
       ).toBe(true);
@@ -867,7 +867,7 @@ describe("TUI ↔ host via sdk-node", () => {
             | undefined;
           return (
             event.type === "tool.failed" &&
-            payload?.toolName === "shell" &&
+            payload?.toolName === "bash" &&
             payload.error?.code === "TOOL_DENIED"
           );
         }),
@@ -891,7 +891,7 @@ describe("TUI ↔ host via sdk-node", () => {
         message: "run a short shell command",
         toolCalls: [
           {
-            toolName: "shell",
+            toolName: "bash",
             arguments: { command: "sleep 0" },
           },
         ],
@@ -912,7 +912,7 @@ describe("TUI ↔ host via sdk-node", () => {
 
       expect(store.getSnapshot().pendingApproval).toMatchObject({
         action: "tool.execute",
-        toolName: "shell",
+        toolName: "bash",
       });
 
       void controller.resolveApproval("allow-once");
@@ -936,7 +936,7 @@ describe("TUI ↔ host via sdk-node", () => {
         message: "run a short shell command",
         toolCalls: [
           {
-            toolName: "shell",
+            toolName: "bash",
             arguments: { command: "sleep 0" },
           },
         ],
@@ -991,7 +991,7 @@ describe("TUI ↔ host via sdk-node", () => {
         message: "patch readme",
         toolCalls: [
           {
-            toolName: "apply_patch",
+            toolName: "edit",
             arguments: {
               path: "README.md",
               patch:
@@ -1038,7 +1038,7 @@ describe("TUI ↔ host via sdk-node", () => {
             typeof event.payload === "object" &&
             event.payload !== null &&
             "toolName" in event.payload &&
-            event.payload.toolName === "apply_patch",
+            event.payload.toolName === "edit",
         ),
       ).toBe(true);
       await expect(

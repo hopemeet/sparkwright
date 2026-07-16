@@ -362,7 +362,7 @@ function recordRunFact(facts: RunFacts, event: RunEvent): void {
 }
 
 function isShellToolName(name: string): boolean {
-  return name === "bash" || name === "shell";
+  return name === "bash";
 }
 
 function snapshotRunFacts(

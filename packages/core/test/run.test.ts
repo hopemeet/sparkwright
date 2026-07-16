@@ -35,7 +35,7 @@ describe("SparkwrightRun", () => {
 
   function createRunHealthReadFileTool() {
     return defineTool({
-      name: "read_file",
+      name: "read",
       description: "Read a file.",
       inputSchema: {
         type: "object",
@@ -849,7 +849,7 @@ describe("SparkwrightRun", () => {
     const events: SparkwrightEvent[] = [];
 
     const shell = defineTool({
-      name: "shell",
+      name: "bash",
       description: "Run a shell command.",
       inputSchema: {
         type: "object",
@@ -873,7 +873,7 @@ describe("SparkwrightRun", () => {
       async complete() {
         modelCalls += 1;
         if (modelCalls === 1) {
-          return { toolCalls: [{ toolName: "shell", arguments: { command } }] };
+          return { toolCalls: [{ toolName: "bash", arguments: { command } }] };
         }
         return { message: "verification done" };
       },
@@ -920,7 +920,7 @@ describe("SparkwrightRun", () => {
     const events: SparkwrightEvent[] = [];
 
     const shell = defineTool({
-      name: "shell",
+      name: "bash",
       description: "Run a shell command.",
       inputSchema: {
         type: "object",
@@ -953,7 +953,7 @@ describe("SparkwrightRun", () => {
       async complete() {
         modelCalls += 1;
         if (modelCalls === 1) {
-          return { toolCalls: [{ toolName: "shell", arguments: { command } }] };
+          return { toolCalls: [{ toolName: "bash", arguments: { command } }] };
         }
         if (modelCalls === 2) {
           return { toolCalls: [{ toolName: "write_readme", arguments: {} }] };
@@ -1255,7 +1255,7 @@ describe("SparkwrightRun", () => {
 
   it("clears stale tool results with explicit placeholders before model calls", async () => {
     let seenContext: ContextItem[] = [];
-    const oldOne = toolResultContext("read_file", "old-one".repeat(500));
+    const oldOne = toolResultContext("read", "old-one".repeat(500));
     const oldTwo = toolResultContext("grep", "old-two".repeat(500));
     const recent = toolResultContext("shell", "recent result");
     const run = createRun({
@@ -1278,7 +1278,7 @@ describe("SparkwrightRun", () => {
     expect(seenContext[0]?.content).toContain(
       "tool result cleared by clear_tool_uses",
     );
-    expect(seenContext[0]?.content).toContain("tool=read_file");
+    expect(seenContext[0]?.content).toContain("tool=read");
     expect(seenContext[0]?.metadata.clearToolUsesCleared).toBe(true);
     expect(seenContext[1]?.content).toContain(
       "tool result cleared by clear_tool_uses",
@@ -1299,7 +1299,7 @@ describe("SparkwrightRun", () => {
 
   it("skips stale tool-result clearing below clearAtLeastChars", async () => {
     let seenContext: ContextItem[] = [];
-    const old = toolResultContext("read_file", "old".repeat(100));
+    const old = toolResultContext("read", "old".repeat(100));
     const recent = toolResultContext("shell", "recent");
     const run = createRun({
       goal: "clear threshold",
@@ -1796,7 +1796,7 @@ describe("SparkwrightRun", () => {
     ).toBe(true);
   });
 
-  it("feeds back unchanged read_file repeats after an intervening tool", async () => {
+  it("feeds back unchanged read repeats after an intervening tool", async () => {
     const root = await mkdtemp(join(tmpdir(), "sparkwright-run-workspace-"));
     tempDirs.push(root);
     await writeFile(join(root, "README.md"), "# Demo\nsame text\n", "utf8");
@@ -1825,7 +1825,7 @@ describe("SparkwrightRun", () => {
           if (modelCalls === 1) {
             return {
               toolCalls: [
-                { toolName: "read_file", arguments: { path: "README.md" } },
+                { toolName: "read", arguments: { path: "README.md" } },
               ],
             };
           }
@@ -1835,7 +1835,7 @@ describe("SparkwrightRun", () => {
           if (modelCalls === 3) {
             return {
               toolCalls: [
-                { toolName: "read_file", arguments: { path: "README.md" } },
+                { toolName: "read", arguments: { path: "README.md" } },
               ],
             };
           }
@@ -1875,7 +1875,7 @@ describe("SparkwrightRun", () => {
     let healthContext: string | undefined;
 
     const readFileTool = defineTool({
-      name: "read_file",
+      name: "read",
       description: "Read a paginated file.",
       inputSchema: {
         type: "object",
@@ -1919,7 +1919,7 @@ describe("SparkwrightRun", () => {
             return {
               toolCalls: [
                 {
-                  toolName: "read_file",
+                  toolName: "read",
                   arguments: { path: "PROJECT_NOTES.md", offset: 1, limit: 2 },
                 },
               ],
@@ -1929,7 +1929,7 @@ describe("SparkwrightRun", () => {
             return {
               toolCalls: [
                 {
-                  toolName: "read_file",
+                  toolName: "read",
                   arguments: { path: "PROJECT_NOTES.md", offset: 3, limit: 2 },
                 },
               ],
@@ -1939,7 +1939,7 @@ describe("SparkwrightRun", () => {
             return {
               toolCalls: [
                 {
-                  toolName: "read_file",
+                  toolName: "read",
                   arguments: { path: "PROJECT_NOTES.md", offset: 1, limit: 2 },
                 },
               ],
@@ -2001,7 +2001,7 @@ describe("SparkwrightRun", () => {
           if (modelCalls === 1) {
             return {
               toolCalls: [
-                { toolName: "read_file", arguments: { path: "README.md" } },
+                { toolName: "read", arguments: { path: "README.md" } },
               ],
             };
           }
@@ -2013,7 +2013,7 @@ describe("SparkwrightRun", () => {
           if (modelCalls === 3) {
             return {
               toolCalls: [
-                { toolName: "read_file", arguments: { path: "README.md" } },
+                { toolName: "read", arguments: { path: "README.md" } },
               ],
             };
           }
@@ -2150,7 +2150,7 @@ describe("SparkwrightRun", () => {
     let step = 0;
 
     const shell = defineTool({
-      name: "shell",
+      name: "bash",
       description: "Run a shell command.",
       inputSchema: { type: "object" },
       execute() {
@@ -2169,7 +2169,7 @@ describe("SparkwrightRun", () => {
           return {
             toolCalls: [
               {
-                toolName: "shell",
+                toolName: "bash",
                 arguments: { command: "printf same", timeoutMs: step * 1000 },
               },
             ],
@@ -3745,56 +3745,6 @@ describe("SparkwrightRun", () => {
     });
   });
 
-  it("canonicalizes a legacy tool name before policy evaluation", async () => {
-    let executed = false;
-    let modelCalls = 0;
-    const seenResources: Array<string | undefined> = [];
-    const read = defineTool({
-      name: "read",
-      legacyNames: ["read_file"],
-      description: "Read a file.",
-      inputSchema: { type: "object" },
-      execute() {
-        executed = true;
-      },
-    });
-    const run = createRun({
-      goal: "deny canonical read",
-      tools: [read],
-      policy: {
-        decide({ action, resource, metadata = {} }) {
-          seenResources.push(resource?.name);
-          return {
-            action,
-            decision: resource?.name === "read" ? "deny" : "allow",
-            reason: "canonical deny",
-            metadata,
-          };
-        },
-      },
-      model: {
-        async complete() {
-          modelCalls += 1;
-          return modelCalls === 1
-            ? { toolCalls: [{ toolName: "read_file", arguments: {} }] }
-            : { message: "denied" };
-        },
-      },
-    });
-
-    await run.start();
-
-    expect(executed).toBe(false);
-    expect(seenResources).toContain("read");
-    expect(
-      run.events.all().find((event) => event.type === "tool.failed")?.payload,
-    ).toMatchObject({
-      toolName: "read_file",
-      canonicalToolName: "read",
-      error: { code: "TOOL_DENIED" },
-    });
-  });
-
   it("rejects a guessed unavailable tool before policy or execution", async () => {
     let executed = false;
     let policyCalls = 0;
@@ -3876,7 +3826,7 @@ describe("SparkwrightRun", () => {
             statusCode: 400,
             requestBodyValues: {
               input: [{ role: "user", content: "secret prompt" }],
-              tools: [{ name: "read_file", inputSchema: { type: "object" } }],
+              tools: [{ name: "read", inputSchema: { type: "object" } }],
             },
             responseHeaders: {
               "x-request-id": "req_sanitized",

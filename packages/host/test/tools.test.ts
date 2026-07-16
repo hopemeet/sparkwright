@@ -479,7 +479,7 @@ describe("host tools", () => {
       execute: () => ({}),
     });
     const shell = defineTool({
-      name: "shell",
+      name: "bash",
       description: "shell",
       inputSchema: { type: "object" },
       execute: () => ({}),
@@ -493,7 +493,7 @@ describe("host tools", () => {
     });
 
     const tools = applyToolConfig([read, mcpSearch, shell, eager], {
-      disabled: ["shell"],
+      disabled: ["bash"],
       defer: ["mcp_docs_search"],
     });
 
@@ -527,7 +527,7 @@ describe("host tools", () => {
       execute: () => ({}),
     });
     const shell = defineTool({
-      name: "shell",
+      name: "bash",
       description: "shell",
       inputSchema: { type: "object" },
       execute: () => ({}),
@@ -541,8 +541,8 @@ describe("host tools", () => {
     });
 
     const tools = applyToolConfig([read, mcpSearch, shell, eager], {
-      allowed: ["read", "mcp_docs_search", "shell"],
-      disabled: ["shell"],
+      allowed: ["read", "mcp_docs_search", "bash"],
+      disabled: ["bash"],
       defer: ["mcp_docs_search"],
     });
 
@@ -1146,7 +1146,7 @@ describe("host tools", () => {
     const entries = createConfiguredDelegateChildToolCatalog({
       workspaceRoot: "/tmp/ws",
       shell: { sandbox: { mode: "off" } },
-      toolConfig: { use: ["shell"] },
+      toolConfig: { use: ["bash"] },
     });
 
     expect(entries.map((entry) => entry.definition.name)).toEqual(["bash"]);
@@ -1158,7 +1158,7 @@ describe("host tools", () => {
     const entries = createConfiguredDelegateChildToolCatalog({
       workspaceRoot: ctx.workspaceRoot,
       shell: { sandbox: { mode: "off" } },
-      toolConfig: { use: ["shell"] },
+      toolConfig: { use: ["bash"] },
     });
     const shell = entries.find(
       (entry) => entry.definition.name === "bash",
@@ -3996,7 +3996,7 @@ describe("host tools", () => {
             ? {
                 toolCalls: [
                   {
-                    toolName: "shell",
+                    toolName: "bash",
                     arguments: {
                       command:
                         'node -e "setTimeout(() => process.exit(0), 1000)"',

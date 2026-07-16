@@ -178,7 +178,7 @@ function isExternalApproval(request: ApprovalRequest): boolean {
 }
 
 function isShellToolName(value: unknown): boolean {
-  return value === "bash" || value === "shell";
+  return value === "bash";
 }
 
 function isSafeShellCommand(command: string | undefined): boolean {

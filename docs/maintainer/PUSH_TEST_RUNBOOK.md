@@ -847,8 +847,8 @@ const parentResult = await parent.start();
 const parentUsage = parentTracker.snapshot();
 
 const derived = deriveChildAgentProfile({
-  parentAgent: { id: 'p', capabilities: { tools: ['read_file'] } },
-  childAgent: { id: 'c', capabilities: { tools: ['read_file', 'write_file'] } },
+  parentAgent: { id: 'p', capabilities: { tools: ['read'] } },
+  childAgent: { id: 'c', capabilities: { tools: ['read', 'write'] } },
 });
 
 console.log(JSON.stringify({

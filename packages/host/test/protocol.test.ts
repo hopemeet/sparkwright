@@ -1166,7 +1166,7 @@ describe("host protocol", () => {
     const previousScript = process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON;
     process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON = JSON.stringify([
       {
-        toolCalls: [{ toolName: "read_file", arguments: { path: ".env" } }],
+        toolCalls: [{ toolName: "read", arguments: { path: ".env" } }],
       },
       { message: "read completed" },
     ]);
@@ -1253,9 +1253,9 @@ describe("host protocol", () => {
     process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON = JSON.stringify([
       {
         toolCalls: [
-          { toolName: "read_file", arguments: { path: ".env" } },
+          { toolName: "read", arguments: { path: ".env" } },
           {
-            toolName: "read_file",
+            toolName: "read",
             arguments: { path: "secrets/token.txt" },
           },
         ],
@@ -1936,7 +1936,7 @@ describe("host protocol", () => {
                   name: "guard-shell",
                   description: "Project shell guard.",
                   hook: "PreToolUse",
-                  matcher: { toolName: "shell" },
+                  matcher: { toolName: "bash" },
                   action: { type: "block", reason: "No shell." },
                 },
                 {
@@ -1987,7 +1987,7 @@ describe("host protocol", () => {
             name: "guard-shell",
             source: "config",
             lifecycle: "PreToolUse",
-            matcher: "toolName=shell",
+            matcher: "toolName=bash",
             action: "block: No shell.",
             blockingPotential: true,
             enabled: true,
@@ -3162,7 +3162,7 @@ describe("host protocol", () => {
         join(workspace, ".sparkwright", "config.json"),
         JSON.stringify({
           tools: {
-            disabled: ["shell"],
+            disabled: ["bash"],
             defer: ["delegate_reviewer"],
           },
           capabilities: {
@@ -3980,7 +3980,7 @@ describe("host protocol", () => {
                   name: "Runner",
                   mode: "child",
                   prompt: "Run the requested shell command.",
-                  use: ["shell"],
+                  use: ["bash"],
                   allowedTools: ["bash"],
                   maxSteps: 4,
                 },

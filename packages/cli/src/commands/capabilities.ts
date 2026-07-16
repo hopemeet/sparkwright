@@ -160,7 +160,6 @@ interface CapabilityToolInspectEntry {
   risk?: "safe" | "risky" | "denied";
   origin?: string;
   canonicalName?: string;
-  legacyNames?: string[];
   defaultExposureTier?: string;
   effectiveLoading?: "eager" | "deferred";
   deferred?: boolean;
@@ -571,9 +570,6 @@ function runtimeToolToInspectEntry(input: {
       ...(input.tool.canonicalName
         ? { canonicalName: input.tool.canonicalName }
         : {}),
-      ...(input.tool.legacyNames
-        ? { legacyNames: input.tool.legacyNames }
-        : {}),
       ...(input.tool.defaultExposureTier
         ? { defaultExposureTier: input.tool.defaultExposureTier }
         : {}),
@@ -606,7 +602,6 @@ function runtimeToolToInspectEntry(input: {
     ...(input.tool.canonicalName
       ? { canonicalName: input.tool.canonicalName }
       : {}),
-    ...(input.tool.legacyNames ? { legacyNames: input.tool.legacyNames } : {}),
     ...(input.tool.defaultExposureTier
       ? { defaultExposureTier: input.tool.defaultExposureTier }
       : {}),
@@ -688,12 +683,8 @@ function formatCapabilityInspectReport(
     const tier = tool.defaultExposureTier
       ? `; tier=${tool.defaultExposureTier}`
       : "";
-    const legacy =
-      tool.legacyNames && tool.legacyNames.length > 0
-        ? `; legacy=${tool.legacyNames.join(",")}`
-        : "";
     lines.push(
-      `  tool: ${tool.name}${tool.risk ? ` (${tool.risk}; loading=${loading}${tier}${legacy})` : ` (loading=${loading}${tier}${legacy})`}${tool.origin ? ` ${tool.origin}` : ""}`,
+      `  tool: ${tool.name}${tool.risk ? ` (${tool.risk}; loading=${loading}${tier})` : ` (loading=${loading}${tier})`}${tool.origin ? ` ${tool.origin}` : ""}`,
     );
   }
   for (const tool of report.tools.available) {
@@ -702,12 +693,8 @@ function formatCapabilityInspectReport(
     const tier = tool.defaultExposureTier
       ? `; tier=${tool.defaultExposureTier}`
       : "";
-    const legacy =
-      tool.legacyNames && tool.legacyNames.length > 0
-        ? `; legacy=${tool.legacyNames.join(",")}`
-        : "";
     lines.push(
-      `  diagnostic tool: ${tool.name}${tool.risk ? ` (${tool.risk}; loading=${loading}${tier}${legacy})` : ` (loading=${loading}${tier}${legacy})`}${tool.origin ? ` ${tool.origin}` : ""}`,
+      `  diagnostic tool: ${tool.name}${tool.risk ? ` (${tool.risk}; loading=${loading}${tier})` : ` (loading=${loading}${tier})`}${tool.origin ? ` ${tool.origin}` : ""}`,
     );
   }
   for (const root of report.skills.roots) lines.push(`  root: ${root}`);

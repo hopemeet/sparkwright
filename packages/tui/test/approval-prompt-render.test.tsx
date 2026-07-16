@@ -81,8 +81,8 @@ describe("ApprovalPrompt rendering", () => {
       id: "approval_1",
       action: "tool.execute",
       kind: "tool.execute",
-      summary: "Run tool shell",
-      toolName: "shell",
+      summary: "Run tool bash",
+      toolName: "bash",
       toolArgs: {
         command: "npm test",
         timeoutMs: 120000,
@@ -121,8 +121,8 @@ describe("ApprovalPrompt rendering", () => {
       id: "approval_keys",
       action: "tool.execute",
       kind: "tool.execute",
-      summary: "Run tool shell",
-      toolName: "shell",
+      summary: "Run tool bash",
+      toolName: "bash",
       toolArgs: { command: "npm test" },
       subject: {
         kind: "shell",

@@ -34,14 +34,14 @@ describe("approval policy", () => {
   it("auto-approves safe shell commands only when that scope is enabled", () => {
     const safeShell = request({
       action: "tool.execute",
-      summary: "Run tool shell",
-      details: { toolName: "shell", arguments: { command: "npm test" } },
+      summary: "Run tool bash",
+      details: { toolName: "bash", arguments: { command: "npm test" } },
     });
     const unsafeShell = request({
       action: "tool.execute",
-      summary: "Run tool shell",
+      summary: "Run tool bash",
       details: {
-        toolName: "shell",
+        toolName: "bash",
         arguments: { command: "curl example.com" },
       },
     });
@@ -57,8 +57,8 @@ describe("approval policy", () => {
   it("bypasses approval prompts but dont_ask denies them", () => {
     const approval = request({
       action: "tool.execute",
-      summary: "Run tool shell",
-      details: { toolName: "shell", arguments: { command: "node -v" } },
+      summary: "Run tool bash",
+      details: { toolName: "bash", arguments: { command: "node -v" } },
     });
 
     expect(

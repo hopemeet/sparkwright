@@ -37,7 +37,6 @@ import {
   createConfiguredWorkflowHooks,
   type CreateConfiguredWorkflowHooksOptions,
 } from "./workflow-hooks.js";
-import { canonicalToolName } from "./tool-identities.js";
 import { runWorkflowScriptNode } from "./workflow-node-api.js";
 
 const DEFAULT_STOP_RUNTIME_ERROR_THRESHOLD = 3;
@@ -1161,18 +1160,11 @@ export function createWorkflowProjectionHooks(
           return { status: "continue", metadata: { workflowRunId } };
         }
         const toolName = toolNameFromPayload(input.payload);
-        const toolCanonical = toolName
-          ? canonicalToolName(toolName)
-          : undefined;
-        const allowedCanonical = new Set(allowed.map(canonicalToolName));
-        if (
-          !toolName ||
-          (toolCanonical !== undefined && allowedCanonical.has(toolCanonical))
-        ) {
+        if (!toolName || allowed.includes(toolName)) {
           return { status: "continue", metadata: { workflowRunId } };
         }
         if (
-          toolCanonical === "tool_search" &&
+          toolName === "tool_search" &&
           options.isScopedToolSearchAvailable?.() === true
         ) {
           return { status: "continue", metadata: { workflowRunId } };

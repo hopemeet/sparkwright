@@ -11,7 +11,9 @@ See [raw-trace.md](raw-trace.md) for source data and [export-diagnostics.md](exp
 ## Last Verified
 
 - Date: 2026-07-16
-- Scope: reviewed delegate identity single-tracking; derived trace summaries retain configured tool names as diagnostics and require no shape change.
+- Scope: derived fixtures and tool-name classifiers now use canonical built-in
+  names only; no alias field or fallback is required. Configured delegate tool
+  names remain independent diagnostics.
 
 ## Main Files
 

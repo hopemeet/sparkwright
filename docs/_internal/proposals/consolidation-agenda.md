@@ -58,13 +58,10 @@
   已同步 Skill/MCP/Agent/Delegate 基座排期。**
 - **C2|能力面词汇拆三层,各设唯一 owner。**
   `agent-access-config-redesign.md` 子提案 #2/#3 与
-  `builtin-tool-surface-consolidation.md` 的 selector 面 + 别名层交叠,
-  且有一处**表述冲突**:access-config 写 selector 词汇 "no aliases",
-  而源码 `host/src/tool-identities.ts` 已是 canonical + legacy alias
-  (`read_file→read`、`apply_patch→edit` 等)——两者说的不是同一层,
-  但不拆开就会互相误伤。三层裁决:
+  `builtin-tool-surface-consolidation.md` 的 selector 面曾与身份层交叠。
+  当前三层裁决为:
   ① selector/toolset 编译词汇(无别名)→ access-config #2/#3;
-  ② tool identity(canonical 名 + legacy 别名 + exposure tier,已落地)
+  ② tool identity(单一 callable 名 + exposure tier,已落地)
   → `tool-identities.ts` 为事实源,builtin-tool-surface 记录其规则;
   ③ 产品默认公开面清单 → builtin-tool-surface。引用不复述。
   **→ 裁决 2026-07-06:批(三层各设唯一 owner 如上)。首个交付物:

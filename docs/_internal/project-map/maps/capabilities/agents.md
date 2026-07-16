@@ -228,7 +228,7 @@ configured profiles/delegates
   partial/truncated.
 - Configured in-process delegates are stable profile-backed children. Host
   expands their `AgentProfile.use` selectors against the configured delegate
-  child catalog (workspace read/write coding tools plus `shell` when selected
+  child catalog (workspace read/write coding tools plus `bash` when selected
   in the current runtime surface), intersects inherited selectors and concrete
   `allowedTools`, and passes only the resulting effective tools to the child run
   so prompt descriptors and runtime callability use one tool set.
@@ -428,10 +428,10 @@ configured profiles/delegates
 - Status: Verified
 - Date: 2026-07-15T23:51:43+0800
 - Scope: Agent/Profile tools now physically narrow admitted Host/child catalogs;
-  deny wins over allow, exact built-in aliases normalize, and MCP wildcard
-  patterns remain supported without exposing denied matches.
+  deny wins over allow, built-in names match exactly, and MCP wildcard patterns
+  remain supported without exposing denied matches.
 - Read: Markdown/config Profile normalization, derived child Profiles, main and
-  child catalog clamps, Core alias policy ordering, capability inspection.
+  child catalog clamps, Core exact-name policy ordering, capability inspection.
 - Tests: focused Profile admission 4/4 and Agent Profile 39/39; real restricted
   main Profile exposed only `read` and `grep` in
   `session_mrlmpwmud4y4ghev` with no approval or write.

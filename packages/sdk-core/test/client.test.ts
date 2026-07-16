@@ -179,7 +179,7 @@ describe("@sparkwright/sdk-core Client", () => {
       timestamp: "2026-05-24T00:00:00.000Z",
       ok: true,
       result: {
-        tools: [{ name: "read_file", risk: "safe" }],
+        tools: [{ name: "read", risk: "safe" }],
         skills: { indexed: [], loaded: [] },
         mcp: { statuses: [] },
         agents: { profiles: [{ id: "main", mode: "primary" }] },
@@ -187,7 +187,7 @@ describe("@sparkwright/sdk-core Client", () => {
     });
 
     await expect(inspected).resolves.toMatchObject({
-      tools: [{ name: "read_file" }],
+      tools: [{ name: "read" }],
       agents: { profiles: [{ id: "main" }] },
     });
   });

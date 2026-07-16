@@ -1391,7 +1391,7 @@ describe("host spawn_agent wiring", () => {
           goal: "read",
           role: "reader",
           prompt: "Read.",
-          allowedTools: ["read_file"],
+          allowedTools: ["read"],
         },
         { run: parent.record } as never,
       ),
@@ -1417,7 +1417,7 @@ describe("host spawn_agent wiring", () => {
           if (childCalls === 1) {
             return {
               toolCalls: [
-                { toolName: "read_file", arguments: { path: "secret.txt" } },
+                { toolName: "read", arguments: { path: "secret.txt" } },
               ],
             };
           }
@@ -1451,7 +1451,7 @@ describe("host spawn_agent wiring", () => {
           goal: "read secret.txt",
           role: "reader",
           prompt: "Read secret.txt and report what happens.",
-          allowedTools: ["read_file"],
+          allowedTools: ["read"],
           maxSteps: 3,
         },
         { run: parent.record } as never,

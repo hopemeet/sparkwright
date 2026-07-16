@@ -11,7 +11,9 @@ See also [../maps/safety/approvals.md](../maps/safety/approvals.md) and [../maps
 ## Last Verified
 
 - Date: 2026-07-16
-- Scope: reviewed after workflow delegate identity became `agentId`-only; no protocol wire contract changed.
+- Scope: capability tool summaries no longer expose `legacyNames`; each summary
+  carries one callable name plus optional stable identity/exposure metadata.
+  Workflow delegate identity remains `agentId`-only.
 
 ## Main Files
 

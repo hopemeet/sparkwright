@@ -209,7 +209,7 @@ describe("parseCommand", () => {
 describe("createShellTool", () => {
   it("advertises risky policy and approval requirement", () => {
     const tool = createShellTool(minimalOptions());
-    expect(tool.name).toBe("shell");
+    expect(tool.name).toBe("bash");
     expect(tool.policy).toEqual({ risk: "risky", requiresApproval: true });
     expect(tool.governance?.origin?.name).toBe("@sparkwright/shell-tool");
   });

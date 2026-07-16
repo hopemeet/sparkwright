@@ -14,7 +14,7 @@ function approvalEvent(id: string): HostEvent & { kind: "approval.requested" } {
       action: "tool.execute",
       summary: "Run shell command",
       details: {
-        toolName: "shell",
+        toolName: "bash",
         arguments: { command: "npm test", cwd: "/workspace/project" },
       },
     },

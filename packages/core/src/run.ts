@@ -638,7 +638,7 @@ export interface RunHandle {
    * The run's {@link RuntimeContext} workspace, if one was configured. Exposed
    * so an orchestrator spawning a sub-agent can inherit it as the child's
    * workspace — otherwise the child's `ctx.workspace` is undefined and any
-   * workspace-backed tool (e.g. `read_file`) throws "Workspace is not
+   * workspace-backed tool (e.g. `read`) throws "Workspace is not
    * configured", even when factory-bound tools like `glob` still work.
    *
    * @reserved Public sub-agent-protocol accessor consumed by spawn helpers.
@@ -2923,20 +2923,10 @@ export class SparkwrightRun implements RunHandle {
     executionDiagnostic?: ToolExecutionDiagnostic,
     recordingOptions: ToolResultRecordingOptions = {},
   ): Promise<RunResult | undefined> {
-    const requestedToolName = requestedCall.toolName;
-    const canonicalToolName = this.tools.canonicalName(requestedToolName);
-    if (canonicalToolName !== requestedToolName) {
-      requestedCall = {
-        ...requestedCall,
-        toolName: canonicalToolName,
-        requestedToolName,
-      };
-    }
     const preToolPayload = (call: RequestedToolCall) => ({
       toolName: call.toolName,
       arguments: call.arguments,
       path: extractWorkflowPath(call.arguments),
-      ...(requestedToolName !== call.toolName ? { requestedToolName } : {}),
     });
     const preToolMetadata = (
       call: RequestedToolCall,
@@ -2946,7 +2936,6 @@ export class SparkwrightRun implements RunHandle {
       toolName: call.toolName,
       path: extractWorkflowPath(call.arguments),
       preToolUseStage,
-      ...(requestedToolName !== call.toolName ? { requestedToolName } : {}),
     });
     const recordPreToolBlock = async (block: WorkflowHookBlock) => {
       const call = createToolCall(
@@ -2970,7 +2959,7 @@ export class SparkwrightRun implements RunHandle {
       };
       span.close("tool.failed", {
         ...blocked,
-        ...this.publicToolEventIdentity(requestedCall),
+        toolName: requestedCall.toolName,
       });
       this.usageTracker.recordToolUsage({
         toolName: requestedCall.toolName,
@@ -3194,7 +3183,6 @@ export class SparkwrightRun implements RunHandle {
     requestedCall: RequestedToolCall,
   ): ReturnType<typeof createToolCall> & {
     preview?: string;
-    canonicalToolName?: string;
   } {
     const requestPreview = formatToolRequestPreview(
       this.tools.get(requestedCall.toolName),
@@ -3202,27 +3190,7 @@ export class SparkwrightRun implements RunHandle {
     );
     return {
       ...call,
-      ...this.publicToolEventIdentity(requestedCall),
       ...(requestPreview ? { preview: requestPreview } : {}),
-    };
-  }
-
-  /**
-   * Public events retain the model-supplied alias for protocol compatibility.
-   * Internal hooks, policy, repeat detection, and execution use toolName after
-   * canonicalization; canonicalToolName keeps the trace unambiguous.
-   */
-  private publicToolEventIdentity(requestedCall: RequestedToolCall): {
-    toolName: string;
-    canonicalToolName?: string;
-  } {
-    const publicToolName =
-      requestedCall.requestedToolName ?? requestedCall.toolName;
-    return {
-      toolName: publicToolName,
-      ...(publicToolName !== requestedCall.toolName
-        ? { canonicalToolName: requestedCall.toolName }
-        : {}),
     };
   }
 
@@ -3258,7 +3226,7 @@ export class SparkwrightRun implements RunHandle {
     };
     span.close("tool.failed", {
       ...skipped,
-      ...this.publicToolEventIdentity(requestedCall),
+      toolName: requestedCall.toolName,
     });
     this.usageTracker.recordToolUsage({
       toolName: requestedCall.toolName,
@@ -3320,7 +3288,7 @@ export class SparkwrightRun implements RunHandle {
       };
       span.close("tool.completed", {
         ...nudged,
-        ...this.publicToolEventIdentity(requestedCall),
+        toolName: requestedCall.toolName,
       });
       this.usageTracker.recordToolUsage({
         toolName: requestedCall.toolName,
@@ -3355,7 +3323,7 @@ export class SparkwrightRun implements RunHandle {
     // so UIs can name the skipped call instead of rendering a generic "tool".
     span.close("tool.failed", {
       ...nudged,
-      ...this.publicToolEventIdentity(requestedCall),
+      toolName: requestedCall.toolName,
     });
     this.usageTracker.recordToolUsage({
       toolName: requestedCall.toolName,
@@ -3417,7 +3385,7 @@ export class SparkwrightRun implements RunHandle {
         "tool.failed",
         {
           ...skipped,
-          ...this.publicToolEventIdentity(requestedCall),
+          toolName: requestedCall.toolName,
         },
         this.toolTimingMetadata(timings),
       );
@@ -3447,7 +3415,7 @@ export class SparkwrightRun implements RunHandle {
         "tool.failed",
         {
           ...validationResult,
-          ...this.publicToolEventIdentity(requestedCall),
+          toolName: requestedCall.toolName,
         },
         this.toolTimingMetadata(timings),
       );
@@ -3476,7 +3444,7 @@ export class SparkwrightRun implements RunHandle {
         "tool.failed",
         {
           ...inputValidationResult,
-          ...this.publicToolEventIdentity(requestedCall),
+          toolName: requestedCall.toolName,
         },
         this.toolTimingMetadata(timings),
       );
@@ -3507,7 +3475,7 @@ export class SparkwrightRun implements RunHandle {
         "tool.failed",
         {
           ...availabilityResult,
-          ...this.publicToolEventIdentity(requestedCall),
+          toolName: requestedCall.toolName,
         },
         this.toolTimingMetadata(timings),
       );
@@ -3530,14 +3498,13 @@ export class SparkwrightRun implements RunHandle {
       requestedCall.toolName,
       requestedCall.arguments,
       timings,
-      requestedCall.requestedToolName,
     );
     if (gatedResult) {
       span.close(
         "tool.failed",
         {
           ...gatedResult,
-          ...this.publicToolEventIdentity(requestedCall),
+          toolName: requestedCall.toolName,
         },
         this.toolTimingMetadata(timings),
       );
@@ -3569,7 +3536,7 @@ export class SparkwrightRun implements RunHandle {
         "tool.failed",
         {
           ...aborted,
-          ...this.publicToolEventIdentity(requestedCall),
+          toolName: requestedCall.toolName,
         },
         this.toolTimingMetadata(timings),
       );
@@ -3589,7 +3556,7 @@ export class SparkwrightRun implements RunHandle {
 
     emitInSpan(this.events, "tool.started", {
       toolCallId: call.id,
-      ...this.publicToolEventIdentity(requestedCall),
+      toolName: requestedCall.toolName,
     });
     const executionStartedAt = Date.now();
     const result = await executeTool(
@@ -3625,7 +3592,7 @@ export class SparkwrightRun implements RunHandle {
       annotatedResult.status === "completed" ? "tool.completed" : "tool.failed",
       {
         ...annotatedResult,
-        ...this.publicToolEventIdentity(requestedCall),
+        toolName: requestedCall.toolName,
       },
       this.toolTimingMetadata(timings),
     );
@@ -4103,7 +4070,6 @@ export class SparkwrightRun implements RunHandle {
     toolName: string,
     args: unknown,
     timings?: ToolStageTimings,
-    requestedToolName?: string,
   ): Promise<ToolResult | undefined> {
     const tool = this.tools.get(toolName);
 
@@ -4145,21 +4111,14 @@ export class SparkwrightRun implements RunHandle {
       governance: effectiveGovernance,
       toolOrigin: effectiveGovernance?.origin,
     };
-    const publicToolName = requestedToolName ?? toolName;
-    const publicMetadata = {
-      ...metadata,
-      toolName: publicToolName,
-      ...(publicToolName !== toolName ? { canonicalToolName: toolName } : {}),
-    };
-
     if (risk === "denied") {
       return {
         toolCallId,
         status: "failed",
         error: {
           code: "TOOL_DENIED",
-          message: `Tool is denied by policy metadata: ${publicToolName}`,
-          metadata: publicMetadata,
+          message: `Tool is denied by policy metadata: ${toolName}`,
+          metadata,
         },
         artifacts: [],
       };
@@ -4206,10 +4165,9 @@ export class SparkwrightRun implements RunHandle {
         approved = await this.requestApproval({
           action: "tool.execute",
           summary:
-            formatToolApprovalSummary(tool, args) ??
-            `Run tool ${publicToolName}`,
+            formatToolApprovalSummary(tool, args) ?? `Run tool ${toolName}`,
           details: {
-            ...publicMetadata,
+            ...metadata,
             arguments: args,
             policy: decision,
           },
@@ -4225,7 +4183,7 @@ export class SparkwrightRun implements RunHandle {
             message:
               cause instanceof Error ? cause.message : "Approval failed.",
             cause,
-            metadata: publicMetadata,
+            metadata,
           },
           artifacts: [],
         };
@@ -4237,8 +4195,8 @@ export class SparkwrightRun implements RunHandle {
           status: "failed",
           error: {
             code: "TOOL_APPROVAL_DENIED",
-            message: `Approval denied for tool: ${publicToolName}`,
-            metadata: publicMetadata,
+            message: `Approval denied for tool: ${toolName}`,
+            metadata,
           },
           artifacts: [],
         };

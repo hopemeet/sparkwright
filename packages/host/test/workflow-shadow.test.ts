@@ -54,7 +54,7 @@ function observedEditTrace() {
     event(1, "run.created", { goal: "update README and verify" }),
     event(2, "tool.requested", {
       id: "read_1",
-      toolName: "read_file",
+      toolName: "read",
       arguments: { path: "README.md" },
     }),
     event(3, "workspace.read", { path: "README.md" }),
@@ -211,7 +211,7 @@ describe("workflow shadow", () => {
         event(1, "run.created", { goal: "inspect README" }),
         event(2, "tool.requested", {
           id: "read_1",
-          toolName: "read_file",
+          toolName: "read",
         }),
         event(3, "workspace.read", { path: "README.md" }),
         event(4, "run.completed", { state: "completed" }),

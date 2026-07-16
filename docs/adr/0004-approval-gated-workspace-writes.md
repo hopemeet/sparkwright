@@ -6,7 +6,7 @@ Accepted
 
 ## Context
 
-A coding/repo-automation agent's most consequential action is writing to the workspace. A bad write can corrupt source, leak secrets, or quietly change configuration. Other harnesses commonly let the model write directly through a `write_file` tool, treating the model's intent as authority and relying on post-hoc review (git diff, CI) to catch mistakes.
+A coding/repo-automation agent's most consequential action is writing to the workspace. A bad write can corrupt source, leak secrets, or quietly change configuration. Other harnesses commonly let the model write directly through a `write` tool, treating the model's intent as authority and relying on post-hoc review (git diff, CI) to catch mistakes.
 
 SparkWright's positioning rejects that trade. The kernel's stated principle is **"the model proposes, the harness disposes"** — the model can request a change, but the harness owns whether and how it happens. Reviewing damage after the fact is not the same as preventing it before the fact, and post-hoc review does not compose with non-git side effects (deletes, renames, binary writes, configuration files outside source control).
 

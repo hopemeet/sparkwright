@@ -41,8 +41,8 @@ Does not own:
 
 - Workspace mutation must go through core policy, approval, event, and artifact paths.
 - Default public model-facing coding names are `read`, `write`, `edit`, `bash`,
-  `glob`, and `grep`; implementation names are legacy aliases and should not
-  appear in new prompt guidance or user docs.
+  `glob`, and `grep`; these are the registered callable names used by prompts,
+  configuration, policy, traces, and user docs.
 - `write` is the whole-file create/replace surface for new files and nested
   paths; it uses the same workspace write path as anchored edits and patches
   and belongs to the `workspace.write` selector.
@@ -140,6 +140,14 @@ Does not own:
   smokes should use `write`, `edit_anchored_text`, or `edit`.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-16
+- Scope: coding and shell factories now register `read`, `write`, `edit`, and
+  `bash` directly; removed callable names are no longer exported, registered, or
+  accepted by shared Core/Host alias infrastructure.
+- Read: coding/shell factories, Host identity/catalog assembly, Core registry,
+  public documentation, and focused tool tests.
 
 - Status: Verified
 - Date: 2026-07-16T10:44:25+0800
@@ -345,7 +353,7 @@ test/index.test.ts -t "todo-planning"`; `npm --workspace
 
 - Status: Verified
 - Date: 2026-06-28T20:30:50+0800
-- Scope: host-wrapped coding tool `read_file` now carries explicit read-only
+- Scope: host-wrapped coding tool `read` now carries explicit read-only
   governance side effects while preserving the `local:@sparkwright/coding-tools`
   catalog origin and existing repeated-read behavior.
 - Read: `packages/host/src/tools.ts`,

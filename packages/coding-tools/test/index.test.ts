@@ -43,9 +43,9 @@ describe("coding tools", () => {
     expect(createCodingTools().map((tool) => tool.name)).toEqual([
       "read_text",
       "read_anchored_text",
-      "write_file",
+      "write",
       "edit_anchored_text",
-      "apply_patch",
+      "edit",
       "list_dir",
       "grep",
       "glob",
@@ -156,10 +156,7 @@ describe("coding tools", () => {
     });
     const tools = createCodingTools({ workspaceRoot: root });
     const readText = getTool<ReadTextInput, ReadTextResult>(tools, "read_text");
-    const writeFile = getTool<WriteFileInput, WriteFileResult>(
-      tools,
-      "write_file",
-    );
+    const writeFile = getTool<WriteFileInput, WriteFileResult>(tools, "write");
     const grep = getTool<GrepTextInput, GrepTextResult>(tools, "grep");
     const glob = getTool<GlobPathsInput, GlobPathsResult>(tools, "glob");
 
@@ -272,7 +269,7 @@ describe("coding tools", () => {
     });
     const tool = getTool<ApplyPatchInput, ApplyPatchResult>(
       createCodingTools({ workspaceRoot: root }),
-      "apply_patch",
+      "edit",
     );
 
     const result = await tool.execute(
@@ -304,7 +301,7 @@ describe("coding tools", () => {
     const { root, ctx } = await createWorkspace({});
     const tool = getTool<WriteFileInput, WriteFileResult>(
       createCodingTools({ workspaceRoot: root }),
-      "write_file",
+      "write",
     );
 
     const result = await tool.execute(
@@ -334,7 +331,7 @@ describe("coding tools", () => {
     });
     const tool = getTool<WriteFileInput, WriteFileResult>(
       createCodingTools({ workspaceRoot: root }),
-      "write_file",
+      "write",
     );
 
     const created = await tool.execute(

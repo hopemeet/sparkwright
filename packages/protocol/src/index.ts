@@ -953,7 +953,6 @@ export interface WorkflowRunSnapshot {
 export interface CapabilityToolSummary {
   name: string;
   canonicalName?: string;
-  legacyNames?: string[];
   defaultExposureTier?:
     | "public"
     | "advanced"

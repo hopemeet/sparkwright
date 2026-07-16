@@ -332,7 +332,7 @@ describe("CapabilitiesPanel rendering", () => {
                 name: "record-tool",
                 source: "config",
                 trigger: "tool.completed",
-                matcher: "toolName=shell",
+                matcher: "toolName=bash",
                 action: "command: node; injectOutput=always",
                 blockingPotential: false,
                 enabled: true,

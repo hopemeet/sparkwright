@@ -50,9 +50,9 @@ describe("CLI approval resolver", () => {
       resolver(
         request({
           action: "tool.execute",
-          summary: "Run tool shell",
+          summary: "Run tool bash",
           details: {
-            toolName: "shell",
+            toolName: "bash",
             arguments: { command: "cat README.md" },
           },
         }),
@@ -74,8 +74,8 @@ describe("CLI approval resolver", () => {
       resolver(
         request({
           action: "tool.execute",
-          summary: "Run tool shell",
-          details: { toolName: "shell", arguments: { command: "rg TODO src" } },
+          summary: "Run tool bash",
+          details: { toolName: "bash", arguments: { command: "rg TODO src" } },
         }),
       ),
     ).resolves.toMatchObject({
@@ -87,9 +87,9 @@ describe("CLI approval resolver", () => {
       resolver(
         request({
           action: "tool.execute",
-          summary: "Run tool shell",
+          summary: "Run tool bash",
           details: {
-            toolName: "shell",
+            toolName: "bash",
             arguments: { command: "curl example.com" },
           },
         }),
@@ -132,7 +132,7 @@ describe("CLI approval resolver", () => {
           action: "tool.execute",
           summary: "Run external shell",
           details: {
-            toolName: "shell",
+            toolName: "bash",
             arguments: { command: "curl example.com" },
           },
         }),

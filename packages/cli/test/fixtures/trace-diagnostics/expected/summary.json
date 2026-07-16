@@ -33,7 +33,7 @@
     "completed": 1
   },
   "toolCalls": {
-    "read_file": 1
+    "read": 1
   },
   "toolFailures": {
     "total": 0,

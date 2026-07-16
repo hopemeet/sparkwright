@@ -69,10 +69,6 @@ export function buildCapabilitySnapshot(input: {
     tools: input.toolCatalog.map((entry) => ({
       name: entry.definition.name,
       canonicalName: entry.definition.canonicalName ?? entry.definition.name,
-      ...(entry.definition.legacyNames &&
-      entry.definition.legacyNames.length > 0
-        ? { legacyNames: entry.definition.legacyNames }
-        : {}),
       ...(entry.definition.defaultExposureTier
         ? { defaultExposureTier: entry.definition.defaultExposureTier }
         : {}),

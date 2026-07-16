@@ -106,17 +106,17 @@ describe("EventStore active phase projection", () => {
     const store = new EventStore();
 
     store.appendEvent(
-      ev("tool.requested", 1, { id: "call_a", toolName: "read_file" }),
+      ev("tool.requested", 1, { id: "call_a", toolName: "read" }),
     );
     store.appendEvent(
-      ev("tool.requested", 2, { id: "call_b", toolName: "shell" }),
+      ev("tool.requested", 2, { id: "call_b", toolName: "bash" }),
     );
 
-    expect(store.getSnapshot().activePhase?.message).toBe("running shell");
+    expect(store.getSnapshot().activePhase?.message).toBe("running bash");
 
     store.appendEvent(ev("tool.completed", 3, { toolCallId: "call_b" }));
 
-    expect(store.getSnapshot().activePhase?.message).toBe("running read_file");
+    expect(store.getSnapshot().activePhase?.message).toBe("running read");
 
     store.appendEvent(ev("tool.completed", 4, { toolCallId: "call_a" }));
 
@@ -127,10 +127,10 @@ describe("EventStore active phase projection", () => {
     const store = new EventStore();
 
     store.appendEvent(
-      ev("tool.requested", 1, { id: "call_a", toolName: "read_file" }),
+      ev("tool.requested", 1, { id: "call_a", toolName: "read" }),
     );
     store.appendEvent(
-      ev("tool.requested", 2, { id: "call_b", toolName: "shell" }),
+      ev("tool.requested", 2, { id: "call_b", toolName: "bash" }),
     );
     store.appendEvent(ev("tool.batch.completed", 3));
 
@@ -296,19 +296,19 @@ describe("EventStore active phase projection", () => {
     const store = new EventStore();
 
     store.appendEvent(
-      ev("tool.requested", 1, { id: "call_a", toolName: "shell" }),
+      ev("tool.requested", 1, { id: "call_a", toolName: "bash" }),
     );
     store.appendEvent(ev("run.completed", 2, { state: "completed" }));
     expect(store.getSnapshot().activePhase).toBeNull();
 
     store.appendEvent(
-      ev("tool.requested", 3, { id: "call_b", toolName: "shell" }),
+      ev("tool.requested", 3, { id: "call_b", toolName: "bash" }),
     );
     store.clearEvents();
     expect(store.getSnapshot().activePhase).toBeNull();
 
     store.appendEvent(
-      ev("tool.requested", 4, { id: "call_c", toolName: "shell" }),
+      ev("tool.requested", 4, { id: "call_c", toolName: "bash" }),
     );
     store.reset();
     expect(store.getSnapshot().activePhase).toBeNull();

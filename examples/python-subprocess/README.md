@@ -110,8 +110,8 @@ Workspace: /path/to/repo-pilot
 
 [1] run.created
 [2] run.started
-[3] tool.requested read_file
-[4] tool.completed read_file
+[3] tool.requested read
+[4] tool.completed read
 [5] run.completed final_answer
 
 --- Run result ---

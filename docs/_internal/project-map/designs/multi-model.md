@@ -183,7 +183,7 @@ Agent-specific model selection stays with the agent profile:
 name: Critic
 mode: child
 model: anthropic/claude-opus-4-8
-allowedTools: [read_file, grep]
+allowedTools: [read, grep]
 maxSteps: 4
 delegateTool: delegate_critic
 ---

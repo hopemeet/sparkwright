@@ -131,6 +131,14 @@ policy requires approval
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16
+- Scope: tool approval metadata and UI/CLI matching use exact callable names;
+  `bash` is the only shell-tool identity. Shell risk classification and approval
+  resource semantics are unchanged.
+- Read: Core run gate/approval policy, Host shell catalog, CLI/TUI approval
+  consumers, and focused tests.
+
+- Status: Verified
 - Date: 2026-07-16T10:23:51+0800
 - Scope: reviewed for removal of the Core revival budget alias; approval
   admission, resolver, and policy boundaries do not consume that run option and
@@ -359,15 +367,6 @@ test/access-mode.test.ts`;
   `npm --workspace @sparkwright/host test -- test/run-access.test.ts
 test/config.test.ts -t "background task policy|backgroundTasks|accessMode"`.
 
-- Status: Verified
-- Date: 2026-06-29T09:28:39+0800
-- Scope: checked after `shell` -> `bash` canonicalization; approval semantics
-  did not change, and shell approval matching now accepts canonical and legacy
-  names.
-- Read: `packages/core/src/approval-policy.ts`,
-  `packages/host/src/shell.ts`, `packages/tui/src/components/approval-prompt.tsx`,
-  `packages/cli/test/cli.test.ts`,
-  `docs/_internal/project-map/maps/safety/approvals.md`.
 - Tests: `npm --workspace @sparkwright/core test -- test/run.test.ts`;
   `npm --workspace @sparkwright/cli test -- test/cli.test.ts test/config-schema.test.ts`;
   `npm --workspace @sparkwright/tui test -- test/tool-request-preview.test.ts`.

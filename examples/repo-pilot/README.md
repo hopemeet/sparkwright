@@ -68,6 +68,6 @@ This example proves:
 
 ## Sparkwright CLI Golden Path
 
-The CLI uses a deterministic model for this example. It first calls `read_file`, then optionally calls `append_file` when `--write` is set. Workspace writes still flow through the core approval and artifact path, so the run leaves a readable trace under `.sparkwright/sessions/<session-id>/trace.jsonl`.
+The CLI uses a deterministic model for this example. It first calls `read`, then optionally calls `append_file` when `--write` is set. Workspace writes still flow through the core approval and artifact path, so the run leaves a readable trace under `.sparkwright/sessions/<session-id>/trace.jsonl`.
 
 Each session directory contains `trace.jsonl`, `agents/main/runs/<run-id>/run.json`, and an `artifacts/` directory when a write is proposed. In the write path, look for `workspace.write.requested`, `artifact.created`, `approval.requested`, `approval.resolved`, and either `workspace.write.completed` or `workspace.write.denied`.

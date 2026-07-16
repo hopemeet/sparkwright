@@ -180,7 +180,6 @@ export interface ToolDescriptor {
   inputSchema: unknown;
   outputSchema?: unknown;
   canonicalName?: string;
-  legacyNames?: string[];
   defaultExposureTier?: ToolExposureTier;
   relatedTools?: string[];
   requiresTool?: string[];
@@ -224,12 +223,9 @@ export interface ToolDefinition<TArgs = unknown, TResult = unknown> {
   inputSchema: unknown;
   outputSchema?: unknown;
   /**
-   * Stable product-facing identity. `name` is the callable name currently
-   * offered to the model; `canonicalName` lets display/config/history code
-   * share one identity record while old names remain parseable.
+   * Stable product-facing identity used by display and inventory code.
    */
   canonicalName?: string;
-  legacyNames?: string[];
   defaultExposureTier?: ToolExposureTier;
   relatedTools?: string[];
   requiresTool?: string[];
@@ -349,7 +345,6 @@ export interface ToolRegistryOptions {
 
 export class ToolRegistry {
   private readonly tools = new Map<string, ToolDefinition>();
-  private readonly aliases = new Map<string, string>();
   private generation = 0;
   private readonly availabilityTtlMs: number;
   // Keyed by the probe function reference so identical probes shared across
@@ -371,27 +366,18 @@ export class ToolRegistry {
   }
 
   register(tool: ToolDefinition): void {
-    if (this.tools.has(tool.name) || this.aliases.has(tool.name)) {
+    if (this.tools.has(tool.name)) {
       throw new Error(`Tool already registered: ${tool.name}`);
-    }
-    for (const alias of tool.legacyNames ?? []) {
-      if (alias === tool.name) continue;
-      if (this.tools.has(alias) || this.aliases.has(alias)) {
-        throw new Error(`Tool alias already registered: ${alias}`);
-      }
     }
 
     this.tools.set(tool.name, tool);
-    this.registerAliases(tool);
     this.generation += 1;
   }
 
   unregister(name: string): boolean {
-    const canonicalName = this.aliases.get(name) ?? name;
-    const existing = this.tools.get(canonicalName);
-    const removed = this.tools.delete(canonicalName);
+    const existing = this.tools.get(name);
+    const removed = this.tools.delete(name);
     if (removed) {
-      this.unregisterAliases(canonicalName, existing);
       this.generation += 1;
       this.dropAvailabilityEntry(existing);
     }
@@ -403,9 +389,7 @@ export class ToolRegistry {
     if (existing && existing.available !== tool.available) {
       this.dropAvailabilityEntry(existing);
     }
-    this.unregisterAliases(tool.name, existing);
     this.tools.set(tool.name, tool);
-    this.registerAliases(tool);
     this.generation += 1;
   }
 
@@ -421,17 +405,7 @@ export class ToolRegistry {
   }
 
   get(name: string): ToolDefinition | undefined {
-    return this.tools.get(name) ?? this.tools.get(this.aliases.get(name) ?? "");
-  }
-
-  /**
-   * Resolve a callable legacy name to the registered tool name. Unknown names
-   * are returned unchanged so callers can report the original lookup failure.
-   * Policy and workflow layers should consume this value instead of each
-   * implementing their own alias table.
-   */
-  canonicalName(name: string): string {
-    return this.aliases.get(name) ?? name;
+    return this.tools.get(name);
   }
 
   list(): ToolDefinition[] {
@@ -516,23 +490,6 @@ export class ToolRegistry {
   private dropAvailabilityEntry(tool: ToolDefinition | undefined): void {
     if (tool?.available) this.availabilityCache.delete(tool.available);
   }
-
-  private registerAliases(tool: ToolDefinition): void {
-    for (const alias of tool.legacyNames ?? []) {
-      if (alias !== tool.name) this.aliases.set(alias, tool.name);
-    }
-  }
-
-  private unregisterAliases(
-    canonicalName: string,
-    tool: ToolDefinition | undefined,
-  ): void {
-    for (const alias of tool?.legacyNames ?? []) {
-      if (this.aliases.get(alias) === canonicalName) {
-        this.aliases.delete(alias);
-      }
-    }
-  }
 }
 
 function toToolDescriptor(tool: ToolDefinition): ToolDescriptor {
@@ -542,7 +499,6 @@ function toToolDescriptor(tool: ToolDefinition): ToolDescriptor {
     inputSchema: tool.inputSchema,
     outputSchema: tool.outputSchema,
     canonicalName: tool.canonicalName,
-    legacyNames: tool.legacyNames,
     defaultExposureTier: tool.defaultExposureTier,
     relatedTools: tool.relatedTools,
     requiresTool: tool.requiresTool,

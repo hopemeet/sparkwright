@@ -138,7 +138,7 @@ export function summarizeRunInspectorFacts(
 }
 
 function isShellToolName(name: string): boolean {
-  return name === "bash" || name === "shell";
+  return name === "bash";
 }
 
 export function eventMatchesSearch(

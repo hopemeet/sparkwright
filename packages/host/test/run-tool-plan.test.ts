@@ -11,14 +11,13 @@ import {
 
 function tool(
   name: string,
-  options: { deferred?: boolean; legacyNames?: string[] } = {},
+  options: { deferred?: boolean } = {},
 ): ToolDefinition {
   return defineTool({
     name,
     description: `${name} test tool`,
     inputSchema: { type: "object", additionalProperties: false },
     deferLoading: options.deferred,
-    legacyNames: options.legacyNames,
     execute: async () => ({ ok: true }),
   });
 }
@@ -102,14 +101,5 @@ describe("resolveRunToolSurface", () => {
       {} as RuntimeContext,
     )) as { matches: Array<{ name: string }> };
     expect(found.matches.map((item) => item.name)).toEqual(["mcp__notes"]);
-  });
-
-  it("canonicalizes workflow aliases before narrowing", () => {
-    const surface = resolveRunToolSurface({
-      tools: [tool("read", { legacyNames: ["read_file"] }), tool("write")],
-      workflowAllowedTools: ["read_file"],
-    });
-
-    expect(surface.tools.map((item) => item.name)).toEqual(["read"]);
   });
 });

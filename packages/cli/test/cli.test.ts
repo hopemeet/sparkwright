@@ -2366,7 +2366,7 @@ describe.sequential("runCli", () => {
       JSON.stringify({
         tools: {
           allowed: ["read", "read_anchored_text"],
-          disabled: ["shell"],
+          disabled: ["bash"],
           defer: ["read_anchored_text"],
         },
         shell: {
@@ -2608,7 +2608,7 @@ describe.sequential("runCli", () => {
     expect(output.stdoutText()).toContain("tool: bash");
     expect(output.stdoutText()).toContain("tool: read");
     expect(output.stdoutText()).toContain("tool: list_skills");
-    // append_file was retired in favor of edit_anchored_text / apply_patch.
+    // append_file was retired in favor of edit_anchored_text / edit.
     expect(output.stdoutText()).not.toContain("tool: append_file");
   });
 
@@ -2650,7 +2650,7 @@ describe.sequential("runCli", () => {
               {
                 name: "guard-shell",
                 hook: "PreToolUse",
-                matcher: { toolName: "shell" },
+                matcher: { toolName: "bash" },
                 action: { type: "block", reason: "No shell." },
               },
             ],
@@ -2658,7 +2658,7 @@ describe.sequential("runCli", () => {
               {
                 name: "record-tool",
                 trigger: "tool.completed",
-                matcher: { toolName: "shell" },
+                matcher: { toolName: "bash" },
                 action: { type: "command", command: "node" },
               },
             ],
@@ -2685,7 +2685,7 @@ describe.sequential("runCli", () => {
     expect(result.exitCode).toBe(0);
     expect(output.stdoutText()).toContain("workflow rules: 3");
     expect(output.stdoutText()).toContain(
-      "rule: guard-shell [config] PreToolUse active; canBlock=true; matcher=toolName=shell; action=block: No shell.",
+      "rule: guard-shell [config] PreToolUse active; canBlock=true; matcher=toolName=bash; action=block: No shell.",
     );
     expect(output.stdoutText()).toContain(
       "rule: verification:fast:test [verification] Stop active; canBlock=false",
@@ -2695,7 +2695,7 @@ describe.sequential("runCli", () => {
     );
     expect(output.stdoutText()).toContain("event rules: 1");
     expect(output.stdoutText()).toContain(
-      "event rule: record-tool [config] tool.completed active; canBlock=false; matcher=toolName=shell; action=command: node; injectOutput=always",
+      "event rule: record-tool [config] tool.completed active; canBlock=false; matcher=toolName=bash; action=command: node; injectOutput=always",
     );
   });
 
@@ -3647,7 +3647,7 @@ describe.sequential("runCli", () => {
         tools: {
           use: ["workspace.read"],
           allowed: ["read"],
-          disabled: ["shell"],
+          disabled: ["bash"],
         },
       }),
       "utf8",
@@ -3682,7 +3682,7 @@ describe.sequential("runCli", () => {
     expect(parsed.tools).toEqual({
       use: ["workspace.read"],
       allowed: ["read", "edit"],
-      disabled: ["shell", "read"],
+      disabled: ["bash", "read"],
       defer: ["todo_write"],
     });
     if (process.platform !== "win32") {
@@ -3736,7 +3736,7 @@ describe.sequential("runCli", () => {
         capabilities: {
           skills: { roots: ["skills"] },
         },
-        tools: { use: [], allowed: [], disabled: ["shell"], defer: [] },
+        tools: { use: [], allowed: [], disabled: ["bash"], defer: [] },
       }),
       "utf8",
     );
@@ -3769,7 +3769,7 @@ describe.sequential("runCli", () => {
     expect(parsed.tools).toEqual({
       use: [],
       allowed: ["read"],
-      disabled: ["shell"],
+      disabled: ["bash"],
       defer: [],
     });
   });

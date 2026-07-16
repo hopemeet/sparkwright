@@ -6,7 +6,7 @@ phases: 19
 [3-3] instant context context.assembled (0ms)
 [4-4] instant model model step 1 (0ms)
 [5-6] completed model model step 1 (1000ms)
-[7-19] completed tool tool read_file (12000ms)
+[7-19] completed tool tool read (12000ms)
 [9-9] instant workspace workspace README.md (0ms)
 [10-10] instant workspace workspace README.md (0ms)
 [11-11] instant workspace workspace README.md (0ms)

@@ -17,7 +17,7 @@ describe("run outcome evidence", () => {
       log.emit("run.created", { goal: "Run verification" }),
       log.emit("tool.requested", {
         id: "call_test",
-        toolName: "shell",
+        toolName: "bash",
         arguments: {
           command:
             'cd /tmp/ws && python -m unittest tests/test_config.py 2>&1; echo "EXIT:$?"',
@@ -25,7 +25,7 @@ describe("run outcome evidence", () => {
       }),
       log.emit("tool.completed", {
         toolCallId: "call_test",
-        toolName: "shell",
+        toolName: "bash",
         status: "completed",
         output: {
           exitCode: 0,
@@ -54,7 +54,7 @@ describe("run outcome evidence", () => {
       log.emit("run.created", { goal: "Run verification" }),
       log.emit("tool.requested", {
         id: "call_fail",
-        toolName: "shell",
+        toolName: "bash",
         arguments: {
           command:
             'cd /tmp/ws && python3 -m unittest tests/test_config.py 2>&1; echo "EXIT:$?"',
@@ -62,7 +62,7 @@ describe("run outcome evidence", () => {
       }),
       log.emit("tool.completed", {
         toolCallId: "call_fail",
-        toolName: "shell",
+        toolName: "bash",
         status: "completed",
         output: {
           exitCode: 0,
@@ -73,7 +73,7 @@ describe("run outcome evidence", () => {
       }),
       log.emit("tool.requested", {
         id: "call_pass",
-        toolName: "shell",
+        toolName: "bash",
         arguments: {
           command:
             'cd /tmp/ws && PYTHONPATH=src python3 -m unittest tests/test_config.py 2>&1; echo "EXIT:$?"',
@@ -81,7 +81,7 @@ describe("run outcome evidence", () => {
       }),
       log.emit("tool.completed", {
         toolCallId: "call_pass",
-        toolName: "shell",
+        toolName: "bash",
         status: "completed",
         output: {
           exitCode: 0,
@@ -111,7 +111,7 @@ describe("run outcome evidence", () => {
       log.emit("run.created", { goal: "Fix and verify with npm test" }),
       log.emit("tool.requested", {
         id: "call_probe",
-        toolName: "shell",
+        toolName: "bash",
         arguments: {
           command:
             'node -e "console.error(\\"probe failed\\"); process.exit(7)"',
@@ -119,7 +119,7 @@ describe("run outcome evidence", () => {
       }),
       log.emit("tool.completed", {
         toolCallId: "call_probe",
-        toolName: "shell",
+        toolName: "bash",
         status: "completed",
         output: {
           exitCode: 7,
@@ -130,23 +130,23 @@ describe("run outcome evidence", () => {
       }),
       log.emit("tool.requested", {
         id: "call_fail",
-        toolName: "shell",
+        toolName: "bash",
         arguments: { command: "npm test" },
       }),
       log.emit("tool.completed", {
         toolCallId: "call_fail",
-        toolName: "shell",
+        toolName: "bash",
         status: "completed",
         output: { exitCode: 1, timedOut: false, stdout: "", stderr: "fail" },
       }),
       log.emit("tool.requested", {
         id: "call_pass",
-        toolName: "shell",
+        toolName: "bash",
         arguments: { command: "npm test" },
       }),
       log.emit("tool.completed", {
         toolCallId: "call_pass",
-        toolName: "shell",
+        toolName: "bash",
         status: "completed",
         output: { exitCode: 0, timedOut: false, stdout: "ok", stderr: "" },
       }),
@@ -167,12 +167,12 @@ describe("run outcome evidence", () => {
       log.emit("run.created", { goal: "Report VALUE from the config file" }),
       log.emit("tool.requested", {
         id: "call_miss",
-        toolName: "read_file",
+        toolName: "read",
         arguments: { path: "config.conf" },
       }),
       log.emit("tool.failed", {
         toolCallId: "call_miss",
-        toolName: "read_file",
+        toolName: "read",
         status: "failed",
         error: { code: "ENOENT", message: "ENOENT: no such file" },
       }),
@@ -189,12 +189,12 @@ describe("run outcome evidence", () => {
       }),
       log.emit("tool.requested", {
         id: "call_read",
-        toolName: "read_file",
+        toolName: "read",
         arguments: { path: "settings.conf" },
       }),
       log.emit("tool.completed", {
         toolCallId: "call_read",
-        toolName: "read_file",
+        toolName: "read",
         status: "completed",
         output: { path: "settings.conf", content: "VALUE=42\n" },
       }),
@@ -423,12 +423,12 @@ describe("run outcome evidence", () => {
       log.emit("run.created", { goal: "Append to the target" }),
       log.emit("tool.requested", {
         id: "call_escape",
-        toolName: "read_file",
+        toolName: "read",
         arguments: { path: "link.txt" },
       }),
       log.emit("tool.failed", {
         toolCallId: "call_escape",
-        toolName: "read_file",
+        toolName: "read",
         status: "failed",
         error: {
           code: "WORKSPACE_PATH_ESCAPED",
@@ -438,12 +438,12 @@ describe("run outcome evidence", () => {
       // A later successful read of a different file must NOT launder the escape.
       log.emit("tool.requested", {
         id: "call_ok",
-        toolName: "read_file",
+        toolName: "read",
         arguments: { path: "README.md" },
       }),
       log.emit("tool.completed", {
         toolCallId: "call_ok",
-        toolName: "read_file",
+        toolName: "read",
         status: "completed",
         output: { path: "README.md", content: "# Demo\n" },
       }),
@@ -463,12 +463,12 @@ describe("run outcome evidence", () => {
       log.emit("run.created", { goal: "Fix and verify" }),
       log.emit("tool.requested", {
         id: "call_verify",
-        toolName: "shell",
+        toolName: "bash",
         arguments: { command: "npm run verify" },
       }),
       log.emit("tool.completed", {
         toolCallId: "call_verify",
-        toolName: "shell",
+        toolName: "bash",
         status: "completed",
         output: { exitCode: 0, timedOut: false, stdout: "ok", stderr: "" },
       }),
@@ -522,12 +522,12 @@ describe("run outcome evidence", () => {
       log.emit("run.created", { goal: "Fix and run tests" }),
       log.emit("tool.requested", {
         id: "call_test",
-        toolName: "shell",
+        toolName: "bash",
         arguments: { command: "npm test" },
       }),
       log.emit("tool.completed", {
         toolCallId: "call_test",
-        toolName: "shell",
+        toolName: "bash",
         status: "completed",
         output: {
           exitCode: 0,
@@ -553,23 +553,23 @@ describe("run outcome evidence", () => {
       // A tool failure that is recovered on the same target (not a real failure).
       log.emit("tool.requested", {
         id: "call_fail",
-        toolName: "read_file",
+        toolName: "read",
         arguments: { path: "a.txt" },
       }),
       log.emit("tool.failed", {
         toolCallId: "call_fail",
-        toolName: "read_file",
+        toolName: "read",
         status: "failed",
         error: { code: "EBUSY", message: "resource busy" },
       }),
       log.emit("tool.requested", {
         id: "call_ok",
-        toolName: "read_file",
+        toolName: "read",
         arguments: { path: "a.txt" },
       }),
       log.emit("tool.completed", {
         toolCallId: "call_ok",
-        toolName: "read_file",
+        toolName: "read",
         status: "completed",
         output: { path: "a.txt", content: "ok" },
       }),
@@ -595,7 +595,7 @@ describe("run outcome evidence", () => {
       log.emit("run.created", { goal: "Run verification" }),
       log.emit("tool.requested", {
         id: "call_test",
-        toolName: "shell",
+        toolName: "bash",
         arguments: {
           command:
             'cd /tmp/ws && python -m unittest tests/test_config.py 2>&1; echo "EXIT:$?"',
@@ -603,7 +603,7 @@ describe("run outcome evidence", () => {
       }),
       log.emit("tool.completed", {
         toolCallId: "call_test",
-        toolName: "shell",
+        toolName: "bash",
         status: "completed",
         output: {
           exitCode: 0,
@@ -645,23 +645,23 @@ describe("run outcome evidence", () => {
       log.emit("run.created", { goal: "Fix and verify" }),
       log.emit("tool.requested", {
         id: "call_fail",
-        toolName: "shell",
+        toolName: "bash",
         arguments: { command },
       }),
       log.emit("tool.completed", {
         toolCallId: "call_fail",
-        toolName: "shell",
+        toolName: "bash",
         status: "completed",
         output: { exitCode: 1, timedOut: false },
       }),
       log.emit("tool.requested", {
         id: "call_pass",
-        toolName: "shell",
+        toolName: "bash",
         arguments: { command },
       }),
       log.emit("tool.completed", {
         toolCallId: "call_pass",
-        toolName: "shell",
+        toolName: "bash",
         status: "completed",
         output: { exitCode: 0, timedOut: false },
       }),
@@ -693,23 +693,23 @@ describe("run outcome evidence", () => {
       log.emit("run.created", { goal: "Read the config" }),
       log.emit("tool.requested", {
         id: "call_fail",
-        toolName: "read_file",
+        toolName: "read",
         arguments: { path: "config.json" },
       }),
       log.emit("tool.failed", {
         toolCallId: "call_fail",
-        toolName: "read_file",
+        toolName: "read",
         status: "failed",
         error: { code: "EBUSY", message: "resource busy" },
       }),
       log.emit("tool.requested", {
         id: "call_ok",
-        toolName: "read_file",
+        toolName: "read",
         arguments: { path: "config.json" },
       }),
       log.emit("tool.completed", {
         toolCallId: "call_ok",
-        toolName: "read_file",
+        toolName: "read",
         status: "completed",
         output: { path: "config.json", content: "{}" },
       }),

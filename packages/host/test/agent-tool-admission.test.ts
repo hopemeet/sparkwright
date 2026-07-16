@@ -11,11 +11,10 @@ import type { HostToolCatalogEntry } from "../src/tool-catalog.js";
 
 function tool(
   name: string,
-  options: { deferred?: boolean; legacyNames?: string[] } = {},
+  options: { deferred?: boolean } = {},
 ): ToolDefinition {
   return defineTool({
     name,
-    legacyNames: options.legacyNames,
     description: name,
     inputSchema: { type: "object" },
     deferLoading: options.deferred,
@@ -28,15 +27,12 @@ function profile(input: Partial<AgentProfile>): AgentProfile {
 }
 
 describe("agent profile physical tool admission", () => {
-  it("applies deny after allow and canonicalizes legacy built-in names", () => {
-    const tools = [
-      tool("read", { legacyNames: ["read_file"] }),
-      tool("write", { legacyNames: ["write_file"] }),
-    ];
+  it("applies deny after allow for canonical built-in names", () => {
+    const tools = [tool("read"), tool("write")];
     const admitted = admitToolsForAgentProfile(
       tools,
       profile({
-        allowedTools: ["read_file", "write_file"],
+        allowedTools: ["read", "write"],
         deniedTools: ["read"],
       }),
       (item) => item,

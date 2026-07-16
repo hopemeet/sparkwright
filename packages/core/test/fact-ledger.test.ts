@@ -18,12 +18,12 @@ describe("FactLedger", () => {
     log.emit("run.created", { goal: "Run verification" });
     log.emit("tool.requested", {
       id: "call_fail",
-      toolName: "shell",
+      toolName: "bash",
       arguments: { command: "npm test" },
     });
     log.emit("tool.completed", {
       toolCallId: "call_fail",
-      toolName: "shell",
+      toolName: "bash",
       output: { exitCode: 1, timedOut: false },
     });
 
@@ -43,12 +43,12 @@ describe("FactLedger", () => {
 
     log.emit("tool.requested", {
       id: "call_pass",
-      toolName: "shell",
+      toolName: "bash",
       arguments: { command: "npm test" },
     });
     log.emit("tool.completed", {
       toolCallId: "call_pass",
-      toolName: "shell",
+      toolName: "bash",
       output: { exitCode: 0, timedOut: false },
     });
 
@@ -68,12 +68,12 @@ describe("FactLedger", () => {
 
     log.emit("tool.requested", {
       id: "call_verify",
-      toolName: "shell",
+      toolName: "bash",
       arguments: { command: "npm test" },
     });
     log.emit("tool.completed", {
       toolCallId: "call_verify",
-      toolName: "shell",
+      toolName: "bash",
       output: { exitCode: 0, timedOut: false },
     });
     log.emit("workspace.write.untracked_access_granted", {

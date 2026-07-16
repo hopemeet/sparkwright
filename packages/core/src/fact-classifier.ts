@@ -236,7 +236,7 @@ export function parseVerificationHookName(
 }
 
 export function isShellToolName(value: unknown): boolean {
-  return value === "bash" || value === "shell";
+  return value === "bash";
 }
 
 export function effectiveShellExitCode(

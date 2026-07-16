@@ -93,19 +93,19 @@ describe("renderTranscript", () => {
       {
         type: "tool.requested",
         sequence: 1,
-        payload: { toolName: "read_file", input: { path: "foo.ts" } },
+        payload: { toolName: "read", input: { path: "foo.ts" } },
       },
       {
         type: "tool.completed",
         sequence: 2,
-        payload: { toolName: "read_file", result: "contents here" },
+        payload: { toolName: "read", result: "contents here" },
       },
     ];
     const md = renderTranscript(
       { sessionId: "s", workspaceRoot: "/x" },
       events,
     );
-    expect(md).toContain("### Tool: `read_file`");
+    expect(md).toContain("### Tool: `read`");
     expect(md).toContain("_Args:_ foo.ts");
     expect(md).toContain("contents here");
   });
@@ -117,7 +117,7 @@ describe("renderTranscript", () => {
         sequence: 1,
         payload: {
           id: "call_1",
-          toolName: "read_file",
+          toolName: "read",
           arguments: { path: "foo.ts", offset: 1, limit: 20 },
         },
       },
@@ -136,9 +136,9 @@ describe("renderTranscript", () => {
       events,
     );
 
-    expect(md).toContain("### Tool: `read_file`");
+    expect(md).toContain("### Tool: `read`");
     expect(md).toContain("_Args:_ foo.ts:1 +20");
-    expect(md).toContain("_Result of `read_file`:_");
+    expect(md).toContain("_Result of `read`:_");
     expect(md).toContain('"bytes":12');
     expect(md).not.toContain("_Result of `?`:_");
   });
@@ -189,7 +189,7 @@ describe("renderTranscript", () => {
         type: "tool.completed",
         sequence: 2,
         payload: {
-          toolName: "read_file",
+          toolName: "read",
           output: {
             path: "README.md",
             content: "# Demo\nbody",
@@ -244,12 +244,12 @@ describe("renderTranscript", () => {
       {
         type: "tool.requested",
         sequence: 2,
-        payload: { toolName: "read_file", input: { path: "a.ts" } },
+        payload: { toolName: "read", input: { path: "a.ts" } },
       },
       {
         type: "tool.requested",
         sequence: 3,
-        payload: { toolName: "read_file", input: { path: "b.ts" } },
+        payload: { toolName: "read", input: { path: "b.ts" } },
       },
       { type: "tool.batch.completed", sequence: 4, payload: {} },
     ];
@@ -260,7 +260,7 @@ describe("renderTranscript", () => {
     expect(md).toContain("### Batch · 2 tools (concurrent)");
     expect(md).toContain("_End of batch._");
     // Children render as normal tool sections, not dumped into the raw tail.
-    expect(md).toContain("### Tool: `read_file`");
+    expect(md).toContain("### Tool: `read`");
     expect(md).not.toContain("Raw events");
   });
 

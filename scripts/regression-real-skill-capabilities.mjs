@@ -77,9 +77,7 @@ async function staticToolDisabledCase() {
     result.exitCode === 0 &&
     includesAll(toolNames, ["list_skills", "create_skill", "update_skill"]) &&
     !toolNames.includes("bash") &&
-    !toolNames.includes("shell") &&
-    toolNames.includes("read") &&
-    !toolNames.includes("read_file");
+    toolNames.includes("read");
 
   record({
     id: "SKILL_TOOLS_ALLOWLIST",
@@ -240,7 +238,6 @@ async function realCreateSkillCase() {
     requests.includes("tool_search") &&
     requests.includes("create_skill") &&
     !requests.includes("bash") &&
-    !requests.includes("shell") &&
     (failures.length === 0 || recoveredCreateSkillFailures) &&
     skillEntries.includes("SKILL.md") &&
     proposals.length === 1 &&
@@ -341,7 +338,6 @@ async function realUpdateSkillProposalCase() {
     requests.includes("tool_search") &&
     includesAll(requests, ["list_skills", "update_skill"]) &&
     !requests.includes("bash") &&
-    !requests.includes("shell") &&
     !has(trace.events, "tool.failed") &&
     proposals.length === 1 &&
     beforeHash === afterHash &&

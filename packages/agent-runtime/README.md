@@ -23,7 +23,7 @@ const derived = deriveChildAgentProfile({
   parentAgent: {
     id: "planner",
     allowedTools: ["read", "search", "delegate"],
-    deniedTools: ["shell"],
+    deniedTools: ["bash"],
   },
   childAgent: {
     id: "reviewer",

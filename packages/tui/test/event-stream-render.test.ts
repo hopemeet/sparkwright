@@ -191,7 +191,7 @@ describe("EventStream committed rendering", () => {
         path: "src/cart.js",
       }),
       ev("tool.completed", 3, {
-        toolName: "apply_patch",
+        toolName: "edit",
         output: {
           path: "src/cart.js",
           changed: true,
@@ -233,7 +233,7 @@ describe("EventStream committed rendering", () => {
         mode: "serial",
       }),
       ev("tool.requested", 2, {
-        toolName: "apply_patch",
+        toolName: "edit",
         arguments: {
           path: "src/cart.js",
           patch:
@@ -242,14 +242,14 @@ describe("EventStream committed rendering", () => {
       }),
     ];
     const text = await renderToText(stream(events), 72);
-    expect(text).toContain("⚙ apply_patch");
+    expect(text).toContain("⚙ edit");
     expect(text).not.toContain("batch  1 tool");
   });
 
-  it("renders shell tool requests as commands instead of raw JSON", async () => {
+  it("renders bash tool requests as commands instead of raw JSON", async () => {
     const events = [
       ev("tool.requested", 1, {
-        toolName: "shell",
+        toolName: "bash",
         arguments: {
           command: "npm test",
           timeoutMs: 120000,
@@ -258,7 +258,7 @@ describe("EventStream committed rendering", () => {
       }),
     ];
     const text = await renderToText(stream(events), 72);
-    expect(text).toContain("⚙ shell  $ npm test");
+    expect(text).toContain("⚙ bash  $ npm test");
     expect(text).not.toContain('"command"');
   });
 
@@ -274,7 +274,7 @@ describe("EventStream committed rendering", () => {
         },
       }),
       ev("tool.requested", 2, {
-        toolName: "read_file",
+        toolName: "read",
         arguments: { path: "README.md", offset: 1, limit: 20 },
       }),
       ev("tool.requested", 3, {
@@ -284,7 +284,7 @@ describe("EventStream committed rendering", () => {
     ];
     const text = await renderToText(stream(events), 100);
     expect(text).toContain("⚙ list_dir  . recursive");
-    expect(text).toContain("⚙ read_file  README.md:1 +20");
+    expect(text).toContain("⚙ read  README.md:1 +20");
     expect(text).toContain("⚙ glob  packages/*/package.json");
     expect(text).not.toContain('"recursive"');
     expect(text).not.toContain('"maxEntries"');
@@ -386,7 +386,7 @@ describe("EventStream committed rendering", () => {
   it("renders shell results as compact output summaries", async () => {
     const events = [
       ev("tool.completed", 1, {
-        toolName: "shell",
+        toolName: "bash",
         output: {
           stdout:
             "\n> calc-fixture@0.0.0 test\n> node test/run-tests.mjs\n\ntests passed\n",
@@ -515,13 +515,13 @@ describe("EventStream committed rendering", () => {
         decision: "approved",
       }),
       ev("tool.requested", 4, {
-        toolName: "shell",
+        toolName: "bash",
         arguments: {
           command: "npm test",
         },
       }),
       ev("tool.completed", 5, {
-        toolName: "shell",
+        toolName: "bash",
         output: {
           stdout: "tests passed\n",
           stderr: "",

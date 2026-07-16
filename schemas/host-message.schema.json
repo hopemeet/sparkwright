@@ -1453,10 +1453,6 @@
       "properties": {
         "name": { "type": "string", "minLength": 1 },
         "canonicalName": { "type": "string", "minLength": 1 },
-        "legacyNames": {
-          "type": "array",
-          "items": { "type": "string", "minLength": 1 }
-        },
         "defaultExposureTier": {
           "type": "string",
           "enum": ["public", "advanced", "infrastructure", "internal", "legacy"]

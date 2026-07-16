@@ -231,7 +231,6 @@ import {
   resolveAgentSpawnToolRequest,
   type AgentWorkspaceWriteGrant,
 } from "../agent-spawn-grants.js";
-import { canonicalToolName } from "../tool-identities.js";
 import {
   acpConfigFromAgentProfile,
   createAcpDelegateTool,
@@ -3144,7 +3143,7 @@ export class HostRuntime {
           purpose: "todo_continuation",
         }).toolSurface;
         const toolName = plan.missingRequiredTools.find(
-          (name) => name === canonicalToolName(requiredTool),
+          (name) => name === requiredTool,
         );
         return toolName
           ? {
@@ -5394,14 +5393,11 @@ function intersectToolNameAllowlists(
   right: readonly string[] | undefined,
 ): string[] | undefined {
   if (left === undefined) return right ? [...right] : undefined;
-  if (right === undefined) return left.map(canonicalToolName);
-  const rightByCanonical = new Map(
-    right.map((name) => [canonicalToolName(name), name]),
-  );
+  if (right === undefined) return [...left];
+  const rightSet = new Set(right);
   const out: string[] = [];
   for (const name of left) {
-    const matched = rightByCanonical.get(canonicalToolName(name));
-    if (matched && !out.includes(matched)) out.push(matched);
+    if (rightSet.has(name) && !out.includes(name)) out.push(name);
   }
   return out;
 }
@@ -6170,8 +6166,7 @@ function inProcessDelegateHasTool(
 ): boolean {
   return delegateChildTools.some(
     (tool) =>
-      canonicalToolName(tool.name) === canonicalToolName(toolName) &&
-      inProcessDelegateCanUseTool(profile, tool),
+      tool.name === toolName && inProcessDelegateCanUseTool(profile, tool),
   );
 }
 
@@ -6281,14 +6276,12 @@ export function assertReadOnlyChildCanSatisfyGoal(input: {
   childTools: readonly Pick<ToolDefinition, "name">[];
   entrypoint: "spawn_agent" | "agent_task";
 }): void {
-  const canonicalChildTools = new Set(
-    input.childTools.map((tool) => canonicalToolName(tool.name)),
-  );
-  const hasExecutor = canonicalChildTools.has("bash");
+  const childTools = new Set(input.childTools.map((tool) => tool.name));
+  const hasExecutor = childTools.has("bash");
   const hasWriter =
-    canonicalChildTools.has("write") ||
-    canonicalChildTools.has("edit") ||
-    canonicalChildTools.has("edit_anchored_text");
+    childTools.has("write") ||
+    childTools.has("edit") ||
+    childTools.has("edit_anchored_text");
   const intent = detectReadOnlyChildIntent(`${input.goal}\n${input.prompt}`);
   if (intent === null) return;
   if (intent === "execute" && hasExecutor) return;
@@ -6459,9 +6452,9 @@ export function createDynamicSpawnAgentTool(input: {
         grant: parsed.grant,
         toolName: input.entrypoint ?? "spawn_agent",
       });
-      const requestedTools = toolRequest.requestedTools.map(canonicalToolName);
+      const requestedTools = toolRequest.requestedTools;
       const availableTools = new Map(
-        input.childTools.map((tool) => [canonicalToolName(tool.name), tool]),
+        input.childTools.map((tool) => [tool.name, tool]),
       );
       const invalidTools = requestedTools.filter(
         (name) => !supportedTools.has(name) || !availableTools.has(name),
@@ -7629,7 +7622,7 @@ function workflowEpisodeAllowedTools(
   if (!node.tools || node.tools.length === 0) return undefined;
   return {
     nodeId: node.id,
-    normalized: [...new Set(node.tools.map(canonicalToolName))],
+    normalized: [...new Set(node.tools)],
   };
 }
 
@@ -8115,7 +8108,7 @@ function workflowProjectionAllowedTools(
   if (!node?.tools || node.tools.length === 0) return undefined;
   return {
     nodeId: node.id,
-    normalized: [...new Set(node.tools.map(canonicalToolName))],
+    normalized: [...new Set(node.tools)],
   };
 }
 

@@ -8,7 +8,9 @@ cron, shell/task tools, and capability inspection.
 ## Last Verified
 
 - Date: 2026-07-16
-- Scope: reviewed Host capability and workflow action assembly after delegate target selection became `agentId`-only; the agents map owns the detailed contract.
+- Scope: capability assembly and inspection now report exact canonical built-in
+  names without alias lists; selectors do not normalize removed names. Delegate
+  target selection remains `agentId`-only.
 
 ## Main Files
 
@@ -700,7 +702,7 @@ test/run-access.test.ts test/spawn-agent.test.ts -t
 - Status: Verified
 - Date: 2026-06-28T20:30:50+0800
 - Scope: capability/tool inventory origin semantics remain stable after adding
-  explicit read-only governance to host `read_file`; the descriptor still
+  explicit read-only governance to host `read`; the descriptor still
   reports `local:@sparkwright/coding-tools`, and read-only approval behavior is
   driven by governance side effects.
 - Read: `packages/host/src/tools.ts`,

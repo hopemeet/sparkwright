@@ -198,7 +198,6 @@ export function normalizeWorkflowToolName(
 ): string | undefined {
   const normalized = toolName.trim();
   switch (normalized) {
-    case "read_file":
     case "read":
       return "read";
     case "grep":
@@ -207,13 +206,11 @@ export function normalizeWorkflowToolName(
     case "glob":
     case "list_dir":
       return "glob";
-    case "write_file":
     case "write":
       return "write";
     case "edit_anchored_text":
     case "edit":
       return "edit";
-    case "shell":
     case "bash":
       return "bash";
     case "todo_write":

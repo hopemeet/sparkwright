@@ -691,7 +691,7 @@ export function createSkillLoaderTool(
 
       // Resource files are reported skill-relative (never as absolute host
       // paths): they live outside the workspace, so an absolute path both leaks
-      // the host layout and lures the model into a workspace-escaping read_file
+      // the host layout and lures the model into a workspace-escaping read
       // call. The model reads them back through this tool's `resource` argument.
       const resourceFiles = await listSkillResourceFiles(
         skill,
@@ -1003,7 +1003,7 @@ function createSkillToolOutput(
             "again with this skill's name and the file's skill-relative path " +
             "as `resource` (for example: skill_load with name " +
             `"${skill.name}" and resource "${resourceFiles[0]}"). These files ` +
-            "live outside the workspace — do NOT pass them to read_file or " +
+            "live outside the workspace — do NOT pass them to read or " +
             "prepend a working directory.",
           "",
           "<skill_files>",

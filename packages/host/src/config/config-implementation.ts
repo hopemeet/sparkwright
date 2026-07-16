@@ -40,7 +40,6 @@ import {
   formatToolUseSelectorList,
   intersectToolUseSelectors,
   isToolUseSelector,
-  normalizeToolUseSelector,
 } from "../tool-selectors.js";
 import { normalizeToolNameList } from "../tool-identities.js";
 import {
@@ -647,7 +646,7 @@ function validateToolUseSelectorArray(
     });
     return undefined;
   }
-  return uniquePreservingOrder(values.map(normalizeToolUseSelector));
+  return uniquePreservingOrder(values);
 }
 
 function uniquePreservingOrder(values: readonly string[]): string[] {

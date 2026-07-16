@@ -13,7 +13,7 @@ describe("session approval subjects", () => {
       {
         action: "tool.execute",
         details: {
-          toolName: "shell",
+          toolName: "bash",
           arguments: { command: "npm test", cwd: "/workspace/project" },
           governance: { origin: { kind: "local", name: "sparkwright" } },
         },
@@ -38,7 +38,7 @@ describe("session approval subjects", () => {
       approvalSubject(
         {
           action: "tool.execute",
-          details: { toolName: "shell", arguments: { command, cwd } },
+          details: { toolName: "bash", arguments: { command, cwd } },
         },
         workspaceRoot,
       );
