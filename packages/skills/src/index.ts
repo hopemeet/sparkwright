@@ -30,7 +30,7 @@ import {
   preprocessSkillContentAsync,
   type PreprocessSkillOptions,
 } from "./preprocess.js";
-import { parseSkillManifestCompat } from "./manifest.js";
+import { parseSkillManifest } from "./manifest.js";
 import { createSkillPackageHasher } from "./package.js";
 import { markdownAssetContentHash } from "./markdown-folder-asset.js";
 
@@ -358,7 +358,7 @@ export async function loadSkill(
         sourcePath,
       })
     : rawContent;
-  const skill = parseSkill(content, sourcePath);
+  const skill = parseSkillDefinition(content, sourcePath);
   skill.packageHash = await skillPackageHashForSource(sourcePath);
   if (!options.layer) return skill;
   skill.metadata = {
@@ -371,7 +371,7 @@ export async function loadSkill(
 
 function inferSkillName(content: string): string | undefined {
   try {
-    return parseSkillManifestCompat(content).name;
+    return parseSkillManifest(content).name;
   } catch {
     return undefined;
   }
@@ -381,11 +381,11 @@ function normalizeSkillRoot(input: SkillRootInput): SkillRoot {
   return typeof input === "string" ? { root: input } : input;
 }
 
-export function parseSkill(
+function parseSkillDefinition(
   content: string,
   sourcePath = SKILL_FILE_NAME,
 ): SkillDefinition {
-  const manifest = parseSkillManifestCompat(content, sourcePath);
+  const manifest = parseSkillManifest(content, sourcePath);
   const metadata = { ...(manifest.metadata ?? {}) };
   if (manifest.version && metadata.version === undefined) {
     metadata.version = manifest.version;

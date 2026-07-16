@@ -41,10 +41,9 @@ skill roots
 
 - Default host behavior exposes loader tool and does not auto-reside all selected skills.
 - Project skill root defaults to `.sparkwright/skills`.
-- Skill metadata parsing is manifest-centered. `parseSkillManifest` is the
-  strict canonical parser and rejects empty `instructions`; the legacy
-  `parseSkill` loader path is a compatibility adapter that still accepts empty
-  markdown bodies. The shared parser preserves first-class `license` and
+- Skill metadata parsing has one entry: `parseSkillManifest`. It rejects empty
+  `instructions`; disk loaders, runtime preparation, and Skill evolution use
+  that same strict parser. The parser preserves first-class `license` and
   `compatibility`, splits list fields consistently, and promotes
   `metadata.version` to canonical `version`.
 - `capabilities.skills.inlineShell.enabled` is required before `` !`cmd` ``

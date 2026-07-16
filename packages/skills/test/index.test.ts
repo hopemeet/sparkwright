@@ -25,77 +25,43 @@ import {
   lockSkills,
   loadSkill,
   loadSkills,
-  parseSkill,
+  markdownAssetContentHash,
+  parseSkillManifest,
   prepareSkillsForRun,
   rankIndexedSkillsByGoal,
   selectSkills,
   snapshotSkillPackage,
   snapshotAssetPackage,
   assetPackagePathsOverlap,
+  type SkillDefinition,
   type SkillIndexEntry,
 } from "../src/index.js";
 
+function definitionFromMarkdown(
+  content: string,
+  sourcePath = "SKILL.md",
+): SkillDefinition {
+  const manifest = parseSkillManifest(content, sourcePath);
+  const metadata: Record<string, unknown> = { ...(manifest.metadata ?? {}) };
+  if (manifest.version && metadata.version === undefined) {
+    metadata.version = manifest.version;
+  }
+  return {
+    name: manifest.name,
+    description: manifest.description,
+    license: manifest.license,
+    compatibility: manifest.compatibility,
+    allowedTools: manifest.allowedTools,
+    version: manifest.version,
+    triggers: manifest.triggers,
+    body: manifest.instructions,
+    sourcePath,
+    contentHash: markdownAssetContentHash(content),
+    metadata,
+  };
+}
+
 describe("skills", () => {
-  it("parses SKILL.md frontmatter and body", () => {
-    const skill = parseSkill(`---
-name: dingtalk-notifier
-description: Sends DingTalk group notifications.
-metadata:
-  version: 1.0.0
-license: MIT
-compatibility: generic
-allowed-tools: read bash
----
-# DingTalk
-
-Use the DingTalk webhook only when asked.
-`);
-
-    expect(skill.name).toBe("dingtalk-notifier");
-    expect(skill.description).toBe("Sends DingTalk group notifications.");
-    expect(skill.license).toBe("MIT");
-    expect(skill.compatibility).toEqual(["generic"]);
-    expect(skill.allowedTools).toEqual(["read", "bash"]);
-    expect(skill.metadata.version).toBe("1.0.0");
-    expect(skill.body).toContain("Use the DingTalk webhook");
-    expect(skill.contentHash).toHaveLength(64);
-  });
-
-  it("rejects missing required frontmatter", () => {
-    expect(() =>
-      parseSkill(`---
-description: Missing a name.
----
-Body
-`),
-    ).toThrow(/name/);
-  });
-
-  it("accepts unknown frontmatter keys without throwing", () => {
-    // Schema declares additionalProperties: true, so unknown top-level
-    // frontmatter keys must be tolerated by the parser as well.
-    const skill = parseSkill(`---
-name: lenient-skill
-description: Has a future field the parser does not know.
-futureExperimentalField: someValue
-anotherUnknownKey: 42
----
-body
-`);
-    expect(skill.name).toBe("lenient-skill");
-  });
-
-  it("rejects invalid skill names", () => {
-    expect(() =>
-      parseSkill(`---
-name: Bad Skill
-description: Invalid names are rejected.
----
-Body
-`),
-    ).toThrow(/lowercase letters/);
-  });
-
   it("loads skill directories from a root", async () => {
     const root = await mkdtemp(join(tmpdir(), "sparkwright-skills-"));
     await mkdir(join(root, "reviewer"));
@@ -380,13 +346,13 @@ Strong body.
   });
 
   it("selects skills deterministically from the goal", () => {
-    const dingtalk = parseSkill(`---
+    const dingtalk = definitionFromMarkdown(`---
 name: dingtalk-notifier
 description: Sends DingTalk group notifications.
 ---
 Notify safely.
 `);
-    const reviewer = parseSkill(`---
+    const reviewer = definitionFromMarkdown(`---
 name: code-reviewer
 description: Reviews code changes.
 ---
@@ -653,13 +619,13 @@ Bad body.
   });
 
   it("filters skills by agent access policy", () => {
-    const notifier = parseSkill(`---
+    const notifier = definitionFromMarkdown(`---
 name: dingtalk-notifier
 description: Sends DingTalk group notifications.
 ---
 Notify safely.
 `);
-    const reviewer = parseSkill(`---
+    const reviewer = definitionFromMarkdown(`---
 name: code-reviewer
 description: Reviews code changes.
 ---
@@ -681,7 +647,7 @@ Review safely.
   });
 
   it("creates a deterministic serializable skill lockfile", () => {
-    const dingtalk = parseSkill(
+    const dingtalk = definitionFromMarkdown(
       `---
 name: dingtalk-notifier
 description: Sends DingTalk group notifications.
@@ -692,7 +658,7 @@ Notify safely.
 `,
       "/skills/dingtalk/SKILL.md",
     );
-    const reviewer = parseSkill(
+    const reviewer = definitionFromMarkdown(
       `---
 name: code-reviewer
 description: Reviews code changes.
@@ -1032,7 +998,7 @@ Write clearly.
   });
 
   it("creates traceable loaded skill context", () => {
-    const skill = parseSkill(`---
+    const skill = definitionFromMarkdown(`---
 name: code-reviewer
 description: Reviews code changes.
 metadata:

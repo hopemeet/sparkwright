@@ -8,9 +8,8 @@ import {
   computeAssetPackageHash,
   computeSkillPackageHash,
   inspectSkill,
-  parseSkill,
+  parseSkillManifest,
   type SkillGuardFinding,
-  type SkillManifest,
   type SkillRoot,
 } from "@sparkwright/skills";
 import { readdir, readFile, stat } from "node:fs/promises";
@@ -1405,14 +1404,7 @@ export function inspectProposedSkillContent(
   skillName: string,
   content: string,
 ): SkillGuardFinding[] {
-  const parsed = parseSkill(content, `${skillName}/SKILL.md`);
-  const manifest: SkillManifest = {
-    name: parsed.name,
-    description: parsed.description,
-    instructions: parsed.body,
-    allowedTools: parsed.allowedTools,
-    metadata: parsed.metadata,
-  };
+  const manifest = parseSkillManifest(content, `${skillName}/SKILL.md`);
   return inspectSkill(manifest, { trust: "agent-created" }).findings;
 }
 
@@ -2053,7 +2045,7 @@ function assertSkillMarkdownName(
   expectedName: string,
   sourcePath: string,
 ): void {
-  const parsed = parseSkill(content, sourcePath);
+  const parsed = parseSkillManifest(content, sourcePath);
   if (parsed.name !== expectedName) {
     throw new Error(
       `Skill proposal content name mismatch: expected ${expectedName}, found ${parsed.name}`,

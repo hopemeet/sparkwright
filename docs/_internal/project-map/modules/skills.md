@@ -113,13 +113,12 @@ Does not own:
   frontmatter/body splitting, loose frontmatter parsing, and content hashing.
   Domain schemas and diagnostics remain with the owner, such as host skills,
   agent profiles, or workflow assets.
-- `SkillManifest` is the canonical parser-normalized metadata shape. The
-  canonical `parseSkillManifest` path requires non-empty `instructions`, while
-  legacy `parseSkill` delegates through a compatibility adapter that still
-  accepts an empty `SKILL.md` body and exposes it as `SkillDefinition.body: ""`.
-  The shared parser owns description length validation, list splitting,
-  `license`, `compatibility`, `allowedTools`, top-level `version`, and
-  `metadata.version` normalization.
+- `SkillManifest` is the sole parser-normalized metadata shape.
+  `parseSkillManifest` requires non-empty `instructions`; runtime loading maps
+  that validated manifest into its indexed `SkillDefinition` privately. There
+  is no public empty-body parser or parallel parse surface. The parser owns
+  description length validation, list splitting, `license`, `compatibility`,
+  `allowedTools`, top-level `version`, and `metadata.version` normalization.
 - Skill index and resident Skill context must keep host absolute source paths
   out of model-visible content/source labels; diagnostics retain provenance in
   metadata and trace events.
@@ -196,6 +195,16 @@ list --run/--session`); failed drafts self-clean. See
   [../maps/capabilities/skill-evolution.md](../maps/capabilities/skill-evolution.md#known-debts).
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-16T19:20:00+0800
+- Scope: Removed the public `parseSkill` and internal
+  `parseSkillManifestCompat` surfaces. All disk/runtime/evolution parsing now
+  enters through strict `parseSkillManifest`; empty instructions are invalid.
+- Read: Skills manifest/index/loader/tests, Host evolution consumers, Skills
+  capability map, and parser proposal notes.
+- Tests: Skills focused/full tests and typecheck; Host skill-evolution focused
+  tests and typecheck; test typecheck; project-map drift check.
 
 - Status: Reviewed
 - Date: 2026-07-16T11:49:00+0800
@@ -420,8 +429,9 @@ proposals"`; `npm --workspace @sparkwright/cli run build`.
   `npm --workspace @sparkwright/skills test -- test/skills.test.ts
 test/index.test.ts test/bundles.test.ts` (historical).
 - Prior verification — Date: 2026-06-27T17:52:04+0800
-- Scope: recorded Phase 1 Skill parser/manifest unification decision and
-  compatibility adapter behavior.
+- Scope: recorded the initial Phase 1 Skill parser/manifest unification
+  decision; the temporary compatibility adapter was removed in the later
+  canonical-only parser cleanup.
 - Read: `packages/skills/src/index.ts`,
   `packages/skills/src/manifest.ts`, `packages/skills/src/loader.ts`,
   `packages/skills/src/types.ts`, `packages/skills/test/index.test.ts`,

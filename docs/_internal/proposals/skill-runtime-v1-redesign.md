@@ -47,10 +47,10 @@ Observed implementation shape:
   - legacy `prepareSkillsForRun` / `SkillDefinition` / `body`;
   - discovery protocol `SkillManifest` / `instructions` /
     `loadSkillsFromDirectory` / `SkillRegistry`.
-- `parseSkill` in `index.ts` is now a compatibility adapter over the manifest
-  parser. The canonical manifest path remains strict about non-empty
-  `instructions`; the legacy adapter preserves the old empty-body behavior by
-  mapping empty markdown bodies to `SkillDefinition.body: ""`.
+- Parsing now has one public entry, `parseSkillManifest`, which requires
+  non-empty `instructions`. Runtime preparation privately projects the
+  validated manifest into `SkillDefinition`; it does not expose a second parser
+  or accept empty markdown bodies.
 - `FileSkillUsageRecorder` exists, but host runtime does not yet wire it into
   Skill selection, `skill_load`, or mutation flows. The file-backed recorder now
   reloads the current sidecar before reads and mutations so two recorder
@@ -196,20 +196,16 @@ interface SkillManifest {
 }
 ```
 
-Compatibility rules:
+Canonicalization rules:
 
-- Old `SkillDefinition.body` becomes an adapter-only alias for
-  `SkillManifest.instructions`.
-- Phase 1 decision: keep `parseSkillManifest` strict and keep `parseSkill` as a
-  compatibility adapter. Empty instructions are invalid for canonical
-  manifests, but an old `SKILL.md` with an empty body still parses through
-  `parseSkill` with `body: ""`.
+- Runtime `SkillDefinition.body` is derived only after
+  `SkillManifest.instructions` passes canonical validation.
+- Empty instructions are invalid on every parse path.
 - `license` and `compatibility` are first-class compatibility fields and must
   not disappear during manifest unification.
 - `version` may be authored as a top-level manifest field or as
   `metadata.version`; loaders normalize either form to the canonical manifest
-  `version`, while the legacy adapter bridges top-level `version` back into
-  `metadata.version` for old consumers.
+  `version`.
 - `loadSkills`, `loadSkill`, and `prepareSkillsForRun` may stay exported during
   migration, but they should internally use manifests.
 - `contentHash` and package hash remain diagnostic/apply metadata, not part of
@@ -343,20 +339,17 @@ Doctor should stay deterministic. It should not call a model.
   proposals and human CLI/TUI surfaces own apply/direct management.
 - No runtime changes.
 
-### Phase 1: Manifest unification decision + compatibility tests
+### Phase 1: Manifest unification
 
-- Implemented decision: canonical manifests require non-empty `instructions`;
-  legacy `parseSkill` delegates through a compatibility adapter that preserves
-  empty markdown bodies.
+- Canonical manifests require non-empty `instructions`; the temporary
+  empty-body adapter has been removed.
 - `SkillManifest` is the parser-normalized shape for skill metadata fields:
   description validation, list splitting, `license`, `compatibility`,
   `allowedTools`, top-level `version`, and `metadata.version`.
-- `SkillDefinition.body` remains the exported compatibility alias for
-  `SkillManifest.instructions`; top-level `version` is bridged into legacy
-  metadata when needed.
-- Tests cover empty body, description required/length rules, first-class
-  compatibility fields, list splitting, `metadata.version`, and the intentional
-  `parseSkill` / `parseSkillManifest` strictness difference.
+- Runtime `SkillDefinition.body` is a private projection input sourced from
+  validated `SkillManifest.instructions`.
+- Tests cover empty-body rejection, description required/length rules,
+  first-class compatibility fields, list splitting, and `metadata.version`.
 
 ### Phase 2a: Fix usage recorder durability semantics
 

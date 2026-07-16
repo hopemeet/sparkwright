@@ -221,6 +221,16 @@ history kinds:   create | update | restore
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T19:34:00+0800
+- Scope: Skill proposal/evolution parsing enters the strict canonical manifest
+  parser; removing the legacy public parser did not change proposal lifecycle,
+  package hashing, or apply gates.
+- Read: `packages/skills/src/index.ts`, `packages/host/src/skill-evolution.ts`,
+  and focused Skill evolution/command-service tests.
+- Tests: Skills full suite and typecheck; focused Host Skill evolution and
+  command-service suites; Host and test typechecks.
+
+- Status: Verified
 - Date: 2026-07-12
 - Scope: competing-draft supersession, legacy inbox reconciliation, stale
   create/update classification, and TUI actionable-draft recovery.

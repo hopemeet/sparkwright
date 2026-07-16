@@ -23,10 +23,6 @@ const DESCRIPTION_MAX_LENGTH = 1024;
  */
 export type SkillManifestInput = string | Record<string, unknown>;
 
-interface ParseSkillManifestOptions {
-  allowEmptyInstructions?: boolean;
-}
-
 /**
  * Parse a skill manifest from raw text or an object.
  *
@@ -42,34 +38,15 @@ export function parseSkillManifest(
   input: SkillManifestInput,
   source?: string,
 ): SkillManifest {
-  return parseSkillManifestInternal(input, source, {
-    allowEmptyInstructions: false,
-  });
-}
-
-/**
- * Compatibility parser for the legacy {@link import("./index.js").parseSkill}
- * adapter. It uses the canonical manifest grammar, but preserves the old
- * `parseSkill` behavior that accepted an empty markdown body.
- *
- * @internal
- */
-export function parseSkillManifestCompat(
-  input: SkillManifestInput,
-  source?: string,
-): SkillManifest {
-  return parseSkillManifestInternal(input, source, {
-    allowEmptyInstructions: true,
-  });
+  return parseSkillManifestInternal(input, source);
 }
 
 function parseSkillManifestInternal(
   input: SkillManifestInput,
   source: string | undefined,
-  options: ParseSkillManifestOptions,
 ): SkillManifest {
   if (typeof input !== "string") {
-    return parseSkillManifestObjectInternal(input, source, options);
+    return parseSkillManifestObjectInternal(input, source);
   }
 
   const trimmed = input.trimStart();
@@ -92,7 +69,6 @@ function parseSkillManifestInternal(
     return parseSkillManifestObjectInternal(
       raw as Record<string, unknown>,
       source,
-      options,
     );
   }
 
@@ -111,13 +87,10 @@ function parseSkillManifestInternal(
         }.`,
       );
     }
-    if (
-      frontmatter.instructions === undefined &&
-      (body !== "" || options.allowEmptyInstructions)
-    ) {
+    if (frontmatter.instructions === undefined && body !== "") {
       frontmatter.instructions = body;
     }
-    return parseSkillManifestObjectInternal(frontmatter, source, options);
+    return parseSkillManifestObjectInternal(frontmatter, source);
   }
 
   throw new Error(
@@ -137,15 +110,12 @@ export function parseSkillManifestObject(
   raw: Record<string, unknown>,
   source?: string,
 ): SkillManifest {
-  return parseSkillManifestObjectInternal(raw, source, {
-    allowEmptyInstructions: false,
-  });
+  return parseSkillManifestObjectInternal(raw, source);
 }
 
 function parseSkillManifestObjectInternal(
   raw: Record<string, unknown>,
   source: string | undefined,
-  options: ParseSkillManifestOptions,
 ): SkillManifest {
   const name = requireString(raw.name, "name", source);
   if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(name)) {
@@ -164,9 +134,7 @@ function parseSkillManifestObjectInternal(
       }.`,
     );
   }
-  const instructions = requireString(raw.instructions, "instructions", source, {
-    allowEmpty: options.allowEmptyInstructions,
-  });
+  const instructions = requireString(raw.instructions, "instructions", source);
 
   const manifest: SkillManifest = {
     name,
@@ -241,11 +209,10 @@ function requireString(
   value: unknown,
   field: string,
   source: string | undefined,
-  options: { allowEmpty?: boolean } = {},
 ): string {
   if (typeof value === "string") {
     const trimmed = value.trim();
-    if (trimmed !== "" || options.allowEmpty) return trimmed;
+    if (trimmed !== "") return trimmed;
   }
   throw new Error(
     `Skill manifest field '${field}' is required${
