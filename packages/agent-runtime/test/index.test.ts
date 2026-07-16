@@ -26,6 +26,10 @@ import {
 } from "@sparkwright/core";
 
 const tempDirs: string[] = [];
+const SAFE_AGENT_TOOL_POLICY = {
+  risk: "safe",
+  requiresApproval: false,
+} as const;
 
 afterEach(async () => {
   await Promise.all(
@@ -1159,6 +1163,7 @@ describe("createAgentTool / mountAgentTool", () => {
     });
 
     mountAgentTool(parent, {
+      policy: SAFE_AGENT_TOOL_POLICY,
       buildSpawnInput: (input) => ({
         goal: input.goal,
         model: childModel,
@@ -1182,6 +1187,7 @@ describe("createAgentTool / mountAgentTool", () => {
       maxSteps: 1,
     });
     const tool = createAgentTool(() => parent, {
+      policy: SAFE_AGENT_TOOL_POLICY,
       buildSpawnInput: (input) => ({
         goal: input.goal,
         model: {
@@ -1204,6 +1210,7 @@ describe("createAgentTool / mountAgentTool", () => {
       toolCalls: 0,
       modelCalls: 1,
     });
+    expect(tool.policy).toEqual(SAFE_AGENT_TOOL_POLICY);
     expect(typeof output).toBe("object");
   });
 
@@ -1218,6 +1225,7 @@ describe("createAgentTool / mountAgentTool", () => {
       maxSteps: 1,
     });
     const tool = createAgentTool(() => parent, {
+      policy: SAFE_AGENT_TOOL_POLICY,
       buildSpawnInput: (input) => ({
         goal: input.goal,
         model: {
@@ -1252,6 +1260,7 @@ describe("createAgentTool / mountAgentTool", () => {
       maxSteps: 1,
     });
     const tool = createAgentTool(() => parent, {
+      policy: SAFE_AGENT_TOOL_POLICY,
       buildSpawnInput: (input) => ({
         goal: input.goal,
         model: {
@@ -1292,6 +1301,7 @@ describe("createAgentTool / mountAgentTool", () => {
       maxSteps: 1,
     });
     const tool = createAgentTool(() => parent, {
+      policy: SAFE_AGENT_TOOL_POLICY,
       buildSpawnInput: (input) => ({
         goal: input.goal,
         model: {
@@ -1337,6 +1347,7 @@ describe("createAgentTool / mountAgentTool", () => {
       maxSteps: 1,
     });
     const tool = createAgentTool(() => parent, {
+      policy: SAFE_AGENT_TOOL_POLICY,
       buildSpawnInput: (input) => ({
         goal: input.goal,
         model: {
@@ -1730,6 +1741,7 @@ describe("createAgentTool / mountAgentTool", () => {
     });
 
     const tool = createAgentTool(() => subParent, {
+      policy: SAFE_AGENT_TOOL_POLICY,
       forbidNesting: true,
       buildSpawnInput: (input) => ({
         goal: input.goal,

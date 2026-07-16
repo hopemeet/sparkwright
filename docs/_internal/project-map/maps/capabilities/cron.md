@@ -103,6 +103,13 @@ cron config/state
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T10:27:51+0800
+- Scope: reviewed after the Agent-tool policy contract changed; cron task and
+  tool policy assembly do not call the Agent-tool factory and are unchanged.
+- Read: agent-runtime call sites and cron capability boundaries.
+- Tests: repository test typecheck passed; no cron contract changed.
+
+- Status: Verified
 - Date: 2026-07-15
 - Scope: reviewed execution-scoped background Task dependencies; cron ownership
   and durable Task revival remain unchanged.

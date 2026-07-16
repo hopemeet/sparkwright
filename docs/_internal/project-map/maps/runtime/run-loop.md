@@ -284,6 +284,13 @@ createRun/resumeRunFromCheckpoint
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T10:27:51+0800
+- Scope: reviewed configured Agent-tool policy input consolidation; Core still
+  receives one ordinary `ToolDefinition.policy` and run-loop behavior is unchanged.
+- Read: Agent-tool definition, Host assembly, and Core policy admission boundary.
+- Tests: Host tools 89/89, Host typecheck, and repository test typecheck passed.
+
+- Status: Verified
 - Date: 2026-07-16T10:23:51+0800
 - Scope: revival forced continuations now accept only the canonical per-source
   budget input; waiting, wake, exhaustion, event, and terminal metadata

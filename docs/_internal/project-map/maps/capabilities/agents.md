@@ -112,7 +112,8 @@ configured profiles/delegates
   default), conditional approval facts (`approvalRequiredUnderCurrentRun`,
   `approvalReasons`, `approvalRunOptions`), profile-selected potential
   capability, and `gatedByRunWrite` when workspace-write or shell access is
-  still behind the parent `--write` gate.
+  still behind the parent `--write` gate. The same effective policy is the sole
+  policy input when Host constructs the in-process Agent tool.
 - Agent profile `triggers` and `when.keywords` are deterministic routing hints
   only. During run preparation the host evaluates those keywords against the
   current goal with the skill matcher, sorts matching delegates ahead of
@@ -384,6 +385,15 @@ configured profiles/delegates
   detection.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-16T10:27:51+0800
+- Scope: in-process delegate tool construction now consumes only the effective
+  capability-derived policy; target capability and approval behavior are unchanged.
+- Read: Agent-tool contract, Host delegate capability facts/runtime assembly,
+  descriptors, and focused policy tests.
+- Tests: agent-runtime index 45/45, Host tools 89/89, affected builds/typechecks,
+  and repository test typecheck passed.
 
 - Status: Verified
 - Date: 2026-07-16T08:56:29+0800

@@ -90,6 +90,13 @@ host config MCP servers
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T10:27:51+0800
+- Scope: reviewed Agent-tool policy input consolidation; MCP policy defaults and
+  adapter tool definitions are separate canonical consumers and are unchanged.
+- Read: Agent-tool call sites and MCP capability boundaries.
+- Tests: repository test typecheck passed; no MCP contract changed.
+
+- Status: Verified
 - Date: 2026-07-15T07:35:27+0800
 - Scope: CLI `--resolve-mcp` inspection moved mechanically with its close-finally
   cleanup intact; MCP preparation, transport, lazy startup, reconnect, process,

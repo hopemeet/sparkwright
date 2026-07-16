@@ -405,6 +405,13 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T10:27:51+0800
+- Scope: Agent-tool construction now has one caller-supplied policy input;
+  registration, concurrency classification, and execution contracts are unchanged.
+- Read: Agent-tool definition, Host delegate assembly, and tool orchestration map.
+- Tests: agent-runtime index 45/45, Host tools 89/89, and affected typechecks passed.
+
+- Status: Verified
 - Date: 2026-07-16T10:23:51+0800
 - Scope: reviewed for removal of the Core revival budget alias; tool
   registration, execution, policy, and result contracts do not consume that

@@ -131,6 +131,13 @@ Future run in compacted session
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-07-16T10:27:51+0800
+- Scope: reviewed Agent-tool policy input consolidation; no checkpoint, session,
+  resume, or replay contract consumes the removed construction option.
+- Read: Agent-tool and Host delegate assembly against resume/replay contracts.
+- Tests: repository test typecheck passed; no resume/replay contract changed.
+
 - Status: Read-only
 - Date: 2026-07-15T07:35:27+0800
 - Scope: doctor session-root path reporting moved to a domain module; resume,

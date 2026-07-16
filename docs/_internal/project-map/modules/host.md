@@ -685,6 +685,9 @@ Does not own:
   `approvalRunOptions`). They use `gatedByRunWrite` when the parent run has not
   enabled workspace writes; that field is a capability gate, not an approval
   reason.
+- Configured in-process Agent tools receive that capability-derived policy as
+  their sole Agent-tool policy input. Host does not also pass the delegate's
+  standalone approval flag into agent-runtime.
 - `capability.inspect` describes ACP, external-command, and configured
   in-process delegates in `agents.delegateTools`; CLI and TUI consume that
   snapshot descriptor instead of maintaining a local in-process delegate
@@ -942,6 +945,15 @@ Does not own:
   remain adapter-native and need continued cross-entrypoint characterization.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-16T10:27:51+0800
+- Scope: configured in-process delegate assembly now passes only the complete
+  capability-derived spawn policy into agent-runtime.
+- Read: Host runtime delegate assembly, shared capability policy projection,
+  Agent-tool contract, and focused delegate policy tests.
+- Tests: Host tools 89/89, Host typecheck, agent-runtime index 45/45/build, and
+  repository test typecheck passed.
 
 - Status: Verified
 - Date: 2026-07-16T09:29:05+0800

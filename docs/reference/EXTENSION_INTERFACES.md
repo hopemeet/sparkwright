@@ -860,12 +860,12 @@ const result = await spawned.run.start();
 
 // High-level: register a ToolDefinition the parent's LLM can call.
 mountAgentTool(parent, {
+  policy: { risk: "safe", requiresApproval: false },
   buildSpawnInput: (input) => ({
     goal: input.goal,
     model: childModel,
     tools: childTools,
   }),
-  // requiresApproval: true,  // force per-spawn approval at parent gate
   // forbidNesting: true,     // refuse to spawn grand-children
 });
 ```

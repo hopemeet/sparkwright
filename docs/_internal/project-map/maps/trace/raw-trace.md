@@ -211,6 +211,13 @@ EventLog emits full event
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-07-16T10:27:51+0800
+- Scope: reviewed configured Agent-tool policy input consolidation; emitted
+  tool/subagent event vocabulary and trace metadata are unchanged.
+- Read: Agent-tool definition, Host delegate assembly, and raw trace contracts.
+- Tests: agent-runtime index 45/45, Host tools 89/89, and affected typechecks passed.
+
 - Status: Read-only
 - Date: 2026-07-16T08:56:29+0800
 - Scope: checked trace ownership after Host lease compatibility removal; lease

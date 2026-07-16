@@ -1281,19 +1281,9 @@ export interface CreateAgentToolOptions {
    */
   forbidNesting?: boolean;
   /**
-   * If true, the tool's policy advertises `requiresApproval`, forcing the
-   * parent's approval gate before each sub-agent spawn. Default: false
-   * (spawning itself is `risk: "safe"`; child actions enforce their own policy).
-   *
-   * @deprecated Prefer `policy` when the caller already derived the effective
-   * tool policy from a capability descriptor.
+   * Effective capability-derived policy for the spawn action.
    */
-  requiresApproval?: boolean;
-  /**
-   * Effective tool policy for the spawn action. When omitted, the spawn action
-   * remains safe and only `requiresApproval` can force approval on spawn.
-   */
-  policy?: ToolDefinition["policy"];
+  policy: ToolDefinition["policy"];
   /**
    * Optional host-derived admission classifier for the child capability set.
    * Return true only when concurrent child execution cannot mutate shared
@@ -1338,14 +1328,7 @@ export function createAgentTool(
       },
       required: ["goal"],
     },
-    // Default risk is "safe": sub-agent SPAWN itself is a routine
-    // decomposition action — the child run enforces its own policy on
-    // anything the sub-agent does. Set `requiresApproval: true` to force
-    // approval-on-spawn for embedders that need it.
-    policy: options.policy ?? {
-      risk: "safe",
-      requiresApproval: options.requiresApproval === true,
-    },
+    policy: options.policy,
     governance: {
       origin: { kind: "local", name: "@sparkwright/agent-runtime" },
       sideEffects: ["external"],

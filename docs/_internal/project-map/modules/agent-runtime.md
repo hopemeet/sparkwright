@@ -355,6 +355,9 @@ Does not own:
   Host uses it to keep write-capable, shell-capable, or spawn-approval-bound
   configured children out of Core concurrent batches while preserving
   concurrency for unapproved read-only children.
+- `createAgentTool` requires the caller's complete spawn `ToolDefinition.policy`.
+  Agent-runtime does not accept a standalone approval option or synthesize a
+  fallback policy; Host passes the effective capability-derived delegate policy.
 - `createAgentTool` accepts synchronous or asynchronous `buildSpawnInput`.
   Embedders still own provider/model construction, but async spawn input lets
   host resolve child-scope model adapters on demand before calling
@@ -396,6 +399,15 @@ Does not own:
   not authorize a generic actor bus or nested background lifecycle.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-16T10:27:51+0800
+- Scope: removed the parallel Agent-tool approval option and default policy
+  synthesis; callers now supply one complete canonical tool policy.
+- Read: Agent-tool options/definition, Host configured-delegate assembly,
+  extension docs, and all call sites.
+- Tests: agent-runtime index 45/45, Host tools 89/89, agent-runtime build, Host
+  typecheck, and repository test typecheck passed.
 
 - Status: Read-only
 - Date: 2026-07-16T09:23:49+0800

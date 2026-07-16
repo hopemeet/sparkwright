@@ -145,6 +145,13 @@ tool proposes write
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-07-16T10:27:51+0800
+- Scope: reviewed configured Agent-tool policy consolidation; capability-derived
+  workspace gates and child write constraints remain unchanged.
+- Read: Host delegate capability facts, Agent-tool assembly, and workspace policy map.
+- Tests: Host tools 89/89, Host typecheck, and repository test typecheck passed.
+
 - Status: Read-only
 - Date: 2026-07-15T07:35:27+0800
 - Scope: task projection extraction does not change WorkspaceContext, mutation

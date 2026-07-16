@@ -210,6 +210,13 @@ config + workspace capability roots
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T10:27:51+0800
+- Scope: configured Agent tools now consume the existing capability-derived
+  policy directly, with no parallel Agent-tool approval input.
+- Read: Host capability projection, runtime assembly, and Agent-tool definition.
+- Tests: Host tools 89/89, Host typecheck, and repository test typecheck passed.
+
+- Status: Verified
 - Date: 2026-07-16T08:47:59+0800
 - Scope: checked Agent capability mutation after retiring the model-side config
   manager; capability inspection remains read-only and explicit config profiles

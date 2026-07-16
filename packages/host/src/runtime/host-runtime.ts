@@ -5611,7 +5611,6 @@ export function createConfiguredDelegateTools(input: {
     const agentTool = createAgentTool(input.getParent, {
       name: toolName,
       description: delegateToolDescription(delegate, profile),
-      requiresApproval: delegate.requiresApproval,
       policy: capabilityFacts.policyProfile.policy,
       isConcurrencySafe: () =>
         capabilityFacts.workspaceAccess === "none" &&
