@@ -181,7 +181,7 @@ Frontend guidance:
 - When `approval.resolved` appears, close or mark the approval UI with the
   final decision.
 - `approval.resolved.autoApproved` is the structured signal for approvals made
-  by policy or flags; legacy traces may only carry this in the message text.
+  by policy or flags; consumers must not infer it from message text.
 - When `interaction.requested` has `kind: "question"`, render the request using
   the structured question shape rather than parsing text.
 - When both approval and interaction events exist for the same exchange, merge

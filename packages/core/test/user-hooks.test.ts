@@ -69,7 +69,15 @@ describe("bindUserHooks", () => {
     };
 
     bindUserHooks({ events, runner });
-    events.emit("approval.requested", {});
+    events.emit("approval.requested", {
+      id: "approval_test",
+      runId,
+      action: "tool.execute",
+      summary: "Run test tool",
+      details: {},
+      createdAt: "2026-07-16T00:00:00.000Z",
+      status: "pending",
+    });
     await flush();
 
     const done = events

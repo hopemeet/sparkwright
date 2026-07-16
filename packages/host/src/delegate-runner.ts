@@ -268,20 +268,12 @@ export async function runConfiguredDelegate(
         capability: descriptor,
       },
     });
-    parent.events.emit("approval.requested", {
-      approvalId: request.id,
-      action: request.action,
-      summary: request.summary,
-      details: request.details,
-    });
+    parent.events.emit("approval.requested", request);
     const response = await resolveApproval(
       request,
       input.interactionChannel.approve.bind(input.interactionChannel),
     );
-    parent.events.emit("approval.resolved", {
-      approvalId: request.id,
-      decision: response.decision,
-    });
+    parent.events.emit("approval.resolved", response);
     if (response.decision !== "approved") {
       await persistence?.finish({
         state: "failed",

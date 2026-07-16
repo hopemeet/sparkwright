@@ -103,7 +103,8 @@ describe("run-outcome consistency (CLI exit vs core outcome)", () => {
   });
 
   it("CONSISTENT: approval-denied write — both treat it as expected (no issue)", () => {
-    const log = new EventLog(createRunId());
+    const runId = createRunId();
+    const log = new EventLog(runId);
     const events = [
       log.emit("run.created", { goal: "Improve the README" }),
       log.emit("tool.requested", {
@@ -111,9 +112,17 @@ describe("run-outcome consistency (CLI exit vs core outcome)", () => {
         toolName: "edit_anchored_text",
         arguments: { path: "README.md", edits: [] },
       }),
-      log.emit("approval.requested", { toolCallId: "call_1" }),
+      log.emit("approval.requested", {
+        id: "approval_1",
+        runId,
+        action: "workspace.write",
+        summary: "Edit README.md",
+        details: { toolCallId: "call_1" },
+        createdAt: "2026-07-16T00:00:00.000Z",
+        status: "pending",
+      }),
       log.emit("approval.resolved", {
-        toolCallId: "call_1",
+        approvalId: "approval_1",
         decision: "denied",
       }),
       log.emit("tool.failed", {

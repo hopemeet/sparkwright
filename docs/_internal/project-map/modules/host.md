@@ -292,7 +292,9 @@ Does not own:
   resolution.
 - Host approval resolution preserves optional resolver `message` and
   `autoApproved` fields so trace summaries can distinguish auto-approved
-  decisions from manual approvals without parsing prose.
+  decisions from manual approvals without parsing prose. Core approval trace
+  events carry the canonical request (`id`) and response (`approvalId`) shapes;
+  Host delegates do not emit alternate compact envelopes.
 - Host protocol `run.start`, `run.resume`, and `workflow.resume` accept only
   `accessMode` for run autonomy. Host resolves ceilings once, freezes the
   canonical mode in the security plan, and compiles internal write/approval

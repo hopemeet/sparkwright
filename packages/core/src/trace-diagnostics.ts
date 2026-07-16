@@ -2505,7 +2505,7 @@ function collectSafetySummary(
   for (const event of events) {
     if (!isRecord(event.payload)) continue;
     if (event.type === "approval.requested") {
-      const id = stringValue(event.payload.id, event.payload.approvalId);
+      const id = stringValue(event.payload.id);
       const action = stringValue(event.payload.action);
       const details = isRecord(event.payload.details)
         ? event.payload.details
@@ -2530,32 +2530,12 @@ function collectSafetySummary(
     }
 
     if (event.type === "approval.resolved") {
-      const decision = stringValue(
-        event.payload.decision,
-        isRecord(event.payload.response)
-          ? event.payload.response.decision
-          : undefined,
-      );
-      const message = stringValue(
-        event.payload.message,
-        isRecord(event.payload.response)
-          ? event.payload.response.message
-          : undefined,
-      );
-      const autoApproved = booleanValue(
-        event.payload.autoApproved,
-        isRecord(event.payload.response)
-          ? event.payload.response.autoApproved
-          : undefined,
-      );
+      const decision = stringValue(event.payload.decision);
+      const autoApproved = booleanValue(event.payload.autoApproved);
       summary.safety.approvals.resolved += 1;
       if (decision === "approved") summary.safety.approvals.approved += 1;
       if (decision === "denied") summary.safety.approvals.denied += 1;
-      if (
-        autoApproved === true ||
-        (autoApproved === undefined &&
-          message?.toLowerCase().includes("auto-approved"))
-      ) {
+      if (autoApproved === true) {
         summary.safety.approvals.autoApproved += 1;
       }
       continue;
@@ -3134,7 +3114,7 @@ function collectRepeatedApprovalDenials(
     if (!isRecord(event.payload)) continue;
 
     if (event.type === "approval.requested") {
-      const id = stringValue(event.payload.id, event.payload.approvalId);
+      const id = stringValue(event.payload.id);
       if (!id) continue;
       const details = recordValue(event.payload.details);
       const toolName = stringValue(details?.toolName);
@@ -3149,12 +3129,9 @@ function collectRepeatedApprovalDenials(
     }
 
     if (event.type !== "approval.resolved") continue;
-    const decision = stringValue(
-      event.payload.decision,
-      recordValue(event.payload.response)?.decision,
-    );
+    const decision = stringValue(event.payload.decision);
     if (decision !== "denied") continue;
-    const id = stringValue(event.payload.approvalId, event.payload.id);
+    const id = stringValue(event.payload.approvalId);
     const label = (id ? requested.get(id) : undefined) ?? "approval denied";
     const existing = counts.get(label);
     if (existing) existing.count += 1;
@@ -3429,11 +3406,12 @@ function timelinePhaseKey(event: SparkwrightEvent): string | undefined {
     return toolCallId ? `${event.runId}:tool:${toolCallId}` : undefined;
   }
 
-  const approvalId = stringValue(payload.approvalId, payload.id);
-  if (
-    event.type === "approval.requested" ||
-    event.type === "approval.resolved"
-  ) {
+  if (event.type === "approval.requested") {
+    const approvalId = stringValue(payload.id);
+    return approvalId ? `${event.runId}:approval:${approvalId}` : undefined;
+  }
+  if (event.type === "approval.resolved") {
+    const approvalId = stringValue(payload.approvalId);
     return approvalId ? `${event.runId}:approval:${approvalId}` : undefined;
   }
 

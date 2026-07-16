@@ -58,8 +58,8 @@ policy requires approval
 
 - `approval.requested` carries an id used by protocol `approval.resolve`.
 - `approval.resolved` preserves optional resolver `message` and structured
-  `autoApproved` state; trace summary/report diagnostics should not rely on
-  message prose for new traces.
+  `autoApproved` state. Trace summary/report diagnostics consume these root
+  fields only and do not parse nested responses or message prose.
 - Approval denial does not automatically mean run cancellation.
 - Repeating a denied same-target tool request does not convert the denial into
   an unexpected tool failure. The repeated-tool guard preserves

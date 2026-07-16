@@ -64,9 +64,8 @@ trace.jsonl
   write-capable process boundaries. MCP tools are summarized as normal
   tool calls; filesystem side effects outside managed workspace APIs are not
   counted as managed writes.
-- Approval auto-approval counts prefer structured
-  `approval.resolved.payload.autoApproved`; old traces without the field fall
-  back to resolver message text for compatibility.
+- Approval auto-approval counts use structured
+  `approval.resolved.payload.autoApproved`; message text is not a data model.
 - Timeline projects events into phases and groups by event family.
 - Timeline phase projection sorts by aggregate evidence
   (`timestamp`, scoped `monotonicUs` when both events share a trace/agent
