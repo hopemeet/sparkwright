@@ -38,10 +38,10 @@ classified the `node -e` probe as unresolved verification and emitted
 goal is verification-like. `node -e` was not in the probe list, so ad-hoc Node
 snippets polluted the verification failure ledger.
 
-`trace-diagnostics.ts` also preferred persisted `run.completed.commandOutcome`
-snapshots even when the raw debug trace still had complete shell command
-arguments, so re-running report on an old debug trace could keep stale
-classification.
+At the time, `trace-diagnostics.ts` also preferred a persisted compact command
+snapshot even when the raw debug trace still had complete shell command
+arguments, so re-running report could keep stale classification. That compact
+format has since been removed in favor of the terminal FactLedger.
 
 ## Diagnostic Move
 

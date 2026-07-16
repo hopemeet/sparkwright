@@ -149,6 +149,9 @@ Does not own:
 - Run facts do not label an explicit/promoted background shell handoff as a
   completed command; task lifecycle rows remain the visible source for its
   later terminal state.
+- Run facts use live shell events when available and the canonical
+  `run.completed.outcome.commandFailures` projection as the terminal fallback;
+  they do not parse a second command-outcome envelope.
 - Ctrl+O uses the `activity.open` binding and opens the Activity Drawer on the
   Tasks tab by default. `events.open` remains a configurable action with no
   default binding; `/events` and `events.open` both open the Activity Drawer on

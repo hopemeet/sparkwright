@@ -572,6 +572,32 @@ describe("EventStream committed rendering", () => {
     expect(text).not.toContain("print_numbers.py completed");
   });
 
+  it("uses the canonical terminal outcome when live command details are absent", async () => {
+    const text = await renderToText(
+      stream([
+        ev("run.started", 1, {}),
+        ev("tool.completed", 2, {
+          toolName: "bash",
+          output: { exitCode: 1, timedOut: false },
+        }),
+        ev("run.completed", 3, {
+          reason: "final_answer",
+          outcome: {
+            kind: "completed_with_verification_failures",
+            failing: true,
+            commandFailures: {
+              count: 1,
+              lastCommand: "npm test",
+              lastExitCode: 1,
+            },
+          },
+        }),
+      ]),
+    );
+
+    expect(text).toContain("last command: npm test failed");
+  });
+
   it("renders terminal task updates that arrive during final model generation", async () => {
     const text = await renderToText(
       stream([

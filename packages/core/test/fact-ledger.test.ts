@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   EventLog,
   FactLedger,
-  commandOutcomeSnapshotFromFactLedger,
   createRunId,
   factLedgerSnapshotFromUnknown,
   verificationProfileResultsFromFactLedger,
@@ -58,7 +57,6 @@ describe("FactLedger", () => {
       stale: false,
       writeEpoch: 1,
     });
-    expect(commandOutcomeSnapshotFromFactLedger(snapshot)).toBeUndefined();
   });
 
   it("treats untracked write-capable boundaries as epoch bumps", () => {

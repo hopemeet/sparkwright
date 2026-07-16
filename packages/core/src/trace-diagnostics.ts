@@ -11,12 +11,12 @@ import {
   type RepeatedToolRequest,
 } from "./run-health.js";
 import {
+  analyzeCommandOutcomes,
+  analyzeCommandOutcomesFromFactLedger,
   analyzeToolOutcomes,
-  commandOutcomeSnapshot,
-  commandOutcomeSnapshotFromFactLedger,
   isPolicyOrApprovalFailure,
   toolOutcomeSnapshot,
-  type CommandOutcomeSnapshot,
+  type CommandOutcomeSummary,
   type ToolOutcomeSnapshot,
 } from "./run-outcome.js";
 import { isShellToolName, stableDiagnosticJson } from "./fact-classifier.js";
@@ -2288,41 +2288,36 @@ function collectCommandFailures(
   summary: TraceSummary,
   events: readonly SparkwrightEvent[],
 ): void {
-  const snapshot = commandOutcomeSnapshotForTrace(events);
-  if (!snapshot) return;
-  summary.commandFailures.total = snapshot.total;
-  summary.commandFailures.byExitCode = snapshot.byExitCode;
-  summary.commandFailures.verification = snapshot.verification;
+  const projection = commandFailureProjectionForTrace(events);
+  if (!projection) return;
+  summary.commandFailures = projection;
 }
 
-function commandOutcomeSnapshotForTrace(
+type CommandFailureProjection = TraceSummary["commandFailures"];
+
+function commandFailureProjectionForTrace(
   events: readonly SparkwrightEvent[],
-): CommandOutcomeSnapshot | undefined {
+): CommandFailureProjection | undefined {
   const runEvents = eventsGroupedByRun(events);
   if (runEvents.length <= 1) {
-    return commandOutcomeSnapshotForRun(events);
+    return commandFailureProjectionForRun(events);
   }
-  return mergeCommandOutcomeSnapshots(
-    runEvents.map((group) => commandOutcomeSnapshotForRun(group)),
+  return mergeCommandFailureProjections(
+    runEvents.map((group) => commandFailureProjectionForRun(group)),
   );
 }
 
-function commandOutcomeSnapshotForRun(
+function commandFailureProjectionForRun(
   events: readonly SparkwrightEvent[],
-): CommandOutcomeSnapshot | undefined {
+): CommandFailureProjection | undefined {
   const ledger = persistedFactLedger(events);
-  if (ledger) return commandOutcomeSnapshotFromFactLedger(ledger);
-  const recomputed = everyShellCompletionHasCommandEvidence(events)
-    ? commandOutcomeSnapshot(events)
-    : undefined;
-  // Prefer recomputing when raw debug events still carry shell command
-  // evidence. Otherwise, use the run-persisted snapshot for standard/legacy
-  // traces that may not retain command args in tool.completed output.
-  return (
-    recomputed ??
-    persistedCommandOutcome(events) ??
-    commandOutcomeSnapshot(events)
-  );
+  if (ledger) {
+    return commandFailureProjectionFromSummary(
+      analyzeCommandOutcomesFromFactLedger(ledger),
+    );
+  }
+  if (events.some((event) => event.type === "run.completed")) return undefined;
+  return commandFailureProjectionFromSummary(analyzeCommandOutcomes(events));
 }
 
 function eventsGroupedByRun(
@@ -2338,15 +2333,57 @@ function eventsGroupedByRun(
   return [...groups.values()];
 }
 
-function mergeCommandOutcomeSnapshots(
-  snapshots: readonly (CommandOutcomeSnapshot | undefined)[],
-): CommandOutcomeSnapshot | undefined {
-  const present = snapshots.filter(
-    (snapshot): snapshot is CommandOutcomeSnapshot => Boolean(snapshot),
+function commandFailureProjectionFromSummary(
+  outcomes: CommandOutcomeSummary,
+): CommandFailureProjection | undefined {
+  if (outcomes.failures.length === 0) return undefined;
+  const lastFailure = outcomes.verificationFailures.at(-1);
+  const lastUnresolved = outcomes.unresolvedVerificationFailures.at(-1);
+  const lastVerificationSuccess = outcomes.successes
+    .filter((success) => success.verificationRelevant)
+    .at(-1);
+  return {
+    total: outcomes.failures.length,
+    byExitCode: outcomes.byExitCode,
+    verification: {
+      total: outcomes.verificationFailures.length,
+      unresolved: outcomes.unresolvedVerificationFailures.length,
+      ...(lastUnresolved?.command
+        ? { lastCommand: lastUnresolved.command }
+        : {}),
+      ...(lastUnresolved
+        ? {
+            lastExitCode: lastUnresolved.exitCode,
+            lastTimedOut: lastUnresolved.timedOut,
+          }
+        : {}),
+      ...(lastFailure?.command
+        ? { lastFailureCommand: lastFailure.command }
+        : {}),
+      ...(lastFailure
+        ? {
+            lastFailureExitCode: lastFailure.exitCode,
+            lastFailureTimedOut: lastFailure.timedOut,
+          }
+        : {}),
+      ...(lastVerificationSuccess?.command
+        ? {
+            lastSuccessfulVerificationCommand: lastVerificationSuccess.command,
+          }
+        : {}),
+    },
+  };
+}
+
+function mergeCommandFailureProjections(
+  projections: readonly (CommandFailureProjection | undefined)[],
+): CommandFailureProjection | undefined {
+  const present = projections.filter(
+    (projection): projection is CommandFailureProjection => Boolean(projection),
   );
   if (present.length === 0) return undefined;
   const byExitCode: Record<string, number> = {};
-  const verification: CommandOutcomeSnapshot["verification"] = {
+  const verification: CommandFailureProjection["verification"] = {
     total: 0,
     unresolved: 0,
   };
@@ -2394,95 +2431,6 @@ function persistedFactLedger(
     const event = events[index];
     if (event?.type !== "run.completed" || !isRecord(event.payload)) continue;
     return factLedgerSnapshotFromUnknown(event.payload.factLedger);
-  }
-  return undefined;
-}
-
-function everyShellCompletionHasCommandEvidence(
-  events: readonly SparkwrightEvent[],
-): boolean {
-  const commandByCallId = new Map<string, string>();
-  let shellCompletions = 0;
-
-  for (const event of events) {
-    if (!isRecord(event.payload)) continue;
-    if (event.type === "tool.requested") {
-      const toolName = stringValue(event.payload.toolName);
-      if (!isShellToolName(toolName)) continue;
-      const callId = stringValue(event.payload.id, event.payload.toolCallId);
-      const command = stringValue(
-        recordValue(event.payload.arguments)?.command,
-      );
-      if (callId && command) commandByCallId.set(callId, command);
-      continue;
-    }
-
-    if (event.type !== "tool.completed") continue;
-    const toolName = stringValue(event.payload.toolName);
-    if (!isShellToolName(toolName)) continue;
-    shellCompletions += 1;
-    const output = recordValue(event.payload.output);
-    if (stringValue(output?.command)) continue;
-    const callId = stringValue(event.payload.toolCallId, event.payload.id);
-    if (!callId || !commandByCallId.has(callId)) return false;
-  }
-
-  return shellCompletions > 0;
-}
-
-/** The command-outcome snapshot persisted on `run.completed`, if present. */
-function persistedCommandOutcome(
-  events: readonly SparkwrightEvent[],
-): CommandOutcomeSnapshot | undefined {
-  for (let index = events.length - 1; index >= 0; index--) {
-    const event = events[index];
-    if (event?.type !== "run.completed" || !isRecord(event.payload)) continue;
-    const raw = event.payload.commandOutcome;
-    if (!isRecord(raw) || typeof raw.total !== "number") return undefined;
-    const verification = isRecord(raw.verification) ? raw.verification : {};
-    return {
-      total: raw.total,
-      byExitCode: isRecord(raw.byExitCode)
-        ? (raw.byExitCode as Record<string, number>)
-        : {},
-      verification: {
-        total: typeof verification.total === "number" ? verification.total : 0,
-        unresolved:
-          typeof verification.unresolved === "number"
-            ? verification.unresolved
-            : 0,
-        ...(typeof verification.lastCommand === "string"
-          ? { lastCommand: verification.lastCommand }
-          : {}),
-        ...("lastExitCode" in verification
-          ? {
-              lastExitCode: verification.lastExitCode as number | null,
-            }
-          : {}),
-        ...(typeof verification.lastTimedOut === "boolean"
-          ? { lastTimedOut: verification.lastTimedOut }
-          : {}),
-        ...(typeof verification.lastFailureCommand === "string"
-          ? { lastFailureCommand: verification.lastFailureCommand }
-          : {}),
-        ...("lastFailureExitCode" in verification
-          ? {
-              lastFailureExitCode: verification.lastFailureExitCode as
-                | number
-                | null,
-            }
-          : {}),
-        ...(typeof verification.lastFailureTimedOut === "boolean"
-          ? { lastFailureTimedOut: verification.lastFailureTimedOut }
-          : {}),
-        ...(typeof verification.lastSuccessfulVerificationCommand === "string"
-          ? {
-              lastSuccessfulVerificationCommand:
-                verification.lastSuccessfulVerificationCommand,
-            }
-          : {}),
-      },
-    };
   }
   return undefined;
 }

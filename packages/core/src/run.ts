@@ -88,7 +88,6 @@ import {
   type RequestedToolCall,
 } from "./tool-orchestration.js";
 import {
-  commandOutcomeSnapshotFromFactLedger,
   completedRunOutcomeFromEvents,
   toolOutcomeSnapshot,
 } from "./run-outcome.js";
@@ -4755,18 +4754,14 @@ export class SparkwrightRun implements RunHandle {
             { factLedger },
           )
         : undefined;
-    // Persist the command- and tool-outcome verdicts (computed over the full
-    // event stream) so trace summaries stay correct for legacy traces that
-    // may not retain the tool.completed output / tool.requested arguments they
-    // would otherwise be recomputed from.
-    const commandOutcome = commandOutcomeSnapshotFromFactLedger(factLedger);
+    // Persist the canonical fact ledger plus the terminal projections consumed
+    // by status and tool-failure diagnostics.
     const toolOutcome = toolOutcomeSnapshot(this.events.all());
     const completedPayload = {
       reason,
       ...payload,
       factLedger,
       ...(outcome ? { outcome } : {}),
-      ...(commandOutcome ? { commandOutcome } : {}),
       ...(toolOutcome ? { toolOutcome } : {}),
     };
     this.setState("completed", reason);

@@ -161,10 +161,9 @@ createRun/resumeRunFromCheckpoint
   provider request bodies, prompt input, and tool schemas must not be carried as
   failure metadata.
 - `complete("final_answer")` snapshots the live FactLedger onto
-  `run.completed.factLedger` and derives the terminal command outcome from that
-  ledger. A clean ledger does not fall back to legacy event recompute; the
-  existing `commandOutcome` and `outcome` shapes remain the public terminal
-  projection when failures are present.
+  `run.completed.factLedger`. `outcome` remains the bounded public terminal
+  status projection when failures are present; command diagnostics derive from
+  the ledger instead of persisting a second compact command model.
 - Sinks should not break event emission.
 - Host pre-run preparation can buffer capability diagnostics before `createRun`
   exists. When flushed into the real run event log, warning-severity

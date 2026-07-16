@@ -905,15 +905,11 @@ describe("SparkwrightRun", () => {
           },
         ],
       },
-      commandOutcome: {
-        total: 1,
-        byExitCode: { "127": 1 },
-        verification: { total: 1, unresolved: 1, lastExitCode: 127 },
-      },
     });
+    expect(completed?.payload).not.toHaveProperty("commandOutcome");
   });
 
-  it("does not persist stale command failures as commandOutcome", async () => {
+  it("marks command failures stale after a workspace write", async () => {
     const root = await mkdtemp(join(tmpdir(), "sparkwright-run-ledger-"));
     tempDirs.push(root);
     await writeFile(join(root, "README.md"), "before\n", "utf8");

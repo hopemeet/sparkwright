@@ -22,8 +22,8 @@ owned by a different feature, plus proposals that each declare their own
 version of the shared substrate they need. Verified dispersion as of
 2026-07-04:
 
-- **4 "did the command pass" extractors** (verification event scan,
-  `commandOutcomeSnapshot`, trace-diagnostics recompute, run-health).
+- **4 "did the command pass" extractors** (verification event scan, the former
+  compact terminal snapshot, trace-diagnostics recompute, run-health).
 - **≥5 continuation/budget knobs across 3 owners** (`maxSteps`,
   `runBudget`, `MAIN_TODO_MAX_CONTINUATIONS` +
   `resolveTodoContinuationMaxSteps` in `host/runtime.ts`;

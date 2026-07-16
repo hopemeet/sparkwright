@@ -66,7 +66,7 @@ interface RunFactsSnapshot {
   approvalsApproved: number;
   approvalsDenied: number;
   lastShell?: ShellFact;
-  commandOutcome?: CommandOutcomeFact;
+  commandFailure?: CommandFailureFact;
   terminalTaskUpdates: RuntimeTaskUpdate[];
 }
 
@@ -85,11 +85,9 @@ interface ShellFact {
   background: boolean;
 }
 
-interface CommandOutcomeFact {
+interface CommandFailureFact {
   lastCommand?: string;
   lastExitCode?: number;
-  lastTimedOut?: boolean;
-  unresolvedVerificationFailures?: number;
 }
 
 /**
@@ -377,26 +375,19 @@ function snapshotRunFacts(
     approvalsApproved: facts.approvalsApproved,
     approvalsDenied: facts.approvalsDenied,
     lastShell: facts.shellResults[facts.shellResults.length - 1],
-    commandOutcome: commandOutcomeFact(p.commandOutcome),
+    commandFailure: commandFailureFact(p.outcome),
     terminalTaskUpdates: [...facts.terminalTaskUpdates],
   };
 }
 
-function commandOutcomeFact(value: unknown): CommandOutcomeFact | undefined {
-  const r = rec(value);
-  if (Object.keys(r).length === 0) return undefined;
-  const verification = rec(r.verification);
-  const fact: CommandOutcomeFact = {};
-  const lastCommand = str(verification.lastCommand);
+function commandFailureFact(value: unknown): CommandFailureFact | undefined {
+  const commandFailures = rec(rec(value).commandFailures);
+  if (Object.keys(commandFailures).length === 0) return undefined;
+  const fact: CommandFailureFact = {};
+  const lastCommand = str(commandFailures.lastCommand);
   if (lastCommand) fact.lastCommand = lastCommand;
-  if (typeof verification.lastExitCode === "number") {
-    fact.lastExitCode = verification.lastExitCode;
-  }
-  if (typeof verification.lastTimedOut === "boolean") {
-    fact.lastTimedOut = verification.lastTimedOut;
-  }
-  if (typeof verification.unresolved === "number") {
-    fact.unresolvedVerificationFailures = verification.unresolved;
+  if (typeof commandFailures.lastExitCode === "number") {
+    fact.lastExitCode = commandFailures.lastExitCode;
   }
   return Object.keys(fact).length > 0 ? fact : undefined;
 }
@@ -427,13 +418,13 @@ function commandFact(facts: RunFactsSnapshot): string | undefined {
   const shell = facts.lastShell;
   if (shell?.background) return undefined;
   if (shell?.command) return `last command: ${commandStatus(shell)}`;
-  const outcome = facts.commandOutcome;
+  const outcome = facts.commandFailure;
   if (!outcome?.lastCommand) return undefined;
   return `last command: ${commandStatus({
     command: outcome.lastCommand,
     exitCode:
       typeof outcome.lastExitCode === "number" ? outcome.lastExitCode : null,
-    timedOut: outcome.lastTimedOut === true,
+    timedOut: false,
     background: false,
   })}`;
 }

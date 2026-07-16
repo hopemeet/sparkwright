@@ -50,6 +50,34 @@ function sessionRunDir(sessionRootDir: string, runId: string): string {
   return join(sessionRootDir, TEST_SESSION_ID, "agents", "main", "runs", runId);
 }
 
+function commandFactLedger(
+  commands: Array<{
+    toolCallId: string;
+    command: string;
+    exitCode: number;
+    verificationRelevant: boolean;
+    sequence: number;
+  }>,
+): Record<string, unknown> {
+  return {
+    schemaVersion: "fact-ledger.v1",
+    writeEpoch: 0,
+    commands: commands.map((command) => ({
+      id: `cmd:test:${command.sequence}:${command.toolCallId}`,
+      source: "shell_tool",
+      initiator: "model-initiated",
+      writeEpoch: 0,
+      stale: false,
+      toolName: "bash",
+      commandKey: command.command,
+      timedOut: false,
+      ...command,
+    })),
+    verificationResults: [],
+    writes: [],
+  };
+}
+
 describe("trace", () => {
   let tempDirs: string[] = [];
 
@@ -2115,7 +2143,27 @@ describe("trace", () => {
         }),
       );
     }
-    events.push(log.emit("run.completed", { state: "completed" }));
+    events.push(
+      log.emit("run.completed", {
+        state: "completed",
+        factLedger: commandFactLedger([
+          {
+            toolCallId: "call_0",
+            command: "npm test -- --runInBand",
+            exitCode: 1,
+            verificationRelevant: true,
+            sequence: 2,
+          },
+          {
+            toolCallId: "call_1",
+            command: "npm test -- --runInBand",
+            exitCode: 1,
+            verificationRelevant: true,
+            sequence: 4,
+          },
+        ]),
+      }),
+    );
 
     const report = buildTraceReportJsonl(
       events.map(serializeEventJsonl).join(""),
@@ -3136,6 +3184,11 @@ describe("trace", () => {
     const log = new EventLog(run.id);
     const jsonl = [
       log.emit("run.created", { goal: "fix and verify" }, { sessionId: "s1" }),
+      log.emit("tool.requested", {
+        id: "call_shell",
+        toolName: "bash",
+        arguments: { command: "npm test" },
+      }),
       log.emit("tool.completed", {
         toolCallId: "call_shell",
         toolName: "bash",
@@ -3145,17 +3198,15 @@ describe("trace", () => {
       log.emit("run.completed", {
         state: "completed",
         reason: "final_answer",
-        commandOutcome: {
-          total: 1,
-          byExitCode: { "1": 1 },
-          verification: {
-            total: 1,
-            unresolved: 1,
-            lastCommand: "npm test",
-            lastExitCode: 1,
-            lastTimedOut: false,
+        factLedger: commandFactLedger([
+          {
+            toolCallId: "call_shell",
+            command: "npm test",
+            exitCode: 1,
+            verificationRelevant: true,
+            sequence: 2,
           },
-        },
+        ]),
       }),
     ]
       .map(serializeEventJsonl)
@@ -3184,11 +3235,21 @@ describe("trace", () => {
     const log = new EventLog(run.id);
     const jsonl = [
       log.emit("run.created", { goal: "fix and verify" }, { sessionId: "s1" }),
+      log.emit("tool.requested", {
+        id: "call_fail",
+        toolName: "bash",
+        arguments: { command: "npm test" },
+      }),
       log.emit("tool.completed", {
         toolCallId: "call_fail",
         toolName: "bash",
         status: "completed",
         output: { exitCode: 1, timedOut: false },
+      }),
+      log.emit("tool.requested", {
+        id: "call_pass",
+        toolName: "bash",
+        arguments: { command: "npm test" },
       }),
       log.emit("tool.completed", {
         toolCallId: "call_pass",
@@ -3199,18 +3260,22 @@ describe("trace", () => {
       log.emit("run.completed", {
         state: "completed",
         reason: "final_answer",
-        commandOutcome: {
-          total: 1,
-          byExitCode: { "1": 1 },
-          verification: {
-            total: 1,
-            unresolved: 0,
-            lastFailureCommand: "npm test",
-            lastFailureExitCode: 1,
-            lastFailureTimedOut: false,
-            lastSuccessfulVerificationCommand: "npm test",
+        factLedger: commandFactLedger([
+          {
+            toolCallId: "call_fail",
+            command: "npm test",
+            exitCode: 1,
+            verificationRelevant: true,
+            sequence: 2,
           },
-        },
+          {
+            toolCallId: "call_pass",
+            command: "npm test",
+            exitCode: 0,
+            verificationRelevant: true,
+            sequence: 4,
+          },
+        ]),
       }),
     ]
       .map(serializeEventJsonl)
@@ -3275,22 +3340,30 @@ describe("trace", () => {
       }),
       log.emit("run.completed", {
         state: "completed",
-        commandOutcome: {
-          total: 2,
-          byExitCode: { "7": 1, "1": 1 },
-          verification: {
-            total: 2,
-            unresolved: 1,
-            lastCommand:
+        factLedger: commandFactLedger([
+          {
+            toolCallId: "probe",
+            command:
               'node -e "console.error(\\"probe failed\\"); process.exit(7)"',
-            lastExitCode: 7,
-            lastTimedOut: false,
-            lastFailureCommand: "npm test",
-            lastFailureExitCode: 1,
-            lastFailureTimedOut: false,
-            lastSuccessfulVerificationCommand: "npm test",
+            exitCode: 7,
+            verificationRelevant: false,
+            sequence: 2,
           },
-        },
+          {
+            toolCallId: "fail",
+            command: "npm test",
+            exitCode: 1,
+            verificationRelevant: true,
+            sequence: 4,
+          },
+          {
+            toolCallId: "pass",
+            command: "npm test",
+            exitCode: 0,
+            verificationRelevant: true,
+            sequence: 6,
+          },
+        ]),
       }),
     ]
       .map(serializeEventJsonl)
@@ -3570,63 +3643,13 @@ describe("trace", () => {
     expect(withoutVerdict.toolFailures.unresolved.total).toBe(1);
   });
 
-  it("reads the persisted command outcome on a standard trace", () => {
-    const run = createRunRecord();
-    const commandOutcome = {
-      total: 1,
-      byExitCode: { "254": 1 },
-      verification: {
-        total: 1,
-        unresolved: 1,
-        lastCommand: "npm test",
-        lastExitCode: 254,
-        lastTimedOut: false,
-        lastFailureCommand: "npm test",
-        lastFailureExitCode: 254,
-        lastFailureTimedOut: false,
-      },
-    };
-    const log = new EventLog(run.id);
-    const standardJsonl = [
-      log.emit("run.created", { goal: run.goal }, { sessionId: "s1" }),
-      log.emit("tool.completed", {
-        toolCallId: "call_1",
-        toolName: "bash",
-        status: "completed",
-        output: { exitCode: 254, stdout: "EXIT:254\n", timedOut: false },
-      }),
-      log.emit("run.completed", { reason: "final_answer", commandOutcome }),
-    ]
-      .map((event) => filterTraceEvent(event, "standard"))
-      .map(serializeEventJsonl)
-      .join("");
-
-    const summary = summarizeTraceJsonl(standardJsonl);
-
-    expect(summary.commandFailures.total).toBe(1);
-    expect(summary.commandFailures.byExitCode).toEqual({ "254": 1 });
-    expect(summary.commandFailures.verification).toMatchObject({
-      total: 1,
-      unresolved: 1,
-      lastCommand: "npm test",
-      lastExitCode: 254,
-      lastFailureCommand: "npm test",
-      lastFailureExitCode: 254,
-    });
-  });
-
-  it("prefers the persisted fact ledger over command outcome snapshots", () => {
+  it("ignores stale command failures in the persisted fact ledger", () => {
     const run = createRunRecord();
     const log = new EventLog(run.id);
     const standardJsonl = [
       log.emit("run.created", { goal: "verify" }, { sessionId: "s1" }),
       log.emit("run.completed", {
         reason: "final_answer",
-        commandOutcome: {
-          total: 1,
-          byExitCode: { "1": 1 },
-          verification: { total: 1, unresolved: 1 },
-        },
         factLedger: {
           schemaVersion: "fact-ledger.v1",
           writeEpoch: 1,
@@ -3792,35 +3815,7 @@ describe("trace", () => {
     });
   });
 
-  it("treats a parseable fact ledger as authoritative over command outcome", () => {
-    const run = createRunRecord();
-    const log = new EventLog(run.id);
-    const standardJsonl = [
-      log.emit("run.created", { goal: run.goal }, { sessionId: "s1" }),
-      log.emit("run.completed", {
-        reason: "final_answer",
-        commandOutcome: {
-          total: 1,
-          byExitCode: { "1": 1 },
-          verification: { total: 1, unresolved: 1 },
-        },
-        factLedger: {
-          schemaVersion: "fact-ledger.v1",
-          writeEpoch: 0,
-          commands: [],
-          verificationResults: [],
-          writes: [],
-        },
-      }),
-    ]
-      .map((event) => filterTraceEvent(event, "standard"))
-      .map(serializeEventJsonl)
-      .join("");
-
-    expect(summarizeTraceJsonl(standardJsonl).commandFailures.total).toBe(0);
-  });
-
-  it("keeps command failures on standard traces without a persisted outcome", () => {
+  it("recomputes command failures for an incomplete standard trace", () => {
     const run = createRunRecord();
     const log = new EventLog(run.id);
     const standardJsonl = [
@@ -3831,7 +3826,6 @@ describe("trace", () => {
         status: "completed",
         output: { exitCode: 254, stdout: "EXIT:254\n", timedOut: false },
       }),
-      log.emit("run.completed", { reason: "final_answer" }),
     ]
       .map((event) => filterTraceEvent(event, "standard"))
       .map(serializeEventJsonl)
@@ -3956,7 +3950,25 @@ describe("trace", () => {
         status: "completed",
         output: { exitCode: 1, timedOut: false },
       }),
-      log.emit("run.completed", { state: "completed" }),
+      log.emit("run.completed", {
+        state: "completed",
+        factLedger: commandFactLedger([
+          {
+            toolCallId: "call_probe",
+            command: "python3 --version",
+            exitCode: 0,
+            verificationRelevant: false,
+            sequence: 2,
+          },
+          {
+            toolCallId: "call_verify",
+            command: "python3 -m greettool.cli --name Ada",
+            exitCode: 1,
+            verificationRelevant: true,
+            sequence: 4,
+          },
+        ]),
+      }),
     ]
       .map(serializeEventJsonl)
       .join("");

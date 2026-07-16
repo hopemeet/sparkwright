@@ -45,8 +45,8 @@ Conventions:
   `factLedger` (`schemaVersion: "fact-ledger.v1"`) with raw command facts,
   verifier result satisfaction, optional `verificationSource`, workspace write
   epochs, and stale markers.
-  Migration: prefer `factLedger` for command/verification diagnostics when
-  present; keep `commandOutcome` as the legacy compact snapshot.
+  Command/verification diagnostics derive from this canonical ledger; terminal
+  status consumers use the bounded `outcome` projection.
 
 - `event.schema.json`: additive — reserves `workflow.started`,
   `workflow.node.started`, `workflow.node.completed`, `workflow.waiting`,

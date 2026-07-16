@@ -600,9 +600,9 @@ Four constraints from reading the run loop, each binding for P1:
    `payload.events` — a pattern that dies on cross-run resume (fresh event
    log). But writing a workflow-private evidence copy at `PostToolUse`
    would just trade the event-scan problem for a stale-state problem and
-   add a fifth "did the command pass" extractor beside verification.ts,
-   `commandOutcomeSnapshot` (run-outcome), trace-diagnostics recompute,
-   and run-health. Instead: extract the fact-classification primitives
+   add another "did the command pass" extractor beside verification.ts,
+   the former compact terminal snapshot, trace-diagnostics recompute, and
+   run-health. Instead: extract the fact-classification primitives
    into core (the `run-health.ts` shared-threshold precedent), run a live
    in-run `FactLedger` over them (command/verifier facts, write set,
    global write epoch), and expose it to hooks. Workflow verdicts
@@ -1424,8 +1424,8 @@ gate.
     the verifier layer, run-outcome reads satisfaction.** (Fourth pass;
     channel corrected by the fifth.) An `expect: nonzero` verifier (the
     reproduce node) intentionally runs failing commands. Fifth-pass
-    correction: the live taint channel is **not** `commandOutcomeSnapshot`
-    — it never sees hook-launched commands — but
+    correction: the live taint channel is **not** the former compact command
+    snapshot — it never sees hook-launched commands — but
     `analyzeVerificationProfileResults`' hookName-metadata channel and its
     CLI exit-path consumer (Current Facts, two-channel bullet). Either
     way, decision 3's "verdicts never taint run outcome" was silently

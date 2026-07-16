@@ -169,20 +169,15 @@ trace.jsonl
   usage exists through `run.started.payload.resolvedModel.pricing` and
   `CapabilitySnapshot.model.pricing`; trace diagnostics should treat this as
   advisory startup evidence, not as a run failure.
-- Persisted command-outcome snapshots keep legacy `verification.lastCommand`
-  scoped to the last unresolved verification failure. Recovered verification
-  failures are preserved separately as `lastFailure*` plus
-  `lastSuccessfulVerificationCommand` so summaries can distinguish "failed
-  then passed" from "still failing".
 - When `run.completed.factLedger` is present, trace summary command-failure
-  diagnostics prefer each run's ledger projection over legacy `commandOutcome`
-  and raw-event recompute. Multi-run traces aggregate per-run projections so a
+  diagnostics project each run's canonical ledger. Multi-run traces aggregate
+  per-run projections so a
   clean later ledger cannot mask an earlier run's failures. The ledger projection
   includes non-stale model-initiated command facts plus verification-relevant
   verifier-launched command facts, so workflow command verifiers are visible in
   `commandFailures.verification` even when they did not originate from a model
-  shell tool call. Older runs without a ledger keep the existing
-  `commandOutcome`/offline recompute compatibility path.
+  shell tool call. Incomplete live traces without a terminal ledger are derived
+  from their current command events.
 - Completed-run outcome projection treats host-emitted `workflow.failed` events
   as failing workflow evidence for the enclosing P1 workflow run. Core does not
   synthesize those events; the projection is over raw trace facts emitted by
@@ -458,9 +453,9 @@ profile|Verification:|experimental gate|--workflow"`;
 
 - Status: Verified
 - Date: 2026-07-04T10:10:34+0800
-- Scope: workflow-runtime-v1 S2 diagnostics: trace summary now prefers
-  per-run persisted FactLedger snapshots for command failures and keeps the
-  offline recompute/legacy commandOutcome fallback for old traces.
+- Scope: workflow-runtime-v1 S2 diagnostics: trace summary projects per-run
+  persisted FactLedger snapshots for command failures and recomputes only for
+  incomplete live traces without a terminal ledger.
 - Read: `packages/core/src/trace-diagnostics.ts`,
   `packages/core/src/fact-ledger.ts`,
   `packages/core/src/run-outcome.ts`,

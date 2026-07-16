@@ -3,7 +3,6 @@ import {
   analyzeCommandOutcomes,
   analyzeToolOutcomes,
   analyzeVerificationProfileResults,
-  commandOutcomeSnapshot,
   completedRunOutcomeFromEvents,
   createRunId,
   toolOutcomeSnapshot,
@@ -589,56 +588,7 @@ describe("run outcome evidence", () => {
     });
   });
 
-  it("snapshots command outcomes for persistence (and is undefined when clean)", () => {
-    const log = new EventLog(createRunId());
-    const events = [
-      log.emit("run.created", { goal: "Run verification" }),
-      log.emit("tool.requested", {
-        id: "call_test",
-        toolName: "bash",
-        arguments: {
-          command:
-            'cd /tmp/ws && python -m unittest tests/test_config.py 2>&1; echo "EXIT:$?"',
-        },
-      }),
-      log.emit("tool.completed", {
-        toolCallId: "call_test",
-        toolName: "bash",
-        status: "completed",
-        output: {
-          exitCode: 0,
-          timedOut: false,
-          stdout: "python: command not found\nEXIT:127\n",
-          stderr: "",
-        },
-      }),
-    ];
-
-    expect(commandOutcomeSnapshot(events)).toMatchObject({
-      total: 1,
-      byExitCode: { "127": 1 },
-      verification: {
-        total: 1,
-        unresolved: 1,
-        lastCommand:
-          'cd /tmp/ws && python -m unittest tests/test_config.py 2>&1; echo "EXIT:$?"',
-        lastExitCode: 127,
-        lastFailureCommand:
-          'cd /tmp/ws && python -m unittest tests/test_config.py 2>&1; echo "EXIT:$?"',
-        lastFailureExitCode: 127,
-      },
-    });
-
-    const cleanLog = new EventLog(createRunId());
-    expect(
-      commandOutcomeSnapshot([
-        cleanLog.emit("run.created", { goal: "Inspect" }),
-        cleanLog.emit("run.completed", { reason: "final_answer" }),
-      ]),
-    ).toBeUndefined();
-  });
-
-  it("snapshots recovered verification failures without legacy unresolved fields", () => {
+  it("recognizes verification failures recovered by a later matching success", () => {
     const log = new EventLog(createRunId());
     const command = "npm test";
     const events = [
@@ -669,19 +619,13 @@ describe("run outcome evidence", () => {
 
     const analyzed = analyzeCommandOutcomes(events);
     expect(analyzed.unresolvedVerificationFailures).toEqual([]);
-    expect(commandOutcomeSnapshot(events)).toMatchObject({
-      total: 1,
-      verification: {
-        total: 1,
-        unresolved: 0,
-        lastFailureCommand: command,
-        lastFailureExitCode: 1,
-        lastFailureTimedOut: false,
-        lastSuccessfulVerificationCommand: command,
-      },
-    });
-    expect(commandOutcomeSnapshot(events)?.verification.lastCommand).toBe(
-      undefined,
+    expect(analyzed.verificationFailures).toMatchObject([
+      { command, exitCode: 1, timedOut: false },
+    ]);
+    expect(analyzed.successes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ command, verificationRelevant: true }),
+      ]),
     );
   });
 
