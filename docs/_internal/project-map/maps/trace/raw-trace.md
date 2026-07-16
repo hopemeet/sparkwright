@@ -11,6 +11,15 @@ and [../session/session-store.md](../session/session-store.md) for session layou
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T21:02:00+0800
+- Scope: Background Shell trace fixtures and TUI rendering use only the
+  canonical `background_shell` untracked-access marker.
+- Read: Host marker producer, Core trace/FactLedger diagnostics, CLI summary,
+  TUI event renderer, and focused tests.
+- Tests: focused Core trace/ledger, CLI summary, and TUI rendering suites;
+  affected typechecks; project-map drift check.
+
+- Status: Verified
 - Date: 2026-07-16T18:30:00+0800
 - Scope: Trace JSONL readers require the canonical event envelope; required top-level fields are no longer synthesized for older rows.
 - Read: Core event schema, trace parser/consumers, trace tests, and protocol references.
@@ -174,10 +183,9 @@ EventLog emits full event
   process boundaries granted workspace write capability outside managed
   `workspace.write.*` APIs. External command delegates use it when direct
   read/write workspace access is granted; background shell tasks use it with
-  `protocol: "background_shell"`, `backgroundOrigin`, and sandbox status. The
-  TUI also accepts historical `promoted_shell` markers. It records access granted /
-  untracked-write-capable only and is not counted as a managed
-  `workspace.write.completed` event.
+  `protocol: "background_shell"`, `backgroundOrigin`, and sandbox status. It
+  records access granted / untracked-write-capable only and is not counted as a
+  managed `workspace.write.completed` event.
 - Skill inline shell preprocessing, when enabled, uses
   `extension.process.*` with `kind: skill_script`; events may be buffered during
   pre-run skill loading and flushed once the run event log exists.

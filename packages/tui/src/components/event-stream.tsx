@@ -762,11 +762,7 @@ function EventCard(props: {
       const taskId = str(p.taskId);
       const protocol = str(p.protocol);
       const command = str(p.command);
-      if (
-        protocol !== "background_shell" &&
-        protocol !== "promoted_shell" &&
-        !taskId
-      ) {
+      if (protocol !== "background_shell") {
         return null;
       }
       return (

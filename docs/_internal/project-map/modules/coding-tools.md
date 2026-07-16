@@ -12,6 +12,15 @@ See also [../maps/runtime/tool-orchestration.md](../maps/runtime/tool-orchestrat
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T21:02:00+0800
+- Scope: Shell background task persistence and deduplication use only
+  `shell.background`; removed the promotion-named persisted-kind reader.
+- Read: Host Shell wrapper, shell-tool handoff contract, task fixtures, and
+  Shell/tool orchestration maps.
+- Tests: focused Host Shell/protocol tests and affected downstream suites;
+  affected typechecks; project-map drift check.
+
+- Status: Verified
 - Date: 2026-07-16T12:45:00+0800
 - Scope: Coding tool names and behavior are unchanged; their write/approval gates now consume the access plan derived from canonical accessMode.
 - Read: routed production sources and focused access-policy tests.
@@ -65,9 +74,8 @@ Does not own:
 - Explicit background shell calls detach only after that gate, distinguish
   explicit origin from timeout promotion, support job/service lifecycle hints,
   and reuse an equivalent active explicit task before spawning a process.
-- Shell embedders use the neutral `onBackground` handoff and new host records use
-  `shell.background`; active historical `shell.promoted` records remain a
-  separate persisted-record compatibility input.
+- Shell embedders use the neutral `onBackground` handoff; Host task records and
+  active-task deduplication use only `shell.background`.
 - The handoff carries the resolved `{ awaited, lifetime }` policy, so hosts do
   not re-derive execution semantics from `backgroundOrigin`.
 - `task_create` remains eager on the main host catalog, while existing-task

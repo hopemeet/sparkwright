@@ -12,6 +12,16 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T21:02:00+0800
+- Scope: Host Shell task creation and active-task deduplication use only the
+  canonical `shell.background` persisted kind; the promotion-named task reader
+  was removed.
+- Read: Host Shell handoff/deduplication, task store consumers, Host/SDK/TUI
+  fixtures, and Shell/task maps.
+- Tests: focused Host Shell/protocol, Core trace/ledger, CLI summary, SDK, and
+  TUI rendering suites; affected typechecks; project-map drift check.
+
+- Status: Verified
 - Date: 2026-07-16T19:25:00+0800
 - Scope: Session list previews read user goals only from canonical transcript
   prompt `messages`; the old top-level `content` shape is no longer parsed.
@@ -917,8 +927,10 @@ Does not own:
   to complete. Handoff is an untracked write-capable boundary rather than a
   per-file attribution point: background tasks emit
   `workspace.write.untracked_access_granted` with
-  `protocol: "background_shell"`, `backgroundOrigin`, and sandbox status, and do not run the
-  foreground shell's post-completion workspace snapshot rollback.
+  `protocol: "background_shell"`, `backgroundOrigin`, and sandbox status, and
+  do not run the foreground shell's post-completion workspace snapshot
+  rollback. Task creation and active-task deduplication use only the persisted
+  kind `shell.background`.
 - Host protocol task inspection (`task.list`, `task.get`, `task.output`,
   `task.stop`) is implemented in `runtime.ts` over `TaskStore` and dispatched
   from `server.ts`. `task.list` is workspace-scoped unless the client supplies

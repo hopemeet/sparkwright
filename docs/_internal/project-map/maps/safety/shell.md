@@ -10,6 +10,15 @@ See [workspace-writes.md](workspace-writes.md) and [../../modules/coding-tools.m
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T21:02:00+0800
+- Scope: Shell background persistence is canonical-only:
+  `shell.background` task records and `background_shell` boundary markers.
+- Read: Host Shell handoff/deduplication, TUI marker rendering, task fixtures,
+  and Shell/tool orchestration maps.
+- Tests: focused Host Shell/protocol and downstream Core/CLI/SDK/TUI suites;
+  affected typechecks; project-map drift check.
+
+- Status: Verified
 - Date: 2026-07-16T13:36:30+0800
 - Scope: Shell workflow rules continue through canonical `WorkflowHook` matching and effects; removing `ValidationHook` did not change shell classification, policy, approval, or sandbox boundaries.
 - Read: host workflow hooks, shell policy/sandbox paths, and focused tests.
@@ -114,9 +123,8 @@ args` without rewriting requests, while the latter parses Host command text
   `backgroundOrigin:"explicit"`, creates an `awaited:false` task, and never
   reports `promoted:true`. Timeout handoff reports origin `promoted` and remains
   awaited.
-- The shared handoff callback is only `onBackground`. New task records use
-  `shell.background`; active historical `shell.promoted` records remain
-  eligible for deduplication as a separate persisted-record concern.
+- The shared handoff callback is only `onBackground`. Task creation and active
+  task deduplication use only the persisted kind `shell.background`.
 - Shell-tool resolves `policy:{ awaited, lifetime }` at the handoff boundary.
   Hosts execute it directly; `origin` remains diagnostic provenance rather than
   an independent keep-alive decision point.

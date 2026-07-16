@@ -112,12 +112,12 @@ Resolved decisions:
    output is arriving, awaited-task suspension must not attempt a terminal
    `cancelled -> waiting_tasks` transition.
 
-8. **Background handoff names the shared primitive.** New embedders use
+8. **Background handoff names the shared primitive.** Embedders use
    `onBackground` as its sole callback.
-   New host tasks use `kind:"shell.background"` and untracked-write markers use
-   `protocol:"background_shell"` with `backgroundOrigin`. Active legacy
-   `shell.promoted` tasks still participate in deduplication, and TUI trace
-   rendering accepts both marker protocols. `promoted:true` and
+   Host tasks use `kind:"shell.background"` and untracked-write markers use
+   `protocol:"background_shell"` with `backgroundOrigin`. Promotion-named
+   persisted task kinds and marker protocols are not alternate readers.
+   `promoted:true` and
    `promotionGuidance` remain output facts only for timeout-origin handoffs.
 9. **The handoff carries the resolved two-dimensional policy.** Shell-tool
    supplies `policy:{ awaited, lifetime }`; hosts execute it without deriving

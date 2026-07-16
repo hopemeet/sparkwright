@@ -141,7 +141,7 @@ describe("CLI run outcome", () => {
       summary,
       log.emit("workspace.write.untracked_access_granted", {
         toolName: "bash",
-        protocol: "promoted_shell",
+        protocol: "background_shell",
         marker: "untracked-write-capable",
         access: "granted",
       }),

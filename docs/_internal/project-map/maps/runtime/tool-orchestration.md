@@ -10,6 +10,16 @@ See [../safety/workspace-writes.md](../safety/workspace-writes.md), [../safety/s
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T21:02:00+0800
+- Scope: Shell background handoff, persistence, and deduplication use the
+  canonical `shell.background` kind only; promotion remains runtime origin
+  metadata, not an alternate task identity.
+- Read: Host Shell wrapper, shell-tool handoff/result contract, task fixtures,
+  and Shell/TUI trace maps.
+- Tests: focused Host Shell/protocol and downstream Core/CLI/SDK/TUI suites;
+  affected typechecks; project-map drift check.
+
+- Status: Verified
 - Date: 2026-07-16T13:36:30+0800
 - Scope: Removed the parallel post-execution `ValidationHook` result gate and its `resultValidationMs` timing; canonical `PostToolUse` workflow hooks remain the post-action policy path.
 - Read: tool execution/recording paths, workflow hooks, trace timing docs, and focused tests.
@@ -292,10 +302,8 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
   promoted `taskId` at the handoff point; the adopted task then owns ongoing
   stdout/stderr observation and emits `task.created` / `task.started` /
   `task.output` / terminal `task.*` trace facts.
-- Shell uses `onBackground` as the shared explicit/timeout handoff primitive and
-  writes `shell.background` task records. Active historical `shell.promoted`
-  records remain readable for deduplication as a separate persisted-record
-  concern.
+- Shell uses `onBackground` as the shared explicit/timeout handoff primitive;
+  task creation and active-task deduplication use only `shell.background`.
 - The shell handoff resolves `{ awaited, lifetime }` once. TaskManager consumes
   `awaited` as its generic keep-alive contract; shell lifetime remains at this
   boundary and is not added to unrelated task kinds.

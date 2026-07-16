@@ -1856,7 +1856,7 @@ describe("trace", () => {
         taskId: "task_writer",
         parentRunId: "run_parent",
         toolName: "bash",
-        protocol: "promoted_shell",
+        protocol: "background_shell",
         marker: "untracked-write-capable",
         access: "granted",
         sandboxMode: "enforce",
@@ -1876,7 +1876,7 @@ describe("trace", () => {
           severity: "medium",
           code: "UNTRACKED_WRITE_CAPABLE_BOUNDARY",
           evidence: expect.arrayContaining([
-            expect.stringContaining("protocol promoted_shell"),
+            expect.stringContaining("protocol background_shell"),
             expect.stringContaining("fs bind-allowlist"),
           ]),
         }),

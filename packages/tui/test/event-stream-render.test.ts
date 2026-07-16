@@ -427,7 +427,7 @@ describe("EventStream committed rendering", () => {
     const events = [
       ev("task.started", 1, {
         taskId: "task_mqzd1c1b30yc24hj",
-        kind: "shell.promoted",
+        kind: "shell.background",
         command: "node bg-task.js",
       }),
       ev("task.output", 2, {
@@ -445,7 +445,7 @@ describe("EventStream committed rendering", () => {
         4,
         {
           taskId: "task_mqzd1c1b30yc24hj",
-          kind: "shell.promoted",
+          kind: "shell.background",
           command: "node bg-task.js",
           result: { exitCode: 0 },
           progressCount: 2,

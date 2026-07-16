@@ -11,6 +11,16 @@ See also [../maps/trace/export-diagnostics.md](../maps/trace/export-diagnostics.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T21:02:00+0800
+- Scope: Background task fixtures and untracked-write rendering use only
+  `shell.background` / `background_shell`; the promotion-named trace marker
+  reader was removed.
+- Read: TUI event stream, task activity/status renderers, focused tests, Host
+  Shell producer, and trace maps.
+- Tests: focused TUI event/activity/status rendering suites; TUI typecheck;
+  project-map drift check.
+
+- Status: Verified
 - Date: 2026-07-16T18:50:00+0800
 - Scope: Verification hook rendering reads explicit result metadata for
   enforced invariant verifiers. The current `verification:<profile>` suggest
@@ -213,7 +223,7 @@ Does not own:
   instead of dumping raw JSON.
 - `StatusBar` surfaces currently running background tasks with a Ctrl+O hint
   and an "untracked writes possible" disclosure when the `background_shell`
-  boundary marker is present; historical `promoted_shell` markers still render.
+  boundary marker is present.
 - Unread terminal task state crosses `useTaskActions` -> `LiveFrame` ->
   `StatusBar` as one `UnreadTaskActivitySummary`; consumers do not reconstruct
   completed counts from parallel total/failed/cancelled props.

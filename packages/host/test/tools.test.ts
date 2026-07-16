@@ -3928,49 +3928,6 @@ describe("host tools", () => {
     await manager.handle(result.taskId as TaskId)!.wait();
   });
 
-  it("deduplicates against active legacy shell.promoted records", async () => {
-    const ctx = await createWorkspace({});
-    const canonicalWorkspaceRoot = await realpath(ctx.workspaceRoot);
-    const store = new InMemoryTaskStore();
-    const manager = new TaskManager({ store });
-    const legacyTaskId = "task_legacy_shell" as TaskId;
-    store.create({
-      id: legacyTaskId,
-      parentRunId: ctx.run.id,
-      kind: "shell.promoted",
-      awaited: false,
-      metadata: {
-        command: "node legacy-service.js",
-        cwd: canonicalWorkspaceRoot,
-        backgroundOrigin: "explicit",
-        lifetime: "service",
-      },
-    });
-    store.update(legacyTaskId, { status: "running" });
-    const tool = createHostShellTool(ctx.workspaceRoot, {
-      taskManager: manager,
-      sandbox: { mode: "off" },
-    });
-
-    const result = await tool.execute(
-      {
-        command: "node legacy-service.js",
-        background: true,
-        lifetime: "service",
-      },
-      ctx,
-    );
-
-    expect(result).toMatchObject({
-      taskId: legacyTaskId,
-      background: true,
-      backgroundOrigin: "explicit",
-      deduplicated: true,
-      executed: false,
-    });
-    expect(store.list({ parentRunId: ctx.run.id })).toHaveLength(1);
-  });
-
   it("resolves shell approval before an explicit background process can detach", async () => {
     const ctx = await createWorkspace({});
     const manager = new TaskManager({ store: new InMemoryTaskStore() });

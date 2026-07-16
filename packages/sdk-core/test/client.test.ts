@@ -271,7 +271,7 @@ describe("@sparkwright/sdk-core Client", () => {
       result: {
         id: "task_1",
         parentRunId: "run_1",
-        kind: "shell.promoted",
+        kind: "shell.background",
         status: "running",
         createdAt: "2026-05-24T00:00:00.000Z",
         metadata: {},

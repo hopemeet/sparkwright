@@ -746,7 +746,7 @@ describe("host protocol", () => {
       taskStore.create({
         id: taskId,
         parentRunId: "run_task_parent" as RunId,
-        kind: "shell.promoted",
+        kind: "shell.background",
         title: "background shell",
         metadata: { command: "node bg.js" },
       });
@@ -811,7 +811,7 @@ describe("host protocol", () => {
           tasks: [
             expect.objectContaining({
               id: taskId,
-              kind: "shell.promoted",
+              kind: "shell.background",
               status: "running",
             }),
           ],

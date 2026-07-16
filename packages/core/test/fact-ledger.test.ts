@@ -75,7 +75,7 @@ describe("FactLedger", () => {
       output: { exitCode: 0, timedOut: false },
     });
     log.emit("workspace.write.untracked_access_granted", {
-      protocol: "promoted_shell",
+      protocol: "background_shell",
       marker: "untracked-write-capable",
       access: "granted",
     });
