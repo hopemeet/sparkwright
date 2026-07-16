@@ -131,6 +131,13 @@ contracts, and focused checklists that no longer fit here.
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-16T08:56:29+0800
+- Scope: rechecked edge adapters after retiring the Host Agent-arbiter
+  compatibility module; edge ownership and wire contracts are unchanged.
+- Read: ACP worker/Host child adapter and canonical Host lease coordinator.
+- Tests: focused Host 70/70, Host typecheck, and the full release gate passed.
+
 - Status: Verified
 - Date: 2026-07-14
 - Scope: checked SDK/Gateway consumers after Host principal isolation. Existing
@@ -201,7 +208,7 @@ contracts, and focused checklists that no longer fit here.
   not a universal run-chain or workspace-lock owner.
 - Read: `packages/server-runtime/src/index.ts`, Workflow service/supervisor,
   `packages/host/src/runtime.ts`, `packages/host/src/server.ts`,
-  `packages/host/src/workspace-agent-arbiter.ts`, and
+  `packages/host/src/workspace-lease-coordinator.ts`, and
   `docs/_internal/proposals/session-agent-host-coordinator.md`.
 - Tests: not run; proposal/map-only review.
 

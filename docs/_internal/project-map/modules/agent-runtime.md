@@ -397,6 +397,12 @@ Does not own:
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-16T08:56:29+0800
+- Scope: checked the agent-runtime supervision/admission seam after Host lease
+  compatibility removal; no agent-runtime contract changed.
+- Tests: focused Host 70/70, Host typecheck, and the full release gate passed.
+
 - Status: Verified
 - Date: 2026-07-15
 - Scope: P6 routed review; workspace lease imports were renamed only. Agent

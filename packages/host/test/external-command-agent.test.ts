@@ -19,7 +19,7 @@ import {
   projectAgentLifecycle,
   terminalLifecycleCount,
 } from "./helpers/agent-lifecycle.js";
-import { WorkspaceLeaseCoordinator } from "../src/workspace-agent-arbiter.js";
+import { WorkspaceLeaseCoordinator } from "../src/workspace-lease-coordinator.js";
 
 describe("external command delegate tool", () => {
   it("parses external command config from agent profile metadata", () => {

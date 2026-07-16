@@ -88,10 +88,10 @@ The first write lease must include an escape hatch from day one:
 - cancellation/finally release;
 - no claim of cross-process safety.
 
-The implemented first slice is a process-local fair RW arbiter shared by
+The implemented first slice is a process-local fair RW lease coordinator shared by
 HostRuntime connections. `spawnSubAgent` exposes an embedder-owned asynchronous
 admission seam so in-process children do not enter the Supervisor's admitted
-state before a lease is acquired; process adapters use the same arbiter before
+state before a lease is acquired; process adapters use the same coordinator before
 their native start signal. Lifecycle metadata carries workspace/concurrency
 facts, and the requested-to-started gap exposes queue delay without adding a
 second lifecycle event family.
@@ -131,7 +131,7 @@ not an Agent actor-notification lane.
 5. `AgentSupervisor`; migrate one adapter at a time and retire adapter-owned
    lifecycle emission. Fix process admission ordering and terminal parity here.
    Complete.
-6. Host workspace lease arbiter with TTL/heartbeat and Core-backed in-process
+6. Host workspace lease coordinator with TTL/heartbeat and Core-backed in-process
    descendant-tree work-budget enforcement. Complete.
 7. Narrow task/communication cleanup and release verification. Complete.
 
@@ -149,14 +149,21 @@ the migration oracle.
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-07-16T08:56:29+0800
+- Scope: aligned the completed supervision design with the sole canonical Host
+  workspace lease coordinator after compatibility removal.
+- Read: Host coordinator, Agent adapters, and supervision ownership boundary.
+- Tests: focused Host 70/70, Host typecheck, and the full release gate passed.
+
 - Status: Read-only
 - Date: 2026-07-14
 - Scope: aligned the completed Agent supervision boundary with the re-baselined
   execution-lane proposal. Agent lifecycle remains below the lane coordinator;
-  the current Agent arbiter is the migration source for a separate Host
+  the current lease coordinator is the migration source for a separate Host
   workspace lease service rather than a scheduler-owned turn lock.
 - Read: `packages/agent-runtime/src/agents/supervisor.ts`,
-  `packages/host/src/workspace-agent-arbiter.ts`,
+  `packages/host/src/workspace-lease-coordinator.ts`,
   `packages/host/src/runtime.ts`, and
   `docs/_internal/proposals/session-agent-host-coordinator.md`.
 - Tests: not run; proposal/map-only review.

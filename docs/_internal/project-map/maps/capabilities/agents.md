@@ -20,7 +20,7 @@ See [../../modules/agent-runtime.md](../../modules/agent-runtime.md) and [../../
 - `packages/host/src/config-zod-schema.ts`
 - `packages/host/src/external-command-agent.ts`
 - `packages/host/src/traced-process-runner.ts`
-- `packages/host/src/workspace-agent-arbiter.ts`
+- `packages/host/src/workspace-lease-coordinator.ts`
 - `packages/agent-runtime/src/index.ts`
 - `packages/agent-runtime/src/agents/*`
 - `packages/agent-runtime/src/concurrency/*`
@@ -384,6 +384,13 @@ configured profiles/delegates
   detection.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-16T08:56:29+0800
+- Scope: retired the workspace Agent-arbiter compatibility vocabulary; all
+  Agent paths consume the canonical lease coordinator directly.
+- Read: in-process, ACP, and external Agent admission plus coordinator tests.
+- Tests: focused Host 70/70, Host typecheck, and the full release gate passed.
 
 - Status: Verified
 - Date: 2026-07-16T08:47:59+0800

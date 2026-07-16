@@ -12,7 +12,9 @@ afterEach(() => vi.useRealTimers());
 
 describe("WorkspaceLeaseCoordinator", () => {
   it("coalesces symlink aliases onto the real workspace root", async () => {
-    const root = await mkdtemp(join(tmpdir(), "sparkwright-agent-arbiter-"));
+    const root = await mkdtemp(
+      join(tmpdir(), "sparkwright-lease-coordinator-"),
+    );
     const alias = `${root}-alias`;
     try {
       await symlink(root, alias, "dir");

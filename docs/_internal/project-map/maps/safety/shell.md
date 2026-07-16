@@ -185,6 +185,12 @@ args` without rewriting requests, while the latter parses Host command text
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-16T08:56:29+0800
+- Scope: checked Shell mutation admission after Host lease compatibility
+  removal; policy, approval, sandboxing, and lease duration are unchanged.
+- Tests: focused Host 70/70, Host typecheck, and the full release gate passed.
+
 - Status: Verified
 - Date: 2026-07-15
 - Scope: P6 routed review; shell sandbox and mutation-window semantics are

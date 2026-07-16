@@ -16,7 +16,7 @@ See [approvals.md](approvals.md) and [../runtime/tool-orchestration.md](../runti
 - `packages/host/src/tools.ts`
 - `packages/host/src/shell.ts`
 - `packages/host/src/workspace-snapshot.ts`
-- `packages/host/src/workspace-agent-arbiter.ts`
+- `packages/host/src/workspace-lease-coordinator.ts`
 
 ## Data Flow
 
@@ -141,6 +141,13 @@ tool proposes write
   from managed workspace writes.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-16T08:56:29+0800
+- Scope: removed deprecated Agent-arbiter names and the alternate admission
+  input; workspace mutation admission now has one coordinator contract.
+- Read: lease coordinator, all Host admission callers, and coordinator tests.
+- Tests: focused Host 70/70, Host typecheck, and the full release gate passed.
 
 - Status: Verified
 - Date: 2026-07-16T08:47:59+0800

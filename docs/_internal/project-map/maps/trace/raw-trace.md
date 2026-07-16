@@ -211,6 +211,12 @@ EventLog emits full event
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-16T08:56:29+0800
+- Scope: checked trace ownership after Host lease compatibility removal; lease
+  lifecycle metadata and raw event contracts are unchanged.
+- Tests: focused Host 70/70, Host typecheck, and the full release gate passed.
+
 - Status: Verified
 - Date: 2026-07-15T23:51:43+0800
 - Scope: removed the redundant `run.started.toolPlan` projection; final

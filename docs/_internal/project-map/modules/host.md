@@ -27,7 +27,6 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 - `packages/host/src/shell.ts`
 - `packages/host/src/workspace-snapshot.ts`
 - `packages/host/src/workspace-lease-coordinator.ts`
-- `packages/host/src/workspace-agent-arbiter.ts` (compatibility re-export)
 - `packages/host/src/workflow-hooks.ts`
 - `packages/host/src/invariant-projection.ts`
 - `packages/host/src/workflows.ts`
@@ -780,11 +779,11 @@ Does not own:
   invocation entrypoint so direct aliases remain `delegate` while
   `delegate_agent` lifecycle records the real indexed surface. Model-authored
   string fields cannot override this attribution marker.
-- `workspace-lease-coordinator.ts` owns the process-local Host workspace lease
-  primitive; `workspace-agent-arbiter.ts` is only a compatibility re-export. One
-  `WorkspaceLeaseCoordinator` singleton is shared by HostRuntime connections
-  and keyed by realpath-canonical workspace root. Host wraps actual parent and
-  child coding/Shell/capability mutation windows, while write-capable
+- `workspace-lease-coordinator.ts` solely owns the process-local Host workspace
+  lease primitive. One `WorkspaceLeaseCoordinator` singleton is shared by
+  HostRuntime connections and keyed by realpath-canonical workspace root. Host
+  wraps actual parent and child coding/Shell/capability mutation windows, while
+  write-capable
   in-process, ACP, and external delegates retain a lease for their full
   execution. Dynamic Agent grant/delegate dispatch tools are not themselves
   wrapped because their child owns the mutation window.
@@ -936,6 +935,15 @@ Does not own:
   remain adapter-native and need continued cross-entrypoint characterization.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-16T08:56:29+0800
+- Scope: deleted the deprecated workspace Agent-arbiter module, export aliases,
+  admission alias, and fallback input branch; the lease coordinator is now the
+  only Host workspace-exclusion surface.
+- Read: coordinator, every production/test import, Agent adapters, runtime
+  assembly, and linked ownership maps.
+- Tests: focused Host 70/70, Host typecheck, and the full release gate passed.
 
 - Status: Verified
 - Date: 2026-07-16T08:47:59+0800

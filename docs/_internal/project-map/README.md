@@ -144,7 +144,7 @@ follow the active maps below for the current contract.
 - `packages/host/src/client-input.ts`: [modules/host.md](modules/host.md), [modules/cli.md](modules/cli.md), [modules/tui.md](modules/tui.md), [modules/protocol.md](modules/protocol.md)
 - `packages/core/src/access-mode.ts` (`run.accessMode` -> `permissionMode`/`shouldWrite` compile + clamp): [modules/host.md](modules/host.md), [modules/protocol.md](modules/protocol.md), [maps/safety/approvals.md](maps/safety/approvals.md)
 - `packages/host/src/workflow-hooks.ts`, `packages/host/src/active-rules.ts`, or `packages/host/src/traced-process-runner.ts`: [modules/host.md](modules/host.md), [modules/core.md](modules/core.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/safety/shell.md](maps/safety/shell.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md), [maps/trace/summary-timeline-verify.md](maps/trace/summary-timeline-verify.md)
-- `packages/acp-client-adapter/src/worker.ts`, `packages/host/src/acp-child-agent.ts`, `packages/host/src/external-command-agent.ts`, `packages/host/src/workspace-agent-arbiter.ts`, `packages/host/src/delegate-capability.ts`, `packages/host/src/delegate-runner.ts`, `packages/host/src/indexed-delegate-tool.ts`, or `packages/host/src/agent-profiles.ts`: [modules/host.md](modules/host.md), [modules/agent-runtime.md](modules/agent-runtime.md), [maps/capabilities/agents.md](maps/capabilities/agents.md), [maps/safety/workspace-writes.md](maps/safety/workspace-writes.md), [maps/safety/shell.md](maps/safety/shell.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md)
+- `packages/acp-client-adapter/src/worker.ts`, `packages/host/src/acp-child-agent.ts`, `packages/host/src/external-command-agent.ts`, `packages/host/src/workspace-lease-coordinator.ts`, `packages/host/src/delegate-capability.ts`, `packages/host/src/delegate-runner.ts`, `packages/host/src/indexed-delegate-tool.ts`, or `packages/host/src/agent-profiles.ts`: [modules/host.md](modules/host.md), [modules/agent-runtime.md](modules/agent-runtime.md), [maps/capabilities/agents.md](maps/capabilities/agents.md), [maps/safety/workspace-writes.md](maps/safety/workspace-writes.md), [maps/safety/shell.md](maps/safety/shell.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md)
 - `packages/host/src/workflows.ts`, `packages/host/src/workflow-projection.ts`, `packages/host/src/workflow-node-api.ts`, `packages/host/src/workflow-distill.ts`, `packages/host/src/workflow-shadow.ts`, `packages/host/src/workflow-trace-observation.ts`, `sparkwright workflow list|inspect|distill|shadow`, or `sparkwright run --workflow`: [modules/host.md](modules/host.md), [modules/cli.md](modules/cli.md), [modules/protocol.md](modules/protocol.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/safety/shell.md](maps/safety/shell.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md)
 - `packages/cli/src/cli.ts`, `packages/cli/src/runners/direct-core-runner.ts`, or `packages/cli/src/runners/host-runner.ts`: [modules/cli.md](modules/cli.md), [maps/trace/summary-timeline-verify.md](maps/trace/summary-timeline-verify.md), [maps/session/session-store.md](maps/session/session-store.md), [maps/safety/approvals.md](maps/safety/approvals.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md)
 - `packages/cli/src/event-format.ts`: [modules/cli.md](modules/cli.md), [modules/protocol.md](modules/protocol.md), [maps/trace/summary-timeline-verify.md](maps/trace/summary-timeline-verify.md)
@@ -203,6 +203,14 @@ TUI events; it is not a trace diagnostic report and must not replace
 trace/session inspection.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-16T08:56:29+0800
+- Scope: routed workspace mutation admission through its sole canonical lease
+  coordinator after deleting the deprecated Agent-arbiter surface.
+- Read: Host coordinator and all production/test imports plus routed Agent,
+  workspace-write, Shell, trace, and supervision pages.
+- Tests: focused Host 70/70, Host typecheck, and the full release gate passed.
 
 - Status: Verified
 - Date: 2026-07-15

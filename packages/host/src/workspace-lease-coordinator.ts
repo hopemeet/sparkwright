@@ -458,20 +458,10 @@ export class WorkspaceLeaseCoordinator {
   }
 }
 
-/** @deprecated Use WorkspaceLeaseCoordinator. */
-export { WorkspaceLeaseCoordinator as WorkspaceAgentArbiter };
-export type WorkspaceAgentLeaseMode = WorkspaceLeaseMode;
-export type WorkspaceAgentLease = WorkspaceLease;
-export type WorkspaceAgentLeaseSnapshot = WorkspaceLeaseSnapshot;
-
 export const processWorkspaceLeaseCoordinator = new WorkspaceLeaseCoordinator();
-/** @deprecated Use processWorkspaceLeaseCoordinator. */
-export const processWorkspaceAgentArbiter = processWorkspaceLeaseCoordinator;
 
 export function createWorkspaceMutationAdmission(input: {
   coordinator?: WorkspaceLeaseCoordinator;
-  /** @deprecated Use coordinator. */
-  arbiter?: WorkspaceLeaseCoordinator;
   workspaceRoot: string;
   mode: WorkspaceLeaseMode;
   ttlMs?: number;
@@ -483,9 +473,7 @@ export function createWorkspaceMutationAdmission(input: {
 }) => Promise<() => void> {
   return async ({ invocation, abortSignal, cancel }) => {
     const lease = await (
-      input.coordinator ??
-      input.arbiter ??
-      processWorkspaceLeaseCoordinator
+      input.coordinator ?? processWorkspaceLeaseCoordinator
     ).acquire({
       workspaceRoot: input.workspaceRoot,
       ownerId: invocation.childRunId,
@@ -504,9 +492,6 @@ export function createWorkspaceMutationAdmission(input: {
     };
   };
 }
-
-/** @deprecated Use createWorkspaceMutationAdmission. */
-export const createWorkspaceAgentAdmission = createWorkspaceMutationAdmission;
 
 export function createWorkspaceLeaseAbortController(
   parentSignal?: AbortSignal,

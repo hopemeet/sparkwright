@@ -31,7 +31,7 @@ import {
 } from "../src/runtime.js";
 import { createReadFileTool } from "../src/tools.js";
 import { createDynamicChildToolCatalog } from "../src/tool-catalog.js";
-import { WorkspaceLeaseCoordinator } from "../src/workspace-agent-arbiter.js";
+import { WorkspaceLeaseCoordinator } from "../src/workspace-lease-coordinator.js";
 import {
   lifecycleTypes,
   projectAgentLifecycle,
