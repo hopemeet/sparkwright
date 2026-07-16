@@ -264,7 +264,8 @@ Does not own:
   for that path.
 - Awaited task revival is budgeted by the core per-source
   forced-continuation budget (`revival` source), separate from `maxSteps`.
-  `CreateRunOptions.maxRevivalTurns` remains the legacy alias with default 5.
+  `CreateRunOptions.forcedContinuationBudgets.revival` is the sole
+  configuration input and defaults to 5.
   A `waiting_tasks` wake can enter a revival turn after `maxSteps` is otherwise
   spent; task readiness, command readiness, and abort share one per-wait abort
   signal so losing race legs clean up promptly. Workflow projection
@@ -389,6 +390,16 @@ Does not own:
   guard and trace diagnostics.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-16T10:23:51+0800
+- Scope: removed the deprecated standalone revival-budget input;
+  `forcedContinuationBudgets.revival` is now the sole revival budget
+  configuration while existing runtime usage metadata remains unchanged.
+- Read: Core run option type, forced-continuation budget resolver, revival
+  loop, focused run tests, and all repository references to the removed field.
+- Tests: focused Core revival/budget tests 19/19, runtime guardrails 28/28,
+  full Core 668/668, and Core typecheck passed.
 
 - Status: Verified
 - Date: 2026-07-16T08:47:59+0800
@@ -661,8 +672,8 @@ test/run-outcome.test.ts test/fact-ledger.test.ts`; `npm --workspace
 - Status: Verified
 - Date: 2026-07-04T12:43:33+0800
 - Scope: workflow-runtime-v1 S3 core budget substrate: generalized
-  `maxRevivalTurns` / `revivalTurnsUsed` into a per-source forced-continuation
-  budget, migrated `revival`, registered `workflow` with no consumer, added
+  revival turns into a per-source forced-continuation budget, retained
+  `revivalTurnsUsed` terminal metadata, registered `workflow` with no consumer, added
   `run.budget.exceeded` / FactLedger `budgetExceeded` facts, and preserved
   revival terminal metadata compatibility.
 - Read: `packages/core/src/run.ts`,
@@ -784,7 +795,7 @@ test/run-outcome.test.ts test/trace.test.ts`; `npm --workspace
 - Status: Verified
 - Date: 2026-07-02T09:30:00+0800
 - Scope: reviewed and patched core awaited-task revival follow-ups:
-  `maxRevivalTurns` is independent of `maxSteps`, final-step awaited
+  the revival forced-continuation budget is independent of `maxSteps`, final-step awaited
   notifications are injected instead of falling into budget wrap-up, race
   cleanup uses one per-wait abort signal, and revival pending-check failures
   emit `run.notification.source_failed` rather than escaping the loop.

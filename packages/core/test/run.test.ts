@@ -6045,46 +6045,6 @@ describe("SparkwrightRun", () => {
     });
   });
 
-  it("prefers per-source revival budget over legacy maxRevivalTurns", async () => {
-    const source = new ManualTaskRevivalSource();
-    source.pending = true;
-    let modelCalls = 0;
-    const run = createRun({
-      goal: "per-source budget wins",
-      notificationSources: [source],
-      taskRevivalSource: source,
-      model: {
-        async complete() {
-          modelCalls += 1;
-          return { message: modelCalls === 1 ? "waiting" : "done" };
-        },
-      },
-      maxSteps: 1,
-      maxRevivalTurns: 0,
-      forcedContinuationBudgets: { revival: 1 },
-    });
-
-    const resultPromise = run.start();
-    await waitForCondition(() => run.record.state === "waiting_tasks");
-
-    source.deliver({
-      content: "Task task_precedence completed.",
-      metadata: { taskId: "task_precedence" },
-    });
-
-    const result = await resultPromise;
-
-    expect(result.state).toBe("completed");
-    expect(modelCalls).toBe(2);
-    expect(result.metadata).toMatchObject({
-      revivalTurnsUsed: 1,
-      forcedContinuationTurnsUsed: { revival: 1 },
-    });
-    expect(run.events.all().map((event) => event.type)).not.toContain(
-      "run.budget.exceeded",
-    );
-  });
-
   it("uses workflow source budget for workflow projection continuations", async () => {
     let modelCalls = 0;
     let stopCalls = 0;
@@ -6190,7 +6150,7 @@ describe("SparkwrightRun", () => {
     );
   });
 
-  it("bounds awaited task revival with maxRevivalTurns", async () => {
+  it("bounds awaited task revival with its forced-continuation budget", async () => {
     const source = new ManualTaskRevivalSource();
     source.pending = true;
     let modelCalls = 0;
@@ -6208,7 +6168,7 @@ describe("SparkwrightRun", () => {
         },
       },
       maxSteps: 1,
-      maxRevivalTurns: 1,
+      forcedContinuationBudgets: { revival: 1 },
     });
 
     const resultPromise = run.start();
@@ -6240,7 +6200,7 @@ describe("SparkwrightRun", () => {
           return { message: "done without revival" };
         },
       },
-      maxRevivalTurns: 0,
+      forcedContinuationBudgets: { revival: 0 },
     });
 
     const result = await run.start();

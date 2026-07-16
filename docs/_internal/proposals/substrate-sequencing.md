@@ -27,7 +27,7 @@ version of the shared substrate they need. Verified dispersion as of
 - **≥5 continuation/budget knobs across 3 owners** (`maxSteps`,
   `runBudget`, `MAIN_TODO_MAX_CONTINUATIONS` +
   `resolveTodoContinuationMaxSteps` in `host/runtime.ts`;
-  `maxRevivalTurns` and the doom-loop limit in core) — with three
+  per-source forced-continuation budgets and the doom-loop limit in core) — with three
   proposals separately claiming to unify them.
 - **≥3 hand-rolled atomic-write implementations**
   (`agent-runtime/src/tasks/file-store.ts:263`,
@@ -167,8 +167,8 @@ listed below.
   and ratified in the S3 annex below).
 - **Status:** implemented 2026-07-04 on `feat/forced-turn-budget`: core
   now owns one per-source forced-continuation budget mechanism,
-  `revival` is migrated as the first consumer while preserving
-  `maxRevivalTurns` / `revivalTurnsUsed` compatibility, and forced-turn
+  `revival` is the first consumer while preserving `revivalTurnsUsed` terminal
+  metadata, and forced-turn
   exhaustion emits `run.budget.exceeded` / FactLedger `budgetExceeded`
   facts without failing the run directly. Workflow P1 now consumes the
   pre-registered `workflow` source for projection advance / verifier block /
@@ -241,8 +241,8 @@ The merge is tractable only with a three-way altitude split; every prior
    `foregroundTimeoutMs`, not to this family or any S3 family, so it is
    orthogonal and non-conflicting.
 2. **In-run forced-turn budget — the S3 mechanism.** One core mechanism
-   with per-source accounting, generalizing `maxRevivalTurns` /
-   `revivalTurnsUsed` (the shipped seed: revival turns already ride it).
+   with per-source accounting (the shipped seed: revival turns already ride it,
+   with `revivalTurnsUsed` retained as terminal usage metadata).
    Sources v1: `revival` (waiting_tasks wake), `workflow` (advance /
    verifier-retry turns). Candidate second wave: `validation`
    (stop-block / validation-continuation turns, which today consume

@@ -131,6 +131,15 @@ policy requires approval
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T10:23:51+0800
+- Scope: reviewed for removal of the Core revival budget alias; approval
+  admission, resolver, and policy boundaries do not consume that run option and
+  require no contract change.
+- Read: Core run option consumers and approval map contracts.
+- Tests: focused Core revival/budget tests 19/19, runtime guardrails 28/28,
+  full Core 668/668, and Core typecheck passed.
+
+- Status: Verified
 - Date: 2026-07-15T07:35:27+0800
 - Scope: expected approval/policy denial classification moved to a pure result
   analysis leaf; resolver ownership, request/resolution order, and approval

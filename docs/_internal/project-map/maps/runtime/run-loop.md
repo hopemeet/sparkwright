@@ -187,7 +187,8 @@ createRun/resumeRunFromCheckpoint
   from `run.command.enqueued`; abort uses the run abort signal. Checkpoints mark
   this live state as not durable rather than pretending it can resume awaited
   task revival. Revival turns use the `revival` source of the per-source
-  forced-continuation budget (`maxRevivalTurns` remains the default-5 alias),
+  forced-continuation budget
+  (`forcedContinuationBudgets.revival`, default 5),
   not `maxSteps`; the revival step still increments monotonically, but the loop
   guard lets a budgeted `waiting_tasks` wake enter after `step > maxSteps`.
   Exhaustion emits `run.budget.exceeded` / FactLedger `budgetExceeded` and
@@ -281,6 +282,16 @@ createRun/resumeRunFromCheckpoint
   handling can still be noisy.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-16T10:23:51+0800
+- Scope: revival forced continuations now accept only the canonical per-source
+  budget input; waiting, wake, exhaustion, event, and terminal metadata
+  behavior is unchanged.
+- Read: Core budget resolver, awaited-task revival loop, focused run tests, and
+  proposal/map references to the removed alias.
+- Tests: focused Core revival/budget tests 19/19, runtime guardrails 28/28,
+  full Core 668/668, and Core typecheck passed.
 
 - Status: Verified
 - Date: 2026-07-15T23:51:43+0800
@@ -870,8 +881,8 @@ test/run.test.ts test/run-outcome.test.ts test/trace.test.ts`;
 
 - Status: Verified
 - Date: 2026-07-02T09:30:00+0800
-- Scope: refreshed run-loop revival contract after adding independent
-  `maxRevivalTurns`, allowing final-step awaited notification injection beyond
+- Scope: refreshed run-loop revival contract after adding an independent
+  revival forced-continuation budget, allowing final-step awaited notification injection beyond
   `maxSteps`, cleaning up losing wait race legs through one abort signal, and
   reporting revival readiness failures as notification source failures.
 - Read: `packages/core/src/run.ts`, `packages/core/test/run.test.ts`,

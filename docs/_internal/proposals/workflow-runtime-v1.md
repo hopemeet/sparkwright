@@ -81,8 +81,8 @@ constraints. Substrate references (S1–S4) resolve to
 - 2026-07-04 — S3 per-source forced-continuation budget implemented on
   `feat/forced-turn-budget`: corrected S3 ratification recorded in
   `substrate-sequencing.md`; core now has one `revival` / `workflow` source
-  budget mechanism, `revival` preserves `maxRevivalTurns` and
-  `revivalTurnsUsed` compatibility, `workflow` is registered with no P1
+  budget mechanism, `revival` preserves `revivalTurnsUsed` terminal metadata,
+  `workflow` is registered with no P1
   consumers yet, and source exhaustion emits `run.budget.exceeded` plus
   FactLedger `budgetExceeded` facts without directly failing the run.
 - 2026-07-04 — P1 projection implemented locally on `feat/workflow-p1`:
@@ -369,7 +369,7 @@ commit-pinned before implementation starts.
   `workflow` forced-continuation source instead of `maxSteps`; non-workflow
   validation continuations still consume normal step budget. Revival turns
   ride the same core per-source budget under the `revival` source, with
-  `maxRevivalTurns` kept as the legacy alias.
+  `forcedContinuationBudgets.revival` as the sole configuration input.
 - Command facts still arrive through **two evidence channels**:
   model-initiated shell `tool.*` events and hook-launched
   `workflow_hook.completed` `result.metadata.exitCode` events. S2 moved

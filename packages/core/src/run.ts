@@ -266,18 +266,9 @@ class ForcedContinuationBudgetLedger {
 }
 
 function resolveForcedContinuationBudgetConfig(
-  options: Pick<
-    CreateRunOptions,
-    "maxRevivalTurns" | "forcedContinuationBudgets"
-  >,
+  options: Pick<CreateRunOptions, "forcedContinuationBudgets">,
 ): Record<ForcedContinuationSource, number> {
   const configured = options.forcedContinuationBudgets ?? {};
-  if (
-    options.maxRevivalTurns !== undefined &&
-    !isNonNegativeInteger(options.maxRevivalTurns)
-  ) {
-    throw new Error("maxRevivalTurns must be a non-negative integer.");
-  }
   for (const source of FORCED_CONTINUATION_SOURCES) {
     const value = configured[source];
     if (value !== undefined && !isNonNegativeInteger(value)) {
@@ -287,10 +278,7 @@ function resolveForcedContinuationBudgetConfig(
     }
   }
   return {
-    revival:
-      configured.revival ??
-      options.maxRevivalTurns ??
-      DEFAULT_MAX_REVIVAL_TURNS,
+    revival: configured.revival ?? DEFAULT_MAX_REVIVAL_TURNS,
     workflow: configured.workflow ?? DEFAULT_MAX_REVIVAL_TURNS,
   };
 }
@@ -453,13 +441,6 @@ export interface CreateRunOptions {
    * run. Default 3.
    */
   maxOutputRecoveries?: number;
-  /**
-   * Maximum number of awaited-task revival turns. These turns are budgeted
-   * separately from maxSteps so a legitimate slow task completion can still be
-   * injected after the normal step budget is otherwise spent. Legacy alias for
-   * `forcedContinuationBudgets.revival`. Default 5.
-   */
-  maxRevivalTurns?: number;
   /**
    * Per-source in-run forced-continuation budgets. Sources are counted
    * independently from `maxSteps` / `runBudget`; exhaustion refuses that forced

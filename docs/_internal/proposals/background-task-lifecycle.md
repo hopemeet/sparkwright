@@ -422,12 +422,13 @@ CLI `--detach` is deferred until the durable waiting-state design exists.
 3. **Nesting** — **forbidden in v1.** The read-only child catalog stays without
    `task_create`; lifecycle stays flat. Revisit post-v1 (depth-bounded, opt-in).
 4. **Revival budget** — revival turns count against a **separate
-   `maxRevivalTurns`** (default 5), **not** `maxSteps`. Prevents a
+   `forcedContinuationBudgets.revival`** budget (default 5), **not**
+   `maxSteps`. Prevents a
    long-running task's completion from being step-budget-killed, and bounds
    wake→spawn→wake recursion. The loop step still increments monotonically for
    checkpoint/event/doom-loop accounting, but a budgeted `waiting_tasks` revival
    turn is allowed to enter the loop even when `step > maxSteps`; total work is
-   bounded by `maxSteps + maxRevivalTurns`.
+   bounded by `maxSteps` plus the configured revival budget.
 5. **Barrier surface** — extend **`task(action:"wait", ids, mode:"any"|"all")`**;
    **no** new `task_join` tool. Reuses the existing host/protocol/TUI task
    inspection surface.
@@ -505,9 +506,10 @@ crash.
 
 ### Implementation Notes
 
-The live revival spine now has an independent `maxRevivalTurns` budget (default
-5), so awaited task completions can be injected after `maxSteps` is otherwise
-spent without falling into step-budget wrap-up. The `waiting_tasks` race uses one
+The live revival spine now has an independent
+`forcedContinuationBudgets.revival` budget (default 5), so awaited task
+completions can be injected after `maxSteps` is otherwise spent without falling
+into step-budget wrap-up. The `waiting_tasks` race uses one
 per-wait abort signal for task readiness, command readiness, and abort cleanup;
 run aborts cascade into that signal. Host notification delivery drains all
 terminal task notifications for the run, including detached tasks; only awaited

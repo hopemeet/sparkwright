@@ -779,8 +779,8 @@ typecheck`.
 - Status: Verified
 - Date: 2026-07-02T09:30:00+0800
 - Scope: routed the background task lifecycle follow-up across core/host/
-  agent-runtime: independent `maxRevivalTurns`, cleaned `waiting_tasks` race
-  cancellation, detached notification surfacing, and explicit
+  agent-runtime: independent revival forced-continuation budget, cleaned
+  `waiting_tasks` race cancellation, detached notification surfacing, and explicit
   `task_create` mode/awaited conflict rejection. Durable detach/resume remains
   proposal-only.
 - Read: `docs/_internal/proposals/background-task-lifecycle.md`,

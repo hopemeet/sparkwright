@@ -405,6 +405,15 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T10:23:51+0800
+- Scope: reviewed for removal of the Core revival budget alias; tool
+  registration, execution, policy, and result contracts do not consume that
+  run option and require no contract change.
+- Read: Core run option consumers and tool-orchestration contracts.
+- Tests: focused Core revival/budget tests 19/19, runtime guardrails 28/28,
+  full Core 668/668, and Core typecheck passed.
+
+- Status: Verified
 - Date: 2026-07-16T08:47:59+0800
 - Scope: model-facing Agent mutation keeps one `create_agent` definition;
   removal now targets the authored Markdown file through managed workspace
