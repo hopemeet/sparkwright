@@ -1873,12 +1873,9 @@ export function parseTraceJsonl(
     .split(/\r?\n/)
     .filter((line) => line.trim() !== "")
     .map((line, index) => {
+      let raw: unknown;
       try {
-        const event = JSON.parse(line) as SparkwrightEvent;
-        return {
-          ...event,
-          metadata: isRecord(event.metadata) ? event.metadata : {},
-        };
+        raw = JSON.parse(line) as unknown;
       } catch (cause) {
         throw new Error(
           `Invalid trace event JSON in ${path} at line ${index + 1}`,
@@ -1887,7 +1884,68 @@ export function parseTraceJsonl(
           },
         );
       }
+      return canonicalTraceEvent(raw, path, index + 1);
     });
+}
+
+function canonicalTraceEvent(
+  value: unknown,
+  path: string,
+  line: number,
+): SparkwrightEvent {
+  if (!isRecord(value)) {
+    throw invalidTraceEventEnvelope(path, line, "event must be an object");
+  }
+  for (const field of ["id", "runId", "type", "timestamp"] as const) {
+    if (typeof value[field] !== "string") {
+      throw invalidTraceEventEnvelope(path, line, `${field} must be a string`);
+    }
+  }
+  if (
+    typeof value.sequence !== "number" ||
+    !Number.isInteger(value.sequence) ||
+    value.sequence < 1
+  ) {
+    throw invalidTraceEventEnvelope(
+      path,
+      line,
+      "sequence must be a positive integer",
+    );
+  }
+  if (!("payload" in value)) {
+    throw invalidTraceEventEnvelope(path, line, "payload is required");
+  }
+  if (!isRecord(value.metadata)) {
+    throw invalidTraceEventEnvelope(path, line, "metadata must be an object");
+  }
+  if (
+    value.monotonicUs !== undefined &&
+    (typeof value.monotonicUs !== "number" ||
+      !Number.isInteger(value.monotonicUs) ||
+      value.monotonicUs < 0)
+  ) {
+    throw invalidTraceEventEnvelope(
+      path,
+      line,
+      "monotonicUs must be a non-negative integer",
+    );
+  }
+  for (const field of ["traceId", "spanId", "parentSpanId"] as const) {
+    if (value[field] !== undefined && typeof value[field] !== "string") {
+      throw invalidTraceEventEnvelope(path, line, `${field} must be a string`);
+    }
+  }
+  return value as unknown as SparkwrightEvent;
+}
+
+function invalidTraceEventEnvelope(
+  path: string,
+  line: number,
+  detail: string,
+): Error {
+  return new Error(
+    `Invalid trace event envelope in ${path} at line ${line}: ${detail}`,
+  );
 }
 
 /**

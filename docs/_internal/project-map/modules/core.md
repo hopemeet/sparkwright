@@ -13,6 +13,12 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md),
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T18:30:00+0800
+- Scope: Core trace readers require the canonical event envelope and no longer synthesize missing top-level metadata.
+- Read: Core event schema, trace parser/consumers, trace tests, and raw-trace map.
+- Tests: Core trace focused tests; Core typecheck; project-map drift check.
+
+- Status: Verified
 - Date: 2026-07-16T14:10:00+0800
 - Scope: `FileRunStore` is session-only; standalone per-run roots and per-run trace reconstruction were removed, while checkpoint reconstruction reads canonical agent/session aggregate traces.
 - Read: Core trace store/facade, trace and interface tests, session layout reference, and downstream Host/CLI lookup consumers.

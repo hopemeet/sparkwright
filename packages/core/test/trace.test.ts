@@ -107,37 +107,19 @@ describe("trace", () => {
     });
   });
 
-  it("normalizes legacy trace events that omit metadata", () => {
-    const jsonl =
-      [
-        {
-          id: "evt_legacy_1",
-          runId: "run_legacy",
-          type: "run.created",
-          timestamp: "2026-01-01T00:00:00.000Z",
-          sequence: 1,
-          payload: { goal: "legacy" },
-        },
-        {
-          id: "evt_legacy_2",
-          runId: "run_legacy",
-          type: "run.completed",
-          timestamp: "2026-01-01T00:00:01.000Z",
-          sequence: 2,
-          payload: { state: "completed" },
-        },
-      ]
-        .map((event) => JSON.stringify(event))
-        .join("\n") + "\n";
+  it("rejects trace rows outside the canonical event envelope", () => {
+    const jsonl = `${JSON.stringify({
+      id: "evt_invalid_1",
+      runId: "run_invalid",
+      type: "run.created",
+      timestamp: "2026-01-01T00:00:00.000Z",
+      sequence: 1,
+      payload: { goal: "inspect" },
+    })}\n`;
 
-    const events = loadTraceEventsJsonl(jsonl);
-    const report = buildTraceReportJsonl(jsonl);
-
-    expect(events.map((event) => event.metadata)).toEqual([{}, {}]);
-    expect(report).toMatchObject({
-      verdict: "ok",
-      summary: { eventCount: 2 },
-    });
+    expect(() => loadTraceEventsJsonl(jsonl)).toThrow(
+      "Invalid trace event envelope in trace.jsonl at line 1: metadata must be an object",
+    );
   });
 
   it("preserves append order in memory", () => {
@@ -1077,6 +1059,7 @@ describe("trace", () => {
           type: "model.completed",
           timestamp: "2026-02-02T00:00:02.000Z",
           payload: { step: 1 },
+          metadata: {},
         }),
         JSON.stringify({
           id: "evt_2",
@@ -1085,6 +1068,7 @@ describe("trace", () => {
           type: "tool.completed",
           timestamp: "2026-02-02T00:00:05.000Z",
           payload: { step: 1 },
+          metadata: {},
         }),
       ].join("\n") + "\n",
       "utf8",

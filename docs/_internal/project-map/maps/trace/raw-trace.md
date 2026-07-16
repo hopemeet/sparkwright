@@ -11,6 +11,12 @@ and [../session/session-store.md](../session/session-store.md) for session layou
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T18:30:00+0800
+- Scope: Trace JSONL readers require the canonical event envelope; required top-level fields are no longer synthesized for older rows.
+- Read: Core event schema, trace parser/consumers, trace tests, and protocol references.
+- Tests: Core trace focused tests; Core typecheck; project-map drift check.
+
+- Status: Verified
 - Date: 2026-07-16T14:10:00+0800
 - Scope: File-backed raw trace persistence is session-only; each event is appended to canonical session and agent aggregate traces, and run directories retain only state plus trace pointers.
 - Read: Core trace store/codec/tests, session layout maps, protocol references, and trace sink examples.
@@ -55,7 +61,9 @@ EventLog emits full event
 
 ## Contracts
 
-- JSONL: one serialized `SparkwrightEvent` per line.
+- JSONL: one serialized canonical `SparkwrightEvent` per line. Readers require
+  `id`, `runId`, `type`, `timestamp`, positive `sequence`, `payload`, and object
+  `metadata`; they do not synthesize omitted envelope fields.
 - Events are ordered by run-local `sequence`.
 - `trace.jsonl` is append-only.
 - Durable file traces live only at session and agent scope. Per-run directories
