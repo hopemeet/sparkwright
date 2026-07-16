@@ -1,13 +1,13 @@
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
-import type { PermissionMode } from "@sparkwright/protocol";
+import type { RunAccessMode } from "@sparkwright/protocol";
 
 const require = createRequire(import.meta.url);
 
 export interface HostStdioSpawnInput {
   workspaceRoot: string;
   sessionRootDir: string;
-  permissionMode: PermissionMode;
+  accessMode: RunAccessMode;
   modelName?: string;
   env?: Record<string, string | undefined>;
 }
@@ -30,8 +30,8 @@ export function resolveHostStdioSpawn(
       input.workspaceRoot,
       "--session-root",
       input.sessionRootDir,
-      "--permission-mode",
-      input.permissionMode,
+      "--access-mode",
+      input.accessMode,
       ...(input.modelName ? ["--model", input.modelName] : []),
     ],
   };

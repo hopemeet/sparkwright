@@ -100,8 +100,7 @@ class SparkwrightClient:
         goal: str,
         *,
         workspace: Optional[str] = None,
-        write: bool = False,
-        approve_all: bool = False,
+        access_mode: str = "read-only",
         trace_level: str = "standard",
         timeout: int = 300,
     ) -> RunResult:
@@ -111,8 +110,8 @@ class SparkwrightClient:
             goal:        Natural-language goal string passed to the agent.
             workspace:   Workspace path for this run (overrides the default
                          set in the constructor).
-            write:       Pass ``--write`` to allow the agent to mutate files.
-            approve_all: Pass ``--yes`` to auto-approve all approval gates.
+            access_mode: Run autonomy preset: ``read-only``, ``ask``,
+                         ``accept-edits``, or ``bypass``.
             trace_level: One of ``"minimal"``, ``"standard"``, or ``"debug"``.
             timeout:     Maximum seconds to wait for the subprocess.
 
@@ -128,7 +127,7 @@ class SparkwrightClient:
                 non-zero code and no result.json was written.
         """
         ws_path = self._resolve_workspace(workspace)
-        cmd = self._build_command(goal, ws_path, write, approve_all, trace_level)
+        cmd = self._build_command(goal, ws_path, access_mode, trace_level)
 
         try:
             proc = subprocess.run(
@@ -241,17 +240,15 @@ class SparkwrightClient:
         self,
         goal: str,
         workspace: Path,
-        write: bool,
-        approve_all: bool,
+        access_mode: str,
         trace_level: str,
     ) -> list[str]:
         cmd = self._resolve_cli_cmd() + ["run", goal]
         cmd += ["--workspace", str(workspace)]
         cmd += ["--trace-level", trace_level]
-        if write:
-            cmd.append("--write")
-        if approve_all:
-            cmd.append("--yes")
+        if access_mode not in {"read-only", "ask", "accept-edits", "bypass"}:
+            raise ValueError(f"Unsupported access mode: {access_mode}")
+        cmd += ["--access-mode", access_mode]
         return cmd
 
     def _load_run_result(self, run_dir: Path) -> RunResult:

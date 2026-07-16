@@ -381,7 +381,7 @@ export function createWriteFileTool() {
  * Supports in-place line replacement — needed for "make one minimal fix" tasks
  * where appending a new section would leave the incorrect text behind. The
  * write itself is still scope- and approval-gated inside Workspace.writeText,
- * so this preserves the --target / --yes contract.
+ * so this preserves the target-path and access-policy contract.
  */
 export function createEditAnchoredTextTool() {
   return createEditAnchoredTextToolBase();

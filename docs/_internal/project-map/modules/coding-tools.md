@@ -9,6 +9,14 @@ See also [../maps/runtime/tool-orchestration.md](../maps/runtime/tool-orchestrat
 
 ## Main Files
 
+## Last Verified
+
+- Status: Verified
+- Date: 2026-07-16T12:45:00+0800
+- Scope: Coding tool names and behavior are unchanged; their write/approval gates now consume the access plan derived from canonical accessMode.
+- Read: routed production sources and focused access-policy tests.
+- Tests: npm run typecheck:test; focused Host/Core tests.
+
 - `packages/host/src/tool-catalog.ts`
 - `packages/host/src/tool-selectors.ts`
 - `packages/host/src/tools.ts`

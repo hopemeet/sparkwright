@@ -1,7 +1,6 @@
 import {
   ACCESS_MODES,
   BACKGROUND_TASK_POLICIES,
-  PERMISSION_MODES,
   TRACE_LEVELS,
 } from "@sparkwright/protocol";
 import type { WorkflowHookMatcher, WorkflowHookName } from "@sparkwright/core";
@@ -35,10 +34,6 @@ export const providerOptionsSchema = z
     "Request-level AI SDK providerOptions keyed by provider namespace.",
   );
 
-const permissionModeSchema = z
-  .enum(PERMISSION_MODES)
-  .describe("Permission policy mode for runs started from the TUI.");
-export const PERMISSION_MODE_CONFIG_VALUES = permissionModeSchema.options;
 const accessModeSchema = z
   .enum(ACCESS_MODES)
   .describe(
@@ -174,36 +169,6 @@ export const TASK_BUDGET_POSITIVE_INTEGER_CONFIG_KEYS = taskBudgetSchema
     maxSourceChars: true,
     maxOutputTokens: true,
     maxInputTokens: true,
-  })
-  .keyof().options;
-
-export const approvalsSchema = z
-  .object({
-    shellSafe: z
-      .boolean()
-      .describe("Auto-approve commands the safety classifier rates safe.")
-      .optional(),
-    edits: z.boolean().describe("Auto-approve workspace edits.").optional(),
-    all: z
-      .boolean()
-      .describe("Auto-approve everything the policy allows.")
-      .optional(),
-    cronMode: permissionModeSchema
-      .describe(
-        "Default permission mode for unattended cron run/tick commands. CLI --access-mode still overrides.",
-      )
-      .optional(),
-  })
-  .strict()
-  .describe(
-    "Default approval auto-grants. CLI flags still override these values.",
-  );
-export const APPROVALS_CONFIG_KEYS = approvalsSchema.keyof().options;
-export const APPROVAL_BOOLEAN_CONFIG_KEYS = approvalsSchema
-  .pick({
-    shellSafe: true,
-    edits: true,
-    all: true,
   })
   .keyof().options;
 
@@ -999,11 +964,10 @@ export const runGroupSchema = z
     budget: runBudgetSchema.optional(),
     maxSteps: maxStepsSchema.optional(),
     traceLevel: traceLevelSchema.optional(),
-    approvals: approvalsSchema.optional(),
   })
   .strict()
   .describe(
-    "Preferred grouping for run-shaping defaults. Flattens to accessMode/backgroundTasks/runBudget/maxSteps/traceLevel/approvals.",
+    "Preferred grouping for run-shaping defaults. Flattens to accessMode/backgroundTasks/runBudget/maxSteps/traceLevel.",
   );
 export const RUN_GROUP_CONFIG_KEYS = runGroupSchema.keyof().options;
 
@@ -1040,7 +1004,6 @@ export const CONFIG_GROUP_FIELD_MAP = {
     budget: "runBudget",
     maxSteps: "maxSteps",
     traceLevel: "traceLevel",
-    approvals: "approvals",
   },
   ui: {
     theme: "theme",
@@ -1068,7 +1031,6 @@ export const sparkwrightConfigZodSchema = z
     runBudget: runBudgetSchema.optional(),
     maxSteps: maxStepsSchema.optional(),
     traceLevel: traceLevelSchema.optional(),
-    approvals: approvalsSchema.optional(),
     shell: shellSchema.optional(),
     tools: toolsSchema.optional(),
     tasks: tasksSchema.optional(),
@@ -1091,7 +1053,6 @@ export type ModelCost = z.output<typeof modelCostSchema>;
 export type ProviderModelConfig = z.output<typeof providerModelConfigSchema>;
 export type ProviderConfig = z.output<typeof providerConfigSchema>;
 export type WriteGuardrailsConfig = z.output<typeof writeGuardrailsSchema>;
-export type ApprovalDefaults = z.output<typeof approvalsSchema>;
 export type TaskBudgetConfig = z.output<typeof taskBudgetSchema>;
 export type TaskConfig = z.output<typeof taskConfigSchema>;
 export type ShellConfig = Omit<z.output<typeof shellSchema>, "sandbox"> & {

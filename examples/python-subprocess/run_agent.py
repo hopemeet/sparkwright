@@ -8,7 +8,7 @@ be built (npm install && npm run build) before using this script.
 Usage:
     python run_agent.py "your goal here"
     python run_agent.py "inspect this repo" --workspace ../../examples/repo-pilot
-    python run_agent.py "inspect and update README" --workspace ../../examples/repo-pilot --write --yes
+    python run_agent.py "inspect and update README" --workspace ../../examples/repo-pilot --access-mode bypass
     python run_agent.py "inspect this repo" --trace-level debug
 
 Exit codes:
@@ -225,7 +225,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         epilog=(
             "Examples:\n"
             '  python run_agent.py "inspect this repo"\n'
-            '  python run_agent.py "improve README" --workspace ../../examples/repo-pilot --write --yes\n'
+            '  python run_agent.py "improve README" --workspace ../../examples/repo-pilot --access-mode bypass\n'
             '  python run_agent.py "audit code quality" --trace-level debug'
         ),
     )
@@ -242,14 +242,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
-        "--write",
-        action="store_true",
-        help="Allow the agent to write files (passes --write to sparkwright).",
-    )
-    parser.add_argument(
-        "--yes",
-        action="store_true",
-        help="Auto-approve all approval gates (passes --yes to sparkwright).",
+        "--access-mode",
+        choices=["read-only", "ask", "accept-edits", "bypass"],
+        default="read-only",
+        help="Run autonomy preset passed to sparkwright (default: read-only).",
     )
     parser.add_argument(
         "--trace-level",
@@ -326,10 +322,7 @@ def main(argv: list[str]) -> int:
     cmd = cli_cmd + ["run", args.goal]
     cmd += ["--workspace", str(workspace)]
     cmd += ["--trace-level", args.trace_level]
-    if args.write:
-        cmd.append("--write")
-    if args.yes:
-        cmd.append("--yes")
+    cmd += ["--access-mode", args.access_mode]
 
     print(f"Running: {' '.join(cmd)}")
     print(f"Workspace: {workspace}")

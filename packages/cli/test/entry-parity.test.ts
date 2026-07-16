@@ -56,7 +56,7 @@ describe("entry parity smoke", () => {
       expect(summary.completedReason).toBe("final_answer");
       expect(summary.runMetadata).toMatchObject({
         traceLevel: "debug",
-        permissionMode: "default",
+        accessMode: expect.any(String),
       });
       expect(summary.runMetadata?.capabilitySnapshot).toMatchObject({
         tools: expect.any(Number),
@@ -64,14 +64,12 @@ describe("entry parity smoke", () => {
     }
 
     expect(cli.source).toBe("cli");
-    expect(cli.runMetadata).toMatchObject({ shouldWrite: false });
+    expect(cli.runMetadata).toMatchObject({ accessMode: "read-only" });
     expect(tui.source).toBe("tui");
-    expect(tui.runMetadata).toMatchObject({
-      shouldWrite: true,
-    });
+    expect(tui.runMetadata).toMatchObject({ accessMode: "ask" });
     expect(tui.runMetadata).not.toHaveProperty("allowWorkspaceWriteApproval");
     expect(acp.source).toBe("acp");
-    expect(acp.runMetadata).toMatchObject({ shouldWrite: false });
+    expect(acp.runMetadata).toMatchObject({ accessMode: "read-only" });
   }, 45_000);
 
   async function runCliEntry(): Promise<EntrySummary> {

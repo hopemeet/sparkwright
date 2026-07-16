@@ -6,16 +6,10 @@ import { serveConnection } from "./server.js";
 import { createHostService } from "./host-service.js";
 import {
   ACCESS_MODES,
-  compileRunAccessMode,
   isRunAccessMode,
   type RunAccessMode,
 } from "@sparkwright/core";
-import {
-  isPermissionMode,
-  isTraceLevel,
-  type PermissionMode,
-  type TraceLevel,
-} from "@sparkwright/protocol";
+import { isTraceLevel, type TraceLevel } from "@sparkwright/protocol";
 import { join } from "node:path";
 import { unauthenticatedConnection } from "./connection.js";
 
@@ -26,10 +20,8 @@ interface ParsedArgs {
   workspaceRoot: string;
   sessionRootDir: string;
   model?: string;
-  accessMode?: RunAccessMode;
-  permissionMode: PermissionMode;
+  accessMode: RunAccessMode;
   traceLevel: TraceLevel;
-  shouldWrite: boolean;
   authToken?: string;
   imControlSelfBinding: boolean;
 }
@@ -41,19 +33,11 @@ function parseArgs(argv: string[]): ParsedArgs {
   let workspaceRoot = process.cwd();
   let sessionRootDir: string | undefined;
   let model: string | undefined;
-  let accessMode: RunAccessMode | undefined;
-  let permissionMode: PermissionMode = "default";
+  let accessMode: RunAccessMode = "read-only";
   let traceLevel: TraceLevel = "standard";
-  let shouldWrite = false;
   let authToken = process.env.SPARKWRIGHT_HOST_TOKEN;
   let imControlSelfBinding =
     process.env.SPARKWRIGHT_HOST_IM_SELF_BINDING === "1";
-  const applyAccessMode = (mode: RunAccessMode): void => {
-    accessMode = mode;
-    const compiled = compileRunAccessMode(mode);
-    permissionMode = compiled.permissionMode;
-    shouldWrite = compiled.shouldWrite;
-  };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === "--stdio") mode = "stdio";
@@ -63,15 +47,9 @@ function parseArgs(argv: string[]): ParsedArgs {
     else if (a === "--workspace" && argv[i + 1]) workspaceRoot = argv[++i];
     else if (a === "--session-root" && argv[i + 1]) sessionRootDir = argv[++i];
     else if (a === "--model" && argv[i + 1]) model = argv[++i];
-    else if (a === "--write") {
-      if (accessMode !== undefined) applyAccessMode("ask");
-      else shouldWrite = true;
-    } else if (a === "--access-mode" && argv[i + 1]) {
+    else if (a === "--access-mode" && argv[i + 1]) {
       const v = argv[++i];
-      if (isRunAccessMode(v)) applyAccessMode(v);
-    } else if (a === "--permission-mode" && argv[i + 1]) {
-      const v = argv[++i];
-      if (isPermissionMode(v)) permissionMode = v;
+      if (isRunAccessMode(v)) accessMode = v;
     } else if (a === "--trace-level" && argv[i + 1]) {
       const v = argv[++i];
       if (isTraceLevel(v)) traceLevel = v;
@@ -91,9 +69,7 @@ function parseArgs(argv: string[]): ParsedArgs {
       sessionRootDir ?? join(workspaceRoot, ".sparkwright", "sessions"),
     model,
     accessMode,
-    permissionMode,
     traceLevel,
-    shouldWrite,
     authToken,
     imControlSelfBinding,
   };
@@ -112,7 +88,6 @@ function printHelp(): void {
       "  --workspace <path>         workspace root for runs (default: cwd)",
       "  --session-root <path>      session/trace storage root (default: <workspace>/.sparkwright/sessions)",
       '  --model <ref>              model reference "provider/model" (or "deterministic")',
-      "  --write                    allow approval-gated workspace writes for requests that omit shouldWrite",
       `  --access-mode <mode>       ${ACCESS_MODES.join(" | ")}`,
       "  --trace-level <level>      standard | debug",
       "  --auth-token <token>       require WS clients to provide Bearer token or ?token=...",
@@ -165,9 +140,7 @@ export async function runHostMain(argv: string[]): Promise<void> {
       sessionRootDir: args.sessionRootDir,
       defaultModel: args.model,
       defaultAccessMode: args.accessMode,
-      defaultPermissionMode: args.permissionMode,
       defaultTraceLevel: args.traceLevel,
-      defaultShouldWrite: args.shouldWrite,
       authContext: unauthenticatedConnection("local-stdio"),
     });
     return;
@@ -205,9 +178,7 @@ export async function runHostMain(argv: string[]): Promise<void> {
         sessionRootDir: args.sessionRootDir,
         defaultModel: args.model,
         defaultAccessMode: args.accessMode,
-        defaultPermissionMode: args.permissionMode,
         defaultTraceLevel: args.traceLevel,
-        defaultShouldWrite: args.shouldWrite,
         authContext,
       });
     },

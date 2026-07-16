@@ -9,6 +9,12 @@ See [approvals.md](approvals.md) and [../runtime/tool-orchestration.md](../runti
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-07-16T12:45:00+0800
+- Scope: Write capability is derived from canonical accessMode; managed write policy, containment, budgets, and event evidence remain unchanged.
+- Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.
+- Tests: focused access/policy/protocol/CLI/TUI/ACP/Workflow tests; npm run typecheck:test; npm run schema:check.
+
 - Date: 2026-07-16T11:52:29+0800
 - Scope: reviewed protocol 2.0 terminal failure envelope changes; workspace
   admission, mutation policy, and approval evidence do not consume the removed
@@ -43,10 +49,9 @@ tool proposes write
 - Accepted anchored edits still flow through normal workspace write events.
 - Large diffs should be artifacts, not only inline payloads.
 - `workspace.write.denied` is a valid terminal write outcome.
-- Runs with `shouldWrite: false` hard-deny workspace writes before approval.
-  Interactive clients that need write approvals should send `shouldWrite: true`;
-  managed coding tools then defer to the normal `workspace.write` diff approval
-  path and guardrails.
+- Runs with `accessMode: read-only` hard-deny workspace writes before approval.
+  `ask`, `accept-edits`, and `bypass` are write-capable; managed coding tools
+  still defer to the normal `workspace.write` diff policy and guardrails.
 - Host and internal direct-core start/resume construct this mutation layer from
   one Host factory. Every invocation is fresh: its `writtenPaths` file-budget
   state must never be cached or shared through the immutable security plan.
@@ -58,7 +63,7 @@ tool proposes write
   managed workspace write tools only through a spawn-time workspace-write grant.
   That grant is approved at the parent tool boundary, then consumed by a
   child-local resolver that approves only `workspace.write` requests. The
-  parent run policy is still layered into the child, so `shouldWrite:false`,
+  parent run policy is still layered into the child, so read-only access,
   target-path restrictions, file budgets, and diff budgets deny before the
   grant resolver can approve.
 - Same-turn Agent tool batching treats a requested dynamic workspace-write grant
@@ -111,7 +116,7 @@ tool proposes write
 - Workflow Script processes require both write-enabled run access and a
   declared `write` capability before their sandbox receives write grants.
   Read-only command hooks are also forced into a fail-closed no-write sandbox
-  when Host run metadata explicitly records `shouldWrite:false`.
+  when Host run metadata records `accessMode: read-only`.
 - Managed `LocalWorkspace` writes use realpath containment and reject stable
   symlink segments in the caller's original workspace-relative path, even when
   the symlink target stays inside the workspace. Missing parent chains are

@@ -3,15 +3,10 @@ import { resolve } from "node:path";
 import { AgentSideConnection, ndJsonStream } from "@agentclientprotocol/sdk";
 import {
   isTraceLevel,
-  type PermissionMode,
   type RunAccessMode,
   type TraceLevel,
 } from "@sparkwright/protocol";
-import {
-  compileRunAccessMode,
-  isRunAccessMode,
-  ACCESS_MODES,
-} from "@sparkwright/core";
+import { isRunAccessMode, ACCESS_MODES } from "@sparkwright/core";
 import { createSparkwrightAcpAgentFactory } from "./agent.js";
 
 export interface AcpMainOptions {
@@ -23,10 +18,8 @@ interface ParsedArgs {
   workspaceRoot: string;
   sessionRootDir?: string;
   model?: string;
-  accessMode?: RunAccessMode;
-  permissionMode: PermissionMode;
+  accessMode: RunAccessMode;
   traceLevel: TraceLevel;
-  shouldWrite: boolean;
 }
 
 export async function runAcpMain(
@@ -60,9 +53,7 @@ export async function runAcpMain(
       defaultSessionRootDir: args.sessionRootDir,
       defaultModel: args.model,
       defaultAccessMode: args.accessMode,
-      defaultPermissionMode: args.permissionMode,
       defaultTraceLevel: args.traceLevel,
-      defaultShouldWrite: args.shouldWrite,
     })(conn);
     agents.push(agent as SparkwrightAcpAgentHandle);
     return agent;
@@ -81,16 +72,8 @@ function parseArgs(argv: string[], cwd: string): ParsedArgs {
   let workspaceRoot = resolve(cwd);
   let sessionRootDir: string | undefined;
   let model: string | undefined;
-  let accessMode: RunAccessMode | undefined;
-  let permissionMode: PermissionMode = "default";
+  let accessMode: RunAccessMode = "read-only";
   let traceLevel: TraceLevel = "standard";
-  let shouldWrite = false;
-  const applyAccessMode = (mode: RunAccessMode): void => {
-    accessMode = mode;
-    const compiled = compileRunAccessMode(mode);
-    permissionMode = compiled.permissionMode;
-    shouldWrite = compiled.shouldWrite;
-  };
 
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -100,13 +83,10 @@ function parseArgs(argv: string[], cwd: string): ParsedArgs {
       sessionRootDir = resolve(cwd, argv[++i]!);
     } else if (arg === "--model" && argv[i + 1]) {
       model = argv[++i];
-    } else if (arg === "--write") {
-      if (accessMode !== undefined) applyAccessMode("ask");
-      else shouldWrite = true;
     } else if (arg === "--access-mode" && argv[i + 1]) {
       const value = argv[++i];
       if (isRunAccessMode(value)) {
-        applyAccessMode(value);
+        accessMode = value;
       }
     } else if (arg === "--trace-level" && argv[i + 1]) {
       const value = argv[++i];
@@ -122,9 +102,7 @@ function parseArgs(argv: string[], cwd: string): ParsedArgs {
     sessionRootDir,
     model,
     accessMode,
-    permissionMode,
     traceLevel,
-    shouldWrite,
   };
 }
 
@@ -140,7 +118,6 @@ function printHelp(): void {
       "  --workspace <path>         default workspace root (default: cwd)",
       "  --session-root <path>      session artifact root (default: <workspace>/.sparkwright/sessions)",
       '  --model <ref>              model reference "provider/model" (or "deterministic")',
-      "  --write                    allow approval-gated workspace writes",
       `  --access-mode <mode>       ${ACCESS_MODES.join(" | ")}`,
       "  --trace-level <level>      standard | debug",
       "",

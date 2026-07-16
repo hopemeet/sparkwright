@@ -9,7 +9,7 @@
     "fromTrace": true,
     "force": false,
     "model": "deterministic",
-    "permissionMode": "default",
+    "accessMode": "ask",
     "traceLevel": "standard",
     "metadata": {
       "source": "fixture"

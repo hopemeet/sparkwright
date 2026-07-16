@@ -763,7 +763,7 @@ async function runCommandAction(
       ? `${JSON.stringify(hookActionStdin(input))}\n`
       : undefined;
   const sandbox =
-    input.run.metadata?.shouldWrite === false
+    input.run.metadata?.accessMode === "read-only"
       ? await enforceNoWriteShellSandbox(options.sandboxConfig, {
           runtime: options.sandboxRuntime,
           denyWriteRoots: [options.workspaceRoot],

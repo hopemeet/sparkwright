@@ -357,7 +357,7 @@ describe("WorkflowControlCommandProcessor", () => {
       authorizationSnapshot: {
         confidentialPaths: [],
         confidentialDefaults: true,
-        shouldWrite: false,
+        accessMode: "read-only",
         backgroundTasks: "foreground-only",
       },
     });

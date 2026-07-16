@@ -9,6 +9,12 @@ See [workspace-writes.md](workspace-writes.md) and [shell.md](shell.md).
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-07-16T12:45:00+0800
+- Scope: All product entrypoints derive approval behavior from accessMode; standalone approval flags/defaults and wire fallbacks were removed.
+- Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.
+- Tests: focused access/policy/protocol/CLI/TUI/ACP/Workflow tests; npm run typecheck:test; npm run schema:check.
+
 - Date: 2026-07-16T11:52:29+0800
 - Scope: reviewed protocol 2.0 terminal failure envelope changes; approval
   request, resolution, and audit contracts are independent of the removed
@@ -55,24 +61,17 @@ policy requires approval
   policy/approval-denial semantics for diagnostics and run outcome, while the
   original approval/policy event remains the audit source.
 - Pending approval UI should key by approval/request identity.
-- `shouldWrite: false` keeps a hard-deny write gate before approval. Interactive
-  clients that need write approvals should start write-enabled runs
-  (`shouldWrite: true`) and rely on `permissionMode` plus normal approval
-  policy for auto/manual responses.
+- `accessMode: read-only` keeps a hard-deny write gate before approval.
+  `ask` enables writes with interactive approval, `accept-edits` auto-approves
+  managed edits, and `bypass` auto-approves permitted actions.
 - Host freezes resolved access fields into a run-local security plan before
   assembling policies and process capabilities. This does not share the Core
   mutation policy: approval state and `writtenPaths` remain newly constructed
   for each run.
 - Trace verification checks that resolutions do not exceed requests.
-- `approvals.cronMode` is a config default for cron command permission mode;
-  named approval behavior remains owned by the normal core/host approval path,
-  and explicit CLI flags still override the default.
-- TUI sends shared `accessMode` at the run boundary; the host projects it to
-  core `permissionMode`/`shouldWrite` and clamps it to any project access
-  ceiling. Deprecated standalone TUI approval scopes (`approveAll`,
-  `approveEdits`, `approveShellSafe`, and config `approvals.*`) do not
-  independently auto-resolve TUI prompts; `bypass` and `accept-edits` remain
-  auto-answering through their derived core permission modes.
+- CLI, TUI, ACP, Cron, and Host send the same `accessMode` at the run boundary;
+  Host clamps it to any project access ceiling and derives the run-local
+  approval policy. There is no second approval-default input.
 - Ask-mode TUI users may remember an exact recognized approval subject for the
   current session. Rules are client-memory only, installed after a successful
   `approval.resolve`, matched on canonical path or exact tool arguments plus
@@ -109,7 +108,7 @@ policy requires approval
 ## Consumers
 
 - Host pending approval map.
-- CLI flags such as `--yes`, `--yes-edits`, and `--yes-shell-safe`.
+- CLI `--access-mode` and the TUI runtime access switch.
 - TUI approval layer via host-client approval helpers.
 - Trace safety summary and verification.
 

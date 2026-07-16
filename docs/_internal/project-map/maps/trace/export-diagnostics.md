@@ -91,6 +91,12 @@ session trace.jsonl
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T12:45:00+0800
+- Scope: TUI diagnostics display canonical access mode and no longer expose compiled permission/write fields.
+- Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.
+- Tests: focused access/policy/protocol/CLI/TUI/ACP/Workflow tests; npm run typecheck:test; npm run schema:check.
+
+- Status: Verified
 - Date: 2026-07-16T11:49:00+0800
 - Scope: TUI transcript export renders terminal failures through the canonical
   protocol `failure` envelope; the root-error fallback was removed. Raw Core

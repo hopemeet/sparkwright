@@ -133,6 +133,12 @@ contracts, and focused checklists that no longer fit here.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T12:45:00+0800
+- Scope: ACP, Server Runtime, and Workflow persistence now carry only canonical accessMode; adapters no longer accept public permission/write fallback fields.
+- Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.
+- Tests: focused access/policy/protocol/CLI/TUI/ACP/Workflow tests; npm run typecheck:test; npm run schema:check.
+
+- Status: Verified
 - Date: 2026-07-16
 - Scope: SDK Core collection, SDK Node, ACP, and IM Gateway consume Host protocol
   2.0 terminal failures through the single `failure` envelope; no edge adapter

@@ -24,12 +24,10 @@ Conventions:
   may use these optional fields for transport/governance diagnostics and must
   continue grouping lifecycle by `childRunId`.
 
-- `host-message.schema.json`: additive — `capability.inspect` accepts optional
-  `accessMode`, `backgroundTasks`, `permissionMode`, and `shouldWrite` fields,
-  and `CapabilitySnapshot` may include an `access` summary. Migration: clients
-  that already inspect capabilities can omit these fields to keep the
-  conservative no-write diagnostic view; clients with an active run mode should
-  send the same access fields used for `run.start`.
+- `host-message.schema.json`: `capability.inspect` accepts `accessMode` and
+  `backgroundTasks`, and `CapabilitySnapshot` may include the same canonical
+  access summary. Omitted access keeps the conservative read-only diagnostic
+  view.
 
 - `host-message.schema.json`: additive — `run.start`, `run.resume`, and
   `workflow.resume` accept optional `confidentialPaths` plus

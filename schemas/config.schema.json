@@ -192,36 +192,6 @@
       "enum": ["standard", "debug"],
       "description": "Default trace verbosity when an entrypoint does not pass one. CLI --trace-level overrides."
     },
-    "approvals": {
-      "type": "object",
-      "properties": {
-        "shellSafe": {
-          "type": "boolean",
-          "description": "Auto-approve commands the safety classifier rates safe."
-        },
-        "edits": {
-          "type": "boolean",
-          "description": "Auto-approve workspace edits."
-        },
-        "all": {
-          "type": "boolean",
-          "description": "Auto-approve everything the policy allows."
-        },
-        "cronMode": {
-          "type": "string",
-          "enum": [
-            "plan",
-            "default",
-            "accept_edits",
-            "dont_ask",
-            "bypass_permissions"
-          ],
-          "description": "Default permission mode for unattended cron run/tick commands. CLI --access-mode still overrides."
-        }
-      },
-      "additionalProperties": false,
-      "description": "Default approval auto-grants. CLI flags still override these values."
-    },
     "shell": {
       "type": "object",
       "properties": {
@@ -1598,40 +1568,10 @@
           "type": "string",
           "enum": ["standard", "debug"],
           "description": "Default trace verbosity when an entrypoint does not pass one. CLI --trace-level overrides."
-        },
-        "approvals": {
-          "type": "object",
-          "properties": {
-            "shellSafe": {
-              "type": "boolean",
-              "description": "Auto-approve commands the safety classifier rates safe."
-            },
-            "edits": {
-              "type": "boolean",
-              "description": "Auto-approve workspace edits."
-            },
-            "all": {
-              "type": "boolean",
-              "description": "Auto-approve everything the policy allows."
-            },
-            "cronMode": {
-              "type": "string",
-              "enum": [
-                "plan",
-                "default",
-                "accept_edits",
-                "dont_ask",
-                "bypass_permissions"
-              ],
-              "description": "Default permission mode for unattended cron run/tick commands. CLI --access-mode still overrides."
-            }
-          },
-          "additionalProperties": false,
-          "description": "Default approval auto-grants. CLI flags still override these values."
         }
       },
       "additionalProperties": false,
-      "description": "Preferred grouping for run-shaping defaults. Flattens to accessMode/backgroundTasks/runBudget/maxSteps/traceLevel/approvals."
+      "description": "Preferred grouping for run-shaping defaults. Flattens to accessMode/backgroundTasks/runBudget/maxSteps/traceLevel."
     },
     "ui": {
       "type": "object",

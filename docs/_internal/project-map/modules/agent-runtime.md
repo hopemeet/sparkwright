@@ -8,6 +8,12 @@ See also [../maps/capabilities/agents.md](../maps/capabilities/agents.md), [../m
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-07-16T12:45:00+0800
+- Scope: Workflow run record v2 persists canonical accessMode authorization and rejects the former dual-field shape.
+- Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.
+- Tests: focused access/policy/protocol/CLI/TUI/ACP/Workflow tests; npm run typecheck:test; npm run schema:check.
+
 - Date: 2026-07-16
 - Scope: workflow delegate identity now requires the canonical `agentId`; the portable workflow type no longer carries a delegate tool-name selector.
 

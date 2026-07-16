@@ -10,14 +10,19 @@ major; breaking changes bump the major.
   `run.failed.failure` is the single terminal failure envelope, and clients no
   longer parse root error/message/reason fallbacks.
 
+- Host protocol 2.0 makes `accessMode` the only run-autonomy input for
+  `run.start`, `run.resume`, `workflow.resume`, and `capability.inspect`.
+  `permissionMode` and `shouldWrite` are no longer wire fields, capability
+  summaries no longer expose their compiled values, and omitted access defaults
+  to `read-only`.
+
 - Add `workflow.control.process` so authenticated channel adapters can dispatch
   an already-durable Package D command without recreating or widening its
   authorization envelope. Add durable workflow binding/delivery coordination
   for TUI, CLI, SDK/API, and IM adapters.
 
 - Add optional `accessMode` to `run.start` and `run.resume` payloads as the
-  preferred high-level run autonomy field. Hosts compile it to legacy
-  `permissionMode`/`shouldWrite` and record conflicts in metadata.
+  canonical high-level run autonomy field.
 - Add optional `confidentialPaths` and `confidentialDefaults` to `run.start`,
   `run.resume`, and `workflow.resume` payloads so clients can add per-run
   read-confidentiality deny globs and explicitly opt out of the built-in

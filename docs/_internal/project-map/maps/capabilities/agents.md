@@ -10,6 +10,12 @@ See [../../modules/agent-runtime.md](../../modules/agent-runtime.md) and [../../
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-07-16T12:45:00+0800
+- Scope: Agent/delegate capability inspection receives canonical run access; child write gating remains an internal derived safety fact.
+- Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.
+- Tests: focused access/policy/protocol/CLI/TUI/ACP/Workflow tests; npm run typecheck:test; npm run schema:check.
+
 - Date: 2026-07-16
 - Scope: `delegate_agent`, `delegate_parallel`, workflow delegate nodes, and hook agent actions select targets only by `agentId`; configured tool names remain diagnostics and direct-tool identities.
 
@@ -117,7 +123,7 @@ configured profiles/delegates
   default), conditional approval facts (`approvalRequiredUnderCurrentRun`,
   `approvalReasons`, `approvalRunOptions`), profile-selected potential
   capability, and `gatedByRunWrite` when workspace-write or shell access is
-  still behind the parent `--write` gate. The same effective policy is the sole
+  still behind a write-capable parent access mode. The same effective policy is the sole
   policy input when Host constructs the in-process Agent tool.
 - Agent profile `triggers` and `when.keywords` are deterministic routing hints
   only. During run preparation the host evaluates those keywords against the

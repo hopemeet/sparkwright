@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import {
   analyzeToolOutcomes,
+  compileRunAccessMode,
   completedRunOutcomeFromEvents,
   createDefaultPromptInspector,
   createPermissionModePolicy,
@@ -12,7 +13,7 @@ import {
   type ClassifiedToolFailure,
   type CompletedRunOutcome,
   type ModelAdapter,
-  type PermissionMode,
+  type RunAccessMode,
   type SparkwrightEvent,
   type ToolDefinition,
 } from "@sparkwright/core";
@@ -27,7 +28,7 @@ export interface RunCronJobOptions {
   modelFactory?: (job: CronJob) => ModelAdapter | Promise<ModelAdapter>;
   tools?: ToolDefinition[];
   approvalResolver?: ApprovalResolver;
-  permissionMode?: PermissionMode;
+  accessMode?: RunAccessMode;
   skillRoots?: string[];
   /**
    * Fallback workspace for jobs that do not carry their own `job.workspace`.
@@ -81,7 +82,7 @@ export async function runCronJob(
     workspace: new LocalWorkspace(workspaceRoot),
     approvalResolver: options.approvalResolver ?? denyApprovals,
     policy: createPermissionModePolicy({
-      mode: options.permissionMode ?? "default",
+      mode: compileRunAccessMode(options.accessMode ?? "ask").permissionMode,
     }),
     promptBuilder,
     tools: (options.tools ?? []).filter((tool) => tool.name !== "cron"),

@@ -3,7 +3,7 @@ import {
   resolveApprovalByPolicy,
   type ApprovalPolicy,
   type ApprovalResolver,
-  type PermissionMode,
+  type RunAccessMode,
 } from "@sparkwright/core";
 import type { CliIO } from "./io.js";
 import { write, writeLine } from "./io.js";
@@ -11,31 +11,19 @@ import { write, writeLine } from "./io.js";
 export type { ApprovalEnforcementMode, ApprovalScope } from "@sparkwright/core";
 export type CliApprovalPolicy = ApprovalPolicy;
 
-export function createCliApprovalPolicy(options: {
-  approveAll?: boolean;
-  approveEdits?: boolean;
-  approveShellSafe?: boolean;
-  permissionMode?: PermissionMode;
-}): CliApprovalPolicy {
-  return createApprovalPolicy(options);
+export function createCliApprovalPolicy(
+  accessMode: RunAccessMode,
+): CliApprovalPolicy {
+  return createApprovalPolicy(accessMode);
 }
 
 export function createCliApprovalResolver(options: {
   approvalPolicy?: CliApprovalPolicy;
-  approveAll?: boolean;
-  approveEdits?: boolean;
-  approveShellSafe?: boolean;
-  permissionMode?: PermissionMode;
+  accessMode: RunAccessMode;
   io: CliIO;
 }): ApprovalResolver {
   const policy =
-    options.approvalPolicy ??
-    createCliApprovalPolicy({
-      approveAll: options.approveAll,
-      approveEdits: options.approveEdits,
-      approveShellSafe: options.approveShellSafe,
-      permissionMode: options.permissionMode,
-    });
+    options.approvalPolicy ?? createCliApprovalPolicy(options.accessMode);
 
   return async (request) => {
     const policyDecision = resolveApprovalByPolicy(policy, request);
@@ -82,20 +70,8 @@ function approvalPolicyLogLine(
   message: string | undefined,
   summary: string,
 ): string {
-  if (message === "Approval denied by dont_ask mode.") {
-    return `Approval denied by permission mode: ${summary}`;
-  }
-  if (message === "Auto-approved by --yes-edits.") {
+  if (message === "Auto-approved by accept-edits access mode.") {
     return `Approval auto-approved for workspace edit: ${summary}`;
-  }
-  if (message === "Auto-approved by --yes-shell-safe.") {
-    return `Approval auto-approved for safe shell: ${summary}`;
-  }
-  if (message === "Auto-approved by MCP approval scope.") {
-    return `Approval auto-approved for MCP tool: ${summary}`;
-  }
-  if (message === "Auto-approved by external approval scope.") {
-    return `Approval auto-approved for external action: ${summary}`;
   }
   return `Approval auto-approved: ${summary}`;
 }

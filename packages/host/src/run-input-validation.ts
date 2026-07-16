@@ -15,9 +15,6 @@ export interface RunInputValidationInput {
   workspaceRoot: string;
   targetPath?: string;
   requireTargetExists?: boolean;
-  approveAll?: boolean;
-  approveShellSafe?: boolean;
-  shouldWrite?: boolean;
   modelName?: string;
   validateModel?: boolean;
   env?: Record<string, string | undefined>;
@@ -34,12 +31,6 @@ export async function validateRunInput(
 ): Promise<RunInputValidationResult> {
   const errors: string[] = [];
   const warnings: string[] = [];
-
-  if (input.approveAll && !input.shouldWrite) {
-    warnings.push(
-      "--yes does not enable workspace writes without --write; it can still approve other risky actions.",
-    );
-  }
 
   const workspaceOk = await validateWorkspace(input.workspaceRoot, errors);
   if (workspaceOk && input.targetPath) {

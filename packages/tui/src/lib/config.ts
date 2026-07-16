@@ -6,7 +6,6 @@ import {
   normalizeGroupedConfig,
   readConfigFileObject,
   type ProviderConfig,
-  type ApprovalDefaults,
 } from "@sparkwright/host";
 import { mergeBindings, type Bindings } from "./keybindings.js";
 import { type TuiPermissionMode } from "./permission.js";
@@ -20,8 +19,6 @@ export interface TuiConfigFile {
   model?: string;
   /** Provider definitions, merged by key across config layers. */
   providers?: Record<string, ProviderConfig>;
-  /** Default approval auto-grants shared with CLI/host config. */
-  approvals?: ApprovalDefaults;
   /** Path relative to the config file, or absolute. */
   workspace?: string;
   /** Host-owned capability runtime settings. The TUI accepts but does not interpret these. */
@@ -51,7 +48,6 @@ export interface SourceMap {
   model?: string;
   workspace?: string;
   theme?: string;
-  approvals?: string;
 }
 
 export interface ValidationError {
@@ -75,7 +71,6 @@ export interface LoadedTuiConfig {
 
 const KNOWN_KEYS = new Set([
   "accessMode",
-  "permissionMode",
   "model",
   "providers",
   "workspace",
@@ -95,12 +90,11 @@ const KNOWN_KEYS = new Set([
   "runBudget",
   "maxSteps",
   "traceLevel",
-  "approvals",
 ]);
 const VALID_THEMES = ["dark", "light", "mono"];
 /**
  * Validate only TUI-owned fields. Shared fields (model, providers,
- * permissionMode, approvals, capabilities, tools, shell, etc.) are loaded by
+ * accessMode, capabilities, tools, shell, etc.) are loaded by
  * @sparkwright/host so the TUI cannot drift from CLI/host semantics.
  */
 function validateUiOverlay(
@@ -226,7 +220,6 @@ export async function loadTuiConfig(cwd: string): Promise<LoadedTuiConfig> {
       | undefined,
     model: shared.config.model,
     providers: shared.config.providers,
-    approvals: shared.config.approvals,
     workspace: shared.config.workspace,
     capabilities: shared.config.capabilities as
       | Record<string, unknown>
@@ -237,7 +230,6 @@ export async function loadTuiConfig(cwd: string): Promise<LoadedTuiConfig> {
     accessModeCeiling: shared.sources.accessModeCeiling,
     model: shared.sources.model,
     workspace: shared.sources.workspace,
-    approvals: shared.sources.approvals,
   };
   const attempted: LoadedTuiConfig["attempted"] = shared.attempted.map(
     (entry) => ({ path: entry.path, loaded: entry.loaded }),

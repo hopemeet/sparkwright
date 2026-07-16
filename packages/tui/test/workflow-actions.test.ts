@@ -34,7 +34,7 @@ function ownedJob(input: {
   const execution = {
     kind: "workflow" as const,
     sessionId: "session_workflow_test",
-    permissionMode: "default" as const,
+    accessMode: "ask" as const,
     runId: input.runId,
     workflowRunId,
   };

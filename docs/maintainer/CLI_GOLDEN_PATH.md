@@ -13,8 +13,7 @@ npm run build --workspaces
 npm exec sparkwright -- run "inspect this repo and suggest a README improvement" \
   --workspace examples/repo-pilot \
   --target README.md \
-  --write \
-  --yes \
+  --access-mode bypass \
   --trace-level standard
 ```
 
@@ -27,9 +26,9 @@ The golden path proves:
 
 - the run starts with `examples/repo-pilot` as the workspace root
 - the model reads `README.md` through a registered tool
-- `--write` creates a workspace write proposal
+- `--access-mode bypass` enables the trusted write path
 - validation and policy run before a diff artifact is persisted
-- approval resolves through `--yes`
+- permitted writes proceed without an interactive approval
 - approved writes create a diff artifact and apply through the controlled workspace
 - denied writes skip mutation and do not materialize a diff artifact
 - session trace and run files are written under `examples/repo-pilot/.sparkwright/sessions/<session-id>/`

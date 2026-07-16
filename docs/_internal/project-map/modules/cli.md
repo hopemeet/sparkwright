@@ -8,6 +8,12 @@ See also [../maps/trace/summary-timeline-verify.md](../maps/trace/summary-timeli
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-07-16T12:45:00+0800
+- Scope: CLI, direct-core, Host, Cron, and delegate entrypoints expose only --access-mode; approval shortcut and write flags are removed.
+- Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.
+- Tests: focused access/policy/protocol/CLI/TUI/ACP/Workflow tests; npm run typecheck:test; npm run schema:check.
+
 - Date: 2026-07-16T11:52:29+0800
 - Scope: Host-mode terminal failure handling consumes only the canonical
   `failure` envelope from protocol 2.0; no `run.failed.error` code/message
@@ -183,12 +189,9 @@ Does not own:
   inspects layered markdown-authored agents for same-layer id collisions. Same
   layer collisions are validation errors and make the command exit non-zero;
   cross-layer shadows remain diagnostics in text/JSON output.
-- `approvals.cronMode` supplies the default `permissionMode` for cron commands;
-  CLI flags still override it.
-- `--access-mode` is the CLI-facing run autonomy flag for interactive runs and
+- `--access-mode` is the only CLI-facing run autonomy flag and
   is clamped to any project `run.accessMode` ceiling before host/direct-core
-  execution. New host-client payloads send `accessMode` rather than relying on
-  low-level `permissionMode`.
+  execution. Host-client payloads send only `accessMode`.
 - CLI run/config plumbing carries config-derived `backgroundTasks` to host
   `run.start` / `run.resume` requests and surfaces `backgroundTasks` /
   `backgroundTasksCeiling` in config inspection. There is not currently a
@@ -910,11 +913,11 @@ rules in capability inspect"`; `npm --workspace @sparkwright/host run build`;
   `npm run build`; `npm run check:dist-fresh`; `git diff --check`.
 
 - Status: Verified
-- Date: 2026-07-08T20:41:34+0800
-- Scope: CLI run access plumbing now groups effective access fields as
-  `runAccess` and approval shortcuts as `approvalOptions` before handing off
-  to host/direct-core runners. `capabilities inspect` passes the same access
-  object into the host runtime and prints the resulting `runtime access` line.
+- Date: 2026-07-16T13:12:00+0800
+- Scope: CLI run access accepts only `accessMode`; host/direct-core runners
+  compile it to their internal execution fields. `capabilities inspect`
+  passes the same access mode into the host runtime and prints the resulting
+  `runtime access` line.
 - Read: `packages/cli/src/cli.ts`, `packages/cli/src/run-access.ts`,
   `packages/cli/src/runners/host-runner.ts`,
   `packages/cli/src/runners/direct-core-runner.ts`,
@@ -922,5 +925,5 @@ rules in capability inspect"`; `npm --workspace @sparkwright/host run build`;
   `docs/_internal/project-map/modules/cli.md`.
 - Tests: `npm --workspace @sparkwright/cli run typecheck`;
   `npm --workspace @sparkwright/cli test -- test/cli-approval.test.ts test/entry-parity.test.ts`;
-  `npm --workspace @sparkwright/cli test -- test/cli.test.ts -t "clamps CLI access-mode overrides|allows safe read tools without approval in read-only access mode|clarifies that --yes without --write|auto-approves writes with --yes|run resume through the host preserves trace level and metadata|resumes workflow runs through the host actor episode driver"`;
+  `npm --workspace @sparkwright/cli test -- test/cli.test.ts -t "clamps CLI access-mode overrides|allows safe read tools without approval in read-only access mode|allows workspace writes without approval in accept_edits mode|run resume through the host preserves trace level and metadata|resumes workflow runs through the host actor episode driver"`;
   `npm --workspace @sparkwright/cli test -- test/cli.test.ts -t "capability inspect"`.

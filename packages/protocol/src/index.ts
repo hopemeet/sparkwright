@@ -406,21 +406,14 @@ export interface RunStartRequestPayload {
   confidentialPaths?: string[];
   /** Whether built-in conservative confidential path defaults are included. */
   confidentialDefaults?: boolean;
-  /** Whether this run is allowed to request workspace writes. */
-  shouldWrite?: boolean;
   /** Model reference in "provider/model" form, or the reserved "deterministic". */
   model?: string;
   /** Workflow asset name to instantiate for this run. */
   workflow?: string;
-  /**
-   * High-level run autonomy preset. When present, the host compiles it to
-   * `permissionMode` + `shouldWrite` and a conflicting legacy `permissionMode`
-   * is ignored (with a diagnostic). Preferred over `permissionMode`.
-   */
+  /** High-level run autonomy preset. Defaults to `read-only`. */
   accessMode?: RunAccessMode;
   /** Session-level foreground/background task policy. Defaults to enabled. */
   backgroundTasks?: BackgroundTaskPolicy;
-  permissionMode?: PermissionMode;
   traceLevel?: TraceLevel;
   metadata?: Record<string, unknown>;
 }
@@ -436,23 +429,16 @@ export interface RunResumeRequestPayload {
   confidentialPaths?: string[];
   /** Whether built-in conservative confidential path defaults are included. */
   confidentialDefaults?: boolean;
-  /** Whether the resumed run is allowed to request workspace writes. */
-  shouldWrite?: boolean;
   /** Reconstruct a best-effort checkpoint from trace.jsonl when checkpoint.json is absent. */
   fromTrace?: boolean;
   /** Allow resuming checkpoints that are terminal or otherwise normally refused. */
   force?: boolean;
   /** Model reference in "provider/model" form, or the reserved "deterministic". */
   model?: string;
-  /**
-   * High-level run autonomy preset. When present, the host compiles it to
-   * `permissionMode` + `shouldWrite` and a conflicting legacy `permissionMode`
-   * is ignored (with a diagnostic). Preferred over `permissionMode`.
-   */
+  /** High-level run autonomy preset. Defaults to `read-only`. */
   accessMode?: RunAccessMode;
   /** Session-level foreground/background task policy. Defaults to enabled. */
   backgroundTasks?: BackgroundTaskPolicy;
-  permissionMode?: PermissionMode;
   traceLevel?: TraceLevel;
   metadata?: Record<string, unknown>;
 }
@@ -469,11 +455,9 @@ export interface WorkflowResumeRequestPayload {
   targetPath?: string;
   confidentialPaths?: string[];
   confidentialDefaults?: boolean;
-  shouldWrite?: boolean;
   model?: string;
   accessMode?: RunAccessMode;
   backgroundTasks?: BackgroundTaskPolicy;
-  permissionMode?: PermissionMode;
   traceLevel?: TraceLevel;
   metadata?: Record<string, unknown>;
 }
@@ -706,17 +690,10 @@ export interface CapabilityInspectRequestPayload {
   sessionId?: string;
   /** Model reference in "provider/model" form, or the reserved "deterministic". */
   model?: string;
-  /** Whether this inspection should describe workspace-write-capable runs. */
-  shouldWrite?: boolean;
-  /**
-   * High-level run autonomy preset used to scope diagnostics. Preferred over
-   * `permissionMode` and `shouldWrite` when present.
-   */
+  /** High-level run autonomy preset used to scope diagnostics. */
   accessMode?: RunAccessMode;
   /** Session-level foreground/background task policy used to scope diagnostics. */
   backgroundTasks?: BackgroundTaskPolicy;
-  /** Legacy approval mode used when `accessMode` is absent. */
-  permissionMode?: PermissionMode;
 }
 
 export type HostRequest =
@@ -940,8 +917,7 @@ export interface WorkflowRunSnapshot {
     hasTargetPath: boolean;
     hasConfidentialPaths: boolean;
     confidentialDefaults: boolean;
-    shouldWrite: boolean;
-    accessMode?: RunAccessMode;
+    accessMode: RunAccessMode;
     backgroundTasks: BackgroundTaskPolicy;
   };
   createdAt: string;
@@ -1202,15 +1178,12 @@ export interface CapabilitySnapshot {
 }
 
 export interface CapabilityRunAccessSummary {
-  permissionMode: PermissionMode;
-  shouldWrite: boolean;
+  accessMode: RunAccessMode;
   backgroundTasks: BackgroundTaskPolicy;
-  accessMode?: RunAccessMode;
   requestedAccessMode?: RunAccessMode;
   accessModeCeiling?: RunAccessMode;
   requestedBackgroundTasks?: BackgroundTaskPolicy;
   backgroundTasksCeiling?: BackgroundTaskPolicy;
-  overriddenLegacyFields?: string[];
 }
 
 export interface CapabilitySkillInlineShellSummary {

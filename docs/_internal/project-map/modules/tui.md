@@ -90,14 +90,10 @@ Does not own:
   `bypass`) but no longer owns a persisted `ui.tuiPermissionMode` config field.
   File config uses shared `run.accessMode`; project `run.accessMode` becomes an
   access ceiling that clamps CLI/TUI runtime requests. Default `ask` runs send
-  `accessMode: ask` at the host request boundary, and the host compiles it to
-  `permissionMode: default`, `shouldWrite: true` so writes use the normal
-  approval path and write guardrails.
-- TUI no longer uses standalone `approveAll`/`approveEdits`/`approveShellSafe`
-  or config `approvals.*` as independent approval scopes. Approval auto-response
-  is still derived from the projected core `permissionMode` so `bypass` and
-  `accept-edits` preserve their mode semantics. `RunController` snapshots this
-  projected permission mode at run start, so runtime mode switches affect the
+  `accessMode: ask` at the host request boundary so writes use the normal
+  approval path and write guardrails. `bypass` and `accept-edits` derive their
+  auto-response policy from that same mode. `RunController` snapshots the
+  access mode at run start, so runtime mode switches affect the
   next run without changing auto-approval behavior for the active run.
 - In `ask` mode, the approval prompt can remember an exact workspace-write,
   shell command + cwd, or tool + arguments for the current TUI session. Rules
@@ -346,6 +342,12 @@ Does not own:
   durable control inbox before adding daemon and multi-channel adapters.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-16T12:45:00+0800
+- Scope: TUI startup, runtime switching, Host requests, metadata, and capability views use canonical access modes without deprecated flag aliases.
+- Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.
+- Tests: focused access/policy/protocol/CLI/TUI/ACP/Workflow tests; npm run typecheck:test; npm run schema:check.
 
 - Status: Verified
 - Date: 2026-07-16

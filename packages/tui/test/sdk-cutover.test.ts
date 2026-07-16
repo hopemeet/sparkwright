@@ -696,8 +696,7 @@ describe("TUI ↔ host via sdk-node", () => {
     const runJson = JSON.parse(
       await readFile(join(runsDir, runIds[0]!, "run.json"), "utf8"),
     ) as { metadata?: Record<string, unknown> };
-    expect(runJson.metadata?.permissionMode).toBe("default");
-    expect(runJson.metadata?.shouldWrite).toBe(true);
+    expect(runJson.metadata?.accessMode).toBe("ask");
     expect(runJson.metadata).not.toHaveProperty("allowWorkspaceWriteApproval");
     expect(runJson.metadata?.source).toBe("tui");
     expect(runJson.metadata?.traceLevel).toBe("debug");
@@ -741,8 +740,7 @@ describe("TUI ↔ host via sdk-node", () => {
       const runJson = JSON.parse(
         await readFile(join(runsDir, runIds[0]!, "run.json"), "utf8"),
       ) as { metadata?: Record<string, unknown> };
-      expect(runJson.metadata?.permissionMode).toBe("plan");
-      expect(runJson.metadata?.shouldWrite).toBe(false);
+      expect(runJson.metadata?.accessMode).toBe("read-only");
       expect(runJson.metadata).not.toHaveProperty(
         "allowWorkspaceWriteApproval",
       );

@@ -3,12 +3,18 @@
 ## Purpose
 
 `@sparkwright/protocol` defines host/client wire contracts: requests,
-responses, errors, host events, permission modes, trace levels, and capability
+responses, errors, host events, access modes, trace levels, and capability
 inspection shapes.
 
 See also [../maps/safety/approvals.md](../maps/safety/approvals.md) and [../maps/session/session-store.md](../maps/session/session-store.md).
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-16T12:45:00+0800
+- Scope: Protocol 2.0 run autonomy is single-track: accessMode is the only wire input and capability access summary; Workflow authorization snapshots use it directly.
+- Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.
+- Tests: focused access/policy/protocol/CLI/TUI/ACP/Workflow tests; npm run typecheck:test; npm run schema:check.
 
 - Date: 2026-07-16T11:52:29+0800
 - Scope: Host protocol 2.0 makes `run.failed.failure` the only terminal failure
@@ -119,13 +125,9 @@ Does not own:
   `standard` and `debug`.
 - `RunAccessMode` is the shared high-level run access preset
   (`read-only`, `ask`, `accept-edits`, `bypass`). `compileRunAccessMode()`
-  maps it to the legacy execution fields `permissionMode` and `shouldWrite`;
-  `dont_ask` remains only a legacy `PermissionMode` and is not a run access
-  mode because it denies approval-required actions instead of auto-approving
-  them.
-- `shouldWrite` is the run start/resume write-capability gate. When it is
-  `false`, write-capable requests are denied by policy rather than represented
-  as a separate read-only approval-escalation protocol field.
+  maps it to Core's internal execution policy fields. `accessMode` is the only
+  public run-autonomy field on start, resume, workflow resume, and capability
+  inspection; omission defaults to `read-only`.
 - Protocol 2.0 run start/resume/workflow-resume payloads may include
   `confidentialPaths` plus optional `confidentialDefaults:false`. Omitted
   `confidentialDefaults` means host defaults apply; false is the only wire

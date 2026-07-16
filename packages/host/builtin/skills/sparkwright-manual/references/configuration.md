@@ -553,7 +553,7 @@ sparkwright delegates run delegate_external_cli_reviewer \
   --goal "Inspect README.md and return one concise suggestion." \
   --session-id delegate-debug \
   --trace-level debug \
-  --yes
+  --access-mode bypass
 ```
 
 This command supports external ACP and external command delegates. Internal
@@ -561,8 +561,8 @@ SparkWright child-agent profiles still run through the normal model/tool loop.
 It writes a normal session trace under
 `.sparkwright/sessions/<session-id>/trace.jsonl`.
 If the delegate profile uses `workspaceAccess: "read_write"`, direct debug runs
-must also pass `--write`; otherwise SparkWright refuses to expose the project
-workspace even when the delegate execution itself is approved.
+must use a write-capable access mode; `--access-mode bypass` is the trusted
+non-interactive choice.
 
 ## Cost Metadata
 

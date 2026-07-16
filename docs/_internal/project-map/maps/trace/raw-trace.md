@@ -10,6 +10,12 @@ and [../session/session-store.md](../session/session-store.md) for session layou
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-07-16T12:45:00+0800
+- Scope: Raw run metadata records canonical accessMode; approval and workspace-write events are unchanged.
+- Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.
+- Tests: focused access/policy/protocol/CLI/TUI/ACP/Workflow tests; npm run typecheck:test; npm run schema:check.
+
 - Date: 2026-07-16T11:52:29+0800
 - Scope: reviewed protocol 2.0 terminal failure envelope changes; Core raw trace
   events remain the durable source contract and do not persist the removed Host

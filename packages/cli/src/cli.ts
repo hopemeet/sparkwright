@@ -32,7 +32,6 @@ import {
 } from "@sparkwright/core";
 import {
   isTraceLevel,
-  type PermissionMode,
   type RunInputPayload,
   type TraceLevel,
   type WorkflowRunSnapshot,
@@ -124,7 +123,7 @@ import {
 import { createCliApprovalResolver } from "./cli-approval.js";
 import type { CliIO } from "./io.js";
 import { writeLine } from "./io.js";
-import type { CliApprovalOptions, CliRunAccess } from "./run-access.js";
+import type { CliRunAccess } from "./run-access.js";
 import {
   createCliModel,
   createConfiguredCliTools,
@@ -224,17 +223,10 @@ export async function runCli(
     accessModeCeiling: cfg.config.accessModeCeiling,
     backgroundTasks: cfg.config.backgroundTasks,
     backgroundTasksCeiling: cfg.config.backgroundTasksCeiling,
-    permissionMode:
-      argv[0] === "cron"
-        ? (cfg.config.approvals?.cronMode ?? cfg.config.permissionMode)
-        : cfg.config.permissionMode,
     workspace: cfg.config.workspace,
     confidentialDefaults: cfg.config.confidentialDefaults,
     confidentialPaths: cfg.config.confidentialPaths,
     traceLevel: cfg.config.traceLevel,
-    approveAll: cfg.config.approvals?.all,
-    approveEdits: cfg.config.approvals?.edits,
-    approveShellSafe: cfg.config.approvals?.shellSafe,
   });
 
   if (!parsed.ok) {
@@ -549,9 +541,6 @@ async function validateCliRunInput(
     workspaceRoot: parsed.workspaceRoot,
     targetPath: parsed.targetPath,
     requireTargetExists: parsed.targetPathSource === "cli",
-    approveAll: parsed.approvalOptions.approveAll,
-    approveShellSafe: parsed.approvalOptions.approveShellSafe,
-    shouldWrite: parsed.runAccess.shouldWrite,
     modelName: parsed.modelNameSource === "cli" ? parsed.modelName : undefined,
     validateModel: parsed.modelNameSource === "cli",
     env,
@@ -671,14 +660,10 @@ interface ConfigDefaults {
   accessModeCeiling?: RunAccessMode;
   backgroundTasks?: BackgroundTaskPolicy;
   backgroundTasksCeiling?: BackgroundTaskPolicy;
-  permissionMode?: PermissionMode;
   workspace?: string;
   confidentialPaths?: string[];
   confidentialDefaults?: boolean;
   traceLevel?: TraceLevel;
-  approveAll?: boolean;
-  approveEdits?: boolean;
-  approveShellSafe?: boolean;
 }
 
 function workspaceBootstrapRoot(argv: string[], cwd: string): string {
@@ -747,18 +732,8 @@ function parseArgs(
   const confidentialPaths: string[] = [...(defaults.confidentialPaths ?? [])];
   const confidentialDefaults = defaults.confidentialDefaults ?? true;
   const imagePaths: string[] = [];
-  let accessMode = defaults.accessMode;
+  let accessMode: RunAccessMode = defaults.accessMode ?? "read-only";
   const backgroundTasks = defaults.backgroundTasks;
-  // accessMode is the autonomy knob: read-only implies no writes, the others
-  // imply writes. Deprecated --write maps to an ask-level request whenever a
-  // project/config access boundary is already in play.
-  let shouldWrite = accessMode
-    ? compileRunAccessMode(accessMode).shouldWrite
-    : false;
-  let approveAll = defaults.approveAll ?? false;
-  let approveEdits = defaults.approveEdits ?? false;
-  let approveShellSafe = defaults.approveShellSafe ?? false;
-  let permissionMode: PermissionMode = defaults.permissionMode ?? "default";
   let modelName: string | undefined = defaults.model;
   let modelNameSource: ParsedArgs["modelNameSource"] = defaults.model
     ? "config"
@@ -791,9 +766,6 @@ function parseArgs(
     const effective =
       clampAccessMode(defaults.accessModeCeiling, requested) ?? requested;
     accessMode = effective;
-    const compiled = compileRunAccessMode(effective);
-    permissionMode = compiled.permissionMode;
-    shouldWrite = compiled.shouldWrite;
   };
 
   for (let index = 0; index < args.length; index += 1) {
@@ -888,48 +860,6 @@ function parseArgs(
         if (trimmed) imagePaths.push(trimmed);
       }
       args.splice(index, 2);
-      index -= 1;
-      continue;
-    }
-
-    if (arg === "--write") {
-      if (
-        accessMode !== undefined ||
-        defaults.accessModeCeiling !== undefined
-      ) {
-        applyRequestedAccessMode("ask");
-      } else {
-        shouldWrite = true;
-      }
-      args.splice(index, 1);
-      index -= 1;
-      continue;
-    }
-
-    if (arg === "--yes") {
-      approveAll = true;
-      args.splice(index, 1);
-      index -= 1;
-      continue;
-    }
-
-    if (arg === "--yes-all") {
-      approveAll = true;
-      args.splice(index, 1);
-      index -= 1;
-      continue;
-    }
-
-    if (arg === "--yes-edits") {
-      approveEdits = true;
-      args.splice(index, 1);
-      index -= 1;
-      continue;
-    }
-
-    if (arg === "--yes-shell-safe") {
-      approveShellSafe = true;
-      args.splice(index, 1);
       index -= 1;
       continue;
     }
@@ -1203,6 +1133,17 @@ function parseArgs(
     }
   }
 
+  if (
+    command === "run" ||
+    command === "delegates" ||
+    (command === "session" && subcommand === "resume")
+  ) {
+    const unknownOption = args.find((arg) => arg.startsWith("--"));
+    if (unknownOption) {
+      return { ok: false, message: `Unknown option: ${unknownOption}` };
+    }
+  }
+
   const target = args[0];
 
   if (
@@ -1292,7 +1233,7 @@ function parseArgs(
     return {
       ok: false,
       message:
-        'Usage: sparkwright delegates run <external-delegate-tool> "goal" [--workspace path] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--format json|text]',
+        'Usage: sparkwright delegates run <external-delegate-tool> "goal" [--workspace path] [--access-mode read-only|ask|accept-edits|bypass] [--format json|text]',
     };
   }
 
@@ -1394,13 +1335,6 @@ function parseArgs(
   const runAccess: CliRunAccess = {
     accessMode,
     backgroundTasks,
-    shouldWrite,
-    permissionMode,
-  };
-  const approvalOptions: CliApprovalOptions = {
-    approveAll,
-    approveEdits,
-    approveShellSafe,
   };
 
   return {
@@ -1422,13 +1356,7 @@ function parseArgs(
       imagePaths,
       accessMode,
       backgroundTasks,
-      shouldWrite,
-      approveAll,
-      approveEdits,
-      approveShellSafe,
-      permissionMode,
       runAccess,
-      approvalOptions,
       modelName,
       modelNameSource,
       workflowName,
@@ -1813,7 +1741,6 @@ async function handleWorkflowCommand(
           workspaceRoot: parsed.workspaceRoot,
           sessionRootDir: parsed.sessionRootDir,
           runAccess: parsed.runAccess,
-          approvalOptions: parsed.approvalOptions,
           modelName: parsed.modelName,
           workflowName,
           sessionId: parsed.sessionId ?? `session_${Date.now().toString(36)}`,
@@ -1844,7 +1771,6 @@ async function handleWorkflowCommand(
           workspaceRoot: parsed.workspaceRoot,
           sessionRootDir: parsed.sessionRootDir,
           runAccess: parsed.runAccess,
-          approvalOptions: parsed.approvalOptions,
           modelName: parsed.modelName,
           sessionId: parsed.sessionId,
           targetPath: parsed.targetPath,
@@ -1999,8 +1925,7 @@ async function handleWorkflowCommand(
         workspaceRoot: parsed.workspaceRoot,
         sessionRootDir: parsed.sessionRootDir,
         defaultModel: parsed.modelName,
-        defaultPermissionMode: parsed.runAccess.permissionMode,
-        defaultShouldWrite: parsed.runAccess.shouldWrite,
+        defaultAccessMode: parsed.runAccess.accessMode,
         defaultTraceLevel: parsed.traceLevel,
         emit: () => {},
       });
@@ -2106,9 +2031,7 @@ async function startDetachedWorkflow(input: {
     jobSessionId: sessionId,
     ...(parsed.sessionId ? { controlSessionId: parsed.sessionId } : {}),
     ...(parsed.modelName ? { modelName: parsed.modelName } : {}),
-    ...(parsed.accessMode ? { accessMode: parsed.accessMode } : {}),
-    permissionMode: parsed.permissionMode,
-    shouldWrite: parsed.shouldWrite,
+    accessMode: parsed.accessMode,
     traceLevel: parsed.traceLevel,
     targetPath: parsed.targetPath,
     confidentialPaths: parsed.confidentialPaths,
@@ -2226,9 +2149,8 @@ async function handleWorkflowServiceCommand(
         workspaceRoot: parsed.workspaceRoot,
         sessionRootDir: parsed.sessionRootDir,
         defaultModel: handoff.modelName,
-        defaultPermissionMode: handoff.permissionMode,
+        defaultAccessMode: handoff.accessMode,
         defaultTraceLevel: handoff.traceLevel,
-        defaultShouldWrite: handoff.shouldWrite,
         emit: (event) => {
           if (event.kind === "run.completed" || event.kind === "run.failed") {
             runtimes.delete(handoff.handoffId);
@@ -2246,7 +2168,6 @@ async function handleWorkflowServiceCommand(
           sessionId: handoff.jobSessionId,
           controlSessionId: handoff.controlSessionId,
           accessMode: handoff.accessMode,
-          permissionMode: handoff.permissionMode,
           targetPath: handoff.targetPath,
           traceLevel: handoff.traceLevel,
           modelName: handoff.modelName,
@@ -2254,7 +2175,6 @@ async function handleWorkflowServiceCommand(
           workflowName: handoff.workflowName,
           confidentialPaths: handoff.confidentialPaths,
           confidentialDefaults: handoff.confidentialDefaults,
-          shouldWrite: handoff.shouldWrite,
           metadata: {
             source: "workflow-service",
             serviceHandoffId: handoff.handoffId,
@@ -2320,9 +2240,8 @@ async function handleWorkflowServiceCommand(
           workspaceRoot: parsed.workspaceRoot,
           sessionRootDir: parsed.sessionRootDir,
           defaultModel: parsed.modelName,
-          defaultPermissionMode: parsed.permissionMode,
+          defaultAccessMode: parsed.accessMode,
           defaultTraceLevel: parsed.traceLevel,
-          defaultShouldWrite: parsed.shouldWrite,
           emit: (event) => {
             if (event.kind === "run.completed" || event.kind === "run.failed") {
               resolveTerminal?.();
@@ -2380,9 +2299,8 @@ async function handleWorkflowServiceCommand(
             workspaceRoot: parsed.workspaceRoot,
             sessionRootDir: parsed.sessionRootDir,
             defaultModel: parsed.modelName,
-            defaultPermissionMode: parsed.permissionMode,
+            defaultAccessMode: parsed.accessMode,
             defaultTraceLevel: parsed.traceLevel,
-            defaultShouldWrite: parsed.shouldWrite,
             emit: (event) => {
               if (
                 event.kind === "run.completed" ||
@@ -4697,12 +4615,13 @@ async function handleCronCommand(
     }
 
     if (subcommand === "run") {
+      const { shouldWrite } = compileRunAccessMode(parsed.accessMode);
       const model = await createCliModel({
         modelRef: parsed.modelName,
         cwd: parsed.workspaceRoot,
         env,
         targetPath: parsed.targetPath,
-        shouldWrite: parsed.runAccess.shouldWrite,
+        shouldWrite,
         goal: `cron run ${ref}`,
       });
       if (!model.ok) {
@@ -4716,13 +4635,10 @@ async function handleCronCommand(
         workspaceRoot: parsed.workspaceRoot,
         tools: await createConfiguredCliTools(parsed.workspaceRoot, env),
         approvalResolver: createCliApprovalResolver({
-          approveAll: parsed.approvalOptions.approveAll,
-          approveEdits: parsed.approvalOptions.approveEdits,
-          approveShellSafe: parsed.approvalOptions.approveShellSafe,
-          permissionMode: parsed.runAccess.permissionMode,
+          accessMode: parsed.accessMode,
           io,
         }),
-        permissionMode: parsed.runAccess.permissionMode,
+        accessMode: parsed.accessMode,
         skillRoots: cron.value.skillRoots,
       });
       writeLine(
@@ -4732,12 +4648,13 @@ async function handleCronCommand(
       return { exitCode: result.ok ? 0 : 1 };
     }
 
+    const { shouldWrite } = compileRunAccessMode(parsed.accessMode);
     const cronTickModelInput = {
       modelRef: parsed.modelName,
       cwd: parsed.workspaceRoot,
       env,
       targetPath: parsed.targetPath,
-      shouldWrite: parsed.runAccess.shouldWrite,
+      shouldWrite,
       goal: "cron tick",
     };
     const model = await createCliModel(cronTickModelInput);
@@ -4756,13 +4673,10 @@ async function handleCronCommand(
       },
       tools: await createConfiguredCliTools(parsed.workspaceRoot, env),
       approvalResolver: createCliApprovalResolver({
-        approveAll: parsed.approvalOptions.approveAll,
-        approveEdits: parsed.approvalOptions.approveEdits,
-        approveShellSafe: parsed.approvalOptions.approveShellSafe,
-        permissionMode: parsed.runAccess.permissionMode,
+        accessMode: parsed.accessMode,
         io,
       }),
-      permissionMode: parsed.runAccess.permissionMode,
+      accessMode: parsed.accessMode,
       skillRoots: cron.value.skillRoots,
     });
     writeLine(io.stdout, JSON.stringify(result, null, 2));
@@ -4990,8 +4904,8 @@ function cronUsage(): string {
     "       sparkwright cron list",
     "       sparkwright cron update <job-id-or-name> [--schedule text] [--prompt text] [--name text] [--job-workspace path|--clear-job-workspace]",
     "       sparkwright cron pause|resume|remove|status <job-id-or-name>",
-    "       sparkwright cron run <job-id-or-name> [--model provider/model] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all]",
-    "       sparkwright cron tick [--model provider/model] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all]",
+    "       sparkwright cron run <job-id-or-name> [--model provider/model] [--access-mode read-only|ask|accept-edits|bypass]",
+    "       sparkwright cron tick [--model provider/model] [--access-mode read-only|ask|accept-edits|bypass]",
   ].join("\n");
 }
 
@@ -5045,10 +4959,10 @@ function helpForArgs(
     return "Usage: sparkwright trace <summary|events|timeline|report|verify> <trace.jsonl>";
   }
   if (command === "tui") {
-    return "Usage: sparkwright tui [--workspace path] [--session-root path] [--model provider/model] [--write] [--access-mode mode] [--trace-level standard|debug] [--session-id id]";
+    return "Usage: sparkwright tui [--workspace path] [--session-root path] [--model provider/model] [--access-mode read-only|ask|accept-edits|bypass] [--trace-level standard|debug] [--session-id id]";
   }
   if (command === "acp") {
-    return "Usage: sparkwright acp [--workspace path] [--session-root path] [--model provider/model] [--write] [--access-mode mode] [--trace-level standard|debug]";
+    return "Usage: sparkwright acp [--workspace path] [--session-root path] [--model provider/model] [--access-mode read-only|ask|accept-edits|bypass] [--trace-level standard|debug]";
   }
   if (command === "session") {
     return "Usage: sparkwright session <summary|inspect|check|repair|compact|resume> <session-id> [goal] [--workspace path] [--session-root path] [--model provider/model] [--llm] [--compaction]";
@@ -5183,9 +5097,6 @@ function renderProjectConfigTemplate(): string {
     "  budget:",
     "    maxModelCalls: 80",
     "    maxCostUsd: 2.0",
-    "  approvals:",
-    "    cronMode: default",
-    "",
     "capabilities:",
     "  skills:",
     "    includeLoaderTool: true",
@@ -5340,7 +5251,7 @@ async function scaffoldProjectConfig(
 }
 
 function runUsage(_env: Record<string, string | undefined>): string {
-  return 'Usage: sparkwright run "your goal" [--image path] [--workspace path] [--session-root path] [--target README.md] [--confidential path-or-glob] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--access-mode mode] [--session-id id] [--model provider/model] [--workflow name]';
+  return 'Usage: sparkwright run "your goal" [--image path] [--workspace path] [--session-root path] [--target README.md] [--confidential path-or-glob] [--access-mode read-only|ask|accept-edits|bypass] [--session-id id] [--model provider/model] [--workflow name]';
 }
 
 function usage(_env: Record<string, string | undefined>): string {
@@ -5348,15 +5259,15 @@ function usage(_env: Record<string, string | undefined>): string {
     "Usage: sparkwright init             # scaffold ~/.config/sparkwright/config.yaml",
     "       sparkwright init --project   # scaffold committable <workspace>/.sparkwright/config.yaml",
     "       sparkwright --version|-v      # print CLI package version",
-    "       sparkwright tui [--workspace path] [--session-root path] [--model provider/model] [--write] [--access-mode mode] [--trace-level standard|debug] [--session-id id]",
-    "       sparkwright acp [--workspace path] [--session-root path] [--model provider/model] [--write] [--access-mode mode] [--trace-level standard|debug]",
+    "       sparkwright tui [--workspace path] [--session-root path] [--model provider/model] [--access-mode read-only|ask|accept-edits|bypass] [--trace-level standard|debug] [--session-id id]",
+    "       sparkwright acp [--workspace path] [--session-root path] [--model provider/model] [--access-mode read-only|ask|accept-edits|bypass] [--trace-level standard|debug]",
     "       sparkwright capabilities inspect [--workspace path] [--model provider/model] [--resolve-mcp] [--format json|text]",
     "       sparkwright doctor paths [--workspace path] [--session-root path] [--format json|text]",
     '       sparkwright cron create --schedule "every 1h" --prompt "task" [--name name]',
     "       sparkwright cron list|status|run|tick",
     "       sparkwright tasks list|get|output [--workspace path] [--root-dir path]",
     "       sparkwright workflow list|start|inspect|resume|distill [workflow-name-or-run-id] [--workspace path] [--format json|text]",
-    '       sparkwright delegates run <external-delegate-tool> "goal" [--workspace path] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--session-id id] [--trace-level standard|debug] [--format json|text]',
+    '       sparkwright delegates run <external-delegate-tool> "goal" [--workspace path] [--access-mode read-only|ask|accept-edits|bypass] [--session-id id] [--trace-level standard|debug] [--format json|text]',
     "       sparkwright tools allow|disable|defer <tool-name...> [--workspace path]",
     "       sparkwright skills list|validate|review|restore [--workspace path] [--format json|text]",
     "       sparkwright skills review [--workspace path] [--session-root path] [--last n] [--skill name] [--skill-key key] [--package-hash hash] [--format json|text]",
@@ -5368,14 +5279,14 @@ function usage(_env: Record<string, string | undefined>): string {
     '       sparkwright skills create <name> --description "what it does" [--workspace path] [--root .sparkwright/skills]',
     "       sparkwright agents list|validate [--workspace path] [--format json|text]",
     '       sparkwright agents create <id> --prompt "what it should do" [--use selector] [--allow tool] [--delegate tool_name] [--workspace path] [--force]',
-    '       sparkwright run "your goal" [--image path] [--workspace path] [--session-root path] [--target README.md] [--confidential path-or-glob] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--access-mode mode] [--session-id id] [--model provider/model] [--workflow name] [--verbose]',
+    '       sparkwright run "your goal" [--image path] [--workspace path] [--session-root path] [--target README.md] [--confidential path-or-glob] [--access-mode read-only|ask|accept-edits|bypass] [--session-id id] [--model provider/model] [--workflow name] [--verbose]',
     "       sparkwright trace summary <trace.jsonl> [--format json|text]",
     "       sparkwright trace events <trace.jsonl> [--type event.type] [--run-id id] [--contains text] [--limit n] [--jsonl] [--format json|text]",
     "       sparkwright trace timeline <trace.jsonl> [--run-id id] [--format json|text]",
     "       sparkwright trace report <trace.jsonl> [--format json|text]",
     "       sparkwright trace verify <trace.jsonl> [--format json|text]",
     "       sparkwright session <summary|inspect|check|repair|compact> <session-id> [--workspace path] [--session-root path] [--format json|text] [--apply] [--compaction]",
-    '       sparkwright session resume <session-id> "next goal" [--workspace path] [--session-root path] [--target README.md] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--access-mode mode] [--model provider/model] [--verbose]',
+    '       sparkwright session resume <session-id> "next goal" [--workspace path] [--session-root path] [--target README.md] [--access-mode read-only|ask|accept-edits|bypass] [--model provider/model] [--verbose]',
     "       sparkwright run resume <run-id> [--session <session-id>] [--workspace path] [--session-root path] [--force] [--from-trace] [--model provider/model] [--verbose]",
   ].join("\n");
 }

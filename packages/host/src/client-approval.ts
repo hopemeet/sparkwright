@@ -3,17 +3,12 @@ import {
   resolveApprovalByPolicy,
   type ApprovalId,
   type RunId,
+  type RunAccessMode,
 } from "@sparkwright/core";
-import type {
-  ApprovalResolveRequestPayload,
-  PermissionMode,
-} from "@sparkwright/protocol";
+import type { ApprovalResolveRequestPayload } from "@sparkwright/protocol";
 
 export interface HostClientApprovalPolicyInput {
-  approveAll?: boolean;
-  approveEdits?: boolean;
-  approveShellSafe?: boolean;
-  permissionMode?: PermissionMode;
+  accessMode: RunAccessMode;
 }
 
 export interface HostClientApprovalRequestInput {
@@ -29,15 +24,18 @@ export function resolveHostClientApprovalByPolicy(
   policyInput: HostClientApprovalPolicyInput,
   requestInput: HostClientApprovalRequestInput,
 ): ApprovalResolveRequestPayload | undefined {
-  const decision = resolveApprovalByPolicy(createApprovalPolicy(policyInput), {
-    id: requestInput.approvalId as ApprovalId,
-    runId: requestInput.runId as RunId,
-    action: requestInput.action,
-    summary: requestInput.summary,
-    details: requestInput.details ?? {},
-    createdAt: requestInput.createdAt,
-    status: "pending",
-  });
+  const decision = resolveApprovalByPolicy(
+    createApprovalPolicy(policyInput.accessMode),
+    {
+      id: requestInput.approvalId as ApprovalId,
+      runId: requestInput.runId as RunId,
+      action: requestInput.action,
+      summary: requestInput.summary,
+      details: requestInput.details ?? {},
+      createdAt: requestInput.createdAt,
+      status: "pending",
+    },
+  );
 
   if (!decision) return undefined;
   return {

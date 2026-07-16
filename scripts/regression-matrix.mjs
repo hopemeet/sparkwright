@@ -109,8 +109,8 @@ async function writeApprovedCase() {
     workspace,
     "--target",
     "README.md",
-    "--write",
-    "--yes",
+    "--access-mode",
+    "accept-edits",
     "--model",
     "deterministic",
     "--trace-level",
@@ -120,24 +120,19 @@ async function writeApprovedCase() {
   const readme = await readFile(join(workspace, "README.md"), "utf8");
   record({
     id: "WA",
-    name: "diagnostics: write approved direct-core",
+    name: "diagnostics: accepted edit direct-core",
     command: commandString(result.command),
     prompt,
     workspace,
-    write: "yes, approved",
+    write: "yes, accept-edits",
     expectedTrace:
-      "approval.requested, approval.resolved approved, artifact.created, workspace.write.completed",
+      "artifact.created, workspace.write.completed; no approval prompt",
     failureRule:
       "Fails if the write is not applied, no diff artifact is created, or a denied write appears.",
     harness: true,
     ok:
       result.exitCode === 0 &&
-      has(trace.events, "approval.requested") &&
-      eventWith(
-        trace.events,
-        "approval.resolved",
-        (event) => event.payload?.decision === "approved",
-      ) &&
+      !has(trace.events, "approval.requested") &&
       has(trace.events, "artifact.created") &&
       has(trace.events, "workspace.write.completed") &&
       !has(trace.events, "workspace.write.denied") &&
@@ -159,7 +154,8 @@ async function writeDeniedCase() {
       workspace,
       "--target",
       "README.md",
-      "--write",
+      "--access-mode",
+      "ask",
       "--model",
       "deterministic",
       "--trace-level",
@@ -421,6 +417,8 @@ async function mcpFailureCase() {
       "scripted",
       "--trace-level",
       "debug",
+      "--access-mode",
+      "bypass",
     ],
     {
       env: {
@@ -526,6 +524,8 @@ async function delegateCwdCase() {
       "debug",
       "--session-id",
       sessionId,
+      "--access-mode",
+      "bypass",
     ],
     {
       env: {
@@ -608,8 +608,8 @@ async function shellPromotionCase() {
       "scripted",
       "--trace-level",
       "debug",
-      "--write",
-      "--yes",
+      "--access-mode",
+      "bypass",
     ],
     {
       env: {
@@ -716,8 +716,8 @@ async function delegateNoTaskManagerTimeoutCase() {
       "debug",
       "--session-id",
       sessionId,
-      "--write",
-      "--yes",
+      "--access-mode",
+      "bypass",
     ],
     {
       env: {

@@ -188,22 +188,20 @@ Begin a new agent run.
 
 **Payload**
 
-| Field                  | Type                      | Required | Notes                                                                                                                                                                                                                         |
-| ---------------------- | ------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `goal`                 | string                    | yes      | User goal text.                                                                                                                                                                                                               |
-| `input.parts`          | array                     | no       | Extensible content parts for the same user turn. Supported part types are `text`, `image`, `file`, and `audio`; image/file/audio parts carry `data` (base64) or `uri`, plus optional `mediaType`, `name`, and `metadata`.     |
-| `sessionId`            | string                    | no       | Existing session to write into; host creates a new one if omitted.                                                                                                                                                            |
-| `controlSessionId`     | string                    | no       | Workflow-job attribution only. Must accompany `workflow` and differ from the job `sessionId`; it is not used as workflow transcript storage.                                                                                  |
-| `targetPath`           | string                    | no       | Workspace-relative target path the run should focus on when applicable.                                                                                                                                                       |
-| `confidentialPaths`    | string[]                  | no       | Additional workspace-relative paths/globs whose contents this run must not read.                                                                                                                                              |
-| `confidentialDefaults` | boolean                   | no       | Whether built-in conservative confidential path defaults are included; defaults to `true`.                                                                                                                                    |
-| `shouldWrite`          | boolean                   | no       | Whether this run is allowed to request workspace writes.                                                                                                                                                                      |
-| `model`                | string                    | no       | Model reference in `provider/model` form, or the reserved `deterministic`.                                                                                                                                                    |
-| `workflow`             | string                    | no       | Workflow asset name to instantiate for this run. Omit it to keep ordinary host-run behavior.                                                                                                                                  |
-| `accessMode`           | string                    | no       | Preferred high-level run autonomy: `read-only`, `ask`, `accept-edits`, or `bypass`. When present, the host compiles it to `permissionMode` and `shouldWrite`; conflicting legacy fields are ignored and recorded in metadata. |
-| `permissionMode`       | string                    | no       | `plan`, `default`, `accept_edits`, `dont_ask`, or `bypass_permissions`.                                                                                                                                                       |
-| `traceLevel`           | `"standard"` \| `"debug"` | no       | Trace persistence detail level; defaults to `standard`.                                                                                                                                                                       |
-| `metadata`             | object                    | no       | Free-form, propagated to runRecord.                                                                                                                                                                                           |
+| Field                  | Type                      | Required | Notes                                                                                                                                                                                                                     |
+| ---------------------- | ------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `goal`                 | string                    | yes      | User goal text.                                                                                                                                                                                                           |
+| `input.parts`          | array                     | no       | Extensible content parts for the same user turn. Supported part types are `text`, `image`, `file`, and `audio`; image/file/audio parts carry `data` (base64) or `uri`, plus optional `mediaType`, `name`, and `metadata`. |
+| `sessionId`            | string                    | no       | Existing session to write into; host creates a new one if omitted.                                                                                                                                                        |
+| `controlSessionId`     | string                    | no       | Workflow-job attribution only. Must accompany `workflow` and differ from the job `sessionId`; it is not used as workflow transcript storage.                                                                              |
+| `targetPath`           | string                    | no       | Workspace-relative target path the run should focus on when applicable.                                                                                                                                                   |
+| `confidentialPaths`    | string[]                  | no       | Additional workspace-relative paths/globs whose contents this run must not read.                                                                                                                                          |
+| `confidentialDefaults` | boolean                   | no       | Whether built-in conservative confidential path defaults are included; defaults to `true`.                                                                                                                                |
+| `model`                | string                    | no       | Model reference in `provider/model` form, or the reserved `deterministic`.                                                                                                                                                |
+| `workflow`             | string                    | no       | Workflow asset name to instantiate for this run. Omit it to keep ordinary host-run behavior.                                                                                                                              |
+| `accessMode`           | string                    | no       | Canonical run autonomy input: `read-only`, `ask`, `accept-edits`, or `bypass`. Defaults to `read-only` when omitted.                                                                                                      |
+| `traceLevel`           | `"standard"` \| `"debug"` | no       | Trace persistence detail level; defaults to `standard`.                                                                                                                                                                   |
+| `metadata`             | object                    | no       | Free-form, propagated to runRecord.                                                                                                                                                                                       |
 
 **Response result**
 
@@ -250,21 +248,19 @@ prefer checking the host capability list before using it.
 
 **Payload**
 
-| Field                  | Type     | Required | Notes                                                                                                                                                                                                                         |
-| ---------------------- | -------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `runId`                | string   | yes      | Prior run id to resume.                                                                                                                                                                                                       |
-| `sessionId`            | string   | no       | Session scope used to disambiguate where the prior run lives.                                                                                                                                                                 |
-| `targetPath`           | string   | no       | Workspace-relative target path the resumed run should focus on if needed.                                                                                                                                                     |
-| `confidentialPaths`    | string[] | no       | Additional workspace-relative paths/globs whose contents this resumed run must not read.                                                                                                                                      |
-| `confidentialDefaults` | boolean  | no       | Whether built-in conservative confidential path defaults are included; defaults to `true`.                                                                                                                                    |
-| `shouldWrite`          | boolean  | no       | Whether this resumed run is allowed to request workspace writes.                                                                                                                                                              |
-| `fromTrace`            | boolean  | no       | Reconstruct a best-effort checkpoint from `trace.jsonl` if needed.                                                                                                                                                            |
-| `force`                | boolean  | no       | Allow resuming checkpoints that are terminal or normally refused.                                                                                                                                                             |
-| `model`                | string   | no       | Model reference in `provider/model` form, or the reserved `deterministic`.                                                                                                                                                    |
-| `accessMode`           | string   | no       | Preferred high-level run autonomy: `read-only`, `ask`, `accept-edits`, or `bypass`. When present, the host compiles it to `permissionMode` and `shouldWrite`; conflicting legacy fields are ignored and recorded in metadata. |
-| `permissionMode`       | string   | no       | `plan`, `default`, `accept_edits`, `dont_ask`, or `bypass_permissions`.                                                                                                                                                       |
-| `traceLevel`           | string   | no       | `standard` or `debug`; defaults to `standard`.                                                                                                                                                                                |
-| `metadata`             | object   | no       | Free-form metadata propagated to the resumed run record and trace context.                                                                                                                                                    |
+| Field                  | Type     | Required | Notes                                                                                                                |
+| ---------------------- | -------- | -------- | -------------------------------------------------------------------------------------------------------------------- |
+| `runId`                | string   | yes      | Prior run id to resume.                                                                                              |
+| `sessionId`            | string   | no       | Session scope used to disambiguate where the prior run lives.                                                        |
+| `targetPath`           | string   | no       | Workspace-relative target path the resumed run should focus on if needed.                                            |
+| `confidentialPaths`    | string[] | no       | Additional workspace-relative paths/globs whose contents this resumed run must not read.                             |
+| `confidentialDefaults` | boolean  | no       | Whether built-in conservative confidential path defaults are included; defaults to `true`.                           |
+| `fromTrace`            | boolean  | no       | Reconstruct a best-effort checkpoint from `trace.jsonl` if needed.                                                   |
+| `force`                | boolean  | no       | Allow resuming checkpoints that are terminal or normally refused.                                                    |
+| `model`                | string   | no       | Model reference in `provider/model` form, or the reserved `deterministic`.                                           |
+| `accessMode`           | string   | no       | Canonical run autonomy input: `read-only`, `ask`, `accept-edits`, or `bypass`. Defaults to `read-only` when omitted. |
+| `traceLevel`           | string   | no       | `standard` or `debug`; defaults to `standard`.                                                                       |
+| `metadata`             | object   | no       | Free-form metadata propagated to the resumed run record and trace context.                                           |
 
 **Response result**
 
@@ -331,7 +327,6 @@ workflow storage is available.
         "hasTargetPath": true,
         "hasConfidentialPaths": false,
         "confidentialDefaults": true,
-        "shouldWrite": true,
         "accessMode": "ask",
         "backgroundTasks": "enabled"
       },
@@ -423,19 +418,17 @@ workflow resume is available.
 
 **Payload**
 
-| Field                  | Type     | Required | Notes                                                                                                                                                                                                                         |
-| ---------------------- | -------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `workflowRunId`        | string   | yes      | Durable workflow instance id, e.g. `workflow_abc`.                                                                                                                                                                            |
-| `sessionId`            | string   | no       | Session scope used to disambiguate where the workflow record lives.                                                                                                                                                           |
-| `targetPath`           | string   | no       | Workspace-relative target path the resumed run should focus on if needed.                                                                                                                                                     |
-| `confidentialPaths`    | string[] | no       | Additional workspace-relative paths/globs whose contents this resumed workflow run must not read.                                                                                                                             |
-| `confidentialDefaults` | boolean  | no       | Whether built-in conservative confidential path defaults are included; defaults to `true`.                                                                                                                                    |
-| `shouldWrite`          | boolean  | no       | Whether this resumed run is allowed to request workspace writes.                                                                                                                                                              |
-| `model`                | string   | no       | Model reference in `provider/model` form, or the reserved `deterministic`.                                                                                                                                                    |
-| `accessMode`           | string   | no       | Preferred high-level run autonomy: `read-only`, `ask`, `accept-edits`, or `bypass`. When present, the host compiles it to `permissionMode` and `shouldWrite`; conflicting legacy fields are ignored and recorded in metadata. |
-| `permissionMode`       | string   | no       | `plan`, `default`, `accept_edits`, `dont_ask`, or `bypass_permissions`.                                                                                                                                                       |
-| `traceLevel`           | string   | no       | `standard` or `debug`; defaults to `standard`.                                                                                                                                                                                |
-| `metadata`             | object   | no       | Free-form metadata propagated to the resumed run record and trace context.                                                                                                                                                    |
+| Field                  | Type     | Required | Notes                                                                                                                |
+| ---------------------- | -------- | -------- | -------------------------------------------------------------------------------------------------------------------- |
+| `workflowRunId`        | string   | yes      | Durable workflow instance id, e.g. `workflow_abc`.                                                                   |
+| `sessionId`            | string   | no       | Session scope used to disambiguate where the workflow record lives.                                                  |
+| `targetPath`           | string   | no       | Workspace-relative target path the resumed run should focus on if needed.                                            |
+| `confidentialPaths`    | string[] | no       | Additional workspace-relative paths/globs whose contents this resumed workflow run must not read.                    |
+| `confidentialDefaults` | boolean  | no       | Whether built-in conservative confidential path defaults are included; defaults to `true`.                           |
+| `model`                | string   | no       | Model reference in `provider/model` form, or the reserved `deterministic`.                                           |
+| `accessMode`           | string   | no       | Canonical run autonomy input: `read-only`, `ask`, `accept-edits`, or `bypass`. Defaults to `read-only` when omitted. |
+| `traceLevel`           | string   | no       | `standard` or `debug`; defaults to `standard`.                                                                       |
+| `metadata`             | object   | no       | Free-form metadata propagated to the resumed run record and trace context.                                           |
 
 **Response result**
 
@@ -758,14 +751,12 @@ scanning files or interpreting local config.
 
 **Payload**
 
-| Field             | Type    | Required | Notes                                                                                            |
-| ----------------- | ------- | -------- | ------------------------------------------------------------------------------------------------ |
-| `sessionId`       | string  | no       | Optional session scope for clients that tie diagnostics to an active interaction.                |
-| `model`           | string  | no       | Runtime model to inspect, using `provider/model` or `deterministic`; omitted means host default. |
-| `accessMode`      | string  | no       | High-level run autonomy preset used to scope diagnostics. Preferred over legacy fields.          |
-| `backgroundTasks` | string  | no       | Foreground/background task policy used to scope diagnostics.                                     |
-| `permissionMode`  | string  | no       | Legacy approval mode used when `accessMode` is absent.                                           |
-| `shouldWrite`     | boolean | no       | Legacy workspace-write flag used when `accessMode` is absent.                                    |
+| Field             | Type   | Required | Notes                                                                                            |
+| ----------------- | ------ | -------- | ------------------------------------------------------------------------------------------------ |
+| `sessionId`       | string | no       | Optional session scope for clients that tie diagnostics to an active interaction.                |
+| `model`           | string | no       | Runtime model to inspect, using `provider/model` or `deterministic`; omitted means host default. |
+| `accessMode`      | string | no       | Canonical run autonomy input used to scope diagnostics. Defaults to `read-only` when omitted.    |
+| `backgroundTasks` | string | no       | Foreground/background task policy used to scope diagnostics.                                     |
 
 **Response result**
 
@@ -773,8 +764,6 @@ scanning files or interpreting local config.
 {
   "access": {
     "accessMode": "ask",
-    "permissionMode": "default",
-    "shouldWrite": true,
     "backgroundTasks": "enabled"
   },
   "model": {
@@ -912,7 +901,7 @@ capability snapshot. Delegate summaries stay per-profile; parallel eligibility
 is enforced by the tool at call time.
 For `in_process` delegates, `workspaceAccess` reports the profile-selected
 potential capability; `gatedByRunWrite: true` means the current run still needs
-workspace writes enabled (for example CLI `--write`) before the delegate can use
+a write-capable `accessMode` before the delegate can use
 workspace write or shell tools. In-process delegate spawn is `risk: "safe"` by
 default because the child run enforces its own tool policies; set
 `requiresApproval: true` on the delegate only when spawn itself needs approval.

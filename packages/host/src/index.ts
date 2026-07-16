@@ -436,7 +436,6 @@ export type {
   SharedConfigSourceMap,
   SharedConfigError,
   LoadedSharedConfig,
-  ApprovalDefaults,
   CapabilityConfig,
   CapabilitySkillEvolutionConfig,
   CapabilitySkillEvolutionMode,

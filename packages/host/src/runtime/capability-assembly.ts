@@ -176,10 +176,8 @@ function capabilityAccessSummary(
   access: ResolvedRunAccess,
 ): NonNullable<CapabilitySnapshot["access"]> {
   return {
-    permissionMode: access.permissionMode,
-    shouldWrite: access.shouldWrite,
+    accessMode: access.accessMode,
     backgroundTasks: access.backgroundTasks,
-    ...(access.accessMode ? { accessMode: access.accessMode } : {}),
     ...(access.requestedAccessMode
       ? { requestedAccessMode: access.requestedAccessMode }
       : {}),
@@ -191,9 +189,6 @@ function capabilityAccessSummary(
       : {}),
     ...(access.backgroundTasksCeiling
       ? { backgroundTasksCeiling: access.backgroundTasksCeiling }
-      : {}),
-    ...(access.overriddenLegacyFields.length > 0
-      ? { overriddenLegacyFields: access.overriddenLegacyFields }
       : {}),
   };
 }

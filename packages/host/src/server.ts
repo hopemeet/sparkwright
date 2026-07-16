@@ -9,7 +9,6 @@ import {
   ACCESS_MODES,
   BACKGROUND_TASK_POLICIES,
   IM_SESSION_PERMISSIONS,
-  PERMISSION_MODES,
   PROTOCOL_VERSION,
   TASK_STATUSES,
   TRACE_LEVELS,
@@ -37,9 +36,7 @@ export interface ServeConnectionOptions {
   accessModeCeiling?: RuntimeOptions["accessModeCeiling"];
   defaultBackgroundTasks?: RuntimeOptions["defaultBackgroundTasks"];
   backgroundTasksCeiling?: RuntimeOptions["backgroundTasksCeiling"];
-  defaultPermissionMode?: RuntimeOptions["defaultPermissionMode"];
   defaultTraceLevel?: RuntimeOptions["defaultTraceLevel"];
-  defaultShouldWrite?: RuntimeOptions["defaultShouldWrite"];
   hostName?: string;
   hostVersion?: string;
   /** Explicit operator opt-in; false by default. */
@@ -94,9 +91,7 @@ export function serveConnection(
     accessModeCeiling: opts.accessModeCeiling,
     defaultBackgroundTasks: opts.defaultBackgroundTasks,
     backgroundTasksCeiling: opts.backgroundTasksCeiling,
-    defaultPermissionMode: opts.defaultPermissionMode,
     defaultTraceLevel: opts.defaultTraceLevel,
-    defaultShouldWrite: opts.defaultShouldWrite,
     approvalTimeoutMs: opts.approvalTimeoutMs,
     emit: (event: HostEvent) => {
       try {
@@ -584,11 +579,9 @@ function validateRequestPayload(req: HostRequest): string | undefined {
           "targetPath",
           "confidentialPaths",
           "confidentialDefaults",
-          "shouldWrite",
           "model",
           "accessMode",
           "backgroundTasks",
-          "permissionMode",
           "traceLevel",
           "workflow",
           "metadata",
@@ -599,13 +592,11 @@ function validateRequestPayload(req: HostRequest): string | undefined {
         optionalString(req.payload, "targetPath") ??
         optionalStringArray(req.payload, "confidentialPaths") ??
         optionalBoolean(req.payload, "confidentialDefaults") ??
-        optionalBoolean(req.payload, "shouldWrite") ??
         optionalString(req.payload, "model") ??
         optionalEnum(req.payload, "accessMode", [...ACCESS_MODES]) ??
         optionalEnum(req.payload, "backgroundTasks", [
           ...BACKGROUND_TASK_POLICIES,
         ]) ??
-        optionalEnum(req.payload, "permissionMode", [...PERMISSION_MODES]) ??
         optionalEnum(req.payload, "traceLevel", [...TRACE_LEVELS]) ??
         optionalString(req.payload, "workflow") ??
         optionalIdentitySafeMetadata(req.payload, "metadata")
@@ -618,13 +609,11 @@ function validateRequestPayload(req: HostRequest): string | undefined {
           "targetPath",
           "confidentialPaths",
           "confidentialDefaults",
-          "shouldWrite",
           "fromTrace",
           "force",
           "model",
           "accessMode",
           "backgroundTasks",
-          "permissionMode",
           "traceLevel",
           "metadata",
         ]) ??
@@ -633,7 +622,6 @@ function validateRequestPayload(req: HostRequest): string | undefined {
         optionalString(req.payload, "targetPath") ??
         optionalStringArray(req.payload, "confidentialPaths") ??
         optionalBoolean(req.payload, "confidentialDefaults") ??
-        optionalBoolean(req.payload, "shouldWrite") ??
         optionalBoolean(req.payload, "fromTrace") ??
         optionalBoolean(req.payload, "force") ??
         optionalString(req.payload, "model") ??
@@ -641,7 +629,6 @@ function validateRequestPayload(req: HostRequest): string | undefined {
         optionalEnum(req.payload, "backgroundTasks", [
           ...BACKGROUND_TASK_POLICIES,
         ]) ??
-        optionalEnum(req.payload, "permissionMode", [...PERMISSION_MODES]) ??
         optionalEnum(req.payload, "traceLevel", [...TRACE_LEVELS]) ??
         optionalIdentitySafeMetadata(req.payload, "metadata")
       );
@@ -830,11 +817,9 @@ function validateRequestPayload(req: HostRequest): string | undefined {
           "targetPath",
           "confidentialPaths",
           "confidentialDefaults",
-          "shouldWrite",
           "model",
           "accessMode",
           "backgroundTasks",
-          "permissionMode",
           "traceLevel",
           "metadata",
         ]) ??
@@ -843,13 +828,11 @@ function validateRequestPayload(req: HostRequest): string | undefined {
         optionalString(req.payload, "targetPath") ??
         optionalStringArray(req.payload, "confidentialPaths") ??
         optionalBoolean(req.payload, "confidentialDefaults") ??
-        optionalBoolean(req.payload, "shouldWrite") ??
         optionalString(req.payload, "model") ??
         optionalEnum(req.payload, "accessMode", [...ACCESS_MODES]) ??
         optionalEnum(req.payload, "backgroundTasks", [
           ...BACKGROUND_TASK_POLICIES,
         ]) ??
-        optionalEnum(req.payload, "permissionMode", [...PERMISSION_MODES]) ??
         optionalEnum(req.payload, "traceLevel", [...TRACE_LEVELS]) ??
         optionalIdentitySafeMetadata(req.payload, "metadata")
       );
@@ -882,19 +865,15 @@ function validateRequestPayload(req: HostRequest): string | undefined {
         requireOnly(req.payload, [
           "sessionId",
           "model",
-          "shouldWrite",
           "accessMode",
           "backgroundTasks",
-          "permissionMode",
         ]) ??
         optionalString(req.payload, "sessionId") ??
         optionalString(req.payload, "model") ??
-        optionalBoolean(req.payload, "shouldWrite") ??
         optionalEnum(req.payload, "accessMode", [...ACCESS_MODES]) ??
         optionalEnum(req.payload, "backgroundTasks", [
           ...BACKGROUND_TASK_POLICIES,
-        ]) ??
-        optionalEnum(req.payload, "permissionMode", [...PERMISSION_MODES])
+        ])
       );
   }
 }

@@ -42,7 +42,6 @@ export type {
   SharedConfigWarning,
 } from "./config/contracts.js";
 export type {
-  ApprovalDefaults,
   AgentExposureMode,
   CapabilityDelegateToolConfig,
   CapabilityEventHookConfig,

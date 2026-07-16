@@ -83,7 +83,7 @@ sparkwright delegates run delegate_external_cli_reviewer \
   --goal "Inspect README.md and return one concise suggestion." \
   --session-id delegate-debug \
   --trace-level debug \
-  --yes \
+  --access-mode bypass \
   --format text
 ```
 
@@ -91,9 +91,8 @@ The command still goes through the delegate approval gate. It writes a trace to
 `.sparkwright/sessions/<session-id>/trace.jsonl`.
 
 Delegates with `workspaceAccess: "read_write"` also require the parent run (or
-direct debug command) to enable workspace writes. For direct debugging, pass
-`--write --yes`; without `--write`, SparkWright refuses to hand the project
-workspace to the delegate even if the delegate tool itself is approved.
+direct debug command) to use a write-capable access mode. For trusted direct
+debugging, pass `--access-mode bypass`.
 
 ## ACP Stdio
 

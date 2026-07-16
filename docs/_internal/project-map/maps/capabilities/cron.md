@@ -9,6 +9,12 @@ See [../../modules/agent-runtime.md](../../modules/agent-runtime.md) for related
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-07-16T12:45:00+0800
+- Scope: Cron runner receives accessMode and compiles it internally; the separate cron approval default was removed.
+- Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.
+- Tests: focused access/policy/protocol/CLI/TUI/ACP/Workflow tests; npm run typecheck:test; npm run schema:check.
+
 - Date: 2026-07-16
 - Scope: reviewed after the portable workflow delegate identity change; cron contracts and execution paths are unaffected.
 
@@ -65,8 +71,11 @@ cron config/state
 - Cron create results expose the requested effective name and whether storage
   adjusted it. CLI and TUI unique-create flows surface that auto-suffixing so
   users can see when `name 2` was created instead of the requested name.
-- `approvals.cronMode` supplies the default permission mode for unattended cron
-  commands; explicit CLI flags still override it.
+- Cron run/tick accepts the same `accessMode` as other run entrypoints and
+  compiles it to the internal execution policy. The reusable runner defaults
+  to `ask` with a deny-only resolver, preserving unattended safe-tool execution
+  while rejecting actions that actually require approval; CLI omission still
+  resolves to its canonical `read-only` default before calling Cron.
 - CLI cron run/tick paths use `createConfiguredCliTools`, which flattens the
   host CLI diagnostic catalog profile, applies configured tool selectors, and
   filters recursive `cron` execution in `@sparkwright/cron`.

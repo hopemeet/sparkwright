@@ -283,7 +283,6 @@ export { createApprovalRequest, resolveApproval } from "./approval.js";
 export type {
   ApprovalEnforcementMode,
   ApprovalPolicy,
-  ApprovalPolicyOptions,
   ApprovalScope,
 } from "./approval-policy.js";
 export {

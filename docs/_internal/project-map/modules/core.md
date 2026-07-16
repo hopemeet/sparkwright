@@ -12,6 +12,12 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md),
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-07-16T12:45:00+0800
+- Scope: Approval auto-policy is derived solely from accessMode; Core permission/write fields remain internal execution targets.
+- Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.
+- Tests: focused access/policy/protocol/CLI/TUI/ACP/Workflow tests; npm run typecheck:test; npm run schema:check.
+
 - Date: 2026-07-16
 - Scope: ToolRegistry now resolves exact names only; hooks, policy, approval,
   repeat detection, execution, and public events all consume the same callable

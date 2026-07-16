@@ -33,7 +33,6 @@ import {
   type RunRecord,
   type RunResult,
   type RuntimeContext,
-  type RunAccessMode,
   type SparkwrightEvent,
   type TaskRevivalSource,
   type SessionTraceFacts,
@@ -155,7 +154,6 @@ import {
 } from "@sparkwright/core/internal";
 import {
   isTraceLevel,
-  type PermissionMode,
   type TraceLevel,
   type ProtocolError,
   type CapabilityInspectRequestPayload,
@@ -1375,8 +1373,6 @@ export class HostRuntime {
         accessModeCeiling: this.opts.accessModeCeiling,
         defaultBackgroundTasks: this.opts.defaultBackgroundTasks,
         backgroundTasksCeiling: this.opts.backgroundTasksCeiling,
-        defaultPermissionMode: this.opts.defaultPermissionMode,
-        defaultShouldWrite: this.opts.defaultShouldWrite ?? false,
       });
       const configured = await this.inspectConfiguredCapabilities({
         modelRef: input.model ?? input.modelRef,
@@ -2599,13 +2595,7 @@ export class HostRuntime {
               ...(input.targetPath ? { targetPath: input.targetPath } : {}),
               confidentialPaths: [...(confidentialPaths ?? [])],
               confidentialDefaults: confidentialDefaults ?? true,
-              shouldWrite: runAccess.shouldWrite,
-              accessMode:
-                runAccess.accessMode ??
-                accessModeFromResolvedFields(
-                  runAccess.permissionMode,
-                  runAccess.shouldWrite,
-                ),
+              accessMode: runAccess.accessMode,
               backgroundTasks: runAccess.backgroundTasks,
             },
             definitionSnapshot: workflowDefinition,
@@ -3360,8 +3350,6 @@ export class HostRuntime {
         accessModeCeiling: this.opts.accessModeCeiling,
         defaultBackgroundTasks: this.opts.defaultBackgroundTasks,
         backgroundTasksCeiling: this.opts.backgroundTasksCeiling,
-        defaultPermissionMode: this.opts.defaultPermissionMode,
-        defaultShouldWrite: this.opts.defaultShouldWrite,
       },
     );
     const { permissionMode, shouldWrite } = access;
@@ -3384,13 +3372,11 @@ export class HostRuntime {
         resumedFromRunId: payload.runId,
         ...(payload.metadata ?? {}),
         ...accessMetadata,
-        shouldWrite,
       },
       runStoreMetadata: {
         resumedFromRunId: payload.runId,
         ...(payload.metadata ?? {}),
         ...accessMetadata,
-        shouldWrite,
         ...(payload.metadata ? { resumeMetadata: payload.metadata } : {}),
       },
     });
@@ -3621,7 +3607,6 @@ export class HostRuntime {
       confidentialDefaults:
         payload.confidentialDefaults ??
         authorizationSnapshot?.confidentialDefaults,
-      shouldWrite: payload.shouldWrite ?? authorizationSnapshot?.shouldWrite,
       accessMode: payload.accessMode ?? authorizationSnapshot?.accessMode,
       backgroundTasks:
         payload.backgroundTasks ?? authorizationSnapshot?.backgroundTasks,
@@ -3633,8 +3618,6 @@ export class HostRuntime {
         accessModeCeiling: this.opts.accessModeCeiling,
         defaultBackgroundTasks: this.opts.defaultBackgroundTasks,
         backgroundTasksCeiling: this.opts.backgroundTasksCeiling,
-        defaultPermissionMode: this.opts.defaultPermissionMode,
-        defaultShouldWrite: this.opts.defaultShouldWrite,
       },
     );
     const { permissionMode, shouldWrite } = access;
@@ -3666,14 +3649,12 @@ export class HostRuntime {
         verifyOnResume: record.resume.verifyOnResume,
         ...(payload.metadata ?? {}),
         ...accessMetadata,
-        shouldWrite,
       },
       runStoreMetadata: {
         resumedWorkflowRunId: record.id,
         verifyOnResume: record.resume.verifyOnResume,
         ...(payload.metadata ?? {}),
         ...accessMetadata,
-        shouldWrite,
       },
     });
     if (!prepared.ok) {
@@ -3924,8 +3905,6 @@ export class HostRuntime {
       accessModeCeiling: this.opts.accessModeCeiling,
       defaultBackgroundTasks: this.opts.defaultBackgroundTasks,
       backgroundTasksCeiling: this.opts.backgroundTasksCeiling,
-      defaultPermissionMode: this.opts.defaultPermissionMode,
-      defaultShouldWrite: this.opts.defaultShouldWrite,
     });
     const { permissionMode, shouldWrite } = access;
     const accessMetadata = buildAccessMetadata(access);
@@ -3984,12 +3963,10 @@ export class HostRuntime {
       runMetadata: {
         ...(payload.metadata ?? {}),
         ...accessMetadata,
-        shouldWrite,
       },
       runStoreMetadata: {
         ...(payload.metadata ?? {}),
         ...accessMetadata,
-        shouldWrite,
       },
     });
     if (!prepared.ok) return prepared;
@@ -7971,10 +7948,7 @@ function workflowRunSnapshot(record: WorkflowRunRecord): WorkflowRunSnapshot {
               record.authorizationSnapshot.confidentialPaths.length > 0,
             confidentialDefaults:
               record.authorizationSnapshot.confidentialDefaults,
-            shouldWrite: record.authorizationSnapshot.shouldWrite,
-            ...(record.authorizationSnapshot.accessMode
-              ? { accessMode: record.authorizationSnapshot.accessMode }
-              : {}),
+            accessMode: record.authorizationSnapshot.accessMode,
             backgroundTasks: record.authorizationSnapshot.backgroundTasks,
           },
         }
@@ -7984,16 +7958,6 @@ function workflowRunSnapshot(record: WorkflowRunRecord): WorkflowRunSnapshot {
     ...(record.completedAt ? { completedAt: record.completedAt } : {}),
     metadata: { ...record.metadata },
   };
-}
-
-function accessModeFromResolvedFields(
-  permissionMode: PermissionMode,
-  shouldWrite: boolean,
-): RunAccessMode {
-  if (!shouldWrite) return "read-only";
-  if (permissionMode === "accept_edits") return "accept-edits";
-  if (permissionMode === "bypass_permissions") return "bypass";
-  return "ask";
 }
 
 async function persistWorkflowProjectionSnapshot(

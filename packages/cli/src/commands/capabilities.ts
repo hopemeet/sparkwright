@@ -1,4 +1,4 @@
-import { createSessionId } from "@sparkwright/core";
+import { compileRunAccessMode, createSessionId } from "@sparkwright/core";
 import { defaultCronRoot } from "@sparkwright/cron";
 import type {
   CapabilityDelegateToolSummary,
@@ -55,7 +55,7 @@ export function capabilitiesUsage(): string {
 
 export function delegatesUsage(): string {
   return [
-    'Usage: sparkwright delegates run <external-delegate-tool> "goal" [--workspace path] [--goal text] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--session-id id] [--trace-level standard|debug] [--format json|text]',
+    'Usage: sparkwright delegates run <external-delegate-tool> "goal" [--workspace path] [--goal text] [--access-mode read-only|ask|accept-edits|bypass] [--session-id id] [--trace-level standard|debug] [--format json|text]',
     "       Supports ACP and external-command delegate tools; internal profiles run through normal run-loop delegation.",
   ].join("\n");
 }
@@ -240,13 +240,10 @@ export async function handleDelegatesCommand(
     sessionId: parsed.sessionId ?? createSessionId(),
     traceLevel: parsed.traceLevel,
     approvalResolver: createCliApprovalResolver({
-      approveAll: parsed.approvalOptions.approveAll,
-      approveEdits: parsed.approvalOptions.approveEdits,
-      approveShellSafe: parsed.approvalOptions.approveShellSafe,
-      permissionMode: parsed.runAccess.permissionMode,
+      accessMode: parsed.runAccess.accessMode,
       io,
     }),
-    shouldWrite: parsed.runAccess.shouldWrite,
+    shouldWrite: compileRunAccessMode(parsed.runAccess.accessMode).shouldWrite,
   });
 
   if (!result.ok) {
@@ -489,8 +486,6 @@ async function inspectRuntimeCapabilities(
     model: options.modelName,
     accessMode: options.runAccess?.accessMode,
     backgroundTasks: options.runAccess?.backgroundTasks,
-    permissionMode: options.runAccess?.permissionMode,
-    shouldWrite: options.runAccess?.shouldWrite,
   });
   if (!inspected.ok) {
     throw new Error(
@@ -719,7 +714,7 @@ function formatCapabilityInspectReport(
     );
   }
   for (const tool of report.agents.delegateTools) {
-    const writeGate = tool.gatedByRunWrite ? "; gated=--write" : "";
+    const writeGate = tool.gatedByRunWrite ? "; gated=write-access" : "";
     const approvalRequired =
       tool.approvalRequiredUnderCurrentRun ?? tool.requiresApproval;
     const model = tool.model ? `; model=${tool.model}` : "";
@@ -793,9 +788,7 @@ function formatCapabilityAccessLine(
 ): string {
   if (!access) return "unavailable";
   const parts = [
-    access.accessMode ? `accessMode=${access.accessMode}` : undefined,
-    `permissionMode=${access.permissionMode}`,
-    `shouldWrite=${String(access.shouldWrite)}`,
+    `accessMode=${access.accessMode}`,
     `backgroundTasks=${access.backgroundTasks}`,
     access.requestedAccessMode
       ? `requestedAccessMode=${access.requestedAccessMode}`

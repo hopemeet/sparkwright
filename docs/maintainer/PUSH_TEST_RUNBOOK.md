@@ -81,8 +81,7 @@ printf '# Repo Pilot\n\nA tiny workspace for SparkWright smoke tests.\n' \
 npm exec sparkwright -- run "inspect this repo and suggest a README improvement" \
   --workspace /tmp/sparkwright-write-smoke \
   --target README.md \
-  --write \
-  --yes \
+  --access-mode bypass \
   --trace-level standard
 ```
 
@@ -107,7 +106,7 @@ printf '# Repo Pilot\n\nA tiny workspace.\n' \
 npm exec sparkwright -- run "inspect this repo and suggest a README improvement" \
   --workspace /tmp/sparkwright-deny-smoke \
   --target README.md \
-  --write \
+  --access-mode ask \
   --trace-level standard
 ```
 
@@ -154,16 +153,14 @@ printf '# Repo Pilot\n\nA tiny workspace.\n' \
 npm exec sparkwright -- run "inspect this repo and suggest a README improvement" \
   --workspace /tmp/sparkwright-skip-smoke \
   --target README.md \
-  --write \
-  --yes \
+  --access-mode bypass \
   --trace-level standard
 
 # Second run: heading already present → skipped (no-op).
 npm exec sparkwright -- run "inspect this repo and suggest a README improvement" \
   --workspace /tmp/sparkwright-skip-smoke \
   --target README.md \
-  --write \
-  --yes \
+  --access-mode bypass \
   --trace-level standard
 ```
 

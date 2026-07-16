@@ -765,12 +765,9 @@ Put user arguments in prompt text instead.
   `runBudget` and the safety backstop.
 - `traceLevel`: default trace verbosity (`standard`, `debug`) when an
   entrypoint does not pass one. CLI `--trace-level` overrides.
-- `approvals`: default approval auto-grants (`shellSafe`, `edits`, `all`) for
-  CLI/host clients that opt into those scopes, plus `cronMode` for unattended
-  cron run/tick defaults. Run autonomy comes from `accessMode`; CLI flags
-  (`--yes`, `--yes-edits`, `--yes-shell-safe`, `--access-mode`) and the TUI
-  runtime mode switch can request stricter temporary behavior, subject to the
-  project access ceiling.
+- `accessMode`: the single run-autonomy input. CLI `--access-mode` and the TUI
+  runtime mode switch can request a temporary mode, subject to the project
+  access ceiling.
 - `tools`: preferred tool selector, allow/disable, and defer settings.
 - `capabilities.skills`: Skill roots and loading behavior.
 - `capabilities.mcp`: MCP server definitions, default policy, and MCP tool

@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import {
   asSessionId,
+  compileRunAccessMode,
   buildTraceReportFile,
   buildTraceTimelineFile,
   FileSessionStore,
@@ -331,7 +332,6 @@ export async function handleRunResumeCommand(
         workspaceRoot: parsed.workspaceRoot,
         sessionRootDir: parsed.sessionRootDir,
         runAccess: parsed.runAccess,
-        approvalOptions: parsed.approvalOptions,
         modelName:
           parsed.modelNameSource === "cli" ? parsed.modelName : undefined,
         sessionId: parsed.sessionId,
@@ -434,12 +434,15 @@ export async function handleRunResumeCommand(
     return { exitCode: 1, sessionId: resolvedSessionId };
   }
 
+  const { permissionMode, shouldWrite } = compileRunAccessMode(
+    parsed.runAccess.accessMode,
+  );
   const model = await createCliModel({
     modelRef: parsed.modelName,
     cwd: parsed.workspaceRoot,
     env,
     targetPath: parsed.targetPath,
-    shouldWrite: parsed.runAccess.shouldWrite,
+    shouldWrite,
     goal: checkpoint.run.goal,
   });
   if (!model.ok) {
@@ -449,16 +452,13 @@ export async function handleRunResumeCommand(
 
   const workspace = new LocalWorkspace(parsed.workspaceRoot);
   const approvalResolver = createCliApprovalResolver({
-    approveAll: parsed.approvalOptions.approveAll,
-    approveEdits: parsed.approvalOptions.approveEdits,
-    approveShellSafe: parsed.approvalOptions.approveShellSafe,
-    permissionMode: parsed.runAccess.permissionMode,
+    accessMode: parsed.runAccess.accessMode,
     io,
   });
   const loadedConfig = await loadHostConfig(parsed.workspaceRoot, env);
   const policy = createHostRunPolicy({
-    permissionMode: parsed.runAccess.permissionMode,
-    shouldWrite: parsed.runAccess.shouldWrite,
+    permissionMode,
+    shouldWrite,
     targetPath:
       parsed.targetPathSource === "cli" ? parsed.targetPath : undefined,
     writeGuardrails: loadedConfig.config.write,

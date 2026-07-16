@@ -358,7 +358,7 @@ async function writeDeniedCase(beforeSnapshot) {
 
   record({
     id: "REAL_WRITE_DENIED",
-    name: "real-model write denied without --write",
+    name: "real-model write denied in read-only access mode",
     status: ok ? "passed" : "failed",
     command: commandString(result.command),
     trace: trace.path,
@@ -457,7 +457,8 @@ async function delegateToolCase() {
     delegateWorkspace,
     "--model",
     requestedModel,
-    "--yes",
+    "--access-mode",
+    "bypass",
     "--trace-level",
     "debug",
   ]);

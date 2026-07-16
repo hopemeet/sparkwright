@@ -20,7 +20,7 @@ import type {
   CapabilitySnapshot,
   CompactionWarning,
   HostEvent,
-  PermissionMode,
+  RunAccessMode,
   RunInputPayload,
   RunInputPart,
   SessionCompactionMeasurement,
@@ -71,7 +71,7 @@ export interface RunControllerOptions {
 export interface WorkflowJobExecutionContext {
   readonly kind: "workflow";
   readonly sessionId: string;
-  readonly permissionMode: PermissionMode;
+  readonly accessMode: RunAccessMode;
   readonly runId: string;
   readonly workflowRunId: string;
 }
@@ -87,7 +87,7 @@ type ExecutionKind = "main" | "workflow";
 interface ExecutionOrigin {
   client: Client;
   sessionId: string;
-  permissionMode: PermissionMode;
+  accessMode: RunAccessMode;
   kind: ExecutionKind;
   workflowRunId?: string;
 }
@@ -366,11 +366,10 @@ export class RunController {
     try {
       const traceLevel = this.opts.traceLevel ?? "standard";
       const input = this.pendingRunInput();
-      const permissions = this.coreRunFields();
       this.executionOrigins.set(client, {
         client,
         sessionId: this.sessionId,
-        permissionMode: permissions.permissionMode,
+        accessMode: this.tuiPermissionMode(),
         kind: "main",
       });
       const { runId } = await client.startRun(
@@ -381,9 +380,7 @@ export class RunController {
           modelName: this.opts.modelName,
           modelNameSource: this.opts.modelNameSource,
           accessMode: this.tuiPermissionMode(),
-          permissionMode: permissions.permissionMode,
           traceLevel,
-          shouldWrite: permissions.shouldWrite,
           metadata: this.runRequestMetadata({ traceLevel }),
         }),
       );
@@ -581,12 +578,11 @@ export class RunController {
     workflowName: string;
     goal: string;
   }): Promise<WorkflowJobHandle | null> {
-    const permissions = this.coreRunFields();
     const client = await createClient({
       spawn: resolveHostStdioSpawn({
         workspaceRoot: this.opts.workspaceRoot,
         sessionRootDir: this.sessionRootDir(),
-        permissionMode: permissions.permissionMode,
+        accessMode: this.tuiPermissionMode(),
       }),
       client: { name: "sparkwright-tui-workflow", version: "0.1.0" },
     });
@@ -595,7 +591,7 @@ export class RunController {
     this.wireWorkflowClientApprovals(client, {
       client,
       sessionId: workflowSessionId,
-      permissionMode: permissions.permissionMode,
+      accessMode: this.tuiPermissionMode(),
       kind: "workflow",
     });
     try {
@@ -609,9 +605,7 @@ export class RunController {
           modelNameSource: this.opts.modelNameSource,
           workflowName: input.workflowName,
           accessMode: this.tuiPermissionMode(),
-          permissionMode: permissions.permissionMode,
           traceLevel,
-          shouldWrite: permissions.shouldWrite,
           metadata: {
             ...this.runRequestMetadata({ traceLevel }),
             workflowStartSource: "tui",
@@ -626,7 +620,7 @@ export class RunController {
       const execution = Object.freeze({
         kind: "workflow" as const,
         sessionId: workflowSessionId,
-        permissionMode: permissions.permissionMode,
+        accessMode: this.tuiPermissionMode(),
         runId: started.runId,
         workflowRunId: started.workflowRunId,
       });
@@ -665,7 +659,7 @@ export class RunController {
       spawn: resolveHostStdioSpawn({
         workspaceRoot: this.opts.workspaceRoot,
         sessionRootDir: this.sessionRootDir(),
-        permissionMode: this.coreRunFields().permissionMode,
+        accessMode: authorization.accessMode,
       }),
       client: { name: "sparkwright-tui-workflow", version: "0.1.0" },
     });
@@ -680,7 +674,7 @@ export class RunController {
     this.wireWorkflowClientApprovals(client, {
       client,
       sessionId: workflowSessionId,
-      permissionMode: permissionModeFromWorkflowAuthorization(authorization),
+      accessMode: authorization.accessMode,
       kind: "workflow",
       workflowRunId: input.workflow.id,
     });
@@ -699,7 +693,6 @@ export class RunController {
           // snapshot (see WorkflowRunSnapshot.authorizationSnapshot); the host
           // re-applies them from the persisted record on resume.
           confidentialDefaults: authorization.confidentialDefaults,
-          shouldWrite: authorization.shouldWrite,
           metadata: {
             ...this.runRequestMetadata({ traceLevel }),
             workflowResumeSource: "tui",
@@ -717,7 +710,7 @@ export class RunController {
       const execution = Object.freeze({
         kind: "workflow" as const,
         sessionId: workflowSessionId,
-        permissionMode: permissionModeFromWorkflowAuthorization(authorization),
+        accessMode: authorization.accessMode,
         runId: started.runId,
         workflowRunId: input.workflow.id,
       });
@@ -889,7 +882,7 @@ export class RunController {
     const spawn = resolveHostStdioSpawn({
       workspaceRoot: this.opts.workspaceRoot,
       sessionRootDir: this.sessionRootDir(),
-      permissionMode: this.coreRunFields().permissionMode,
+      accessMode: this.tuiPermissionMode(),
     });
     this.clientPromise = createClient({
       spawn,
@@ -920,7 +913,7 @@ export class RunController {
       source: "tui",
       sessionId: this.sessionId,
       traceLevel: this.opts.traceLevel ?? "standard",
-      shouldWrite: this.shouldWrite(),
+      accessMode: this.tuiPermissionMode(),
       metadata: this.runRequestMetadata(),
     });
     if (!result.tracePath) return;
@@ -957,16 +950,13 @@ export class RunController {
     input: { traceLevel?: TraceLevel } = {},
   ): Record<string, unknown> {
     const traceLevel = input.traceLevel ?? this.opts.traceLevel ?? "standard";
-    const permissions = this.coreRunFields();
     return {
       ...createHostClientRunMetadata({
         source: "tui",
         sessionId: this.sessionId,
         workspaceRoot: this.opts.workspaceRoot,
         accessMode: this.tuiPermissionMode(),
-        permissionMode: permissions.permissionMode,
         traceLevel,
-        shouldWrite: permissions.shouldWrite,
         modelName: this.opts.modelName,
       }),
       ...runInputMetadataRecord(this.pendingRunInput()),
@@ -976,10 +966,6 @@ export class RunController {
   private pendingRunInput(): RunInputPayload | undefined {
     if (this.pendingInputParts.length === 0) return undefined;
     return createRunInputPayloadFromParts(this.pendingInputParts);
-  }
-
-  private shouldWrite(): boolean {
-    return this.coreRunFields().shouldWrite;
   }
 
   private tuiPermissionMode(): TuiPermissionMode {
@@ -1119,7 +1105,7 @@ export class RunController {
     const details = (msg.payload.details ?? {}) as Record<string, unknown>;
     const action = msg.payload.action;
     const policyDecision = resolveHostClientApprovalByPolicy(
-      { permissionMode: execution.permissionMode },
+      { accessMode: execution.accessMode },
       {
         approvalId: msg.payload.approvalId,
         runId: msg.payload.runId,
@@ -1275,14 +1261,6 @@ export class RunController {
     );
     if (removedActive) this.showNextApproval();
   }
-}
-
-function permissionModeFromWorkflowAuthorization(
-  authorization: NonNullable<WorkflowRunSnapshot["authorizationSnapshot"]>,
-): PermissionMode {
-  if (authorization.accessMode === "bypass") return "bypass_permissions";
-  if (authorization.accessMode === "accept-edits") return "accept_edits";
-  return "default";
 }
 
 function validateSessionId(id: string): string {

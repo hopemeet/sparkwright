@@ -170,7 +170,6 @@ describe("workflow durable channels", () => {
       authorizationSnapshot: {
         confidentialPaths: [],
         confidentialDefaults: true,
-        shouldWrite: true,
         accessMode: "ask",
         backgroundTasks: "enabled",
       },

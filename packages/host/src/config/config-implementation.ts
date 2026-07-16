@@ -4,7 +4,7 @@
  * Both the CLI and the TUI read the same on-disk config so the active model
  * and its provider credentials are configured once. This module owns the
  * canonical file locations and the validation for the *shared* fields (model,
- * providers, permissionMode, workspace). UI-only fields (theme, keybindings,
+ * providers, accessMode, workspace). UI-only fields (theme, keybindings,
  * mouse) live in the same file and are validated by the TUI; this loader
  * ignores them.
  *
@@ -13,7 +13,7 @@
  * files, top-level tool config merges with allowed as a tightening
  * intersection, disabled as a tightening union, and defer as a later-layer
  * replacement, capabilities merge by sub-capability, and the security
- * boundaries — shell.sandbox, permissionMode, and
+ * boundaries — shell.sandbox, accessMode, and
  * confidentialPaths — merge conservatively so later (lower-trust) layers cannot
  * weaken an earlier layer's policy. confidentialDefaults is the explicit
  * later-layer override for the built-in confidential path set.
@@ -24,12 +24,10 @@ import { dirname, isAbsolute, resolve } from "node:path";
 import {
   clampBackgroundTaskPolicy,
   clampAccessMode,
-  compileRunAccessMode,
   type RunBudget,
   type WorkflowHookMatcher,
   type WorkflowHookName,
 } from "@sparkwright/core";
-import { PERMISSION_MODES } from "@sparkwright/protocol";
 import type {
   AgentProfile,
   AgentProfileWorkflowHookConfig,
@@ -76,8 +74,6 @@ import {
   stringArray,
   stringSchema,
   stringRecordSchema,
-  APPROVAL_BOOLEAN_CONFIG_KEYS,
-  APPROVALS_CONFIG_KEYS,
   AGENT_PROFILE_ACP_METADATA_CONFIG_KEYS,
   AGENT_PROFILE_CONFIG_KEYS,
   AGENT_PROFILE_DELEGATE_TOOL_CONFIG_KEYS,
@@ -155,11 +151,9 @@ import {
   maxStepsSchema,
   ACCESS_MODE_CONFIG_VALUES,
   BACKGROUND_TASK_POLICY_CONFIG_VALUES,
-  PERMISSION_MODE_CONFIG_VALUES,
   workspaceSchema,
 } from "../config-zod-schema.js";
 import type {
-  ApprovalDefaults,
   CapabilityDelegateToolConfig,
   CapabilityEventHookConfig,
   CapabilityHookActionConfig,
@@ -184,7 +178,6 @@ import type {
   WriteGuardrailsConfig,
 } from "../config-zod-schema.js";
 export type {
-  ApprovalDefaults,
   AgentExposureMode,
   CapabilityDelegateToolConfig,
   CapabilityEventHookConfig,
@@ -2212,54 +2205,6 @@ function validateTaskBudget(
   return out;
 }
 
-function validateApprovals(
-  raw: unknown,
-  filePath: string,
-  errors: SharedConfigError[],
-): ApprovalDefaults | undefined {
-  if (!isRecord(raw)) {
-    errors.push({
-      file: filePath,
-      field: "approvals",
-      message: "must be an object",
-    });
-    return undefined;
-  }
-  const out: ApprovalDefaults = {};
-  const allowed = new Set<string>(APPROVALS_CONFIG_KEYS);
-  for (const key of Object.keys(raw)) {
-    if (!allowed.has(key)) {
-      errors.push({
-        file: filePath,
-        field: `approvals.${key}`,
-        message: `unknown field (allowed: ${[...allowed].join(", ")})`,
-      });
-    }
-  }
-  for (const key of APPROVAL_BOOLEAN_CONFIG_KEYS) {
-    if (raw[key] !== undefined) {
-      out[key] = validateOptionalBoolean(
-        raw[key],
-        `approvals.${key}`,
-        filePath,
-        errors,
-      );
-    }
-  }
-  if (raw.cronMode !== undefined) {
-    if (isStringOption(raw.cronMode, PERMISSION_MODE_CONFIG_VALUES)) {
-      out.cronMode = raw.cronMode;
-    } else {
-      errors.push({
-        file: filePath,
-        field: "approvals.cronMode",
-        message: `must be one of ${PERMISSION_MODES.join(" | ")}`,
-      });
-    }
-  }
-  return out;
-}
-
 function validateShellConfig(
   raw: unknown,
   filePath: string,
@@ -3802,24 +3747,6 @@ export function normalizeGroupedConfig(
     }
     const knownSub = new Set<string>(CONFIG_GROUP_CONFIG_KEYS[group]);
     for (const subKey of Object.keys(groupValue)) {
-      if (group === "policy" && subKey === "permissionMode") {
-        errors.push({
-          file: filePath,
-          field: "policy.permissionMode",
-          message:
-            'removed; use run.accessMode ("read-only", "ask", "accept-edits", or "bypass")',
-        });
-        continue;
-      }
-      if (group === "ui" && subKey === "tuiPermissionMode") {
-        errors.push({
-          file: filePath,
-          field: "ui.tuiPermissionMode",
-          message:
-            "removed; use run.accessMode for configured run autonomy or the TUI runtime mode switch for temporary changes",
-        });
-        continue;
-      }
       if (!knownSub.has(subKey)) {
         errors.push({
           file: filePath,
@@ -3868,23 +3795,6 @@ function validateShared(
   }
   const obj = normalizeGroupedConfig(raw, filePath, errors);
 
-  if (Object.prototype.hasOwnProperty.call(obj, "permissionMode")) {
-    errors.push({
-      file: filePath,
-      field: "permissionMode",
-      message:
-        'removed; use run.accessMode ("read-only", "ask", "accept-edits", or "bypass")',
-    });
-  }
-  if (Object.prototype.hasOwnProperty.call(obj, "tuiPermissionMode")) {
-    errors.push({
-      file: filePath,
-      field: "tuiPermissionMode",
-      message:
-        "removed; use run.accessMode for configured run autonomy or the TUI runtime mode switch for temporary changes",
-    });
-  }
-
   if (obj.model !== undefined) {
     const model = validateZodValue(
       modelSchema,
@@ -3929,12 +3839,7 @@ function validateShared(
   if (obj.accessMode !== undefined) {
     if (isStringOption(obj.accessMode, ACCESS_MODE_CONFIG_VALUES)) {
       config.accessMode = obj.accessMode;
-      // permissionMode is an internal compile target, never user-parsed.
-      config.permissionMode = compileRunAccessMode(
-        obj.accessMode,
-      ).permissionMode;
       sources.accessMode = origin;
-      sources.permissionMode = origin;
     } else {
       errors.push({
         file: filePath,
@@ -4042,13 +3947,6 @@ function validateShared(
         field: "traceLevel",
         message: "must be one of standard | debug",
       });
-    }
-  }
-  if (obj.approvals !== undefined) {
-    const approvals = validateApprovals(obj.approvals, filePath, errors);
-    if (approvals) {
-      config.approvals = approvals;
-      sources.approvals = origin;
     }
   }
   if (obj.shell !== undefined) {
@@ -4185,14 +4083,11 @@ export async function loadHostConfig(
       tools: layerTools,
       accessMode: layerAccessMode,
       backgroundTasks: layerBackgroundTasks,
-      // permissionMode is derived from accessMode; never merged from a layer.
-      permissionMode: _layerPermissionMode,
       confidentialDefaults: layerConfidentialDefaults,
       confidentialPaths: layerConfidentialPaths,
       write: layerWrite,
       ...rest
     } = v.config;
-    void _layerPermissionMode;
     Object.assign(merged, rest);
     if (providers) {
       merged.providers = { ...(merged.providers ?? {}), ...providers };
@@ -4240,12 +4135,6 @@ export async function loadHostConfig(
               ? sources.accessMode
               : v.sources.accessMode
             : sources.accessModeCeiling;
-      }
-      if (merged.accessMode !== undefined) {
-        merged.permissionMode = compileRunAccessMode(
-          merged.accessMode,
-        ).permissionMode;
-        sources.permissionMode = sources.accessMode;
       }
     }
     if (layerBackgroundTasks !== undefined) {
@@ -4306,7 +4195,6 @@ export async function loadHostConfig(
     delete fieldSources.accessModeCeiling;
     delete fieldSources.backgroundTasks;
     delete fieldSources.backgroundTasksCeiling;
-    delete fieldSources.permissionMode;
     delete fieldSources.confidentialDefaults;
     delete fieldSources.confidentialPaths;
     delete fieldSources.write;

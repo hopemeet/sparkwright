@@ -9,6 +9,12 @@ See [session-store.md](session-store.md) and [../runtime/context-compaction.md](
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-07-16T12:45:00+0800
+- Scope: Run and Workflow resume reapply canonical persisted/requested accessMode; compatibility reconstruction of permission/write inputs was removed.
+- Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.
+- Tests: focused access/policy/protocol/CLI/TUI/ACP/Workflow tests; npm run typecheck:test; npm run schema:check.
+
 - Date: 2026-07-16T11:52:29+0800
 - Scope: reviewed protocol 2.0 terminal failure envelope changes; persisted
   run/session resume semantics consume Core state and are unaffected by removal

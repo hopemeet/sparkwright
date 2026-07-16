@@ -1063,8 +1063,7 @@ npm run build --workspaces
 npm exec sparkwright -- run "inspect this repo and suggest a README improvement" \
   --workspace examples/repo-pilot \
   --target README.md \
-  --write \
-  --yes \
+  --access-mode bypass \
   --trace-level standard
 ```
 
@@ -1101,4 +1100,4 @@ model.completed
 run.completed
 ```
 
-If `--write` is used without `--yes` in a non-interactive environment, approval is denied and the sequence should include `workspace.write.denied` and `tool.failed` instead of `workspace.write.completed`.
+If `--access-mode ask` is used in a non-interactive environment, approval is denied and the sequence should include `workspace.write.denied` and `tool.failed` instead of `workspace.write.completed`.

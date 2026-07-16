@@ -7,35 +7,24 @@ import {
 import type { CliIO } from "../src/io.js";
 
 describe("CLI approval resolver", () => {
-  it("normalizes legacy switches and permission modes into one policy", () => {
-    expect(createCliApprovalPolicy({})).toEqual({
+  it("derives one approval policy from accessMode", () => {
+    expect(createCliApprovalPolicy("ask")).toEqual({
       enforcement: "ask",
       scopes: [],
     });
-    expect(createCliApprovalPolicy({ approveShellSafe: true })).toEqual({
+    expect(createCliApprovalPolicy("accept-edits")).toEqual({
       enforcement: "auto",
-      scopes: ["safe_shell"],
+      scopes: ["workspace_edits"],
     });
-    expect(createCliApprovalPolicy({ approveAll: true })).toEqual({
-      enforcement: "auto",
-      scopes: ["all"],
-    });
-    expect(
-      createCliApprovalPolicy({ permissionMode: "bypass_permissions" }),
-    ).toEqual({
+    expect(createCliApprovalPolicy("bypass")).toEqual({
       enforcement: "bypass",
       scopes: ["all"],
     });
-    expect(createCliApprovalPolicy({ permissionMode: "dont_ask" })).toEqual({
-      enforcement: "deny",
-      scopes: [],
-    });
   });
 
-  it("auto-approves only workspace writes with --yes-edits", async () => {
+  it("accept-edits auto-approves only workspace writes", async () => {
     const resolver = createCliApprovalResolver({
-      approveAll: false,
-      approveEdits: true,
+      accessMode: "accept-edits",
       io: captureIo(),
     });
 
@@ -43,103 +32,49 @@ describe("CLI approval resolver", () => {
       resolver(request({ action: "workspace.write", summary: "Write README" })),
     ).resolves.toMatchObject({
       decision: "approved",
-      message: "Auto-approved by --yes-edits.",
+      message: "Auto-approved by accept-edits access mode.",
     });
-
     await expect(
-      resolver(
-        request({
-          action: "tool.execute",
-          summary: "Run tool bash",
-          details: {
-            toolName: "bash",
-            arguments: { command: "cat README.md" },
-          },
-        }),
-      ),
+      resolver(request({ action: "tool.execute", summary: "Run bash" })),
     ).resolves.toMatchObject({
       decision: "denied",
       message: "Non-interactive stdin.",
     });
   });
 
-  it("auto-approves safe shell commands but denies unsafe shell commands", async () => {
-    const resolver = createCliApprovalResolver({
-      approveAll: false,
-      approveShellSafe: true,
+  it("ask prompts interactively and denies without an interactive stdin", async () => {
+    const interactive = createCliApprovalResolver({
+      accessMode: "ask",
+      io: captureIo({ stdinIsTTY: true, question: async () => "yes" }),
+    });
+    await expect(
+      interactive(request({ action: "tool.execute", summary: "Run bash" })),
+    ).resolves.toMatchObject({ decision: "approved" });
+
+    const nonInteractive = createCliApprovalResolver({
+      accessMode: "ask",
       io: captureIo(),
     });
-
     await expect(
-      resolver(
-        request({
-          action: "tool.execute",
-          summary: "Run tool bash",
-          details: { toolName: "bash", arguments: { command: "rg TODO src" } },
-        }),
-      ),
-    ).resolves.toMatchObject({
-      decision: "approved",
-      message: "Auto-approved by --yes-shell-safe.",
-    });
-
-    await expect(
-      resolver(
-        request({
-          action: "tool.execute",
-          summary: "Run tool bash",
-          details: {
-            toolName: "bash",
-            arguments: { command: "curl example.com" },
-          },
-        }),
-      ),
+      nonInteractive(request({ action: "tool.execute", summary: "Run bash" })),
     ).resolves.toMatchObject({
       decision: "denied",
       message: "Non-interactive stdin.",
     });
   });
 
-  it("denies approval requests in dont_ask mode without prompting", async () => {
-    const io = captureIo({
-      stdinIsTTY: true,
-      question: async () => {
-        throw new Error("should not prompt");
-      },
-    });
+  it("bypass auto-approves approval requests", async () => {
     const resolver = createCliApprovalResolver({
-      permissionMode: "dont_ask",
-      io,
-    });
-
-    await expect(
-      resolver(request({ action: "workspace.write", summary: "Write README" })),
-    ).resolves.toMatchObject({
-      decision: "denied",
-      message: "Approval denied by dont_ask mode.",
-    });
-  });
-
-  it("auto-approves approval requests in bypass_permissions mode", async () => {
-    const resolver = createCliApprovalResolver({
-      permissionMode: "bypass_permissions",
+      accessMode: "bypass",
       io: captureIo(),
     });
-
     await expect(
       resolver(
-        request({
-          action: "tool.execute",
-          summary: "Run external shell",
-          details: {
-            toolName: "bash",
-            arguments: { command: "curl example.com" },
-          },
-        }),
+        request({ action: "tool.execute", summary: "Run external shell" }),
       ),
     ).resolves.toMatchObject({
       decision: "approved",
-      message: "Auto-approved by bypass_permissions.",
+      message: "Auto-approved by bypass access mode.",
     });
   });
 });

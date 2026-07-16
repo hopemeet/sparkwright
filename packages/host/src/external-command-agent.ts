@@ -617,7 +617,7 @@ function buildCommandEnv(
     return { ...(config.env ?? {}) };
   }
   // Inherit mode. A delegate that was granted read_write workspace access has
-  // already been explicitly trusted by the parent run (`--write`), so its
+  // already been explicitly trusted by the parent run's access mode, so its
   // inherited environment is left intact. But a locked-down delegate
   // (workspaceAccess "none", the default) runs in a throwaway cwd and must not
   // be able to exfiltrate the parent's credentials: we still hand it a working

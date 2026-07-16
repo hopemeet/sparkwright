@@ -275,7 +275,7 @@ describe("CapabilitiesPanel rendering", () => {
     expect(text).toContain("anthropic/claude");
     expect(text).toContain("relevant");
     expect(text).toContain("workspace read_write");
-    expect(text).toContain("requires --write");
+    expect(text).toContain("requires write access");
   });
 
   it("does not count the built-in primary main profile as a configured agent", async () => {

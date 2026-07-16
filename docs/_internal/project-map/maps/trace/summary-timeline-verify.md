@@ -10,6 +10,12 @@ See [raw-trace.md](raw-trace.md) for source data and [export-diagnostics.md](exp
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-07-16T12:45:00+0800
+- Scope: Trace summaries keep approval/write outcome facts; run metadata now records canonical accessMode only.
+- Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.
+- Tests: focused access/policy/protocol/CLI/TUI/ACP/Workflow tests; npm run typecheck:test; npm run schema:check.
+
 - Date: 2026-07-16T11:52:29+0800
 - Scope: reviewed protocol 2.0 terminal failure envelope changes; summary,
   timeline, report, and verify continue to derive from Core trace events and do

@@ -1,5 +1,6 @@
 import {
   createRun,
+  compileRunAccessMode,
   createSessionRunStoreFactory,
   FileSessionStore,
   type ContextItem,
@@ -31,7 +32,7 @@ import { createCliApprovalResolver } from "../cli-approval.js";
 import { createLiveEventFormatter } from "../event-format.js";
 import type { CliIO } from "../io.js";
 import { writeLine } from "../io.js";
-import type { CliApprovalOptions, CliRunAccess } from "../run-access.js";
+import type { CliRunAccess } from "../run-access.js";
 import {
   cliExitCodeForRun,
   completedRunHasCliIssues,
@@ -61,7 +62,6 @@ export interface DirectCoreRunInput {
   confidentialPaths?: readonly string[];
   confidentialDefaults?: boolean;
   runAccess: CliRunAccess;
-  approvalOptions: CliApprovalOptions;
   modelName?: string;
   sessionId: string;
   contextItems?: ContextItem[];
@@ -91,12 +91,12 @@ export async function startDirectCoreRun(
     confidentialPaths,
     confidentialDefaults,
     runAccess,
-    approvalOptions,
     modelName,
     sessionId,
   } = parsed;
-  const { shouldWrite, permissionMode } = runAccess;
-  const { approveAll, approveEdits, approveShellSafe } = approvalOptions;
+  const { permissionMode, shouldWrite } = compileRunAccessMode(
+    runAccess.accessMode,
+  );
   const model = await createCliModel({
     modelRef: modelName,
     cwd: workspaceRoot,
@@ -113,10 +113,7 @@ export async function startDirectCoreRun(
 
   const workspace = new LocalWorkspace(workspaceRoot);
   const approvalResolver = createCliApprovalResolver({
-    approveAll,
-    approveEdits,
-    approveShellSafe,
-    permissionMode,
+    accessMode: runAccess.accessMode,
     io,
   });
   const loadedConfig = await loadHostConfig(workspaceRoot, env);
@@ -458,7 +455,7 @@ function formatDeterministicReadSummary(
   if (failure) {
     return `Could not read ${targetPath}: ${formatToolFailure(failure)}.`;
   }
-  return `Read ${targetPath}. Re-run with --write to exercise approval-gated workspace mutation.`;
+  return `Read ${targetPath}. Re-run with --access-mode ask to exercise approval-gated workspace mutation.`;
 }
 
 function formatDeterministicWriteSummary(

@@ -4,7 +4,7 @@ import { mkdir, open, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
 export const WORKFLOW_SERVICE_SCHEMA_VERSION =
-  "sparkwright-workflow-service.v1" as const;
+  "sparkwright-workflow-service.v2" as const;
 
 export type WorkflowServiceState =
   | "starting"
@@ -33,14 +33,7 @@ export interface WorkflowServiceHandoff {
   jobSessionId: string;
   controlSessionId?: string;
   modelName?: string;
-  accessMode?: "read-only" | "ask" | "accept-edits" | "bypass";
-  permissionMode:
-    | "default"
-    | "plan"
-    | "accept_edits"
-    | "dont_ask"
-    | "bypass_permissions";
-  shouldWrite: boolean;
+  accessMode: "read-only" | "ask" | "accept-edits" | "bypass";
   traceLevel: "standard" | "debug";
   targetPath?: string;
   confidentialPaths?: string[];
@@ -440,8 +433,9 @@ function validateHandoff(
     typeof record.workflowName !== "string" ||
     typeof record.goal !== "string" ||
     typeof record.jobSessionId !== "string" ||
-    typeof record.permissionMode !== "string" ||
-    typeof record.shouldWrite !== "boolean" ||
+    !["read-only", "ask", "accept-edits", "bypass"].includes(
+      record.accessMode ?? "",
+    ) ||
     typeof record.traceLevel !== "string" ||
     record.source?.kind !== "cli" ||
     typeof record.source.principalId !== "string" ||

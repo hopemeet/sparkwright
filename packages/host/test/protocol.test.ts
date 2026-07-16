@@ -367,7 +367,7 @@ describe("host protocol", () => {
         payload: {
           goal: "request a write and time out",
           model: "scripted",
-          shouldWrite: true,
+          accessMode: "ask",
         },
       });
       await pair.waitFor(
@@ -975,7 +975,6 @@ describe("host protocol", () => {
           targetPath: "README.md",
           confidentialPaths: [".env"],
           confidentialDefaults: false,
-          shouldWrite: true,
           accessMode: "ask",
           backgroundTasks: "enabled",
         },
@@ -1048,7 +1047,6 @@ describe("host protocol", () => {
                 hasTargetPath: true,
                 hasConfidentialPaths: true,
                 confidentialDefaults: false,
-                shouldWrite: true,
                 accessMode: "ask",
                 backgroundTasks: "enabled",
               },
@@ -2064,7 +2062,7 @@ describe("host protocol", () => {
 
       const started = await runtime.startRun({
         goal: "prepare handoff and verify documented commands",
-        shouldWrite: true,
+        accessMode: "ask",
       });
       expect(started).toMatchObject({ ok: true });
       if (!started.ok) throw new Error(started.error.message);
@@ -2226,7 +2224,7 @@ describe("host protocol", () => {
         payload: {
           goal: "inspect missing default target",
           model: "deterministic",
-          permissionMode: "default",
+          accessMode: "ask",
         },
       });
 
@@ -2306,7 +2304,7 @@ describe("host protocol", () => {
         payload: {
           goal: "exercise invalid tool args",
           model: "scripted",
-          permissionMode: "default",
+          accessMode: "ask",
         },
       });
       await pair.waitFor(
@@ -2425,7 +2423,7 @@ describe("host protocol", () => {
         fromTrace: true,
         force: false,
         model: "deterministic",
-        permissionMode: "default",
+        accessMode: "ask",
         metadata: { source: "test" },
       },
     });
@@ -2530,7 +2528,7 @@ describe("host protocol", () => {
           runId,
           sessionId,
           model: "deterministic",
-          permissionMode: "default",
+          accessMode: "ask",
           traceLevel: "standard",
           metadata: { source: "test", traceLevel: "standard", ticket: "T-1" },
         },
@@ -2712,7 +2710,7 @@ describe("host protocol", () => {
         payload: {
           runId,
           model: "deterministic",
-          permissionMode: "default",
+          accessMode: "ask",
         },
       });
 
@@ -2845,7 +2843,7 @@ describe("host protocol", () => {
           runId,
           sessionId,
           model: "deterministic",
-          permissionMode: "default",
+          accessMode: "ask",
         },
       });
 
@@ -3343,8 +3341,6 @@ describe("host protocol", () => {
         result: {
           access: {
             accessMode: "bypass",
-            permissionMode: "bypass_permissions",
-            shouldWrite: true,
             backgroundTasks: "disabled",
           },
           shell: {
@@ -3609,7 +3605,7 @@ describe("host protocol", () => {
         payload: {
           goal: "write with approval",
           model: "scripted",
-          shouldWrite: true,
+          accessMode: "ask",
         },
       });
       await pair.waitFor((m) => m.envelope === "response" && m.id === "start");
@@ -3765,7 +3761,7 @@ describe("host protocol", () => {
         payload: {
           goal: "delegate a README write",
           model: "scripted",
-          shouldWrite: true,
+          accessMode: "ask",
         },
       });
       await pair.waitFor((m) => m.envelope === "response" && m.id === "start");
@@ -4018,20 +4014,58 @@ describe("host protocol", () => {
           goal: "delegate a shell command",
           model: "scripted",
           sessionId: "session_delegate_shell",
+          accessMode: "ask",
         },
       });
       await pair.waitFor((m) => m.envelope === "response" && m.id === "start");
 
-      const approval = await pair.waitFor(
+      const firstApproval = await pair.waitFor(
         (m) => m.envelope === "event" && m.kind === "approval.requested",
       );
       if (
-        approval.envelope !== "event" ||
-        approval.kind !== "approval.requested"
+        firstApproval.envelope !== "event" ||
+        firstApproval.kind !== "approval.requested"
       ) {
         throw new Error("approval request was not emitted");
       }
-      expect(approval.payload).toMatchObject({
+      let shellApproval = firstApproval;
+      if (firstApproval.payload.details?.toolName === "delegate_agent") {
+        pair.clientSend({
+          envelope: "request",
+          id: "approve_delegate",
+          kind: "approval.resolve",
+          timestamp: TIMESTAMP,
+          payload: {
+            approvalId: firstApproval.payload.approvalId,
+            decision: "approved",
+            message: "Approved delegation.",
+          },
+        });
+        await pair.waitFor(
+          (m) =>
+            m.envelope === "response" && m.id === "approve_delegate" && m.ok,
+        );
+        const nextShellApproval = await pair.waitFor(
+          (m) =>
+            m.envelope === "event" &&
+            m.kind === "approval.requested" &&
+            m.payload.details?.toolName === "bash",
+        );
+        if (
+          nextShellApproval.envelope !== "event" ||
+          nextShellApproval.kind !== "approval.requested"
+        ) {
+          throw new Error("shell approval request was not emitted");
+        }
+        shellApproval = nextShellApproval;
+      }
+      if (
+        shellApproval.envelope !== "event" ||
+        shellApproval.kind !== "approval.requested"
+      ) {
+        throw new Error("shell approval request was not emitted");
+      }
+      expect(shellApproval.payload).toMatchObject({
         details: {
           toolName: "bash",
           arguments: { command: "printf child-shell" },
@@ -4043,7 +4077,7 @@ describe("host protocol", () => {
         kind: "approval.resolve",
         timestamp: TIMESTAMP,
         payload: {
-          approvalId: approval.payload.approvalId,
+          approvalId: shellApproval.payload.approvalId,
           decision: "approved",
           message: "Approved delegate shell.",
           autoApproved: true,
@@ -4077,7 +4111,12 @@ describe("host protocol", () => {
       } else {
         process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON = previousScript;
       }
-      await rm(workspace, { recursive: true, force: true });
+      await rm(workspace, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 20,
+      });
     }
   });
 
@@ -4387,8 +4426,7 @@ describe("host protocol", () => {
         payload: {
           goal: "write README and verify",
           model: "scripted",
-          permissionMode: "accept_edits",
-          shouldWrite: true,
+          accessMode: "accept-edits",
         },
       });
       const startResp = await pair.waitFor(

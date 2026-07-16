@@ -4,7 +4,7 @@ import type { TaskError } from "../tasks/types.js";
 export type WorkflowRunId = Brand<string, "WorkflowRunId">;
 
 export const WORKFLOW_RUN_RECORD_SCHEMA_VERSION =
-  "sparkwright-workflow-run.v1" as const;
+  "sparkwright-workflow-run.v2" as const;
 
 export type WorkflowRunStatus =
   | "running"
@@ -75,8 +75,7 @@ export interface WorkflowRunAuthorizationSnapshot {
   targetPath?: string;
   confidentialPaths: string[];
   confidentialDefaults: boolean;
-  shouldWrite: boolean;
-  accessMode?: WorkflowRunAccessMode;
+  accessMode: WorkflowRunAccessMode;
   backgroundTasks: WorkflowBackgroundTaskPolicy;
 }
 

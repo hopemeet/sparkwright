@@ -4273,7 +4273,7 @@ describe("createConfiguredWorkflowHooks", () => {
     try {
       const run = {
         ...runRecord(),
-        metadata: { shouldWrite: false },
+        metadata: { accessMode: "read-only" },
       };
       const events = new EventLog(run.id);
       const hooks = createConfiguredWorkflowHooks({

@@ -682,8 +682,6 @@ describe("loadHostConfig", () => {
       expect(loaded.config.accessModeCeiling).toBe("bypass");
       expect(loaded.sources.accessMode).toContain("user");
       expect(loaded.sources.accessModeCeiling).toContain("project");
-      expect(loaded.config.permissionMode).toBe("default");
-      expect(loaded.sources.permissionMode).toContain("user");
       expect(loaded.warnings).toEqual([]);
     } finally {
       await rm(xdg, { recursive: true, force: true });
@@ -710,8 +708,6 @@ describe("loadHostConfig", () => {
       expect(loaded.config.accessMode).toBe("ask");
       expect(loaded.config.accessModeCeiling).toBe("ask");
       expect(loaded.sources.accessMode).toContain("project");
-      expect(loaded.config.permissionMode).toBe("default");
-      expect(loaded.sources.permissionMode).toContain("project");
       expect(loaded.warnings).toEqual([
         expect.objectContaining({
           file: projectConfig,
@@ -864,7 +860,6 @@ describe("loadHostConfig", () => {
           budget: { maxModelCalls: 12 },
           maxSteps: 30,
           traceLevel: "debug",
-          approvals: { shellSafe: true, cronMode: "accept_edits" },
         },
         ui: { theme: "dark" },
       });
@@ -874,17 +869,12 @@ describe("loadHostConfig", () => {
       expect(loaded.config.model).toBe("openai/gpt-x");
       expect(loaded.config.providers?.openai?.apiKey).toBe("sk-test");
       expect(loaded.config.accessMode).toBe("ask");
-      expect(loaded.config.permissionMode).toBe("default");
       expect(loaded.config.confidentialPaths).toEqual(["secrets/**"]);
       expect(loaded.config.write).toEqual({ maxFiles: 2 });
       expect(loaded.config.shell?.sandbox?.mode).toBe("warn");
       expect(loaded.config.runBudget).toEqual({ maxModelCalls: 12 });
       expect(loaded.config.maxSteps).toBe(30);
       expect(loaded.config.traceLevel).toBe("debug");
-      expect(loaded.config.approvals).toEqual({
-        shellSafe: true,
-        cronMode: "accept_edits",
-      });
     } finally {
       await rm(xdg, { recursive: true, force: true });
       await rm(cwd, { recursive: true, force: true });
@@ -1004,28 +994,6 @@ describe("loadHostConfig", () => {
         expect.objectContaining({
           field: "run.bogus",
           message: expect.stringContaining("unknown field"),
-        }),
-      ]);
-    } finally {
-      await rm(xdg, { recursive: true, force: true });
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
-
-  it("rejects invalid approval cronMode values", async () => {
-    const xdg = await makeTempDir();
-    const cwd = await makeTempDir();
-    try {
-      await writeUserConfig(xdg, {
-        run: { approvals: { cronMode: "always" } },
-      });
-      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
-
-      expect(loaded.config.approvals).toEqual({});
-      expect(loaded.errors).toEqual([
-        expect.objectContaining({
-          field: "approvals.cronMode",
-          message: expect.stringContaining("must be one of"),
         }),
       ]);
     } finally {
@@ -2218,7 +2186,6 @@ describe("loadHostConfig", () => {
       const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
       expect(loaded.config.model).toBeUndefined();
       expect(loaded.config.accessMode).toBeUndefined();
-      expect(loaded.config.permissionMode).toBeUndefined();
       expect(loaded.config.workspace).toBeUndefined();
       expect(loaded.config.confidentialDefaults).toBeUndefined();
       expect(loaded.config.confidentialPaths).toBeUndefined();
@@ -2232,33 +2199,6 @@ describe("loadHostConfig", () => {
           expect.objectContaining({ field: "confidentialDefaults" }),
           expect.objectContaining({ field: "confidentialPaths" }),
           expect.objectContaining({ field: "maxSteps" }),
-        ]),
-      );
-    } finally {
-      await rm(xdg, { recursive: true, force: true });
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
-
-  it("reports removed permission mode config fields instead of ignoring them", async () => {
-    const xdg = await makeTempDir();
-    const cwd = await makeTempDir();
-    try {
-      await writeUserConfig(xdg, {
-        permissionMode: "bypass_permissions",
-        policy: { permissionMode: "plan" },
-        tuiPermissionMode: "bypass",
-        ui: { tuiPermissionMode: "accept-edits" },
-      });
-
-      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
-
-      expect(loaded.errors).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ field: "permissionMode" }),
-          expect.objectContaining({ field: "policy.permissionMode" }),
-          expect.objectContaining({ field: "tuiPermissionMode" }),
-          expect.objectContaining({ field: "ui.tuiPermissionMode" }),
         ]),
       );
     } finally {

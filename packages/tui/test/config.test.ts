@@ -34,7 +34,7 @@ describe("loadTuiConfig", () => {
           model: "openai/gpt-test",
           providers: { openai: { apiKey: "sk-test" } },
         },
-        run: { accessMode: "accept-edits", approvals: { edits: true } },
+        run: { accessMode: "accept-edits" },
         ui: {
           theme: "mono",
           mouse: false,
@@ -48,7 +48,6 @@ describe("loadTuiConfig", () => {
 
     expect(loaded.config.model).toBe("openai/gpt-test");
     expect(loaded.config.providers?.openai?.apiKey).toBe("sk-test");
-    expect(loaded.config.approvals).toEqual({ edits: true });
     expect(loaded.config.tuiPermissionMode).toBe("accept-edits");
     expect(loaded.config.theme).toBe("mono");
     expect(loaded.config.mouse).toBe(false);

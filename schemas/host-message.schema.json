@@ -505,10 +505,6 @@
           "type": "boolean",
           "description": "Whether built-in conservative confidential path defaults are included. Defaults to true."
         },
-        "shouldWrite": {
-          "type": "boolean",
-          "description": "Whether this run is allowed to request workspace writes."
-        },
         "model": { "type": "string", "minLength": 1 },
         "workflow": {
           "type": "string",
@@ -518,22 +514,12 @@
         "accessMode": {
           "type": "string",
           "enum": ["read-only", "ask", "accept-edits", "bypass"],
-          "description": "High-level run autonomy preset. When present, the host compiles it to permissionMode + shouldWrite and ignores a conflicting legacy permissionMode."
+          "description": "Canonical run autonomy input. Defaults to read-only when omitted."
         },
         "backgroundTasks": {
           "type": "string",
           "enum": ["disabled", "foreground-only", "enabled"],
           "description": "Session-level foreground/background task policy."
-        },
-        "permissionMode": {
-          "type": "string",
-          "enum": [
-            "plan",
-            "default",
-            "accept_edits",
-            "dont_ask",
-            "bypass_permissions"
-          ]
         },
         "traceLevel": {
           "type": "string",
@@ -580,10 +566,6 @@
           "type": "boolean",
           "description": "Whether built-in conservative confidential path defaults are included. Defaults to true."
         },
-        "shouldWrite": {
-          "type": "boolean",
-          "description": "Whether the resumed run is allowed to request workspace writes."
-        },
         "fromTrace": {
           "type": "boolean",
           "description": "Reconstruct a best-effort checkpoint from trace.jsonl when checkpoint.json is absent."
@@ -596,22 +578,12 @@
         "accessMode": {
           "type": "string",
           "enum": ["read-only", "ask", "accept-edits", "bypass"],
-          "description": "High-level run autonomy preset. When present, the host compiles it to permissionMode + shouldWrite and ignores a conflicting legacy permissionMode."
+          "description": "Canonical run autonomy input. Defaults to read-only when omitted."
         },
         "backgroundTasks": {
           "type": "string",
           "enum": ["disabled", "foreground-only", "enabled"],
           "description": "Session-level foreground/background task policy."
-        },
-        "permissionMode": {
-          "type": "string",
-          "enum": [
-            "plan",
-            "default",
-            "accept_edits",
-            "dont_ask",
-            "bypass_permissions"
-          ]
         },
         "traceLevel": {
           "type": "string",
@@ -992,30 +964,16 @@
           "type": "boolean",
           "description": "Whether built-in conservative confidential path defaults are included. Defaults to true."
         },
-        "shouldWrite": {
-          "type": "boolean",
-          "description": "Whether the resumed run is allowed to request workspace writes."
-        },
         "model": { "type": "string", "minLength": 1 },
         "accessMode": {
           "type": "string",
           "enum": ["read-only", "ask", "accept-edits", "bypass"],
-          "description": "High-level run autonomy preset. When present, the host compiles it to permissionMode + shouldWrite and ignores a conflicting legacy permissionMode."
+          "description": "Canonical run autonomy input. Defaults to read-only when omitted."
         },
         "backgroundTasks": {
           "type": "string",
           "enum": ["disabled", "foreground-only", "enabled"],
           "description": "Session-level foreground/background task policy."
-        },
-        "permissionMode": {
-          "type": "string",
-          "enum": [
-            "plan",
-            "default",
-            "accept_edits",
-            "dont_ask",
-            "bypass_permissions"
-          ]
         },
         "traceLevel": {
           "type": "string",
@@ -1111,49 +1069,23 @@
           "minLength": 1,
           "description": "Model reference in provider/model form, or the reserved deterministic model."
         },
-        "shouldWrite": {
-          "type": "boolean",
-          "description": "Whether this inspection should describe workspace-write-capable runs."
-        },
         "accessMode": {
           "type": "string",
           "enum": ["read-only", "ask", "accept-edits", "bypass"],
-          "description": "High-level run autonomy preset used to scope diagnostics. Preferred over permissionMode and shouldWrite when present."
+          "description": "Canonical run autonomy input used to scope diagnostics. Defaults to read-only when omitted."
         },
         "backgroundTasks": {
           "type": "string",
           "enum": ["disabled", "foreground-only", "enabled"],
           "description": "Session-level foreground/background task policy used to scope diagnostics."
-        },
-        "permissionMode": {
-          "type": "string",
-          "enum": [
-            "plan",
-            "default",
-            "accept_edits",
-            "dont_ask",
-            "bypass_permissions"
-          ],
-          "description": "Legacy approval mode used when accessMode is absent."
         }
       },
       "additionalProperties": false
     },
     "CapabilityRunAccessSummary": {
       "type": "object",
-      "required": ["permissionMode", "shouldWrite", "backgroundTasks"],
+      "required": ["accessMode", "backgroundTasks"],
       "properties": {
-        "permissionMode": {
-          "type": "string",
-          "enum": [
-            "plan",
-            "default",
-            "accept_edits",
-            "dont_ask",
-            "bypass_permissions"
-          ]
-        },
-        "shouldWrite": { "type": "boolean" },
         "backgroundTasks": {
           "type": "string",
           "enum": ["disabled", "foreground-only", "enabled"]
@@ -1177,13 +1109,6 @@
         "backgroundTasksCeiling": {
           "type": "string",
           "enum": ["disabled", "foreground-only", "enabled"]
-        },
-        "overriddenLegacyFields": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "enum": ["permissionMode", "shouldWrite"]
-          }
         }
       },
       "additionalProperties": false

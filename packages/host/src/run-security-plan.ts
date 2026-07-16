@@ -20,12 +20,7 @@ import { resolveSkillRootsForRuntime } from "./skill-roots.js";
  */
 export interface HostRunSecurityPlan {
   readonly workspaceRoot: string;
-  readonly access: Omit<
-    Readonly<ResolvedRunAccess>,
-    "overriddenLegacyFields"
-  > & {
-    readonly overriddenLegacyFields: readonly string[];
-  };
+  readonly access: Readonly<ResolvedRunAccess>;
   readonly confidentialPaths?: readonly string[];
   readonly confidentialDefaults?: boolean;
   readonly skillRoots: readonly Readonly<SkillRoot>[];
@@ -75,12 +70,7 @@ export async function prepareHostRunSecurityPlan(input: {
     input.loadedConfig.config.confidentialPaths,
     input.requestConfidentialPaths,
   );
-  const access = Object.freeze({
-    ...input.access,
-    overriddenLegacyFields: Object.freeze([
-      ...input.access.overriddenLegacyFields,
-    ]),
-  });
+  const access = Object.freeze({ ...input.access });
 
   return Object.freeze({
     workspaceRoot,

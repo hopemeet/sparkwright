@@ -9,7 +9,7 @@ import {
   type RunRecord,
   type RunResult,
 } from "@sparkwright/core";
-import type { TraceLevel } from "@sparkwright/protocol";
+import type { RunAccessMode, TraceLevel } from "@sparkwright/protocol";
 
 export interface HostStartFailureTraceInput {
   goal: string;
@@ -20,7 +20,7 @@ export interface HostStartFailureTraceInput {
   runId?: string;
   traceLevel?: TraceLevel;
   targetPath?: string;
-  shouldWrite?: boolean;
+  accessMode?: RunAccessMode;
   metadata?: Record<string, unknown>;
 }
 
@@ -60,9 +60,7 @@ export async function writeHostStartFailureTrace(
     source: input.source,
     failurePhase: "host_start",
     ...(input.targetPath ? { targetPath: input.targetPath } : {}),
-    ...(input.shouldWrite !== undefined
-      ? { shouldWrite: input.shouldWrite }
-      : {}),
+    ...(input.accessMode !== undefined ? { accessMode: input.accessMode } : {}),
     traceLevel,
     ...input.metadata,
   };

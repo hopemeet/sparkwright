@@ -11,6 +11,12 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-07-16T12:45:00+0800
+- Scope: Host run-access resolution accepts only accessMode, clamps it once, and compiles internal execution policy without conflict diagnostics or compatibility fallbacks.
+- Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.
+- Tests: focused access/policy/protocol/CLI/TUI/ACP/Workflow tests; npm run typecheck:test; npm run schema:check.
+
 - Date: 2026-07-16T11:52:29+0800
 - Scope: Host protocol failure producers emit only the required
   `run.failed.failure` envelope under protocol 2.0. Built-in tool identity and
@@ -197,8 +203,7 @@ Does not own:
 - Workflow Script execution receives write access only when both the resolved
   run access and the script's declared capabilities allow `write`. Command
   hooks are likewise strengthened to fail-closed no-write when run metadata
-  explicitly carries `shouldWrite:false`; missing metadata retains the legacy
-  embedder contract.
+  carries `accessMode: read-only`.
 - CLI `capabilities inspect` treats the Host `CapabilitySnapshot` as required
   for effective tool, delegate, and sandbox facts. It may add CLI-only config
   diagnostics and optional MCP resolution detail, but it no longer reconstructs
@@ -246,8 +251,8 @@ Does not own:
   config section types in `config.ts` are re-exported from this Zod source where
   the shape is host-owned. Runtime loader validation now shares the Zod source
   for primitive field checks (strings, arrays, booleans, numbers, string
-  records). Section key validation for `tools`, `write`, `runBudget`,
-  `approvals`, `shell`, shell sandbox subsections, `capabilities`,
+  records). Section key validation for `tools`, `write`, `runBudget`, `shell`,
+  shell sandbox subsections, `capabilities`,
   `capabilities.skills` subsections, `capabilities.hooks`/workflow hook
   subsections, `capabilities.verification` subsections, `capabilities.mcp`,
   `capabilities.mcp.defaultPolicy`, `capabilities.agents`, and
@@ -273,11 +278,10 @@ Does not own:
 - Host approval resolution preserves optional resolver `message` and
   `autoApproved` fields so trace summaries can distinguish auto-approved
   decisions from manual approvals without parsing prose.
-- Host protocol `run.start` and `run.resume` pass `shouldWrite` as the
-  workspace-write capability gate into core policy. Read-only runs
-  (`shouldWrite: false`) keep the hard-deny write gate; interactive TUI clients
-  that need write approvals send `shouldWrite: true` with an approval-oriented
-  `permissionMode`.
+- Host protocol `run.start`, `run.resume`, and `workflow.resume` accept only
+  `accessMode` for run autonomy. Host resolves ceilings once, freezes the
+  canonical mode in the security plan, and compiles internal write/approval
+  policy from it.
 - Host start/resume/workflow-resume run policies pass `confidentialPaths` and
   `confidentialDefaults` through core `resolveRunConfidentialPaths()`.
   `confidentialDefaults` defaults to true and may be set false by config or
@@ -288,32 +292,21 @@ Does not own:
   record. `workflow.resume` reapplies those persisted values when the client
   omits them, preserving the authorization boundary without broadcasting paths.
 - `run.accessMode` is the single user-facing run autonomy knob. The protocol
-  `RunStart`/`RunResume` payloads accept optional `accessMode`
-  (`read-only`/`ask`/`accept-edits`/`bypass`); `host/src/run-access.ts`
-  (`resolveRunAccessFields`) compiles it to `permissionMode` + `shouldWrite` and,
-  when a conflicting legacy `permissionMode`/`shouldWrite` is also present,
-  prefers `accessMode` and records the overridden field names in run metadata
-  (`accessMode`, `accessModeOverrodeLegacyFields`) via `buildAccessMetadata`.
-  When `accessMode` is absent the previous `permissionMode`/`shouldWrite`/default
-  path is used, but host runtime defaults can still clamp legacy fields through
-  an `accessModeCeiling`. The mapping primitive lives in core
+  run payloads accept optional `accessMode`
+  (`read-only`/`ask`/`accept-edits`/`bypass`); omission defaults to
+  `read-only`. `host/src/run-access.ts` validates/clamps the mode against an
+  `accessModeCeiling` and compiles the immutable internal execution fields.
+  The mapping primitive lives in core
   (`compileRunAccessMode`/`clampAccessMode`/`ACCESS_MODES`), mirrored as a wire
   type in `@sparkwright/protocol`. `server.ts` validates the `accessMode` enum at
   the wire boundary.
-- `permissionMode` is no longer a user-facing config/CLI surface; it is an
-  internal compile target only. Config exposes `run.accessMode` (the flat
-  `permissionMode`/`policy.permissionMode` fields were removed, and
-  `ui.tuiPermissionMode` was removed instead of keeping a second persisted
-  autonomy axis). The loader (`config.ts`) derives the internal
-  `SharedConfig.permissionMode` from `accessMode`. Project `run.accessMode` is
-  also exposed as `accessModeCeiling`; lower layers, CLI flags, host clients, and
+- Core permission/write fields are internal compile targets only. Config
+  exposes `run.accessMode`; project `run.accessMode` is also exposed as
+  `accessModeCeiling`. Lower layers, CLI flags, host clients, and
   TUI runtime switches are clamped to that ceiling while stricter requests remain
-  effective. The CLI flag is `--access-mode` (compiled to
-  `permissionMode`/`shouldWrite` locally after ceiling clamp); `tui`/`acp` launch
-  flags are also `--access-mode`. The internal host↔host
-  spawn IPC (`host/src/main.ts` + `client-spawn.ts`) still speaks the low-level
-  `--permission-mode` contract. `approvals.cronMode` remains a low-level
-  `permissionMode` field; `dont_ask` has no `accessMode` equivalent by design.
+  effective. CLI, TUI, ACP, Cron, and host↔host spawn use `--access-mode` or
+  the matching typed field; there are no separate approval shortcut flags or
+  persisted approval-default scopes.
 - TUI approval auto-policy goes through `@sparkwright/host` helpers; TUI source
   must not import `@sparkwright/core` directly.
 - Host client input helpers build protocol `RunInputPart` image attachments and
@@ -453,8 +446,8 @@ Does not own:
   telemetry/progress, and scripts report effects through host API methods such
   as `progress`, `getEvidence(nodeId)`, governed `invoke(type:"command")`,
   `complete`, and `fail`. Script-declared write capability is fail-closed when
-  the parent run lacks `shouldWrite`; scripts do not write trace directly and do
-  not receive raw host capabilities.
+  the parent run uses `accessMode: read-only`; scripts do not write trace
+  directly and do not receive raw host capabilities.
 - P4 keeps node-boundary compaction and retry-time model escalation out of
   host execution. There is still no `workflow_start` tool; script nodes do not
   introduce an expression language, and data flow between nodes remains

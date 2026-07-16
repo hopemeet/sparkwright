@@ -702,7 +702,6 @@ function describeConfigFields(
   add("runBudget", sources.runBudget, config.runBudget);
   add("maxSteps", sources.maxSteps, config.maxSteps);
   add("traceLevel", sources.traceLevel, config.traceLevel);
-  add("approvals", sources.approvals, config.approvals);
   for (const key of Object.keys(config.providers ?? {}).sort()) {
     add(`providers.${key}`, sources.providers?.[key], config.providers?.[key]);
   }
@@ -842,9 +841,9 @@ const CONFIG_EXAMPLES: Record<string, unknown> = {
   },
   run: {
     run: {
+      accessMode: "ask",
       budget: { maxModelCalls: 50, maxToolCalls: 100 },
       traceLevel: "standard",
-      approvals: { shellSafe: true },
     },
   },
   hooks: {

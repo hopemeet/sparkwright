@@ -185,35 +185,6 @@ describe.sequential("runCli", () => {
         ],
         goal: "inspect",
       },
-      {
-        name: "unknown flags remain goal text",
-        argv: [
-          "run",
-          "inspect",
-          "--mystery",
-          "value",
-          "--workspace",
-          workspace,
-          "--model",
-          "deterministic",
-          "--direct-core",
-        ],
-        goal: "inspect --mystery value",
-      },
-      {
-        name: "double dash is goal text rather than a terminator",
-        argv: [
-          "run",
-          "inspect",
-          "--",
-          "--workspace",
-          workspace,
-          "--model",
-          "deterministic",
-          "--direct-core",
-        ],
-        goal: "inspect --",
-      },
     ];
 
     for (const testCase of cases) {
@@ -224,6 +195,13 @@ describe.sequential("runCli", () => {
       );
       expect(created?.payload?.goal, testCase.name).toBe(testCase.goal);
     }
+  });
+
+  it("rejects unknown run options instead of treating them as goal text", async () => {
+    const result = await runCli(["run", "inspect", "--mystery", "value"], {
+      io: { stdinIsTTY: false },
+    });
+    expect(result.exitCode).toBe(1);
   });
 
   it("restores explicit process environment overrides through the cleanup stack", async () => {
@@ -643,7 +621,8 @@ describe.sequential("runCli", () => {
         okWorkspace,
         "--model",
         "deterministic",
-        "--yes-edits",
+        "--access-mode",
+        "accept-edits",
       ],
       {
         io: {
@@ -1257,66 +1236,6 @@ describe.sequential("runCli", () => {
     });
   });
 
-  it("clarifies that --yes without --write still applies to risky non-write approvals", async () => {
-    const workspace = await createWorkspace("# Demo\n");
-    const output = createOutputCapture();
-
-    const result = await runCli(
-      [
-        "run",
-        "--direct-core",
-        "inspect temp",
-        "--workspace",
-        workspace,
-        "--yes",
-        "--model",
-        "deterministic",
-      ],
-      {
-        io: {
-          stdout: output.stdout,
-          stderr: output.stderr,
-          stdinIsTTY: false,
-        },
-      },
-    );
-
-    expect(result.exitCode).toBe(0);
-    expect(output.stderrText()).toContain(
-      "Warning: --yes does not enable workspace writes without --write; it can still approve other risky actions.",
-    );
-    expect(output.stdoutText()).toContain("run.completed final_answer");
-  });
-
-  it("does not warn that --yes-shell-safe is ineffective without --write", async () => {
-    const workspace = await createWorkspace("# Demo\n");
-    const output = createOutputCapture();
-
-    const result = await runCli(
-      [
-        "run",
-        "--direct-core",
-        "inspect temp",
-        "--workspace",
-        workspace,
-        "--yes-shell-safe",
-        "--model",
-        "deterministic",
-      ],
-      {
-        io: {
-          stdout: output.stdout,
-          stderr: output.stderr,
-          stdinIsTTY: false,
-        },
-      },
-    );
-
-    expect(result.exitCode).toBe(0);
-    expect(output.stderrText()).not.toContain("has no effect without --write");
-    expect(output.stdoutText()).toContain("run.completed final_answer");
-  });
-
   it("runs the read-only golden path and writes a trace", async () => {
     const workspace = await createWorkspace("# Demo\n");
     const output = createOutputCapture();
@@ -1509,8 +1428,6 @@ describe.sequential("runCli", () => {
     expect(runJson.metadata).toMatchObject({
       source: "cli",
       accessMode: "read-only",
-      permissionMode: "plan",
-      shouldWrite: false,
     });
   });
 
@@ -1595,6 +1512,8 @@ describe.sequential("runCli", () => {
         workspace,
         "--model",
         "scripted",
+        "--access-mode",
+        "ask",
         "--trace-level",
         "debug",
       ],
@@ -1755,7 +1674,8 @@ describe.sequential("runCli", () => {
         workspace,
         "--target",
         "README.md",
-        "--write",
+        "--access-mode",
+        "ask",
       ],
       {
         io: {
@@ -1803,7 +1723,7 @@ describe.sequential("runCli", () => {
     );
   });
 
-  it("auto-approves writes with --yes and records the write path", async () => {
+  it("auto-approves writes in bypass mode and records the write path", async () => {
     const workspace = await createWorkspace("# Demo\n");
     await enableWorkspaceTools(workspace, ["read", "edit_anchored_text"]);
     const output = createOutputCapture();
@@ -1817,8 +1737,8 @@ describe.sequential("runCli", () => {
         workspace,
         "--target",
         "README.md",
-        "--write",
-        "--yes",
+        "--access-mode",
+        "bypass",
       ],
       {
         io: {
@@ -1830,7 +1750,7 @@ describe.sequential("runCli", () => {
     );
 
     expect(result.exitCode).toBe(0);
-    expect(output.stderrText()).toContain("Approval auto-approved");
+    expect(output.stderrText()).toBe("");
     await expect(
       readFile(join(workspace, "README.md"), "utf8"),
     ).resolves.toContain("## Sparkwright CLI Golden Path");
@@ -1843,7 +1763,6 @@ describe.sequential("runCli", () => {
         "workspace.anchored_edit.requested",
         "workspace.anchored_edit.verified",
         "artifact.created",
-        "approval.resolved",
         "workspace.write.completed",
         "tool.completed",
       ]),
@@ -1997,7 +1916,7 @@ describe.sequential("runCli", () => {
     expect(loaded.config.providers?.openai?.apiKey).toBe(
       "REPLACE_WITH_YOUR_API_KEY",
     );
-    expect(loaded.config.permissionMode).toBe("default");
+    expect(loaded.config.accessMode).toBe("ask");
     expect(loaded.config.traceLevel).toBe("standard");
     expect(loaded.config.runBudget?.maxModelCalls).toBe(80);
     expect(loaded.config.runBudget?.maxCostUsd).toBe(2.0);
@@ -2035,7 +1954,7 @@ describe.sequential("runCli", () => {
     const loaded = await loadHostConfig(workspace, {
       XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
     });
-    expect(loaded.config.permissionMode).toBe("default");
+    expect(loaded.config.accessMode).toBe("ask");
     expect(loaded.config.write?.maxFiles).toBe(5);
     expect(loaded.config.tools?.use).toEqual([
       "workspace.read",
@@ -2601,7 +2520,7 @@ describe.sequential("runCli", () => {
     );
     expect(output.stdoutText()).toContain("runtime tools:");
     expect(output.stdoutText()).toContain(
-      "runtime access: permissionMode=default; shouldWrite=false; backgroundTasks=enabled",
+      "runtime access: accessMode=read-only; backgroundTasks=enabled",
     );
     expect(output.stdoutText()).toContain("tool: list_dir");
     expect(output.stdoutText()).toContain("diagnostic tools:");
@@ -2634,7 +2553,7 @@ describe.sequential("runCli", () => {
 
     expect(result.exitCode).toBe(0);
     expect(output.stdoutText()).toContain(
-      "runtime access: accessMode=bypass; permissionMode=bypass_permissions; shouldWrite=true; backgroundTasks=enabled",
+      "runtime access: accessMode=bypass; backgroundTasks=enabled",
     );
   });
 
@@ -8245,7 +8164,7 @@ describe.sequential("runCli", () => {
     ) as { metadata?: Record<string, unknown> };
     expect(runJson.metadata).toMatchObject({
       source: "cli",
-      shouldWrite: false,
+      accessMode: "read-only",
       traceLevel: "standard",
       resumedFromRunId: runId,
     });
@@ -8362,6 +8281,8 @@ describe.sequential("runCli", () => {
         workspace,
         "--model",
         "scripted",
+        "--access-mode",
+        "ask",
         "--trace-level",
         "debug",
       ],
@@ -8462,6 +8383,8 @@ describe.sequential("runCli", () => {
         workspace,
         "--model",
         "scripted",
+        "--access-mode",
+        "ask",
         "--trace-level",
         "debug",
       ],
@@ -8624,8 +8547,8 @@ describe.sequential("runCli", () => {
         workspace,
         "--model",
         "scripted",
-        "--write",
-        "--yes",
+        "--access-mode",
+        "bypass",
         "--trace-level",
         "debug",
       ],
@@ -8746,8 +8669,8 @@ describe.sequential("runCli", () => {
         workspace,
         "--model",
         "scripted",
-        "--write",
-        "--yes",
+        "--access-mode",
+        "bypass",
         "--trace-level",
         "debug",
       ],
@@ -9213,7 +9136,7 @@ describe.sequential("runCli", () => {
     ).toBeTruthy();
   });
 
-  it("denies scripted host writes when --write is not enabled", async () => {
+  it("denies scripted host writes in read-only mode", async () => {
     const workspace = await createWorkspace("# Demo\n");
     await enableWorkspaceTools(workspace, ["edit"]);
     const output = createOutputCapture();
@@ -9226,7 +9149,6 @@ describe.sequential("runCli", () => {
         workspace,
         "--model",
         "scripted",
-        "--yes",
         "--trace-level",
         "debug",
       ],
@@ -9288,7 +9210,6 @@ describe.sequential("runCli", () => {
         workspace,
         "--model",
         "scripted",
-        "--yes",
         "--trace-level",
         "debug",
       ],
@@ -9563,8 +9484,8 @@ describe.sequential("runCli", () => {
         workspace,
         "--model",
         "scripted",
-        "--write",
-        "--yes",
+        "--access-mode",
+        "bypass",
         "--trace-level",
         "debug",
       ],
@@ -9684,8 +9605,8 @@ describe.sequential("runCli", () => {
         "README.md",
         "--model",
         "scripted",
-        "--write",
-        "--yes",
+        "--access-mode",
+        "bypass",
         "--trace-level",
         "debug",
       ],
@@ -9754,8 +9675,8 @@ describe.sequential("runCli", () => {
         workspace,
         "--model",
         "scripted",
-        "--write",
-        "--yes",
+        "--access-mode",
+        "bypass",
         "--trace-level",
         "debug",
       ],
@@ -9821,8 +9742,8 @@ describe.sequential("runCli", () => {
         workspace,
         "--model",
         "scripted",
-        "--write",
-        "--yes",
+        "--access-mode",
+        "bypass",
         "--trace-level",
         "debug",
       ],
@@ -9899,8 +9820,8 @@ describe.sequential("runCli", () => {
         workspace,
         "--model",
         "scripted",
-        "--write",
-        "--yes",
+        "--access-mode",
+        "bypass",
         "--trace-level",
         "debug",
       ],
@@ -10188,7 +10109,8 @@ describe.sequential("runCli", () => {
         "inspect readme",
         "--workspace",
         workspace,
-        "--yes",
+        "--access-mode",
+        "bypass",
         "--session-id",
         "delegate-session-test",
         "--trace-level",
@@ -10407,7 +10329,8 @@ describe.sequential("runCli", () => {
         "inspect readme",
         "--workspace",
         workspace,
-        "--yes",
+        "--access-mode",
+        "bypass",
         "--format",
         "json",
       ],
@@ -10436,7 +10359,7 @@ describe.sequential("runCli", () => {
     expect(parsed.message).toContain("maxDepth (0)");
   });
 
-  it("requires --write before a direct delegate can receive read-write workspace access", async () => {
+  it("allows a direct delegate to receive read-write workspace access in bypass mode", async () => {
     const workspace = await createWorkspace("# Demo\n");
     const commandPath = join(workspace, "delegate-fixture.mjs");
     await writeFile(
@@ -10485,33 +10408,6 @@ describe.sequential("runCli", () => {
       "utf8",
     );
 
-    const deniedOutput = createOutputCapture();
-    const denied = await runCli(
-      [
-        "delegates",
-        "run",
-        "delegate_external_cli_fixture",
-        "--goal",
-        "inspect readme",
-        "--workspace",
-        workspace,
-        "--yes",
-        "--format",
-        "text",
-      ],
-      {
-        io: {
-          stdout: deniedOutput.stdout,
-          stderr: deniedOutput.stderr,
-          stdinIsTTY: false,
-        },
-      },
-    );
-    expect(denied.exitCode).toBe(1);
-    expect(deniedOutput.stderrText()).toContain(
-      "parent run has not enabled workspace writes",
-    );
-
     const approvedOutput = createOutputCapture();
     const approved = await runCli(
       [
@@ -10522,8 +10418,8 @@ describe.sequential("runCli", () => {
         "inspect readme",
         "--workspace",
         workspace,
-        "--write",
-        "--yes",
+        "--access-mode",
+        "bypass",
         "--session-id",
         "delegate-write-marker-test",
         "--trace-level",

@@ -26,7 +26,6 @@ describe("prepareHostRunSecurityPlan", () => {
       shouldWrite: true,
       backgroundTasks: "enabled",
       accessMode: "ask",
-      overriddenLegacyFields: [],
     };
     const loadedConfig = {
       config: {
@@ -85,7 +84,7 @@ describe("prepareHostRunSecurityPlan", () => {
       filesystemIsolation: "bind-allowlist",
     });
     expect(Object.isFrozen(plan)).toBe(true);
-    expect(Object.isFrozen(plan.access.overriddenLegacyFields)).toBe(true);
+    expect(Object.isFrozen(plan.access)).toBe(true);
     expect(Object.isFrozen(plan.skillRoots)).toBe(true);
     expect(Object.isFrozen(plan.shellSandbox.filesystem.allowRead)).toBe(true);
   });
@@ -100,7 +99,6 @@ describe("prepareHostRunSecurityPlan", () => {
         shouldWrite: false,
         backgroundTasks: "disabled",
         accessMode: "read-only",
-        overriddenLegacyFields: [],
       },
       loadedConfig: {
         config: { shell: { sandbox: { mode: "off" } } },

@@ -1,5 +1,9 @@
 import { existsSync } from "node:fs";
-import type { ApprovalResolver, SparkwrightEvent } from "@sparkwright/core";
+import {
+  compileRunAccessMode,
+  type ApprovalResolver,
+  type SparkwrightEvent,
+} from "@sparkwright/core";
 import type {
   RunInputPayload,
   TraceLevel,
@@ -20,7 +24,7 @@ import { createCliApprovalResolver } from "../cli-approval.js";
 import { createLiveEventFormatter } from "../event-format.js";
 import type { CliIO } from "../io.js";
 import { writeLine } from "../io.js";
-import type { CliApprovalOptions, CliRunAccess } from "../run-access.js";
+import type { CliRunAccess } from "../run-access.js";
 import {
   cliExitCodeForRun,
   completedRunHasCliIssues,
@@ -43,7 +47,6 @@ export interface HostRunInput {
   workspaceRoot: string;
   sessionRootDir: string;
   runAccess: CliRunAccess;
-  approvalOptions: CliApprovalOptions;
   modelName?: string;
   workflowName?: string;
   sessionId: string;
@@ -61,7 +64,6 @@ export interface HostResumeInput {
   workspaceRoot: string;
   sessionRootDir: string;
   runAccess: CliRunAccess;
-  approvalOptions: CliApprovalOptions;
   modelName?: string;
   workflowName?: string;
   sessionId?: string;
@@ -79,7 +81,6 @@ export interface HostWorkflowResumeInput {
   workspaceRoot: string;
   sessionRootDir: string;
   runAccess: CliRunAccess;
-  approvalOptions: CliApprovalOptions;
   modelName?: string;
   sessionId?: string;
   targetPath?: string;
@@ -132,16 +133,14 @@ async function runHostLifecycle(
     workspaceRoot,
     sessionRootDir,
     runAccess,
-    approvalOptions,
     modelName,
     targetPath,
     confidentialPaths,
     confidentialDefaults,
     traceLevel,
   } = input;
-  const { shouldWrite, accessMode, backgroundTasks, permissionMode } =
-    runAccess;
-  const { approveAll, approveEdits, approveShellSafe } = approvalOptions;
+  const { accessMode, backgroundTasks } = runAccess;
+  const { shouldWrite } = compileRunAccessMode(accessMode);
   const workflowName = "workflowName" in input ? input.workflowName : undefined;
 
   let client: Client | undefined;
@@ -173,7 +172,7 @@ async function runHostLifecycle(
           ...resolveHostStdioSpawn({
             workspaceRoot,
             sessionRootDir,
-            permissionMode,
+            accessMode,
             modelName,
             env,
           }),
@@ -195,10 +194,7 @@ async function runHostLifecycle(
 
       client.on("approval.requested", (msg) => {
         const resolver = createCliApprovalResolver({
-          approveAll,
-          approveEdits,
-          approveShellSafe,
-          permissionMode,
+          accessMode,
           io,
         });
         const request: Parameters<ApprovalResolver>[0] = {
@@ -291,7 +287,6 @@ async function runHostLifecycle(
           ...createHostClientRunMetadata({
             source: "cli",
             targetPath,
-            shouldWrite,
             accessMode,
             backgroundTasks,
             traceLevel,
@@ -306,7 +301,6 @@ async function runHostLifecycle(
             controlSessionId: input.controlSessionId,
             accessMode,
             backgroundTasks,
-            permissionMode,
             targetPath,
             traceLevel,
             modelName,
@@ -314,7 +308,6 @@ async function runHostLifecycle(
             workflowName,
             confidentialPaths,
             confidentialDefaults,
-            shouldWrite,
             metadata,
             input: input.input,
           }),
@@ -325,7 +318,6 @@ async function runHostLifecycle(
         const metadata = createHostClientRunMetadata({
           source: "cli",
           targetPath,
-          shouldWrite,
           accessMode,
           backgroundTasks,
           traceLevel,
@@ -338,14 +330,12 @@ async function runHostLifecycle(
             force: input.force,
             accessMode,
             backgroundTasks,
-            permissionMode,
             targetPath,
             traceLevel,
             modelName,
             modelNameSource: "request",
             confidentialPaths,
             confidentialDefaults,
-            shouldWrite,
             metadata,
           }),
         );
@@ -358,7 +348,6 @@ async function runHostLifecycle(
         const metadata = createHostClientRunMetadata({
           source: "cli",
           targetPath,
-          shouldWrite,
           accessMode,
           backgroundTasks,
           traceLevel,
@@ -369,14 +358,12 @@ async function runHostLifecycle(
             sessionId,
             accessMode,
             backgroundTasks,
-            permissionMode,
             targetPath,
             traceLevel,
             modelName,
             modelNameSource: "request",
             confidentialPaths,
             confidentialDefaults,
-            shouldWrite,
             metadata,
           }),
         );
@@ -406,7 +393,7 @@ async function runHostLifecycle(
         runId,
         traceLevel: input.traceLevel,
         targetPath: input.targetPath,
-        shouldWrite,
+        accessMode,
       });
       sessionId = failureTrace.sessionId;
       runId = failureTrace.runId;

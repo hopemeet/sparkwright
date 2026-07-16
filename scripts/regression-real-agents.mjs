@@ -80,8 +80,8 @@ async function realCreateAgentCase() {
     workspace,
     "--model",
     requestedModel,
-    "--write",
-    "--yes",
+    "--access-mode",
+    "bypass",
     "--trace-level",
     "debug",
   ]);
@@ -177,7 +177,8 @@ async function realDelegateAgentCase() {
     workspace,
     "--model",
     requestedModel,
-    "--yes",
+    "--access-mode",
+    "bypass",
     "--trace-level",
     "debug",
   ]);

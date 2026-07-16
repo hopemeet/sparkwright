@@ -9,6 +9,12 @@ See [workspace-writes.md](workspace-writes.md) and [../../modules/coding-tools.m
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-07-16T12:45:00+0800
+- Scope: Shell and Workflow process sandbox write grants derive from canonical access mode; shell policy and containment remain unchanged.
+- Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.
+- Tests: focused access/policy/protocol/CLI/TUI/ACP/Workflow tests; npm run typecheck:test; npm run schema:check.
+
 - Date: 2026-07-16
 - Scope: the model-facing shell tool and tool selector are exactly `bash`; the
   internal catalog source/runtime/resource category remains `shell`. Admission,
@@ -142,8 +148,7 @@ args` without rewriting requests, while the latter parses Host command text
 - Workflow Script process writes require two independent grants: write-enabled
   run access and an explicit script `write` capability. Otherwise Host compiles
   a fail-closed no-write sandbox that denies the workspace. Command hooks do the
-  same when the run explicitly records `shouldWrite:false`; legacy hook
-  embedders with no access metadata keep their prior behavior.
+  same when the run records `accessMode: read-only`.
 - Host run security planning distinguishes the configured main-Shell sandbox
   status used by capability inspection from the effective extension-process
   sandbox. Read-only runs may strengthen the latter for MCP and Skill process

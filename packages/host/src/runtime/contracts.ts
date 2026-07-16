@@ -2,7 +2,6 @@ import type { BackgroundTaskPolicy, RunAccessMode } from "@sparkwright/core";
 import type { McpServerConfig } from "@sparkwright/mcp-adapter";
 import type {
   HostEvent,
-  PermissionMode,
   ProtocolError,
   RunInputPart,
   RunResumeRequestPayload,
@@ -28,12 +27,8 @@ export interface RuntimeOptions {
   defaultBackgroundTasks?: BackgroundTaskPolicy;
   /** Project/runtime ceiling for foreground/background task policy. */
   backgroundTasksCeiling?: BackgroundTaskPolicy;
-  /** Default permission mode when run.start does not specify one. */
-  defaultPermissionMode?: PermissionMode;
   /** Default trace level when run.start does not specify one. */
   defaultTraceLevel?: TraceLevel;
-  /** Default workspace-write permission when run.start does not specify one. */
-  defaultShouldWrite?: boolean;
   /** Session-scoped MCP servers supplied by an embedding protocol (for example ACP). */
   extraMcpServers?: readonly McpServerConfig[];
   /** Called to deliver host events to the client. */

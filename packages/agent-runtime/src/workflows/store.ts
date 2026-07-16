@@ -824,7 +824,7 @@ function parseAuthorizationSnapshot(
     !Array.isArray(raw.confidentialPaths) ||
     !raw.confidentialPaths.every(optionalString) ||
     typeof raw.confidentialDefaults !== "boolean" ||
-    typeof raw.shouldWrite !== "boolean" ||
+    !isWorkflowRunAccessMode(raw.accessMode) ||
     !isWorkflowBackgroundTaskPolicy(raw.backgroundTasks)
   ) {
     return undefined;
@@ -833,10 +833,7 @@ function parseAuthorizationSnapshot(
     ...(optionalString(raw.targetPath) ? { targetPath: raw.targetPath } : {}),
     confidentialPaths: [...raw.confidentialPaths],
     confidentialDefaults: raw.confidentialDefaults,
-    shouldWrite: raw.shouldWrite,
-    ...(isWorkflowRunAccessMode(raw.accessMode)
-      ? { accessMode: raw.accessMode }
-      : {}),
+    accessMode: raw.accessMode,
     backgroundTasks: raw.backgroundTasks,
   };
 }

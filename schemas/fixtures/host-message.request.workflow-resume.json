@@ -7,7 +7,7 @@
     "workflowRunId": "workflow_abc123",
     "sessionId": "sess_123",
     "model": "deterministic",
-    "permissionMode": "default",
+    "accessMode": "ask",
     "traceLevel": "standard",
     "metadata": {
       "source": "fixture"

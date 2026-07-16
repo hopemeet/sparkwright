@@ -9,6 +9,12 @@ See [../trace/raw-trace.md](../trace/raw-trace.md) for raw event evidence.
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-07-16T12:45:00+0800
+- Scope: Run metadata and Workflow authorization snapshots persist canonical accessMode rather than duplicate permission/write fields.
+- Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.
+- Tests: focused access/policy/protocol/CLI/TUI/ACP/Workflow tests; npm run typecheck:test; npm run schema:check.
+
 - Date: 2026-07-16T11:52:29+0800
 - Scope: reviewed protocol 2.0 terminal failure envelope changes; session
   persistence remains owned by Core event and trace contracts and does not read

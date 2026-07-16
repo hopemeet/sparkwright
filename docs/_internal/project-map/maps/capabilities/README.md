@@ -7,6 +7,12 @@ cron, shell/task tools, and capability inspection.
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-07-16T12:45:00+0800
+- Scope: Capability inspection accepts and reports only accessMode plus backgroundTasks; compiled permission/write diagnostics were removed.
+- Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.
+- Tests: focused access/policy/protocol/CLI/TUI/ACP/Workflow tests; npm run typecheck:test; npm run schema:check.
+
 - Date: 2026-07-16T11:52:29+0800
 - Scope: reviewed protocol 2.0 terminal failure envelope changes; capability
   discovery, assembly, and inspection do not consume the removed Host
@@ -869,8 +875,9 @@ test/cli.test.ts -t "filters proposals|agents|capabilities inspect"`.
 - Date: 2026-07-08T20:41:34+0800
 - Scope: capability inspection is now access-scoped. Host protocol,
   in-process CLI inspection, and TUI inspection can pass active access fields;
-  snapshots include `access`, delegate diagnostics use the effective
-  `shouldWrite`, and shell promotion visibility follows effective
+  snapshots include canonical `accessMode`/`backgroundTasks`; delegate
+  diagnostics use the internally compiled write gate, and shell background
+  handoff visibility follows effective
   `backgroundTasks`.
 - Read: `packages/host/src/runtime.ts`,
   `packages/host/src/server.ts`, `packages/host/src/client-run.ts`,

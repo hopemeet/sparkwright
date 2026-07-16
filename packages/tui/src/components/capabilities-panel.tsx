@@ -544,7 +544,7 @@ function addAgentsRows(
           {formatDelegateRouting(tool.routing)} ·{" "}
           {tool.requiresApproval ? "approval" : "no approval"} · workspace{" "}
           {tool.workspaceAccess}
-          {tool.gatedByRunWrite ? " · requires --write" : ""}
+          {tool.gatedByRunWrite ? " · requires write access" : ""}
         </Text>
       </Text>,
     );
