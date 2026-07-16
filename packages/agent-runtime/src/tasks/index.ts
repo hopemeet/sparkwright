@@ -97,21 +97,13 @@ export {
 } from "./notifications.js";
 
 export type {
-  CreateTaskToolsOptions,
+  TaskToolOptions,
   TaskCreateKindDescriptor,
   TaskCreateMode,
   TaskCreateResult,
   TaskConcurrencyLimits,
 } from "./tools.js";
-export {
-  createTaskTools,
-  createTaskCreate,
-  createTaskControl,
-  createTaskList,
-  createTaskGet,
-  createTaskStop,
-  createTaskOutput,
-} from "./tools.js";
+export { createTaskCreate, createTaskControl } from "./tools.js";
 
 export type {
   TaskHealthProbe,

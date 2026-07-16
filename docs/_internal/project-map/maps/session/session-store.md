@@ -123,6 +123,13 @@ Manual compact
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T10:44:25+0800
+- Scope: reviewed Task model-surface consolidation; durable Task storage and
+  Host task protocol reads are unchanged.
+- Read: Task action handlers, Task stores, Host protocol, and session boundaries.
+- Tests: agent-runtime Task 69/69 and Host protocol/Agent-task 61/61 passed.
+
+- Status: Verified
 - Date: 2026-07-15T07:35:27+0800
 - Scope: doctor session/task path reporting now uses a shared resolution leaf;
   store roots, persistence, cleanup, and Host ownership are unchanged.

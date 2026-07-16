@@ -55,6 +55,11 @@ Does not own:
   get/output/wait/stop. Runtime and durable state report whether stop actually
   returned `cancelled:true`; the tool descriptions do not try to police model
   final-answer prose.
+- Agent-runtime exports only `createTaskCreate` and `createTaskControl` as
+  model-facing Task factories. List/get/output/wait/stop are private action
+  handlers and no parallel callable Task tools or bundle factory remain.
+- Workflow evidence `kind:"task_output"` identifies a stored evidence source;
+  it is not a tool name or compatibility route.
 - `TaskManager.registeredKinds()` exposes live runner keys for model-facing
   diagnostics; `createTaskCreate()` can accept optional
   `TaskCreateKindDescriptor` hints so embedders describe registered kinds and
@@ -291,10 +296,9 @@ Does not own:
   Keep the matching `validateInput()` checks in agent-runtime, because core's
   local schema validator intentionally does not enforce all JSON Schema
   guidance keywords.
-- `task(action:"list")` and legacy `task_list` default to current-run scope for
-  backward compatibility, but accept `scope:"all"` so resumed runs can discover
-  durable tasks whose `parentRunId` belongs to an earlier run. Use `get`/`wait`
-  / `output` with concrete task ids after discovery.
+- `task(action:"list")` defaults to current-run scope and accepts `scope:"all"`
+  so resumed runs can discover durable tasks whose `parentRunId` belongs to an
+  earlier run. Use `get`/`wait`/`output` with concrete task ids after discovery.
 - `task_create` model-facing description must disclose active task concurrency
   caps, including the default `agent=1` per-kind cap. The cap still fails as a
   recoverable `TASK_CONCURRENCY_LIMIT` tool error rather than queueing work.
@@ -399,6 +403,15 @@ Does not own:
   not authorize a generic actor bus or nested background lifecycle.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-16T10:44:25+0800
+- Scope: removed the parallel Task control tools and bundle factory; the
+  canonical `task` tool now calls private action handlers directly.
+- Read: Task exports/factories/action handlers, all production and test
+  consumers, Workflow evidence kind, Host catalog, TUI preview, and trace reads.
+- Tests: agent-runtime Task 69/69/build, Core trace 131/131, TUI preview 4/4,
+  Host protocol/Agent-task 61/61, and repository test typecheck passed.
 
 - Status: Verified
 - Date: 2026-07-16T10:27:51+0800

@@ -405,6 +405,14 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T10:44:25+0800
+- Scope: Task orchestration now exposes only create plus one action controller;
+  shell-to-task handoff and durable task behavior are unchanged.
+- Read: Agent-runtime Task handlers/exports, Host catalog, shell handoff docs,
+  TUI preview, and Core trace projection.
+- Tests: focused Agent/Core/Host/TUI suites and repository test typecheck passed.
+
+- Status: Verified
 - Date: 2026-07-16T10:32:50+0800
 - Scope: explicit and timeout shell handoff now expose only `onBackground`;
   runtime handoff behavior, output facts, and task adoption are unchanged.

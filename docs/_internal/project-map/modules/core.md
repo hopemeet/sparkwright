@@ -392,6 +392,13 @@ Does not own:
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T10:44:25+0800
+- Scope: task terminal-evidence trace projection now recognizes only the
+  canonical `task_create` and `task` model-facing tools.
+- Read: trace Task lifecycle collection and canonical Task result shapes.
+- Tests: Core trace 131/131 and repository test typecheck passed.
+
+- Status: Verified
 - Date: 2026-07-16T10:23:51+0800
 - Scope: removed the deprecated standalone revival-budget input;
   `forcedContinuationBudgets.revival` is now the sole revival budget

@@ -103,6 +103,13 @@ cron config/state
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T10:44:25+0800
+- Scope: reviewed after Task model-surface consolidation; cron does not register
+  or consume the removed Task control factories.
+- Read: Task factory consumers and cron capability boundary.
+- Tests: repository test typecheck passed; no cron contract changed.
+
+- Status: Verified
 - Date: 2026-07-16T10:27:51+0800
 - Scope: reviewed after the Agent-tool policy contract changed; cron task and
   tool policy assembly do not call the Agent-tool factory and are unchanged.

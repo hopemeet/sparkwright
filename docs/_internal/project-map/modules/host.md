@@ -573,8 +573,8 @@ Does not own:
   background agent tasks. `capabilities.agents.maxDepth` still bounds ordinary
   child/delegate spawning but is not a nested-background opt-in.
 - Background `agent` tasks use the shared `runHostAgentTask()` helper. The task
-  controller signal is the child run's abort owner, so `task_stop` cancels the
-  child lifecycle independently of the foreground parent turn. The helper also
+  controller signal is the child run's abort owner, so `task(action:"stop")`
+  cancels the child lifecycle independently of the foreground parent turn. The helper also
   threads the controller task id into dynamic-spawn metadata so parent-visible
   `subagent.*` terminal events for `entrypoint:"agent_task"` can be joined back
   to `task_create` outputs.
@@ -945,6 +945,15 @@ Does not own:
   remain adapter-native and need continued cross-entrypoint characterization.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-16T10:44:25+0800
+- Scope: Host Task model surface remains exactly `task_create` plus `task`; UI
+  and SDK task protocol methods remain the separate product control plane.
+- Read: Host tool catalog, protocol Task requests, agent task runner, and
+  agent-runtime Task exports.
+- Tests: Host protocol/Agent-task 61/61, agent-runtime Task 69/69/build, and
+  repository test typecheck passed.
 
 - Status: Verified
 - Date: 2026-07-16T10:27:51+0800

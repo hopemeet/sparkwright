@@ -796,13 +796,13 @@ describe("host protocol", () => {
 
       pair.clientSend({
         envelope: "request",
-        id: "task_list",
+        id: "list_tasks",
         kind: "task.list",
         timestamp: TIMESTAMP,
         payload: { status: "running", limit: 10 },
       });
       const listResp = await pair.waitFor(
-        (m) => m.envelope === "response" && m.id === "task_list",
+        (m) => m.envelope === "response" && m.id === "list_tasks",
       );
       expect(listResp).toMatchObject({
         envelope: "response",
@@ -820,13 +820,13 @@ describe("host protocol", () => {
 
       pair.clientSend({
         envelope: "request",
-        id: "task_get",
+        id: "get_task",
         kind: "task.get",
         timestamp: TIMESTAMP,
         payload: { taskId },
       });
       const getResp = await pair.waitFor(
-        (m) => m.envelope === "response" && m.id === "task_get",
+        (m) => m.envelope === "response" && m.id === "get_task",
       );
       expect(getResp).toMatchObject({
         envelope: "response",
@@ -840,13 +840,13 @@ describe("host protocol", () => {
 
       pair.clientSend({
         envelope: "request",
-        id: "task_output",
+        id: "output_task",
         kind: "task.output",
         timestamp: TIMESTAMP,
         payload: { taskId, fromSequence: 0, maxChunks: 1 },
       });
       const outputResp = await pair.waitFor(
-        (m) => m.envelope === "response" && m.id === "task_output",
+        (m) => m.envelope === "response" && m.id === "output_task",
       );
       expect(outputResp).toMatchObject({
         envelope: "response",

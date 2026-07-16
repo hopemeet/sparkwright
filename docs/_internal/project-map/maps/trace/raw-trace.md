@@ -212,6 +212,13 @@ EventLog emits full event
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T10:44:25+0800
+- Scope: Task terminal evidence now recognizes only canonical `task_create` and
+  `task` tool events; raw event vocabulary is unchanged.
+- Read: Core Task trace collector and canonical Task tool result shapes.
+- Tests: Core trace 131/131 and repository test typecheck passed.
+
+- Status: Verified
 - Date: 2026-07-16T10:27:51+0800
 - Scope: reviewed configured Agent-tool policy input consolidation; emitted
   tool/subagent event vocabulary and trace metadata are unchanged.

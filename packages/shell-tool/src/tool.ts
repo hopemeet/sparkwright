@@ -99,7 +99,8 @@ export interface ShellBackgroundHandoffRequest {
 /**
  * Outcome of {@link ShellToolOptions.onBackground}. `taskId` is opaque to the
  * shell tool — the host is responsible for routing follow-up monitoring
- * (e.g. wiring it to a TaskManager so the agent can call `task_output`).
+ * (e.g. wiring it to a TaskManager so the agent can call
+ * `task(action="output")`).
  *
  * @public
  * @stability experimental v0.1

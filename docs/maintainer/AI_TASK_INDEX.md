@@ -248,7 +248,7 @@ Read the linked entry file first, then the linked docs, then make the change. Do
 
 ### Task: Spawn a background task from a run (Task\*)
 
-- **Entry point**: `packages/agent-runtime/src/tasks/` (`TaskManager`, `InMemoryTaskStore`, `createTaskTools`)
+- **Entry point**: `packages/agent-runtime/src/tasks/` (`TaskManager`, `InMemoryTaskStore`, `createTaskCreate`, `createTaskControl`)
 - **Interface to implement**: `TaskStore` (durable backends), `TaskRunner` (kind-specific runners)
 - **Wire in via**: register the five `task_*` `ToolDefinition`s with your `ToolRegistry`; call `TaskManager.registerKind(kind, runner)` for each runner the model can spawn
 - **Notes**: Tasks are NOT new runs — they are work spawned BY a run that the model can poll / cancel / stream output from. Emits `task.*` lifecycle events.

@@ -142,6 +142,13 @@ Does not own:
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T10:44:25+0800
+- Scope: shell handoff documentation now points to the canonical Task output
+  action; shell execution and handoff behavior are unchanged.
+- Read: shell handoff result docs and Task model surface.
+- Tests: repository test typecheck passed; no coding-tool contract changed.
+
+- Status: Verified
 - Date: 2026-07-16T10:32:50+0800
 - Scope: removed the shell promotion-named handoff aliases and callback fallback;
   `onBackground` and the `ShellBackgroundHandoff*` types are the only public

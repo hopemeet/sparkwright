@@ -168,8 +168,8 @@ configured profiles/delegates
   terminal/finality projection, cancellation path, and delegation ledger.
 - Background `agent` tasks call the same dynamic-spawn path through
   `runHostAgentTask()`, with the task controller signal bound to the child run
-  so `task_stop` cancels the background child instead of only stopping the
-  foreground parent turn. Parent-visible `subagent.*` events for this
+  so `task(action:"stop")` cancels the background child instead of only
+  stopping the foreground parent turn. Parent-visible `subagent.*` events for this
   `entrypoint:"agent_task"` path carry the owning `taskId` in payload and
   metadata so trace diagnostics can join child terminal evidence back to
   `task_create`. `task_create(kind:"agent")` uses the same workspace-write
@@ -385,6 +385,14 @@ configured profiles/delegates
   detection.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-16T10:44:25+0800
+- Scope: background Agent task management now documents and tests only the
+  canonical `task` action surface; child cancellation behavior is unchanged.
+- Read: Agent task runner, Task control handlers, Host catalog, and focused tests.
+- Tests: agent-runtime Task 69/69, Host protocol/Agent-task 61/61, and repository
+  test typecheck passed.
 
 - Status: Verified
 - Date: 2026-07-16T10:27:51+0800

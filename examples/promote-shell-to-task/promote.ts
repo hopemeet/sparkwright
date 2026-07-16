@@ -119,7 +119,7 @@ function scriptedEnvironment(
 // ---------------------------------------------------------------------------
 // 2. Build the promotion bridge: when the foreground deadline fires, hand the
 //    live LiveShellHandle to TaskManager.spawn. The runner continues to drain
-//    stdout/stderr into the task store so `task_output` can stream it later.
+//    stdout/stderr into the task store so `task(action="output")` can read it later.
 // ---------------------------------------------------------------------------
 
 function makeBackgroundHandoff(

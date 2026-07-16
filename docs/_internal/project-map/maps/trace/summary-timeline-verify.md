@@ -237,6 +237,13 @@ trace.jsonl
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T10:44:25+0800
+- Scope: reviewed Task tool-name consolidation; summary Task lifecycle evidence
+  now derives only from the two canonical model-facing Task tools.
+- Read: Core trace Task evidence projection and summary consumers.
+- Tests: Core trace 131/131 and repository test typecheck passed.
+
+- Status: Verified
 - Date: 2026-07-15T23:51:43+0800
 - Scope: completed-run unsupported-claim analysis requires exact successful
   command evidence and does not infer package-script expansion from final

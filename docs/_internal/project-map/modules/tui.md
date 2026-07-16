@@ -348,6 +348,13 @@ Does not own:
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T10:44:25+0800
+- Scope: Task request previews now format only canonical `task_create` and
+  `task(action=...)` calls; parallel Task tool-name branches were removed.
+- Read: TUI request preview formatter/tests and Host Task catalog.
+- Tests: TUI request preview 4/4 and repository test typecheck passed.
+
+- Status: Verified
 - Date: 2026-07-15T23:53:45+0800
 - Scope: background task notifications keep `cancelled` separate from `failed`
   in one end-to-end unread summary, and narrow StatusBar rendering uses

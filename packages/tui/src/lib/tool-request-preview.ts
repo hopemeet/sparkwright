@@ -40,8 +40,8 @@ export function formatToolRequestPreview(
     const skill = str(r.name);
     return truncatePlain([action, skill].filter(Boolean).join(" "), max);
   }
-  if (r && (name === "task" || name.startsWith("task_"))) {
-    const action = str(r.action) || taskActionFromToolName(name);
+  if (r && (name === "task" || name === "task_create")) {
+    const action = str(r.action) || (name === "task_create" ? "create" : "");
     const taskId = str(r.taskId);
     const status = str(r.status);
     const kind = str(r.kind);
@@ -104,15 +104,6 @@ function str(value: unknown): string {
 function truncatePlain(text: string, max: number): string {
   if (max <= 0) return "";
   return text.length > max ? text.slice(0, Math.max(0, max - 1)) + "…" : text;
-}
-
-function taskActionFromToolName(name: string): string {
-  if (name === "task_list") return "list";
-  if (name === "task_get") return "get";
-  if (name === "task_output") return "output";
-  if (name === "task_stop") return "stop";
-  if (name === "task_create") return "create";
-  return "";
 }
 
 function shortTaskId(id: string): string {

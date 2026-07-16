@@ -381,7 +381,7 @@ export type TaskTerminalStatus = "completed" | "failed" | "cancelled";
  *
  * `outputRef` is intentionally string-typed and opaque — hosts that spill
  * output to disk pass a file path; hosts that keep output in memory pass a
- * `taskId` the agent will hand to `task_output`.
+ * `taskId` the agent will hand to `task(action="output")`.
  *
  * @public
  * @stability experimental v0.1

@@ -15,16 +15,16 @@ worked, proving the store had not lost records.
 
 ## Root Cause
 
-`task_list` always filtered by the current `parentRunId`. A resumed run has a
-new run id, while historical tasks keep the original parent run id. The model
-had no schema-supported way to list older durable tasks when it did not already
-know their ids.
+The `task` list action always filtered by the current `parentRunId`. A resumed
+run has a new run id, while historical tasks keep the original parent run id.
+The model had no schema-supported way to list older durable tasks when it did
+not already know their ids.
 
 ## Fix
 
-`task(action:"list")` and legacy `task_list` now accept `scope:"all"`.
-Default `scope:"run"` preserves existing current-run behavior; `scope:"all"`
-lists every durable task in the task store for resume recovery.
+`task(action:"list")` accepts `scope:"all"`. Default `scope:"run"` preserves
+current-run behavior; `scope:"all"` lists every durable task in the task store
+for resume recovery.
 
 ## Verification
 

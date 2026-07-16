@@ -1016,13 +1016,7 @@ function taskTerminalEvidenceFromEvent(
 }
 
 function isTaskLifecycleTraceTool(toolName: string | undefined): boolean {
-  return (
-    toolName === "task_create" ||
-    toolName === "task" ||
-    toolName === "task_wait" ||
-    toolName === "task_get" ||
-    toolName === "task_list"
-  );
+  return toolName === "task_create" || toolName === "task";
 }
 
 function collectTerminalTaskRecords(

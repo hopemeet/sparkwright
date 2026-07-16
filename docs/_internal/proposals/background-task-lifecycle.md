@@ -374,7 +374,8 @@ result/err summary` so the model can tell _which_ of many finished (and which
 Three separable questions, distinct answers:
 
 1. **Launch a sub-agent as a background task** — _already works_
-   (`task_create(kind:"agent")`, `task_stop` cancels via `controller.signal`).
+   (`task_create(kind:"agent")`, `task(action:"stop")` cancels via
+   `controller.signal`).
 2. **Promote a running inline sub-agent to background** — _not wired; feasible
    but not as simple as "wrap the child promise as a task."_ The child run is
    abortable with its own run store, but an inline sub-agent also carries a

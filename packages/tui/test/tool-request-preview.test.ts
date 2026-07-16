@@ -58,11 +58,6 @@ describe("formatToolRequestPreview", () => {
       }),
     ).toBe("output task_mqzd...yc24hj from 0 10 chunks");
     expect(
-      formatToolRequestPreview("task_get", {
-        taskId: "task_mqzd1c1b30yc24hj",
-      }),
-    ).toBe("get task_mqzd...yc24hj");
-    expect(
       formatToolRequestPreview("task", {
         action: "get",
         taskId: "task_mqzd1c1b30yc24hj",

@@ -186,6 +186,13 @@ args` without rewriting requests, while the latter parses Host command text
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T10:44:25+0800
+- Scope: reviewed Task model-surface consolidation; shell handoff points to the
+  canonical Task action controller and all shell safety boundaries are unchanged.
+- Read: shell handoff docs and canonical Task tool surface.
+- Tests: repository test typecheck passed; no shell safety contract changed.
+
+- Status: Verified
 - Date: 2026-07-16T10:32:50+0800
 - Scope: shell handoff construction now has one callback and one type family;
   foreground budgets, kill fallback, policy, and approval behavior are unchanged.

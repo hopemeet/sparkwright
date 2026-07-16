@@ -22,7 +22,8 @@ import {
   TaskManager,
   TaskWatchdog,
   createTaskId,
-  createTaskTools,
+  createTaskControl,
+  createTaskCreate,
   isNonRetryableActorNotificationError,
   notificationFromRecord,
   pidTaskHealthProbe,
@@ -33,6 +34,7 @@ import {
   type InternalActorKind,
   type TaskId,
   type TaskCompletedNotificationInput,
+  type TaskToolOptions,
   type TaskNotification,
   type TaskOutputChunk,
   type WorkflowProgressNotificationInput,
@@ -55,10 +57,17 @@ function makeManager(): TaskManager {
 }
 
 function makeTools(manager: TaskManager) {
-  return createTaskTools({
+  return makeTaskToolsFromOptions({
     manager,
     getParentRunId: () => PARENT_RUN_ID,
   });
+}
+
+function makeTaskToolsFromOptions(options: TaskToolOptions) {
+  return {
+    taskCreate: createTaskCreate(options),
+    task: createTaskControl(options),
+  };
 }
 
 async function exec<T>(tool: ToolDefinition, args: unknown): Promise<T> {
@@ -998,7 +1007,7 @@ describe("task tools", () => {
   it("task_create can describe registered kinds and kind-specific payloads", () => {
     const manager = makeManager();
     manager.registerKind("hello", async () => "hi");
-    const tools = createTaskTools({
+    const tools = makeTaskToolsFromOptions({
       manager,
       getParentRunId: () => PARENT_RUN_ID,
       taskCreateKinds: [
@@ -1058,8 +1067,8 @@ describe("task tools", () => {
       result: "hi",
     });
     const listed = await exec<{ tasks: Array<{ id: string; kind: string }> }>(
-      tools.taskList,
-      { kind: "hello" },
+      tools.task,
+      { action: "list", kind: "hello" },
     );
     expect(listed.tasks).toHaveLength(1);
     expect(listed.tasks[0]!.id).toBe(created.taskId);
@@ -1070,7 +1079,7 @@ describe("task tools", () => {
   it("task_create keeps the execution-scoped runner captured by its tool bundle", async () => {
     const manager = makeManager();
     manager.registerKind("agent", async () => "workspace-default");
-    const firstExecutionTools = createTaskTools({
+    const firstExecutionTools = makeTaskToolsFromOptions({
       manager,
       getParentRunId: () => PARENT_RUN_ID,
       taskRunners: { agent: async () => "first-execution" },
@@ -1079,7 +1088,7 @@ describe("task tools", () => {
 
     // Simulate a later execution preparing a different bundle before the
     // earlier tool is invoked. Its immutable runner must still win.
-    createTaskTools({
+    makeTaskToolsFromOptions({
       manager,
       getParentRunId: () => PARENT_RUN_ID,
       taskRunners: { agent: async () => "later-execution" },
@@ -1183,7 +1192,7 @@ describe("task tools", () => {
       "slow",
       () => new Promise((resolve) => setTimeout(() => resolve("done"), 20)),
     );
-    const tools = createTaskTools({
+    const tools = makeTaskToolsFromOptions({
       manager,
       getParentRunId: () => PARENT_RUN_ID,
       foregroundTimeoutMs: 1,
@@ -1224,7 +1233,7 @@ describe("task tools", () => {
           finish = resolve;
         }),
     );
-    const tools = createTaskTools({
+    const tools = makeTaskToolsFromOptions({
       manager,
       getParentRunId: () => PARENT_RUN_ID,
       foregroundTimeoutMs: 1000,
@@ -1253,7 +1262,7 @@ describe("task tools", () => {
   it("task_create rejects new work when background tasks are disabled", async () => {
     const manager = makeManager();
     manager.registerKind("slow", async () => "done");
-    const tools = createTaskTools({
+    const tools = makeTaskToolsFromOptions({
       manager,
       getParentRunId: () => PARENT_RUN_ID,
       backgroundTasks: "disabled",
@@ -1270,7 +1279,7 @@ describe("task tools", () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
       return "done";
     });
-    const tools = createTaskTools({
+    const tools = makeTaskToolsFromOptions({
       manager,
       getParentRunId: () => PARENT_RUN_ID,
       foregroundTimeoutMs: 1,
@@ -1326,7 +1335,7 @@ describe("task tools", () => {
     const manager = makeManager();
     manager.registerKind("hello", async () => "hi");
     const currentTools = makeTools(manager);
-    const otherTools = createTaskTools({
+    const otherTools = makeTaskToolsFromOptions({
       manager,
       getParentRunId: () => "run_other" as unknown as RunId,
     });
@@ -1353,16 +1362,8 @@ describe("task tools", () => {
         scope: "all",
       },
     );
-    const legacyAll = await exec<{ tasks: Array<{ id: string }> }>(
-      currentTools.taskList,
-      { kind: "hello", scope: "all" },
-    );
-
     expect(runOnly.tasks.map((task) => task.id)).toEqual([current.taskId]);
     expect(all.tasks.map((task) => task.id).sort()).toEqual(
-      [current.taskId, other.taskId].sort(),
-    );
-    expect(legacyAll.tasks.map((task) => task.id).sort()).toEqual(
       [current.taskId, other.taskId].sort(),
     );
     await expect(
@@ -1565,7 +1566,7 @@ describe("task tools", () => {
     ).resolves.toEqual({ ok: true });
   });
 
-  it("task_get returns the record; task_stop cancels", async () => {
+  it("task get returns the record and task stop cancels", async () => {
     const manager = makeManager();
     manager.registerKind(
       "long",
@@ -1587,19 +1588,22 @@ describe("task tools", () => {
       kind: "long",
       mode: "awaited",
     });
-    const got = await exec<{ id: string; status: string }>(tools.taskGet, {
+    const got = await exec<{ id: string; status: string }>(tools.task, {
+      action: "get",
       taskId,
     });
     expect(got.id).toBe(taskId);
     expect(["pending", "running"]).toContain(got.status);
 
-    const stopped = await exec<{ cancelled: boolean }>(tools.taskStop, {
+    const stopped = await exec<{ cancelled: boolean }>(tools.task, {
+      action: "stop",
       taskId,
     });
     expect(stopped.cancelled).toBe(true);
 
     // Second stop is a no-op.
-    const stoppedAgain = await exec<{ cancelled: boolean }>(tools.taskStop, {
+    const stoppedAgain = await exec<{ cancelled: boolean }>(tools.task, {
+      action: "stop",
       taskId,
     });
     expect(stoppedAgain.cancelled).toBe(false);
@@ -1753,7 +1757,7 @@ describe("task tools", () => {
     expect(manager.store.get(orphan.id)?.awaited).toBe(true);
   });
 
-  it("task_output drains buffered chunks", async () => {
+  it("task output drains buffered chunks", async () => {
     const manager = makeManager();
     manager.registerKind("emitter", async (controller) => {
       controller.emitOutput({ channel: "stdout", data: "x" });
@@ -1771,7 +1775,7 @@ describe("task tools", () => {
       nextSequence: number;
       complete: boolean;
       status: string;
-    }>(tools.taskOutput, { taskId });
+    }>(tools.task, { action: "output", taskId });
     expect(drained.chunks.map((c) => c.data)).toEqual(["x", "y"]);
     expect(drained.nextSequence).toBe(2);
     expect(drained.complete).toBe(true);

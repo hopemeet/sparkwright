@@ -32,7 +32,7 @@ import {
  * (`abortSignal: controller.signal`), so the task, not the foreground turn,
  * owns the child lifecycle. These tests exercise that shared runner through a
  * TaskManager and assert the two behaviors the design hinges on:
- *   1. `task_stop` (handle.cancel) tears down the child and marks the task
+ *   1. `task(action="stop")` (handle.cancel) tears down the child and marks the task
  *      cancelled;
  *   2. an un-stopped agent task runs the child to completion.
  */
@@ -102,8 +102,8 @@ describe("background agent task runner", () => {
     manager.registerKind("agent", runner);
   }
 
-  it("task_stop cancels the child run and marks the task cancelled", async () => {
-    const harness = await makeHarness("session_agent_task_stop");
+  it("task stop cancels the child run and marks the task cancelled", async () => {
+    const harness = await makeHarness("session_agent_task_control_stop");
     try {
       const manager = new TaskManager({ store: new InMemoryTaskStore() });
       let started: () => void = () => {};
@@ -111,7 +111,7 @@ describe("background agent task runner", () => {
         started = resolve;
       });
       // A child tool that parks until the run is aborted — simulating a
-      // long-running background agent that task_stop must tear down. No
+      // long-running background agent that task(action="stop") must tear down. No
       // step-limit race: the child is blocked inside the tool call until abort.
       const waitTool = defineTool({
         name: "grep",
@@ -153,7 +153,7 @@ describe("background agent task runner", () => {
       });
 
       await startedGate; // child has issued its first tool call and parked
-      await withTimeout(handle.cancel(), 2000, "agent task cancel"); // <- task_stop
+      await withTimeout(handle.cancel(), 2000, "agent task cancel");
 
       expect(handle.record.status).toBe("cancelled");
       expect(lifecycleTypes(harness.parent.events.all())).toEqual([
