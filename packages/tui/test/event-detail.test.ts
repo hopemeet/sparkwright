@@ -142,7 +142,9 @@ describe("run inspector facts", () => {
       event("approval.requested"),
       event("approval.resolved", { decision: "denied" }),
       event("tool.failed", { error: { message: "boom" } }),
-      event("run.failed", { reason: "stopped" }),
+      event("run.failed", {
+        failure: { code: "stopped", message: "stopped" },
+      }),
     ]);
 
     expect(facts.approvalsDenied).toBe(1);

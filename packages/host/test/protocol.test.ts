@@ -2384,10 +2384,6 @@ describe("host protocol", () => {
             code: "internal_error",
             message: "event sink failed",
           },
-          error: {
-            code: "internal_error",
-            message: "event sink failed",
-          },
         },
       });
     } finally {
@@ -5267,12 +5263,7 @@ describe("host protocol", () => {
           if (message.envelope !== "event") return;
           if (message.kind === "run.completed") resolveCompleted();
           if (message.kind === "run.failed") {
-            rejectCompleted(
-              new Error(
-                (message.payload as { error?: { message?: string } }).error
-                  ?.message ?? "run failed",
-              ),
-            );
+            rejectCompleted(new Error(message.payload.failure.message));
           }
         },
       });

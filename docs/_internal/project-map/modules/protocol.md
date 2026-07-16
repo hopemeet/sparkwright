@@ -10,10 +10,10 @@ See also [../maps/safety/approvals.md](../maps/safety/approvals.md) and [../maps
 
 ## Last Verified
 
-- Date: 2026-07-16
-- Scope: capability tool summaries no longer expose `legacyNames`; each summary
-  carries one callable name plus optional stable identity/exposure metadata.
-  Workflow delegate identity remains `agentId`-only.
+- Date: 2026-07-16T11:52:29+0800
+- Scope: Host protocol 2.0 makes `run.failed.failure` the only terminal failure
+  envelope; the root `error` projection and helper fallbacks are removed. Tool
+  summaries also carry one callable name without alias metadata.
 
 ## Main Files
 
@@ -126,7 +126,7 @@ Does not own:
 - `shouldWrite` is the run start/resume write-capability gate. When it is
   `false`, write-capable requests are denied by policy rather than represented
   as a separate read-only approval-escalation protocol field.
-- Protocol 1.4 run start/resume/workflow-resume payloads may include
+- Protocol 2.0 run start/resume/workflow-resume payloads may include
   `confidentialPaths` plus optional `confidentialDefaults:false`. Omitted
   `confidentialDefaults` means host defaults apply; false is the only wire
   value that disables SparkWright's built-in conservative read-confidentiality
@@ -141,12 +141,9 @@ Does not own:
   expose those events. The list currently includes `model.stream.chunk` and
   `run.budget.checked`.
 - `RunFailureEnvelope` is the shared terminal failure shape. `run.completed` may
-  carry optional `failure` for `failed`/`cancelled` states; `run.failed` carries
-  canonical `failure` plus deprecated compatibility `error`. Consumers should use
-  `getRunFailure()` / `runFailureMessage()` instead of hand-reading event payload
-  variants. `runFailureMessage()` also falls back to legacy root
-  `message`/`reason`/`stopReason` fields for display, without broadening
-  `getRunFailure()` enough to treat clean completed answers as failures.
+  carry optional `failure` for `failed`/`cancelled` states; `run.failed` requires
+  `failure`. `getRunFailure()` and `runFailureMessage()` read only that envelope;
+  they do not synthesize failures from root fields.
 - `approvalId` from `approval.requested` is resolved by `approval.resolve`.
 - `CapabilityDelegateToolSummary.protocol` covers `acp`,
   `external_command`, and configured in-process delegates as `in_process`.
@@ -381,7 +378,7 @@ workflow list"`.
 
 - Status: Verified
 - Date: 2026-07-06T20:47:10+0800
-- Scope: C13-② protocol 1.4 reserves the optional
+- Scope: C13-② introduced the optional
   `confidentialDefaults:false` run-boundary override and aligns
   host-message schema/fixture/reference docs.
 - Read: `packages/protocol/src/index.ts`,

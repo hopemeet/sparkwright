@@ -11,7 +11,6 @@ export {
   isProtocolErrorCode,
   isRequest,
   isResponse,
-  protocolErrorToRunFailure,
   runFailureMessage,
 } from "@sparkwright/protocol";
 export type {

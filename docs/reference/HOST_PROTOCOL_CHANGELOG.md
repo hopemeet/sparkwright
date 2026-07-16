@@ -6,6 +6,10 @@ major; breaking changes bump the major.
 
 ## Unreleased
 
+- Host protocol 2.0 removes the deprecated `run.failed.error` projection.
+  `run.failed.failure` is the single terminal failure envelope, and clients no
+  longer parse root error/message/reason fallbacks.
+
 - Add `workflow.control.process` so authenticated channel adapters can dispatch
   an already-durable Package D command without recreating or widening its
   authorization envelope. Add durable workflow binding/delivery coordination
@@ -43,9 +47,6 @@ major; breaking changes bump the major.
   `freedChars`; unsupported v1 artifacts are ignored rather than migrated.
 - Add `metadata.summaryFingerprint` and `metadata.measurement` to compact
   artifacts when available.
-- Add canonical `failure` to `run.failed` while keeping deprecated `error` for
-  compatibility; clients should use the shared failure shape across terminal
-  failure events.
 - Add host task control requests: `task.join` marks a task awaited for
   on-demand revival, and `task.promote` signals an in-flight foreground wait to
   resolve as a promoted task ticket.

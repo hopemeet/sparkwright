@@ -9,8 +9,10 @@ See [approvals.md](approvals.md) and [../runtime/tool-orchestration.md](../runti
 
 ## Last Verified
 
-- Date: 2026-07-16
-- Scope: reviewed delegate routing simplification; per-agent workspace admission and write policy remain unchanged.
+- Date: 2026-07-16T11:52:29+0800
+- Scope: reviewed protocol 2.0 terminal failure envelope changes; workspace
+  admission, mutation policy, and approval evidence do not consume the removed
+  Host run-terminal `error` projection.
 
 ## Main Files
 

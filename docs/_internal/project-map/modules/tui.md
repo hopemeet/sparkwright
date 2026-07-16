@@ -348,6 +348,14 @@ Does not own:
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16
+- Scope: live failure rows, transcript export, run controller, inspector, and
+  workflow actions consume protocol `failure` only; the legacy root-error render
+  test and fallback were removed.
+- Read: protocol helper, TUI failure consumers, SDK integration, and focused
+  renderer/controller tests.
+
+- Status: Verified
 - Date: 2026-07-16T10:44:25+0800
 - Scope: Task request previews now format only canonical `task_create` and
   `task(action=...)` calls; parallel Task tool-name branches were removed.

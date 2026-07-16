@@ -3254,10 +3254,6 @@ export class HostRuntime {
             payload: {
               runId: lastRunId,
               failure,
-              error: {
-                code: "internal_error",
-                message,
-              },
             },
           });
         });

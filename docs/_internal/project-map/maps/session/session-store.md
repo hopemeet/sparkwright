@@ -7,6 +7,13 @@ CLI, TUI, host, and diagnostics a stable place to find a conversation/work unit.
 
 See [../trace/raw-trace.md](../trace/raw-trace.md) for raw event evidence.
 
+## Last Verified
+
+- Date: 2026-07-16T11:52:29+0800
+- Scope: reviewed protocol 2.0 terminal failure envelope changes; session
+  persistence remains owned by Core event and trace contracts and does not read
+  the removed Host wire-level `run.failed.error` projection.
+
 ## Main Files
 
 - `packages/core/src/session.ts`

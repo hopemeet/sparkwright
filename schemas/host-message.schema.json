@@ -3,7 +3,7 @@
   "$id": "https://sparkwright.dev/schemas/v0/host-message.schema.json",
   "x-sparkwrightProtocolVersion": "0.2",
   "title": "Sparkwright Host Message",
-  "description": "Wire envelope for all messages exchanged between a Sparkwright host (server-runtime + transport) and a client (TUI, web SDK, etc). Newline-delimited JSON over stdio or one message per WebSocket frame. Every message is one of: request (client→host, expects response), response (host→client, paired with a request by id), or event (host→client, fire-and-forget). The host protocol is versioned via the top-level `protocolVersion` field on the handshake; v1.x is backwards compatible (fields may be added but never removed or repurposed). See docs/HOST_PROTOCOL.md.",
+  "description": "Wire envelope for all messages exchanged between a Sparkwright host (server-runtime + transport) and a client (TUI, web SDK, etc). Newline-delimited JSON over stdio or one message per WebSocket frame. Every message is one of: request (client→host, expects response), response (host→client, paired with a request by id), or event (host→client, fire-and-forget). The host protocol is versioned via the top-level `protocolVersion` field on the handshake; compatible additions retain the major version and breaking changes increment it. See docs/HOST_PROTOCOL.md.",
   "oneOf": [
     { "$ref": "#/$defs/Request" },
     { "$ref": "#/$defs/Response" },
@@ -1792,11 +1792,10 @@
     },
     "RunFailedEventPayload": {
       "type": "object",
-      "required": ["runId", "failure", "error"],
+      "required": ["runId", "failure"],
       "properties": {
         "runId": { "type": "string", "minLength": 1 },
-        "failure": { "$ref": "#/$defs/RunFailureEnvelope" },
-        "error": { "$ref": "#/$defs/ProtocolError" }
+        "failure": { "$ref": "#/$defs/RunFailureEnvelope" }
       },
       "additionalProperties": false
     }

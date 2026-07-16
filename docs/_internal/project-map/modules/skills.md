@@ -197,6 +197,12 @@ list --run/--session`); failed drafts self-clean. See
 
 ## Last Verified
 
+- Status: Reviewed
+- Date: 2026-07-16T11:49:00+0800
+- Scope: reviewed during cumulative branch drift checking; Skill loading and
+  usage code uses canonical built-in tool names but does not consume Host
+  protocol terminal failure payloads. No Skill contract changed in protocol 2.0.
+
 - Status: Verified
 - Date: 2026-07-13
 - Scope: moved inline-shell OS-specific no-write/read-grant compilation into

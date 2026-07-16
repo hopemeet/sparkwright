@@ -9,8 +9,10 @@ See [tool-orchestration.md](tool-orchestration.md) and [../trace/raw-trace.md](.
 
 ## Last Verified
 
-- Date: 2026-07-16
-- Scope: reviewed Host delegate and workflow routing after canonical `agentId` selection; run-loop lifecycle and terminal ownership are unchanged.
+- Date: 2026-07-16T11:52:29+0800
+- Scope: reviewed protocol 2.0 terminal failure envelope changes; Core run-loop
+  lifecycle and raw terminal event ownership are unchanged, while the Host wire
+  projection now emits only the canonical `failure` envelope.
 
 ## Main Files
 

@@ -146,6 +146,12 @@ skill roots
 
 ## Last Verified
 
+- Status: Reviewed
+- Date: 2026-07-16T11:49:00+0800
+- Scope: reviewed during cumulative branch drift checking; Skill capability
+  discovery is independent of Host `run.failed` serialization and requires no
+  protocol 2.0 change.
+
 - Status: Verified
 - Date: 2026-07-13
 - Scope: centralized Skill inline-shell no-write/read filesystem grants in

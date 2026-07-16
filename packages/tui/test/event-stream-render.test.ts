@@ -635,12 +635,12 @@ describe("EventStream committed rendering", () => {
     expect(text).not.toContain("MODEL_COMPLETION_FAILED");
   });
 
-  it("renders run.failed messages from legacy error projections", async () => {
+  it("renders canonical run.failed failure messages", async () => {
     const text = await renderToText(
       stream([
         ev("run.failed", 1, {
           runId: "run_1",
-          error: {
+          failure: {
             code: "internal_error",
             message: "host failed",
           },

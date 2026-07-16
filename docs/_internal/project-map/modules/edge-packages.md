@@ -133,6 +133,14 @@ contracts, and focused checklists that no longer fit here.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16
+- Scope: SDK Core collection, SDK Node, ACP, and IM Gateway consume Host protocol
+  2.0 terminal failures through the single `failure` envelope; no edge adapter
+  reads a root error projection.
+- Read: protocol exports, SDK collection/round-trip, ACP event/turn mapping, IM
+  rendering, and focused integration tests.
+
+- Status: Verified
 - Date: 2026-07-16T10:13:52+0800
 - Scope: removed the deprecated server-runtime convenience stack and durable
   dispatcher alias after confirming that only package-local compatibility tests

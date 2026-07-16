@@ -3,7 +3,7 @@
 This is a reference contract. If you are new to SparkWright, start with
 [the documentation map](../README.md) or the [User Manual](../guides/USER_MANUAL.md).
 
-**Version:** 1.4
+**Version:** 2.0
 **Schema:** [`schemas/host-message.schema.json`](../../schemas/host-message.schema.json)
 **Changelog:** [`HOST_PROTOCOL_CHANGELOG.md`](./HOST_PROTOCOL_CHANGELOG.md)
 
@@ -1011,15 +1011,13 @@ unknown metadata as diagnostic context.
 Terminal event for a host/runtime protocol error before a core run can finish
 normally.
 
-| Field     | Type          | Notes                                                                 |
-| --------- | ------------- | --------------------------------------------------------------------- |
-| `runId`   | string        |                                                                       |
-| `failure` | object        | Canonical `{ category, code, message, retryable, metadata }` failure. |
-| `error`   | ProtocolError | Deprecated compatibility projection of `failure`.                     |
+| Field     | Type   | Notes                                                                 |
+| --------- | ------ | --------------------------------------------------------------------- |
+| `runId`   | string |                                                                       |
+| `failure` | object | Canonical `{ category, code, message, retryable, metadata }` failure. |
 
-Clients should prefer `failure` for both `run.completed{state:"failed"}` and
-`run.failed`. The compatibility `error` field remains present on `run.failed`
-for older protocol clients.
+Clients use `failure` for both `run.completed{state:"failed"}` and
+`run.failed`.
 
 ---
 
@@ -1080,7 +1078,7 @@ the wire protocol. The minimal path:
 
 1. Start a host: `sparkwright host --port 7320`.
 2. Open a WebSocket to `ws://localhost:7320`.
-3. Send a `handshake` request with `protocolVersion: "1.0"`.
+3. Send a `handshake` request with `protocolVersion: "2.0"`.
 4. Listen for the `response` (matching `id`) and the subsequent
    `host.ready` event.
 5. Send `run.start` and stream `run.event` events; resolve any

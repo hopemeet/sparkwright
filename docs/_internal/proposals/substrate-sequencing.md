@@ -214,7 +214,7 @@ listed below.
   the built-in conservative deny set (`.env`, secret/token/credential patterns,
   `.ssh`, `.aws`, `.gcp`, `.azure`) with caller-supplied
   `confidentialPaths`. Host start/resume/workflow resume and CLI direct-core
-  runs use it; protocol 1.4 carries optional `confidentialDefaults:false` so
+  runs use it; the protocol carries optional `confidentialDefaults:false` so
   embedders can intentionally own the full list. Post-acceptance fix
   2026-07-06: host-loaded workspace config is merged into the prepared run
   policy before start/resume/workflow-resume episodes are built, so protocol

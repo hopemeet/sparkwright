@@ -11,10 +11,10 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 
 ## Last Verified
 
-- Date: 2026-07-16
-- Scope: Host built-in catalog entries, selectors, Profile admission, Workflow
-  clamps, policy checks, and capability inspection now use exact canonical tool
-  names without alias normalization. Delegate target inputs remain `agentId`-only.
+- Date: 2026-07-16T11:52:29+0800
+- Scope: Host protocol failure producers emit only the required
+  `run.failed.failure` envelope under protocol 2.0. Built-in tool identity and
+  delegate target inputs remain single-track.
 
 ## Main Files
 
@@ -204,9 +204,9 @@ Does not own:
   diagnostics and optional MCP resolution detail, but it no longer reconstructs
   a fallback Host tool catalog or independently reports sandbox availability.
 - Session root defaults to `<workspace>/.sparkwright/sessions`.
-- Host protocol `run.failed` events emitted by runtime carry canonical
-  `failure` and deprecated compatibility `error`; failed core completions remain
-  `run.completed` with optional `failure`.
+- Host protocol `run.failed` events emitted by runtime carry only required
+  `failure`; failed Core completions remain `run.completed` with optional
+  `failure`.
 - `run.start` and `run.inject_message` accept protocol `input.parts`; host
   normalizes them into core `ContextItem.parts` while keeping `goal`/`content`
   as text summaries.

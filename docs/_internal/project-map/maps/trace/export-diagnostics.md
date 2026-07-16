@@ -90,6 +90,12 @@ session trace.jsonl
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-07-16T11:49:00+0800
+- Scope: TUI transcript export renders terminal failures through the canonical
+  protocol `failure` envelope; the root-error fallback was removed. Raw Core
+  trace remains a separate diagnostic contract.
+
 - Status: Read-only
 - Date: 2026-07-15T23:53:45+0800
 - Scope: route check for TUI input P0-P2 work. App/input/keybinding changes,

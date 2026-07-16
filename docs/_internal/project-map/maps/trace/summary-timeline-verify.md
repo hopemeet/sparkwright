@@ -10,10 +10,10 @@ See [raw-trace.md](raw-trace.md) for source data and [export-diagnostics.md](exp
 
 ## Last Verified
 
-- Date: 2026-07-16
-- Scope: derived fixtures and tool-name classifiers now use canonical built-in
-  names only; no alias field or fallback is required. Configured delegate tool
-  names remain independent diagnostics.
+- Date: 2026-07-16T11:52:29+0800
+- Scope: reviewed protocol 2.0 terminal failure envelope changes; summary,
+  timeline, report, and verify continue to derive from Core trace events and do
+  not consume the removed Host wire-level `run.failed.error` projection.
 
 ## Main Files
 

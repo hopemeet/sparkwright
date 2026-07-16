@@ -7,10 +7,10 @@ cron, shell/task tools, and capability inspection.
 
 ## Last Verified
 
-- Date: 2026-07-16
-- Scope: capability assembly and inspection now report exact canonical built-in
-  names without alias lists; selectors do not normalize removed names. Delegate
-  target selection remains `agentId`-only.
+- Date: 2026-07-16T11:52:29+0800
+- Scope: reviewed protocol 2.0 terminal failure envelope changes; capability
+  discovery, assembly, and inspection do not consume the removed Host
+  run-terminal `error` projection.
 
 ## Main Files
 

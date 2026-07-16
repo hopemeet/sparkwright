@@ -9,8 +9,10 @@ See [session-store.md](session-store.md) and [../runtime/context-compaction.md](
 
 ## Last Verified
 
-- Date: 2026-07-16
-- Scope: reviewed delegate target identity changes; persisted run/session resume semantics are unaffected.
+- Date: 2026-07-16T11:52:29+0800
+- Scope: reviewed protocol 2.0 terminal failure envelope changes; persisted
+  run/session resume semantics consume Core state and are unaffected by removal
+  of the Host wire-level `run.failed.error` projection.
 
 ## Main Files
 

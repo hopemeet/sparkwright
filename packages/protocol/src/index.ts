@@ -10,7 +10,7 @@
  * the full specification, lifecycle, and error semantics.
  */
 
-export const PROTOCOL_VERSION = "1.4" as const;
+export const PROTOCOL_VERSION = "2.0" as const;
 
 export const PERMISSION_MODES = [
   "plan",
@@ -1331,10 +1331,8 @@ export interface RunCompletedEventPayload {
 
 export interface RunFailedEventPayload {
   runId: string;
-  /** Canonical terminal failure. Prefer this over the legacy `error` projection. */
+  /** Canonical terminal failure. */
   failure: RunFailureEnvelope;
-  /** @deprecated Use `failure`; kept for older protocol clients. */
-  error: ProtocolError;
 }
 
 export type HostEvent =
@@ -1360,72 +1358,19 @@ export function isEvent(msg: HostMessage): msg is HostEvent {
   return msg.envelope === "event";
 }
 
-export function protocolErrorToRunFailure(
-  error: ProtocolError,
-): RunFailureEnvelope {
-  return {
-    code: error.code,
-    message: error.message,
-    ...(error.details ? { metadata: error.details } : {}),
-  };
-}
-
 export function getRunFailure(
   payload: unknown,
 ): RunFailureEnvelope | undefined {
   const record = isRecord(payload) ? payload : undefined;
   if (!record) return undefined;
-
-  const failure = runFailureEnvelope(record.failure);
-  if (failure) return failure;
-
-  const error = protocolError(record.error);
-  if (error) return protocolErrorToRunFailure(error);
-
-  const state = stringValue(record.state);
-  if (state !== "failed" && state !== "cancelled") return undefined;
-
-  const message =
-    stringValue(record.message) ??
-    stringValue(record.reason) ??
-    stringValue(record.stopReason);
-  if (!message) return undefined;
-
-  return {
-    code:
-      stringValue(record.code) ??
-      stringValue(record.reason) ??
-      stringValue(record.stopReason) ??
-      state,
-    message,
-  };
+  return runFailureEnvelope(record.failure);
 }
 
 export function runFailureMessage(
   payload: unknown,
   fallback = "run failed",
 ): string {
-  const failure = getRunFailure(payload);
-  if (failure?.message) return failure.message;
-  const record = isRecord(payload) ? payload : undefined;
-  return (
-    stringValue(record?.message) ??
-    stringValue(record?.reason) ??
-    stringValue(record?.stopReason) ??
-    fallback
-  );
-}
-
-function protocolError(value: unknown): ProtocolError | undefined {
-  const record = isRecord(value) ? value : undefined;
-  const code = stringValue(record?.code);
-  const message = stringValue(record?.message);
-  if (!code || !message || !isProtocolErrorCode(code)) return undefined;
-  return {
-    code,
-    message,
-    ...(isRecord(record?.details) ? { details: record.details } : {}),
-  };
+  return getRunFailure(payload)?.message ?? fallback;
 }
 
 function runFailureEnvelope(value: unknown): RunFailureEnvelope | undefined {

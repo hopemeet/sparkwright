@@ -7,6 +7,13 @@ how it was resolved, and what happened afterward.
 
 See [workspace-writes.md](workspace-writes.md) and [shell.md](shell.md).
 
+## Last Verified
+
+- Date: 2026-07-16T11:52:29+0800
+- Scope: reviewed protocol 2.0 terminal failure envelope changes; approval
+  request, resolution, and audit contracts are independent of the removed
+  `run.failed.error` projection.
+
 ## Main Files
 
 - `packages/core/src/run.ts`

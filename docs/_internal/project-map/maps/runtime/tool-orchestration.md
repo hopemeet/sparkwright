@@ -9,12 +9,10 @@ See [../safety/workspace-writes.md](../safety/workspace-writes.md), [../safety/s
 
 ## Last Verified
 
-- Date: 2026-07-16
-- Scope: built-in callable identity is single-track: Core registers and traces
-  exact names, Host configuration and selectors do not normalize removed names,
-  and capability inspection no longer emits alias metadata. Indexed and parallel
-  delegate model schemas also require `agentId`; their configured target tool
-  names remain private execution details.
+- Date: 2026-07-16T11:52:29+0800
+- Scope: reviewed protocol 2.0 terminal failure envelope changes; tool
+  validation, execution, and tool failure events are independent of the removed
+  Host run-terminal `error` projection.
 
 ## Main Files
 

@@ -134,6 +134,12 @@ completed prior turns
 
 ## Last Verified
 
+- Status: Reviewed
+- Date: 2026-07-16T11:49:00+0800
+- Scope: reviewed after protocol 2.0 failure-envelope consolidation and the
+  branch's Core context naming cleanup; compaction stages do not read Host
+  `run.failed` wire payloads and require no contract change.
+
 - Status: Read-only
 - Date: 2026-07-16T09:23:49+0800
 - Scope: checked context-compaction consumers after integrating config/runtime

@@ -213,6 +213,12 @@ trace/session inspection.
 
 - Status: Verified
 - Date: 2026-07-16
+- Scope: Host protocol 2.0 removed `run.failed.error` across producer, schema,
+  protocol helpers, SDK, CLI, TUI, ACP, IM Gateway, fixtures, and reference docs;
+  `failure` is the only terminal failure envelope.
+
+- Status: Verified
+- Date: 2026-07-16
 - Scope: built-in model-facing tools now have one exact callable/configuration
   identity (`read`, `write`, `edit`, `bash`); the Core alias registry, Host
   normalization, protocol alias metadata, and old documentation paths were

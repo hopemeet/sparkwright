@@ -8,10 +8,10 @@ See also [../maps/trace/summary-timeline-verify.md](../maps/trace/summary-timeli
 
 ## Last Verified
 
-- Date: 2026-07-16
-- Scope: capability inspection and approval/trace fixtures now present exact
-  canonical built-in names and no alias metadata. Workflow delegate identity
-  remains `agentId`-only.
+- Date: 2026-07-16T11:52:29+0800
+- Scope: Host-mode terminal failure handling consumes only the canonical
+  `failure` envelope from protocol 2.0; no `run.failed.error` code/message
+  fallback remains. Capability/tool identity remains canonical-only.
 
 ## Main Files
 
@@ -288,8 +288,8 @@ Does not own:
   continuation exhaustion remains visible in live output.
 - Host-mode terminal failure summaries use protocol `getRunFailure()` /
   `runFailureMessage()` so `run.completed{state:"failed"}` and `run.failed`
-  share the same failure-message extraction instead of maintaining separate CLI
-  payload cascades.
+  share the same canonical envelope extraction instead of maintaining separate
+  CLI payload cascades.
 - `session resume` is a new run in the existing session context. It does not
   implicitly inherit an earlier CLI/TUI model override; users can pass
   `--model provider/model` explicitly.

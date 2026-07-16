@@ -253,7 +253,7 @@ export function renderTranscript(
         break;
       }
       case "run.failed": {
-        const err = runFailureMessage(p, safeJson(p.error));
+        const err = runFailureMessage(p);
         out.push("---");
         out.push("");
         out.push(`_Run failed: **${err}**_`);

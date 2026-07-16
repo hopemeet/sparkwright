@@ -233,7 +233,7 @@ client.on('run.event', () => eventCount++);
 const terminal = new Promise((resolve, reject) => {
   client.on('run.completed', (m) => resolve(m.payload));
   client.on('run.failed', (m) =>
-    reject(new Error(m.payload.error?.message ?? 'run failed')),
+    reject(new Error(m.payload.failure.message)),
   );
 });
 const started = await client.startRun({ goal: 'inspect this repo' });
@@ -285,7 +285,7 @@ client.on('run.event', () => runEventCount++);
 const terminal = new Promise((resolve, reject) => {
   client.on('run.completed', (m) => resolve(m.payload));
   client.on('run.failed', (m) =>
-    reject(new Error(m.payload.error?.message ?? 'run failed')),
+    reject(new Error(m.payload.failure.message)),
   );
 });
 const started = await client.startRun({ goal: 'inspect this repo' });
@@ -343,7 +343,7 @@ client.on('run.event', (m) => {
 const terminal = new Promise((resolve, reject) => {
   client.on('run.completed', (m) => resolve(m.payload));
   client.on('run.failed', (m) =>
-    reject(new Error(m.payload.error?.message ?? 'run failed')),
+    reject(new Error(m.payload.failure.message)),
   );
 });
 

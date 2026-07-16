@@ -258,15 +258,15 @@ async function runHostLifecycle(
       client.on("run.failed", (msg) => {
         for (const line of liveEvents.flush()) writeLine(io.stdout, line);
         runId = msg.payload.runId || runId;
-        const failure = getRunFailure(msg.payload);
+        const failure = msg.payload.failure;
         failedMessage =
           summarizeTerminalRunFailure({
             state: "failed",
-            stopReason: failure?.code ?? msg.payload.error.code,
+            stopReason: failure.code,
             failure,
           }) ?? runFailureMessage(msg.payload);
         runState = "failed";
-        stopReason = failure?.code ?? msg.payload.error.code;
+        stopReason = failure.code;
         writeLine(io.stderr, failedMessage);
         terminalFailurePrinted = true;
         resolveOnce();

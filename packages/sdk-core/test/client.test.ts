@@ -632,10 +632,6 @@ describe("@sparkwright/sdk-core Client", () => {
           code: "internal_error",
           message: "host failed",
         },
-        error: {
-          code: "internal_error",
-          message: "host failed",
-        },
       },
     });
 

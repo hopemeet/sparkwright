@@ -9,8 +9,10 @@ See [../../modules/mcp-adapter.md](../../modules/mcp-adapter.md).
 
 ## Last Verified
 
-- Date: 2026-07-16
-- Scope: reviewed Host runtime routing changes; MCP tool-name mapping and capability contracts are independent and unchanged.
+- Date: 2026-07-16T11:52:29+0800
+- Scope: reviewed protocol 2.0 terminal failure envelope changes; MCP
+  tool/resource/prompt capability contracts and tool failure events are
+  independent and unchanged.
 
 ## Main Files
 
