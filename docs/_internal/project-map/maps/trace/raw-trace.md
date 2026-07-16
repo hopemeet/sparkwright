@@ -227,6 +227,9 @@ EventLog emits full event
 - Add trace-level payload handling for new large event types.
 - Keep artifacts out of large inline payloads.
 - Check `transcript.jsonl` behavior if event-to-transcript mapping changes.
+- Prompt transcript rehydration resolves `systemRef` only through the owning
+  session's `blobs/` directory; transcript rows do not carry an inline system
+  prefix identity or alternate reader path.
 - Verify redaction still applies to trace and artifacts.
 - Update docs and schemas when event envelope changes.
 

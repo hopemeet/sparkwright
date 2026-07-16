@@ -94,6 +94,9 @@ Manual compact
   `result.json`, and `trace-pointer.json` files that point from each run
   directory back to the aggregate session and agent traces. It requires a
   session identity and has no standalone `.sparkwright/runs/` layout.
+- Transcript prompt entries store leading system messages only in the canonical
+  session `blobs/<systemRef>.json` store. `restoreTranscriptPrompts()` requires
+  that blobs directory and does not read inline system-prefix/hash variants.
 - `FileSessionStore` writes `session.json` through core `file-atomic`, the same
   lower-level atomic text writer wrapped by `agent-runtime` doc-store, because
   core cannot depend upward on runtime packages.

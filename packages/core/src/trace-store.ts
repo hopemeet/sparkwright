@@ -800,38 +800,24 @@ function readSystemPrefixBlob(
 /**
  * Rehydrate transcript entries produced by {@link FileRunStore}: any `prompt`
  * entry carrying a `systemRef` gets its system prefix prepended back onto
- * `messages`. The prefix is resolved (in order of preference) from an earlier
- * inline `systemHash` entry in the same list — the legacy self-contained form —
- * or from `blobs/<hash>.json` under `options.blobsDir`, which is where current
- * transcripts store every prefix. Entries are returned in input order; non
- * `prompt` entries pass through untouched.
+ * `messages`. The prefix is resolved from `blobs/<hash>.json` under
+ * `options.blobsDir`, the canonical session transcript blob store. Entries are
+ * returned in input order; non-`prompt` entries pass through untouched.
  */
 export function restoreTranscriptPrompts(
   entries: Record<string, unknown>[],
-  options: { blobsDir?: string } = {},
+  options: { blobsDir: string },
 ): Record<string, unknown>[] {
   const prefixes = new Map<string, PromptMessage[]>();
   const resolvePrefix = (ref: string): PromptMessage[] => {
     const cached = prefixes.get(ref);
     if (cached) return cached;
-    const prefix =
-      (options.blobsDir
-        ? readSystemPrefixBlob(options.blobsDir, ref)
-        : undefined) ?? [];
+    const prefix = readSystemPrefixBlob(options.blobsDir, ref) ?? [];
     prefixes.set(ref, prefix);
     return prefix;
   };
   return entries.map((entry) => {
     if (entry.type !== "prompt") return entry;
-    // Legacy self-contained form: the first occurrence stored the prefix inline
-    // alongside its `systemHash`. Newer transcripts never do this.
-    if (typeof entry.systemHash === "string" && Array.isArray(entry.messages)) {
-      prefixes.set(
-        entry.systemHash,
-        leadingSystemPrefix(entry.messages as PromptMessage[]),
-      );
-      return entry;
-    }
     if (typeof entry.systemRef === "string") {
       const prefix = resolvePrefix(entry.systemRef);
       const rest = Array.isArray(entry.messages)

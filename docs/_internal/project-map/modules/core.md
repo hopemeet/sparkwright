@@ -13,6 +13,16 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md),
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T19:05:00+0800
+- Scope: Transcript prompt rehydration uses only canonical session
+  `blobs/<systemRef>.json` storage; the inline `systemHash` reader and optional
+  no-blob restore path were removed.
+- Read: Core trace store/tests, session-store map, raw-trace map, and state/trace
+  reference.
+- Tests: Core trace focused tests and typecheck; test typecheck; npm run
+  release:check; project-map drift check.
+
+- Status: Verified
 - Date: 2026-07-16T18:30:00+0800
 - Scope: Core trace readers require the canonical event envelope and no longer synthesize missing top-level metadata.
 - Read: Core event schema, trace parser/consumers, trace tests, and raw-trace map.

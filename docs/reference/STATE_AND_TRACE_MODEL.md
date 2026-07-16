@@ -169,6 +169,9 @@ Default file layout for session-scoped run traces:
 
 Session-scoped run directories hold per-run state. `trace-pointer.json` points
 back to the session and agent trace files that contain the run's events.
+Transcript prompt rows reference leading system messages with `systemRef`; the
+referenced array lives only at `blobs/<systemRef>.json`. Rehydration therefore
+requires the owning session's `blobs/` directory.
 
 ### 4. Runtime Live State
 
