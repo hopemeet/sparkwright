@@ -808,27 +808,6 @@ describe("run outcome evidence", () => {
     ]);
   });
 
-  it("classifies a legacy compact tool failure (flat errorCode) like the full shape", () => {
-    const log = new EventLog(createRunId());
-    // Older compact traces flattened the code to `errorCode`; the analyzer must
-    // read it so classification stays trace-shape invariant.
-    const events = [
-      log.emit("run.created", { goal: "Improve the README" }),
-      log.emit("tool.failed", {
-        toolCallId: "call_1",
-        status: "failed",
-        errorCode: "TOOL_APPROVAL_DENIED",
-      }),
-    ];
-
-    const summary = analyzeToolOutcomes(events);
-
-    expect(summary.unresolvedFailures).toEqual([]);
-    expect(summary.policyDenials.map((failure) => failure.code)).toEqual([
-      "TOOL_APPROVAL_DENIED",
-    ]);
-  });
-
   it("includes a failed verification profile in the run outcome", () => {
     const log = new EventLog(createRunId());
     const events = [

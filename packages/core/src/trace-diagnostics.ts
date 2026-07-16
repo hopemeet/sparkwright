@@ -2576,8 +2576,6 @@ function collectSafetySummary(
       continue;
     }
     if (event.type === "tool.failed") {
-      // traceErrorCode reads legacy compact `errorCode` shapes too, so this
-      // safety counter stays trace-level invariant.
       if (traceErrorCode(event) === "UNTRACKED_WORKSPACE_MUTATION") {
         summary.safety.shell.untrackedWorkspaceMutations += 1;
       }
@@ -3274,9 +3272,13 @@ function collectErrorCode(
 
 function traceErrorCode(event: SparkwrightEvent): string | undefined {
   if (!isRecord(event.payload)) return undefined;
+  const nestedErrorCode = isRecord(event.payload.error)
+    ? stringValue(event.payload.error.code)
+    : undefined;
+  if (event.type === "tool.failed") return nestedErrorCode;
   return stringValue(
     event.payload.errorCode,
-    isRecord(event.payload.error) ? event.payload.error.code : undefined,
+    nestedErrorCode,
     // run.failed carries its code at the payload root (e.g. a target-boundary
     // rejection's TARGET_OUTSIDE_WORKSPACE), not under `error`.
     event.type === "run.failed" ? event.payload.code : undefined,
@@ -3327,8 +3329,6 @@ function collectExpectedDenialCode(
 
 function isExpectedDenialEvent(event: SparkwrightEvent): boolean {
   if (event.type.endsWith(".denied")) return true;
-  // Use traceErrorCode so this reads legacy compact `errorCode` shapes too,
-  // keeping the expected-denial count trace-level invariant.
   return isPolicyOrApprovalFailure(traceErrorCode(event));
 }
 

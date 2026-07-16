@@ -138,7 +138,8 @@ arguments.
 may include diagnostic stage timings such as `schemaValidationMs`,
 `inputValidationMs`, `policyForArgsMs`, `policyDecisionMs`, `approvalWaitMs`,
 and `executionMs`. Treat these as optional observability fields; do not infer
-success/failure from their presence.
+success/failure from their presence. A `tool.failed` payload uses the canonical
+`error` envelope; consumers read the failure code from `payload.error.code`.
 
 When a deferred tool call fails argument schema validation before its schema has
 been loaded into the model request, the `tool.failed` error metadata may include

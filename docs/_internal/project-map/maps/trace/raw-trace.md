@@ -86,6 +86,9 @@ EventLog emits full event
   fields (`schemaValidationMs`, `inputValidationMs`, `policyForArgsMs`,
   `policyDecisionMs`, `approvalWaitMs`, `executionMs`). These are diagnostics on existing terminal events;
   they do not change span closure or event-family semantics.
+- `tool.failed` uses the canonical nested error envelope. Its failure code is
+  read only from `payload.error.code`; root-level `errorCode` fields belong to
+  other event-family contracts and are not a tool-failure alias.
 - `workspace.read.denied` is the raw trace evidence for read-scope policy
   denial. It pairs with the enclosing read tool's `tool.failed`
   `READ_SCOPE_DENIED`; successful reads continue to use `workspace.read`.

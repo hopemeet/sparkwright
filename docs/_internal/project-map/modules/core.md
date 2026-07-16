@@ -116,7 +116,8 @@ Does not own:
   `policyForArgs()` / policy / approval. It must validate only, not mutate
   args, write the workspace, create artifacts, or call external networks.
   Failures produce model-visible `tool.failed` observations with
-  `metadata.phase: "validateInput"`.
+  `metadata.phase: "validateInput"`; all tool failure codes live at the
+  canonical `payload.error.code` location.
 - In a read-only run, `createWorkspaceMutationPolicy(false)` denies a
   `tool.execute` resource whose governance omits side-effect classification.
   Missing metadata is not evidence of safety. Approval is reached only after

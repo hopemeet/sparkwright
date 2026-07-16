@@ -9,6 +9,16 @@ See also [../maps/trace/summary-timeline-verify.md](../maps/trace/summary-timeli
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T15:30:00+0800
+- Scope: Live tool-failure formatting consumes only the canonical nested
+  `payload.error.code` envelope; the root `errorCode` compatibility alias is
+  not accepted for `tool.failed`.
+- Read: CLI event formatter/tests, Core outcome and trace diagnostics, raw trace
+  map, and run-event reference.
+- Tests: CLI event-format focused tests; Core outcome/trace focused tests; Core
+  and CLI typechecks; test typecheck; project-map drift check.
+
+- Status: Verified
 - Date: 2026-07-16T14:10:00+0800
 - Scope: Direct-core run resume searches only `sessions/*/agents/*/runs/<run-id>` and reconstructs from canonical aggregate traces; the legacy workspace run root is no longer accepted.
 - Read: CLI trace/session command module, Core trace store, CLI resume tests, and protocol references.

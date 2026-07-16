@@ -146,9 +146,7 @@ export function formatEvent(event: SparkwrightEvent): string {
       String(payload.toolName ?? ""),
       `status=${String(payload.status ?? "")}`,
       path ? `path=${path}` : "",
-      event.type === "tool.failed"
-        ? `error=${String(payload.errorCode ?? error.code ?? "")}`
-        : "",
+      event.type === "tool.failed" ? `error=${String(error.code ?? "")}` : "",
       `artifacts=${String(
         Array.isArray(payload.artifacts)
           ? payload.artifacts.length

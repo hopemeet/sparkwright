@@ -999,20 +999,12 @@ function analyzeWorkflowFailures(
   });
 }
 
-/**
- * Read a tool.failed code regardless of trace shape. Standard/debug traces
- * carry the nested `error.code`; legacy compact traces may flatten it to
- * `errorCode`. Reading both keeps failure classification — and therefore the
- * run verdict — trace-level invariant.
- */
 function toolFailureCodeFromPayload(
   payload: Record<string, unknown>,
 ): string | undefined {
-  if (isRecord(payload.error)) {
-    const nested = stringValue(payload.error.code);
-    if (nested) return nested;
-  }
-  return stringValue(payload.errorCode);
+  return isRecord(payload.error)
+    ? stringValue(payload.error.code)
+    : undefined;
 }
 
 export function classifyToolFailure(
