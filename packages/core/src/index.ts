@@ -168,7 +168,6 @@ export {
   isShellToolName,
   isVerificationGoal,
   isVerificationRelevantCommand,
-  parseVerificationHookName,
   shellCommandFactFromToolCompleted,
   shellCommandRequestFromEvent,
   stableDiagnosticJson,

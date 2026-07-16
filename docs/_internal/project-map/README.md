@@ -668,8 +668,8 @@ release:check`.
 - Scope: routed workflow-runtime-v1 P1.5 deletion work: workflow release gate
   removal, implicit verification/documented-command projection compilation,
   delegate child `workflowHooksForProfile` projection assembly, and
-  FactLedger-first verification profile verdicts with old-trace hookName
-  fallback.
+  FactLedger-first verification profile verdicts keyed by explicit
+  `verificationSource`, `profile`, and `verifierId` metadata.
 - Read: `docs/_internal/proposals/workflow-runtime-v1.md`,
   `docs/_internal/proposals/substrate-sequencing.md`,
   `packages/agent-runtime/src/workflows/types.ts`,

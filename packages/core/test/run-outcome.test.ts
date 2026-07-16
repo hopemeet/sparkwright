@@ -812,17 +812,31 @@ describe("run outcome evidence", () => {
     const log = new EventLog(createRunId());
     const events = [
       log.emit("workflow_hook.completed", {
-        hookName: "verification:fast:lint",
+        hookName: "workflow:verification_fast",
         result: {
           status: "continue",
-          metadata: { exitCode: 0, timedOut: false },
+          metadata: {
+            verificationSource: "profile",
+            profile: "fast",
+            verifierId: "lint",
+            expect: "zero",
+            exitCode: 0,
+            timedOut: false,
+          },
         },
       }),
       log.emit("workflow_hook.completed", {
-        hookName: "verification:fast:typecheck",
+        hookName: "workflow:verification_fast",
         result: {
           status: "continue",
-          metadata: { exitCode: 2, timedOut: false },
+          metadata: {
+            verificationSource: "profile",
+            profile: "fast",
+            verifierId: "typecheck",
+            expect: "zero",
+            exitCode: 2,
+            timedOut: false,
+          },
         },
       }),
       log.emit("run.completed", { reason: "final_answer" }),
@@ -1192,10 +1206,17 @@ describe("run outcome evidence", () => {
     const log = new EventLog(createRunId());
     const events = [
       log.emit("workflow_hook.completed", {
-        hookName: "verification:fast:lint",
+        hookName: "workflow:verification_fast",
         result: {
           status: "continue",
-          metadata: { exitCode: 0, timedOut: false },
+          metadata: {
+            verificationSource: "profile",
+            profile: "fast",
+            verifierId: "lint",
+            expect: "zero",
+            exitCode: 0,
+            timedOut: false,
+          },
         },
       }),
       log.emit("run.completed", { reason: "final_answer" }),

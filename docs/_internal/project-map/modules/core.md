@@ -143,12 +143,12 @@ Does not own:
   `workflow.failed` events with `projectionKind:"invariant"` as generic
   workflow failures because verification/documented-command buckets carry those
   facts.
-- FactLedger verifier snapshots may carry `verificationSource` metadata. Core
+- FactLedger profile/documented-command verifier snapshots carry explicit
+  `verificationSource`, `profile`, `verifierId`, and `expect` metadata. Core
   run-outcome reads terminal FactLedger snapshots first for verification profile
   and documented-command verdicts, treats stale satisfied verifier facts as
-  failed, keys invariant results by `hookName + verifierId`, and keeps
-  `verification:<profile>:<id>` hookName parsing only for old-trace
-  compatibility.
+  failed, and keys invariant results by `hookName + verifierId`; hook names are
+  diagnostic labels and are not parsed for verifier identity.
 - Command outcome projections from FactLedger include non-stale
   `model-initiated` commands and verification-relevant `verifier-launched`
   commands. Generic hook-launched command facts stay out unless marked
@@ -685,8 +685,8 @@ test/fact-ledger.test.ts test/run-outcome.test.ts`; `npm --workspace
 - Date: 2026-07-04T16:47:47+0800
 - Scope: workflow-runtime-v1 P1.5 core boundary: FactLedger command and
   verifier snapshots preserve `verificationSource`, completed-run outcome and
-  profile-result analysis prefer terminal ledger snapshots, and legacy
-  `verification:` hookName parsing remains only for old traces.
+  profile-result analysis prefer terminal ledger snapshots, and verification
+  identity comes only from explicit metadata.
 - Read: `packages/core/src/fact-classifier.ts`,
   `packages/core/src/fact-ledger.ts`,
   `packages/core/src/run-outcome.ts`,

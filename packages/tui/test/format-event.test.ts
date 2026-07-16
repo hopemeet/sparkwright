@@ -121,33 +121,45 @@ describe("formatEvent", () => {
     expect(
       formatEvent(
         event("workflow_hook.started", {
-          hookName: "verification:stop-gate",
+          hookName: "verification:fast",
         }),
       ),
     ).toMatchObject({
       color: "gray",
       label: "verification",
-      detail: "stop-gate started",
+      detail: "fast started",
     });
     expect(
       formatEvent(
         event("workflow_hook.completed", {
-          hookName: "verification:stop-gate",
-          result: { status: "continue" },
+          hookName: "verification:fast",
+          result: {
+            status: "continue",
+            metadata: {
+              verificationSource: "profile",
+              profile: "fast",
+            },
+          },
         }),
       ),
     ).toMatchObject({
       color: "green",
       label: "verification",
-      detail: "stop-gate ok",
+      detail: "fast ok",
     });
     expect(
       formatEvent(
         event("workflow_hook.completed", {
-          hookName: "verification:fast:lint",
+          hookName: "workflow:verification_fast",
           result: {
             status: "continue",
-            metadata: { exitCode: 0, timedOut: false },
+            metadata: {
+              verificationSource: "profile",
+              profile: "fast",
+              verifierId: "lint",
+              exitCode: 0,
+              timedOut: false,
+            },
           },
         }),
       ),
@@ -159,10 +171,16 @@ describe("formatEvent", () => {
     expect(
       formatEvent(
         event("workflow_hook.completed", {
-          hookName: "verification:fast:typecheck",
+          hookName: "workflow:verification_fast",
           result: {
             status: "continue",
-            metadata: { exitCode: 2, timedOut: false },
+            metadata: {
+              verificationSource: "profile",
+              profile: "fast",
+              verifierId: "typecheck",
+              exitCode: 2,
+              timedOut: false,
+            },
           },
         }),
       ),
@@ -173,15 +191,18 @@ describe("formatEvent", () => {
     });
     expect(
       formatEvent(
-        event("workflow_hook.completed", {
-          hookName: "verification:stop-gate",
-          result: { status: "block" },
+        event("workflow_hook.blocked", {
+          hookName: "workflow:verification_fast",
+          resultMetadata: {
+            verificationSource: "profile",
+            profile: "fast",
+          },
         }),
       ),
     ).toMatchObject({
       color: "red",
       label: "verification",
-      detail: "stop-gate blocked",
+      detail: "fast blocked",
     });
   });
 

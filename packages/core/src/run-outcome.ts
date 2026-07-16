@@ -6,7 +6,6 @@ import {
   isShellToolName,
   isVerificationGoal,
   isVerificationRelevantCommand,
-  parseVerificationHookName,
   stripLeadingEnvAssignments,
 } from "./fact-classifier.js";
 import {
@@ -517,7 +516,7 @@ export function analyzeVerificationProfileResults(
 ): VerificationProfileResult[] {
   const ledgerResults = verificationProfileResultsFromEventLedgers(events);
   if (ledgerResults) return ledgerResults;
-  return analyzeVerificationProfileResultsFromLegacyEvents(events);
+  return analyzeVerificationProfileResultsFromEvents(events);
 }
 
 function analyzeDocumentedCommandResults(
@@ -525,10 +524,10 @@ function analyzeDocumentedCommandResults(
 ): VerificationProfileResult[] {
   const ledgerResults = documentedCommandResultsFromEventLedgers(events);
   if (ledgerResults) return ledgerResults;
-  return analyzeDocumentedCommandResultsFromLegacyEvents(events);
+  return analyzeDocumentedCommandResultsFromEvents(events);
 }
 
-function analyzeVerificationProfileResultsFromLegacyEvents(
+function analyzeVerificationProfileResultsFromEvents(
   events: readonly SparkwrightEvent[],
 ): VerificationProfileResult[] {
   const latest = new Map<string, VerificationProfileResult>();
@@ -538,23 +537,27 @@ function analyzeVerificationProfileResultsFromLegacyEvents(
       continue;
     }
     const hookName = stringValue(event.payload.hookName);
-    const parsed = parseVerificationHookName(hookName);
-    if (!hookName || !parsed) continue;
+    if (!hookName) continue;
     const result = isRecord(event.payload.result)
       ? event.payload.result
       : undefined;
     const metadata = isRecord(result?.metadata) ? result.metadata : undefined;
-    if (!metadata) continue;
+    if (metadata?.verificationSource !== "profile") continue;
+    const id = stringValue(metadata.verifierId);
+    if (!id) continue;
     const timedOut = booleanValue(metadata.timedOut) ?? false;
     const exitCode = numberOrNullValue(metadata.exitCode);
-    latest.set(hookName, {
+    const item: VerificationProfileResult = {
       hookName,
-      profile: parsed.profile,
-      id: parsed.id,
+      ...(stringValue(metadata.profile)
+        ? { profile: stringValue(metadata.profile) }
+        : {}),
+      id,
       status: exitCode === 0 && !timedOut ? "passed" : "failed",
       exitCode,
       timedOut,
-    });
+    };
+    latest.set(verificationResultKey(item), item);
   }
   return [...latest.values()].sort((a, b) => a.id.localeCompare(b.id));
 }
@@ -595,7 +598,7 @@ function documentedCommandResultsFromEventLedgers(
     : undefined;
 }
 
-function analyzeDocumentedCommandResultsFromLegacyEvents(
+function analyzeDocumentedCommandResultsFromEvents(
   events: readonly SparkwrightEvent[],
 ): VerificationProfileResult[] {
   const latest = new Map<string, VerificationProfileResult>();
@@ -611,10 +614,8 @@ function analyzeDocumentedCommandResultsFromLegacyEvents(
       : undefined;
     const metadata = isRecord(result?.metadata) ? result.metadata : undefined;
     if (metadata?.verificationSource !== "documented_command") continue;
-    const id =
-      stringValue(metadata.verifierId) ??
-      stringValue(metadata.ruleName) ??
-      hookName;
+    const id = stringValue(metadata.verifierId);
+    if (!id) continue;
     const timedOut = booleanValue(metadata.timedOut) ?? false;
     const exitCode = numberOrNullValue(metadata.exitCode);
     const item: VerificationProfileResult = {
@@ -642,22 +643,13 @@ function collectInvariantWorkflowFailureResult(
     return;
   }
   const workflowRunId = stringValue(event.payload.workflowRunId);
-  const hookName =
-    (workflowRunId ? `workflow:${workflowRunId}` : undefined) ??
-    stringValue(event.payload.assetName) ??
-    (source === "documented_command"
-      ? "workflow:documented_command"
-      : "workflow:verification");
-  const failures = Array.isArray(event.payload.failures)
-    ? event.payload.failures
-    : [{}];
+  if (!workflowRunId || !Array.isArray(event.payload.failures)) return;
+  const hookName = `workflow:${workflowRunId}`;
+  const failures = event.payload.failures;
   for (const failure of failures) {
     const failureRecord = isRecord(failure) ? failure : {};
-    const id =
-      stringValue(failureRecord.verifierId) ??
-      (source === "documented_command"
-        ? "documented-command-check"
-        : "verification");
+    const id = stringValue(failureRecord.verifierId);
+    if (!id) continue;
     const item: VerificationProfileResult = {
       hookName,
       ...(source === "profile" && stringValue(event.payload.profile)
@@ -898,23 +890,14 @@ function verificationResultsFromFactLedger(
 ): VerificationProfileResult[] {
   const latest = new Map<string, VerificationProfileResult>();
   for (const result of snapshot.verificationResults) {
-    const parsed = parseVerificationHookName(result.hookName);
-    if (source === "profile") {
-      if (result.verificationSource !== "profile" && !parsed) continue;
-    } else if (result.verificationSource !== source) {
-      continue;
-    }
-    const hookName = result.hookName ?? result.id;
-    const id =
-      result.verifierId ??
-      parsed?.id ??
-      (source === "documented_command"
-        ? "documented-command-check"
-        : result.id);
+    if (result.verificationSource !== source) continue;
+    const hookName = result.hookName;
+    if (!hookName) continue;
+    const id = result.verifierId;
     const item: VerificationProfileResult = {
       hookName,
-      ...(source === "profile" && (result.profile ?? parsed?.profile)
-        ? { profile: result.profile ?? parsed?.profile }
+      ...(source === "profile" && result.profile
+        ? { profile: result.profile }
         : {}),
       id,
       status: result.satisfied && result.stale !== true ? "passed" : "failed",
@@ -1002,9 +985,7 @@ function analyzeWorkflowFailures(
 function toolFailureCodeFromPayload(
   payload: Record<string, unknown>,
 ): string | undefined {
-  return isRecord(payload.error)
-    ? stringValue(payload.error.code)
-    : undefined;
+  return isRecord(payload.error) ? stringValue(payload.error.code) : undefined;
 }
 
 export function classifyToolFailure(

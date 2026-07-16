@@ -3067,13 +3067,22 @@ function collectSuccessfulVerificationEvents(
 
     if (event.type !== "workflow_hook.completed") continue;
     const hookName = stringValue(event.payload.hookName);
-    if (!hookName?.startsWith("verification:")) continue;
     const result = recordValue(event.payload.result);
     const metadata = recordValue(result?.metadata);
+    const verificationSource = stringValue(metadata?.verificationSource);
+    if (
+      verificationSource !== "profile" &&
+      verificationSource !== "documented_command"
+    ) {
+      continue;
+    }
     const exitCode = optionalNumberValue(metadata?.exitCode);
     const timedOut = metadata?.timedOut === true;
     if (timedOut || exitCode !== 0) continue;
-    out.push({ index, command: hookName });
+    out.push({
+      index,
+      command: stringValue(metadata?.command) ?? hookName ?? verificationSource,
+    });
   }
 
   return out;

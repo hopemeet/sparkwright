@@ -193,6 +193,9 @@ Does not own:
   `workflow.started` / terminal `workflow.*` names with
   `projectionKind:"invariant"` and `verificationSource:"profile" |
 "documented_command"`; they do not emit `workflow.node.*`.
+- Verification workflow-hook results identify their source and verifier with
+  explicit `verificationSource`, `profile`, `verifierId`, and `expect`
+  metadata. `hookName` is a display/correlation label, not a packed identity.
 - Config schema accepts canonical workflow lifecycle names only and separates
   non-blocking subscribers into `capabilities.hooks.events`. Workflow actions
   can be `block`, `context`, `command`, `http`, or `agent`; event actions can be

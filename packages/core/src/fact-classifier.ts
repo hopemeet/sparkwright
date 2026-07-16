@@ -121,9 +121,8 @@ export function hookCommandFactFromWorkflowHookCompleted(
   if (exitCode === null && !timedOut) return undefined;
 
   const hookName = stringValue(event.payload.hookName, metadata.hookName);
-  const parsed = parseVerificationHookName(hookName);
   const nodeId = stringValue(metadata.nodeId);
-  const verifierId = stringValue(metadata.verifierId) ?? parsed?.id;
+  const verifierId = stringValue(metadata.verifierId);
   const verificationSource = stringValue(metadata.verificationSource);
   const command = stringValue(metadata.command);
   const args = stringArrayValue(metadata.args);
@@ -135,7 +134,7 @@ export function hookCommandFactFromWorkflowHookCompleted(
     sequence: event.sequence,
     hookName,
     hook: stringValue(event.payload.hook, metadata.hook),
-    profile: stringValue(metadata.profile) ?? parsed?.profile,
+    profile: stringValue(metadata.profile),
     nodeId,
     verifierId,
     verificationSource,
@@ -144,7 +143,7 @@ export function hookCommandFactFromWorkflowHookCompleted(
     commandKey: commandIdentity(commandWithArgs(command, args)),
     exitCode,
     timedOut,
-    verificationRelevant: Boolean(parsed || verifierId || expect),
+    verificationRelevant: Boolean(verifierId || expect),
     ...(expect ? { expect } : {}),
   };
 }
@@ -222,17 +221,6 @@ export function commandExpectationSatisfied(
   if (input.timedOut) return false;
   if (expect === "zero") return input.exitCode === 0;
   return typeof input.exitCode === "number" && input.exitCode !== 0;
-}
-
-export function parseVerificationHookName(
-  hookName: string | undefined,
-): { profile: string; id: string } | undefined {
-  if (!hookName?.startsWith("verification:")) return undefined;
-  const [, profile, ...idParts] = hookName.split(":");
-  const id = idParts.join(":");
-  if (!profile || !id) return undefined;
-  if (id === "stop-gate" || profile === "suggest") return undefined;
-  return { profile, id };
 }
 
 export function isShellToolName(value: unknown): boolean {

@@ -215,9 +215,10 @@ Stable consumption rules:
 - Once a terminal event is seen, ignore later state-transition attempts except
   to surface `run.state_transition.rejected` as diagnostics.
 - Completed final-answer events may carry `factLedger` as the persisted
-  command/verification fact snapshot, including optional `verificationSource`
-  on verifier-launched command/result facts. It is an audit snapshot on the
-  terminal event, not a new event family.
+  command/verification fact snapshot. Profile/documented-command facts identify
+  verification with explicit `verificationSource`, `profile`, `verifierId`,
+  and `expect` fields; `hookName` is only a correlation label. The ledger is an
+  audit snapshot on the terminal event, not a new event family.
 
 For durable stores, update the run record and write `result.json` at terminal
 completion, but keep `trace.jsonl` append-only.

@@ -292,7 +292,9 @@ Current event types:
   Built-in verification/documented-command run-level invariants reuse the
   terminal workflow event vocabulary with `projectionKind: "invariant"` and
   `verificationSource: "profile" | "documented_command"`, but do not emit
-  `workflow.node.*` events.
+  `workflow.node.*` events. Their workflow-hook results carry explicit
+  `profile`, `verifierId`, and `expect` metadata; consumers must not derive
+  verifier identity by splitting `hookName`.
 - `extension.process.started` / `extension.process.progress` /
   `extension.process.completed` / `extension.process.failed`: host-controlled
   external process invocation evidence. External processes cannot write

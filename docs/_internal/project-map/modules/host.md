@@ -2172,8 +2172,8 @@ workflow hooks"`; `npm --workspace @sparkwright/host run typecheck`;
 - Status: Verified
 - Date: 2026-07-04T09:30:36+0800
 - Scope: workflow-runtime-v1 S2 host consumer boundary: verification Stop gate
-  now reads core FactLedger snapshots while verification hook assembly and the
-  legacy `verification:` hookName protocol remain host-owned.
+  now reads core FactLedger snapshots while verification hook assembly and
+  explicit verification identity metadata remain host-owned.
 - Read: `packages/host/src/verification.ts`,
   `packages/host/test/workflow-hooks.test.ts`,
   `packages/core/src/workflow-hooks.ts`,

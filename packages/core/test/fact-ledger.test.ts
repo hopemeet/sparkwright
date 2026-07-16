@@ -98,11 +98,14 @@ describe("FactLedger", () => {
     log.subscribe((event) => ledger.observeEvent(event));
 
     log.emit("workflow_hook.completed", {
-      hookName: "verification:fast:repro",
+      hookName: "workflow:verification_fast",
       hook: "PostToolUse",
       result: {
         status: "continue",
         metadata: {
+          verificationSource: "profile",
+          profile: "fast",
+          verifierId: "repro",
           command: "npm",
           args: ["test"],
           exitCode: 1,
@@ -117,7 +120,7 @@ describe("FactLedger", () => {
     expect(snapshot.commands[0]).toMatchObject({
       initiator: "verifier-launched",
       source: "workflow_hook",
-      hookName: "verification:fast:repro",
+      hookName: "workflow:verification_fast",
       nodeId: "reproduce",
       command: "npm",
       args: ["test"],
@@ -125,7 +128,8 @@ describe("FactLedger", () => {
       timedOut: false,
     });
     expect(snapshot.verificationResults[0]).toMatchObject({
-      hookName: "verification:fast:repro",
+      hookName: "workflow:verification_fast",
+      verificationSource: "profile",
       profile: "fast",
       nodeId: "reproduce",
       verifierId: "repro",
@@ -135,7 +139,7 @@ describe("FactLedger", () => {
     });
     expect(verificationProfileResultsFromFactLedger(snapshot)).toEqual([
       {
-        hookName: "verification:fast:repro",
+        hookName: "workflow:verification_fast",
         profile: "fast",
         id: "repro",
         status: "passed",
@@ -152,11 +156,15 @@ describe("FactLedger", () => {
 
     log.emit("workspace.write.completed", { path: "src/app.ts" });
     log.emit("workflow_hook.completed", {
-      hookName: "verification:fast:lint",
+      hookName: "workflow:verification_fast",
       hook: "PostToolUse",
       result: {
         status: "continue",
         metadata: {
+          verificationSource: "profile",
+          profile: "fast",
+          verifierId: "lint",
+          expect: "zero",
           command: "npm",
           args: ["run", "lint"],
           exitCode: 1,

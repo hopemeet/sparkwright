@@ -88,9 +88,9 @@ trace.jsonl
   repeated command failures,
   recovered/unresolved failures, safety posture, and cost-reporting gaps.
 - Completed-run verification profile summaries prefer terminal FactLedger
-  verification-result snapshots, including `verificationSource:"profile"`;
-  legacy `verification:<profile>:<id>` hookName parsing remains a fallback for
-  old traces.
+  verification-result snapshots. Profile/documented-command identity is read
+  from explicit `verificationSource`, `profile`, and `verifierId` fields;
+  `hookName` remains a label rather than an encoded identity channel.
 - Report workspace-read volume findings derive tool attribution from existing
   span correlation (`spanId` / `parentSpanId`) when available. This keeps the
   public summary `workspaceReads` total intact while report evidence can split
@@ -435,8 +435,8 @@ test/workflows.test.ts test/workflow-hooks.test.ts -t "workflow"`.
 - Date: 2026-07-04T16:47:47+0800
 - Scope: workflow-runtime-v1 P1.5 outcome diagnostics: completed-run command
   and verification profile outcomes prefer terminal FactLedger snapshots with
-  `verificationSource`, while old `verification:` hookName traces remain
-  readable as fallback.
+  explicit `verificationSource`, `profile`, and `verifierId` metadata; hook
+  names are not decoded as a fallback identity format.
 - Read: `packages/core/src/run-outcome.ts`,
   `packages/core/src/fact-ledger.ts`,
   `packages/core/test/run-outcome.test.ts`,

@@ -591,8 +591,9 @@ test/workflows.test.ts test/workflow-hooks.test.ts -t "workflow"`.
 - Date: 2026-07-04T16:47:47+0800
 - Scope: workflow-runtime-v1 P1.5 raw trace update: terminal FactLedger
   snapshots can carry `verificationSource` for projection-backed profile and
-  documented-command verifier results; legacy `verification:` hook names remain
-  old-trace compatibility only.
+  documented-command verifier results. Current projection events also carry
+  explicit `profile`, `verifierId`, and `expect`; consumers do not infer these
+  fields from `hookName`.
 - Read: `packages/core/src/fact-ledger.ts`,
   `packages/core/src/run-outcome.ts`,
   `packages/host/src/workflow-projection.ts`,

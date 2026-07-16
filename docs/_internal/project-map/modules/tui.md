@@ -8,6 +8,19 @@ human-readable transcript.
 
 See also [../maps/trace/export-diagnostics.md](../maps/trace/export-diagnostics.md) and [../maps/session/resume-replay.md](../maps/session/resume-replay.md).
 
+## Last Verified
+
+- Status: Verified
+- Date: 2026-07-16T18:50:00+0800
+- Scope: Verification hook rendering reads explicit result metadata for
+  enforced invariant verifiers. The current `verification:<profile>` suggest
+  hook remains a display label, but packed
+  `verification:<profile>:<verifierId>` identities are not decoded.
+- Read: TUI event formatter/tests, Core FactLedger classifier/outcome, Host
+  invariant projection, and trace/protocol maps.
+- Tests: TUI event-format focused tests; Core/CLI outcome and FactLedger focused
+  tests; Core/CLI/TUI typechecks; test typecheck; project-map drift check.
+
 ## Main Files
 
 - `packages/tui/src/app.tsx`

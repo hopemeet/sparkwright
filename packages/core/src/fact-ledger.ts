@@ -4,7 +4,6 @@ import {
   commandExpectationValue,
   forcedContinuationBudgetExceededFromEvent,
   hookCommandFactFromWorkflowHookCompleted,
-  parseVerificationHookName,
   shellCommandFactFromToolCompleted,
   shellCommandRequestFromEvent,
   workspaceWriteFactFromEvent,
@@ -302,9 +301,8 @@ function verificationResultForHookCommand(
   command: Omit<FactLedgerCommandFact, "stale">,
   commandExpect: CommandExpectation | undefined,
 ): Omit<FactLedgerVerificationResult, "stale"> | undefined {
-  const parsed = parseVerificationHookName(command.hookName);
-  const verifierId = command.verifierId ?? parsed?.id;
-  const expect = commandExpect ?? (parsed || verifierId ? "zero" : undefined);
+  const verifierId = command.verifierId;
+  const expect = commandExpect;
   if (!verifierId || !expect) return undefined;
   return {
     id: `verify:${command.sequence}:${verifierId}`,
@@ -312,9 +310,7 @@ function verificationResultForHookCommand(
     sequence: command.sequence,
     writeEpoch: command.writeEpoch,
     ...(command.hookName ? { hookName: command.hookName } : {}),
-    ...((command.profile ?? parsed?.profile)
-      ? { profile: command.profile ?? parsed?.profile }
-      : {}),
+    ...(command.profile ? { profile: command.profile } : {}),
     ...(command.nodeId ? { nodeId: command.nodeId } : {}),
     verifierId,
     ...(command.verificationSource
