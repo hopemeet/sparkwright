@@ -12,12 +12,16 @@ See [../safety/workspace-writes.md](../safety/workspace-writes.md), [../safety/s
 - `packages/core/src/run.ts`
 - `packages/core/src/run-budget.ts`
 - `packages/core/src/tool-orchestration.ts`
+- `packages/core/src/runtime/tool-result-analysis.ts`
 - `packages/core/src/tools.ts`
 - `packages/host/src/tool-catalog.ts`
 - `packages/host/src/tool-surface.ts`
 - `packages/host/src/run-security-plan.ts`
 - `packages/host/src/tools.ts`
 - `packages/host/src/shell.ts`
+- `packages/coding-tools/src/index.ts`
+- `packages/coding-tools/src/unified-diff.ts`
+- `packages/host/src/runtime/host-runtime.ts`
 
 ## Data Flow
 
@@ -443,6 +447,74 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
   and real Sonnet continuation evidence.
 
 - Status: Verified
+- Date: 2026-07-15T07:35:27+0800
+- Scope: duplicate/repeated-call, failure-context, no-op, and compaction request
+  analysis moved intact to a pure leaf; validation, policy, approval, execution,
+  observation, recovery, and event ordering are unchanged.
+- Read: Core run tool phases and tool-result-analysis.
+- Tests: Core run/runtime-guardrails/trace and Host tools/protocol.
+
+- Status: Read-only
+- Date: 2026-07-15
+- Scope: CLI config/doctor handler extraction preserves tools configuration
+  display and validation; runtime catalog, policy, approval, and invocation are unchanged.
+- Read: CLI config-doctor and facade config routing.
+- Tests: CLI config focused/full golden and repo-pilot.
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: CLI tool capability inventory and delegate diagnostics moved to a
+  domain module; catalog assembly, policy, approval, invocation, observation,
+  and event order are unchanged.
+- Read: CLI capability command and Host tool/delegate APIs.
+- Tests: CLI capability/delegate focused slices, full golden, and repo-pilot.
+
+- Status: Read-only
+- Date: 2026-07-15
+- Scope: CLI trace/session handler relocation preserves direct-core resume tool
+  assembly, Host routing, policy, approval, event, and observation behavior.
+- Read: CLI trace-session module and both CLI runners.
+- Tests: CLI run-resume focused slice, full golden, and repo-pilot.
+
+- Status: Read-only
+- Date: 2026-07-15
+- Scope: task value conversion moved to a leaf; tool selection, policy,
+  approval, invocation, observation, and event order are unchanged.
+- Read: concrete runtime and task-projections boundary.
+- Tests: Host tools/agent focused suites and repo-pilot.
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: tool capability projection and configured/live snapshot merge moved
+  to a stateless collaborator; actual catalog assembly, policy, approval,
+  invocation, observation, and event behavior are unchanged.
+- Read: capability-assembly and concrete runtime tool preparation.
+- Tests: Host tools/agent/delegate/protocol focused suites and repo-pilot.
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: HostRuntime module relocation only; tool assembly, policy, approval,
+  execution, observation, and event behavior are unchanged.
+- Read: runtime facade and concrete runtime imports/tool assembly.
+- Tests: Host tools/agent/delegate focused suites and repo-pilot.
+
+- Status: Read-only
+- Date: 2026-07-15
+- Scope: Host execution coordination contracts moved to a type leaf; tool
+  preparation, policy, approval, invocation, result, and event behavior are
+  unchanged.
+- Read: runtime contracts and Host runtime coordination boundary.
+- Tests: Host tools/agent/delegate focused suites and repo-pilot.
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: unified-diff parsing/application moved behind the coding-tools named
+  facade; tool validation, policy, approval, execution, and event ordering are
+  unchanged.
+- Read: coding-tools facade, unified-diff leaf, and coding-tools tests.
+- Tests: coding-tools full suite/typecheck/build and Host tools downstream test.
+
+- Status: Verified
 - Date: 2026-07-14
 - Scope: checked Host connection principal and Workflow control attribution;
   tool preparation, selection, policy, and invocation contracts are unchanged.
@@ -454,12 +526,12 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
   unchanged by module renaming.
 - Tests: Host full suite passed.
 
-- Status: Verified (no tool contract change)
+- Status: Verified
 - Date: 2026-07-14
 - Scope: reviewed Host IM message and approval routing; tool execution and
   approval policy remain Core/Host execution concerns.
 
-- Status: Verified (no tool ownership change)
+- Status: Verified
 - Date: 2026-07-14
 - Scope: reviewed atomic interactive command acceptance and Host lanes; tool
   preparation, policy gates, and Core tool execution remain existing owners.

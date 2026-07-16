@@ -15,12 +15,15 @@ import {
   ExecutionLaneCoordinator,
   type ExecutionDriver,
 } from "@sparkwright/server-runtime";
-import {
-  HostRuntime,
-  type HostExecutionCoordinatorPort,
-  type HostExecutionMessage,
-  type RuntimeOptions,
-} from "./runtime.js";
+import { HostRuntime } from "./runtime/host-runtime.js";
+import type {
+  HostExecutionCoordinatorPort,
+  HostExecutionMessage,
+  HostExecutionCoordinatorRuntime,
+  HostResumeRunOutcome,
+  HostStartRunOutcome,
+  RuntimeOptions,
+} from "./runtime/contracts.js";
 import { WorkspaceContext, workspaceContextKey } from "./workspace-context.js";
 import { WorkspaceLeaseCoordinator } from "./workspace-lease-coordinator.js";
 import {
@@ -329,9 +332,9 @@ export class HostService {
   }
 
   private async coordinateStart(
-    runtime: HostRuntime,
+    runtime: HostExecutionCoordinatorRuntime,
     payload: RunStartRequestPayload,
-  ): ReturnType<HostRuntime["startRunDirect"]> {
+  ): Promise<HostStartRunOutcome> {
     const sessionId = payload.sessionId ?? createSessionId();
     const normalized = { ...payload, sessionId };
     return (await this.submit(runtime, sessionId, {
@@ -342,9 +345,9 @@ export class HostService {
   }
 
   private async coordinateResume(
-    runtime: HostRuntime,
+    runtime: HostExecutionCoordinatorRuntime,
     payload: RunResumeRequestPayload,
-  ): ReturnType<HostRuntime["resumeRunDirect"]> {
+  ): Promise<HostResumeRunOutcome> {
     const resolved = await runtime.resolveResumeSession(payload);
     if (!resolved.ok) return resolved;
     return (await this.submit(runtime, resolved.sessionId, {
@@ -355,7 +358,7 @@ export class HostService {
   }
 
   private async submit(
-    runtime: HostRuntime,
+    runtime: HostExecutionCoordinatorRuntime,
     sessionId: string,
     input: HostLaneInput,
   ): Promise<HostLaneOutcome> {
@@ -392,11 +395,19 @@ export class HostService {
 }
 
 type HostLaneInput =
-  | { kind: "start"; runtime: HostRuntime; payload: RunStartRequestPayload }
-  | { kind: "resume"; runtime: HostRuntime; payload: RunResumeRequestPayload };
+  | {
+      kind: "start";
+      runtime: HostExecutionCoordinatorRuntime;
+      payload: RunStartRequestPayload;
+    }
+  | {
+      kind: "resume";
+      runtime: HostExecutionCoordinatorRuntime;
+      payload: RunResumeRequestPayload;
+    };
 
-type HostStartOutcome = Awaited<ReturnType<HostRuntime["startRunDirect"]>>;
-type HostResumeOutcome = Awaited<ReturnType<HostRuntime["resumeRunDirect"]>>;
+type HostStartOutcome = HostStartRunOutcome;
+type HostResumeOutcome = HostResumeRunOutcome;
 type HostLaneOutcome = HostStartOutcome | HostResumeOutcome;
 
 function runNotFound(

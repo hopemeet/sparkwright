@@ -13,6 +13,7 @@ See [session-store.md](session-store.md) and [../runtime/context-compaction.md](
 - `packages/core/src/trace.ts`
 - `packages/core/src/session.ts`
 - `packages/host/src/runtime.ts`
+- `packages/host/src/runtime/host-runtime.ts`
 - `packages/cli/src/cli.ts`
 - `packages/tui/src/state/run-controller.ts`
 
@@ -130,6 +131,56 @@ Future run in compacted session
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-15T07:35:27+0800
+- Scope: doctor session-root path reporting moved to a domain module; resume,
+  checkpoint, replay, identity, and session behavior are unchanged.
+- Read: CLI config-doctor path report and trace-session module.
+- Tests: doctor/session focused and full CLI golden.
+
+- Status: Read-only
+- Date: 2026-07-15
+- Scope: capability/delegate command relocation preserves delegate session-id
+  creation and trace routing; resume/replay behavior is unchanged.
+- Read: CLI capability command and facade routing.
+- Tests: full CLI golden.
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: CLI session and run-resume handlers moved to one domain module;
+  HostService reuse, session lookup, checkpoint reconstruction, direct-core
+  diagnostic gate, replay order, identity, and output are unchanged.
+- Read: CLI trace-session module, host/direct-core runners, CLI facade.
+- Tests: CLI session/run-resume focused slices and full CLI golden.
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: task notification/snapshot conversion moved to a leaf; task revival,
+  persisted lookup, checkpoint replay, run identity, and ordering are unchanged.
+- Read: concrete runtime revival path and task-projections.
+- Tests: Host service/protocol/agent and CLI host-resume focused suites.
+
+- Status: Read-only
+- Date: 2026-07-15
+- Scope: capability snapshot merge moved to a stateless collaborator; resume
+  lookup, checkpoint reconstruction, run identity, and replay order are unchanged.
+- Read: capability-assembly merge and concrete runtime resume path.
+- Tests: Host protocol/client and CLI host-resume focused suites.
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: concrete resume orchestration moved behind the runtime facade;
+  session lookup, lane selection, checkpoint replay, and identities are unchanged.
+- Read: runtime facade, concrete resume path, contracts, HostService.
+- Tests: Host service/protocol/client and CLI host-resume focused suites.
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: resume request/outcome ports are now neutral contracts; session lookup,
+  lane selection, checkpoint replay, and identity behavior are unchanged.
+- Read: runtime contracts, Host runtime resume path, and HostService coordinator.
+- Tests: Host service/protocol/client focused suites.
+
 - Status: Verified
 - Date: 2026-07-15T23:53:45+0800
 - Scope: fresh/session resume/Workflow continuation derive a new visibility
@@ -165,7 +216,7 @@ Future run in compacted session
   resume and replay contracts and adds no durable lane recovery claim.
 - Tests: Host session/compaction coverage in the 571-test suite passed.
 
-- Status: Verified (no durable resume change)
+- Status: Verified
 - Date: 2026-07-14
 - Scope: reviewed IM reconnect replay; it replays bounded Host event
   projections only and does not add execution restart adoption.

@@ -139,6 +139,20 @@ contracts, and focused checklists that no longer fit here.
 - Tests: focused Host 70/70, Host typecheck, and the full release gate passed.
 
 - Status: Verified
+- Date: 2026-07-15
+- Scope: Host runtime facade preserves package exports while internal Host
+  production callers import the concrete implementation directly.
+- Read: Host package index, runtime facade/concrete implementation, server.
+- Tests: Host build/typecheck and CLI entry parity/host path.
+
+- Status: Read-only
+- Date: 2026-07-15
+- Scope: Host runtime contract extraction preserves all package exports and
+  downstream edge-package behavior; no edge package source changed.
+- Read: Host package index, runtime contracts, and server imports.
+- Tests: Host build/typecheck and CLI host-path focused verification.
+
+- Status: Verified
 - Date: 2026-07-14
 - Scope: checked SDK/Gateway consumers after Host principal isolation. Existing
   wire methods and Gateway reconnect/rebind flow remain compatible; stable

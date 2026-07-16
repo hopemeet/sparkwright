@@ -14,7 +14,7 @@ import type { AgentMode, AgentProfile } from "@sparkwright/agent-runtime";
 import { splitMarkdownFrontmatter } from "@sparkwright/skills";
 import { parse as parseYaml } from "yaml";
 import { resolveCapabilityDirs } from "./layers.js";
-import { isValidModelRefSyntax } from "./config.js";
+import { isValidModelRefSyntax } from "./config/config-implementation.js";
 import { normalizeToolNameList } from "./tool-identities.js";
 
 const AGENT_MODES = new Set<AgentMode>(["primary", "child", "all"]);

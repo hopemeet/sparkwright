@@ -15,6 +15,7 @@ See [raw-trace.md](raw-trace.md) for source data and [export-diagnostics.md](exp
 - `packages/core/src/trace-session-consistency.ts`
 - `packages/core/src/trace-codec.ts`
 - `packages/cli/src/cli.ts`
+- `packages/cli/src/commands/trace-session.ts`
 - `packages/cli/test/fixtures/trace-diagnostics/*`
 - `packages/host/src/runtime.ts`
 - `docs/reference/STATE_AND_TRACE_MODEL.md`
@@ -243,7 +244,29 @@ trace.jsonl
 - Read: Core run-outcome/fact classifier and CLI outcome projection.
 - Tests: Core run/outcome 160/160 and typecheck.
 
-- Status: Verified (no trace-view change)
+- Status: Read-only
+- Date: 2026-07-15T07:35:27+0800
+- Scope: config/doctor handler extraction preserves diagnostic paths and does
+  not alter trace summary, timeline, report, verify, or repair semantics.
+- Read: CLI config-doctor and trace-session modules.
+- Tests: full CLI golden and repo-pilot trace smoke.
+
+- Status: Read-only
+- Date: 2026-07-15
+- Scope: capability/delegate command relocation preserves delegate trace path
+  reporting and does not change trace summaries, timelines, reports, or verify.
+- Read: CLI capability command and existing trace-session module.
+- Tests: full CLI golden and repo-pilot trace smoke.
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: CLI trace/session diagnostic handlers and formatters moved intact to
+  a domain module; summary, events, timeline, report, verify, consistency,
+  repair, compact, inspect, and text/JSON output are unchanged.
+- Read: trace-session command module, CLI facade, Core trace diagnostics.
+- Tests: CLI trace/session focused slices and full CLI golden.
+
+- Status: Verified
 - Date: 2026-07-14
 - Scope: reviewed CLI/Host assembly migration; trace summary, timeline, and
   verification derivation remain unchanged.

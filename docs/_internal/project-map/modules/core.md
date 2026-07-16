@@ -13,6 +13,7 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md),
 ## Main Files
 
 - `packages/core/src/run.ts`
+- `packages/core/src/runtime/tool-result-analysis.ts` — pure duplicate/repeat/failure/no-op/compaction classifiers
 - `packages/core/src/run-budget.ts`
 - `packages/core/src/context.ts`
 - `packages/core/src/pipeline.ts`
@@ -429,12 +430,22 @@ Does not own:
 - Tests: Core run/run-outcome 160/160 and typecheck.
 
 - Status: Verified
+- Date: 2026-07-15T07:35:27+0800
+- Scope: moved pure tool-result duplicate, repeat-target, failure-context,
+  idempotent-noop, nudge, and compaction-request analysis to a dependency leaf.
+  SparkwrightRun retains RunRecord, loop state, events, commands, budgets,
+  tools/models, and checkpoint ownership.
+- Read: Core run loop and tool-result-analysis leaf.
+- Tests: Core run/runtime-guardrails/trace, Core build/typecheck, Agent Runtime
+  downstream, Host protocol/tools, repo-pilot, import/boundary, and map drift.
+
+- Status: Verified
 - Date: 2026-07-14T14:35:00+0800
 - Scope: P6 routed review; deprecated server-runtime convenience APIs remain
   isolated and Core run/session/event ownership is unchanged.
 - Tests: server-runtime 30/30 and Host 571/571 passed.
 
-- Status: Verified (no ownership change)
+- Status: Verified
 - Date: 2026-07-14
 - Scope: reviewed Host execution lanes and atomic command acceptance; Core
   remains the per-run state machine and canonical run-event owner.

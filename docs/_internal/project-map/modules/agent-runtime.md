@@ -398,6 +398,14 @@ Does not own:
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-07-16T09:23:49+0800
+- Scope: checked Agent/Todo supervision consumers after integrating the Host
+  runtime facade split; agent-runtime ownership and contracts are unchanged.
+- Read: Host concrete runtime imports, Todo continuation, and Agent admission.
+- Tests: Host focused 259/259, test typecheck, static dependency gates, and the
+  full release gate passed.
+
+- Status: Read-only
 - Date: 2026-07-16T08:56:29+0800
 - Scope: checked the agent-runtime supervision/admission seam after Host lease
   compatibility removal; no agent-runtime contract changed.

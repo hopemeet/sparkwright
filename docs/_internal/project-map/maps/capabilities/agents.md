@@ -426,12 +426,20 @@ configured profiles/delegates
   `npm run release:check` passed.
 
 - Status: Verified
+- Date: 2026-07-15T07:26:47+0800
+- Scope: CLI configured-delegate run and capability formatting moved to a
+  domain module; Host profile resolution, collision handling, approvals,
+  workspace access, and execution governance are unchanged.
+- Read: CLI capability command and Host delegate APIs.
+- Tests: CLI delegate/capability focused slices and full golden.
+
+- Status: Verified
 - Date: 2026-07-14T14:35:00+0800
 - Scope: P6 routed review; Agent admission and lifecycle semantics are
   unchanged by the workspace lease module rename.
 - Tests: Host Agent and full suites passed.
 
-- Status: Verified (no contract change)
+- Status: Verified
 - Date: 2026-07-14
 - Scope: reviewed immutable Task runner capture and Host lanes; AgentSupervisor
   remains the child invocation lifecycle owner.

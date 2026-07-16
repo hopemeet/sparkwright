@@ -31,12 +31,14 @@ import {
 import {
   isValidModelRefSyntax,
   loadHostConfig,
+  resolveModelSelection,
+} from "./config/config-implementation.js";
+import {
   projectConfigPath,
   readConfigFileObject,
   resolveConfigWriteTarget,
-  resolveModelSelection,
-  type CapabilityToolsConfig,
-} from "./config.js";
+} from "./config/file-io.js";
+import type { CapabilityToolsConfig } from "./config-zod-schema.js";
 import {
   formatToolUseSelectorList,
   isToolUseSelector,

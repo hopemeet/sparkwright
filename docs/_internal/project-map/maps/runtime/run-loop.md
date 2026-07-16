@@ -10,11 +10,13 @@ See [tool-orchestration.md](tool-orchestration.md) and [../trace/raw-trace.md](.
 ## Main Files
 
 - `packages/core/src/run.ts`
+- `packages/core/src/runtime/tool-result-analysis.ts`
 - `packages/core/src/run-budget.ts`
 - `packages/core/src/events.ts`
 - `packages/core/src/run-validation.ts`
 - `packages/core/src/run-outcome.ts`
 - `packages/host/src/runtime.ts`
+- `packages/host/src/runtime/host-runtime.ts`
 
 ## Data Flow
 
@@ -302,6 +304,46 @@ createRun/resumeRunFromCheckpoint
   agent-runtime Todo 31/31, and affected typechecks.
 
 - Status: Verified
+- Date: 2026-07-15T07:35:27+0800
+- Scope: stateless tool-result/repeat/compaction classifiers moved to a leaf;
+  SparkwrightRun loop state, transitions, event/tool observation order, budgets,
+  commands, checkpoints, and terminal behavior are unchanged.
+- Read: Core run loop and tool-result-analysis.
+- Tests: Core run/runtime-guardrails/trace and downstream Host tools/protocol.
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: stateless task projections and notification conversion moved to a
+  leaf; run supervision, revival waits, run-loop state, events, and execution
+  ownership are unchanged.
+- Read: concrete runtime task paths and task-projections.
+- Tests: Host execution/service/protocol/agent focused suites and repo-pilot.
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: moved stateless capability projection/preparation helpers out of the
+  concrete runtime; start/resume supervision, run-loop state, events, and
+  HostExecution ownership are unchanged.
+- Read: concrete runtime and capability-assembly collaborator.
+- Tests: Host execution/service/protocol/client focused suites and repo-pilot.
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: concrete Host run orchestration moved behind the runtime facade with
+  no change to start/resume supervision, event order, Core run ownership, or
+  HostExecution lifecycle.
+- Read: runtime facade, concrete runtime, contracts, HostService.
+- Tests: Host execution/service/protocol/client focused suites and repo-pilot.
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: extracted neutral Host execution coordination contracts without
+  changing start/resume orchestration, Core run ownership, event ordering, or
+  HostExecution lifecycle.
+- Read: runtime contracts, Host runtime, HostService, HostExecution.
+- Tests: Host execution/service/protocol/client focused suites and repo-pilot.
+
+- Status: Verified
 - Date: 2026-07-14
 - Scope: checked Host Workflow resume source attribution; execution assembly,
   episode driving, lane completion, and Core run-loop behavior are unchanged.
@@ -314,7 +356,7 @@ createRun/resumeRunFromCheckpoint
   unchanged.
 - Tests: Host 571/571; server-runtime 30/30; ACP/CLI focused suites passed.
 
-- Status: Verified (no Core loop change)
+- Status: Verified
 - Date: 2026-07-14
 - Scope: reviewed Host-owned IM dispatch/retention; messages still enter through
   atomic Core acceptance and lane release still follows HostExecution completion.

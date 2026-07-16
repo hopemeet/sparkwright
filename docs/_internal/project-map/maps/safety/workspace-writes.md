@@ -17,6 +17,9 @@ See [approvals.md](approvals.md) and [../runtime/tool-orchestration.md](../runti
 - `packages/host/src/shell.ts`
 - `packages/host/src/workspace-snapshot.ts`
 - `packages/host/src/workspace-lease-coordinator.ts`
+- `packages/coding-tools/src/index.ts`
+- `packages/coding-tools/src/unified-diff.ts`
+- `packages/host/src/runtime/host-runtime.ts`
 
 ## Data Flow
 
@@ -142,6 +145,43 @@ tool proposes write
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-15T07:35:27+0800
+- Scope: task projection extraction does not change WorkspaceContext, mutation
+  admission, policy, approvals, containment, or write events.
+- Read: concrete runtime and task-projections boundary.
+- Tests: Host tools/agent focused suites and repo-pilot.
+
+- Status: Read-only
+- Date: 2026-07-15
+- Scope: access/capability projection moved to a stateless collaborator;
+  WorkspaceContext, policy, mutation admission, approvals, containment, and
+  write-event ownership are unchanged.
+- Read: capability-assembly access summary and concrete runtime security path.
+- Tests: Host security/tools focused suites and repo-pilot.
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: HostRuntime module relocation preserves WorkspaceContext ownership,
+  mutation admission, policy, approvals, containment, and write events.
+- Read: runtime facade, concrete runtime, HostService, WorkspaceContext.
+- Tests: Host service/tools focused suites and repo-pilot.
+
+- Status: Read-only
+- Date: 2026-07-15
+- Scope: Host runtime contract extraction leaves WorkspaceContext, mutation
+  admission, policy, approval, and execution-resource ownership unchanged.
+- Read: runtime contracts, Host runtime constructor, and HostService.
+- Tests: Host service/tools focused suites and repo-pilot.
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: pure unified-diff parsing/application moved to a leaf module; managed
+  workspace mutation, containment, approval, and write-event contracts are
+  unchanged.
+- Read: coding-tools facade, unified-diff leaf, and coding-tools tests.
+- Tests: coding-tools full suite and Host tools downstream test.
+
 - Status: Verified
 - Date: 2026-07-16T08:56:29+0800
 - Scope: removed deprecated Agent-arbiter names and the alternate admission
@@ -170,12 +210,12 @@ tool proposes write
   changing admission scope, fairness, or the non-fencing limitation.
 - Tests: Workspace lease tests and Host 571/571 passed.
 
-- Status: Verified (no write-admission change)
+- Status: Verified
 - Date: 2026-07-14
 - Scope: reviewed IM principal/binding permissions; they authorize session
   control only and do not grant workspace mutation or replace existing leases.
 
-- Status: Verified (no lease semantic change)
+- Status: Verified
 - Date: 2026-07-14
 - Scope: reviewed WorkspaceContext and lane capacity; canonical workspace lease
   admission remains independent from execution scheduling capacity.

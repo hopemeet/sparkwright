@@ -135,6 +135,14 @@ completed prior turns
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-07-16T09:23:49+0800
+- Scope: checked context-compaction consumers after integrating config/runtime
+  facades; compaction stages and persisted contracts are unchanged.
+- Read: Host runtime facade/concrete runtime and config implementation split.
+- Tests: Host focused 259/259, test typecheck, static dependency gates, and the
+  full release gate passed.
+
+- Status: Read-only
 - Date: 2026-07-15
 - Scope: C9 S1 migration touched only the atomic writer used by
   `FileSessionStore` `session.json` saves. Runtime compaction stages, session

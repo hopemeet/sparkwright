@@ -209,6 +209,20 @@ Does not own:
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-15T07:26:47+0800
+- Scope: HostRuntime relocation does not alter protocol requests, responses,
+  errors, events, wire schema, or emission ordering.
+- Read: runtime facade, concrete runtime, and protocol imports.
+- Tests: Host protocol/client focused suites and Host build.
+
+- Status: Read-only
+- Date: 2026-07-15
+- Scope: protocol request, response, error, event, and wire schema types are
+  only referenced by the new Host contracts leaf; no protocol contract changed.
+- Read: Host runtime contracts and protocol types consumed by them.
+- Tests: Host protocol/client focused suites and Host build.
+
 - Status: Verified
 - Date: 2026-07-15T23:53:45+0800
 - Scope: Host principal isolation keeps existing handshake/IM/Workflow request
@@ -225,7 +239,7 @@ Does not own:
   and Gateway bridge.
 - Tests: protocol 8/8; SDK 12/12; Host protocol focused; schema check passed.
 
-- Status: Verified (no contract change)
+- Status: Verified
 - Date: 2026-07-14
 - Scope: reviewed HostService/lane migration; existing run request and response
   shapes remain compatible and root run ids remain legacy execution aliases.

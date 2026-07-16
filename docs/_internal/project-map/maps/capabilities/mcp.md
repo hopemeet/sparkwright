@@ -11,6 +11,8 @@ See [../../modules/mcp-adapter.md](../../modules/mcp-adapter.md).
 
 - `packages/mcp-adapter/src/index.ts`
 - `packages/host/src/runtime.ts`
+- `packages/host/src/runtime/host-runtime.ts`
+- `packages/host/src/runtime/capability-assembly.ts`
 - `packages/cli/src/cli.ts`
 - `packages/tui/src/lib/create-capability.ts`
 - `docs/reference/EXTENSION_INTERFACES.md`
@@ -88,7 +90,44 @@ host config MCP servers
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-15T07:35:27+0800
+- Scope: CLI `--resolve-mcp` inspection moved mechanically with its close-finally
+  cleanup intact; MCP preparation, transport, lazy startup, reconnect, process,
+  and runtime cleanup behavior are unchanged.
+- Read: CLI capability command and MCP preparation API.
+- Tests: CLI capability inspect focused/full golden; no MCP lifecycle split.
+
+- Status: Read-only
 - Date: 2026-07-15
+- Scope: task projection extraction does not touch MCP preparation, status,
+  transport, reconnect, process, or cleanup behavior.
+- Read: concrete runtime/task leaf import boundary and existing MCP path.
+- Tests: Host protocol/tools focused suites; no MCP lifecycle code changed.
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: MCP status-to-capability projection moved into the stateless
+  capability collaborator; MCP preparation, lazy startup, transport, reconnect,
+  process ownership, and cleanup remain in their existing owners.
+- Read: capability-assembly MCP projection and concrete runtime preparation.
+- Tests: Host protocol/tools focused suites and CLI capability inspect.
+
+- Status: Read-only
+- Date: 2026-07-15
+- Scope: HostRuntime relocation only; MCP preparation, lazy startup, transport,
+  reconnect, process ownership, and cleanup are unchanged.
+- Read: runtime facade and concrete runtime MCP imports/preparation paths.
+- Tests: Host tools/protocol focused suites; no MCP lifecycle code changed.
+
+- Status: Read-only
+- Date: 2026-07-15
+- Scope: runtime contract extraction does not move or alter MCP preparation,
+  transport, lazy startup, reconnect, or cleanup ownership.
+- Read: Host runtime contracts and existing runtime MCP imports.
+- Tests: Host tools/protocol focused suites; no MCP lifecycle code changed.
+
+- Status: Verified
+- Date: 2026-07-14
 - Scope: checked Host runtime source-attribution signature change; MCP
   preparation, transport, policy, and lifecycle contracts are unchanged.
 - Tests: Host focused suites and typecheck passed.
@@ -99,7 +138,7 @@ host config MCP servers
   into session query/compaction modules.
 - Tests: Host full suite passed.
 
-- Status: Verified (no MCP ownership change)
+- Status: Verified
 - Date: 2026-07-14
 - Scope: reviewed retained IM executions; live MCP remains execution-scoped and
   is disposed by HostExecution, never the subscription/outbox control state.

@@ -5,7 +5,7 @@ import type { RunHandle, ToolDefinition } from "@sparkwright/core";
 import type { AgentProfile } from "@sparkwright/agent-runtime";
 import { matchSkills } from "@sparkwright/skills";
 import { MAIN_AGENT_ID } from "./agent-constants.js";
-import type { CapabilityDelegateToolConfig } from "./config.js";
+import type { CapabilityDelegateToolConfig } from "./config-zod-schema.js";
 
 export type DelegateProtocol = "acp" | "external_command" | "in_process";
 export type DelegateWorkspaceAccess = "none" | "read_write";

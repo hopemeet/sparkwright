@@ -23,7 +23,8 @@ import {
   unauthenticatedConnection,
   type HostConnectionAuthContext,
 } from "./connection.js";
-import { HostRuntime, type RuntimeOptions } from "./runtime.js";
+import { HostRuntime } from "./runtime/host-runtime.js";
+import type { RuntimeOptions } from "./runtime/contracts.js";
 import { createHostService, type HostService } from "./host-service.js";
 import type { HostImPrincipal } from "./im-control.js";
 

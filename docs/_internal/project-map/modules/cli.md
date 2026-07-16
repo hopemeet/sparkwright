@@ -9,12 +9,20 @@ See also [../maps/trace/summary-timeline-verify.md](../maps/trace/summary-timeli
 ## Main Files
 
 - `packages/cli/src/cli.ts`
+- `packages/cli/src/commands/contracts.ts` — shared parsed-command and result contracts
+- `packages/cli/src/commands/trace-session.ts` — trace, session, and run-resume diagnostics/lifecycle handlers
+- `packages/cli/src/commands/capabilities.ts` — capability inspection and configured delegate diagnostics
+- `packages/cli/src/commands/config-doctor.ts` — config read/validate/explain/example and doctor path diagnostics
+- `packages/cli/src/commands/config-paths.ts` — stable config/task path resolution leaf
+- `packages/cli/src/parser/numbers.ts` — shared pure integer flag parsing
+- `packages/cli/src/parser/values.ts` — shared pure record/list/word parsing
 - `packages/cli/src/event-format.ts`
 - `packages/cli/src/run-outcome.ts`
 - `packages/cli/src/runners/direct-core-runner.ts`
 - `packages/cli/src/runners/host-runner.ts`
 - `packages/cli/src/cli-approval.ts`
 - `packages/cli/test/cli.test.ts`
+- `packages/cli/test/support/cli-harness.ts`
 - `packages/cli/test/fixtures/trace-diagnostics/*`
 - `scripts/copy-cli-schemas.mjs`
 
@@ -52,6 +60,14 @@ Does not own:
 - Top-level `sparkwright --version` / `sparkwright -v` prints the CLI package
   version and exits before config loading, parsing a run goal, or starting a
   model run.
+- A first token outside the known command set is the default `run` goal, not an
+  unknown-command error. Recognized flags are consumed wherever they occur;
+  repeated scalar flags use the last value, unknown flags remain goal text,
+  and `--` is currently ordinary goal text rather than an option terminator.
+- CLI tests that mutate the real `process.env` live in one sequential suite and
+  use `test/support/cli-harness.ts` for explicit env restoration, LIFO cleanup,
+  temporary workspace/XDG roots, output capture, HTTP servers, MCP fixtures,
+  and trace/checkpoint helpers.
 - `sparkwright session *` resolves a session id under the session root.
 - `sparkwright session compact` calls the host session compaction path and
   prints `freedChars`, measurement regime/savings ratio, optional
@@ -318,8 +334,48 @@ Does not own:
 
 ## Last Verified
 
-- Status: Verified (adapter-only change)
+- Status: Verified
+- Date: 2026-07-15T07:35:27+0800
+- Scope: moved config path/validate/inspect/explain/example and doctor paths
+  into one domain module with a shared path-resolution leaf. Config precedence,
+  schema diagnostics, redaction, output, help, and init template behavior are unchanged.
+- Read: CLI facade, config-doctor/config-paths, config schema, and CLI tests.
+- Tests: config/doctor focused and full CLI golden, schema/entry/outcome,
+  typecheck/build, repo-pilot, import/boundary, and map drift.
+
+- Status: Verified
 - Date: 2026-07-15
+- Scope: moved capability inspect, MCP status projection, delegate diagnostics,
+  and their text/JSON formatters into one domain module. The module receives the
+  existing HostService explicitly; CLI parsing/help/output and service singleton
+  count are unchanged.
+- Read: CLI facade, capability command module, parser value leaf, Host
+  capability/delegate APIs, and CLI golden tests.
+- Tests: capability/delegate focused and full CLI golden, config/entry/outcome,
+  build/typecheck, repo-pilot, import/boundary, and map drift.
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: moved trace/session/run-resume handlers and their text/JSON formatting
+  into one domain module. `cli.ts` remains the composition facade,
+  `cliHostService` is still created once and passed explicitly, and parseArgs,
+  help, stdout/stderr, exit codes, direct-core, and lazy entry loading are unchanged.
+- Read: CLI facade, command contracts, trace-session module, number parser,
+  host/direct-core runners, and CLI golden tests.
+- Tests: focused and full CLI golden, config/entry/outcome suites,
+  typecheck/build, repo-pilot, import/boundary gates, and map drift.
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: froze existing command/parser behavior and extracted shared CLI test
+  support without changing production CLI behavior or output.
+- Read: CLI bootstrap/parser/help, test setup/helpers, direct-core/Host paths,
+  and root governance scripts.
+- Tests: CLI 155/155; config/schema/entry/outcome 29/29; CLI and test
+  typechecks; deterministic repo-pilot; import/boundary/drift checks.
+
+- Status: Verified
+- Date: 2026-07-14
 - Scope: CLI Host-backed entrypoints now use the shared HostService assembly;
   CLI command and output contracts remain unchanged.
 

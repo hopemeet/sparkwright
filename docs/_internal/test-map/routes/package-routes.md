@@ -34,6 +34,10 @@ npm --workspace @sparkwright/core test -- test/runtime-guardrails.test.ts
 Broaden to `test/trace.test.ts` when run terminal payloads, tool outcomes,
 verification summaries, or trace snapshots change.
 
+Apply the same route to `packages/core/src/runtime/tool-result-analysis.ts` and
+add Host protocol/tools downstream tests. The leaf must not receive a mutable
+run-state bag or import the `run.ts` facade.
+
 ### `packages/core/src/trace-diagnostics.ts`
 
 Run:
@@ -53,6 +57,23 @@ Sensitivity:
 - Multi-agent traces use run-local `sequence`; cross-run ordering assertions
   should use trace append order or timeline projection rules.
 - Standard trace level folds high-volume progress events.
+
+## Coding Tools
+
+### `packages/coding-tools/src/*`
+
+Run:
+
+```bash
+npm --workspace @sparkwright/coding-tools test
+npm --workspace @sparkwright/coding-tools run typecheck
+npm --workspace @sparkwright/coding-tools run build
+npm --workspace @sparkwright/host test -- test/tools.test.ts
+```
+
+Downstream Host imports coding-tools through package exports, so build the
+package before the Host test. Preserve the named `index.ts` facade and reject
+implementation-to-facade reverse imports.
 
 ## Shell Tool
 
@@ -122,7 +143,7 @@ inventory consumption changes. Keep mutable policy-state tests separate: a
 frozen security plan must never share Core mutation-policy instances between
 runs.
 
-### `packages/host/src/config.ts` or `config-zod-schema.ts`
+### `packages/host/src/config.ts`, `config/*`, or `config-zod-schema.ts`
 
 Run:
 
@@ -154,7 +175,7 @@ npm --workspace @sparkwright/host test -- test/tools.test.ts
 Also run shell-tool tests when behavior belongs to command parsing, path scope,
 foreground timeout, promotion, or shell output schema.
 
-### `packages/host/src/runtime.ts`
+### `packages/host/src/runtime.ts` or `packages/host/src/runtime/*`
 
 Run the focused suite matching the changed surface:
 
@@ -166,6 +187,14 @@ npm --workspace @sparkwright/host test -- test/config.test.ts
 
 Broaden to CLI/TUI tests when capability snapshots, protocol responses, or
 run summaries change.
+
+For `runtime/contracts.ts`, also run Host execution/service and the import graph
+gate; coordinator ports must not derive their signatures from `HostRuntime`
+class methods.
+
+For `runtime/task-projections.ts`, run Host service/protocol and agent-task
+focused tests; keep TaskManager/store/outbox ownership outside the projection
+leaf.
 
 ## Server Runtime
 
@@ -214,7 +243,7 @@ npm --workspace @sparkwright/cli test -- test/run-outcome-consistency.test.ts
 
 If terminal text changes, run the specific CLI test slice that renders it.
 
-### `packages/cli/src/cli.ts`
+### `packages/cli/src/cli.ts` or `packages/cli/src/commands/*`
 
 Choose a focused slice first:
 
@@ -226,6 +255,45 @@ npm --workspace @sparkwright/cli test -- test/cli.test.ts -t "session"
 
 Then broaden to the full CLI test file when command parsing or shared helpers
 are touched.
+
+For `commands/trace-session.ts`, run all `trace|session|run resume` slices and
+the full CLI golden. Assert that the module receives the existing HostService;
+it must not create a second one.
+
+For `commands/config-doctor.ts`, run `config|doctor|init|first interactive`
+CLI slices, `config-schema.test.ts`, and the full CLI golden. Preserve schema
+artifact parity and secret redaction.
+
+### `packages/cli/test/support/*`
+
+Run:
+
+```bash
+npm --workspace @sparkwright/cli test -- test/cli.test.ts
+npm run typecheck:test
+```
+
+Keep real `process.env` mutation inside the sequential CLI suite. New temporary
+directories, HTTP servers, MCP fixtures, and process-like resources should
+register cleanup with the shared LIFO stack.
+
+## Repository Governance
+
+### import/facade or project-map routing scripts
+
+Run:
+
+```bash
+node scripts/check-package-boundaries.mjs
+node scripts/check-internal-imports.mjs
+node scripts/check-import-graph.mjs
+python3 scripts/check-project-map-drift.py
+python3 scripts/check-project-map-drift.py --base origin/main
+```
+
+The value-import graph is a hard zero-SCC gate. Type-only SCCs are reported as
+information and must not grow silently. Workspace manifest discovery follows
+the root `workspaces` declarations rather than a package allowlist.
 
 ## TUI
 

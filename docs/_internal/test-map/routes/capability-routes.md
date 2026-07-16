@@ -48,6 +48,10 @@ Add CLI trace fixtures when text/JSON output changes:
 npm --workspace @sparkwright/cli test -- test/cli.test.ts -t "trace"
 ```
 
+When `commands/trace-session.ts` moves mechanically, also run the `session|run
+resume` CLI slices and the full CLI golden to freeze stderr, exit codes, Host
+reuse, and direct-core behavior.
+
 Scenario refs:
 
 - [../scenarios/trace-subagent-write-verify.yaml](../scenarios/trace-subagent-write-verify.yaml)
@@ -55,6 +59,23 @@ Scenario refs:
 Coverage ref:
 
 - [../coverage/trace-diagnostics.md](../coverage/trace-diagnostics.md)
+
+## Facade And Import Integrity
+
+Covers runtime value cycles, implementation-to-facade reverse imports, and
+workspace package discovery during mechanical module splits.
+
+Focused route:
+
+```bash
+node scripts/check-import-graph.mjs
+node scripts/check-package-boundaries.mjs
+node scripts/check-internal-imports.mjs
+```
+
+Treat any runtime value SCC or new sibling implementation import of a listed
+facade as a hard failure. Existing type-only SCCs are diagnostic debt, not
+permission to add another cycle.
 
 ## Capability Inspect
 
@@ -71,6 +92,17 @@ npm --workspace @sparkwright/cli test -- test/cli.test.ts -t "direct-core|run re
 npm --workspace @sparkwright/host run build
 npm --workspace @sparkwright/cli test -- test/cli.test.ts -t "capabilities inspect"
 ```
+
+For `packages/host/src/runtime/capability-assembly.ts`, keep HostRuntime as the
+snapshot-cache owner and run the import graph/facade gate in addition to this
+route.
+
+For `packages/cli/src/commands/capabilities.ts`, run `capabilities
+inspect|delegates run` focused slices plus the full CLI golden. Assert the
+existing HostService is passed in and MCP inspection always closes preparation.
+
+For CLI config/doctor extraction, also run config schema parity and the
+`config|doctor|init|first interactive` focused slice before the full golden.
 
 Add TUI panel tests when visible panel rendering changes:
 

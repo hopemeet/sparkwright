@@ -13,6 +13,7 @@ See [workspace-writes.md](workspace-writes.md) and [shell.md](shell.md).
 - `packages/core/src/approval.ts`
 - `packages/core/src/approval-policy.ts`
 - `packages/host/src/runtime.ts`
+- `packages/host/src/runtime/host-runtime.ts`
 - `packages/host/src/client-approval.ts`
 - `packages/cli/src/cli-approval.ts`
 - `packages/tui/src/app.tsx`
@@ -130,7 +131,50 @@ policy requires approval
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-15T07:35:27+0800
+- Scope: expected approval/policy denial classification moved to a pure result
+  analysis leaf; resolver ownership, request/resolution order, and approval
+  behavior are unchanged.
+- Read: Core run approval path and tool-result-analysis.
+- Tests: Core run/runtime guardrails and Host protocol/tools.
+
+- Status: Read-only
 - Date: 2026-07-15
+- Scope: config/doctor read diagnostics moved mechanically; permission,
+  approval defaults, resolver, and execution behavior are unchanged.
+- Read: CLI config-doctor and facade routing.
+- Tests: full CLI golden and config-schema suite.
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: configured delegate CLI handler relocation preserves approval option
+  mapping, permission mode, write gate, resolver, and Host execution behavior.
+- Read: CLI capability command and approval adapter.
+- Tests: CLI delegate focused slice and full CLI golden.
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: direct-core run-resume handler relocation preserves approval options,
+  resolver creation, permission mode, policy, and host-path routing.
+- Read: CLI trace-session module, approval adapter, host/direct-core runners.
+- Tests: CLI run-resume focused slice and full CLI golden.
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: HostRuntime relocation preserves approval routing, timeout, resolver,
+  cancellation, and HostExecution cleanup behavior.
+- Read: runtime facade, concrete runtime, HostExecution, HostService.
+- Tests: Host execution/service/protocol focused suites.
+
+- Status: Read-only
+- Date: 2026-07-15
+- Scope: runtime contract extraction leaves approval resolver ownership,
+  timeout, routing, and HostExecution cleanup unchanged.
+- Read: runtime contracts, Host runtime, HostExecution, and HostService.
+- Tests: Host execution/service/protocol focused suites.
+
+- Status: Verified
+- Date: 2026-07-14
 - Scope: bound IM approval/subscription/cancel authorization to immutable
   authenticated principals and Host-assigned new-binding sessions while
   retaining exact subject and scoped permission checks.

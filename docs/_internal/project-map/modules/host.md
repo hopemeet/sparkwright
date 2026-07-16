@@ -11,7 +11,11 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 
 ## Main Files
 
-- `packages/host/src/runtime.ts`
+- `packages/host/src/runtime.ts` — stable named compatibility facade
+- `packages/host/src/runtime/host-runtime.ts` — concrete HostRuntime composition and execution orchestration
+- `packages/host/src/runtime/capability-assembly.ts` — capability snapshot projection, summaries, automation reads, and merge
+- `packages/host/src/runtime/task-projections.ts` — task snapshots, notifications, terminal classification, and bounded output reads
+- `packages/host/src/runtime/contracts.ts` — runtime construction and execution coordination ports
 - `packages/host/src/session-queries.ts`
 - `packages/host/src/session-compaction.ts`
 - `packages/host/src/run-access.ts`
@@ -47,6 +51,9 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 - `packages/host/src/model-builder.ts`
 - `packages/host/src/model-factory.ts`
 - `packages/host/src/config.ts`
+- `packages/host/src/config/contracts.ts`
+- `packages/host/src/config/file-io.ts`
+- `packages/host/src/config/config-implementation.ts`
 - `packages/host/src/config-zod-schema.ts`
 - `packages/host/src/client-input.ts`
 - `packages/host/test/protocol.test.ts`
@@ -937,6 +944,16 @@ Does not own:
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T09:29:05+0800
+- Scope: integrated config/runtime facade extraction with later tool-surface,
+  Markdown Agent removal, model validation, and lease cleanup changes. Concrete
+  modules now retain those behaviors without importing their public facades.
+- Read: config facade/implementation/file I/O, runtime facade/concrete modules,
+  tool/Agent consumers, capability assembly, and import graph.
+- Tests: focused Host 259/259, Host/test typechecks, static dependency gates,
+  and the full release gate passed.
+
+- Status: Verified
 - Date: 2026-07-16T08:56:29+0800
 - Scope: deleted the deprecated workspace Agent-arbiter module, export aliases,
   admission alias, and fallback input branch; the lease coordinator is now the
@@ -996,6 +1013,69 @@ Does not own:
 - Tests: Host build; tools, Agent profile, and config suites 200/200 passed;
   real mini Agent create/delegate regression passed 2/2; full
   `npm run release:check` passed.
+
+- Status: Verified
+- Date: 2026-07-15T07:35:27+0800
+- Scope: moved config candidate discovery, resolution ordering, JSON/YAML
+  parsing/serialization, private-file writes, and sibling write-target selection
+  into a cohesive dependency leaf. Validation and conservative merge semantics
+  remain in the loader implementation.
+- Read: config facade, contracts, file I/O leaf, loader, CLI config consumers,
+  and focused config tests.
+- Tests: Host config 59/59, CLI schema 5/5, CLI config/first-run 29/29,
+  schema parity, Host typecheck/build, CLI build, import gates, and map drift.
+
+- Status: Verified
+- Date: 2026-07-15T07:26:47+0800
+- Scope: established `config.ts` as a named compatibility facade and moved
+  public config contracts, provider constants, and model-selection types into
+  a dependency leaf. Internal Host code imports the leaf or concrete loader;
+  the facade is only consumed by the package public index.
+- Read: config facade, contracts, concrete loader, Zod schema source, internal
+  consumers, and import-graph guardrails.
+- Tests: config/schema/CLI focused suites, Host and CLI builds, typecheck,
+  import/boundary gates, generated schema parity, and map drift.
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: moved stateless task record/output projections, notification summary,
+  terminal classification, protocol not-found conversion, and one-shot iterator
+  polling into a dependency leaf. TaskManager/store/outbox ownership remains in
+  WorkspaceContext and HostRuntime holds no new task truth.
+- Read: concrete runtime, task-projections, WorkspaceContext.
+- Tests: Host execution/service/protocol/tools/agent focused suites, build,
+  typecheck, CLI host paths, repo-pilot, import gates, and map drift.
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: extracted capability snapshot construction, summaries, automation
+  inspection, inline-shell preprocess preparation, and snapshot merge into one
+  cohesive collaborator. It receives immutable inputs and owns no live state.
+- Read: concrete runtime and capability-assembly module.
+- Tests: capability/protocol/client/tools focused suites, Host build/typecheck,
+  CLI capability/host paths, repo-pilot, import/boundary gates, and map drift.
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: established `runtime.ts` as a named facade and mechanically moved the
+  concrete class to `runtime/host-runtime.ts`. Internal production callers use
+  the concrete module; exports, initialization order, singleton count, and all
+  Host/Workspace/Execution/Core ownership remain unchanged.
+- Read: runtime facade, concrete runtime, contracts, HostService, server, and
+  import-graph guardrails.
+- Tests: full Host focused matrix, Host build/typecheck, CLI host path,
+  deterministic repo-pilot, import/boundary gates, and map drift.
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: moved RuntimeOptions, execution messages, outcomes, and lane-driver
+  ports into a dependency leaf. HostService remains the sole process/lane
+  owner; HostRuntime and HostExecution ownership and behavior are unchanged.
+- Read: runtime contracts, Host runtime, HostService, server, IM control, and
+  Host public exports.
+- Tests: Host execution/service/protocol/client/tools/agent/delegate focused
+  suites, Host typecheck/build, CLI host path, static import/boundary gates,
+  deterministic repo-pilot, and map drift.
 
 - Status: Verified
 - Date: 2026-07-14

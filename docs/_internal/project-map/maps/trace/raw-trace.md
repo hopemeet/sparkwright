@@ -236,6 +236,34 @@ EventLog emits full event
 - Tests: trace verify/session check passed; Core/Host/TUI focused gates passed.
 
 - Status: Verified
+- Date: 2026-07-15T07:35:27+0800
+- Scope: task snapshot/output/notification value conversion moved to a leaf;
+  trace events, payloads, ordering, storage, and levels are unchanged.
+- Read: concrete runtime task output path and task-projections.
+- Tests: Host protocol/agent focused suites and repo-pilot trace smoke.
+
+- Status: Read-only
+- Date: 2026-07-15
+- Scope: capability projection extraction does not change trace emitters,
+  payloads, event order, storage, levels, or session trace facts.
+- Read: capability-assembly and concrete runtime trace boundary.
+- Tests: Host protocol/client focused suites and repo-pilot trace smoke.
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: HostRuntime module relocation preserves trace emitters, payloads,
+  ordering, storage, levels, and session trace facts.
+- Read: runtime facade and concrete runtime event/trace boundaries.
+- Tests: Host protocol/client focused suites and repo-pilot trace smoke.
+
+- Status: Read-only
+- Date: 2026-07-15
+- Scope: runtime contract extraction does not change trace emitters, event
+  payloads, ordering, storage, or trace-level behavior.
+- Read: runtime contracts and Host runtime event boundary.
+- Tests: Host protocol/client focused suites and repo-pilot trace smoke.
+
+- Status: Verified
 - Date: 2026-07-14
 - Scope: checked Workflow API principal attribution; no Core trace event or file
   trace schema changed. Durable Workflow control envelopes now retain the real
@@ -248,12 +276,12 @@ EventLog emits full event
   but raw trace remains canonical and no duplicate event store was introduced.
 - Tests: Host session inspection/full suite passed.
 
-- Status: Verified (no canonical trace change)
+- Status: Verified
 - Date: 2026-07-14
 - Scope: reviewed IM delivery replay; Host outbox entries are bounded delivery
   projections and do not replace or duplicate canonical trace storage.
 
-- Status: Verified (no canonical-event change)
+- Status: Verified
 - Date: 2026-07-14
 - Scope: reviewed Host lanes; the coordinator neither subscribes to nor copies
   Core canonical events, and trace storage remains unchanged.

@@ -39,7 +39,7 @@ import type {
   CapabilityHookActionConfig,
   CapabilityHooksConfig,
   CapabilityWorkflowHookConfig,
-} from "./config.js";
+} from "./config-zod-schema.js";
 import {
   TracedProcessRunner,
   inferProcessRuntime,

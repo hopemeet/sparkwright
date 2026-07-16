@@ -8,6 +8,8 @@ cron, shell/task tools, and capability inspection.
 ## Main Files
 
 - `packages/host/src/runtime.ts`
+- `packages/host/src/runtime/host-runtime.ts`
+- `packages/host/src/runtime/capability-assembly.ts`
 - `packages/host/src/active-rules.ts`
 - `packages/host/src/tool-catalog.ts`
 - `packages/host/src/tools.ts`
@@ -216,7 +218,60 @@ config + workspace capability roots
   release gate passed.
 
 - Status: Verified
+- Date: 2026-07-15T07:35:27+0800
+- Scope: CLI config/doctor diagnostics moved to a domain module; capability
+  directory resolution, config precedence, inspect fields, redaction, and schema
+  validation behavior are unchanged.
+- Read: CLI config-doctor/config-paths and Host config/capability APIs.
+- Tests: CLI config/doctor focused/full golden and config-schema suite.
+
+- Status: Verified
 - Date: 2026-07-15
+- Scope: CLI capability/delegate diagnostics moved intact to a domain module;
+  Host remains the capability snapshot/cache owner and inspect protocol/text/JSON
+  fields, delegate collision semantics, and effective access reporting are unchanged.
+- Read: CLI capability command, facade, Host capability assembly and delegate APIs.
+- Tests: CLI capability/delegate focused slices and full golden.
+
+- Status: Read-only
+- Date: 2026-07-15
+- Scope: CLI trace/session command extraction does not change capability
+  assembly, snapshot cache, inspect output, tools, models, skills, or MCP facts.
+- Read: CLI command routing and trace-session module.
+- Tests: full CLI golden and deterministic repo-pilot.
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: task automation protocol projection now uses a stateless leaf; the
+  capability snapshot cache, TaskManager/store, and outbox ownership are unchanged.
+- Read: task-projections, capability-assembly, concrete runtime.
+- Tests: Host protocol/client/tools and CLI capability inspect focused suites.
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: capability snapshot projection, model/access/workflow/skill summaries,
+  automation inspection, and configured/live snapshot merge moved into a
+  stateless collaborator; protocol shape and snapshot cache ownership remain
+  with HostRuntime and are unchanged.
+- Read: concrete runtime and capability-assembly module.
+- Tests: Host protocol/client/run-security/tools and CLI capability inspect.
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: HostRuntime relocation preserves capability preparation, snapshot
+  cache, inspect output, and tool/model/skill/MCP facts.
+- Read: runtime facade, concrete runtime capability paths, contracts.
+- Tests: Host protocol/client/tools focused suites and repo-pilot.
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: runtime contract extraction only; capability assembly, snapshot cache,
+  tool/model/skill/MCP facts, and inspect output are unchanged.
+- Read: Host runtime contracts and runtime composition.
+- Tests: Host protocol/client/tools focused suites and deterministic repo-pilot.
+
+- Status: Verified
+- Date: 2026-07-14
 - Scope: checked Host connection principal and Workflow control attribution;
   capability snapshot shapes and resolution behavior are unchanged.
 - Tests: Host focused suites and typecheck passed.
@@ -227,12 +282,12 @@ config + workspace capability roots
   unchanged by session-module extraction and lease import renaming.
 - Tests: Host full suite/typecheck passed.
 
-- Status: Verified (no capability activation change)
+- Status: Verified
 - Date: 2026-07-14
 - Scope: reviewed Host IM control integration; it adds protocol/session control
   and does not alter tool or capability discovery.
 
-- Status: Verified (no capability contract change)
+- Status: Verified
 - Date: 2026-07-14
 - Scope: reviewed Host execution planning/resource extraction and tool catalog;
   capability discovery and activation remain unchanged.

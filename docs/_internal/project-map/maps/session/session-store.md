@@ -16,6 +16,7 @@ See [../trace/raw-trace.md](../trace/raw-trace.md) for raw event evidence.
 - `packages/core/src/trace-diagnostics.ts`
 - `packages/core/src/trace-session-consistency.ts`
 - `packages/host/src/runtime.ts`
+- `packages/host/src/runtime/host-runtime.ts`
 - `docs/reference/STATE_AND_TRACE_MODEL.md`
 
 ## Data Flow
@@ -122,6 +123,42 @@ Manual compact
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-15T07:35:27+0800
+- Scope: doctor session/task path reporting now uses a shared resolution leaf;
+  store roots, persistence, cleanup, and Host ownership are unchanged.
+- Read: CLI config-doctor/config-paths and facade callers.
+- Tests: doctor/config focused and full CLI golden.
+
+- Status: Read-only
+- Date: 2026-07-15
+- Scope: capability/delegate command relocation reuses the composition-root
+  HostService and preserves session roots, stores, persistence, and cleanup.
+- Read: CLI facade and capability command HostService parameter.
+- Tests: full CLI golden.
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: CLI session diagnostics moved to a domain module while reusing the
+  single composition-root HostService; store paths, compact/inspect behavior,
+  persistence, and cleanup are unchanged.
+- Read: CLI trace-session module, CLI facade, Host session APIs.
+- Tests: CLI session focused slice and full CLI golden.
+
+- Status: Verified
+- Date: 2026-07-15
+- Scope: HostRuntime relocation leaves session-root resolution, stores,
+  WorkspaceContext ownership, and persistence unchanged.
+- Read: runtime facade, concrete runtime constructor, WorkspaceContext.
+- Tests: Host execution/service/protocol focused suites.
+
+- Status: Read-only
+- Date: 2026-07-15
+- Scope: runtime construction types moved to a leaf; session root resolution,
+  WorkspaceContext ownership, stores, and persistence are unchanged.
+- Read: runtime contracts, Host runtime constructor, WorkspaceContext.
+- Tests: Host execution/service/protocol focused suites.
+
+- Status: Verified
 - Date: 2026-07-14
 - Scope: Host principal/auth isolation changes only process-memory ordinary IM
   bindings and replay authorization; new bindings cannot select arbitrary
@@ -134,13 +171,13 @@ Manual compact
   extracted query/compaction functions use the same store and artifact format.
 - Tests: Host session/compaction coverage passed.
 
-- Status: Verified (no persisted-format change)
+- Status: Verified
 - Date: 2026-07-14
 - Scope: reviewed Host-owned IM retention/replay; ordinary IM control state is
   explicitly process-local while existing session and Workflow stores remain
   unchanged.
 
-- Status: Verified (no storage contract change)
+- Status: Verified
 - Date: 2026-07-14
 - Scope: reviewed Host workspace contexts and session lane keys; session stores
   remain per execution and in-memory lane queues are not durable state.

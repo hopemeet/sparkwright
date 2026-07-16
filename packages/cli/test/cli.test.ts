@@ -1,7 +1,6 @@
 import {
   access,
   mkdir,
-  mkdtemp,
   readdir,
   readFile,
   realpath,
@@ -10,11 +9,8 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { createServer, type Server } from "node:http";
-import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { join } from "node:path";
 import {
   FileTaskStore,
   FileWorkflowChannelStore,
@@ -43,6 +39,17 @@ import {
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runCli } from "../src/cli.js";
 import { createConfiguredCliTools } from "../src/runners/direct-core-runner.js";
+import {
+  checkpointJson,
+  createCliTestHarness,
+  createOutputCapture,
+  createProviderMock,
+  mcpEchoServerConfig,
+  mcpFixtureShellConfig,
+  readTrace,
+  traceEvent,
+  writeWorkflowAsset,
+} from "./support/cli-harness.js";
 
 const TRACE_DIAGNOSTICS_FIXTURE_DIR = join(
   "test",
@@ -61,45 +68,24 @@ const TRACE_DIAGNOSTIC_SNAPSHOT_COMMANDS = [
 ] as const;
 const TRACE_DIAGNOSTIC_SNAPSHOT_FORMATS = ["text", "json"] as const;
 
-describe("runCli", () => {
-  let tempDirs: string[] = [];
-  let prevXdg: string | undefined;
-  let prevHostSource: string | undefined;
-  let prevDirectCore: string | undefined;
+describe.sequential("runCli", () => {
+  let harness: ReturnType<typeof createCliTestHarness>;
 
   beforeEach(async () => {
-    tempDirs = [];
+    harness = createCliTestHarness();
     // Isolate the shared config loader from any real ~/.config/sparkwright so
     // tests that rely on process.env can't pick up the developer's own config.
-    prevXdg = process.env.XDG_CONFIG_HOME;
-    prevHostSource = process.env.SPARKWRIGHT_HOST_SOURCE;
-    prevDirectCore = process.env.SPARKWRIGHT_ENABLE_DIRECT_CORE;
-    const xdg = await mkdtemp(join(tmpdir(), "sparkwright-xdg-"));
-    tempDirs.push(xdg);
-    process.env.XDG_CONFIG_HOME = xdg;
-    process.env.SPARKWRIGHT_HOST_SOURCE = "1";
-    process.env.SPARKWRIGHT_ENABLE_DIRECT_CORE = "1";
+    // This sequential suite is the only region that mutates the real process.env.
+    const xdg = await harness.tempDir("sparkwright-xdg-");
+    harness.installProcessEnv({
+      XDG_CONFIG_HOME: xdg,
+      SPARKWRIGHT_HOST_SOURCE: "1",
+      SPARKWRIGHT_ENABLE_DIRECT_CORE: "1",
+    });
   });
 
   afterEach(async () => {
-    if (prevXdg === undefined) delete process.env.XDG_CONFIG_HOME;
-    else process.env.XDG_CONFIG_HOME = prevXdg;
-    if (prevHostSource === undefined)
-      delete process.env.SPARKWRIGHT_HOST_SOURCE;
-    else process.env.SPARKWRIGHT_HOST_SOURCE = prevHostSource;
-    if (prevDirectCore === undefined)
-      delete process.env.SPARKWRIGHT_ENABLE_DIRECT_CORE;
-    else process.env.SPARKWRIGHT_ENABLE_DIRECT_CORE = prevDirectCore;
-    await Promise.all(
-      tempDirs.map((dir) =>
-        rm(dir, {
-          recursive: true,
-          force: true,
-          maxRetries: 5,
-          retryDelay: 100,
-        }),
-      ),
-    );
+    await harness.cleanup.dispose();
   });
 
   it("prints top-level help without starting a run", async () => {
@@ -127,12 +113,134 @@ describe("runCli", () => {
     expect(output.stderrText()).toBe("");
   });
 
+  it("treats an unknown first token as the default run goal", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      [
+        "inspect this repo",
+        "--workspace",
+        workspace,
+        "--direct-core",
+        "--model",
+        "deterministic",
+      ],
+      {
+        io: { stdout: output.stdout, stderr: output.stderr, stdinIsTTY: false },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(output.stderrText()).not.toContain("Unknown command");
+    const created = (await readTrace(result.tracePath)).find(
+      (event) => event.type === "run.created",
+    );
+    expect(created?.payload?.goal).toBe("inspect this repo");
+  });
+
+  it("preserves current flag interleaving, repetition, unknown-flag, and no-terminator parsing", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const missingWorkspace = join(workspace, "missing");
+    const cases = [
+      {
+        name: "default run with leading global flag",
+        argv: [
+          "--direct-core",
+          "inspect",
+          "--workspace",
+          workspace,
+          "--model",
+          "deterministic",
+        ],
+        goal: "inspect",
+      },
+      {
+        name: "known run with command flags around the goal",
+        argv: [
+          "run",
+          "--workspace",
+          workspace,
+          "inspect",
+          "--direct-core",
+          "--model",
+          "deterministic",
+        ],
+        goal: "inspect",
+      },
+      {
+        name: "repeated scalar flags use the last value",
+        argv: [
+          "run",
+          "inspect",
+          "--workspace",
+          missingWorkspace,
+          "--workspace",
+          workspace,
+          "--model",
+          "missing/provider",
+          "--model",
+          "deterministic",
+          "--direct-core",
+        ],
+        goal: "inspect",
+      },
+      {
+        name: "unknown flags remain goal text",
+        argv: [
+          "run",
+          "inspect",
+          "--mystery",
+          "value",
+          "--workspace",
+          workspace,
+          "--model",
+          "deterministic",
+          "--direct-core",
+        ],
+        goal: "inspect --mystery value",
+      },
+      {
+        name: "double dash is goal text rather than a terminator",
+        argv: [
+          "run",
+          "inspect",
+          "--",
+          "--workspace",
+          workspace,
+          "--model",
+          "deterministic",
+          "--direct-core",
+        ],
+        goal: "inspect --",
+      },
+    ];
+
+    for (const testCase of cases) {
+      const result = await runCli(testCase.argv, { io: { stdinIsTTY: false } });
+      expect(result.exitCode, testCase.name).toBe(0);
+      const created = (await readTrace(result.tracePath)).find(
+        (event) => event.type === "run.created",
+      );
+      expect(created?.payload?.goal, testCase.name).toBe(testCase.goal);
+    }
+  });
+
+  it("restores explicit process environment overrides through the cleanup stack", async () => {
+    const nested = createCliTestHarness();
+    const name = "SPARKWRIGHT_CLI_TEST_ENV_RESTORE";
+    const previous = process.env[name];
+    nested.installProcessEnv({ [name]: "temporary" });
+    expect(process.env[name]).toBe("temporary");
+    await nested.cleanup.dispose();
+    expect(process.env[name]).toBe(previous);
+  });
+
   it("prints the CLI package version without starting a run", async () => {
     const packageJson = JSON.parse(
       await readFile(new URL("../package.json", import.meta.url), "utf8"),
     ) as { version: string };
-    const configDir = await mkdtemp(join(tmpdir(), "sparkwright-version-"));
-    tempDirs.push(configDir);
+    const configDir = await harness.tempDir("sparkwright-version-");
     const badConfig = join(configDir, "config.yaml");
     await writeFile(badConfig, "model: [\n");
 
@@ -194,8 +302,7 @@ describe("runCli", () => {
   it("prints run resume help without starting a resume run", async () => {
     const output = createOutputCapture();
     const workspace = await createWorkspace("# Demo\n");
-    const configDir = await mkdtemp(join(tmpdir(), "sparkwright-help-"));
-    tempDirs.push(configDir);
+    const configDir = await harness.tempDir("sparkwright-help-");
     const badConfig = join(configDir, "config.yaml");
     await writeFile(badConfig, "model: [\n");
 
@@ -243,8 +350,7 @@ describe("runCli", () => {
 
   it("prints workflow nested help before config or session setup", async () => {
     const workspace = await createWorkspace("# Demo\n");
-    const configDir = await mkdtemp(join(tmpdir(), "sparkwright-help-"));
-    tempDirs.push(configDir);
+    const configDir = await harness.tempDir("sparkwright-help-");
     const badConfig = join(configDir, "config.yaml");
     await writeFile(badConfig, "model: [\n");
 
@@ -296,8 +402,7 @@ describe("runCli", () => {
 
   it("reports installation, config, capability, and state paths", async () => {
     const workspace = await createWorkspace("# Paths\n");
-    const stateHome = await mkdtemp(join(tmpdir(), "sparkwright-state-"));
-    tempDirs.push(stateHome);
+    const stateHome = await harness.tempDir("sparkwright-state-");
     const output = createOutputCapture();
 
     const result = await runCli(
@@ -393,8 +498,7 @@ describe("runCli", () => {
   });
 
   it("prints cron status for a stored job", async () => {
-    const root = await mkdtemp(join(tmpdir(), "sparkwright-cron-cli-"));
-    tempDirs.push(root);
+    const root = await harness.tempDir("sparkwright-cron-cli-");
     const createOutput = createOutputCapture();
     const created = await runCli(
       [
@@ -447,8 +551,7 @@ describe("runCli", () => {
   });
 
   it("warns when cron create adjusts a duplicate name", async () => {
-    const root = await mkdtemp(join(tmpdir(), "sparkwright-cron-cli-"));
-    tempDirs.push(root);
+    const root = await harness.tempDir("sparkwright-cron-cli-");
 
     const create = async (output: ReturnType<typeof createOutputCapture>) => {
       const result = await runCli(
@@ -491,8 +594,7 @@ describe("runCli", () => {
   });
 
   it("returns a failed exit code when cron tick has a failed job", async () => {
-    const root = await mkdtemp(join(tmpdir(), "sparkwright-cron-cli-"));
-    tempDirs.push(root);
+    const root = await harness.tempDir("sparkwright-cron-cli-");
     const okWorkspace = await createWorkspace("# Demo\n");
     const badWorkspace = await createWorkspace("# Demo\n");
     await rm(join(badWorkspace, "README.md"));
@@ -588,8 +690,7 @@ describe("runCli", () => {
   });
 
   it("inspects durable background tasks without starting tasks", async () => {
-    const root = await mkdtemp(join(tmpdir(), "sparkwright-task-cli-"));
-    tempDirs.push(root);
+    const root = await harness.tempDir("sparkwright-task-cli-");
     const store = new FileTaskStore({ rootDir: root });
     const taskId = createTaskId();
     const record = store.create({
@@ -1118,8 +1219,7 @@ describe("runCli", () => {
   });
 
   it("returns a failed exit code and clear final answer for unhandled tool failures", async () => {
-    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-cli-"));
-    tempDirs.push(workspace);
+    const workspace = await harness.tempDir("sparkwright-cli-");
     const output = createOutputCapture();
 
     const result = await runCli(
@@ -1607,8 +1707,7 @@ describe("runCli", () => {
 
   it("writes host run sessions under --session-root", async () => {
     const workspace = await createWorkspace("# Demo\n");
-    const sessionRoot = await mkdtemp(join(tmpdir(), "sparkwright-sessions-"));
-    tempDirs.push(sessionRoot);
+    const sessionRoot = await harness.tempDir("sparkwright-sessions-");
     const output = createOutputCapture();
 
     const result = await runCli(
@@ -1890,8 +1989,7 @@ describe("runCli", () => {
     expect(configText).toContain("#     # spawnModel: openai/gpt-5.4-mini");
     expect(configText).toContain("#     # delegateModel: openai/gpt-5.4-mini");
 
-    const cwd = await mkdtemp(join(tmpdir(), "sw-"));
-    tempDirs.push(cwd);
+    const cwd = await harness.tempDir("sw-");
     const loaded = await loadHostConfig(cwd, {
       XDG_CONFIG_HOME: xdg,
     });
@@ -2229,8 +2327,7 @@ describe("runCli", () => {
 
   it("inspects configured capability layers", async () => {
     const workspace = await createWorkspace("# Demo\n");
-    const stateHome = await mkdtemp(join(tmpdir(), "sparkwright-state-"));
-    tempDirs.push(stateHome);
+    const stateHome = await harness.tempDir("sparkwright-state-");
     await mkdir(join(workspace, ".sparkwright", "skills", "reviewer"), {
       recursive: true,
     });
@@ -6858,10 +6955,7 @@ describe("runCli", () => {
 
   it("agents validate honors the injected environment for user agent roots", async () => {
     const workspace = await createWorkspace("# Demo\n");
-    const injectedXdg = await mkdtemp(
-      join(tmpdir(), "sparkwright-agents-xdg-"),
-    );
-    tempDirs.push(injectedXdg);
+    const injectedXdg = await harness.tempDir("sparkwright-agents-xdg-");
     const userAgentsDir = join(injectedXdg, "sparkwright", "agents");
     await mkdir(userAgentsDir, { recursive: true });
     await writeFile(
@@ -10492,90 +10586,8 @@ describe("runCli", () => {
     ).toBe(1);
   });
 
-  function mcpEchoServerConfig(
-    name: string,
-    options: {
-      prelude?: string;
-      toolRegistrations?: string[];
-      cwd?: string;
-    } = {},
-  ) {
-    const repoRoot = findRepoRoot(process.cwd());
-    const mcpPath = resolve(
-      repoRoot,
-      "node_modules/@modelcontextprotocol/sdk/dist/esm/server/mcp.js",
-    );
-    const transportPath = resolve(
-      repoRoot,
-      "node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js",
-    );
-    const zodPath = resolve(repoRoot, "node_modules/zod/v4/index.js");
-    // ESM `import` of an absolute path must be a file:// URL on Windows
-    // (a bare `C:\...` specifier is rejected); POSIX tolerates a bare path but
-    // file:// works there too, so always convert.
-    const script = [
-      options.prelude ?? "",
-      `import { McpServer } from ${JSON.stringify(pathToFileURL(mcpPath).href)};`,
-      `import { StdioServerTransport } from ${JSON.stringify(pathToFileURL(transportPath).href)};`,
-      `import { z } from ${JSON.stringify(pathToFileURL(zodPath).href)};`,
-      "const server = new McpServer({ name: 'cli-test-mcp', version: '0.0.1' });",
-      "server.registerTool('echo', { description: 'Echo text.', inputSchema: { text: z.string() } }, async ({ text }) => ({ content: [{ type: 'text', text }] }));",
-      ...(options.toolRegistrations ?? []),
-      "await server.connect(new StdioServerTransport());",
-    ].join("\n");
-    return {
-      type: "stdio",
-      name,
-      command: process.execPath,
-      args: ["--input-type=module", "-e", script],
-      enabled: true,
-      // Generous ceiling so a cold node + ESM SDK load on the slow Windows CI
-      // runner has room to connect (not a delay on fast machines).
-      timeoutMs: 15000,
-      ...(options.cwd ? { cwd: options.cwd } : {}),
-    };
-  }
-
-  function mcpFixtureShellConfig() {
-    return {
-      sandbox: {
-        filesystem: {
-          allowRead: [join(findRepoRoot(process.cwd()), "node_modules")],
-        },
-      },
-    };
-  }
-
-  function findRepoRoot(start: string): string {
-    let current = resolve(start);
-    while (true) {
-      if (
-        existsSync(join(current, "packages", "cli", "test", "cli.test.ts")) &&
-        existsSync(join(current, "tools", "demo-mcp.mjs"))
-      ) {
-        return current;
-      }
-      const parent = resolve(current, "..");
-      if (parent === current) return resolve(start);
-      current = parent;
-    }
-  }
-
   async function createWorkspace(readme: string): Promise<string> {
-    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-cli-"));
-    tempDirs.push(workspace);
-    await writeFile(join(workspace, "README.md"), readme, "utf8");
-    return workspace;
-  }
-
-  async function writeWorkflowAsset(
-    workspace: string,
-    name: string,
-    workflow: string,
-  ): Promise<void> {
-    const dir = join(workspace, ".sparkwright", "workflows", name);
-    await mkdir(dir, { recursive: true });
-    await writeFile(join(dir, "workflow.md"), workflow, "utf8");
+    return harness.tempWorkspace(readme);
   }
 
   // Read/write tools are available by default, so the write smokes no longer
@@ -10586,158 +10598,3 @@ describe("runCli", () => {
     _tools: string[],
   ): Promise<void> {}
 });
-
-function createOutputCapture() {
-  let stdout = "";
-  let stderr = "";
-
-  return {
-    stdout: {
-      write(chunk: string | Uint8Array) {
-        stdout += String(chunk);
-        return true;
-      },
-    },
-    stderr: {
-      write(chunk: string | Uint8Array) {
-        stderr += String(chunk);
-        return true;
-      },
-    },
-    stdoutText: () => stdout,
-    stderrText: () => stderr,
-  };
-}
-
-function traceEvent(
-  sequence: number,
-  runId: string,
-  type: string,
-  payload: Record<string, unknown>,
-  metadata: Record<string, unknown> = {},
-): string {
-  return `${JSON.stringify({
-    id: `evt_${sequence}`,
-    runId,
-    type,
-    timestamp: `2026-06-13T00:00:${String(sequence).padStart(2, "0")}.000Z`,
-    sequence,
-    payload,
-    metadata,
-  })}\n`;
-}
-
-async function readTrace(path: string | undefined): Promise<
-  Array<{
-    type: string;
-    runId?: string;
-    payload?: Record<string, unknown>;
-  }>
-> {
-  if (!path) throw new Error("Missing trace path.");
-  const content = await readFile(path, "utf8");
-  return content
-    .trim()
-    .split("\n")
-    .filter(Boolean)
-    .map(
-      (line) =>
-        JSON.parse(line) as {
-          type: string;
-          runId?: string;
-          payload?: Record<string, unknown>;
-        },
-    );
-}
-
-async function createProviderMock(): Promise<{
-  baseURL: string;
-  requests: Array<{
-    method: string | undefined;
-    url: string | undefined;
-    authorization: string;
-  }>;
-  close: () => Promise<void>;
-}> {
-  const requests: Array<{
-    method: string | undefined;
-    url: string | undefined;
-    authorization: string;
-  }> = [];
-  const server: Server = createServer((req, res) => {
-    req.resume();
-    req.on("end", () => {
-      requests.push({
-        method: req.method,
-        url: req.url,
-        authorization:
-          typeof req.headers.authorization === "string"
-            ? req.headers.authorization
-            : "",
-      });
-      res.writeHead(401, { "content-type": "application/json" });
-      res.end(
-        JSON.stringify({
-          error: {
-            message: "mock provider rejected request",
-            type: "invalid_request_error",
-          },
-        }),
-      );
-    });
-  });
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const { port } = server.address() as AddressInfo;
-  return {
-    baseURL: `http://127.0.0.1:${port}/v1`,
-    requests,
-    close: () =>
-      new Promise<void>((resolve, reject) =>
-        server.close((error) => (error ? reject(error) : resolve())),
-      ),
-  };
-}
-
-function checkpointJson(input: { runId: string; goal: string }) {
-  return JSON.stringify(
-    {
-      schemaVersion: "run-checkpoint.v1",
-      run: {
-        id: input.runId,
-        goal: input.goal,
-        state: "running",
-        createdAt: "2026-01-01T00:00:00.000Z",
-        updatedAt: "2026-01-01T00:00:30.000Z",
-        metadata: { source: "seed" },
-      },
-      loop: {
-        step: 1,
-        turnCount: 0,
-        context: [],
-        repeatedToolCallCount: 0,
-        transition: { reason: "next_turn" },
-      },
-      model: { activeIndex: 0, fallbackCount: 0 },
-      recovery: { outputRecoveriesUsed: 0, maxOutputRecoveries: 3 },
-      budget: {
-        usage: {
-          elapsedMs: 0,
-          modelCalls: 0,
-          toolCalls: 0,
-          tokens: 0,
-          costUsd: 0,
-        },
-      },
-      queues: {
-        commandCount: 0,
-        pendingPrefetch: false,
-        pendingSummary: false,
-      },
-      resumability: { complete: true, reasons: [] },
-      createdAt: "2026-01-01T00:00:30.500Z",
-      metadata: { snapshotReason: "test" },
-    },
-    null,
-    2,
-  );
-}

@@ -1,10 +1,10 @@
 import { readFile } from "node:fs/promises";
 import type { ModelAdapter } from "@sparkwright/core";
+import { DETERMINISTIC_PROVIDER } from "./config/contracts.js";
 import {
-  DETERMINISTIC_PROVIDER,
   loadHostConfig,
   resolveModelSelection,
-} from "./config.js";
+} from "./config/config-implementation.js";
 import {
   buildConfiguredAdapter,
   resolveConfiguredModelPricing,

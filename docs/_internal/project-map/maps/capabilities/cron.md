@@ -102,7 +102,7 @@ cron config/state
 
 ## Last Verified
 
-- Status: Verified (no contract change)
+- Status: Verified
 - Date: 2026-07-15
 - Scope: reviewed execution-scoped background Task dependencies; cron ownership
   and durable Task revival remain unchanged.

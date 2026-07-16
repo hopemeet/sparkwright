@@ -2,9 +2,9 @@ import type { ModelAdapter, ModelPricing } from "@sparkwright/core";
 import { OPENAI_MODEL_PRICING } from "@sparkwright/provider-ai-sdk";
 import {
   SUPPORTED_PROVIDER_NPMS,
-  costToPricing,
   type ModelSelection,
-} from "./config.js";
+} from "./config/contracts.js";
+import { costToPricing } from "./config/config-implementation.js";
 
 type ConfiguredSelection = Extract<ModelSelection, { kind: "configured" }>;
 

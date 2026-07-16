@@ -186,6 +186,14 @@ args` without rewriting requests, while the latter parses Host command text
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-07-16T09:23:49+0800
+- Scope: checked Shell policy, sandbox, and mutation-window ownership after
+  integrating the Host runtime facade split; behavior remains unchanged.
+- Read: concrete Host runtime, Shell assembly, and lease admission paths.
+- Tests: Host focused 259/259, test typecheck, static dependency gates, and the
+  full release gate passed.
+
+- Status: Read-only
 - Date: 2026-07-16T08:56:29+0800
 - Scope: checked Shell mutation admission after Host lease compatibility
   removal; policy, approval, sandboxing, and lease duration are unchanged.

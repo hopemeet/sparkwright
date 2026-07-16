@@ -12,7 +12,7 @@ import {
   type SparkwrightEvent,
 } from "@sparkwright/core";
 import type { TraceLevel } from "@sparkwright/protocol";
-import { loadHostConfig } from "./config.js";
+import { loadHostConfig } from "./config/config-implementation.js";
 import { resolveAgentProfiles } from "./agent-profiles.js";
 import { resolveSkillRootsForRuntime } from "./skill-roots.js";
 import {

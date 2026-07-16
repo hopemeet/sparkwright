@@ -9,7 +9,7 @@ import {
   type WorkflowHookResult,
 } from "@sparkwright/core";
 import type { WorkflowCommandVerifierDefinition } from "@sparkwright/agent-runtime";
-import type { CapabilityWorkflowHookConfig } from "./config.js";
+import type { CapabilityWorkflowHookConfig } from "./config-zod-schema.js";
 import {
   createConfiguredWorkflowHooks,
   type CreateConfiguredWorkflowHooksOptions,
