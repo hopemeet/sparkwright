@@ -58,8 +58,8 @@ Does not own:
   explicit origin from timeout promotion, support job/service lifecycle hints,
   and reuse an equivalent active explicit task before spawning a process.
 - Shell embedders use the neutral `onBackground` handoff and new host records use
-  `shell.background`; deprecated `onPromote` and active legacy
-  `shell.promoted` records remain compatibility inputs.
+  `shell.background`; active historical `shell.promoted` records remain a
+  separate persisted-record compatibility input.
 - The handoff carries the resolved `{ awaited, lifetime }` policy, so hosts do
   not re-derive execution semantics from `backgroundOrigin`.
 - `task_create` remains eager on the main host catalog, while existing-task
@@ -140,6 +140,16 @@ Does not own:
   smokes should use `write`, `edit_anchored_text`, or `edit`.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-16T10:32:50+0800
+- Scope: removed the shell promotion-named handoff aliases and callback fallback;
+  `onBackground` and the `ShellBackgroundHandoff*` types are the only public
+  construction API.
+- Read: shell-tool public exports/options/validation, all production call sites,
+  shell tests, and handoff docs.
+- Tests: shell-tool 42/42, build/typecheck, Host tools 89/89, and repository test
+  typecheck passed; full release gate passed.
 
 - Status: Verified
 - Date: 2026-07-16T08:47:59+0800

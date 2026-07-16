@@ -131,13 +131,6 @@ export type ShellBackgroundHandoffHandler = (
   request: ShellBackgroundHandoffRequest,
 ) => ShellBackgroundHandoffResult | Promise<ShellBackgroundHandoffResult>;
 
-/** @deprecated Use {@link ShellBackgroundHandoffRequest}. */
-export type ShellPromotionRequest = ShellBackgroundHandoffRequest;
-/** @deprecated Use {@link ShellBackgroundHandoffResult}. */
-export type ShellPromotionResult = ShellBackgroundHandoffResult;
-/** @deprecated Use {@link ShellBackgroundHandoffHandler}. */
-export type ShellPromotionHandler = ShellBackgroundHandoffHandler;
-
 /**
  * Options accepted by {@link createShellTool}.
  *
@@ -169,9 +162,7 @@ export interface ShellToolOptions {
    * live process (typically by registering it with
    * `@sparkwright/agent-runtime`'s `TaskManager`) and returns a `taskId`.
    */
-  onBackground?: ShellBackgroundHandoffHandler;
-  /** @deprecated Use `onBackground`. */
-  onPromote?: ShellPromotionHandler;
+  onBackground: ShellBackgroundHandoffHandler;
   /**
    * Optional host lookup used after policy/approval but before process spawn to
    * collapse an explicit background request onto equivalent active work.
@@ -363,7 +354,7 @@ export function createShellTool(
   options: ShellToolOptions,
 ): ToolDefinition<ShellToolInput, ShellToolOutput> {
   validateShellToolOptions(options);
-  const onBackground = options.onBackground ?? options.onPromote!;
+  const onBackground = options.onBackground;
   return defineTool<ShellToolInput, ShellToolOutput>({
     name: options.name ?? DEFAULT_NAME,
     description: options.description ?? DEFAULT_DESCRIPTION,
@@ -709,12 +700,9 @@ function validateShellToolOptions(options: ShellToolOptions): void {
       `@sparkwright/shell-tool: \`foregroundTimeoutMs\` must be <= ${MAX_FOREGROUND_TIMEOUT_MS}.`,
     );
   }
-  if (
-    typeof options.onBackground !== "function" &&
-    typeof options.onPromote !== "function"
-  ) {
+  if (typeof options.onBackground !== "function") {
     throw new Error(
-      "@sparkwright/shell-tool: `onBackground` is required. Wire it to your TaskManager so background and timed-out shells can continue as tasks (`onPromote` remains a deprecated alias).",
+      "@sparkwright/shell-tool: `onBackground` is required. Wire it to your TaskManager so background and timed-out shells can continue as tasks.",
     );
   }
 }

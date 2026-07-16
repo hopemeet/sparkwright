@@ -96,9 +96,9 @@ args` without rewriting requests, while the latter parses Host command text
   `backgroundOrigin:"explicit"`, creates an `awaited:false` task, and never
   reports `promoted:true`. Timeout handoff reports origin `promoted` and remains
   awaited.
-- The shared handoff callback is `onBackground`; deprecated `onPromote` remains
-  source-compatible for embedders. New task records use `shell.background`;
-  active historical `shell.promoted` records remain eligible for deduplication.
+- The shared handoff callback is only `onBackground`. New task records use
+  `shell.background`; active historical `shell.promoted` records remain
+  eligible for deduplication as a separate persisted-record concern.
 - Shell-tool resolves `policy:{ awaited, lifetime }` at the handoff boundary.
   Hosts execute it directly; `origin` remains diagnostic provenance rather than
   an independent keep-alive decision point.
@@ -184,6 +184,14 @@ args` without rewriting requests, while the latter parses Host command text
 - Shell is powerful and cross-cuts workspace, tasks, trace, and capability state.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-16T10:32:50+0800
+- Scope: shell handoff construction now has one callback and one type family;
+  foreground budgets, kill fallback, policy, and approval behavior are unchanged.
+- Read: shell-tool options/validation/execution/tests and Host handoff assembly.
+- Tests: shell-tool 42/42, build/typecheck, Host tools 89/89, and repository test
+  typecheck passed; full release gate passed.
 
 - Status: Read-only
 - Date: 2026-07-16T09:23:49+0800

@@ -260,7 +260,7 @@ describe("createShellTool", () => {
     // protects hosts whose options come from JSON/config (not TS literals).
     const incomplete = {
       foregroundTimeoutMs: 1000,
-      onPromote: () => ({ taskId: "x" }),
+      onBackground: () => ({ taskId: "x" }),
     } as unknown as Parameters<typeof createShellTool>[0];
     expect(() => createShellTool(incomplete)).toThrow(/environment/);
   });
@@ -278,7 +278,7 @@ describe("createShellTool", () => {
       createShellTool({
         environment: batchOnly,
         foregroundTimeoutMs: 1000,
-        onPromote: () => ({ taskId: "x" }),
+        onBackground: () => ({ taskId: "x" }),
       }),
     ).toThrow(/executeShellStreaming/);
   });
@@ -291,7 +291,7 @@ describe("createShellTool", () => {
         completeAfterMs: 1,
         exitCode: 0,
       }),
-      onPromote: () => ({ taskId: "x" }),
+      onBackground: () => ({ taskId: "x" }),
     } as unknown as Parameters<typeof createShellTool>[0];
     expect(() => createShellTool(incomplete)).toThrow(/foregroundTimeoutMs/);
   });
@@ -332,7 +332,7 @@ describe("createShellTool", () => {
     const tool = createShellTool({
       environment,
       foregroundTimeoutMs: 1000,
-      onPromote: () => ({ taskId: "unused" }),
+      onBackground: () => ({ taskId: "unused" }),
     });
     const result = await tool.execute(
       { command: "ls -la", cwd: "/tmp" },
@@ -364,7 +364,7 @@ describe("createShellTool", () => {
         },
       }),
       foregroundTimeoutMs: 1000,
-      onPromote: () => ({ taskId: "unused" }),
+      onBackground: () => ({ taskId: "unused" }),
     });
 
     const result = await tool.execute({ command: "ls" }, runtimeContext());
@@ -388,7 +388,7 @@ describe("createShellTool", () => {
         exitCode: 0,
       }),
       foregroundTimeoutMs: 1000,
-      onPromote: () => ({ taskId: "unused" }),
+      onBackground: () => ({ taskId: "unused" }),
     });
 
     const result = await tool.execute(
@@ -435,7 +435,7 @@ describe("createShellTool", () => {
     const tool = createShellTool({
       environment,
       foregroundTimeoutMs: 1000,
-      onPromote: () => ({ taskId: "unused" }),
+      onBackground: () => ({ taskId: "unused" }),
       workspaceRoot: "/workspace",
     });
 
@@ -516,7 +516,7 @@ describe("createShellTool", () => {
     const tool = createShellTool({
       environment,
       foregroundTimeoutMs: 1000,
-      onPromote: () => ({ taskId: "unused" }),
+      onBackground: () => ({ taskId: "unused" }),
       workspaceRoot: "/workspace",
     });
 
@@ -551,7 +551,7 @@ describe("createShellTool", () => {
     const tool = createShellTool({
       environment,
       foregroundTimeoutMs: 1000,
-      onPromote: () => ({ taskId: "unused" }),
+      onBackground: () => ({ taskId: "unused" }),
       workspaceRoot: "/workspace",
     });
 
@@ -581,7 +581,7 @@ function minimalOptions() {
       exitCode: 0,
     }),
     foregroundTimeoutMs: 1000,
-    onPromote: () => ({ taskId: "noop" }),
+    onBackground: () => ({ taskId: "noop" }),
   };
 }
 
@@ -601,7 +601,7 @@ describe("foreground→background promotion", () => {
     const tool = createShellTool({
       environment,
       foregroundTimeoutMs: 1000,
-      onPromote: (req) => {
+      onBackground: (req) => {
         promotions.push(req);
         return { taskId: "should-not-fire" };
       },
@@ -625,7 +625,7 @@ describe("foreground→background promotion", () => {
     const tool = createShellTool({
       environment,
       foregroundTimeoutMs: 1000,
-      onPromote: () => ({ taskId: "should-not-fire" }),
+      onBackground: () => ({ taskId: "should-not-fire" }),
     });
 
     const result = await tool.execute(
@@ -731,7 +731,7 @@ describe("foreground→background promotion", () => {
     const tool = createShellTool({
       environment,
       foregroundTimeoutMs: 20,
-      onPromote: () => ({ taskId: "task_release_test" }),
+      onBackground: () => ({ taskId: "task_release_test" }),
     });
     const result = await tool.execute(
       { command: "sleep 99" },
@@ -778,7 +778,7 @@ describe("foreground→background promotion", () => {
     const tool = createShellTool({
       environment,
       foregroundTimeoutMs: 10,
-      onPromote: () => ({ taskId: "task_nonblocking" }),
+      onBackground: () => ({ taskId: "task_nonblocking" }),
     });
 
     const result = await Promise.race([
@@ -807,7 +807,7 @@ describe("foreground→background promotion", () => {
       environment,
       foregroundTimeoutMs: 10,
       promotionAvailable: false,
-      onPromote: () => {
+      onBackground: () => {
         throw new Error("host queue full");
       },
     });
@@ -835,7 +835,7 @@ describe("foreground→background promotion", () => {
       // A generous foreground budget would normally keep this inline;
       // background must hand off directly without pretending it timed out.
       foregroundTimeoutMs: 5 * 60 * 1000,
-      onPromote: (req) => {
+      onBackground: (req) => {
         promotions.push(req);
         return { taskId: "task_bg" };
       },
@@ -887,7 +887,7 @@ describe("foreground→background promotion", () => {
       environment,
       foregroundTimeoutMs: 1000,
       promotionAvailable: false,
-      onPromote: () => ({ taskId: "should-not-fire" }),
+      onBackground: () => ({ taskId: "should-not-fire" }),
     });
     await expect(
       tool.execute({ command: "sleep 1", background: true }, runtimeContext()),
@@ -905,7 +905,7 @@ describe("foreground→background promotion", () => {
     const tool = createShellTool({
       environment,
       foregroundTimeoutMs: 1000,
-      onPromote: () => {
+      onBackground: () => {
         promoted = true;
         return { taskId: "new_task" };
       },
@@ -939,7 +939,7 @@ describe("foreground→background promotion", () => {
     const tool = createShellTool({
       environment,
       foregroundTimeoutMs: 1000,
-      onPromote: () => {
+      onBackground: () => {
         handedOff = true;
         return { taskId: "should_not_handoff" };
       },
@@ -971,7 +971,7 @@ describe("foreground→background promotion", () => {
     const tool = createShellTool({
       environment,
       foregroundTimeoutMs: 10_000,
-      onPromote: (request) => {
+      onBackground: (request) => {
         handoffPolicy = request.policy;
         return {
           taskId:

@@ -113,7 +113,7 @@ Resolved decisions:
    `cancelled -> waiting_tasks` transition.
 
 8. **Background handoff names the shared primitive.** New embedders use
-   `onBackground`; `onPromote` remains a deprecated source-compatible alias.
+   `onBackground` as its sole callback.
    New host tasks use `kind:"shell.background"` and untracked-write markers use
    `protocol:"background_shell"` with `backgroundOrigin`. Active legacy
    `shell.promoted` tasks still participate in deduplication, and TUI trace
@@ -149,7 +149,7 @@ project maps for current behavior:
   — `FileTaskNotificationOutbox` (durable sink, L48), also un-wired.
 - [`packages/shell-tool/src/tool.ts`](../../../packages/shell-tool/src/tool.ts)
   — explicit background or timeout → `onBackground` → detach → returns a
-  background task ticket; `onPromote` is a deprecated compatibility alias.
+  background task ticket through `onBackground`.
 - [`packages/host/src/runtime.ts`](../../../packages/host/src/runtime.ts)
   — `new TaskManager({ store: FileTaskStore })` with no sink (L779);
   `runHostAgentTask` drives a read-only child, `controller.signal` → child (L701/L731).

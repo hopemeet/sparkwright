@@ -277,9 +277,9 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
   stdout/stderr observation and emits `task.created` / `task.started` /
   `task.output` / terminal `task.*` trace facts.
 - Shell uses `onBackground` as the shared explicit/timeout handoff primitive and
-  writes `shell.background` task records. `onPromote` remains a deprecated API
-  alias, while active historical `shell.promoted` records remain readable for
-  deduplication.
+  writes `shell.background` task records. Active historical `shell.promoted`
+  records remain readable for deduplication as a separate persisted-record
+  concern.
 - The shell handoff resolves `{ awaited, lifetime }` once. TaskManager consumes
   `awaited` as its generic keep-alive contract; shell lifetime remains at this
   boundary and is not added to unrelated task kinds.
@@ -403,6 +403,15 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
 - TUI live rendering and transcript export now share presentation summaries, but trace/model-context result compaction is still a separate backend concern.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-16T10:32:50+0800
+- Scope: explicit and timeout shell handoff now expose only `onBackground`;
+  runtime handoff behavior, output facts, and task adoption are unchanged.
+- Read: shell-tool handoff types/factory/tests, Host shell assembly, and active
+  persisted task-record compatibility boundary.
+- Tests: shell-tool 42/42, build/typecheck, Host tools 89/89, and repository test
+  typecheck passed; full release gate passed.
 
 - Status: Verified
 - Date: 2026-07-16T10:27:51+0800
