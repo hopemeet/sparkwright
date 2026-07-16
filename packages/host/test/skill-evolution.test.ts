@@ -70,6 +70,30 @@ describe("skill roots", () => {
 });
 
 describe("skill proposal application", () => {
+  it("requires the canonical package hash policy on proposal records", async () => {
+    const workspace = await makeWorkspace();
+    try {
+      const proposal = await createSkillCreateProposal({
+        workspaceRoot: workspace,
+        name: "canonical-policy",
+        description: "Canonical package identity",
+        content: skillMarkdown("canonical-policy"),
+      });
+      const metadataPath = join(proposal.path, "metadata.json");
+      const metadata = JSON.parse(await readFile(metadataPath, "utf8")) as {
+        packageHashPolicyVersion?: number;
+      };
+      delete metadata.packageHashPolicyVersion;
+      await writeFile(metadataPath, JSON.stringify(metadata));
+
+      await expect(readSkillProposal(workspace, proposal.id)).rejects.toThrow(
+        "Skill proposal requires package hash policy 2.",
+      );
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
   it("supersedes every competing draft after one proposal is applied", async () => {
     const workspace = await makeWorkspace();
     try {

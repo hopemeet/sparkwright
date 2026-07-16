@@ -77,16 +77,16 @@ Does not own:
   when evolution metadata hashes match the package-hash identity.
 - Runtime Skill indexing uses a shared process-local package hasher cache to
   avoid rereading unchanged package contents across runs/agents and applies
-  conservative file/byte limits on the run-time identity path. Direct
-  `computeSkillPackageHash()` remains the exact, uncached path for evolution
-  apply/restore guard checks.
+  conservative file/byte limits on the run-time identity path. The distinct
+  `computeSkillPackageHash()` v1 primitive remains in Skill doctor/runtime
+  identity code; evolution no longer consumes it.
 - Package identity v2 substrate lives in `package-v2.ts` without changing the
   current Skill v1 runtime path. It recursively enumerates all canonical
   ordinary files except the fixed exclusion table, rejects non-excluded
   symlinks/special files and limit violations, hashes normalized relative paths
   with NUL framing, snapshots the identical file set, and returns
-  `packageHashPolicyVersion: 2`. Managed evolution now uses this API for new
-  proposal/history/restore operations; runtime trace/stats identity remains
+  `packageHashPolicyVersion: 2`. Managed evolution requires this API and policy
+  for proposal/history/restore operations; runtime trace/stats identity remains
   v1 until Phase 6.
 - `skills stats` materializes rebuildable per-session projections under
   `.sparkwright/skill-stats/sessions/`, keyed by trace fingerprints plus a
@@ -197,6 +197,15 @@ list --run/--session`); failed drafts self-clean. See
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T19:11:00+0800
+- Scope: removed the Skill evolution v1 record/hash reader and made policy 2
+  mandatory without changing the separate runtime Skill identity path.
+- Read: Host Skill evolution, Skills v1/v2 package primitives, Host/CLI tests,
+  and the Skill evolution capability map.
+- Tests: focused Host Skill evolution and CLI stats suites; Host and test
+  typechecks; full release gate; project-map drift check.
+
+- Status: Verified
 - Date: 2026-07-16T19:20:00+0800
 - Scope: Removed the public `parseSkill` and internal
   `parseSkillManifestCompat` surfaces. All disk/runtime/evolution parsing now
@@ -250,7 +259,7 @@ list --run/--session`); failed drafts self-clean. See
 - Status: Verified
 - Date: 2026-07-12T14:03:23+0800
 - Scope: verified managed Skill v2 proposal/history/restore operations while
-  retaining v1 readers for legacy records and deferring runtime stats identity.
+  deferring runtime stats identity.
 - Read: `packages/host/src/skill-evolution.ts`,
   `packages/host/src/capability-package-mutation.ts`,
   `packages/skills/src/package-v2.ts`, and focused host tests.

@@ -38,10 +38,10 @@ See [../../modules/skills.md](../../modules/skills.md).
 Both `before/` and `after/` are full immutable skill-package snapshots with
 `sha256` package hashes in metadata.
 
-New managed proposals, revisions, apply/recovery, history, restore, and
-mutation receipts use package identity v2 and persist
-`packageHashPolicyVersion: 2`. Missing policy version means immutable legacy v1
-and continues to use the v1 enumerator; readers never rewrite it during scans.
+Managed proposals, revisions, apply/recovery, history, restore, and mutation
+receipts use package identity v2 and require
+`packageHashPolicyVersion: 2`. Proposal and history readers reject missing or
+non-v2 policies; evolution hashing has no v1 path.
 
 ## Lifecycle
 
@@ -221,6 +221,16 @@ history kinds:   create | update | restore
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T19:11:00+0800
+- Scope: Skill evolution proposal/history/receipt records require package hash
+  policy v2; removed the missing-version fallback and v1 hash reader while
+  leaving the distinct current runtime Skill identity path unchanged.
+- Read: `packages/host/src/skill-evolution.ts`, Host/CLI tests,
+  `packages/skills/src/package.ts`, and package-governance design notes.
+- Tests: focused Host Skill evolution and CLI stats suites; Host and test
+  typechecks; full release gate; project-map drift check.
+
+- Status: Verified
 - Date: 2026-07-16T19:34:00+0800
 - Scope: Skill proposal/evolution parsing enters the strict canonical manifest
   parser; removing the legacy public parser did not change proposal lifecycle,
@@ -251,9 +261,8 @@ history kinds:   create | update | restore
 
 - Status: Verified
 - Date: 2026-07-12T14:03:23+0800
-- Scope: migrated new managed Skill package operations to the v2 canonical file
-  set with legacy v1 proposal/history compatibility and external-file drift
-  stale protection.
+- Scope: migrated managed Skill package operations to the v2 canonical file
+  set with external-file drift stale protection.
 - Read: `packages/host/src/skill-evolution.ts`,
   `packages/host/src/capability-package-mutation.ts`,
   `packages/skills/src/package-v2.ts`, and focused host tests.

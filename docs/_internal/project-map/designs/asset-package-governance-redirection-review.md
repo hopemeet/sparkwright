@@ -164,9 +164,9 @@ interface AssetPackageIdentity {
 }
 ```
 
-The hash value may retain the existing `sha256:<hex>` representation. Existing
-history remains immutable and readable. Records without a policy version are
-legacy v1; they are not rewritten during read-only scans.
+The hash value retains the existing `sha256:<hex>` representation. Managed
+Skill evolution proposal and history records require policy version 2; records
+without it are outside the canonical schema and are rejected.
 
 ### Shared implementation boundary
 

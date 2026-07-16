@@ -169,10 +169,9 @@ interface AssetPackageIdentity {
 }
 ```
 
-Records without a policy version are legacy v1. Existing v1 history is
-immutable and is not rewritten. Equality and statistics grouping require both
-policy version and hash; the same hash text under different policies does not
-erase the boundary.
+Managed Skill evolution records require policy version 2. Equality and
+statistics grouping require both policy version and hash; the same hash text
+under different policies does not erase the boundary.
 
 ## Direct Filesystem Reconciliation
 
@@ -303,16 +302,16 @@ history, receipt, recovery, and four-entry command-service convergence.
   exclusions, special-file/path/size rejection, NUL-framed hashing, same-set
   snapshots, and `packageHashPolicyVersion: 2` without migrating current
   consumers.
-- Existing v1 APIs and records remain readable and are not rewritten. Phase 3B
-  performs the explicit Skill migration.
+- The v1 substrate remains isolated to the distinct runtime identity path.
+  Phase 3B performs the explicit Skill evolution migration.
 
 ### Completed: Phase 3B Skill full-package and external-change safety
 
 - New managed proposals, revisions, staged snapshots, apply/recovery, history,
   restore, and mutation receipts use the v2 canonical set and carry policy 2.
-- Missing policy version remains legacy v1. Included external ordinary-file
-  drift marks a proposal stale without overwriting the target; registry-based
-  continuity and runtime stats attribution remain later phases.
+- Proposal/history readers require policy version 2. Included external
+  ordinary-file drift marks a proposal stale without overwriting the target;
+  registry-based continuity and runtime stats attribution remain later phases.
 
 ### Completed: Phase 4 Workflow executable package pinning correctness
 
@@ -378,13 +377,12 @@ history, receipt, recovery, and four-entry command-service convergence.
   mislabel policy-only change as performance regression.
 - No Agent/Workflow observation triggers mutation or evolution.
 
-## Migration and Compatibility
+## Canonical Boundaries
 
-- Existing Skill v1 history and receipts remain readable and immutable.
 - Existing Phase 1/2 proposal commands, durable waiting, history, restore, and
-  command entrypoints remain compatible.
-- A missing `packageHashPolicyVersion` means legacy v1; readers do not rewrite
-  it during scans.
+  command entrypoints continue to use the same governed lifecycle.
+- Skill evolution proposals, history, and receipts require
+  `packageHashPolicyVersion: 2`; missing/non-v2 records are rejected.
 - Workflow `contentHash` remains for compatibility while new execution records
   add v2 package identity and snapshot reference.
 - Existing Markdown Agent discovery remains unchanged until Phase 5; the future
@@ -455,8 +453,8 @@ history, receipt, recovery, and four-entry command-service convergence.
 
 - Status: Verified
 - Date: 2026-07-12T14:03:23+0800
-- Scope: completed Phase 3B managed Skill migration to v2 package identity,
-  including legacy v1 compatibility and external-file stale protection.
+- Scope: completed Phase 3B managed Skill migration to v2 package identity and
+  external-file stale protection.
 - Read: `packages/host/src/skill-evolution.ts`,
   `packages/host/src/capability-package-mutation.ts`,
   `packages/skills/src/package-v2.ts`, and focused host tests.
