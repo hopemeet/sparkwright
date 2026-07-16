@@ -10,6 +10,15 @@ See [session-store.md](session-store.md) and [../runtime/context-compaction.md](
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T22:26:54+0800
+- Scope: Workflow resume, list, control, and restart recovery now resolve
+  record/event truth only by replaying the canonical workspace journal.
+- Read: Agent Runtime store/journal, Host resume/control paths, CLI/TUI
+  consumers, protocol docs, and focused restart/recovery tests.
+- Tests: Agent Runtime workflow focused suite/typecheck; Host workflow/protocol
+  focused suites/typecheck; repository test typecheck; full release gate.
+
+- Status: Verified
 - Date: 2026-07-16T14:10:00+0800
 - Scope: Checkpoint resume locates runs only under canonical session storage; best-effort trace reconstruction reads the session or agent aggregate trace, never a run-local trace.
 - Read: Core checkpoint reconstruction, Host/CLI run lookup, focused resume tests, and protocol references.
@@ -58,7 +67,8 @@ Session resume
   -> new run in same session
 
 Workflow resume
-  -> locate workspace .sparkwright/workflow-runs/<workflowRunId>.json
+  -> replay workspace .sparkwright/workflow-runs/<workflowRunId>.journal/
+     to locate the canonical record and event history
   -> acquire single-writer lease
   -> prepare host run environment
   -> consume input waits at the actor boundary when status is waiting

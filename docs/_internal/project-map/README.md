@@ -212,6 +212,17 @@ trace/session inspection.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T22:26:54+0800
+- Scope: Workflow durable persistence is journal-only; record/event sidecar
+  readers, mirror writers, and lazy import were removed while Host/CLI/TUI
+  list, get, resume, and event consumers continue through `FileWorkflowStore`.
+- Read: Agent Runtime workflow store/journal/tests; Host, CLI, TUI,
+  server-runtime, protocol, current persistence docs, and workflow test maps.
+- Tests: Agent Runtime workflow focused suite/typecheck; Host workflow/protocol
+  focused suites/typecheck; repository test typecheck; project-map drift; full
+  release gate.
+
+- Status: Verified
 - Date: 2026-07-16
 - Scope: Host protocol 2.0 removed `run.failed.error` across producer, schema,
   protocol helpers, SDK, CLI, TUI, ACP, IM Gateway, fixtures, and reference docs;

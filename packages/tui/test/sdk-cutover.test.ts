@@ -14,6 +14,7 @@ import {
   FileWorkflowChannelStore,
   FileWorkflowStore,
   type WorkflowRunId,
+  type WorkflowRunRecord,
 } from "@sparkwright/agent-runtime";
 import { EventStore } from "../src/state/event-store.js";
 import { RunController } from "../src/state/run-controller.js";
@@ -77,21 +78,16 @@ async function waitForError(store: EventStore): Promise<void> {
 async function waitForWorkflowRecords(
   workspace: string,
   count: number,
-): Promise<Array<Record<string, unknown>>> {
+): Promise<WorkflowRunRecord[]> {
   const root = join(workspace, ".sparkwright", "workflow-runs");
   const deadline = Date.now() + 5_000;
   while (Date.now() < deadline) {
     try {
-      const files = (await readdir(root)).filter((file) =>
-        file.endsWith(".json"),
-      );
-      if (files.length >= count) {
-        return Promise.all(
-          files.map(async (file) =>
-            JSON.parse(await readFile(join(root, file), "utf8")),
-          ),
-        );
-      }
+      const records = new FileWorkflowStore({
+        rootDir: root,
+        createRoot: false,
+      }).list().records;
+      if (records.length >= count) return records;
     } catch {
       // The workflow store is created lazily.
     }

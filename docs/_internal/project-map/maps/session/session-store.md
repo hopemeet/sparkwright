@@ -10,6 +10,15 @@ See [../trace/raw-trace.md](../trace/raw-trace.md) for raw event evidence.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T22:26:54+0800
+- Scope: Workflow durable state now has one workspace journal layout; record
+  JSON/event JSONL sidecars, mirrors, readers, and lazy import are gone.
+- Read: workflow store/journal, Host/CLI/TUI consumers, restart/list/event tests,
+  and current protocol/design docs.
+- Tests: Agent Runtime workflow focused suite/typecheck; Host workflow/protocol
+  focused suites/typecheck; repository test typecheck; full release gate.
+
+- Status: Verified
 - Date: 2026-07-16T14:10:00+0800
 - Scope: Run persistence is single-layout: `FileRunStore`, Host lookup, CLI lookup, examples, and tests now use only the canonical session/agent/run tree.
 - Read: Core trace store/tests, Host and CLI resume lookup, coding-tools state exclusion, protocol references, and subprocess examples.
@@ -56,8 +65,10 @@ Host chooses/validates sessionId
   -> FileRunStore (trace-store.ts) writes session trace/transcript and agent run files
 
 Fresh workflow run state
-  -> FileWorkflowStore writes <workspace>/.sparkwright/workflow-runs/<workflowRunId>.json
-  -> <workspace>/.sparkwright/workflow-runs/<workflowRunId>.events.jsonl
+  -> FileWorkflowStore publishes checksummed entries under
+     <workspace>/.sparkwright/workflow-runs/<workflowRunId>.journal/
+  -> journal replay derives the current record, canonical events, generation,
+     revision, and quarantine diagnostics
   -> <workspace>/.sparkwright/workflow-runs/<workflowRunId>.lease/
 
 Fresh workflow job execution
@@ -104,10 +115,11 @@ Manual compact
   core cannot depend upward on runtime packages.
 - Workflow records live under workspace-level
   `.sparkwright/workflow-runs/`; each record retains `sessionId` so session
-  filters and resume context remain available. Each workflow run has a JSON
-  record, a JSONL event log, and a token lease path; corrupt record/log entries
-  are skipped with diagnostics by `FileWorkflowStore` rather than wedging
-  workflow list/resume.
+  filters and resume context remain available. Each workflow run has one
+  immutable checksummed journal plus a token lease path. `FileWorkflowStore`
+  derives records, events, generation/revision, and invalid-entry diagnostics
+  from journal replay; quarantined entries do not wedge list/resume or advance
+  canonical state.
 - TUI and CLI fresh workflow-job entrypoints allocate a unique safe job session
   instead of writing into a selected/control session. The job session does not
   inherit control-session scrollback. Resume requires and reuses the persisted

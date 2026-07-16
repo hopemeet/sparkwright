@@ -196,6 +196,25 @@ For `runtime/task-projections.ts`, run Host service/protocol and agent-task
 focused tests; keep TaskManager/store/outbox ownership outside the projection
 leaf.
 
+## Agent Runtime
+
+### `packages/agent-runtime/src/workflows/store.ts` or `journal.ts`
+
+Run:
+
+```bash
+npm --workspace @sparkwright/agent-runtime test -- test/workflows.test.ts
+npm --workspace @sparkwright/agent-runtime run typecheck
+npm --workspace @sparkwright/host test -- test/workflows.test.ts test/protocol.test.ts
+npm --workspace @sparkwright/host run typecheck
+```
+
+For durable-layout changes, also run repository test typecheck and the full
+release gate. Preserve deterministic coverage for generation/revision fencing,
+lease takeover, checksum/quarantine recovery, restart list/get/event replay,
+and Host resume/control. Tests and product adapters must inspect workflow state
+through `FileWorkflowStore`, never by reading journal entry files directly.
+
 ## Server Runtime
 
 ### Durable workflow channels and adapters

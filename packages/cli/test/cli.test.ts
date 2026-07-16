@@ -1,7 +1,6 @@
 import {
   access,
   mkdir,
-  readdir,
   readFile,
   realpath,
   rm,
@@ -896,16 +895,12 @@ describe.sequential("runCli", () => {
     expect(result.exitCode).toBe(0);
     expect(result.sessionId).toMatch(/^session_workflow_/);
     expect(result.sessionId).not.toBe("session_cli_control");
-    const recordFiles = (
-      await readdir(join(workspace, ".sparkwright", "workflow-runs"))
-    ).filter((file) => file.endsWith(".json"));
-    expect(recordFiles).toHaveLength(1);
-    const record = JSON.parse(
-      await readFile(
-        join(workspace, ".sparkwright", "workflow-runs", recordFiles[0]!),
-        "utf8",
-      ),
-    );
+    const records = new FileWorkflowStore({
+      rootDir: join(workspace, ".sparkwright", "workflow-runs"),
+      createRoot: false,
+    }).list().records;
+    expect(records).toHaveLength(1);
+    const record = records[0];
     expect(record).toMatchObject({
       sessionId: result.sessionId,
       metadata: { controlSessionId: "session_cli_control" },

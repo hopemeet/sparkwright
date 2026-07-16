@@ -12,6 +12,16 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T22:26:54+0800
+- Scope: audited every Host workflow list/get/resume/control/event consumer
+  after Agent Runtime made the workspace workflow journal the only durable
+  record/event layout; no Host sidecar reader or direct file consumer remains.
+- Read: Host runtime/workspace/asset-stats consumers, CLI/TUI/server-runtime
+  adapters, protocol docs, and Agent Runtime store/journal.
+- Tests: Host workflow/protocol focused suites and typecheck; repository test
+  typecheck; full release gate.
+
+- Status: Verified
 - Date: 2026-07-16T21:02:00+0800
 - Scope: Host Shell task creation and active-task deduplication use only the
   canonical `shell.background` persisted kind; the promotion-named task reader
@@ -408,10 +418,11 @@ Does not own:
   `workflow.*` lifecycle events, and runtime interruption facts. It delegates
   transition decisions to the portable agent-runtime state machine.
 - Workflow runs are durable host-orchestrated records. After P9a, fresh runs
-  write `FileWorkflowStore` records under the workspace-level
-  `.sparkwright/workflow-runs/` store while retaining `sessionId` on each
-  record. List, resume, control, notification, and supervisor paths all resolve
-  this one store. Host acquires the workflow run's single-writer lease
+  write `FileWorkflowStore` journal entries under workspace-level
+  `.sparkwright/workflow-runs/<workflowRunId>.journal/` while retaining
+  `sessionId` on each record. List, resume, control, notification, event-log,
+  and supervisor paths all replay this one canonical store; Host does not read
+  record or event sidecars. Host acquires the workflow run's single-writer lease
   before fresh record creation or resume, pins the compiled workflow definition
   snapshot, persists projection snapshots into current node, attempts,
   verdict/transition logs, and run/fact evidence refs, refreshes a single-writer

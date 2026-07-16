@@ -569,8 +569,9 @@ monotonic fencing generation 或跨 record/event transaction。TTL 为 Host 的 
    `{workflowRunId, token, generation}`。每次 mutation 要求 expected record revision，
    以 exclusive-create 发布一条同时包含 next record snapshot/patch 与 canonical event 的
    revision entry。successor 使用更高 generation；旧 generation 后来产生的 physical entry
-   不得成为 canonical。`.json` snapshot 与 `.events.jsonl` 只是可重建投影，读取时必须从
-   canonical journal 校验 generation/revision，不能信任 stale snapshot pointer。
+   不得成为 canonical。2026-07-16 的持久化收口进一步删除了 `.json` snapshot 与
+   `.events.jsonl` projection；`get/list/eventLog` 现在直接 replay canonical journal，
+   不再存在可被误读为事实的 sidecar pointer。
 
 #### generation、revision 与 replay 强制契约
 
@@ -632,9 +633,9 @@ maintenance/recovery 也必须显式 claim writer，不能保留同名无 fencin
 通用 `restore()`；它写入一条 fenced compensating mutation。补偿事实保留在 canonical
 journal 中供审计，当前用户视图可以按需隐藏内部细节，但 durable history 不得抹除。
 
-v1 record/event 采用 lazy migration，不要求离线重写工具。第一次 fenced claim 建立
-revision-0 baseline/migration marker；该过程必须幂等、crash-safe，并在并发 claim 下只有
-一个 winner。旧 event log 的来源、摘要或迁移关联必须可诊断，不能静默丢弃已有审计事实。
+2026-07-16 follow-up：仓库没有需要迁移的旧持久化数据，v1 record/event lazy
+migration 已删除。新 journal 从 revision-0 baseline 开始，baseline 使用 canonical
+`events` 字段；并发 claim 仍由 lease 与 exclusive journal publication 保证单 winner。
 
 #### 阻塞原因
 
@@ -670,13 +671,14 @@ writer 无旁路。补偿记录保留 durable history 的产品语义已于 2026
 
 - `FileWorkflowStore` 现以 immutable canonical journal 作为 generation/history
   sequencer；claim 与 mutation 共用 physical sequence，mutation 同 entry 保存 record
-  与 event，snapshot/event log 仅作可重建投影。
+  与 event。2026-07-16 follow-up 删除了 snapshot/event-log sidecar 投影，journal
+  replay 成为唯一 record/event 读取路径。
 - runtime mutation 只能经 `WorkflowLeaseBoundWriter`；旧 public
   `create/update/restore/appendEvent/acquireLease` 已删除。Host fresh/resume/waiting/
   projection/usage/finalization/compensation 全部迁移。
 - generation-aware replay 隔离 stale、discontinuous、corrupt/torn entries；隔离项
-  不推进 revision、不进入 record/event projection。legacy v1 首次 claim 建立
-  revision-0 baseline，重复/并发 migration 单 winner。
+  不推进 revision、不进入 record/event history。新 workflow 首次 claim 建立
+  revision-0 baseline；旧 sidecar import/migration 不再存在。
 - focused evidence: agent-runtime 32 tests，Host workflow/protocol 79 tests，CLI
   workflow slice 13 tests；相关 typecheck/build 均通过。首次 release gate 仅发现
   7 个本次文件需 Prettier，格式化后完整 `npm run release:check` 重跑通过；最终

@@ -1,15 +1,11 @@
-// AI maintenance note: durable workflow stores mirror the task store shape, but
-// compose doc-store primitives so workflow persistence does not grow another
-// hand-rolled atomic-write/log/lease copy.
+// AI maintenance note: the immutable workflow journal is the only durable
+// record/event truth. Keep list/get/eventLog on journal replay rather than
+// adding snapshot or append-log projections.
 
 import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import {
   acquireFileDocumentLease,
-  atomicWriteTextSync,
-  readJsonDocumentDirSync,
-  readJsonDocumentLogSync,
-  writeJsonDocumentSync,
   type JsonDocumentInvalidEntry,
   type JsonDocumentLogInvalidEntry,
 } from "../doc-store/index.js";
@@ -24,7 +20,6 @@ import type {
   WorkflowDefinition,
   WorkflowAssetPin,
   WorkflowEvidenceRef,
-  WorkflowNodeVerdict,
   WorkflowParallelBranchState,
   WorkflowNodeVerdictLogEntry,
   WorkflowResumePolicy,
@@ -33,7 +28,6 @@ import type {
   WorkflowRunRecord,
   WorkflowRunStatus,
   WorkflowStoreEvent,
-  WorkflowTransitionDecision,
   WorkflowTransitionLogEntry,
   WorkflowWaitState,
 } from "./types.js";
@@ -125,7 +119,7 @@ export interface WorkflowStore {
 }
 
 export interface FileWorkflowStoreOptions {
-  /** Directory containing workflow run snapshots/logs. */
+  /** Directory containing workflow run journals and leases. */
   rootDir: string;
   /** Create the root eagerly. Set false for read-only inspection commands. */
   createRoot?: boolean;
@@ -133,61 +127,68 @@ export interface FileWorkflowStoreOptions {
 
 export class FileWorkflowStore implements WorkflowStore {
   readonly rootDir: string;
-  private readonly records = new Map<WorkflowRunId, WorkflowRunRecord>();
-  private invalidRecordEntries: JsonDocumentInvalidEntry[] = [];
 
   constructor(options: FileWorkflowStoreOptions) {
     this.rootDir = resolve(options.rootDir);
     if (options.createRoot !== false) {
       mkdirSync(this.rootDir, { recursive: true });
     }
-    this.loadExistingRecords();
   }
 
   get(id: WorkflowRunId): WorkflowRunRecord | undefined {
     assertSafeWorkflowRunId(id);
-    const record = this.records.get(id);
-    return record ? cloneRecord(record) : undefined;
+    return cloneOptionalRecord(
+      readWorkflowJournalSync(this.rootDir, id)?.record,
+    );
   }
 
   list(): WorkflowStoreListResult {
-    return {
-      records: [...this.records.values()].map(cloneRecord),
-      invalidEntries: [...this.invalidRecordEntries],
-    };
+    const records: WorkflowRunRecord[] = [];
+    const invalidEntries: JsonDocumentInvalidEntry[] = [];
+    for (const entry of existsSync(this.rootDir)
+      ? readdirSync(this.rootDir, { withFileTypes: true }).sort((left, right) =>
+          left.name.localeCompare(right.name),
+        )
+      : []) {
+      if (!entry.isDirectory() || !entry.name.endsWith(".journal")) continue;
+      const rawId = entry.name.slice(0, -".journal".length);
+      if (!isSafeWorkflowRunId(rawId)) {
+        invalidEntries.push({
+          path: join(this.rootDir, entry.name),
+          code: "invalid_document",
+          reason: `Unsafe workflow run id: ${rawId}`,
+        });
+        continue;
+      }
+      const canonical = readWorkflowJournalSync(
+        this.rootDir,
+        rawId as WorkflowRunId,
+      );
+      if (canonical?.record) records.push(cloneRecord(canonical.record));
+      invalidEntries.push(
+        ...(canonical?.quarantined.map(({ path, code, reason }) => ({
+          path,
+          code,
+          reason,
+        })) ?? []),
+      );
+    }
+    return { records, invalidEntries };
   }
 
   eventLog(id: WorkflowRunId): WorkflowStoreEventLogResult {
     assertSafeWorkflowRunId(id);
     const canonical = readWorkflowJournalSync(this.rootDir, id);
-    if (canonical) {
-      return {
-        events: canonical.events.map((event) => ({ ...event })),
-        invalidEntries: canonical.quarantined.map((entry) => ({
-          path: entry.path,
-          code: "invalid_document" as const,
-          reason: entry.reason,
-          line: 0,
-        })),
-      };
-    }
-    const result = readJsonDocumentLogSync<WorkflowStoreEvent>({
-      path: this.eventLogPath(id),
-      parse: parseWorkflowStoreEvent,
-    });
     return {
-      events: result.entries.map((entry) => entry.value),
-      invalidEntries: result.invalidEntries,
+      events: canonical?.events.map((event) => ({ ...event })) ?? [],
+      invalidEntries:
+        canonical?.quarantined.map((entry) => ({ ...entry, line: 0 })) ?? [],
     };
   }
 
   canonicalGeneration(id: WorkflowRunId): number {
     assertSafeWorkflowRunId(id);
-    return (
-      readWorkflowJournalSync(this.rootDir, id)?.generation ??
-      this.records.get(id)?.generation ??
-      0
-    );
+    return readWorkflowJournalSync(this.rootDir, id)?.generation ?? 0;
   }
 
   async acquireWriter(
@@ -205,8 +206,6 @@ export class FileWorkflowStore implements WorkflowStore {
     try {
       let head = await readWorkflowJournal(this.rootDir, id);
       if (!head) {
-        const legacyRecord = this.get(id);
-        const legacyEvents = this.eventLog(id).events;
         const published = await publishWorkflowJournalEntry({
           rootDir: this.rootDir,
           workflowRunId: id,
@@ -215,16 +214,7 @@ export class FileWorkflowStore implements WorkflowStore {
             kind: "baseline",
             generation: 0,
             recordRevision: 0,
-            ...(legacyRecord
-              ? {
-                  record: {
-                    ...legacyRecord,
-                    generation: 0,
-                    recordRevision: 0,
-                  },
-                }
-              : {}),
-            legacyEvents,
+            events: [],
           },
         });
         if (!published)
@@ -313,7 +303,6 @@ export class FileWorkflowStore implements WorkflowStore {
           throw new WorkflowStaleWriteError(
             "published workflow revision was quarantined",
           );
-        this.projectCanonical(id, canonical);
         return cloneRecord(canonical.record);
       };
       return {
@@ -381,7 +370,6 @@ export class FileWorkflowStore implements WorkflowStore {
               "workflow create did not become canonical",
             );
           }
-          this.projectCanonical(id, canonical);
           return cloneRecord(canonical.record);
         },
         mutate: (input) => mutate("mutation", input),
@@ -394,54 +382,6 @@ export class FileWorkflowStore implements WorkflowStore {
       if (cause instanceof WorkflowStaleWriteError) return null;
       throw cause;
     }
-  }
-
-  private projectCanonical(id: WorkflowRunId, head: WorkflowJournalHead): void {
-    if (!head.record) return;
-    this.records.set(id, cloneRecord(head.record));
-    this.writeRecord(head.record);
-    atomicWriteTextSync(
-      this.eventLogPath(id),
-      head.events.map((event) => JSON.stringify(event)).join("\n") +
-        (head.events.length ? "\n" : ""),
-      { durable: true },
-    );
-  }
-
-  private loadExistingRecords(): void {
-    const result = readJsonDocumentDirSync<WorkflowRunRecord>({
-      dir: this.rootDir,
-      extension: ".json",
-      parse: parseWorkflowRunRecord,
-    });
-    this.records.clear();
-    this.invalidRecordEntries = result.invalidEntries;
-    for (const entry of result.entries) {
-      this.records.set(entry.value.id, entry.value);
-    }
-    for (const entry of existsSync(this.rootDir)
-      ? readdirSync(this.rootDir, { withFileTypes: true })
-      : []) {
-      if (!entry.isDirectory() || !entry.name.endsWith(".journal")) continue;
-      const rawId = entry.name.slice(0, -".journal".length);
-      if (!isSafeWorkflowRunId(rawId)) continue;
-      const id = rawId as WorkflowRunId;
-      const canonical = readWorkflowJournalSync(this.rootDir, id);
-      if (canonical?.record)
-        this.records.set(id, cloneRecord(canonical.record));
-    }
-  }
-
-  private writeRecord(record: WorkflowRunRecord): void {
-    writeJsonDocumentSync(this.recordPath(record.id), record);
-  }
-
-  private recordPath(id: WorkflowRunId): string {
-    return join(this.rootDir, `${String(id)}.json`);
-  }
-
-  private eventLogPath(id: WorkflowRunId): string {
-    return join(this.rootDir, `${String(id)}.events.jsonl`);
   }
 
   private leasePath(id: WorkflowRunId): string {
@@ -633,151 +573,6 @@ function applyWorkflowPatch(
   };
 }
 
-function parseWorkflowRunRecord(raw: unknown): WorkflowRunRecord {
-  if (!isRecord(raw)) throw new Error("record must be an object");
-  if (raw.schemaVersion !== WORKFLOW_RUN_RECORD_SCHEMA_VERSION) {
-    throw new Error("unsupported workflow run schemaVersion");
-  }
-  const id = stringField(raw, "id") as WorkflowRunId;
-  assertSafeWorkflowRunId(id);
-  const status = workflowStatus(raw.status);
-  const assetName = stringField(raw, "assetName");
-  const contentHash = stringField(raw, "contentHash");
-  const record: WorkflowRunRecord = {
-    schemaVersion: WORKFLOW_RUN_RECORD_SCHEMA_VERSION,
-    id,
-    ...(typeof raw.recordRevision === "number"
-      ? { recordRevision: raw.recordRevision }
-      : {}),
-    ...(typeof raw.generation === "number"
-      ? { generation: raw.generation }
-      : {}),
-    assetName,
-    ...(raw.layer === "builtin" ||
-    raw.layer === "user" ||
-    raw.layer === "project" ||
-    raw.layer === "unknown"
-      ? { layer: raw.layer }
-      : {}),
-    ...(optionalString(raw.version) ? { version: raw.version } : {}),
-    contentHash,
-    ...(optionalString(raw.packageHash)
-      ? { packageHash: raw.packageHash }
-      : {}),
-    ...(raw.packageHashPolicyVersion === 2
-      ? { packageHashPolicyVersion: 2 as const }
-      : {}),
-    ...(optionalString(raw.packageSnapshotRef)
-      ? { packageSnapshotRef: raw.packageSnapshotRef }
-      : {}),
-    ...(optionalString(raw.parentRunId)
-      ? { parentRunId: raw.parentRunId as WorkflowRunRecord["parentRunId"] }
-      : {}),
-    ...(optionalString(raw.sessionId) ? { sessionId: raw.sessionId } : {}),
-    ...(optionalString(raw.activeRunId)
-      ? { activeRunId: raw.activeRunId as WorkflowRunRecord["activeRunId"] }
-      : {}),
-    runIds: Array.isArray(raw.runIds)
-      ? raw.runIds
-          .filter(optionalString)
-          .map((runId) => runId as WorkflowRunRecord["runIds"][number])
-      : [],
-    status,
-    ...(optionalString(raw.currentNodeId)
-      ? { currentNodeId: raw.currentNodeId }
-      : {}),
-    ...(isRecord(raw.wait) ? { wait: parseWait(raw.wait) } : {}),
-    attempts: isRecord(raw.attempts)
-      ? Object.fromEntries(
-          Object.entries(raw.attempts).filter(
-            (entry): entry is [string, number] => typeof entry[1] === "number",
-          ),
-        )
-      : {},
-    ...(isRecord(raw.parallelBranches)
-      ? { parallelBranches: parseParallelBranches(raw.parallelBranches) }
-      : {}),
-    evidenceRefs: Array.isArray(raw.evidenceRefs)
-      ? raw.evidenceRefs.filter(isRecord).map(parseEvidenceRef)
-      : [],
-    verdictLog: Array.isArray(raw.verdictLog)
-      ? raw.verdictLog.filter(isRecord).map(parseVerdictLogEntry)
-      : [],
-    transitionLog: Array.isArray(raw.transitionLog)
-      ? raw.transitionLog.filter(isRecord).map(parseTransitionLogEntry)
-      : [],
-    ...(isRecord(raw.failure) ? { failure: parseFailure(raw.failure) } : {}),
-    resume: {
-      verifyOnResume:
-        !isRecord(raw.resume) || raw.resume.verifyOnResume !== false,
-    },
-    ...parseOptionalAuthorizationSnapshot(raw.authorizationSnapshot),
-    ...(isRecord(raw.definitionSnapshot)
-      ? {
-          definitionSnapshot: cloneJsonLike(
-            raw.definitionSnapshot,
-          ) as unknown as WorkflowDefinition,
-        }
-      : {}),
-    createdAt: stringField(raw, "createdAt"),
-    ...(optionalString(raw.updatedAt) ? { updatedAt: raw.updatedAt } : {}),
-    ...(optionalString(raw.completedAt)
-      ? { completedAt: raw.completedAt }
-      : {}),
-    metadata: isRecord(raw.metadata) ? { ...raw.metadata } : {},
-  };
-  if (record.status === "waiting" && !record.wait) {
-    throw new Error("waiting workflow record requires wait.kind");
-  }
-  return record;
-}
-
-function parseWorkflowStoreEvent(raw: unknown): WorkflowStoreEvent {
-  if (!isRecord(raw)) throw new Error("event must be an object");
-  const workflowRunId = stringField(raw, "workflowRunId") as WorkflowRunId;
-  assertSafeWorkflowRunId(workflowRunId);
-  return {
-    at: stringField(raw, "at"),
-    type: workflowStoreEventType(raw.type),
-    workflowRunId,
-    ...(optionalString(raw.parentRunId)
-      ? { parentRunId: raw.parentRunId as WorkflowRunRecord["parentRunId"] }
-      : {}),
-    status: workflowStatus(raw.status),
-    ...(isRecord(raw.metadata) ? { metadata: { ...raw.metadata } } : {}),
-  };
-}
-
-function workflowStatus(value: unknown): WorkflowRunStatus {
-  if (
-    value === "running" ||
-    value === "waiting" ||
-    value === "completed" ||
-    value === "failed" ||
-    value === "cancelled"
-  ) {
-    return value;
-  }
-  throw new Error(`invalid workflow status: ${String(value)}`);
-}
-
-function workflowStoreEventType(value: unknown): WorkflowStoreEvent["type"] {
-  if (
-    value === "created" ||
-    value === "updated" ||
-    value === "waiting" ||
-    value === "input" ||
-    value === "completed" ||
-    value === "failed" ||
-    value === "cancelled" ||
-    value === "adopted" ||
-    value === "released"
-  ) {
-    return value;
-  }
-  throw new Error(`invalid workflow store event type: ${String(value)}`);
-}
-
 function cloneRecord(record: WorkflowRunRecord): WorkflowRunRecord {
   return {
     ...record,
@@ -802,35 +597,6 @@ function cloneRecord(record: WorkflowRunRecord): WorkflowRunRecord {
   };
 }
 
-function parseOptionalAuthorizationSnapshot(
-  raw: unknown,
-): Pick<WorkflowRunRecord, "authorizationSnapshot"> {
-  if (!isRecord(raw)) return {};
-  const snapshot = parseAuthorizationSnapshot(raw);
-  return snapshot ? { authorizationSnapshot: snapshot } : {};
-}
-
-function parseAuthorizationSnapshot(
-  raw: Record<string, unknown>,
-): WorkflowRunRecord["authorizationSnapshot"] | undefined {
-  if (
-    !Array.isArray(raw.confidentialPaths) ||
-    !raw.confidentialPaths.every(optionalString) ||
-    typeof raw.confidentialDefaults !== "boolean" ||
-    !isWorkflowRunAccessMode(raw.accessMode) ||
-    !isWorkflowBackgroundTaskPolicy(raw.backgroundTasks)
-  ) {
-    return undefined;
-  }
-  return {
-    ...(optionalString(raw.targetPath) ? { targetPath: raw.targetPath } : {}),
-    confidentialPaths: [...raw.confidentialPaths],
-    confidentialDefaults: raw.confidentialDefaults,
-    accessMode: raw.accessMode,
-    backgroundTasks: raw.backgroundTasks,
-  };
-}
-
 function cloneAuthorizationSnapshot(
   snapshot: NonNullable<WorkflowRunRecord["authorizationSnapshot"]>,
 ): NonNullable<WorkflowRunRecord["authorizationSnapshot"]> {
@@ -838,29 +604,6 @@ function cloneAuthorizationSnapshot(
     ...snapshot,
     confidentialPaths: [...snapshot.confidentialPaths],
   };
-}
-
-function isWorkflowRunAccessMode(
-  value: unknown,
-): value is NonNullable<
-  WorkflowRunRecord["authorizationSnapshot"]
->["accessMode"] {
-  return (
-    value === "read-only" ||
-    value === "ask" ||
-    value === "accept-edits" ||
-    value === "bypass"
-  );
-}
-
-function isWorkflowBackgroundTaskPolicy(
-  value: unknown,
-): value is NonNullable<
-  WorkflowRunRecord["authorizationSnapshot"]
->["backgroundTasks"] {
-  return (
-    value === "disabled" || value === "foreground-only" || value === "enabled"
-  );
 }
 
 function cloneWait(wait: WorkflowWaitState): WorkflowWaitState {
@@ -875,23 +618,6 @@ function cloneWait(wait: WorkflowWaitState): WorkflowWaitState {
     ...wait,
     metadata: wait.metadata ? { ...wait.metadata } : undefined,
   };
-}
-
-function parseWait(raw: Record<string, unknown>): WorkflowWaitState {
-  return cloneWait({
-    kind: waitKind(raw.kind),
-    ...(optionalString(raw.reason) ? { reason: raw.reason } : {}),
-    ...(optionalString(raw.taskId) ? { taskId: raw.taskId } : {}),
-    ...(optionalString(raw.approvalId) ? { approvalId: raw.approvalId } : {}),
-    ...(isRecord(raw.metadata) ? { metadata: { ...raw.metadata } } : {}),
-  });
-}
-
-function waitKind(value: unknown): WorkflowWaitState["kind"] {
-  if (value === "input" || value === "task" || value === "approval") {
-    return value;
-  }
-  throw new Error("workflow wait.kind must be input, task, or approval");
 }
 
 function cloneParallelBranches(
@@ -910,71 +636,11 @@ function cloneParallelBranches(
   );
 }
 
-function parseParallelBranches(
-  raw: Record<string, unknown>,
-): Record<string, WorkflowParallelBranchState> {
-  return Object.fromEntries(
-    Object.entries(raw)
-      .filter((entry): entry is [string, Record<string, unknown>] =>
-        isRecord(entry[1]),
-      )
-      .map(([key, branch]) => [
-        key,
-        {
-          sourceNodeId: stringField(branch, "sourceNodeId"),
-          nodeId: stringField(branch, "nodeId"),
-          attempt:
-            typeof branch.attempt === "number" && branch.attempt > 0
-              ? branch.attempt
-              : 1,
-          status: parallelBranchStatus(branch.status),
-          verdict: cloneJsonLike(branch.verdict) as WorkflowNodeVerdict,
-          evidenceRefs: Array.isArray(branch.evidenceRefs)
-            ? branch.evidenceRefs.filter(isRecord).map(parseEvidenceRef)
-            : undefined,
-          completedAt: stringField(branch, "completedAt"),
-          ...(isRecord(branch.metadata)
-            ? { metadata: { ...branch.metadata } }
-            : {}),
-        },
-      ]),
-  );
-}
-
-function parallelBranchStatus(
-  value: unknown,
-): WorkflowParallelBranchState["status"] {
-  if (value === "passed" || value === "failed" || value === "runtime_error") {
-    return value;
-  }
-  throw new Error("workflow parallel branch status is invalid");
-}
-
 function cloneEvidenceRef(ref: WorkflowEvidenceRef): WorkflowEvidenceRef {
   return {
     ...ref,
     metadata: ref.metadata ? { ...ref.metadata } : undefined,
   };
-}
-
-function parseEvidenceRef(raw: Record<string, unknown>): WorkflowEvidenceRef {
-  const kind = raw.kind;
-  if (
-    kind !== "trace_span" &&
-    kind !== "artifact" &&
-    kind !== "task_output" &&
-    kind !== "fact" &&
-    kind !== "run"
-  ) {
-    throw new Error("workflow evidence kind is invalid");
-  }
-  return cloneEvidenceRef({
-    kind,
-    ref: stringField(raw, "ref"),
-    ...(optionalString(raw.nodeId) ? { nodeId: raw.nodeId } : {}),
-    ...(optionalString(raw.verifierId) ? { verifierId: raw.verifierId } : {}),
-    ...(isRecord(raw.metadata) ? { metadata: { ...raw.metadata } } : {}),
-  });
 }
 
 function cloneVerdictLogEntry(
@@ -987,23 +653,6 @@ function cloneVerdictLogEntry(
   };
 }
 
-function parseVerdictLogEntry(
-  raw: Record<string, unknown>,
-): WorkflowNodeVerdictLogEntry {
-  if (typeof raw.attempt !== "number") {
-    throw new Error("workflow verdict attempt must be a number");
-  }
-  return cloneVerdictLogEntry({
-    at: stringField(raw, "at"),
-    nodeId: stringField(raw, "nodeId"),
-    attempt: raw.attempt,
-    verdict: cloneJsonLike(raw.verdict) as WorkflowNodeVerdict,
-    evidenceRefs: Array.isArray(raw.evidenceRefs)
-      ? raw.evidenceRefs.filter(isRecord).map(parseEvidenceRef)
-      : undefined,
-  });
-}
-
 function cloneTransitionLogEntry(
   entry: WorkflowTransitionLogEntry,
 ): WorkflowTransitionLogEntry {
@@ -1014,16 +663,6 @@ function cloneTransitionLogEntry(
   };
 }
 
-function parseTransitionLogEntry(
-  raw: Record<string, unknown>,
-): WorkflowTransitionLogEntry {
-  return cloneTransitionLogEntry({
-    at: stringField(raw, "at"),
-    verdict: cloneJsonLike(raw.verdict) as WorkflowNodeVerdict,
-    decision: cloneJsonLike(raw.decision) as WorkflowTransitionDecision,
-  });
-}
-
 function cloneFailure(failure: WorkflowRunFailure): WorkflowRunFailure {
   return {
     ...failure,
@@ -1031,41 +670,6 @@ function cloneFailure(failure: WorkflowRunFailure): WorkflowRunFailure {
   };
 }
 
-function parseFailure(raw: Record<string, unknown>): WorkflowRunFailure {
-  const kind = raw.kind;
-  if (
-    kind !== "verdict" &&
-    kind !== "runtime" &&
-    kind !== "cancelled" &&
-    kind !== "definition"
-  ) {
-    throw new Error("workflow failure kind is invalid");
-  }
-  return cloneFailure({
-    kind,
-    code: stringField(raw, "code"),
-    message: stringField(raw, "message"),
-    ...(optionalString(raw.nodeId) ? { nodeId: raw.nodeId } : {}),
-    ...(isRecord(raw.metadata) ? { metadata: { ...raw.metadata } } : {}),
-  });
-}
-
 function cloneJsonLike<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
-}
-
-function stringField(record: Record<string, unknown>, field: string): string {
-  const value = record[field];
-  if (typeof value !== "string" || value.length === 0) {
-    throw new Error(`${field} must be a non-empty string`);
-  }
-  return value;
-}
-
-function optionalString(value: unknown): value is string {
-  return typeof value === "string" && value.length > 0;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

@@ -282,21 +282,22 @@ provide `sessionId` to make that lookup explicit.
 
 ### `workflow.list`
 
-List durable workflow-run snapshots. Workflow records are stored under the
-workspace state root at `.sparkwright/workflow-runs/<workflowRunId>.json` and
-retain their `sessionId` in the record. Malformed records are skipped and
-reported in `invalidEntries` instead of failing the list.
+List durable workflow-run snapshots. Workflow record and event truth is replayed
+from checksummed entries under the workspace state root at
+`.sparkwright/workflow-runs/<workflowRunId>.journal/`; records retain their
+`sessionId`. Quarantined journal entries are reported in `invalidEntries`
+instead of failing the list.
 
 Hosts advertise `workflow.list` in `host.ready.capabilities` once durable
 workflow storage is available.
 
 **Payload**
 
-| Field       | Type                                                                       | Required | Notes                                                                              |
-| ----------- | -------------------------------------------------------------------------- | -------- | ---------------------------------------------------------------------------------- |
-| `sessionId` | string                                                                     | no       | Filter workspace records by `record.sessionId` and legacy records by session path. |
-| `status`    | `"running"` \| `"waiting"` \| `"completed"` \| `"failed"` \| `"cancelled"` | no       | Filter by workflow-run status.                                                     |
-| `limit`     | integer 1..200                                                             | no       | Maximum snapshots to return after newest-first sort.                               |
+| Field       | Type                                                                       | Required | Notes                                                |
+| ----------- | -------------------------------------------------------------------------- | -------- | ---------------------------------------------------- |
+| `sessionId` | string                                                                     | no       | Filter workspace records by `record.sessionId`.      |
+| `status`    | `"running"` \| `"waiting"` \| `"completed"` \| `"failed"` \| `"cancelled"` | no       | Filter by workflow-run status.                       |
+| `limit`     | integer 1..200                                                             | no       | Maximum snapshots to return after newest-first sort. |
 
 **Response result**
 
@@ -334,9 +335,9 @@ workflow storage is available.
   ],
   "invalidEntries": [
     {
-      "path": "/workspace/.sparkwright/workflow-runs/bad.json",
+      "path": "/workspace/.sparkwright/workflow-runs/workflow_bad.journal/0000000000000002.json",
       "code": "parse_error",
-      "reason": "unsupported workflow run schemaVersion"
+      "reason": "journal checksum mismatch"
     }
   ]
 }
@@ -418,7 +419,7 @@ workflow resume is available.
 | Field                  | Type     | Required | Notes                                                                                                                |
 | ---------------------- | -------- | -------- | -------------------------------------------------------------------------------------------------------------------- |
 | `workflowRunId`        | string   | yes      | Durable workflow instance id, e.g. `workflow_abc`.                                                                   |
-| `sessionId`            | string   | no       | Session scope used to disambiguate where the workflow record lives.                                                  |
+| `sessionId`            | string   | no       | Expected persisted workflow job session; mismatches are rejected.                                                    |
 | `targetPath`           | string   | no       | Workspace-relative target path the resumed run should focus on if needed.                                            |
 | `confidentialPaths`    | string[] | no       | Additional workspace-relative paths/globs whose contents this resumed workflow run must not read.                    |
 | `confidentialDefaults` | boolean  | no       | Whether built-in conservative confidential path defaults are included; defaults to `true`.                           |

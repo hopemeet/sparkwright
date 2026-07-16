@@ -6,6 +6,10 @@
 > section could be misread as P1 work it carries an explicit phase label.
 > Current Facts are source-verified; substrate ownership and build order
 > defer to `substrate-sequencing.md`.
+> Storage convergence (2026-07-16): the accepted runtime now persists workflow
+> record/event truth only in `<workflowRunId>.journal/`. P2/P9a wording about
+> record JSON, event JSONL, or legacy-store compatibility is implementation
+> history, not a current compatibility requirement.
 >
 > Review history: six source-verified passes (2026-07-03 ×2,
 > 2026-07-04 ×3) plus a consolidation sweep; provenance is tagged inline —

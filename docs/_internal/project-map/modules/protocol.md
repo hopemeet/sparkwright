@@ -11,6 +11,16 @@ See also [../maps/safety/approvals.md](../maps/safety/approvals.md) and [../maps
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T22:26:54+0800
+- Scope: Workflow list/resume wire shapes are unchanged while their current
+  durable-path documentation now names the journal-only workspace layout and
+  journal quarantine diagnostics.
+- Read: protocol workflow types/schema, Host projections, Agent Runtime store,
+  fixtures, and current protocol reference.
+- Tests: Host workflow/protocol focused suites; Host typecheck; repository test
+  typecheck; full release gate.
+
+- Status: Verified
 - Date: 2026-07-16T13:36:30+0800
 - Scope: Event vocabulary no longer publishes dead `validation.started`/`validation.completed` values; `validation.failed` remains canonical for run-input and recoverable extension diagnostics.
 - Read: Core event/trace codecs, JSON schema, CLI producer, TUI consumer, and protocol docs.
@@ -85,10 +95,11 @@ Does not own:
 - `CapabilitySnapshot.workflows` is an optional diagnostic inventory of
   host-discovered workflow assets and parse errors. It is not a workflow run
   state channel and does not imply execution support.
-- `workflow.list` returns durable `WorkflowRunSnapshot` entries from the
-  session root, optionally scoped by `sessionId`, `status`, and `limit`; corrupt
-  workflow record entries are reported as invalid entries instead of aborting
-  the whole list. `workflow.resume` adopts a non-terminal workflow run by
+- `workflow.list` returns durable `WorkflowRunSnapshot` entries replayed from
+  workspace `.sparkwright/workflow-runs/<id>.journal/`, optionally scoped by
+  `sessionId`, `status`, and `limit`; quarantined journal entries are reported
+  as invalid entries instead of aborting the whole list. `workflow.resume`
+  adopts a non-terminal workflow run by
   `workflowRunId` plus optional `sessionId`; it has no `force` field because
   terminal workflow records are not resurrected in P2. In P3 Step 3,
   `WorkflowRunSnapshot.status:"waiting"` is active for human nodes and includes

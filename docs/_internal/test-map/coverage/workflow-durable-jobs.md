@@ -16,6 +16,11 @@
 
 ## Current Evidence
 
+- 2026-07-16 journal-only convergence: `FileWorkflowStore.get/list/eventLog`,
+  restart recovery, writer acquire/create/mutate/compensate, and all Host/CLI/TUI
+  consumers now use the immutable journal as their only record/event truth.
+  Record JSON/event JSONL readers, mirrors, and lazy import were removed; the
+  token lease remains the adjacent live-ownership primitive.
 - A: TUI full suite 399-test baseline includes immutable permission identity,
   exact run/workflow attribution, client-specific approval cleanup, and active
   main-run session mutation guards.
@@ -35,8 +40,8 @@ Use a controllable clock and barriers, not sleep:
    changing B's canonical record/history.
 4. A release must not affect B. B must continue through waiting, resume, and
    completion.
-5. Competing claims produce one generation winner; crash at every journal /
-   snapshot projection boundary must recover one canonical revision.
+5. Competing claims produce one generation winner; torn/corrupt journal slots
+   recover one canonical revision without advancing record/event truth.
 
 Do not mark C partially verified from current lease acquire/release tests; they
 do not exercise workflow mutation fencing.
@@ -44,10 +49,11 @@ do not exercise workflow mutation fencing.
 ## Package C Evidence (2026-07-11)
 
 - Canonical immutable journal separates physical sequence, record revision,
-  and fencing generation. Snapshot JSON and event JSONL are projections.
+  and fencing generation and is the sole record/event read layout.
 - Deterministic tests cover TTL takeover, stale mutation and compensation,
   revision races, stale-generation physical entries, torn publication slots,
-  corrupt projections, lazy-migration retry, and concurrent migration claim.
+  checksum/quarantine diagnostics, restart recovery, canonical event replay,
+  and concurrent journal claim.
 - Host fresh start, resume input, episode projection/usage, finalization,
   supervisor failure, and rollback use `WorkflowLeaseBoundWriter`; fixture and
   production searches show no external `update/restore/appendEvent` bypass.

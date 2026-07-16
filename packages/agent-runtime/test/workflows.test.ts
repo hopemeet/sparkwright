@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { RunId } from "@sparkwright/core";
@@ -318,8 +318,6 @@ describe("FileWorkflowStore", () => {
       "created",
       "completed",
     ]);
-    await writeFile(join(root, `${id}.json`), "{torn", "utf8");
-    await writeFile(join(root, `${id}.events.jsonl`), "{torn\n", "utf8");
     const recovered = new FileWorkflowStore({
       rootDir: root,
       createRoot: false,
@@ -332,6 +330,9 @@ describe("FileWorkflowStore", () => {
     expect(recovered.eventLog(id).events.map((event) => event.type)).toEqual([
       "created",
       "completed",
+    ]);
+    expect(recovered.list().records).toEqual([
+      expect.objectContaining({ id, status: "completed" }),
     ]);
     await writerB?.release();
   });
@@ -644,129 +645,10 @@ describe("FileWorkflowStore", () => {
         },
       },
     });
-    expect(
-      JSON.parse(await readFile(join(root, `${id}.json`), "utf8")),
-    ).toMatchObject({
-      schemaVersion: WORKFLOW_RUN_RECORD_SCHEMA_VERSION,
-      id,
-    });
-  });
-
-  it("reads legacy workflow records without authorization snapshots", async () => {
-    const root = await tempDir();
-    await writeFile(
-      join(root, "workflow_legacy.json"),
-      JSON.stringify(
-        {
-          schemaVersion: WORKFLOW_RUN_RECORD_SCHEMA_VERSION,
-          id: "workflow_legacy",
-          assetName: "legacy",
-          contentHash: "hash",
-          runIds: [],
-          status: "running",
-          attempts: {},
-          evidenceRefs: [],
-          verdictLog: [],
-          transitionLog: [],
-          resume: { verifyOnResume: true },
-          createdAt: "2026-07-04T00:00:00.000Z",
-          metadata: {},
-        },
-        null,
-        2,
-      ),
-      "utf8",
-    );
-
-    const reopened = new FileWorkflowStore({
-      rootDir: root,
-      createRoot: false,
-    });
-
-    expect(reopened.get("workflow_legacy" as WorkflowRunId)).toMatchObject({
-      id: "workflow_legacy",
-      status: "running",
-    });
-    expect(
-      reopened.get("workflow_legacy" as WorkflowRunId)?.authorizationSnapshot,
-    ).toBeUndefined();
-  });
-
-  it("resumes an idempotent lazy migration after baseline publication", async () => {
-    const root = await tempDir();
-    const id = "workflow_migration_retry" as WorkflowRunId;
-    const legacy = {
-      schemaVersion: WORKFLOW_RUN_RECORD_SCHEMA_VERSION,
-      id,
-      assetName: "legacy",
-      contentHash: "hash",
-      runIds: [],
-      status: "running" as const,
-      attempts: {},
-      evidenceRefs: [],
-      verdictLog: [],
-      transitionLog: [],
-      resume: { verifyOnResume: true },
-      createdAt: "2026-07-04T00:00:00.000Z",
-      metadata: {},
-    };
-    await writeFile(join(root, `${id}.json`), JSON.stringify(legacy), "utf8");
-    const legacyEvent = {
-      at: legacy.createdAt,
-      type: "created" as const,
-      workflowRunId: id,
-      status: "running" as const,
-    };
-    await writeFile(
-      join(root, `${id}.events.jsonl`),
-      `${JSON.stringify(legacyEvent)}\n`,
-      "utf8",
-    );
-    const store = new FileWorkflowStore({ rootDir: root, createRoot: false });
-    const record = store.get(id)!;
-    expect(
-      await publishWorkflowJournalEntry({
-        rootDir: root,
-        workflowRunId: id,
-        physicalSequence: 0,
-        payload: {
-          kind: "baseline",
-          generation: 0,
-          recordRevision: 0,
-          record: { ...record, generation: 0, recordRevision: 0 },
-          legacyEvents: [legacyEvent],
-        },
-      }),
-    ).toBe(true);
-
-    const writer = await store.acquireWriter(id, { owner: "migration-retry" });
-    expect(writer).toMatchObject({ generation: 1 });
-    expect(await writer!.readFresh()).toMatchObject({
-      id,
-      generation: 0,
-      recordRevision: 0,
-    });
-    const migrated = await writer!.mutate({
-      expectedRevision: 0,
-      patch: { metadata: { migrated: true } },
-      event: {
-        at: "2026-07-04T00:01:00.000Z",
-        type: "updated",
-        workflowRunId: id,
-        status: "running",
-        metadata: { migration: true },
-      },
-    });
-    expect(migrated).toMatchObject({
-      generation: 1,
-      recordRevision: 1,
-      metadata: { migrated: true },
-    });
-    expect(store.eventLog(id).events).toEqual([
-      legacyEvent,
-      expect.objectContaining({ metadata: { migration: true } }),
+    expect((await readdir(root)).sort()).toEqual([
+      `${id}.journal`,
+      `${id}.lease`,
     ]);
-    await writer!.release();
   });
 
   it("keeps async and sync replay aligned for a mismatched baseline record", async () => {
@@ -785,7 +667,7 @@ describe("FileWorkflowStore", () => {
           record: {
             schemaVersion: WORKFLOW_RUN_RECORD_SCHEMA_VERSION,
             id: wrongId,
-            assetName: "legacy",
+            assetName: "baseline",
             contentHash: "hash",
             runIds: [],
             status: "running",
@@ -799,7 +681,7 @@ describe("FileWorkflowStore", () => {
             generation: 0,
             recordRevision: 0,
           },
-          legacyEvents: [],
+          events: [],
         },
       }),
     ).toBe(true);
@@ -817,28 +699,9 @@ describe("FileWorkflowStore", () => {
     });
   });
 
-  it("allows only one concurrent lazy-migration claimant", async () => {
+  it("allows only one concurrent journal claimant", async () => {
     const root = await tempDir();
-    const id = "workflow_migration_race" as WorkflowRunId;
-    await writeFile(
-      join(root, `${id}.json`),
-      JSON.stringify({
-        schemaVersion: WORKFLOW_RUN_RECORD_SCHEMA_VERSION,
-        id,
-        assetName: "legacy",
-        contentHash: "hash",
-        runIds: [],
-        status: "running",
-        attempts: {},
-        evidenceRefs: [],
-        verdictLog: [],
-        transitionLog: [],
-        resume: { verifyOnResume: true },
-        createdAt: "2026-07-04T00:00:00.000Z",
-        metadata: {},
-      }),
-      "utf8",
-    );
+    const id = "workflow_claim_race" as WorkflowRunId;
     const storeA = new FileWorkflowStore({ rootDir: root });
     const storeB = new FileWorkflowStore({ rootDir: root });
     const claims = await Promise.all([
@@ -848,44 +711,6 @@ describe("FileWorkflowStore", () => {
     expect(claims.filter(Boolean)).toHaveLength(1);
     expect(claims.find(Boolean)).toMatchObject({ generation: 1 });
     await claims.find(Boolean)!.release();
-  });
-
-  it("treats partial authorization snapshots as absent instead of defaulting privileges", async () => {
-    const root = await tempDir();
-    await writeFile(
-      join(root, "workflow_partial_auth.json"),
-      JSON.stringify(
-        {
-          schemaVersion: WORKFLOW_RUN_RECORD_SCHEMA_VERSION,
-          id: "workflow_partial_auth",
-          assetName: "legacy",
-          contentHash: "hash",
-          runIds: [],
-          status: "running",
-          attempts: {},
-          evidenceRefs: [],
-          verdictLog: [],
-          transitionLog: [],
-          resume: { verifyOnResume: true },
-          authorizationSnapshot: {},
-          createdAt: "2026-07-04T00:00:00.000Z",
-          metadata: {},
-        },
-        null,
-        2,
-      ),
-      "utf8",
-    );
-
-    const reopened = new FileWorkflowStore({
-      rootDir: root,
-      createRoot: false,
-    });
-
-    expect(
-      reopened.get("workflow_partial_auth" as WorkflowRunId)
-        ?.authorizationSnapshot,
-    ).toBeUndefined();
   });
 
   it("can restore a workflow record snapshot after a failed adoption attempt", async () => {
@@ -977,7 +802,7 @@ describe("FileWorkflowStore", () => {
     });
   });
 
-  it("lists valid records while reporting corrupt entries", async () => {
+  it("lists canonical records while reporting quarantined journal entries", async () => {
     const root = await tempDir();
     const store = new FileWorkflowStore({ rootDir: root });
     const id = "workflow_good" as WorkflowRunId;
@@ -988,12 +813,40 @@ describe("FileWorkflowStore", () => {
       contentHash: "hash",
     });
     await writer!.release();
-    await writeFile(join(root, "bad-json.json"), "{", "utf8");
+    const badJsonId = "workflow_bad_json" as WorkflowRunId;
+    await mkdir(join(root, `${badJsonId}.journal`), { recursive: true });
     await writeFile(
-      join(root, "bad-shape.json"),
-      JSON.stringify({ schemaVersion: WORKFLOW_RUN_RECORD_SCHEMA_VERSION }),
+      join(root, `${badJsonId}.journal`, "0000000000000000.json"),
+      "{",
       "utf8",
     );
+    const badShapeId = "workflow_bad_shape" as WorkflowRunId;
+    await publishWorkflowJournalEntry({
+      rootDir: root,
+      workflowRunId: badShapeId,
+      physicalSequence: 0,
+      payload: {
+        kind: "baseline",
+        generation: 0,
+        recordRevision: 0,
+        record: {
+          schemaVersion: WORKFLOW_RUN_RECORD_SCHEMA_VERSION,
+          id: "workflow_wrong" as WorkflowRunId,
+          assetName: "bad",
+          contentHash: "hash",
+          runIds: [],
+          status: "running",
+          attempts: {},
+          evidenceRefs: [],
+          verdictLog: [],
+          transitionLog: [],
+          resume: { verifyOnResume: true },
+          createdAt: "2026-07-04T00:00:00.000Z",
+          metadata: {},
+        },
+        events: [],
+      },
+    });
 
     const reopened = new FileWorkflowStore({
       rootDir: root,
@@ -1012,7 +865,7 @@ describe("FileWorkflowStore", () => {
     );
   });
 
-  it("rebuilds event projection from the canonical journal", async () => {
+  it("reads event history only from the canonical journal", async () => {
     const root = await tempDir();
     const store = new FileWorkflowStore({ rootDir: root });
     const id = "workflow_events" as WorkflowRunId;
@@ -1042,10 +895,6 @@ describe("FileWorkflowStore", () => {
       },
     });
     await writer!.release();
-    await writeFile(join(root, `${id}.events.jsonl`), "{bad\n", {
-      flag: "a",
-    });
-
     const log = store.eventLog(id);
 
     expect(log.events.map((event) => event.type)).toEqual([
@@ -1053,6 +902,9 @@ describe("FileWorkflowStore", () => {
       "failed",
     ]);
     expect(log.invalidEntries).toEqual([]);
+    expect((await readdir(root)).some((name) => name.endsWith(".jsonl"))).toBe(
+      false,
+    );
   });
 
   it("leases workflow records for single-writer adoption", async () => {

@@ -8,6 +8,16 @@ cron, shell/task tools, and capability inspection.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T22:26:54+0800
+- Scope: checked capability ownership after workflow durable storage became
+  journal-only; workflow assets remain capabilities and workflow journals
+  remain workspace runtime state, with no inventory or wire-shape change.
+- Read: capability workflow contracts, Host list/resume consumers, and Agent
+  Runtime store/journal.
+- Tests: Host workflow/protocol focused suites; Host typecheck; repository test
+  typecheck; full release gate.
+
+- Status: Verified
 - Date: 2026-07-16T13:50:10+0800
 - Scope: Workflow assets remain capabilities, while durable workflow records have one workspace store and no session-local compatibility lookup.
 - Read: Host workflow list/resume, capability docs, Agent Runtime store helpers, and focused tests.
@@ -90,7 +100,8 @@ config + workspace capability roots
   `sparkwright run --workflow <name>` / `run.start.workflow` instantiate a
   selected asset without the former experimental workflow runtime gate.
   Durable workflow run records are workspace state under the canonical
-  `.sparkwright/workflow-runs/` root; they are not capabilities.
+  `.sparkwright/workflow-runs/<workflowRunId>.journal/` layout; they are not
+  capabilities.
   `sparkwright workflow list` may show both workflow assets and
   workflow run records, but `capability.inspect.workflows` remains the asset
   inventory.

@@ -17,7 +17,7 @@ export type WorkflowJournalPayload =
       generation: 0;
       recordRevision: 0;
       record?: WorkflowRunRecord;
-      legacyEvents: WorkflowStoreEvent[];
+      events: WorkflowStoreEvent[];
     }
   | {
       kind: "claim";
@@ -54,7 +54,11 @@ export interface WorkflowJournalHead {
   token?: string;
   record?: WorkflowRunRecord;
   events: WorkflowStoreEvent[];
-  quarantined: Array<{ path: string; reason: string }>;
+  quarantined: Array<{
+    path: string;
+    code: "read_failed" | "invalid_json" | "invalid_document";
+    reason: string;
+  }>;
 }
 
 export class WorkflowStaleWriteError extends Error {
@@ -98,7 +102,11 @@ export async function readWorkflowJournal(
       entry = JSON.parse(await readFile(path, "utf8")) as JournalEntry;
       validateEntry(entry, id, Number(name.slice(0, 16)));
     } catch (cause) {
-      head.quarantined.push({ path, reason: errorMessage(cause) });
+      head.quarantined.push({
+        path,
+        code: quarantineCode(cause),
+        reason: errorMessage(cause),
+      });
       head.physicalSequence = Math.max(
         head.physicalSequence,
         Number(name.slice(0, 16)),
@@ -126,7 +134,11 @@ export function readWorkflowJournalSync(
       entry = JSON.parse(readFileSync(path, "utf8")) as JournalEntry;
       validateEntry(entry, id, Number(name.slice(0, 16)));
     } catch (cause) {
-      head.quarantined.push({ path, reason: errorMessage(cause) });
+      head.quarantined.push({
+        path,
+        code: quarantineCode(cause),
+        reason: errorMessage(cause),
+      });
       head.physicalSequence = Math.max(
         head.physicalSequence,
         Number(name.slice(0, 16)),
@@ -201,6 +213,7 @@ function applyCanonicalEntry(
     if (entry.physicalSequence !== 0 || head.record || head.events.length > 0) {
       head.quarantined.push({
         path,
+        code: "invalid_document",
         reason: "duplicate or misplaced baseline",
       });
       return;
@@ -208,13 +221,14 @@ function applyCanonicalEntry(
     if (payload.record && payload.record.id !== entry.workflowRunId) {
       head.quarantined.push({
         path,
+        code: "invalid_document",
         reason: "baseline record identity mismatch",
       });
       return;
     }
     head.record = payload.record;
     if (payload.record) head.recordPhysicalSequence = entry.physicalSequence;
-    head.events = [...payload.legacyEvents];
+    head.events = [...payload.events];
     return;
   }
   if (payload.kind === "claim") {
@@ -223,7 +237,11 @@ function applyCanonicalEntry(
       payload.generation !== head.generation + 1 ||
       payload.expectedRecordRevision !== head.recordRevision
     ) {
-      head.quarantined.push({ path, reason: "invalid claim transition" });
+      head.quarantined.push({
+        path,
+        code: "invalid_document",
+        reason: "invalid claim transition",
+      });
       return;
     }
     head.generation = payload.generation;
@@ -240,7 +258,11 @@ function applyCanonicalEntry(
     payload.record.id !== entry.workflowRunId ||
     payload.event.workflowRunId !== entry.workflowRunId
   ) {
-    head.quarantined.push({ path, reason: "stale or discontinuous mutation" });
+    head.quarantined.push({
+      path,
+      code: "invalid_document",
+      reason: "stale or discontinuous mutation",
+    });
     return;
   }
   head.recordRevision = payload.recordRevision;
@@ -255,4 +277,14 @@ function checksum(value: unknown): string {
 
 function errorMessage(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
+}
+
+function quarantineCode(
+  cause: unknown,
+): "read_failed" | "invalid_json" | "invalid_document" {
+  if (cause instanceof SyntaxError) return "invalid_json";
+  if (cause && typeof cause === "object" && "code" in cause) {
+    return "read_failed";
+  }
+  return "invalid_document";
 }

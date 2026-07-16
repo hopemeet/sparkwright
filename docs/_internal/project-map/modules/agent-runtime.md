@@ -9,6 +9,16 @@ See also [../maps/capabilities/agents.md](../maps/capabilities/agents.md), [../m
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T22:26:54+0800
+- Scope: `FileWorkflowStore` now reads records and events only by replaying
+  `<id>.journal/`; snapshot/JSONL mirrors and sidecar-to-journal lazy migration
+  were removed, and baseline payloads carry canonical `events`.
+- Read: workflow store, journal, all store consumers, focused tests, and current
+  persistence/test maps.
+- Tests: Agent Runtime workflow focused suite/typecheck; Host workflow/protocol
+  focused suites/typecheck; repository test typecheck; full release gate.
+
+- Status: Verified
 - Date: 2026-07-16T13:50:10+0800
 - Scope: Workflow persistence exports only `workspaceWorkflowRunsDir`; the session-local `workflowRunsDir` layout helper was removed.
 - Read: workflow store/index sources, host consumers, focused workflow tests, and current persistence maps.
@@ -135,12 +145,13 @@ Does not own:
   `WorkflowRunRecord` is now a durable P2 state document with five-value
   status, version pinning, attempts, evidence refs, verdict/transition logs,
   resume policy, optional `wait.kind`, and optional resolved authorization
-  snapshots. Malformed present authorization snapshots are treated as absent
-  rather than defaulted. `FileWorkflowStore` composes the shared doc-store
-  primitives for per-session `workflow-runs/` records, JSONL events,
-  corrupt-entry diagnostics, waiting-state invariants, restore-after-adoption
-  rollback, and single-writer leases; host owns parsing, projection, and
-  run-loop execution.
+  snapshots. `FileWorkflowStore` persists one immutable journal per workflow
+  under workspace `.sparkwright/workflow-runs/`; journal replay is the sole
+  record/event read path for `get`, `list`, `eventLog`, restart recovery, and
+  writer acquisition. The journal keeps generation/revision fencing, checksum
+  validation, quarantined-entry diagnostics, and compensating mutations while
+  the adjacent token lease controls live writer ownership. Host owns parsing,
+  projection, and run-loop execution.
 - Workflow control is a separate typed command plane. `FileWorkflowControlInbox`
   owns immutable accepted commands, immutable terminal outcomes, scoped
   idempotency, corrupt-entry diagnostics, and a reconstructible cursor;
@@ -401,19 +412,10 @@ Does not own:
 
 ## Known Debts
 
-- Workflow canonical projection rewrites the full event JSONL after each
-  mutation and the immutable journal has no compaction policy. Long-lived,
-  high-mutation workflows may incur quadratic projection write amplification
-  and unbounded journal-file growth.
+- The immutable workflow journal has no compaction policy. Long-lived,
+  high-mutation workflows may incur unbounded journal-file growth.
 
 - Task/todo behavior spans host, CLI, TUI replay, and trace diagnostics; ownership can be easy to blur.
-- Workflow leases carry winner-validated fencing tokens for acquire/refresh/release,
-  but live `WorkflowStore` mutation paths do not validate that token; a stale
-  worker can therefore write after lease takeover until S1 write fencing lands.
-  The Package C audit additionally found constructor-time record caching and
-  split record/event writes. A refresh-only writer handle is insufficient
-  against a process frozen after refresh; the recommended reopen design uses a
-  monotonic fencing generation plus revisioned canonical mutation entries.
 - Durable workflow control remains outbound-notification oriented. The approved
   staged route adds a narrow typed control inbox after write fencing; it does
   not authorize a generic actor bus or nested background lifecycle.
