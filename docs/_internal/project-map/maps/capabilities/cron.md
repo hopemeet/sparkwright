@@ -10,8 +10,8 @@ See [../../modules/agent-runtime.md](../../modules/agent-runtime.md) for related
 ## Last Verified
 
 - Status: Verified
-- Date: 2026-07-16T12:45:00+0800
-- Scope: Cron runner receives accessMode and compiles it internally; the separate cron approval default was removed.
+- Date: 2026-07-16T13:21:00+0800
+- Scope: Cron accepts only `InteractionChannel`; unattended default is `ask` plus a deny-only approval handler, while CLI omission stays read-only.
 - Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.
 - Tests: focused access/policy/protocol/CLI/TUI/ACP/Workflow tests; npm run typecheck:test; npm run schema:check.
 

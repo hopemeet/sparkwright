@@ -15,8 +15,8 @@ import { createHash } from "node:crypto";
 import { dirname, basename, relative, resolve, sep } from "node:path";
 import { createArtifactId, createWorkspaceWriteId } from "./ids.js";
 import type { EventLog } from "./events.js";
-import type { ApprovalResolver } from "./approval.js";
 import { createApprovalRequest, resolveApproval } from "./approval.js";
+import type { InteractionChannel } from "./interaction.js";
 import {
   AnchoredEditError,
   applyAnchoredEdits,
@@ -226,7 +226,7 @@ export interface ControlledWorkspaceOptions {
   workspace: WorkspaceRuntime;
   events: EventLog;
   policy?: Policy;
-  approvalResolver?: ApprovalResolver;
+  interactionChannel?: InteractionChannel;
   validationHooks?: ValidationHook[];
   /**
    * Optional setState callback used to mutate run state through the run's
@@ -455,16 +455,17 @@ export class ControlledWorkspace implements WorkspaceRuntime {
     }
 
     if (decision.decision === "requires_approval") {
-      if (!this.options.approvalResolver) {
+      if (!this.options.interactionChannel?.approve) {
         this.options.events.emit("workspace.write.denied", {
           proposalId: proposal.id,
           path: workspacePath,
-          reason: "Approval required but no approval resolver was configured.",
+          reason:
+            "Approval required but no interaction channel approval handler was configured.",
           policy: decision,
         });
         throw new WorkspaceRuntimeError(
           "APPROVAL_UNAVAILABLE",
-          "Workspace write requires approval but no approval resolver was configured.",
+          "Workspace write requires approval but no interaction channel approval handler was configured.",
           {
             path: workspacePath,
             proposalId: proposal.id,
@@ -490,7 +491,9 @@ export class ControlledWorkspace implements WorkspaceRuntime {
       this.options.events.emit("approval.requested", request);
       const response = await resolveApproval(
         request,
-        this.options.approvalResolver,
+        this.options.interactionChannel.approve.bind(
+          this.options.interactionChannel,
+        ),
       );
       this.options.events.emit("approval.resolved", response);
       this.transitionState("running");

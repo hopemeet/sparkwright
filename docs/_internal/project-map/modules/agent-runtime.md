@@ -9,8 +9,8 @@ See also [../maps/capabilities/agents.md](../maps/capabilities/agents.md), [../m
 ## Last Verified
 
 - Status: Verified
-- Date: 2026-07-16T12:45:00+0800
-- Scope: Workflow run record v2 persists canonical accessMode authorization and rejects the former dual-field shape.
+- Date: 2026-07-16T13:21:00+0800
+- Scope: `spawnSubAgent` carries only `InteractionChannel`; callers use an approval-only channel when a child must not gain free-form interaction.
 - Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.
 - Tests: focused access/policy/protocol/CLI/TUI/ACP/Workflow tests; npm run typecheck:test; npm run schema:check.
 
@@ -212,9 +212,9 @@ Does not own:
   `truncated`, `stopReason`) are derived from the child run's real `run.*`
   outcome and payload flags; parent emit sites must not set a separate terminal
   state.
-- `spawnSubAgent` may receive an explicit approval resolver so configured child
-  runs can share the parent host/CLI/TUI approval path without gaining a
-  free-form interaction channel.
+- `spawnSubAgent` may receive an explicit approval-only interaction channel so
+  configured child runs can share the parent Host/CLI/TUI approval path without
+  gaining `ask` or `notify` capabilities.
 - `spawnSubAgent` accepts `workflowHooks?: WorkflowHook[]` as the child-run
   deterministic hook lane and forwards it into `CreateRunOptions.workflowHooks`.
   Agent-runtime carries caller-supplied hooks; host-owned Agent.md/config

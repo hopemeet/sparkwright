@@ -28,7 +28,7 @@ import {
 import { prepareMcpToolsForRun } from "@sparkwright/mcp-adapter";
 import { resolveShellSandboxConfig } from "@sparkwright/shell-sandbox";
 import { RECOMMENDED_FOREGROUND_TIMEOUT_MS } from "@sparkwright/shell-tool";
-import { createCliApprovalResolver } from "../cli-approval.js";
+import { createCliInteractionChannel } from "../cli-approval.js";
 import type { CliIO } from "../io.js";
 import { writeLine } from "../io.js";
 import type { CliRunAccess } from "../run-access.js";
@@ -239,7 +239,7 @@ export async function handleDelegatesCommand(
     env,
     sessionId: parsed.sessionId ?? createSessionId(),
     traceLevel: parsed.traceLevel,
-    approvalResolver: createCliApprovalResolver({
+    interactionChannel: createCliInteractionChannel({
       accessMode: parsed.runAccess.accessMode,
       io,
     }),

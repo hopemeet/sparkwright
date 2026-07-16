@@ -48,7 +48,7 @@ Read the linked entry file first, then the linked docs, then make the change. Do
 - **Interface to implement**: `ToolDefinition` (input schema, `policy.risk`, `policy.requiresApproval`, `execute`)
 - **Must read**: `docs/reference/EXTENSION_INTERFACES.md` (Tool Extensions), `docs/guides/CUSTOM_TOOL_EXAMPLE.md`, `docs/reference/PROTOCOL.md` (tool section)
 - **Must update on change**: `schemas/tool.schema.json` if the tool envelope grows new top-level fields; otherwise no schema change
-- **Wire in via**: `createRun({ tools: [...] })`. Approval is automatic when `policy.requiresApproval` is true and an `approvalResolver` is configured.
+- **Wire in via**: `createRun({ tools: [...], interactionChannel })`. Approval is automatic when `policy.requiresApproval` is true and `interactionChannel.approve` is configured.
 - **Notes**: Risky side effects belong in `governance.sideEffects`. Long outputs should become artifacts, not prompt context.
 
 ### Task: Use the official coding workspace tools
@@ -105,14 +105,14 @@ Read the linked entry file first, then the linked docs, then make the change. Do
 - **Wire in via**: subscribe at the run boundary (`run.events.subscribe(…)`) or wrap with a helper like `attachPerfettoSink({ source: run.events, outPath })`
 - **Notes**: Treat absence of `spanId` as "no span info" — degrade to an instant marker rather than dropping the event. Never block emission; sinks must be safe to throw inside without breaking the loop.
 
-### Task: Add a new approval channel (Slack, web UI, CI gate)
+### Task: Add a new interaction channel (Slack, web UI, CI gate)
 
-- **Entry point**: `packages/core/src/approval.ts`
-- **Interface to implement**: `ApprovalResolver`
+- **Entry point**: `packages/core/src/interaction.ts`
+- **Interface to implement**: `InteractionChannel` (`approve` is the approval handler)
 - **Must read**: `docs/reference/EXTENSION_INTERFACES.md` (Approval Extensions), ADR `0004-approval-gated-workspace-writes.md`, `docs/reference/PROTOCOL.md` (approval events)
 - **Must update on change**: no schema change; the `approval.requested` / `approval.resolved` payloads are already stable
-- **Wire in via**: `createRun({ approvalResolver: yourResolver })`
-- **Notes**: Requests and responses must remain JSON-serializable so trace can replay them. Do not mutate the run record from inside the resolver.
+- **Wire in via**: `createRun({ interactionChannel: yourChannel })`
+- **Notes**: Requests and responses must remain JSON-serializable so trace can replay them. Do not mutate the run record from inside the channel.
 
 ### Task: Add a custom policy (capability rule)
 

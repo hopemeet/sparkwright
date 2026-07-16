@@ -1071,17 +1071,19 @@ describe("host tools", () => {
         tools: [taskCreate!],
         policy,
         maxSteps: 4,
-        approvalResolver(request) {
-          approvalCalls += 1;
-          approvedBeforeTaskCreated = manager.store.list().length === 0;
-          expect(request.summary).toContain(
-            'Grant workspace write to child "writer"',
-          );
-          return {
-            approvalId: request.id,
-            decision: "approved",
-            message: "approved",
-          };
+        interactionChannel: {
+          approve(request) {
+            approvalCalls += 1;
+            approvedBeforeTaskCreated = manager.store.list().length === 0;
+            expect(request.summary).toContain(
+              'Grant workspace write to child "writer"',
+            );
+            return {
+              approvalId: request.id,
+              decision: "approved",
+              message: "approved",
+            };
+          },
         },
         model: {
           async complete() {
@@ -3260,19 +3262,21 @@ describe("host tools", () => {
         workspace: new LocalWorkspace(root),
         tools: [tool],
         maxSteps: 3,
-        approvalResolver(request) {
-          approvalCalls += 1;
-          expect(request.action).toBe("skill.apply");
-          expect(request.details).toMatchObject({
-            proposalId: expect.stringMatching(/^skillprop_/),
-            proposalRevision: 1,
-            effectHash: expect.stringMatching(/^[a-f0-9]{64}$/),
-            diff: expect.stringContaining("SKILL.md"),
-          });
-          return {
-            approvalId: request.id,
-            decision: "approved",
-          };
+        interactionChannel: {
+          approve(request) {
+            approvalCalls += 1;
+            expect(request.action).toBe("skill.apply");
+            expect(request.details).toMatchObject({
+              proposalId: expect.stringMatching(/^skillprop_/),
+              proposalRevision: 1,
+              effectHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+              diff: expect.stringContaining("SKILL.md"),
+            });
+            return {
+              approvalId: request.id,
+              decision: "approved",
+            };
+          },
         },
         model: {
           async complete() {
@@ -3980,14 +3984,16 @@ describe("host tools", () => {
       goal: "deny a background shell",
       workspace: new LocalWorkspace(ctx.workspaceRoot),
       tools: [shell],
-      approvalResolver(request) {
-        approvalCalls += 1;
-        expect(manager.store.list()).toHaveLength(0);
-        return {
-          approvalId: request.id,
-          decision: "denied",
-          message: "denied for test",
-        };
+      interactionChannel: {
+        approve(request) {
+          approvalCalls += 1;
+          expect(manager.store.list()).toHaveLength(0);
+          return {
+            approvalId: request.id,
+            decision: "denied",
+            message: "denied for test",
+          };
+        },
       },
       model: {
         async complete() {

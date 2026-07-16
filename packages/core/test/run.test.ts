@@ -170,10 +170,12 @@ describe("SparkwrightRun", () => {
     const run = createRun({
       goal: "semantic validation",
       tools: [checked],
-      approvalResolver(request) {
-        throw new Error(
-          `Approval should not be requested for ${request.action}`,
-        );
+      interactionChannel: {
+        approve(request) {
+          throw new Error(
+            `Approval should not be requested for ${request.action}`,
+          );
+        },
       },
       model: {
         async complete() {
@@ -967,12 +969,14 @@ describe("SparkwrightRun", () => {
       model,
       tools: [shell, writeReadme],
       workspace: new LocalWorkspace(root),
-      approvalResolver(request) {
-        expect(request.action).toBe("workspace.write");
-        return {
-          approvalId: request.id,
-          decision: "approved",
-        };
+      interactionChannel: {
+        approve(request) {
+          expect(request.action).toBe("workspace.write");
+          return {
+            approvalId: request.id,
+            decision: "approved",
+          };
+        },
       },
       maxSteps: 4,
     });
@@ -2891,11 +2895,13 @@ describe("SparkwrightRun", () => {
     const run = createRun({
       goal: "approve risky",
       tools: [risky],
-      approvalResolver(request) {
-        return {
-          approvalId: request.id,
-          decision: "approved",
-        };
+      interactionChannel: {
+        approve(request) {
+          return {
+            approvalId: request.id,
+            decision: "approved",
+          };
+        },
       },
       model: {
         async complete() {
@@ -2940,11 +2946,13 @@ describe("SparkwrightRun", () => {
     const run = createRun({
       goal: "approve explicit gate",
       tools: [tool],
-      approvalResolver(request) {
-        return {
-          approvalId: request.id,
-          decision: "approved",
-        };
+      interactionChannel: {
+        approve(request) {
+          return {
+            approvalId: request.id,
+            decision: "approved",
+          };
+        },
       },
       model: {
         async complete(input) {
@@ -2988,12 +2996,14 @@ describe("SparkwrightRun", () => {
     const run = createRun({
       goal: "approve custom summary",
       tools: [tool],
-      approvalResolver(request) {
-        expect(request.summary).toBe("Grant access to workspace");
-        return {
-          approvalId: request.id,
-          decision: "approved",
-        };
+      interactionChannel: {
+        approve(request) {
+          expect(request.summary).toBe("Grant access to workspace");
+          return {
+            approvalId: request.id,
+            decision: "approved",
+          };
+        },
       },
       model: {
         async complete(input) {
@@ -3060,24 +3070,26 @@ describe("SparkwrightRun", () => {
           };
         },
       },
-      approvalResolver(request) {
-        expect(request.details).toMatchObject({
-          toolName: "mcp_demo_echo",
-          risk: "risky",
-          toolOrigin: {
-            kind: "mcp",
-            name: "demo",
-            metadata: {
-              serverName: "demo",
-              mcpToolName: "echo",
+      interactionChannel: {
+        approve(request) {
+          expect(request.details).toMatchObject({
+            toolName: "mcp_demo_echo",
+            risk: "risky",
+            toolOrigin: {
+              kind: "mcp",
+              name: "demo",
+              metadata: {
+                serverName: "demo",
+                mcpToolName: "echo",
+              },
             },
-          },
-        });
+          });
 
-        return {
-          approvalId: request.id,
-          decision: "approved",
-        };
+          return {
+            approvalId: request.id,
+            decision: "approved",
+          };
+        },
       },
       model: {
         async complete(input) {
@@ -3270,8 +3282,10 @@ describe("SparkwrightRun", () => {
       policy: createWorkspaceMutationPolicy({
         allowWorkspaceWrites: false,
       }),
-      approvalResolver() {
-        throw new Error("read-only write-side-effect tools must not ask");
+      interactionChannel: {
+        approve() {
+          throw new Error("read-only write-side-effect tools must not ask");
+        },
       },
       model: {
         async complete() {
@@ -3327,9 +3341,11 @@ describe("SparkwrightRun", () => {
       goal: "do not let approval widen read-only",
       tools: [tool],
       policy: createWorkspaceMutationPolicy({ allowWorkspaceWrites: false }),
-      approvalResolver(request) {
-        approvalRequested = true;
-        return { approvalId: request.id, decision: "approved" };
+      interactionChannel: {
+        approve(request) {
+          approvalRequested = true;
+          return { approvalId: request.id, decision: "approved" };
+        },
       },
       model: {
         async complete() {
@@ -3571,10 +3587,12 @@ describe("SparkwrightRun", () => {
     const run = createRun({
       goal: "invalid risky",
       tools: [risky],
-      approvalResolver(request) {
-        throw new Error(
-          `Approval should not be requested for ${request.action}`,
-        );
+      interactionChannel: {
+        approve(request) {
+          throw new Error(
+            `Approval should not be requested for ${request.action}`,
+          );
+        },
       },
       model: {
         async complete() {
@@ -3628,12 +3646,14 @@ describe("SparkwrightRun", () => {
     const run = createRun({
       goal: "deny risky",
       tools: [risky],
-      approvalResolver(request) {
-        expect(run.record.state).toBe("waiting_approval");
-        return {
-          approvalId: request.id,
-          decision: "denied",
-        };
+      interactionChannel: {
+        approve(request) {
+          expect(run.record.state).toBe("waiting_approval");
+          return {
+            approvalId: request.id,
+            decision: "denied",
+          };
+        },
       },
       model: {
         async complete() {
@@ -4545,12 +4565,14 @@ describe("SparkwrightRun", () => {
       goal: "write file",
       workspace: new LocalWorkspace(root),
       tools: [writeReadme],
-      approvalResolver(request) {
-        expect(request.action).toBe("workspace.write");
-        return {
-          approvalId: request.id,
-          decision: "approved",
-        };
+      interactionChannel: {
+        approve(request) {
+          expect(request.action).toBe("workspace.write");
+          return {
+            approvalId: request.id,
+            decision: "approved",
+          };
+        },
       },
       model: {
         async complete() {
@@ -4621,11 +4643,13 @@ describe("SparkwrightRun", () => {
       goal: "write denied",
       workspace: new LocalWorkspace(root),
       tools: [writeReadme],
-      approvalResolver(request) {
-        return {
-          approvalId: request.id,
-          decision: "denied",
-        };
+      interactionChannel: {
+        approve(request) {
+          return {
+            approvalId: request.id,
+            decision: "denied",
+          };
+        },
       },
       model: {
         async complete() {

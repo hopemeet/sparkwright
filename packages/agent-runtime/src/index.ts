@@ -13,7 +13,6 @@
 // docs/EXTENSION_INTERFACES.md "Sub-agents".
 
 import type {
-  ApprovalResolver,
   ContextItem,
   CreateRunOptions,
   EventEmitter,
@@ -785,11 +784,6 @@ export interface SpawnSubAgentInput {
    */
   interactionChannel?: InteractionChannel | null;
   /**
-   * Approval resolver for child tool gates. Use this when a child should share
-   * the parent run's approval path without inheriting free-form interaction.
-   */
-  approvalResolver?: ApprovalResolver;
-  /**
    * Parent's UsageTracker. When supplied, the child's tool/model usage is
    * forwarded into this tracker so the parent's `usage()` snapshot reflects
    * the total cost of the run including children. Default: no rollup.
@@ -930,7 +924,6 @@ export function spawnSubAgent(input: SpawnSubAgentInput): SpawnedSubAgent {
     promptBuilder: childPromptBuilder,
     interactionChannel:
       input.interactionChannel === null ? undefined : input.interactionChannel,
-    approvalResolver: input.approvalResolver,
     hooks: input.hooks,
     workflowHooks: input.workflowHooks,
     maxSteps: input.maxSteps ?? parent.maxSteps,

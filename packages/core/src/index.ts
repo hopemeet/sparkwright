@@ -278,7 +278,6 @@ export {
 } from "./environment.js";
 
 // Approval
-export type { ApprovalResolver } from "./approval.js";
 export { createApprovalRequest, resolveApproval } from "./approval.js";
 export type {
   ApprovalEnforcementMode,
@@ -711,8 +710,6 @@ export type {
   InteractionNotificationLevel,
 } from "./interaction.js";
 export {
-  approvalResolverFromChannel,
-  channelFromApprovalResolver,
   createInteractionNotification,
   createInteractionQuestionRequest,
 } from "./interaction.js";

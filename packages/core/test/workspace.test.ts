@@ -181,15 +181,17 @@ describe("LocalWorkspace", () => {
       run,
       events,
       workspace: new LocalWorkspace(root),
-      approvalResolver(request) {
-        expect(run.state).toBe("waiting_approval");
-        expect(request.action).toBe("workspace.write");
-        expect(request.details.path).toBe("README.md");
-        expect(String(request.details.diff)).toContain("-before");
-        return {
-          approvalId: request.id,
-          decision: "approved",
-        };
+      interactionChannel: {
+        approve(request) {
+          expect(run.state).toBe("waiting_approval");
+          expect(request.action).toBe("workspace.write");
+          expect(request.details.path).toBe("README.md");
+          expect(String(request.details.diff)).toContain("-before");
+          return {
+            approvalId: request.id,
+            decision: "approved",
+          };
+        },
       },
     });
 
@@ -227,15 +229,17 @@ describe("LocalWorkspace", () => {
       run,
       events,
       workspace: new LocalWorkspace(root),
-      approvalResolver(request) {
-        expect(request.action).toBe("workspace.write");
-        expect(request.summary).toBe("Remove obsolete.md");
-        expect(request.details).toMatchObject({
-          path: "obsolete.md",
-          operation: "remove",
-        });
-        expect(String(request.details.diff)).toContain("-remove me");
-        return { approvalId: request.id, decision: "approved" };
+      interactionChannel: {
+        approve(request) {
+          expect(request.action).toBe("workspace.write");
+          expect(request.summary).toBe("Remove obsolete.md");
+          expect(request.details).toMatchObject({
+            path: "obsolete.md",
+            operation: "remove",
+          });
+          expect(String(request.details.diff)).toContain("-remove me");
+          return { approvalId: request.id, decision: "approved" };
+        },
       },
     });
 
@@ -270,8 +274,10 @@ describe("LocalWorkspace", () => {
       run,
       events,
       workspace: new LocalWorkspace(root),
-      approvalResolver(request) {
-        return { approvalId: request.id, decision: "denied" };
+      interactionChannel: {
+        approve(request) {
+          return { approvalId: request.id, decision: "denied" };
+        },
       },
     });
 
@@ -339,11 +345,13 @@ describe("LocalWorkspace", () => {
       run,
       events,
       workspace: new LocalWorkspace(root),
-      approvalResolver(request) {
-        return {
-          approvalId: request.id,
-          decision: "denied",
-        };
+      interactionChannel: {
+        approve(request) {
+          return {
+            approvalId: request.id,
+            decision: "denied",
+          };
+        },
       },
     });
 
@@ -367,12 +375,14 @@ describe("LocalWorkspace", () => {
       run,
       events,
       workspace: new LocalWorkspace(root),
-      async approvalResolver(request) {
-        await writeFile(join(root, "README.md"), "external change\n", "utf8");
-        return {
-          approvalId: request.id,
-          decision: "approved",
-        };
+      interactionChannel: {
+        async approve(request) {
+          await writeFile(join(root, "README.md"), "external change\n", "utf8");
+          return {
+            approvalId: request.id,
+            decision: "approved",
+          };
+        },
       },
     });
 
@@ -400,12 +410,14 @@ describe("LocalWorkspace", () => {
       run,
       events,
       workspace: new LocalWorkspace(root),
-      approvalResolver(request) {
-        expect(request.action).toBe("workspace.write");
-        return {
-          approvalId: request.id,
-          decision: "approved",
-        };
+      interactionChannel: {
+        approve(request) {
+          expect(request.action).toBe("workspace.write");
+          return {
+            approvalId: request.id,
+            decision: "approved",
+          };
+        },
       },
     });
     const anchored = await workspace.readAnchoredText("README.md");
@@ -446,8 +458,10 @@ describe("LocalWorkspace", () => {
       run,
       events,
       workspace: new LocalWorkspace(root),
-      approvalResolver() {
-        throw new Error("approval should not be requested");
+      interactionChannel: {
+        approve() {
+          throw new Error("approval should not be requested");
+        },
       },
     });
     const anchored = await workspace.readAnchoredText("README.md");
@@ -513,8 +527,10 @@ describe("LocalWorkspace", () => {
       run,
       events,
       workspace: new LocalWorkspace(root),
-      approvalResolver() {
-        throw new Error("approval should not be requested");
+      interactionChannel: {
+        approve() {
+          throw new Error("approval should not be requested");
+        },
       },
       validationHooks: [
         {
@@ -578,12 +594,14 @@ describe("LocalWorkspace", () => {
         run.state = state;
         run.updatedAt = new Date().toISOString();
       },
-      approvalResolver(request) {
-        expect(run.state).toBe("waiting_approval");
-        return {
-          approvalId: request.id,
-          decision: "approved",
-        };
+      interactionChannel: {
+        approve(request) {
+          expect(run.state).toBe("waiting_approval");
+          return {
+            approvalId: request.id,
+            decision: "approved",
+          };
+        },
       },
     });
 
@@ -611,8 +629,10 @@ describe("LocalWorkspace", () => {
           };
         },
       },
-      approvalResolver() {
-        throw new Error("approval should not be requested");
+      interactionChannel: {
+        approve() {
+          throw new Error("approval should not be requested");
+        },
       },
     });
 
@@ -674,10 +694,12 @@ describe("LocalWorkspace", () => {
       events,
       workspace: local,
       checkpointStore,
-      approvalResolver: (request) => ({
-        approvalId: request.id,
-        decision: "approved",
-      }),
+      interactionChannel: {
+        approve: (request) => ({
+          approvalId: request.id,
+          decision: "approved",
+        }),
+      },
     });
 
     const checkpointId = checkpointStore.openCheckpoint("turn-1");

@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import {
   compileRunAccessMode,
-  type ApprovalResolver,
+  type ApprovalRequest,
   type SparkwrightEvent,
 } from "@sparkwright/core";
 import type {
@@ -20,7 +20,7 @@ import {
   resolveHostStdioSpawn,
   tracePathForSession,
 } from "@sparkwright/host";
-import { createCliApprovalResolver } from "../cli-approval.js";
+import { createCliInteractionChannel } from "../cli-approval.js";
 import { createLiveEventFormatter } from "../event-format.js";
 import type { CliIO } from "../io.js";
 import { writeLine } from "../io.js";
@@ -193,20 +193,20 @@ async function runHostLifecycle(
       });
 
       client.on("approval.requested", (msg) => {
-        const resolver = createCliApprovalResolver({
+        const channel = createCliInteractionChannel({
           accessMode,
           io,
         });
-        const request: Parameters<ApprovalResolver>[0] = {
-          id: msg.payload.approvalId as Parameters<ApprovalResolver>[0]["id"],
-          runId: msg.payload.runId as Parameters<ApprovalResolver>[0]["runId"],
+        const request: ApprovalRequest = {
+          id: msg.payload.approvalId as ApprovalRequest["id"],
+          runId: msg.payload.runId as ApprovalRequest["runId"],
           action: msg.payload.action,
           summary: msg.payload.summary,
           details: msg.payload.details ?? {},
           createdAt: msg.timestamp,
           status: "pending",
         };
-        void Promise.resolve(resolver(request)).then((decision) =>
+        void Promise.resolve(channel.approve!(request)).then((decision) =>
           client
             ?.resolveApproval({
               approvalId: msg.payload.approvalId,

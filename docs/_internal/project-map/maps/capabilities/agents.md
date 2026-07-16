@@ -11,8 +11,8 @@ See [../../modules/agent-runtime.md](../../modules/agent-runtime.md) and [../../
 ## Last Verified
 
 - Status: Verified
-- Date: 2026-07-16T12:45:00+0800
-- Scope: Agent/delegate capability inspection receives canonical run access; child write gating remains an internal derived safety fact.
+- Date: 2026-07-16T13:21:00+0800
+- Scope: Agent/delegate child runs receive only `InteractionChannel`; configured children use approval-only channels and dynamic write grants use scoped approval-only channels.
 - Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.
 - Tests: focused access/policy/protocol/CLI/TUI/ACP/Workflow tests; npm run typecheck:test; npm run schema:check.
 
@@ -167,8 +167,8 @@ configured profiles/delegates
   request `grant.workspaceWrite: true`, or request one of the managed write
   tools (`write`, `edit`, `edit_anchored_text`) as sugar for that grant. The
   parent run approves this at spawn time through the normal tool approval path;
-  the child then receives a scoped approval resolver that auto-approves only
-  child `workspace.write` requests covered by the grant. The grant never exposes
+  the child then receives a scoped approval-only interaction channel that
+  auto-approves only child `workspace.write` requests covered by the grant. The grant never exposes
   `bash`, never bypasses `shouldWrite:false` or target/write budgets in the
   parent run policy, and cannot resurrect tools removed by `tools.allowed` /
   `tools.disabled` / `tools.use`.
@@ -238,10 +238,9 @@ configured profiles/delegates
   in the current runtime surface), intersects inherited selectors and concrete
   `allowedTools`, and passes only the resulting effective tools to the child run
   so prompt descriptors and runtime callability use one tool set.
-- Configured in-process delegate child runs share the host approval resolver
-  with the parent run for workspace write and shell gates, but keep
-  `interactionChannel` unset so delegates do not gain free-form user
-  interaction.
+- Configured in-process delegate child runs receive an approval-only Host
+  interaction channel for workspace write and shell gates, so delegates do not
+  gain free-form user interaction.
 - Configured in-process delegates inherit the parent run's effective `maxSteps`
   when neither the delegate nor the child profile sets one. Delegate/profile
   overrides remain explicit product choices, while run depth remains governed by

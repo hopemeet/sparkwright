@@ -2,7 +2,8 @@ import {
   createApprovalPolicy,
   resolveApprovalByPolicy,
   type ApprovalPolicy,
-  type ApprovalResolver,
+  type ApprovalRequest,
+  type InteractionChannel,
   type RunAccessMode,
 } from "@sparkwright/core";
 import type { CliIO } from "./io.js";
@@ -17,52 +18,54 @@ export function createCliApprovalPolicy(
   return createApprovalPolicy(accessMode);
 }
 
-export function createCliApprovalResolver(options: {
+export function createCliInteractionChannel(options: {
   approvalPolicy?: CliApprovalPolicy;
   accessMode: RunAccessMode;
   io: CliIO;
-}): ApprovalResolver {
+}): InteractionChannel {
   const policy =
     options.approvalPolicy ?? createCliApprovalPolicy(options.accessMode);
 
-  return async (request) => {
-    const policyDecision = resolveApprovalByPolicy(policy, request);
-    if (policyDecision) {
-      writeLine(
-        options.io.stderr,
-        approvalPolicyLogLine(policyDecision.message, request.summary),
-      );
-      return policyDecision;
-    }
+  return {
+    approve: async (request) => {
+      const policyDecision = resolveApprovalByPolicy(policy, request);
+      if (policyDecision) {
+        writeLine(
+          options.io.stderr,
+          approvalPolicyLogLine(policyDecision.message, request.summary),
+        );
+        return policyDecision;
+      }
 
-    if (options.io.stdinIsTTY !== true || !options.io.question) {
-      writeLine(
-        options.io.stderr,
-        `Approval denied because stdin is not interactive: ${request.summary}`,
-      );
-      return {
-        approvalId: request.id,
-        decision: "denied",
-        message: "Non-interactive stdin.",
-      };
-    }
-
-    write(options.io.stderr, formatApprovalRequest(request));
-
-    while (true) {
-      const answer = normalizeApprovalAnswer(
-        await options.io.question("Approve? [y/N] "),
-      );
-
-      if (answer) {
+      if (options.io.stdinIsTTY !== true || !options.io.question) {
+        writeLine(
+          options.io.stderr,
+          `Approval denied because stdin is not interactive: ${request.summary}`,
+        );
         return {
           approvalId: request.id,
-          decision: answer,
+          decision: "denied",
+          message: "Non-interactive stdin.",
         };
       }
 
-      writeLine(options.io.stderr, "Please answer yes or no.");
-    }
+      write(options.io.stderr, formatApprovalRequest(request));
+
+      while (true) {
+        const answer = normalizeApprovalAnswer(
+          await options.io.question("Approve? [y/N] "),
+        );
+
+        if (answer) {
+          return {
+            approvalId: request.id,
+            decision: answer,
+          };
+        }
+
+        writeLine(options.io.stderr, "Please answer yes or no.");
+      }
+    },
   };
 }
 
@@ -76,9 +79,7 @@ function approvalPolicyLogLine(
   return `Approval auto-approved: ${summary}`;
 }
 
-function formatApprovalRequest(
-  request: Parameters<ApprovalResolver>[0],
-): string {
+function formatApprovalRequest(request: ApprovalRequest): string {
   const lines = [
     "",
     "Approval required",

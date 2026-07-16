@@ -13,8 +13,8 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md),
 ## Last Verified
 
 - Status: Verified
-- Date: 2026-07-16T12:45:00+0800
-- Scope: Approval auto-policy is derived solely from accessMode; Core permission/write fields remain internal execution targets.
+- Date: 2026-07-16T13:21:00+0800
+- Scope: Core accepts only `InteractionChannel` for outbound approvals, questions, and notifications; resolver compatibility adapters and precedence fallback were removed.
 - Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.
 - Tests: focused access/policy/protocol/CLI/TUI/ACP/Workflow tests; npm run typecheck:test; npm run schema:check.
 
@@ -26,6 +26,7 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md),
 ## Main Files
 
 - `packages/core/src/run.ts`
+- `packages/core/src/interaction.ts`
 - `packages/core/src/runtime/tool-result-analysis.ts` — pure duplicate/repeat/failure/no-op/compaction classifiers
 - `packages/core/src/run-budget.ts`
 - `packages/core/src/context.ts`

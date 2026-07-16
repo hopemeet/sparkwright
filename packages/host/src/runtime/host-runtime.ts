@@ -20,7 +20,7 @@ import {
   resumeRunFromCheckpoint,
   sessionCompactArtifactToContextItem,
   sessionTurnToContextItems,
-  type ApprovalResolver,
+  type InteractionChannel,
   type BackgroundTaskPolicy,
   type ContentPart,
   type ContextItem,
@@ -424,7 +424,7 @@ interface PreparedHostRunEnvironment {
   pendingExtensionEvents: ReturnType<typeof createBufferedEmitter>;
   skillUsageRecorder: SkillUsageRecorder | null;
   runIdHolder: { value: string | null };
-  approvalResolver: ApprovalResolver;
+  interactionChannel: InteractionChannel;
   model: ModelAdapter;
   modelRef: string;
   resolvedModel: ResolvedModelConfig;
@@ -2023,7 +2023,7 @@ export class HostRuntime {
     const sessionRootDir = plan.sessionRootDir;
     const skillUsageRecorder = createSkillUsageRecorder(workspaceRoot);
     const runIdHolder: { value: string | null } = { value: null };
-    const approvalResolver = this.createApprovalResolver(runIdHolder);
+    const interactionChannel = this.createInteractionChannel(runIdHolder);
     const loadedConfig = await loadHostConfig(workspaceRoot);
     const baseToolConfig = loadedConfig.config.tools;
     const shellConfig = loadedConfig.config.shell;
@@ -2239,7 +2239,7 @@ export class HostRuntime {
       childTools: delegateChildTools,
       workspaceRoot,
       parentRunPolicy,
-      approvalResolver,
+      interactionChannel,
       sandbox: shellConfig?.sandbox,
       skillRoots: skillRoots.map((root) => root.root),
       configPaths: loadedConfig.attempted.map((entry) => entry.path),
@@ -2278,7 +2278,7 @@ export class HostRuntime {
           workflowHooksForProfile: delegateWorkflowHooksForProfile,
           childTools: delegateChildTools,
           parentRunPolicy,
-          approvalResolver,
+          interactionChannel,
           childRunStoreFactory,
           allowReadWriteWorkspaceAccess: runAccess.shouldWrite,
           maxDepth: agentConfig?.maxDepth,
@@ -2764,7 +2764,7 @@ export class HostRuntime {
         pendingExtensionEvents,
         skillUsageRecorder,
         runIdHolder,
-        approvalResolver,
+        interactionChannel,
         model: model.adapter,
         modelRef: model.resolved.modelRef,
         resolvedModel: model.resolved,
@@ -2890,60 +2890,62 @@ export class HostRuntime {
     await store.finish(run, result);
   }
 
-  private createApprovalResolver(runIdHolder: {
+  private createInteractionChannel(runIdHolder: {
     value: string | null;
-  }): ApprovalResolver {
-    return (request) =>
-      new Promise((resolve) => {
-        const approvalId = request.id;
-        const currentRunId = runIdHolder.value;
-        if (!currentRunId) {
-          // Approval requested before runId was populated — should not happen
-          // because createRun returns synchronously, but guard rather than
-          // crash on `null!`.
-          resolve({ approvalId, decision: "denied" });
-          return;
-        }
-        const execution = this.currentExecution;
-        if (!execution) {
-          resolve({ approvalId, decision: "denied" });
-          return;
-        }
-        const timeout = setTimeout(() => {
-          execution.resolveApproval(approvalId, {
-            decision: "denied",
-            message: "Approval timed out.",
-          });
-        }, this.opts.approvalTimeoutMs ?? 300_000);
-        timeout.unref?.();
-        execution.addApproval({
-          approvalId,
-          runId: currentRunId,
-          resolve: (response) => {
-            clearTimeout(timeout);
-            resolve({ approvalId, ...response });
-          },
-        });
-        const details = request.details as { path?: unknown } | undefined;
-        this.opts.emit({
-          envelope: "event",
-          id: nextMessageId("evt"),
-          kind: "approval.requested",
-          timestamp: nowIso(),
-          payload: {
-            runId: currentRunId,
+  }): InteractionChannel {
+    return {
+      approve: (request) =>
+        new Promise((resolve) => {
+          const approvalId = request.id;
+          const currentRunId = runIdHolder.value;
+          if (!currentRunId) {
+            // Approval requested before runId was populated — should not happen
+            // because createRun returns synchronously, but guard rather than
+            // crash on `null!`.
+            resolve({ approvalId, decision: "denied" });
+            return;
+          }
+          const execution = this.currentExecution;
+          if (!execution) {
+            resolve({ approvalId, decision: "denied" });
+            return;
+          }
+          const timeout = setTimeout(() => {
+            execution.resolveApproval(approvalId, {
+              decision: "denied",
+              message: "Approval timed out.",
+            });
+          }, this.opts.approvalTimeoutMs ?? 300_000);
+          timeout.unref?.();
+          execution.addApproval({
             approvalId,
-            action: request.action,
-            summary: request.summary,
-            details: {
-              ...(typeof details?.path === "string"
-                ? { path: details.path }
-                : {}),
-              ...(request.details ?? {}),
+            runId: currentRunId,
+            resolve: (response) => {
+              clearTimeout(timeout);
+              resolve({ approvalId, ...response });
             },
-          },
-        });
-      });
+          });
+          const details = request.details as { path?: unknown } | undefined;
+          this.opts.emit({
+            envelope: "event",
+            id: nextMessageId("evt"),
+            kind: "approval.requested",
+            timestamp: nowIso(),
+            payload: {
+              runId: currentRunId,
+              approvalId,
+              action: request.action,
+              summary: request.summary,
+              details: {
+                ...(typeof details?.path === "string"
+                  ? { path: details.path }
+                  : {}),
+                ...(request.details ?? {}),
+              },
+            },
+          });
+        }),
+    };
   }
 
   // P3 Step 4a: actor-owned episode driver. The workflow/todo actor owns the
@@ -3399,7 +3401,7 @@ export class HostRuntime {
         goal,
         context: [...(env.preparedSkills?.context ?? []), ...extraContext],
         workspace: env.workspace,
-        approvalResolver: env.approvalResolver,
+        interactionChannel: env.interactionChannel,
         policy: createHostRunPolicy({
           permissionMode,
           shouldWrite,
@@ -3476,7 +3478,7 @@ export class HostRuntime {
               const run = resumeRunFromCheckpoint(checkpoint, {
                 force: payload.force,
                 workspace: env.workspace,
-                approvalResolver: env.approvalResolver,
+                interactionChannel: env.interactionChannel,
                 policy: createHostRunPolicy({
                   permissionMode,
                   shouldWrite,
@@ -3689,7 +3691,7 @@ export class HostRuntime {
           ...extraContext,
         ],
         workspace: env.workspace,
-        approvalResolver: env.approvalResolver,
+        interactionChannel: env.interactionChannel,
         policy: createHostRunPolicy({
           permissionMode,
           shouldWrite,
@@ -4016,7 +4018,7 @@ export class HostRuntime {
           ...extraContext,
         ],
         workspace: env.workspace,
-        approvalResolver: env.approvalResolver,
+        interactionChannel: env.interactionChannel,
         policy: createHostRunPolicy({
           permissionMode,
           shouldWrite,
@@ -5491,7 +5493,7 @@ export function createConfiguredDelegateTools(input: {
   childTools: ToolDefinition[];
   workspaceRoot: string;
   parentRunPolicy: Policy;
-  approvalResolver?: ApprovalResolver;
+  interactionChannel?: InteractionChannel;
   sandbox?: Parameters<typeof createExternalCommandDelegateTool>[0]["sandbox"];
   skillRoots?: readonly string[];
   configPaths?: readonly string[];
@@ -5619,8 +5621,7 @@ export function createConfiguredDelegateTools(input: {
               shouldWrite: input.allowReadWriteWorkspaceAccess,
             },
           ),
-          interactionChannel: null,
-          approvalResolver: input.approvalResolver,
+          interactionChannel: input.interactionChannel,
           // Persist the child's trace under its own agent dir + register it in
           // session.json, and roll its usage up into the parent run's tracker.
           runStore: input.childRunStoreFactory(profile.id),
@@ -5668,7 +5669,7 @@ export function createDelegateParallelTool(input: {
   workflowHooksForProfile?: InProcessDelegateWorkflowHooksForProfile;
   childTools: ToolDefinition[];
   parentRunPolicy: Policy;
-  approvalResolver?: ApprovalResolver;
+  interactionChannel?: InteractionChannel;
   allowReadWriteWorkspaceAccess: boolean;
   maxDepth?: number;
   workspaceRoot?: string;
@@ -5905,8 +5906,7 @@ export function createDelegateParallelTool(input: {
                 shouldWrite: input.allowReadWriteWorkspaceAccess,
               },
             ),
-            interactionChannel: null,
-            approvalResolver: input.approvalResolver,
+            interactionChannel: input.interactionChannel,
             runStore: input.childRunStoreFactory(spec.profile.id),
             parentUsageTracker: parent.getUsageTracker(),
             metadata: {
@@ -6526,7 +6526,7 @@ export function createDynamicSpawnAgentTool(input: {
           input.parentRunPolicy,
           createAgentProfilePolicy(profile),
         ]),
-        approvalResolver: createAgentWorkspaceWriteGrantResolver({
+        interactionChannel: createAgentWorkspaceWriteGrantChannel({
           enabled: toolRequest.workspaceWriteGrant,
           source: input.entrypoint ?? "spawn_agent",
           role: parsed.role,
@@ -6542,7 +6542,6 @@ export function createDynamicSpawnAgentTool(input: {
               }),
             }
           : {}),
-        interactionChannel: null,
         // Persist the child's own trace/transcript under
         // `sessions/<id>/agents/<agentId>/` and register it in session.json,
         // instead of letting its steps disappear once the tool returns.
@@ -6855,26 +6854,28 @@ function createLinkedAbortController(parentSignal?: AbortSignal): {
   };
 }
 
-function createAgentWorkspaceWriteGrantResolver(input: {
+function createAgentWorkspaceWriteGrantChannel(input: {
   enabled: boolean;
   source: string;
   role: string;
-}): ApprovalResolver | undefined {
+}): InteractionChannel | undefined {
   if (!input.enabled) return undefined;
-  return (request) => {
-    if (request.action === "workspace.write") {
+  return {
+    approve: (request) => {
+      if (request.action === "workspace.write") {
+        return {
+          approvalId: request.id,
+          decision: "approved",
+          message: `Auto-approved by ${input.source} workspaceWrite grant for ${input.role}.`,
+          autoApproved: true,
+        };
+      }
       return {
         approvalId: request.id,
-        decision: "approved",
-        message: `Auto-approved by ${input.source} workspaceWrite grant for ${input.role}.`,
-        autoApproved: true,
+        decision: "denied",
+        message: `Approval request is outside the ${input.source} workspaceWrite grant.`,
       };
-    }
-    return {
-      approvalId: request.id,
-      decision: "denied",
-      message: `Approval request is outside the ${input.source} workspaceWrite grant.`,
-    };
+    },
   };
 }
 

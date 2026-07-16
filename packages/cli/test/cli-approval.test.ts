@@ -1,12 +1,12 @@
-import type { ApprovalResolver } from "@sparkwright/core";
+import type { ApprovalRequest } from "@sparkwright/core";
 import { describe, expect, it } from "vitest";
 import {
   createCliApprovalPolicy,
-  createCliApprovalResolver,
+  createCliInteractionChannel,
 } from "../src/cli-approval.js";
 import type { CliIO } from "../src/io.js";
 
-describe("CLI approval resolver", () => {
+describe("CLI interaction channel", () => {
   it("derives one approval policy from accessMode", () => {
     expect(createCliApprovalPolicy("ask")).toEqual({
       enforcement: "ask",
@@ -23,19 +23,23 @@ describe("CLI approval resolver", () => {
   });
 
   it("accept-edits auto-approves only workspace writes", async () => {
-    const resolver = createCliApprovalResolver({
+    const channel = createCliInteractionChannel({
       accessMode: "accept-edits",
       io: captureIo(),
     });
 
     await expect(
-      resolver(request({ action: "workspace.write", summary: "Write README" })),
+      channel.approve!(
+        request({ action: "workspace.write", summary: "Write README" }),
+      ),
     ).resolves.toMatchObject({
       decision: "approved",
       message: "Auto-approved by accept-edits access mode.",
     });
     await expect(
-      resolver(request({ action: "tool.execute", summary: "Run bash" })),
+      channel.approve!(
+        request({ action: "tool.execute", summary: "Run bash" }),
+      ),
     ).resolves.toMatchObject({
       decision: "denied",
       message: "Non-interactive stdin.",
@@ -43,20 +47,24 @@ describe("CLI approval resolver", () => {
   });
 
   it("ask prompts interactively and denies without an interactive stdin", async () => {
-    const interactive = createCliApprovalResolver({
+    const interactive = createCliInteractionChannel({
       accessMode: "ask",
       io: captureIo({ stdinIsTTY: true, question: async () => "yes" }),
     });
     await expect(
-      interactive(request({ action: "tool.execute", summary: "Run bash" })),
+      interactive.approve!(
+        request({ action: "tool.execute", summary: "Run bash" }),
+      ),
     ).resolves.toMatchObject({ decision: "approved" });
 
-    const nonInteractive = createCliApprovalResolver({
+    const nonInteractive = createCliInteractionChannel({
       accessMode: "ask",
       io: captureIo(),
     });
     await expect(
-      nonInteractive(request({ action: "tool.execute", summary: "Run bash" })),
+      nonInteractive.approve!(
+        request({ action: "tool.execute", summary: "Run bash" }),
+      ),
     ).resolves.toMatchObject({
       decision: "denied",
       message: "Non-interactive stdin.",
@@ -64,12 +72,12 @@ describe("CLI approval resolver", () => {
   });
 
   it("bypass auto-approves approval requests", async () => {
-    const resolver = createCliApprovalResolver({
+    const channel = createCliInteractionChannel({
       accessMode: "bypass",
       io: captureIo(),
     });
     await expect(
-      resolver(
+      channel.approve!(
         request({ action: "tool.execute", summary: "Run external shell" }),
       ),
     ).resolves.toMatchObject({
@@ -83,10 +91,10 @@ function request(input: {
   action: string;
   summary: string;
   details?: Record<string, unknown>;
-}): Parameters<ApprovalResolver>[0] {
+}): ApprovalRequest {
   return {
-    id: "approval_test" as Parameters<ApprovalResolver>[0]["id"],
-    runId: "run_test" as Parameters<ApprovalResolver>[0]["runId"],
+    id: "approval_test" as ApprovalRequest["id"],
+    runId: "run_test" as ApprovalRequest["runId"],
     action: input.action,
     summary: input.summary,
     details: input.details ?? {},

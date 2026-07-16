@@ -744,9 +744,11 @@ describe("spawnSubAgent", () => {
       model: childModel,
       tools: [riskyTool],
       maxSteps: 3,
-      approvalResolver: (request) => {
-        approvals += 1;
-        return { approvalId: request.id, decision: "approved" };
+      interactionChannel: {
+        approve: (request) => {
+          approvals += 1;
+          return { approvalId: request.id, decision: "approved" };
+        },
       },
     });
 

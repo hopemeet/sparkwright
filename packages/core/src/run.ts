@@ -6,7 +6,7 @@
 //
 //   * Tools          → tools.ts                 (defineTool, ToolRegistry)
 //   * Policy         → policy.ts                (createLayeredPolicy)
-//   * Approval       → approval.ts              (ApprovalResolver)
+//   * Approval       → approval.ts              (request validation)
 //   * Interaction    → interaction.ts           (InteractionChannel)
 //   * Hooks          → hooks.ts                 (RunHook)
 //   * Usage / cost   → usage.ts                 (UsageTracker)
@@ -26,13 +26,8 @@ import {
   withSpan,
   type SpanFrame,
 } from "./spans.js";
+import { createApprovalRequest, resolveApproval } from "./approval.js";
 import {
-  createApprovalRequest,
-  type ApprovalResolver,
-  resolveApproval,
-} from "./approval.js";
-import {
-  approvalResolverFromChannel,
   createInteractionNotification,
   createInteractionQuestionRequest,
   type InteractionChannel,
@@ -354,11 +349,9 @@ export interface CreateRunOptions {
   loopServices?: RunLoopServices;
   tools?: ToolDefinition[];
   policy?: Policy;
-  approvalResolver?: ApprovalResolver;
   /**
-   * Unified outbound channel for approve / ask / notify. When provided, the
-   * loop uses `interactionChannel.approve` as the approval resolver (taking
-   * precedence over `approvalResolver` for that one capability) and exposes
+   * Unified outbound channel for approve / ask / notify. The loop uses
+   * `interactionChannel.approve` for approvals and exposes
    * `RunHandle.askUser()` / `RunHandle.notifyUser()` for tools and hooks.
    * See {@link InteractionChannel}.
    */
@@ -704,7 +697,6 @@ export class SparkwrightRun implements RunHandle {
   readonly events: EventLog;
   readonly tools = new ToolRegistry();
   private readonly policy: Policy;
-  private readonly approvalResolver?: ApprovalResolver;
   private readonly interactionChannel?: InteractionChannel;
   private readonly hook: RunHook;
   /**
@@ -811,13 +803,6 @@ export class SparkwrightRun implements RunHandle {
     this.events.subscribe((event) => this.runHealth.observeEvent(event));
     this.policy = options.policy ?? createDefaultPolicy();
     this.interactionChannel = options.interactionChannel;
-    // InteractionChannel.approve, when supplied, takes precedence as the
-    // approval resolver. The legacy `approvalResolver` is honored when the
-    // channel does not implement approve, or when no channel is supplied.
-    this.approvalResolver =
-      (this.interactionChannel &&
-        approvalResolverFromChannel(this.interactionChannel)) ??
-      options.approvalResolver;
     for (const seed of options.hooks ?? []) {
       this.dynamicHooks.push({
         ...seed,
@@ -856,7 +841,7 @@ export class SparkwrightRun implements RunHandle {
           workspace: options.workspace,
           events: this.events,
           policy: this.policy,
-          approvalResolver: this.approvalResolver,
+          interactionChannel: this.interactionChannel,
           validationHooks: options.validationHooks,
           setState: (state) => this.setState(state),
           checkpointStore: options.workspaceCheckpointStore,
@@ -2495,9 +2480,9 @@ export class SparkwrightRun implements RunHandle {
     summary: string;
     details?: Record<string, unknown>;
   }): Promise<boolean> {
-    if (!this.approvalResolver) {
+    if (!this.interactionChannel?.approve) {
       throw new Error(
-        "Approval requested but no approval resolver was configured.",
+        "Approval requested but no interaction channel approval handler was configured.",
       );
     }
 
@@ -2511,7 +2496,10 @@ export class SparkwrightRun implements RunHandle {
     this.setState("waiting_approval");
     this.events.emit("approval.requested", request);
     this.events.emit("interaction.requested", { kind: "approval", request });
-    const response = await resolveApproval(request, this.approvalResolver);
+    const response = await resolveApproval(
+      request,
+      this.interactionChannel.approve.bind(this.interactionChannel),
+    );
     this.events.emit("approval.resolved", response);
     this.events.emit("interaction.resolved", { kind: "approval", response });
     this.setState("running");

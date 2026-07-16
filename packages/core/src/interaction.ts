@@ -3,16 +3,13 @@
 //
 // InteractionChannel is the unified outbound channel from the runtime to a
 // user (CLI prompt, desktop modal, Slack/Feishu DM, web UI, etc.). It
-// generalizes the existing ApprovalResolver and adds two more shapes that
-// embedders consistently need:
+// covers the three outbound shapes that embedders consistently need:
 //
-//   - `approve`  → yes/no decision on a risky action (back-compat with the
-//                  existing ApprovalResolver).
+//   - `approve`  → yes/no decision on a risky action.
 //   - `ask`      → free-form or multiple-choice question for the user.
 //   - `notify`   → fire-and-forget status / warning / error message.
 //
-// Only `approve` is wired into the core run loop (via the back-compat shim
-// `approvalResolverFromChannel`). `ask` and `notify` are surfaced on
+// `approve` is wired into the core run loop. `ask` and `notify` are surfaced on
 // `RunHandle.askUser()` / `RunHandle.notifyUser()` so tools and hooks can
 // reach the user without each integrator inventing its own channel.
 //
@@ -22,7 +19,6 @@
 import { createId } from "./ids.js";
 import type { RunId } from "./ids.js";
 import type { ApprovalRequest, ApprovalResponse } from "./types.js";
-import type { ApprovalResolver } from "./approval.js";
 
 /**
  * One fixed choice on a structured question. `preview` is reserved for
@@ -127,31 +123,6 @@ export interface InteractionChannel {
     request: InteractionQuestionRequest,
   ): Promise<InteractionQuestionResponse> | InteractionQuestionResponse;
   notify?(notification: InteractionNotification): void | Promise<void>;
-}
-
-/**
- * Adapt an InteractionChannel to the existing `ApprovalResolver` shape that
- * the run loop already consumes. Returns `undefined` if the channel does not
- * implement `approve`, so callers can fall back to a default.
- */
-export function approvalResolverFromChannel(
-  channel: InteractionChannel,
-): ApprovalResolver | undefined {
-  if (!channel.approve) return undefined;
-  return (request) => channel.approve!(request);
-}
-
-/**
- * Lift a legacy `ApprovalResolver` into an InteractionChannel (with no
- * `ask` / `notify` capability). Use this when migrating embedders that still
- * pass `approvalResolver` directly.
- */
-export function channelFromApprovalResolver(
-  resolver: ApprovalResolver,
-): InteractionChannel {
-  return {
-    approve: (request) => resolver(request),
-  };
 }
 
 export function createInteractionQuestionRequest(input: {

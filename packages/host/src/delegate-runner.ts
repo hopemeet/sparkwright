@@ -7,7 +7,7 @@ import {
   createSessionRunStoreFactory,
   FileSessionStore,
   resolveApproval,
-  type ApprovalResolver,
+  type InteractionChannel,
   type RunResult,
   type SparkwrightEvent,
 } from "@sparkwright/core";
@@ -39,7 +39,7 @@ export interface RunConfiguredDelegateInput {
   goal: string;
   env?: Record<string, string | undefined>;
   metadata?: Record<string, unknown>;
-  approvalResolver?: ApprovalResolver;
+  interactionChannel?: InteractionChannel;
   shouldWrite?: boolean;
   sessionId?: string;
   traceLevel?: TraceLevel;
@@ -242,7 +242,7 @@ export async function runConfiguredDelegate(
 
   const requiresApproval = delegate.requiresApproval ?? true;
   if (requiresApproval) {
-    if (!input.approvalResolver) {
+    if (!input.interactionChannel?.approve) {
       await persistence?.finish({
         state: "failed",
         code: "DELEGATE_APPROVAL_DENIED",
@@ -274,7 +274,10 @@ export async function runConfiguredDelegate(
       summary: request.summary,
       details: request.details,
     });
-    const response = await resolveApproval(request, input.approvalResolver);
+    const response = await resolveApproval(
+      request,
+      input.interactionChannel.approve.bind(input.interactionChannel),
+    );
     parent.events.emit("approval.resolved", {
       approvalId: request.id,
       decision: response.decision,

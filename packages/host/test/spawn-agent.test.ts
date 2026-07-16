@@ -328,17 +328,19 @@ describe("host spawn_agent wiring", () => {
         tools: [spawnTool],
         policy,
         maxSteps: 5,
-        approvalResolver(request) {
-          approvalCalls += 1;
-          approvedBeforeChildStarted = childCalls === 0;
-          expect(request.summary).toContain(
-            'Grant workspace write to child "writer"',
-          );
-          return {
-            approvalId: request.id,
-            decision: "approved",
-            message: "approved",
-          };
+        interactionChannel: {
+          approve(request) {
+            approvalCalls += 1;
+            approvedBeforeChildStarted = childCalls === 0;
+            expect(request.summary).toContain(
+              'Grant workspace write to child "writer"',
+            );
+            return {
+              approvalId: request.id,
+              decision: "approved",
+              message: "approved",
+            };
+          },
         },
         model: {
           async complete() {
@@ -433,16 +435,18 @@ describe("host spawn_agent wiring", () => {
         tools: [spawnTool],
         policy,
         maxSteps: 5,
-        approvalResolver(request) {
-          expect(request.summary).toContain(
-            'Grant workspace write to child "writer"',
-          );
-          return {
-            approvalId: request.id,
-            decision: "approved",
-            message: "Auto-approved by bypass_permissions.",
-            autoApproved: true,
-          };
+        interactionChannel: {
+          approve(request) {
+            expect(request.summary).toContain(
+              'Grant workspace write to child "writer"',
+            );
+            return {
+              approvalId: request.id,
+              decision: "approved",
+              message: "Auto-approved by bypass_permissions.",
+              autoApproved: true,
+            };
+          },
         },
         model: {
           async complete() {
@@ -517,12 +521,14 @@ describe("host spawn_agent wiring", () => {
         tools: [spawnTool],
         policy,
         maxSteps: 3,
-        approvalResolver(request) {
-          return {
-            approvalId: request.id,
-            decision: "denied",
-            message: "denied",
-          };
+        interactionChannel: {
+          approve(request) {
+            return {
+              approvalId: request.id,
+              decision: "denied",
+              message: "denied",
+            };
+          },
         },
         model: {
           async complete() {
@@ -597,8 +603,12 @@ describe("host spawn_agent wiring", () => {
         tools: [spawnTool],
         policy,
         maxSteps: 3,
-        approvalResolver() {
-          throw new Error("read-only grant denial must happen before approval");
+        interactionChannel: {
+          approve() {
+            throw new Error(
+              "read-only grant denial must happen before approval",
+            );
+          },
         },
         model: {
           async complete() {
@@ -679,8 +689,12 @@ describe("host spawn_agent wiring", () => {
         tools: [spawnTool],
         policy,
         maxSteps: 3,
-        approvalResolver() {
-          throw new Error("default read-only spawn must not request approval");
+        interactionChannel: {
+          approve() {
+            throw new Error(
+              "default read-only spawn must not request approval",
+            );
+          },
         },
         model: {
           async complete() {
@@ -1008,13 +1022,15 @@ describe("host spawn_agent wiring", () => {
         tools: [spawnTool],
         policy,
         maxSteps: 5,
-        approvalResolver(request) {
-          approvalCalls += 1;
-          return {
-            approvalId: request.id,
-            decision: "approved",
-            message: "approved",
-          };
+        interactionChannel: {
+          approve(request) {
+            approvalCalls += 1;
+            return {
+              approvalId: request.id,
+              decision: "approved",
+              message: "approved",
+            };
+          },
         },
         model: {
           async complete() {

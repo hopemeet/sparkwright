@@ -120,7 +120,7 @@ import {
   WorkflowSupervisor,
   type WorkflowServiceHandoff,
 } from "@sparkwright/server-runtime";
-import { createCliApprovalResolver } from "./cli-approval.js";
+import { createCliInteractionChannel } from "./cli-approval.js";
 import type { CliIO } from "./io.js";
 import { writeLine } from "./io.js";
 import type { CliRunAccess } from "./run-access.js";
@@ -4634,7 +4634,7 @@ async function handleCronCommand(
         model: model.adapter,
         workspaceRoot: parsed.workspaceRoot,
         tools: await createConfiguredCliTools(parsed.workspaceRoot, env),
-        approvalResolver: createCliApprovalResolver({
+        interactionChannel: createCliInteractionChannel({
           accessMode: parsed.accessMode,
           io,
         }),
@@ -4672,7 +4672,7 @@ async function handleCronCommand(
         return fresh.adapter;
       },
       tools: await createConfiguredCliTools(parsed.workspaceRoot, env),
-      approvalResolver: createCliApprovalResolver({
+      interactionChannel: createCliInteractionChannel({
         accessMode: parsed.accessMode,
         io,
       }),

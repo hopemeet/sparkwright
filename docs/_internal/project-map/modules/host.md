@@ -12,8 +12,8 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 ## Last Verified
 
 - Status: Verified
-- Date: 2026-07-16T12:45:00+0800
-- Scope: Host run-access resolution accepts only accessMode, clamps it once, and compiles internal execution policy without conflict diagnostics or compatibility fallbacks.
+- Date: 2026-07-16T13:21:00+0800
+- Scope: Host routes pending approvals through an approval-only `InteractionChannel`; main runs, configured delegates, and dynamic child grants no longer carry a parallel resolver field.
 - Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.
 - Tests: focused access/policy/protocol/CLI/TUI/ACP/Workflow tests; npm run typecheck:test; npm run schema:check.
 
@@ -84,7 +84,7 @@ Owns:
 - host tool catalog entries that preserve runtime tool source metadata
 - immutable per-run/per-inspect derivation of resolved access, workspace,
   confidential path inputs, skill/config roots, and shell sandbox status
-- host-level approval resolver and pending approval routing
+- host-level interaction channel and pending approval routing
 - host-client approval helpers used by frontends that must not import core directly
 - session diagnostics bundle composition
 - shell live-process handoff into task state, including explicit/promotion
@@ -186,12 +186,12 @@ Does not own:
   a fixed protocol-client attribution.
 - `WorkspaceContext` owns the shared TaskManager/store/outbox and Workflow
   notification/control adapters. It never owns live MCP, LocalWorkspace,
-  mutable policy, event emitter, approval resolver, or active execution.
+  mutable policy, event emitter, interaction channel, or active execution.
 - `run-security-plan.ts` is the immutable boundary between config/access
   parsing and runtime assembly. A run and `capability.inspect` derive the same
   workspace, access, confidential paths, skill/config roots, and resolved shell
   sandbox inputs there. It must not own prepared tools/processes, approval
-  resolvers, traces, Workflow state, or Core's mutable per-run mutation policy.
+  channels, traces, Workflow state, or Core's mutable per-run mutation policy.
 - `run-policy.ts` is the stateful companion factory. Every call creates a fresh
   layered policy and fresh mutation `writtenPaths` state. Host runtime and the
   internal CLI direct-core start/resume paths share its target/default
@@ -655,9 +655,9 @@ Does not own:
   closed before any child is spawned. If a directly exposed delegate already
   owns the reserved `delegate_parallel` tool name, host drops the built-in tool
   and emits a warning-severity `capability.index.failed` event.
-- Configured in-process delegate child runs receive the host approval resolver
-  so workspace-write and shell approval requests route through the parent run's
-  CLI/TUI approval path; they do not receive an interaction channel.
+- Configured in-process delegate child runs receive an approval-only Host
+  interaction channel, so workspace-write and shell approval requests route
+  through the parent run's CLI/TUI path without exposing `ask` or `notify`.
 - Profile `hooks` authoring is parsed into the neutral `AgentProfile.hooks`
   carrier from Agent.md frontmatter and `capabilities.agents.profiles[].hooks`.
   Profile hooks are workflow-only, restricted to `command`, `block`, `context`,

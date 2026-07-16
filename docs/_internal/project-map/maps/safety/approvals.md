@@ -10,8 +10,8 @@ See [workspace-writes.md](workspace-writes.md) and [shell.md](shell.md).
 ## Last Verified
 
 - Status: Verified
-- Date: 2026-07-16T12:45:00+0800
-- Scope: All product entrypoints derive approval behavior from accessMode; standalone approval flags/defaults and wire fallbacks were removed.
+- Date: 2026-07-16T13:21:00+0800
+- Scope: `InteractionChannel` is the only Core outbound approval/question/notification boundary; the direct approval resolver option and adapter bridges were removed.
 - Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.
 - Tests: focused access/policy/protocol/CLI/TUI/ACP/Workflow tests; npm run typecheck:test; npm run schema:check.
 
@@ -38,7 +38,7 @@ See [workspace-writes.md](workspace-writes.md) and [shell.md](shell.md).
 ```txt
 policy requires approval
   -> approval.requested / interaction.requested
-  -> CLI/TUI/host resolver
+  -> InteractionChannel.approve (CLI/TUI/Host/Cron)
   -> approval.resolved / interaction.resolved
   -> action continues or denial path
 ```
@@ -88,15 +88,15 @@ policy requires approval
   ceilings. This is governance, not an approval prompt: cap/policy denials for
   background task surfaces are recoverable tool failures rather than
   `approval.requested` events.
-- Configured in-process delegate child runs share the host approval resolver
-  with the parent run, so child workspace-write and shell gates still resolve
-  through the same CLI/TUI approval and trace path. They do not receive an
-  interaction channel for arbitrary user questions.
+- Configured in-process delegate child runs receive an approval-only
+  `InteractionChannel` from Host, so child workspace-write and shell gates
+  still resolve through the same CLI/TUI approval and trace path without
+  gaining `ask` or `notify` capabilities.
 - Dynamic `spawn_agent` and host `task_create(kind:"agent")` can request a
   spawn-time workspace-write grant through `grant.workspaceWrite: true` or an
   explicit managed write tool in `allowedTools`. The parent tool approval uses
   a grant-aware summary and write side-effect governance; once approved, the
-  child gets a scoped resolver that auto-approves only child
+  child gets a scoped approval-only channel that auto-approves only child
   `workspace.write` requests. The child does not prompt the user again for the
   same grant, and grant consumption cannot approve unrelated tool execution or
   shell access.

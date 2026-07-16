@@ -9,8 +9,8 @@ See also [../maps/trace/summary-timeline-verify.md](../maps/trace/summary-timeli
 ## Last Verified
 
 - Status: Verified
-- Date: 2026-07-16T12:45:00+0800
-- Scope: CLI, direct-core, Host, Cron, and delegate entrypoints expose only --access-mode; approval shortcut and write flags are removed.
+- Date: 2026-07-16T13:21:00+0800
+- Scope: CLI constructs one `InteractionChannel` from access mode and IO; direct-core, delegate, Cron, and Host-client approval paths no longer expose a resolver API.
 - Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.
 - Tests: focused access/policy/protocol/CLI/TUI/ACP/Workflow tests; npm run typecheck:test; npm run schema:check.
 

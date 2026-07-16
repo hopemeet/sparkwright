@@ -675,8 +675,8 @@ event under the task span.
 ## Interaction Channel
 
 `InteractionChannel` is the unified _outbound_ channel from the runtime to a
-user (CLI prompt, desktop modal, Slack/Feishu DM, etc.). It generalizes
-`ApprovalResolver` to also cover free-form questions and notifications.
+user (CLI prompt, desktop modal, Slack/Feishu DM, etc.). It covers approvals,
+free-form questions, and notifications through one runtime boundary.
 
 ```ts
 interface InteractionChannel {
@@ -688,14 +688,10 @@ interface InteractionChannel {
 }
 ```
 
-Wire via `createRun({ interactionChannel })`. When supplied,
-`channel.approve` becomes the approval resolver (taking precedence over the
-legacy `approvalResolver` option), and `RunHandle.askUser` /
-`RunHandle.notifyUser` route through the channel.
-
-Embedders that only implement approval today can keep using
-`approvalResolver`; the channel is strictly additive. Use
-`channelFromApprovalResolver` / `approvalResolverFromChannel` to bridge.
+Wire via `createRun({ interactionChannel })`. `channel.approve` resolves risky
+actions, while `RunHandle.askUser` / `RunHandle.notifyUser` route through the
+same channel. Approval-only embedders provide an object containing only
+`approve`; there is no parallel resolver option or precedence rule.
 
 Every channel exchange emits `interaction.requested` / `interaction.resolved`
 events so trace consumers see the full conversation, not just the binary
@@ -788,9 +784,10 @@ in the runtime package):
    Sub-agents MUST NOT silently widen permissions; any expansion must come
    from an explicit `childOverrides` layer.
 3. **Approval channel.** The child run reuses the parent's
-   `InteractionChannel`/`approvalResolver` unless the parent provides a
-   sub-agent-specific channel. Approvals from a child are visible in the
-   parent's trace via the `parentRunId` linkage.
+   `InteractionChannel` unless the parent provides a sub-agent-specific
+   channel. An approval-only child channel may expose only `approve` so the
+   child cannot ask arbitrary user questions. Approvals from a child are
+   visible in the parent's trace via the `parentRunId` linkage.
 4. **Usage rollup.** The parent SHOULD subscribe to the child's
    `UsageTracker` (`tracker.subscribe(...)`) and roll usage into its own
    tracker so the parent's `UsageSnapshot` reflects total cost.

@@ -9,7 +9,7 @@ import {
   createSessionFileRunStoreFactory,
   LocalWorkspace,
   wrapPromptBuilderWithInspector,
-  type ApprovalResolver,
+  type InteractionChannel,
   type ClassifiedToolFailure,
   type CompletedRunOutcome,
   type ModelAdapter,
@@ -27,7 +27,7 @@ export interface RunCronJobOptions {
   model?: ModelAdapter;
   modelFactory?: (job: CronJob) => ModelAdapter | Promise<ModelAdapter>;
   tools?: ToolDefinition[];
-  approvalResolver?: ApprovalResolver;
+  interactionChannel?: InteractionChannel;
   accessMode?: RunAccessMode;
   skillRoots?: string[];
   /**
@@ -80,7 +80,7 @@ export async function runCronJob(
   const run = createRun({
     goal,
     workspace: new LocalWorkspace(workspaceRoot),
-    approvalResolver: options.approvalResolver ?? denyApprovals,
+    interactionChannel: options.interactionChannel ?? denyInteractions,
     policy: createPermissionModePolicy({
       mode: compileRunAccessMode(options.accessMode ?? "ask").permissionMode,
     }),
@@ -126,8 +126,10 @@ export async function runCronJob(
   };
 }
 
-const denyApprovals: ApprovalResolver = (request) =>
-  Promise.resolve({ approvalId: request.id, decision: "denied" });
+const denyInteractions: InteractionChannel = {
+  approve: (request) =>
+    Promise.resolve({ approvalId: request.id, decision: "denied" }),
+};
 
 function cronRunVerdict(input: {
   state: string;

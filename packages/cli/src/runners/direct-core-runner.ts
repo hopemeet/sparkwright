@@ -28,7 +28,7 @@ import {
   resolveModelSelection,
 } from "@sparkwright/host";
 import { buildAgentPromptBuilder } from "@sparkwright/project-context";
-import { createCliApprovalResolver } from "../cli-approval.js";
+import { createCliInteractionChannel } from "../cli-approval.js";
 import { createLiveEventFormatter } from "../event-format.js";
 import type { CliIO } from "../io.js";
 import { writeLine } from "../io.js";
@@ -112,7 +112,7 @@ export async function startDirectCoreRun(
   }
 
   const workspace = new LocalWorkspace(workspaceRoot);
-  const approvalResolver = createCliApprovalResolver({
+  const interactionChannel = createCliInteractionChannel({
     accessMode: runAccess.accessMode,
     io,
   });
@@ -156,7 +156,7 @@ export async function startDirectCoreRun(
   const run = createRun({
     goal,
     workspace,
-    approvalResolver,
+    interactionChannel,
     policy,
     promptBuilder: buildAgentPromptBuilder({
       cwd: workspaceRoot,

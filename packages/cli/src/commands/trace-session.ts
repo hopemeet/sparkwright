@@ -33,7 +33,7 @@ import {
   type HostRuntime,
   type HostService,
 } from "@sparkwright/host";
-import { createCliApprovalResolver } from "../cli-approval.js";
+import { createCliInteractionChannel } from "../cli-approval.js";
 import { createLiveEventFormatter, formatEvent } from "../event-format.js";
 import type { CliIO } from "../io.js";
 import { writeLine } from "../io.js";
@@ -451,7 +451,7 @@ export async function handleRunResumeCommand(
   }
 
   const workspace = new LocalWorkspace(parsed.workspaceRoot);
-  const approvalResolver = createCliApprovalResolver({
+  const interactionChannel = createCliInteractionChannel({
     accessMode: parsed.runAccess.accessMode,
     io,
   });
@@ -489,7 +489,7 @@ export async function handleRunResumeCommand(
     run = resumeRunFromCheckpoint(checkpoint, {
       force: parsed.force,
       workspace,
-      approvalResolver,
+      interactionChannel,
       policy,
       tools,
       model: model.adapter,

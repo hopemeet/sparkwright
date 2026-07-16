@@ -3,7 +3,6 @@ import {
   DefaultObservationFormatter,
   DefaultPromptBuilder,
   ToolRegistry,
-  approvalResolverFromChannel,
   compilePromptCacheBlocks,
   createApprovalRequest,
   createContextItemId,
@@ -21,7 +20,6 @@ import {
   validateToolArguments,
   validateToolOutput,
   withSpan,
-  type ApprovalResolver,
   type ContextAssembler,
   type ContextBudget,
   type ContextItem,
@@ -59,7 +57,6 @@ export interface CreateStreamingRunOptions {
   model: ModelAdapter;
   tools?: ToolDefinition[];
   policy?: Policy;
-  approvalResolver?: ApprovalResolver;
   interactionChannel?: InteractionChannel;
   workspace?: RuntimeContext["workspace"];
   context?: ContextItem[];
@@ -148,7 +145,6 @@ class AfterTurnStreamingRun implements StreamingRunHandle {
 
   private readonly model: ModelAdapter;
   private readonly policy: Policy;
-  private readonly approvalResolver?: ApprovalResolver;
   private readonly interactionChannel?: InteractionChannel;
   private readonly workspace?: RuntimeContext["workspace"];
   private readonly contextAssembler: ContextAssembler;
@@ -194,10 +190,6 @@ class AfterTurnStreamingRun implements StreamingRunHandle {
     this.model = options.model;
     this.policy = options.policy ?? createDefaultPolicy();
     this.interactionChannel = options.interactionChannel;
-    this.approvalResolver =
-      (this.interactionChannel &&
-        approvalResolverFromChannel(this.interactionChannel)) ??
-      options.approvalResolver;
     this.workspace = options.workspace;
     this.context = [...(options.context ?? [])];
     this.contextAssembler =
@@ -1096,9 +1088,9 @@ class AfterTurnStreamingRun implements StreamingRunHandle {
     summary: string;
     details?: Record<string, unknown>;
   }): Promise<boolean> {
-    if (!this.approvalResolver) {
+    if (!this.interactionChannel?.approve) {
       throw new Error(
-        "Approval requested but no approval resolver was configured.",
+        "Approval requested but no interaction channel approval handler was configured.",
       );
     }
 
@@ -1111,7 +1103,7 @@ class AfterTurnStreamingRun implements StreamingRunHandle {
     this.setState("waiting_approval");
     this.events.emit("approval.requested", request);
     this.events.emit("interaction.requested", { kind: "approval", request });
-    const response = await this.approvalResolver(request);
+    const response = await this.interactionChannel.approve(request);
     this.events.emit("approval.resolved", response);
     this.events.emit("interaction.resolved", { kind: "approval", response });
     this.setState("running");
