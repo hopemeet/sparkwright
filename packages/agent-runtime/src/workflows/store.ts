@@ -449,13 +449,6 @@ export class FileWorkflowStore implements WorkflowStore {
   }
 }
 
-export function workflowRunsDir(input: {
-  sessionRootDir: string;
-  sessionId: string;
-}): string {
-  return join(input.sessionRootDir, input.sessionId, "workflow-runs");
-}
-
 export function workspaceWorkflowRunsDir(input: {
   workspaceRoot: string;
 }): string {

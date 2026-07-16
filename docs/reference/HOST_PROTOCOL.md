@@ -283,12 +283,10 @@ host-owned resume attaches them to a newly-created session and returns that
 
 ### `workflow.list`
 
-List durable workflow-run snapshots. Fresh workflow records are stored under the
+List durable workflow-run snapshots. Workflow records are stored under the
 workspace state root at `.sparkwright/workflow-runs/<workflowRunId>.json` and
-retain their `sessionId` in the record. Hosts also read legacy session-root
-records from `<sessionRoot>/<sessionId>/workflow-runs/` for compatibility;
-malformed records are skipped and reported in `invalidEntries` instead of
-failing the list.
+retain their `sessionId` in the record. Malformed records are skipped and
+reported in `invalidEntries` instead of failing the list.
 
 Hosts advertise `workflow.list` in `host.ready.capabilities` once durable
 workflow storage is available.
@@ -337,7 +335,7 @@ workflow storage is available.
   ],
   "invalidEntries": [
     {
-      "path": "/workspace/.sparkwright/sessions/session_123/workflow-runs/bad.json",
+      "path": "/workspace/.sparkwright/workflow-runs/bad.json",
       "code": "parse_error",
       "reason": "unsupported workflow run schemaVersion"
     }

@@ -1,11 +1,4 @@
-import {
-  access,
-  mkdir,
-  mkdtemp,
-  readFile,
-  readdir,
-  writeFile,
-} from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -93,16 +86,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function workflowStoreRoot(workspace: string, _sessionId?: string): string {
   return join(workspace, ".sparkwright", "workflow-runs");
-}
-
-function legacyWorkflowStoreRoot(workspace: string, sessionId: string): string {
-  return join(
-    workspace,
-    ".sparkwright",
-    "sessions",
-    sessionId,
-    "workflow-runs",
-  );
 }
 
 async function waitForWorkflowRecord(
@@ -982,7 +965,7 @@ describe("workflow assets", () => {
     runtime.cancelRun(started.runId, "test cleanup");
   });
 
-  it("persists workflow run records under the session root", async () => {
+  it("persists workflow run records under the workspace root", async () => {
     const workspace = await tempWorkspace();
     const sessionId = "sess_workflow_p2";
     await writeWorkflow(
@@ -1049,9 +1032,6 @@ describe("workflow assets", () => {
       kind: "run",
       ref: started.ok ? started.runId : "",
     });
-    await expect(
-      access(legacyWorkflowStoreRoot(workspace, sessionId)),
-    ).rejects.toThrow();
     const notifications = await runtime
       .workflowActorInbox()
       .drain((notification) => notification.source.kind === "workflow");
@@ -1948,7 +1928,7 @@ describe("workflow assets", () => {
       nodes: [{ id: "main", body: "Pinned body." }],
     };
     const store = new FileWorkflowStore({
-      rootDir: legacyWorkflowStoreRoot(workspace, sessionId),
+      rootDir: workflowStoreRoot(workspace, sessionId),
     });
     const workflowRunId = "workflow_resume_pinned" as WorkflowRunId;
     await seedWorkflowRecord(store, {
@@ -1992,7 +1972,7 @@ describe("workflow assets", () => {
     expect(resumed).toMatchObject({ ok: true, workflowRunId, sessionId });
     await waitForHostEvent(events, (event) => event.kind === "run.completed");
     const record = new FileWorkflowStore({
-      rootDir: legacyWorkflowStoreRoot(workspace, sessionId),
+      rootDir: workflowStoreRoot(workspace, sessionId),
       createRoot: false,
     }).get(workflowRunId);
 
@@ -2019,7 +1999,7 @@ describe("workflow assets", () => {
       nodes: [{ id: "main", body: "Claimed body." }],
     };
     const store = new FileWorkflowStore({
-      rootDir: legacyWorkflowStoreRoot(workspace, sessionId),
+      rootDir: workflowStoreRoot(workspace, sessionId),
     });
     await seedWorkflowRecord(store, {
       id: workflowRunId,
@@ -2051,7 +2031,7 @@ describe("workflow assets", () => {
     await waitForHostEvent(events, (event) => event.kind === "run.completed");
     expect(
       new FileWorkflowStore({
-        rootDir: legacyWorkflowStoreRoot(workspace, sessionId),
+        rootDir: workflowStoreRoot(workspace, sessionId),
         createRoot: false,
       }).get(workflowRunId),
     ).toMatchObject({ status: "completed", generation: writer!.generation });
@@ -2139,70 +2119,6 @@ describe("workflow assets", () => {
     await expect(readFile(marker, "utf8")).rejects.toMatchObject({
       code: "ENOENT",
     });
-  });
-
-  it("prefers workspace workflow records over matching legacy session copies on resume", async () => {
-    const workspace = await tempWorkspace();
-    const sessionId = "sess_workflow_workspace_legacy_duplicate";
-    const definition: WorkflowDefinition = {
-      assetName: "pinned",
-      contentHash: "hash-pinned",
-      nodes: [{ id: "main", body: "Resume from workspace record." }],
-    };
-    const workflowRunId = "workflow_workspace_duplicate" as WorkflowRunId;
-    const workspaceStore = new FileWorkflowStore({
-      rootDir: workflowStoreRoot(workspace, sessionId),
-    });
-    await seedWorkflowRecord(workspaceStore, {
-      id: workflowRunId,
-      sessionId,
-      assetName: definition.assetName,
-      contentHash: definition.contentHash,
-      currentNodeId: "main",
-      definitionSnapshot: definition,
-      metadata: { goal: "resume duplicate workflow" },
-    });
-    const legacyStore = new FileWorkflowStore({
-      rootDir: legacyWorkflowStoreRoot(workspace, sessionId),
-    });
-    await seedWorkflowRecord(legacyStore, {
-      id: workflowRunId,
-      sessionId,
-      assetName: definition.assetName,
-      contentHash: definition.contentHash,
-      currentNodeId: "main",
-      definitionSnapshot: definition,
-      metadata: { goal: "resume duplicate workflow" },
-    });
-    const events: HostEvent[] = [];
-    const runtime = new HostRuntime({
-      workspaceRoot: workspace,
-      defaultModel: "deterministic",
-      emit: (event) => events.push(event),
-    });
-
-    const resumed = await runtime.resumeWorkflowRun(
-      {
-        workflowRunId,
-        sessionId,
-      },
-      TEST_WORKFLOW_SOURCE,
-    );
-
-    expect(resumed).toMatchObject({ ok: true });
-    await waitForHostEvent(events, (event) => event.kind === "run.completed");
-    expect(
-      new FileWorkflowStore({
-        rootDir: workflowStoreRoot(workspace, sessionId),
-        createRoot: false,
-      }).get(workflowRunId)?.runIds,
-    ).toHaveLength(1);
-    expect(
-      new FileWorkflowStore({
-        rootDir: legacyWorkflowStoreRoot(workspace, sessionId),
-        createRoot: false,
-      }).get(workflowRunId)?.runIds,
-    ).toHaveLength(0);
   });
 
   it("rejects terminal workflow records instead of force-resuming them", async () => {

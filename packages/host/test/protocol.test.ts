@@ -953,13 +953,7 @@ describe("host protocol", () => {
     const pair = createConnectionPair();
     try {
       const store = new FileWorkflowStore({
-        rootDir: join(
-          workspace,
-          ".sparkwright",
-          "sessions",
-          sessionId,
-          "workflow-runs",
-        ),
+        rootDir: join(workspace, ".sparkwright", "workflow-runs"),
       });
       const writer = await store.acquireWriter(workflowRunId, {
         owner: "test-fixture",
@@ -1089,13 +1083,7 @@ describe("host protocol", () => {
       });
       expect(
         new FileWorkflowStore({
-          rootDir: join(
-            workspace,
-            ".sparkwright",
-            "sessions",
-            sessionId,
-            "workflow-runs",
-          ),
+          rootDir: join(workspace, ".sparkwright", "workflow-runs"),
           createRoot: false,
         }).get(workflowRunId),
       ).toMatchObject({ status: "cancelled" });

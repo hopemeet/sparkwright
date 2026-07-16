@@ -9,6 +9,11 @@ See also [../maps/capabilities/agents.md](../maps/capabilities/agents.md), [../m
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T13:50:10+0800
+- Scope: Workflow persistence exports only `workspaceWorkflowRunsDir`; the session-local `workflowRunsDir` layout helper was removed.
+- Read: workflow store/index sources, host consumers, focused workflow tests, and current persistence maps.
+- Tests: npm run build; npm run typecheck:test; focused Agent Runtime and Host workflow tests.
+
 - Date: 2026-07-16T13:21:00+0800
 - Scope: `spawnSubAgent` carries only `InteractionChannel`; callers use an approval-only channel when a child must not gain free-form interaction.
 - Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.

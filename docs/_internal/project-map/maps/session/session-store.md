@@ -10,6 +10,11 @@ See [../trace/raw-trace.md](../trace/raw-trace.md) for raw event evidence.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T13:50:10+0800
+- Scope: Workflow state is no longer a session-directory child; canonical records live only under workspace `.sparkwright/workflow-runs/` and retain `sessionId` as record attribution.
+- Read: workflow store helpers, Host list/resume consumers, focused tests, and current layout docs.
+- Tests: npm run build; npm run typecheck:test; Agent Runtime workflow tests (25); Host workflow/protocol tests (94).
+
 - Date: 2026-07-16T13:36:30+0800
 - Scope: Session traces no longer contain validation-hook lifecycle spans; current `validation.failed` diagnostics remain persisted without layout changes.
 - Read: Core event/trace codecs, session storage, schemas, and trace tests.
@@ -55,9 +60,6 @@ Fresh workflow job execution
   -> WorkflowRunRecord.sessionId is the job storage identity
   -> WorkflowRunRecord.metadata.controlSessionId is attribution only
 
-Legacy workflow run state
-  -> <sessionRoot>/<sessionId>/workflow-runs/ remains list/resume compatible
-
 Manual compact
   -> compactSessionTurns()
   -> compact.json
@@ -89,13 +91,12 @@ Manual compact
 - `FileSessionStore` writes `session.json` through core `file-atomic`, the same
   lower-level atomic text writer wrapped by `agent-runtime` doc-store, because
   core cannot depend upward on runtime packages.
-- Fresh workflow records live under workspace-level
+- Workflow records live under workspace-level
   `.sparkwright/workflow-runs/`; each record retains `sessionId` so session
-  filters and resume context remain available. Legacy
-  `<sessionRoot>/<sessionId>/workflow-runs/` records remain list/resume
-  compatible. Each workflow run has a JSON record, a JSONL event log, and a
-  token lease path; corrupt record/log entries are skipped with diagnostics by
-  `FileWorkflowStore` rather than wedging workflow list/resume.
+  filters and resume context remain available. Each workflow run has a JSON
+  record, a JSONL event log, and a token lease path; corrupt record/log entries
+  are skipped with diagnostics by `FileWorkflowStore` rather than wedging
+  workflow list/resume.
 - TUI and CLI fresh workflow-job entrypoints allocate a unique safe job session
   instead of writing into a selected/control session. The job session does not
   inherit control-session scrollback. Resume requires and reuses the persisted

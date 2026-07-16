@@ -10,6 +10,11 @@ See [tool-orchestration.md](tool-orchestration.md) and [../trace/raw-trace.md](.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T13:50:10+0800
+- Scope: Resumed workflow episodes receive the single canonical workspace store; removing session-local lookup does not change Core run-loop execution.
+- Read: Host workflow lookup/episode paths, Core workflow entry, and focused tests.
+- Tests: npm run build; npm run typecheck:test; Host workflow/protocol tests (94).
+
 - Date: 2026-07-16T13:36:30+0800
 - Scope: Run-loop policy is single-track through `WorkflowHook`; legacy tool-result, post-sampling, pre-terminal, and final-output validation stages were removed.
 - Read: Core run/workflow hook sources, focused run-loop tests, and current extension/protocol docs.
@@ -276,9 +281,8 @@ createRun/resumeRunFromCheckpoint
   concurrent model episode loop inside core.
 - P9a D5 workspace-root workflow storage also stays host-side. Fresh
   `WorkflowRunRecord` files move to workspace `.sparkwright/workflow-runs/`,
-  list/resume still read legacy session-local stores, and the resumed worker
-  episode still enters core as an ordinary run with the pinned workflow
-  definition.
+  list/resume use the same store, and the resumed worker episode still enters
+  core as an ordinary run with the pinned workflow definition.
 
 ## Consumers
 

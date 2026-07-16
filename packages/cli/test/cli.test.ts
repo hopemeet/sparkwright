@@ -2673,13 +2673,7 @@ describe.sequential("runCli", () => {
       "utf8",
     );
     const store = new FileWorkflowStore({
-      rootDir: join(
-        workspace,
-        ".sparkwright",
-        "sessions",
-        sessionId,
-        "workflow-runs",
-      ),
+      rootDir: join(workspace, ".sparkwright", "workflow-runs"),
     });
     const workflowRunId = "workflow_cli_list" as WorkflowRunId;
     const writer = await store.acquireWriter(workflowRunId, {
@@ -3284,13 +3278,7 @@ describe.sequential("runCli", () => {
     const sessionId = "sess_cli_workflow_resume";
     const workflowRunId = "workflow_cli_resume" as WorkflowRunId;
     const store = new FileWorkflowStore({
-      rootDir: join(
-        workspace,
-        ".sparkwright",
-        "sessions",
-        sessionId,
-        "workflow-runs",
-      ),
+      rootDir: join(workspace, ".sparkwright", "workflow-runs"),
     });
     const writer = await store.acquireWriter(workflowRunId, {
       owner: "test-fixture",
@@ -3298,8 +3286,6 @@ describe.sequential("runCli", () => {
     const packageSnapshotRef = join(
       workspace,
       ".sparkwright",
-      "sessions",
-      sessionId,
       "workflow-runs",
       "package-snapshots",
       workflowRunId,
@@ -3361,13 +3347,7 @@ describe.sequential("runCli", () => {
     expect(resumed.sessionId).toBe(sessionId);
     expect(output.stdoutText()).toContain("run.completed");
     const completed = new FileWorkflowStore({
-      rootDir: join(
-        workspace,
-        ".sparkwright",
-        "sessions",
-        sessionId,
-        "workflow-runs",
-      ),
+      rootDir: join(workspace, ".sparkwright", "workflow-runs"),
       createRoot: false,
     }).get(workflowRunId);
     expect(completed).toMatchObject({

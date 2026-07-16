@@ -12,7 +12,6 @@ import {
   runWorkflowRunChain,
   workspaceWorkflowRunsDir,
   WORKFLOW_RUN_RECORD_SCHEMA_VERSION,
-  workflowRunsDir,
   validateWorkflowRuntimeDefinition,
   type WorkflowRunId,
   type WorkflowDefinition,
@@ -511,10 +510,7 @@ describe("FileWorkflowStore", () => {
     await writerB!.release();
   });
 
-  it("exposes session legacy and workspace workflow-run roots", () => {
-    expect(
-      workflowRunsDir({ sessionRootDir: "/state/sessions", sessionId: "sess" }),
-    ).toBe(join("/state/sessions", "sess", "workflow-runs"));
+  it("exposes the canonical workspace workflow-run root", () => {
     expect(workspaceWorkflowRunsDir({ workspaceRoot: "/workspace" })).toBe(
       join("/workspace", ".sparkwright", "workflow-runs"),
     );

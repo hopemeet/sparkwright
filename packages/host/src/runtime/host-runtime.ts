@@ -97,7 +97,6 @@ import {
   type WorkflowRunStatus,
   type WorkflowRuntimeState,
   workspaceWorkflowRunsDir,
-  workflowRunsDir,
 } from "@sparkwright/agent-runtime";
 import { defaultCronRoot } from "@sparkwright/cron";
 import { RECOMMENDED_FOREGROUND_TIMEOUT_MS } from "@sparkwright/shell-tool";
@@ -1546,14 +1545,11 @@ export class HostRuntime {
       }
     | { ok: false; error: ProtocolError }
   > {
-    const sessionRootDir =
-      this.opts.sessionRootDir ??
-      defaultSessionRootDir(this.opts.workspaceRoot);
-    let sessions: string[];
+    let requestedSessionId: string | undefined;
     try {
-      sessions = payload.sessionId
-        ? [asSessionId(payload.sessionId)]
-        : await listSessionIds(sessionRootDir);
+      requestedSessionId = payload.sessionId
+        ? asSessionId(payload.sessionId)
+        : undefined;
     } catch (error) {
       return {
         ok: false,
@@ -1571,7 +1567,7 @@ export class HostRuntime {
     }> = [];
     const seenWorkflowRunIds = new Set<string>();
     const addRecord = (record: WorkflowRunRecord) => {
-      if (payload.sessionId && record.sessionId !== payload.sessionId) return;
+      if (requestedSessionId && record.sessionId !== requestedSessionId) return;
       if (payload.status && record.status !== payload.status) return;
       const id = String(record.id);
       if (seenWorkflowRunIds.has(id)) return;
@@ -1586,17 +1582,6 @@ export class HostRuntime {
     invalidEntries.push(...workspaceListed.invalidEntries);
     for (const record of workspaceListed.records) {
       addRecord(record);
-    }
-    for (const sessionId of sessions) {
-      const store = new FileWorkflowStore({
-        rootDir: workflowRunsDir({ sessionRootDir, sessionId }),
-        createRoot: false,
-      });
-      const listed = store.list();
-      invalidEntries.push(...listed.invalidEntries);
-      for (const record of listed.records) {
-        addRecord(record);
-      }
     }
     workflows.sort((left, right) =>
       (right.updatedAt ?? right.createdAt).localeCompare(
@@ -3786,8 +3771,10 @@ export class HostRuntime {
       }
     | { ok: false; error: ProtocolError }
   > {
+    let requestedSessionId: string | undefined;
     try {
       assertSafeWorkflowRunId(workflowRunId);
+      requestedSessionId = sessionId ? asSessionId(sessionId) : undefined;
     } catch (error) {
       return {
         ok: false,
@@ -3797,76 +3784,15 @@ export class HostRuntime {
         },
       };
     }
-    const sessionRootDir =
-      this.opts.sessionRootDir ??
-      defaultSessionRootDir(this.opts.workspaceRoot);
-    let sessions: string[];
-    try {
-      sessions = sessionId
-        ? [asSessionId(sessionId)]
-        : await listSessionIds(sessionRootDir);
-    } catch (error) {
-      return {
-        ok: false,
-        error: {
-          code: "invalid_payload",
-          message: error instanceof Error ? error.message : String(error),
-        },
-      };
-    }
-    const matches: Array<{
-      record: WorkflowRunRecord;
-      store: FileWorkflowStore;
-      sessionId: string;
-    }> = [];
     const workspaceStore = new FileWorkflowStore({
       rootDir: this.workflowStoreRootDir(),
       createRoot: false,
     });
     const workspaceRecord = workspaceStore.get(workflowRunId);
-    let workspaceLocatedSessionId: string | undefined;
     if (
-      workspaceRecord &&
-      (!sessionId || workspaceRecord.sessionId === sessionId)
+      !workspaceRecord ||
+      (requestedSessionId && workspaceRecord.sessionId !== requestedSessionId)
     ) {
-      const locatedSessionId = workspaceRecord.sessionId ?? sessionId;
-      if (!locatedSessionId) {
-        return {
-          ok: false,
-          error: {
-            code: "invalid_payload",
-            message: `Workflow run ${workflowRunId} does not record a sessionId; pass sessionId to resume it.`,
-          },
-        };
-      }
-      matches.push({
-        record: workspaceRecord,
-        store: workspaceStore,
-        sessionId: locatedSessionId,
-      });
-      workspaceLocatedSessionId = locatedSessionId;
-    }
-    for (const candidateSessionId of sessions) {
-      const store = new FileWorkflowStore({
-        rootDir: workflowRunsDir({
-          sessionRootDir,
-          sessionId: candidateSessionId,
-        }),
-        createRoot: false,
-      });
-      const record = store.get(workflowRunId);
-      if (
-        record &&
-        workspaceRecord &&
-        workspaceLocatedSessionId &&
-        (record.sessionId ?? candidateSessionId) === workspaceLocatedSessionId
-      ) {
-        continue;
-      }
-      if (record)
-        matches.push({ record, store, sessionId: candidateSessionId });
-    }
-    if (matches.length === 0) {
       return {
         ok: false,
         error: {
@@ -3875,18 +3801,22 @@ export class HostRuntime {
         },
       };
     }
-    if (matches.length > 1) {
+    const locatedSessionId = workspaceRecord.sessionId ?? requestedSessionId;
+    if (!locatedSessionId) {
       return {
         ok: false,
         error: {
           code: "invalid_payload",
-          message:
-            `Workflow run ${workflowRunId} exists in multiple sessions. ` +
-            `Pass sessionId to disambiguate.`,
+          message: `Workflow run ${workflowRunId} does not record a sessionId.`,
         },
       };
     }
-    return { ok: true, ...matches[0]! };
+    return {
+      ok: true,
+      record: workspaceRecord,
+      store: workspaceStore,
+      sessionId: locatedSessionId,
+    };
   }
 
   private async startRunInner(
@@ -7871,19 +7801,6 @@ function appendWorkflowEvidenceRef(
     return refs.map((existing) => ({ ...existing }));
   }
   return [...refs.map((existing) => ({ ...existing })), { ...ref }];
-}
-
-async function listSessionIds(sessionRootDir: string): Promise<string[]> {
-  try {
-    const entries = await readdir(sessionRootDir, { withFileTypes: true });
-    return entries
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => entry.name)
-      .sort();
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
-    throw error;
-  }
 }
 
 function workflowRunSnapshot(record: WorkflowRunRecord): WorkflowRunSnapshot {

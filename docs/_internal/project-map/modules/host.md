@@ -12,6 +12,11 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T13:50:10+0800
+- Scope: Workflow list/resume now resolve only workspace `.sparkwright/workflow-runs/`; session enumeration, duplicate precedence, and located-store fallback were removed.
+- Read: Host workflow list/resume/control paths, Agent Runtime store helpers, protocol fixtures, focused tests, and current docs.
+- Tests: npm run build; npm run typecheck:test; Agent Runtime workflow tests (25); Host workflow/protocol tests (94).
+
 - Date: 2026-07-16T13:36:30+0800
 - Scope: Host workflow actions now use the workflow-owned `WorkflowHookFinding` type; no host production path supplied the removed Core validation-hook lane.
 - Read: host workflow hook compiler/executor, core workflow contracts, focused tests, and current hook documentation.
@@ -379,16 +384,15 @@ Does not own:
 - Workflow runs are durable host-orchestrated records. After P9a, fresh runs
   write `FileWorkflowStore` records under the workspace-level
   `.sparkwright/workflow-runs/` store while retaining `sessionId` on each
-  record; legacy `<sessionRoot>/<sessionId>/workflow-runs/` records remain
-  list/resume compatible. Host acquires the workflow run's single-writer lease
+  record. List, resume, control, notification, and supervisor paths all resolve
+  this one store. Host acquires the workflow run's single-writer lease
   before fresh record creation or resume, pins the compiled workflow definition
   snapshot, persists projection snapshots into current node, attempts,
   verdict/transition logs, and run/fact evidence refs, refreshes a single-writer
   lease while the run chain is active, and releases the lease on terminal/
-  rejected paths. `workflow resume` uses the pinned definition and the located
+  rejected paths. `workflow resume` uses the pinned definition and workspace
   store, not the live asset folder or a reconstructed session-root store;
-  workspace-level records are preferred over matching legacy session-local
-  copies for the same `workflowRunId`/`sessionId`; `verifyOnResume` re-runs
+  `verifyOnResume` re-runs
   verifier nodes whose latest stored verdict is passed before trusting the
   stored position. Waiting-input resume does not consume the durable wait until
   host run preparation has succeeded; if a later pre-run failure occurs, host

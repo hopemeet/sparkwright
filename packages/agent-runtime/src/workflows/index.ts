@@ -65,7 +65,6 @@ export {
   assertSafeWorkflowRunId,
   isSafeWorkflowRunId,
   workspaceWorkflowRunsDir,
-  workflowRunsDir,
   type CreateWorkflowRunRecordInput,
   type FileWorkflowStoreOptions,
   type WorkflowRunRecordPatch,

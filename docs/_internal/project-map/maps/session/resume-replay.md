@@ -10,6 +10,11 @@ See [session-store.md](session-store.md) and [../runtime/context-compaction.md](
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T13:50:10+0800
+- Scope: Workflow resume is single-layout: only the workspace workflow store is searched and returned to the resumed projection.
+- Read: Host lookup/resume paths, Agent Runtime workflow store, focused tests, and protocol docs.
+- Tests: npm run build; npm run typecheck:test; Agent Runtime workflow tests (25); Host workflow/protocol tests (94).
+
 - Date: 2026-07-16T12:45:00+0800
 - Scope: Run and Workflow resume reapply canonical persisted/requested accessMode; compatibility reconstruction of permission/write inputs was removed.
 - Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.
@@ -49,7 +54,6 @@ Session resume
 
 Workflow resume
   -> locate workspace .sparkwright/workflow-runs/<workflowRunId>.json
-     or legacy session workflow-runs/<workflowRunId>.json
   -> acquire single-writer lease
   -> prepare host run environment
   -> consume input waits at the actor boundary when status is waiting
@@ -98,11 +102,9 @@ Future run in compacted session
   worker run can be prepared. If a pre-run failure happens after consuming the
   wait, host restores the previous waiting record before returning the error.
 - Fresh workflow runs now persist their durable `WorkflowRunRecord` under the
-  workspace-level `.sparkwright/workflow-runs/` root. Resume and list still
-  discover legacy session-local `workflow-runs/` records for compatibility;
-  workspace records are preferred over matching legacy copies for the same
-  workflow/session, and resume continues to pass the located store back into
-  the host projection.
+  workspace-level `.sparkwright/workflow-runs/` root. Resume, list, control,
+  notifications, and supervisor adoption resolve only this canonical store and
+  pass it into the host projection.
 - Session compact artifacts seed future context only when `throughRunId` can be
   matched to completed turns. A mismatch produces an explicit
   conversation-layer warning item and falls back to replaying completed turns.

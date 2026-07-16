@@ -8,6 +8,11 @@ cron, shell/task tools, and capability inspection.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T13:50:10+0800
+- Scope: Workflow assets remain capabilities, while durable workflow records have one workspace store and no session-local compatibility lookup.
+- Read: Host workflow list/resume, capability docs, Agent Runtime store helpers, and focused tests.
+- Tests: npm run build; npm run typecheck:test; Host workflow/protocol tests (94).
+
 - Date: 2026-07-16T13:36:30+0800
 - Scope: Configured deterministic rules compile only to `WorkflowHook`; the removed Core validation-hook lane had no capability/config producer.
 - Read: host capability assembly and workflow hook compiler plus Core run contracts.
@@ -84,9 +89,9 @@ config + workspace capability roots
   `sparkwright workflow *` remain inspection surfaces; P1/P1.5 also lets
   `sparkwright run --workflow <name>` / `run.start.workflow` instantiate a
   selected asset without the former experimental workflow runtime gate.
-  Durable workflow run records are workspace state for fresh P9a+ runs, with
-  legacy session-local lookup kept for compatibility; they are not
-  capabilities. `sparkwright workflow list` may show both workflow assets and
+  Durable workflow run records are workspace state under the canonical
+  `.sparkwright/workflow-runs/` root; they are not capabilities.
+  `sparkwright workflow list` may show both workflow assets and
   workflow run records, but `capability.inspect.workflows` remains the asset
   inventory.
   P3 Step 4b.1 per-episode workflow catalog narrowing filters worker
