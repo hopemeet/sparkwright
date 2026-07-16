@@ -213,6 +213,21 @@ trace/session inspection.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T00:08:26+0800
+- Scope: Agent direct delegate exposure now has one configuration path:
+  `exposure`, `pinnedDelegates`, and per-profile `exposeAsDelegate`. Removed the
+  old global boolean reader, resolver/filter branches, CLI preservation, and
+  generated schema property.
+- Read: Host, CLI, Agent Runtime, Agent/capability maps, public Agent guidance,
+  config schema, and focused tests.
+- Checked with no contract update needed: provider/model resolution,
+  workspace-write approval, Shell protection, trace/session envelopes, and TUI
+  capability rendering.
+- Tests: Host Agent/config/tools 184/184; focused Host protocol 4/4; CLI
+  Agent/delegate/capability 9/9; Agent Runtime, Host, and CLI typechecks;
+  repository test typecheck; schema check; project-map drift; full release gate.
+
+- Status: Verified
 - Date: 2026-07-16T23:55:17+0800
 - Scope: model-facing Markdown Agent authoring has one explicit inheritance
   marker, `model: "inherit"`; the `model: "default"` compatibility reader and

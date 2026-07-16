@@ -12,6 +12,10 @@
 
 ## Covered
 
+- 2026-07-17 Agent exposure cleanup verifies the retired
+  `exposeChildrenAsDelegates` key is rejected as unknown and absent from the
+  generated schema; canonical exposure remains `exposure`, `pinnedDelegates`,
+  and profile `exposeAsDelegate`.
 - Host config loading merges project, user, and default config layers.
 - Tool selection supports `use`, `allowed`, `disabled`, and `defer`.
 - Shell foreground timeout and sandbox config flow into capability inspect.

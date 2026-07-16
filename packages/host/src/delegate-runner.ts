@@ -28,6 +28,7 @@ import {
   delegateToolDescription,
   describeDelegateCapability,
   errorCode,
+  filterDirectDelegatesForExposure,
   resolveAgentDelegateTools,
   type DelegateFailureCode,
   type DelegateToolCollision,
@@ -93,14 +94,31 @@ export async function runConfiguredDelegate(
     loaded.config.capabilities?.agents?.profiles,
   );
   const delegateToolCollisions: DelegateToolCollision[] = [];
-  const delegates = resolveAgentDelegateTools(
+  const delegationTargets = resolveAgentDelegateTools(
     profiles,
     agentConfig?.delegateTools,
     {
-      exposeChildrenAsDelegates: agentConfig?.exposeChildrenAsDelegates,
+      includeAllChildProfiles: true,
       onCollision: (collision) => delegateToolCollisions.push(collision),
     },
   );
+  const directlyExposed = filterDirectDelegatesForExposure(
+    delegationTargets,
+    agentConfig,
+    profiles,
+  );
+  const explicitProfileIds = new Set([
+    ...(agentConfig?.delegateTools ?? []).map((delegate) => delegate.profileId),
+    ...profiles
+      .filter((profile) => profile.delegateTool !== undefined)
+      .map((profile) => profile.id),
+  ]);
+  const runnableToolNames = new Set([
+    ...directlyExposed.map((delegate) => delegateToolName(delegate)),
+    ...delegationTargets
+      .filter((delegate) => explicitProfileIds.has(delegate.profileId))
+      .map((delegate) => delegateToolName(delegate)),
+  ]);
   const targetCollision = delegateToolCollisions.find(
     (item) => item.toolName === input.toolName,
   );
@@ -114,8 +132,10 @@ export async function runConfiguredDelegate(
         `owned by profile ${targetCollision.conflictsWith} (fail-closed)`,
     };
   }
-  const delegate = delegates.find(
-    (item) => delegateToolName(item) === input.toolName,
+  const delegate = delegationTargets.find(
+    (item) =>
+      delegateToolName(item) === input.toolName &&
+      runnableToolNames.has(input.toolName),
   );
   if (!delegate) {
     return {

@@ -231,14 +231,11 @@ export interface AgentProfile {
   when?: AgentProfileRoutingCondition;
   delegateTool?: AgentProfileDelegateTool;
   /**
-   * Tri-state opt-in/opt-out for automatic delegate exposure. `undefined` means
-   * "not configured" (the host's `capabilities.agents.exposeChildrenAsDelegates`
-   * flag decides for direct aliases); `true` forces this child/all profile into
-   * automatic delegate exposure even when the global flag is off; `false`
-   * suppresses automatic `delegate_agent` targeting and direct alias exposure.
-   * An explicit `delegateTool` (inline) or a
-   * `capabilities.agents.delegateTools[]` entry still wins. See
-   * `resolveAgentDelegateTools` in @sparkwright/host.
+   * Tri-state opt-in/opt-out for automatic delegate exposure. `undefined`
+   * follows the host's indexed target policy; `true` also exposes this profile
+   * as a direct delegate alias, while `false` suppresses automatic
+   * `delegate_agent` targeting and synthesized aliases. An explicit
+   * `delegateTool` (inline) or host delegate config still defines a target.
    */
   exposeAsDelegate?: boolean;
   /**

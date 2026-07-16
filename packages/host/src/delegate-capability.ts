@@ -387,13 +387,6 @@ export interface DelegateToolCollision {
 
 export interface ResolveAgentDelegateToolsOptions {
   /**
-   * When true, synthesize a `delegate_<id>` for every `mode in {child, all}`
-   * profile that has no explicit delegate and is not opted out via
-   * `exposeAsDelegate: false`. Default false — auto-exposure changes the main
-   * agent's tool surface, so it stays opt-in.
-   */
-  exposeChildrenAsDelegates?: boolean;
-  /**
    * When true, synthesize a delegate target for every `mode in {child, all}`
    * profile that has no explicit delegate and is not opted out via
    * `exposeAsDelegate: false`. Use this for indexed/generic delegation
@@ -452,9 +445,7 @@ export function resolveAgentDelegateTools(
     const expose =
       (options.includeAllChildProfiles === true &&
         profile.exposeAsDelegate !== false) ||
-      profile.exposeAsDelegate === true ||
-      (options.exposeChildrenAsDelegates === true &&
-        profile.exposeAsDelegate !== false);
+      profile.exposeAsDelegate === true;
     if (!expose) continue;
     claim({ profileId: profile.id }, "auto");
   }
@@ -467,11 +458,6 @@ export type DirectDelegateExposureMode = "indexed" | "all";
 export interface DirectDelegateExposureConfig {
   exposure?: DirectDelegateExposureMode;
   pinnedDelegates?: readonly string[];
-  exposeChildrenAsDelegates?: boolean;
-  delegateTools?: readonly Pick<
-    CapabilityDelegateToolConfig,
-    "profileId" | "toolName"
-  >[];
 }
 
 export function directDelegateExposureMode(
@@ -488,34 +474,14 @@ export function filterDirectDelegatesForExposure<
   profiles: readonly {
     id: string;
     exposeAsDelegate?: boolean;
-    delegateTool?: unknown;
   }[] = [],
 ): T[] {
   if (directDelegateExposureMode(config) === "all") return [...delegates];
   const pinned = new Set(config?.pinnedDelegates ?? []);
   const profileById = new Map(profiles.map((profile) => [profile.id, profile]));
-  const isExplicitDelegate = (delegate: T, toolName: string): boolean => {
-    const configured = config?.delegateTools ?? [];
-    if (
-      configured.some(
-        (entry) =>
-          entry.profileId === delegate.profileId ||
-          (entry.toolName !== undefined && entry.toolName === toolName),
-      )
-    ) {
-      return true;
-    }
-    return profileById.get(delegate.profileId)?.delegateTool !== undefined;
-  };
   return delegates.filter((delegate) => {
     const toolName = delegateToolName(delegate);
     const profile = profileById.get(delegate.profileId);
-    if (config?.exposeChildrenAsDelegates === true) {
-      return (
-        profile?.exposeAsDelegate !== false ||
-        isExplicitDelegate(delegate, toolName)
-      );
-    }
     return (
       pinned.has(delegate.profileId) ||
       pinned.has(toolName) ||

@@ -4071,7 +4071,6 @@ interface AgentsConfigShape {
   delegateModel?: string;
   exposure?: "indexed" | "all";
   pinnedDelegates?: string[];
-  exposeChildrenAsDelegates?: boolean;
   enableParallelDelegates?: boolean;
   maxDepth?: number;
 }
@@ -4260,9 +4259,6 @@ function getAgentsConfig(config: Record<string, unknown>): AgentsConfigShape {
           ),
         }
       : {}),
-    ...(typeof agents.exposeChildrenAsDelegates === "boolean"
-      ? { exposeChildrenAsDelegates: agents.exposeChildrenAsDelegates }
-      : {}),
     ...(typeof agents.enableParallelDelegates === "boolean"
       ? { enableParallelDelegates: agents.enableParallelDelegates }
       : {}),
@@ -4305,9 +4301,6 @@ function setAgentsConfig(
     ...(agents.exposure !== undefined ? { exposure: agents.exposure } : {}),
     ...(agents.pinnedDelegates !== undefined
       ? { pinnedDelegates: agents.pinnedDelegates }
-      : {}),
-    ...(agents.exposeChildrenAsDelegates !== undefined
-      ? { exposeChildrenAsDelegates: agents.exposeChildrenAsDelegates }
       : {}),
     ...(agents.enableParallelDelegates !== undefined
       ? { enableParallelDelegates: agents.enableParallelDelegates }

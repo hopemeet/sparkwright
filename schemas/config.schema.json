@@ -1258,10 +1258,6 @@
               },
               "description": "Profile ids or delegate tool names that should remain exposed as direct delegate_* tools when exposure is indexed."
             },
-            "exposeChildrenAsDelegates": {
-              "type": "boolean",
-              "description": "Opt-in: auto-expose every child/all profile without an explicit delegate as a delegate_<id> tool. Default false. Per-profile exposeAsDelegate overrides this."
-            },
             "enableParallelDelegates": {
               "type": "boolean",
               "description": "Opt-in: expose delegate_parallel for foreground fan-out across read-only configured delegates. Default false. The tool only accepts delegates with workspaceAccess \"none\"."

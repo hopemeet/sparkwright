@@ -9,6 +9,18 @@ See also [../maps/trace/summary-timeline-verify.md](../maps/trace/summary-timeli
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T00:08:26+0800
+- Scope: CLI Agent config mutation no longer reads or rewrites the retired
+  `exposeChildrenAsDelegates` field. Direct delegate execution uses canonical
+  exposure controls for synthesized aliases while explicit aliases remain
+  runnable by name.
+- Read: CLI Agent config serializer, delegates command, Host delegate runner,
+  generated config schema, and focused CLI/config tests.
+- Tests: Host Agent/config/tools 184/184; focused Host protocol 4/4; CLI
+  Agent/delegate/capability 9/9; Agent Runtime, Host, and CLI typechecks;
+  repository test typecheck; schema check; project-map drift; full release gate.
+
+- Status: Verified
 - Date: 2026-07-16T18:55:00+0800
 - Scope: Inline trace-command test fixtures use the required canonical event
   envelope, including object `metadata`; trace diagnostics no longer exercise

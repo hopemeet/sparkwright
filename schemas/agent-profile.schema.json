@@ -80,7 +80,7 @@
     },
     "exposeAsDelegate": {
       "type": "boolean",
-      "description": "Tri-state automatic delegation control. true forces automatic delegate exposure even when capabilities.agents.exposeChildrenAsDelegates is off; false suppresses automatic delegate_agent/list_agents/delegate_parallel targeting and direct aliases. An explicit delegateTool or delegateTools entry still wins."
+      "description": "Tri-state automatic delegation control. true adds the profile to indexed delegation and direct delegate exposure; false suppresses automatic delegate_agent/list_agents/delegate_parallel targeting and synthesized direct aliases. An explicit delegateTool or delegateTools entry still defines a target."
     },
     "hooks": {
       "$ref": "#/$defs/agentProfileHooks",

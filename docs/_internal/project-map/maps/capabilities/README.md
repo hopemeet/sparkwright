@@ -8,6 +8,17 @@ cron, shell/task tools, and capability inspection.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T00:08:26+0800
+- Scope: Agent direct aliases have one canonical exposure policy; the retired
+  global child-exposure boolean no longer participates in config, inspection,
+  runtime assembly, or direct execution.
+- Read: Agent capability map, Host config/delegate paths, CLI consumer, and
+  public guidance.
+- Tests: Host Agent/config/tools 184/184; focused Host protocol 4/4; CLI
+  Agent/delegate/capability 9/9; Agent Runtime, Host, and CLI typechecks;
+  repository test typecheck; schema check; project-map drift; full release gate.
+
+- Status: Verified
 - Date: 2026-07-16T23:55:17+0800
 - Scope: `create_agent` capability authoring now accepts only canonical
   `model: "inherit"` for inheritance. Configured Agent model defaults and the

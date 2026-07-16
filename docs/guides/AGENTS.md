@@ -263,18 +263,19 @@ To expose every resolved delegate alias as a direct tool, set:
 { "capabilities": { "agents": { "exposure": "all" } } }
 ```
 
-The older `exposeChildrenAsDelegates: true` setting is still treated as all
-direct exposure. Per-profile `exposeAsDelegate` affects automatic delegation
-targets and synthesized direct aliases:
+Per-profile `exposeAsDelegate` affects automatic delegation targets and
+synthesized direct aliases:
 
-- `exposeAsDelegate: true` — expose this child even when the global flag is off.
+- `exposeAsDelegate: true` — add this child to indexed delegation and expose
+  its synthesized direct alias.
 - `exposeAsDelegate: false` — keep this child out of the automatic delegation
-  index and direct alias surface, even when on.
-- omitted — follow the global flag.
+  index and synthesized direct alias surface.
+- omitted — keep the child in the generic delegation index; direct exposure
+  follows `exposure` and `pinnedDelegates`.
 
-An explicit `delegateTool` / `delegateTools` entry always defines the alias; the
-`exposure` / `pinnedDelegates` settings decide whether that alias appears as a
-top-level model tool.
+An explicit `delegateTool` / `delegateTools` entry defines the target and alias;
+the `exposure` / `pinnedDelegates` settings decide whether that alias appears as
+a top-level model tool.
 
 ## Routing Hints
 

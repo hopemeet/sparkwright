@@ -12,6 +12,19 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T00:08:26+0800
+- Scope: Agent direct exposure has one policy surface: `exposure`,
+  `pinnedDelegates`, and per-profile `exposeAsDelegate`. The retired
+  `exposeChildrenAsDelegates` config reader, resolver branch, and direct-filter
+  branch are gone. `delegates run` retains explicit aliases and admits
+  synthesized aliases only through the canonical exposure policy.
+- Read: Host config schema/parser/contracts, delegate resolver/filter/direct
+  runner, CLI config serializer, public Agent guidance, and focused tests.
+- Tests: Host Agent/config/tools 184/184; focused Host protocol 4/4; CLI
+  Agent/delegate/capability 9/9; Agent Runtime, Host, and CLI typechecks;
+  repository test typecheck; schema check; project-map drift; full release gate.
+
+- Status: Verified
 - Date: 2026-07-16T23:55:17+0800
 - Scope: `create_agent` accepts only canonical `model: "inherit"` for model
   inheritance; it normalizes that marker to omission and rejects the removed
@@ -716,8 +729,9 @@ Does not own:
   `exposeAsDelegate: false` and is not explicitly configured as a delegate.
   `capabilities.agents.exposure` defaults to `indexed`; direct `delegate_*`
   tools are exposed only for `pinnedDelegates`, per-profile
-  `exposeAsDelegate: true`, legacy `exposeChildrenAsDelegates: true`, or
-  `exposure: "all"`.
+  `exposeAsDelegate: true`, or `exposure: "all"`. Direct `delegates run`
+  additionally accepts explicit inline/config aliases because it is a
+  user-selected diagnostic entrypoint rather than the model-facing tool list.
 - Host evaluates configured delegate routing hints (`triggers` and
   `when.keywords`) during run preparation only. It reuses the skill matcher to
   sort and label delegates for the current goal, records the decision in

@@ -13,6 +13,7 @@ import {
   delegateToolDescription,
   describeInProcessDelegateCapability,
   evaluateDelegateRouting,
+  filterDirectDelegatesForExposure,
 } from "../src/delegate-capability.js";
 import { loadLayeredAgentReport } from "../src/agent-report.js";
 
@@ -511,7 +512,7 @@ describe("resolveAgentDelegateTools", () => {
     expect(delegates).toEqual([]);
   });
 
-  it("auto-exposes child/all and mode-less profiles when the flag is on", () => {
+  it("indexes child/all and mode-less profiles for generic delegation", () => {
     const delegates = resolveAgentDelegateTools(
       [
         { id: "reviewer", mode: "child" },
@@ -520,7 +521,7 @@ describe("resolveAgentDelegateTools", () => {
         { id: "loose" },
       ],
       [],
-      { exposeChildrenAsDelegates: true },
+      { includeAllChildProfiles: true },
     );
     expect(delegates).toEqual([
       { profileId: "reviewer" },
@@ -539,14 +540,14 @@ describe("resolveAgentDelegateTools", () => {
     expect(delegates).toEqual([{ profileId: "reviewer" }]);
   });
 
-  it("honors exposeAsDelegate:false as opt-out even when the flag is on", () => {
+  it("honors exposeAsDelegate:false as an indexed-target opt-out", () => {
     const delegates = resolveAgentDelegateTools(
       [
         { id: "reviewer", mode: "child" },
         { id: "secret", mode: "child", exposeAsDelegate: false },
       ],
       [],
-      { exposeChildrenAsDelegates: true },
+      { includeAllChildProfiles: true },
     );
     expect(delegates).toEqual([{ profileId: "reviewer" }]);
   });
@@ -574,7 +575,7 @@ describe("resolveAgentDelegateTools", () => {
     ]);
   });
 
-  it("honors exposeAsDelegate:true as per-profile opt-in when the flag is off", () => {
+  it("honors exposeAsDelegate:true as per-profile opt-in", () => {
     const delegates = resolveAgentDelegateTools([
       { id: "reviewer", mode: "child", exposeAsDelegate: true },
       { id: "other", mode: "child" },
@@ -589,7 +590,7 @@ describe("resolveAgentDelegateTools", () => {
         { id: "writer", mode: "child" },
       ],
       [{ profileId: "writer", toolName: "explicit_writer" }],
-      { exposeChildrenAsDelegates: true },
+      { includeAllChildProfiles: true },
     );
     expect(delegates).toEqual([
       { profileId: "writer", toolName: "explicit_writer" },
@@ -606,7 +607,7 @@ describe("resolveAgentDelegateTools", () => {
       ],
       [],
       {
-        exposeChildrenAsDelegates: true,
+        includeAllChildProfiles: true,
         onCollision: (collision) => collisions.push(collision),
       },
     );
@@ -620,6 +621,39 @@ describe("resolveAgentDelegateTools", () => {
         source: "auto",
       }),
     ]);
+  });
+});
+
+describe("filterDirectDelegatesForExposure", () => {
+  const delegates = [
+    { profileId: "reviewer" },
+    { profileId: "writer", toolName: "write_now" },
+    { profileId: "auditor" },
+  ];
+  const profiles = [
+    { id: "reviewer" },
+    { id: "writer", exposeAsDelegate: true },
+    { id: "auditor" },
+  ];
+
+  it("keeps indexed direct aliases to pins and profile opt-ins", () => {
+    expect(
+      filterDirectDelegatesForExposure(
+        delegates,
+        { pinnedDelegates: ["reviewer"] },
+        profiles,
+      ),
+    ).toEqual([delegates[0], delegates[1]]);
+  });
+
+  it("exposes every resolved alias in all mode", () => {
+    expect(
+      filterDirectDelegatesForExposure(
+        delegates,
+        { exposure: "all" },
+        profiles,
+      ),
+    ).toEqual(delegates);
   });
 });
 

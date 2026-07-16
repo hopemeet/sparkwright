@@ -90,7 +90,6 @@ export interface CapabilityAgentsConfig {
   delegateModel?: string;
   exposure?: AgentExposureMode;
   pinnedDelegates?: string[];
-  exposeChildrenAsDelegates?: boolean;
   enableParallelDelegates?: boolean;
   maxDepth?: number;
 }

@@ -2114,6 +2114,7 @@ describe("loadHostConfig", () => {
           },
           agents: {
             unexpected: true,
+            exposeChildrenAsDelegates: true,
             spawnModel: "",
             delegateModel: 123,
             exposure: "everything",
@@ -2146,6 +2147,9 @@ describe("loadHostConfig", () => {
           }),
           expect.objectContaining({
             field: "capabilities.agents.unexpected",
+          }),
+          expect.objectContaining({
+            field: "capabilities.agents.exposeChildrenAsDelegates",
           }),
           expect.objectContaining({
             field: "capabilities.agents.spawnModel",

@@ -11,6 +11,18 @@ See [../../modules/agent-runtime.md](../../modules/agent-runtime.md) and [../../
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T00:08:26+0800
+- Scope: removed the parallel `exposeChildrenAsDelegates` policy. Direct Agent
+  aliases now use only `exposure`, `pinnedDelegates`, and per-profile
+  `exposeAsDelegate`; generic delegation continues to use the canonical
+  resolved target index.
+- Read: Agent profile carrier, Host config/schema/resolver/runtime/direct
+  runner, CLI serializer/consumer, public docs, and focused tests.
+- Tests: Host Agent/config/tools 184/184; focused Host protocol 4/4; CLI
+  Agent/delegate/capability 9/9; Agent Runtime, Host, and CLI typechecks;
+  repository test typecheck; schema check; project-map drift; full release gate.
+
+- Status: Verified
 - Date: 2026-07-16T23:55:17+0800
 - Scope: Markdown Agent authoring has one explicit inheritance marker,
   `model: "inherit"`; `model: "default"` is no longer admitted or normalized.
@@ -172,6 +184,10 @@ configured profiles/delegates
   `capabilities.agents.exposure` / `pinnedDelegates` / `exposeAsDelegate`
   request them. Default exposure is indexed, so new child profiles no longer
   create one model-facing tool each.
+- Direct `delegates run` is a user-selected diagnostic entrypoint: explicit
+  inline/config delegate aliases remain runnable even when not model-facing,
+  while synthesized aliases must be selected by `exposure: "all"`, a pin, or
+  `exposeAsDelegate: true`.
 - Capability inspection keeps profile inventory broader than delegation:
   `CapabilitySnapshot.agents.profiles` reports all resolved Agent.md and
   inline-config profiles, including primary/non-delegate profiles, while

@@ -10191,6 +10191,88 @@ describe.sequential("runCli", () => {
     expect(traceSubagent?.metadata).toEqual(stdoutSubagent?.metadata);
   });
 
+  it("uses canonical exposure for synthesized direct delegate runs", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const configPath = join(workspace, ".sparkwright", "config.json");
+    await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+    const config = {
+      capabilities: {
+        agents: {
+          exposure: "indexed" as "indexed" | "all",
+          profiles: [
+            {
+              id: "external_auto",
+              metadata: {
+                externalCommand: {
+                  command: process.execPath,
+                  args: ["-e", "process.stdout.write('canonical')"],
+                  input: "none",
+                },
+              },
+            },
+          ],
+        },
+      },
+    };
+    await writeFile(configPath, JSON.stringify(config), "utf8");
+
+    const hiddenOutput = createOutputCapture();
+    const hidden = await runCli(
+      [
+        "delegates",
+        "run",
+        "delegate_external_auto",
+        "--goal",
+        "inspect",
+        "--workspace",
+        workspace,
+        "--access-mode",
+        "bypass",
+      ],
+      {
+        io: {
+          stdout: hiddenOutput.stdout,
+          stderr: hiddenOutput.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+    expect(hidden.exitCode).toBe(1);
+    expect(hiddenOutput.stderrText()).toContain("delegate tool not found");
+
+    config.capabilities.agents.exposure = "all";
+    await writeFile(configPath, JSON.stringify(config), "utf8");
+    const exposedOutput = createOutputCapture();
+    const exposed = await runCli(
+      [
+        "delegates",
+        "run",
+        "delegate_external_auto",
+        "--goal",
+        "inspect",
+        "--workspace",
+        workspace,
+        "--access-mode",
+        "bypass",
+        "--format",
+        "json",
+      ],
+      {
+        io: {
+          stdout: exposedOutput.stdout,
+          stderr: exposedOutput.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+    expect(exposed.exitCode).toBe(0);
+    expect(JSON.parse(exposedOutput.stdoutText())).toMatchObject({
+      ok: true,
+      profileId: "external_auto",
+      output: { stdout: "canonical" },
+    });
+  });
+
   it("fails direct delegate runs when the target tool name collided", async () => {
     const workspace = await createWorkspace("# Demo\n");
     await mkdir(join(workspace, ".sparkwright"), { recursive: true });

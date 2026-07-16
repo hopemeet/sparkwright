@@ -97,7 +97,7 @@ and delegate defaults; it does not require alias machinery or usage reshaping.
 The agents fields intentionally use flat camelCase (`spawnModel`,
 `delegateModel`) rather than nested `spawn.model` / `delegate.model` to match
 the existing `capabilities.agents` style (`pinnedDelegates`,
-`enableParallelDelegates`, `exposeChildrenAsDelegates`). `tasks.compaction.model`
+`enableParallelDelegates`, `exposure`). `tasks.compaction.model`
 stays task-shaped because `tasks.<name>` is already a per-task namespace.
 
 ### Resolution Order

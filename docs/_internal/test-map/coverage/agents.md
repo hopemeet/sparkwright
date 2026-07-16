@@ -43,6 +43,10 @@
 
 ## Covered
 
+- 2026-07-17 canonical exposure verification removed the global
+  `exposeChildrenAsDelegates` path. Generic targets remain indexed, direct
+  aliases use `exposure` / pins / per-profile opt-in, and explicit aliases stay
+  available to the user-selected `delegates run` entrypoint.
 - 2026-07-15 tool-decision audit physically applied main/child Profile allow
   and deny after upstream catalog admission, normalized exact built-in aliases,
   and retained MCP wildcard matching. A real restricted main Profile exposed

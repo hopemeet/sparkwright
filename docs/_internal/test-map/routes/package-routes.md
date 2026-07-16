@@ -129,6 +129,11 @@ diagnostics, config-over-Markdown shadowing, exact-file post-write callability,
 the model-facing `name`-only authoring schema, and canonical `model: "inherit"`
 normalization without a `default` alias.
 
+For `delegate-capability.ts` or `delegate-runner.ts`, also run config/schema and
+focused CLI `delegates run|capabilities inspect` slices. Preserve the distinction
+between generic delegation targets, model-facing direct aliases, and explicit
+user-selected direct execution.
+
 ### `packages/host/src/acp-child-agent.ts` or ACP worker launch
 
 Run:

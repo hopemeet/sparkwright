@@ -130,6 +130,7 @@ Focused route:
 npm --workspace @sparkwright/agent-runtime run build
 npm --workspace @sparkwright/core test -- test/run.test.ts
 npm --workspace @sparkwright/agent-runtime test -- test/index.test.ts
+npm --workspace @sparkwright/host test -- test/agent-profiles.test.ts test/config.test.ts
 npm --workspace @sparkwright/host test -- test/tools.test.ts test/spawn-agent.test.ts test/agent-task-runner.test.ts test/acp-child-agent.test.ts test/external-command-agent.test.ts
 npm --workspace @sparkwright/cli test -- test/cli.test.ts -t "configured external command delegate directly"
 npm --workspace @sparkwright/core test -- test/trace.test.ts
@@ -140,7 +141,9 @@ consume the workspace package's built output, and a stale dist can otherwise
 look like a Host behavior failure.
 
 Add CLI delegate tests when `delegates run` or capability descriptor output
-changes.
+changes. Exposure-policy changes must cover indexed pins, per-profile opt-in,
+all-mode aliases, explicit direct execution, and generated config-schema
+rejection of removed keys.
 
 Coverage ref:
 

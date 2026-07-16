@@ -801,7 +801,7 @@ export const agentProfileConfigSchema = z
     exposeAsDelegate: z
       .boolean()
       .describe(
-        "Tri-state automatic delegation opt-in/opt-out. true forces automatic delegate exposure even when capabilities.agents.exposeChildrenAsDelegates is off; false suppresses automatic delegate_agent/list_agents/delegate_parallel targeting and direct aliases. An explicit delegateTool or delegateTools entry still wins.",
+        "Tri-state automatic delegation opt-in/opt-out. true adds the profile to indexed delegation and direct delegate exposure; false suppresses automatic delegate_agent/list_agents/delegate_parallel targeting and synthesized direct aliases. An explicit delegateTool or delegateTools entry still defines a target.",
       )
       .optional(),
     hooks: agentProfileHooksSchema.optional(),
@@ -866,12 +866,6 @@ export const agentsConfigSchema = z
     pinnedDelegates: stringArray
       .describe(
         "Profile ids or delegate tool names that should remain exposed as direct delegate_* tools when exposure is indexed.",
-      )
-      .optional(),
-    exposeChildrenAsDelegates: z
-      .boolean()
-      .describe(
-        "Opt-in: auto-expose every child/all profile without an explicit delegate as a delegate_<id> tool. Default false. Per-profile exposeAsDelegate overrides this.",
       )
       .optional(),
     enableParallelDelegates: z

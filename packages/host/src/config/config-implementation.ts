@@ -3450,15 +3450,6 @@ function validateCapabilityAgents(
       out.pinnedDelegates = [...parsed.data];
     }
   }
-  if (raw.exposeChildrenAsDelegates !== undefined) {
-    const parsed = validateOptionalBoolean(
-      raw.exposeChildrenAsDelegates,
-      "capabilities.agents.exposeChildrenAsDelegates",
-      filePath,
-      errors,
-    );
-    if (parsed !== undefined) out.exposeChildrenAsDelegates = parsed;
-  }
   if (raw.enableParallelDelegates !== undefined) {
     const parsed = validateOptionalBoolean(
       raw.enableParallelDelegates,
