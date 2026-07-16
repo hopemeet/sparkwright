@@ -12,6 +12,17 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T23:55:17+0800
+- Scope: `create_agent` accepts only canonical `model: "inherit"` for model
+  inheritance; it normalizes that marker to omission and rejects the removed
+  `model: "default"` compatibility alias.
+- Read: Markdown Agent tool schema/parser/serializer, discovery validation,
+  current user/manual guidance, and focused tests.
+- Tests: Agent profile/tools 125/125; capability protocol 5/5; CLI
+  Agent/capability routes 7/7; Host and CLI typechecks; repository test
+  typecheck; project-map drift; full release gate.
+
+- Status: Verified
 - Date: 2026-07-16T23:38:00+0800
 - Scope: Agent.md discovery derives `AgentProfile.id` only from the `.md`
   filename stem; frontmatter cannot redirect identity, and `create_agent`
@@ -199,10 +210,9 @@ Does not own:
   `AgentProfile.id` from that filename stem only; frontmatter does not override
   it. New files omit inferred child mode and inherited budgets.
   Explicit model refs are resolved against current layered config before write.
-  Authoring aliases `inherit` / `default` normalize to omission, the sole
-  persisted inheritance form. Markdown discovery drops and reports invalid
-  model-ref syntax instead of advertising profiles that fail only when
-  delegated.
+  The authoring-only `inherit` marker normalizes to omission, the sole persisted
+  inheritance form. Markdown discovery drops and reports invalid model-ref
+  syntax instead of advertising profiles that fail only when delegated.
 
 - One active HostExecution per compatibility runtime facade.
 - One execution-wide abort spans assembly

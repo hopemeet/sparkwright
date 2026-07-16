@@ -698,14 +698,14 @@ export function createMarkdownAgentManagerTool(workspaceRoot: string) {
         prompt: { type: "string" },
         model: {
           oneOf: [
-            { type: "string", enum: ["inherit", "default"] },
+            { type: "string", enum: ["inherit"] },
             {
               type: "string",
               pattern: "^(deterministic|[^/\\s]+/[^\\s]+)$",
             },
           ],
           description:
-            'Use "inherit" (or legacy authoring alias "default") to inherit the effective parent/default model; these aliases are normalized away and never persisted. Otherwise pass an explicit "provider/model" ref or "deterministic".',
+            'Use "inherit" to inherit the effective parent/default model; it is normalized away and never persisted. Otherwise pass an explicit "provider/model" ref or "deterministic".',
         },
         use: { type: "array", items: { type: "string" } },
         allowedTools: { type: "array", items: { type: "string" } },
@@ -1503,9 +1503,7 @@ function parseMarkdownAgentArgs(args: unknown): MarkdownAgentInput {
     typeof args.model === "string" && args.model.trim()
       ? args.model.trim()
       : undefined;
-  const model = isMarkdownAgentModelInheritanceAlias(requestedModel)
-    ? undefined
-    : requestedModel;
+  const model = requestedModel === "inherit" ? undefined : requestedModel;
   assertMarkdownAgentModelRef(model);
   return {
     action,
@@ -1672,12 +1670,6 @@ function assertMarkdownAgentModelRef(model: string | undefined): void {
     `create_agent model "${model}" must be in "provider/model" form. ` +
       'Pass model="inherit" (or omit model) to inherit the parent/default model.',
   );
-}
-
-function isMarkdownAgentModelInheritanceAlias(
-  model: string | undefined,
-): boolean {
-  return model === "inherit" || model === "default";
 }
 
 async function assertMarkdownAgentModelResolvable(

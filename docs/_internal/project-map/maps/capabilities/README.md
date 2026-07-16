@@ -8,6 +8,17 @@ cron, shell/task tools, and capability inspection.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T23:55:17+0800
+- Scope: `create_agent` capability authoring now accepts only canonical
+  `model: "inherit"` for inheritance. Configured Agent model defaults and the
+  capability inventory are unchanged.
+- Read: Host Agent tool schema/parser, Agent capability map, capability
+  inspection consumers, and focused Host/CLI tests.
+- Tests: Host Agent profile/tools 125/125; capability protocol 5/5; CLI
+  Agent/capability routes 7/7; Host and CLI typechecks; repository test
+  typecheck; project-map drift; full release gate.
+
+- Status: Verified
 - Date: 2026-07-16T22:26:54+0800
 - Scope: checked capability ownership after workflow durable storage became
   journal-only; workflow assets remain capabilities and workflow journals

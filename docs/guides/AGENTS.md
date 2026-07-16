@@ -74,6 +74,8 @@ uses `profile.model`, then `capabilities.agents.delegateModel`, then the parent
 run model. The child's cost rolls up into the parent run under that model's
 pricing. ACP and external-command delegates run their own process, so their
 model comes from `metadata.acp`/`metadata.externalCommand`, not this field.
+When calling `create_agent`, omit `model` or pass canonical `model: "inherit"`
+to inherit; the marker is normalized to omission and is not persisted.
 
 Non-`main` markdown profiles default to child agents. A file named `main.md` or
 `mode: primary` marks the primary profile and is excluded from delegate targets.

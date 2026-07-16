@@ -211,8 +211,10 @@ inspection never triggers an approval prompt:
 - `create_agent` — `create` / `update` / `replace` / `remove`. Manages one
   `.sparkwright/agents/<name>.md` file through the normal workspace-write
   approval path. Create/update/replace require a prompt; replace also requires a
-  reason. Remove deletes that exact Markdown Agent. Explicit config profiles
-  remain human/CLI-owned governance and are not mutated by this model tool.
+  reason. Omit `model` or pass `model: "inherit"` for inheritance; the marker
+  is not persisted. Remove deletes that exact Markdown Agent. Explicit config
+  profiles remain human/CLI-owned governance and are not mutated by this model
+  tool.
 
 Skills follow the same split: `list_skills` (`list` / `validate`, read-only)
 and `create_skill` (`create`, writes a SKILL.md, requires approval).

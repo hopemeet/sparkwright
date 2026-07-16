@@ -126,7 +126,8 @@ npm --workspace @sparkwright/host run typecheck
 
 Preserve filename-derived Markdown identity, same-layer basename collision
 diagnostics, config-over-Markdown shadowing, exact-file post-write callability,
-and the model-facing `name`-only authoring schema.
+the model-facing `name`-only authoring schema, and canonical `model: "inherit"`
+normalization without a `default` alias.
 
 ### `packages/host/src/acp-child-agent.ts` or ACP worker launch
 

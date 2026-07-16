@@ -111,6 +111,8 @@ All notable changes to Sparkwright will be documented in this file.
 
 ### Changed
 
+- Markdown Agent authoring accepts only canonical `model: "inherit"` for model
+  inheritance. The `model: "default"` compatibility alias is no longer read.
 - Markdown Agent identity now comes only from the `.md` filename stem.
   Frontmatter `id` and the hidden `create_agent` `id` argument are no longer
   read; model-facing authoring uses canonical `name`.

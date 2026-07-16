@@ -12,6 +12,15 @@ See also [../maps/runtime/tool-orchestration.md](../maps/runtime/tool-orchestrat
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T23:55:17+0800
+- Scope: the Host-owned `create_agent` input boundary now recognizes only
+  canonical `model: "inherit"`; coding tool policy, approval, execution, and
+  result contracts are unchanged.
+- Read: Host tool definition/parser/tests and tool orchestration contracts.
+- Tests: Host Agent profile/tools 125/125; Host typecheck; repository test
+  typecheck; project-map drift; full release gate.
+
+- Status: Verified
 - Date: 2026-07-16T21:02:00+0800
 - Scope: Shell background task persistence and deduplication use only
   `shell.background`; removed the promotion-named persisted-kind reader.

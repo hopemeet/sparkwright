@@ -202,10 +202,16 @@ describe("host tools", () => {
     ]);
   });
 
-  it("normalizes Markdown Agent inheritance aliases without persisting model", async () => {
+  it("accepts only the canonical Markdown Agent inheritance marker", async () => {
     const ctx = await createWorkspace({});
     const tool = createMarkdownAgentManagerTool(ctx.workspaceRoot);
+    const modelSchema = (
+      tool.inputSchema as {
+        properties: { model: { oneOf: Array<{ enum?: string[] }> } };
+      }
+    ).properties.model;
 
+    expect(modelSchema.oneOf[0]?.enum).toEqual(["inherit"]);
     await expect(
       tool.execute(
         {
@@ -213,6 +219,18 @@ describe("host tools", () => {
           name: "reviewer",
           prompt: "Review changes.",
           model: "default",
+        },
+        ctx,
+      ),
+    ).rejects.toMatchObject({ code: "TOOL_ARGUMENTS_INVALID" });
+
+    await expect(
+      tool.execute(
+        {
+          action: "create",
+          name: "reviewer",
+          prompt: "Review changes.",
+          model: "inherit",
         },
         ctx,
       ),

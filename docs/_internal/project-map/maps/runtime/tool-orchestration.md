@@ -10,6 +10,17 @@ See [../safety/workspace-writes.md](../safety/workspace-writes.md), [../safety/s
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T23:55:17+0800
+- Scope: the model-facing `create_agent` schema and parser admit only
+  `model: "inherit"` as an inheritance marker; the removed `default` alias
+  cannot reach execution or persistence.
+- Read: Host tool definition/parser/serializer, schema-focused tests, Agent
+  capability contracts, and current guidance.
+- Tests: Host Agent profile/tools 125/125; capability protocol 5/5; CLI
+  Agent/capability routes 7/7; Host and CLI typechecks; repository test
+  typecheck; project-map drift; full release gate.
+
+- Status: Verified
 - Date: 2026-07-16T21:02:00+0800
 - Scope: Shell background handoff, persistence, and deduplication use the
   canonical `shell.background` kind only; promotion remains runtime origin
@@ -77,6 +88,9 @@ model tool calls
   decides each concrete execution. Deferred/eager is exposure only, approval
   confirms an authorized call, and neither mechanism can recover a removed
   tool.
+- Model-facing Markdown Agent authoring admits `model: "inherit"` as its sole
+  explicit inheritance marker and normalizes it to omission before execution.
+  Explicit persisted model values remain `provider/model` or `deterministic`.
 - Fresh runs, session/run resume, Workflow resume, and Todo continuations all
   derive their episode tools through `workflowActorEpisodePlan()` and
   `resolveRunToolSurface()`. Todo continuation requests eager `todo_write`

@@ -11,6 +11,17 @@ See [../../modules/agent-runtime.md](../../modules/agent-runtime.md) and [../../
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T23:55:17+0800
+- Scope: Markdown Agent authoring has one explicit inheritance marker,
+  `model: "inherit"`; `model: "default"` is no longer admitted or normalized.
+  Persisted inheritance remains omission.
+- Read: Host tool schema/parser/serializer, discovery validation, public
+  Agent/manual guidance, capability/tool maps, and focused tests.
+- Tests: Host Agent profile/tools 125/125; capability protocol 5/5; CLI
+  Agent/capability routes 7/7; Host and CLI typechecks; repository test
+  typecheck; project-map drift; full release gate.
+
+- Status: Verified
 - Date: 2026-07-16T23:38:00+0800
 - Scope: Markdown Agent identity now has one source: the `.md` filename stem.
   The frontmatter override and hidden `create_agent.id` reader were removed;
@@ -88,8 +99,8 @@ configured profiles/delegates
   `create_agent` surface does not expose or write a second `id`. It omits the
   default child mode and other inherited fields unless explicitly requested.
   An explicit persisted model must be `provider/model` or `deterministic`.
-  Model-facing authoring also accepts `inherit` / `default` as inheritance
-  aliases and normalizes them to omission before serialization. Semantic
+  Model-facing authoring accepts only `inherit` as an explicit inheritance
+  marker and normalizes it to omission before serialization. Semantic
   validation resolves explicit refs against the current layered config before
   any write, while file discovery fails closed and reports manually authored
   invalid syntax.

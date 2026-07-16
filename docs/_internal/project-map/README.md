@@ -213,6 +213,19 @@ trace/session inspection.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T23:55:17+0800
+- Scope: model-facing Markdown Agent authoring has one explicit inheritance
+  marker, `model: "inherit"`; the `model: "default"` compatibility reader and
+  schema branch were removed. Config/runtime model defaults are unchanged.
+- Read: Host `create_agent` schema/parser, Agent discovery validation, current
+  Agent/capability/tool maps, public guidance/manual, and focused tests.
+- Checked with no contract update needed: provider construction, configured
+  Agent `spawnModel`/`delegateModel`, policy/approval, trace, and session paths.
+- Tests: Host Agent profile/tools 125/125; Host capability protocol 5/5; CLI
+  Agent/capability routes 7/7; Host and CLI typechecks; repository test
+  typecheck; project-map drift; full release gate.
+
+- Status: Verified
 - Date: 2026-07-16T23:38:00+0800
 - Scope: Markdown Agent identity is filename-only. Host no longer reads a
   frontmatter `id` override or the hidden model-tool `id` argument; config
