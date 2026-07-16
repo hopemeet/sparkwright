@@ -853,7 +853,6 @@ describe("external command delegate tool", () => {
       stderr: string;
       stdoutTruncated: boolean;
       stderrTruncated: boolean;
-      outputTruncated: boolean;
       output: { artifactIds?: string[] };
     };
 
@@ -862,8 +861,15 @@ describe("external command delegate tool", () => {
       stderr: "wxy",
       stdoutTruncated: true,
       stderrTruncated: true,
-      outputTruncated: true,
     });
+    expect(result).not.toHaveProperty("outputTruncated");
+    const completed = parent.events
+      .all()
+      .find((event) => event.type === "subagent.completed");
+    const completedPayload = completed?.payload as
+      | { result?: unknown }
+      | undefined;
+    expect(completedPayload?.result).not.toHaveProperty("outputTruncated");
     expect(result.output.artifactIds).toEqual(
       expect.arrayContaining([expect.stringMatching(/^artifact_/)]),
     );

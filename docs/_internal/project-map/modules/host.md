@@ -12,6 +12,19 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T01:07:28+0800
+- Scope: external-command delegate output truncation has one representation:
+  the stream-specific `stdoutTruncated` and `stderrTruncated` fields. Removed
+  the divergent aggregate compatibility alias from tool and terminal trace
+  results.
+- Read: external-command adapter, traced process summary, direct delegate CLI
+  path, Core trace consumers, public process-output references, and focused
+  tests.
+- Tests: Host external-command 20/20 and delegate protocol 8/8; CLI direct
+  delegate 1/1; Core trace 4/4; Host build/typecheck and repository test
+  typecheck; project-map drift; full release gate passed.
+
+- Status: Verified
 - Date: 2026-07-17T00:08:26+0800
 - Scope: Agent direct exposure has one policy surface: `exposure`,
   `pinnedDelegates`, and per-profile `exposeAsDelegate`. The retired
@@ -963,6 +976,9 @@ Does not own:
   bounded `progressCount` / `progressDropped` / `progressHead` /
   `progressTail` summaries on the delegate tool result and
   `subagent.completed.payload.result`, not routed as `extension.process.*`.
+  Delegate output truncation is represented only by the canonical
+  `stdoutTruncated` and `stderrTruncated` fields; there is no aggregate
+  compatibility alias.
   Read/write ACP and external command delegates emit
   `workspace.write.untracked_access_granted` when direct workspace access is
   granted; this is a boundary marker, not a managed write event.

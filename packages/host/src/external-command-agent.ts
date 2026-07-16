@@ -98,8 +98,6 @@ export interface ExternalCommandDelegateToolResult {
   stdoutTruncated: boolean;
   /** @reserved Public delegate-tool output field consumed by UIs and orchestrators. */
   stderrTruncated: boolean;
-  /** @reserved Backward-compatible aggregate truncation flag. */
-  outputTruncated: boolean;
   /** @reserved Public delegate process output summary consumed by trace and diagnostics UIs. */
   output: ProcessOutputSummary;
   /** @reserved Public delegate sandbox status consumed by trace and diagnostics UIs. */
@@ -356,7 +354,6 @@ export function createExternalCommandDelegateTool(
             stderrChars: result.stderr.length,
             stdoutTruncated: result.stdoutTruncated,
             stderrTruncated: result.stderrTruncated,
-            outputTruncated: result.outputTruncated,
             output: result.output,
             sandbox: result.sandbox,
             progressCount: result.progressCount,
@@ -411,7 +408,6 @@ async function runExternalCommand(input: {
     | "stderr"
     | "stdoutTruncated"
     | "stderrTruncated"
-    | "outputTruncated"
     | "output"
     | "sandbox"
     | "progressCount"
@@ -555,8 +551,6 @@ async function runExternalCommand(input: {
       stderrTruncated:
         result.output.stderrTruncated ||
         result.output.stderrBytes > stderrLimit,
-      outputTruncated:
-        result.output.stdoutTruncated || result.output.stderrTruncated,
       output: result.output,
       sandbox,
       ...progress.summary({

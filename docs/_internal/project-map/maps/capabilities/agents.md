@@ -11,6 +11,17 @@ See [../../modules/agent-runtime.md](../../modules/agent-runtime.md) and [../../
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T01:07:28+0800
+- Scope: external-command delegate tool and `subagent.completed` results report
+  truncation only through canonical `stdoutTruncated` and `stderrTruncated`
+  fields; the aggregate compatibility alias is gone.
+- Read: Host external-command adapter/direct runner, Core process/trace
+  contracts, CLI serializer, Agent coverage routes, and public references.
+- Tests: Host external-command 20/20 and delegate protocol 8/8; CLI direct
+  delegate 1/1; Core trace 4/4; Host build/typecheck and repository test
+  typecheck; project-map drift; full release gate passed.
+
+- Status: Verified
 - Date: 2026-07-17T00:08:26+0800
 - Scope: removed the parallel `exposeChildrenAsDelegates` policy. Direct Agent
   aliases now use only `exposure`, `pinnedDelegates`, and per-profile
@@ -413,7 +424,9 @@ configured profiles/delegates
   stderr `SPARKWRIGHT_EVENT:` token progress is summarized back onto the
   delegate tool result and `subagent.completed.payload.result` as
   `progressCount`, `progressDropped`, `progressHead`, and `progressTail`; it
-  does not create `extension.process.*` lifecycle rows. When a read/write
+  does not create `extension.process.*` lifecycle rows. Output truncation is
+  reported per stream through `stdoutTruncated` and `stderrTruncated`, without
+  an aggregate compatibility alias. When a read/write
   ACP or external command delegate is granted direct workspace access it emits
   an untracked write-capable marker, not managed write events.
 

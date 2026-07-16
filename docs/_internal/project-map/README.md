@@ -213,6 +213,22 @@ trace/session inspection.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T01:07:28+0800
+- Scope: external-command delegate results expose only canonical per-stream
+  `stdoutTruncated` and `stderrTruncated` facts. Removed the aggregate
+  `outputTruncated` compatibility field from the tool result, terminal
+  `subagent.completed` payload, result type, and tests.
+- Read: Host external-command adapter and direct delegate runner, Core process
+  output and trace consumers, CLI direct-run serializer, Agent capability and
+  test maps, public process-output references, and focused tests.
+- Checked with no contract update needed: Agent Runtime lifecycle, workspace
+  access and Shell sandboxing, and ShellTool's independent artifact-aware
+  `outputTruncated` field.
+- Tests: Host external-command 20/20 and delegate protocol 8/8; CLI direct
+  delegate 1/1; Core subagent/delegate trace 4/4; Host build/typecheck and
+  repository test typecheck; project-map drift; full release gate passed.
+
+- Status: Verified
 - Date: 2026-07-17T00:08:26+0800
 - Scope: Agent direct delegate exposure now has one configuration path:
   `exposure`, `pinnedDelegates`, and per-profile `exposeAsDelegate`. Removed the

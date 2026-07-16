@@ -3,7 +3,7 @@
 ## Current Confidence
 
 - Status: `Partially Verified`
-- Last reviewed: 2026-07-14
+- Last reviewed: 2026-07-17
 - Evidence source: 2026-06-22 focused host/agent tests passed and real
   `openai/gpt-5.4-mini` read-only dynamic `spawn_agent` canaries produced valid
   trace/session structure. A configured read/write delegate canary wrote through
@@ -39,10 +39,15 @@
   current v1 lifecycle is flat. 2026-07-14 deterministic verification covered
   argument-level Agent concurrency admission, exact delegation fingerprints,
   and same-millisecond ACP/external child-id uniqueness across Core,
-  agent-runtime, and Host focused suites.
+  agent-runtime, and Host focused suites. 2026-07-17 focused verification
+  removed the external-command aggregate truncation alias while preserving
+  stream-specific tool/trace results and direct CLI execution.
 
 ## Covered
 
+- 2026-07-17 external-command delegate result coverage locks stream-specific
+  `stdoutTruncated` / `stderrTruncated` fields on both the tool result and
+  `subagent.completed`, and rejects the removed aggregate compatibility alias.
 - 2026-07-17 canonical exposure verification removed the global
   `exposeChildrenAsDelegates` path. Generic targets remain indexed, direct
   aliases use `exposure` / pins / per-profile opt-in, and explicit aliases stay

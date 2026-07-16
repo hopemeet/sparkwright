@@ -11,6 +11,17 @@ and [../session/session-store.md](../session/session-store.md) for session layou
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T01:07:28+0800
+- Scope: external-command terminal subagent results no longer persist the
+  aggregate truncation compatibility alias; stream-specific flags and the
+  canonical `ProcessOutputSummary` remain unchanged.
+- Read: Host terminal result projection, Core event/trace consumers, CLI
+  direct-run output, Agent trace coverage, and public trace references.
+- Tests: Host external-command 20/20 and delegate protocol 8/8; CLI direct
+  delegate 1/1; Core trace 4/4; repository test typecheck passed; project-map
+  drift and full release gate passed.
+
+- Status: Verified
 - Date: 2026-07-16T21:02:00+0800
 - Scope: Background Shell trace fixtures and TUI rendering use only the
   canonical `background_shell` untracked-access marker.
@@ -145,6 +156,9 @@ EventLog emits full event
   primitives are implemented in the dependency-leaf `trace-codec.ts`.
 - `artifact.created` remains the materialization boundary for large process
   stdout/stderr logs referenced by `ProcessOutputSummary.artifactIds`.
+- External-command `subagent.completed.payload.result` reports truncation only
+  through stream-specific `stdoutTruncated` and `stderrTruncated` fields; raw
+  trace does not retain an aggregate compatibility alias.
 - Promoted shell task output is traced as `task.output` under the task span and
   summarized on terminal `task.*`; it does not create `extension.process.*`
   lifecycle rows.
