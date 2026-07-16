@@ -12,6 +12,15 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T19:25:00+0800
+- Scope: Session list previews read user goals only from canonical transcript
+  prompt `messages`; the old top-level `content` shape is no longer parsed.
+- Read: Host session queries/tests, Core transcript writer, session-store map,
+  and state/trace reference.
+- Tests: Host session-preview focused tests and typecheck; test typecheck;
+  project-map drift check.
+
+- Status: Verified
 - Date: 2026-07-16T14:10:00+0800
 - Scope: Host run resume resolves runs only from canonical session storage; the workspace `.sparkwright/runs/<run-id>` lookup and attach-to-new-session compatibility path were removed.
 - Read: Host run lookup/resume, Core trace storage, protocol tests, and Host protocol reference.

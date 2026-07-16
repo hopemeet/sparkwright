@@ -97,6 +97,8 @@ Manual compact
 - Transcript prompt entries store leading system messages only in the canonical
   session `blobs/<systemRef>.json` store. `restoreTranscriptPrompts()` requires
   that blobs directory and does not read inline system-prefix/hash variants.
+- Session list previews extract the goal from canonical prompt `messages` only;
+  top-level transcript `content` is not an alternate preview format.
 - `FileSessionStore` writes `session.json` through core `file-atomic`, the same
   lower-level atomic text writer wrapped by `agent-runtime` doc-store, because
   core cannot depend upward on runtime packages.

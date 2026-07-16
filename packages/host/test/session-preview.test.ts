@@ -48,11 +48,6 @@ describe("sessionPreviewFromTranscriptLine", () => {
     );
   });
 
-  it("falls back to a top-level content string (legacy shape)", () => {
-    const line = JSON.stringify({ content: "legacy goal text" });
-    expect(sessionPreviewFromTranscriptLine(line)).toBe("legacy goal text");
-  });
-
   it("returns the raw line when it is not JSON", () => {
     expect(sessionPreviewFromTranscriptLine("not json at all")).toBe(
       "not json at all",

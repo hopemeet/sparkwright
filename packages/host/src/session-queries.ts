@@ -192,7 +192,6 @@ export function sessionPreviewFromTranscriptLine(firstLine: string): string {
     return firstLine;
   }
   const object = parsed as {
-    content?: unknown;
     messages?: Array<{ role?: unknown; content?: unknown }>;
   };
   if (Array.isArray(object.messages)) {
@@ -208,9 +207,6 @@ export function sessionPreviewFromTranscriptLine(firstLine: string): string {
       const goal = stripGoalDecorations(message.content);
       if (goal) return goal;
     }
-  }
-  if (typeof object.content === "string" && object.content.trim()) {
-    return stripGoalDecorations(object.content);
   }
   return firstLine;
 }
