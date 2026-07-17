@@ -27,15 +27,7 @@ import {
   type SpanFrame,
 } from "./spans.js";
 import { createApprovalRequest, resolveApproval } from "./approval.js";
-import {
-  createInteractionNotification,
-  createInteractionQuestionRequest,
-  type InteractionChannel,
-  type InteractionNotification,
-  type InteractionNotificationLevel,
-  type InteractionQuestionRequest,
-  type InteractionQuestionResponse,
-} from "./interaction.js";
+import type { InteractionChannel } from "./interaction.js";
 import {
   createDynamicHookSet,
   type RunHook,
@@ -341,10 +333,7 @@ export interface CreateRunOptions {
   tools?: ToolDefinition[];
   policy?: Policy;
   /**
-   * Unified outbound channel for approve / ask / notify. The loop uses
-   * `interactionChannel.approve` for approvals and exposes
-   * `RunHandle.askUser()` / `RunHandle.notifyUser()` for tools and hooks.
-   * See {@link InteractionChannel}.
+   * Outbound approval channel used by governed runtime actions.
    */
   interactionChannel?: InteractionChannel;
   /**
@@ -583,27 +572,6 @@ export interface RunHandle {
     summary: string;
     details?: Record<string, unknown>;
   }): Promise<boolean>;
-  /**
-   * Ask the user a free-form or multiple-choice question via the configured
-   * InteractionChannel. Resolves with `undefined` when no channel is wired
-   * or the channel cannot ask.
-   */
-  askUser(input: {
-    prompt: string;
-    choices?: InteractionQuestionRequest["choices"];
-    defaultChoiceId?: string;
-    metadata?: Record<string, unknown>;
-  }): Promise<InteractionQuestionResponse | undefined>;
-  /**
-   * Fire-and-forget notification to the user via the configured
-   * InteractionChannel. No-ops when no channel is wired.
-   */
-  notifyUser(input: {
-    level: InteractionNotificationLevel;
-    message: string;
-    title?: string;
-    metadata?: Record<string, unknown>;
-  }): Promise<void>;
   /** Current usage snapshot (tokens / cost / wall time / per-tool / per-model). */
   usage(): ReturnType<UsageTracker["snapshot"]>;
   /**
@@ -2380,60 +2348,6 @@ export class SparkwrightRun implements RunHandle {
     this.events.emit("interaction.resolved", { kind: "approval", response });
     this.setState("running");
     return response.decision === "approved";
-  }
-
-  async askUser(input: {
-    prompt: string;
-    choices?: InteractionQuestionRequest["choices"];
-    defaultChoiceId?: string;
-    metadata?: Record<string, unknown>;
-  }): Promise<InteractionQuestionResponse | undefined> {
-    if (!this.interactionChannel?.ask) return undefined;
-    const request = createInteractionQuestionRequest({
-      runId: this.record.id,
-      prompt: input.prompt,
-      choices: input.choices,
-      defaultChoiceId: input.defaultChoiceId,
-      metadata: input.metadata,
-    });
-    this.events.emit("interaction.requested", { kind: "question", request });
-    const response = await this.interactionChannel.ask(request);
-    this.events.emit("interaction.resolved", { kind: "question", response });
-    return response;
-  }
-
-  async notifyUser(input: {
-    level: InteractionNotificationLevel;
-    message: string;
-    title?: string;
-    metadata?: Record<string, unknown>;
-  }): Promise<void> {
-    if (!this.interactionChannel?.notify) return;
-    const notification: InteractionNotification = createInteractionNotification(
-      {
-        runId: this.record.id,
-        level: input.level,
-        message: input.message,
-        title: input.title,
-        metadata: input.metadata,
-      },
-    );
-    this.events.emit("interaction.requested", {
-      kind: "notification",
-      notification,
-    });
-    try {
-      await this.interactionChannel.notify(notification);
-    } catch (err) {
-      // Notification failures must not interrupt the run.
-      console.warn(
-        `[sparkwright] notifyUser failed: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
-    this.events.emit("interaction.resolved", {
-      kind: "notification",
-      notification,
-    });
   }
 
   usage() {

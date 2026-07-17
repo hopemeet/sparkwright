@@ -1055,6 +1055,7 @@ describe("task tools", () => {
         payload: { required?: string[] };
       };
       required?: string[];
+      additionalProperties?: boolean;
     };
     expect(schema.properties.kind.enum).toEqual(["hello"]);
     expect(schema.properties.mode.enum).toEqual([
@@ -1064,6 +1065,8 @@ describe("task tools", () => {
     ]);
     expect(schema.required).toEqual(["kind", "payload"]);
     expect(schema.properties.payload.required).toEqual(["name"]);
+    expect(schema).not.toHaveProperty("properties.awaited");
+    expect(schema.additionalProperties).toBe(false);
   });
 
   it("task_create defaults to foreground and returns inline results", async () => {
@@ -1123,7 +1126,7 @@ describe("task tools", () => {
     expect(created.result).toBe("first-execution");
   });
 
-  it("task_create can detach fire-and-forget tasks with awaited=false", async () => {
+  it("task_create mode=background starts detached fire-and-forget work", async () => {
     const manager = makeManager();
     manager.registerKind("hello", async () => "hi");
     const tools = makeTools(manager);
@@ -1137,7 +1140,7 @@ describe("task tools", () => {
       };
     }>(tools.taskCreate, {
       kind: "hello",
-      awaited: false,
+      mode: "background",
     });
     expect(created.nextAction).toMatchObject({
       action: "wait",
@@ -1180,7 +1183,7 @@ describe("task tools", () => {
     expect(manager.store.get(created.taskId as TaskId)?.awaited).toBe(true);
   });
 
-  it("task_create rejects explicit mode and awaited conflicts", async () => {
+  it("task_create rejects the removed awaited input field", async () => {
     const manager = makeManager();
     manager.registerKind("hello", async () => "hi");
     const tools = makeTools(manager);
@@ -1188,22 +1191,13 @@ describe("task tools", () => {
     await expect(
       exec(tools.taskCreate, {
         kind: "hello",
-        mode: "background",
         awaited: true,
       }),
     ).rejects.toMatchObject({
       code: "TASK_ARGUMENTS_INVALID",
-      message: expect.stringContaining("mode=background conflicts"),
-    });
-    await expect(
-      exec(tools.taskCreate, {
-        kind: "hello",
-        mode: "awaited",
-        awaited: false,
-      }),
-    ).rejects.toMatchObject({
-      code: "TASK_ARGUMENTS_INVALID",
-      message: expect.stringContaining("mode=awaited conflicts"),
+      message: expect.stringContaining(
+        "unsupported argument field(s): awaited",
+      ),
     });
   });
 

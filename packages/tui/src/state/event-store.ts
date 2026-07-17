@@ -899,9 +899,7 @@ function parseTodoPanelItems(rawItems: unknown): TodoPanelItem[] | null {
   return items.map((raw): TodoPanelItem => {
     const it = rec(raw);
     const title =
-      (typeof it.title === "string" && it.title.trim()) ||
-      (typeof it.content === "string" && it.content.trim()) ||
-      "(untitled)";
+      (typeof it.title === "string" && it.title.trim()) || "(untitled)";
     return {
       title,
       status: typeof it.status === "string" ? it.status : "pending",

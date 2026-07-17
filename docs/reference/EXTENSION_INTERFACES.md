@@ -671,28 +671,20 @@ event under the task span.
 
 ## Interaction Channel
 
-`InteractionChannel` is the unified _outbound_ channel from the runtime to a
-user (CLI prompt, desktop modal, Slack/Feishu DM, etc.). It covers approvals,
-free-form questions, and notifications through one runtime boundary.
+`InteractionChannel` is the outbound approval channel from the runtime to a
+user-facing embedder (CLI prompt, desktop modal, Slack/Feishu DM, etc.).
 
 ```ts
 interface InteractionChannel {
-  approve?(request): Promise<ApprovalResponse>; // yes/no
-  ask?(
-    request: InteractionQuestionRequest,
-  ): Promise<InteractionQuestionResponse>;
-  notify?(notification: InteractionNotification): void | Promise<void>;
+  approve(request): Promise<ApprovalResponse>; // yes/no
 }
 ```
 
 Wire via `createRun({ interactionChannel })`. `channel.approve` resolves risky
-actions, while `RunHandle.askUser` / `RunHandle.notifyUser` route through the
-same channel. Approval-only embedders provide an object containing only
-`approve`; there is no parallel resolver option or precedence rule.
+actions; there is no parallel resolver option or precedence rule.
 
 Every channel exchange emits `interaction.requested` / `interaction.resolved`
-events so trace consumers see the full conversation, not just the binary
-approval decision.
+events so trace consumers see the approval decision.
 
 ## Usage Tracker
 
@@ -969,14 +961,14 @@ import {
   runTodoSupervised,
 } from "@sparkwright/agent-runtime";
 
-const { todoRead, todoWrite } = createTodoTools({
+const { todoWrite } = createTodoTools({
   getTodoPath: () => `${sessionDir}/todo.md`,
 });
 
 // Child agents are denied todo_write via CapabilityRule:
 const childPolicy = createAgentProfilePolicy({
   id: "worker",
-  allowedTools: ["todo_read"],
+  allowedTools: ["read"],
   policy: [
     {
       action: "tool.execute",
@@ -991,15 +983,14 @@ const childPolicy = createAgentProfilePolicy({
 The on-disk format is GFM-compatible Markdown backed by the structured
 `TodoLedger` API. Its status alphabet is `[ ]` pending, `[ ] 🔄` in-progress,
 `[x]` completed, `[ ] ⛔` blocked, `[ ] ❌` failed, and `[~]` skipped.
-`todo_write` rewrites the file whole; the Leader keeps the ordering, depth,
-notes, optional `priority`, `doneWhen`, `owner`, and `evidence` fields the
-model produces.
+`todo_write` rewrites the file whole. Its model-facing item DTO is strict:
+`title`, `status`, and optional `priority`. The Markdown/parser APIs retain the
+richer internal ledger fields for host-owned correlation and evidence.
 
-`evidence` is the important guardrail: todo status changes are self-reporting,
-not proof of progress. Supervisors should treat external trace/workspace
-signals (`workspace.write.completed`, `tool.completed`, `artifact.created`) and
-item evidence (`file_changed`, `command`, `test`, `artifact`, `trace_event`) as
-the progress source of truth.
+Todo status changes are self-reporting, not proof of progress. Supervisors
+should treat external trace/workspace signals (`workspace.write.completed`,
+`tool.completed`, `artifact.created`) and host-owned item evidence as the
+progress source of truth.
 
 For long-running or background agentic work, wrap ordinary runs with
 `runTodoSupervised` rather than putting todo behavior into core or

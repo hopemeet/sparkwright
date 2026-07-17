@@ -48,7 +48,6 @@ export interface TaskCreateKindDescriptor {
 export interface TaskCreateKindCall {
   title?: string;
   mode: TaskCreateMode;
-  awaited: boolean;
 }
 
 /**
@@ -306,7 +305,6 @@ function taskCreateKindCall(parsed: CreateArgs): TaskCreateKindCall {
   return {
     ...(parsed.title ? { title: parsed.title } : {}),
     mode: parsed.mode,
-    awaited: parsed.awaited,
   };
 }
 
@@ -389,11 +387,6 @@ function taskCreateInputSchema(
         description:
           "foreground waits inline and auto-promotes on budget overrun; awaited starts detached but keeps this run alive; background starts detached fire-and-forget.",
       },
-      awaited: {
-        type: "boolean",
-        description:
-          "Compatibility flag for detached tasks. mode is preferred. Without mode, awaited=false selects background; otherwise foreground is the default.",
-      },
       payload:
         singlePayloadKind?.payloadSchema ??
         ({
@@ -404,6 +397,7 @@ function taskCreateInputSchema(
         } satisfies JsonSchemaObject),
     },
     required,
+    additionalProperties: false,
   };
 }
 
@@ -885,6 +879,7 @@ interface CreateArgs {
 
 function parseCreateArgs(args: unknown): CreateArgs {
   const record = requireRecord(args, "task_create");
+  assertOnlyKeys(record, ["kind", "title", "mode", "payload"], "task_create");
   const kind = record.kind;
   if (typeof kind !== "string" || kind.length === 0) {
     throw makeToolError(
@@ -893,8 +888,8 @@ function parseCreateArgs(args: unknown): CreateArgs {
     );
   }
   const title = typeof record.title === "string" ? record.title : undefined;
-  const mode = parseTaskCreateMode(record.mode, record.awaited);
-  const awaited = parseTaskCreateAwaited(mode, record.awaited);
+  const mode = parseTaskCreateMode(record.mode);
+  const awaited = mode !== "background";
   const payload =
     record.payload && typeof record.payload === "object"
       ? (record.payload as Record<string, unknown>)
@@ -910,10 +905,7 @@ function tryParseCreateArgs(args: unknown): CreateArgs | undefined {
   }
 }
 
-function parseTaskCreateMode(
-  rawMode: unknown,
-  rawAwaited: unknown,
-): TaskCreateMode {
+function parseTaskCreateMode(rawMode: unknown): TaskCreateMode {
   if (
     rawMode === "foreground" ||
     rawMode === "awaited" ||
@@ -927,28 +919,21 @@ function parseTaskCreateMode(
       "task_create: mode must be foreground, awaited, or background.",
     );
   }
-  return rawAwaited === false ? "background" : "foreground";
+  return "foreground";
 }
 
-function parseTaskCreateAwaited(
-  mode: TaskCreateMode,
-  rawAwaited: unknown,
-): boolean {
-  const expected = mode === "background" ? false : true;
-  if (rawAwaited === undefined) return expected;
-  if (typeof rawAwaited !== "boolean") {
-    throw makeToolError(
-      "TASK_ARGUMENTS_INVALID",
-      "task_create: awaited must be a boolean when provided.",
-    );
-  }
-  if (rawAwaited !== expected) {
-    throw makeToolError(
-      "TASK_ARGUMENTS_INVALID",
-      `task_create: mode=${mode} conflicts with awaited=${rawAwaited}. Omit awaited or choose a matching mode.`,
-    );
-  }
-  return rawAwaited;
+function assertOnlyKeys(
+  record: Record<string, unknown>,
+  allowed: readonly string[],
+  toolName: string,
+): void {
+  const allowedSet = new Set(allowed);
+  const unsupported = Object.keys(record).filter((key) => !allowedSet.has(key));
+  if (unsupported.length === 0) return;
+  throw makeToolError(
+    "TASK_ARGUMENTS_INVALID",
+    `${toolName}: unsupported argument field(s): ${unsupported.join(", ")}.`,
+  );
 }
 
 function enforceConcurrencyLimit(

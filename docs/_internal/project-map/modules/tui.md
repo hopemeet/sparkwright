@@ -225,6 +225,9 @@ Does not own:
   join/promote actions for host-backed callers; these callbacks call
   host-facing `task.join` / `task.promote` controls, while task state remains
   host/protocol-owned.
+- Todo event projection reads only canonical model/result item titles. It does
+  not retain a `content` fallback; malformed title-less trace rows use the
+  generic `(untitled)` diagnostic placeholder.
 - The Activity Drawer task details view is a bounded output browser: task
   selection uses arrow keys / `j` / `k`, output mode uses `f` / `H` / `T`, and
   long head/tail output can be paged with PgUp/PgDn or nudged with `[` / `]`.

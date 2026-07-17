@@ -213,6 +213,19 @@ trace/session inspection.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T11:02:45+0800
+- Scope: model-facing runtime DTOs are single-shape: Task scheduling accepts
+  only `mode`, Todo writes accept only `title`/`status`/optional `priority`, and
+  Core interaction is approval-only. Durable Task state and rich internal Todo
+  ledger fields remain intact.
+- Read: Agent Runtime Task/Todo maps and sources, Core interaction/run surface,
+  Host/CLI/Streaming Runtime approval adapters, TUI Todo projection, public
+  references, and relevant test-map coverage/routes.
+- Tests: Agent Runtime Task/Todo 99/99; Core interaction/approval 18/18;
+  Host task/approval 12/12; CLI approval 4/4; TUI Todo 11/11; affected package
+  typechecks; schema/test typechecks; project-map drift; full release gate.
+
+- Status: Verified
 - Date: 2026-07-17T09:43:00+0800
 - Scope: external configuration now has one canonical input shape: identity,
   policy, run, and UI-owned fields are grouped-only; active root fields remain
@@ -912,8 +925,8 @@ typecheck`.
 - Date: 2026-07-02T09:30:00+0800
 - Scope: routed the background task lifecycle follow-up across core/host/
   agent-runtime: independent revival forced-continuation budget, cleaned
-  `waiting_tasks` race cancellation, detached notification surfacing, and explicit
-  `task_create` mode/awaited conflict rejection. Durable detach/resume remains
+  `waiting_tasks` race cancellation, detached notification surfacing, and
+  `task_create` scheduling validation. Durable detach/resume remains
   proposal-only.
 - Read: `docs/_internal/proposals/background-task-lifecycle.md`,
   `docs/_internal/project-map/modules/core.md`,

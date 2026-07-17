@@ -313,10 +313,8 @@ Current event types:
   samples into the terminal event; `debug` traces keep raw progress and bounded
   `progressDroppedSamples`.
 - `interaction.requested`: the runtime asked the InteractionChannel for an
-  approval / question / notification. Payload:
-  `{ kind: "approval"|"question"|"notification", request|notification }`.
-- `interaction.resolved`: the channel returned a response (or the
-  notification was delivered).
+  approval. Payload: `{ kind: "approval", request }`.
+- `interaction.resolved`: the channel returned an approval response.
 - `context.cache_break.detected`: a context item previously emitted as
   `stability: stable` was observed to have changed between turns. Payload:
   `{ runId, step, prefixIndex, priorHash, currentHash, role }`. Diagnostic

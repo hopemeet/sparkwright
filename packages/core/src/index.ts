@@ -690,19 +690,8 @@ export type {
 } from "./user-hooks.js";
 export { bindUserHooks } from "./user-hooks.js";
 
-// Interaction channel (approve / ask / notify — unified outbound).
-export type {
-  InteractionChannel,
-  InteractionQuestionChoice,
-  InteractionQuestionRequest,
-  InteractionQuestionResponse,
-  InteractionNotification,
-  InteractionNotificationLevel,
-} from "./interaction.js";
-export {
-  createInteractionNotification,
-  createInteractionQuestionRequest,
-} from "./interaction.js";
+// Interaction channel (approval-only outbound boundary).
+export type { InteractionChannel } from "./interaction.js";
 
 // Slash-command registry (user intent surface; distinct from ToolDefinition).
 export type {

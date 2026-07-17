@@ -134,7 +134,7 @@ contracts, and focused checklists that no longer fit here.
 
 - Status: Verified
 - Date: 2026-07-16T13:21:00+0800
-- Scope: Streaming Runtime accepts only `InteractionChannel` for outbound approvals/questions/notifications and no longer resolves a parallel approval option.
+- Scope: Streaming Runtime accepts only `InteractionChannel` and no longer resolves a parallel approval option.
 - Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.
 - Tests: focused access/policy/protocol/CLI/TUI/ACP/Workflow tests; npm run typecheck:test; npm run schema:check.
 

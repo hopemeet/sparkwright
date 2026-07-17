@@ -1,5 +1,10 @@
 # TUI Rendering Coverage
 
+- Todo projection coverage uses canonical `title` items from `todo_write`
+  request/result events. The TUI no longer accepts `content` as an alternate
+  model DTO field; title-less malformed rows retain only the generic diagnostic
+  placeholder.
+
 - 2026-07-11 Package A deterministically verified immutable per-execution
   approval policy, exact run/workflow attribution, two-workflow permission
   isolation, active/queued client cleanup, idempotent cleanup, and controller-

@@ -10,13 +10,24 @@ See [workspace-writes.md](workspace-writes.md) and [shell.md](shell.md).
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T11:02:45+0800
+- Scope: `InteractionChannel` is now the required-method, approval-only Core
+  outbound boundary. Question/notification DTOs and RunHandle helpers were
+  removed without changing approval policy ordering or audit events.
+- Read: Core interaction/run/workspace paths, Host/CLI/Streaming Runtime
+  adapters, interaction tests, and current reference docs.
+- Tests: Core interaction/approval 18/18; Host task/approval 12/12; CLI
+  approval 4/4; affected package typechecks; repository test typecheck; schema
+  check; project-map drift; full release gate.
+
+- Status: Verified
 - Date: 2026-07-16T13:36:30+0800
 - Scope: Removing `ValidationHook` does not weaken approval ordering: policy still runs before the canonical interaction-channel approval, and managed workspace writes remain approval-gated.
 - Read: Core run/workspace policy and approval paths plus focused safety tests.
 - Tests: focused approval/workspace tests; npm run build; npm run typecheck:test; npm run release:check.
 
 - Date: 2026-07-16T13:21:00+0800
-- Scope: `InteractionChannel` is the only Core outbound approval/question/notification boundary; the direct approval resolver option and adapter bridges were removed.
+- Scope: `InteractionChannel` became the single Core outbound interaction boundary; the direct approval resolver option and adapter bridges were removed.
 - Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.
 - Tests: focused access/policy/protocol/CLI/TUI/ACP/Workflow tests; npm run typecheck:test; npm run schema:check.
 

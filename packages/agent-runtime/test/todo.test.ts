@@ -156,10 +156,10 @@ describe("createTodoWriteTool", () => {
   it("write creates the file and echoes the resulting state", async () => {
     const path = await tempPath();
     const write = createTodoWriteTool({ getTodoPath: () => path });
-    const items: TodoItem[] = [
-      { title: "stage 0", status: "completed", depth: 0 },
-      { title: "stage 1", status: "in_progress", depth: 0 },
-      { title: "substep", status: "pending", depth: 1 },
+    const items = [
+      { title: "stage 0", status: "completed" },
+      { title: "stage 1", status: "in_progress" },
+      { title: "stage 2", status: "pending" },
     ];
     const writeRes = (await write.execute(
       { items },
@@ -172,7 +172,7 @@ describe("createTodoWriteTool", () => {
     expect(writeRes.todos).toEqual([
       { title: "stage 0", status: "completed" },
       { title: "stage 1", status: "in_progress" },
-      { title: "substep", status: "pending" },
+      { title: "stage 2", status: "pending" },
     ]);
     expect(writeRes.summary).toContain("1/3 done");
     expect(writeRes.summary).toContain("stage 1");
@@ -180,38 +180,62 @@ describe("createTodoWriteTool", () => {
     const onDisk = await readFile(path, "utf8");
     expect(onDisk).toContain("- [x] stage 0");
     expect(onDisk).toContain("- [ ] 🔄 stage 1");
-    expect(onDisk).toContain("  - [ ] substep");
+    expect(onDisk).toContain("- [ ] stage 2");
   });
 
-  it("write still accepts (but no longer advertises) rich item fields", async () => {
+  it("exposes and accepts only the canonical model-facing item fields", async () => {
     const path = await tempPath();
     const write = createTodoWriteTool({ getTodoPath: () => path });
+    const schema = write.inputSchema as {
+      properties: {
+        items: {
+          items: {
+            properties: Record<string, unknown>;
+            required?: string[];
+            additionalProperties?: boolean;
+          };
+        };
+      };
+      additionalProperties?: boolean;
+    };
+    expect(Object.keys(schema.properties.items.items.properties)).toEqual([
+      "title",
+      "status",
+      "priority",
+    ]);
+    expect(schema.properties.items.items.required).toEqual(["title", "status"]);
+    expect(schema.properties.items.items.additionalProperties).toBe(false);
+    expect(schema.additionalProperties).toBe(false);
+
     await write.execute(
       {
         items: [
-          {
-            id: "oc-1",
-            content: "implement ledger",
-            status: "blocked",
-            priority: "medium",
-            doneWhen: "agent-runtime tests pass",
-            evidence: [{ kind: "command", command: "npm test", exitCode: 0 }],
-          },
+          { title: "implement ledger", status: "blocked", priority: "medium" },
         ],
       },
       {} as never,
     );
     const ledger = await readTodoLedger(path);
     expect(ledger.items[0]).toMatchObject({
-      id: "oc-1",
       title: "implement ledger",
       status: "blocked",
       priority: "medium",
-      doneWhen: "agent-runtime tests pass",
     });
-    expect(ledger.items[0]?.evidence).toEqual([
-      { kind: "command", command: "npm test", exitCode: 0 },
-    ]);
+
+    await expect(
+      write.execute(
+        { items: [{ content: "legacy", status: "pending" }] },
+        {} as never,
+      ),
+    ).rejects.toThrow(/unsupported field\(s\): content/);
+    await expect(
+      write.execute(
+        {
+          items: [{ title: "rich", status: "pending", doneWhen: "tests pass" }],
+        },
+        {} as never,
+      ),
+    ).rejects.toThrow(/unsupported field\(s\): doneWhen/);
   });
 
   it("write rejects invalid status values", async () => {
@@ -231,7 +255,7 @@ describe("createTodoWriteTool", () => {
   it("write skips a byte-identical rewrite as a no-op", async () => {
     const path = await tempPath();
     const write = createTodoWriteTool({ getTodoPath: () => path });
-    const items = [{ title: "a", status: "pending", depth: 0 }];
+    const items = [{ title: "a", status: "pending" }];
     const first = (await write.execute(
       { items },
       {} as never,
@@ -250,7 +274,7 @@ describe("createTodoWriteTool", () => {
   it("nudges after repeated no-op writes, and resets on a real change", async () => {
     const path = await tempPath();
     const write = createTodoWriteTool({ getTodoPath: () => path });
-    const items = [{ title: "a", status: "pending", depth: 0 }];
+    const items = [{ title: "a", status: "pending" }];
     const run = (todoItems: unknown[]) =>
       write.execute(
         { items: todoItems },
@@ -263,7 +287,7 @@ describe("createTodoWriteTool", () => {
     expect(nudged.saved).toBe(false);
     expect(nudged.hint).toMatch(/calling todo_write again/);
     // A real change resets the counter.
-    const changed = [{ title: "a", status: "completed", depth: 0 }];
+    const changed = [{ title: "a", status: "completed" }];
     expect((await run(changed)).hint).toBeUndefined();
     expect((await run(changed)).hint).toMatch(/calling todo_write again/);
   });
@@ -343,7 +367,7 @@ describe("createTodoWriteTool", () => {
     });
     expect(all().map((t) => t.name)).toEqual(["todo_write"]);
     await todoWrite.execute(
-      { items: [{ title: "x", status: "pending", depth: 0 }] },
+      { items: [{ title: "x", status: "pending" }] },
       {} as never,
     );
     const ledger = await readTodoLedger(path);
@@ -376,7 +400,7 @@ describe("TodoLedger helpers", () => {
         items: [
           { title: "done", status: "completed" },
           { title: "next", status: "pending", priority: "high" },
-          { title: "blocked", status: "blocked", note: "needs input" },
+          { title: "blocked", status: "blocked" },
         ],
       },
       {} as never,

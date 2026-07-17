@@ -58,16 +58,9 @@ export interface TodoItem {
    */
   id?: string;
   /**
-   * Human-readable task text. This remains the canonical field for backwards
-   * compatibility with v0.1 callers.
+   * Human-readable task text.
    */
   title: string;
-  /**
-   * Alternative task-text field accepted from clients that send `content`
-   * instead of `title`. Normalizers copy it into `title`; serializers emit
-   * `title`.
-   */
-  content?: string;
   status: TodoStatus;
   depth: number;
   priority?: TodoPriority;

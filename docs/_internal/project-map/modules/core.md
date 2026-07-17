@@ -13,6 +13,17 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md),
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T11:02:45+0800
+- Scope: `InteractionChannel` is approval-only; speculative question and
+  notification DTOs/factories plus `RunHandle.askUser()`/`notifyUser()` were
+  removed. Existing approval and interaction audit events remain canonical.
+- Read: Core interaction/run exports and tests, Host/CLI/Streaming Runtime
+  approval adapters, approval map, and current reference docs.
+- Tests: Core interaction/approval 18/18; CLI approval 4/4; Core, CLI,
+  Streaming Runtime, and Cron typechecks; repository test typecheck; schema
+  check; project-map drift; full release gate.
+
+- Status: Verified
 - Date: 2026-07-16T19:05:00+0800
 - Scope: Transcript prompt rehydration uses only canonical session
   `blobs/<systemRef>.json` storage; the inline `systemHash` reader and optional
@@ -40,7 +51,7 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md),
 - Tests: focused Core/Host/TUI tests; npm run build; npm run typecheck:test; npm run release:check.
 
 - Date: 2026-07-16T13:21:00+0800
-- Scope: Core accepts only `InteractionChannel` for outbound approvals, questions, and notifications; resolver compatibility adapters and precedence fallback were removed.
+- Scope: Core consolidated outbound interaction behind `InteractionChannel`; resolver compatibility adapters and precedence fallback were removed.
 - Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.
 - Tests: focused access/policy/protocol/CLI/TUI/ACP/Workflow tests; npm run typecheck:test; npm run schema:check.
 
@@ -297,7 +308,7 @@ Does not own:
   read-like tool calls without changing raw `workspace.read` payloads.
 - Trace reports also include a task-lifecycle advisory for repeated equivalent
   `task_create` calls inside one run. Equivalence is `kind` plus stable
-  `payload` fingerprint, while scheduling fields such as `mode`/`awaited` are
+  `payload` fingerprint, while the scheduling field `mode` is
   ignored. The finding requires evidence that a prior task id reached a
   reusable completed terminal state before the later create request, and skips
   failed, cancelled, partial, or truncated prior tasks.

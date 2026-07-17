@@ -9,6 +9,18 @@ See also [../maps/capabilities/agents.md](../maps/capabilities/agents.md), [../m
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T11:02:45+0800
+- Scope: Model-facing Task and Todo inputs are canonical: `task_create` accepts
+  scheduling only through `mode`, while `todo_write` accepts only
+  `title`/`status`/optional `priority`. Durable Task `awaited` state and internal
+  rich Todo ledger fields remain separate runtime/storage contracts.
+- Read: Task/Todo factories, parsers, durable types, Host kind descriptors, TUI
+  projections, focused tests, runtime tool map, and current reference docs.
+- Tests: Task/Todo 99/99; Host task/approval 12/12; TUI Todo 11/11;
+  Agent Runtime/Host/TUI typechecks; repository test typecheck; schema check;
+  project-map drift; full release gate.
+
+- Status: Verified
 - Date: 2026-07-17T00:08:26+0800
 - Scope: portable `AgentProfile.exposeAsDelegate` now documents only the
   canonical indexed/direct exposure policy; Agent Runtime carries the value
@@ -327,9 +339,15 @@ Does not own:
   execution from reopened durable `pending`/`running` records.
 - `task_create` supports `foreground`, `awaited`, and `background` modes. The
   default is foreground; foreground timeout may promote to an awaited background
-  task; explicit `mode`/`awaited` conflicts are rejected as recoverable argument
-  errors; global/per-kind concurrency caps fail as recoverable tool errors
-  rather than queueing internally.
+  task. `mode` is the only model-facing scheduling input; the durable/result
+  `awaited` boolean reports runtime state. Unknown create fields fail as
+  recoverable argument errors. Global/per-kind concurrency caps fail as
+  recoverable tool errors rather than queueing internally.
+- `todo_write` accepts a strict model-facing item DTO of non-empty `title`,
+  status, and optional priority. Common status synonyms remain normalized as a
+  deliberate model-tolerance mechanism. The Markdown ledger can retain richer
+  host-owned fields, but the tool does not accept an unadvertised rich DTO or a
+  `content` alias.
 - Detached or promoted `task_create` results include a model-visible
   `nextAction` object with the concrete task id, recommended `task` monitor
   action, output retrieval hint, and duplicate-avoidance guidance. Keep this

@@ -313,7 +313,6 @@ export function itemsOnly(entries: TodoEntry[]): TodoItem[] {
       ({
         id,
         title,
-        content,
         status,
         depth,
         priority,
@@ -324,7 +323,6 @@ export function itemsOnly(entries: TodoEntry[]): TodoItem[] {
       }) => ({
         ...(id ? { id } : {}),
         title,
-        ...(content ? { content } : {}),
         status,
         depth,
         ...(priority ? { priority } : {}),

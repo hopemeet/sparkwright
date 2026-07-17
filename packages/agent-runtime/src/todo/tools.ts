@@ -18,12 +18,7 @@ import {
   serializeTodoMarkdown,
   type TodoEntry,
 } from "./markdown.js";
-import type {
-  TodoEvidence,
-  TodoItem,
-  TodoPriority,
-  TodoStatus,
-} from "./types.js";
+import type { TodoItem, TodoPriority, TodoStatus } from "./types.js";
 
 const VALID_STATUSES: ReadonlySet<TodoStatus> = new Set([
   "pending",
@@ -152,13 +147,15 @@ export function createTodoWriteTool(
             properties: {
               title: { type: "string" },
               status: { type: "string" },
-              priority: { type: "string" },
+              priority: { type: "string", enum: ["high", "medium", "low"] },
             },
-            required: ["status"],
+            required: ["title", "status"],
+            additionalProperties: false,
           },
         },
       },
       required: ["items"],
+      additionalProperties: false,
     },
     deferLoading: false,
     // The ledger is internal session bookkeeping (.sparkwright/sessions/<id>/
@@ -317,6 +314,7 @@ function parseWriteArgs(args: unknown): TodoItem[] {
     throw new Error("todo_write: arguments must be an object.");
   }
   const record = args as Record<string, unknown>;
+  assertOnlyKeys(record, ["items"], "todo_write");
   if (!Array.isArray(record.items)) {
     throw new Error("todo_write: items must be an array.");
   }
@@ -328,15 +326,18 @@ function normalizeItem(raw: unknown, index: number): TodoItem {
     throw new Error(`todo_write: items[${index}] must be an object.`);
   }
   const r = raw as Record<string, unknown>;
+  assertOnlyKeys(
+    r,
+    ["title", "status", "priority"],
+    `todo_write: items[${index}]`,
+  );
   const title =
     typeof r.title === "string" && r.title.trim().length > 0
       ? r.title.trim()
-      : typeof r.content === "string" && r.content.trim().length > 0
-        ? r.content.trim()
-        : undefined;
+      : undefined;
   if (!title) {
     throw new Error(
-      `todo_write: items[${index}] must include non-empty title or content.`,
+      `todo_write: items[${index}].title must be a non-empty string.`,
     );
   }
   const status = normalizeStatus(r.status);
@@ -345,69 +346,28 @@ function normalizeItem(raw: unknown, index: number): TodoItem {
       `todo_write: items[${index}].status must be one of: ${[...VALID_STATUSES].join(", ")}`,
     );
   }
-  const depth =
-    typeof r.depth === "number" && Number.isInteger(r.depth) && r.depth >= 0
-      ? r.depth
-      : 0;
-  const id =
-    typeof r.id === "string" && r.id.trim().length > 0
-      ? r.id.trim()
-      : undefined;
   const priority =
     typeof r.priority === "string" &&
     VALID_PRIORITIES.has(r.priority as TodoPriority)
       ? (r.priority as TodoPriority)
       : undefined;
-  const doneWhen =
-    typeof r.doneWhen === "string" && r.doneWhen.trim().length > 0
-      ? r.doneWhen.trim()
-      : undefined;
-  const evidence = Array.isArray(r.evidence)
-    ? r.evidence.map(normalizeEvidence).filter((e): e is TodoEvidence => !!e)
-    : undefined;
-  const owner =
-    typeof r.owner === "string" && r.owner.trim().length > 0
-      ? r.owner.trim()
-      : undefined;
-  const note = typeof r.note === "string" ? r.note : undefined;
   return {
-    ...(id ? { id } : {}),
     title,
-    ...(typeof r.content === "string" ? { content: r.content } : {}),
     status,
-    depth,
+    depth: 0,
     ...(priority ? { priority } : {}),
-    ...(doneWhen ? { doneWhen } : {}),
-    ...(evidence && evidence.length > 0 ? { evidence } : {}),
-    ...(owner ? { owner } : {}),
-    ...(note ? { note } : {}),
   };
 }
 
-function normalizeEvidence(raw: unknown): TodoEvidence | undefined {
-  if (typeof raw !== "object" || raw === null) return undefined;
-  const r = raw as Record<string, unknown>;
-  switch (r.kind) {
-    case "file_changed":
-      return typeof r.path === "string" && r.path.length > 0
-        ? { kind: "file_changed", path: r.path }
-        : undefined;
-    case "command":
-      return typeof r.command === "string" && typeof r.exitCode === "number"
-        ? { kind: "command", command: r.command, exitCode: r.exitCode }
-        : undefined;
-    case "test":
-      return typeof r.command === "string" && typeof r.passed === "boolean"
-        ? { kind: "test", command: r.command, passed: r.passed }
-        : undefined;
-    case "artifact":
-      return typeof r.artifactId === "string" && r.artifactId.length > 0
-        ? { kind: "artifact", artifactId: r.artifactId }
-        : undefined;
-    case "trace_event":
-      return typeof r.eventId === "string" && r.eventId.length > 0
-        ? { kind: "trace_event", eventId: r.eventId }
-        : undefined;
-  }
-  return undefined;
+function assertOnlyKeys(
+  record: Record<string, unknown>,
+  allowed: readonly string[],
+  location: string,
+): void {
+  const allowedSet = new Set(allowed);
+  const unsupported = Object.keys(record).filter((key) => !allowedSet.has(key));
+  if (unsupported.length === 0) return;
+  throw new Error(
+    `${location}: unsupported field(s): ${unsupported.join(", ")}.`,
+  );
 }

@@ -211,9 +211,10 @@ true` records a mutation index for its target (`mutatedByTarget`). A
   source of live unknown-kind diagnostics.
 - `task_create` is a task lifecycle tool, not an internal queue. It supports
   `foreground`, `awaited`, and `background` modes; default foreground may
-  promote on budget timeout when policy allows it. Explicit `mode`/`awaited`
-  conflicts reject as recoverable argument errors. Global/per-kind concurrency
-  caps fail as recoverable tool errors. `task(action:"wait", ids,
+  promote on budget timeout when policy allows it. `mode` is its only
+  model-facing scheduling input; unknown fields reject as recoverable argument
+  errors, while output/durable `awaited` reports current runtime state.
+  Global/per-kind concurrency caps fail as recoverable tool errors. `task(action:"wait", ids,
 mode:"any"|"all")` is the join surface. Detached/promoted create results
   include concrete `nextAction` guidance so the model has a task id and monitor
   action to reuse instead of issuing an equivalent `task_create`.
@@ -225,7 +226,7 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
   `task_create` lifecycle events when a later same-run create has the same
   `kind` + stable payload fingerprint after an earlier same-payload task
   completed. This diagnostic intentionally ignores scheduling-only differences
-  such as `mode`/`awaited` and skips failed, cancelled, partial, or truncated
+  such as `mode` and skips failed, cancelled, partial, or truncated
   prior tasks.
 - Deferred `task` action monitoring is guarded in both model guidance and
   runtime validation: the schema advertises action-specific non-empty

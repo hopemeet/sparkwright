@@ -23,7 +23,6 @@ import {
   createTodoTools,
   parseSubAgentResult,
   validateDeclaredWrites,
-  type TodoItem,
   type TodoStatus,
   type WorktreeHandle,
 } from "@sparkwright/agent-runtime";
@@ -74,10 +73,9 @@ async function runLeader(
   // Initial todo: everything pending.
   await writeTodo(
     todoWrite,
-    plans.map<TodoItem>((p) => ({
+    plans.map((p) => ({
       title: p.goal,
       status: "pending",
-      depth: 0,
     })),
   );
 
@@ -105,10 +103,9 @@ async function runLeader(
   // Mark all in_progress.
   await writeTodo(
     todoWrite,
-    plans.map<TodoItem>((p) => ({
+    plans.map((p) => ({
       title: p.goal,
       status: "in_progress",
-      depth: 0,
     })),
   );
 
@@ -187,11 +184,9 @@ async function runLeader(
   // Final todo write reflecting every outcome.
   await writeTodo(
     todoWrite,
-    outcomes.map<TodoItem>((o) => ({
+    outcomes.map((o) => ({
       title: o.plan.goal,
       status: o.finalStatus,
-      depth: 0,
-      ...(o.note ? { note: o.note } : {}),
     })),
   );
   return outcomes;
@@ -202,7 +197,11 @@ type ToolLike = { execute: (args: any, ctx: any) => any };
 
 async function writeTodo(
   todoWrite: ToolLike,
-  items: TodoItem[],
+  items: Array<{
+    title: string;
+    status: TodoStatus;
+    priority?: "high" | "medium" | "low";
+  }>,
 ): Promise<void> {
   await todoWrite.execute({ items }, {});
 }

@@ -80,6 +80,10 @@
 - Child agents cannot receive `task_create` or call dynamic `spawn_agent` again
   in v1. Focused tests reject the removed `allowNestedBackgroundTasks` config
   and reject a dynamic spawn whose parent is already a sub-agent.
+- Model-facing `task_create` scheduling is covered through canonical `mode`
+  values only. Focused Agent Runtime coverage rejects the removed `awaited`
+  input field while preserving durable/result `awaited` state for revival and
+  Activity Drawer consumers.
 
 - Dynamic `spawn_agent` children emit parent-visible sub-agent lifecycle events.
 - Configured in-process delegates can write through the parent approval path.

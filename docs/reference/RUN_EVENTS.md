@@ -166,14 +166,14 @@ Recommended UI behavior:
 - Throttle progress rendering on the frontend; store every event on the backend
   if the trace level allows it.
 
-## Approval And Questions
+## Approvals
 
 There are two related surfaces:
 
 - `approval.requested` / `approval.resolved` are the stable approval-specific
   events used around governed actions.
-- `interaction.requested` / `interaction.resolved` are the generalized channel
-  events for `approval`, `question`, and `notification` exchanges.
+- `interaction.requested` / `interaction.resolved` are the channel-level view
+  of the same approval exchange.
 
 Frontend guidance:
 
@@ -183,14 +183,12 @@ Frontend guidance:
   final decision.
 - `approval.resolved.autoApproved` is the structured signal for approvals made
   by policy or flags; consumers must not infer it from message text.
-- When `interaction.requested` has `kind: "question"`, render the request using
-  the structured question shape rather than parsing text.
 - When both approval and interaction events exist for the same exchange, merge
   them in the UI instead of showing duplicate prompts.
 
 Backend guidance:
 
-- Persist pending approval/question state separately from the event stream only
+- Persist pending approval state separately from the event stream only
   as a cache. The event stream remains the audit record.
 - Approval denial is not the same as run cancellation. Follow subsequent
   `workspace.write.denied`, `tool.failed`, or terminal run events for outcome.
