@@ -11,6 +11,16 @@ See [../../modules/agent-runtime.md](../../modules/agent-runtime.md) and [../../
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T08:25:00+0800
+- Scope: ACP and external-command tool results expose only canonical
+  `agentProfileId` for configured-profile identity. The parallel result/error
+  `agentId` alias is gone; lifecycle actor and child-run identity are unchanged.
+- Read: Host process delegate adapters/direct runner, CLI/TUI consumers, Core
+  trace projections, Agent Runtime lifecycle boundary, and focused tests.
+- Tests: Host ACP/external-command 30/30 and delegate protocol 8/8; CLI direct
+  delegate 1/1; Core trace 4/4; Host and repository test typechecks passed.
+
+- Status: Verified
 - Date: 2026-07-17T01:07:28+0800
 - Scope: external-command delegate tool and `subagent.completed` results report
   truncation only through canonical `stdoutTruncated` and `stderrTruncated`
@@ -112,6 +122,9 @@ configured profiles/delegates
   runs also carry `sessionId` on both parent-visible lifecycle metadata and the
   spawned child run metadata before persistence so stdout/event-stream views,
   child EventLog output, and `trace.jsonl` agree.
+- Process delegate tool results identify a configured profile only through
+  `agentProfileId`. They do not expose `agentId`, because that name belongs to
+  run/lifecycle actor attribution rather than a transport profile alias.
 - Delegate tools are capability surface, not a hidden second runtime.
 - Markdown-authored profiles are recursively discovered from layered
   `.sparkwright/agents` roots, parsed as YAML frontmatter plus prompt body, and

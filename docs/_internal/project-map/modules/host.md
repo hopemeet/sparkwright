@@ -12,6 +12,17 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T08:25:00+0800
+- Scope: process delegate tool results have one configured-profile identity:
+  `agentProfileId`. Removed the duplicate `agentId` field from ACP and
+  external-command success results and external nonzero-exit metadata without
+  changing parent/child lifecycle attribution.
+- Read: ACP/external-command adapters, direct delegate runner, Host/CLI/TUI
+  consumers, Core trace projections, public references, and focused tests.
+- Tests: Host ACP/external-command 30/30 and delegate protocol 8/8; CLI direct
+  delegate 1/1; Core trace 4/4; Host and repository test typechecks passed.
+
+- Status: Verified
 - Date: 2026-07-17T01:07:28+0800
 - Scope: external-command delegate output truncation has one representation:
   the stream-specific `stdoutTruncated` and `stderrTruncated` fields. Removed
@@ -979,6 +990,9 @@ Does not own:
   Delegate output truncation is represented only by the canonical
   `stdoutTruncated` and `stderrTruncated` fields; there is no aggregate
   compatibility alias.
+  ACP and external-command delegate tool results identify the configured
+  profile only through `agentProfileId`; result and error metadata must not
+  reuse `agentId`, which is reserved for run/lifecycle actor attribution.
   Read/write ACP and external command delegates emit
   `workspace.write.untracked_access_granted` when direct workspace access is
   granted; this is a boundary marker, not a managed write event.

@@ -87,7 +87,6 @@ export interface ExternalCommandDelegateToolResult {
   spanId: string;
   /** @reserved Public delegate-tool output field consumed by UIs and orchestrators. */
   protocol: "external_command";
-  agentId: string;
   /** @reserved Public delegate-tool output field consumed by UIs and orchestrators. */
   agentProfileId: string;
   exitCode: number | null;
@@ -337,7 +336,6 @@ export function createExternalCommandDelegateTool(
             )}.`,
             {
               childRunId,
-              agentId: input.profile.id,
               agentProfileId: input.profile.id,
               ...result,
             },
@@ -366,7 +364,6 @@ export function createExternalCommandDelegateTool(
           childRunId,
           spanId,
           protocol: "external_command",
-          agentId: input.profile.id,
           agentProfileId: input.profile.id,
           ...result,
         };

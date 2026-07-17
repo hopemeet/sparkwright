@@ -41,10 +41,17 @@
   and same-millisecond ACP/external child-id uniqueness across Core,
   agent-runtime, and Host focused suites. 2026-07-17 focused verification
   removed the external-command aggregate truncation alias while preserving
-  stream-specific tool/trace results and direct CLI execution.
+  stream-specific tool/trace results and direct CLI execution. A later
+  2026-07-17 pass removed the ACP/external-command tool-result `agentId`
+  profile alias while retaining canonical `agentProfileId` and lifecycle actor
+  attribution.
 
 ## Covered
 
+- 2026-07-17 ACP/external-command result identity coverage rejects the removed
+  top-level `agentId` alias on both success paths and external nonzero-exit
+  metadata, while locking canonical `agentProfileId` and unchanged lifecycle
+  actor/child identity.
 - 2026-07-17 external-command delegate result coverage locks stream-specific
   `stdoutTruncated` / `stderrTruncated` fields on both the tool result and
   `subagent.completed`, and rejects the removed aggregate compatibility alias.

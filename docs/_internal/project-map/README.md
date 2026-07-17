@@ -213,6 +213,22 @@ trace/session inspection.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T08:25:00+0800
+- Scope: ACP and external-command delegate tool results identify their
+  configured profile only through canonical `agentProfileId`. Removed the
+  duplicate top-level `agentId` result field and the same alias from external
+  nonzero-exit error metadata.
+- Read: Host ACP/external-command adapters and result types, direct delegate
+  runner, Host/CLI/TUI result and lifecycle consumers, Core trace projections,
+  public process-delegate references, and focused tests.
+- Checked with no contract update needed: parent-visible lifecycle metadata
+  retains parent/trace actor `agentId`, `childAgentId`, and `agentProfileId`;
+  child run/session identity, Agent Runtime lifecycle, protocol wire shapes,
+  raw trace envelopes, workspace access, and Shell sandboxing are unchanged.
+- Tests: Host ACP/external-command 30/30 and delegate protocol 8/8; CLI direct
+  delegate 1/1; Core trace 4/4; Host and repository test typechecks passed.
+
+- Status: Verified
 - Date: 2026-07-17T01:07:28+0800
 - Scope: external-command delegate results expose only canonical per-stream
   `stdoutTruncated` and `stderrTruncated` facts. Removed the aggregate
