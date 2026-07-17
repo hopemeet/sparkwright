@@ -1,6 +1,11 @@
 # Multi-Agent Invocation Supervision
 
-Status: active staged refactor
+Status: implemented; retained as design history
+
+All seven delivery stages are complete. Current ownership and runtime contracts
+live in [../modules/agent-runtime.md](../modules/agent-runtime.md),
+[../modules/host.md](../modules/host.md), and
+[../maps/capabilities/agents.md](../maps/capabilities/agents.md).
 
 ## Purpose
 

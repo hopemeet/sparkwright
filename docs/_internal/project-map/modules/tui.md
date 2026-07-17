@@ -164,8 +164,8 @@ Does not own:
   first resolution, inspectable/clearable with `/approvals [clear]`, and never
   offered for an unrecognized approval shape. Simultaneous requests queue
   instead of replacing the visible prompt.
-- TUI config compatibility accepts the shared `confidentialDefaults` config key
-  but does not own a separate UI surface for read-confidentiality defaults; host
+- TUI consumes the shared grouped `policy.confidentialDefaults` config field but
+  does not own a separate UI surface for read-confidentiality defaults; Host
   config/runtime own validation and enforcement.
 - `shift+tab` (`cycle-permission-mode`) cycles the runtime permission mode in
   read-only -> ask -> accept-edits -> bypass order, skipping modes above the

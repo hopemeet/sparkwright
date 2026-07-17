@@ -66,7 +66,7 @@ Non-goals for the MVP:
 | Concern                       | Current reality                                                                                                               | Source                                                |
 | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
 | Model factory                 | Per-call, any raw ref, returns its own adapter; `inspectResolvedModelConfig` resolves ref+pricing without building an adapter | `model-factory.ts`                                    |
-| Active model                  | Single top-level `model` plus grouped `identity.model` flattening                                                             | `config-zod-schema.ts` / `config.ts`                  |
+| Active model                  | `identity.model` is the sole external config input; Host compiles it into the internal flat carrier                           | `config-zod-schema.ts` / `config.ts`                  |
 | Provider registry             | `providers.<name>` owns transport, credentials, provider options, physical model metadata, and pricing                        | `config-zod-schema.ts` / `config.ts`                  |
 | Compaction model              | `tasks.compaction.model` + `tasks.compaction.budget`; already wired                                                           | `runtime.ts`                                          |
 | Profile model                 | `profile.model` is carried from config/Agent.md and used by configured in-process delegates                                   | `agent-profiles.ts`, `runtime.ts`, `model-factory.ts` |
@@ -285,6 +285,14 @@ need.
 - Config schema source: `packages/host/src/config-zod-schema.ts`
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: aligned the model design catalog with grouped-only external config;
+  internal model resolution and scope-specific inheritance remain unchanged.
+- Read: Host config schema/normalization and model factory/runtime consumers.
+- Tests: grouped-config release gate recorded with the implementation commit;
+  this documentation-only correction is covered by the current release gate.
 
 - Status: Verified
 - Date: 2026-07-17T23:37:17+0800

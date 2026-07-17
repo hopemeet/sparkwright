@@ -868,7 +868,7 @@ depth-bounded sub-agents|keeps nested background agent spawning bounded"`;
   `packages/agent-runtime/test/doc-store.test.ts`,
   `packages/core/src/file-atomic.ts`, `packages/core/src/session.ts`,
   `packages/core/src/internal.ts`, `scripts/check-internal-imports.mjs`,
-  `docs/_internal/proposals/consolidation-agenda.md`,
+  `docs/_internal/reviews/consolidation-agenda.md`,
   `docs/_internal/proposals/substrate-sequencing.md`.
 - Tests: `npm --workspace @sparkwright/agent-runtime test --
 test/doc-store.test.ts`; `npm --workspace @sparkwright/core test --
@@ -885,7 +885,7 @@ check:internal-imports`; `npm run check:package-boundaries`.
 - Read: `packages/cron/src/store.ts`, `packages/cron/package.json`,
   `packages/agent-runtime/src/index.ts`,
   `packages/agent-runtime/src/doc-store/index.ts`,
-  `docs/_internal/proposals/consolidation-agenda.md`,
+  `docs/_internal/reviews/consolidation-agenda.md`,
   `docs/_internal/proposals/substrate-sequencing.md`.
 - Tests: `npm --workspace @sparkwright/cron test -- test/schedule.test.ts`;
   `npm --workspace @sparkwright/cron run typecheck`; `npm run
@@ -901,7 +901,7 @@ check:package-boundaries`; `npm run check:workspace-lock`.
   `packages/agent-runtime/src/doc-store/index.ts`,
   `packages/agent-runtime/test/tasks.test.ts`,
   `packages/agent-runtime/test/doc-store.test.ts`,
-  `docs/_internal/proposals/consolidation-agenda.md`,
+  `docs/_internal/reviews/consolidation-agenda.md`,
   `docs/_internal/proposals/substrate-sequencing.md`.
 - Tests: `npm --workspace @sparkwright/agent-runtime test --
 test/doc-store.test.ts test/tasks.test.ts`; `npm --workspace

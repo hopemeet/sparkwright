@@ -12,6 +12,9 @@ Keep `docs/_internal/project-map/` useful as the codebase grows.
 - Structured project-map, proposal, and test-map files are versioned in this
   checkout. Keep their updates with the behavior change; ephemeral run notes
   and uncatalogued scratch material remain ignored.
+- `docs/_internal/reviews/` versions only explicitly cataloged, closed planning
+  records. Ad-hoc review notes remain local-only until deliberately classified
+  and linked from the archive index.
 - `scripts/check-project-map-drift.py` includes untracked files, rejects
   unrouted changes under mapped refactor hotspots, and validates the exact
   verification status vocabulary in both working-tree and `--base` modes.
@@ -51,15 +54,25 @@ Rules:
 - Add `Open Questions` when unsure; do not invent behavior.
 - Refresh `Last Verified` after meaningful code changes.
 - If tests were not run, say so explicitly.
+- Move a completed or closed proposal into the cataloged review archive when it
+  no longer routes future implementation. Record why it closed; do not leave an
+  unsourced planning stub looking active.
 
 ## Known Debts
 
 - First pass is broad but shallow for some capability packages.
 - Some package-specific tests are listed only at package level, not per workflow.
-- The recently restored/versioned internal corpus still contains historical
-  local-only wording; remove it when encountered and keep drift checks in review.
+- Historical pages may still contain obsolete status labels or compatibility
+  wording; correct them when source/history evidence resolves the current state.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-18
+- Read: `.gitignore`, review archive index, proposal/review classification,
+  project-map root, test-map update rules, and affected design entries.
+- Tests: Markdown links, formatting, project-map drift, and the full release
+  gate passed.
 
 - Status: Verified
 - Date: 2026-07-15

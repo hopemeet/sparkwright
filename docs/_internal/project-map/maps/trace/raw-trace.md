@@ -546,7 +546,7 @@ test/cli.test.ts -t "confidential"`.
   inventory. Raw trace JSONL locations, event envelopes, event families,
   filtering, and redaction are unchanged.
 - Read: `packages/host/src/runtime.ts`, `packages/host/test/protocol.test.ts`,
-  `packages/core/src/trace-store.ts`, `docs/_internal/proposals/consolidation-agenda.md`.
+  `packages/core/src/trace-store.ts`, `docs/_internal/reviews/consolidation-agenda.md`.
 - Tests: `npm --workspace @sparkwright/host test --
 test/protocol.test.ts -t "inspect reports inline agent profiles"`;
   `npm --workspace @sparkwright/host run typecheck`; `npm --workspace

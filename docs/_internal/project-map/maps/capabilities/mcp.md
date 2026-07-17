@@ -255,7 +255,7 @@ host config MCP servers
   cwd handling, workspace-cwd disclosure, and diagnostic payloads are unchanged.
 - Read: `packages/host/src/runtime.ts`, `packages/host/src/config.ts`,
   `packages/host/src/config-zod-schema.ts`,
-  `docs/_internal/proposals/consolidation-agenda.md`.
+  `docs/_internal/reviews/consolidation-agenda.md`.
 - Tests: not run for MCP-specific behavior; C13 focused validation ran in
   core/host/CLI/protocol.
 
@@ -265,7 +265,7 @@ host config MCP servers
   inventory. MCP server preparation, tool execution wrapping, cwd handling,
   workspace-cwd disclosure, and diagnostic payloads are unchanged.
 - Read: `packages/host/src/runtime.ts`, `packages/host/test/protocol.test.ts`,
-  `docs/_internal/proposals/consolidation-agenda.md`.
+  `docs/_internal/reviews/consolidation-agenda.md`.
 - Tests: `npm --workspace @sparkwright/host test --
 test/protocol.test.ts -t "inspect reports inline agent profiles"`;
   `npm --workspace @sparkwright/host run typecheck`; `npm --workspace

@@ -335,7 +335,7 @@ test/spawn-agent.test.ts`;
   denials and do not introduce approval requests or approval resolver changes.
 - Read: `packages/core/src/policy.ts`, `packages/core/src/run-outcome.ts`,
   `packages/host/src/runtime.ts`, `packages/cli/test/cli.test.ts`,
-  `docs/_internal/proposals/consolidation-agenda.md`.
+  `docs/_internal/reviews/consolidation-agenda.md`.
 - Tests: `npm --workspace @sparkwright/core test -- test/policy.test.ts
 test/workspace.test.ts`; `npm --workspace @sparkwright/cli test --
 test/cli.test.ts -t "confidential"`.

@@ -3,9 +3,9 @@
 ## Status
 
 - Status: Verified
-- Date: 2026-07-12
-- Scope: implementation-ready master design after the asset-governance review.
-  Skill Phase 1-8 delivery slices are implemented; remaining open questions
+- Date: 2026-07-18
+- Scope: implemented master design retained as lifecycle and decision history.
+  Skill Phase 1-8 delivery slices are complete; remaining open questions
   concern policy tuning and retention, not a missing managed lifecycle.
 - Source check: current Skill package enumeration, prepared-change lifecycle,
   command service, Agent Markdown discovery, Workflow parsing/execution/resume,
@@ -57,9 +57,9 @@ These current-source facts remain valid and are not redesigned:
 - Applying-state recovery is idempotent: an already-written target matching the
   approved after hash is reconciled through doctor, history, and receipt rather
   than rewritten.
-- Model, CLI, canonical TUI `/create skill`, and compatibility
-  `/skill-create` creation paths converge on `SkillCommandService`; persistent
-  proposal storage remains the durable review/recovery surface.
+- Model, CLI, and canonical TUI `/create skill` creation paths converge on
+  `SkillCommandService`; persistent proposal storage remains the durable
+  review/recovery surface.
 - Existing proposal inspection/rejection, history, receipt, restore, revision,
   provenance, and session-scoped deduplication remain supported.
 
@@ -508,10 +508,12 @@ history, receipt, recovery, and four-entry command-service convergence.
 
 - Status: Verified
 - Date: 2026-07-12T08:34:00+0800
-- Scope: Phase 2 command-service extraction and convergence of model, CLI,
-  `/create skill`, and compatibility `/skill-create` proposal preparation.
-- Read: shared service, four entry adapters, approval/apply path, focused tests,
-  and the linked project/test maps.
+- Scope: Phase 2 command-service extraction and convergence of the then-current
+  model, CLI, `/create skill`, and `/skill-create` proposal paths. The
+  compatibility shortcut was retired on 2026-07-17; this entry records the
+  original implementation checkpoint rather than the current command surface.
+- Read: shared service, the then-current entry adapters, approval/apply path,
+  focused tests, and the linked project/test maps.
 - Tests: focused host/CLI/TUI suites, affected typechecks, and full
   `npm run release:check` on the same source tree.
 

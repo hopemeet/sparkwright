@@ -106,6 +106,9 @@ Use these cause buckets when counting failures:
 - Keep stable assertions separate from non-invariants.
 - When a real-model run is involved, do not assert exact prose, exact step
   count, or exact tool route unless the prompt and harness force them.
+- Do not keep an unsourced QA outline as an active proposal. Start planned QA
+  work from a source-linked route, coverage gap, failure pattern, or scenario,
+  then record bounded evidence in this test map.
 
 ## Minimal Workflow
 

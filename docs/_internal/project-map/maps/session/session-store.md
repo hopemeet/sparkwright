@@ -391,7 +391,7 @@ list|inspect|resume|distill|shadow --help`.
 - Read: `packages/core/src/session.ts`, `packages/core/src/file-atomic.ts`,
   `packages/core/src/internal.ts`,
   `packages/agent-runtime/src/doc-store/index.ts`,
-  `docs/_internal/proposals/consolidation-agenda.md`,
+  `docs/_internal/reviews/consolidation-agenda.md`,
   `docs/_internal/proposals/substrate-sequencing.md`.
 - Tests: `npm --workspace @sparkwright/core test -- test/session.test.ts`;
   `npm --workspace @sparkwright/agent-runtime test -- test/doc-store.test.ts`;

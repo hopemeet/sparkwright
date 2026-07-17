@@ -1,10 +1,13 @@
 # Host Execution Lane Coordinator
 
-Status: Draft for review (v4)
-Date: 2026-07-14
+Status: P0-P3 implemented; P4-P5 deferred
+Date: 2026-07-18
 
-> Internal architecture proposal. This document does not change runtime
-> behavior by itself.
+> Implementation history. P0-P3 established one process-scoped `HostService`,
+> one `ExecutionLaneCoordinator`, service-only Host runtime entry, and
+> Host-owned ordinary IM control. P4 durable single-host coordination and P5
+> multi-process/multi-host coordination remain deferred. Follow the linked
+> project maps and current source for the live contract.
 >
 > v4 re-baselines the former Session Agent Host Coordinator after the Workflow
 > actor, durable Workflow service/channel, Agent invocation supervision,
@@ -71,7 +74,11 @@ Change:
 - [`packages/im-gateway/src/gateway.ts`](../../../packages/im-gateway/src/gateway.ts)
 - [`packages/agent-runtime/src/workflows/channels.ts`](../../../packages/agent-runtime/src/workflows/channels.ts)
 
-## Current Source Facts
+## Pre-Implementation Source Facts (Historical Baseline)
+
+The facts in this section record the source state used to design v4. They are
+not a current-runtime checklist; the implemented outcome is summarized above
+and routed through the project map.
 
 - `serveConnection()` creates one `HostRuntime` per connection. Disconnect
   cleanup denies that runtime's approvals and cancels its active run.
@@ -887,8 +894,8 @@ failure.
 
 ## Recommendation
 
-Approve v4 as the new design baseline and retire v3's direct implementation
-plan.
+Historical recommendation: approve v4 as the new design baseline and retire
+v3's direct implementation plan. P0-P3 subsequently implemented that baseline.
 
 The first code slice is Host decomposition plus characterization, not
 `session-turn-scheduler.ts`. The first concurrency milestone is:

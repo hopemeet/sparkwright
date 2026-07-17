@@ -664,7 +664,7 @@ test/trace.test.ts`; `npm --workspace @sparkwright/core run typecheck`.
   gates or approval semantics.
 - Read: `packages/core/src/policy.ts`, `packages/core/src/workspace.ts`,
   `packages/core/test/policy.test.ts`, `packages/core/test/workspace.test.ts`,
-  `docs/_internal/proposals/consolidation-agenda.md`.
+  `docs/_internal/reviews/consolidation-agenda.md`.
 - Tests: `npm --workspace @sparkwright/core test -- test/policy.test.ts
 test/workspace.test.ts`.
 
@@ -679,7 +679,7 @@ test/workspace.test.ts`.
   `packages/core/src/internal.ts`,
   `packages/agent-runtime/src/doc-store/index.ts`,
   `scripts/check-internal-imports.mjs`,
-  `docs/_internal/proposals/consolidation-agenda.md`,
+  `docs/_internal/reviews/consolidation-agenda.md`,
   `docs/_internal/proposals/substrate-sequencing.md`.
 - Tests: `npm --workspace @sparkwright/core test -- test/session.test.ts`;
   `npm --workspace @sparkwright/agent-runtime test -- test/doc-store.test.ts`;

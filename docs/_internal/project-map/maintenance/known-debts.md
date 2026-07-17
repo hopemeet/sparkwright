@@ -17,17 +17,15 @@ These are not promises of current behavior. They are risk flags to revisit when 
 - TUI `/export` is readable, but not a full diagnostic report.
 - Host runtime is a broad composition point where capability, session, trace, and policy changes meet.
 - From-trace resume is only best-effort and can be mistaken for full restore.
-- Durable workflow projection rewrites the complete compatibility event log on
-  each canonical mutation, and immutable journal files currently have no
-  compaction/retention policy.
+- The canonical immutable Workflow journal has no compaction or retention
+  policy.
 - Capability self-evolution design exists, but stable runtime behavior should remain explicit and reviewable.
 - Project-map package coverage is intentionally hot-path based. Packages without
   dedicated module pages are grouped under
   [../modules/edge-packages.md](../modules/edge-packages.md) and should graduate
   only when repeated changes need clearer ownership boundaries.
-- The structured internal corpus was recently restored and versioned; some
-  historical pages can still describe it as local-only until touched and
-  re-verified.
+- Historical internal pages can retain stale status labels or compatibility
+  wording until touched and re-verified.
 
 ## Consumers
 
@@ -41,6 +39,13 @@ These are not promises of current behavior. They are risk flags to revisit when 
 - Remove debts only after code, tests, and docs all reflect the fix.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-18
+- Read: Workflow journal/storage maps and the internal planning/documentation
+  corpus classification.
+- Tests: documentation link/format checks, project-map drift, and the full
+  release gate passed.
 
 - Status: Read-only
 - Date: 2026-07-11T00:00:00+0800

@@ -60,8 +60,8 @@ read them for the shape and rationale of a planned or completed change, then
 follow the active maps below for the current contract.
 
 - [designs/multi-agent-supervision.md](designs/multi-agent-supervision.md) —
-  Active staged refactor for converging Agent invocation identity, lifecycle,
-  resource admission, and adapter ownership without adding a generic actor bus.
+  Implemented design history for converged Agent invocation identity,
+  lifecycle, resource admission, and adapter ownership without a generic actor bus.
   Active contracts: [modules/agent-runtime.md](modules/agent-runtime.md),
   [modules/host.md](modules/host.md), and
   [maps/capabilities/agents.md](maps/capabilities/agents.md).
@@ -75,7 +75,7 @@ follow the active maps below for the current contract.
   contract.
 
 - [designs/skill-managed-change-redesign.md](designs/skill-managed-change-redesign.md) —
-  Implementation-ready master design: preserves completed Skill Phase 1/2,
+  Implemented master design history: preserves completed Skill Phase 1/2,
   freezes package identity v2 and external-change safety, requires Workflow
   executable package pinning, limits Agent authoring to validated Markdown,
   defines trace-derived policy-aware stats, and defers Skill identity
@@ -120,6 +120,14 @@ follow the active maps below for the current contract.
   use raw refs with parent-model inheritance. Logical aliases, model
   allowlists/budgets, and per-logical model usage keying are deferred out of the
   MVP. Active model construction contract: [modules/host.md](modules/host.md).
+
+## Archived Reviews
+
+Selected closed planning records live in [../reviews/](../reviews/README.md).
+They preserve implementation or closure rationale but are not active routing
+targets. The current archive contains the completed
+[consolidation agenda](../reviews/consolidation-agenda.md) and the closed,
+unsourced [QA convergence stub](../reviews/qa-convergence-plan.md).
 
 ## Touch File -> Read Docs
 
@@ -209,6 +217,16 @@ TUI events; it is not a trace diagnostic report and must not replace
 trace/session inspection.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: classified completed designs and closed planning records, routed the
+  versioned review archive, and removed stale active/Draft labels and obsolete
+  compatibility claims from the internal maintenance corpus.
+- Read: project-map root and maintenance policy, proposal/review corpus,
+  affected design entries, current Host/Agent/config ownership, and git history.
+- Tests: Markdown links, formatting, project-map drift, and the full release
+  gate passed.
 
 - Status: Verified
 - Date: 2026-07-17T23:37:17+0800

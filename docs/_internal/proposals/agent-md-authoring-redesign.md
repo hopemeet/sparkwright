@@ -1,9 +1,17 @@
 # Agent.md Authoring Redesign
 
-Status: Draft for review
-Date: 2026-06-28
+Status: Implemented authoring/runtime contract; retained as implementation history
+Date: 2026-07-18
 Branch: feat/access-mode (builds on the Access-mode + agent-capability work)
 
+> The neutral hook carrier, Markdown parser and validation, schema surface,
+> in-process resolver, child-run forwarding, isolation, and rewrite-before-
+> governance behavior are implemented. Current source and the Agent capability
+> map are authoritative; the delivery split and open questions below preserve
+> the design history. A richer inspect explanation for hooks ignored across
+> process-agent boundaries remains optional UX, not an incomplete runtime
+> contract.
+>
 > Relationship to other proposals: this is a focused, authoring-experience
 > slice of `agent-access-config-redesign.md` (the "agent definition" layer) and
 > sits next to `agent-capability-upgrade.md` (indexed exposure, generic
@@ -311,6 +319,7 @@ Targeted cases:
 1. **Closed:** `matcher: bash` matches the exact concrete tool name. The `bash`
    selector selects catalog entries whose internal source is `shell`; the source
    classification is not a second callable identity.
-2. Should P0 ship independently of P2, or land the whole authoring redesign as
-   one reviewed unit? (P0 + P1 are low-risk and independently verifiable.)
-3. Inspect surface for "hooks ignored on ACP/external" — in-scope now or follow-up?
+2. **Closed by implementation:** P0-P2 landed as independently reviewable
+   slices and now form one canonical authoring/runtime contract.
+3. Optional follow-up: whether inspect should explain that Agent.md hooks do not
+   cross ACP/external-command process boundaries.
