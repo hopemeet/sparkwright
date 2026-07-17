@@ -11,6 +11,15 @@ and [../session/session-store.md](../session/session-store.md) for session layou
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T20:55:00+0800
+- Scope: Skill indexed/resident-loaded lifecycle metadata now carries required
+  v2 package identity and omits Markdown `contentHash`; stats ignore events
+  without that canonical identity instead of inventing legacy/unknown buckets.
+- Read: Skills emitter, Core on-demand companion events, Host stats reader,
+  public trace references, and focused Skills/CLI tests.
+- Tests: Skills 73/73; focused CLI Skill stats/catalog gates; Host protocol tests.
+
+- Status: Verified
 - Date: 2026-07-17T17:20:00+0800
 - Scope: Workflow lifecycle events emitted by real Host execution attribute the
   pinned v2 `packageHash`/policy at event time and no longer publish the

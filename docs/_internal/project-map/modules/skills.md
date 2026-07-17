@@ -69,25 +69,20 @@ Does not own:
 
 - Skill events include `skill.indexed`, `skill.failed`, and `skill.loaded`.
 - `skill.indexed.metadata.skills[]` carries emit-time identity provenance,
-  including `contentHash`, `packageHash` when available, and layer. Skill stats
-  use `name + layer + packageHash` as the strong version identity and keep old
-  traces in legacy/unknown buckets rather than merging them into package-hash
-  identities. Stats scan both session traces and `agents/<agent-id>/trace.jsonl`
-  files, dedupe repeated event ids, and roll up proposal/history activity only
-  when evolution metadata hashes match the package-hash identity.
-- Runtime Skill indexing uses a shared process-local package hasher cache to
-  avoid rereading unchanged package contents across runs/agents and applies
-  conservative file/byte limits on the run-time identity path. The distinct
-  `computeSkillPackageHash()` v1 primitive remains in Skill doctor/runtime
-  identity code; evolution no longer consumes it.
-- Package identity v2 substrate lives in `package-v2.ts` without changing the
-  current Skill v1 runtime path. It recursively enumerates all canonical
+  including required `packageHash`, `packageHashPolicyVersion: 2`, and layer;
+  Markdown `contentHash` is not an attributable identity. Skill stats accept
+  only that policy-bound package identity and key observations as
+  `skill + layer + name + policy + hash`; old content/name-only trace rows do
+  not create version buckets. Stats scan both session traces and
+  `agents/<agent-id>/trace.jsonl` files, dedupe repeated event ids, and roll up
+  proposal/history activity only when evolution metadata hashes match.
+- Runtime indexing, doctor, trace, capability inspection, lockfiles, statistics,
+  and managed evolution all consume the v2 primitive in `package-v2.ts`. It
+  recursively enumerates all canonical
   ordinary files except the fixed exclusion table, rejects non-excluded
   symlinks/special files and limit violations, hashes normalized relative paths
   with NUL framing, snapshots the identical file set, and returns
-  `packageHashPolicyVersion: 2`. Managed evolution requires this API and policy
-  for proposal/history/restore operations; runtime trace/stats identity remains
-  v1 until Phase 6.
+  `packageHashPolicyVersion: 2`. The separate v1 Skill package API is removed.
 - `skills stats` materializes rebuildable per-session projections under
   `.sparkwright/skill-stats/sessions/`, keyed by trace fingerprints plus a
   projection algorithm version. Reports expose trace/evolution windows,
@@ -106,7 +101,7 @@ Does not own:
 - Host defaults to on-demand loading via `skill_load` unless config opts into
   selected skill residency.
 - The on-demand loader deduplicates successful body loads by name and reference
-  loads by name + canonical resource path + package/content identity within the
+  loads by name + canonical resource path + package identity within the
   loader/run. Repeat references return a short `already_loaded` result without
   content; unsuccessful loads remain retryable.
 - Markdown-folder asset helpers own only generic folder discovery,
@@ -163,7 +158,7 @@ restore --to before` is the revert edge. See
   skill and session reuse the existing draft across supervised continuation
   runs; callers without session provenance retain run-scoped fallback.
 - Applying a proposal closes competing drafts for the same project target as
-  superseded. Explicit host reconciliation repairs legacy create drafts against
+  superseded. Explicit host reconciliation repairs durable create drafts against
   managed history or marks externally occupied/drifted targets stale; TUI
   inbox/review recovery and ordinary create preparation invoke it, while plain
   proposal listing stays read-only.
@@ -195,6 +190,16 @@ list --run/--session`); failed drafts self-clean. See
   [../maps/capabilities/skill-evolution.md](../maps/capabilities/skill-evolution.md#known-debts).
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-17T20:55:00+0800
+- Scope: made Skill package identity v2 canonical across runtime loading,
+  trace/capability projection, lockfiles, doctor, statistics, proposal/history
+  artifact continuity, and advisory suggestions. Removed the v1 package API,
+  content/name-only stats buckets, and proposal artifact fallbacks.
+- Read: Skills v1/v2 package paths, Host stats/evolution/registry/report/doctor,
+  protocol capability schema, CLI consumers, public references, and focused maps/tests.
+- Tests: Skills 73/73; Host Skill/protocol 81/81; focused CLI Skill stats/review/catalog/doctor 5/5; affected typechecks passed before the full release gate.
 
 - Status: Verified
 - Date: 2026-07-16T19:11:00+0800

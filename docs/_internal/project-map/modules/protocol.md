@@ -11,6 +11,14 @@ See also [../maps/safety/approvals.md](../maps/safety/approvals.md) and [../maps
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T20:55:00+0800
+- Scope: `CapabilitySkillSummary` requires policy-2 package identity and no
+  longer exposes optional Markdown `contentHash`; Host schema and producer use
+  the same canonical shape.
+- Read: protocol types, host-message schema, Host capability assembly/protocol tests, and CLI/TUI consumers.
+- Tests: Protocol typecheck; Host protocol 58/58; repository test typecheck.
+
+- Status: Verified
 - Date: 2026-07-17T17:20:00+0800
 - Scope: public Workflow run snapshots expose required generation, record
   revision, source layer, v2 package hash, and package-hash policy. The durable

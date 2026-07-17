@@ -63,11 +63,10 @@ These current-source facts remain valid and are not redesigned:
 - Existing proposal inspection/rejection, history, receipt, restore, revision,
   provenance, and session-scoped deduplication remain supported.
 
-The current package-hash policy is v1. It enumerates `SKILL.md` and recursive
-ordinary files only under `references/`, `templates/`, and `scripts/`. It
-rejects a symlink or special file when encountered in that enumerated set, but
-ignores other root entries. Phase 3A therefore changes observable identity and
-fail-closed coverage; it is not a behavior-neutral refactor.
+Skill runtime and managed evolution now share package-hash policy v2. It covers
+the canonical full ordinary-file set below and fails closed for non-excluded
+unsafe entries. The earlier v1 runtime enumerator and API were removed after
+the repository established that no persisted compatibility data had to remain.
 
 ## Managed Skill Change
 
@@ -278,15 +277,9 @@ Capture it when the event occurs: Skill index/load/use, Agent spawn/delegate,
 and Workflow instantiate/run/node/usage. Later registry reconciliation may add
 an unambiguous `artifactId`, but must not guess across ambiguity.
 
-The v1-to-v2 transition is an identity-policy boundary. Projections do not
-automatically merge buckets across it and reports distinguish:
-
-- content changed;
-- policy changed;
-- both content and policy changed.
-
-A policy-only boundary is not reported as a real performance regression.
-Agent and Workflow initially support only `observe -> aggregate -> diagnose`;
+Skill projections accept only policy-2 event-time identity; rows without it do
+not create attributable version buckets. Agent and Workflow initially support
+only `observe -> aggregate -> diagnose`;
 their statistics cannot trigger mutation or evolution.
 
 ## Delivery Plan
@@ -302,8 +295,9 @@ history, receipt, recovery, and four-entry command-service convergence.
   exclusions, special-file/path/size rejection, NUL-framed hashing, same-set
   snapshots, and `packageHashPolicyVersion: 2` without migrating current
   consumers.
-- The v1 substrate remains isolated to the distinct runtime identity path.
-  Phase 3B performs the explicit Skill evolution migration.
+- The later identity-consolidation pass moved runtime Skill indexing, doctor,
+  capability inspection, lockfiles, and statistics onto this same substrate and
+  deleted the v1 Skill package API.
 
 ### Completed: Phase 3B Skill full-package and external-change safety
 
@@ -376,8 +370,7 @@ history, receipt, recovery, and four-entry command-service convergence.
   source or retry/fail closed.
 - Agent spawn/delegate and Workflow run/node/usage events record package
   identity at event time.
-- v1 and v2 statistics boundaries stay visible, do not auto-merge, and do not
-  mislabel policy-only change as performance regression.
+- Skill statistics accept only canonical policy-2 package identity.
 - No Agent/Workflow observation triggers mutation or evolution.
 
 ## Canonical Boundaries
@@ -391,8 +384,7 @@ history, receipt, recovery, and four-entry command-service convergence.
   but it is not durable execution identity.
 - Existing Markdown Agent discovery remains unchanged until Phase 5; the future
   `AGENT.md` sentinel requires an explicit doctor-led migration.
-- Registry introduction may reconcile only unambiguous observations; ambiguous
-  legacy identity remains legacy.
+- Registry reconciliation may attach only unambiguous artifact identity.
 
 ## Open Questions
 
@@ -410,6 +402,14 @@ history, receipt, recovery, and four-entry command-service convergence.
   projection caches?
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-17T20:55:00+0800
+- Scope: completed the runtime/stats side of Skill identity v2, deleted the v1
+  package surface and legacy/unknown stats buckets, and made proposal/history
+  artifact identity canonical.
+- Read: Skills package/runtime, Host stats/evolution/registry, protocol/CLI consumers, and focused maps/tests.
+- Tests: Skills 73/73; Host Skill/protocol 81/81; focused CLI Skill gates 5/5; affected typechecks.
 
 - Status: Verified
 - Date: 2026-07-16T23:38:00+0800

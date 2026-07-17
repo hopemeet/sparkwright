@@ -35,9 +35,8 @@ skill roots
 
 - The first managed-change fast path applies only to a complete, clean,
   model-authored create. Its package hash participates in a stable final-effect
-  hash; runtime/model fingerprints remain outside that identity. The broader
-  `artifactId + packageHash` registry/stats migration is designed but not yet
-  implemented.
+  hash; runtime/model fingerprints remain outside that identity. Managed
+  proposals carry required artifact identity and policy-2 package identity.
 
 - Default host behavior exposes loader tool and does not auto-reside all selected skills.
 - Project skill root defaults to `.sparkwright/skills`.
@@ -64,30 +63,26 @@ skill roots
   path like `README.md` can recover by loading the body and choosing an exact
   `<skill_files>` entry.
 - A loader/run caches successful reference loads by Skill name, canonical
-  resource path, and package/content identity. Repeating the same resource for
+  resource path, and package identity. Repeating the same resource for
   the same Skill version returns a short `already_loaded` result without the
   content or another file read; failed/denied loads are never cached. The cache
   is loader-scoped and does not replace package-hash identity or trace stats.
 - Skill index and resident Skill context must not expose host absolute
-  `sourcePath`/`contentHash` values to provider prompts. Keep source provenance
+  source paths or package hashes to provider prompts. Keep source provenance
   in metadata and trace events.
-- `skill.indexed` trace metadata includes per-Skill emit-time package identity
-  (`packageHash` when available, `contentHash`, and layer). On-demand
+- `skill.indexed` trace metadata includes required per-Skill emit-time package
+  identity (`packageHash`, `packageHashPolicyVersion: 2`, and layer). On-demand
   `skill.loaded` remains path/hash-free and read-time stats join it back to the
   same run's indexed Skill by name. Resident `skill.loaded` may carry package
   identity because it is trace metadata, not model-visible content.
-- Runtime indexing computes package identity through a shared process-local
-  hasher cache, reducing repeated content reads for unchanged packages across
-  runs/agents. The run-time identity path has conservative file/byte guardrails;
-  direct exact hash computation remains available to evolution guard paths.
-- `packages/skills/src/package-v2.ts` provides the dormant v2 canonical package
-  substrate for later Skill/Workflow migration: complete ordinary-file
+- `packages/skills/src/package-v2.ts` is the canonical Skill package substrate:
+  complete ordinary-file
   enumeration, fixed exclusions, normalized NUL-framed hashing, identical-set
   snapshots, policy version 2, and fail-closed special-file/path/size checks.
-  It does not change current Skill index/load or proposal behavior until
-  Phase 3B.
-- `skills stats` is read-time only in v1. It aggregates by
-  `name + layer + packageHash`, classifies old traces as legacy/unknown,
+  Runtime loading and managed evolution share it; the v1 package surface is gone.
+- `skills stats` is read-time only. It aggregates by
+  `skill + layer + name + packageHashPolicyVersion + packageHash`,
+  ignores rows without canonical v2 identity,
   separates explicit and resident loads, classifies load failures by mode/status,
   splits associated tool failures before vs after first load, scans agent trace
   files with event-id dedupe, and rolls up proposal/history metadata only when
@@ -144,6 +139,15 @@ skill roots
 - Self-evolution design exists, but automatic learning should remain clearly opt-in/reviewed.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-17T20:55:00+0800
+- Scope: runtime Skill identity now uses the same policy-2 full-package primitive
+  as evolution. Trace, capability inspection, stats, doctor, and lockfiles no
+  longer expose or fall back to v1/content-only identity.
+- Read: Skills loader/package/tests; Host report/doctor/stats/evolution/runtime;
+  protocol schema and CLI stats consumers.
+- Tests: Skills 73/73; focused Host Skill/protocol 81/81; focused CLI Skill gates 5/5; affected typechecks.
 
 - Status: Reviewed
 - Date: 2026-07-16T11:49:00+0800

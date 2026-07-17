@@ -13,6 +13,11 @@
   runtime behavior. The decisions below are closed unless new implementation
   evidence requires reopening them.
 
+Implementation note (2026-07-17): the later no-compatibility consolidation
+made Skill policy v2 the only runtime/statistics identity and removed legacy
+trace/history/proposal readers. Historical migration recommendations below are
+retained as review history, not as current implementation requirements.
+
 ## Executive Decision
 
 The existing Skill managed-change implementation remains valid. The design no

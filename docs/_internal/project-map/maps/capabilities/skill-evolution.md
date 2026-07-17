@@ -41,7 +41,10 @@ Both `before/` and `after/` are full immutable skill-package snapshots with
 Managed proposals, revisions, apply/recovery, history, restore, and mutation
 receipts use package identity v2 and require
 `packageHashPolicyVersion: 2`. Proposal and history readers reject missing or
-non-v2 policies; evolution hashing has no v1 path.
+non-v2 policies. Proposal `artifactId`, `effectHash`, `preparedState`, and
+`revision` are required; history records carry the same artifact id. Project
+updates reuse an active registry id or prior canonical history id, otherwise
+allocate one new id. Evolution hashing has no v1 or artifact fallback path.
 
 ## Lifecycle
 
@@ -75,7 +78,7 @@ history kinds:   create | update | restore
 - **Draft reconciliation and competing proposals:** successful apply closes all
   other draft proposals for the same project target as `superseded`, linked by
   `supersededBy`. Before TUI inbox/review recovery and ordinary create
-  preparation, host reconciliation repairs legacy drafts: a create whose
+  preparation, host reconciliation repairs durable drafts: a create whose
   current target matches managed applied history becomes `superseded`; an
   externally occupied create target or an update whose base disappeared or
   drifted becomes `stale`. Listing proposals remains read-only. Apply-time hash
@@ -219,6 +222,14 @@ history kinds:   create | update | restore
   there is no persisted run→proposals index (a scan, not an index).
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-17T20:55:00+0800
+- Scope: made prepared and historical Skill artifact identity required, removed
+  `legacy:project:<name>` and random-history fallbacks, and preserved identity
+  through registry/history resolution for later project updates.
+- Read: Skill evolution, registry, stats rollup, Host/CLI tests, and managed-change design.
+- Tests: Host Skill evolution 19/19 plus focused CLI Skill stats/review/doctor gates and affected typechecks.
 
 - Status: Verified
 - Date: 2026-07-16T19:11:00+0800

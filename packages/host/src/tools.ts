@@ -1048,8 +1048,8 @@ function skillDraftToolOutput(
     targetPath: proposal.targetPath,
     basePackageHash: proposal.basePackageHash,
     afterPackageHash: proposal.afterPackageHash,
-    contentHash: proposal.afterPackageHash,
-    revision: proposal.revision ?? 1,
+    packageHashPolicyVersion: proposal.packageHashPolicyVersion,
+    revision: proposal.revision,
     previousAfterPackageHash: proposal.previousAfterPackageHash,
     contentMode: proposal.contentMode,
     ...(proposal.guardFindings

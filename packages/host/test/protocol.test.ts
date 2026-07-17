@@ -3217,11 +3217,22 @@ describe("host protocol", () => {
           name: string;
           origin?: string;
         }>;
-        expect(
-          (
-            resp.result as { skills: { indexed: Array<{ name: string }> } }
-          ).skills.indexed.some((skill) => skill.name === "reviewer"),
-        ).toBe(true);
+        const reviewer = (
+          resp.result as {
+            skills: {
+              indexed: Array<{
+                name: string;
+                packageHash: string;
+                packageHashPolicyVersion: number;
+              }>;
+            };
+          }
+        ).skills.indexed.find((skill) => skill.name === "reviewer");
+        expect(reviewer).toMatchObject({
+          packageHash: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
+          packageHashPolicyVersion: 2,
+        });
+        expect(reviewer).not.toHaveProperty("contentHash");
         expect(tools.find((tool) => tool.name === "read")).toMatchObject({
           origin: "local:@sparkwright/coding-tools",
         });

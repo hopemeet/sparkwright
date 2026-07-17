@@ -47,7 +47,6 @@ export interface AssetPackageIdentity {
 }
 
 export interface AssetPackageHash extends AssetPackageIdentity {
-  algorithm: "sha256";
   value: string;
   files: AssetPackageFile[];
 }
@@ -94,7 +93,6 @@ export async function computeAssetPackageHash(
   }
   const value = hash.digest("hex");
   return {
-    algorithm: "sha256",
     value,
     packageHash: `sha256:${value}`,
     packageHashPolicyVersion: PACKAGE_HASH_POLICY_VERSION,

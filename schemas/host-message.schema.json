@@ -1405,12 +1405,13 @@
     },
     "CapabilitySkillSummary": {
       "type": "object",
-      "required": ["name"],
+      "required": ["name", "packageHash", "packageHashPolicyVersion"],
       "properties": {
         "name": { "type": "string", "minLength": 1 },
         "description": { "type": "string" },
         "sourcePath": { "type": "string" },
-        "contentHash": { "type": "string" },
+        "packageHash": { "type": "string", "minLength": 1 },
+        "packageHashPolicyVersion": { "const": 2 },
         "version": { "type": "string" },
         "selectionReason": { "type": "string" }
       },

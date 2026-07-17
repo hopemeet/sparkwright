@@ -383,8 +383,8 @@ Common metadata:
         "name": "code-reviewer",
         "version": "1.0.0",
         "sourcePath": ".sparkwright/skills/code-reviewer/SKILL.md",
-        "contentHash": "...",
         "packageHash": "sha256:...",
+        "packageHashPolicyVersion": 2,
         "layer": "project"
       }
     ]
@@ -425,8 +425,8 @@ event back to the recovery-aware tool outcome.
     "sourcePackage": "@sparkwright/skills",
     "version": "1.0.0",
     "sourcePath": ".sparkwright/skills/code-reviewer/SKILL.md",
-    "contentHash": "...",
     "packageHash": "sha256:...",
+    "packageHashPolicyVersion": 2,
     "layer": "project",
     "selectionReason": "Matched goal against skill name or description.",
     "mode": "resident_context"

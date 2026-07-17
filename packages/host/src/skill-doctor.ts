@@ -1,5 +1,4 @@
-import { dirname } from "node:path";
-import { computeSkillPackageHash, type SkillRoot } from "@sparkwright/skills";
+import type { SkillRoot } from "@sparkwright/skills";
 import {
   loadLayeredSkillReport,
   type SkillReportEntry,
@@ -21,7 +20,8 @@ export interface SkillDoctorEntry {
   name: string;
   layer?: SkillRoot["layer"];
   sourcePath?: string;
-  packageHash?: string;
+  packageHash: string;
+  packageHashPolicyVersion: 2;
   shadowedBy?: string;
   shadows?: string[];
 }
@@ -49,13 +49,15 @@ export async function runSkillDoctor(
   const byName = new Map<string, SkillDoctorEntry>();
 
   for (const skill of report.skills) {
-    byName.set(skill.name, await doctorEntryForSkill(skill, findings));
+    byName.set(skill.name, doctorEntryForSkill(skill));
   }
 
   for (const error of report.errors) {
     findings.push({
       severity: "blocker",
-      code: "SKILL_LOAD_FAILED",
+      code: error.message.startsWith("Asset package ")
+        ? "SKILL_PACKAGE_INVALID"
+        : "SKILL_LOAD_FAILED",
       message: error.message,
       source: error.source,
     });
@@ -135,30 +137,15 @@ export async function runSkillDoctor(
   };
 }
 
-async function doctorEntryForSkill(
-  skill: SkillReportEntry,
-  findings: SkillDoctorFinding[],
-): Promise<SkillDoctorEntry> {
+function doctorEntryForSkill(skill: SkillReportEntry): SkillDoctorEntry {
   const entry: SkillDoctorEntry = {
     name: skill.name,
+    packageHash: skill.packageHash,
+    packageHashPolicyVersion: skill.packageHashPolicyVersion,
     ...(skill.layer ? { layer: skill.layer } : {}),
     ...(skill.source ? { sourcePath: skill.source } : {}),
   };
 
-  if (!skill.source) return entry;
-  try {
-    const hash = await computeSkillPackageHash(dirname(skill.source));
-    entry.packageHash = hash.packageHash;
-  } catch (error) {
-    findings.push({
-      severity: "blocker",
-      code: "SKILL_PACKAGE_INVALID",
-      message: error instanceof Error ? error.message : String(error),
-      skillName: skill.name,
-      source: skill.source,
-      layer: skill.layer,
-    });
-  }
   return entry;
 }
 

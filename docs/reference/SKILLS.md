@@ -374,9 +374,10 @@ Skill bodies are not resident-loaded unless config sets
 The low-level `prepareSkillsForRun` helper still supports both modes. Its
 pipeline is:
 
-1. Index all discovered Skills by `name`, `description`, version, path, and content hash.
+1. Index all discovered Skills by `name`, `description`, version, path, and
+   required v2 package identity.
 2. Create one `skill_index` context item listing discovered Skills without host
-   source paths or content hashes in the model-visible body.
+   source paths or package hashes in the model-visible body.
 3. Optionally select matching Skills with a deterministic goal matcher and load
    them into resident context when `loadSelectedSkills` is true.
 4. Optionally expose a governed `skill_load` tool for on-demand body/resource
@@ -398,7 +399,8 @@ source projection.
     name: "dingtalk-notifier",
     version: "1.0.0",
     sourcePath: ".sparkwright/skills/dingtalk-notifier/SKILL.md",
-    contentHash: "...",
+    packageHash: "sha256:...",
+    packageHashPolicyVersion: 2,
     selectionReason: "Matched goal against skill name or description.",
   },
 ];
@@ -418,8 +420,9 @@ const lockfile = createSkillLockfile(skills);
 ```
 
 The lockfile records `schemaVersion`, optional `generatedAt`, and sorted Skill
-entries containing `name`, `sourcePath`, `contentHash`, `version`, and
-`metadata`. This is intentionally only a minimal manifest foundation for later
+entries containing `name`, `sourcePath`, `packageHash`,
+`packageHashPolicyVersion`, `version`, and `metadata`. This is intentionally
+only a minimal manifest foundation for later
 marketplace and hot reload work; it does not install, update, or execute Skills.
 
 ## Non-Goals In The First Slice

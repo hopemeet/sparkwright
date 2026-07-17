@@ -1,8 +1,14 @@
 # Skill Stats / Evolution Evidence Plan
 
-Status: draft for review
+Status: superseded by the implemented policy-2 Skill identity contract
 
 Date: 2026-06-27
+
+Implementation outcome (2026-07-17): Skill stats now require event-time
+`packageHashPolicyVersion: 2` plus `packageHash`. The proposed
+`legacy_content_hash`, `name_only_unknown`, and `legacyContentHash` surfaces were
+removed because the project has no persisted compatibility population to
+serve. The remaining text is design history.
 
 ## Summary
 

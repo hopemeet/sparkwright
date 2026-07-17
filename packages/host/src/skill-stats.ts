@@ -33,11 +33,6 @@ export type SkillStatsQueryScope =
   | "evolution_evidence"
   | "post_apply_verification";
 
-export type SkillStatsIdentityConfidence =
-  | "package_hash"
-  | "legacy_content_hash"
-  | "name_only_unknown";
-
 export interface SkillStatsQuery {
   /** @reserved Public skill-stats query field consumed by diagnostics UIs. */
   scope: SkillStatsQueryScope;
@@ -133,8 +128,6 @@ export interface SkillStatsCatalogInfo {
 export type SkillStatsFindingSeverity = "info" | "warning";
 export type SkillStatsFindingRelation = "associated" | "observed";
 export type SkillStatsFindingCode =
-  | "LEGACY_SKILL_IDENTITY"
-  | "UNKNOWN_SKILL_IDENTITY"
   | "SKILL_LOAD_FAILURES"
   | "ASSOCIATED_TOOL_FAILURES"
   | "SKILL_EVOLUTION_ACTIVITY";
@@ -145,7 +138,7 @@ export interface SkillStatsFinding {
   relation: SkillStatsFindingRelation;
   skillKey: string;
   skillName: string;
-  packageHash?: string;
+  packageHash: string;
   message: string;
   evidence: {
     runIds: string[];
@@ -157,12 +150,10 @@ export interface SkillStatsFinding {
 export interface SkillStatsEntry {
   skillKey: string;
   name: string;
-  identityConfidence: SkillStatsIdentityConfidence;
   layer?: SkillRoot["layer"] | "unknown";
   sourcePath?: string;
-  packageHash?: string;
-  contentHash?: string;
-  legacyContentHash?: string;
+  packageHash: string;
+  packageHashPolicyVersion: 2;
   shadowedBy?: string;
   shadows?: string[];
   firstEventAt?: string;
@@ -236,10 +227,8 @@ interface SkillIdentity {
   name: string;
   layer?: SkillRoot["layer"] | "unknown";
   sourcePath?: string;
-  packageHash?: string;
-  contentHash?: string;
-  legacyContentHash?: string;
-  identityConfidence: SkillStatsIdentityConfidence;
+  packageHash: string;
+  packageHashPolicyVersion: 2;
 }
 
 interface SkillStatsTarget {
@@ -304,10 +293,9 @@ interface SkillStatsCatalogSessionRef {
 interface SkillStatsCatalogSkillRef {
   skillKey: string;
   name: string;
-  identityConfidence: SkillStatsIdentityConfidence;
   layer?: SkillRoot["layer"] | "unknown";
-  packageHash?: string;
-  legacyContentHash?: string;
+  packageHash: string;
+  packageHashPolicyVersion: 2;
   sessionIds: string[];
   firstEventAt?: string;
   lastEventAt?: string;
@@ -347,10 +335,10 @@ interface EvolutionRollupResult {
 const DEFAULT_SESSION_LIMIT = 20;
 const DEFAULT_SKILL_SAMPLE_LIMIT = 20;
 const UNKNOWN_LAYER = "unknown";
-const SESSION_PROJECTION_SCHEMA_VERSION = "skill-stats-session.v1";
-const SESSION_PROJECTION_ALGORITHM_VERSION = "skill-stats-trace-v3";
-const CATALOG_SCHEMA_VERSION = "skill-stats-catalog.v1";
-const CATALOG_ALGORITHM_VERSION = "skill-stats-catalog-v1";
+const SESSION_PROJECTION_SCHEMA_VERSION = "skill-stats-session.v2";
+const SESSION_PROJECTION_ALGORITHM_VERSION = "skill-stats-trace-v4";
+const CATALOG_SCHEMA_VERSION = "skill-stats-catalog.v2";
+const CATALOG_ALGORITHM_VERSION = "skill-stats-catalog-v2";
 const DEFAULT_USE_PROJECTION_CACHE = true;
 
 export async function collectSkillStats(
@@ -479,7 +467,7 @@ export async function collectSkillStats(
     );
   }
 
-  applyCurrentSkillReport(byKey, report.skills, report.shadows, report.errors);
+  applyCurrentSkillReport(byKey, report.skills, report.shadows);
   const evolutionWindow = await applyEvolutionRollup(
     byKey,
     options.workspaceRoot,
@@ -787,12 +775,9 @@ function buildSkillStatsCatalog(input: {
         ref = {
           skillKey: skill.skillKey,
           name: skill.name,
-          identityConfidence: skill.identityConfidence,
           ...(skill.layer ? { layer: skill.layer } : {}),
-          ...(skill.packageHash ? { packageHash: skill.packageHash } : {}),
-          ...(skill.legacyContentHash
-            ? { legacyContentHash: skill.legacyContentHash }
-            : {}),
+          packageHash: skill.packageHash,
+          packageHashPolicyVersion: skill.packageHashPolicyVersion,
           sessionIds: [],
           sessionIdSet: new Set(),
         };
@@ -814,23 +799,18 @@ function buildSkillStatsCatalog(input: {
     skillKeyRecords[key] = {
       skillKey: ref.skillKey,
       name: ref.name,
-      identityConfidence: ref.identityConfidence,
       ...(ref.layer ? { layer: ref.layer } : {}),
-      ...(ref.packageHash ? { packageHash: ref.packageHash } : {}),
-      ...(ref.legacyContentHash
-        ? { legacyContentHash: ref.legacyContentHash }
-        : {}),
+      packageHash: ref.packageHash,
+      packageHashPolicyVersion: ref.packageHashPolicyVersion,
       sessionIds,
       ...(ref.firstEventAt ? { firstEventAt: ref.firstEventAt } : {}),
       ...(ref.lastEventAt ? { lastEventAt: ref.lastEventAt } : {}),
     };
     skillNames[ref.name] = sortedUnique([...(skillNames[ref.name] ?? []), key]);
-    if (ref.packageHash) {
-      packageHashes[ref.packageHash] = sortedUnique([
-        ...(packageHashes[ref.packageHash] ?? []),
-        key,
-      ]);
-    }
+    packageHashes[ref.packageHash] = sortedUnique([
+      ...(packageHashes[ref.packageHash] ?? []),
+      key,
+    ]);
   }
 
   return {
@@ -974,7 +954,8 @@ function isCachedSkillStatsEntry(value: unknown): value is SkillStatsEntry {
     isRecord(value) &&
     typeof value.skillKey === "string" &&
     typeof value.name === "string" &&
-    isIdentityConfidence(value.identityConfidence) &&
+    typeof value.packageHash === "string" &&
+    value.packageHashPolicyVersion === 2 &&
     typeof value.indexedCount === "number" &&
     typeof value.loadedCount === "number" &&
     typeof value.residentLoadCount === "number" &&
@@ -1051,17 +1032,14 @@ function isCatalogSkillRef(value: unknown): value is SkillStatsCatalogSkillRef {
     isRecord(value) &&
     typeof value.skillKey === "string" &&
     typeof value.name === "string" &&
-    isIdentityConfidence(value.identityConfidence) &&
     (value.layer === undefined ||
       value.layer === "builtin" ||
       value.layer === "user" ||
       value.layer === "project" ||
       value.layer === "legacy" ||
       value.layer === UNKNOWN_LAYER) &&
-    (value.packageHash === undefined ||
-      typeof value.packageHash === "string") &&
-    (value.legacyContentHash === undefined ||
-      typeof value.legacyContentHash === "string") &&
+    typeof value.packageHash === "string" &&
+    value.packageHashPolicyVersion === 2 &&
     Array.isArray(value.sessionIds) &&
     value.sessionIds.every((sessionId) => typeof sessionId === "string") &&
     (value.firstEventAt === undefined ||
@@ -1435,6 +1413,7 @@ function collectSkillIndexed(
   for (const rawSkill of event.metadata.skills) {
     if (!isRecord(rawSkill) || typeof rawSkill.name !== "string") continue;
     const identity = identityFromRawSkill(rawSkill);
+    if (!identity) continue;
     run.indexedByName.set(identity.name, identity);
     const entry = ensureEntry(byKey, identity);
     entry.indexedCount += 1;
@@ -1457,6 +1436,7 @@ function collectSkillFailed(
   if (!name) return;
 
   const identity = identityForNamedEvent(name, event, run, source);
+  if (!identity) return;
   const entry = ensureEntry(byKey, identity);
   const mode = stringValue(event.metadata.mode) ?? "unknown";
   const status = stringValue(event.payload.status) ?? "load_failed";
@@ -1477,6 +1457,7 @@ function collectSkillLoaded(
   if (!name) return;
 
   const identity = identityForNamedEvent(name, event, run);
+  if (!identity) return;
   const entry = ensureEntry(byKey, identity);
   const mode = stringValue(event.metadata.mode) ?? "unknown";
   entry.loadedCount += 1;
@@ -1540,7 +1521,6 @@ function applyCurrentSkillReport(
     shadowed: SkillReportEntry;
     shadowedBy: SkillReportEntry;
   }[],
-  errors: readonly { source: string }[],
 ): void {
   for (const skill of skills) {
     const entries = entriesByName(byKey, skill.name);
@@ -1568,18 +1548,6 @@ function applyCurrentSkillReport(
       entry.shadowedBy = formatSkillOrigin(shadow.shadowedBy);
     }
   }
-
-  for (const error of errors) {
-    const name = inferSkillNameFromSource(error.source);
-    if (!name) continue;
-    const entry = ensureEntry(byKey, {
-      name,
-      sourcePath: error.source,
-      layer: UNKNOWN_LAYER,
-      identityConfidence: "name_only_unknown",
-    });
-    recordLoadFailure(entry, "inventory", "load_failed");
-  }
 }
 
 function ensureEntry(
@@ -1592,14 +1560,10 @@ function ensureEntry(
     entry = {
       skillKey: key,
       name: identity.name,
-      identityConfidence: identity.identityConfidence,
       ...(identity.layer ? { layer: identity.layer } : {}),
       ...(identity.sourcePath ? { sourcePath: identity.sourcePath } : {}),
-      ...(identity.packageHash ? { packageHash: identity.packageHash } : {}),
-      ...(identity.contentHash ? { contentHash: identity.contentHash } : {}),
-      ...(identity.legacyContentHash
-        ? { legacyContentHash: identity.legacyContentHash }
-        : {}),
+      packageHash: identity.packageHash,
+      packageHashPolicyVersion: identity.packageHashPolicyVersion,
       sampleRunIds: [],
       failureRunIds: [],
       indexedCount: 0,
@@ -1646,13 +1610,6 @@ function ensureEntry(
   if (identity.layer && !entry.layer) entry.layer = identity.layer;
   if (identity.sourcePath && !entry.sourcePath)
     entry.sourcePath = identity.sourcePath;
-  if (identity.packageHash && !entry.packageHash)
-    entry.packageHash = identity.packageHash;
-  if (identity.contentHash && !entry.contentHash)
-    entry.contentHash = identity.contentHash;
-  if (identity.legacyContentHash && !entry.legacyContentHash) {
-    entry.legacyContentHash = identity.legacyContentHash;
-  }
   return entry;
 }
 
@@ -1693,14 +1650,10 @@ function finalizeEntry(entry: MutableSkillStatsEntry): SkillStatsEntry {
   return {
     skillKey: entry.skillKey,
     name: entry.name,
-    identityConfidence: entry.identityConfidence,
     ...(entry.layer ? { layer: entry.layer } : {}),
     ...(entry.sourcePath ? { sourcePath: entry.sourcePath } : {}),
-    ...(entry.packageHash ? { packageHash: entry.packageHash } : {}),
-    ...(entry.contentHash ? { contentHash: entry.contentHash } : {}),
-    ...(entry.legacyContentHash
-      ? { legacyContentHash: entry.legacyContentHash }
-      : {}),
+    packageHash: entry.packageHash,
+    packageHashPolicyVersion: entry.packageHashPolicyVersion,
     ...(entry.shadowedBy ? { shadowedBy: entry.shadowedBy } : {}),
     ...(entry.shadows && entry.shadows.length > 0
       ? { shadows: sortedUnique(entry.shadows) }
@@ -1768,44 +1721,6 @@ function analyzeSkillStats(
       runIds: skill.runIds,
       sessionIds: skill.sessionIds,
     });
-    if (skill.identityConfidence === "legacy_content_hash") {
-      findings.push({
-        code: "LEGACY_SKILL_IDENTITY",
-        severity: "info",
-        relation: "observed",
-        skillKey: skill.skillKey,
-        skillName: skill.name,
-        ...(skill.packageHash ? { packageHash: skill.packageHash } : {}),
-        message:
-          "Skill stats use legacy contentHash identity; support-file changes are not visible for this record.",
-        evidence: {
-          ...baseEvidence(),
-          metrics: {
-            indexed: skill.indexedCount,
-            loaded: skill.loadedCount,
-          },
-        },
-      });
-    }
-    if (skill.identityConfidence === "name_only_unknown") {
-      findings.push({
-        code: "UNKNOWN_SKILL_IDENTITY",
-        severity: "info",
-        relation: "observed",
-        skillKey: skill.skillKey,
-        skillName: skill.name,
-        ...(skill.packageHash ? { packageHash: skill.packageHash } : {}),
-        message:
-          "Skill stats only know this skill by name/layer; version-specific comparisons are unavailable.",
-        evidence: {
-          ...baseEvidence(),
-          metrics: {
-            indexed: skill.indexedCount,
-            loaded: skill.loadedCount,
-          },
-        },
-      });
-    }
     if (skill.loadFailures.total > 0) {
       findings.push({
         code: "SKILL_LOAD_FAILURES",
@@ -1813,7 +1728,7 @@ function analyzeSkillStats(
         relation: "observed",
         skillKey: skill.skillKey,
         skillName: skill.name,
-        ...(skill.packageHash ? { packageHash: skill.packageHash } : {}),
+        packageHash: skill.packageHash,
         message: "Skill load failures were observed in the scanned evidence.",
         evidence: {
           ...baseEvidence(),
@@ -1832,7 +1747,7 @@ function analyzeSkillStats(
         relation: "associated",
         skillKey: skill.skillKey,
         skillName: skill.name,
-        ...(skill.packageHash ? { packageHash: skill.packageHash } : {}),
+        packageHash: skill.packageHash,
         message:
           "Tool failures occurred in runs that loaded this skill; this is an associated signal, not a causal claim.",
         evidence: {
@@ -1857,7 +1772,7 @@ function analyzeSkillStats(
         relation: "observed",
         skillKey: skill.skillKey,
         skillName: skill.name,
-        ...(skill.packageHash ? { packageHash: skill.packageHash } : {}),
+        packageHash: skill.packageHash,
         message:
           "Skill evolution proposals or history entries reference this package version.",
         evidence: {
@@ -1894,14 +1809,8 @@ function identityFromStatsEntry(entry: SkillStatsEntry): SkillIdentity {
     name: entry.name,
     ...(entry.layer ? { layer: entry.layer } : {}),
     ...(entry.sourcePath ? { sourcePath: entry.sourcePath } : {}),
-    ...(entry.packageHash ? { packageHash: entry.packageHash } : {}),
-    ...(entry.contentHash ? { contentHash: entry.contentHash } : {}),
-    ...(entry.legacyContentHash
-      ? { legacyContentHash: entry.legacyContentHash }
-      : entry.identityConfidence === "legacy_content_hash" && entry.contentHash
-        ? { legacyContentHash: entry.contentHash }
-        : {}),
-    identityConfidence: entry.identityConfidence,
+    packageHash: entry.packageHash,
+    packageHashPolicyVersion: entry.packageHashPolicyVersion,
   };
 }
 
@@ -1933,37 +1842,18 @@ function matchesSkillStatsTarget(
 
 function identityFromRawSkill(
   rawSkill: Record<string, unknown>,
-): SkillIdentity {
+): SkillIdentity | undefined {
   const name = String(rawSkill.name);
   const sourcePath = stringValue(rawSkill.sourcePath);
   const packageHash = stringValue(rawSkill.packageHash);
-  const contentHash = stringValue(rawSkill.contentHash);
   const layer = skillLayer(rawSkill.layer);
-  if (packageHash) {
-    return {
-      name,
-      ...(layer ? { layer } : {}),
-      ...(sourcePath ? { sourcePath } : {}),
-      packageHash,
-      ...(contentHash ? { contentHash } : {}),
-      identityConfidence: "package_hash",
-    };
-  }
-  if (contentHash) {
-    return {
-      name,
-      ...(layer ? { layer } : {}),
-      ...(sourcePath ? { sourcePath } : {}),
-      contentHash,
-      legacyContentHash: contentHash,
-      identityConfidence: "legacy_content_hash",
-    };
-  }
+  if (!packageHash || rawSkill.packageHashPolicyVersion !== 2) return undefined;
   return {
     name,
     ...(layer ? { layer } : {}),
     ...(sourcePath ? { sourcePath } : {}),
-    identityConfidence: "name_only_unknown",
+    packageHash,
+    packageHashPolicyVersion: 2,
   };
 }
 
@@ -1972,18 +1862,16 @@ function identityForNamedEvent(
   event: SparkwrightEvent,
   run: RunStats,
   sourcePath?: string,
-): SkillIdentity {
+): SkillIdentity | undefined {
   const packageHash = stringValue(event.metadata.packageHash);
-  const contentHash = stringValue(event.metadata.contentHash);
   const layer = skillLayer(event.metadata.layer);
   const indexed = run.indexedByName.get(name);
-  if (packageHash) {
+  if (packageHash && event.metadata.packageHashPolicyVersion === 2) {
     if (indexed?.packageHash === packageHash) {
       return {
         ...indexed,
         ...(layer && !indexed.layer ? { layer } : {}),
         ...(sourcePath && !indexed.sourcePath ? { sourcePath } : {}),
-        ...(contentHash && !indexed.contentHash ? { contentHash } : {}),
       };
     }
     return {
@@ -1991,8 +1879,7 @@ function identityForNamedEvent(
       ...(layer ? { layer } : {}),
       ...(sourcePath ? { sourcePath } : {}),
       packageHash,
-      ...(contentHash ? { contentHash } : {}),
-      identityConfidence: "package_hash",
+      packageHashPolicyVersion: 2,
     };
   }
 
@@ -2003,22 +1890,7 @@ function identityForNamedEvent(
     };
   }
 
-  if (contentHash) {
-    return {
-      name,
-      ...(layer ? { layer } : {}),
-      ...(sourcePath ? { sourcePath } : {}),
-      contentHash,
-      legacyContentHash: contentHash,
-      identityConfidence: "legacy_content_hash",
-    };
-  }
-  return {
-    name,
-    ...(layer ? { layer } : {}),
-    ...(sourcePath ? { sourcePath } : {}),
-    identityConfidence: "name_only_unknown",
-  };
+  return undefined;
 }
 
 function identityFromReportEntry(skill: SkillReportEntry): SkillIdentity {
@@ -2026,19 +1898,14 @@ function identityFromReportEntry(skill: SkillReportEntry): SkillIdentity {
     name: skill.name,
     ...(skill.layer ? { layer: skill.layer } : { layer: UNKNOWN_LAYER }),
     ...(skill.source ? { sourcePath: skill.source } : {}),
-    identityConfidence: "name_only_unknown",
+    packageHash: skill.packageHash,
+    packageHashPolicyVersion: skill.packageHashPolicyVersion,
   };
 }
 
 function skillKey(identity: SkillIdentity): string {
   const layer = identity.layer ?? UNKNOWN_LAYER;
-  if (identity.packageHash) {
-    return `${identity.name}|${layer}|package:${identity.packageHash}`;
-  }
-  if (identity.legacyContentHash) {
-    return `${identity.name}|${layer}|legacy-content:${identity.legacyContentHash}`;
-  }
-  return `${identity.name}|${layer}|unknown`;
+  return `skill|${layer}|${identity.name}|v${identity.packageHashPolicyVersion}|${identity.packageHash}`;
 }
 
 function entriesByName(
@@ -2218,16 +2085,6 @@ function skillLayer(value: unknown): SkillRoot["layer"] | undefined {
     value === "legacy"
     ? value
     : undefined;
-}
-
-function isIdentityConfidence(
-  value: unknown,
-): value is SkillStatsIdentityConfidence {
-  return (
-    value === "package_hash" ||
-    value === "legacy_content_hash" ||
-    value === "name_only_unknown"
-  );
 }
 
 function isNumberRecord(value: unknown): value is Record<string, number> {

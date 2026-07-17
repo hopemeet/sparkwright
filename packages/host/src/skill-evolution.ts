@@ -27,6 +27,7 @@ import {
   type SkillReportEntry,
 } from "./skill-report.js";
 import { recordSkillPatch } from "./skill-usage.js";
+import { readSkillRegistry } from "./skill-registry.js";
 
 export type SkillProposalState =
   | "draft"
@@ -64,6 +65,23 @@ async function computeCurrentSkillPackageHash(skillDir: string) {
   });
 }
 
+async function resolveSkillArtifactIdForUpdate(
+  workspaceRoot: string,
+  skillName: string,
+  layer: SkillRoot["layer"] | undefined,
+): Promise<string> {
+  if (layer === "project") {
+    const registered = (await readSkillRegistry(workspaceRoot)).artifacts.find(
+      (artifact) =>
+        artifact.status === "active" && artifact.activePath === skillName,
+    );
+    if (registered) return registered.artifactId;
+    const prior = (await listSkillHistory(workspaceRoot, skillName))[0];
+    if (prior) return prior.artifactId;
+  }
+  return createId("skill") as string;
+}
+
 /**
  * Where a proposal came from. Auto-captured when a proposal is drafted by a
  * model tool during a run, so a reviewer can pull the trace that motivated the
@@ -88,14 +106,14 @@ export interface SkillProposalMetadata {
   basePackageHash: string | null;
   afterPackageHash: string;
   packageHashPolicyVersion: typeof PACKAGE_HASH_POLICY_VERSION;
-  /** Stable project identity allocated for managed creates. */
-  artifactId?: string;
+  /** Stable project identity carried across managed versions. */
+  artifactId: string;
   /** Hash of the inspectable final effect; excludes guard policy versions. */
-  effectHash?: string;
-  /** Prepared-change transaction state. Legacy draft proposals omit it. */
-  preparedState?: PreparedChangeState;
+  effectHash: string;
+  /** Prepared-change transaction state. */
+  preparedState: PreparedChangeState;
   /** Monotonic revision of a mutable draft. Applied/closed proposals freeze it. */
-  revision?: number;
+  revision: number;
   /** Hash replaced by the latest draft revision, for reviewer-visible audit. */
   previousAfterPackageHash?: string;
   summary: string;
@@ -169,6 +187,7 @@ export interface SkillHistoryMetadata {
   id: string;
   skillName: string;
   proposalId: string;
+  artifactId: string;
   kind: SkillHistoryKind;
   createdAt: string;
   beforePackageHash: string | null;
@@ -449,7 +468,11 @@ export async function createSkillUpdateProposal(
     const guardFindings = inspectProposedSkillContent(input.name, afterContent);
 
     const afterHash = await computeCurrentSkillPackageHash(afterSkillDir);
-    const artifactId = `legacy:project:${input.name}`;
+    const artifactId = await resolveSkillArtifactIdForUpdate(
+      input.workspaceRoot,
+      input.name,
+      skill.layer,
+    );
     const metadata: SkillProposalMetadata = {
       id: proposalId,
       kind: "update",
@@ -594,8 +617,7 @@ export async function reviseSkillProposalDraft(input: {
       afterPackageHash: afterHash.packageHash,
       packageHashPolicyVersion: PACKAGE_HASH_POLICY_VERSION,
       effectHash: skillProposalEffectHash({
-        artifactId:
-          proposal.artifactId ?? `legacy:project:${proposal.skillName}`,
+        artifactId: proposal.artifactId,
         operation: proposal.kind,
         skillName: proposal.skillName,
         basePackageHash: proposal.basePackageHash,
@@ -604,7 +626,7 @@ export async function reviseSkillProposalDraft(input: {
         provenance: input.provenance ?? proposal.provenance,
       }),
       preparedState: "ready",
-      revision: (proposal.revision ?? 1) + 1,
+      revision: proposal.revision + 1,
       previousAfterPackageHash: proposal.afterPackageHash,
       contentMode: input.content ? "authored" : proposal.contentMode,
       guardFindings: guardFindings.length > 0 ? guardFindings : undefined,
@@ -797,10 +819,10 @@ export async function readSkillProposal(
 async function readSkillProposalFromPath(
   path: string,
 ): Promise<SkillProposalDetail> {
-  const metadata = JSON.parse(
+  const metadata: unknown = JSON.parse(
     await readFile(join(path, "metadata.json"), "utf8"),
-  ) as SkillProposalMetadata;
-  assertCanonicalPackageHashPolicy(metadata, "Skill proposal");
+  );
+  assertCanonicalSkillProposal(metadata);
   return {
     ...metadata,
     path,
@@ -1074,7 +1096,7 @@ export async function recordSkillProposalApproval(input: {
     schemaVersion: 1,
     receiptId: createId("skillapproval") as string,
     proposalId: proposal.id,
-    proposalRevision: proposal.revision ?? 1,
+    proposalRevision: proposal.revision,
     effectHash: currentEffectHash,
     decision: "approved",
     approvedRiskFingerprints: dangerousRiskFingerprints(
@@ -1478,7 +1500,7 @@ function skillProposalEffectHash(input: {
 
 function currentSkillProposalEffectHash(proposal: SkillProposalDetail): string {
   return skillProposalEffectHash({
-    artifactId: proposal.artifactId ?? `legacy:project:${proposal.skillName}`,
+    artifactId: proposal.artifactId,
     operation: proposal.kind,
     skillName: proposal.skillName,
     basePackageHash: proposal.basePackageHash,
@@ -1515,7 +1537,7 @@ function validateSkillApprovalReceipt(
     receipt.schemaVersion !== 1 ||
     receipt.decision !== "approved" ||
     receipt.proposalId !== proposal.id ||
-    receipt.proposalRevision !== (proposal.revision ?? 1) ||
+    receipt.proposalRevision !== proposal.revision ||
     receipt.effectHash !== effectHash
   ) {
     throw new Error(
@@ -1611,7 +1633,7 @@ async function writeSkillMutationReceipt(
     receiptId: createId("skillmutation") as string,
     proposalId: proposal.id,
     effectHash,
-    artifactId: proposal.artifactId ?? `legacy:project:${proposal.skillName}`,
+    artifactId: proposal.artifactId,
     beforePackageHash: proposal.basePackageHash,
     afterPackageHash: proposal.afterPackageHash,
     packageHashPolicyVersion: proposal.packageHashPolicyVersion,
@@ -1678,9 +1700,7 @@ async function writeHistoryEntry(
   createdAt: string,
   mutations: CapabilityPackageMutationWriter,
 ): Promise<SkillHistoryEntry> {
-  const id = proposal.effectHash
-    ? `skillver_${proposal.effectHash.slice(0, 24)}`
-    : (createId("skillver") as string);
+  const id = `skillver_${proposal.effectHash.slice(0, 24)}`;
   const path = join(historySkillRoot(workspaceRoot, proposal.skillName), id);
   if (existsSync(join(path, "metadata.json"))) {
     const existing = await readHistoryEntry(path);
@@ -1721,6 +1741,7 @@ async function writeHistoryEntry(
     id,
     skillName: proposal.skillName,
     proposalId: proposal.id,
+    artifactId: proposal.artifactId,
     kind: proposal.kind,
     createdAt,
     beforePackageHash: proposal.basePackageHash,
@@ -1775,6 +1796,7 @@ async function writeRestoreHistoryEntry(input: {
     id,
     skillName: input.skillName,
     proposalId: input.sourceHistory.proposalId,
+    artifactId: input.sourceHistory.artifactId,
     kind: "restore",
     createdAt: input.createdAt,
     beforePackageHash: input.beforePackageHash,
@@ -1790,11 +1812,62 @@ async function writeRestoreHistoryEntry(input: {
 }
 
 async function readHistoryEntry(path: string): Promise<SkillHistoryEntry> {
-  const metadata = JSON.parse(
+  const metadata: unknown = JSON.parse(
     await readFile(join(path, "metadata.json"), "utf8"),
-  ) as SkillHistoryMetadata;
-  assertCanonicalPackageHashPolicy(metadata, "Skill history entry");
+  );
+  assertCanonicalSkillHistory(metadata);
   return { ...metadata, path };
+}
+
+function assertCanonicalSkillProposal(
+  value: unknown,
+): asserts value is SkillProposalMetadata {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    typeof (value as { artifactId?: unknown }).artifactId !== "string" ||
+    typeof (value as { effectHash?: unknown }).effectHash !== "string" ||
+    !Number.isInteger((value as { revision?: unknown }).revision) ||
+    !isPreparedChangeState((value as { preparedState?: unknown }).preparedState)
+  ) {
+    throw new Error("Skill proposal requires canonical prepared identity.");
+  }
+  assertCanonicalPackageHashPolicy(
+    value as { packageHashPolicyVersion?: unknown },
+    "Skill proposal",
+  );
+}
+
+function assertCanonicalSkillHistory(
+  value: unknown,
+): asserts value is SkillHistoryMetadata {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    typeof (value as { artifactId?: unknown }).artifactId !== "string"
+  ) {
+    throw new Error(
+      "Skill history entry requires canonical artifact identity.",
+    );
+  }
+  assertCanonicalPackageHashPolicy(
+    value as { packageHashPolicyVersion?: unknown },
+    "Skill history entry",
+  );
+}
+
+function isPreparedChangeState(value: unknown): value is PreparedChangeState {
+  return (
+    value === "ready" ||
+    value === "waiting" ||
+    value === "approved" ||
+    value === "applying" ||
+    value === "applied" ||
+    value === "rejected" ||
+    value === "superseded" ||
+    value === "stale" ||
+    value === "failed"
+  );
 }
 
 function assertCanonicalPackageHashPolicy(

@@ -963,7 +963,8 @@ export interface CapabilitySkillSummary {
   name: string;
   description?: string;
   sourcePath?: string;
-  contentHash?: string;
+  packageHash: string;
+  packageHashPolicyVersion: 2;
   version?: string;
   selectionReason?: string;
 }

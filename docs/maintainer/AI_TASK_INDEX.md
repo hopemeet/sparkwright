@@ -128,7 +128,7 @@ Read the linked entry file first, then the linked docs, then make the change. Do
 - **Entry point**: `packages/skills/` (extension package, not core)
 - **Interface to implement**: skill manifest matching `schemas/skill-manifest.schema.json`; adapter normalizes manifest into `ContextItem[]` + `ToolDefinition[]`
 - **Must read**: `docs/reference/SKILLS.md`, `docs/guides/CAPABILITY_DESIGN_GUIDE.md`, `docs/reference/EXTENSION_INTERFACES.md` (Skill Extensions)
-- **Must update on change**: `schemas/skill-manifest.schema.json` if the manifest shape grows; trace should carry skill `name` + `contentHash`
+- **Must update on change**: `schemas/skill-manifest.schema.json` if the manifest shape grows; trace should carry Skill `name` + `packageHashPolicyVersion: 2` + `packageHash`
 - **Wire in via**: `prepareSkillsForRun({ skillRoots })` then `createRun({ context: prepared.context, tools: prepared.tools })`
 - **Notes**: Skill scripts must enter as governed tools; reading a `SKILL.md` must not have side effects.
 

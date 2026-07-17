@@ -12,6 +12,12 @@ Conventions:
 
 ## Unreleased
 
+- Skill capability and trace identity: breaking consolidation — indexed and
+  resident-loaded Skills publish required `packageHash` plus
+  `packageHashPolicyVersion: 2`; the Markdown-only `contentHash` projection is
+  removed. Skill statistics accept only that event-time v2 identity and no
+  longer create legacy-content or name-only buckets.
+
 - Workflow run snapshots: breaking identity consolidation — `generation`,
   `recordRevision`, source `layer`, `packageHash`, and
   `packageHashPolicyVersion: 2` are required; durable `contentHash` is removed.

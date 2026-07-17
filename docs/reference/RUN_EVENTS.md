@@ -302,8 +302,8 @@ Skill events explain capability/context changes at the edge of the run.
 Stable consumption guidance:
 
 - Render these as environment/context evidence, not as model-authored actions.
-- Keep names, versions, source paths, content hashes, counts, and selection
-  reasons when available.
+- Keep names, versions, source paths, policy-bound package hashes, counts, and
+  selection reasons when available.
 - Do not require full Skill body text in the event payload.
 - Expect some edge lifecycle events to be flushed into the run after
   `createRun()` through a buffered emitter; final `sequence` order is the

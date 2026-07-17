@@ -139,7 +139,6 @@ export type {
   SkillStatsFindingRelation,
   SkillStatsFindingSeverity,
   SkillStatsFreshness,
-  SkillStatsIdentityConfidence,
   SkillStatsOptions,
   SkillStatsProjectionCacheInfo,
   SkillStatsQuery,

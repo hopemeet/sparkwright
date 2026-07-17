@@ -137,7 +137,8 @@ const context: ContextItem[] = [
       stability: "session",
       skillName: "dingtalk-notifier",
       version: "1.0.0",
-      contentHash: "sha256:...",
+      packageHash: "sha256:...",
+      packageHashPolicyVersion: 2,
     },
   },
 ];
@@ -341,7 +342,7 @@ Any extension that affects model input, tool availability, permission boundaries
 
 Examples:
 
-- selected Skill name and content hash
+- selected Skill name and policy-bound package hash
 - memory item ids selected for context
 - retrieval query and source references
 - MCP server that provided a tool

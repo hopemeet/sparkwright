@@ -94,6 +94,30 @@ describe("skill proposal application", () => {
     }
   });
 
+  it("rejects proposal records without canonical artifact identity", async () => {
+    const workspace = await makeWorkspace();
+    try {
+      const proposal = await createSkillCreateProposal({
+        workspaceRoot: workspace,
+        name: "canonical-artifact",
+        description: "Canonical artifact identity",
+        content: skillMarkdown("canonical-artifact"),
+      });
+      const metadataPath = join(proposal.path, "metadata.json");
+      const metadata = JSON.parse(await readFile(metadataPath, "utf8")) as {
+        artifactId?: string;
+      };
+      delete metadata.artifactId;
+      await writeFile(metadataPath, JSON.stringify(metadata));
+
+      await expect(readSkillProposal(workspace, proposal.id)).rejects.toThrow(
+        "Skill proposal requires canonical prepared identity.",
+      );
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
   it("supersedes every competing draft after one proposal is applied", async () => {
     const workspace = await makeWorkspace();
     try {
@@ -285,6 +309,7 @@ describe("skill proposal application", () => {
       expect(applied.history.id).toBe(
         `skillver_${prepared.effectHash.slice(0, 24)}`,
       );
+      expect(applied.history.artifactId).toBe(proposal.artifactId);
       await expect(
         readFile(join(proposal.path, "mutation-receipt.json"), "utf8"),
       ).resolves.toContain(applied.history.id);

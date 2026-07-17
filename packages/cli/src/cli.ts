@@ -3558,11 +3558,9 @@ function formatSkillStatsReport(report: SkillStatsReport): string {
   }
   for (const skill of report.skills) {
     lines.push(`- ${skill.name}${skill.layer ? ` (${skill.layer})` : ""}`);
-    lines.push(`  identity: ${skill.identityConfidence}`);
-    if (skill.packageHash) lines.push(`  package: ${skill.packageHash}`);
-    if (skill.legacyContentHash) {
-      lines.push(`  legacy content: ${skill.legacyContentHash}`);
-    }
+    lines.push(
+      `  package: v${skill.packageHashPolicyVersion} ${skill.packageHash}`,
+    );
     if (skill.sourcePath) lines.push(`  source: ${skill.sourcePath}`);
     if (skill.shadowedBy) lines.push(`  shadowed by: ${skill.shadowedBy}`);
     if (skill.shadows && skill.shadows.length > 0) {
@@ -3663,7 +3661,9 @@ function formatSkillDoctorReport(report: SkillDoctorReport): string {
   for (const skill of report.skills) {
     lines.push(`- ${skill.name}${skill.layer ? ` (${skill.layer})` : ""}`);
     if (skill.sourcePath) lines.push(`  source: ${skill.sourcePath}`);
-    if (skill.packageHash) lines.push(`  package: ${skill.packageHash}`);
+    lines.push(
+      `  package: v${skill.packageHashPolicyVersion} ${skill.packageHash}`,
+    );
     if (skill.shadowedBy) lines.push(`  shadowed by: ${skill.shadowedBy}`);
     if (skill.shadows && skill.shadows.length > 0) {
       lines.push(`  shadows: ${skill.shadows.join(", ")}`);

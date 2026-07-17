@@ -12,6 +12,15 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T20:55:00+0800
+- Scope: Host Skill composition consumes one v2 package identity across reports,
+  doctor, runtime capability snapshots, trace-derived stats, managed proposals,
+  history, and suggestion keys. Content/name-only stats readers and artifact
+  fallbacks were removed.
+- Read: Host Skill report/doctor/stats/evolution/registry/tools, runtime capability assembly, CLI consumers, and focused tests.
+- Tests: Host Skill/protocol 81/81; focused CLI Skill gates 5/5; Host/CLI/test typechecks.
+
+- Status: Verified
 - Date: 2026-07-17T17:20:00+0800
 - Scope: Host Workflow execution and observation use one package identity.
   Fresh start persists the required pinned v2 package, resume verifies that

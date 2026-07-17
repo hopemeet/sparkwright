@@ -2,8 +2,8 @@
 
 ## Current Confidence
 
-- Status: `Partially Verified`
-- Last reviewed: 2026-07-11
+- Status: `Verified`
+- Last reviewed: 2026-07-17
 - Evidence source: 2026-06-23 focused host Skill evolution,
   capability-package mutation, inline-shell, TUI skill review, and
   `@sparkwright/skills` package tests passed. Real `openai/gpt-5.4-nano`
@@ -13,6 +13,13 @@
   duplicate recovered `create_skill` call.
 
 ## Covered
+
+- 2026-07-17 identity consolidation coverage proves runtime loading, indexed
+  and resident trace metadata, capability inspection, doctor, lockfiles, stats,
+  proposals, history, and restore share required policy-2 package identity.
+  Focused tests also prove v1 package helpers are gone, arbitrary included root
+  files affect runtime identity, old content/name-only trace rows no longer
+  become stats buckets, and proposal records without artifact identity fail.
 
 - 2026-07-12 hardening coverage rejects snapshot targets that are ancestors of
   their source, rejects duplicate registry path ownership, preserves concurrent
@@ -26,13 +33,14 @@
 - 2026-07-12 Phase 3B coverage proves new managed proposal/history/receipt
   records use v2 identity, ordinary root files survive proposal apply/history,
   and direct change to an included file marks the proposal stale without target
-  overwrite. Missing-policy legacy records remain v1 readers.
+  overwrite. The later 2026-07-17 consolidation removed missing-policy and
+  artifact fallback readers.
 
 - 2026-07-12 Phase 3A package identity v2 substrate coverage proves complete
   canonical ordinary-file enumeration, fixed exclusions, NUL-framed stable
   hashing, same-set snapshotting, policy version attribution, and fail-closed
-  file/path/size guardrails. It deliberately does not change the current Skill
-  v1 runtime/evolution path; Phase 3B owns that migration.
+  file/path/size guardrails. Runtime loading joined that same v2 path in the
+  2026-07-17 consolidation.
 
 - 2026-07-12 TUI completion-card coverage proves a draft proposal is restored
   from persistent proposal storage after startup, card dismissal leaves the
@@ -165,6 +173,8 @@
 
 ```bash
 npm --workspace @sparkwright/host test -- test/skill-evolution.test.ts test/capability-package-mutation.test.ts test/skill-inline-shell.test.ts
+npm --workspace @sparkwright/host test -- test/protocol.test.ts test/skill-suggestions.test.ts
+npm --workspace @sparkwright/cli test -- test/cli.test.ts -t "skill stats|skill review digest|catalog|doctors skills"
 npm --workspace @sparkwright/tui test -- test/skill-review-dialog-render.test.tsx test/path-display.test.ts
 npm --workspace @sparkwright/skills test
 npm --workspace @sparkwright/skills run typecheck

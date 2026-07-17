@@ -5,6 +5,7 @@ import {
   realpath,
   rm,
   stat,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { existsSync } from "node:fs";
@@ -3936,8 +3937,6 @@ describe.sequential("runCli", () => {
     const runId = "run_skill_stats";
     const residentRunId = "run_resident_skill_stats";
     const agentRunId = "run_agent_skill_stats";
-    const legacyRunId = "run_legacy_skill_stats";
-    const unknownRunId = "run_unknown_skill_stats";
     const sessionDir = join(sessionRoot, sessionId);
     await mkdir(sessionDir, { recursive: true });
     await writeFile(
@@ -3947,7 +3946,7 @@ describe.sequential("runCli", () => {
           id: sessionId,
           createdAt: "2026-06-13T00:00:00.000Z",
           updatedAt: "2026-06-13T00:00:02.000Z",
-          runIds: [runId, residentRunId, agentRunId, legacyRunId, unknownRunId],
+          runIds: [runId, residentRunId, agentRunId],
           agents: ["main", "dynamic_reviewer"],
           eventCount: 0,
         },
@@ -3971,8 +3970,8 @@ describe.sequential("runCli", () => {
                 name: "code-reviewer",
                 layer: "project",
                 sourcePath: skillPath,
-                contentHash: "sha256:indexed",
                 packageHash: "sha256:package",
+                packageHashPolicyVersion: 2,
               },
             ],
           },
@@ -4020,8 +4019,8 @@ describe.sequential("runCli", () => {
               {
                 name: "resident-reviewer",
                 layer: "project",
-                contentHash: "sha256:resident-indexed",
                 packageHash: "sha256:resident",
+                packageHashPolicyVersion: 2,
               },
             ],
           },
@@ -4031,59 +4030,13 @@ describe.sequential("runCli", () => {
           residentRunId,
           "skill.loaded",
           { name: "resident-reviewer", status: "loaded" },
-          { mode: "resident_context", packageHash: "sha256:resident" },
+          {
+            mode: "resident_context",
+            packageHash: "sha256:resident",
+            packageHashPolicyVersion: 2,
+          },
         ),
         traceEvent(9, residentRunId, "run.completed", {
-          status: "completed",
-          toolOutcome: {
-            unresolved: { total: 0, byCode: {} },
-            recovered: { total: 0, byCode: {} },
-          },
-        }),
-        traceEvent(
-          13,
-          legacyRunId,
-          "skill.indexed",
-          { count: 1 },
-          {
-            skills: [
-              {
-                name: "legacy-reviewer",
-                layer: "project",
-                sourcePath: join(
-                  workspace,
-                  ".sparkwright",
-                  "skills",
-                  "legacy-reviewer",
-                  "SKILL.md",
-                ),
-                contentHash: "sha256:legacy",
-              },
-            ],
-          },
-        ),
-        traceEvent(
-          14,
-          legacyRunId,
-          "skill.loaded",
-          { name: "legacy-reviewer" },
-          { mode: "on_demand_tool" },
-        ),
-        traceEvent(15, legacyRunId, "run.completed", {
-          status: "completed",
-          toolOutcome: {
-            unresolved: { total: 0, byCode: {} },
-            recovered: { total: 0, byCode: {} },
-          },
-        }),
-        traceEvent(
-          16,
-          unknownRunId,
-          "skill.loaded",
-          { name: "unknown-reviewer" },
-          { mode: "on_demand_tool" },
-        ),
-        traceEvent(17, unknownRunId, "run.completed", {
           status: "completed",
           toolOutcome: {
             unresolved: { total: 0, byCode: {} },
@@ -4109,8 +4062,8 @@ describe.sequential("runCli", () => {
               {
                 name: "agent-reviewer",
                 layer: "project",
-                contentHash: "sha256:agent-indexed",
                 packageHash: "sha256:agent",
+                packageHashPolicyVersion: 2,
               },
             ],
           },
@@ -4161,6 +4114,10 @@ describe.sequential("runCli", () => {
           basePackageHash: "sha256:package",
           afterPackageHash: "sha256:package-after",
           packageHashPolicyVersion: 2,
+          artifactId: "skill_stats",
+          effectHash: "effect_stats",
+          preparedState: "applied",
+          revision: 1,
           summary: "Improve review guidance.",
           sourceLayer: "project",
           sourcePath: skillPath,
@@ -4179,6 +4136,7 @@ describe.sequential("runCli", () => {
           id: historyId,
           skillName: "code-reviewer",
           proposalId,
+          artifactId: "skill_stats",
           kind: "update",
           createdAt: "2026-06-13T00:00:16.000Z",
           beforePackageHash: "sha256:package",
@@ -4274,8 +4232,7 @@ describe.sequential("runCli", () => {
         explicitLoadCount: number;
         residentLoadCount: number;
         packageHash?: string;
-        legacyContentHash?: string;
-        identityConfidence: string;
+        packageHashPolicyVersion: 2;
         loadFailures: {
           total: number;
           byMode: Record<string, number>;
@@ -4320,9 +4277,9 @@ describe.sequential("runCli", () => {
         firstSessionUpdatedAt: "2026-06-13T00:00:02.000Z",
         lastSessionUpdatedAt: "2026-06-13T00:00:02.000Z",
         firstEventAt: "2026-06-13T00:00:01.000Z",
-        lastEventAt: "2026-06-13T00:00:17.000Z",
-        runCount: 5,
-        terminalRunCount: 5,
+        lastEventAt: "2026-06-13T00:00:12.000Z",
+        runCount: 3,
+        terminalRunCount: 3,
         openRunCount: 0,
       }),
     );
@@ -4335,9 +4292,9 @@ describe.sequential("runCli", () => {
         lastClosedAt: "2026-06-13T00:00:15.000Z",
       }),
     );
-    expect(stats.freshness.latestTraceEventAt).toBe("2026-06-13T00:00:17.000Z");
+    expect(stats.freshness.latestTraceEventAt).toBe("2026-06-13T00:00:12.000Z");
     expect(stats.freshness.latestEvolutionAt).toBe("2026-06-13T00:00:16.000Z");
-    expect(stats.freshness.latestEvidenceAt).toBe("2026-06-13T00:00:17.000Z");
+    expect(stats.freshness.latestEvidenceAt).toBe("2026-06-13T00:00:16.000Z");
     expect(stats.projectionCache).toEqual(
       expect.objectContaining({
         enabled: true,
@@ -4367,7 +4324,7 @@ describe.sequential("runCli", () => {
       `${sessionId}.json`,
     );
     expect(await readFile(projectionCachePath, "utf8")).toContain(
-      '"schemaVersion": "skill-stats-session.v1"',
+      '"schemaVersion": "skill-stats-session.v2"',
     );
     expect(stats.findings).toEqual(
       expect.arrayContaining([
@@ -4389,18 +4346,6 @@ describe.sequential("runCli", () => {
           relation: "observed",
           skillName: "code-reviewer",
         }),
-        expect.objectContaining({
-          code: "LEGACY_SKILL_IDENTITY",
-          severity: "info",
-          relation: "observed",
-          skillName: "legacy-reviewer",
-        }),
-        expect.objectContaining({
-          code: "UNKNOWN_SKILL_IDENTITY",
-          severity: "info",
-          relation: "observed",
-          skillName: "unknown-reviewer",
-        }),
       ]),
     );
     expect(stats.skills).toEqual(
@@ -4409,7 +4354,7 @@ describe.sequential("runCli", () => {
           name: "code-reviewer",
           layer: "project",
           packageHash: "sha256:package",
-          identityConfidence: "package_hash",
+          packageHashPolicyVersion: 2,
           indexedCount: 1,
           loadedCount: 1,
           residentLoadCount: 0,
@@ -4452,7 +4397,7 @@ describe.sequential("runCli", () => {
           name: "resident-reviewer",
           layer: "project",
           packageHash: "sha256:resident",
-          identityConfidence: "package_hash",
+          packageHashPolicyVersion: 2,
           indexedCount: 1,
           loadedCount: 1,
           residentLoadCount: 1,
@@ -4462,24 +4407,8 @@ describe.sequential("runCli", () => {
           name: "agent-reviewer",
           layer: "project",
           packageHash: "sha256:agent",
-          identityConfidence: "package_hash",
+          packageHashPolicyVersion: 2,
           indexedCount: 1,
-          loadedCount: 1,
-          explicitLoadCount: 1,
-        }),
-        expect.objectContaining({
-          name: "legacy-reviewer",
-          layer: "project",
-          legacyContentHash: "sha256:legacy",
-          identityConfidence: "legacy_content_hash",
-          indexedCount: 1,
-          loadedCount: 1,
-          explicitLoadCount: 1,
-        }),
-        expect.objectContaining({
-          name: "unknown-reviewer",
-          identityConfidence: "name_only_unknown",
-          indexedCount: 0,
           loadedCount: 1,
           explicitLoadCount: 1,
         }),
@@ -4589,7 +4518,7 @@ describe.sequential("runCli", () => {
     );
     expect(text.exitCode).toBe(0);
     expect(textOutput.stdoutText()).toContain("- code-reviewer (project)");
-    expect(textOutput.stdoutText()).toContain("window: runs=5");
+    expect(textOutput.stdoutText()).toContain("window: runs=3");
     expect(textOutput.stdoutText()).toContain("freshness: computed=");
     expect(textOutput.stdoutText()).toContain("projection cache: enabled=true");
     expect(textOutput.stdoutText()).toContain("catalog: enabled=true");
@@ -4598,7 +4527,7 @@ describe.sequential("runCli", () => {
     );
     expect(textOutput.stdoutText()).toContain("findings: 3");
     expect(textOutput.stdoutText()).toContain("finding detail:");
-    expect(textOutput.stdoutText()).toContain("package: sha256:package");
+    expect(textOutput.stdoutText()).toContain("package: v2 sha256:package");
     expect(textOutput.stdoutText()).toContain(
       "load failure detail: modes=on_demand_tool=1, statuses=resource_denied=1",
     );
@@ -4675,8 +4604,8 @@ describe.sequential("runCli", () => {
                 name: "code-reviewer",
                 layer: "project",
                 sourcePath: skillPath,
-                contentHash: "sha256:review-content",
                 packageHash: "sha256:review-package",
+                packageHashPolicyVersion: 2,
               },
             ],
           },
@@ -4896,8 +4825,8 @@ describe.sequential("runCli", () => {
                 name: "code-reviewer",
                 layer: "project",
                 sourcePath: codeSkillPath,
-                contentHash: "sha256:code-content",
                 packageHash: "sha256:code-package",
+                packageHashPolicyVersion: 2,
               },
             ],
           },
@@ -4933,8 +4862,8 @@ describe.sequential("runCli", () => {
                 name: "other-reviewer",
                 layer: "project",
                 sourcePath: otherSkillPath,
-                contentHash: "sha256:other-content",
                 packageHash: "sha256:other-package",
+                packageHashPolicyVersion: 2,
               },
             ],
           },
@@ -5065,7 +4994,7 @@ describe.sequential("runCli", () => {
     expect(targetStats.skills).toEqual([
       expect.objectContaining({
         name: "code-reviewer",
-        skillKey: "code-reviewer|project|package:sha256:code-package",
+        skillKey: "skill|project|code-reviewer|v2|sha256:code-package",
         packageHash: "sha256:code-package",
         firstEventAt: "2026-06-13T00:00:21.000Z",
         lastEventAt: "2026-06-13T00:00:22.000Z",
@@ -5086,7 +5015,7 @@ describe.sequential("runCli", () => {
         "--last",
         "2",
         "--skill-key",
-        "code-reviewer|project|package:sha256:code-package",
+        "skill|project|code-reviewer|v2|sha256:code-package",
         "--format",
         "json",
       ],
@@ -5099,14 +5028,14 @@ describe.sequential("runCli", () => {
       skills: Array<{ skillKey: string }>;
     };
     expect(keyStats.query.skillKey).toBe(
-      "code-reviewer|project|package:sha256:code-package",
+      "skill|project|code-reviewer|v2|sha256:code-package",
     );
     expect(keyStats.catalog).toEqual(
       expect.objectContaining({ hits: 1, selectedSessions: 1 }),
     );
     expect(keyStats.skills).toEqual([
       expect.objectContaining({
-        skillKey: "code-reviewer|project|package:sha256:code-package",
+        skillKey: "skill|project|code-reviewer|v2|sha256:code-package",
       }),
     ]);
   });
@@ -5164,7 +5093,7 @@ describe.sequential("runCli", () => {
       ),
       "utf8",
     );
-    await writeFile(join(badSkillDir, "references"), "not a directory\n");
+    await symlink("SKILL.md", join(badSkillDir, "alias.md"));
 
     const badOutput = createOutputCapture();
     const bad = await runCli(
@@ -5178,7 +5107,7 @@ describe.sequential("runCli", () => {
     expect(badOutput.stdoutText()).toContain("status: blocked");
     expect(badOutput.stdoutText()).toContain("SKILL_PACKAGE_INVALID");
     expect(badOutput.stdoutText()).toContain(
-      "Skill package entry must be a directory: references",
+      "Asset package cannot contain a symlink: alias.md",
     );
   });
 
