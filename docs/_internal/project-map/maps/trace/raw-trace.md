@@ -11,6 +11,16 @@ and [../session/session-store.md](../session/session-store.md) for session layou
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T17:20:00+0800
+- Scope: Workflow lifecycle events emitted by real Host execution attribute the
+  pinned v2 `packageHash`/policy at event time and no longer publish the
+  Markdown `contentHash` identity. Event names and trace storage are unchanged.
+- Read: Host Workflow projection/runtime metadata, Core event vocabulary,
+  distill/shadow observation, and focused Workflow tests.
+- Tests: Host Workflow/hook/distill/shadow focused tests and repository test
+  typecheck passed before the full release gate.
+
+- Status: Verified
 - Date: 2026-07-17T01:07:28+0800
 - Scope: external-command terminal subagent results no longer persist the
   aggregate truncation compatibility alias; stream-specific flags and the
@@ -118,6 +128,8 @@ EventLog emits full event
   `workflow.failed`, and `workflow.cancelled`. P3 human nodes are the first
   `workflow.waiting` emitter; durable workflow waiting truth still lives in
   `WorkflowRunRecord.wait`, not in trace replay alone.
+  Host-instantiated projections attach the pinned v2 package hash/policy to
+  these lifecycle payloads; Markdown `contentHash` is not execution identity.
 - P2 `WorkflowRunRecord.evidenceRefs` may point at raw trace/fact evidence
   such as run ids and FactLedger verifier result ids, but workflow records do
   not copy raw trace payloads and raw trace remains the audit source rather than

@@ -17,8 +17,8 @@ import {
   type WorkflowJournalHead,
 } from "./journal.js";
 import type {
-  WorkflowDefinition,
   WorkflowAssetPin,
+  PinnedWorkflowDefinition,
   WorkflowEvidenceRef,
   WorkflowParallelBranchState,
   WorkflowNodeVerdictLogEntry,
@@ -47,7 +47,7 @@ export interface CreateWorkflowRunRecordInput extends WorkflowAssetPin {
   transitionLog?: WorkflowTransitionLogEntry[];
   resume?: Partial<WorkflowResumePolicy>;
   authorizationSnapshot?: WorkflowRunRecord["authorizationSnapshot"];
-  definitionSnapshot?: WorkflowDefinition;
+  definitionSnapshot: PinnedWorkflowDefinition;
   metadata?: Record<string, unknown>;
   now?: () => string;
 }
@@ -70,7 +70,6 @@ export interface WorkflowRunRecordPatch {
   clearFailure?: boolean;
   resume?: Partial<WorkflowResumePolicy>;
   authorizationSnapshot?: WorkflowRunRecord["authorizationSnapshot"];
-  definitionSnapshot?: WorkflowDefinition;
   metadata?: Record<string, unknown>;
   completedAt?: string;
   now?: () => string;
@@ -338,7 +337,8 @@ export class FileWorkflowStore implements WorkflowStore {
             metadata: {
               assetName: record.assetName,
               version: record.version,
-              contentHash: record.contentHash,
+              packageHash: record.packageHash,
+              packageHashPolicyVersion: record.packageHashPolicyVersion,
             },
           };
           const published = await publishWorkflowJournalEntry({
@@ -445,16 +445,11 @@ function buildWorkflowRecord(
     generation: state.generation,
     recordRevision: state.recordRevision,
     assetName: input.assetName,
-    ...(input.layer ? { layer: input.layer } : {}),
+    layer: input.layer,
     ...(input.version ? { version: input.version } : {}),
-    contentHash: input.contentHash,
-    ...(input.packageHash ? { packageHash: input.packageHash } : {}),
-    ...(input.packageHashPolicyVersion
-      ? { packageHashPolicyVersion: input.packageHashPolicyVersion }
-      : {}),
-    ...(input.packageSnapshotRef
-      ? { packageSnapshotRef: input.packageSnapshotRef }
-      : {}),
+    packageHash: input.packageHash,
+    packageHashPolicyVersion: input.packageHashPolicyVersion,
+    packageSnapshotRef: input.packageSnapshotRef,
     ...(input.parentRunId ? { parentRunId: input.parentRunId } : {}),
     ...(input.sessionId ? { sessionId: input.sessionId } : {}),
     ...(input.activeRunId ? { activeRunId: input.activeRunId } : {}),
@@ -478,9 +473,7 @@ function buildWorkflowRecord(
           ),
         }
       : {}),
-    ...(input.definitionSnapshot
-      ? { definitionSnapshot: cloneJsonLike(input.definitionSnapshot) }
-      : {}),
+    definitionSnapshot: cloneJsonLike(input.definitionSnapshot),
     createdAt: state.now,
     updatedAt: state.now,
     metadata: { ...(input.metadata ?? {}) },
@@ -562,9 +555,6 @@ function applyWorkflowPatch(
           ),
         }
       : {}),
-    ...(patch.definitionSnapshot
-      ? { definitionSnapshot: cloneJsonLike(patch.definitionSnapshot) }
-      : {}),
     ...(completedAt ? { completedAt } : {}),
     updatedAt: now,
     metadata: patch.metadata
@@ -590,9 +580,7 @@ function cloneRecord(record: WorkflowRunRecord): WorkflowRunRecord {
     authorizationSnapshot: record.authorizationSnapshot
       ? cloneAuthorizationSnapshot(record.authorizationSnapshot)
       : undefined,
-    definitionSnapshot: record.definitionSnapshot
-      ? cloneJsonLike(record.definitionSnapshot)
-      : undefined,
+    definitionSnapshot: cloneJsonLike(record.definitionSnapshot),
     metadata: { ...record.metadata },
   };
 }

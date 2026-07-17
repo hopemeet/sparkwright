@@ -768,9 +768,9 @@ export class RunController {
         workspaceId: this.opts.workspaceRoot,
         sessionId: workflow.sessionId,
         source,
-        idempotencyKey: `tui-cancel-${workflow.id}-${workflow.generation ?? 0}`,
+        idempotencyKey: `tui-cancel-${workflow.id}-${workflow.generation}`,
         expected: {
-          generation: workflow.generation ?? 0,
+          generation: workflow.generation,
           status: workflow.status,
           ...(workflow.wait?.id ? { waitId: workflow.wait.id } : {}),
         },

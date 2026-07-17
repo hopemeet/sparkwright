@@ -199,8 +199,8 @@ filesystem change.
 
 A Workflow is a folder package. Its v2 `packageHash` covers `workflow.md`,
 configuration, scripts, and every other included canonical ordinary file.
-Legacy `contentHash` remains temporarily as the Markdown/compatibility identity;
-it is not sufficient for execution pinning.
+The live parser may expose `contentHash` as a Markdown-only inspection
+fingerprint; durable execution identity is exclusively the v2 package pin.
 
 Instantiation must:
 
@@ -321,6 +321,9 @@ history, receipt, recovery, and four-entry command-service convergence.
   and atomic rename; concurrent pins safely reuse an already-published hash.
 - Durable records persist strong identity and `packageSnapshotRef`; normal and
   resumed execution require the snapshot hash and snapshot-backed `sourceDir`.
+- The later canonicalization pass made layer, revision/generation, v2 package
+  identity, snapshot reference, and snapshot-backed definition required, and
+  removed Markdown `contentHash` plus legacy default readers from durable runs.
 
 ### Completed: Phase 5 Markdown Agent authoring and version attribution
 
@@ -383,8 +386,9 @@ history, receipt, recovery, and four-entry command-service convergence.
   command entrypoints continue to use the same governed lifecycle.
 - Skill evolution proposals, history, and receipts require
   `packageHashPolicyVersion: 2`; missing/non-v2 records are rejected.
-- Workflow `contentHash` remains for compatibility while new execution records
-  add v2 package identity and snapshot reference.
+- Workflow run records accept only v2 package identity and a snapshot-backed
+  definition. Live Workflow inspection may still show the Markdown fingerprint,
+  but it is not durable execution identity.
 - Existing Markdown Agent discovery remains unchanged until Phase 5; the future
   `AGENT.md` sentinel requires an explicit doctor-led migration.
 - Registry introduction may reconcile only unambiguous observations; ambiguous

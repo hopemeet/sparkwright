@@ -7,6 +7,7 @@ import {
   FileWorkflowChannelStore,
   FileWorkflowControlInbox,
   type WorkflowDefinition,
+  type WorkflowExecutableDefinition,
   type WorkflowRunId,
   type WorkflowRunRecord,
   type CreateWorkflowRunRecordInput,
@@ -105,42 +106,49 @@ async function waitForWorkflowRecord(
 
 async function seedWorkflowRecord(
   store: FileWorkflowStore,
-  input: CreateWorkflowRunRecordInput,
+  input: Omit<
+    CreateWorkflowRunRecordInput,
+    | "layer"
+    | "packageHash"
+    | "packageHashPolicyVersion"
+    | "packageSnapshotRef"
+    | "definitionSnapshot"
+  > & {
+    layer?: CreateWorkflowRunRecordInput["layer"];
+    definitionSnapshot: WorkflowExecutableDefinition;
+  },
   patch?: WorkflowRunRecordPatch,
 ): Promise<WorkflowRunRecord> {
-  const definitionSnapshot = input.definitionSnapshot;
-  const pinnedInput: CreateWorkflowRunRecordInput =
-    definitionSnapshot && !input.packageHash
-      ? await (async () => {
-          const rootDir = (store as unknown as { rootDir: string }).rootDir;
-          const packageSnapshotRef = join(
-            rootDir,
-            "package-snapshots",
-            input.id,
-          );
-          await mkdir(packageSnapshotRef, { recursive: true });
-          await writeFile(
-            join(packageSnapshotRef, "workflow.md"),
-            "# snapshot\n",
-          );
-          const packageHash = (
-            await computeAssetPackageHash({
-              rootPath: packageSnapshotRef,
-              entryPath: "workflow.md",
-            })
-          ).packageHash;
-          return {
-            ...input,
-            packageHash,
-            packageHashPolicyVersion: 2 as const,
-            packageSnapshotRef,
-            definitionSnapshot: {
-              ...definitionSnapshot,
-              sourceDir: packageSnapshotRef,
-            },
-          };
-        })()
-      : input;
+  const { contentHash: _contentHash, ...executableDefinition } =
+    input.definitionSnapshot as WorkflowExecutableDefinition & {
+      contentHash?: string;
+    };
+  const rootDir = store.rootDir;
+  const packageSnapshotRef = join(rootDir, "package-snapshots", input.id);
+  await mkdir(packageSnapshotRef, { recursive: true });
+  await writeFile(join(packageSnapshotRef, "workflow.md"), "# snapshot\n");
+  const packageHash = (
+    await computeAssetPackageHash({
+      rootPath: packageSnapshotRef,
+      entryPath: "workflow.md",
+    })
+  ).packageHash;
+  const layer = input.layer ?? "project";
+  const pinnedInput: CreateWorkflowRunRecordInput = {
+    ...input,
+    layer,
+    packageHash,
+    packageHashPolicyVersion: 2,
+    packageSnapshotRef,
+    definitionSnapshot: {
+      ...executableDefinition,
+      sourceDir: packageSnapshotRef,
+      layer,
+      packageHash,
+      packageHashPolicyVersion: 2,
+      packageSnapshotRef,
+    },
+  };
   const writer = await store.acquireWriter(pinnedInput.id, {
     owner: "test-fixture",
   });
@@ -149,7 +157,7 @@ async function seedWorkflowRecord(
   if (patch) {
     const status = patch.status ?? record.status;
     record = await writer.mutate({
-      expectedRevision: record.recordRevision ?? 0,
+      expectedRevision: record.recordRevision,
       patch,
       event: {
         at: new Date().toISOString(),
@@ -999,6 +1007,11 @@ describe("workflow assets", () => {
       throw new Error("Expected workflow.started event.");
     }
     const workflowPayload = runEventPayload(workflowStarted)?.payload;
+    expect(workflowPayload).toMatchObject({
+      packageHash: expect.stringMatching(/^sha256:/),
+      packageHashPolicyVersion: 2,
+    });
+    expect(workflowPayload).not.toHaveProperty("contentHash");
     const workflowRunId =
       workflowPayload &&
       typeof workflowPayload === "object" &&
@@ -1017,6 +1030,9 @@ describe("workflow assets", () => {
       id: workflowRunId,
       status: "completed",
       assetName: "durable",
+      layer: "project",
+      packageHash: expect.stringMatching(/^sha256:/),
+      packageHashPolicyVersion: 2,
       sessionId,
       metadata: {
         episodeDriver: "workflow_actor",
@@ -1027,6 +1043,7 @@ describe("workflow assets", () => {
         nodes: [expect.objectContaining({ id: "main" })],
       },
     });
+    expect(record).not.toHaveProperty("contentHash");
     expect(record?.runIds).toContain(started.ok ? started.runId : "");
     expect(record?.evidenceRefs).toContainEqual({
       kind: "run",
@@ -1721,7 +1738,6 @@ describe("workflow assets", () => {
         id: workflowRunId,
         sessionId,
         assetName: definition.assetName,
-        contentHash: definition.contentHash,
         currentNodeId: "review",
         attempts: { review: 1 },
         definitionSnapshot: definition,
@@ -1935,7 +1951,6 @@ describe("workflow assets", () => {
       id: workflowRunId,
       sessionId,
       assetName: definition.assetName,
-      contentHash: definition.contentHash,
       currentNodeId: "main",
       attempts: { main: 1 },
       definitionSnapshot: definition,
@@ -2005,7 +2020,6 @@ describe("workflow assets", () => {
       id: workflowRunId,
       sessionId,
       assetName: definition.assetName,
-      contentHash: definition.contentHash,
       currentNodeId: "main",
       attempts: { main: 1 },
       definitionSnapshot: definition,
@@ -2073,7 +2087,6 @@ describe("workflow assets", () => {
       id: workflowRunId,
       sessionId,
       assetName: definition.assetName,
-      contentHash: definition.contentHash,
       currentNodeId: "second",
       attempts: { first: 1, second: 1 },
       definitionSnapshot: definition,
@@ -2139,7 +2152,6 @@ describe("workflow assets", () => {
         id: workflowRunId,
         sessionId,
         assetName: definition.assetName,
-        contentHash: definition.contentHash,
         currentNodeId: "main",
         definitionSnapshot: definition,
       },
@@ -2179,11 +2191,9 @@ describe("workflow assets", () => {
       id: workflowRunId,
       sessionId,
       assetName: "controlled",
-      contentHash: "hash-controlled",
       currentNodeId: "main",
       definitionSnapshot: {
         assetName: "controlled",
-        contentHash: "hash-controlled",
         nodes: [{ id: "main", body: "Controlled body." }],
       },
     });
@@ -2229,11 +2239,9 @@ describe("workflow assets", () => {
       id: workflowRunId,
       sessionId,
       assetName: "channel-controlled",
-      contentHash: "hash-channel-controlled",
       currentNodeId: "main",
       definitionSnapshot: {
         assetName: "channel-controlled",
-        contentHash: "hash-channel-controlled",
         nodes: [{ id: "main", body: "Controlled body." }],
       },
     });

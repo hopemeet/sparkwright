@@ -9,6 +9,16 @@ See also [../maps/trace/summary-timeline-verify.md](../maps/trace/summary-timeli
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T17:20:00+0800
+- Scope: CLI Workflow list/control consumes required generation and canonical
+  package identity from Host snapshots; cancellation no longer defaults a
+  missing generation. Shadow text reports the pinned v2 package hash and policy.
+- Read: CLI Workflow list/inspect/shadow/control paths, Host runner contracts,
+  protocol Workflow snapshot, and focused fixtures.
+- Tests: CLI Workflow focused tests and CLI typecheck passed before the full
+  release gate.
+
+- Status: Verified
 - Date: 2026-07-17T13:00:00+0800
 - Scope: `capabilities inspect` renders required current-run delegate approval
   facts directly. The fallback to the removed config echo is gone.

@@ -11,6 +11,7 @@ import type {
   WorkflowNodeDefinition,
   WorkflowNodeExecuteKind,
   WorkflowParallelNodeDefinition,
+  PinnedWorkflowDefinition,
   WorkflowScriptNodeCapability,
   WorkflowScriptNodeDefinition,
   WorkflowTaskNodeDefinition,
@@ -64,8 +65,6 @@ export interface WorkflowAssetSummary {
   sourcePath: string;
   layer: CapabilityLayer;
   contentHash: string;
-  packageHash?: string;
-  packageHashPolicyVersion?: 2;
   version?: string;
   description?: string;
   nodeCount: number;
@@ -77,7 +76,11 @@ export interface WorkflowAssetDetail extends WorkflowAssetSummary {
 }
 
 export interface PinnedWorkflowAsset {
-  asset: WorkflowAssetDetail;
+  asset: Omit<WorkflowAssetDetail, "definition"> & {
+    packageHash: string;
+    packageHashPolicyVersion: 2;
+    definition: PinnedWorkflowDefinition;
+  };
   packageHash: string;
   packageHashPolicyVersion: 2;
   packageSnapshotRef: string;
@@ -219,13 +222,17 @@ export async function pinWorkflowAssetPackage(input: {
       assetName: input.asset.assetName,
     },
   };
+  const { contentHash: _contentHash, ...executableDefinition } =
+    asset.definition;
   return {
     asset: {
       ...asset,
       packageHash: before.packageHash,
       packageHashPolicyVersion: 2,
       definition: {
-        ...asset.definition,
+        ...executableDefinition,
+        sourceDir: packageSnapshotRef,
+        layer: asset.layer,
         packageHash: before.packageHash,
         packageHashPolicyVersion: 2,
         packageSnapshotRef,

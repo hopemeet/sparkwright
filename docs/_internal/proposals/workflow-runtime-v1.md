@@ -10,6 +10,11 @@
 > record/event truth only in `<workflowRunId>.journal/`. P2/P9a wording about
 > record JSON, event JSONL, or legacy-store compatibility is implementation
 > history, not a current compatibility requirement.
+> Package-identity convergence (2026-07-17): durable runs now require source
+> layer, generation/revision, v2 `packageHash`/policy, executable snapshot ref,
+> and a matching snapshot-backed definition. Earlier `{assetName, version,
+contentHash}` pin wording is implementation history; Markdown `contentHash`
+> remains only a live-parser fingerprint and is not durable execution identity.
 >
 > Review history: six source-verified passes (2026-07-03 ×2,
 > 2026-07-04 ×3) plus a consolidation sweep; provenance is tagged inline —

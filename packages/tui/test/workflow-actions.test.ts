@@ -14,9 +14,13 @@ function workflow(input: {
 }): WorkflowRunSnapshot {
   return {
     id: input.id,
+    generation: 1,
+    recordRevision: 1,
     assetName: "wf",
+    layer: "project",
     status: input.status ?? "running",
-    contentHash: "hash",
+    packageHash: "sha256:wf",
+    packageHashPolicyVersion: 2,
     ...(input.activeRunId ? { activeRunId: input.activeRunId } : {}),
     runIds: input.runIds ?? [],
     attempts: {},

@@ -10,6 +10,17 @@ See [../trace/raw-trace.md](../trace/raw-trace.md) for raw event evidence.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T17:20:00+0800
+- Scope: canonical Workflow journal records now require generation/revision,
+  source layer, package hash policy 2, package hash, executable snapshot
+  reference, and a matching snapshot-backed definition. No baseline record or
+  Markdown-hash durable identity is imported during replay.
+- Read: Workflow store/journal/types, Host list/resume, durable-job coverage,
+  and package-identity designs.
+- Tests: Agent Runtime Workflow focused tests, Host Workflow/protocol tests,
+  and repository test typecheck passed before the full release gate.
+
+- Status: Verified
 - Date: 2026-07-16T22:26:54+0800
 - Scope: Workflow durable state now has one workspace journal layout; record
   JSON/event JSONL sidecars, mirrors, readers, and lazy import are gone.
@@ -119,7 +130,8 @@ Manual compact
   immutable checksummed journal plus a token lease path. `FileWorkflowStore`
   derives records, events, generation/revision, and invalid-entry diagnostics
   from journal replay; quarantined entries do not wedge list/resume or advance
-  canonical state.
+  canonical state. Mutation records without the required v2 executable package
+  pin are quarantined rather than defaulted or migrated.
 - TUI and CLI fresh workflow-job entrypoints allocate a unique safe job session
   instead of writing into a selected/control session. The job session does not
   inherit control-session scrollback. Resume requires and reuses the persisted

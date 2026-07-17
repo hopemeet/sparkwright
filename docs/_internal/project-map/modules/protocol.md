@@ -11,6 +11,17 @@ See also [../maps/safety/approvals.md](../maps/safety/approvals.md) and [../maps
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T17:20:00+0800
+- Scope: public Workflow run snapshots expose required generation, record
+  revision, source layer, v2 package hash, and package-hash policy. The durable
+  Markdown `contentHash` projection and optional generation/revision shape are
+  removed; capability Workflow assets remain a separate live inventory.
+- Read: protocol Workflow types, Host snapshot producer, CLI/TUI consumers,
+  protocol fixtures, and Workflow persistence contracts.
+- Tests: Protocol build/typecheck, Host protocol tests, CLI/TUI Workflow tests,
+  and repository test typecheck passed before the full release gate.
+
+- Status: Verified
 - Date: 2026-07-17T13:00:00+0800
 - Scope: capability wire shapes expose four canonical tool tiers and one
   required delegate approval fact. Removed the `legacy` tier and delegate

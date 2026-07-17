@@ -76,6 +76,16 @@ Does not own:
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-17T17:24:00+0800
+- Scope: checked after durable Workflow package-identity convergence. MCP
+  preparation, wrapped tool identity, stdio sandboxing, and trace contracts do
+  not consume Workflow run records or their package pins.
+- Read: MCP adapter ownership, Host Workflow preparation boundary, and routed
+  capability/session maps.
+- Tests: no MCP-specific gate required; affected Workflow and repository
+  typecheck gates passed.
+
 - Status: Verified
 - Date: 2026-07-13T22:21:00+0800
 - Scope: Host read-only security plans now pass a fail-closed no-write process

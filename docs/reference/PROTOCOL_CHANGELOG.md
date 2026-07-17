@@ -12,6 +12,13 @@ Conventions:
 
 ## Unreleased
 
+- Workflow run snapshots: breaking identity consolidation — `generation`,
+  `recordRevision`, source `layer`, `packageHash`, and
+  `packageHashPolicyVersion: 2` are required; durable `contentHash` is removed.
+  Workflow resume accepts only records backed by the matching executable
+  package snapshot. Migration: consume package identity directly and do not
+  synthesize missing fencing fields or infer identity from the live asset.
+
 - `host-message.schema.json`: breaking consolidation — capability tool exposure
   tiers no longer admit `legacy`; `list_dir` is canonical `advanced`.
   `CapabilityDelegateToolSummary` no longer echoes delegate
@@ -71,10 +78,10 @@ Conventions:
 
 - `host-message.schema.json`: additive — host requests now include
   `workflow.list` and `workflow.resume`. Workflow run records are stored under
-  the owning session's `workflow-runs/` directory, carry pinned asset
-  `{assetName, version, contentHash}` plus a definition snapshot, and resume
-  only non-terminal records through a single-writer lease. Migration: clients
-  can inspect/resume workflow instances without scraping trace events.
+  the workspace workflow-run journal, carry a pinned executable package plus a
+  snapshot-backed definition, and resume only non-terminal records through a
+  single-writer lease. Migration: clients can inspect/resume workflow instances
+  without scraping trace events.
 
 - `host-message.schema.json`: additive — `CapabilitySnapshot.workflows` may
   include parsed workflow asset summaries and parse errors. Migration: none;

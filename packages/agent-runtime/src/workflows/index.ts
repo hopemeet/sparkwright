@@ -1,10 +1,13 @@
 export type {
   WorkflowAssetPin,
+  WorkflowSourceIdentity,
   WorkflowCommandNodeDefinition,
   WorkflowCommandVerifierDefinition,
   WorkflowDelegateNodeDefinition,
   WorkflowDiffScopeVerifierDefinition,
   WorkflowDefinition,
+  WorkflowExecutableDefinition,
+  PinnedWorkflowDefinition,
   WorkflowEvidenceRef,
   WorkflowHumanNodeDefinition,
   WorkflowNodeDefinition,

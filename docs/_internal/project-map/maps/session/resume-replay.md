@@ -10,6 +10,17 @@ See [session-store.md](session-store.md) and [../runtime/context-compaction.md](
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T17:20:00+0800
+- Scope: Workflow resume has one identity path: replay a canonical journal
+  record, verify its required v2 executable snapshot, and execute its
+  snapshot-backed definition. Live-folder or Markdown-hash fallback and missing
+  layer/revision/generation defaults are absent.
+- Read: Workflow journal/store, Host lookup/preparation/resume, CLI/TUI
+  consumers, and focused resume tests.
+- Tests: Agent Runtime/Host/CLI/TUI Workflow focused tests and affected
+  typechecks passed before the full release gate.
+
+- Status: Verified
 - Date: 2026-07-16T22:26:54+0800
 - Scope: Workflow resume, list, control, and restart recovery now resolve
   record/event truth only by replaying the canonical workspace journal.
@@ -70,6 +81,7 @@ Workflow resume
   -> replay workspace .sparkwright/workflow-runs/<workflowRunId>.journal/
      to locate the canonical record and event history
   -> acquire single-writer lease
+  -> verify packageHash/packageSnapshotRef and snapshot-backed sourceDir
   -> prepare host run environment
   -> consume input waits at the actor boundary when status is waiting
   -> start a transient worker run with the pinned workflow definition

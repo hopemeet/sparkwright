@@ -871,13 +871,15 @@ export interface ResponseResults {
 
 export interface WorkflowRunSnapshot {
   id: string;
-  generation?: number;
-  recordRevision?: number;
+  generation: number;
+  recordRevision: number;
   sessionId?: string;
   status: "running" | "waiting" | "completed" | "failed" | "cancelled";
   assetName: string;
+  layer: "builtin" | "user" | "project";
   version?: string;
-  contentHash: string;
+  packageHash: string;
+  packageHashPolicyVersion: 2;
   activeRunId?: string;
   runIds: string[];
   currentNodeId?: string;

@@ -16,6 +16,12 @@
 
 ## Current Evidence
 
+- 2026-07-17 canonical package identity convergence: Workflow mutation records
+  require generation/revision, source layer, v2 package hash/policy, executable
+  snapshot ref, and a matching snapshot-backed definition. Journal replay
+  quarantines missing pins; focused store/control/channel, Host start/resume/
+  shadow/stats/protocol, CLI/TUI, and server-runtime fixtures no longer seed
+  durable `contentHash` or revision/generation defaults.
 - 2026-07-16 journal-only convergence: `FileWorkflowStore.get/list/eventLog`,
   restart recovery, writer acquire/create/mutate/compensate, and all Host/CLI/TUI
   consumers now use the immutable journal as their only record/event truth.

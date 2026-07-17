@@ -41,12 +41,16 @@ function event(
 }
 
 function workflow(raw: string) {
-  return parseWorkflowMarkdownAsset({
-    assetName: "shadowed-flow",
-    dir: "/tmp/shadowed-flow",
-    sourcePath: "/tmp/shadowed-flow/workflow.md",
-    raw,
-  });
+  return {
+    ...parseWorkflowMarkdownAsset({
+      assetName: "shadowed-flow",
+      dir: "/tmp/shadowed-flow",
+      sourcePath: "/tmp/shadowed-flow/workflow.md",
+      raw,
+    }),
+    packageHash: "sha256:shadowed-flow",
+    packageHashPolicyVersion: 2 as const,
+  };
 }
 
 function observedEditTrace() {
@@ -305,7 +309,7 @@ describe("workflow shadow", () => {
     );
   });
 
-  it("loads a workflow asset and session trace without creating workflow state", async () => {
+  it("pins a workflow package for shadowing without creating a run record", async () => {
     const root = await tempRoot("sparkwright-workflow-shadow-");
     await mkdir(join(root, ".sparkwright", "workflows", "shadowed-flow"), {
       recursive: true,
@@ -353,7 +357,14 @@ describe("workflow shadow", () => {
     });
 
     expect(report.ok).toBe(true);
+    expect(report.asset).toMatchObject({
+      packageHash: expect.stringMatching(/^sha256:/),
+      packageHashPolicyVersion: 2,
+    });
     await expect(access(join(sessionDir, "workflow-runs"))).rejects.toThrow();
+    await expect(
+      access(join(root, ".sparkwright", "workflow-runs")),
+    ).rejects.toThrow();
     await expect(
       shadowWorkflowFromSession({
         workspaceRoot: root,

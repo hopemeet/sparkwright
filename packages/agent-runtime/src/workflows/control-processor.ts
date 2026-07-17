@@ -100,7 +100,7 @@ export class WorkflowControlCommandProcessor {
       }
       const mutation = commandMutation(envelope, fresh);
       await writer.mutate({
-        expectedRevision: fresh.recordRevision ?? 0,
+        expectedRevision: fresh.recordRevision,
         patch: mutation.patch,
         event: mutation.event,
       });
@@ -199,7 +199,7 @@ function commandStateRejection(
 ): { code: string; message: string } | undefined {
   if (
     !options.skipGeneration &&
-    (record.generation ?? 0) !== envelope.expected.generation
+    record.generation !== envelope.expected.generation
   )
     return {
       code: "stale_generation",

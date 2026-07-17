@@ -9,6 +9,18 @@ See also [../maps/capabilities/agents.md](../maps/capabilities/agents.md), [../m
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T17:20:00+0800
+- Scope: durable Workflow identity is canonical v2 only. Run records require
+  source layer, generation/revision, package hash policy 2, package hash,
+  executable snapshot reference, and a matching snapshot-backed definition;
+  Markdown `contentHash`, optional pin fields, record defaults, and baseline
+  record migration are absent. Journal replay quarantines noncanonical pins.
+- Read: Workflow types/store/journal/control/channel consumers, Host fixtures,
+  durable-job test routes, and package-identity designs.
+- Tests: Agent Runtime Workflow/store/control/channel focused suites and
+  repository test typecheck passed before the full release gate.
+
+- Status: Verified
 - Date: 2026-07-17T11:02:45+0800
 - Scope: Model-facing Task and Todo inputs are canonical: `task_create` accepts
   scheduling only through `mode`, while `todo_write` accepts only
@@ -189,13 +201,15 @@ Does not own:
   shared terminal state/finality fields.
 - Workflow types in agent-runtime are portable runtime/store declarations.
   `WorkflowRunRecord` is now a durable P2 state document with five-value
-  status, version pinning, attempts, evidence refs, verdict/transition logs,
+  status, required v2 executable package pin, attempts, evidence refs,
+  verdict/transition logs,
   resume policy, optional `wait.kind`, and optional resolved authorization
   snapshots. `FileWorkflowStore` persists one immutable journal per workflow
   under workspace `.sparkwright/workflow-runs/`; journal replay is the sole
   record/event read path for `get`, `list`, `eventLog`, restart recovery, and
   writer acquisition. The journal keeps generation/revision fencing, checksum
-  validation, quarantined-entry diagnostics, and compensating mutations while
+  validation, canonical package-pin validation, quarantined-entry diagnostics,
+  and compensating mutations while
   the adjacent token lease controls live writer ownership. Host owns parsing,
   projection, and run-loop execution.
 - Workflow control is a separate typed command plane. `FileWorkflowControlInbox`

@@ -126,15 +126,24 @@ describe("TUI ↔ host via sdk-node", () => {
       owner: "tui-channel-test",
     });
     if (!writer) throw new Error("missing workflow writer");
+    const packageSnapshotRef = `/snapshots/${workflowRunId}`;
+    const packageHash = "sha256:tui-channel";
     await writer.create({
       id: workflowRunId,
       sessionId: "session_workflow_tui_channel",
       assetName: "demo",
-      contentHash: "demo-hash",
+      layer: "project",
+      packageHash,
+      packageHashPolicyVersion: 2,
+      packageSnapshotRef,
       currentNodeId: "main",
       definitionSnapshot: {
         assetName: "demo",
-        contentHash: "demo-hash",
+        sourceDir: packageSnapshotRef,
+        layer: "project",
+        packageHash,
+        packageHashPolicyVersion: 2,
+        packageSnapshotRef,
         nodes: [{ id: "main", body: "Finish." }],
       },
     });

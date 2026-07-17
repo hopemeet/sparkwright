@@ -87,7 +87,7 @@ import {
   type TaskStatus,
   type TodoSupervisedRunInput,
   type SpawnedSubAgent,
-  type WorkflowDefinition,
+  type WorkflowExecutableDefinition,
   type WorkflowEvidenceRef,
   type WorkflowNodeDefinition,
   type WorkflowNodeVerdictLogEntry,
@@ -1128,9 +1128,10 @@ export class HostRuntime {
           metadata: {
             assetName: record.assetName,
             version: record.version,
-            contentHash: record.contentHash,
+            packageHash: record.packageHash,
+            packageHashPolicyVersion: record.packageHashPolicyVersion,
             currentNodeId: record.currentNodeId,
-            generation: record.generation ?? 0,
+            generation: record.generation,
             status: record.status,
           },
         },
@@ -1150,7 +1151,8 @@ export class HostRuntime {
           metadata: {
             assetName: record.assetName,
             version: record.version,
-            contentHash: record.contentHash,
+            packageHash: record.packageHash,
+            packageHashPolicyVersion: record.packageHashPolicyVersion,
           },
         },
       });
@@ -2380,28 +2382,14 @@ export class HostRuntime {
           snapshotRoot: join(this.workflowStoreRootDir(), "package-snapshots"),
         })
       : undefined;
-    const workflowDefinition =
-      input.workflowRecord?.definitionSnapshot ??
-      pinnedWorkflow?.asset.definition;
-    if (
-      input.workflowRecord &&
-      (!workflowDefinition ||
-        !input.workflowRecord.packageHash ||
-        !input.workflowRecord.packageSnapshotRef)
-    ) {
-      return {
-        ok: false,
-        error: {
-          code: "invalid_payload",
-          message: `Workflow run "${input.workflowRecord.id}" does not contain an executable package snapshot.`,
-        },
-      };
-    }
-    if (input.workflowRecord && workflowDefinition) {
+    const workflowDefinition = input.workflowRecord
+      ? input.workflowRecord.definitionSnapshot
+      : pinnedWorkflow?.asset.definition;
+    if (input.workflowRecord) {
       try {
         await verifyWorkflowPackageSnapshot({
-          packageSnapshotRef: input.workflowRecord.packageSnapshotRef!,
-          packageHash: input.workflowRecord.packageHash!,
+          packageSnapshotRef: input.workflowRecord.packageSnapshotRef,
+          packageHash: input.workflowRecord.packageHash,
         });
       } catch (error) {
         return {
@@ -2415,7 +2403,8 @@ export class HostRuntime {
         };
       }
       if (
-        workflowDefinition.sourceDir !== input.workflowRecord.packageSnapshotRef
+        input.workflowRecord.definitionSnapshot.sourceDir !==
+        input.workflowRecord.packageSnapshotRef
       ) {
         return {
           ok: false,
@@ -2566,25 +2555,13 @@ export class HostRuntime {
           workflowRecord = await acquiredLease.create({
             id: workflowRunId,
             assetName: workflowDefinition.assetName,
-            ...(pinnedWorkflow?.asset.layer
-              ? { layer: pinnedWorkflow.asset.layer }
-              : {}),
+            layer: pinnedWorkflow!.asset.layer,
             ...(workflowDefinition.version
               ? { version: workflowDefinition.version }
               : {}),
-            contentHash: workflowDefinition.contentHash,
-            ...(workflowDefinition.packageHash
-              ? { packageHash: workflowDefinition.packageHash }
-              : {}),
-            ...(workflowDefinition.packageHashPolicyVersion
-              ? {
-                  packageHashPolicyVersion:
-                    workflowDefinition.packageHashPolicyVersion,
-                }
-              : {}),
-            ...(workflowDefinition.packageSnapshotRef
-              ? { packageSnapshotRef: workflowDefinition.packageSnapshotRef }
-              : {}),
+            packageHash: pinnedWorkflow!.packageHash,
+            packageHashPolicyVersion: pinnedWorkflow!.packageHashPolicyVersion,
+            packageSnapshotRef: pinnedWorkflow!.packageSnapshotRef,
             sessionId: input.sessionId,
             currentNodeId: projectedState.currentNodeId,
             attempts: projectedState.attempts,
@@ -2707,16 +2684,8 @@ export class HostRuntime {
               workflowRunId: workflowRecord.id,
               assetName: workflowRecord.assetName,
               version: workflowRecord.version,
-              contentHash: workflowRecord.contentHash,
-              ...(workflowRecord.packageHash
-                ? { packageHash: workflowRecord.packageHash }
-                : {}),
-              ...(workflowRecord.packageHashPolicyVersion
-                ? {
-                    packageHashPolicyVersion:
-                      workflowRecord.packageHashPolicyVersion,
-                  }
-                : {}),
+              packageHash: workflowRecord.packageHash,
+              packageHashPolicyVersion: workflowRecord.packageHashPolicyVersion,
               verifyOnResume: workflowRecord.resume.verifyOnResume,
             },
           }
@@ -3566,19 +3535,6 @@ export class HostRuntime {
         error: {
           code: "invalid_payload",
           message: `Workflow run ${record.id} is already ${record.status}.`,
-        },
-      };
-    }
-    if (
-      !record.definitionSnapshot ||
-      !record.packageHash ||
-      !record.packageSnapshotRef
-    ) {
-      return {
-        ok: false,
-        error: {
-          code: "invalid_payload",
-          message: `Workflow run ${record.id} does not contain an executable package snapshot.`,
         },
       };
     }
@@ -7250,7 +7206,7 @@ interface WorkflowActorEpisodePlan {
 }
 
 async function resolveWorkflowModelAdapters(input: {
-  definition: WorkflowDefinition;
+  definition: WorkflowExecutableDefinition;
   parentModelRef: string;
   goal: string;
   workspaceRoot: string;
@@ -7471,14 +7427,14 @@ function resolveWorkflowEpisodeMaxSteps(
 function currentWorkflowRecordNode(
   record: WorkflowRunRecord | undefined,
 ): WorkflowNodeDefinition | undefined {
-  if (!record?.definitionSnapshot || !record.currentNodeId) return undefined;
+  if (!record || !record.currentNodeId) return undefined;
   return record.definitionSnapshot.nodes.find(
     (candidate) => candidate.id === record.currentNodeId,
   );
 }
 
 function workflowNodeModelRef(
-  definition: WorkflowDefinition,
+  definition: WorkflowExecutableDefinition,
   node: WorkflowNodeDefinition,
 ): string | undefined {
   if (!node.model) return undefined;
@@ -7487,7 +7443,7 @@ function workflowNodeModelRef(
 }
 
 function workflowModelTiers(
-  definition: WorkflowDefinition,
+  definition: WorkflowExecutableDefinition,
 ): Record<string, string> {
   const config = definition.config;
   if (!isPlainRecord(config)) return {};
@@ -7514,7 +7470,7 @@ function numericField(record: Record<string, unknown>, key: string): number {
 function workflowEpisodeAllowedTools(
   record: WorkflowRunRecord | undefined,
 ): { nodeId: string; normalized: string[] } | undefined {
-  if (!record?.definitionSnapshot || !record.currentNodeId) return undefined;
+  if (!record || !record.currentNodeId) return undefined;
   const node = record.definitionSnapshot.nodes.find(
     (candidate) => candidate.id === record.currentNodeId,
   );
@@ -7564,11 +7520,6 @@ async function consumeWorkflowActorWaitingInput(
   if (record.wait.kind !== "input") {
     throw new Error(
       `Workflow run ${record.id} is waiting for ${record.wait.kind}; workflow.resume can only consume input waits in P3 Step 3.`,
-    );
-  }
-  if (!record.definitionSnapshot) {
-    throw new Error(
-      `Workflow run ${record.id} does not contain a pinned definition snapshot.`,
     );
   }
   if (!record.currentNodeId) {
@@ -7651,7 +7602,7 @@ async function consumeWorkflowActorWaitingInput(
       : {}),
   };
   return writer.mutate({
-    expectedRevision: record.recordRevision ?? 0,
+    expectedRevision: record.recordRevision,
     patch,
     event: {
       at,
@@ -7700,7 +7651,7 @@ async function mutateWorkflowRecord(
             ? "waiting"
             : "updated");
   return writer.mutate({
-    expectedRevision: record.recordRevision ?? 0,
+    expectedRevision: record.recordRevision,
     patch,
     event: {
       at: patch.now?.() ?? new Date().toISOString(),
@@ -7727,7 +7678,7 @@ async function compensateWorkflowRecord(
     throw new Error(`Workflow run ${prior.id} has no lease-bound writer.`);
   const at = new Date().toISOString();
   return writer.compensate({
-    expectedRevision: current.recordRevision ?? 0,
+    expectedRevision: current.recordRevision,
     patch: {
       status: prior.status,
       ...(prior.currentNodeId ? { currentNodeId: prior.currentNodeId } : {}),
@@ -7761,7 +7712,7 @@ async function compensateWorkflowRecord(
 
 function completedWorkflowNodeIds(
   record: WorkflowRunRecord,
-  definition: WorkflowDefinition,
+  definition: WorkflowExecutableDefinition,
 ): string[] {
   const currentNodeId = record.currentNodeId;
   const verifierNodeIds = new Set(
@@ -7804,17 +7755,15 @@ function appendWorkflowEvidenceRef(
 function workflowRunSnapshot(record: WorkflowRunRecord): WorkflowRunSnapshot {
   return {
     id: record.id,
-    ...(record.generation !== undefined
-      ? { generation: record.generation }
-      : {}),
-    ...(record.recordRevision !== undefined
-      ? { recordRevision: record.recordRevision }
-      : {}),
+    generation: record.generation,
+    recordRevision: record.recordRevision,
     ...(record.sessionId ? { sessionId: record.sessionId } : {}),
     status: record.status,
     assetName: record.assetName,
+    layer: record.layer,
     ...(record.version ? { version: record.version } : {}),
-    contentHash: record.contentHash,
+    packageHash: record.packageHash,
+    packageHashPolicyVersion: record.packageHashPolicyVersion,
     ...(record.activeRunId ? { activeRunId: record.activeRunId } : {}),
     runIds: record.runIds.map(String),
     ...(record.currentNodeId ? { currentNodeId: record.currentNodeId } : {}),

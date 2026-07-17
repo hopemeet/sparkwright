@@ -8,6 +8,17 @@ cron, shell/task tools, and capability inspection.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T17:20:00+0800
+- Scope: live Workflow discovery remains the capability inventory and may show
+  a Markdown fingerprint, while every durable/executable Workflow instance has
+  one required v2 package identity and immutable snapshot. Capability inventory
+  is not a fallback identity for run resume or statistics.
+- Read: Host Workflow discovery/pinning/capability assembly, Agent Runtime
+  durable pin types, protocol asset/run projections, and focused tests.
+- Tests: Host Workflow/capability/protocol tests and affected typechecks passed
+  before the full release gate.
+
+- Status: Verified
 - Date: 2026-07-17T13:00:00+0800
 - Scope: capability inspection publishes one exposure vocabulary and one
   delegate approval fact. `list_dir` is advanced; the legacy tier and delegate
@@ -144,7 +155,9 @@ config + workspace capability roots
   selected asset without the former experimental workflow runtime gate.
   Durable workflow run records are workspace state under the canonical
   `.sparkwright/workflow-runs/<workflowRunId>.journal/` layout; they are not
-  capabilities.
+  capabilities. Their identity is the required source layer plus v2 package
+  hash/policy and executable snapshot; the live inventory's Markdown
+  `contentHash` cannot substitute for that pin.
   `sparkwright workflow list` may show both workflow assets and
   workflow run records, but `capability.inspect.workflows` remains the asset
   inventory.

@@ -67,6 +67,35 @@ const TRACE_DIAGNOSTIC_SNAPSHOT_COMMANDS = [
 ] as const;
 const TRACE_DIAGNOSTIC_SNAPSHOT_FORMATS = ["text", "json"] as const;
 
+function workflowPinFixture(
+  id: WorkflowRunId,
+  assetName: string,
+  body = "Fixture workflow.",
+  nodeId = "main",
+  version?: string,
+) {
+  const packageSnapshotRef = `/snapshots/${id}`;
+  const packageHash = `sha256:${id}`;
+  return {
+    assetName,
+    layer: "project" as const,
+    ...(version ? { version } : {}),
+    packageHash,
+    packageHashPolicyVersion: 2 as const,
+    packageSnapshotRef,
+    definitionSnapshot: {
+      assetName,
+      ...(version ? { version } : {}),
+      sourceDir: packageSnapshotRef,
+      layer: "project" as const,
+      packageHash,
+      packageHashPolicyVersion: 2 as const,
+      packageSnapshotRef,
+      nodes: [{ id: nodeId, body }],
+    },
+  };
+}
+
 describe.sequential("runCli", () => {
   let harness: ReturnType<typeof createCliTestHarness>;
 
@@ -2683,9 +2712,13 @@ describe.sequential("runCli", () => {
     await writer!.create({
       id: workflowRunId,
       sessionId,
-      assetName: "bugfix",
-      version: "1.0.0",
-      contentHash: "hash",
+      ...workflowPinFixture(
+        workflowRunId,
+        "bugfix",
+        "Fixture workflow.",
+        "main",
+        "1.0.0",
+      ),
       currentNodeId: "main",
       attempts: { main: 1 },
     });
@@ -2765,19 +2798,18 @@ describe.sequential("runCli", () => {
     const staleRecord = await seededWriter!.create({
       id: staleWorkflowRunId,
       sessionId: "session_stale_same_asset",
-      assetName: "human-gate",
-      contentHash: "stale-human-gate",
+      ...workflowPinFixture(
+        staleWorkflowRunId,
+        "human-gate",
+        "Stale review.",
+        "review",
+      ),
       activeRunId: "run_stale_same_asset" as RunId,
       currentNodeId: "review",
-      definitionSnapshot: {
-        assetName: "human-gate",
-        contentHash: "stale-human-gate",
-        nodes: [{ id: "review", body: "Stale review." }],
-      },
       metadata: { goal: "stale workflow with the same asset name" },
     });
     await seededWriter!.mutate({
-      expectedRevision: staleRecord.recordRevision ?? 0,
+      expectedRevision: staleRecord.recordRevision,
       patch: {
         status: "waiting",
         wait: { kind: "input", reason: "Stale human review." },
@@ -2950,14 +2982,8 @@ describe.sequential("runCli", () => {
     await writer.create({
       id: workflowRunId,
       sessionId: "session_workflow_cli_channel",
-      assetName: "demo",
-      contentHash: "demo-hash",
+      ...workflowPinFixture(workflowRunId, "demo", "Finish."),
       currentNodeId: "main",
-      definitionSnapshot: {
-        assetName: "demo",
-        contentHash: "demo-hash",
-        nodes: [{ id: "main", body: "Finish." }],
-      },
     });
     await writer.release();
     const output = createOutputCapture();
@@ -3303,7 +3329,7 @@ describe.sequential("runCli", () => {
       id: workflowRunId,
       sessionId,
       assetName: "cli-resume",
-      contentHash: "hash-cli-resume",
+      layer: "project",
       packageHash,
       packageHashPolicyVersion: 2,
       packageSnapshotRef,
@@ -3311,7 +3337,7 @@ describe.sequential("runCli", () => {
       attempts: { main: 1 },
       definitionSnapshot: {
         assetName: "cli-resume",
-        contentHash: "hash-cli-resume",
+        layer: "project",
         packageHash,
         packageHashPolicyVersion: 2,
         packageSnapshotRef,

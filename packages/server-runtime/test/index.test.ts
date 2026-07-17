@@ -9,6 +9,27 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+function workflowPin(id: WorkflowRunId) {
+  const packageSnapshotRef = `/snapshots/${id}`;
+  const packageHash = `sha256:${id}`;
+  return {
+    assetName: "test",
+    layer: "project" as const,
+    packageHash,
+    packageHashPolicyVersion: 2 as const,
+    packageSnapshotRef,
+    definitionSnapshot: {
+      assetName: "test",
+      sourceDir: packageSnapshotRef,
+      layer: "project" as const,
+      packageHash,
+      packageHashPolicyVersion: 2 as const,
+      packageSnapshotRef,
+      nodes: [{ id: "main", body: "Test." }],
+    },
+  };
+}
+
 describe("server-runtime", () => {
   it("coalesces concurrent in-flight consumption without claiming durability", async () => {
     const dispatcher = new InFlightCommandDispatcher();
@@ -44,8 +65,7 @@ describe("server-runtime", () => {
     });
     await creator!.create({
       id: workflowRunId,
-      assetName: "test",
-      contentHash: "hash",
+      ...workflowPin(workflowRunId),
     });
     await creator!.release();
     const registry = new FileWorkflowWorkerRegistry({
@@ -101,8 +121,7 @@ describe("server-runtime", () => {
     });
     await creator!.create({
       id: workflowRunId,
-      assetName: "test",
-      contentHash: "hash",
+      ...workflowPin(workflowRunId),
     });
     await creator!.release();
     const registry = new FileWorkflowWorkerRegistry({
@@ -152,8 +171,7 @@ describe("server-runtime", () => {
       const writer = await store.acquireWriter(id, { owner: "creator" });
       const created = await writer!.create({
         id,
-        assetName: "test",
-        contentHash: id,
+        ...workflowPin(id),
       });
       if (status !== "running") {
         await writer!.mutate({
@@ -209,8 +227,7 @@ describe("server-runtime", () => {
     });
     await creator!.create({
       id: workflowRunId,
-      assetName: "test",
-      contentHash: "hash",
+      ...workflowPin(workflowRunId),
     });
     await creator!.release();
     const registry = new FileWorkflowWorkerRegistry({
@@ -251,8 +268,7 @@ describe("server-runtime", () => {
     });
     await creator!.create({
       id: workflowRunId,
-      assetName: "test",
-      contentHash: "hash",
+      ...workflowPin(workflowRunId),
     });
     await creator!.release();
     const frozenA = await storeA.acquireWriter(workflowRunId, {

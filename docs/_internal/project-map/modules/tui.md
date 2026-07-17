@@ -11,6 +11,16 @@ See also [../maps/trace/export-diagnostics.md](../maps/trace/export-diagnostics.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T17:20:00+0800
+- Scope: TUI Workflow state consumes required canonical run generation,
+  revision, layer, and v2 package identity. Durable cancel uses the required
+  generation directly and no Workflow snapshot fixture carries `contentHash`.
+- Read: Workflow controller/actions/display/panel, SDK cutover fixture, and
+  protocol Workflow snapshot contract.
+- Tests: TUI Workflow display/action/panel/SDK focused tests and TUI typecheck
+  passed before the full release gate.
+
+- Status: Verified
 - Date: 2026-07-17T13:00:00+0800
 - Scope: the capability panel renders delegate approval from the required
   `approvalRequiredUnderCurrentRun` snapshot fact; it no longer reads a

@@ -10,6 +10,16 @@ See [tool-orchestration.md](tool-orchestration.md) and [../trace/raw-trace.md](.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T17:20:00+0800
+- Scope: fresh and resumed Workflow episodes enter the run loop only with a
+  pinned v2 executable package. Host lifecycle events carry package identity;
+  Core remains Workflow-unaware and receives the snapshot-backed definition.
+- Read: Host Workflow preparation/projection, Agent Runtime durable pin,
+  Workflow tests, and trace/resume maps.
+- Tests: Host Workflow/hook focused tests and affected typechecks passed before
+  the full release gate.
+
+- Status: Verified
 - Date: 2026-07-16T23:05:00+0800
 - Scope: Host task revival now filters and projects canonical task actor
   notifications directly; Core still drains the unchanged
@@ -248,7 +258,8 @@ createRun/resumeRunFromCheckpoint
   run loop with immutable hook arrays; host projection snapshots persist
   workflow position/attempt/verdict/transition state into `WorkflowRunRecord`.
   Cross-run `workflow resume` starts a new core run with the pinned workflow
-  definition and optional resume re-verification before the stored node
+  definition from the verified executable package snapshot and optional resume
+  re-verification before the stored node
   position is trusted.
 - P3 Step 3 human waiting remains host projection/store behavior rather than a
   new core run state. A `human` node emits `workflow.waiting`, persists

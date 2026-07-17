@@ -16,7 +16,6 @@ export type WorkflowJournalPayload =
       kind: "baseline";
       generation: 0;
       recordRevision: 0;
-      record?: WorkflowRunRecord;
       events: WorkflowStoreEvent[];
     }
   | {
@@ -218,16 +217,6 @@ function applyCanonicalEntry(
       });
       return;
     }
-    if (payload.record && payload.record.id !== entry.workflowRunId) {
-      head.quarantined.push({
-        path,
-        code: "invalid_document",
-        reason: "baseline record identity mismatch",
-      });
-      return;
-    }
-    head.record = payload.record;
-    if (payload.record) head.recordPhysicalSequence = entry.physicalSequence;
     head.events = [...payload.events];
     return;
   }
@@ -256,7 +245,8 @@ function applyCanonicalEntry(
     payload.record.recordRevision !== payload.recordRevision ||
     payload.record.generation !== payload.generation ||
     payload.record.id !== entry.workflowRunId ||
-    payload.event.workflowRunId !== entry.workflowRunId
+    payload.event.workflowRunId !== entry.workflowRunId ||
+    !isCanonicalRecord(payload.record)
   ) {
     head.quarantined.push({
       path,
@@ -269,6 +259,35 @@ function applyCanonicalEntry(
   head.record = payload.record;
   head.recordPhysicalSequence = entry.physicalSequence;
   head.events.push(payload.event);
+}
+
+function isCanonicalRecord(record: WorkflowRunRecord): boolean {
+  return (
+    record.schemaVersion === "sparkwright-workflow-run.v2" &&
+    Number.isInteger(record.generation) &&
+    record.generation >= 1 &&
+    Number.isInteger(record.recordRevision) &&
+    record.recordRevision >= 1 &&
+    (record.layer === "builtin" ||
+      record.layer === "user" ||
+      record.layer === "project") &&
+    typeof record.packageHash === "string" &&
+    record.packageHash.length > 0 &&
+    record.packageHashPolicyVersion === 2 &&
+    typeof record.packageSnapshotRef === "string" &&
+    record.packageSnapshotRef.length > 0 &&
+    !("contentHash" in record) &&
+    !!record.definitionSnapshot &&
+    !("contentHash" in record.definitionSnapshot) &&
+    record.definitionSnapshot.assetName === record.assetName &&
+    record.definitionSnapshot.version === record.version &&
+    record.definitionSnapshot.layer === record.layer &&
+    record.definitionSnapshot.packageHash === record.packageHash &&
+    record.definitionSnapshot.packageHashPolicyVersion === 2 &&
+    record.definitionSnapshot.packageSnapshotRef ===
+      record.packageSnapshotRef &&
+    record.definitionSnapshot.sourceDir === record.packageSnapshotRef
+  );
 }
 
 function checksum(value: unknown): string {

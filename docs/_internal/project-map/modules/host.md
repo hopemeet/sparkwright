@@ -12,6 +12,19 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T17:20:00+0800
+- Scope: Host Workflow execution and observation use one package identity.
+  Fresh start persists the required pinned v2 package, resume verifies that
+  snapshot and its snapshot-backed definition, lifecycle/notification/run
+  metadata publishes package identity instead of Markdown `contentHash`, and
+  offline shadow pins the candidate package in an ephemeral snapshot before
+  comparison without creating Workflow run state.
+- Read: Workflow asset pinning, runtime start/resume/projection/notification,
+  shadow/distill trace boundary, asset stats, and focused tests.
+- Tests: Host Workflow/shadow/distill/stats/protocol focused suites and Host
+  typecheck passed before the full release gate.
+
+- Status: Verified
 - Date: 2026-07-17T13:00:00+0800
 - Scope: Host tool and delegate capability assembly has one semantic source:
   `list_dir` is an advanced deferred tool, delegate descriptors project only
@@ -528,11 +541,12 @@ Does not own:
   `sessionId` on each record. List, resume, control, notification, event-log,
   and supervisor paths all replay this one canonical store; Host does not read
   record or event sidecars. Host acquires the workflow run's single-writer lease
-  before fresh record creation or resume, pins the compiled workflow definition
-  snapshot, persists projection snapshots into current node, attempts,
+  before fresh record creation or resume, pins the v2 executable package and
+  its snapshot-backed definition, persists projection snapshots into current node, attempts,
   verdict/transition logs, and run/fact evidence refs, refreshes a single-writer
   lease while the run chain is active, and releases the lease on terminal/
-  rejected paths. `workflow resume` uses the pinned definition and workspace
+  rejected paths. `workflow resume` verifies and uses the pinned executable
+  package and workspace
   store, not the live asset folder or a reconstructed session-root store;
   `verifyOnResume` re-runs
   verifier nodes whose latest stored verdict is passed before trusting the

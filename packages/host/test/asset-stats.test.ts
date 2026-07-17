@@ -117,14 +117,23 @@ describe("asset stats", () => {
     });
     const id = "workflow_stats" as WorkflowRunId;
     const writer = await store.acquireWriter(id, { owner: "test" });
+    const packageSnapshotRef = join(workspaceRoot, "snapshot");
     const created = await writer!.create({
       id,
       assetName: "release",
       layer: "user",
-      contentHash: "legacy",
       packageHash: "sha256:workflow-v2",
       packageHashPolicyVersion: 2,
-      packageSnapshotRef: join(workspaceRoot, "snapshot"),
+      packageSnapshotRef,
+      definitionSnapshot: {
+        assetName: "release",
+        sourceDir: packageSnapshotRef,
+        layer: "user",
+        packageHash: "sha256:workflow-v2",
+        packageHashPolicyVersion: 2,
+        packageSnapshotRef,
+        nodes: [{ id: "build", body: "Build." }],
+      },
       attempts: { build: 2 },
       metadata: { workflowUsage: { modelCalls: 1 } },
     });

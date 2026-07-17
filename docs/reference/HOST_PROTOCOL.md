@@ -306,11 +306,15 @@ workflow storage is available.
   "workflows": [
     {
       "id": "workflow_abc",
+      "generation": 2,
+      "recordRevision": 7,
       "sessionId": "session_123",
       "status": "running",
       "assetName": "bugfix",
+      "layer": "project",
       "version": "1.0.0",
-      "contentHash": "sha256:...",
+      "packageHash": "sha256:...",
+      "packageHashPolicyVersion": 2,
       "activeRunId": "run_456",
       "runIds": ["run_456"],
       "currentNodeId": "reproduce",
@@ -405,11 +409,11 @@ acceptance. Hosts advertise it in `host.ready.capabilities`.
 ### `workflow.resume`
 
 Adopt a non-terminal durable workflow run and start a new host run from its
-pinned workflow definition snapshot. The host does not reload the live asset
-for execution; it resumes from the record's pinned `{assetName, version,
-contentHash}` and `definitionSnapshot`, then appends the new `runId` to the
-record. This compatibility request first enqueues a durable `resume_request`
-and dispatches through the same workflow control consumer.
+pinned executable package snapshot. The host does not reload the live asset
+for execution; it verifies the record's required source layer, v2
+`packageHash`, `packageSnapshotRef`, and snapshot-backed `definitionSnapshot`,
+then appends the new `runId` to the record. The request first enqueues a durable
+`resume_request` and dispatches through the same workflow control consumer.
 
 Hosts advertise `workflow.resume` in `host.ready.capabilities` once durable
 workflow resume is available.

@@ -1,4 +1,6 @@
 import { join } from "node:path";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import {
   asSessionId,
   loadTraceEventsFile,
@@ -7,12 +9,13 @@ import {
 import type {
   WorkflowCommandNodeDefinition,
   WorkflowCommandVerifierDefinition,
-  WorkflowDefinition,
+  WorkflowExecutableDefinition,
   WorkflowNodeDefinition,
   WorkflowVerifierDefinition,
 } from "@sparkwright/agent-runtime";
 import {
   loadLayeredWorkflowAssets,
+  pinWorkflowAssetPackage,
   type WorkflowAssetDetail,
 } from "./workflows.js";
 import {
@@ -52,7 +55,8 @@ export interface WorkflowShadowReport {
   eventCount: number;
   asset: {
     sourcePath: string;
-    contentHash: string;
+    packageHash: string;
+    packageHashPolicyVersion: 2;
     version?: string;
     nodeCount: number;
   };
@@ -112,16 +116,28 @@ export async function shadowWorkflowFromSession(
   if (!asset) {
     throw new Error(`Workflow not found: ${options.workflowName}`);
   }
-  return shadowWorkflowFromEvents({
-    workflow: asset,
-    sessionId,
-    tracePath,
-    events,
-  });
+  const snapshotRoot = await mkdtemp(
+    join(tmpdir(), "sparkwright-workflow-shadow-"),
+  );
+  try {
+    const pinned = await pinWorkflowAssetPackage({ asset, snapshotRoot });
+    return shadowWorkflowFromEvents({
+      workflow: { ...pinned.asset, sourcePath: asset.sourcePath },
+      sessionId,
+      tracePath,
+      events,
+    });
+  } finally {
+    await rm(snapshotRoot, { recursive: true, force: true });
+  }
 }
 
 export function shadowWorkflowFromEvents(input: {
-  workflow: WorkflowAssetDetail;
+  workflow: Omit<WorkflowAssetDetail, "definition"> & {
+    definition: WorkflowExecutableDefinition;
+    packageHash: string;
+    packageHashPolicyVersion: 2;
+  };
   sessionId: string;
   tracePath: string;
   events: readonly SparkwrightEvent[];
@@ -153,7 +169,8 @@ export function shadowWorkflowFromEvents(input: {
     eventCount: observation.eventCount,
     asset: {
       sourcePath: input.workflow.sourcePath,
-      contentHash: input.workflow.contentHash,
+      packageHash: input.workflow.packageHash,
+      packageHashPolicyVersion: input.workflow.packageHashPolicyVersion,
       ...(input.workflow.version ? { version: input.workflow.version } : {}),
       nodeCount: input.workflow.nodeCount,
     },
@@ -298,7 +315,7 @@ function buildChecks(input: {
 }
 
 function collectDeclarations(
-  definition: WorkflowDefinition,
+  definition: WorkflowExecutableDefinition,
 ): WorkflowShadowDeclarations {
   const declarations: WorkflowShadowDeclarations = {
     openModelTools: false,

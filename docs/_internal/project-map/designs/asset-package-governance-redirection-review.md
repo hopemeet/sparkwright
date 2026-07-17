@@ -357,9 +357,9 @@ A Workflow is already a folder package:
   ...
 ```
 
-Retain `contentHash` temporarily as the legacy Markdown-body identity where
-compatibility requires it, but add `packageHash` as the strong identity used by
-new execution records, statistics, comparison, and future authoring flows.
+The live parser may retain `contentHash` as a Markdown-only inspection
+fingerprint, but durable execution records use only `packageHash` as their
+version identity. A Markdown hash is never a resumable package pin.
 
 `packageHash` covers every included ordinary file, including `workflow.md`,
 config, scripts, fixtures, and other authored dependencies.
@@ -371,8 +371,8 @@ New Workflow instances pin:
 ```ts
 interface PinnedWorkflowAsset {
   assetName: string;
+  layer: "builtin" | "user" | "project";
   version?: string;
-  contentHash: string; // compatibility/Markdown identity
   packageHash: string; // strong package identity
   packageHashPolicyVersion: 2;
   definitionSnapshot: unknown;
@@ -605,11 +605,9 @@ from structural similarity among Markdown assets.
   every nested directory into a package.
 - Config-backed Agent profiles remain supported for explicit configuration;
   only the ordinary authoring tool direction changes.
-- Existing Workflow `contentHash` remains available for compatibility while
-  new records use `packageHash` as the strong version identity.
-- Existing Workflow run records without package snapshots remain legacy. Resume
-  policy for them must be explicit and fail closed when exact execution content
-  cannot be proven.
+- Workflow run records require the v2 `packageHash`, source layer, executable
+  snapshot reference, and snapshot-backed definition. Records without that
+  canonical pin are rejected during journal replay rather than migrated.
 - Existing raw trace is immutable. Stats migration reads legacy identities but
   never rewrites historical events.
 

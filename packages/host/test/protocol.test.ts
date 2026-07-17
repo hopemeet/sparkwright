@@ -958,11 +958,25 @@ describe("host protocol", () => {
       const writer = await store.acquireWriter(workflowRunId, {
         owner: "test-fixture",
       });
+      const packageSnapshotRef = `/snapshots/${workflowRunId}`;
+      const packageHash = "sha256:workflow-protocol";
       const created = await writer!.create({
         id: workflowRunId,
         sessionId,
         assetName: "bugfix",
-        contentHash: "hash-protocol",
+        layer: "project",
+        packageHash,
+        packageHashPolicyVersion: 2,
+        packageSnapshotRef,
+        definitionSnapshot: {
+          assetName: "bugfix",
+          sourceDir: packageSnapshotRef,
+          layer: "project",
+          packageHash,
+          packageHashPolicyVersion: 2,
+          packageSnapshotRef,
+          nodes: [{ id: "main", body: "Protocol fixture." }],
+        },
         currentNodeId: "main",
         attempts: { main: 1 },
         authorizationSnapshot: {
@@ -974,7 +988,7 @@ describe("host protocol", () => {
         },
       });
       await writer!.mutate({
-        expectedRevision: created.recordRevision ?? 0,
+        expectedRevision: created.recordRevision,
         patch: {
           verdictLog: [
             {

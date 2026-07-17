@@ -21,10 +21,12 @@ import {
   type WorkflowCommandVerifierDefinition,
   type WorkflowDiffScopeVerifierDefinition,
   type WorkflowDefinition,
+  type WorkflowExecutableDefinition,
   type WorkflowEvidenceRef,
   type WorkflowNodeDefinition,
   type WorkflowNodeVerdict,
   type WorkflowParallelBranchState,
+  type PinnedWorkflowDefinition,
   type WorkflowRuntimeState,
   type WorkflowTodoClearVerifierDefinition,
   type WorkflowTransitionDecision,
@@ -47,7 +49,7 @@ export interface CreateWorkflowProjectionHooksOptions extends Omit<
   CreateConfiguredWorkflowHooksOptions,
   "hooks" | "workflowActive"
 > {
-  definition: WorkflowDefinition;
+  definition: WorkflowDefinition | PinnedWorkflowDefinition;
   taskTool?: ToolDefinition;
   delegateParallelTool?: ToolDefinition;
   workflowRunId?: string;
@@ -77,7 +79,7 @@ export interface WorkflowProjectionHookSet {
 
 export interface WorkflowProjectionStateSnapshot {
   workflowRunId: string;
-  definition: WorkflowDefinition;
+  definition: WorkflowDefinition | PinnedWorkflowDefinition;
   state: WorkflowRuntimeState;
   phase:
     | "started"
@@ -151,7 +153,13 @@ export function createWorkflowProjectionHooks(
     input.events?.emit(type, {
       workflowRunId,
       assetName: options.definition.assetName,
-      contentHash: options.definition.contentHash,
+      ...(isPinnedWorkflowDefinition(options.definition)
+        ? {
+            packageHash: options.definition.packageHash,
+            packageHashPolicyVersion:
+              options.definition.packageHashPolicyVersion,
+          }
+        : {}),
       ...(options.definition.version
         ? { version: options.definition.version }
         : {}),
@@ -1574,6 +1582,19 @@ export function createWorkflowProjectionHooks(
   };
 }
 
+function isPinnedWorkflowDefinition(
+  definition: WorkflowExecutableDefinition,
+): definition is PinnedWorkflowDefinition {
+  return (
+    "packageHash" in definition &&
+    typeof definition.packageHash === "string" &&
+    "packageHashPolicyVersion" in definition &&
+    definition.packageHashPolicyVersion === 2 &&
+    "packageSnapshotRef" in definition &&
+    typeof definition.packageSnapshotRef === "string"
+  );
+}
+
 function verifierStopHooks(
   input: CreateWorkflowProjectionHooksOptions & {
     familyName: string;
@@ -2020,7 +2041,7 @@ async function evaluateTodoClearVerifier(input: {
 }
 
 function validateWorkflowProjectionDefinition(
-  definition: WorkflowDefinition,
+  definition: WorkflowExecutableDefinition,
 ): void {
   assertWorkflowRuntimeDefinition(definition);
   for (const node of definition.nodes) {
@@ -2100,7 +2121,7 @@ function assertHumanNodeRunnable(node: WorkflowNodeDefinition): void {
 }
 
 function assertParallelNodeRunnable(
-  definition: WorkflowDefinition,
+  definition: WorkflowExecutableDefinition,
   node: WorkflowNodeDefinition,
 ): void {
   const parallel = node.parallel;
@@ -2162,7 +2183,7 @@ function assertParallelNodeRunnable(
 }
 
 function assertJoinNodeRunnable(
-  definition: WorkflowDefinition,
+  definition: WorkflowExecutableDefinition,
   node: WorkflowNodeDefinition,
 ): void {
   const join = node.join;
@@ -2216,7 +2237,7 @@ function workflowTransitionTargets(
 }
 
 function currentNode(
-  definition: WorkflowDefinition,
+  definition: WorkflowExecutableDefinition,
   state: WorkflowRuntimeState,
 ): WorkflowNodeDefinition | undefined {
   return state.currentNodeId
@@ -2225,14 +2246,14 @@ function currentNode(
 }
 
 function findWorkflowNode(
-  definition: WorkflowDefinition,
+  definition: WorkflowExecutableDefinition,
   nodeId: string,
 ): WorkflowNodeDefinition | undefined {
   return definition.nodes.find((node) => node.id === nodeId);
 }
 
 function parallelProducerNodeIds(
-  definition: WorkflowDefinition,
+  definition: WorkflowExecutableDefinition,
   branchId: string,
 ): string[] {
   return definition.nodes
@@ -2242,7 +2263,7 @@ function parallelProducerNodeIds(
 }
 
 function uniqueParallelProducerNodeId(
-  definition: WorkflowDefinition,
+  definition: WorkflowExecutableDefinition,
   branchId: string,
 ): string {
   const producers = parallelProducerNodeIds(definition, branchId);
@@ -2250,7 +2271,7 @@ function uniqueParallelProducerNodeId(
 }
 
 function nextNodeIsNonModel(
-  definition: WorkflowDefinition,
+  definition: WorkflowExecutableDefinition,
   state: WorkflowRuntimeState,
 ): boolean {
   if (state.status !== "running" || !state.currentNodeId) return false;
@@ -2265,7 +2286,7 @@ function nodeExecuteKind(
 }
 
 function resumeVerificationNodes(
-  definition: WorkflowDefinition,
+  definition: WorkflowExecutableDefinition,
   pendingNodeIds: ReadonlySet<string>,
 ): WorkflowNodeDefinition[] {
   return definition.nodes.filter(
