@@ -10,6 +10,14 @@ See [workspace-writes.md](workspace-writes.md) and [../../modules/coding-tools.m
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T23:37:17+0800
+- Scope: Host delegate/workspace reference imports moved to Core `/internal`;
+  shell parsing, sandbox launch, process lifecycle, and write authority are
+  unchanged.
+- Read: affected Host imports, Core barrels, and shell ownership boundary.
+- Tests: Host typecheck/build; Cron and downstream focused suites passed.
+
+- Status: Verified
 - Date: 2026-07-16T21:02:00+0800
 - Scope: Shell background persistence is canonical-only:
   `shell.background` task records and `background_shell` boundary markers.

@@ -12,6 +12,17 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T23:37:17+0800
+- Scope: Host reference runtime/storage/workspace consumers import explicit
+  Core internals after the public root was narrowed; Host composition,
+  execution, delegate, snapshot, trace, policy, and protocol behavior did not
+  change.
+- Read: all affected Host imports, Core public/internal exports, and internal
+  import governance.
+- Tests: Host typecheck/build and downstream focused suites passed; full Host
+  coverage is part of the final release gate.
+
+- Status: Verified
 - Date: 2026-07-17T23:04:01+0800
 - Scope: session operations have one Host owner. `session-queries.ts` locates
   canonical session/agent run directories, projects completed conversation

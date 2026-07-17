@@ -5,7 +5,6 @@ import {
   buildTraceReportFile,
   buildTraceTimelineFile,
   FileSessionStore,
-  loadCheckpointFromRunDir,
   loadTraceEventsFile,
   projectSessionReplayToContextItems,
   repairSessionTraceConsistency,
@@ -23,6 +22,7 @@ import {
 import {
   createSessionFileRunStoreFactory,
   FileRunStore,
+  loadCheckpointFromRunDir,
   LocalWorkspace,
 } from "@sparkwright/core/internal";
 import type { SessionCompactionInspectReport } from "@sparkwright/protocol";

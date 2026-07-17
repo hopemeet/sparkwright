@@ -11,6 +11,14 @@ and [../session/session-store.md](../session/session-store.md) for session layou
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T23:37:17+0800
+- Scope: EventLog/file trace reference implementations moved exclusively to
+  Core `/internal`, and TraceSink ingestion is canonical `append`; raw event
+  envelopes, filtering, redaction, and persistence layout are unchanged.
+- Read: Core barrels/storage/trace store and Host/CLI/Perfetto consumers.
+- Tests: Core interface 4/4, Perfetto 18/18, CLI 23/23, affected typechecks.
+
+- Status: Verified
 - Date: 2026-07-17T23:04:01+0800
 - Scope: session conversation trace-fact projection moved intact from
   HostRuntime to `session-queries.ts`. It still reads the canonical session

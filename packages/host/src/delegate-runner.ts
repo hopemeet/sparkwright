@@ -3,7 +3,6 @@ import {
   createApprovalRequest,
   createRun,
   createSessionId,
-  createSessionFileRunStoreFactory,
   createSessionRunStoreFactory,
   FileSessionStore,
   resolveApproval,
@@ -11,6 +10,7 @@ import {
   type RunResult,
   type SparkwrightEvent,
 } from "@sparkwright/core";
+import { createSessionFileRunStoreFactory } from "@sparkwright/core/internal";
 import type { TraceLevel } from "@sparkwright/protocol";
 import { loadHostConfig } from "./config/config-implementation.js";
 import { resolveAgentProfiles } from "./agent-profiles.js";

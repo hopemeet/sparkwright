@@ -1,5 +1,5 @@
 import { createId, type ContentPart, type RunHandle } from "@sparkwright/core";
-import type { MemoryTrace } from "@sparkwright/core";
+import type { MemoryTrace } from "@sparkwright/core/internal";
 import type { WorkflowRunId } from "@sparkwright/agent-runtime";
 import {
   runTodoSupervised,

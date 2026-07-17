@@ -53,7 +53,7 @@ ORIGIN                          GATE (human only)            EFFECT
  model: create_skill            CLI/TUI:                     mutate .sparkwright/skills
  model: update_skill          ─► apply [--force] / reject /   + history snapshot (before+after)
    (draft, optional body)      │  supersede / prune /         + guard re-inspect (force on danger)
- human: TUI /skill-create     └► restore (--to before|after) + runSkillDoctor re-validate
+ human: TUI /create skill     └► restore (--to before|after) + runSkillDoctor re-validate
  human: TUI /skill-learn
 
 draft inspected by guard.inspectSkill (agent-created) -> metadata.guardFindings
@@ -65,8 +65,8 @@ history kinds:   create | update | restore
 ## Contracts
 
 - **Create entrypoint convergence:** model `create_skill`, CLI `skills create`,
-  TUI `/create skill`, and TUI `/skill-create` all call
-  `SkillCommandService.prepareCreate`. CLI/TUI review apply calls
+  and TUI `/create skill` all call `SkillCommandService.prepareCreate`.
+  CLI/TUI review apply calls
   `approveAndApply`; the in-run model fast path uses `prepareApproval` plus
   `approvePrepared` after the run approval resolves. Advanced proposal-create
   commands remain low-level authoring surfaces, not a fifth ordinary UX.
@@ -198,7 +198,7 @@ history kinds:   create | update | restore
 ## Consumers
 
 - CLI `skills review`, `skills proposals`, `skills history`, `skills restore`.
-- TUI `/skill-create`, `/skill-update`, `/skill-review`, `/skill-learn`.
+- TUI `/create skill`, `/skill-update`, `/skill-review`, `/skill-learn`.
 - Capability inspection (skill roots/errors), not the proposal store.
 
 ## Change Checklist
@@ -222,6 +222,15 @@ history kinds:   create | update | restore
   there is no persisted run→proposals index (a scan, not an index).
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-17T23:37:17+0800
+- Scope: removed the TUI `/skill-create` compatibility entry while preserving
+  the canonical generic creation adapter and the same governed proposal,
+  review, effect authorization, doctor, and history pipeline.
+- Read: TUI command/capability/Skill actions, Host command service, public Skill
+  reference, and focused TUI tests.
+- Tests: TUI create/evolution/command 22/22 and TUI typecheck passed.
 
 - Status: Verified
 - Date: 2026-07-17T20:55:00+0800

@@ -10,6 +10,15 @@ See [../safety/workspace-writes.md](../safety/workspace-writes.md), [../safety/s
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T23:37:17+0800
+- Scope: runtime consumers now import default prompt/event/workspace reference
+  implementations through Core `/internal`; tool registry, batching, policy,
+  approval, and result contracts are unchanged.
+- Read: Core barrels, Agent/Host/CLI/Project Context/Streaming consumers, and
+  import gate.
+- Tests: Agent Runtime 49/49, Project Context 19/19, Streaming 12/12, CLI 23/23.
+
+- Status: Verified
 - Date: 2026-07-17T13:00:00+0800
 - Scope: tool exposure and replay decisions use one vocabulary: four canonical
   exposure tiers, with `list_dir` advanced, and governance idempotency as the

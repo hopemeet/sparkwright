@@ -3,11 +3,11 @@ import {
   createContextItemId,
   createRun,
   defineTool,
-  EventLog,
   runWorkflowHooks,
   type ModelAdapter,
   type WorkflowHook,
 } from "../src/index.js";
+import { EventLog } from "../src/internal.js";
 import { createRunId } from "../src/ids.js";
 
 describe("runWorkflowHooks", () => {

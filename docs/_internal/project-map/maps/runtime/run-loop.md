@@ -10,6 +10,14 @@ See [tool-orchestration.md](tool-orchestration.md) and [../trace/raw-trace.md](.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T23:37:17+0800
+- Scope: concrete Core run/context/event implementations moved behind
+  `/internal`; `createRun`, extension interfaces, lifecycle, budgets, and Host
+  episode coordination remain unchanged.
+- Read: Core barrels and Agent/Host/Streaming runtime consumers.
+- Tests: Core interface 4/4, Agent Runtime 49/49, Streaming 12/12, typechecks.
+
+- Status: Verified
 - Date: 2026-07-17T23:04:01+0800
 - Scope: session/run lookup and prior-conversation reconstruction moved from
   HostRuntime into the existing session owner. Host still prepares fresh and

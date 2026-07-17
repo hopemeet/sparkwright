@@ -8,6 +8,14 @@ cron, shell/task tools, and capability inspection.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T23:37:17+0800
+- Scope: Core implementation import routing changed only; Host capability
+  assembly, inspection, schemas, and active tool/capability semantics are
+  unchanged.
+- Read: Core barrels and affected Host/CLI runtime consumers.
+- Tests: affected typechecks/builds and import governance passed.
+
+- Status: Verified
 - Date: 2026-07-17T17:20:00+0800
 - Scope: live Workflow discovery remains the capability inventory and may show
   a Markdown fingerprint, while every durable/executable Workflow instance has

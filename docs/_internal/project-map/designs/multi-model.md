@@ -287,6 +287,15 @@ need.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T23:37:17+0800
+- Scope: Provider Registry removed the `createFallbackChain` alias and retains
+  only canonical `createProviderFallbackChain`; model resolution, adapter
+  construction, and Core model fallback behavior are unchanged.
+- Read: Provider Registry source/tests/README, Core model helpers, and Host
+  model consumer boundary.
+- Tests: Provider Registry 7/7 and affected typechecks/build passed.
+
+- Status: Verified
 - Date: 2026-06-28T14:13:14+0800
 - Scope: updated the design catalog after implementing the simplified raw-ref
   MVP: `spawnModel` / `delegateModel` config schema and loader support,

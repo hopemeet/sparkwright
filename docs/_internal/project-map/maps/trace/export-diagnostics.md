@@ -91,6 +91,13 @@ session trace.jsonl
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T23:37:17+0800
+- Scope: TUI removed the `/skill-create` layer wiring; event rendering,
+  transcript export, trace diagnostics, and `/export` storage remain unchanged.
+- Read: TUI App/layer changes and export/diagnostic ownership boundary.
+- Tests: TUI focused 22/22 and TUI typecheck passed.
+
+- Status: Verified
 - Date: 2026-07-16T13:36:30+0800
 - Scope: TUI/export no longer projects a validation-hook active phase; durable `validation.failed` evidence remains available in raw trace and diagnostics.
 - Read: TUI event store/export paths, Core trace vocabulary, and current trace documentation.

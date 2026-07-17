@@ -6,6 +6,23 @@ contracts, public schema, package exports, or generated `dist`.
 
 ## Core
 
+### `packages/core/src/index.ts`, `internal.ts`, or public/internal export routing
+
+Run:
+
+```bash
+npm --workspace @sparkwright/core test -- test/interfaces.test.ts
+npm --workspace @sparkwright/core run build
+npm run check:internal-imports
+npm run check:package-boundaries
+npm run check:dist-fresh
+```
+
+Then typecheck/build every workspace moved between the public and internal
+entrypoints and run its focused tests. Assert removed implementation names are
+absent from the root module and present under `/internal`; import-only source
+changes can still fail at runtime when an upstream `dist` barrel is stale.
+
 ### `packages/core/src/workspace.ts` or `workspace-checkpoint.ts`
 
 Run:
@@ -379,6 +396,19 @@ information and must not grow silently. Workspace manifest discovery follows
 the root `workspaces` declarations rather than a package allowlist.
 
 ## TUI
+
+### TUI command registry or capability-creation entrypoints
+
+Run:
+
+```bash
+npm --workspace @sparkwright/tui test -- test/commands.test.ts test/create-capability.test.ts test/skill-evolution.test.ts
+npm --workspace @sparkwright/tui run typecheck
+```
+
+Keep generic `/create skill` on the managed proposal service. Removing a slash
+surface should also remove its dedicated action, layer, dialog branch, help,
+and reference documentation; do not leave a hidden second parser.
 
 ### `packages/tui/src/state/run-controller.ts`
 

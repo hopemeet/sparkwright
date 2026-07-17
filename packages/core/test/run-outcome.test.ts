@@ -1,5 +1,4 @@
 import {
-  EventLog,
   analyzeCommandOutcomes,
   analyzeToolOutcomes,
   analyzeVerificationProfileResults,
@@ -7,6 +6,7 @@ import {
   createRunId,
   toolOutcomeSnapshot,
 } from "../src/index.js";
+import { EventLog } from "../src/internal.js";
 import { describe, expect, it } from "vitest";
 
 describe("run outcome evidence", () => {

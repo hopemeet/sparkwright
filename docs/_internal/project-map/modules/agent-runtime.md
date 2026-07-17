@@ -9,6 +9,13 @@ See also [../maps/capabilities/agents.md](../maps/capabilities/agents.md), [../m
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T23:37:17+0800
+- Scope: Agent Runtime imports default prompt reference implementations from
+  Core `/internal`; Agent/Task/Todo/Workflow contracts are unchanged.
+- Read: Agent Runtime root composition, Core barrels, tests, and import gate.
+- Tests: Agent Runtime index/supervisor 49/49, typecheck, and build passed.
+
+- Status: Verified
 - Date: 2026-07-17T17:20:00+0800
 - Scope: durable Workflow identity is canonical v2 only. Run records require
   source layer, generation/revision, package hash policy 2, package hash,

@@ -74,7 +74,7 @@ export function parseTuiSkillProposalInput(
   const parts = rest.trim().split(/\s+/u).filter(Boolean);
   const name = parts.shift();
   if (!name || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(name)) {
-    throw new Error("usage: /skill-create <name> --description <text>");
+    throw new Error("usage: /skill-update <name> --description <text>");
   }
 
   const descriptionFlag = parts.indexOf("--description");
@@ -86,33 +86,6 @@ export function parseTuiSkillProposalInput(
     throw new Error("description is required");
   }
   return { name, description: description.trim() };
-}
-
-export async function createTuiSkillProposal(
-  workspaceRoot: string,
-  rest: string,
-): Promise<TuiSkillProposalResult> {
-  const input = parseTuiSkillProposalInput(rest);
-  return createTuiSkillProposalFromInput(workspaceRoot, input);
-}
-
-export async function createTuiSkillProposalFromInput(
-  workspaceRoot: string,
-  input: TuiSkillProposalInput,
-): Promise<TuiSkillProposalResult> {
-  const { proposal } = await new SkillCommandService(
-    workspaceRoot,
-  ).prepareCreate({
-    name: input.name,
-    description: input.description,
-  });
-  return {
-    id: proposal.id,
-    kind: proposal.kind,
-    skillName: proposal.skillName,
-    state: proposal.state,
-    path: proposal.path,
-  };
 }
 
 export async function updateTuiSkillProposal(

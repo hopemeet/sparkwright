@@ -11,6 +11,15 @@ See also [../maps/trace/export-diagnostics.md](../maps/trace/export-diagnostics.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T23:37:17+0800
+- Scope: `/create skill` is the only TUI Skill creation route. Removed the
+  `/skill-create` command, dedicated create layer/dialog branch, action/parser
+  adapter, and compatibility guidance; `/skill-update` and review remain.
+- Read: command registry, capability/Skill actions, layer renderer/stack,
+  proposal helpers/dialog, tests, and Skill reference docs.
+- Tests: TUI create/evolution/command focused suites 22/22 and TUI typecheck.
+
+- Status: Verified
 - Date: 2026-07-17T17:20:00+0800
 - Scope: TUI Workflow state consumes required canonical run generation,
   revision, layer, and v2 package identity. Durable cancel uses the required
@@ -106,9 +115,8 @@ Does not own:
 
 ## Contracts
 
-- `/create skill` is the canonical general creation entrypoint and
-  `/skill-create` is a hidden compatibility/advanced shortcut. Both prepare a
-  proposal through host `SkillCommandService`; neither writes the current Skill
+- `/create skill` is the sole Skill creation entrypoint. It prepares a proposal
+  through host `SkillCommandService` and never writes the current Skill
   directly. Review apply also calls the service so later-session approval uses
   the same effect-bound receipt as the in-run fast path.
 

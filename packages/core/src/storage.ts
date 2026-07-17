@@ -61,10 +61,10 @@ export interface RunStore {
  */
 export interface TraceSink {
   /**
-   * Write a single event. May be sync or async; the harness awaits the
+   * Append a single event. May be sync or async; the harness awaits the
    * returned promise when present.
    */
-  write(event: SparkwrightEvent): void | Promise<void>;
+  append(event: SparkwrightEvent): void | Promise<void>;
 
   /**
    * Optional: flush any buffered events to the underlying transport.

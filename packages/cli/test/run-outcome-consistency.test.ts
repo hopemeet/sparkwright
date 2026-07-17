@@ -1,9 +1,9 @@
 import {
-  EventLog,
   completedRunOutcomeFromEvents,
   createRunId,
   type SparkwrightEvent,
 } from "@sparkwright/core";
+import { EventLog } from "@sparkwright/core/internal";
 import { describe, expect, it } from "vitest";
 import {
   cliExitCodeForRun,

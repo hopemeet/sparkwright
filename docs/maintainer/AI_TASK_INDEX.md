@@ -207,10 +207,10 @@ Read the linked entry file first, then the linked docs, then make the change. Do
 ### Task: Wire trace to an external sink (Datadog, Sentry, file)
 
 - **Entry point**: `packages/core/src/storage.ts` (`TraceSink`)
-- **Interface to implement**: `TraceSink` (`write` + optional `flush`)
+- **Interface to implement**: `TraceSink` (`append` + optional `flush`)
 - **Must read**: `docs/reference/PROTOCOL.md` (file trace section), ADR `0006-jsonl-traces-with-tiered-detail.md`
 - **Must update on change**: nothing; `TraceSink` consumes the already-serialized event stream
-- **Wire in via**: `run.events.subscribe(event => sink.write(event))`; flush at terminal state
+- **Wire in via**: `run.events.subscribe(event => sink.append(event))`; flush at terminal state
 - **Notes**: Apply trace-level filtering and redaction before forwarding; do not rely on the downstream system to redact. For local derived analytics, prefer `summarizeTraceJsonl` / `summarizeTraceFile` over maintaining a second mutable counter path. Use `validateSessionTraceConsistency` for session directory integrity checks.
 
 ### Task: Add lazy / deferred tool discovery (`tool_search`)

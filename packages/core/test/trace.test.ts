@@ -909,8 +909,8 @@ describe("trace", () => {
   it("autoCheckpointEveryNSteps persists a fresh checkpoint on the configured cadence", async () => {
     const root = await mkdtemp(join(tmpdir(), "sparkwright-auto-cp-"));
     tempDirs.push(root);
-    const { createRun, defineTool, loadCheckpointFromRunDir } =
-      await import("../src/index.js");
+    const { createRun, defineTool } = await import("../src/index.js");
+    const { loadCheckpointFromRunDir } = await import("../src/internal.js");
 
     const noop = defineTool({
       name: "noop",
@@ -956,12 +956,9 @@ describe("trace", () => {
   it("reconstructs a best-effort checkpoint from trace when checkpoint.json is missing", async () => {
     const root = await mkdtemp(join(tmpdir(), "sparkwright-trace-recover-"));
     tempDirs.push(root);
-    const {
-      createRun,
-      defineTool,
-      loadCheckpointFromRunDir,
-      resumeRunFromCheckpoint,
-    } = await import("../src/index.js");
+    const { createRun, defineTool, resumeRunFromCheckpoint } =
+      await import("../src/index.js");
+    const { loadCheckpointFromRunDir } = await import("../src/internal.js");
 
     const noop = defineTool({
       name: "noop",
@@ -1021,8 +1018,8 @@ describe("trace", () => {
   it("resumeRunFromCheckpoint(force) accepts a reconstructed checkpoint of a non-terminal run", async () => {
     const root = await mkdtemp(join(tmpdir(), "sparkwright-trace-resume-"));
     tempDirs.push(root);
-    const { loadCheckpointFromRunDir, resumeRunFromCheckpoint } =
-      await import("../src/index.js");
+    const { resumeRunFromCheckpoint } = await import("../src/index.js");
+    const { loadCheckpointFromRunDir } = await import("../src/internal.js");
 
     // Build a canonical session run with a non-terminal run.json and agent trace.
     const runId = createRunId();
@@ -1105,8 +1102,9 @@ describe("trace", () => {
   it("RunHandle.persistCheckpoint writes via the wired runStore", async () => {
     const root = await mkdtemp(join(tmpdir(), "sparkwright-persist-"));
     tempDirs.push(root);
-    const { createRun, resumeRunFromCheckpoint, loadCheckpointFromRunDir } =
+    const { createRun, resumeRunFromCheckpoint } =
       await import("../src/index.js");
+    const { loadCheckpointFromRunDir } = await import("../src/internal.js");
 
     let stepSeen = 0;
     const run = createRun({

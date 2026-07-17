@@ -9,6 +9,15 @@ See [../../modules/agent-runtime.md](../../modules/agent-runtime.md) for related
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-07-17T23:37:17+0800
+- Scope: Cron runner imports Core workspace/trace reference implementations
+  through `/internal`; scheduling, locking, policy, and persistence contracts
+  are unchanged.
+- Read: Cron runner/tests, Agent/Project Context downstream builds, Core
+  barrels, and package route.
+- Tests: Cron 20/20 and Cron typecheck passed.
+
 - Status: Read-only
 - Date: 2026-07-16T23:05:00+0800
 - Scope: checked the routed Task notification consolidation; Cron stores,

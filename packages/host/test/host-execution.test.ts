@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { createRun, MemoryTrace } from "@sparkwright/core";
+import { createRun } from "@sparkwright/core";
+import { MemoryTrace } from "@sparkwright/core/internal";
 import { HostExecution } from "../src/host-execution.js";
 
 describe("HostExecution", () => {

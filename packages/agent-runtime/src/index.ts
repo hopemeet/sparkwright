@@ -39,13 +39,15 @@ import type {
   WorkflowHookName,
 } from "@sparkwright/core";
 import {
-  createAppPromptSection,
   createDefaultPolicy,
   createSpanId,
   createRun as defaultCreateRun,
-  DefaultPromptBuilder,
   defineTool,
 } from "@sparkwright/core";
+import {
+  createAppPromptSection,
+  DefaultPromptBuilder,
+} from "@sparkwright/core/internal";
 import type {
   AgentToolInvocationInput,
   AgentToolResult,

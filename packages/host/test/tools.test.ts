@@ -18,13 +18,12 @@ import {
   createWorkspaceMutationPolicy,
   defineTool,
   createRunId,
-  EventLog,
   isToolConcurrencySafe,
-  LocalWorkspace,
   type CapabilityMutationEvent,
   type ModelAdapter,
   type RuntimeContext,
 } from "@sparkwright/core";
+import { EventLog, LocalWorkspace } from "@sparkwright/core/internal";
 import {
   FileTaskStore,
   InMemoryTaskStore,

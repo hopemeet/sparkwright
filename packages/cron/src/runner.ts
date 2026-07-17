@@ -6,8 +6,6 @@ import {
   createDefaultPromptInspector,
   createPermissionModePolicy,
   createRun,
-  createSessionFileRunStoreFactory,
-  LocalWorkspace,
   wrapPromptBuilderWithInspector,
   type InteractionChannel,
   type ClassifiedToolFailure,
@@ -17,6 +15,10 @@ import {
   type SparkwrightEvent,
   type ToolDefinition,
 } from "@sparkwright/core";
+import {
+  createSessionFileRunStoreFactory,
+  LocalWorkspace,
+} from "@sparkwright/core/internal";
 import { buildAgentPromptBuilder } from "@sparkwright/project-context";
 import { assembleCronPrompt } from "./prompt.js";
 import type { CronJob } from "./model.js";

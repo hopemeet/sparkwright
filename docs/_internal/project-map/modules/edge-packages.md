@@ -136,6 +136,16 @@ contracts, and focused checklists that no longer fit here.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T23:37:17+0800
+- Scope: edge packages use the explicit Core internal entry for reference
+  prompt/runtime implementations, while Provider Registry exposes one fallback
+  constructor name: `createProviderFallbackChain`.
+- Read: Provider Registry export/tests, Agent/Project Context/Streaming/Cron/
+  Perfetto consumers, Core package exports, and internal-import governance.
+- Tests: Provider 7/7; Agent Runtime 49/49; Project Context 19/19; Streaming
+  Runtime 12/12; Cron 20/20; Perfetto 18/18; affected typechecks passed.
+
+- Status: Verified
 - Date: 2026-07-17T22:15:00+0800
 - Scope: Host edge adapters receive one explicit process HostService;
   serveConnection no longer creates a per-connection service, and SDK

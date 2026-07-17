@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
-  EventLog,
   createRunId,
   withSpan,
   emitInSpan,
   type SparkwrightEvent,
 } from "@sparkwright/core";
+import { EventLog } from "@sparkwright/core/internal";
 import { PerfettoTrace, attachPerfettoSink } from "../src/index.js";
 
 describe("PerfettoTrace", () => {

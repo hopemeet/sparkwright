@@ -10,6 +10,14 @@ See [../trace/raw-trace.md](../trace/raw-trace.md) for raw event evidence.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T23:37:17+0800
+- Scope: file-run reference implementations now enter through Core
+  `/internal`; session layout, membership, replay, and Host ownership are
+  unchanged.
+- Read: Core public/internal barrels, trace store, Host/CLI/Streaming consumers.
+- Tests: Core interface 4/4, Streaming Runtime 12/12, affected typechecks/builds.
+
+- Status: Verified
 - Date: 2026-07-17T23:04:01+0800
 - Scope: Host session filesystem reads are consolidated in
   `session-queries.ts`: canonical run lookup, completed-turn replay, trace facts,

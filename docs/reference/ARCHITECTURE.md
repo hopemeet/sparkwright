@@ -50,8 +50,11 @@ runner should not become a second production runtime.
 
 Architecture checks enforce the most important parts of this boundary: TUI
 source cannot import `@sparkwright/core`, and `@sparkwright/core/internal`
-imports are allowlisted for the few packages that own reference storage/runtime
-plumbing.
+production imports are allowlisted for packages that own reference
+storage/runtime/prompt plumbing. Package tests may opt into the internal entry
+when they need a reference implementation. The Core root exports only stable
+types, factories, and extension interfaces; implementation classes are
+available exclusively from `@sparkwright/core/internal`.
 
 ## Runtime Kernel
 

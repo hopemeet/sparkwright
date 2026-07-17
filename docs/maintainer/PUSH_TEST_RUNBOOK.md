@@ -458,9 +458,9 @@ plumbing.
 node --input-type=module <<'NODE'
 import {
   bindUserHooks,
-  EventLog,
   createRunId,
 } from './packages/core/dist/index.js';
+import { EventLog } from './packages/core/dist/internal.js';
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
 const result = {

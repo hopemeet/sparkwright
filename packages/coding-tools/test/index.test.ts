@@ -12,10 +12,10 @@ import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   createRunId,
-  LocalWorkspace,
   type RuntimeContext,
   type ToolDefinition,
 } from "@sparkwright/core";
+import { LocalWorkspace } from "@sparkwright/core/internal";
 import {
   applyUnifiedDiff,
   createCodingTools,

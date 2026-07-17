@@ -11,6 +11,14 @@ See [raw-trace.md](raw-trace.md) for source data and [export-diagnostics.md](exp
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T23:37:17+0800
+- Scope: CLI and Core reference trace implementations moved behind the explicit
+  internal entry; summary/timeline/report/verify algorithms and output shapes
+  are unchanged.
+- Read: Core barrels/trace store and CLI trace/outcome consumers.
+- Tests: Core interface exports 4/4, CLI outcome 23/23, and affected typechecks.
+
+- Status: Verified
 - Date: 2026-07-16T13:36:30+0800
 - Scope: Trace projections retain `validation.failed` finding-code diagnostics but no longer expect validation-hook lifecycle spans.
 - Read: trace codecs/diagnostics/consistency checks, schemas, and focused trace tests.

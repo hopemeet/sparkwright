@@ -9,6 +9,16 @@ See also [../maps/trace/summary-timeline-verify.md](../maps/trace/summary-timeli
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T23:37:17+0800
+- Scope: CLI diagnostics/reference harness imports EventLog and file-run
+  implementations through Core `/internal`; command and output contracts are
+  unchanged.
+- Read: CLI root, trace/session command, direct-core runner, tests, Core
+  barrels, and import governance.
+- Tests: CLI outcome 23/23 and CLI typecheck passed; full CLI coverage is part
+  of the final release gate.
+
+- Status: Verified
 - Date: 2026-07-17T17:20:00+0800
 - Scope: CLI Workflow list/control consumes required generation and canonical
   package identity from Host snapshots; cancellation no longer defaults a

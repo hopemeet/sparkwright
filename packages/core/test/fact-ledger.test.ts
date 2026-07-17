@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
-  EventLog,
   FactLedger,
   createRunId,
   factLedgerSnapshotFromUnknown,
   verificationProfileResultsFromFactLedger,
 } from "../src/index.js";
+import { EventLog } from "../src/internal.js";
 
 describe("FactLedger", () => {
   it("records shell command facts and marks old epochs stale after writes", () => {

@@ -10,6 +10,14 @@ See [approvals.md](approvals.md) and [../runtime/tool-orchestration.md](../runti
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T23:37:17+0800
+- Scope: Host and test consumers import LocalWorkspace through Core
+  `/internal`; containment, policy, approval, checkpoint, and lease behavior
+  are unchanged.
+- Read: Core barrels, Host execution/snapshot/delegate imports, and import gate.
+- Tests: Host typecheck/build and affected focused suites passed.
+
+- Status: Verified
 - Date: 2026-07-16T13:36:30+0800
 - Scope: Removed the unused public workspace-write validation-hook seam; containment, write policy, interaction-channel approval, checkpoints, mutation budgets, and artifact evidence remain canonical and unchanged.
 - Read: ControlledWorkspace, run assembly, focused workspace tests, and current safety docs.

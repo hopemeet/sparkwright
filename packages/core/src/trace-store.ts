@@ -37,11 +37,6 @@ export class MemoryTrace implements TraceSink {
     this.lines.push(serializeEventJsonl(event));
   }
 
-  /** TraceSink alias for `append`. */
-  write(event: SparkwrightEvent): void {
-    this.append(event);
-  }
-
   toString(): string {
     return this.lines.join("");
   }

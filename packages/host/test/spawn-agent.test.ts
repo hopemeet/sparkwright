@@ -7,17 +7,19 @@ import {
   createLayeredPolicy,
   createPermissionModePolicy,
   createRun,
-  createSessionFileRunStoreFactory,
   createSessionRunStoreFactory,
   createWorkspaceMutationPolicy,
   createWorkspaceReadScopePolicy,
   defineTool,
   FileSessionStore,
   isToolConcurrencySafe,
-  LocalWorkspace,
   type ModelAdapter,
   type ToolDefinition,
 } from "@sparkwright/core";
+import {
+  createSessionFileRunStoreFactory,
+  LocalWorkspace,
+} from "@sparkwright/core/internal";
 import {
   InMemoryActorNotificationQueue,
   InMemoryTaskStore,

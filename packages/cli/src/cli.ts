@@ -28,7 +28,6 @@ import {
   type RunAccessMode,
   type RunRecord,
   type ContextItem,
-  EventLog,
 } from "@sparkwright/core";
 import {
   isTraceLevel,
@@ -36,7 +35,7 @@ import {
   type TraceLevel,
   type WorkflowRunSnapshot,
 } from "@sparkwright/protocol";
-import { FileRunStore } from "@sparkwright/core/internal";
+import { EventLog, FileRunStore } from "@sparkwright/core/internal";
 import {
   CronCommandService,
   CronStore,

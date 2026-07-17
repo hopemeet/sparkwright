@@ -123,6 +123,7 @@ follow the active maps below for the current contract.
 
 ## Touch File -> Read Docs
 
+- `packages/core/src/index.ts`, `packages/core/src/internal.ts`, or `scripts/check-internal-imports.mjs`: [modules/core.md](modules/core.md), [modules/edge-packages.md](modules/edge-packages.md), [modules/host.md](modules/host.md), [modules/agent-runtime.md](modules/agent-runtime.md), [modules/cli.md](modules/cli.md)
 - `packages/core/src/trace.ts`, `packages/core/src/trace-codec.ts`, `packages/core/src/trace-diagnostics.ts`, `packages/core/src/run-health.ts`, `packages/core/src/trace-session-consistency.ts`, or `packages/core/src/trace-store.ts`: [modules/core.md](modules/core.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md), [maps/trace/summary-timeline-verify.md](maps/trace/summary-timeline-verify.md), [maps/session/session-store.md](maps/session/session-store.md)
 - `packages/core/src/context.ts` or `packages/core/src/path-display.ts`: [modules/core.md](modules/core.md), [maps/runtime/context-compaction.md](maps/runtime/context-compaction.md), [maps/trace/summary-timeline-verify.md](maps/trace/summary-timeline-verify.md)
 - `packages/core/src/events.ts` or `packages/core/src/workflow-hooks.ts`: [modules/core.md](modules/core.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md), [maps/trace/summary-timeline-verify.md](maps/trace/summary-timeline-verify.md)
@@ -176,11 +177,7 @@ follow the active maps below for the current contract.
 - `packages/project-context/src/index.ts`: [modules/coding-tools.md](modules/coding-tools.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md)
 - `packages/project-commands/src/*`: [modules/edge-packages.md](modules/edge-packages.md), [modules/tui.md](modules/tui.md), [maps/safety/shell.md](maps/safety/shell.md)
 - `packages/skills/src/*` or `packages/host/src/skill-*`: [modules/skills.md](modules/skills.md), [maps/capabilities/skills.md](maps/capabilities/skills.md)
-- `packages/host/src/skill-command-service.ts`, `sparkwright skills create`,
-  TUI `/create skill`, or TUI `/skill-create`:
-  [modules/skills.md](modules/skills.md), [modules/host.md](modules/host.md),
-  [modules/cli.md](modules/cli.md), [modules/tui.md](modules/tui.md),
-  [maps/capabilities/skill-evolution.md](maps/capabilities/skill-evolution.md).
+- `packages/host/src/skill-command-service.ts`, `sparkwright skills create`, or TUI `/create skill`: [modules/skills.md](modules/skills.md), [modules/host.md](modules/host.md), [modules/cli.md](modules/cli.md), [modules/tui.md](modules/tui.md), [maps/capabilities/skill-evolution.md](maps/capabilities/skill-evolution.md)
 - `packages/skills/src/markdown-folder-asset.ts`: [modules/skills.md](modules/skills.md), [modules/host.md](modules/host.md), [maps/capabilities/README.md](maps/capabilities/README.md)
 - `packages/host/src/skill-evolution.ts` or `sparkwright skills proposals|history|restore`: [modules/skills.md](modules/skills.md), [maps/capabilities/skill-evolution.md](maps/capabilities/skill-evolution.md)
 - `packages/mcp-adapter/src/index.ts`: [modules/mcp-adapter.md](modules/mcp-adapter.md), [maps/capabilities/mcp.md](maps/capabilities/mcp.md), [maps/safety/shell.md](maps/safety/shell.md)
@@ -212,6 +209,20 @@ TUI events; it is not a trace diagnostic report and must not replace
 trace/session inspection.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-17T23:37:17+0800
+- Scope: public compatibility surfaces are canonical-only: Core reference
+  implementations are exported exclusively from `@sparkwright/core/internal`,
+  TraceSink uses `append`, Provider Registry exposes only
+  `createProviderFallbackChain`, and TUI Skill creation enters through
+  `/create skill` without `/skill-create`.
+- Read: Core public/internal barrels and consumers, internal-import governance,
+  Provider Registry, TUI command/layer/action flow, Skill references, and
+  routed module/test-map pages.
+- Tests: focused Core/Provider/Agent Runtime/Project Context/Streaming Runtime/
+  Cron/Perfetto/CLI/TUI suites and affected package typechecks passed; final
+  repository gates recorded in the commit verification.
 
 - Status: Verified
 - Date: 2026-07-17T13:00:00+0800

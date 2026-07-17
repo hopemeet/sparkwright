@@ -12,6 +12,13 @@ See also [../maps/runtime/tool-orchestration.md](../maps/runtime/tool-orchestrat
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T23:37:17+0800
+- Scope: coding-tools tests opt into Core's internal LocalWorkspace reference;
+  coding tool names, schemas, governance, and execution behavior are unchanged.
+- Read: affected test import, Core barrels, and package route.
+- Tests: coding-tools coverage is included in the final release gate.
+
+- Status: Verified
 - Date: 2026-07-17T13:00:00+0800
 - Scope: `list_dir` remains a current read-only discovery tool and is now
   classified as canonical advanced/deferred instead of carrying a dedicated

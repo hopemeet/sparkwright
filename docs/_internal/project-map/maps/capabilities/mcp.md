@@ -10,6 +10,14 @@ See [../../modules/mcp-adapter.md](../../modules/mcp-adapter.md).
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T23:37:17+0800
+- Scope: Host runtime implementation imports moved to Core `/internal`; MCP
+  discovery, transport, sandbox, tool governance, and inspection contracts are
+  unchanged.
+- Read: Host runtime import boundary and Core public/internal barrels.
+- Tests: Host typecheck/build and import governance passed.
+
+- Status: Verified
 - Date: 2026-07-16T12:45:00+0800
 - Scope: MCP preparation consumes the frozen internal security plan derived from canonical accessMode; no MCP contract changed.
 - Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.

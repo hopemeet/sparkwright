@@ -188,8 +188,7 @@ sparkwright skills proposals apply <proposal-id> --workspace . --format text
 The TUI exposes slash-command entry points for the same proposal flow:
 
 ```txt
-/skill-create
-/skill-create code-reviewer --description Reviews code changes for risk and missing tests.
+/create skill
 /skill-update
 /skill-update code-reviewer
 /skill-update code-reviewer --description Prefer concise findings with concrete verification steps.
@@ -199,17 +198,16 @@ The TUI exposes slash-command entry points for the same proposal flow:
 /skill-learn notice
 ```
 
-`/create skill` is the canonical general capability-creation entrypoint.
-`/skill-create` remains a compatibility/advanced shortcut; both call the same
-managed proposal service and neither directly writes the current Skill.
+`/create skill` is the sole Skill creation entrypoint in the TUI. It opens the
+general capability-creation dialog on Skill and prepares through the managed
+proposal service; it does not directly write the current Skill.
 
-`/skill-create` without arguments opens a guided prompt for a project Skill
-proposal. `/skill-update` without arguments opens a guided prompt for an
-effective Skill update proposal; with only a Skill name, it opens directly at
-the description step. `/skill-review` opens a proposal review panel with
-proposal, patch, and metadata views; it can apply or reject the selected
-proposal after an Enter confirmation. `/skill-create` and `/skill-update`
-create proposals but do not apply them.
+`/skill-update` without arguments opens a guided prompt for an effective Skill
+update proposal; with only a Skill name, it opens directly at the description
+step. `/skill-review` opens a proposal review panel with proposal, patch, and
+metadata views; it can apply or reject the selected proposal after an Enter
+confirmation. `/create skill` and `/skill-update` create proposals but do not
+apply them.
 
 `/skill-learn` shows the effective Skill Evolution mode. `/skill-learn
 off|notice|draft|apply` writes the project config field
@@ -220,7 +218,7 @@ setting the mode alone.
 In `notice` mode, the TUI may show a conservative notice after a successful run
 when the user's own prompt contains explicit reuse signals such as "remember
 this", "next time", or equivalent workflow corrections. The notice only
-suggests `/skill-create` or `/skill-update`; it does not create proposals
+suggests `/create skill` or `/skill-update`; it does not create proposals
 automatically.
 
 In `draft` mode, the same conservative signal creates a draft proposal for the

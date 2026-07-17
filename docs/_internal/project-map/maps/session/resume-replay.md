@@ -10,6 +10,14 @@ See [session-store.md](session-store.md) and [../runtime/context-compaction.md](
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T23:37:17+0800
+- Scope: checkpoint/file-run reference helpers moved to Core `/internal`;
+  resume identity, replay, compaction anchors, and Host/CLI behavior are
+  unchanged.
+- Read: Core barrels/trace store and Host/CLI resume consumers.
+- Tests: Host/CLI typechecks and builds passed; final release gate covers resume.
+
+- Status: Verified
 - Date: 2026-07-17T23:04:01+0800
 - Scope: run resume and session-context replay now call the single Host session
   owner for canonical run lookup, completed turns, trace facts, and compact

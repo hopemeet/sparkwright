@@ -17,13 +17,12 @@ import {
   createRun,
   createUsageTracker,
   defineTool,
-  FileRunStore,
-  LocalWorkspace,
   resumeRunFromCheckpoint,
   type CreateRunOptions,
   type ModelAdapter,
   type WorkflowHook,
 } from "@sparkwright/core";
+import { FileRunStore, LocalWorkspace } from "@sparkwright/core/internal";
 
 const tempDirs: string[] = [];
 const SAFE_AGENT_TOOL_POLICY = {

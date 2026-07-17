@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  createArtifactId,
+  createContextItemId,
+  createRunId,
+  type ContextItem,
+  type RunRecord,
+  type ToolDescriptor,
+} from "../src/index.js";
+import {
   CompactingContextAssembler,
   DefaultContextAssembler,
   DefaultObservationFormatter,
@@ -10,13 +18,7 @@ import {
   createEnvironmentSection,
   createToolGuidanceSection,
   createModelAdaptiveSection,
-  createArtifactId,
-  createContextItemId,
-  createRunId,
-  type ContextItem,
-  type RunRecord,
-  type ToolDescriptor,
-} from "../src/index.js";
+} from "../src/internal.js";
 
 describe("DefaultContextAssembler", () => {
   it("keeps ALL tool observations append-only when within budget", () => {

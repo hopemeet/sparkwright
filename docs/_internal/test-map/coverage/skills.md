@@ -43,13 +43,15 @@
   2026-07-17 consolidation.
 
 - 2026-07-12 TUI completion-card coverage proves a draft proposal is restored
-  from persistent proposal storage after startup, card dismissal leaves the
-  draft recoverable through `/skill-review`, and both generic and dedicated
-  creation paths refresh the affordance.
+  from persistent proposal storage after startup and card dismissal leaves the
+  draft recoverable through `/skill-review`. The dedicated compatibility create
+  path was removed on 2026-07-17; `/create skill` is now the sole TUI creation
+  adapter and refreshes the affordance.
 
-- 2026-07-12 Phase 2 create convergence routes model `create_skill`, CLI
-  `skills create`, TUI `/create skill`, and `/skill-create` through host
-  `SkillCommandService`. Focused service, host tool, CLI and TUI tests verify
+- 2026-07-12 Phase 2 create convergence routed model `create_skill`, CLI
+  `skills create`, and the TUI creation adapters through host
+  `SkillCommandService`. The TUI compatibility adapter was removed on
+  2026-07-17; focused service, host tool, CLI and TUI tests continue to verify
   proposal-first behavior, shared review apply, session dedupe, and absence of
   direct current-Skill writes from ordinary create adapters.
 

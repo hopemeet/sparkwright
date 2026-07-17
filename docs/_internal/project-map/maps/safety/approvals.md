@@ -10,6 +10,13 @@ See [workspace-writes.md](workspace-writes.md) and [shell.md](shell.md).
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T23:37:17+0800
+- Scope: CLI reference EventLog import moved to Core `/internal`; interaction,
+  approval policy, resolution, and audit contracts are unchanged.
+- Read: CLI consumer and Core public/internal boundary.
+- Tests: CLI outcome 23/23 and affected typechecks passed.
+
+- Status: Verified
 - Date: 2026-07-17T11:02:45+0800
 - Scope: `InteractionChannel` is now the required-method, approval-only Core
   outbound boundary. Question/notification DTOs and RunHandle helpers were

@@ -13,6 +13,16 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md),
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T23:37:17+0800
+- Scope: the Core root is limited to stable types, factories, and extension
+  interfaces. Reference classes/helpers live only under `/internal`, and
+  TraceSink/MemoryTrace use the single `append` method.
+- Read: public/internal barrels, trace storage/sink contracts, all workspace
+  imports of implementation symbols, architecture guidance, and import gates.
+- Tests: Core interface/export 4/4; downstream focused suites and affected
+  typechecks passed before repository release verification.
+
+- Status: Verified
 - Date: 2026-07-17T13:00:00+0800
 - Scope: `ToolDefinition.governance.idempotency` is the sole replay-safety
   declaration. Conditional and non-idempotent tools receive network-failure
@@ -123,6 +133,14 @@ Does not own:
 
 ## Contracts
 
+- The package root exports stable types, factories, and extension interfaces.
+  `EventLog`, file/in-memory trace stores, concrete workspace/checkpoint
+  classes, default prompt/context implementations, and `SparkwrightRun` are
+  reference implementations exported exclusively from
+  `@sparkwright/core/internal`; repository production imports are explicit and
+  governed.
+- `TraceSink.append(event)` is its sole event-ingest method. `MemoryTrace`
+  implements that method directly and has no `write` alias.
 - Facts enter append-only event streams before derived stores or views.
 - `runId` routes kernel work; `sessionId` groups runs at the edge.
 - `FileRunStore` requires `sessionId` and writes only beneath the session root:

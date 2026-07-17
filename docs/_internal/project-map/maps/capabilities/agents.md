@@ -11,6 +11,14 @@ See [../../modules/agent-runtime.md](../../modules/agent-runtime.md) and [../../
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T23:37:17+0800
+- Scope: Agent Runtime/Host delegate implementation imports moved to Core
+  `/internal`; Agent identity, admission, lifecycle, workspace authority, and
+  capability exposure contracts are unchanged.
+- Read: affected Agent Runtime/Host imports and Core barrels.
+- Tests: Agent Runtime focused 49/49, Host typecheck/build, and import gate.
+
+- Status: Verified
 - Date: 2026-07-17T13:00:00+0800
 - Scope: delegate capability descriptors no longer echo configured
   `requiresApproval`; Host emits the required current-run approval fact plus

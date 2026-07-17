@@ -5,7 +5,6 @@ import type { TuiSkillProposalInput } from "../lib/skill-evolution.js";
 import { DialogFrame } from "./dialog-frame.js";
 
 type FieldKey = "name" | "description";
-export type SkillProposalDialogAction = "create" | "update";
 
 interface Field {
   key: FieldKey;
@@ -23,7 +22,6 @@ const FIELDS: Field[] = [
 ];
 
 export function SkillProposalDialog(props: {
-  action: SkillProposalDialogAction;
   initialName?: string;
   onCancel: () => void;
   onCommit: (draft: TuiSkillProposalInput) => void;
@@ -139,7 +137,7 @@ export function SkillProposalDialog(props: {
       </Text>
       <Box flexDirection="column" marginTop={1}>
         <Text>
-          <Text color={theme.success}>{props.action}</Text>
+          <Text color={theme.success}>update</Text>
           {values.name && field.key !== "name" ? (
             <Text color={theme.muted}> {values.name}</Text>
           ) : null}

@@ -1,4 +1,5 @@
-import { EventLog, createRunId } from "@sparkwright/core";
+import { createRunId } from "@sparkwright/core";
+import { EventLog } from "@sparkwright/core/internal";
 import { describe, expect, it } from "vitest";
 import {
   cliExitCodeForRun,

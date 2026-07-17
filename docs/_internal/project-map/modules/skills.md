@@ -52,11 +52,9 @@ Does not own:
 ## Contracts
 
 - `SkillCommandService` is the host-owned create command boundary. Model
-  `create_skill`, CLI `skills create`, TUI `/create skill`, and TUI
-  `/skill-create` call `prepareCreate`; proposal review apply calls
-  `approveAndApply`. Adapters parse/render only and may not directly write a
-  current Skill. `/skill-create` is a compatibility shortcut for the canonical
-  general `/create skill` entrypoint.
+  `create_skill`, CLI `skills create`, and TUI `/create skill` call
+  `prepareCreate`; proposal review apply calls `approveAndApply`. Adapters
+  parse/render only and may not directly write a current Skill.
 
 - Safe model-authored create proposals now use the first prepared-change fast
   path: the complete package and `effectHash` are persisted before approval;
@@ -190,6 +188,15 @@ list --run/--session`); failed drafts self-clean. See
   [../maps/capabilities/skill-evolution.md](../maps/capabilities/skill-evolution.md#known-debts).
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-17T23:37:17+0800
+- Scope: TUI Skill creation has one human entrypoint, `/create skill`; the
+  compatibility shortcut and its dedicated adapter path were removed without
+  changing `SkillCommandService` proposal/apply ownership.
+- Read: Host command service boundary, TUI generic creation and Skill
+  update/review adapters, public Skill reference, and capability map.
+- Tests: TUI create/evolution/command 22/22 and TUI typecheck passed.
 
 - Status: Verified
 - Date: 2026-07-17T20:55:00+0800

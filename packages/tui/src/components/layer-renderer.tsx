@@ -85,7 +85,6 @@ export function LayerRenderer(props: {
   ) => void;
   onApprovalDecision: (choice: ApprovalChoice) => void;
   onCreateCapability: (draft: CreateCapabilityDraft) => void;
-  onCreateSkillProposal: (draft: TuiSkillProposalInput) => void;
   onUpdateSkillProposal: (draft: TuiSkillProposalInput) => void;
   onApplySkillReviewProposal: (proposalId: string) => void;
   onRejectSkillReviewProposal: (proposalId: string) => void;
@@ -202,18 +201,9 @@ export function LayerRenderer(props: {
           onCommit={props.onCreateCapability}
         />
       );
-    case "skill-create":
-      return (
-        <SkillProposalDialog
-          action="create"
-          onCancel={props.onCloseTop}
-          onCommit={props.onCreateSkillProposal}
-        />
-      );
     case "skill-update":
       return (
         <SkillProposalDialog
-          action="update"
           initialName={skillNameFromPayload(props.entry.payload)}
           onCancel={props.onCloseTop}
           onCommit={props.onUpdateSkillProposal}

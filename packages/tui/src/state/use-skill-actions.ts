@@ -1,8 +1,6 @@
 import { useState } from "react";
 import { formatWorkspaceDisplayPath } from "../lib/path-display.js";
 import {
-  createTuiSkillProposal,
-  createTuiSkillProposalFromInput,
   applyTuiSkillReviewProposal,
   formatTuiSkillProposalResult,
   loadTuiSkillReview,
@@ -40,8 +38,6 @@ export interface SkillActions {
   skillReviewSnapshot: TuiSkillReviewDetail | null;
   /** Whether the review snapshot is loading. */
   loadingSkillReview: boolean;
-  openSkillCreateProposal: (rest?: string) => void;
-  handleCreateSkillProposal: (draft: TuiSkillProposalInput) => void;
   openSkillUpdateProposal: (rest?: string) => void;
   handleUpdateSkillProposal: (draft: TuiSkillProposalInput) => void;
   reviewSkillProposalsFromSlash: (rest: string) => void;
@@ -63,53 +59,6 @@ export function useSkillActions(deps: {
     useState<TuiSkillReviewDetail | null>(null);
   const [loadingSkillReview, setLoadingSkillReview] = useState(false);
   const [skillReviewRest, setSkillReviewRest] = useState("");
-
-  function createSkillProposalFromSlash(rest: string): void {
-    void createTuiSkillProposal(workspaceRoot, rest)
-      .then((proposal) => {
-        toasts.push({
-          variant: "success",
-          title: "skill proposal",
-          message: formatTuiSkillProposalResult(proposal),
-        });
-        deps.onProposalPrepared?.();
-      })
-      .catch((error: unknown) => {
-        toasts.push({
-          variant: "error",
-          title: "/skill-create failed",
-          message: error instanceof Error ? error.message : String(error),
-        });
-      });
-  }
-
-  function openSkillCreateProposal(rest = ""): void {
-    if (rest.trim().length > 0) {
-      createSkillProposalFromSlash(rest);
-      return;
-    }
-    layers.push("skill-create");
-  }
-
-  function handleCreateSkillProposal(draft: TuiSkillProposalInput): void {
-    void createTuiSkillProposalFromInput(workspaceRoot, draft)
-      .then((proposal) => {
-        layers.pop("skill-create");
-        toasts.push({
-          variant: "success",
-          title: "skill proposal",
-          message: formatTuiSkillProposalResult(proposal),
-        });
-        deps.onProposalPrepared?.();
-      })
-      .catch((error: unknown) => {
-        toasts.push({
-          variant: "error",
-          title: "/skill-create failed",
-          message: error instanceof Error ? error.message : String(error),
-        });
-      });
-  }
 
   function updateSkillProposalFromSlash(rest: string): void {
     void updateTuiSkillProposal(workspaceRoot, rest)
@@ -307,8 +256,6 @@ export function useSkillActions(deps: {
   return {
     skillReviewSnapshot,
     loadingSkillReview,
-    openSkillCreateProposal,
-    handleCreateSkillProposal,
     openSkillUpdateProposal,
     handleUpdateSkillProposal,
     reviewSkillProposalsFromSlash,
@@ -353,7 +300,7 @@ export function runSkillLearnAutoNotice(deps: {
         toasts.push({
           variant: "info",
           title: "skill learn",
-          message: `${notice.reason}. Run /skill-create or /skill-update <skill-name>.`,
+          message: `${notice.reason}. Run /create skill or /skill-update <skill-name>.`,
           durationMs: 9000,
         });
         return;

@@ -5,7 +5,6 @@ import { join } from "node:path";
 import {
   createDefaultPolicy,
   createRun,
-  createSessionFileRunStoreFactory,
   createSessionRunStoreFactory,
   defineTool,
   FileSessionStore,
@@ -13,6 +12,7 @@ import {
   type RuntimeContext,
   type ToolDefinition,
 } from "@sparkwright/core";
+import { createSessionFileRunStoreFactory } from "@sparkwright/core/internal";
 import {
   InMemoryTaskStore,
   TaskManager,

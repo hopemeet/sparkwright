@@ -1,14 +1,16 @@
 import { join } from "node:path";
 import {
   createRunId,
-  createSessionFileRunStoreFactory,
   createSessionId,
   createSessionRunStoreFactory,
-  EventLog,
   FileSessionStore,
   type RunRecord,
   type RunResult,
 } from "@sparkwright/core";
+import {
+  createSessionFileRunStoreFactory,
+  EventLog,
+} from "@sparkwright/core/internal";
 import type { RunAccessMode, TraceLevel } from "@sparkwright/protocol";
 
 export interface HostStartFailureTraceInput {

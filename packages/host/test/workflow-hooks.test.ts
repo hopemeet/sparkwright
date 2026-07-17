@@ -8,10 +8,10 @@ import {
   createRun,
   createRunId,
   defineTool,
-  EventLog,
   FactLedger,
   runWorkflowHooks,
 } from "@sparkwright/core";
+import { EventLog } from "@sparkwright/core/internal";
 import {
   createPlatformShellSandboxRuntime,
   type ShellSandboxRuntime,

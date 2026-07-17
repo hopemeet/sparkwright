@@ -1,4 +1,5 @@
-import { createRunId, EventLog } from "@sparkwright/core";
+import { createRunId } from "@sparkwright/core";
+import { EventLog } from "@sparkwright/core/internal";
 import { describe, expect, it } from "vitest";
 import { prepareAgentInvocation } from "../src/agents/invocation.js";
 import { createAgentSupervisor } from "../src/agents/supervisor.js";
