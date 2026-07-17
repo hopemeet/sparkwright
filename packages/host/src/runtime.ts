@@ -17,8 +17,4 @@ export type {
   InProcessDelegateWorkflowHooksForProfile,
   RuntimeWorkflowHookAssemblyOptions,
 } from "./runtime/host-runtime.js";
-export type {
-  HostExecutionCoordinatorPort,
-  HostExecutionMessage,
-  RuntimeOptions,
-} from "./runtime/contracts.js";
+export type { RuntimeOptions } from "./runtime/contracts.js";

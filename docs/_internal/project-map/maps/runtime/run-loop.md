@@ -10,6 +10,17 @@ See [tool-orchestration.md](tool-orchestration.md) and [../trace/raw-trace.md](.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T22:15:00+0800
+- Scope: ordinary Host start/resume/inject/cancel can enter only through the
+  process HostService lane coordinator. HostRuntime no longer self-composes or
+  exposes direct execution fallbacks; service-owned Workflow detached starts
+  remain a distinct durable handoff path.
+- Read: Host runtime contracts/concrete implementation, HostService driver,
+  connection server, HostExecution, and focused service/protocol/Workflow tests.
+- Tests: Host service/task-revival 5/5; protocol 58/58; Workflow 35/35; Host
+  typecheck; full `npm run release:check`.
+
+- Status: Verified
 - Date: 2026-07-17T17:20:00+0800
 - Scope: fresh and resumed Workflow episodes enter the run loop only with a
   pinned v2 executable package. Host lifecycle events carry package identity;
@@ -99,6 +110,10 @@ createRun/resumeRunFromCheckpoint
   message injection, cancellation, and whole-execution completion only. It does
   not interpret run trees, Workflow actors, Tasks, Agents, Core events, MCP, or
   workspace leases.
+- The process HostService is the only HostRuntime factory and the only ordinary
+  execution admission path. Runtime construction requires the service-owned
+  WorkspaceContext, workspace lease coordinator, and lane coordinator;
+  connection adapters receive that existing service explicitly.
 - `cancel()` emits `run.cancelled` synchronously and kicks the `RunEnd`
   workflow-hook phase with `state:"cancelled"` / `reason:"manual_cancelled"`.
   `RunEnd` remains fire-and-forget.

@@ -21,8 +21,8 @@ import {
   pinWorkflowAssetPackage,
   verifyWorkflowPackageSnapshot,
 } from "../src/workflows.js";
-import { HostRuntime } from "../src/runtime.js";
 import type { HostEvent } from "@sparkwright/protocol";
+import { createTestHostRuntime } from "./helpers/host-runtime.js";
 
 const TEST_WORKFLOW_SOURCE = {
   kind: "api" as const,
@@ -322,7 +322,7 @@ describe("workflow assets", () => {
       ].join("\n"),
     );
     const events: HostEvent[] = [];
-    const runtime = new HostRuntime({
+    const runtime = createTestHostRuntime({
       workspaceRoot: workspace,
       defaultModel: "deterministic",
       emit: (event) => events.push(event),
@@ -354,7 +354,7 @@ describe("workflow assets", () => {
     });
     await waitForHostEvent(events, (event) => event.kind === "run.completed");
 
-    const invalid = await new HostRuntime({
+    const invalid = await createTestHostRuntime({
       workspaceRoot: workspace,
       defaultModel: "deterministic",
       emit: () => {},
@@ -390,7 +390,7 @@ describe("workflow assets", () => {
     const workflowRunId =
       "workflow_service_0123456789abcdef0123456789abcdef" as WorkflowRunId;
     const events: HostEvent[] = [];
-    const first = await new HostRuntime({
+    const first = await createTestHostRuntime({
       workspaceRoot: workspace,
       defaultModel: "deterministic",
       emit: (event) => events.push(event),
@@ -406,7 +406,7 @@ describe("workflow assets", () => {
     expect(first).toMatchObject({ ok: true, workflowRunId });
     await waitForHostEvent(events, (event) => event.kind === "run.completed");
 
-    const duplicate = await new HostRuntime({
+    const duplicate = await createTestHostRuntime({
       workspaceRoot: workspace,
       defaultModel: "deterministic",
       emit: () => {},
@@ -921,7 +921,7 @@ describe("workflow assets", () => {
       "inspectable",
       ["---", "version: 0.1", "nodes: [main]", "---", "Main"].join("\n"),
     );
-    const runtime = new HostRuntime({
+    const runtime = createTestHostRuntime({
       workspaceRoot: workspace,
       defaultModel: "deterministic",
       emit: () => {},
@@ -957,7 +957,7 @@ describe("workflow assets", () => {
         "Run only when enabled.",
       ].join("\n"),
     );
-    const runtime = new HostRuntime({
+    const runtime = createTestHostRuntime({
       workspaceRoot: workspace,
       defaultModel: "deterministic",
       emit: () => {},
@@ -982,7 +982,7 @@ describe("workflow assets", () => {
       ["---", "nodes: [main]", "---", "Main durable workflow."].join("\n"),
     );
     const events: HostEvent[] = [];
-    const runtime = new HostRuntime({
+    const runtime = createTestHostRuntime({
       workspaceRoot: workspace,
       defaultModel: "deterministic",
       emit: (event) => events.push(event),
@@ -1102,7 +1102,7 @@ describe("workflow assets", () => {
       { message: "done" },
     ]);
     const events: HostEvent[] = [];
-    const runtime = new HostRuntime({
+    const runtime = createTestHostRuntime({
       workspaceRoot: workspace,
       defaultModel: "scripted",
       emit: (event) => events.push(event),
@@ -1187,7 +1187,7 @@ describe("workflow assets", () => {
       { message: "done" },
     ]);
     const events: HostEvent[] = [];
-    const runtime = new HostRuntime({
+    const runtime = createTestHostRuntime({
       workspaceRoot: workspace,
       defaultModel: "scripted",
       emit: (event) => events.push(event),
@@ -1303,7 +1303,7 @@ describe("workflow assets", () => {
       { message: "done" },
     ]);
     const events: HostEvent[] = [];
-    const runtime = new HostRuntime({
+    const runtime = createTestHostRuntime({
       workspaceRoot: workspace,
       defaultModel: "scripted",
       emit: (event) => events.push(event),
@@ -1441,7 +1441,7 @@ describe("workflow assets", () => {
       { message: "done" },
     ]);
     const events: HostEvent[] = [];
-    const runtime = new HostRuntime({
+    const runtime = createTestHostRuntime({
       workspaceRoot: workspace,
       defaultModel: "scripted",
       emit: (event) => events.push(event),
@@ -1519,7 +1519,7 @@ describe("workflow assets", () => {
     ]);
     const sessionId = "sess_workflow_d6";
     const events: HostEvent[] = [];
-    const runtime = new HostRuntime({
+    const runtime = createTestHostRuntime({
       workspaceRoot: workspace,
       defaultModel: "deterministic",
       emit: (event) => events.push(event),
@@ -1598,7 +1598,7 @@ describe("workflow assets", () => {
       ].join("\n"),
     );
     const events: HostEvent[] = [];
-    const runtime = new HostRuntime({
+    const runtime = createTestHostRuntime({
       workspaceRoot: workspace,
       defaultModel: "deterministic",
       emit: (event) => events.push(event),
@@ -1748,7 +1748,7 @@ describe("workflow assets", () => {
         wait: { kind: "input", reason: "Need human review." },
       },
     );
-    const runtime = new HostRuntime({
+    const runtime = createTestHostRuntime({
       workspaceRoot: workspace,
       defaultModel: "deterministic",
       emit: () => {},
@@ -1799,7 +1799,7 @@ describe("workflow assets", () => {
       ].join("\n"),
     );
     const events: HostEvent[] = [];
-    const runtime = new HostRuntime({
+    const runtime = createTestHostRuntime({
       workspaceRoot: workspace,
       defaultModel: "deterministic",
       emit: (event) => events.push(event),
@@ -1825,7 +1825,7 @@ describe("workflow assets", () => {
     });
     expect(competingLease).toBeNull();
 
-    const competingRuntime = new HostRuntime({
+    const competingRuntime = createTestHostRuntime({
       workspaceRoot: workspace,
       defaultModel: "deterministic",
       emit: () => {},
@@ -1857,7 +1857,7 @@ describe("workflow assets", () => {
     );
     const events: HostEvent[] = [];
     let brokeStream = false;
-    const runtime = new HostRuntime({
+    const runtime = createTestHostRuntime({
       workspaceRoot: workspace,
       defaultModel: "deterministic",
       emit: (event) => {
@@ -1915,7 +1915,7 @@ describe("workflow assets", () => {
     expect(releasedLease).not.toBeNull();
     await releasedLease?.release();
 
-    const resumed = await new HostRuntime({
+    const resumed = await createTestHostRuntime({
       workspaceRoot: workspace,
       defaultModel: "deterministic",
       emit: () => {},
@@ -1964,7 +1964,7 @@ describe("workflow assets", () => {
       ),
     );
     const events: HostEvent[] = [];
-    const runtime = new HostRuntime({
+    const runtime = createTestHostRuntime({
       workspaceRoot: workspace,
       defaultModel: "deterministic",
       emit: (event) => events.push(event),
@@ -2030,7 +2030,7 @@ describe("workflow assets", () => {
     });
     expect(writer).not.toBeNull();
     const events: HostEvent[] = [];
-    const runtime = new HostRuntime({
+    const runtime = createTestHostRuntime({
       workspaceRoot: workspace,
       defaultModel: "deterministic",
       emit: (event) => events.push(event),
@@ -2113,7 +2113,7 @@ describe("workflow assets", () => {
       metadata: { goal: "resume failed-history workflow" },
     });
     const events: HostEvent[] = [];
-    const runtime = new HostRuntime({
+    const runtime = createTestHostRuntime({
       workspaceRoot: workspace,
       defaultModel: "deterministic",
       emit: (event) => events.push(event),
@@ -2157,7 +2157,7 @@ describe("workflow assets", () => {
       },
       { status: "completed" },
     );
-    const runtime = new HostRuntime({
+    const runtime = createTestHostRuntime({
       workspaceRoot: workspace,
       defaultModel: "deterministic",
       emit: () => {},
@@ -2197,7 +2197,7 @@ describe("workflow assets", () => {
         nodes: [{ id: "main", body: "Controlled body." }],
       },
     });
-    const runtime = new HostRuntime({
+    const runtime = createTestHostRuntime({
       workspaceRoot: workspace,
       defaultModel: "deterministic",
       emit: () => {},
@@ -2277,7 +2277,7 @@ describe("workflow assets", () => {
       expiresAt: new Date(now.getTime() + 60_000).toISOString(),
     });
     if (accepted.status === "conflict") throw new Error("unexpected conflict");
-    const processed = await new HostRuntime({
+    const processed = await createTestHostRuntime({
       workspaceRoot: workspace,
       defaultModel: "deterministic",
       emit: () => {},
@@ -2296,7 +2296,7 @@ describe("workflow assets", () => {
 
   it("rejects unsafe workflow resume ids before building paths", async () => {
     const workspace = await tempWorkspace();
-    const runtime = new HostRuntime({
+    const runtime = createTestHostRuntime({
       workspaceRoot: workspace,
       defaultModel: "deterministic",
       emit: () => {},

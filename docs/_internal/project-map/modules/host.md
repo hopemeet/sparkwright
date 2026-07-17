@@ -12,6 +12,17 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T22:15:00+0800
+- Scope: HostService is the sole HostRuntime composition and ordinary execution
+  entry. Runtime context, workspace lease, and execution coordinator are
+  required internal dependencies; start/resume/inject/cancel have no direct
+  fallback; and serveConnection requires the process-owned service.
+- Read: runtime contracts/concrete facade, HostService, connection server,
+  stdio/WS composition, protocol/Workflow/task-revival tests, and SDK round-trip.
+- Tests: Host service/task-revival 5/5; protocol 58/58; Workflow 35/35; Host
+  typecheck; full `npm run release:check`.
+
+- Status: Verified
 - Date: 2026-07-17T20:55:00+0800
 - Scope: Host Skill composition consumes one v2 package identity across reports,
   doctor, runtime capability snapshots, trace-derived stats, managed proposals,
@@ -185,7 +196,7 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 
 ## Main Files
 
-- `packages/host/src/runtime.ts` — stable named compatibility facade
+- `packages/host/src/runtime.ts` — stable named public facade
 - `packages/host/src/runtime/host-runtime.ts` — concrete HostRuntime composition and execution orchestration
 - `packages/host/src/runtime/capability-assembly.ts` — capability snapshot projection, summaries, automation reads, and merge
 - `packages/host/src/runtime/task-projections.ts` — task snapshots, notifications, terminal classification, and bounded output reads
@@ -298,10 +309,11 @@ Does not own:
   inheritance form. Markdown discovery drops and reports invalid model-ref
   syntax instead of advertising profiles that fail only when delegated.
 
-- One active HostExecution per compatibility runtime facade.
+- One active HostExecution per HostService-composed runtime facade.
 - One execution-wide abort spans assembly
-  and all todo/workflow episodes on that connection. Disconnect and legacy
-  cancel trip the same abort; Core run cancellation remains run-scoped.
+  and all todo/workflow episodes on that connection. Disconnect and
+  service-coordinated cancel trip the same abort; Core run cancellation remains
+  run-scoped.
 - Background Agent `task_create` tools capture their model, policy, session,
   child-store, permission, and workspace-lease dependencies in an inline Task
   runner. Host has no mutable latest-run Agent dependency slot.
@@ -314,16 +326,22 @@ Does not own:
   before `createExecutionResources()` creates a fresh LocalWorkspace, trace
   emitter, and session store handles. Live execution resources are not pooled.
 - `HostService` is the process composition root and the only production
-  `HostRuntime` factory. It keys `WorkspaceContext` by canonical workspace and
-  session-store roots, shares one workspace mutation lease coordinator per
-  canonical workspace, attaches runtime facades, provides execution/run alias
-  lookup without copying execution truth, and drains attached runtimes.
+  and test `HostRuntime` factory. `HostRuntime` requires its service-owned
+  `WorkspaceContext`, workspace mutation lease coordinator, and execution
+  coordinator at construction; it has no self-composition fallback.
+  `HostService` keys `WorkspaceContext` by canonical workspace and session-store
+  roots, shares one workspace mutation lease coordinator per canonical
+  workspace, attaches runtime facades, provides execution/run alias lookup
+  without copying execution truth, and drains attached runtimes.
 - `HostService` owns one in-memory `ExecutionLaneCoordinator` and is the
   canonical production path for ordinary start, resume, inject, and cancel.
   Lane identity is canonical session-store root plus persisted session id.
   Same-lane executions serialize; different lanes may consume the bounded
   process capacity concurrently. Core episode terminal does not release the
   lane until `HostExecution.completion` settles.
+- `serveConnection()` receives the existing process HostService. The connection
+  server never creates a per-connection coordinator; stdio/WS and embedders own
+  service construction and sharing.
 - `HostService` also owns ordinary IM session bindings, exact subject
   authorization, approval-to-execution routing, retained runtime attachment,
   and per-binding delivery cursors over a bounded event-projection outbox.

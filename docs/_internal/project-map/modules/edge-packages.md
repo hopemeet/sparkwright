@@ -117,6 +117,9 @@ contracts, and focused checklists that no longer fit here.
   runtime facades through one process-scoped HostService. The adapters retain
   protocol/transport ownership; workspace Task/Workflow durable owners live in
   Host WorkspaceContext rather than each connection/session facade.
+- `serveConnection()` requires that existing HostService. Transport adapters
+  cannot silently create a per-connection execution coordinator; SDK/embedded
+  fixtures must compose and pass the service explicitly.
 - Ordinary IM Gateway traffic now uses typed `im.*` Host control requests.
   Gateway retains platform verification, formatting, inbound message dedupe,
   outbound delivery attempts, and the existing durable Workflow channel
@@ -131,6 +134,17 @@ contracts, and focused checklists that no longer fit here.
   source exports. It should not be used as the sole authority for behavior.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-17T22:15:00+0800
+- Scope: Host edge adapters receive one explicit process HostService;
+  serveConnection no longer creates a per-connection service, and SDK
+  round-trip fixtures compose the Host through the same canonical entry.
+- Read: Host server/main/WS transport, Host package exports, SDK Node
+  round-trip fixture, and runtime/service contracts.
+- Tests: Host protocol 58/58; SDK Node round-trip 2/2; SDK Node and Host
+  typechecks; import graph, package boundary, and internal import gates; full
+  `npm run release:check`.
 
 - Status: Verified
 - Date: 2026-07-16T13:21:00+0800

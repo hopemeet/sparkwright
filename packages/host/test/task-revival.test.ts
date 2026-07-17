@@ -6,7 +6,7 @@ import {
   type TaskRevivalSource,
 } from "@sparkwright/core";
 import { type TaskManager } from "@sparkwright/agent-runtime";
-import { HostRuntime } from "../src/runtime.js";
+import { createTestHostRuntime } from "./helpers/host-runtime.js";
 
 interface RuntimeTaskRevivalInternals {
   taskManager: TaskManager;
@@ -18,7 +18,7 @@ interface RuntimeTaskRevivalInternals {
 
 describe("host task revival bridge", () => {
   it("surfaces detached terminal notifications without keeping the run alive", async () => {
-    const runtime = new HostRuntime({
+    const runtime = createTestHostRuntime({
       workspaceRoot: process.cwd(),
       defaultModel: "deterministic",
       emit: () => {},

@@ -42,10 +42,7 @@ import {
   type HostImPrincipal,
 } from "./im-control.js";
 
-export type HostRuntimeFacadeOptions = Omit<
-  RuntimeOptions,
-  "workspaceContext" | "workspaceLeaseCoordinator"
->;
+export type HostRuntimeFacadeOptions = RuntimeOptions;
 
 /** Process-scoped Host composition root. */
 export class HostService {
@@ -75,11 +72,11 @@ export class HostService {
       start: async (input, context) => {
         const outcome =
           input.kind === "start"
-            ? await input.runtime.startRunDirect(
+            ? await input.runtime.startExecution(
                 input.payload,
                 context.executionId,
               )
-            : await input.runtime.resumeRunDirect(
+            : await input.runtime.resumeExecution(
                 input.payload,
                 context.executionId,
                 context.sessionId,

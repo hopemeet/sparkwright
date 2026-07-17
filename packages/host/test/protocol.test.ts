@@ -5,7 +5,6 @@ import { join } from "node:path";
 import { PROTOCOL_VERSION, type HostMessage } from "@sparkwright/protocol";
 import {
   asSessionId,
-  createRun,
   type ContextItem,
   FileSessionStore,
   SESSION_COMPACT_SCHEMA_VERSION,
@@ -24,9 +23,13 @@ import { CronStore, defaultCronRoot } from "@sparkwright/cron";
 import { FileSkillUsageRecorder } from "@sparkwright/skills";
 import { authenticatedConnection, type Connection } from "../src/connection.js";
 import { skillUsagePath } from "../src/index.js";
-import { serveConnection } from "../src/server.js";
-import { HostRuntime } from "../src/runtime.js";
+import {
+  serveConnection as serveCanonicalConnection,
+  type ServeConnectionOptions,
+} from "../src/server.js";
+import type { HostRuntime } from "../src/runtime.js";
 import { createHostService } from "../src/host-service.js";
+import { createTestHostRuntime } from "./helpers/host-runtime.js";
 
 /**
  * Tiny in-process Connection pair: two ends sharing two queues. Lets the
@@ -85,6 +88,18 @@ function createConnectionPair(): {
       }),
     close: () => onClose?.("test close"),
   };
+}
+
+function serveConnection(
+  connection: Connection,
+  options: Omit<ServeConnectionOptions, "hostService"> & {
+    hostService?: ServeConnectionOptions["hostService"];
+  },
+): void {
+  serveCanonicalConnection(connection, {
+    ...options,
+    hostService: options.hostService ?? createHostService(),
+  });
 }
 
 let testConnectionSequence = 0;
@@ -220,7 +235,6 @@ describe("host protocol", () => {
         serveConnection(pair.hostSide, {
           hostService: service,
           workspaceRoot: workspace,
-          imControlSelfBinding: true,
           authContext: authenticatedConnection(
             `gateway:credential:${index}`,
             "test-credential",
@@ -408,6 +422,12 @@ describe("host protocol", () => {
     const workspace = await mkdtemp(
       join(tmpdir(), "sparkwright-host-im-bind-"),
     );
+    const deniedService = createHostService();
+    const enabledService = createHostService({
+      imControl: { allowSelfBinding: true },
+    });
+    const deniedPair = createConnectionPair();
+    const enabledPair = createConnectionPair();
     const handshake = (pair: ReturnType<typeof createConnectionPair>) => {
       pair.clientSend({
         envelope: "request",
@@ -432,8 +452,10 @@ describe("host protocol", () => {
       permissions: ["message", "inspect", "approve"] as const,
     };
     try {
-      const deniedPair = createConnectionPair();
-      serveConnection(deniedPair.hostSide, { workspaceRoot: workspace });
+      serveConnection(deniedPair.hostSide, {
+        hostService: deniedService,
+        workspaceRoot: workspace,
+      });
       await handshake(deniedPair);
       deniedPair.clientSend({
         envelope: "request",
@@ -449,10 +471,9 @@ describe("host protocol", () => {
         ),
       ).toMatchObject({ ok: false, error: { code: "unauthorized" } });
 
-      const enabledPair = createConnectionPair();
       serveConnection(enabledPair.hostSide, {
+        hostService: enabledService,
         workspaceRoot: workspace,
-        imControlSelfBinding: true,
         authContext: authenticatedConnection(
           "gateway:enabled",
           "test-credential",
@@ -495,6 +516,9 @@ describe("host protocol", () => {
         result: { sessionId: expect.stringMatching(/^session_/) },
       });
     } finally {
+      deniedPair.close();
+      enabledPair.close();
+      await Promise.all([deniedService.shutdown(), enabledService.shutdown()]);
       await rmWhenReady(workspace);
     }
   });
@@ -1816,7 +1840,7 @@ describe("host protocol", () => {
       };
       await writeFile(configPath, JSON.stringify(baseConfig), "utf8");
 
-      const defaultRuntime = new HostRuntime({
+      const defaultRuntime = createTestHostRuntime({
         workspaceRoot: workspace,
         defaultModel: "deterministic",
         emit: () => {},
@@ -1842,7 +1866,7 @@ describe("host protocol", () => {
         }),
         "utf8",
       );
-      const enabledRuntime = new HostRuntime({
+      const enabledRuntime = createTestHostRuntime({
         workspaceRoot: workspace,
         defaultModel: "deterministic",
         emit: () => {},
@@ -1896,7 +1920,7 @@ describe("host protocol", () => {
         "utf8",
       );
 
-      const runtime = new HostRuntime({
+      const runtime = createTestHostRuntime({
         workspaceRoot: workspace,
         defaultModel: "deterministic",
         emit: () => {},
@@ -1973,7 +1997,7 @@ describe("host protocol", () => {
         }),
         "utf8",
       );
-      const runtime = new HostRuntime({
+      const runtime = createTestHostRuntime({
         workspaceRoot: workspace,
         defaultModel: "deterministic",
         emit: () => {},
@@ -2054,7 +2078,7 @@ describe("host protocol", () => {
       resolveTerminal = resolve;
     });
     try {
-      const runtime = new HostRuntime({
+      const runtime = createTestHostRuntime({
         workspaceRoot: workspace,
         defaultModel: "deterministic",
         emit: (event) => {
@@ -2349,12 +2373,13 @@ describe("host protocol", () => {
     const workspace = await mkdtemp(
       join(tmpdir(), "sparkwright-host-runtime-failure-"),
     );
+    const service = createHostService();
     try {
       let resolveFailed!: (message: HostMessage) => void;
       const failed = new Promise<HostMessage>((resolve) => {
         resolveFailed = resolve;
       });
-      const runtime = new HostRuntime({
+      const runtime = service.createRuntime({
         workspaceRoot: workspace,
         defaultModel: "deterministic",
         emit: (message) => {
@@ -2389,6 +2414,7 @@ describe("host protocol", () => {
         },
       });
     } finally {
+      await service.shutdown();
       await rm(workspace, {
         recursive: true,
         force: true,
@@ -2632,7 +2658,7 @@ describe("host protocol", () => {
       startedAt: "2026-06-30T00:00:00.000Z",
     });
 
-    const runtime = new HostRuntime({
+    const runtime = createTestHostRuntime({
       workspaceRoot: workspace,
       defaultModel: "deterministic",
       emit: () => {},
@@ -3311,7 +3337,7 @@ describe("host protocol", () => {
         }),
         "utf8",
       );
-      const runtime = new HostRuntime({
+      const runtime = createTestHostRuntime({
         workspaceRoot: workspace,
         emit: () => {},
       });
@@ -3362,7 +3388,7 @@ describe("host protocol", () => {
         }),
         "utf8",
       );
-      const runtime = new HostRuntime({
+      const runtime = createTestHostRuntime({
         workspaceRoot: workspace,
         emit: () => {},
       });
@@ -4166,7 +4192,7 @@ describe("host protocol", () => {
     let runtime: HostRuntime | undefined;
     try {
       await writeFile(join(workspace, "README.md"), "# Demo\n", "utf8");
-      runtime = new HostRuntime({
+      runtime = createTestHostRuntime({
         workspaceRoot: workspace,
         defaultModel: "scripted",
         emit: (event) => {
@@ -4751,7 +4777,7 @@ describe("host protocol", () => {
         ]),
       );
 
-      const inspectRuntime = new HostRuntime({
+      const inspectRuntime = createTestHostRuntime({
         workspaceRoot: workspace,
         sessionRootDir,
         defaultModel: "deterministic",
@@ -4800,7 +4826,7 @@ describe("host protocol", () => {
       const store = new FileSessionStore({ rootDir: sessionRootDir });
       await store.create({ id: sessionId });
 
-      const runtime = new HostRuntime({
+      const runtime = createTestHostRuntime({
         workspaceRoot: workspace,
         sessionRootDir,
         defaultModel: "deterministic",
@@ -5134,7 +5160,7 @@ describe("host protocol", () => {
         "utf8",
       );
 
-      const runtime = new HostRuntime({
+      const runtime = createTestHostRuntime({
         workspaceRoot: workspace,
         sessionRootDir,
         defaultModel: "deterministic",
@@ -5230,7 +5256,7 @@ describe("host protocol", () => {
         resolveCompleted = resolve;
         rejectCompleted = reject;
       });
-      runtime = new HostRuntime({
+      runtime = createTestHostRuntime({
         workspaceRoot: workspace,
         defaultModel: "deterministic",
         emit: (message) => {
@@ -5266,13 +5292,15 @@ describe("host protocol", () => {
     }
   });
 
-  it("characterizes two connections starting the same session without shared coordination", async () => {
+  it("routes two connections for one session through the shared service", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "sparkwright-runtime-"));
+    const service = createHostService();
     const first = createConnectionPair();
     const second = createConnectionPair();
     try {
       for (const pair of [first, second]) {
         serveConnection(pair.hostSide, {
+          hostService: service,
           workspaceRoot: workspace,
           defaultModel: "deterministic",
         });
@@ -5319,50 +5347,43 @@ describe("host protocol", () => {
         ),
       ]);
 
-      // P0 fact: the reservation lives on each per-connection HostRuntime, so
-      // both starts are admitted. P4 replaces this assertion with same-lane
-      // serialization through the process coordinator.
+      // The HostService lane coordinator serializes the shared session; both
+      // requests still complete successfully once each owns the lane.
       expect(responses).toEqual([
         expect.objectContaining({ envelope: "response", ok: true }),
         expect.objectContaining({ envelope: "response", ok: true }),
       ]);
+      await Promise.all(
+        [first, second].map((pair) =>
+          pair.waitFor(
+            (message) =>
+              message.envelope === "event" && message.kind === "run.completed",
+          ),
+        ),
+      );
     } finally {
       first.close();
       second.close();
+      await service.shutdown();
       await rmWhenReady(workspace);
     }
   });
 
-  it("rejects Host injection when the current Core run is already terminal", async () => {
+  it("rejects injection for an unregistered run through the service", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "sparkwright-runtime-"));
-    const runtime = new HostRuntime({
+    const runtime = createTestHostRuntime({
       workspaceRoot: workspace,
       emit: () => {},
     });
     try {
-      const run = createRun({ goal: "already complete" });
-      await run.start();
-      (runtime as unknown as { active: unknown }).active = {
-        runId: run.record.id,
-        run,
-        trace: { append() {} },
-        sessionId: "terminal_inject",
-      };
-
       expect(
-        runtime.injectRunMessage(run.record.id, { content: "too late" }),
+        runtime.injectRunMessage("run_unregistered", { content: "too late" }),
       ).toMatchObject({
         ok: false,
         error: {
           code: "run_not_found",
-          message: expect.stringContaining("closed"),
         },
       });
-      expect(
-        run.events
-          .all()
-          .filter((event) => event.type === "run.command.enqueued"),
-      ).toHaveLength(0);
     } finally {
       runtime.cleanup();
       await rmWhenReady(workspace);
@@ -5372,7 +5393,7 @@ describe("host protocol", () => {
   it("disconnect aborts an execution that is still assembling", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "sparkwright-runtime-"));
     const events: HostMessage[] = [];
-    const runtime = new HostRuntime({
+    const runtime = createTestHostRuntime({
       workspaceRoot: workspace,
       defaultModel: "deterministic",
       emit: (event) => events.push(event),
@@ -5437,7 +5458,7 @@ describe("host protocol", () => {
         },
       });
 
-      const runtime = new HostRuntime({
+      const runtime = createTestHostRuntime({
         workspaceRoot: workspace,
         defaultModel: "deterministic",
         emit: () => {},

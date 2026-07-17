@@ -214,6 +214,21 @@ For `runtime/contracts.ts`, also run Host execution/service and the import graph
 gate; coordinator ports must not derive their signatures from `HostRuntime`
 class methods.
 
+For `host-service.ts`, `server.ts`, or runtime construction/admission changes,
+also run:
+
+```bash
+npm --workspace @sparkwright/host test -- test/host-service.test.ts test/task-revival.test.ts test/workflows.test.ts test/protocol.test.ts
+npm --workspace @sparkwright/sdk-node test -- test/round-trip.test.ts
+npm --workspace @sparkwright/host run typecheck
+npm --workspace @sparkwright/sdk-node run typecheck
+```
+
+Assert that `HostService.createRuntime()` is the only `new HostRuntime()` site,
+ordinary start/resume/inject/cancel always traverse its lane coordinator, and
+connection adapters receive the existing process service rather than creating
+one per connection.
+
 For `runtime/task-projections.ts`, run Host service/protocol and agent-task
 focused tests; keep TaskManager/store/outbox ownership outside the projection
 leaf.

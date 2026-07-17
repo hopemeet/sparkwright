@@ -33,14 +33,15 @@ export interface RuntimeOptions {
   extraMcpServers?: readonly McpServerConfig[];
   /** Called to deliver host events to the client. */
   emit: (event: HostEvent) => void;
-  /** @internal Process-scoped workspace mutation coordinator override. */
-  workspaceLeaseCoordinator?: WorkspaceLeaseCoordinator;
-  /** @internal Workspace-scoped durable owner injected by HostService. */
-  workspaceContext?: WorkspaceContext;
-  /** @internal Canonical process lane path injected by HostService. */
-  executionCoordinator?: HostExecutionCoordinatorPort;
   /** @internal Finite live approval wait; defaults to five minutes. */
   approvalTimeoutMs?: number;
+}
+
+/** @internal Fully composed runtime dependencies owned by HostService. */
+export interface HostRuntimeOptions extends RuntimeOptions {
+  workspaceLeaseCoordinator: WorkspaceLeaseCoordinator;
+  workspaceContext: WorkspaceContext;
+  executionCoordinator: HostExecutionCoordinatorPort;
 }
 
 export interface HostExecutionMessageInput {
@@ -84,20 +85,15 @@ export interface HostExecutionIdentity {
 
 /** Narrow execution surface driven by the process-scoped lane coordinator. */
 export interface HostExecutionCoordinatorRuntime {
-  startRunDirect(
+  startExecution(
     payload: RunStartRequestPayload,
     executionId?: string,
   ): Promise<HostStartRunOutcome>;
-  resumeRunDirect(
+  resumeExecution(
     payload: RunResumeRequestPayload,
     executionId?: string,
     resolvedSessionId?: string,
   ): Promise<HostResumeRunOutcome>;
-  injectRunMessageDirect(
-    runId: string,
-    input: HostExecutionMessageInput,
-  ): HostRunControlOutcome;
-  cancelRunDirect(runId: string, reason?: string): HostRunControlOutcome;
   resolveResumeSession(
     payload: RunResumeRequestPayload,
   ): Promise<

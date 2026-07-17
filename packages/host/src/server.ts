@@ -24,11 +24,12 @@ import {
 } from "./connection.js";
 import { HostRuntime } from "./runtime/host-runtime.js";
 import type { RuntimeOptions } from "./runtime/contracts.js";
-import { createHostService, type HostService } from "./host-service.js";
+import type { HostService } from "./host-service.js";
 import type { HostImPrincipal } from "./im-control.js";
 
 export interface ServeConnectionOptions {
-  hostService?: HostService;
+  /** Process composition root shared by every connection in this host. */
+  hostService: HostService;
   workspaceRoot: string;
   sessionRootDir?: string;
   defaultModel?: string;
@@ -39,8 +40,6 @@ export interface ServeConnectionOptions {
   defaultTraceLevel?: RuntimeOptions["defaultTraceLevel"];
   hostName?: string;
   hostVersion?: string;
-  /** Explicit operator opt-in; false by default. */
-  imControlSelfBinding?: boolean;
   /** Stable transport/auth-derived principal id for this connection. */
   principalId?: string;
   /** Verified transport/auth result. Request payloads cannot supply it. */
@@ -60,11 +59,7 @@ export function serveConnection(
   opts: ServeConnectionOptions,
 ): void {
   let handshakeState: "pending" | "processing" | "complete" = "pending";
-  const hostService =
-    opts.hostService ??
-    createHostService({
-      imControl: { allowSelfBinding: opts.imControlSelfBinding === true },
-    });
+  const hostService = opts.hostService;
   const authContext =
     opts.authContext ??
     (opts.principalId

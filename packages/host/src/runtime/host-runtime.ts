@@ -104,7 +104,7 @@ import {
   InFlightCommandDispatcher,
   type ExecutionHandle,
 } from "@sparkwright/server-runtime";
-import type { HostExecutionMessage, RuntimeOptions } from "./contracts.js";
+import type { HostExecutionMessage, HostRuntimeOptions } from "./contracts.js";
 import {
   buildCapabilitySnapshot,
   createSkillPreprocessOptions,
@@ -125,14 +125,9 @@ import {
   taskOutputChunkSnapshot,
   taskRecordSnapshot,
 } from "./task-projections.js";
-export type {
-  HostExecutionCoordinatorPort,
-  HostExecutionMessage,
-  RuntimeOptions,
-} from "./contracts.js";
+export type { RuntimeOptions } from "./contracts.js";
 import {
   createWorkspaceMutationAdmission,
-  processWorkspaceLeaseCoordinator,
   type WorkspaceLeaseCoordinator,
 } from "../workspace-lease-coordinator.js";
 import { type ResolvedShellSandboxConfig } from "@sparkwright/shell-sandbox";
@@ -204,7 +199,6 @@ import {
   type SessionCompactResult,
 } from "../session-compaction.js";
 export { sessionPreviewFromTranscriptLine } from "../session-queries.js";
-import { WorkspaceContext } from "../workspace-context.js";
 import {
   createModel,
   inspectResolvedModelConfig,
@@ -679,12 +673,6 @@ const DELEGATED_AGENT_CONTRACT = [
 ].join("\n");
 
 /**
- * Compatibility facade over one HostExecution attachment. Production starts,
- * resumes, injection, cancellation, and terminal handoff are admitted by the
- * process HostService and its ExecutionLaneCoordinator before reaching this
- * runtime.
- */
-/**
  * @internal Per-run spawn dependencies the registered `agent` task kind needs
  * to drive a read-only background child run. Published by {@link HostRuntime}
  * during run preparation; the registered runner snapshots it at the top of
@@ -771,8 +759,9 @@ export async function runHostAgentTask(
   return output;
 }
 
+/** One HostExecution attachment composed by the process HostService. */
 export class HostRuntime {
-  private opts: RuntimeOptions;
+  private opts: HostRuntimeOptions;
   private readonly taskNotifications: FileTaskNotificationOutbox;
   private readonly workflowNotifications: FileWorkflowNotificationOutbox;
   private readonly workflowControls: FileWorkflowControlInbox;
@@ -783,7 +772,8 @@ export class HostRuntime {
   // every todo/workflow episode. Core run cancellation remains run-scoped.
   private lastCapabilitySnapshot: CapabilitySnapshot | null = null;
 
-  constructor(opts: RuntimeOptions) {
+  /** @internal Construct through HostService.createRuntime(). */
+  constructor(opts: HostRuntimeOptions) {
     this.opts = {
       ...opts,
       workspaceRoot: resolve(opts.workspaceRoot),
@@ -791,17 +781,7 @@ export class HostRuntime {
         ? { sessionRootDir: resolve(opts.sessionRootDir) }
         : {}),
     };
-    const context =
-      opts.workspaceContext ??
-      new WorkspaceContext(
-        {
-          workspaceRoot: this.opts.workspaceRoot,
-          sessionRootDir:
-            this.opts.sessionRootDir ??
-            defaultSessionRootDir(this.opts.workspaceRoot),
-        },
-        opts.workspaceLeaseCoordinator ?? processWorkspaceLeaseCoordinator,
-      );
+    const context = opts.workspaceContext;
     this.taskNotifications = context.taskNotifications;
     this.workflowNotifications = context.workflowNotifications;
     this.workflowControls = context.workflowControls;
@@ -857,7 +837,7 @@ export class HostRuntime {
       rootRunId: execution.rootRunId,
       currentRunId: () => execution.currentRunId() ?? execution.rootRunId!,
       tryInject: (message) =>
-        this.injectRunMessageDirect(message.runId, message).ok
+        this.acceptExecutionMessage(message.runId, message).ok
           ? "accepted"
           : "closed",
       cancel: (reason) => {
@@ -1423,13 +1403,11 @@ export class HostRuntime {
       }
     | { ok: false; error: ProtocolError }
   > {
-    if (this.opts.executionCoordinator) {
-      return this.opts.executionCoordinator.startRun(this, payload);
-    }
-    return this.startRunDirect(payload);
+    return this.opts.executionCoordinator.startRun(this, payload);
   }
 
-  async startRunDirect(
+  /** @internal Driven only after HostService lane admission. */
+  async startExecution(
     payload: RunStartRequestPayload,
     executionId?: string,
   ): Promise<
@@ -1509,10 +1487,7 @@ export class HostRuntime {
     | { ok: true; runId: string; resumedFromRunId: string; sessionId?: string }
     | { ok: false; error: ProtocolError }
   > {
-    if (this.opts.executionCoordinator) {
-      return this.opts.executionCoordinator.resumeRun(this, payload);
-    }
-    return this.resumeRunDirect(payload);
+    return this.opts.executionCoordinator.resumeRun(this, payload);
   }
 
   /** @internal Resolve the persisted session before HostService chooses a lane. */
@@ -1526,7 +1501,8 @@ export class HostRuntime {
     return { ok: true, sessionId: located.sessionId ?? createSessionId() };
   }
 
-  async resumeRunDirect(
+  /** @internal Driven only after HostService lane admission. */
+  async resumeExecution(
     payload: RunResumeRequestPayload,
     executionId?: string,
     resolvedSessionId?: string,
@@ -2016,8 +1992,7 @@ export class HostRuntime {
     }
 
     const workspaceRoot = plan.workspaceRoot;
-    const workspaceLeaseCoordinator =
-      this.opts.workspaceLeaseCoordinator ?? processWorkspaceLeaseCoordinator;
+    const workspaceLeaseCoordinator = this.opts.workspaceLeaseCoordinator;
     const resources = createExecutionResources(plan);
     const { workspace, trace, pendingExtensionEvents } = resources;
     const sessionRootDir = plan.sessionRootDir;
@@ -4522,29 +4497,7 @@ export class HostRuntime {
     runId: string,
     reason?: string,
   ): { ok: true } | { ok: false; error: ProtocolError } {
-    if (this.opts.executionCoordinator) {
-      return this.opts.executionCoordinator.cancelRun(this, runId, reason);
-    }
-    return this.cancelRunDirect(runId, reason);
-  }
-
-  cancelRunDirect(
-    runId: string,
-    reason?: string,
-  ): { ok: true } | { ok: false; error: ProtocolError } {
-    if (!this.currentExecution?.ownsRun(runId)) {
-      return {
-        ok: false,
-        error: {
-          code: "run_not_found",
-          message: `no active run with id ${runId}`,
-        },
-      };
-    }
-    // Stop the whole supervised chain, not just this run: a cancel that races
-    // a run's natural completion must still prevent further continuations.
-    this.currentExecution.cancel(reason ?? "client requested cancel");
-    return { ok: true };
+    return this.opts.executionCoordinator.cancelRun(this, runId, reason);
   }
 
   injectRunMessage(
@@ -4555,17 +4508,10 @@ export class HostRuntime {
       metadata?: Record<string, unknown>;
     },
   ): { ok: true } | { ok: false; error: ProtocolError } {
-    if (this.opts.executionCoordinator) {
-      return this.opts.executionCoordinator.injectRunMessage(
-        this,
-        runId,
-        input,
-      );
-    }
-    return this.injectRunMessageDirect(runId, input);
+    return this.opts.executionCoordinator.injectRunMessage(this, runId, input);
   }
 
-  injectRunMessageDirect(
+  private acceptExecutionMessage(
     runId: string,
     input: {
       content: string;
