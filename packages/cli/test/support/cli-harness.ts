@@ -195,12 +195,10 @@ export function mcpEchoServerConfig(
   };
 }
 
-export function mcpFixtureShellConfig() {
+export function mcpFixtureSandboxConfig() {
   return {
-    sandbox: {
-      filesystem: {
-        allowRead: [join(findRepoRoot(process.cwd()), "node_modules")],
-      },
+    filesystem: {
+      allowRead: [join(findRepoRoot(process.cwd()), "node_modules")],
     },
   };
 }

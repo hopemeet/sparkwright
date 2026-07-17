@@ -273,7 +273,7 @@ describe("ACP round trip", () => {
     await writeFile(
       join(cwd, ".sparkwright", "config.json"),
       JSON.stringify({
-        shell: {
+        policy: {
           sandbox: {
             filesystem: {
               allowRead: [join(findRepoRoot(process.cwd()), "node_modules")],

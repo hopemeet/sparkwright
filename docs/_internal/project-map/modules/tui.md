@@ -11,6 +11,18 @@ See also [../maps/trace/export-diagnostics.md](../maps/trace/export-diagnostics.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T09:43:00+0800
+- Scope: TUI config now projects the single Host loader result. The independent
+  file re-read, flat-key allowlist, grouped normalizer call, and UI validator
+  were removed; canonical ui.theme/mouse/keybindings/vim remain active.
+- Read: TUI config loader/app consumers, Host config contracts and loader,
+  config/capability/status tests, and generated schema.
+- Tests: TUI config/capability/status consumers 17/17; TUI and Host typechecks;
+  Host config/protocol 115/115; repository test typecheck; schema check;
+  project-map drift; full release gate including TUI 415/415, regression matrix,
+  and install smokes.
+
+- Status: Verified
 - Date: 2026-07-16T21:02:00+0800
 - Scope: Background task fixtures and untracked-write rendering use only
   `shell.background` / `background_shell`; the promotion-named trace marker
@@ -287,9 +299,11 @@ Does not own:
   until the user submits again.
 - Long `/sessions` lists keep the selected row visible while navigating; row
   windows are presentation state and do not affect session storage order.
-- TUI UI preferences are read from the same config files the host loaded
-  (`config.json`, `config.yaml`, or `config.yml`), so same-layer conflict and
-  format precedence stays host-owned.
+- TUI config is a projection of the single Host loader result. Host validates
+  and merges `ui.theme`, `ui.mouse`, `ui.keybindings`, and `ui.vim` from
+  `config.json`, `config.yaml`, or `config.yml`; TUI does not re-read files or
+  keep a second parser. Same-layer conflict, format precedence, unknown-key
+  diagnostics, and keybinding layer merge therefore stay Host-owned.
 - TUI capability creation flows use host config read/write helpers and preserve
   an existing project YAML file when adding MCP servers or agent profiles.
 - TUI cron capability creation routes through `@sparkwright/cron`

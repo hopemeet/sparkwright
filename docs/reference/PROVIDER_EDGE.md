@@ -8,17 +8,19 @@ optional `@sparkwright/provider-registry` package.
 
 Provider selection is config-driven. A run references a model as
 `"<provider>/<model>"`, and the `<provider>` key is looked up in the
-`providers` map of the merged shared config (user → project → env). Each
+`identity.providers` map of the merged shared config (user → project → env). Each
 provider entry names the AI SDK npm package that implements it, plus the
 endpoint and credentials:
 
 ```jsonc
 {
-  "model": "openai/gpt-5.4-mini",
-  "providers": {
-    "openai": {
-      "baseURL": "https://api.openai.com/v1",
-      "apiKey": "sk-...",
+  "identity": {
+    "model": "openai/gpt-5.4-mini",
+    "providers": {
+      "openai": {
+        "baseURL": "https://api.openai.com/v1",
+        "apiKey": "sk-...",
+      },
     },
   },
 }
@@ -26,7 +28,7 @@ endpoint and credentials:
 
 `npm` defaults to `@ai-sdk/openai` when omitted. The reserved provider key
 `deterministic` selects the built-in offline model used for stable demos and
-tests, and is also the default when no `model` is configured.
+tests, and is also the default when no `identity.model` is configured.
 
 If `HTTPS_PROXY`, `https_proxy`, `HTTP_PROXY`, or `http_proxy` is set, the CLI
 passes that proxy explicitly into the provider's `fetch`. This matters because
@@ -72,16 +74,18 @@ steps:
    friendly `Install it: npm install <pkg>` message rather than a crash.
 
 3. **Reference it in config.** Add a provider entry whose `npm` points at the
-   new package, then select it via `model`:
+   new package, then select it via `identity.model`:
 
    ```jsonc
    {
-     "model": "mistral/mistral-large-latest",
-     "providers": {
-       "mistral": {
-         "npm": "@ai-sdk/mistral",
-         "baseURL": "https://api.mistral.ai/v1",
-         "apiKey": "...",
+     "identity": {
+       "model": "mistral/mistral-large-latest",
+       "providers": {
+         "mistral": {
+           "npm": "@ai-sdk/mistral",
+           "baseURL": "https://api.mistral.ai/v1",
+           "apiKey": "...",
+         },
        },
      },
    }

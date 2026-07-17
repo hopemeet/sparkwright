@@ -308,7 +308,6 @@ export {
 } from "./workflows.js";
 export {
   loadHostConfig,
-  normalizeGroupedConfig,
   configResolutionOrder,
   projectConfigCandidatePaths,
   readConfigFileObject,

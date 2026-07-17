@@ -113,13 +113,15 @@ describe("loadHostConfig", () => {
     const cwd = await makeTempDir();
     try {
       await writeUserConfig(xdg, {
-        providers: {
-          openai: {
-            apiKey: "sk-test",
-            providerOptions: { openai: { reasoningSummary: "auto" } },
-            models: {
-              "gpt-5.4-nano": {
-                providerOptions: { openai: "auto" },
+        identity: {
+          providers: {
+            openai: {
+              apiKey: "sk-test",
+              providerOptions: { openai: { reasoningSummary: "auto" } },
+              models: {
+                "gpt-5.4-nano": {
+                  providerOptions: { openai: "auto" },
+                },
               },
             },
           },
@@ -148,16 +150,18 @@ describe("loadHostConfig", () => {
     const cwd = await makeTempDir();
     try {
       await writeUserConfig(xdg, {
-        providers: {
-          openai: {
-            apiKey: "sk-test",
-            extra: true,
-            models: {
-              "gpt-5.4-nano": {
-                extra: true,
-                cost: {
-                  input: 1,
-                  unexpected: 2,
+        identity: {
+          providers: {
+            openai: {
+              apiKey: "sk-test",
+              extra: true,
+              models: {
+                "gpt-5.4-nano": {
+                  extra: true,
+                  cost: {
+                    input: 1,
+                    unexpected: 2,
+                  },
                 },
               },
             },
@@ -189,17 +193,21 @@ describe("loadHostConfig", () => {
     }
   });
 
-  it("reads shared fields and applies them, ignoring UI-only keys", async () => {
+  it("reads identity and UI fields through the shared loader", async () => {
     const xdg = await makeTempDir();
     const cwd = await makeTempDir();
     try {
       await writeUserConfig(xdg, {
-        model: "openai/gpt-x",
-        providers: {
-          openai: { baseURL: "https://example.test/v1", apiKey: "sk-test" },
+        identity: {
+          model: "openai/gpt-x",
+          providers: {
+            openai: {
+              baseURL: "https://example.test/v1",
+              apiKey: "sk-test",
+            },
+          },
         },
-        // UI-only field the host loader must ignore without erroring:
-        theme: "light",
+        ui: { theme: "light", mouse: false, vim: true },
       });
       const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
       expect(loaded.errors).toEqual([]);
@@ -208,6 +216,9 @@ describe("loadHostConfig", () => {
         "https://example.test/v1",
       );
       expect(loaded.config.providers?.openai?.apiKey).toBe("sk-test");
+      expect(loaded.config.theme).toBe("light");
+      expect(loaded.config.mouse).toBe(false);
+      expect(loaded.config.vim).toBe(true);
     } finally {
       await rm(xdg, { recursive: true, force: true });
       await rm(cwd, { recursive: true, force: true });
@@ -331,13 +342,15 @@ describe("loadHostConfig", () => {
     const cwd = await makeTempDir();
     try {
       await writeUserConfig(xdg, {
-        model: "openai/user-model",
-        providers: { openai: { apiKey: "sk-user" } },
+        identity: {
+          model: "openai/user-model",
+          providers: { openai: { apiKey: "sk-user" } },
+        },
       });
       await mkdir(join(cwd, ".sparkwright"), { recursive: true });
       await writeFile(
         join(cwd, ".sparkwright", "config.json"),
-        JSON.stringify({ model: "openai/project-model" }),
+        JSON.stringify({ identity: { model: "openai/project-model" } }),
         "utf8",
       );
       const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
@@ -528,7 +541,7 @@ describe("loadHostConfig", () => {
     const cwd = await makeTempDir();
     try {
       await writeUserConfig(xdg, {
-        shell: {
+        policy: {
           sandbox: {
             mode: "enforce",
             failIfUnavailable: true,
@@ -570,8 +583,8 @@ describe("loadHostConfig", () => {
       await writeUserConfig(xdg, {
         shell: {
           foregroundTimeoutMs: 300_000,
-          sandbox: { mode: "warn" },
         },
+        policy: { sandbox: { mode: "warn" } },
       });
       let loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
       expect(loaded.errors).toEqual([]);
@@ -605,7 +618,7 @@ describe("loadHostConfig", () => {
     const cwd = await makeTempDir();
     try {
       await writeUserConfig(xdg, {
-        shell: {
+        policy: {
           sandbox: {
             mode: "enforce",
             failIfUnavailable: true,
@@ -624,7 +637,7 @@ describe("loadHostConfig", () => {
       await writeFile(
         join(cwd, ".sparkwright", "config.json"),
         JSON.stringify({
-          shell: {
+          policy: {
             sandbox: {
               mode: "off",
               failIfUnavailable: false,
@@ -667,11 +680,11 @@ describe("loadHostConfig", () => {
     const xdg = await makeTempDir();
     const cwd = await makeTempDir();
     try {
-      await writeUserConfig(xdg, { accessMode: "ask" });
+      await writeUserConfig(xdg, { run: { accessMode: "ask" } });
       await mkdir(join(cwd, ".sparkwright"), { recursive: true });
       await writeFile(
         join(cwd, ".sparkwright", "config.json"),
-        JSON.stringify({ accessMode: "bypass" }),
+        JSON.stringify({ run: { accessMode: "bypass" } }),
         "utf8",
       );
 
@@ -693,12 +706,12 @@ describe("loadHostConfig", () => {
     const xdg = await makeTempDir();
     const cwd = await makeTempDir();
     try {
-      await writeUserConfig(xdg, { accessMode: "bypass" });
+      await writeUserConfig(xdg, { run: { accessMode: "bypass" } });
       await mkdir(join(cwd, ".sparkwright"), { recursive: true });
       const projectConfig = join(cwd, ".sparkwright", "config.json");
       await writeFile(
         projectConfig,
-        JSON.stringify({ accessMode: "ask" }),
+        JSON.stringify({ run: { accessMode: "ask" } }),
         "utf8",
       );
 
@@ -759,12 +772,14 @@ describe("loadHostConfig", () => {
     const xdg = await makeTempDir();
     const cwd = await makeTempDir();
     try {
-      await writeUserConfig(xdg, { confidentialPaths: ["secrets/**", ".env"] });
+      await writeUserConfig(xdg, {
+        policy: { confidentialPaths: ["secrets/**", ".env"] },
+      });
       await mkdir(join(cwd, ".sparkwright"), { recursive: true });
       await writeFile(
         join(cwd, ".sparkwright", "config.json"),
         // A project config trying to blank out the user's read-confidentiality.
-        JSON.stringify({ confidentialPaths: ["internal/**"] }),
+        JSON.stringify({ policy: { confidentialPaths: ["internal/**"] } }),
         "utf8",
       );
 
@@ -786,13 +801,17 @@ describe("loadHostConfig", () => {
     const xdg = await makeTempDir();
     const cwd = await makeTempDir();
     try {
-      await writeUserConfig(xdg, { confidentialDefaults: true });
+      await writeUserConfig(xdg, {
+        policy: { confidentialDefaults: true },
+      });
       await mkdir(join(cwd, ".sparkwright"), { recursive: true });
       await writeFile(
         join(cwd, ".sparkwright", "config.json"),
         JSON.stringify({
-          policy: { confidentialDefaults: false },
-          confidentialPaths: ["internal/**"],
+          policy: {
+            confidentialDefaults: false,
+            confidentialPaths: ["internal/**"],
+          },
         }),
         "utf8",
       );
@@ -814,7 +833,9 @@ describe("loadHostConfig", () => {
     const cwd = await makeTempDir();
     try {
       await writeUserConfig(xdg, {
-        write: { maxFiles: 4, maxDiffLines: 200, allowDeletions: true },
+        policy: {
+          write: { maxFiles: 4, maxDiffLines: 200, allowDeletions: true },
+        },
       });
       await mkdir(join(cwd, ".sparkwright"), { recursive: true });
       await writeFile(
@@ -822,7 +843,9 @@ describe("loadHostConfig", () => {
         // Project tightens maxFiles down and forbids deletions; it tries to
         // loosen maxDiffLines up (ignored — the smaller value wins).
         JSON.stringify({
-          write: { maxFiles: 1, maxDiffLines: 500, allowDeletions: false },
+          policy: {
+            write: { maxFiles: 1, maxDiffLines: 500, allowDeletions: false },
+          },
         }),
         "utf8",
       );
@@ -841,7 +864,7 @@ describe("loadHostConfig", () => {
     }
   });
 
-  it("reads the grouped config form and normalizes it to the flat shape", async () => {
+  it("loads the canonical grouped config into the internal carrier", async () => {
     const xdg = await makeTempDir();
     const cwd = await makeTempDir();
     try {
@@ -861,7 +884,12 @@ describe("loadHostConfig", () => {
           maxSteps: 30,
           traceLevel: "debug",
         },
-        ui: { theme: "dark" },
+        ui: {
+          theme: "dark",
+          mouse: false,
+          keybindings: { "help.open": "ctrl+h" },
+          vim: true,
+        },
       });
       const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
 
@@ -875,6 +903,10 @@ describe("loadHostConfig", () => {
       expect(loaded.config.runBudget).toEqual({ maxModelCalls: 12 });
       expect(loaded.config.maxSteps).toBe(30);
       expect(loaded.config.traceLevel).toBe("debug");
+      expect(loaded.config.theme).toBe("dark");
+      expect(loaded.config.mouse).toBe(false);
+      expect(loaded.config.keybindings).toEqual({ "help.open": "ctrl+h" });
+      expect(loaded.config.vim).toBe(true);
     } finally {
       await rm(xdg, { recursive: true, force: true });
       await rm(cwd, { recursive: true, force: true });
@@ -935,7 +967,7 @@ describe("loadHostConfig", () => {
       await mkdir(join(cwd, ".sparkwright"), { recursive: true });
       await writeFile(
         join(cwd, ".sparkwright", "config.json"),
-        JSON.stringify({ model: "openai/json-model" }),
+        JSON.stringify({ identity: { model: "openai/json-model" } }),
         "utf8",
       );
       await writeFile(
@@ -959,23 +991,27 @@ describe("loadHostConfig", () => {
     }
   });
 
-  it("reports a conflict when grouped and flat keys are both set, preferring grouped", async () => {
+  it("rejects removed root-level aliases instead of silently ignoring them", async () => {
     const xdg = await makeTempDir();
     const cwd = await makeTempDir();
     try {
       await writeUserConfig(xdg, {
         model: "openai/flat-model",
-        identity: { model: "openai/grouped-model" },
+        accessMode: "ask",
+        shell: { sandbox: { mode: "warn" } },
       });
       const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
 
-      expect(loaded.config.model).toBe("openai/grouped-model");
-      expect(loaded.errors).toEqual([
-        expect.objectContaining({
-          field: "identity.model",
-          message: expect.stringContaining('conflicts with top-level "model"'),
-        }),
-      ]);
+      expect(loaded.config.model).toBeUndefined();
+      expect(loaded.config.accessMode).toBeUndefined();
+      expect(loaded.config.shell?.sandbox).toBeUndefined();
+      expect(loaded.errors).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ field: "model" }),
+          expect.objectContaining({ field: "accessMode" }),
+          expect.objectContaining({ field: "shell.sandbox" }),
+        ]),
+      );
     } finally {
       await rm(xdg, { recursive: true, force: true });
       await rm(cwd, { recursive: true, force: true });
@@ -1063,7 +1099,7 @@ describe("loadHostConfig", () => {
     const cwd = await makeTempDir();
     try {
       await writeUserConfig(xdg, {
-        shell: {
+        policy: {
           sandbox: {
             mode: "warn",
             filesystem: {
@@ -1078,7 +1114,7 @@ describe("loadHostConfig", () => {
       await writeFile(
         join(cwd, ".sparkwright", "config.json"),
         JSON.stringify({
-          shell: {
+          policy: {
             sandbox: {
               mode: "enforce",
               filesystem: {
@@ -1119,8 +1155,8 @@ describe("loadHostConfig", () => {
     const cwd = await makeTempDir();
     try {
       await writeUserConfig(xdg, {
-        traceLevel: "verbose",
-        shell: {
+        run: { traceLevel: "verbose" },
+        policy: {
           sandbox: {
             mode: "audit",
             network: { mode: "maybe" },
@@ -1140,11 +1176,11 @@ describe("loadHostConfig", () => {
             message: "must be one of standard | debug",
           }),
           expect.objectContaining({
-            field: "shell.sandbox.mode",
+            field: "policy.sandbox.mode",
             message: "must be off, warn, or enforce",
           }),
           expect.objectContaining({
-            field: "shell.sandbox.network.mode",
+            field: "policy.sandbox.network.mode",
             message: "must be allow or deny",
           }),
         ]),
@@ -2179,13 +2215,13 @@ describe("loadHostConfig", () => {
     const cwd = await makeTempDir();
     try {
       await writeUserConfig(xdg, {
-        model: 123,
-        providers: "nope",
-        accessMode: "always",
+        identity: { model: 123, providers: "nope" },
+        run: { accessMode: "always", maxSteps: 0 },
+        policy: {
+          confidentialDefaults: "false",
+          confidentialPaths: ["secrets/**", ""],
+        },
         workspace: "",
-        confidentialDefaults: "false",
-        confidentialPaths: ["secrets/**", ""],
-        maxSteps: 0,
       });
       const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
       expect(loaded.config.model).toBeUndefined();

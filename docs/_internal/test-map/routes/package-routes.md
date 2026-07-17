@@ -171,6 +171,8 @@ Run:
 npm --workspace @sparkwright/host test -- test/config.test.ts
 npm run schema:check
 npm --workspace @sparkwright/cli test -- test/config-schema.test.ts
+npm --workspace @sparkwright/cli test -- test/cli.test.ts -t "config|doctor|init|first interactive|capabilities inspect"
+npm --workspace @sparkwright/tui test -- test/config.test.ts
 ```
 
 Use `npm run schema:generate` instead when the generated schema artifacts are

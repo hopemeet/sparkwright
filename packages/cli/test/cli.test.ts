@@ -44,7 +44,7 @@ import {
   createOutputCapture,
   createProviderMock,
   mcpEchoServerConfig,
-  mcpFixtureShellConfig,
+  mcpFixtureSandboxConfig,
   readTrace,
   traceEvent,
   writeWorkflowAsset,
@@ -1566,7 +1566,7 @@ describe.sequential("runCli", () => {
     await writeFile(join(workspace, ".env"), "API_TOKEN=abc\n", "utf8");
     await writeFile(
       join(workspace, ".sparkwright", "config.json"),
-      JSON.stringify({ confidentialDefaults: false }),
+      JSON.stringify({ policy: { confidentialDefaults: false } }),
       "utf8",
     );
     const output = createOutputCapture();
@@ -1811,7 +1811,9 @@ describe.sequential("runCli", () => {
     await writeFile(
       join(workspace, "sparkwright", "config.json"),
       JSON.stringify({
-        providers: { openai: { baseURL: "https://api.openai.com/v1" } },
+        identity: {
+          providers: { openai: { baseURL: "https://api.openai.com/v1" } },
+        },
       }),
       "utf8",
     );
@@ -3360,10 +3362,12 @@ describe.sequential("runCli", () => {
     await writeFile(
       join(workspace, ".sparkwright", "config.json"),
       JSON.stringify({
-        model: "openai/gpt-5.4-mini",
-        providers: {
-          openai: {
-            apiKey: "sk-test",
+        identity: {
+          model: "openai/gpt-5.4-mini",
+          providers: {
+            openai: {
+              apiKey: "sk-test",
+            },
           },
         },
       }),
@@ -3390,10 +3394,12 @@ describe.sequential("runCli", () => {
     await writeFile(
       join(workspace, ".sparkwright", "config.json"),
       JSON.stringify({
-        model: "openai/gpt-5.4-nano",
-        providers: {
-          openai: {
-            apiKey: "sk-test",
+        identity: {
+          model: "openai/gpt-5.4-nano",
+          providers: {
+            openai: {
+              apiKey: "sk-test",
+            },
           },
         },
       }),
@@ -3429,7 +3435,7 @@ describe.sequential("runCli", () => {
     await writeFile(
       join(workspace, ".sparkwright", "config.json"),
       JSON.stringify({
-        shell: mcpFixtureShellConfig(),
+        policy: { sandbox: mcpFixtureSandboxConfig() },
         capabilities: {
           mcp: {
             namePrefix: "mcp",
@@ -3534,7 +3540,7 @@ describe.sequential("runCli", () => {
     await writeFile(
       configPath,
       JSON.stringify({
-        model: "deterministic/demo",
+        identity: { model: "deterministic/demo" },
         capabilities: {
           skills: { roots: ["./skills"] },
         },
@@ -3560,7 +3566,7 @@ describe.sequential("runCli", () => {
     }
 
     const parsed = JSON.parse(await readFile(configPath, "utf8")) as {
-      model?: string;
+      identity?: { model?: string };
       capabilities?: {
         skills?: { roots?: string[] };
       };
@@ -3571,7 +3577,7 @@ describe.sequential("runCli", () => {
         defer?: string[];
       };
     };
-    expect(parsed.model).toBe("deterministic/demo");
+    expect(parsed.identity?.model).toBe("deterministic/demo");
     expect(parsed.capabilities?.skills?.roots).toEqual(["./skills"]);
     expect(parsed.tools).toEqual({
       use: ["workspace.read"],
@@ -6893,8 +6899,10 @@ describe.sequential("runCli", () => {
     await writeFile(
       join(xdg, "sparkwright", "config.json"),
       JSON.stringify({
-        model: "openai/cfg-model",
-        providers: { openai: { baseURL: "https://api.openai.com/v1" } },
+        identity: {
+          model: "openai/cfg-model",
+          providers: { openai: { baseURL: "https://api.openai.com/v1" } },
+        },
       }),
       "utf8",
     );
@@ -6926,8 +6934,10 @@ describe.sequential("runCli", () => {
     await writeFile(
       join(workspace, ".sparkwright", "config.json"),
       JSON.stringify({
-        model: "openai/project-model",
-        providers: { openai: { baseURL: "https://api.openai.com/v1" } },
+        identity: {
+          model: "openai/project-model",
+          providers: { openai: { baseURL: "https://api.openai.com/v1" } },
+        },
       }),
       "utf8",
     );
@@ -7103,12 +7113,14 @@ describe.sequential("runCli", () => {
       await writeFile(
         join(workspace, ".sparkwright", "config.json"),
         JSON.stringify({
-          model: "openai/mock-model",
-          providers: {
-            openai: {
-              baseURL: mock.baseURL,
-              apiKey: "CONFIG_KEY",
-              models: { "mock-model": {} },
+          identity: {
+            model: "openai/mock-model",
+            providers: {
+              openai: {
+                baseURL: mock.baseURL,
+                apiKey: "CONFIG_KEY",
+                models: { "mock-model": {} },
+              },
             },
           },
         }),
@@ -7172,11 +7184,13 @@ describe.sequential("runCli", () => {
       await writeFile(
         join(workspace, ".sparkwright", "config.json"),
         JSON.stringify({
-          model: "openai/mock-model",
-          providers: {
-            openai: {
-              baseURL: "http://127.0.0.1:9/v1",
-              models: { "mock-model": {} },
+          identity: {
+            model: "openai/mock-model",
+            providers: {
+              openai: {
+                baseURL: "http://127.0.0.1:9/v1",
+                models: { "mock-model": {} },
+              },
             },
           },
         }),
@@ -8180,7 +8194,7 @@ describe.sequential("runCli", () => {
     await writeFile(
       join(workspace, ".sparkwright", "config.json"),
       JSON.stringify({
-        shell: mcpFixtureShellConfig(),
+        policy: { sandbox: mcpFixtureSandboxConfig() },
         capabilities: {
           mcp: {
             namePrefix: "mcp",
@@ -8246,7 +8260,7 @@ describe.sequential("runCli", () => {
     await writeFile(
       join(workspace, ".sparkwright", "config.json"),
       JSON.stringify({
-        shell: mcpFixtureShellConfig(),
+        policy: { sandbox: mcpFixtureSandboxConfig() },
         capabilities: {
           mcp: {
             namePrefix: "mcp",
@@ -8342,7 +8356,7 @@ describe.sequential("runCli", () => {
     await writeFile(
       join(workspace, ".sparkwright", "config.json"),
       JSON.stringify({
-        shell: mcpFixtureShellConfig(),
+        policy: { sandbox: mcpFixtureSandboxConfig() },
         capabilities: {
           mcp: {
             namePrefix: "mcp",
@@ -8434,7 +8448,7 @@ describe.sequential("runCli", () => {
     await writeFile(
       join(workspace, ".sparkwright", "config.json"),
       JSON.stringify({
-        shell: mcpFixtureShellConfig(),
+        policy: { sandbox: mcpFixtureSandboxConfig() },
         capabilities: {
           mcp: {
             namePrefix: "mcp",

@@ -1162,7 +1162,7 @@ describe("host protocol", () => {
       await mkdir(join(workspace, ".sparkwright"), { recursive: true });
       await writeFile(
         join(workspace, ".sparkwright", "config.json"),
-        JSON.stringify({ confidentialDefaults: false }),
+        JSON.stringify({ policy: { confidentialDefaults: false } }),
         "utf8",
       );
 
@@ -1261,8 +1261,10 @@ describe("host protocol", () => {
       await writeFile(
         join(workspace, ".sparkwright", "config.json"),
         JSON.stringify({
-          confidentialDefaults: false,
-          confidentialPaths: ["secrets/**"],
+          policy: {
+            confidentialDefaults: false,
+            confidentialPaths: ["secrets/**"],
+          },
         }),
         "utf8",
       );
@@ -3275,9 +3277,11 @@ describe("host protocol", () => {
       await writeFile(
         join(workspace, ".sparkwright", "config.json"),
         JSON.stringify({
-          model: "openai/gpt-5.4-mini",
-          providers: {
-            openai: {},
+          identity: {
+            model: "openai/gpt-5.4-mini",
+            providers: {
+              openai: {},
+            },
           },
         }),
         "utf8",
@@ -3324,9 +3328,11 @@ describe("host protocol", () => {
       await writeFile(
         join(workspace, ".sparkwright", "config.json"),
         JSON.stringify({
-          model: "openai/gpt-5.4-nano",
-          providers: {
-            openai: {},
+          identity: {
+            model: "openai/gpt-5.4-nano",
+            providers: {
+              openai: {},
+            },
           },
         }),
         "utf8",
@@ -3365,9 +3371,11 @@ describe("host protocol", () => {
       await writeFile(
         join(workspace, ".sparkwright", "config.json"),
         JSON.stringify({
-          model: "openai/gpt-5.4-nano",
-          providers: {
-            openai: {},
+          identity: {
+            model: "openai/gpt-5.4-nano",
+            providers: {
+              openai: {},
+            },
           },
         }),
         "utf8",
@@ -3865,7 +3873,7 @@ describe("host protocol", () => {
       await writeFile(
         join(workspace, ".sparkwright", "config.json"),
         JSON.stringify({
-          shell: { sandbox: { mode: "off" } },
+          policy: { sandbox: { mode: "off" } },
           capabilities: {
             agents: {
               profiles: [

@@ -8,6 +8,17 @@ cron, shell/task tools, and capability inspection.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T09:43:00+0800
+- Scope: capability preparation and inspection consume grouped-only external
+  config through Host. Tool/capability roots and effective runtime semantics are
+  unchanged; real-regression config copying no longer reads root providers.
+- Read: Host config/capability paths, CLI capability inspection and regression
+  helpers, TUI capability consumer, generated schema, and focused tests.
+- Tests: Host config/protocol 115/115; CLI config schema 6/6 and full 155/155;
+  TUI capability/config consumers 17/17; affected typechecks and schema check;
+  project-map drift; full release gate.
+
+- Status: Verified
 - Date: 2026-07-17T00:08:26+0800
 - Scope: Agent direct aliases have one canonical exposure policy; the retired
   global child-exposure boolean no longer participates in config, inspection,
@@ -160,6 +171,8 @@ config + workspace capability roots
 - Config-declared capabilities can live in JSON or YAML config files. Host owns
   parsing, same-layer conflict diagnostics, and serialization helpers; CLI/TUI
   and managed capability tools should reuse those helpers when mutating config.
+  External identity, policy, run, and UI fields are grouped-only; capability,
+  tool, task, workspace, and Shell foreground-timeout roots remain canonical.
 - `capability.inspect` should report runtime tools from the host catalog so sources/deferred flags match the actual run surface.
 - `CapabilitySnapshot.agents.profiles` is the resolved profile inventory
   (Agent.md plus inline config) and is broader than configured-delegate
@@ -230,7 +243,7 @@ config + workspace capability roots
 - Regression and smoke scripts must not recreate removed tool allowlists; use
   the default tool surface or top-level negative filters.
 - Real-model skill capability regression preserves JSON/YAML config layers,
-  recognizes top-level `providers` and grouped `identity.providers`, and should
+  reads canonical `identity.providers`, and should
   use `capabilities inspect` evidence rather than a local hard-coded tool list.
   Prompt canaries should ask for current tool catalog names and treat recovered
   model/tool retries as passable only when the final run outcome is not failing

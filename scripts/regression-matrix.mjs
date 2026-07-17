@@ -285,7 +285,7 @@ async function skillLoadingCase() {
   await writeFile(
     join(workspace, ".sparkwright", "config.json"),
     JSON.stringify({
-      model: "deterministic",
+      identity: { model: "deterministic" },
       capabilities: {
         skills: {
           roots: ["../skills"],
@@ -354,7 +354,7 @@ async function mcpFailureCase() {
   await writeFile(
     join(workspace, ".sparkwright", "config.json"),
     JSON.stringify({
-      model: "deterministic",
+      identity: { model: "deterministic" },
       capabilities: {
         mcp: {
           servers: [
@@ -492,8 +492,9 @@ async function delegateCwdCase() {
   const workspace = await workspaceWithReadme("sparkwright-reg-delegate-cwd-");
   const sessionId = "session_reg_delegate_cwd";
   await writeProjectConfig(workspace, {
-    shell: { foregroundTimeoutMs: 1_000, sandbox: { mode: "off" } },
-    maxSteps: 20,
+    shell: { foregroundTimeoutMs: 1_000 },
+    policy: { sandbox: { mode: "off" } },
+    run: { maxSteps: 20 },
     capabilities: {
       agents: {
         profiles: [
@@ -594,8 +595,9 @@ async function delegateCwdCase() {
 async function shellPromotionCase() {
   const workspace = await workspaceWithReadme("sparkwright-reg-promote-");
   await writeProjectConfig(workspace, {
-    shell: { foregroundTimeoutMs: 20, sandbox: { mode: "off" } },
-    maxSteps: 20,
+    shell: { foregroundTimeoutMs: 20 },
+    policy: { sandbox: { mode: "off" } },
+    run: { maxSteps: 20 },
   });
   const prompt = "Promote a long Bash command and inspect tasks.";
   const result = await runCli(
@@ -684,8 +686,9 @@ async function delegateNoTaskManagerTimeoutCase() {
   const workspace = await workspaceWithReadme("sparkwright-reg-no-taskmgr-");
   const sessionId = "session_reg_delegate_no_taskmgr";
   await writeProjectConfig(workspace, {
-    shell: { foregroundTimeoutMs: 20, sandbox: { mode: "off" } },
-    maxSteps: 20,
+    shell: { foregroundTimeoutMs: 20 },
+    policy: { sandbox: { mode: "off" } },
+    run: { maxSteps: 20 },
     capabilities: {
       agents: {
         profiles: [
@@ -786,7 +789,7 @@ async function delegateNoTaskManagerTimeoutCase() {
 async function spawnFinalityCase() {
   const workspace = await workspaceWithReadme("sparkwright-reg-spawn-");
   const prompt = "Spawn a read-only child and verify finality.";
-  await writeProjectConfig(workspace, { maxSteps: 20 });
+  await writeProjectConfig(workspace, { run: { maxSteps: 20 } });
   const result = await runCli(
     [
       "run",

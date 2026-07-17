@@ -680,10 +680,10 @@ function describeConfigFields(
     });
   };
 
-  add("model", sources.model, config.model);
-  add("accessMode", sources.accessMode, config.accessMode);
+  add("identity.model", sources.model, config.model);
+  add("run.accessMode", sources.accessMode, config.accessMode);
   add("accessModeCeiling", sources.accessModeCeiling, config.accessModeCeiling);
-  add("backgroundTasks", sources.backgroundTasks, config.backgroundTasks);
+  add("run.backgroundTasks", sources.backgroundTasks, config.backgroundTasks);
   add(
     "backgroundTasksCeiling",
     sources.backgroundTasksCeiling,
@@ -691,19 +691,28 @@ function describeConfigFields(
   );
   add("workspace", sources.workspace, config.workspace);
   add(
-    "confidentialDefaults",
+    "policy.confidentialDefaults",
     sources.confidentialDefaults,
     config.confidentialDefaults,
   );
-  add("confidentialPaths", sources.confidentialPaths, config.confidentialPaths);
-  add("write", sources.write, config.write);
+  add(
+    "policy.confidentialPaths",
+    sources.confidentialPaths,
+    config.confidentialPaths,
+  );
+  add("policy.write", sources.write, config.write);
   add("shell", sources.shell, config.shell);
   add("tools", sources.tools, config.tools);
-  add("runBudget", sources.runBudget, config.runBudget);
-  add("maxSteps", sources.maxSteps, config.maxSteps);
-  add("traceLevel", sources.traceLevel, config.traceLevel);
+  add("run.budget", sources.runBudget, config.runBudget);
+  add("run.maxSteps", sources.maxSteps, config.maxSteps);
+  add("run.traceLevel", sources.traceLevel, config.traceLevel);
+  add("ui.theme", sources.theme, config.theme);
   for (const key of Object.keys(config.providers ?? {}).sort()) {
-    add(`providers.${key}`, sources.providers?.[key], config.providers?.[key]);
+    add(
+      `identity.providers.${key}`,
+      sources.providers?.[key],
+      config.providers?.[key],
+    );
   }
   return fields;
 }

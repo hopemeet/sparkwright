@@ -73,6 +73,10 @@ export interface SharedConfig {
   runBudget?: RunBudget;
   maxSteps?: number;
   traceLevel?: TraceLevel;
+  theme?: string;
+  mouse?: boolean;
+  keybindings?: Record<string, string | string[] | null>;
+  vim?: boolean;
 }
 
 export interface CapabilityConfig {
@@ -143,6 +147,7 @@ export interface SharedConfigSourceMap {
   runBudget?: string;
   maxSteps?: string;
   traceLevel?: string;
+  theme?: string;
   providers?: Record<string, string>;
   tasks?: string;
 }

@@ -213,6 +213,21 @@ trace/session inspection.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T09:43:00+0800
+- Scope: external configuration now has one canonical input shape: identity,
+  policy, run, and UI-owned fields are grouped-only; active root fields remain
+  workspace, shell foreground timing, tools, tasks, and capabilities. Removed
+  root aliases, shell.sandbox, grouped-vs-flat conflicts, and the TUI second
+  parser are gone.
+- Read: Host schema/contracts/loader, CLI init/writers/doctor/real-regression
+  helpers, TUI config projection, generated schema and fixtures, public config
+  references, and routed project/test-map pages.
+- Tests: Host config/protocol 115/115; CLI config schema 6/6 and full 155/155;
+  TUI config/capability/status consumers 17/17; Agent Runtime, Host, CLI, and
+  TUI typechecks; repository test typecheck; schema check; project-map drift;
+  full release gate including regression matrix and install smokes.
+
+- Status: Verified
 - Date: 2026-07-17T08:25:00+0800
 - Scope: ACP and external-command delegate tool results identify their
   configured profile only through canonical `agentProfileId`. Removed the

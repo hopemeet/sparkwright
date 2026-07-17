@@ -2,7 +2,6 @@ export {
   costToPricing,
   isValidModelRefSyntax,
   loadHostConfig,
-  normalizeGroupedConfig,
   parseModelRef,
   resolveModelSelection,
 } from "./config/config-implementation.js";

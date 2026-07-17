@@ -12,6 +12,21 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T09:43:00+0800
+- Scope: external configuration now has one canonical input shape: identity,
+  policy, run, and UI-owned fields are grouped-only; active root fields remain
+  workspace, shell foreground timing, tools, tasks, and capabilities. Removed
+  root aliases, shell.sandbox, grouped-vs-flat conflicts, and the TUI second
+  parser are gone.
+- Read: Host schema/contracts/loader, CLI init/writers/doctor/real-regression
+  helpers, TUI config projection, generated schema and fixtures, public config
+  references, and routed project/test-map pages.
+- Tests: Host config/protocol 115/115; CLI config schema 6/6 and full 155/155;
+  TUI config/capability/status consumers 17/17; Agent Runtime, Host, CLI, and
+  TUI typechecks; repository test typecheck; schema check; project-map drift;
+  full release gate including regression matrix and install smokes.
+
+- Status: Verified
 - Date: 2026-07-17T08:25:00+0800
 - Scope: process delegate tool results have one configured-profile identity:
   `agentProfileId`. Removed the duplicate `agentId` field from ACP and
@@ -354,6 +369,16 @@ Does not own:
   user and project layers. Within a layer, JSON wins over YAML/YML and multiple
   files are reported as a non-fatal same-layer conflict; explicit
   `$SPARKWRIGHT_CONFIG` still loads as the final file layer.
+- External config has one canonical shape: model/providers live under
+  `identity`, confidential/write/sandbox policy under `policy`, run defaults
+  under `run`, and TUI preferences under `ui`. `workspace`,
+  `shell.foregroundTimeoutMs`, `tools`, `tasks`, and `capabilities` remain
+  canonical root fields. Removed root aliases and `shell.sandbox` are rejected
+  by both the runtime loader and generated schema instead of being ignored.
+- The Host loader validates and merges `ui.theme`, `ui.mouse`,
+  `ui.keybindings`, and `ui.vim`; TUI consumes that loaded carrier and does not
+  re-read or independently normalize config files. Keybindings merge by action
+  across layers.
 - `shell.foregroundTimeoutMs` is the single configurable foreground shell
   budget. It defaults to 300000 ms, is capped at 600000 ms, flows through the
   host tool catalog to main and configured-delegate child shell tools, and is
@@ -379,12 +404,11 @@ Does not own:
   enum/literal checks for trace level, shell sandbox modes, skill evolution,
   workflow hooks, verification, MCP startup/schema-load modes, and agent
   profile modes also reuse Zod-exported option lists. Root/shared scalar
-  validation for `model`, `workspace`, `confidentialPaths`, `maxSteps`, and
-  `run.accessMode` also consumes the Zod source while preserving host loader
-  partial recovery. Strict root unknown-key validation remains a
-  `sparkwright config validate` / generated JSON Schema responsibility; the
-  runtime host loader intentionally ignores unknown root keys for UI/future
-  compatibility. Externally-owned schemas (`capabilities.mcp.servers` and
+  validation for `identity.model`, `workspace`,
+  `policy.confidentialPaths`, `run.maxSteps`, and `run.accessMode` also
+  consumes the Zod source while preserving host loader partial recovery.
+  Runtime loading and generated JSON Schema both reject unknown root keys.
+  Externally-owned schemas (`capabilities.mcp.servers` and
   `capabilities.agents.profiles`) remain integration edges, with host runtime
   validation preserving existing partial parsing and source-relative path
   resolution.
@@ -399,6 +423,8 @@ Does not own:
   policy from it.
 - Host start/resume/workflow-resume run policies pass `confidentialPaths` and
   `confidentialDefaults` through core `resolveRunConfidentialPaths()`.
+  External config owns these as `policy.confidentialPaths` and
+  `policy.confidentialDefaults`; the compiled carrier remains flat.
   `confidentialDefaults` defaults to true and may be set false by config or
   protocol clients to opt out of SparkWright's built-in conservative read-deny
   list while retaining any explicit `confidentialPaths`.

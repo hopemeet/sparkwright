@@ -2,9 +2,11 @@
 
 ## Current Confidence
 
-- Status: `Partially Verified`
-- Last reviewed: 2026-06-29
-- Evidence source: 2026-06-23 host config tests, CLI schema drift/XDG tests,
+- Status: `Verified`
+- Last reviewed: 2026-07-17
+- Evidence source: 2026-07-17 grouped-only Host/CLI/TUI config tests, generated
+  schema rejection checks, package typechecks, repository test typecheck, and
+  the full release gate; earlier evidence includes Host config tests, CLI schema drift/XDG tests,
   generated schema validation, CLI config/capabilities subsets, and manual
   `capabilities inspect` with `openai/gpt-5.4-nano`, and 2026-06-29
   real-mini follow-up checks for tool filters, disabled discovery, and nested
@@ -12,6 +14,13 @@
 
 ## Covered
 
+- External config accepts only canonical `identity`, `policy`, `run`, and `ui`
+  grouping for their owned fields. Host and generated JSON Schema both reject
+  removed root aliases and `shell.sandbox`; `shell.foregroundTimeoutMs` remains
+  canonical and active.
+- TUI consumes the Host loader result for `ui.theme`, `ui.mouse`,
+  `ui.keybindings`, and `ui.vim`; layered keybinding merge and access-mode
+  clamping are covered without a second parser.
 - 2026-07-17 Agent exposure cleanup verifies the retired
   `exposeChildrenAsDelegates` key is rejected as unknown and absent from the
   generated schema; canonical exposure remains `exposure`, `pinnedDelegates`,
@@ -50,7 +59,8 @@
 npm --workspace @sparkwright/host test -- test/config.test.ts
 npm run schema:check
 npm --workspace @sparkwright/cli test -- test/config-schema.test.ts
-npm --workspace @sparkwright/cli test -- test/cli.test.ts -t "capabilities inspect"
+npm --workspace @sparkwright/cli test -- test/cli.test.ts -t "config|doctor|init|first interactive|capabilities inspect"
+npm --workspace @sparkwright/tui test -- test/config.test.ts
 ```
 
 Build affected packages before CLI/package-boundary checks when generated

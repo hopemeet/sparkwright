@@ -3,18 +3,16 @@
  *
  * Both the CLI and the TUI read the same on-disk config so the active model
  * and its provider credentials are configured once. This module owns the
- * canonical file locations and the validation for the *shared* fields (model,
- * providers, accessMode, workspace). UI-only fields (theme, keybindings,
- * mouse) live in the same file and are validated by the TUI; this loader
- * ignores them.
+ * canonical file locations and validation for the complete external config,
+ * including the UI preferences consumed by the TUI.
  *
  * Resolution order (later overrides earlier): user file, project file, then an
  * explicit $SPARKWRIGHT_CONFIG path. The `providers` map merges by key across
  * files, top-level tool config merges with allowed as a tightening
  * intersection, disabled as a tightening union, and defer as a later-layer
  * replacement, capabilities merge by sub-capability, and the security
- * boundaries — shell.sandbox, accessMode, and
- * confidentialPaths — merge conservatively so later (lower-trust) layers cannot
+ * boundaries — policy.sandbox, run.accessMode, and policy.confidentialPaths —
+ * merge conservatively so later (lower-trust) layers cannot
  * weaken an earlier layer's policy. confidentialDefaults is the explicit
  * later-layer override for the built-in confidential path set.
  * Callers layer CLI flags / env on top.
@@ -86,7 +84,6 @@ import {
   AGENTS_CONFIG_KEYS,
   CAPABILITIES_CONFIG_KEYS,
   CONFIG_GROUP_CONFIG_KEYS,
-  CONFIG_GROUP_FIELD_MAP,
   confidentialDefaultsSchema,
   confidentialPathsSchema,
   DELEGATE_TOOL_BOOLEAN_CONFIG_KEYS,
@@ -126,6 +123,7 @@ import {
   SKILL_EVOLUTION_CONFIG_KEYS,
   SKILL_EVOLUTION_MODES,
   SKILL_INLINE_SHELL_CONFIG_KEYS,
+  SPARKWRIGHT_CONFIG_KEYS,
   TOOLS_CONFIG_KEYS,
   TRACE_LEVEL_CONFIG_VALUES,
   VERIFICATION_AFTER_WRITES_CONFIG_KEYS,
@@ -151,6 +149,9 @@ import {
   maxStepsSchema,
   ACCESS_MODE_CONFIG_VALUES,
   BACKGROUND_TASK_POLICY_CONFIG_VALUES,
+  keybindingsSchema,
+  mouseSchema,
+  themeSchema,
   workspaceSchema,
 } from "../config-zod-schema.js";
 import type {
@@ -2219,7 +2220,7 @@ function validateShellConfig(
     return undefined;
   }
   const out: ShellConfig = {};
-  const allowed = new Set<string>(SHELL_CONFIG_KEYS);
+  const allowed = new Set<string>([...SHELL_CONFIG_KEYS, "sandbox"]);
   for (const key of Object.keys(raw)) {
     if (!allowed.has(key)) {
       errors.push({
@@ -2230,7 +2231,12 @@ function validateShellConfig(
     }
   }
   if (raw.sandbox !== undefined) {
-    const sandbox = validateShellSandboxConfig(raw.sandbox, filePath, errors);
+    const sandbox = validateShellSandboxConfig(
+      raw.sandbox,
+      "policy.sandbox",
+      filePath,
+      errors,
+    );
     if (sandbox) out.sandbox = sandbox;
   }
   if (raw.foregroundTimeoutMs !== undefined) {
@@ -2257,13 +2263,14 @@ function validateShellConfig(
 
 function validateShellSandboxConfig(
   raw: unknown,
+  field: string,
   filePath: string,
   errors: SharedConfigError[],
 ): ShellSandboxConfig | undefined {
   if (!isRecord(raw)) {
     errors.push({
       file: filePath,
-      field: "shell.sandbox",
+      field,
       message: "must be an object",
     });
     return undefined;
@@ -2274,7 +2281,7 @@ function validateShellSandboxConfig(
     if (!allowed.has(key)) {
       errors.push({
         file: filePath,
-        field: `shell.sandbox.${key}`,
+        field: `${field}.${key}`,
         message: `unknown field (allowed: ${[...allowed].join(", ")})`,
       });
     }
@@ -2285,7 +2292,7 @@ function validateShellSandboxConfig(
     } else {
       errors.push({
         file: filePath,
-        field: "shell.sandbox.mode",
+        field: `${field}.mode`,
         message: "must be off, warn, or enforce",
       });
     }
@@ -2293,7 +2300,7 @@ function validateShellSandboxConfig(
   if (raw.failIfUnavailable !== undefined) {
     out.failIfUnavailable = validateOptionalBoolean(
       raw.failIfUnavailable,
-      "shell.sandbox.failIfUnavailable",
+      `${field}.failIfUnavailable`,
       filePath,
       errors,
     );
@@ -2301,13 +2308,19 @@ function validateShellSandboxConfig(
   if (raw.filesystem !== undefined) {
     const filesystem = validateShellSandboxFilesystem(
       raw.filesystem,
+      field,
       filePath,
       errors,
     );
     if (filesystem) out.filesystem = filesystem;
   }
   if (raw.network !== undefined) {
-    const network = validateShellSandboxNetwork(raw.network, filePath, errors);
+    const network = validateShellSandboxNetwork(
+      raw.network,
+      field,
+      filePath,
+      errors,
+    );
     if (network) out.network = network;
   }
   return out;
@@ -2315,13 +2328,14 @@ function validateShellSandboxConfig(
 
 function validateShellSandboxFilesystem(
   raw: unknown,
+  parentField: string,
   filePath: string,
   errors: SharedConfigError[],
 ): NonNullable<ShellSandboxConfig["filesystem"]> | undefined {
   if (!isRecord(raw)) {
     errors.push({
       file: filePath,
-      field: "shell.sandbox.filesystem",
+      field: `${parentField}.filesystem`,
       message: "must be an object",
     });
     return undefined;
@@ -2332,7 +2346,7 @@ function validateShellSandboxFilesystem(
     if (!allowed.has(key)) {
       errors.push({
         file: filePath,
-        field: `shell.sandbox.filesystem.${key}`,
+        field: `${parentField}.filesystem.${key}`,
         message: `unknown field (allowed: ${[...allowed].join(", ")})`,
       });
     }
@@ -2341,7 +2355,7 @@ function validateShellSandboxFilesystem(
     if (raw[key] !== undefined) {
       out[key] = validateStringArray(
         raw[key],
-        `shell.sandbox.filesystem.${key}`,
+        `${parentField}.filesystem.${key}`,
         filePath,
         errors,
       );
@@ -2350,7 +2364,7 @@ function validateShellSandboxFilesystem(
   if (raw.tmp !== undefined) {
     out.tmp = validateOptionalBoolean(
       raw.tmp,
-      "shell.sandbox.filesystem.tmp",
+      `${parentField}.filesystem.tmp`,
       filePath,
       errors,
     );
@@ -2360,13 +2374,14 @@ function validateShellSandboxFilesystem(
 
 function validateShellSandboxNetwork(
   raw: unknown,
+  parentField: string,
   filePath: string,
   errors: SharedConfigError[],
 ): NonNullable<ShellSandboxConfig["network"]> | undefined {
   if (!isRecord(raw)) {
     errors.push({
       file: filePath,
-      field: "shell.sandbox.network",
+      field: `${parentField}.network`,
       message: "must be an object",
     });
     return undefined;
@@ -2377,7 +2392,7 @@ function validateShellSandboxNetwork(
     if (!allowed.has(key)) {
       errors.push({
         file: filePath,
-        field: `shell.sandbox.network.${key}`,
+        field: `${parentField}.network.${key}`,
         message: `unknown field (allowed: ${[...allowed].join(", ")})`,
       });
     }
@@ -2388,7 +2403,7 @@ function validateShellSandboxNetwork(
     } else {
       errors.push({
         file: filePath,
-        field: "shell.sandbox.network.mode",
+        field: `${parentField}.network.mode`,
         message: "must be allow or deny",
       });
     }
@@ -3694,40 +3709,44 @@ function validateProviderOptions(
   return out;
 }
 
-/**
- * Flatten the grouped config form into the flat shape the field validators
- * expect. Both the grouped key and an old flat alias may appear; the grouped
- * value wins and the conflict is reported. Unknown keys inside a known group are
- * errors (groups are new, so we can be strict without breaking old configs).
- *
- * Exported so the TUI config reader can normalize the same grouped form before
- * reading its UI-facing fields; it shares this single source of truth rather
- * than re-implementing the mapping.
- */
-export function normalizeGroupedConfig(
+/** Flatten the one canonical external shape into the internal config carrier. */
+function normalizeConfigInput(
   raw: Record<string, unknown>,
   filePath: string,
   errors: SharedConfigError[],
 ): Record<string, unknown> {
-  const flat: Record<string, unknown> = { ...raw };
-
-  const assign = (flatKey: string, value: unknown, groupedField: string) => {
-    if (Object.prototype.hasOwnProperty.call(raw, flatKey)) {
+  const flat: Record<string, unknown> = {};
+  const allowedRoot = new Set<string>(SPARKWRIGHT_CONFIG_KEYS);
+  for (const key of Object.keys(raw)) {
+    if (!allowedRoot.has(key)) {
       errors.push({
         file: filePath,
-        field: groupedField,
-        message: `conflicts with top-level "${flatKey}"; the grouped value is used`,
+        field: key,
+        message: `unknown field (allowed: ${[...allowedRoot].join(", ")})`,
       });
     }
-    flat[flatKey] = value;
-  };
+  }
 
-  for (const [group, fieldMap] of Object.entries(
-    CONFIG_GROUP_FIELD_MAP,
-  ) as Array<[keyof typeof CONFIG_GROUP_FIELD_MAP, Record<string, string>]>) {
+  for (const key of ["workspace", "tools", "tasks", "capabilities"])
+    if (raw[key] !== undefined) flat[key] = raw[key];
+  if (raw.shell !== undefined) {
+    flat.shell = raw.shell;
+    if (isRecord(raw.shell) && raw.shell.sandbox !== undefined) {
+      errors.push({
+        file: filePath,
+        field: "shell.sandbox",
+        message: 'unknown field; use canonical "policy.sandbox"',
+      });
+      const { sandbox: _removed, ...canonicalShell } = raw.shell;
+      flat.shell = canonicalShell;
+    }
+  }
+
+  for (const group of Object.keys(CONFIG_GROUP_CONFIG_KEYS) as Array<
+    keyof typeof CONFIG_GROUP_CONFIG_KEYS
+  >) {
     const groupValue = raw[group];
     if (groupValue === undefined) continue;
-    delete flat[group];
     if (!isRecord(groupValue)) {
       errors.push({
         file: filePath,
@@ -3746,21 +3765,52 @@ export function normalizeGroupedConfig(
         });
         continue;
       }
-      const flatKey = fieldMap[subKey]!;
-      if (group === "policy" && subKey === "sandbox") {
-        assign("shell", { sandbox: groupValue.sandbox }, "policy.sandbox");
-        continue;
-      }
-      assign(flatKey, groupValue[subKey], `${group}.${subKey}`);
     }
   }
+
+  const identity = isRecord(raw.identity) ? raw.identity : undefined;
+  if (identity?.model !== undefined) flat.model = identity.model;
+  if (identity?.providers !== undefined) flat.providers = identity.providers;
+
+  const policy = isRecord(raw.policy) ? raw.policy : undefined;
+  if (policy?.confidentialPaths !== undefined)
+    flat.confidentialPaths = policy.confidentialPaths;
+  if (policy?.confidentialDefaults !== undefined)
+    flat.confidentialDefaults = policy.confidentialDefaults;
+  if (policy?.write !== undefined) flat.write = policy.write;
+  if (policy?.sandbox !== undefined) {
+    if (flat.shell !== undefined && !isRecord(flat.shell)) {
+      errors.push({
+        file: filePath,
+        field: "shell",
+        message: "must be an object",
+      });
+    }
+    flat.shell = {
+      ...(isRecord(flat.shell) ? flat.shell : {}),
+      sandbox: policy.sandbox,
+    };
+  }
+
+  const run = isRecord(raw.run) ? raw.run : undefined;
+  if (run?.accessMode !== undefined) flat.accessMode = run.accessMode;
+  if (run?.backgroundTasks !== undefined)
+    flat.backgroundTasks = run.backgroundTasks;
+  if (run?.budget !== undefined) flat.runBudget = run.budget;
+  if (run?.maxSteps !== undefined) flat.maxSteps = run.maxSteps;
+  if (run?.traceLevel !== undefined) flat.traceLevel = run.traceLevel;
+
+  const ui = isRecord(raw.ui) ? raw.ui : undefined;
+  if (ui?.theme !== undefined) flat.theme = ui.theme;
+  if (ui?.mouse !== undefined) flat.mouse = ui.mouse;
+  if (ui?.keybindings !== undefined) flat.keybindings = ui.keybindings;
+  if (ui?.vim !== undefined) flat.vim = ui.vim;
   return flat;
 }
 
 /**
- * Validate the shared fields of one parsed config object. Unknown keys are
- * ignored (they may be UI-only fields owned by the TUI). Wrong types produce
- * an error and the field is dropped.
+ * Validate one parsed canonical config object. Wrong types produce an error
+ * and the field is dropped so remaining valid fields can still be diagnosed.
  */
 function validateShared(
   raw: unknown,
@@ -3784,7 +3834,7 @@ function validateShared(
     });
     return { config, sources, errors };
   }
-  const obj = normalizeGroupedConfig(raw, filePath, errors);
+  const obj = normalizeConfigInput(raw, filePath, errors);
 
   if (obj.model !== undefined) {
     const model = validateZodValue(
@@ -3940,6 +3990,53 @@ function validateShared(
       });
     }
   }
+  if (obj.theme !== undefined) {
+    const theme = validateZodValue(
+      themeSchema,
+      obj.theme,
+      "ui.theme",
+      filePath,
+      errors,
+      "must be one of dark | light | mono",
+    );
+    if (theme !== undefined) {
+      config.theme = theme;
+      sources.theme = origin;
+    }
+  }
+  if (obj.mouse !== undefined) {
+    const mouse = validateZodValue(
+      mouseSchema,
+      obj.mouse,
+      "ui.mouse",
+      filePath,
+      errors,
+      "must be a boolean",
+    );
+    if (mouse !== undefined) config.mouse = mouse;
+  }
+  if (obj.keybindings !== undefined) {
+    const keybindings = validateZodValue(
+      keybindingsSchema,
+      obj.keybindings,
+      "ui.keybindings",
+      filePath,
+      errors,
+      "must be an object with string, string[], or null values",
+    );
+    if (keybindings !== undefined) config.keybindings = keybindings;
+  }
+  if (obj.vim !== undefined) {
+    const vim = validateZodValue(
+      booleanSchema,
+      obj.vim,
+      "ui.vim",
+      filePath,
+      errors,
+      "must be a boolean",
+    );
+    if (vim !== undefined) config.vim = vim;
+  }
   if (obj.shell !== undefined) {
     const shell = validateShellConfig(obj.shell, filePath, errors);
     if (shell) {
@@ -4063,7 +4160,7 @@ export async function loadHostConfig(
     }
     // Providers merge by key (a later file adds/overrides individual entries),
     // top-level tools merge by explicit set semantics, capabilities merge by
-    // sub-capability (skills/mcp/agents), and shell.sandbox merges
+    // sub-capability (skills/mcp/agents), and policy.sandbox merges
     // conservatively so a project cannot downgrade a user-defined sandbox
     // boundary. Within a sub-capability the later layer still
     // wholesale-overrides. Every other field is wholesale-overridden.
@@ -4077,6 +4174,7 @@ export async function loadHostConfig(
       confidentialDefaults: layerConfidentialDefaults,
       confidentialPaths: layerConfidentialPaths,
       write: layerWrite,
+      keybindings: layerKeybindings,
       ...rest
     } = v.config;
     Object.assign(merged, rest);
@@ -4178,6 +4276,12 @@ export async function loadHostConfig(
     if (layerWrite !== undefined) {
       merged.write = mergeWriteGuardrails(merged.write, layerWrite);
       sources.write = v.sources.write;
+    }
+    if (layerKeybindings !== undefined) {
+      merged.keybindings = {
+        ...(merged.keybindings ?? {}),
+        ...layerKeybindings,
+      };
     }
     const { providers: providerSources, ...fieldSources } = v.sources;
     // These security-boundary sources are tracked above to reflect the layer

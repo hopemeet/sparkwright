@@ -14,7 +14,7 @@ export const CONFIG_SCHEMA_ID =
 export const CONFIG_SCHEMA_PROTOCOL_VERSION = "0.2";
 export const CONFIG_SCHEMA_TITLE = "Sparkwright Config";
 export const CONFIG_SCHEMA_DESCRIPTION =
-  "User-editable settings shared by the CLI and the interactive TUI. Loaded (in order, later overriding earlier) from ~/.config/sparkwright/config.{json,yaml,yml}, <workspace>/.sparkwright/config.{json,yaml,yml}, and $SPARKWRIGHT_CONFIG. Within a user/project layer, config.json wins over config.yaml, which wins over config.yml; multiple files in one layer are reported as a conflict. CLI args and env vars override files. Fields may be written flat or under the preferred groups identity/policy/run/ui; tools and capabilities are top-level groups. A field set both ways conflicts and the grouped value wins. The providers map is merged by key, tools.use and tools.allowed intersect, tools.disabled unions, tools.defer is replaced by later layers, capabilities merges by sub-capability, and the security boundaries - shell.sandbox, run.accessMode, confidentialPaths, and write - merge conservatively so later layers cannot weaken an earlier layer's policy (project clamps user); confidentialDefaults is an explicit later-layer override for the built-in confidential path set; other shared fields are wholesale-overridden.";
+  "User-editable settings shared by the CLI and the interactive TUI. Loaded (in order, later overriding earlier) from ~/.config/sparkwright/config.{json,yaml,yml}, <workspace>/.sparkwright/config.{json,yaml,yml}, and $SPARKWRIGHT_CONFIG. Within a user/project layer, config.json wins over config.yaml, which wins over config.yml; multiple files in one layer are reported as a conflict. CLI args and env vars override files. Model/provider settings live under identity, security boundaries under policy, run defaults under run, and TUI preferences under ui; workspace, shell foreground timing, tools, tasks, and capabilities remain top-level. The providers map is merged by key, tools.use and tools.allowed intersect, tools.disabled unions, tools.defer is replaced by later layers, capabilities merges by sub-capability, and policy.sandbox, run.accessMode, policy.confidentialPaths, and policy.write merge conservatively so later layers cannot weaken an earlier layer's policy (project clamps user); policy.confidentialDefaults is an explicit later-layer override for the built-in confidential path set; other shared fields are wholesale-overridden.";
 
 export const stringSchema = z.string();
 export const nonEmptyString = stringSchema.min(1);
@@ -235,7 +235,6 @@ export const shellSchema = z
         "Foreground shell budget in milliseconds before promotion to a background task. Defaults to 300000 and is capped at 600000.",
       )
       .optional(),
-    sandbox: shellSandboxSchema.optional(),
   })
   .strict()
   .describe("Host shell execution boundary.");
@@ -933,9 +932,7 @@ export const identityGroupSchema = z
     providers: providersSchema.optional(),
   })
   .strict()
-  .describe(
-    "Preferred grouping for who/what runs. Flattens to model/providers.",
-  );
+  .describe("Canonical model and provider identity settings.");
 export const IDENTITY_GROUP_CONFIG_KEYS = identityGroupSchema.keyof().options;
 
 export const policyGroupSchema = z
@@ -947,7 +944,7 @@ export const policyGroupSchema = z
   })
   .strict()
   .describe(
-    "Preferred grouping for security boundaries. Flattens to confidentialDefaults/confidentialPaths/write and shell.sandbox. Run autonomy lives in run.accessMode.",
+    "Canonical security boundaries. Run autonomy lives in run.accessMode.",
   );
 export const POLICY_GROUP_CONFIG_KEYS = policyGroupSchema.keyof().options;
 
@@ -960,9 +957,7 @@ export const runGroupSchema = z
     traceLevel: traceLevelSchema.optional(),
   })
   .strict()
-  .describe(
-    "Preferred grouping for run-shaping defaults. Flattens to accessMode/backgroundTasks/runBudget/maxSteps/traceLevel.",
-  );
+  .describe("Canonical run-shaping defaults.");
 export const RUN_GROUP_CONFIG_KEYS = runGroupSchema.keyof().options;
 
 export const uiGroupSchema = z
@@ -970,11 +965,13 @@ export const uiGroupSchema = z
     theme: themeSchema.optional(),
     mouse: mouseSchema.optional(),
     keybindings: keybindingsSchema.optional(),
+    vim: z
+      .boolean()
+      .describe("Enable Vim-style modal input editing.")
+      .optional(),
   })
   .strict()
-  .describe(
-    "Preferred grouping for TUI-only preferences. Flattens to theme/mouse/keybindings.",
-  );
+  .describe("Canonical TUI-only preferences.");
 export const UI_GROUP_CONFIG_KEYS = uiGroupSchema.keyof().options;
 
 export const CONFIG_GROUP_CONFIG_KEYS = {
@@ -982,28 +979,6 @@ export const CONFIG_GROUP_CONFIG_KEYS = {
   policy: POLICY_GROUP_CONFIG_KEYS,
   run: RUN_GROUP_CONFIG_KEYS,
   ui: UI_GROUP_CONFIG_KEYS,
-} as const;
-
-export const CONFIG_GROUP_FIELD_MAP = {
-  identity: { model: "model", providers: "providers" },
-  policy: {
-    confidentialPaths: "confidentialPaths",
-    confidentialDefaults: "confidentialDefaults",
-    write: "write",
-    sandbox: "shell",
-  },
-  run: {
-    accessMode: "accessMode",
-    backgroundTasks: "backgroundTasks",
-    budget: "runBudget",
-    maxSteps: "maxSteps",
-    traceLevel: "traceLevel",
-  },
-  ui: {
-    theme: "theme",
-    mouse: "mouse",
-    keybindings: "keybindings",
-  },
 } as const;
 
 export const sparkwrightConfigZodSchema = z
@@ -1014,24 +989,11 @@ export const sparkwrightConfigZodSchema = z
         "Optional reference to this JSON Schema so editors can offer completion and validation. Ignored by the loader.",
       )
       .optional(),
-    model: modelSchema.optional(),
-    providers: providersSchema.optional(),
-    accessMode: accessModeSchema.optional(),
-    backgroundTasks: backgroundTasksSchema.optional(),
     workspace: workspaceSchema.optional(),
-    confidentialPaths: confidentialPathsSchema.optional(),
-    confidentialDefaults: confidentialDefaultsSchema.optional(),
-    write: writeGuardrailsSchema.optional(),
-    runBudget: runBudgetSchema.optional(),
-    maxSteps: maxStepsSchema.optional(),
-    traceLevel: traceLevelSchema.optional(),
     shell: shellSchema.optional(),
     tools: toolsSchema.optional(),
     tasks: tasksSchema.optional(),
     capabilities: capabilitiesSchema.optional(),
-    theme: themeSchema.optional(),
-    mouse: mouseSchema.optional(),
-    keybindings: keybindingsSchema.optional(),
     identity: identityGroupSchema.optional(),
     policy: policyGroupSchema.optional(),
     run: runGroupSchema.optional(),

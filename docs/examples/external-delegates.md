@@ -50,7 +50,7 @@ surface. Supported template values are `{{goal}}`, `{{metadataJson}}`, and
 from an isolated writable temporary cwd and fails closed unless the platform
 sandbox can protect the project workspace from writes. This does not turn the
 macOS deny-list backend into a general filesystem allowlist. External-command
-delegates use the same `shell.sandbox` launch substrate as the built-in shell
+delegates use the same `policy.sandbox` launch substrate as the built-in shell
 tool and workflow-hook commands.
 
 Use `envMode: "explicit"` when the child process should receive only the

@@ -12,10 +12,12 @@ import {
 describe("model factory pricing diagnostics", () => {
   it("surfaces missing pricing before and after adapter construction", async () => {
     const workspace = await configuredWorkspace({
-      model: "openai/gpt-5.4-mini",
-      providers: {
-        openai: {
-          apiKey: "sk-test",
+      identity: {
+        model: "openai/gpt-5.4-mini",
+        providers: {
+          openai: {
+            apiKey: "sk-test",
+          },
         },
       },
     });
@@ -63,12 +65,14 @@ describe("model factory pricing diagnostics", () => {
 
   it("reports configured pricing when a cost block is present", async () => {
     const workspace = await configuredWorkspace({
-      model: "openai/gpt-5.4-mini",
-      providers: {
-        openai: {
-          models: {
-            "gpt-5.4-mini": {
-              cost: { input: 0.1, output: 0.4 },
+      identity: {
+        model: "openai/gpt-5.4-mini",
+        providers: {
+          openai: {
+            models: {
+              "gpt-5.4-mini": {
+                cost: { input: 0.1, output: 0.4 },
+              },
             },
           },
         },
@@ -95,7 +99,9 @@ describe("model factory pricing diagnostics", () => {
 
 describe("resolveProfileModelAdapters", () => {
   it("dedupes adapters by modelRef and keys them by profile", async () => {
-    const workspace = await configuredWorkspace({ model: "deterministic" });
+    const workspace = await configuredWorkspace({
+      identity: { model: "deterministic" },
+    });
     try {
       const result = await resolveProfileModelAdapters({
         requests: [
@@ -117,7 +123,9 @@ describe("resolveProfileModelAdapters", () => {
   });
 
   it("fails with the profile attribution when a model is unresolvable", async () => {
-    const workspace = await configuredWorkspace({ model: "deterministic" });
+    const workspace = await configuredWorkspace({
+      identity: { model: "deterministic" },
+    });
     try {
       const result = await resolveProfileModelAdapters({
         requests: [{ profileId: "reviewer", modelRef: "nope/missing-model" }],
@@ -135,7 +143,9 @@ describe("resolveProfileModelAdapters", () => {
   });
 
   it("returns an empty map when there are no requests", async () => {
-    const workspace = await configuredWorkspace({ model: "deterministic" });
+    const workspace = await configuredWorkspace({
+      identity: { model: "deterministic" },
+    });
     try {
       const result = await resolveProfileModelAdapters({
         requests: [],
@@ -151,7 +161,9 @@ describe("resolveProfileModelAdapters", () => {
 
 describe("deterministic demo model", () => {
   it("uses the active run goal and keeps turn state isolated by run", async () => {
-    const workspace = await configuredWorkspace({ model: "deterministic" });
+    const workspace = await configuredWorkspace({
+      identity: { model: "deterministic" },
+    });
     try {
       const created = await createModel({
         modelRef: "deterministic",

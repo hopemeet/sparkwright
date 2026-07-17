@@ -9,6 +9,18 @@ See also [../maps/trace/summary-timeline-verify.md](../maps/trace/summary-timeli
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T09:43:00+0800
+- Scope: grouped-only config is emitted by init/examples and consumed by
+  config doctor, inspect, capability inspection, and real-regression helpers.
+  Root identity/policy/run/UI aliases are no longer preserved by config writers.
+- Read: CLI init templates, config doctor/writers, config tests, schema tests,
+  real-model helper, generated schema, and public config references.
+- Tests: CLI config schema 6/6 and full 155/155; CLI typecheck; Host
+  config/protocol 115/115; repository test typecheck; schema check;
+  project-map drift; full release gate including regression matrix and install
+  smokes.
+
+- Status: Verified
 - Date: 2026-07-17T00:08:26+0800
 - Scope: CLI Agent config mutation no longer reads or rewrites the retired
   `exposeChildrenAsDelegates` field. Direct delegate execution uses canonical
@@ -213,6 +225,9 @@ Does not own:
   copies root `schemas/*.schema.json` into `dist/schemas` so installed CLIs can
   validate without a checkout of the source tree. The root config schema is
   generated from the host Zod schema before schema checks.
+- Config inspect/explain labels canonical paths (`identity.*`, `policy.*`,
+  `run.*`, and `ui.*`) while consuming the flat post-validation carrier.
+  Initializers and examples emit only the grouped canonical form.
 - `tools allow`, `tools disable`, and `tools defer` write local tool config;
   they preserve an existing JSON/YAML file in the selected user/project layer.
   There is no `tools list` command. `allow` appends to `tools.allowed`;
@@ -266,7 +281,8 @@ Does not own:
 - Real-model regression scripts share `scripts/lib/real-model-config.mjs` for
   model availability and isolated config copying. The helper asks
   `sparkwright config inspect --format json` for effective config facts and
-  supports grouped `identity.providers`, YAML sources, and source-file copying.
+  reads only canonical `identity.providers`, supports YAML sources, and copies
+  source files without retaining a root-level provider fallback.
   Setup-time config inspection must run outside the script's isolated XDG
   fixture; actual regression cases run against the copied isolated config.
   Real-model prompt canaries should target current catalog tools such as

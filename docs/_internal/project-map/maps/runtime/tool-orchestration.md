@@ -10,6 +10,17 @@ See [../safety/workspace-writes.md](../safety/workspace-writes.md), [../safety/s
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T09:43:00+0800
+- Scope: checked tool admission and capability inspection after grouped-only
+  external config consolidation. Tool selector roots, catalog filtering,
+  approval, execution, and capability snapshot semantics are unchanged.
+- Read: Host config loader/schema and tool catalog consumers, CLI capability
+  inspection, generated config schema, and focused tests.
+- Tests: Host config/protocol 115/115; CLI config schema 6/6 and full 155/155;
+  schema check and affected package typechecks; project-map drift; full release
+  gate.
+
+- Status: Verified
 - Date: 2026-07-16T23:55:17+0800
 - Scope: the model-facing `create_agent` schema and parser admit only
   `model: "inherit"` as an inheritance marker; the removed `default` alias

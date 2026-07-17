@@ -3,8 +3,6 @@ import { dirname } from "node:path";
 import {
   configResolutionOrder,
   loadHostConfig,
-  normalizeGroupedConfig,
-  readConfigFileObject,
   type ProviderConfig,
 } from "@sparkwright/host";
 import { mergeBindings, type Bindings } from "./keybindings.js";
@@ -69,138 +67,6 @@ export interface LoadedTuiConfig {
   warnings: ValidationError[];
 }
 
-const KNOWN_KEYS = new Set([
-  "accessMode",
-  "model",
-  "providers",
-  "workspace",
-  "capabilities",
-  "tools",
-  "keybindings",
-  "theme",
-  "mouse",
-  "vim",
-  // Host-only flat fields the TUI does not consume but must tolerate (the
-  // grouped form normalizes into these). Listed so they are not flagged as
-  // unknown; the host loader owns their validation.
-  "confidentialDefaults",
-  "confidentialPaths",
-  "write",
-  "shell",
-  "runBudget",
-  "maxSteps",
-  "traceLevel",
-]);
-const VALID_THEMES = ["dark", "light", "mono"];
-/**
- * Validate only TUI-owned fields. Shared fields (model, providers,
- * accessMode, capabilities, tools, shell, etc.) are loaded by
- * @sparkwright/host so the TUI cannot drift from CLI/host semantics.
- */
-function validateUiOverlay(
-  raw: unknown,
-  origin: string,
-  filePath: string,
-): { config: TuiConfigFile; sources: SourceMap; errors: ValidationError[] } {
-  const errors: ValidationError[] = [];
-  const config: TuiConfigFile = {};
-  const sources: SourceMap = {};
-
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-    errors.push({
-      file: filePath,
-      field: "(root)",
-      message: "must be a JSON object",
-    });
-    return { config, sources, errors };
-  }
-  // Accept grouped config so ui.theme/keybindings/mouse normalize to the same
-  // flat fields the rest of the TUI reads. Shared grouped fields are normalized
-  // too but intentionally ignored here; host validation owns them.
-  const obj = normalizeGroupedConfig(
-    raw as Record<string, unknown>,
-    filePath,
-    errors,
-  );
-
-  for (const key of Object.keys(obj)) {
-    if (!KNOWN_KEYS.has(key)) {
-      errors.push({
-        file: filePath,
-        field: key,
-        message: `unknown field (allowed: ${[...KNOWN_KEYS].join(", ")})`,
-      });
-    }
-  }
-
-  if (obj.theme !== undefined) {
-    if (typeof obj.theme === "string" && VALID_THEMES.includes(obj.theme)) {
-      config.theme = obj.theme;
-      sources.theme = origin;
-    } else {
-      errors.push({
-        file: filePath,
-        field: "theme",
-        message: `must be one of ${VALID_THEMES.join(" | ")}`,
-      });
-    }
-  }
-  if (obj.mouse !== undefined) {
-    if (typeof obj.mouse === "boolean") {
-      config.mouse = obj.mouse;
-    } else {
-      errors.push({
-        file: filePath,
-        field: "mouse",
-        message: "must be a boolean",
-      });
-    }
-  }
-  if (obj.vim !== undefined) {
-    if (typeof obj.vim === "boolean") {
-      config.vim = obj.vim;
-    } else {
-      errors.push({
-        file: filePath,
-        field: "vim",
-        message: "must be a boolean",
-      });
-    }
-  }
-  if (obj.keybindings !== undefined) {
-    if (
-      typeof obj.keybindings === "object" &&
-      obj.keybindings !== null &&
-      !Array.isArray(obj.keybindings)
-    ) {
-      const ok: Record<string, string | string[] | null> = {};
-      for (const [k, v] of Object.entries(
-        obj.keybindings as Record<string, unknown>,
-      )) {
-        if (v === null || typeof v === "string") {
-          ok[k] = v;
-        } else if (Array.isArray(v) && v.every((x) => typeof x === "string")) {
-          ok[k] = v as string[];
-        } else {
-          errors.push({
-            file: filePath,
-            field: `keybindings.${k}`,
-            message: "must be a string, string[], or null",
-          });
-        }
-      }
-      config.keybindings = ok;
-    } else {
-      errors.push({
-        file: filePath,
-        field: "keybindings",
-        message: "must be a JSON object",
-      });
-    }
-  }
-  return { config, sources, errors };
-}
-
 function resolutionOrder(cwd: string): { path: string; label: string }[] {
   return configResolutionOrder(cwd, process.env);
 }
@@ -210,7 +76,6 @@ function resolutionOrder(cwd: string): { path: string; label: string }[] {
  */
 export async function loadTuiConfig(cwd: string): Promise<LoadedTuiConfig> {
   const shared = await loadHostConfig(cwd, process.env);
-  const order = resolutionOrder(cwd);
   const merged: TuiConfigFile = {
     tuiPermissionMode: shared.config.accessMode as
       | TuiPermissionMode
@@ -224,12 +89,17 @@ export async function loadTuiConfig(cwd: string): Promise<LoadedTuiConfig> {
     capabilities: shared.config.capabilities as
       | Record<string, unknown>
       | undefined,
+    keybindings: shared.config.keybindings,
+    theme: shared.config.theme,
+    mouse: shared.config.mouse,
+    vim: shared.config.vim,
   };
   const sources: SourceMap = {
     tuiPermissionMode: shared.sources.accessMode,
     accessModeCeiling: shared.sources.accessModeCeiling,
     model: shared.sources.model,
     workspace: shared.sources.workspace,
+    theme: shared.sources.theme,
   };
   const attempted: LoadedTuiConfig["attempted"] = shared.attempted.map(
     (entry) => ({ path: entry.path, loaded: entry.loaded }),
@@ -237,39 +107,9 @@ export async function loadTuiConfig(cwd: string): Promise<LoadedTuiConfig> {
   const errors: ValidationError[] = [...shared.errors];
   const warnings: ValidationError[] = [...shared.warnings];
 
-  // Keybindings merge layer-by-layer (later files override earlier ones per
-  // binding name), so user can override project defaults of their own choice.
-  let mergedBindings: Record<string, string | string[] | null> | undefined;
-
-  const labelByPath = new Map(order.map((entry) => [entry.path, entry.label]));
-  for (const { path, loaded } of attempted) {
-    if (!loaded) continue;
-    let value: Record<string, unknown>;
-    try {
-      value = (await readConfigFileObject(path)).value;
-    } catch (error) {
-      errors.push({
-        file: path,
-        field: "(root)",
-        message: error instanceof Error ? error.message : String(error),
-      });
-      continue;
-    }
-    const label = labelByPath.get(path) ?? "config";
-    const v = validateUiOverlay(value, `${label}:${path}`, path);
-    errors.push(...v.errors);
-    if (v.config.keybindings) {
-      mergedBindings = { ...(mergedBindings ?? {}), ...v.config.keybindings };
-    }
-    if (v.config.theme !== undefined) merged.theme = v.config.theme;
-    if (v.config.mouse !== undefined) merged.mouse = v.config.mouse;
-    if (v.config.vim !== undefined) merged.vim = v.config.vim;
-    Object.assign(sources, v.sources);
-  }
-
   // Resolve final bindings (defaults + user overrides). Bad chord strings
   // become validation errors with a synthetic file path.
-  const resolved = mergeBindings(mergedBindings);
+  const resolved = mergeBindings(merged.keybindings);
   for (const e of resolved.errors) {
     errors.push({
       file: "(keybindings)",
@@ -277,7 +117,6 @@ export async function loadTuiConfig(cwd: string): Promise<LoadedTuiConfig> {
       message: e.message,
     });
   }
-  merged.keybindings = mergedBindings;
   merged.resolvedBindings = resolved.bindings;
 
   return { config: merged, sources, attempted, errors, warnings };

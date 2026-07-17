@@ -393,7 +393,7 @@ describe("TUI ↔ host via sdk-node", () => {
     await mkdir(join(workspace, ".sparkwright"), { recursive: true });
     await writeFile(
       join(workspace, ".sparkwright", "config.json"),
-      JSON.stringify({ model: "deterministic" }),
+      JSON.stringify({ identity: { model: "deterministic" } }),
       "utf8",
     );
     const store = new EventStore();
@@ -469,9 +469,11 @@ describe("TUI ↔ host via sdk-node", () => {
     await writeFile(
       join(workspace, ".sparkwright", "config.json"),
       JSON.stringify({
-        model: "openai/gpt-5.4-nano",
-        providers: {
-          openai: {},
+        identity: {
+          model: "openai/gpt-5.4-nano",
+          providers: {
+            openai: {},
+          },
         },
       }),
       "utf8",
@@ -625,8 +627,10 @@ describe("TUI ↔ host via sdk-node", () => {
     await writeFile(
       join(workspace, ".sparkwright", "config.json"),
       JSON.stringify({
-        model: "openai/gpt-test",
-        providers: { openai: {} },
+        identity: {
+          model: "openai/gpt-test",
+          providers: { openai: {} },
+        },
       }),
       "utf8",
     );

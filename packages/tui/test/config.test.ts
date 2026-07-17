@@ -38,6 +38,7 @@ describe("loadTuiConfig", () => {
         ui: {
           theme: "mono",
           mouse: false,
+          vim: true,
           keybindings: { "help.open": "ctrl+h" },
         },
       }),
@@ -51,6 +52,7 @@ describe("loadTuiConfig", () => {
     expect(loaded.config.tuiPermissionMode).toBe("accept-edits");
     expect(loaded.config.theme).toBe("mono");
     expect(loaded.config.mouse).toBe(false);
+    expect(loaded.config.vim).toBe(true);
     expect(loaded.config.resolvedBindings?.["help.open"]).toMatchObject([
       { ctrl: true, key: "h" },
     ]);
@@ -68,13 +70,22 @@ describe("loadTuiConfig", () => {
     const userConfig = join(xdg, "sparkwright", "config.json");
     await writeFile(
       userConfig,
-      JSON.stringify({ run: { accessMode: "bypass" } }),
+      JSON.stringify({
+        run: { accessMode: "bypass" },
+        ui: { theme: "dark", keybindings: { "help.open": "ctrl+h" } },
+      }),
       "utf8",
     );
     const projectConfig = join(workspace, ".sparkwright", "config.json");
     await writeFile(
       projectConfig,
-      JSON.stringify({ run: { accessMode: "ask" } }),
+      JSON.stringify({
+        run: { accessMode: "ask" },
+        ui: {
+          theme: "mono",
+          keybindings: { "activity.open": "ctrl+o" },
+        },
+      }),
       "utf8",
     );
 
@@ -83,6 +94,11 @@ describe("loadTuiConfig", () => {
     expect(loaded.config.tuiPermissionMode).toBe("ask");
     expect(loaded.config.accessModeCeiling).toBe("ask");
     expect(loaded.sources.tuiPermissionMode).toContain(projectConfig);
+    expect(loaded.config.theme).toBe("mono");
+    expect(loaded.config.keybindings).toEqual({
+      "help.open": "ctrl+h",
+      "activity.open": "ctrl+o",
+    });
     expect(loaded.warnings).toEqual([
       expect.objectContaining({
         file: projectConfig,

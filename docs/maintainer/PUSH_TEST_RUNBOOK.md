@@ -1093,7 +1093,7 @@ key and a non-zero `costUsd`.
 
 ```bash
 tmpcfg=$(mktemp)
-printf '%s\n' '{"model":"openai/smoke-model","providers":{"openai":{"baseURL":"https://api.openai.com/v1"}}}' >"$tmpcfg"
+printf '%s\n' '{"identity":{"model":"openai/smoke-model","providers":{"openai":{"baseURL":"https://api.openai.com/v1"}}}}' >"$tmpcfg"
 env -u OPENAI_API_KEY SPARKWRIGHT_CONFIG="$tmpcfg" npm exec sparkwright -- run "inspect this repo" \
   --workspace examples/repo-pilot \
   --target README.md \
