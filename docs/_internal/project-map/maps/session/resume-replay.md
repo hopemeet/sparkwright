@@ -10,6 +10,17 @@ See [session-store.md](session-store.md) and [../runtime/context-compaction.md](
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T23:04:01+0800
+- Scope: run resume and session-context replay now call the single Host session
+  owner for canonical run lookup, completed turns, trace facts, and compact
+  anchoring. Checkpoint selection, force/from-trace behavior, identities, and
+  Core resume execution remain unchanged.
+- Read: Host resume/start paths, session query/compaction modules, Core
+  checkpoint/session contracts, and focused protocol coverage.
+- Tests: Host protocol 59/59 and full Host 577/577; Host typecheck; repository
+  test typecheck; full release gate.
+
+- Status: Verified
 - Date: 2026-07-17T17:20:00+0800
 - Scope: Workflow resume has one identity path: replay a canonical journal
   record, verify its required v2 executable snapshot, and execute its

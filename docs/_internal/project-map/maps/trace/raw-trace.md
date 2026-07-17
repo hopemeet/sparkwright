@@ -11,6 +11,17 @@ and [../session/session-store.md](../session/session-store.md) for session layou
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T23:04:01+0800
+- Scope: session conversation trace-fact projection moved intact from
+  HostRuntime to `session-queries.ts`. It still reads the canonical session
+  aggregate trace and does not add an event family, alternate trace file, or
+  persistence path.
+- Read: Host session replay projection, Core trace store/codec contracts, and
+  resume/compaction protocol coverage.
+- Tests: Host protocol 59/59 and full Host 577/577; Host typecheck; full release
+  gate.
+
+- Status: Verified
 - Date: 2026-07-17T20:55:00+0800
 - Scope: Skill indexed/resident-loaded lifecycle metadata now carries required
   v2 package identity and omits Markdown `contentHash`; stats ignore events

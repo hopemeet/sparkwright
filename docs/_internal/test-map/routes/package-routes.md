@@ -233,6 +233,13 @@ For `runtime/task-projections.ts`, run Host service/protocol and agent-task
 focused tests; keep TaskManager/store/outbox ownership outside the projection
 leaf.
 
+For `session-queries.ts` or `session-compaction.ts`, run the full Host protocol
+file plus Host typecheck. Preserve canonical session/agent run lookup,
+checkpoint resume, completed-turn replay, compact artifact anchoring,
+compaction audit events, and session inspect/fork behavior. These modules own
+session filesystem reads; `HostRuntime` must not grow a second reader or expose
+private helpers for tests.
+
 ## Agent Runtime
 
 ### `packages/agent-runtime/src/tasks/notifications.ts`, `file-notifications.ts`, or `manager.ts`

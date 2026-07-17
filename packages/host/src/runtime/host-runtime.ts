@@ -1,4 +1,3 @@
-import { readdir, stat, readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import {
@@ -10,16 +9,12 @@ import {
   createLayeredPolicy,
   createSessionId,
   createSessionRunStoreFactory,
-  loadSessionCompactArtifact,
-  loadTraceEventsFile,
   createRun,
   defineTool,
   FileSessionStore,
   EventLog,
   loadCheckpointFromRunDir,
   resumeRunFromCheckpoint,
-  sessionCompactArtifactToContextItem,
-  sessionTurnToContextItems,
   type InteractionChannel,
   type BackgroundTaskPolicy,
   type ContentPart,
@@ -35,7 +30,6 @@ import {
   type RuntimeContext,
   type SparkwrightEvent,
   type TaskRevivalSource,
-  type SessionTraceFacts,
   type ToolDefinition,
   type ToolRequestPreviewOptions,
   type WorkflowHook,
@@ -188,10 +182,13 @@ import {
 import { resolveExecutionPlan } from "../execution-plan.js";
 import { createExecutionResources } from "../execution-resources.js";
 import {
+  findHostRunDirectory,
   forkHostSession,
   inspectHostSession,
   inspectHostSessionCompaction,
   listHostSessions,
+  loadHostSessionConversation,
+  sessionRootDirFor,
   type SessionInspectOptions,
 } from "../session-queries.js";
 import {
@@ -399,13 +396,6 @@ function requireActiveRunId(value: string | null): RunId {
   return value as RunId;
 }
 
-interface CompletedConversationTurn {
-  runId: RunId;
-  goal: string;
-  message: string;
-  traceFacts?: SessionTraceFacts;
-}
-
 type PreparedSkills = Awaited<ReturnType<typeof prepareSkillsForRun>>;
 type PreparedMcp = Awaited<ReturnType<typeof prepareMcpToolsForRun>>;
 
@@ -492,10 +482,6 @@ export function assembleRuntimeWorkflowHooks(
     ...projectionHooks,
     createPartialSubagentFinalityDisclosureHook(),
   ];
-}
-
-function defaultSessionRootDir(workspaceRoot: string): string {
-  return join(workspaceRoot, ".sparkwright", "sessions");
 }
 
 /**
@@ -817,9 +803,7 @@ export class HostRuntime {
 
   /** @internal Canonical lane scope used by the process HostService. */
   executionLaneKey(sessionId: string): string {
-    return `${
-      this.opts.sessionRootDir ?? defaultSessionRootDir(this.opts.workspaceRoot)
-    }\0${sessionId}`;
+    return `${sessionRootDirFor(this.opts)}\0${sessionId}`;
   }
 
   executionDriverHandle(
@@ -1496,7 +1480,11 @@ export class HostRuntime {
   ): Promise<
     { ok: true; sessionId: string } | { ok: false; error: ProtocolError }
   > {
-    const located = await this.findRunDir(payload.runId, payload.sessionId);
+    const located = await findHostRunDirectory(
+      this.opts,
+      payload.runId,
+      payload.sessionId,
+    );
     if (!located.ok) return located;
     return { ok: true, sessionId: located.sessionId ?? createSessionId() };
   }
@@ -3245,7 +3233,11 @@ export class HostRuntime {
     | { ok: true; runId: string; resumedFromRunId: string; sessionId?: string }
     | { ok: false; error: ProtocolError }
   > {
-    const located = await this.findRunDir(payload.runId, payload.sessionId);
+    const located = await findHostRunDirectory(
+      this.opts,
+      payload.runId,
+      payload.sessionId,
+    );
     if (!located.ok) return located;
 
     let checkpoint: ReturnType<typeof loadCheckpointFromRunDir>;
@@ -3593,8 +3585,8 @@ export class HostRuntime {
       return prepared;
     }
     const env = prepared.env;
-    const priorContext = await this.loadConversationHistory(
-      env.sessionRootDir,
+    const priorContext = await loadHostSessionConversation(
+      { workspaceRoot: env.workspaceRoot, sessionRootDir: env.sessionRootDir },
       sessionId,
     );
     const buildRun = (
@@ -3852,8 +3844,8 @@ export class HostRuntime {
     // the conversation history. Each completed prior run contributes a
     // user (goal) + assistant (final message) pair, tagged for the
     // "conversation" layer with session-stable cache policy.
-    const priorContext = await this.loadConversationHistory(
-      env.sessionRootDir,
+    const priorContext = await loadHostSessionConversation(
+      { workspaceRoot: env.workspaceRoot, sessionRootDir: env.sessionRootDir },
       sessionId,
     );
     const initialInputParts = inputPartsFromPayload(payload.input?.parts);
@@ -4005,223 +3997,6 @@ export class HostRuntime {
         ? { workflowRunId: String(env.workflowRecord.id) }
         : {}),
     };
-  }
-
-  private async findRunDir(
-    runId: string,
-    sessionId?: string,
-  ): Promise<
-    | { ok: true; runDir: string; sessionId?: string; agentId: string }
-    | { ok: false; error: ProtocolError }
-  > {
-    if (!isSafePathSegment(runId)) {
-      return {
-        ok: false,
-        error: {
-          code: "invalid_payload",
-          message:
-            "runId must contain only letters, numbers, dot, underscore, or hyphen",
-        },
-      };
-    }
-    const sessionRootDir =
-      this.opts.sessionRootDir ??
-      defaultSessionRootDir(this.opts.workspaceRoot);
-    if (sessionId) {
-      let safeSessionId: string;
-      try {
-        safeSessionId = asSessionId(sessionId);
-      } catch (error) {
-        return {
-          ok: false,
-          error: {
-            code: "invalid_payload",
-            message: error instanceof Error ? error.message : String(error),
-          },
-        };
-      }
-      const agentsDir = join(sessionRootDir, safeSessionId, "agents");
-      try {
-        const agents = await readdir(agentsDir, { withFileTypes: true });
-        for (const agent of agents) {
-          if (!agent.isDirectory() || !isSafePathSegment(agent.name)) continue;
-          const runDir = join(agentsDir, agent.name, "runs", runId);
-          if (await isDirectory(runDir)) {
-            return {
-              ok: true,
-              runDir,
-              sessionId: safeSessionId,
-              agentId: agent.name,
-            };
-          }
-        }
-      } catch {
-        // handled by not-found below
-      }
-      return {
-        ok: false,
-        error: {
-          code: "run_not_found",
-          message: `run not found in session ${safeSessionId}: ${runId}`,
-        },
-      };
-    }
-
-    try {
-      const sessions = await readdir(sessionRootDir, { withFileTypes: true });
-      for (const session of sessions) {
-        if (!session.isDirectory() || !isSafePathSegment(session.name))
-          continue;
-        const agentsDir = join(sessionRootDir, session.name, "agents");
-        let agents;
-        try {
-          agents = await readdir(agentsDir, { withFileTypes: true });
-        } catch {
-          continue;
-        }
-        for (const agent of agents) {
-          if (!agent.isDirectory() || !isSafePathSegment(agent.name)) continue;
-          const runDir = join(agentsDir, agent.name, "runs", runId);
-          if (await isDirectory(runDir)) {
-            return {
-              ok: true,
-              runDir,
-              sessionId: session.name,
-              agentId: agent.name,
-            };
-          }
-        }
-      }
-    } catch {
-      // handled by not-found below
-    }
-
-    return {
-      ok: false,
-      error: {
-        code: "run_not_found",
-        message: `Could not find run directory for ${runId} under ${this.opts.sessionRootDir ?? defaultSessionRootDir(this.opts.workspaceRoot)}.`,
-      },
-    };
-  }
-
-  /**
-   * Build conversation-history context items from the prior runs of a session.
-   * Each completed prior run contributes a user (goal) + assistant (final
-   * message) pair, tagged for the "conversation" layer with session-stable
-   * cache policy so the model sees the full multi-turn thread. New sessions
-   * (no prior runs) yield an empty array. Missing/unreadable run files are
-   * skipped rather than aborting the new run.
-   */
-  private async loadConversationHistory(
-    sessionRootDir: string,
-    sessionId: string,
-  ): Promise<ContextItem[]> {
-    const turns = await this.loadCompletedConversationTurns(
-      sessionRootDir,
-      sessionId,
-    );
-    const compact = await loadSessionCompactArtifact({
-      sessionRootDir,
-      sessionId,
-    });
-    if (turns.length === 0) {
-      return compact
-        ? [
-            sessionCompactWarningContextItem(
-              sessionId,
-              `Session compact artifact ignored because no completed turns were available to anchor throughRunId ${compact.throughRunId}.`,
-              { throughRunId: compact.throughRunId },
-            ),
-          ]
-        : [];
-    }
-
-    const items: ContextItem[] = [];
-    let startAt = 0;
-    if (compact) {
-      const compactedThrough = turns.findIndex(
-        (turn) => turn.runId === compact.throughRunId,
-      );
-      if (compactedThrough >= 0) {
-        items.push(sessionCompactArtifactToContextItem(compact));
-        startAt = compactedThrough + 1;
-      } else {
-        items.push(
-          sessionCompactWarningContextItem(
-            sessionId,
-            `Session compact artifact ignored because throughRunId ${compact.throughRunId} was not found in completed session turns.`,
-            { throughRunId: compact.throughRunId },
-          ),
-        );
-      }
-    }
-
-    for (const turn of turns.slice(startAt)) {
-      items.push(...sessionTurnToContextItems(turn));
-    }
-    return items;
-  }
-
-  private async loadCompletedConversationTurns(
-    sessionRootDir: string,
-    sessionId: string,
-  ): Promise<CompletedConversationTurn[]> {
-    let runIds: RunId[];
-    try {
-      const store = new FileSessionStore({ rootDir: sessionRootDir });
-      const session = await store.get(sessionId);
-      runIds = session?.runIds ?? [];
-    } catch {
-      return [];
-    }
-    if (runIds.length === 0) return [];
-
-    const traceFacts = await this.loadSessionTraceFacts(
-      sessionRootDir,
-      sessionId,
-    );
-    const runsDir = join(sessionRootDir, sessionId, "agents", "main", "runs");
-    const turns: CompletedConversationTurn[] = [];
-    for (const runId of runIds) {
-      const goal = await this.readJsonField(
-        join(runsDir, runId, "run.json"),
-        "goal",
-      );
-      const message = await this.readJsonField(
-        join(runsDir, runId, "result.json"),
-        "message",
-      );
-      // A turn only counts toward history once it has both sides of the
-      // exchange; a still-running or failed run with no final message is
-      // skipped so we never thread a dangling half-turn.
-      if (!goal || !message) continue;
-      turns.push({ runId, goal, message, traceFacts: traceFacts.get(runId) });
-    }
-    return turns;
-  }
-
-  private async loadSessionTraceFacts(
-    sessionRootDir: string,
-    sessionId: string,
-  ): Promise<Map<RunId, SessionTraceFacts>> {
-    let events: SparkwrightEvent[];
-    try {
-      events = await loadTraceEventsFile(
-        join(sessionRootDir, sessionId, "trace.jsonl"),
-      );
-    } catch {
-      return new Map();
-    }
-    const byRun = new Map<RunId, SessionTraceFacts>();
-    for (const event of events) {
-      const runId = event.runId;
-      if (!runId) continue;
-      const facts = byRun.get(runId) ?? {};
-      collectSessionTraceFact(facts, event);
-      byRun.set(runId, facts);
-    }
-    return byRun;
   }
 
   private async inspectConfiguredCapabilities(input: {
@@ -4387,8 +4162,7 @@ export class HostRuntime {
         taskManager: this.taskManager,
         getParentRunId: () => "run_capability_snapshot" as RunId,
         todoPath: join(
-          this.opts.sessionRootDir ??
-            defaultSessionRootDir(this.opts.workspaceRoot),
+          sessionRootDirFor(this.opts),
           "capability_snapshot",
           "todo.md",
         ),
@@ -4475,22 +4249,6 @@ export class HostRuntime {
         tasks: tasks.slice(0, 8),
       },
     };
-  }
-
-  private async readJsonField(
-    path: string,
-    field: string,
-  ): Promise<string | null> {
-    try {
-      const parsed = JSON.parse(await readFile(path, "utf8")) as Record<
-        string,
-        unknown
-      >;
-      const value = parsed[field];
-      return typeof value === "string" ? value : null;
-    } catch {
-      return null;
-    }
   }
 
   cancelRun(
@@ -4635,31 +4393,11 @@ export class HostRuntime {
       llm?: boolean;
     } = {},
   ): Promise<SessionCompactResult> {
-    let safeSessionId: string;
-    try {
-      safeSessionId = asSessionId(sessionId);
-    } catch {
-      return await compactHostSession({
-        context: this.opts,
-        sessionId,
-        reason,
-        manualLlm: options.llm === true,
-        turns: [],
-      });
-    }
-    const sessionRootDir =
-      this.opts.sessionRootDir ??
-      defaultSessionRootDir(this.opts.workspaceRoot);
-    const turns = await this.loadCompletedConversationTurns(
-      sessionRootDir,
-      safeSessionId,
-    );
     return await compactHostSession({
       context: this.opts,
       sessionId,
       reason,
       manualLlm: options.llm === true,
-      turns,
     });
   }
 
@@ -5090,18 +4828,6 @@ function minBudgetValue(
   return configured === undefined
     ? continuationLimit
     : Math.min(configured, continuationLimit);
-}
-
-function isSafePathSegment(value: string): boolean {
-  return /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(value);
-}
-
-async function isDirectory(path: string): Promise<boolean> {
-  try {
-    return (await stat(path)).isDirectory();
-  } catch {
-    return false;
-  }
 }
 
 function deriveConfiguredAgents(
@@ -7013,101 +6739,6 @@ function objectField(
   return value as Record<string, unknown>;
 }
 
-function collectSessionTraceFact(
-  facts: SessionTraceFacts,
-  event: SparkwrightEvent,
-): void {
-  if (event.type === "approval.requested") {
-    facts.approvals = {
-      ...(facts.approvals ?? {}),
-      requested: (facts.approvals?.requested ?? 0) + 1,
-    };
-    return;
-  }
-  if (event.type === "approval.resolved") {
-    const decision = recordString(event.payload, "decision");
-    facts.approvals = {
-      ...(facts.approvals ?? {}),
-      ...(decision === "approved"
-        ? { approved: (facts.approvals?.approved ?? 0) + 1 }
-        : {}),
-      ...(decision === "denied"
-        ? { denied: (facts.approvals?.denied ?? 0) + 1 }
-        : {}),
-    };
-    return;
-  }
-
-  if (
-    event.type === "workspace.write.completed" ||
-    event.type === "workspace.write.denied" ||
-    event.type === "workspace.write.skipped"
-  ) {
-    const key =
-      event.type === "workspace.write.completed"
-        ? "completed"
-        : event.type === "workspace.write.denied"
-          ? "denied"
-          : "skipped";
-    const path = recordString(event.payload, "path") ?? "(unknown)";
-    const writes = facts.workspaceWrites ?? {};
-    const next = new Set(writes[key] ?? []);
-    next.add(path);
-    facts.workspaceWrites = { ...writes, [key]: [...next] };
-    return;
-  }
-
-  if (event.type === "subagent.completed" || event.type === "subagent.failed") {
-    const childRunId =
-      recordString(event.payload, "childRunId") ??
-      recordString(event.metadata, "childRunId");
-    if (!childRunId) return;
-    const finality =
-      recordString(event.payload, "finality") ??
-      (event.type === "subagent.completed" ? "complete" : "partial");
-    addSessionSubagentFact(facts, {
-      childRunId,
-      finality,
-      role: recordString(event.payload, "role"),
-    });
-    return;
-  }
-
-  if (event.type === "tool.completed" || event.type === "tool.failed") {
-    const payload = isPlainRecord(event.payload) ? event.payload : undefined;
-    const toolName = payload
-      ? (recordString(payload, "toolName") ?? recordString(payload, "name"))
-      : undefined;
-    if (toolName !== "spawn_agent") return;
-    const childRunId =
-      findNestedString(event.payload, "childRunId") ??
-      findNestedString(event.metadata, "childRunId");
-    if (!childRunId) return;
-    addSessionSubagentFact(facts, {
-      childRunId,
-      finality: findNestedString(event.payload, "finality"),
-      role: findNestedString(event.payload, "role"),
-    });
-  }
-}
-
-function addSessionSubagentFact(
-  facts: SessionTraceFacts,
-  fact: NonNullable<SessionTraceFacts["subagents"]>[number],
-): void {
-  const existing = new Map(
-    (facts.subagents ?? []).map((entry) => [entry.childRunId, entry]),
-  );
-  existing.set(fact.childRunId, { ...existing.get(fact.childRunId), ...fact });
-  facts.subagents = [...existing.values()];
-}
-
-function recordString(value: unknown, key: string): string | undefined {
-  return isPlainRecord(value) && typeof value[key] === "string"
-    ? (value[key] as string)
-    : undefined;
-}
-
 function runtimeStateFromWorkflowRecord(
   record: WorkflowRunRecord,
 ): WorkflowRuntimeState {
@@ -7910,39 +7541,8 @@ function cloneJsonLike<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
-function findNestedString(value: unknown, key: string): string | undefined {
-  if (!isPlainRecord(value)) return undefined;
-  const direct = recordString(value, key);
-  if (direct) return direct;
-  for (const nested of Object.values(value)) {
-    const found = findNestedString(nested, key);
-    if (found) return found;
-  }
-  return undefined;
-}
-
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function sessionCompactWarningContextItem(
-  sessionId: string,
-  message: string,
-  metadata: Record<string, unknown> = {},
-): ContextItem {
-  return {
-    id: createContextItemId(),
-    type: "summary",
-    source: { kind: "session_compact_warning", uri: sessionId },
-    content: message,
-    metadata: {
-      layer: "conversation",
-      stability: "session",
-      sessionId,
-      compactionWarning: true,
-      ...metadata,
-    },
-  };
 }
 
 /** A summarized successful tool result salvaged from a child run's events. */

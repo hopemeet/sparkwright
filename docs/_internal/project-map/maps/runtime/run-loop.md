@@ -10,6 +10,17 @@ See [tool-orchestration.md](tool-orchestration.md) and [../trace/raw-trace.md](.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T23:04:01+0800
+- Scope: session/run lookup and prior-conversation reconstruction moved from
+  HostRuntime into the existing session owner. Host still prepares fresh and
+  resumed Core episodes with the same context, checkpoint, lane, and
+  HostExecution lifecycle; no second run-loop path was introduced.
+- Read: HostRuntime start/resume paths, session query/compaction modules, Core
+  run/session contracts, and focused protocol coverage.
+- Tests: Host protocol 59/59 and full Host 577/577; Host typecheck; full release
+  gate.
+
+- Status: Verified
 - Date: 2026-07-17T22:15:00+0800
 - Scope: ordinary Host start/resume/inject/cancel can enter only through the
   process HostService lane coordinator. HostRuntime no longer self-composes or

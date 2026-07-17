@@ -5,7 +5,6 @@ import { join } from "node:path";
 import { PROTOCOL_VERSION, type HostMessage } from "@sparkwright/protocol";
 import {
   asSessionId,
-  type ContextItem,
   FileSessionStore,
   SESSION_COMPACT_SCHEMA_VERSION,
   type SessionEvent,
@@ -30,6 +29,10 @@ import {
 import type { HostRuntime } from "../src/runtime.js";
 import { createHostService } from "../src/host-service.js";
 import { createTestHostRuntime } from "./helpers/host-runtime.js";
+import {
+  findHostRunDirectory,
+  loadHostSessionConversation,
+} from "../src/session-queries.js";
 
 /**
  * Tiny in-process Connection pair: two ends sharing two queues. Lets the
@@ -2468,6 +2471,49 @@ describe("host protocol", () => {
         message: expect.stringContaining("run_123"),
       },
     });
+  });
+
+  it("locates runs only in the canonical session agent tree", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-host-resume-"));
+    const sessionRootDir = join(workspace, ".sparkwright", "sessions");
+    const sessionId = "session_run_lookup";
+    const agentId = "reviewer";
+    const runId = "run_lookup";
+    const runDir = join(
+      sessionRootDir,
+      sessionId,
+      "agents",
+      agentId,
+      "runs",
+      runId,
+    );
+    try {
+      await mkdir(runDir, { recursive: true });
+      const context = { workspaceRoot: workspace, sessionRootDir };
+
+      await expect(
+        findHostRunDirectory(context, runId, sessionId),
+      ).resolves.toEqual({
+        ok: true,
+        runDir,
+        sessionId,
+        agentId,
+      });
+      await expect(findHostRunDirectory(context, runId)).resolves.toEqual({
+        ok: true,
+        runDir,
+        sessionId,
+        agentId,
+      });
+      await expect(
+        findHostRunDirectory(context, "../escape", sessionId),
+      ).resolves.toMatchObject({
+        ok: false,
+        error: { code: "invalid_payload" },
+      });
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
   });
 
   it("resumes a session-scoped checkpoint through the host runtime", async () => {
@@ -5160,20 +5206,10 @@ describe("host protocol", () => {
         "utf8",
       );
 
-      const runtime = createTestHostRuntime({
-        workspaceRoot: workspace,
-        sessionRootDir,
-        defaultModel: "deterministic",
-        emit: () => {},
-      });
-      const history = await (
-        runtime as unknown as {
-          loadConversationHistory(
-            rootDir: string,
-            id: string,
-          ): Promise<ContextItem[]>;
-        }
-      ).loadConversationHistory(sessionRootDir, sessionId);
+      const history = await loadHostSessionConversation(
+        { workspaceRoot: workspace, sessionRootDir },
+        sessionId,
+      );
 
       expect(history.map((item) => item.source?.kind)).toEqual([
         "session_compact_warning",

@@ -11,7 +11,6 @@ import {
   type ContextUsageHint,
   type SessionCompactionMeasurement,
   type SessionCompactionOptions,
-  type SessionCompactionTurn,
 } from "@sparkwright/core";
 import type { ProtocolError } from "@sparkwright/protocol";
 import { DETERMINISTIC_PROVIDER } from "./config/contracts.js";
@@ -22,6 +21,7 @@ import {
 import { createModel, type ResolvedModelConfig } from "./model-factory.js";
 import { createModelSessionSummarizer } from "./session-summarizer.js";
 import {
+  loadCompletedHostSessionTurns,
   sessionRootDirFor,
   type SessionQueryContext,
 } from "./session-queries.js";
@@ -53,7 +53,6 @@ export async function compactHostSession(input: {
   sessionId: string;
   reason?: string;
   manualLlm?: boolean;
-  turns: SessionCompactionTurn[];
 }): Promise<SessionCompactResult> {
   let safeSessionId: string;
   try {
@@ -70,6 +69,11 @@ export async function compactHostSession(input: {
     return sessionNotFound(input.sessionId);
   }
 
+  const turns = await loadCompletedHostSessionTurns(
+    input.context,
+    safeSessionId,
+  );
+
   const loaded = await loadHostConfig(input.context.workspaceRoot);
   const prepared = await sessionCompactionOptionsForTask({
     context: input.context,
@@ -79,9 +83,9 @@ export async function compactHostSession(input: {
   });
   let compacted: Awaited<ReturnType<typeof compactSessionTurns>>;
   try {
-    compacted = await compactSessionTurns(input.turns, prepared.options);
+    compacted = await compactSessionTurns(turns, prepared.options);
   } catch (error) {
-    const originalCharCount = input.turns.reduce(
+    const originalCharCount = turns.reduce(
       (sum, turn) => sum + turn.goal.length + turn.message.length,
       0,
     );
@@ -94,7 +98,7 @@ export async function compactHostSession(input: {
       summaryCharCount: originalCharCount,
       freedChars: 0,
       measurement: emptySessionCompactionMeasurement({
-        sourceRunCount: input.turns.length,
+        sourceRunCount: turns.length,
         originalCharCount,
       }),
       artifactPath: null,

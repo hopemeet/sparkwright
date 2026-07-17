@@ -5,13 +5,21 @@ import {
   SESSION_COMPACT_FILENAME,
   asSessionId,
   buildTraceTimelineFile,
+  createContextItemId,
   forkSessionFromEvent,
   loadSessionCompactArtifact,
+  loadTraceEventsFile,
+  sessionCompactArtifactToContextItem,
+  sessionTurnToContextItems,
   summarizeTraceFile,
   validateSessionTraceConsistency,
+  type ContextItem,
+  type RunId,
   type SessionCompactArtifact,
   type SessionCompactionMeasurement,
   type SessionEvent,
+  type SessionTraceFacts,
+  type SparkwrightEvent,
 } from "@sparkwright/core";
 import type {
   ProtocolError,
@@ -25,6 +33,19 @@ export interface SessionQueryContext {
   sessionRootDir?: string;
 }
 
+export interface CompletedHostSessionTurn {
+  runId: RunId;
+  goal: string;
+  message: string;
+  traceFacts?: SessionTraceFacts;
+}
+
+export type LocatedHostRunDirectory = {
+  runDir: string;
+  sessionId?: string;
+  agentId: string;
+};
+
 export type SessionInspectOptions = {
   compaction?: boolean;
 };
@@ -34,6 +55,209 @@ export function sessionRootDirFor(context: SessionQueryContext): string {
     context.sessionRootDir ??
     join(context.workspaceRoot, ".sparkwright", "sessions")
   );
+}
+
+export async function findHostRunDirectory(
+  context: SessionQueryContext,
+  runId: string,
+  sessionId?: string,
+): Promise<
+  ({ ok: true } & LocatedHostRunDirectory) | { ok: false; error: ProtocolError }
+> {
+  if (!isSafePathSegment(runId)) {
+    return {
+      ok: false,
+      error: {
+        code: "invalid_payload",
+        message:
+          "runId must contain only letters, numbers, dot, underscore, or hyphen",
+      },
+    };
+  }
+  const sessionRootDir = sessionRootDirFor(context);
+  if (sessionId) {
+    let safeSessionId: string;
+    try {
+      safeSessionId = asSessionId(sessionId);
+    } catch (error) {
+      return protocolFailure("invalid_payload", error);
+    }
+    const located = await findRunInSession(
+      sessionRootDir,
+      safeSessionId,
+      runId,
+    );
+    return located
+      ? { ok: true, ...located }
+      : {
+          ok: false,
+          error: {
+            code: "run_not_found",
+            message: `run not found in session ${safeSessionId}: ${runId}`,
+          },
+        };
+  }
+
+  try {
+    const sessions = await readdir(sessionRootDir, { withFileTypes: true });
+    for (const session of sessions) {
+      if (!session.isDirectory() || !isSafePathSegment(session.name)) continue;
+      const located = await findRunInSession(
+        sessionRootDir,
+        session.name,
+        runId,
+      );
+      if (located) return { ok: true, ...located };
+    }
+  } catch {
+    // Report the canonical not-found result below.
+  }
+
+  return {
+    ok: false,
+    error: {
+      code: "run_not_found",
+      message: `Could not find run directory for ${runId} under ${sessionRootDir}.`,
+    },
+  };
+}
+
+export async function loadHostSessionConversation(
+  context: SessionQueryContext,
+  sessionId: string,
+): Promise<ContextItem[]> {
+  const turns = await loadCompletedHostSessionTurns(context, sessionId);
+  const sessionRootDir = sessionRootDirFor(context);
+  const compact = await loadSessionCompactArtifact({
+    sessionRootDir,
+    sessionId,
+  });
+  if (turns.length === 0) {
+    return compact
+      ? [
+          sessionCompactWarningContextItem(
+            sessionId,
+            `Session compact artifact ignored because no completed turns were available to anchor throughRunId ${compact.throughRunId}.`,
+            { throughRunId: compact.throughRunId },
+          ),
+        ]
+      : [];
+  }
+
+  const items: ContextItem[] = [];
+  let startAt = 0;
+  if (compact) {
+    const compactedThrough = turns.findIndex(
+      (turn) => turn.runId === compact.throughRunId,
+    );
+    if (compactedThrough >= 0) {
+      items.push(sessionCompactArtifactToContextItem(compact));
+      startAt = compactedThrough + 1;
+    } else {
+      items.push(
+        sessionCompactWarningContextItem(
+          sessionId,
+          `Session compact artifact ignored because throughRunId ${compact.throughRunId} was not found in completed session turns.`,
+          { throughRunId: compact.throughRunId },
+        ),
+      );
+    }
+  }
+
+  for (const turn of turns.slice(startAt)) {
+    items.push(...sessionTurnToContextItems(turn));
+  }
+  return items;
+}
+
+export async function loadCompletedHostSessionTurns(
+  context: SessionQueryContext,
+  sessionId: string,
+): Promise<CompletedHostSessionTurn[]> {
+  const sessionRootDir = sessionRootDirFor(context);
+  let runIds: RunId[];
+  try {
+    const store = new FileSessionStore({ rootDir: sessionRootDir });
+    const session = await store.get(sessionId);
+    runIds = session?.runIds ?? [];
+  } catch {
+    return [];
+  }
+  if (runIds.length === 0) return [];
+
+  const traceFacts = await loadHostSessionTraceFacts(context, sessionId);
+  const runsDir = join(sessionRootDir, sessionId, "agents", "main", "runs");
+  const turns: CompletedHostSessionTurn[] = [];
+  for (const runId of runIds) {
+    const goal = await readJsonField(join(runsDir, runId, "run.json"), "goal");
+    const message = await readJsonField(
+      join(runsDir, runId, "result.json"),
+      "message",
+    );
+    if (!goal || !message) continue;
+    turns.push({ runId, goal, message, traceFacts: traceFacts.get(runId) });
+  }
+  return turns;
+}
+
+async function findRunInSession(
+  sessionRootDir: string,
+  sessionId: string,
+  runId: string,
+): Promise<LocatedHostRunDirectory | null> {
+  const agentsDir = join(sessionRootDir, sessionId, "agents");
+  try {
+    const agents = await readdir(agentsDir, { withFileTypes: true });
+    for (const agent of agents) {
+      if (!agent.isDirectory() || !isSafePathSegment(agent.name)) continue;
+      const runDir = join(agentsDir, agent.name, "runs", runId);
+      if (await isDirectory(runDir)) {
+        return { runDir, sessionId, agentId: agent.name };
+      }
+    }
+  } catch {
+    // The session has no canonical agent run tree.
+  }
+  return null;
+}
+
+async function loadHostSessionTraceFacts(
+  context: SessionQueryContext,
+  sessionId: string,
+): Promise<Map<RunId, SessionTraceFacts>> {
+  let events: SparkwrightEvent[];
+  try {
+    events = await loadTraceEventsFile(
+      join(sessionRootDirFor(context), sessionId, "trace.jsonl"),
+    );
+  } catch {
+    return new Map();
+  }
+  const byRun = new Map<RunId, SessionTraceFacts>();
+  for (const event of events) {
+    const runId = event.runId;
+    if (!runId) continue;
+    const facts = byRun.get(runId) ?? {};
+    collectSessionTraceFact(facts, event);
+    byRun.set(runId, facts);
+  }
+  return byRun;
+}
+
+async function readJsonField(
+  path: string,
+  field: string,
+): Promise<string | null> {
+  try {
+    const parsed = JSON.parse(await readFile(path, "utf8")) as Record<
+      string,
+      unknown
+    >;
+    const value = parsed[field];
+    return typeof value === "string" ? value : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function listHostSessions(
@@ -440,6 +664,138 @@ function stripGoalDecorations(content: string): string {
     .replace(/^\s*User request:\s*/i, "")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function collectSessionTraceFact(
+  facts: SessionTraceFacts,
+  event: SparkwrightEvent,
+): void {
+  if (event.type === "approval.requested") {
+    facts.approvals = {
+      ...(facts.approvals ?? {}),
+      requested: (facts.approvals?.requested ?? 0) + 1,
+    };
+    return;
+  }
+  if (event.type === "approval.resolved") {
+    const decision = recordString(event.payload, "decision");
+    facts.approvals = {
+      ...(facts.approvals ?? {}),
+      ...(decision === "approved"
+        ? { approved: (facts.approvals?.approved ?? 0) + 1 }
+        : {}),
+      ...(decision === "denied"
+        ? { denied: (facts.approvals?.denied ?? 0) + 1 }
+        : {}),
+    };
+    return;
+  }
+
+  if (
+    event.type === "workspace.write.completed" ||
+    event.type === "workspace.write.denied" ||
+    event.type === "workspace.write.skipped"
+  ) {
+    const key =
+      event.type === "workspace.write.completed"
+        ? "completed"
+        : event.type === "workspace.write.denied"
+          ? "denied"
+          : "skipped";
+    const path = recordString(event.payload, "path") ?? "(unknown)";
+    const writes = facts.workspaceWrites ?? {};
+    const next = new Set(writes[key] ?? []);
+    next.add(path);
+    facts.workspaceWrites = { ...writes, [key]: [...next] };
+    return;
+  }
+
+  if (event.type === "subagent.completed" || event.type === "subagent.failed") {
+    const childRunId =
+      recordString(event.payload, "childRunId") ??
+      recordString(event.metadata, "childRunId");
+    if (!childRunId) return;
+    const finality =
+      recordString(event.payload, "finality") ??
+      (event.type === "subagent.completed" ? "complete" : "partial");
+    addSessionSubagentFact(facts, {
+      childRunId,
+      finality,
+      role: recordString(event.payload, "role"),
+    });
+    return;
+  }
+
+  if (event.type === "tool.completed" || event.type === "tool.failed") {
+    const payload = isPlainRecord(event.payload) ? event.payload : undefined;
+    const toolName = payload
+      ? (recordString(payload, "toolName") ?? recordString(payload, "name"))
+      : undefined;
+    if (toolName !== "spawn_agent") return;
+    const childRunId =
+      findNestedString(event.payload, "childRunId") ??
+      findNestedString(event.metadata, "childRunId");
+    if (!childRunId) return;
+    addSessionSubagentFact(facts, {
+      childRunId,
+      finality: findNestedString(event.payload, "finality"),
+      role: findNestedString(event.payload, "role"),
+    });
+  }
+}
+
+function addSessionSubagentFact(
+  facts: SessionTraceFacts,
+  fact: NonNullable<SessionTraceFacts["subagents"]>[number],
+): void {
+  const existing = new Map(
+    (facts.subagents ?? []).map((entry) => [entry.childRunId, entry]),
+  );
+  existing.set(fact.childRunId, { ...existing.get(fact.childRunId), ...fact });
+  facts.subagents = [...existing.values()];
+}
+
+function sessionCompactWarningContextItem(
+  sessionId: string,
+  message: string,
+  metadata: Record<string, unknown> = {},
+): ContextItem {
+  return {
+    id: createContextItemId(),
+    type: "summary",
+    source: { kind: "session_compact_warning", uri: sessionId },
+    content: message,
+    metadata: {
+      layer: "conversation",
+      stability: "session",
+      sessionId,
+      compactionWarning: true,
+      ...metadata,
+    },
+  };
+}
+
+function findNestedString(value: unknown, key: string): string | undefined {
+  if (!isPlainRecord(value)) return undefined;
+  const direct = recordString(value, key);
+  if (direct) return direct;
+  for (const nested of Object.values(value)) {
+    const found = findNestedString(nested, key);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+function isSafePathSegment(value: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(value);
+}
+
+async function isDirectory(path: string): Promise<boolean> {
+  try {
+    return (await stat(path)).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 function sessionNotFound(sessionId: string): {

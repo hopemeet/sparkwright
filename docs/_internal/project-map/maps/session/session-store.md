@@ -10,6 +10,17 @@ See [../trace/raw-trace.md](../trace/raw-trace.md) for raw event evidence.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T23:04:01+0800
+- Scope: Host session filesystem reads are consolidated in
+  `session-queries.ts`: canonical run lookup, completed-turn replay, trace facts,
+  compact anchoring, list/inspect/fork. Manual compaction now loads turns inside
+  `session-compaction.ts`; HostRuntime retains no duplicate reader.
+- Read: Host session query/compaction/runtime sources, Core FileSessionStore and
+  canonical run/trace layout, focused resume/compaction tests.
+- Tests: Host protocol 59/59 and full Host 577/577; Host typecheck; full release
+  gate.
+
+- Status: Verified
 - Date: 2026-07-17T17:20:00+0800
 - Scope: canonical Workflow journal records now require generation/revision,
   source layer, package hash policy 2, package hash, executable snapshot

@@ -12,6 +12,18 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T23:04:01+0800
+- Scope: session operations have one Host owner. `session-queries.ts` locates
+  canonical session/agent run directories, projects completed conversation
+  turns and trace facts, anchors compact context, and serves session queries;
+  `session-compaction.ts` loads those turns before compacting. HostRuntime keeps
+  only protocol/execution delegation and no session filesystem reader copy.
+- Read: concrete HostRuntime, session query/compaction modules, canonical Core
+  session/trace stores, resume and compaction protocol coverage.
+- Tests: Host protocol 59/59 and full Host 577/577; Host typecheck; repository
+  test typecheck; import graph and project-map drift gates; full release gate.
+
+- Status: Verified
 - Date: 2026-07-17T22:15:00+0800
 - Scope: HostService is the sole HostRuntime composition and ordinary execution
   entry. Runtime context, workspace lease, and execution coordinator are
@@ -201,8 +213,8 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 - `packages/host/src/runtime/capability-assembly.ts` — capability snapshot projection, summaries, automation reads, and merge
 - `packages/host/src/runtime/task-projections.ts` — task snapshots, notifications, terminal classification, and bounded output reads
 - `packages/host/src/runtime/contracts.ts` — runtime construction and execution coordination ports
-- `packages/host/src/session-queries.ts`
-- `packages/host/src/session-compaction.ts`
+- `packages/host/src/session-queries.ts` — canonical Host run lookup, completed-turn replay, compact-context anchoring, trace fact projection, and session queries
+- `packages/host/src/session-compaction.ts` — complete manual compaction operation from turn loading through artifact/event persistence
 - `packages/host/src/run-access.ts`
 - `packages/host/src/run-security-plan.ts`
 - `packages/host/src/run-policy.ts`
@@ -991,14 +1003,13 @@ Does not own:
   in-process, ACP, and external delegates retain a lease for their full
   execution. Dynamic Agent grant/delegate dispatch tools are not themselves
   wrapped because their child owns the mutation window.
-- `session-queries.ts` owns session listing, trace inspection, compaction
-  inspection, transcript previews, and session fork queries. `runtime.ts`
-  delegates those protocol-compatible operations without retaining duplicate
-  implementations.
-- `session-compaction.ts` owns manual compaction preparation, optional
-  summarizer model assembly, artifact writes, and compaction event recording.
-  Runtime supplies completed immutable turns and does not retain a second
-  compaction implementation.
+- `session-queries.ts` owns canonical session/agent run lookup, completed-turn
+  replay, raw-trace fact projection, compact-context anchoring, session listing,
+  trace/compaction inspection, transcript previews, and session fork queries.
+  `HostRuntime` delegates without retaining filesystem readers or projections.
+- `session-compaction.ts` owns the complete manual compaction operation:
+  completed-turn loading, optional summarizer model assembly, artifact writes,
+  and compaction event recording. Runtime does not prepare a parallel turn list.
 - Same-owner acquisition is reference-counted and reentrant, so a child holding
   its execution lease can call managed write tools. A descendant request that
   would wait on an ancestor fails fast instead of entering a run-chain
