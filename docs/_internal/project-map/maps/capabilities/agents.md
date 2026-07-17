@@ -11,6 +11,16 @@ See [../../modules/agent-runtime.md](../../modules/agent-runtime.md) and [../../
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T13:00:00+0800
+- Scope: delegate capability descriptors no longer echo configured
+  `requiresApproval`; Host emits the required current-run approval fact plus
+  reasons/options, and CLI/TUI consume it directly.
+- Read: delegate policy/descriptor assembly, runtime capability projection,
+  protocol schema/fixture, CLI/TUI consumers, and Agent coverage routes.
+- Tests: Host capability/delegate protocol 14/14 and tools 88/88; CLI
+  capability 3/3; TUI capability 8/8; affected typechecks passed.
+
+- Status: Verified
 - Date: 2026-07-17T08:25:00+0800
 - Scope: ACP and external-command tool results expose only canonical
   `agentProfileId` for configured-profile identity. The parallel result/error

@@ -8,6 +8,16 @@ cron, shell/task tools, and capability inspection.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T13:00:00+0800
+- Scope: capability inspection publishes one exposure vocabulary and one
+  delegate approval fact. `list_dir` is advanced; the legacy tier and delegate
+  config echo are absent from Host/protocol/CLI/TUI snapshots.
+- Read: Host capability assembly/tool identity/delegate descriptor, protocol
+  schema/fixture, CLI/TUI consumers, Agent map, and focused tests.
+- Tests: Host tools 88/88 and capability/delegate protocol 14/14; CLI 3/3;
+  TUI 8/8; affected typechecks passed.
+
+- Status: Verified
 - Date: 2026-07-17T09:43:00+0800
 - Scope: capability preparation and inspection consume grouped-only external
   config through Host. Tool/capability roots and effective runtime semantics are

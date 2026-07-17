@@ -44,7 +44,6 @@
         "protocol": "in_process",
         "model": "anthropic/claude",
         "risk": "safe",
-        "requiresApproval": false,
         "approvalRequiredUnderCurrentRun": false,
         "approvalReasons": [],
         "approvalRunOptions": { "shouldWrite": false },

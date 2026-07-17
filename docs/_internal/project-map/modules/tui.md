@@ -11,6 +11,16 @@ See also [../maps/trace/export-diagnostics.md](../maps/trace/export-diagnostics.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T13:00:00+0800
+- Scope: the capability panel renders delegate approval from the required
+  `approvalRequiredUnderCurrentRun` snapshot fact; it no longer reads a
+  delegate-config echo.
+- Read: TUI capability panel/test, protocol capability type/schema, Host
+  descriptor producer, and TUI rendering coverage.
+- Tests: TUI capability panel 8/8 and typecheck; Host protocol and CLI
+  capability tests passed.
+
+- Status: Verified
 - Date: 2026-07-17T09:43:00+0800
 - Scope: TUI config now projects the single Host loader result. The independent
   file re-read, flat-key allowlist, grouped normalizer call, and UI validator

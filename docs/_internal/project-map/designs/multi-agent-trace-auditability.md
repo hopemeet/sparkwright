@@ -167,28 +167,11 @@ bookkeeping, do not zero out same-batch multiplicity."
 
 ### 4 — `inspect` approval ≠ runtime approval
 
-The delegate descriptor dual-encodes approval: a constant `risk: "risky"`
-([delegate-capability.ts:142](../../../../packages/host/src/delegate-capability.ts))
-and a config-derived `requiresApproval`
-([delegate-capability.ts:143](../../../../packages/host/src/delegate-capability.ts)).
-`capabilities inspect` reports `requiresApproval` (→ "not-required" when config
-says false); the runtime approval gate keys off the tool `risk` and requests
-approval anyway. The two `describe*` functions even default the boolean
-differently — external `?? true` (line 143) vs in-process `=== true` (line 169)
-— so the field is unreliable on its own.
-
-Root cause: "does this require approval at runtime" is not derived from one
-place; it is asserted twice and the inspect view trusts the wrong copy.
-
-Direction: replace the standalone `requiresApproval` echo with **conditional
-approval facts** derived from the same gate the runtime uses. `inspect` cannot
-own the full run-time context (permission mode, `--yes`, interactive resolver,
-`--write` may all combine), so it must not promise a single unconditional
-`requiresApproval: boolean` that "predicts runtime". Instead the
-`EffectiveCapabilitySnapshot` emits, e.g.,
-`approvalRequiredUnderCurrentRun`, `approvalReasons`, and `gatedByRunWrite`, and
-`inspect` states which run options the result was computed under. Same gate
-logic, honestly scoped to what inspect actually knows.
+Resolved: delegate capability descriptors no longer echo configured
+`requiresApproval`. Host derives required `approvalRequiredUnderCurrentRun`
+plus `approvalReasons` and `approvalRunOptions` from the same policy profile
+used for execution, while `gatedByRunWrite` remains a separate authority fact.
+CLI and TUI render that scoped snapshot directly.
 
 ### 5 — external-command direct writes invisible to `workspace.write.*`
 

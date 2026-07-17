@@ -929,12 +929,7 @@ export interface WorkflowRunSnapshot {
 export interface CapabilityToolSummary {
   name: string;
   canonicalName?: string;
-  defaultExposureTier?:
-    | "public"
-    | "advanced"
-    | "infrastructure"
-    | "internal"
-    | "legacy";
+  defaultExposureTier?: "public" | "advanced" | "infrastructure" | "internal";
   source?: string;
   origin?: string;
   risk?: string;
@@ -1002,10 +997,8 @@ export interface CapabilityDelegateToolSummary {
    */
   model?: string;
   risk: "safe" | "risky" | "denied";
-  /** Legacy config echo. Prefer approvalRequiredUnderCurrentRun for diagnostics. */
-  requiresApproval: boolean;
   /** @reserved Public capability-inspection field consumed by permission UIs. */
-  approvalRequiredUnderCurrentRun?: boolean;
+  approvalRequiredUnderCurrentRun: boolean;
   /** @reserved Public capability-inspection field consumed by permission UIs. */
   approvalReasons?: string[];
   /** @reserved Public capability-inspection field consumed by permission UIs. */

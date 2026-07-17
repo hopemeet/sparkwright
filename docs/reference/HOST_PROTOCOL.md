@@ -803,7 +803,6 @@ scanning files or interpreting local config.
         "profileId": "external_reviewer",
         "protocol": "external_command",
         "risk": "risky",
-        "requiresApproval": true,
         "approvalRequiredUnderCurrentRun": true,
         "approvalReasons": [
           "tool.risk:risky",
@@ -825,7 +824,6 @@ scanning files or interpreting local config.
         "protocol": "in_process",
         "model": "anthropic/claude",
         "risk": "safe",
-        "requiresApproval": false,
         "approvalRequiredUnderCurrentRun": false,
         "approvalReasons": [],
         "approvalRunOptions": { "shouldWrite": false },
@@ -903,10 +901,10 @@ a write-capable `accessMode` before the delegate can use
 workspace write or shell tools. In-process delegate spawn is `risk: "safe"` by
 default because the child run enforces its own tool policies; set
 `requiresApproval: true` on the delegate only when spawn itself needs approval.
-`requiresApproval` is a legacy delegate-config echo. For audit/diagnostics, use
-`approvalRequiredUnderCurrentRun`, `approvalReasons`, and `approvalRunOptions`;
-those fields describe the runtime gate under the inspected run options rather
-than promising an unconditional approval boolean.
+Capability snapshots expose only `approvalRequiredUnderCurrentRun`,
+`approvalReasons`, and `approvalRunOptions`; those fields describe the runtime
+gate under the inspected run options rather than echoing delegate config as an
+unconditional approval prediction.
 Capability snapshots may include `rules.workflow` and `rules.events`,
 host-authored inspection summaries for configured workflow hooks, verification
 invariants, documented-command verifier rules, and non-blocking event

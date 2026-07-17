@@ -44,10 +44,15 @@
   stream-specific tool/trace results and direct CLI execution. A later
   2026-07-17 pass removed the ACP/external-command tool-result `agentId`
   profile alias while retaining canonical `agentProfileId` and lifecycle actor
-  attribution.
+  attribution. The current semantic-consolidation pass also removed the
+  delegate `requiresApproval` capability echo and verified the required
+  current-run approval fact across Host protocol, CLI inspect, and TUI panel.
 
 ## Covered
 
+- 2026-07-17 delegate capability coverage locks
+  `approvalRequiredUnderCurrentRun` as the only rendered approval boolean and
+  rejects the removed config echo in CLI JSON output.
 - 2026-07-17 ACP/external-command result identity coverage rejects the removed
   top-level `agentId` alias on both success paths and external nonzero-exit
   metadata, while locking canonical `agentProfileId` and unchanged lifecycle

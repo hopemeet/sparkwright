@@ -18,7 +18,7 @@
 ## Current Confidence
 
 - Status: `Partially Verified`
-- Last reviewed: 2026-06-29
+- Last reviewed: 2026-07-17
 - Evidence source: 2026-06-22 TUI status-bar and event-stream render tests
   passed; PTY first-screen capture at 24x100 showed a single static
   `SparkWright` header and no duplicate brand text in live status/input areas.
@@ -35,6 +35,8 @@
 
 ## Covered
 
+- 2026-07-17 capability-panel tests render configured delegates from the
+  required current-run approval fact after removal of the config echo.
 - 2026-07-15 real 80x24 PTY QA on a resumed coding/background-task session
   exposed two related presentation defects: a normal `task.cancelled` was
   labelled `failed unread`, and the one-line compact StatusBar split status,

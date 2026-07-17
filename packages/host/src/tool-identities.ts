@@ -47,7 +47,7 @@ const PUBLIC_IDENTITIES: Record<string, BuiltinToolIdentity> = {
 const ADVANCED_BY_NAME: Record<string, BuiltinToolIdentity> = {
   list_dir: {
     canonicalName: "list_dir",
-    defaultExposureTier: "legacy",
+    defaultExposureTier: "advanced",
     relatedTools: ["glob"],
   },
   read_anchored_text: {
@@ -153,10 +153,7 @@ export function applyBuiltinToolIdentity<T extends ToolDefinition>(
 }
 
 export function shouldDeferToolByDefault(tool: ToolDefinition): boolean {
-  return (
-    tool.defaultExposureTier === "advanced" ||
-    tool.defaultExposureTier === "legacy"
-  );
+  return tool.defaultExposureTier === "advanced";
 }
 
 export function identityForTool(

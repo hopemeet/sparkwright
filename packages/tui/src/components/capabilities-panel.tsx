@@ -542,8 +542,8 @@ function addAgentsRows(
           → {tool.profileId} · {tool.protocol}
           {tool.model ? ` · ${tool.model}` : ""}
           {formatDelegateRouting(tool.routing)} ·{" "}
-          {tool.requiresApproval ? "approval" : "no approval"} · workspace{" "}
-          {tool.workspaceAccess}
+          {tool.approvalRequiredUnderCurrentRun ? "approval" : "no approval"} ·
+          workspace {tool.workspaceAccess}
           {tool.gatedByRunWrite ? " · requires write access" : ""}
         </Text>
       </Text>,

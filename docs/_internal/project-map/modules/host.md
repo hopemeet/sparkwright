@@ -12,6 +12,16 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T13:00:00+0800
+- Scope: Host tool and delegate capability assembly has one semantic source:
+  `list_dir` is an advanced deferred tool, delegate descriptors project only
+  current-run approval facts, and replay behavior reads tool governance.
+- Read: tool identities/catalog/selectors, Host tool definitions, delegate
+  capability/runtime assembly, protocol/schema consumers, and focused tests.
+- Tests: Host tools 88/88; capability/delegate protocol 14/14; Host typecheck;
+  downstream CLI/TUI capability tests passed.
+
+- Status: Verified
 - Date: 2026-07-17T09:43:00+0800
 - Scope: external configuration now has one canonical input shape: identity,
   policy, run, and UI-owned fields are grouped-only; active root fields remain

@@ -213,6 +213,19 @@ trace/session inspection.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T13:00:00+0800
+- Scope: tool/capability semantics are single-source: exposure tiers are
+  public/advanced/infrastructure/internal with `list_dir` canonical advanced;
+  delegate snapshots expose only the required current-run approval fact; replay
+  risk is derived only from governance idempotency.
+- Read: Core tool/run contracts, Host catalog/delegate/capability assembly,
+  protocol/schema/fixtures, CLI/TUI capability consumers, MCP/Cron/Agent tool
+  definitions, public references, and routed project/test-map pages.
+- Tests: Core replay 2/2; Host tools 88/88 and capability/delegate protocol
+  14/14; CLI capability 3/3; TUI capability 8/8; MCP adapter 34/34; Cron 20/20;
+  affected package typechecks.
+
+- Status: Verified
 - Date: 2026-07-17T11:02:45+0800
 - Scope: model-facing runtime DTOs are single-shape: Task scheduling accepts
   only `mode`, Todo writes accept only `title`/`status`/optional `priority`, and

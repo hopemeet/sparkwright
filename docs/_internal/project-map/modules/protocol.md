@@ -11,6 +11,16 @@ See also [../maps/safety/approvals.md](../maps/safety/approvals.md) and [../maps
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T13:00:00+0800
+- Scope: capability wire shapes expose four canonical tool tiers and one
+  required delegate approval fact. Removed the `legacy` tier and delegate
+  `requiresApproval` config echo from types, schema, fixtures, and references.
+- Read: protocol capability types, host-message schema/fixture, Host producer,
+  CLI/TUI consumers, and Host protocol reference/changelog.
+- Tests: Protocol build/typecheck; Host capability/delegate protocol 14/14;
+  schema validation and downstream capability tests passed.
+
+- Status: Verified
 - Date: 2026-07-16T22:26:54+0800
 - Scope: Workflow list/resume wire shapes are unchanged while their current
   durable-path documentation now names the journal-only workspace layout and
@@ -178,10 +188,9 @@ Does not own:
   `mode: "sort"`, `relevance`, `score`, `matchedKeywords`, `reason`). This is
   diagnostic/capability metadata only; clients must not infer hidden tools or
   permission changes from it.
-- `CapabilityDelegateToolSummary.requiresApproval` is a legacy config echo.
-  Diagnostics should prefer conditional approval facts:
-  `approvalRequiredUnderCurrentRun`, `approvalReasons`, and
-  `approvalRunOptions`.
+- `CapabilityDelegateToolSummary.approvalRequiredUnderCurrentRun` is the
+  required effective fact for the inspected run. `approvalReasons` and
+  `approvalRunOptions` explain that fact; delegate config is not echoed.
 - `CapabilitySnapshot.model` is optional startup/capability diagnostic data.
   Its `pricing` object reports `configured`/`builtin`/`unavailable`/
   `not_applicable`; `missing_pricing` is warning-only and means cost estimates

@@ -1380,7 +1380,7 @@
         "canonicalName": { "type": "string", "minLength": 1 },
         "defaultExposureTier": {
           "type": "string",
-          "enum": ["public", "advanced", "infrastructure", "internal", "legacy"]
+          "enum": ["public", "advanced", "infrastructure", "internal"]
         },
         "source": { "type": "string" },
         "origin": { "type": "string" },
@@ -1462,7 +1462,7 @@
         "profileId",
         "protocol",
         "risk",
-        "requiresApproval",
+        "approvalRequiredUnderCurrentRun",
         "forbidNesting",
         "sideEffects",
         "workspaceAccess",
@@ -1482,7 +1482,6 @@
           "type": "string",
           "enum": ["safe", "risky", "denied"]
         },
-        "requiresApproval": { "type": "boolean" },
         "approvalRequiredUnderCurrentRun": { "type": "boolean" },
         "approvalReasons": { "type": "array", "items": { "type": "string" } },
         "approvalRunOptions": {

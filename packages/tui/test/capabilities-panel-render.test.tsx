@@ -243,7 +243,7 @@ describe("CapabilitiesPanel rendering", () => {
                 protocol: "in_process",
                 model: "anthropic/claude",
                 risk: "safe",
-                requiresApproval: false,
+                approvalRequiredUnderCurrentRun: false,
                 forbidNesting: true,
                 sideEffects: ["model", "workspace"],
                 workspaceAccess: "read_write",

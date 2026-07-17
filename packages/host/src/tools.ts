@@ -423,7 +423,6 @@ export function createSkillInspectorTool(
       sideEffects: ["read"],
       idempotency: "idempotent",
     },
-    isReplaySafe: true,
     async execute(args: unknown) {
       const action = parseInspectAction(args, "list_skills");
       const roots = resolveSkillRoots(workspaceRoot, configuredRoots);
@@ -493,7 +492,6 @@ export function createSkillManagerTool(
       const preview = [action, name].filter(Boolean).join(" ");
       return preview || undefined;
     },
-    isReplaySafe: false,
     async execute(args: unknown, ctx) {
       const input = parseSkillManagerArgs(args);
       if (!input.name || !isSkillName(input.name)) {
@@ -589,7 +587,6 @@ export function createSkillUpdateTool(
       const preview = [action, name].filter(Boolean).join(" ");
       return preview || undefined;
     },
-    isReplaySafe: false,
     async execute(args: unknown, ctx) {
       const input = parseSkillUpdateArgs(args);
       const roots = resolveSkillRoots(workspaceRoot, configuredRoots);
@@ -665,7 +662,6 @@ export function createAgentInspectorTool(workspaceRoot: string) {
       sideEffects: ["read"],
       idempotency: "idempotent",
     },
-    isReplaySafe: true,
     async execute(args: unknown) {
       const action = parseInspectAction(args, "list_agents");
       return loadAgentReport(workspaceRoot, action);
@@ -722,7 +718,6 @@ export function createMarkdownAgentManagerTool(workspaceRoot: string) {
       sideEffects: ["read", "write"],
       idempotency: "conditional",
     },
-    isReplaySafe: false,
     async execute(args: unknown, ctx) {
       if (!ctx.workspace) throw new Error("Workspace is not configured.");
       if (isPlainObject(args) && args.action === "remove")

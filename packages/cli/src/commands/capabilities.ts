@@ -715,12 +715,10 @@ function formatCapabilityInspectReport(
   }
   for (const tool of report.agents.delegateTools) {
     const writeGate = tool.gatedByRunWrite ? "; gated=write-access" : "";
-    const approvalRequired =
-      tool.approvalRequiredUnderCurrentRun ?? tool.requiresApproval;
     const model = tool.model ? `; model=${tool.model}` : "";
     const routing = formatDelegateRouting(tool.routing);
     lines.push(
-      `  delegate: ${tool.toolName} -> ${tool.profileId} (${tool.protocol}${model}${routing}; approval=current-run:${approvalRequired ? "required" : "not-required"}; workspace=${tool.workspaceAccess}${writeGate})`,
+      `  delegate: ${tool.toolName} -> ${tool.profileId} (${tool.protocol}${model}${routing}; approval=current-run:${tool.approvalRequiredUnderCurrentRun ? "required" : "not-required"}; workspace=${tool.workspaceAccess}${writeGate})`,
     );
   }
   if (report.agents.shadows.length > 0) {

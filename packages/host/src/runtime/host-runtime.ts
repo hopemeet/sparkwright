@@ -5719,7 +5719,6 @@ export function createDelegateParallelTool(input: {
         ? parsed.map((task) => `${task.agentId}: ${task.goal}`).join(" | ")
         : undefined;
     },
-    isReplaySafe: false,
     async execute(args: unknown): Promise<unknown> {
       const parent = input.getParent();
       if (!parent) {
@@ -6332,7 +6331,6 @@ export function createDynamicSpawnAgentTool(input: {
       if (role && goal) return `${role}: ${goal}${toolHint}`;
       return role || goal || undefined;
     },
-    isReplaySafe: false,
     async execute(args: unknown): Promise<unknown> {
       const parent = input.getParent();
       if (!parent) {

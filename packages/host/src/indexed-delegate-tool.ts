@@ -125,7 +125,6 @@ export function createDelegateAgentTool(input: {
         return false;
       }
     },
-    isReplaySafe: false,
     async execute(args: unknown, ctx): Promise<unknown> {
       const task = parseDelegateAgentArgs(args);
       const target = resolveTarget(task);

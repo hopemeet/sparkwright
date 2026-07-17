@@ -829,7 +829,7 @@ Tool risk levels:
 - `risky`
 - `denied`
 
-Tool governance metadata is optional but should be used for production tools. The registry accepts caller scopes, rate limits, output contracts, side-effect metadata, idempotency, audit policy, data sensitivity, and cost estimates. `requiresApproval` forces the approval path even when `risk` is `safe`.
+Tool governance metadata is optional but should be used for production tools. The registry accepts caller scopes, rate limits, output contracts, side-effect metadata, idempotency, audit policy, data sensitivity, and cost estimates. `requiresApproval` forces the approval path even when `risk` is `safe`. After a network-class failure, `conditional` and `non_idempotent` tools emit `tool.replay_risk`; `idempotent` tools do not.
 
 Tool descriptors may also include optional runtime hints:
 

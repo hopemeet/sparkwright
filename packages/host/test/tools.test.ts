@@ -2297,7 +2297,6 @@ describe("host tools", () => {
         sideEffects: ["write"],
         idempotency: "conditional",
       },
-      isReplaySafe: false,
       async execute() {
         return { ok: true };
       },
@@ -2948,6 +2947,12 @@ describe("host tools", () => {
       "edit",
       "tool_search",
     ]);
+    expect(
+      entries.find((entry) => entry.definition.name === "list_dir")?.definition,
+    ).toMatchObject({
+      defaultExposureTier: "advanced",
+      deferLoading: true,
+    });
     expect(
       entries.find((entry) => entry.definition.name === "read"),
     ).toMatchObject({

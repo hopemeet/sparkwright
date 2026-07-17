@@ -10,6 +10,16 @@ See [../safety/workspace-writes.md](../safety/workspace-writes.md), [../safety/s
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T13:00:00+0800
+- Scope: tool exposure and replay decisions use one vocabulary: four canonical
+  exposure tiers, with `list_dir` advanced, and governance idempotency as the
+  sole replay-risk declaration.
+- Read: Core tools/run replay path, Host tool identity/catalog/surface,
+  protocol capability schema, MCP/Cron/Agent definitions, and focused tests.
+- Tests: Core replay 2/2; Host tools 88/88; MCP 34/34; Cron 20/20; affected
+  package typechecks passed.
+
+- Status: Verified
 - Date: 2026-07-17T09:43:00+0800
 - Scope: checked tool admission and capability inspection after grouped-only
   external config consolidation. Tool selector roots, catalog filtering,
@@ -121,6 +131,9 @@ model tool calls
 - Episode visibility is not persisted as a second decision model. Policy,
   `approval.*`, and `tool.*` events remain the final evidence for availability,
   authorization, and execution.
+- Replay-risk classification reads only `governance.idempotency`: conditional
+  and non-idempotent tools are annotated after network-class failures, while
+  idempotent and undeclared tools are not.
 - Read-only policy treats absent side-effect governance conservatively. Known
   wrappers must classify the strongest underlying capability they can invoke;
   ACP and external-command delegates include `write` when granted read-write

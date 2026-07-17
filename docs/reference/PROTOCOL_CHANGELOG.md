@@ -12,6 +12,13 @@ Conventions:
 
 ## Unreleased
 
+- `host-message.schema.json`: breaking consolidation — capability tool exposure
+  tiers no longer admit `legacy`; `list_dir` is canonical `advanced`.
+  `CapabilityDelegateToolSummary` no longer echoes delegate
+  `requiresApproval`, and `approvalRequiredUnderCurrentRun` is now required.
+  Migration: render the current-run approval fact directly and treat delegate
+  config as authoring input, not capability output.
+
 - `subagent.*` lifecycle: additive/ordering correction — all built-in Agent
   transports now include terminal `terminalState`/`finality`; admission failures
   emit requested -> failed without a false started phase, and indexed calls use

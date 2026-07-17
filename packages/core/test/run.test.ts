@@ -2651,14 +2651,14 @@ describe("SparkwrightRun", () => {
     expect(events.at(-1)?.type).toBe("run.completed");
   });
 
-  it("emits tool.replay_risk and annotates result when a non-replay-safe tool times out", async () => {
+  it("emits tool.replay_risk when a conditionally idempotent tool times out", async () => {
     let modelCalls = 0;
 
     const sendPayment = defineTool({
       name: "send_payment",
       description: "Imagine an external POST.",
       inputSchema: { type: "object" },
-      isReplaySafe: false,
+      governance: { idempotency: "conditional" },
       async execute() {
         await sleep(30);
         return { ok: true };
@@ -2701,14 +2701,14 @@ describe("SparkwrightRun", () => {
     });
   });
 
-  it("does not emit tool.replay_risk for replay-safe tool failures", async () => {
+  it("does not emit tool.replay_risk for idempotent tool failures", async () => {
     let modelCalls = 0;
 
     const readSomething = defineTool({
       name: "read_something",
       description: "Idempotent read.",
       inputSchema: { type: "object" },
-      isReplaySafe: true,
+      governance: { idempotency: "idempotent" },
       async execute() {
         await sleep(30);
         return { ok: true };

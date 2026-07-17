@@ -9,6 +9,15 @@ See also [../maps/trace/summary-timeline-verify.md](../maps/trace/summary-timeli
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T13:00:00+0800
+- Scope: `capabilities inspect` renders required current-run delegate approval
+  facts directly. The fallback to the removed config echo is gone.
+- Read: CLI capability formatter/tests, protocol delegate summary, Host
+  descriptor producer, and capability routes.
+- Tests: CLI capability inspect 3/3 and typecheck; Host protocol and TUI
+  capability consumers passed.
+
+- Status: Verified
 - Date: 2026-07-17T09:43:00+0800
 - Scope: grouped-only config is emitted by init/examples and consumed by
   config doctor, inspect, capability inspection, and real-regression helpers.
@@ -295,8 +304,8 @@ Does not own:
   or configuration posture signals, not filesystem side-effect detection.
 - `capabilities inspect` prints delegate risk and conditional approval facts from
   host snapshots (`risk`, `approvalRequiredUnderCurrentRun`, `approvalReasons`,
-  `approvalRunOptions`) instead of treating delegates or the legacy
-  `requiresApproval` echo as unconditional runtime approval predictions.
+  `approvalRunOptions`) directly; delegate authoring config is not part of the
+  capability output.
 - `capabilities inspect` treats `agents.delegateTools` as the delegation index,
   not proof that every entry is a direct model-facing `delegate_*` tool. Runtime
   snapshots list actual tools (`delegate_agent` by default plus pinned/all direct

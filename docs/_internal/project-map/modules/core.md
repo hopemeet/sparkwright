@@ -13,6 +13,16 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md),
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T13:00:00+0800
+- Scope: `ToolDefinition.governance.idempotency` is the sole replay-safety
+  declaration. Conditional and non-idempotent tools receive network-failure
+  replay-risk annotations; the parallel `isReplaySafe` hint is removed.
+- Read: Core tool/run definitions and replay tests, Host/MCP/Cron/Agent tool
+  declarations, protocol references, and tool-orchestration map.
+- Tests: Core replay 2/2 and typecheck; affected Host/MCP/Cron typechecks and
+  focused suites passed.
+
+- Status: Verified
 - Date: 2026-07-17T11:02:45+0800
 - Scope: `InteractionChannel` is approval-only; speculative question and
   notification DTOs/factories plus `RunHandle.askUser()`/`notifyUser()` were
@@ -132,6 +142,9 @@ Does not own:
   approval, the run loop uses this bounded summary before falling back to
   `Run tool <name>`. The hook must be pure and must tolerate invalid model
   arguments by throwing or returning undefined.
+- `ToolDefinition.governance.idempotency` is the only replay-safety semantic.
+  Network-class failures on `conditional` / `non_idempotent` tools emit
+  `tool.replay_risk`; `idempotent` or undeclared tools do not.
 - `ToolDefinition.validateInput()` is the small runtime-level semantic input
   validation seam. Core calls it after JSON schema validation and before
   `policyForArgs()` / policy / approval. It must validate only, not mutate

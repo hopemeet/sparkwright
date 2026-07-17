@@ -981,7 +981,6 @@ describe.sequential("runCli", () => {
           protocol: "in_process",
           model: "deterministic",
           risk: "safe",
-          requiresApproval: false,
           approvalRequiredUnderCurrentRun: false,
           approvalReasons: [],
           approvalRunOptions: { shouldWrite: false },
@@ -1005,6 +1004,11 @@ describe.sequential("runCli", () => {
           gatedByRunWrite: true,
           routing: { keywords: ["write", "patch"] },
         }),
+      ]),
+    );
+    expect(report.agents?.delegateTools).toEqual(
+      expect.not.arrayContaining([
+        expect.objectContaining({ requiresApproval: expect.any(Boolean) }),
       ]),
     );
   });

@@ -3506,16 +3506,19 @@ export class SparkwrightRun implements RunHandle {
    * (e.g. ask the user) rather than letting the model silently re-issue a
    * call that may already have produced an external side effect.
    *
-   * Read-only / idempotent tools (`isReplaySafe: true`) and tools that
-   * declare nothing (legacy) skip this annotation to preserve existing
-   * behavior.
+   * Tools with `governance.idempotency: "conditional"` or
+   * `"non_idempotent"` receive the annotation. Idempotent tools and tools
+   * without an idempotency declaration skip it.
    */
   private annotateReplayRiskOnFailure(
     toolName: string,
     result: ToolResult,
   ): ToolResult {
     const tool = this.tools.get(toolName);
-    if (!tool || tool.isReplaySafe !== false) return result;
+    const idempotency = tool?.governance?.idempotency;
+    if (idempotency !== "conditional" && idempotency !== "non_idempotent") {
+      return result;
+    }
     if (!isLikelySideEffectFailure(result.error)) return result;
 
     const replayRisk = "side_effect_may_have_landed";
@@ -5225,7 +5228,8 @@ export interface ResumeRunOptions extends Omit<
  *     later checkpoint reconstruction design)
  *   - in-flight model stream (always re-issued)
  *   - tool calls that were mid-execution when the process died (caller must
- *     reconcile; tools should declare `isReplaySafe` so the model can decide)
+ *     reconcile; tools should declare `governance.idempotency` so the model
+ *     can decide)
  *
  * The factory rejects checkpoints whose runs are already terminal
  * (`completed` / `failed` / `cancelled`) and, by default, ones whose

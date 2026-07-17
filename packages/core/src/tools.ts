@@ -143,8 +143,7 @@ export type ToolExposureTier =
   | "public"
   | "advanced"
   | "infrastructure"
-  | "internal"
-  | "legacy";
+  | "internal";
 
 export interface ToolGovernance {
   allowedAgents?: string[];
@@ -306,20 +305,6 @@ export interface ToolDefinition<TArgs = unknown, TResult = unknown> {
    */
   available?: ToolAvailableProbe;
   isConcurrencySafe?(args: TArgs): boolean;
-  /**
-   * Whether re-invoking this tool with the same args after a transient
-   * failure is safe (no double-spend, no duplicated mutation).
-   *
-   * - `undefined` (default): unknown — runtime treats as safe to preserve
-   *   backward compatibility with existing tools.
-   * - `true`: idempotent or read-only — runtime / model may freely retry.
-   * - `false`: caller-visible side effect (HTTP POST, payment, IM send,
-   *   external API mutation). On a network-class failure the runtime
-   *   emits a `tool.replay_risk` event and annotates the ToolResult so
-   *   the model and host can choose to pause for confirmation instead of
-   *   silently re-running.
-   */
-  isReplaySafe?: boolean;
   /** @reserved Public tool-governance hint consumed by policy adapters. */
   isReadOnly?(args: TArgs): boolean;
   /** @reserved Public tool-governance hint consumed by policy adapters. */

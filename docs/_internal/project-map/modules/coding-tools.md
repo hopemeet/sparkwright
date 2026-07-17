@@ -12,6 +12,16 @@ See also [../maps/runtime/tool-orchestration.md](../maps/runtime/tool-orchestrat
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-17T13:00:00+0800
+- Scope: `list_dir` remains a current read-only discovery tool and is now
+  classified as canonical advanced/deferred instead of carrying a dedicated
+  legacy exposure tier.
+- Read: Coding tool implementation/tests, Host identities/catalog/selectors,
+  child tool grants, capability consumers, and tool-orchestration map.
+- Tests: Host tools 88/88 and typecheck; TUI capability 8/8; coding-tool
+  behavior itself is unchanged.
+
+- Status: Verified
 - Date: 2026-07-16T23:55:17+0800
 - Scope: the Host-owned `create_agent` input boundary now recognizes only
   canonical `model: "inherit"`; coding tool policy, approval, execution, and

@@ -35,8 +35,6 @@ export interface DelegateCapabilityDescriptor {
    */
   model?: string;
   risk: DelegateInvocationRisk;
-  /** Legacy config echo. Prefer approvalRequiredUnderCurrentRun for diagnostics. */
-  requiresApproval: boolean;
   approvalRequiredUnderCurrentRun: boolean;
   /** @reserved Public capability-inspection field consumed by permission UIs. */
   approvalReasons: string[];
@@ -520,7 +518,6 @@ export function describeDelegateCapability(input: {
     ...modelField(input.profile),
     ...routingSummary(input.profile, input.routing),
     risk: policyProfile.policy.risk,
-    requiresApproval: input.delegate.requiresApproval ?? true,
     ...approval,
     forbidNesting: input.delegate.forbidNesting ?? true,
     sideEffects: ["external"],
@@ -561,7 +558,6 @@ export function describeInProcessDelegateCapability(input: {
     ...modelField(input.profile),
     ...routingSummary(input.profile, input.routing),
     risk: policyProfile.policy.risk,
-    requiresApproval: input.delegate.requiresApproval === true,
     ...approval,
     forbidNesting: input.delegate.forbidNesting ?? true,
     sideEffects: [

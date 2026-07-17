@@ -3186,7 +3186,7 @@ describe("host protocol", () => {
                 profileName: "Reviewer",
                 protocol: "in_process",
                 risk: "safe",
-                requiresApproval: false,
+                approvalRequiredUnderCurrentRun: false,
                 forbidNesting: true,
                 sideEffects: ["model", "workspace"],
                 workspaceAccess: "read_write",
