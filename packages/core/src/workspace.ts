@@ -222,12 +222,8 @@ export interface ControlledWorkspaceOptions {
   events: EventLog;
   policy?: Policy;
   interactionChannel?: InteractionChannel;
-  /**
-   * Optional setState callback used to mutate run state through the run's
-   * legal-transition guard. When omitted, falls back to a minimal in-place
-   * mutation (kept for backward compatibility in standalone usage).
-   */
-  setState?: (state: RunState) => void;
+  /** Run-owned state transition port. Callers must apply legal-transition guards. */
+  setState: (state: RunState) => void;
   /**
    * Optional transparent checkpoint store. When provided, the prior content of
    * each file is captured before it is written (after approval/policy pass),
@@ -449,7 +445,7 @@ export class ControlledWorkspace implements WorkspaceRuntime {
         },
       });
 
-      this.transitionState("waiting_approval");
+      this.options.setState("waiting_approval");
       this.options.events.emit("approval.requested", request);
       const response = await resolveApproval(
         request,
@@ -458,7 +454,7 @@ export class ControlledWorkspace implements WorkspaceRuntime {
         ),
       );
       this.options.events.emit("approval.resolved", response);
-      this.transitionState("running");
+      this.options.setState("running");
 
       if (response.decision !== "approved") {
         this.options.events.emit("workspace.write.denied", {
@@ -567,18 +563,6 @@ export class ControlledWorkspace implements WorkspaceRuntime {
         currentHash,
       },
     );
-  }
-
-  private transitionState(state: RunState): void {
-    if (this.options.setState) {
-      this.options.setState(state);
-      return;
-    }
-    // Fallback: direct mutation kept for ad-hoc usage where the workspace is
-    // constructed without a host run. Callers wiring the workspace into a
-    // SparkwrightRun MUST provide setState so legal-transition checks apply.
-    this.options.run.state = state;
-    this.options.run.updatedAt = new Date().toISOString();
   }
 
   private createDiffArtifact(proposal: WorkspaceWriteProposal): Artifact {

@@ -13,6 +13,17 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md),
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-18T09:58:00+0800
+- Scope: `ControlledWorkspace` requires a run-owned `setState` port and no
+  longer mutates `RunRecord` directly; production assembly routes approval
+  transitions through `SparkwrightRun`'s legal state-transition guard.
+- Read: Core workspace/run state ownership, workspace safety map, focused
+  workspace and run tests, and package test routes.
+- Tests: workspace/policy/checkpoint 62/62; run/guardrails 155/155; Core
+  typecheck/build; repository test typecheck; project-map drift; full release
+  verification.
+
+- Status: Verified
 - Date: 2026-07-18
 - Scope: `bindUserHooks()` has one provenance-aware binding contract. Hosts
   provide a descriptor resolver, every descriptor/invocation carries a required
@@ -254,6 +265,10 @@ Does not own:
   emits the normal write lifecycle, and only then calls the contained workspace
   remover. `operation:"remove"` distinguishes deletion in approval/event
   metadata without creating a second authorization action.
+- `ControlledWorkspace` never mutates `RunRecord.state` directly. Its required
+  `setState` port delegates approval-driven transitions to the run owner;
+  `SparkwrightRun` wires that port to the same legal-transition guard used by
+  every other run lifecycle transition.
 - Core `createWorkspaceShellPolicy` is a structured `command + args` embedder
   policy, not the Host shell-tool command parser. Relative `cwd` is evaluated
   against its configured workspace root, while the original request remains

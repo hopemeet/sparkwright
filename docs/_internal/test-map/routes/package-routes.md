@@ -38,6 +38,9 @@ Sensitivity:
   inside it; realpath containment alone does not distinguish the latter.
 - Nonexistent descendants and the workspace root have different semantics.
   Do not replace focused cases with one generic path-helper assertion.
+- Exercise approval-driven `waiting_approval -> running` changes through the
+  required run-owned state port; standalone workspace tests must provide a
+  deliberate test port rather than depending on direct `RunRecord` mutation.
 
 ### `packages/core/src/run.ts`
 

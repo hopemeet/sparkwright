@@ -12,8 +12,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { EventLog } from "../src/events.js";
 import { createRunId } from "../src/ids.js";
 import { createWorkspaceReadScopePolicy } from "../src/policy.js";
-import type { RunRecord } from "../src/types.js";
+import type { RunRecord, RunState } from "../src/types.js";
 import { ControlledWorkspace, LocalWorkspace } from "../src/workspace.js";
+import type { ControlledWorkspaceOptions } from "../src/workspace.js";
 import { WorkspaceCheckpointStore } from "../src/workspace-checkpoint.js";
 
 describe("LocalWorkspace", () => {
@@ -177,7 +178,7 @@ describe("LocalWorkspace", () => {
     await writeFile(join(root, "README.md"), "before\n", "utf8");
     const run = createRunRecord();
     const events = new EventLog(run.id);
-    const workspace = new ControlledWorkspace({
+    const workspace = createTestControlledWorkspace({
       run,
       events,
       workspace: new LocalWorkspace(root),
@@ -225,7 +226,7 @@ describe("LocalWorkspace", () => {
     await writeFile(join(root, "obsolete.md"), "remove me\n", "utf8");
     const run = createRunRecord();
     const events = new EventLog(run.id);
-    const workspace = new ControlledWorkspace({
+    const workspace = createTestControlledWorkspace({
       run,
       events,
       workspace: new LocalWorkspace(root),
@@ -270,7 +271,7 @@ describe("LocalWorkspace", () => {
     await writeFile(join(root, "keep.md"), "keep me\n", "utf8");
     const run = createRunRecord();
     const events = new EventLog(run.id);
-    const workspace = new ControlledWorkspace({
+    const workspace = createTestControlledWorkspace({
       run,
       events,
       workspace: new LocalWorkspace(root),
@@ -293,7 +294,7 @@ describe("LocalWorkspace", () => {
     await writeFile(join(root, "README.md"), "public\n", "utf8");
     const run = createRunRecord();
     const events = new EventLog(run.id);
-    const workspace = new ControlledWorkspace({
+    const workspace = createTestControlledWorkspace({
       run,
       events,
       workspace: new LocalWorkspace(root),
@@ -315,7 +316,7 @@ describe("LocalWorkspace", () => {
     await writeFile(join(root, "secret.txt"), "SECRET_TOKEN=abc\n", "utf8");
     const run = createRunRecord();
     const events = new EventLog(run.id);
-    const workspace = new ControlledWorkspace({
+    const workspace = createTestControlledWorkspace({
       run,
       events,
       workspace: new LocalWorkspace(root),
@@ -341,7 +342,7 @@ describe("LocalWorkspace", () => {
     await writeFile(join(root, "README.md"), "before\n", "utf8");
     const run = createRunRecord();
     const events = new EventLog(run.id);
-    const workspace = new ControlledWorkspace({
+    const workspace = createTestControlledWorkspace({
       run,
       events,
       workspace: new LocalWorkspace(root),
@@ -371,7 +372,7 @@ describe("LocalWorkspace", () => {
     await writeFile(join(root, "README.md"), "before\n", "utf8");
     const run = createRunRecord();
     const events = new EventLog(run.id);
-    const workspace = new ControlledWorkspace({
+    const workspace = createTestControlledWorkspace({
       run,
       events,
       workspace: new LocalWorkspace(root),
@@ -406,7 +407,7 @@ describe("LocalWorkspace", () => {
     await writeFile(join(root, "README.md"), "alpha\nbeta\n", "utf8");
     const run = createRunRecord();
     const events = new EventLog(run.id);
-    const workspace = new ControlledWorkspace({
+    const workspace = createTestControlledWorkspace({
       run,
       events,
       workspace: new LocalWorkspace(root),
@@ -454,7 +455,7 @@ describe("LocalWorkspace", () => {
     await writeFile(join(root, "README.md"), "alpha\nbeta\n", "utf8");
     const run = createRunRecord();
     const events = new EventLog(run.id);
-    const workspace = new ControlledWorkspace({
+    const workspace = createTestControlledWorkspace({
       run,
       events,
       workspace: new LocalWorkspace(root),
@@ -501,7 +502,7 @@ describe("LocalWorkspace", () => {
     await writeFile(join(root, "README.md"), "before\n", "utf8");
     const run = createRunRecord();
     const events = new EventLog(run.id);
-    const workspace = new ControlledWorkspace({
+    const workspace = createTestControlledWorkspace({
       run,
       events,
       workspace: new LocalWorkspace(root),
@@ -555,7 +556,7 @@ describe("LocalWorkspace", () => {
     await writeFile(join(root, "README.md"), "before\n", "utf8");
     const run = createRunRecord();
     const events = new EventLog(run.id);
-    const workspace = new ControlledWorkspace({
+    const workspace = createTestControlledWorkspace({
       run,
       events,
       workspace: new LocalWorkspace(root),
@@ -596,7 +597,7 @@ describe("LocalWorkspace", () => {
     const run = createRunRecord();
     const events = new EventLog(run.id);
     const policyPaths: unknown[] = [];
-    const workspace = new ControlledWorkspace({
+    const workspace = createTestControlledWorkspace({
       run,
       events,
       workspace: new LocalWorkspace(root),
@@ -629,7 +630,7 @@ describe("LocalWorkspace", () => {
     const events = new EventLog(run.id);
     const local = new LocalWorkspace(root);
     const checkpointStore = new WorkspaceCheckpointStore();
-    const workspace = new ControlledWorkspace({
+    const workspace = createTestControlledWorkspace({
       run,
       events,
       workspace: local,
@@ -670,5 +671,21 @@ function createRunRecord(): RunRecord {
     createdAt: now,
     updatedAt: now,
     metadata: {},
+  };
+}
+
+function createTestControlledWorkspace(
+  options: Omit<ControlledWorkspaceOptions, "setState">,
+): ControlledWorkspace {
+  return new ControlledWorkspace({
+    ...options,
+    setState: createTestRunStateSetter(options.run),
+  });
+}
+
+function createTestRunStateSetter(run: RunRecord): (state: RunState) => void {
+  return (state) => {
+    run.state = state;
+    run.updatedAt = new Date().toISOString();
   };
 }

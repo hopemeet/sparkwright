@@ -10,6 +10,16 @@ See [approvals.md](approvals.md) and [../runtime/tool-orchestration.md](../runti
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-18T09:58:00+0800
+- Scope: approval-driven workspace state changes use the required run-owned
+  state port; the standalone direct `RunRecord` mutation fallback was removed.
+- Read: `ControlledWorkspace`, `SparkwrightRun` assembly and transition guard,
+  focused tests, Core module map, and test routes.
+- Tests: workspace/policy/checkpoint 62/62; run/guardrails 155/155; Core
+  typecheck/build; repository test typecheck; project-map drift; full release
+  verification.
+
+- Status: Verified
 - Date: 2026-07-17T23:37:17+0800
 - Scope: Host and test consumers import LocalWorkspace through Core
   `/internal`; containment, policy, approval, checkpoint, and lease behavior
@@ -143,6 +153,10 @@ tool proposes write
   boundary as content replacement. The proposal carries the deletion diff and
   `operation:"remove"`; checkpoint capture happens before unlink so rollback
   can restore the prior file. No separate delete authorization rule exists.
+- Approval-driven run state changes use the required `ControlledWorkspace`
+  `setState` port. The workspace layer does not directly mutate `RunRecord`;
+  production run assembly binds the port to `SparkwrightRun`'s legal state
+  transition guard.
 
 ## Consumers
 
