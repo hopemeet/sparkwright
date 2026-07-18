@@ -12,6 +12,16 @@ and [../session/session-store.md](../session/session-store.md) for session layou
 
 - Status: Verified
 - Date: 2026-07-18
+- Scope: Agent/Delegate lifecycle emitter wiring, child run-store construction,
+  promotion attribution, and terminal result normalization moved within Host to
+  `AgentRuntimeAssembly`. Raw `subagent.*`, task, workspace-write, and session
+  trace payloads, ordering, and persistence remain unchanged.
+- Read: Host Agent assembly/adapters, Agent Runtime invocation/result contracts,
+  Core trace storage, and focused tests.
+- Tests: focused Host Agent/Delegate/protocol and Agent Runtime suites passed.
+
+- Status: Verified
+- Date: 2026-07-18
 - Scope: Workflow durable finalization and notification ownership moved within
   Host only. Raw `workflow.*` lifecycle payloads, ordering, package identity,
   evidence refs, and append-only trace ownership are unchanged.

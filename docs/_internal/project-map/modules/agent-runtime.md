@@ -10,6 +10,17 @@ See also [../maps/capabilities/agents.md](../maps/capabilities/agents.md), [../m
 
 - Status: Verified
 - Date: 2026-07-18
+- Scope: Host `AgentRuntimeAssembly` now composes Agent Runtime's portable
+  profile derivation, spawn/invocation lifecycle, task runner, delegation
+  ledger, and result contracts behind one Host owner. Agent Runtime does not
+  acquire Host model, tool catalog, approval, workspace lease, or execution
+  state ownership.
+- Read: Host Agent assembly, Agent Runtime Agent/task/ledger/result contracts,
+  capability and tool maps, and focused tests.
+- Tests: focused Agent Runtime 77/77 and Host Agent/Delegate 359/359 passed.
+
+- Status: Verified
+- Date: 2026-07-18
 - Scope: Host WorkflowEpisodeRuntime now owns the adapter around existing Agent
   Runtime `runTodoSupervised`/HostExecution chaining. Agent Runtime actor-chain
   decisions, continuation/stall bounds contract, Workflow machine, and durable

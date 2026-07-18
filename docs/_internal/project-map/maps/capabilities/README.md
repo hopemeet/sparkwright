@@ -9,6 +9,17 @@ cron, shell/task tools, and capability inspection.
 
 - Status: Verified
 - Date: 2026-07-18
+- Scope: effective Agent execution surfaces are now constructed by
+  `AgentRuntimeAssembly`; capability inspection remains a separate HostRuntime
+  path for the next ownership phase. Agent profile inventory, delegate
+  descriptors, tool names, protocol snapshots, and config semantics are
+  unchanged.
+- Read: Host Agent assembly/capability inspection, Agent capability map, and
+  focused protocol/tool tests.
+- Tests: owner-level and focused Host Agent/Delegate suites passed.
+
+- Status: Verified
+- Date: 2026-07-18
 - Scope: checked Host Workflow durable owner extraction. Workflow assets and
   capability inspection remain live inventory, while durable records remain
   workspace runtime state; no `workflow_start`, capability field, or tool

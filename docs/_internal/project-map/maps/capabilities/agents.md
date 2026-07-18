@@ -11,6 +11,18 @@ See [../../modules/agent-runtime.md](../../modules/agent-runtime.md) and [../../
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-18
+- Scope: Host configured Agent/Delegate assembly has one owner in
+  `runtime/agent-runtime-assembly.ts`, covering profile/target resolution,
+  direct/indexed/parallel delegates, dynamic spawn, child models/hooks/tools,
+  workspace grants, promotion, result normalization, and background Agent task
+  execution. Capability inspection still projects the same effective facts
+  from HostRuntime and remains a later ownership boundary.
+- Read: Host Agent owner/runtime/adapters, Agent Runtime invocation/task/ledger
+  contracts, and focused tests.
+- Tests: owner-level 1/1, focused Host 359/359, and Agent Runtime 77/77 passed.
+
+- Status: Verified
 - Date: 2026-07-17T23:37:17+0800
 - Scope: Agent Runtime/Host delegate implementation imports moved to Core
   `/internal`; Agent identity, admission, lifecycle, workspace authority, and
@@ -105,6 +117,7 @@ See [../../modules/agent-runtime.md](../../modules/agent-runtime.md) and [../../
 ## Main Files
 
 - `packages/host/src/runtime.ts`
+- `packages/host/src/runtime/agent-runtime-assembly.ts`
 - `packages/host/src/agent-spawn-grants.ts`
 - `packages/host/src/agent-profiles.ts`
 - `packages/host/src/delegate-runner.ts`
@@ -123,8 +136,8 @@ See [../../modules/agent-runtime.md](../../modules/agent-runtime.md) and [../../
 
 ```txt
 configured profiles/delegates
-  -> host derives agent profiles
-  -> delegate/spawn tools prepare one Agent invocation identity
+  -> AgentRuntimeAssembly resolves profiles, targets, and child catalogs
+  -> direct/indexed/parallel delegate and dynamic-spawn tools prepare one Agent invocation identity
   -> child run store factory
   -> session/agent trace attribution
 ```

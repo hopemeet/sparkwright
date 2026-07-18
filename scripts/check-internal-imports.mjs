@@ -27,6 +27,10 @@ const ALLOWED_CORE_INTERNAL_IMPORTS = new Map([
     "Host owns the current local reference harness and file-backed trace store.",
   ],
   [
+    "packages/host/src/runtime/agent-runtime-assembly.ts",
+    "Host Agent runtime assembly owns session-scoped child reference Core run stores.",
+  ],
+  [
     "packages/host/src/runtime/workflow-episode-runtime.ts",
     "Host Workflow episode execution owns session-scoped reference Core run stores.",
   ],

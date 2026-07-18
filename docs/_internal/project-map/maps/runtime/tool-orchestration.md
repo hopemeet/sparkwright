@@ -11,6 +11,19 @@ See [../safety/workspace-writes.md](../safety/workspace-writes.md), [../safety/s
 
 - Status: Verified
 - Date: 2026-07-18
+- Scope: Agent/Profile admission inputs, configured delegate child catalogs,
+  direct/indexed/parallel delegate tools, dynamic spawn, child-scoped discovery,
+  model/hook resolution, and background Agent task runner construction now live
+  in `AgentRuntimeAssembly`. HostRuntime still owns the generic main catalog and
+  final main-profile admission; tool schemas, policy, approval, and execution
+  order are unchanged.
+- Read: Agent assembly, Host catalog/surface, Agent Runtime invocation/ledger,
+  and focused tests.
+- Tests: owner-level 1/1, Host Agent/tool/protocol 359/359, and Agent Runtime
+  77/77 passed.
+
+- Status: Verified
+- Date: 2026-07-18
 - Scope: Workflow per-node model selection, budget narrowing, tool allowlist,
   scoped discovery, and continuation required-tool checks now live with
   `WorkflowEpisodeRuntime`. Base catalog admission and generic Host run
@@ -120,6 +133,7 @@ See [../safety/workspace-writes.md](../safety/workspace-writes.md), [../safety/s
 - `packages/coding-tools/src/index.ts`
 - `packages/coding-tools/src/unified-diff.ts`
 - `packages/host/src/runtime/host-runtime.ts`
+- `packages/host/src/runtime/agent-runtime-assembly.ts`
 
 ## Data Flow
 

@@ -13,6 +13,19 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 
 - Status: Verified
 - Date: 2026-07-18
+- Scope: `runtime/agent-runtime-assembly.ts` is the Host owner for configured
+  Agent/Delegate runtime construction, dynamic spawn, parallel delegation,
+  promotion, workspace grants, child result normalization, and the captured
+  background Agent task runner. It reuses the process TaskManager and workspace
+  lease coordinator and does not own HostExecution, current run, or lane state.
+- Read: HostRuntime/HostExecution/WorkspaceContext, Agent assembly and adapters,
+  Agent Runtime invocation/task/ledger contracts, safety and trace maps, and
+  focused tests.
+- Tests: owner-level 1/1, focused Host 359/359, and focused Agent Runtime 77/77
+  passed; final repository gates are recorded with the commit.
+
+- Status: Verified
+- Date: 2026-07-18
 - Scope: `runtime/workflow-episode-runtime.ts` is the Host owner for live
   Workflow-aware episode preparation and execution: projection/wait input,
   per-node model/tool/budget planning, Core run construction, actor chain,
@@ -271,6 +284,7 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 
 - `packages/host/src/runtime.ts` — stable named public facade
 - `packages/host/src/runtime/host-runtime.ts` — concrete HostRuntime composition and execution orchestration
+- `packages/host/src/runtime/agent-runtime-assembly.ts` — configured/direct/indexed/parallel Agent and Delegate assembly, dynamic spawn/promotion, child grants/results, and background Agent task execution
 - `packages/host/src/runtime/capability-assembly.ts` — capability snapshot projection, summaries, automation reads, and merge
 - `packages/host/src/runtime/task-runtime-operations.ts` — Host Task protocol/control, output reads, actor revival, orphan recovery, and canonical workspace root
 - `packages/host/src/runtime/task-projections.ts` — stateless task snapshots, notifications, and terminal classification
@@ -329,6 +343,8 @@ Owns:
 - provider pricing resolution for run metadata, session compaction usage hints,
   and `capability.inspect` diagnostics
 - skill, MCP, shell, cron, and agent capability preparation
+- host Agent/Delegate execution-surface construction through
+  `AgentRuntimeAssembly`
 - host tool catalog entries that preserve runtime tool source metadata
 - immutable per-run/per-inspect derivation of resolved access, workspace,
   confidential path inputs, skill/config roots, and shell sandbox status
@@ -827,6 +843,13 @@ Does not own:
 - Host-owned task tools pass default concurrency caps to agent-runtime
   (`global=4`, `agent=1`) unless configured. Cap violations are recoverable
   tool errors and must not become an internal host queue.
+- `AgentRuntimeAssembly` receives per-run inputs plus the existing process
+  `TaskManager` and workspace lease coordinator. It owns Agent profile/target
+  resolution, direct/indexed/parallel delegate construction, dynamic spawn,
+  child model/hook/catalog/policy assembly, promotion, grant, result, and
+  background Agent task-runner behavior. It does not copy HostExecution,
+  current-run, active-run, or lane state; child tools resolve the caller-owned
+  parent run only through the narrow per-run reference supplied by HostRuntime.
 - Host Agent tools classify Core same-turn concurrency from effective call
   capability rather than their static read-shaped wrapper. Dynamic
   `spawn_agent` remains concurrent only without a workspace-write grant;

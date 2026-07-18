@@ -149,7 +149,7 @@ unsourced [QA convergence stub](../reviews/qa-convergence-plan.md).
 - `packages/host/src/tool-identities.ts`, `packages/host/src/tool-catalog.ts`, `packages/host/src/tool-selectors.ts`, or `packages/host/src/tool-surface.ts`: [modules/host.md](modules/host.md), [modules/coding-tools.md](modules/coding-tools.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md), [maps/capabilities/README.md](maps/capabilities/README.md)
 - `packages/host/src/model-builder.ts` or `packages/host/src/model-factory.ts`: [modules/host.md](modules/host.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/trace/summary-timeline-verify.md](maps/trace/summary-timeline-verify.md), [maps/runtime/context-compaction.md](maps/runtime/context-compaction.md)
 - `packages/host/src/runtime.ts`, `packages/host/src/run-access.ts`, `packages/host/src/run-security-plan.ts`, or `packages/host/src/run-policy.ts`: [modules/host.md](modules/host.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md), [maps/session/resume-replay.md](maps/session/resume-replay.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/capabilities/mcp.md](maps/capabilities/mcp.md), [maps/safety/workspace-writes.md](maps/safety/workspace-writes.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md)
-- `packages/host/src/runtime/*`, including Workflow durable ownership in `workflow-runtime-operations.ts` and live episode ownership in `workflow-episode-runtime.ts`: [modules/host.md](modules/host.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md), [maps/session/resume-replay.md](maps/session/resume-replay.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/capabilities/mcp.md](maps/capabilities/mcp.md), [maps/safety/workspace-writes.md](maps/safety/workspace-writes.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md)
+- `packages/host/src/runtime/*`, including Agent/Delegate assembly in `agent-runtime-assembly.ts`, Workflow durable ownership in `workflow-runtime-operations.ts`, and live episode ownership in `workflow-episode-runtime.ts`: [modules/host.md](modules/host.md), [modules/agent-runtime.md](modules/agent-runtime.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md), [maps/session/resume-replay.md](maps/session/resume-replay.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/capabilities/agents.md](maps/capabilities/agents.md), [maps/capabilities/mcp.md](maps/capabilities/mcp.md), [maps/safety/workspace-writes.md](maps/safety/workspace-writes.md), [maps/safety/shell.md](maps/safety/shell.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md)
 - `packages/host/src/session-queries.ts` or `packages/host/src/session-compaction.ts`: [modules/host.md](modules/host.md), [maps/session/session-store.md](maps/session/session-store.md), [maps/session/resume-replay.md](maps/session/resume-replay.md), [maps/runtime/context-compaction.md](maps/runtime/context-compaction.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md)
 - `packages/host/src/host-execution.ts`, `packages/host/src/execution-plan.ts`, or `packages/host/src/execution-resources.ts`: [modules/host.md](modules/host.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/session/session-store.md](maps/session/session-store.md), [maps/safety/workspace-writes.md](maps/safety/workspace-writes.md)
 - `packages/host/src/host-service.ts` or `packages/host/src/workspace-context.ts`: [modules/host.md](modules/host.md), [modules/edge-packages.md](modules/edge-packages.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/session/session-store.md](maps/session/session-store.md), [maps/safety/workspace-writes.md](maps/safety/workspace-writes.md)
@@ -217,6 +217,21 @@ TUI events; it is not a trace diagnostic report and must not replace
 trace/session inspection.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: Host Agent/Delegate runtime assembly now lives in
+  `AgentRuntimeAssembly`: configured profile resolution, delegate routing and
+  direct/indexed/parallel surfaces, dynamic spawn, child model/hook/tool/policy
+  preparation, promotion, workspace grants, result normalization, and the
+  execution-scoped background Agent task runner. `HostRuntime` retains generic
+  run preparation, capability inspection, main catalog admission, and the
+  single parent-run/HostExecution envelope.
+- Read: Host runtime and Agent assembly owner, portable Agent Runtime contracts,
+  tool/delegate/workspace/trace maps, active multi-agent design history, and
+  focused tests.
+- Tests: owner-level 1/1, focused Host Agent/Delegate 359/359, and focused Agent
+  Runtime 77/77 passed; final repository gates are recorded with the commit.
 
 - Status: Verified
 - Date: 2026-07-18

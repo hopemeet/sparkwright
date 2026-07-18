@@ -3,7 +3,7 @@
 ## Current Confidence
 
 - Status: `Partially Verified`
-- Last reviewed: 2026-07-17
+- Last reviewed: 2026-07-18
 - Evidence source: 2026-06-22 focused host/agent tests passed and real
   `openai/gpt-5.4-mini` read-only dynamic `spawn_agent` canaries produced valid
   trace/session structure. A configured read/write delegate canary wrote through
@@ -47,8 +47,17 @@
   attribution. The current semantic-consolidation pass also removed the
   delegate `requiresApproval` capability echo and verified the required
   current-run approval fact across Host protocol, CLI inspect, and TUI panel.
+  The 2026-07-18 ownership pass added a direct `AgentRuntimeAssembly` test and
+  reran 359 Host Agent/Delegate/tool/protocol tests plus 77 Agent Runtime
+  invocation/supervisor/ledger/result tests without changing capability or
+  lifecycle behavior.
 
 ## Covered
+
+- `AgentRuntimeAssembly` owner-level coverage constructs configured direct,
+  indexed, and parallel delegates together with dynamic spawn and the captured
+  background Agent task runner, while focused integration suites cover their
+  policy, approval, workspace, trace, promotion, and process-adapter behavior.
 
 - 2026-07-17 delegate capability coverage locks
   `approvalRequiredUnderCurrentRun` as the only rendered approval boolean and

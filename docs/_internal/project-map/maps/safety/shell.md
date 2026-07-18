@@ -10,6 +10,15 @@ See [workspace-writes.md](workspace-writes.md) and [../../modules/coding-tools.m
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-18
+- Scope: configured in-process delegate shell catalog and child approval/lease
+  wiring moved to `AgentRuntimeAssembly`; shell parsing, sandbox launch,
+  mutation audit, policy, and process lifecycle remain with their existing
+  owners.
+- Read: Host Agent assembly, shell/delegate adapters, and focused tests.
+- Tests: focused Host Agent/Delegate/tool suites passed.
+
+- Status: Verified
 - Date: 2026-07-17T23:37:17+0800
 - Scope: Host delegate/workspace reference imports moved to Core `/internal`;
   shell parsing, sandbox launch, process lifecycle, and write authority are
@@ -52,6 +61,7 @@ See [workspace-writes.md](workspace-writes.md) and [../../modules/coding-tools.m
 - `packages/shell-sandbox/src/*`
 - `packages/core/src/run.ts`
 - `packages/agent-runtime/src/tasks/*`
+- `packages/host/src/runtime/agent-runtime-assembly.ts`
 
 ## Data Flow
 

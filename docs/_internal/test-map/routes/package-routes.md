@@ -303,6 +303,21 @@ model/tool/budget planning. Preserve HostRuntime as the only HostExecution
 factory and lane-facing facade; the episode owner receives that exact instance
 and must not mirror current execution or active-run state.
 
+For `runtime/agent-runtime-assembly.ts`, run:
+
+```bash
+npm --workspace @sparkwright/host test -- test/agent-runtime-assembly.test.ts test/tools.test.ts test/spawn-agent.test.ts test/agent-task-runner.test.ts test/agent-profiles.test.ts test/protocol.test.ts test/acp-child-agent.test.ts test/external-command-agent.test.ts
+npm --workspace @sparkwright/agent-runtime test -- test/index.test.ts test/agent-invocation.test.ts test/agent-supervisor.test.ts test/delegation-ledger.test.ts test/result-protocol.test.ts
+npm --workspace @sparkwright/host run typecheck
+npm --workspace @sparkwright/agent-runtime run typecheck
+```
+
+Construct the owner directly to lock configured, indexed, parallel, dynamic,
+and background-task surfaces. Preserve the existing process TaskManager and
+workspace lease coordinator, the caller-owned parent run reference, HostExecution
+as the sole active execution owner, and the generic Host main-catalog admission
+boundary.
+
 For `session-queries.ts` or `session-compaction.ts`, run the full Host protocol
 file plus Host typecheck. Preserve canonical session/agent run lookup,
 checkpoint resume, completed-turn replay, compact artifact anchoring,

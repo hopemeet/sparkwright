@@ -11,6 +11,16 @@ See [tool-orchestration.md](tool-orchestration.md) and [../trace/raw-trace.md](.
 
 - Status: Verified
 - Date: 2026-07-18
+- Scope: Agent child-run construction and captured background Agent task
+  execution moved from HostRuntime to `AgentRuntimeAssembly`. The owner receives
+  a caller-owned parent-run reference and existing process collaborators; it
+  does not create a second HostExecution, current-run owner, or lane entry.
+- Read: HostRuntime/HostExecution, Agent assembly, Core run construction, Agent
+  Runtime spawn/task contracts, and focused tests.
+- Tests: owner-level, focused Host Agent/Delegate, and Agent Runtime suites passed.
+
+- Status: Verified
+- Date: 2026-07-18
 - Scope: Workflow-aware Core run construction, continuation context, actor
   episode chaining, live control polling, usage recording, and terminal event
   completion moved to `WorkflowEpisodeRuntime`. The collaborator drives one
@@ -135,6 +145,7 @@ See [tool-orchestration.md](tool-orchestration.md) and [../trace/raw-trace.md](.
 - `packages/core/src/run-outcome.ts`
 - `packages/host/src/runtime.ts`
 - `packages/host/src/runtime/host-runtime.ts`
+- `packages/host/src/runtime/agent-runtime-assembly.ts`
 
 ## Data Flow
 

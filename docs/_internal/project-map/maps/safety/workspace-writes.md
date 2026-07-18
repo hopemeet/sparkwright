@@ -10,6 +10,17 @@ See [approvals.md](approvals.md) and [../runtime/tool-orchestration.md](../runti
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-18
+- Scope: Agent workspace-write grant compilation, configured child admission,
+  promotion handoff, and delegate lease wiring moved into
+  `AgentRuntimeAssembly`. The owner reuses the process workspace lease
+  coordinator and parent policy/interaction channel; write authority, event
+  evidence, and lease semantics are unchanged.
+- Read: Host Agent assembly/grants/delegate adapters, workspace lease and Core
+  policy contracts, plus focused tests.
+- Tests: focused Host Agent/Delegate/tool/protocol 359/359 passed.
+
+- Status: Verified
 - Date: 2026-07-18T09:58:00+0800
 - Scope: approval-driven workspace state changes use the required run-owned
   state port; the standalone direct `RunRecord` mutation fallback was removed.
@@ -56,6 +67,7 @@ See [approvals.md](approvals.md) and [../runtime/tool-orchestration.md](../runti
 - `packages/coding-tools/src/index.ts`
 - `packages/coding-tools/src/unified-diff.ts`
 - `packages/host/src/runtime/host-runtime.ts`
+- `packages/host/src/runtime/agent-runtime-assembly.ts`
 
 ## Data Flow
 
