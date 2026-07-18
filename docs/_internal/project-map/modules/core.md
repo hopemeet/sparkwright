@@ -13,6 +13,17 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md),
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-18
+- Scope: `bindUserHooks()` has one provenance-aware binding contract. Hosts
+  provide a descriptor resolver, every descriptor/invocation carries a required
+  configuration source, and event streams support canonical replay and live
+  subscription without a minimal-emitter fallback.
+- Read: Core user-hook/event contracts and focused tests, Host configured event
+  hook binding, extension reference, run-loop map, and test routes.
+- Tests: Core user-hook focused tests and Core/Host typechecks passed; repository
+  release verification covers the full downstream surface.
+
+- Status: Verified
 - Date: 2026-07-17T23:37:17+0800
 - Scope: the Core root is limited to stable types, factories, and extension
   interfaces. Reference classes/helpers live only under `/internal`, and
@@ -98,6 +109,7 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md),
 - `packages/core/src/path-display.ts`
 - `packages/core/src/session.ts`
 - `packages/core/src/events.ts`
+- `packages/core/src/user-hooks.ts`
 - `packages/core/src/workflow-hooks.ts`
 - `packages/core/src/fact-classifier.ts`
 - `packages/core/src/fact-ledger.ts`
@@ -107,6 +119,7 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md),
 - `packages/core/src/workspace.ts`
 - `packages/core/test/run.test.ts`
 - `packages/core/test/run-budget.test.ts`
+- `packages/core/test/user-hooks.test.ts`
 - `packages/core/test/trace.test.ts`
 - `packages/core/test/session.test.ts`
 

@@ -463,6 +463,11 @@ import {
 import { EventLog } from './packages/core/dist/internal.js';
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
+const resolveProjectDescriptor = (trigger) => ({
+  hookId: `${trigger}:demo`,
+  hookName: trigger,
+  source: 'project',
+});
 const result = {
   replayedRunStarted: false,
   blockedNonManaged: true,
@@ -477,6 +482,7 @@ const result = {
   events.emit('run.started', { goal: 'replay-demo' });
   bindUserHooks({
     events,
+    resolveDescriptor: resolveProjectDescriptor,
     runner: {
       triggers: () => ['run.started'],
       invoke: () => {
@@ -521,6 +527,7 @@ const result = {
   const events = new EventLog(createRunId());
   bindUserHooks({
     events,
+    resolveDescriptor: resolveProjectDescriptor,
     runner: {
       triggers: () => ['tool.completed'],
       invoke: async (inv) => {
@@ -544,6 +551,7 @@ const result = {
   let calls = 0;
   const unbind = bindUserHooks({
     events,
+    resolveDescriptor: resolveProjectDescriptor,
     runner: {
       triggers: () => ['tool.completed'],
       invoke: () => {

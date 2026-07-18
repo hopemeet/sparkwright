@@ -10,6 +10,17 @@ See [tool-orchestration.md](tool-orchestration.md) and [../trace/raw-trace.md](.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-18
+- Scope: non-blocking user hooks bind through one provenance-aware event lane:
+  the Host resolves a required descriptor/source and Core uses the run event
+  log's replay/live subscription methods directly. Awaited workflow hooks and
+  run-loop steering semantics are unchanged.
+- Read: Core user-hook/event sources and tests, Host event-hook binding, and
+  extension reference.
+- Tests: Core user-hook and Host workflow-hook focused suites plus Core/Host
+  typechecks; full release verification passed.
+
+- Status: Verified
 - Date: 2026-07-17T23:37:17+0800
 - Scope: concrete Core run/context/event implementations moved behind
   `/internal`; `createRun`, extension interfaces, lifecycle, budgets, and Host

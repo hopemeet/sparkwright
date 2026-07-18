@@ -12,6 +12,17 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-18
+- Scope: Host configured event hooks remain the sole production
+  `bindUserHooks()` consumer and already provide stable event-rule identity,
+  `source: "project"`, the run abort signal, and the canonical replay-capable
+  run event log.
+- Read: Host workflow-hook binding, Core user-hook contract/tests, extension
+  reference, and run-loop route.
+- Tests: focused Core user-hook and Host workflow-hook tests plus Host typecheck;
+  full downstream coverage is included in the repository release gate.
+
+- Status: Verified
 - Date: 2026-07-17T23:37:17+0800
 - Scope: Host reference runtime/storage/workspace consumers import explicit
   Core internals after the public root was narrowed; Host composition,

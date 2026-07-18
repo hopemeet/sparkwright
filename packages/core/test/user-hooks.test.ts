@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { EventLog } from "../src/events.js";
 import {
   bindUserHooks,
+  type UserHookDescriptor,
+  type UserHookTrigger,
   type UserHookRunner,
   type UserHookOutcome,
 } from "../src/user-hooks.js";
@@ -11,30 +13,47 @@ function flush(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+function resolveDescriptor(trigger: UserHookTrigger): UserHookDescriptor {
+  return {
+    hookId: `${trigger}:project`,
+    hookName: trigger,
+    source: "project",
+  };
+}
+
 describe("bindUserHooks", () => {
   it("invokes the runner for matching triggers and records completion", async () => {
     const runId = createRunId();
     const events = new EventLog(runId);
-    const calls: string[] = [];
+    const calls: Array<{ trigger: string; source: string }> = [];
 
     const runner: UserHookRunner = {
       triggers: () => ["tool.completed"],
       invoke: async (invocation): Promise<UserHookOutcome> => {
-        calls.push(invocation.trigger);
+        calls.push({
+          trigger: invocation.trigger,
+          source: invocation.source,
+        });
         return { status: "ok", durationMs: 5, output: "ok" };
       },
     };
 
-    bindUserHooks({ events, runner });
+    bindUserHooks({ events, runner, resolveDescriptor });
     events.emit("tool.completed", { toolCallId: "x" });
     events.emit("model.completed", { tokens: 1 });
     await flush();
 
-    expect(calls).toEqual(["tool.completed"]);
+    expect(calls).toEqual([{ trigger: "tool.completed", source: "project" }]);
     const types = events.all().map((entry) => entry.type);
     expect(types).toContain("user_hook.invoked");
     expect(types).toContain("user_hook.completed");
     expect(types).not.toContain("user_hook.failed");
+    expect(
+      events
+        .all()
+        .filter((entry) => entry.type.startsWith("user_hook."))
+        .map((entry) => (entry.payload as { source: string }).source),
+    ).toEqual(["project", "project"]);
   });
 
   it("emits user_hook.failed when the runner throws", async () => {
@@ -47,7 +66,7 @@ describe("bindUserHooks", () => {
       },
     };
 
-    bindUserHooks({ events, runner });
+    bindUserHooks({ events, runner, resolveDescriptor });
     events.emit("run.completed", {});
     await flush();
 
@@ -68,7 +87,7 @@ describe("bindUserHooks", () => {
       invoke: () => ({ status: "skipped", reason: "not-configured" }),
     };
 
-    bindUserHooks({ events, runner });
+    bindUserHooks({ events, runner, resolveDescriptor });
     events.emit("approval.requested", {
       id: "approval_test",
       runId,
@@ -101,10 +120,38 @@ describe("bindUserHooks", () => {
       },
     };
 
-    bindUserHooks({ events, runner });
+    bindUserHooks({ events, runner, resolveDescriptor });
     await flush();
 
     expect(seen).toEqual(["run.started"]);
+  });
+
+  it("can bind to future events without replaying prior events", async () => {
+    const runId = createRunId();
+    const events = new EventLog(runId);
+    events.emit("run.started", { goal: "past" });
+
+    const seen: string[] = [];
+    const runner: UserHookRunner = {
+      triggers: () => ["run.started"],
+      invoke: async (inv): Promise<UserHookOutcome> => {
+        seen.push((inv.event.payload as { goal: string }).goal);
+        return { status: "ok", durationMs: 0 };
+      },
+    };
+
+    bindUserHooks({
+      events,
+      runner,
+      resolveDescriptor,
+      replayPastEvents: false,
+    });
+    await flush();
+    expect(seen).toEqual([]);
+
+    events.emit("run.started", { goal: "future" });
+    await flush();
+    expect(seen).toEqual(["future"]);
   });
 
   it("skips non-managed invocations when allowManagedOnly is set", async () => {
@@ -149,7 +196,7 @@ describe("bindUserHooks", () => {
       },
     };
 
-    bindUserHooks({ events, runner });
+    bindUserHooks({ events, runner, resolveDescriptor });
     events.emit("tool.completed", { toolCallId: "x" });
     await flush();
 
@@ -175,7 +222,12 @@ describe("bindUserHooks", () => {
       },
     };
 
-    bindUserHooks({ events, runner, signal: controller.signal });
+    bindUserHooks({
+      events,
+      runner,
+      resolveDescriptor,
+      signal: controller.signal,
+    });
     events.emit("tool.completed", { toolCallId: "x" });
     await flush();
 

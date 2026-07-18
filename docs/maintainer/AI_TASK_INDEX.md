@@ -243,8 +243,8 @@ Read the linked entry file first, then the linked docs, then make the change. Do
 
 - **Entry point**: `packages/core/src/user-hooks.ts`
 - **Interface to implement**: `UserHookRunner`
-- **Wire in via**: `bindUserHooks({ events: run.events, runner })`
-- **Notes**: Core defines the trigger vocabulary (`UserHookTrigger`) and forwards matching events; the host owns execution (shell, webhook, file write). Failures are recorded as `user_hook.failed` events and never abort the run.
+- **Wire in via**: `bindUserHooks({ events: run.events, runner, resolveDescriptor })`; the resolver must return stable `hookId`, `hookName`, and `source` provenance.
+- **Notes**: Core defines the trigger vocabulary (`UserHookTrigger`) and forwards matching events from the replay-capable run event log; the host owns execution (shell, webhook, file write). Failures are recorded as `user_hook.failed` events and never abort the run.
 
 ### Task: Spawn a background task from a run (Task\*)
 

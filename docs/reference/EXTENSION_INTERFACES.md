@@ -529,6 +529,33 @@ const tracingHook: RunHook = {
 };
 ```
 
+## User Hooks
+
+`UserHookRunner` is the non-blocking host adapter for external event
+subscribers. Bind it to a replay-capable run event stream with
+`bindUserHooks()`. Every binding must provide `resolveDescriptor`; the returned
+descriptor has one canonical identity (`hookId`, `hookName`) and a required
+configuration `source`. Core copies that provenance into the invocation and
+every `user_hook.*` lifecycle event, so trace and `allowManagedOnly` policy do
+not need an unsourced fallback.
+
+```ts
+const unsubscribe = bindUserHooks({
+  events: run.events,
+  runner,
+  signal: run.abortSignal,
+  resolveDescriptor: (trigger) => ({
+    hookId: `project-check:${trigger}`,
+    hookName: "project-check",
+    source: "project",
+  }),
+});
+```
+
+Replay is enabled by default so a late-bound runner sees earlier matching
+events in sequence order. Set `replayPastEvents: false` only when the subscriber
+intentionally wants future events.
+
 ## Workflow Hooks
 
 `WorkflowHook` is the higher-level deterministic hook layer for rules that

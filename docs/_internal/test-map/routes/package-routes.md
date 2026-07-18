@@ -55,6 +55,22 @@ Apply the same route to `packages/core/src/runtime/tool-result-analysis.ts` and
 add Host protocol/tools downstream tests. The leaf must not receive a mutable
 run-state bag or import the `run.ts` facade.
 
+### `packages/core/src/user-hooks.ts`
+
+Run:
+
+```bash
+npm --workspace @sparkwright/core test -- test/user-hooks.test.ts
+npm --workspace @sparkwright/core run typecheck
+npm --workspace @sparkwright/host test -- test/workflow-hooks.test.ts
+npm --workspace @sparkwright/host run typecheck
+```
+
+Assert descriptor identity and configuration source are present on the runner
+invocation and every `user_hook.*` lifecycle event. Cover both replay-enabled
+late binding and explicit future-only subscription; do not reintroduce an
+unsourced descriptor or minimal-emitter fallback.
+
 ### `packages/core/src/trace-diagnostics.ts`
 
 Run:
