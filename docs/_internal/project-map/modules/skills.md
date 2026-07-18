@@ -66,6 +66,11 @@ Does not own:
   existing review/direct behavior until `SkillCommandService` convergence.
 
 - Skill events include `skill.indexed`, `skill.failed`, and `skill.loaded`.
+- Skill root layers are canonical and weak-to-strong:
+  `builtin -> user -> project -> configured`. Entries from
+  `capabilities.skills.roots` are current configured overrides, remain
+  strongest, and are read-only to managed evolution; there is no `legacy`
+  layer reader.
 - `skill.indexed.metadata.skills[]` carries emit-time identity provenance,
   including required `packageHash`, `packageHashPolicyVersion: 2`, and layer;
   Markdown `contentHash` is not an attributable identity. Skill stats accept
@@ -188,6 +193,17 @@ list --run/--session`); failed drafts self-clean. See
   [../maps/capabilities/skill-evolution.md](../maps/capabilities/skill-evolution.md#known-debts).
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-18T08:08:47+0800
+- Scope: renamed current custom-root identity from `legacy` to `configured`
+  without changing its strongest precedence or project-shadow evolution
+  boundary. Runtime metadata, doctor findings, capability output, stats cache
+  readers, docs, and tests now share the canonical layer.
+- Read: Skills index/root types, Host roots/report/doctor/stats, CLI/TUI
+  consumers and tests, public reference, and Skill capability/evolution maps.
+- Tests: Skills 27/27, Host 21/21, CLI 4/4, TUI 13/13, plus affected package
+  typechecks.
 
 - Status: Verified
 - Date: 2026-07-17T23:37:17+0800

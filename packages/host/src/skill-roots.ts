@@ -4,8 +4,8 @@ import type { SkillRoot } from "@sparkwright/skills";
 import { resolveCapabilityDirs } from "./layers.js";
 
 /**
- * Skill roots prepared in weak-to-strong order. Configured legacy roots stay
- * strongest so existing workspaces keep their override behavior.
+ * Skill roots prepared in weak-to-strong order. Explicitly configured roots
+ * stay strongest so workspace overrides remain deterministic.
  */
 export function resolveSkillRootsForRuntime(
   workspaceRoot: string,
@@ -23,7 +23,7 @@ export function resolveSkillRootsForRuntime(
     ...layered,
     ...configuredRoots.map((root) => ({
       root,
-      layer: "legacy" as const,
+      layer: "configured" as const,
     })),
   ];
 }

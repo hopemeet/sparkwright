@@ -14,6 +14,13 @@
 
 ## Covered
 
+- 2026-07-18 configured-root vocabulary coverage proves custom Skill roots
+  retain strongest precedence while carrying the sole canonical `configured`
+  layer through package loading, Host security planning and doctor, CLI text
+  and JSON capability inspection, TUI configured-root consumption, and stats
+  cache validation. The old `legacy` layer and doctor codes are rejected or no
+  longer emitted.
+
 - 2026-07-17 identity consolidation coverage proves runtime loading, indexed
   and resident trace metadata, capability inspection, doctor, lockfiles, stats,
   proposals, history, and restore share required policy-2 package identity.

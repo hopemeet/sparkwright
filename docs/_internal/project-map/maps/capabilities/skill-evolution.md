@@ -71,6 +71,12 @@ history kinds:   create | update | restore
   `approvePrepared` after the run approval resolves. Advanced proposal-create
   commands remain low-level authoring surfaces, not a fifth ordinary UX.
 
+- **Configured roots are override sources, not mutation targets:** a Skill
+  selected from `capabilities.skills.roots` has layer `configured`, is strongest
+  during loading, and produces a project fork/shadow proposal during evolution.
+  Doctor reports that current boundary with configured-root findings; no
+  `legacy` layer or diagnostic code remains.
+
 - **TUI persistent inbox:** proposal files remain the source of truth. TUI
   reads the newest draft after startup and after either creation surface, then
   presents a dismissible completion card linked to `/skill-review`; dismissing
@@ -222,6 +228,16 @@ history kinds:   create | update | restore
   there is no persisted run→proposals index (a scan, not an index).
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-18T08:08:47+0800
+- Scope: evolution now describes current custom roots as `configured` and
+  reports `CONFIGURED_*` findings while preserving project fork/shadow updates
+  instead of mutating those strongest override sources.
+- Read: Skill root resolution, doctor/reporting, evolution tests, public Skill
+  reference, and loading/evolution maps.
+- Tests: focused Host root/evolution 21/21, CLI capability/doctor/stats 4/4,
+  TUI evolution 13/13, and affected package typechecks.
 
 - Status: Verified
 - Date: 2026-07-17T23:37:17+0800

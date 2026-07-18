@@ -104,7 +104,7 @@ function shouldReportMissingRoot(
 ): boolean {
   if (includeMissingRoots === true) return true;
   if (includeMissingRoots === false) return false;
-  return root.layer === "legacy";
+  return root.layer === "configured";
 }
 
 function toReportEntry(

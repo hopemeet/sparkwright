@@ -133,7 +133,7 @@ skill roots
 ### Components
 
 - **SkillSourceResolver**
-  Resolves builtin, user, project, and configured legacy roots in weak-to-strong
+  Resolves builtin, user, project, and configured roots in weak-to-strong
   order. Owns layer labels and shadow diagnostics.
 
 - **SkillManifestLoader**
@@ -294,7 +294,7 @@ Recommended change:
   directly; the direct writer is the clearly human/manual CLI-only operation.
 - Keep project Skill root as the only writable v1 target:
   `.sparkwright/skills/`.
-- Keep builtin, user, and legacy roots read-only for evolution; update creates a
+- Keep builtin, user, and configured roots read-only for evolution; update creates a
   project fork/shadow proposal when the effective Skill comes from those layers.
 - Keep draft and apply guard checks independent. A draft can record caution
   findings; apply blocks dangerous findings unless a human force path is used.
@@ -321,7 +321,7 @@ Add checks after the manifest unification lands:
 - oversized `SKILL.md` body warning;
 - too many support files warning;
 - missing usage sidecar warning only when usage scoring is enabled;
-- legacy root effective warning retained;
+- configured root effective warning retained;
 - shadow/fork diagnostics retained;
 - model mutation boundary warning if any model-facing tool applies current
   Skill package changes directly.
@@ -408,7 +408,7 @@ Doctor should stay deterministic. It should not call a model.
 - No semantic/vector retrieval requirement.
 - No broad YAML parser unless a real use case requires it.
 - No direct execution of Skill-authored scripts during discovery.
-- No automatic mutation of user, builtin, or legacy Skill roots.
+- No automatic mutation of user, builtin, or configured Skill roots.
 - No claim that associated run failures were caused by loaded Skills.
 
 ## Resolved Questions

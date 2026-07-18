@@ -160,7 +160,7 @@ export interface PrepareSkillsForRunOptions {
 
 export type SkillPreprocessOptions = Omit<PreprocessSkillOptions, "skillDir">;
 
-export type SkillRootLayer = "builtin" | "user" | "project" | "legacy";
+export type SkillRootLayer = "builtin" | "user" | "project" | "configured";
 
 export interface SkillRoot {
   root: string;
@@ -915,7 +915,7 @@ function skillLayer(
   return value === "builtin" ||
     value === "user" ||
     value === "project" ||
-    value === "legacy"
+    value === "configured"
     ? value
     : undefined;
 }

@@ -27,6 +27,7 @@ import {
   resolveSkillRootsForRuntime,
   reviseSkillProposalDraft,
   restoreSkillFromHistory,
+  runSkillDoctor,
   skillUsagePath,
 } from "../src/index.js";
 
@@ -47,10 +48,17 @@ function skillMarkdown(name: string): string {
 }
 
 describe("skill roots", () => {
-  it("keeps the project skill root when legacy roots are configured", async () => {
+  it("keeps configured roots strongest and read-only for evolution", async () => {
     const workspace = await makeWorkspace();
     try {
-      const roots = resolveSkillRootsForRuntime(workspace, ["legacy-skills"], {
+      const configuredRoot = join(workspace, "configured-skills");
+      await mkdir(join(configuredRoot, "reviewer"), { recursive: true });
+      await writeFile(
+        join(configuredRoot, "reviewer", "SKILL.md"),
+        skillMarkdown("reviewer"),
+        "utf8",
+      );
+      const roots = resolveSkillRootsForRuntime(workspace, [configuredRoot], {
         XDG_CONFIG_HOME: join(workspace, "xdg"),
       });
 
@@ -58,10 +66,32 @@ describe("skill roots", () => {
         "builtin",
         "user",
         "project",
-        "legacy",
+        "configured",
       ]);
       expect(roots.find((root) => root.layer === "project")?.root).toBe(
         join(workspace, ".sparkwright", "skills"),
+      );
+
+      const doctor = await runSkillDoctor({ skillRoots: roots });
+      expect(doctor.status).toBe("ok_with_warnings");
+      expect(doctor.skills).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ name: "reviewer", layer: "configured" }),
+        ]),
+      );
+      expect(doctor.findings).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            code: "CONFIGURED_SKILL_EFFECTIVE",
+            severity: "warning",
+            layer: "configured",
+          }),
+          expect.objectContaining({
+            code: "CONFIGURED_ROOT_READ_ONLY",
+            severity: "info",
+            layer: "configured",
+          }),
+        ]),
       );
     } finally {
       await rm(workspace, { recursive: true, force: true });

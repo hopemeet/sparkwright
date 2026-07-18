@@ -2365,7 +2365,7 @@ describe.sequential("runCli", () => {
     );
     expect(textOutput.stdoutText()).toContain("network=deny");
     expect(textOutput.stdoutText()).toContain("skills:");
-    expect(textOutput.stdoutText()).toContain("reviewer (legacy)");
+    expect(textOutput.stdoutText()).toContain("reviewer (configured)");
     expect(textOutput.stdoutText()).toContain("agents: 1 effective");
     expect(textOutput.stdoutText()).toContain("agent shadows: 1");
     expect(textOutput.stdoutText()).toContain("mcp: 1 servers");
@@ -2450,7 +2450,7 @@ describe.sequential("runCli", () => {
     );
     expect(report.skills.skills).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ name: "reviewer", layer: "legacy" }),
+        expect.objectContaining({ name: "reviewer", layer: "configured" }),
       ]),
     );
     expect(report.agents.profiles).toEqual([
@@ -5038,6 +5038,69 @@ describe.sequential("runCli", () => {
         skillKey: "skill|project|code-reviewer|v2|sha256:code-package",
       }),
     ]);
+
+    const cacheDir = join(workspace, ".sparkwright", "skill-stats");
+    const catalogPath = join(cacheDir, "catalog.json");
+    const catalogCache = JSON.parse(await readFile(catalogPath, "utf8")) as {
+      skillKeys: Record<string, { layer?: string }>;
+    };
+    catalogCache.skillKeys[
+      "skill|project|code-reviewer|v2|sha256:code-package"
+    ]!.layer = "legacy";
+    await writeFile(
+      catalogPath,
+      `${JSON.stringify(catalogCache, null, 2)}\n`,
+      "utf8",
+    );
+
+    const projectionPath = join(cacheDir, "sessions", `${codeSessionId}.json`);
+    const projectionCache = JSON.parse(
+      await readFile(projectionPath, "utf8"),
+    ) as { skills: Array<{ layer?: string }> };
+    projectionCache.skills[0]!.layer = "legacy";
+    await writeFile(
+      projectionPath,
+      `${JSON.stringify(projectionCache, null, 2)}\n`,
+      "utf8",
+    );
+
+    const rebuiltOutput = createOutputCapture();
+    const rebuiltResult = await runCli(
+      [
+        "skills",
+        "stats",
+        "--workspace",
+        workspace,
+        "--session-root",
+        sessionRoot,
+        "--last",
+        "2",
+        "--skill",
+        "code-reviewer",
+        "--format",
+        "json",
+      ],
+      { io: { stdout: rebuiltOutput.stdout, stderr: rebuiltOutput.stderr } },
+    );
+    expect(rebuiltResult.exitCode).toBe(0);
+    const rebuiltStats = JSON.parse(rebuiltOutput.stdoutText()) as {
+      sessionsScanned: number;
+      catalog: { used: boolean; misses: number; selectedSessions: number };
+      projectionCache: { hits: number; misses: number; writes: number };
+      skills: Array<{ name: string; layer?: string }>;
+    };
+    expect(rebuiltStats.sessionsScanned).toBe(2);
+    expect(rebuiltStats.catalog).toEqual(
+      expect.objectContaining({ used: true, misses: 1, selectedSessions: 2 }),
+    );
+    expect(rebuiltStats.projectionCache).toEqual(
+      expect.objectContaining({ hits: 1, misses: 1, writes: 1 }),
+    );
+    expect(rebuiltStats.skills).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "code-reviewer", layer: "project" }),
+      ]),
+    );
   });
 
   it("doctors skills with package hashes and deterministic blockers", async () => {

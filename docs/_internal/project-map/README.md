@@ -219,6 +219,18 @@ trace/session inspection.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-18T08:08:47+0800
+- Scope: made configured Skill roots canonical across loading, Host security
+  planning, doctor/reporting, statistics caches, CLI/TUI projections, and
+  evolution documentation. Custom roots remain the strongest read-only
+  override layer; the `legacy` layer reader and diagnostics are gone.
+- Read: Skills root types/loaders, Host root/report/doctor/stats consumers,
+  CLI/TUI tests and current Skill references, plus routed module/capability and
+  test-map pages.
+- Tests: focused Skills 27/27, Host 21/21, CLI 4/4, and TUI 13/13 passed;
+  affected package typechecks passed.
+
+- Status: Verified
 - Date: 2026-07-18
 - Scope: classified completed designs and closed planning records, routed the
   versioned review archive, and removed stale active/Draft labels and obsolete

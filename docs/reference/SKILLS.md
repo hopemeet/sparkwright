@@ -109,7 +109,7 @@ sparkwright skills create code-reviewer \
 
 `list` and `validate` discover Skills across the builtin, user, and project
 layers. If `capabilities.skills.roots` is configured, those roots are loaded as
-legacy workspace roots after builtin/user roots. `create` prepares a managed
+configured workspace roots after the standard layers. `create` prepares a managed
 project-layer proposal and prints its review/apply command; it does not write the
 current Skill package or accept `--force`. Apply the proposal only after
 reviewing its final patch. CLI, TUI, and model creation adapters share the host
@@ -126,7 +126,7 @@ letting generated changes silently mutate the current Skill package.
 
 The writable surface is intentionally narrow: proposal apply writes only to the
 project Skill root under `.sparkwright/skills/`. Builtin, user, and configured
-legacy roots are read-only sources for diagnostics, statistics, and project
+roots are read-only sources for diagnostics, statistics, and project
 fork/shadow proposals.
 
 Start by inspecting the current Skill surface:
@@ -150,7 +150,7 @@ hashes to session projections so targeted `--skill`, `--skill-key`, and
 `--package-hash` queries can skip unrelated sessions after the catalog is warm.
 Raw trace and evolution files remain the source of truth. Tool failures are
 reported as associated with loaded Skills, not caused by them. `doctor`
-performs deterministic checks such as load errors, shadowing, legacy-root
+performs deterministic checks such as load errors, shadowing, configured-root
 warnings, and package hash validity.
 
 Create a new project Skill through a draft proposal:
@@ -171,7 +171,7 @@ sparkwright skills proposals update code-reviewer \
   --format text
 ```
 
-If the effective Skill comes from builtin, user, or legacy layers, update
+If the effective Skill comes from builtin, user, or configured layers, update
 creates a project-layer fork/shadow proposal instead of editing that source in
 place. If the effective Skill is already project-scoped, apply replaces that
 project Skill only after the proposal's `basePackageHash` still matches the

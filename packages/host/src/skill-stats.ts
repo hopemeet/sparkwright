@@ -954,6 +954,9 @@ function isCachedSkillStatsEntry(value: unknown): value is SkillStatsEntry {
     isRecord(value) &&
     typeof value.skillKey === "string" &&
     typeof value.name === "string" &&
+    (value.layer === undefined ||
+      value.layer === UNKNOWN_LAYER ||
+      skillLayer(value.layer) !== undefined) &&
     typeof value.packageHash === "string" &&
     value.packageHashPolicyVersion === 2 &&
     typeof value.indexedCount === "number" &&
@@ -1036,7 +1039,7 @@ function isCatalogSkillRef(value: unknown): value is SkillStatsCatalogSkillRef {
       value.layer === "builtin" ||
       value.layer === "user" ||
       value.layer === "project" ||
-      value.layer === "legacy" ||
+      value.layer === "configured" ||
       value.layer === UNKNOWN_LAYER) &&
     typeof value.packageHash === "string" &&
     value.packageHashPolicyVersion === 2 &&
@@ -2082,7 +2085,7 @@ function skillLayer(value: unknown): SkillRoot["layer"] | undefined {
   return value === "builtin" ||
     value === "user" ||
     value === "project" ||
-    value === "legacy"
+    value === "configured"
     ? value
     : undefined;
 }

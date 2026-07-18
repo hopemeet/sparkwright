@@ -390,7 +390,7 @@ describe("tui skill evolution commands", () => {
     expect((content.match(/- Run the linter first\./gu) ?? []).length).toBe(1);
   });
 
-  it("accumulates learnings when legacy skill roots are configured", async () => {
+  it("accumulates learnings when custom skill roots are configured", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "sparkwright-tui-roots-"));
     tempDirs.push(workspace);
     await mkdir(join(workspace, ".sparkwright"), { recursive: true });
@@ -399,7 +399,7 @@ describe("tui skill evolution commands", () => {
       JSON.stringify({
         capabilities: {
           skills: {
-            roots: ["legacy-skills"],
+            roots: ["configured-skills"],
           },
         },
       }),

@@ -73,7 +73,7 @@ describe("prepareHostRunSecurityPlan", () => {
     expect(plan.confidentialDefaults).toBe(false);
     expect(plan.skillRoots.at(-1)).toEqual({
       root: configuredSkillRoot,
-      layer: "legacy",
+      layer: "configured",
     });
     expect(plan.configPaths).toEqual([configPath]);
     expect(plan.shellSandbox.forcedDenyWrite).toContain(configPath);

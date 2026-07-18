@@ -40,6 +40,11 @@ skill roots
 
 - Default host behavior exposes loader tool and does not auto-reside all selected skills.
 - Project skill root defaults to `.sparkwright/skills`.
+- Root precedence is `builtin -> user -> project -> configured`.
+  `capabilities.skills.roots` supplies the canonical configured layer, which
+  remains strongest for deterministic workspace overrides. Runtime reports,
+  traces, stats, doctor, CLI, and TUI use that same label; `legacy` is not an
+  accepted layer.
 - Skill metadata parsing has one entry: `parseSkillManifest`. It rejects empty
   `instructions`; disk loaders, runtime preparation, and Skill evolution use
   that same strict parser. The parser preserves first-class `license` and
@@ -139,6 +144,16 @@ skill roots
 - Self-evolution design exists, but automatic learning should remain clearly opt-in/reviewed.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-18T08:08:47+0800
+- Scope: configured Skill roots now carry the sole canonical `configured`
+  layer through loading, trace/capability projection, doctor, and statistics;
+  stale `legacy` catalog/session cache layers are rejected and rebuilt.
+- Read: Skills loader/root contracts, Host root/report/doctor/stats paths,
+  CLI/TUI projections, tests, and public Skill documentation.
+- Tests: Skills 27/27, Host 21/21, CLI 4/4, TUI 13/13, and affected package
+  typechecks.
 
 - Status: Verified
 - Date: 2026-07-17T20:55:00+0800

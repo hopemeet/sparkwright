@@ -234,14 +234,14 @@ Strong body.
 
     const skills = await loadSkills([
       { root: weak, layer: "builtin" },
-      { root: strong, layer: "project" },
+      { root: strong, layer: "configured" },
     ]);
 
     expect(skills).toHaveLength(1);
     expect(skills[0]).toMatchObject({
       description: "Strong reviewer.",
       body: "Strong body.",
-      metadata: { sparkwrightLayer: "project" },
+      metadata: { sparkwrightLayer: "configured" },
     });
   });
 

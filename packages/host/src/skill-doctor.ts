@@ -88,12 +88,12 @@ export async function runSkillDoctor(
   }
 
   for (const skill of report.skills) {
-    if (skill.layer !== "legacy") continue;
+    if (skill.layer !== "configured") continue;
     findings.push({
       severity: "warning",
-      code: "LEGACY_SKILL_EFFECTIVE",
+      code: "CONFIGURED_SKILL_EFFECTIVE",
       message:
-        "Effective Skill comes from a configured legacy root; evolution updates should create a project shadow/fork proposal instead of editing the legacy root.",
+        "Effective Skill comes from a configured root; evolution updates should create a project shadow/fork proposal instead of editing the configured root.",
       skillName: skill.name,
       source: skill.source,
       layer: skill.layer,
@@ -101,12 +101,12 @@ export async function runSkillDoctor(
   }
 
   for (const root of options.skillRoots) {
-    if (root.layer !== "legacy") continue;
+    if (root.layer !== "configured") continue;
     findings.push({
       severity: "info",
-      code: "LEGACY_ROOT_READ_ONLY",
+      code: "CONFIGURED_ROOT_READ_ONLY",
       message:
-        "Configured legacy skill root is treated as a read-only advanced override for Skill Evolution v1.",
+        "Configured skill root is treated as a read-only override for managed Skill evolution.",
       source: root.root,
       layer: root.layer,
     });
