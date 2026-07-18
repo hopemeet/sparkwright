@@ -9,6 +9,17 @@ See also [../maps/trace/summary-timeline-verify.md](../maps/trace/summary-timeli
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-18T08:52:13+0800
+- Scope: `skills stats` JSON and text consume the sole structured
+  `loadFailures` DTO; text totals no longer read the removed compatibility
+  summary. Host session projection schema v3 rebuilds retired cached DTOs.
+- Read: CLI Skill stats command/formatter/tests, Host stats projection/cache,
+  public Skill reference, and Skill project/test maps.
+- Tests: focused CLI Skill stats/review/catalog/doctor 5/5, full CLI 155/155,
+  CLI and Host typechecks, repository test typecheck, schema check, project-map
+  drift, and the full release gate passed.
+
+- Status: Verified
 - Date: 2026-07-17T23:37:17+0800
 - Scope: CLI diagnostics/reference harness imports EventLog and file-run
   implementations through Core `/internal`; command and output contracts are

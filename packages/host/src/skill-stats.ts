@@ -165,11 +165,6 @@ export interface SkillStatsEntry {
   loadedCount: number;
   residentLoadCount: number;
   explicitLoadCount: number;
-  /**
-   * Back-compat summary of `loadFailures.total`. New callers should prefer the
-   * classified `loadFailures` object.
-   */
-  loadFailureCount: number;
   loadFailures: {
     total: number;
     byMode: Record<string, number>;
@@ -274,7 +269,7 @@ interface SessionProjectionWindow {
   openRunCount: number;
 }
 
-interface SkillStatsSessionProjectionV1 {
+interface SkillStatsSessionProjection {
   schemaVersion: typeof SESSION_PROJECTION_SCHEMA_VERSION;
   algorithmVersion: typeof SESSION_PROJECTION_ALGORITHM_VERSION;
   sessionId: string;
@@ -301,7 +296,7 @@ interface SkillStatsCatalogSkillRef {
   lastEventAt?: string;
 }
 
-interface SkillStatsCatalogV1 {
+interface SkillStatsCatalog {
   schemaVersion: typeof CATALOG_SCHEMA_VERSION;
   algorithmVersion: typeof CATALOG_ALGORITHM_VERSION;
   sessionProjectionAlgorithmVersion: typeof SESSION_PROJECTION_ALGORITHM_VERSION;
@@ -335,7 +330,7 @@ interface EvolutionRollupResult {
 const DEFAULT_SESSION_LIMIT = 20;
 const DEFAULT_SKILL_SAMPLE_LIMIT = 20;
 const UNKNOWN_LAYER = "unknown";
-const SESSION_PROJECTION_SCHEMA_VERSION = "skill-stats-session.v2";
+const SESSION_PROJECTION_SCHEMA_VERSION = "skill-stats-session.v3";
 const SESSION_PROJECTION_ALGORITHM_VERSION = "skill-stats-trace-v4";
 const CATALOG_SCHEMA_VERSION = "skill-stats-catalog.v2";
 const CATALOG_ALGORITHM_VERSION = "skill-stats-catalog-v2";
@@ -422,7 +417,7 @@ export async function collectSkillStats(
   catalog.selectedSessions = sessionsToScan.length;
   const traceErrors: SkillStatsReport["traceErrors"] = [];
   let tracesScanned = 0;
-  const scannedProjections: SkillStatsSessionProjectionV1[] = [];
+  const scannedProjections: SkillStatsSessionProjection[] = [];
   const traceWindow: MutableTraceWindow = {
     runCount: 0,
     terminalRunCount: 0,
@@ -567,7 +562,7 @@ async function loadOrBuildSessionProjection(input: {
   computedAt: string;
   traceErrors: SkillStatsReport["traceErrors"];
   projectionCache: SkillStatsProjectionCacheInfo;
-}): Promise<SkillStatsSessionProjectionV1> {
+}): Promise<SkillStatsSessionProjection> {
   const tracePaths = await sessionTracePaths(
     input.sessionRootDir,
     input.sessionId,
@@ -625,7 +620,7 @@ async function loadOrBuildSessionProjection(input: {
 
   const byKey = new Map<string, MutableSkillStatsEntry>();
   collectTraceStats(byKey, sessionEvents, input.sessionId);
-  const projection: SkillStatsSessionProjectionV1 = {
+  const projection: SkillStatsSessionProjection = {
     schemaVersion: SESSION_PROJECTION_SCHEMA_VERSION,
     algorithmVersion: SESSION_PROJECTION_ALGORITHM_VERSION,
     sessionId: input.sessionId,
@@ -703,7 +698,7 @@ async function readSkillStatsCatalog(
     sessions: readonly SkillStatsCatalogSessionRef[];
   },
   catalog: SkillStatsCatalogInfo,
-): Promise<SkillStatsCatalogV1 | undefined> {
+): Promise<SkillStatsCatalog | undefined> {
   let raw: unknown;
   try {
     raw = JSON.parse(await readFile(path, "utf8")) as unknown;
@@ -729,7 +724,7 @@ async function readSkillStatsCatalog(
 
 async function writeSkillStatsCatalog(
   path: string,
-  value: SkillStatsCatalogV1,
+  value: SkillStatsCatalog,
   catalog: SkillStatsCatalogInfo,
 ): Promise<void> {
   try {
@@ -756,9 +751,9 @@ function buildSkillStatsCatalog(input: {
   sessionRootDir: string;
   sessionLimit: number;
   sessions: readonly { id: string; updatedAt: string }[];
-  projections: readonly SkillStatsSessionProjectionV1[];
+  projections: readonly SkillStatsSessionProjection[];
   computedAt: string;
-}): SkillStatsCatalogV1 {
+}): SkillStatsCatalog {
   const projectionsBySession = new Map(
     input.projections.map((projection) => [projection.sessionId, projection]),
   );
@@ -835,7 +830,7 @@ function buildSkillStatsCatalog(input: {
 }
 
 function selectCatalogSessionIds(
-  catalog: SkillStatsCatalogV1,
+  catalog: SkillStatsCatalog,
   target: SkillStatsTarget,
 ): Set<string> {
   const keys = catalogSkillKeysForTarget(catalog, target);
@@ -849,7 +844,7 @@ function selectCatalogSessionIds(
 }
 
 function catalogSkillKeysForTarget(
-  catalog: SkillStatsCatalogV1,
+  catalog: SkillStatsCatalog,
   target: SkillStatsTarget,
 ): string[] {
   let keys: string[];
@@ -880,7 +875,7 @@ async function readSessionProjectionCache(
   sessionId: string,
   traceFingerprints: readonly TraceFileFingerprint[],
   projectionCache: SkillStatsProjectionCacheInfo,
-): Promise<SkillStatsSessionProjectionV1 | undefined> {
+): Promise<SkillStatsSessionProjection | undefined> {
   let raw: unknown;
   try {
     raw = JSON.parse(await readFile(path, "utf8")) as unknown;
@@ -909,7 +904,7 @@ async function readSessionProjectionCache(
 
 function isSessionProjectionCache(
   value: unknown,
-): value is SkillStatsSessionProjectionV1 {
+): value is SkillStatsSessionProjection {
   if (!isRecord(value)) return false;
   if (!Array.isArray(value.traceFingerprints)) return false;
   if (!Array.isArray(value.skills)) return false;
@@ -971,7 +966,6 @@ function isCachedSkillStatsEntry(value: unknown): value is SkillStatsEntry {
     value.sampleRunIds.every((runId) => typeof runId === "string") &&
     Array.isArray(value.failureRunIds) &&
     value.failureRunIds.every((runId) => typeof runId === "string") &&
-    typeof value.loadFailureCount === "number" &&
     isRecord(value.loadFailures) &&
     typeof value.loadFailures.total === "number" &&
     isNumberRecord(value.loadFailures.byMode) &&
@@ -999,7 +993,7 @@ function isCachedSkillStatsEntry(value: unknown): value is SkillStatsEntry {
   );
 }
 
-function isSkillStatsCatalog(value: unknown): value is SkillStatsCatalogV1 {
+function isSkillStatsCatalog(value: unknown): value is SkillStatsCatalog {
   return (
     isRecord(value) &&
     value.schemaVersion === CATALOG_SCHEMA_VERSION &&
@@ -1053,7 +1047,7 @@ function isCatalogSkillRef(value: unknown): value is SkillStatsCatalogSkillRef {
 
 async function writeSessionProjectionCache(
   path: string,
-  projection: SkillStatsSessionProjectionV1,
+  projection: SkillStatsSessionProjection,
   sessionId: string,
   projectionCache: SkillStatsProjectionCacheInfo,
 ): Promise<void> {
@@ -1118,7 +1112,7 @@ function sessionProjectionWindow(
 
 function mergeSessionProjection(
   byKey: Map<string, MutableSkillStatsEntry>,
-  projection: SkillStatsSessionProjectionV1,
+  projection: SkillStatsSessionProjection,
 ): void {
   for (const skill of projection.skills) {
     mergeSkillStatsEntry(byKey, skill);
@@ -1142,7 +1136,6 @@ function mergeSkillStatsEntry(
   for (const runId of source.failureRunIds) {
     addBoundedSet(target.failureRunIdSet, runId, DEFAULT_SKILL_SAMPLE_LIMIT);
   }
-  target.loadFailureCount += source.loadFailureCount;
   target.loadFailures.total += source.loadFailures.total;
   mergeRecordCounts(target.loadFailures.byMode, source.loadFailures.byMode);
   mergeRecordCounts(target.loadFailures.byStatus, source.loadFailures.byStatus);
@@ -1573,7 +1566,6 @@ function ensureEntry(
       loadedCount: 0,
       residentLoadCount: 0,
       explicitLoadCount: 0,
-      loadFailureCount: 0,
       loadFailures: { total: 0, byMode: {}, byStatus: {} },
       runIds: [],
       sessionIds: [],
@@ -1621,7 +1613,6 @@ function recordLoadFailure(
   mode: string,
   status: string,
 ): void {
-  entry.loadFailureCount += 1;
   entry.loadFailures.total += 1;
   incrementRecord(entry.loadFailures.byMode, mode);
   incrementRecord(entry.loadFailures.byStatus, status);
@@ -1669,7 +1660,6 @@ function finalizeEntry(entry: MutableSkillStatsEntry): SkillStatsEntry {
     loadedCount: entry.loadedCount,
     residentLoadCount: entry.residentLoadCount,
     explicitLoadCount: entry.explicitLoadCount,
-    loadFailureCount: entry.loadFailureCount,
     loadFailures: {
       total: entry.loadFailures.total,
       byMode: sortRecord(entry.loadFailures.byMode),

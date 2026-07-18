@@ -4323,9 +4323,11 @@ describe.sequential("runCli", () => {
       "sessions",
       `${sessionId}.json`,
     );
-    expect(await readFile(projectionCachePath, "utf8")).toContain(
-      '"schemaVersion": "skill-stats-session.v2"',
+    const projectionCacheContents = await readFile(projectionCachePath, "utf8");
+    expect(projectionCacheContents).toContain(
+      '"schemaVersion": "skill-stats-session.v3"',
     );
+    expect(projectionCacheContents).not.toContain("loadFailureCount");
     expect(stats.findings).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -4414,6 +4416,9 @@ describe.sequential("runCli", () => {
         }),
       ]),
     );
+    expect(stats.skills.every((skill) => !("loadFailureCount" in skill))).toBe(
+      true,
+    );
     expect(
       stats.skills.filter((skill) => skill.name === "resident-reviewer"),
     ).toHaveLength(1);
@@ -4456,9 +4461,18 @@ describe.sequential("runCli", () => {
     );
     expect(cachedStats.skills).toEqual(stats.skills);
 
+    const retiredProjection = JSON.parse(projectionCacheContents) as {
+      schemaVersion: string;
+      skills: Array<Record<string, unknown>>;
+    };
+    retiredProjection.schemaVersion = "skill-stats-session.v2";
+    for (const skill of retiredProjection.skills) {
+      skill.loadFailureCount = 0;
+    }
     await writeFile(
       projectionCachePath,
-      '{"schemaVersion":"skill-stats-session.v1"}\n',
+      `${JSON.stringify(retiredProjection, null, 2)}\n`,
+      "utf8",
     );
     const repairedOutput = createOutputCapture();
     const repairedResult = await runCli(
@@ -4528,6 +4542,7 @@ describe.sequential("runCli", () => {
     expect(textOutput.stdoutText()).toContain("findings: 3");
     expect(textOutput.stdoutText()).toContain("finding detail:");
     expect(textOutput.stdoutText()).toContain("package: v2 sha256:package");
+    expect(textOutput.stdoutText()).toContain("load failures: 1");
     expect(textOutput.stdoutText()).toContain(
       "load failure detail: modes=on_demand_tool=1, statuses=resource_denied=1",
     );

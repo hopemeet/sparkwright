@@ -3566,7 +3566,7 @@ function formatSkillStatsReport(report: SkillStatsReport): string {
       lines.push(`  shadows: ${skill.shadows.join(", ")}`);
     }
     lines.push(
-      `  indexed: ${skill.indexedCount}, loaded: ${skill.loadedCount}, resident loads: ${skill.residentLoadCount}, explicit loads: ${skill.explicitLoadCount}, load failures: ${skill.loadFailureCount}`,
+      `  indexed: ${skill.indexedCount}, loaded: ${skill.loadedCount}, resident loads: ${skill.residentLoadCount}, explicit loads: ${skill.explicitLoadCount}, load failures: ${skill.loadFailures.total}`,
     );
     const loadFailureModes = Object.entries(skill.loadFailures.byMode);
     const loadFailureStatuses = Object.entries(skill.loadFailures.byStatus);

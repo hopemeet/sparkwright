@@ -88,12 +88,14 @@ skill roots
 - `skills stats` is read-time only. It aggregates by
   `skill + layer + name + packageHashPolicyVersion + packageHash`,
   ignores rows without canonical v2 identity,
-  separates explicit and resident loads, classifies load failures by mode/status,
+  separates explicit and resident loads, and exposes load failures only through
+  `loadFailures.total/byMode/byStatus`,
   splits associated tool failures before vs after first load, scans agent trace
   files with event-id dedupe, and rolls up proposal/history metadata only when
   package hashes align. It also reports trace/evolution windows, freshness
   timestamps, analyzer findings, and rebuildable session projection cache
-  hit/miss/write/error counts. Session projection Skill entries carry event
+  hit/miss/write/error counts. Projection schema and algorithm versions
+  invalidate stale cache DTOs. Session projection Skill entries carry event
   windows plus bounded sample/failure run ids. A lightweight catalog cache maps
   Skill names, Skill keys, and package hashes to session projections for
   targeted `--skill`, `--skill-key`, and `--package-hash` queries. These are
@@ -144,6 +146,18 @@ skill roots
 - Self-evolution design exists, but automatic learning should remain clearly opt-in/reviewed.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-18T08:52:13+0800
+- Scope: Skill stats load failures now have one structured counter/classifier
+  contract. The parallel summary field and its merge/increment/serialization
+  path are gone, CLI renders the structured total, and v2 session projections
+  rebuild under schema v3.
+- Read: Host stats projection/cache, CLI stats formatter and integration tests,
+  public Skill reference, and Skill module/test maps.
+- Tests: focused CLI Skill stats/review/catalog/doctor 5/5, full CLI 155/155,
+  Host and CLI typechecks, repository test typecheck, schema check, project-map
+  drift, and the full release gate passed.
 
 - Status: Verified
 - Date: 2026-07-18T08:08:47+0800

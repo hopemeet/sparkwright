@@ -3,8 +3,11 @@
 ## Current Confidence
 
 - Status: `Verified`
-- Last reviewed: 2026-07-17
-- Evidence source: 2026-06-23 focused host Skill evolution,
+- Last reviewed: 2026-07-18
+- Evidence source: 2026-07-18 focused Skill stats/cache/CLI rendering and full
+  CLI coverage passed, along with Host/CLI and repository test typechecks plus
+  schema validation, project-map drift, and the full release gate. Earlier
+  2026-06-23 focused host Skill evolution,
   capability-package mutation, inline-shell, TUI skill review, and
   `@sparkwright/skills` package tests passed. Real `openai/gpt-5.4-nano`
   Skill capability regression partially passed: shell-managed package bypass was
@@ -13,6 +16,12 @@
   duplicate recovered `create_skill` call.
 
 ## Covered
+
+- 2026-07-18 Skill stats DTO coverage proves load failure aggregation, JSON,
+  text rendering, findings, and rebuildable session projections use only
+  `loadFailures.total/byMode/byStatus`. The duplicate `loadFailureCount`
+  summary is absent, and v2 session projections are rejected and rebuilt as
+  canonical v3 cache entries.
 
 - 2026-07-18 configured-root vocabulary coverage proves custom Skill roots
   retain strongest precedence while carrying the sole canonical `configured`

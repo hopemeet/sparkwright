@@ -142,9 +142,11 @@ sparkwright skills doctor --workspace . --format text
 associated run status, associated tool failures, and package-hash-aligned
 proposal/history rollups. The report includes the trace/evolution window,
 freshness timestamps, analyzer findings, and a rebuildable session projection
-cache summary. Session projections are stored under
+cache summary. Load failures have one structured JSON contract:
+`loadFailures.total`, `loadFailures.byMode`, and `loadFailures.byStatus`.
+Session projections are stored under
 `.sparkwright/skill-stats/sessions/` and are invalidated by trace file
-fingerprints plus the projection algorithm version. A lightweight
+fingerprints plus the projection schema and algorithm versions. A lightweight
 `.sparkwright/skill-stats/catalog.json` maps Skill names, keys, and package
 hashes to session projections so targeted `--skill`, `--skill-key`, and
 `--package-hash` queries can skip unrelated sessions after the catalog is warm.

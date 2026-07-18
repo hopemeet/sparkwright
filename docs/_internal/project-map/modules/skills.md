@@ -88,10 +88,12 @@ Does not own:
   `packageHashPolicyVersion: 2`. The separate v1 Skill package API is removed.
 - `skills stats` materializes rebuildable per-session projections under
   `.sparkwright/skill-stats/sessions/`, keyed by trace fingerprints plus a
-  projection algorithm version. Reports expose trace/evolution windows,
-  freshness timestamps, cache hit/miss/write/error counts, and analyzer
-  findings. Per-session Skill entries include event windows and bounded run
-  samples for later targeted evidence queries. A lightweight
+  projection schema and algorithm version. Reports expose trace/evolution
+  windows, freshness timestamps, cache hit/miss/write/error counts, and
+  analyzer findings. Load failure statistics have one structured carrier,
+  `loadFailures.total/byMode/byStatus`; there is no parallel summary field.
+  Per-session Skill entries include event windows and bounded run samples for
+  later targeted evidence queries. A lightweight
   `.sparkwright/skill-stats/catalog.json` routes `--skill`, `--skill-key`, and
   `--package-hash` queries to relevant session projections; it is still a
   rebuildable cache, not a full Skill rollup or source of truth.
@@ -193,6 +195,18 @@ list --run/--session`); failed drafts self-clean. See
   [../maps/capabilities/skill-evolution.md](../maps/capabilities/skill-evolution.md#known-debts).
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-18T08:52:13+0800
+- Scope: Skill statistics expose one load-failure DTO,
+  `loadFailures.total/byMode/byStatus`. Host aggregation and caches no longer
+  persist the duplicate `loadFailureCount` summary; session projection schema
+  v3 invalidates the retired DTO and rebuilds from trace evidence.
+- Read: Host Skill stats aggregation/cache/analyzer, CLI JSON/text rendering,
+  focused tests, public Skill reference, and Skill project/test maps.
+- Tests: focused CLI Skill stats/review/catalog/doctor 5/5, full CLI 155/155,
+  Host and CLI typechecks, repository test typecheck, schema check, project-map
+  drift, and the full release gate passed.
 
 - Status: Verified
 - Date: 2026-07-18T08:08:47+0800
