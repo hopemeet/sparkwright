@@ -10,6 +10,17 @@ See [../trace/raw-trace.md](../trace/raw-trace.md) for raw event evidence.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-19
+- Scope: the final HostRuntime composition audit changes only live execution
+  admission wiring. The explicit HostExecution passed to fresh/resume episode
+  owners still uses the same session query, run-store, Workflow journal, and
+  job/control-session identities; no storage path or format changed.
+- Read: Host execution envelopes, run preparation/episode owners, session
+  query/store paths, and focused start/resume tests.
+- Tests: focused Host composition/Workflow/protocol and final repository gates
+  are recorded with the commit.
+
+- Status: Verified
 - Date: 2026-07-18
 - Scope: per-run `FileSessionStore`, workspace/trace resources, and run/store
   metadata are now assembled by `RunPreparationOperations`; canonical session

@@ -10,6 +10,18 @@ See [session-store.md](session-store.md) and [../runtime/context-compaction.md](
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-19
+- Scope: checkpoint and Workflow resume now receive the already-admitted
+  HostExecution explicitly from the single HostRuntime execution envelope.
+  Canonical run lookup, checkpoint/from-trace behavior, pinned Workflow
+  verification, writer claims, waiting compensation, job-session identity,
+  and replay context are unchanged.
+- Read: Host resume envelopes, session query owner, Workflow durable/episode
+  owners, HostExecution/HostService lanes, and focused resume tests.
+- Tests: focused Host Workflow/protocol and final repository gates are recorded
+  with the commit.
+
+- Status: Verified
 - Date: 2026-07-18
 - Scope: fresh, checkpoint-resume, and Workflow-resume envelopes now obtain the
   same prepared environment through `RunPreparationOperations`. Canonical run

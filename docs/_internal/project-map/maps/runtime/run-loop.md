@@ -11,6 +11,18 @@ See [tool-orchestration.md](tool-orchestration.md) and [../trace/raw-trace.md](.
 
 - Status: Verified
 - Date: 2026-07-19
+- Scope: Host fresh/start and checkpoint/Workflow resume paths now enter one
+  HostRuntime execution envelope and receive its exact HostExecution as an
+  explicit argument. Busy rejection, abort scope, release-on-preparation
+  failure, Core episode construction, lane admission, and terminal event order
+  are unchanged; inner assembly has no fallback execution entrance.
+- Read: HostRuntime/HostExecution, HostService lanes, preparation/episode/
+  interaction owners, and focused start/resume/Workflow tests.
+- Tests: focused Host composition and downstream/final repository gates are
+  recorded with the commit.
+
+- Status: Verified
+- Date: 2026-07-19
 - Scope: Host execution identity/driver projection, atomic user-message
   acceptance, cancellation, approval interaction, disconnect cleanup, and
   drain moved intact to `ExecutionInteractionOperations`. The owner reads the

@@ -246,6 +246,23 @@ npm --workspace @sparkwright/host test -- test/config.test.ts
 Broaden to CLI/TUI tests when capability snapshots, protocol responses, or
 run summaries change.
 
+For the final `runtime/host-runtime.ts` composition boundary, run:
+
+```bash
+npm --workspace @sparkwright/host test -- test/host-service.test.ts test/host-execution.test.ts test/execution-interaction-operations.test.ts test/run-preparation-operations.test.ts test/workflow-episode-runtime.test.ts test/workflow-runtime-operations.test.ts test/workflows.test.ts test/protocol.test.ts test/client-run.test.ts test/task-revival.test.ts
+npm --workspace @sparkwright/server-runtime test -- test/execution-lanes.test.ts test/workflow-service.test.ts test/workflow-channel-coordinator.test.ts
+npm --workspace @sparkwright/sdk-node test -- test/round-trip.test.ts
+npm --workspace @sparkwright/host run typecheck
+```
+
+Audit the source with the behavior tests: HostRuntime must contain the sole
+`currentExecution` slot and `new HostExecution()` site, every live start/resume
+inner envelope must receive that exact execution explicitly, and ordinary
+start/resume/inject/cancel must continue through HostService lane admission.
+Keep durable/session owners and Core episode execution in their existing
+collaborators; this route does not authorize storage, protocol, or event-shape
+changes.
+
 For `runtime/contracts.ts`, also run Host execution/service and the import graph
 gate; coordinator ports must not derive their signatures from `HostRuntime`
 class methods.

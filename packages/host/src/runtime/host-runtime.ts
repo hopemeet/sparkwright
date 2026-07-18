@@ -39,7 +39,6 @@ import {
   RunPreparationOperations,
   devSkillsEnabled,
   prepareRuntimeMcpInspection,
-  type RunPreparationInput,
 } from "./run-preparation-operations.js";
 export type { RuntimeOptions } from "./contracts.js";
 import { loadCheckpointFromRunDir } from "@sparkwright/core/internal";
@@ -125,11 +124,10 @@ function resolveTraceLevel(input: {
 
 /** One HostExecution attachment composed by the process HostService. */
 export class HostRuntime {
-  private opts: HostRuntimeOptions;
+  private readonly opts: HostRuntimeOptions;
   private readonly tasks: TaskRuntimeOperations;
   private readonly workflows: WorkflowRuntimeOperations;
   private readonly workflowEpisodes: WorkflowEpisodeRuntime;
-  private readonly agents: AgentRuntimeAssembly;
   private readonly capabilities: CapabilityRuntimeOperations;
   private readonly runPreparation: RunPreparationOperations;
   private readonly interactions: ExecutionInteractionOperations;
@@ -166,7 +164,7 @@ export class HostRuntime {
         if (this.currentExecution === execution) this.currentExecution = null;
       },
     });
-    this.agents = new AgentRuntimeAssembly({
+    const agents = new AgentRuntimeAssembly({
       taskManager: this.tasks.manager,
       workspaceLeaseCoordinator: this.opts.workspaceLeaseCoordinator,
     });
@@ -201,7 +199,7 @@ export class HostRuntime {
       extraMcpServers: this.opts.extraMcpServers,
       workspaceLeaseCoordinator: this.opts.workspaceLeaseCoordinator,
       taskManager: this.tasks.manager,
-      agents: this.agents,
+      agents,
       capabilities: this.capabilities,
       workflowEpisodes: this.workflowEpisodes,
       createInteractionChannel: (runIdHolder) =>
@@ -234,21 +232,41 @@ export class HostRuntime {
     return this.interactions.executionDriverHandle(executionId);
   }
 
-  private beginExecution(
-    abortController?: AbortController,
-    executionId?: string,
-  ): HostExecution {
-    const execution = new HostExecution({ abortController, executionId });
-    this.currentExecution = execution;
-    return execution;
-  }
-
   private releaseUnstartedExecution(execution: HostExecution): void {
     if (this.currentExecution !== execution || execution.activeRun) return;
     execution.finish(
       execution.abortController.signal.aborted ? "cancelled" : "failed",
     );
     this.currentExecution = null;
+  }
+
+  private async runInExecutionEnvelope<Result>(
+    input: {
+      busyMessage: string;
+      abortController?: AbortController;
+      executionId?: string;
+    },
+    run: (execution: HostExecution) => Promise<Result>,
+  ): Promise<Result | { ok: false; error: ProtocolError }> {
+    if (this.currentExecution) {
+      return {
+        ok: false,
+        error: {
+          code: "internal_error",
+          message: input.busyMessage,
+        },
+      };
+    }
+    const execution = new HostExecution({
+      abortController: input.abortController,
+      executionId: input.executionId,
+    });
+    this.currentExecution = execution;
+    try {
+      return await run(execution);
+    } finally {
+      this.releaseUnstartedExecution(execution);
+    }
   }
 
   listTasks(input: ListRuntimeTasksInput): {
@@ -324,22 +342,14 @@ export class HostRuntime {
       }
     | { ok: false; error: ProtocolError }
   > {
-    if (this.currentExecution) {
-      return {
-        ok: false,
-        error: {
-          code: "internal_error",
-          message: "another run is already active on this connection",
-        },
-      };
-    }
-    const executionAbort = new AbortController();
-    const execution = this.beginExecution(executionAbort, executionId);
-    try {
-      return await this.startRunInner(payload);
-    } finally {
-      this.releaseUnstartedExecution(execution);
-    }
+    return await this.runInExecutionEnvelope(
+      {
+        busyMessage: "another run is already active on this connection",
+        abortController: new AbortController(),
+        executionId,
+      },
+      (execution) => this.startRunInner(execution, payload),
+    );
   }
 
   /**
@@ -369,21 +379,12 @@ export class HostRuntime {
         },
       };
     }
-    if (this.currentExecution) {
-      return {
-        ok: false,
-        error: {
-          code: "internal_error",
-          message: "another run is already active on this service adapter",
-        },
-      };
-    }
-    const execution = this.beginExecution();
-    try {
-      return await this.startRunInner(payload, workflowRunId);
-    } finally {
-      this.releaseUnstartedExecution(execution);
-    }
+    return await this.runInExecutionEnvelope(
+      {
+        busyMessage: "another run is already active on this service adapter",
+      },
+      (execution) => this.startRunInner(execution, payload, workflowRunId),
+    );
   }
 
   async resumeRun(
@@ -419,22 +420,14 @@ export class HostRuntime {
     | { ok: true; runId: string; resumedFromRunId: string; sessionId?: string }
     | { ok: false; error: ProtocolError }
   > {
-    if (this.currentExecution) {
-      return {
-        ok: false,
-        error: {
-          code: "internal_error",
-          message: "another run is already active on this connection",
-        },
-      };
-    }
-    const executionAbort = new AbortController();
-    const execution = this.beginExecution(executionAbort, executionId);
-    try {
-      return await this.resumeRunInner(payload, resolvedSessionId);
-    } finally {
-      this.releaseUnstartedExecution(execution);
-    }
+    return await this.runInExecutionEnvelope(
+      {
+        busyMessage: "another run is already active on this connection",
+        abortController: new AbortController(),
+        executionId,
+      },
+      (execution) => this.resumeRunInner(execution, payload, resolvedSessionId),
+    );
   }
 
   async listWorkflowRuns(payload: WorkflowListRequestPayload = {}): Promise<
@@ -461,21 +454,12 @@ export class HostRuntime {
         }
       },
       resume: async (payload) => {
-        if (this.currentExecution) {
-          return {
-            ok: false,
-            error: {
-              code: "internal_error",
-              message: "another run is already active on this connection",
-            },
-          };
-        }
-        const execution = this.beginExecution();
-        try {
-          return await this.resumeWorkflowRunInner(payload);
-        } finally {
-          this.releaseUnstartedExecution(execution);
-        }
+        return await this.runInExecutionEnvelope(
+          {
+            busyMessage: "another run is already active on this connection",
+          },
+          (execution) => this.resumeWorkflowRunInner(execution, payload),
+        );
       },
     };
   }
@@ -556,25 +540,15 @@ export class HostRuntime {
     | { ok: true; runId: string; workflowRunId: string; sessionId?: string }
     | { ok: false; error: ProtocolError }
   > {
-    if (this.currentExecution) {
-      return {
-        ok: false,
-        error: {
-          code: "internal_error",
-          message: "another run is already active on this connection",
-        },
-      };
-    }
-    const execution = this.beginExecution();
-    try {
-      return await this.workflows.resumeThroughControl(
-        payload,
-        source,
-        (resumePayload) => this.resumeWorkflowRunInner(resumePayload),
-      );
-    } finally {
-      this.releaseUnstartedExecution(execution);
-    }
+    return await this.runInExecutionEnvelope(
+      {
+        busyMessage: "another run is already active on this connection",
+      },
+      (execution) =>
+        this.workflows.resumeThroughControl(payload, source, (resumePayload) =>
+          this.resumeWorkflowRunInner(execution, resumePayload),
+        ),
+    );
   }
 
   async resumeClaimedWorkflowRun(
@@ -586,27 +560,16 @@ export class HostRuntime {
   > {
     const claimed = this.workflows.validateClaimedWriter(payload, writer);
     if (!claimed.ok) return claimed;
-    if (this.currentExecution) {
-      return {
-        ok: false,
-        error: {
-          code: "internal_error",
-          message: "another run is already active on this connection",
-        },
-      };
-    }
-    const execution = this.beginExecution();
-    try {
-      return await this.resumeWorkflowRunInner(payload, writer);
-    } finally {
-      this.releaseUnstartedExecution(execution);
-    }
+    return await this.runInExecutionEnvelope(
+      {
+        busyMessage: "another run is already active on this connection",
+      },
+      (execution) => this.resumeWorkflowRunInner(execution, payload, writer),
+    );
   }
 
-  private prepareHostRunEnvironment(input: RunPreparationInput) {
-    return this.runPreparation.prepare(input);
-  }
   private async resumeRunInner(
+    execution: HostExecution,
     payload: RunResumeRequestPayload,
     resolvedSessionId?: string,
   ): Promise<
@@ -672,7 +635,7 @@ export class HostRuntime {
     const accessMetadata = buildAccessMetadata(access);
     const resumeSessionId =
       located.sessionId ?? resolvedSessionId ?? createSessionId();
-    const prepared = await this.prepareHostRunEnvironment({
+    const prepared = await this.runPreparation.prepare({
       goal: checkpoint.run.goal,
       modelRef,
       access,
@@ -699,7 +662,6 @@ export class HostRuntime {
     if (!prepared.ok) return prepared;
     const env = prepared.env;
 
-    const execution = this.currentExecution ?? this.beginExecution();
     const started = await this.workflowEpisodes.resumeCheckpoint({
       execution,
       env,
@@ -721,6 +683,7 @@ export class HostRuntime {
   }
 
   private async resumeWorkflowRunInner(
+    execution: HostExecution,
     payload: WorkflowResumeRequestPayload,
     claimedWriter?: WorkflowLeaseBoundWriter,
   ): Promise<
@@ -783,7 +746,7 @@ export class HostRuntime {
     );
     const { permissionMode, shouldWrite } = access;
     const accessMetadata = buildAccessMetadata(access);
-    const prepared = await this.prepareHostRunEnvironment({
+    const prepared = await this.runPreparation.prepare({
       goal:
         typeof record.metadata.goal === "string"
           ? record.metadata.goal
@@ -827,7 +790,6 @@ export class HostRuntime {
       { workspaceRoot: env.workspaceRoot, sessionRootDir: env.sessionRootDir },
       sessionId,
     );
-    const execution = this.currentExecution ?? this.beginExecution();
     const started = await this.workflowEpisodes.resumeWorkflow({
       execution,
       env,
@@ -860,6 +822,7 @@ export class HostRuntime {
   }
 
   private async startRunInner(
+    execution: HostExecution,
     payload: RunStartRequestPayload,
     workflowRunId?: WorkflowRunId,
   ): Promise<
@@ -917,7 +880,7 @@ export class HostRuntime {
         },
       };
     }
-    const prepared = await this.prepareHostRunEnvironment({
+    const prepared = await this.runPreparation.prepare({
       goal: payload.goal,
       modelRef,
       access,
@@ -963,7 +926,6 @@ export class HostRuntime {
       metadata: payload.input?.metadata,
     });
 
-    const execution = this.currentExecution ?? this.beginExecution();
     const started = await this.workflowEpisodes.startFresh({
       execution,
       env,

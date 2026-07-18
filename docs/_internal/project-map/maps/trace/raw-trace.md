@@ -12,6 +12,17 @@ and [../session/session-store.md](../session/session-store.md) for session layou
 
 - Status: Verified
 - Date: 2026-07-19
+- Scope: Host start/resume execution lifecycle wiring now has one explicit
+  envelope and no inner fallback execution entrance. The same HostExecution,
+  episode owner, EventLog, trace sink, approval/cancel paths, event payloads,
+  and ordering remain in use; no trace vocabulary or persistence changed.
+- Read: HostRuntime/HostExecution, episode/preparation/interaction owners, Core
+  trace boundaries, and focused start/resume tests.
+- Tests: focused Host composition/protocol and final repository gates are
+  recorded with the commit.
+
+- Status: Verified
+- Date: 2026-07-19
 - Scope: Host approval request delivery and active execution message/cancel
   routing moved behind `ExecutionInteractionOperations`. Core remains the raw
   `approval.*`, `run.command.*`, and cancellation event owner; event payloads,

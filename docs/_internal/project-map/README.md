@@ -220,6 +220,19 @@ trace/session inspection.
 
 - Status: Verified
 - Date: 2026-07-19
+- Scope: the final HostRuntime composition audit leaves one process facade,
+  one explicit execution envelope, and collaborator wiring. All fresh,
+  checkpoint-resume, and Workflow-resume entrypoints now share the same
+  HostRuntime-owned begin/release path and pass that exact HostExecution into
+  episode execution; the former implicit inner fallback cannot create a second
+  execution entrance.
+- Read: HostRuntime, HostExecution, HostService/lane admission, all extracted
+  Host runtime owners, session owners, protocol routing, and focused tests.
+- Tests: focused composition/Workflow/protocol and final repository gates are
+  recorded with the commit.
+
+- Status: Verified
+- Date: 2026-07-19
 - Scope: Host execution interaction/control routing now lives in
   `ExecutionInteractionOperations`: execution identity and driver handles,
   atomic message acceptance, approval channel/timeout/resolution, cancellation,

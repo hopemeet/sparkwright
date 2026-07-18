@@ -13,6 +13,21 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 
 - Status: Verified
 - Date: 2026-07-19
+- Scope: the final `HostRuntime` composition audit consolidates every
+  HostExecution begin/busy/release sequence behind one private execution
+  envelope. Start, checkpoint resume, Workflow resume, service-detached start,
+  control resume, and claimed-writer resume pass that exact execution to their
+  inner envelope; no inner method can silently construct a second execution.
+  The Agent assembly reference is retained only by run preparation after
+  constructor wiring.
+- Read: HostRuntime/HostExecution/HostService, lane coordinator contracts,
+  Task/Workflow/episode/Agent/capability/preparation/interaction owners,
+  session modules, protocol consumers, and focused tests.
+- Tests: focused Host composition, Workflow, protocol, and downstream/final
+  repository gates are recorded with the commit.
+
+- Status: Verified
+- Date: 2026-07-19
 - Scope: `runtime/execution-interaction-operations.ts` is the Host owner for
   execution identity/driver projection, active message acceptance, the
   approval-only interaction channel and timeout/resolution path, cancellation,
@@ -320,7 +335,8 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 ## Main Files
 
 - `packages/host/src/runtime.ts` — stable named public facade
-- `packages/host/src/runtime/host-runtime.ts` — concrete HostRuntime composition and execution orchestration
+- `packages/host/src/runtime/host-runtime.ts` — concrete process facade,
+  single HostExecution envelope, and runtime collaborator wiring
 - `packages/host/src/runtime/execution-interaction-operations.ts` — execution identity/driver projection, message acceptance, approval channel/routing, cancellation cleanup, and drain
 - `packages/host/src/runtime/run-preparation-operations.ts` — immutable run plan, model/config/security, Skill/MCP, Agent/catalog, Workflow preparation, Hook/rule, capability snapshot, and metadata assembly
 - `packages/host/src/runtime/agent-runtime-assembly.ts` — configured/direct/indexed/parallel Agent and Delegate assembly, dynamic spawn/promotion, child grants/results, and background Agent task execution
@@ -378,6 +394,8 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 
 Owns:
 
+- the sole HostExecution slot/factory and the explicit start/resume execution
+  envelope passed to every live episode
 - host protocol method implementations such as `run.start`, `run.resume`, `session.inspect`, `session.compact`, and `capability.inspect`
 - provider/model construction for local host runs
 - provider pricing resolution for run metadata, session compaction usage hints,
