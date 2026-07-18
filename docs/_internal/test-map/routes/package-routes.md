@@ -290,6 +290,19 @@ durable idempotency tests. Preserve WorkspaceContext as the sole adapter
 constructor and HostExecution as the sole live execution owner; the operations
 owner may request resume only through a narrow HostRuntime execution port.
 
+For `runtime/workflow-episode-runtime.ts`, run:
+
+```bash
+npm --workspace @sparkwright/host test -- test/workflow-episode-runtime.test.ts test/workflows.test.ts test/workflow-hooks.test.ts test/protocol.test.ts test/host-service.test.ts
+npm --workspace @sparkwright/agent-runtime test -- test/workflows.test.ts test/workflow-control.test.ts test/workflow-channels.test.ts test/workflow-workers.test.ts
+npm --workspace @sparkwright/host run typecheck
+```
+
+Construct the owner directly for projection preparation and per-node
+model/tool/budget planning. Preserve HostRuntime as the only HostExecution
+factory and lane-facing facade; the episode owner receives that exact instance
+and must not mirror current execution or active-run state.
+
 For `session-queries.ts` or `session-compaction.ts`, run the full Host protocol
 file plus Host typecheck. Preserve canonical session/agent run lookup,
 checkpoint resume, completed-turn replay, compact artifact anchoring,

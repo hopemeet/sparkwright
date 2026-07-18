@@ -27,6 +27,10 @@ const ALLOWED_CORE_INTERNAL_IMPORTS = new Map([
     "Host owns the current local reference harness and file-backed trace store.",
   ],
   [
+    "packages/host/src/runtime/workflow-episode-runtime.ts",
+    "Host Workflow episode execution owns session-scoped reference Core run stores.",
+  ],
+  [
     "packages/host/src/delegate-runner.ts",
     "Host delegate execution owns session-scoped reference trace persistence.",
   ],

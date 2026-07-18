@@ -11,6 +11,16 @@ See [../trace/raw-trace.md](../trace/raw-trace.md) for raw event evidence.
 
 - Status: Verified
 - Date: 2026-07-18
+- Scope: WorkflowEpisodeRuntime now constructs fresh and resumed Core episode
+  run stores using the existing canonical session-store factories. Job/control
+  session separation, paths, metadata, checkpoint layout, and Workflow journal
+  formats are unchanged.
+- Read: episode run-store construction, Host session resolution, Workflow
+  durable owner, and focused start/resume tests.
+- Tests: focused Host Workflow/protocol suites passed.
+
+- Status: Verified
+- Date: 2026-07-18
 - Scope: canonical workspace Workflow store construction and lookup now route
   through `WorkflowRuntimeOperations`; storage remains journal-only at
   `.sparkwright/workflow-runs`, with job sessions and control attribution

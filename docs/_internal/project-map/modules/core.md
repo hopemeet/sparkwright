@@ -13,6 +13,16 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md),
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-18
+- Scope: Host Core run/resume construction for Workflow-aware episodes moved
+  into `WorkflowEpisodeRuntime` without changing Core run, checkpoint,
+  interaction, policy, event, usage, or run-store contracts.
+- Read: Core run/checkpoint/session store surfaces and the new Host episode
+  owner plus focused Host tests.
+- Tests: focused Host Workflow/protocol suites passed; Core behavior is covered
+  again by the final repository gate.
+
+- Status: Verified
 - Date: 2026-07-18T09:58:00+0800
 - Scope: `ControlledWorkspace` requires a run-owned `setState` port and no
   longer mutates `RunRecord` directly; production assembly routes approval

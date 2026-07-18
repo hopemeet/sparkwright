@@ -11,6 +11,16 @@ See [../safety/workspace-writes.md](../safety/workspace-writes.md), [../safety/s
 
 - Status: Verified
 - Date: 2026-07-18
+- Scope: Workflow per-node model selection, budget narrowing, tool allowlist,
+  scoped discovery, and continuation required-tool checks now live with
+  `WorkflowEpisodeRuntime`. Base catalog admission and generic Host run
+  preparation remain unchanged.
+- Read: Workflow episode planner, Host tool surface/catalog preparation,
+  projection tool availability, and focused Workflow tests.
+- Tests: owner-level planner and focused Host Workflow/tool-hook suites passed.
+
+- Status: Verified
+- Date: 2026-07-18
 - Scope: checked Workflow durable ownership extraction. Per-episode model/tool
   selection, Workflow catalog narrowing, deferred discovery, policy, and tool
   execution remain in HostRuntime/run preparation and were not moved.

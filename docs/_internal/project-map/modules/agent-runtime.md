@@ -10,6 +10,16 @@ See also [../maps/capabilities/agents.md](../maps/capabilities/agents.md), [../m
 
 - Status: Verified
 - Date: 2026-07-18
+- Scope: Host WorkflowEpisodeRuntime now owns the adapter around existing Agent
+  Runtime `runTodoSupervised`/HostExecution chaining. Agent Runtime actor-chain
+  decisions, continuation/stall bounds contract, Workflow machine, and durable
+  worker ownership are unchanged.
+- Read: Host episode owner, HostExecution, Agent Runtime todo/workflow worker
+  contracts, and focused Host/Agent Runtime tests.
+- Tests: focused Host and Agent Runtime Workflow suites passed.
+
+- Status: Verified
+- Date: 2026-07-18
 - Scope: Host Workflow ownership consolidation continues to consume Agent
   Runtime's existing journal store, lease-bound writer, actor inbox, and
   durable control processor as ports. Their formats, fencing, idempotency, and

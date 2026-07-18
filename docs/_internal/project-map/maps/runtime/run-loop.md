@@ -11,6 +11,17 @@ See [tool-orchestration.md](tool-orchestration.md) and [../trace/raw-trace.md](.
 
 - Status: Verified
 - Date: 2026-07-18
+- Scope: Workflow-aware Core run construction, continuation context, actor
+  episode chaining, live control polling, usage recording, and terminal event
+  completion moved to `WorkflowEpisodeRuntime`. The collaborator drives one
+  caller-owned HostExecution; Core state-machine semantics and event order are
+  unchanged.
+- Read: Workflow episode/durable owners, HostRuntime/HostExecution, Core run
+  and Agent Runtime todo-supervision paths, plus focused tests.
+- Tests: owner-level and focused Host Workflow/protocol suites passed.
+
+- Status: Verified
+- Date: 2026-07-18
 - Scope: Workflow durable finalization, notification, control pumping, and
   record persistence moved behind `WorkflowRuntimeOperations`. HostRuntime
   still exclusively constructs Core episodes, owns HostExecution/current run,

@@ -16,6 +16,15 @@
 
 ## Current Evidence
 
+- 2026-07-18 Host live episode ownership consolidation:
+  `WorkflowEpisodeRuntime` owns pinned projection preparation, waiting-input
+  consumption/compensation, fresh/checkpoint/workflow-resume Core run
+  construction, node model/tool/budget planning, actor episode chaining, live
+  control polling, usage persistence, and terminal completion. Direct owner
+  coverage exercises fresh projection and node planning; existing Host
+  Workflow tests remain the lifecycle/storage/event-order backstop. No Core,
+  journal, notification, command, protocol, or session format changed.
+
 - 2026-07-18 Host ownership consolidation: `WorkflowRuntimeOperations` now
   owns Host-side canonical lookup/list projection, notification delivery,
   durable control processing, resume claims, terminal finalization, and

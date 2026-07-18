@@ -9,6 +9,15 @@ See also [../maps/trace/summary-timeline-verify.md](../maps/trace/summary-timeli
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-18
+- Scope: checked internal-import governance after Host Workflow episode
+  extraction. CLI internal reference harness allowances and Host/protocol
+  client boundaries are unchanged.
+- Read: internal-import allowlist, CLI direct-core entries, and Host episode
+  owner.
+- Tests: internal-import and CLI gates pass in the final release check.
+
+- Status: Verified
 - Date: 2026-07-18T08:52:13+0800
 - Scope: `skills stats` JSON and text consume the sole structured
   `loadFailures` DTO; text totals no longer read the removed compatibility

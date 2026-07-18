@@ -13,6 +13,19 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 
 - Status: Verified
 - Date: 2026-07-18
+- Scope: `runtime/workflow-episode-runtime.ts` is the Host owner for live
+  Workflow-aware episode preparation and execution: projection/wait input,
+  per-node model/tool/budget planning, Core run construction, actor chain,
+  control pumping, usage, and terminal completion. It drives the exact
+  HostExecution passed by HostRuntime and never owns current execution state.
+- Read: HostRuntime, Workflow episode/durable owners, HostExecution, projection
+  hooks/assets, Core run/session stores, Agent Runtime todo supervision, and
+  focused tests.
+- Tests: owner-level 1/1 and focused Host Workflow 175/175 passed; final
+  cross-package and repository gates are recorded with the commit.
+
+- Status: Verified
+- Date: 2026-07-18
 - Scope: `runtime/workflow-runtime-operations.ts` is the single Host owner for
   Workflow canonical roots/store lookup, list snapshots, actor notification
   delivery, durable control acceptance/dispatch/outcomes, resume claims,
@@ -262,6 +275,7 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 - `packages/host/src/runtime/task-runtime-operations.ts` — Host Task protocol/control, output reads, actor revival, orphan recovery, and canonical workspace root
 - `packages/host/src/runtime/task-projections.ts` — stateless task snapshots, notifications, and terminal classification
 - `packages/host/src/runtime/workflow-runtime-operations.ts` — Host Workflow canonical roots/store, snapshots, actor notifications, durable controls/resume claims, finalization, and record persistence helpers
+- `packages/host/src/runtime/workflow-episode-runtime.ts` — Host Workflow-aware projection preparation, Core episode construction, actor chain, live control pump, usage, and execution completion
 - `packages/host/src/runtime/contracts.ts` — runtime construction and execution coordination ports
 - `packages/host/src/session-queries.ts` — canonical Host run lookup, completed-turn replay, compact-context anchoring, trace fact projection, and session queries
 - `packages/host/src/session-compaction.ts` — complete manual compaction operation from turn loading through artifact/event persistence
@@ -322,8 +336,8 @@ Owns:
 - host Task protocol/control, actor revival, resume orphan handling, and
   workspace Task-root projection through `TaskRuntimeOperations`
 - host Workflow durable control-plane behavior through
-  `WorkflowRuntimeOperations`; live Core episode execution remains in
-  `HostRuntime`
+  `WorkflowRuntimeOperations`, and live Workflow-aware Core episode execution
+  through `WorkflowEpisodeRuntime`
 - host-client approval helpers used by frontends that must not import core directly
 - session diagnostics bundle composition
 - shell live-process handoff into task state, including explicit/promotion
@@ -436,6 +450,11 @@ Does not own:
   it does not construct a second inbox/outbox/dispatcher or hold HostExecution
   state. Durable command processing can request one resume only through the
   HostRuntime-owned execution port, preserving a single execution entrance.
+- `WorkflowEpisodeRuntime` receives the exact HostExecution created by
+  HostRuntime. It may attach/detach Core episode runs and drive the actor chain,
+  but it does not store `currentExecution`, construct HostExecution, admit
+  lanes, or create a second execution entrance. HostRuntime continues to own
+  generic `prepareHostRunEnvironment()` assembly and process facade wiring.
 - `run-security-plan.ts` is the immutable boundary between config/access
   parsing and runtime assembly. A run and `capability.inspect` derive the same
   workspace, access, confidential paths, skill/config roots, and resolved shell

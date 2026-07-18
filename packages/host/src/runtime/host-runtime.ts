@@ -1,7 +1,6 @@
 import { isAbsolute, join, relative, resolve } from "node:path";
 import {
   asSessionId,
-  createBufferedEmitter,
   createContextItemId,
   createRunId,
   createDefaultPolicy,
@@ -11,7 +10,6 @@ import {
   createRun,
   defineTool,
   FileSessionStore,
-  resumeRunFromCheckpoint,
   type InteractionChannel,
   type BackgroundTaskPolicy,
   type ContentPart,
@@ -29,10 +27,7 @@ import {
   type ToolRequestPreviewOptions,
   type WorkflowHook,
 } from "@sparkwright/core";
-import {
-  prepareSkillsForRun,
-  type SkillUsageRecorder,
-} from "@sparkwright/skills";
+import { prepareSkillsForRun } from "@sparkwright/skills";
 import {
   createLazyMcpToolsForRun,
   prepareMcpToolsForRun,
@@ -49,8 +44,6 @@ import {
   deriveChildAgentProfile,
   findSimilarSuccessfulDelegation,
   rememberSuccessfulDelegation,
-  readTodoLedger,
-  TODO_CONTINUATION_REQUIRED_TOOL,
   spawnSubAgent,
   summarizeDelegationResult,
   withAlreadyCompletedNote,
@@ -61,10 +54,7 @@ import {
   type DelegationLedgerKey,
   type DerivedChildAgentProfile,
   type TaskRunnerController,
-  type TodoSupervisedRunInput,
   type SpawnedSubAgent,
-  type WorkflowExecutableDefinition,
-  type WorkflowNodeDefinition,
   type WorkflowRunId,
   type WorkflowRunRecord,
   type WorkflowRunStatus,
@@ -95,6 +85,10 @@ import {
   WorkflowRuntimeOperations,
   type WorkflowControlExecutionPort,
 } from "./workflow-runtime-operations.js";
+import {
+  WorkflowEpisodeRuntime,
+  type WorkflowEpisodeEnvironment,
+} from "./workflow-episode-runtime.js";
 export type { RuntimeOptions } from "./contracts.js";
 import {
   createWorkspaceMutationAdmission,
@@ -103,27 +97,22 @@ import {
 import { type ResolvedShellSandboxConfig } from "@sparkwright/shell-sandbox";
 import type {
   CapabilityDelegateToolConfig,
-  CapabilityEventHookConfig,
   CapabilityHooksConfig,
   CapabilityToolsConfig,
   CapabilityVerificationConfig,
   CapabilityWorkflowHookConfig,
   ShellConfig,
-  WriteGuardrailsConfig,
 } from "../config-zod-schema.js";
 import {
   createSessionFileRunStoreFactory,
   EventLog,
   loadCheckpointFromRunDir,
-  LocalWorkspace,
-  MemoryTrace,
 } from "@sparkwright/core/internal";
 import {
   isTraceLevel,
   type TraceLevel,
   type ProtocolError,
   type CapabilityInspectRequestPayload,
-  type RunFailureEnvelope,
   type RunResumeRequestPayload,
   type RunStartRequestPayload,
   type WorkflowListRequestPayload,
@@ -135,7 +124,6 @@ import {
   type CapabilitySnapshot,
   type CapabilityAutomationSummary,
 } from "@sparkwright/protocol";
-import { buildAgentPromptBuilder } from "@sparkwright/project-context";
 import { loadHostConfig } from "../config/config-implementation.js";
 import type { CapabilityMcpConfig } from "../config/contracts.js";
 import {
@@ -173,11 +161,7 @@ import {
   type SessionCompactResult,
 } from "../session-compaction.js";
 export { sessionPreviewFromTranscriptLine } from "../session-queries.js";
-import {
-  createModel,
-  inspectResolvedModelConfig,
-  type ResolvedModelConfig,
-} from "../model-factory.js";
+import { createModel, inspectResolvedModelConfig } from "../model-factory.js";
 import {
   catalogToolDefinitions,
   createConfiguredDelegateChildToolCatalog,
@@ -206,10 +190,7 @@ import {
 } from "../external-command-agent.js";
 import { createDelegateAgentTool } from "../indexed-delegate-tool.js";
 export { createDelegateAgentTool } from "../indexed-delegate-tool.js";
-import {
-  createSkillUsageRecorder,
-  observeSkillUsageEvent,
-} from "../skill-usage.js";
+import { createSkillUsageRecorder } from "../skill-usage.js";
 import {
   assertSubagentDepthAllowed,
   describeDelegateCapability,
@@ -229,7 +210,6 @@ import {
   type DelegatePolicyProfile,
 } from "../delegate-capability.js";
 import {
-  bindConfiguredEventHooks,
   createConfiguredWorkflowHooks,
   createPartialSubagentFinalityDisclosureHook,
   type CreateConfiguredWorkflowHooksOptions,
@@ -240,11 +220,7 @@ import {
   describeActiveEventRules,
   describeActiveWorkflowRules,
 } from "../active-rules.js";
-import {
-  loadLayeredWorkflowAssets,
-  pinWorkflowAssetPackage,
-  verifyWorkflowPackageSnapshot,
-} from "../workflows.js";
+import { loadLayeredWorkflowAssets } from "../workflows.js";
 import { createWorkflowProjectionHooks } from "../workflow-projection.js";
 import {
   DISCOVERY_TOOL_NAME,
@@ -256,10 +232,7 @@ import {
   admitToolsForAgentProfile,
   agentProfileAdmitsTool,
   createScopedToolSearch,
-  isWorkflowScopedToolSearch,
   matchesAgentToolName,
-  resolveRunToolSurface,
-  type ResolvedToolSurface,
 } from "../tool-surface.js";
 
 /**
@@ -373,46 +346,11 @@ function requireActiveRunId(value: string | null): RunId {
 type PreparedSkills = Awaited<ReturnType<typeof prepareSkillsForRun>>;
 type PreparedMcp = Awaited<ReturnType<typeof prepareMcpToolsForRun>>;
 
-interface PreparedHostRunEnvironment {
-  workspaceRoot: string;
-  workspace: LocalWorkspace;
-  sessionRootDir: string;
-  trace: MemoryTrace;
-  pendingExtensionEvents: ReturnType<typeof createBufferedEmitter>;
-  skillUsageRecorder: SkillUsageRecorder | null;
-  runIdHolder: { value: string | null };
-  interactionChannel: InteractionChannel;
-  model: ModelAdapter;
-  modelRef: string;
-  resolvedModel: ResolvedModelConfig;
-  workflowModelAdapters: Map<
-    string,
-    { adapter: ModelAdapter; resolved: ResolvedModelConfig }
-  >;
+interface PreparedHostRunEnvironment extends WorkflowEpisodeEnvironment {
   preparedSkills: PreparedSkills | null;
   preparedMcp: PreparedMcp | null;
-  mainAgent: AgentProfile;
   toolCatalog: HostToolCatalogEntry[];
-  tools: ToolDefinition[];
-  workflowHooks: WorkflowHook[];
   workflowProjection?: ReturnType<typeof createWorkflowProjectionHooks>;
-  workflowStore?: FileWorkflowStore;
-  workflowRecord?: WorkflowRunRecord;
-  workflowLease?: WorkflowLeaseBoundWriter;
-  eventHookConfig?: CapabilityEventHookConfig[];
-  hookSandbox?: ShellConfig["sandbox"];
-  hookHttp?: CapabilityHooksConfig["http"];
-  hookSkillRoots: string[];
-  hookConfigPaths: string[];
-  delegateAgentTool?: ToolDefinition;
-  sessionStore: FileSessionStore;
-  parentRunRef: { current?: ReturnType<typeof createRun> };
-  traceLevel: TraceLevel;
-  writeGuardrails?: WriteGuardrailsConfig;
-  confidentialPaths?: readonly string[];
-  confidentialDefaults?: boolean;
-  runMetadata: Record<string, unknown>;
-  runStoreMetadata: Record<string, unknown>;
 }
 
 export interface RuntimeWorkflowHookAssemblyOptions extends Omit<
@@ -608,21 +546,6 @@ function summarizeCapabilitySnapshot(
   };
 }
 
-// Todo-supervisor continuation budget for the main agent. Conservative, fixed
-// bounds: after MAIN_TODO_MAX_CONTINUATIONS auto-continuations — or a single
-// continuation that produced no progress (no external write and no newly
-// completed item) — the run chain hands back to the human rather than spinning.
-// The stall bound is deliberately tight: once a continuation makes zero
-// progress, the model has typically converged on its answer and further rounds
-// just re-emit it, so one empty round is enough to stop. Only runs whose model
-// left unfinished todos continue at all; a run with an empty/finished ledger
-// audits once and stops.
-const MAIN_TODO_MAX_CONTINUATIONS = 4;
-const MAIN_TODO_MAX_STALLED_CONTINUATIONS = 1;
-const MAIN_TODO_CONTINUATION_MAX_STEPS = 8;
-const MAIN_TODO_CONTINUATION_MAX_MODEL_CALLS = 8;
-const MAIN_TODO_CONTINUATION_MAX_TOOL_CALLS = 12;
-
 const DELEGATED_AGENT_CONTRACT = [
   "Delegated agent contract:",
   "- Do not ask the user directly. Your parent agent owns all user interaction.",
@@ -723,6 +646,7 @@ export class HostRuntime {
   private opts: HostRuntimeOptions;
   private readonly tasks: TaskRuntimeOperations;
   private readonly workflows: WorkflowRuntimeOperations;
+  private readonly workflowEpisodes: WorkflowEpisodeRuntime;
   private currentExecution: HostExecution | null = null;
   // One abort for the complete interactive execution, including assembly and
   // every todo/workflow episode. Core run cancellation remains run-scoped.
@@ -748,6 +672,14 @@ export class HostRuntime {
       notifications: context.workflowNotifications,
       controls: context.workflowControls,
       dispatcher: context.workflowControlDispatcher,
+    });
+    this.workflowEpisodes = new WorkflowEpisodeRuntime({
+      workflows: this.workflows,
+      tasks: this.tasks,
+      emit: this.opts.emit,
+      releaseExecution: (execution) => {
+        if (this.currentExecution === execution) this.currentExecution = null;
+      },
     });
   }
 
@@ -1064,11 +996,12 @@ export class HostRuntime {
     return {
       hasExecution: () => this.currentExecution !== null,
       processActiveControls: async (workflowRunId) => {
+        const active = this.currentExecution?.activeRun;
         if (
-          this.active?.workflowRunId === workflowRunId &&
-          this.active.processWorkflowControls
+          active?.workflowRunId === workflowRunId &&
+          active.processWorkflowControls
         ) {
-          await this.active.processWorkflowControls();
+          await active.processWorkflowControls();
         }
       },
       resume: async (payload) => {
@@ -1603,254 +1536,51 @@ export class HostRuntime {
     );
     const tools = catalogToolDefinitions(toolCatalog);
     const workflows = await loadLayeredWorkflowAssets(workspaceRoot);
-    const selectedWorkflow = input.workflowRecord
-      ? undefined
-      : input.workflowName
-        ? workflows.assets.find(
-            (asset) => asset.assetName === input.workflowName,
-          )
-        : undefined;
-    if (!input.workflowRecord && input.workflowName && !selectedWorkflow) {
-      return {
-        ok: false,
-        error: {
-          code: "invalid_payload",
-          message: `Workflow "${input.workflowName}" was not found.`,
-        },
-      };
-    }
-    const pinnedWorkflow = selectedWorkflow
-      ? await pinWorkflowAssetPackage({
-          asset: selectedWorkflow,
-          snapshotRoot: join(this.workflows.rootDir, "package-snapshots"),
-        })
-      : undefined;
-    const workflowDefinition = input.workflowRecord
-      ? input.workflowRecord.definitionSnapshot
-      : pinnedWorkflow?.asset.definition;
-    if (input.workflowRecord) {
-      try {
-        await verifyWorkflowPackageSnapshot({
-          packageSnapshotRef: input.workflowRecord.packageSnapshotRef,
-          packageHash: input.workflowRecord.packageHash,
-        });
-      } catch (error) {
-        return {
-          ok: false,
-          error: {
-            code: "invalid_payload",
-            message: `Workflow run "${input.workflowRecord.id}" executable package snapshot is invalid: ${
-              error instanceof Error ? error.message : String(error)
-            }`,
-          },
-        };
-      }
-      if (
-        input.workflowRecord.definitionSnapshot.sourceDir !==
-        input.workflowRecord.packageSnapshotRef
-      ) {
-        return {
-          ok: false,
-          error: {
-            code: "invalid_payload",
-            message: `Workflow run "${input.workflowRecord.id}" definition does not execute from its package snapshot.`,
-          },
-        };
-      }
-    }
-    const workflowModelAdapters = workflowDefinition
-      ? await resolveWorkflowModelAdapters({
-          definition: workflowDefinition,
-          parentModelRef: model.resolved.modelRef,
-          goal: input.goal,
-          workspaceRoot,
-          targetPath: input.targetPath,
-        })
-      : { ok: true as const, adapters: new Map() };
-    if (!workflowModelAdapters.ok) {
-      return {
-        ok: false,
-        error: {
-          code: "invalid_payload",
-          message: workflowModelAdapters.message,
-        },
-      };
-    }
-    const workflowStore = workflowDefinition
-      ? (input.workflowStore ?? this.workflows.createStore())
-      : undefined;
-    let workflowRecord = input.workflowRecord;
-    let workflowLease = input.workflowLease;
-    let acquiredWorkflowLease = false;
-    let workflowRollbackRecord: WorkflowRunRecord | undefined;
-    let workflowProjection:
-      | ReturnType<typeof createWorkflowProjectionHooks>
-      | undefined;
-    try {
-      if (
-        workflowStore &&
-        workflowRecord?.status === "waiting" &&
-        input.workflowWaitingInputMetadata !== undefined
-      ) {
-        workflowRollbackRecord = workflowRecord;
-        workflowRecord = await this.workflows.consumeWaitingInput(
-          workflowLease,
-          workflowRecord,
-          input.workflowWaitingInputMetadata,
-        );
-        if (this.workflows.isTerminalStatus(workflowRecord.status)) {
-          const terminalStatus = workflowRecord.status;
-          const rollbackWorkflowRunId = workflowRollbackRecord.id;
-          workflowRecord = await this.workflows.compensate(
-            workflowLease,
-            workflowRecord,
-            workflowRollbackRecord,
-            "workflow_resume_terminal_after_input",
-          );
-          workflowRollbackRecord = undefined;
-          return {
-            ok: false,
-            error: {
-              code: "invalid_payload",
-              message: `Workflow run ${rollbackWorkflowRunId} would reach ${terminalStatus} while consuming waiting input.`,
-            },
-          };
-        }
-      }
-      workflowProjection = workflowDefinition
-        ? createWorkflowProjectionHooks({
-            definition: workflowDefinition,
-            workflowRunId: input.workflowRecord?.id ?? input.workflowRunId,
-            initialState: input.workflowRecord
-              ? this.workflows.runtimeState(input.workflowRecord)
-              : undefined,
-            resumeVerificationNodeIds:
-              input.workflowRecord?.resume.verifyOnResume === true
-                ? this.workflows.completedNodeIds(
-                    input.workflowRecord,
-                    workflowDefinition,
-                  )
-                : [],
-            onStateSnapshot: async (snapshot) => {
-              if (!workflowLease || !workflowRecord) return;
-              const latestRecord =
-                (await workflowLease.readFresh()) ?? workflowRecord;
-              workflowRecord = await this.workflows.persistProjectionSnapshot(
-                workflowLease,
-                latestRecord,
-                snapshot,
-              );
-              this.workflows.deliverNotification(workflowRecord);
-            },
-            workspaceRoot,
-            sandbox: shellConfig?.sandbox,
-            http: hookConfig?.http,
-            skillRoots: skillRoots.map((root) => root.root),
-            configPaths: loadedConfig.attempted.map((entry) => entry.path),
-            getRun: () => parentRunRef.current,
-            getEvidenceRefs: (nodeId) =>
-              (workflowRecord?.evidenceRefs ?? []).filter(
-                (ref) => ref.nodeId === nodeId,
-              ),
-            readTodoLedger: () =>
-              readTodoLedger(join(sessionRootDir, input.sessionId, "todo.md")),
-            runEndTerminalOwner: "episode_chain",
-            allowScriptWrite: runAccess.shouldWrite,
-            agentTool: delegateAgentTool,
+    const workflowEpisode = await this.workflowEpisodes.prepare({
+      goal: input.goal,
+      sessionId: input.sessionId,
+      sessionRootDir,
+      workspaceRoot,
+      workflows,
+      parentModelRef: model.resolved.modelRef,
+      ...(input.workflowName ? { workflowName: input.workflowName } : {}),
+      ...(input.workflowRunId ? { workflowRunId: input.workflowRunId } : {}),
+      ...(input.controlSessionId
+        ? { controlSessionId: input.controlSessionId }
+        : {}),
+      ...(input.workflowStore ? { workflowStore: input.workflowStore } : {}),
+      ...(input.workflowRecord ? { workflowRecord: input.workflowRecord } : {}),
+      ...(input.workflowLease ? { workflowLease: input.workflowLease } : {}),
+      ...(input.workflowWaitingInputMetadata !== undefined
+        ? { workflowWaitingInputMetadata: input.workflowWaitingInputMetadata }
+        : {}),
+      ...(input.targetPath ? { targetPath: input.targetPath } : {}),
+      ...(confidentialPaths ? { confidentialPaths } : {}),
+      ...(confidentialDefaults !== undefined ? { confidentialDefaults } : {}),
+      access: runAccess,
+      ...(input.runMetadata ? { runMetadata: input.runMetadata } : {}),
+      ...(shellConfig?.sandbox ? { shellSandbox: shellConfig.sandbox } : {}),
+      ...(hookConfig?.http ? { hookHttp: hookConfig.http } : {}),
+      skillRoots: skillRoots.map((root) => root.root),
+      configPaths: loadedConfig.attempted.map((entry) => entry.path),
+      parentRunRef,
+      tools,
+      ...(delegateAgentTool ? { delegateAgentTool } : {}),
+      ...(tools.find((tool) => tool.name === DELEGATE_PARALLEL_TOOL_NAME)
+        ? {
             delegateParallelTool: tools.find(
               (tool) => tool.name === DELEGATE_PARALLEL_TOOL_NAME,
-            ),
-            taskTool: tools.find((tool) => tool.name === "task_create"),
-            isToolAvailable: (toolName) =>
-              parentRunRef.current?.tools.get(toolName) !== undefined,
-            isScopedToolSearchAvailable: () =>
-              isWorkflowScopedToolSearch(
-                parentRunRef.current?.tools.get(DISCOVERY_TOOL_NAME),
-              ),
-          })
-        : undefined;
-      if (workflowProjection && workflowDefinition && workflowStore) {
-        const projectedState = workflowProjection.getState();
-        if (!workflowRecord) {
-          const workflowRunId =
-            workflowProjection.workflowRunId as WorkflowRunId;
-          const acquiredLease = await workflowStore.acquireWriter(
-            workflowRunId,
-            {
-              owner: this.workflows.leaseOwner(),
-              ttlMs: this.workflows.leaseTtlMs(),
-            },
-          );
-          if (!acquiredLease) {
-            return {
-              ok: false,
-              error: {
-                code: "invalid_payload",
-                message: `Workflow run ${workflowRunId} is already adopted by another writer.`,
-              },
-            };
+            )!,
           }
-          workflowLease = acquiredLease;
-          acquiredWorkflowLease = true;
-          workflowRecord = await acquiredLease.create({
-            id: workflowRunId,
-            assetName: workflowDefinition.assetName,
-            layer: pinnedWorkflow!.asset.layer,
-            ...(workflowDefinition.version
-              ? { version: workflowDefinition.version }
-              : {}),
-            packageHash: pinnedWorkflow!.packageHash,
-            packageHashPolicyVersion: pinnedWorkflow!.packageHashPolicyVersion,
-            packageSnapshotRef: pinnedWorkflow!.packageSnapshotRef,
-            sessionId: input.sessionId,
-            currentNodeId: projectedState.currentNodeId,
-            attempts: projectedState.attempts,
-            transitionLog: projectedState.transitionLog,
-            authorizationSnapshot: {
-              ...(input.targetPath ? { targetPath: input.targetPath } : {}),
-              confidentialPaths: [...(confidentialPaths ?? [])],
-              confidentialDefaults: confidentialDefaults ?? true,
-              accessMode: runAccess.accessMode,
-              backgroundTasks: runAccess.backgroundTasks,
-            },
-            definitionSnapshot: workflowDefinition,
-            metadata: {
-              goal: input.goal,
-              verifyOnResume: true,
-              ...(input.workflowRunId &&
-              typeof input.runMetadata?.serviceHandoffId === "string"
-                ? {
-                    serviceHandoffId: input.runMetadata.serviceHandoffId,
-                  }
-                : {}),
-              ...(input.controlSessionId
-                ? { controlSessionId: input.controlSessionId }
-                : {}),
-            },
-          });
-        }
-      }
-    } catch (error) {
-      if (workflowRollbackRecord && workflowStore) {
-        workflowRecord = await this.workflows.compensate(
-          workflowLease,
-          workflowRecord ?? workflowRollbackRecord,
-          workflowRollbackRecord,
-          "workflow_resume_prepare_failed",
-        );
-      }
-      if (acquiredWorkflowLease) {
-        await workflowLease?.release().catch(() => {});
-        workflowLease = undefined;
-      }
-      return {
-        ok: false,
-        error: {
-          code: "invalid_payload",
-          message: error instanceof Error ? error.message : String(error),
-        },
-      };
-    }
+        : {}),
+    });
+    if (!workflowEpisode.ok) return workflowEpisode;
+    const workflowModelAdapters =
+      workflowEpisode.prepared.workflowModelAdapters;
+    const workflowProjection = workflowEpisode.prepared.workflowProjection;
+    const workflowStore = workflowEpisode.prepared.workflowStore;
+    const workflowRecord = workflowEpisode.prepared.workflowRecord;
+    const workflowLease = workflowEpisode.prepared.workflowLease;
     const workflowHooks = assembleRuntimeWorkflowHooks({
       workflowHooks: hookConfig?.workflow,
       workflowActive: workflowProjection !== undefined,
@@ -1975,7 +1705,7 @@ export class HostRuntime {
         model: model.adapter,
         modelRef: model.resolved.modelRef,
         resolvedModel: model.resolved,
-        workflowModelAdapters: workflowModelAdapters.adapters,
+        workflowModelAdapters,
         preparedSkills,
         preparedMcp,
         mainAgent,
@@ -2155,352 +1885,6 @@ export class HostRuntime {
     };
   }
 
-  // P3 Step 4a: actor-owned episode driver. The workflow/todo actor owns the
-  // chain shape through runTodoSupervised -> runWorkflowRunChain; host creates
-  // transient core runs and wires session/lease/event glue for each episode.
-  private async startWorkflowActorEpisodeChain(input: {
-    episodeKind: "run_start" | "run_resume" | "workflow_resume";
-    env: PreparedHostRunEnvironment;
-    sessionId: string;
-    todoPath: string;
-    buildRun: (
-      supervisedInput: TodoSupervisedRunInput,
-    ) => ReturnType<typeof createRun>;
-    afterRun?: (
-      supervisedInput: TodoSupervisedRunInput,
-      run: ReturnType<typeof createRun>,
-      result: RunResult,
-    ) => void | Promise<void>;
-  }): Promise<
-    { ok: true; runId: string } | { ok: false; error: ProtocolError }
-  > {
-    const { env, sessionId, todoPath } = input;
-    const execution = this.currentExecution ?? this.beginExecution();
-    const executionAbort = execution.abortController;
-    execution.bindSession(sessionId);
-    const runCleanups: Array<() => void> = [];
-    const stopWorkflowLeaseRefresh = this.workflows.startLeaseRefresh(
-      env.workflowLease,
-    );
-    execution.addCleanup(async () => {
-      stopWorkflowLeaseRefresh();
-      await env.workflowLease?.release().catch(() => {});
-      env.workflowLease = undefined;
-      for (const cleanup of runCleanups.splice(0)) cleanup();
-      await env.preparedMcp?.close().catch(() => {});
-    });
-    if (executionAbort.signal.aborted) {
-      await execution.disposeResources();
-      return {
-        ok: false,
-        error: {
-          code: "internal_error",
-          message: "interactive execution was cancelled during assembly",
-        },
-      };
-    }
-    const registerActiveRun = async (
-      run: ReturnType<typeof createRun>,
-      runId: string,
-    ): Promise<SparkwrightEvent[]> => {
-      env.parentRunRef.current = run;
-      env.runIdHolder.value = runId;
-      if (env.workflowLease && env.workflowRecord) {
-        const episodeAllowedTools = workflowEpisodeAllowedTools(
-          env.workflowRecord,
-        );
-        const episodeMetadata =
-          workflowEpisodeMetadataFromRun(run) ??
-          workflowActorEpisodeMetadata(
-            workflowActorEpisodePlan(env, { purpose: "main_agent" }),
-          );
-        env.workflowRecord = await this.workflows.mutate(
-          env.workflowLease,
-          env.workflowRecord,
-          {
-            activeRunId: runId as RunId,
-            appendRunId: runId as RunId,
-            parentRunId: env.workflowRecord.parentRunId ?? (runId as RunId),
-            evidenceRefs: this.workflows.appendEvidenceRef(
-              env.workflowRecord.evidenceRefs,
-              { kind: "run", ref: runId },
-            ),
-            metadata: {
-              activeRunId: runId,
-              resumeRun: env.workflowRecord.runIds.length > 0,
-              episodeDriver: "workflow_actor",
-              episodeKind: input.episodeKind,
-              workflowEpisode: episodeMetadata,
-              ...(episodeAllowedTools
-                ? { episodeAllowedTools: episodeAllowedTools.normalized }
-                : {}),
-            },
-          },
-        );
-      }
-      const closeEventHooks = bindConfiguredEventHooks({
-        hooks: env.eventHookConfig,
-        run,
-        workspaceRoot: env.workspaceRoot,
-        sandbox: env.hookSandbox,
-        http: env.hookHttp,
-        skillRoots: env.hookSkillRoots,
-        configPaths: env.hookConfigPaths,
-        getRun: () => env.parentRunRef.current,
-        agentTool: env.delegateAgentTool,
-      });
-      runCleanups.push(closeEventHooks);
-      this.active = {
-        runId,
-        run,
-        trace: env.trace,
-        sessionId,
-        ...(env.workflowRecord
-          ? {
-              workflowRunId: env.workflowRecord.id,
-              processWorkflowControls: async () => {
-                if (
-                  !env.workflowStore ||
-                  !env.workflowLease ||
-                  !env.workflowRecord
-                )
-                  return;
-                env.workflowRecord = await this.workflows.processLiveControls({
-                  store: env.workflowStore,
-                  writer: env.workflowLease,
-                  record: env.workflowRecord,
-                  cancel: () =>
-                    run.cancel({ reason: "workflow_control_cancel" }),
-                });
-              },
-            }
-          : {}),
-        closeCapabilities: async () => {
-          closeEventHooks();
-          await env.preparedMcp?.close();
-        },
-      };
-      if (env.workflowRecord) {
-        const controlTimer = setInterval(() => {
-          void this.active?.processWorkflowControls?.().catch(() => {});
-        }, 500);
-        controlTimer.unref?.();
-        runCleanups.push(() => clearInterval(controlTimer));
-      }
-      const collected: SparkwrightEvent[] = [];
-      run.events.subscribe((event: SparkwrightEvent) => {
-        env.trace.append(event);
-        collected.push(event);
-        this.opts.emit({
-          envelope: "event",
-          id: nextMessageId("evt"),
-          kind: "run.event",
-          timestamp: nowIso(),
-          payload: { runId, event },
-        });
-      });
-      run.events.subscribe((event: SparkwrightEvent) => {
-        observeSkillUsageEvent(env.skillUsageRecorder, event);
-      });
-      env.pendingExtensionEvents.flush(run.events);
-      return collected;
-    };
-
-    let resolveFirstRunId!: (id: string) => void;
-    let rejectFirstRunId!: (err: unknown) => void;
-    const firstRunId = new Promise<string>((resolve, reject) => {
-      resolveFirstRunId = resolve;
-      rejectFirstRunId = reject;
-    });
-    let firstRunStarted = false;
-    let previousRunId: string | undefined;
-    let lastRunId = "";
-    let executionTerminalState: "completed" | "failed" | "cancelled" = "failed";
-
-    const supervised = execution.runEpisodeChain({
-      todoPath,
-      sessionId,
-      maxContinuations: MAIN_TODO_MAX_CONTINUATIONS,
-      maxStalledContinuations: MAIN_TODO_MAX_STALLED_CONTINUATIONS,
-      continuationToolAvailability: (requiredTool) => {
-        const plan = workflowActorEpisodePlan(env, {
-          fallbackRunBudget: resolveTodoContinuationRunBudget(env.mainAgent),
-          purpose: "todo_continuation",
-        }).toolSurface;
-        const toolName = plan.missingRequiredTools.find(
-          (name) => name === requiredTool,
-        );
-        return toolName
-          ? {
-              available: false as const,
-              toolName,
-              reason: "not admitted for this run episode",
-            }
-          : { available: true as const };
-      },
-      runOnce: async (supervisedInput) => {
-        const run = input.buildRun(supervisedInput);
-        const runId = run.record.id;
-        lastRunId = runId;
-        const collected = await registerActiveRun(run, runId);
-        if (!firstRunStarted) {
-          firstRunStarted = true;
-          resolveFirstRunId(runId);
-        } else if (supervisedInput.continuation) {
-          this.opts.emit({
-            envelope: "event",
-            id: nextMessageId("evt"),
-            kind: "run.continuation",
-            timestamp: nowIso(),
-            payload: {
-              runId,
-              previousRunId: previousRunId ?? runId,
-              continuationCount:
-                supervisedInput.continuation.metadata.continuationCount,
-              reason: supervisedInput.continuation.metadata.reason,
-            },
-          });
-        }
-        const result = await run.start();
-        previousRunId = runId;
-        await input.afterRun?.(supervisedInput, run, result);
-        await this.recordWorkflowActorEpisodeUsage(env, run, result);
-        if (executionAbort.signal.aborted) {
-          return {
-            result: {
-              ...result,
-              state: "cancelled",
-              stopReason: "manual_cancelled",
-            },
-            events: collected,
-          };
-        }
-        return { result, events: collected };
-      },
-    });
-
-    supervised
-      .then(async (outcome) => {
-        executionTerminalState =
-          outcome.result.state === "cancelled"
-            ? "cancelled"
-            : outcome.result.state === "failed"
-              ? "failed"
-              : "completed";
-        const handoff =
-          !executionAbort.signal.aborted && outcome.decision.kind === "handoff"
-            ? {
-                reason: outcome.decision.reason,
-                message: outcome.decision.message,
-              }
-            : undefined;
-        const finalized = await this.workflows.finalizeAfterRun(
-          { record: env.workflowRecord, lease: env.workflowLease },
-          lastRunId as RunId,
-          outcome.result,
-        );
-        env.workflowRecord = finalized.record;
-        env.workflowLease = finalized.lease;
-        this.opts.emit({
-          envelope: "event",
-          id: nextMessageId("evt"),
-          kind: "run.completed",
-          timestamp: nowIso(),
-          payload: {
-            runId: lastRunId,
-            state: outcome.result.state,
-            stopReason: outcome.result.stopReason,
-            ...(outcome.result.metadata.outcome
-              ? { outcome: outcome.result.metadata.outcome }
-              : {}),
-            ...(outcome.result.failure
-              ? { failure: outcome.result.failure }
-              : {}),
-            ...(handoff ? { todoHandoff: handoff } : {}),
-          },
-        });
-      })
-      .catch((err: unknown) => {
-        if (!firstRunStarted) rejectFirstRunId(err);
-        const message = err instanceof Error ? err.message : String(err);
-        const failure: RunFailureEnvelope = {
-          category: "runtime",
-          code: "internal_error",
-          message,
-        };
-        return this.workflows
-          .finalizeAfterSupervisorError(
-            { record: env.workflowRecord, lease: env.workflowLease },
-            lastRunId ? (lastRunId as RunId) : undefined,
-            err,
-          )
-          .then((finalized) => {
-            env.workflowRecord = finalized.record;
-            env.workflowLease = finalized.lease;
-          })
-          .finally(() => {
-            this.opts.emit({
-              envelope: "event",
-              id: nextMessageId("evt"),
-              kind: "run.failed",
-              timestamp: nowIso(),
-              payload: {
-                runId: lastRunId,
-                failure,
-              },
-            });
-          });
-      })
-      .finally(async () => {
-        await execution.disposeResources();
-        this.active = null;
-        execution.finish(
-          executionAbort.signal.aborted ? "cancelled" : executionTerminalState,
-        );
-        if (this.currentExecution === execution) {
-          this.currentExecution = null;
-        }
-        execution.denyPendingApprovals();
-      });
-
-    try {
-      return { ok: true, runId: await firstRunId };
-    } catch (err) {
-      return {
-        ok: false,
-        error: {
-          code: "internal_error",
-          message: err instanceof Error ? err.message : String(err),
-        },
-      };
-    }
-  }
-
-  private async recordWorkflowActorEpisodeUsage(
-    env: PreparedHostRunEnvironment,
-    run: ReturnType<typeof createRun>,
-    result: RunResult,
-  ): Promise<void> {
-    if (!env.workflowLease || !env.workflowRecord) return;
-    const latest = await env.workflowLease.readFresh();
-    if (!latest) return;
-    const episode = workflowEpisodeMetadataFromRun(run);
-    const usage = run.usage();
-    env.workflowRecord = await this.workflows.mutate(
-      env.workflowLease,
-      latest,
-      {
-        metadata: this.workflows.appendEpisodeUsage(latest.metadata, {
-          runId: run.record.id,
-          stopReason: result.stopReason,
-          state: result.state,
-          ...(episode ? { episode } : {}),
-          usage: usage as unknown as Record<string, unknown>,
-        }),
-      },
-    );
-  }
-
   private async resumeRunInner(
     payload: RunResumeRequestPayload,
     resolvedSessionId?: string,
@@ -2594,158 +1978,16 @@ export class HostRuntime {
     if (!prepared.ok) return prepared;
     const env = prepared.env;
 
-    const buildContinuationRun = (
-      goal: string,
-      extraContext: ContextItem[],
-    ) => {
-      const episode = workflowActorEpisodePlan(env, {
-        fallbackRunBudget: resolveTodoContinuationRunBudget(env.mainAgent),
-        purpose: "todo_continuation",
-      });
-      const runRef: { current?: ReturnType<typeof createRun> } = {};
-      const taskBridge = this.tasks.createRevivalBridge(
-        () => runRef.current?.record.id,
-      );
-      const run = createRun({
-        goal,
-        context: [...(env.preparedSkills?.context ?? []), ...extraContext],
-        workspace: env.workspace,
-        interactionChannel: env.interactionChannel,
-        policy: createHostRunPolicy({
-          permissionMode,
-          shouldWrite,
-          targetPath: payload.targetPath,
-          confidentialPaths: env.confidentialPaths,
-          confidentialDefaults: env.confidentialDefaults,
-          writeGuardrails: env.writeGuardrails,
-        }),
-        promptBuilder: buildAgentPromptBuilder({
-          cwd: env.workspaceRoot,
-          sessionId: resumeSessionId,
-        }),
-        tools: episode.toolSurface.tools,
-        workflowHooks: env.workflowHooks,
-        model: episode.model,
-        maxSteps: resolveTodoContinuationMaxSteps(env.mainAgent),
-        runBudget: episode.runBudget,
-        metadata: workflowActorEpisodeRunMetadata(env.runMetadata, episode),
-        notificationSources: [taskBridge.notificationSource],
-        taskRevivalSource: taskBridge.taskRevivalSource,
-        runStore: createSessionRunStoreFactory({
-          sessionStore: env.sessionStore,
-          sessionId: resumeSessionId,
-          runStoreFactory: createSessionFileRunStoreFactory({
-            sessionRootDir: env.sessionRootDir,
-            sessionId: resumeSessionId,
-            agentId: located.agentId,
-            traceLevel: env.traceLevel,
-          }),
-          metadata: workflowActorEpisodeRunMetadata(
-            env.runStoreMetadata,
-            episode,
-          ),
-        }),
-      });
-      runRef.current = run;
-      return run;
-    };
-
-    const chainTurns: ContextItem[] = [];
-    const chainTurn = (
-      role: "user" | "assistant",
-      content: string,
-      idSuffix: string,
-    ): ContextItem => ({
-      id: `ctx_resume_chain_${idSuffix}` as ContextItem["id"],
-      type: role,
-      content: content.trim(),
-      metadata: { layer: "conversation", stability: "session" },
-    });
-
-    const started = await this.startWorkflowActorEpisodeChain({
-      episodeKind: "run_resume",
+    const execution = this.currentExecution ?? this.beginExecution();
+    const started = await this.workflowEpisodes.resumeCheckpoint({
+      execution,
       env,
-      todoPath: join(env.sessionRootDir, resumeSessionId, "todo.md"),
+      payload,
+      checkpoint,
       sessionId: resumeSessionId,
-      buildRun: (supervisedInput) =>
-        supervisedInput.continuation
-          ? buildContinuationRun(supervisedInput.continuation.prompt, [
-              ...chainTurns,
-              supervisedInput.continuation.context,
-            ])
-          : (() => {
-              const episode = workflowActorEpisodePlan(env, {
-                fallbackRunBudget: env.mainAgent.runBudget,
-                purpose: "main_agent",
-              });
-              const runRef: {
-                current?: ReturnType<typeof resumeRunFromCheckpoint>;
-              } = {};
-              const taskBridge = this.tasks.createRevivalBridge(
-                () => runRef.current?.record.id,
-              );
-              const run = resumeRunFromCheckpoint(checkpoint, {
-                force: payload.force,
-                workspace: env.workspace,
-                interactionChannel: env.interactionChannel,
-                policy: createHostRunPolicy({
-                  permissionMode,
-                  shouldWrite,
-                  targetPath: payload.targetPath,
-                  confidentialPaths: env.confidentialPaths,
-                  confidentialDefaults: env.confidentialDefaults,
-                  writeGuardrails: env.writeGuardrails,
-                }),
-                promptBuilder: buildAgentPromptBuilder({
-                  cwd: env.workspaceRoot,
-                  sessionId: resumeSessionId,
-                }),
-                tools: episode.toolSurface.tools,
-                model: episode.model,
-                maxSteps: resolveWorkflowEpisodeMaxSteps(
-                  env.mainAgent,
-                  episode.runBudget,
-                ),
-                ...(episode.runBudget !== undefined
-                  ? { runBudget: episode.runBudget }
-                  : {}),
-                metadata: workflowActorEpisodeRunMetadata(
-                  env.runMetadata,
-                  episode,
-                ),
-                notificationSources: [taskBridge.notificationSource],
-                taskRevivalSource: taskBridge.taskRevivalSource,
-                runStore: createSessionRunStoreFactory({
-                  sessionStore: env.sessionStore,
-                  sessionId: resumeSessionId,
-                  runStoreFactory: createSessionFileRunStoreFactory({
-                    sessionRootDir: env.sessionRootDir,
-                    sessionId: resumeSessionId,
-                    agentId: located.agentId,
-                    traceLevel: env.traceLevel,
-                  }),
-                  metadata: workflowActorEpisodeRunMetadata(
-                    env.runStoreMetadata,
-                    episode,
-                  ),
-                }),
-              });
-              runRef.current = run;
-              return run;
-            })(),
-      afterRun: (_supervisedInput, run, result) => {
-        const runId = run.record.id;
-        if (chainTurns.length === 0) {
-          chainTurns.push(
-            chainTurn("user", checkpoint.run.goal, `${runId}_goal`),
-          );
-        }
-        if (result.message && result.message.trim().length > 0) {
-          chainTurns.push(
-            chainTurn("assistant", result.message, `${runId}_answer`),
-          );
-        }
-      },
+      agentId: located.agentId,
+      permissionMode,
+      shouldWrite,
     });
     if (!started.ok) return started;
 
@@ -2864,90 +2106,16 @@ export class HostRuntime {
       { workspaceRoot: env.workspaceRoot, sessionRootDir: env.sessionRootDir },
       sessionId,
     );
-    const buildRun = (
-      goal: string,
-      extraContext: ContextItem[],
-      todoContinuation = false,
-    ) => {
-      const episode = workflowActorEpisodePlan(env, {
-        fallbackRunBudget: todoContinuation
-          ? resolveTodoContinuationRunBudget(env.mainAgent)
-          : env.mainAgent.runBudget,
-        purpose: todoContinuation ? "todo_continuation" : "main_agent",
-      });
-      const runRef: { current?: ReturnType<typeof createRun> } = {};
-      const taskBridge = this.tasks.createRevivalBridge(
-        () => runRef.current?.record.id,
-      );
-      const run = createRun({
-        goal,
-        context: [
-          ...priorContext,
-          ...(env.preparedSkills?.context ?? []),
-          ...extraContext,
-        ],
-        workspace: env.workspace,
-        interactionChannel: env.interactionChannel,
-        policy: createHostRunPolicy({
-          permissionMode,
-          shouldWrite,
-          targetPath: effectiveResumePayload.targetPath,
-          confidentialPaths: env.confidentialPaths,
-          confidentialDefaults: env.confidentialDefaults,
-          writeGuardrails: env.writeGuardrails,
-        }),
-        promptBuilder: buildAgentPromptBuilder({
-          cwd: env.workspaceRoot,
-          sessionId,
-        }),
-        tools: episode.toolSurface.tools,
-        workflowHooks: env.workflowHooks,
-        model: episode.model,
-        maxSteps: resolveWorkflowEpisodeMaxSteps(
-          env.mainAgent,
-          episode.runBudget,
-        ),
-        ...(episode.runBudget !== undefined
-          ? { runBudget: episode.runBudget }
-          : {}),
-        metadata: workflowActorEpisodeRunMetadata(env.runMetadata, episode),
-        notificationSources: [taskBridge.notificationSource],
-        taskRevivalSource: taskBridge.taskRevivalSource,
-        runStore: createSessionRunStoreFactory({
-          sessionStore: env.sessionStore,
-          sessionId,
-          runStoreFactory: createSessionFileRunStoreFactory({
-            sessionRootDir: env.sessionRootDir,
-            sessionId,
-            agentId: "main",
-            traceLevel: env.traceLevel,
-          }),
-          metadata: workflowActorEpisodeRunMetadata(
-            env.runStoreMetadata,
-            episode,
-          ),
-        }),
-      });
-      runRef.current = run;
-      return run;
-    };
-
-    const started = await this.startWorkflowActorEpisodeChain({
-      episodeKind: "workflow_resume",
+    const execution = this.currentExecution ?? this.beginExecution();
+    const started = await this.workflowEpisodes.resumeWorkflow({
+      execution,
       env,
-      todoPath: join(env.sessionRootDir, sessionId, "todo.md"),
+      record,
+      payload: effectiveResumePayload,
       sessionId,
-      buildRun: (supervisedInput) =>
-        supervisedInput.continuation
-          ? buildRun(
-              supervisedInput.continuation.prompt,
-              [supervisedInput.continuation.context],
-              true,
-            )
-          : buildRun(
-              `Resume workflow ${record.assetName} at node ${record.currentNodeId ?? "(unknown)"}.`,
-              [],
-            ),
+      permissionMode,
+      shouldWrite,
+      priorContext,
     });
     if (!started.ok) {
       if (record.status === "waiting") {
@@ -3074,135 +2242,16 @@ export class HostRuntime {
       metadata: payload.input?.metadata,
     });
 
-    // Build (but do not start) a main-agent run for `goal`, appending
-    // `extraContext` after the skills context. Each call mints a fresh runId
-    // and run dir; the todo supervisor calls this once per (re)try, so a
-    // continuation is a new run that carries the prior run's todo ledger.
-    const buildRun = (
-      goal: string,
-      extraContext: ContextItem[],
-      overrides: { maxSteps?: number; runBudget?: RunBudget } = {},
-    ) => {
-      const episode = workflowActorEpisodePlan(env, {
-        fallbackRunBudget: overrides.runBudget ?? env.mainAgent.runBudget,
-        purpose: overrides.runBudget ? "todo_continuation" : "main_agent",
-      });
-      const runRef: { current?: ReturnType<typeof createRun> } = {};
-      const taskBridge = this.tasks.createRevivalBridge(
-        () => runRef.current?.record.id,
-      );
-      const run = createRun({
-        goal,
-        context: [
-          ...priorContext,
-          ...(env.preparedSkills?.context ?? []),
-          ...extraContext,
-        ],
-        workspace: env.workspace,
-        interactionChannel: env.interactionChannel,
-        policy: createHostRunPolicy({
-          permissionMode,
-          shouldWrite,
-          targetPath: payload.targetPath,
-          confidentialPaths: env.confidentialPaths,
-          confidentialDefaults: env.confidentialDefaults,
-          writeGuardrails: env.writeGuardrails,
-        }),
-        promptBuilder: buildAgentPromptBuilder({
-          cwd: env.workspaceRoot,
-          sessionId,
-        }),
-        tools: episode.toolSurface.tools,
-        workflowHooks: env.workflowHooks,
-        model: episode.model,
-        // Bind the main agent on resources, not a leaked step count of 8: honor
-        // the profile's RunBudget when set and derive the step ceiling from it.
-        maxSteps:
-          overrides.maxSteps ??
-          resolveWorkflowEpisodeMaxSteps(env.mainAgent, episode.runBudget),
-        ...(episode.runBudget !== undefined
-          ? { runBudget: episode.runBudget }
-          : {}),
-        metadata: workflowActorEpisodeRunMetadata(env.runMetadata, episode),
-        notificationSources: [taskBridge.notificationSource],
-        taskRevivalSource: taskBridge.taskRevivalSource,
-        runStore: createSessionRunStoreFactory({
-          sessionStore: env.sessionStore,
-          sessionId,
-          runStoreFactory: createSessionFileRunStoreFactory({
-            sessionRootDir: env.sessionRootDir,
-            sessionId,
-            agentId: "main",
-            traceLevel: env.traceLevel,
-          }),
-          metadata: workflowActorEpisodeRunMetadata(
-            env.runStoreMetadata,
-            episode,
-          ),
-        }),
-      });
-      runRef.current = run;
-      return run;
-    };
-
-    // Conversation turns accumulated across this supervised chain. A
-    // continuation is an in-context *resume*, not a cold restart: every turn so
-    // far rides along as conversation history so the model keeps the scope and
-    // findings it already had. Sizing this is the Compactor's concern, not the
-    // continuation's — we always pass the full chain forward. See runOnce.
-    const chainTurns: ContextItem[] = [];
-    const chainTurn = (
-      role: "user" | "assistant",
-      content: string,
-      idSuffix: string,
-    ): ContextItem => ({
-      id: `ctx_chain_${idSuffix}` as ContextItem["id"],
-      type: role,
-      content: content.trim(),
-      metadata: { layer: "conversation", stability: "session" },
-    });
-
-    const started = await this.startWorkflowActorEpisodeChain({
-      episodeKind: "run_start",
+    const execution = this.currentExecution ?? this.beginExecution();
+    const started = await this.workflowEpisodes.startFresh({
+      execution,
       env,
-      todoPath: join(env.sessionRootDir, sessionId, "todo.md"),
+      payload,
       sessionId,
-      buildRun: (supervisedInput) => {
-        // The nudge stays the final user turn (current_request via `goal`); the
-        // original goal and every prior turn ride along as conversation history
-        // (chainTurns), so the continuation resumes with full context instead
-        // of re-deriving from only the ledger. The ledger context item still
-        // comes last as the durable, compaction-proof backstop.
-        const goal = supervisedInput.continuation?.prompt ?? payload.goal;
-        const extraContext = supervisedInput.continuation
-          ? [
-              ...(initialInputContext ? [initialInputContext] : []),
-              ...chainTurns,
-              supervisedInput.continuation.context,
-            ]
-          : initialInputContext
-            ? [initialInputContext]
-            : [];
-        if (!supervisedInput.continuation) return buildRun(goal, extraContext);
-        return buildRun(goal, extraContext, {
-          maxSteps: resolveTodoContinuationMaxSteps(env.mainAgent),
-          runBudget: resolveTodoContinuationRunBudget(env.mainAgent),
-        });
-      },
-      afterRun: (_supervisedInput, run, result) => {
-        const runId = run.record.id;
-        // Accumulate this chain's conversation for the next continuation's
-        // resume context: seed the original user goal once as the opening turn,
-        // then append each run's final answer as an assistant turn.
-        if (chainTurns.length === 0) {
-          chainTurns.push(chainTurn("user", payload.goal, `${runId}_goal`));
-        }
-        if (result.message && result.message.trim().length > 0) {
-          chainTurns.push(
-            chainTurn("assistant", result.message, `${runId}_answer`),
-          );
-        }
-      },
+      permissionMode,
+      shouldWrite,
+      priorContext,
+      ...(initialInputContext ? { initialInputContext } : {}),
     });
     if (!started.ok) return started;
     return {
@@ -3987,62 +3036,6 @@ function applyConfiguredRunBudget(
       ? { runBudget }
       : {}),
   };
-}
-
-/**
- * Pure safety floor for the interactive main agent's step count, used only when
- * neither an explicit `maxSteps` nor a model-call budget is configured. It is a
- * backstop against a runaway loop the progress guard misses (the human can also
- * Ctrl-C), NOT a task budget — long-horizon work (auto-research, broad sweeps)
- * must not bind on it. See `docs/adr/0009-step-cap-unfit-for-long-horizon-agents.md`.
- */
-const MAIN_AGENT_MAX_STEPS_BACKSTOP = 100;
-
-/**
- * Resolve the main agent's step ceiling. An explicit profile `maxSteps` wins;
- * otherwise it is derived from the resource budget — a step consumes at least
- * one model call, so `runBudget.maxModelCalls` is the tightest natural step
- * bound and `RunBudget` enforces it precisely regardless. Only when neither is
- * configured does the high backstop apply. This keeps the binding limit on the
- * resource axis rather than a leaked step count of 8.
- */
-function resolveMainAgentMaxSteps(profile: AgentProfile): number {
-  if (profile.maxSteps !== undefined) return profile.maxSteps;
-  const modelCallBudget = profile.runBudget?.maxModelCalls;
-  if (modelCallBudget !== undefined && modelCallBudget >= 1) {
-    return modelCallBudget;
-  }
-  return MAIN_AGENT_MAX_STEPS_BACKSTOP;
-}
-
-function resolveTodoContinuationMaxSteps(profile: AgentProfile): number {
-  return Math.min(
-    resolveMainAgentMaxSteps(profile),
-    MAIN_TODO_CONTINUATION_MAX_STEPS,
-  );
-}
-
-function resolveTodoContinuationRunBudget(profile: AgentProfile): RunBudget {
-  return {
-    ...(profile.runBudget ?? {}),
-    maxModelCalls: minBudgetValue(
-      profile.runBudget?.maxModelCalls,
-      MAIN_TODO_CONTINUATION_MAX_MODEL_CALLS,
-    ),
-    maxToolCalls: minBudgetValue(
-      profile.runBudget?.maxToolCalls,
-      MAIN_TODO_CONTINUATION_MAX_TOOL_CALLS,
-    ),
-  };
-}
-
-function minBudgetValue(
-  configured: number | undefined,
-  continuationLimit: number,
-): number {
-  return configured === undefined
-    ? continuationLimit
-    : Math.min(configured, continuationLimit);
 }
 
 function deriveConfiguredAgents(
@@ -5952,229 +4945,6 @@ function objectField(
     throw new Error(`${toolName} ${field} must be an object.`);
   }
   return value as Record<string, unknown>;
-}
-
-interface WorkflowActorEpisodePlan {
-  model: ModelAdapter;
-  modelRef: string;
-  resolvedModel: ResolvedModelConfig;
-  nodeId?: string;
-  attempt?: number;
-  runBudget?: RunBudget;
-  budgetScope: "main_agent" | "todo_continuation";
-  toolSurface: ResolvedToolSurface;
-}
-
-async function resolveWorkflowModelAdapters(input: {
-  definition: WorkflowExecutableDefinition;
-  parentModelRef: string;
-  goal: string;
-  workspaceRoot: string;
-  targetPath?: string;
-}): Promise<
-  | {
-      ok: true;
-      adapters: Map<
-        string,
-        { adapter: ModelAdapter; resolved: ResolvedModelConfig }
-      >;
-    }
-  | { ok: false; message: string }
-> {
-  const adapters = new Map<
-    string,
-    { adapter: ModelAdapter; resolved: ResolvedModelConfig }
-  >();
-  const refs = new Set<string>();
-  for (const node of input.definition.nodes) {
-    const modelRef = workflowNodeModelRef(input.definition, node);
-    if (modelRef && modelRef !== input.parentModelRef) refs.add(modelRef);
-  }
-  for (const modelRef of refs) {
-    const built = await createModel({
-      modelRef,
-      goal: input.goal,
-      workspaceRoot: input.workspaceRoot,
-      ...(input.targetPath ? { targetPath: input.targetPath } : {}),
-    });
-    if (!built.ok) {
-      return {
-        ok: false,
-        message: `Workflow node model "${modelRef}": ${built.message}`,
-      };
-    }
-    adapters.set(modelRef, {
-      adapter: built.adapter,
-      resolved: built.resolved,
-    });
-  }
-  return { ok: true, adapters };
-}
-
-function workflowActorEpisodePlan(
-  env: PreparedHostRunEnvironment,
-  options: {
-    fallbackRunBudget?: RunBudget;
-    purpose: WorkflowActorEpisodePlan["budgetScope"];
-  },
-): WorkflowActorEpisodePlan {
-  const node = currentWorkflowRecordNode(env.workflowRecord);
-  const nodeModelRef =
-    node && env.workflowRecord?.definitionSnapshot
-      ? workflowNodeModelRef(env.workflowRecord.definitionSnapshot, node)
-      : undefined;
-  const modelRef = nodeModelRef ?? env.modelRef;
-  const model =
-    nodeModelRef && env.workflowModelAdapters.has(modelRef)
-      ? env.workflowModelAdapters.get(modelRef)!
-      : { adapter: env.model, resolved: env.resolvedModel };
-  const workflowAllowedTools = workflowEpisodeAllowedTools(env.workflowRecord);
-  const toolSurface = resolveRunToolSurface({
-    tools: env.tools,
-    workflowAllowedTools: workflowAllowedTools?.normalized,
-    ...(options.purpose === "todo_continuation"
-      ? { requiredTools: [TODO_CONTINUATION_REQUIRED_TOOL] }
-      : {}),
-  });
-  const runBudget = narrowRunBudgets(
-    options.fallbackRunBudget,
-    node?.runBudget,
-  );
-  return {
-    model: model.adapter,
-    modelRef,
-    resolvedModel: model.resolved,
-    ...(node ? { nodeId: node.id } : {}),
-    ...(node && env.workflowRecord
-      ? { attempt: env.workflowRecord.attempts[node.id] ?? 1 }
-      : {}),
-    ...(runBudget ? { runBudget } : {}),
-    budgetScope: options.purpose,
-    toolSurface,
-  };
-}
-
-function narrowRunBudgets(
-  upstream: RunBudget | undefined,
-  downstream: RunBudget | undefined,
-): RunBudget | undefined {
-  if (!upstream) return downstream ? { ...downstream } : undefined;
-  if (!downstream) return { ...upstream };
-  const minimum = (
-    left: number | undefined,
-    right: number | undefined,
-  ): number | undefined => {
-    if (left === undefined) return right;
-    if (right === undefined) return left;
-    return Math.min(left, right);
-  };
-  return {
-    maxDurationMs: minimum(upstream.maxDurationMs, downstream.maxDurationMs),
-    maxModelCalls: minimum(upstream.maxModelCalls, downstream.maxModelCalls),
-    maxToolCalls: minimum(upstream.maxToolCalls, downstream.maxToolCalls),
-    maxTokens: minimum(upstream.maxTokens, downstream.maxTokens),
-    maxCostUsd: minimum(upstream.maxCostUsd, downstream.maxCostUsd),
-  };
-}
-
-function workflowActorEpisodeRunMetadata(
-  base: Record<string, unknown>,
-  episode: WorkflowActorEpisodePlan,
-): Record<string, unknown> {
-  return {
-    ...base,
-    resolvedModel: episode.resolvedModel,
-    workflowEpisode: workflowActorEpisodeMetadata(episode),
-  };
-}
-
-function workflowActorEpisodeMetadata(
-  episode: WorkflowActorEpisodePlan,
-): Record<string, unknown> {
-  return {
-    modelRef: episode.modelRef,
-    budgetScope: episode.budgetScope,
-    ...(episode.nodeId ? { nodeId: episode.nodeId } : {}),
-    ...(episode.attempt !== undefined ? { attempt: episode.attempt } : {}),
-    ...(episode.runBudget ? { runBudget: { ...episode.runBudget } } : {}),
-  };
-}
-
-function workflowEpisodeMetadataFromRun(
-  run: ReturnType<typeof createRun>,
-): Record<string, unknown> | undefined {
-  const raw = run.record.metadata.workflowEpisode;
-  return isPlainRecord(raw) ? cloneJsonLike(raw) : undefined;
-}
-
-function resolveWorkflowEpisodeMaxSteps(
-  profile: AgentProfile,
-  runBudget: RunBudget | undefined,
-): number {
-  const base = resolveMainAgentMaxSteps(profile);
-  if (runBudget?.maxModelCalls !== undefined) {
-    return Math.min(base, runBudget.maxModelCalls);
-  }
-  return base;
-}
-
-function currentWorkflowRecordNode(
-  record: WorkflowRunRecord | undefined,
-): WorkflowNodeDefinition | undefined {
-  if (!record || !record.currentNodeId) return undefined;
-  return record.definitionSnapshot.nodes.find(
-    (candidate) => candidate.id === record.currentNodeId,
-  );
-}
-
-function workflowNodeModelRef(
-  definition: WorkflowExecutableDefinition,
-  node: WorkflowNodeDefinition,
-): string | undefined {
-  if (!node.model) return undefined;
-  const tiers = workflowModelTiers(definition);
-  return tiers[node.model] ?? node.model;
-}
-
-function workflowModelTiers(
-  definition: WorkflowExecutableDefinition,
-): Record<string, string> {
-  const config = definition.config;
-  if (!isPlainRecord(config)) return {};
-  const raw = isPlainRecord(config.modelTiers)
-    ? config.modelTiers
-    : isPlainRecord(config.model_tiers)
-      ? config.model_tiers
-      : undefined;
-  if (!raw) return {};
-  return Object.fromEntries(
-    Object.entries(raw).flatMap(([key, value]) =>
-      typeof value === "string" && value.trim() !== ""
-        ? [[key, value.trim()]]
-        : [],
-    ),
-  );
-}
-
-function workflowEpisodeAllowedTools(
-  record: WorkflowRunRecord | undefined,
-): { nodeId: string; normalized: string[] } | undefined {
-  if (!record || !record.currentNodeId) return undefined;
-  const node = record.definitionSnapshot.nodes.find(
-    (candidate) => candidate.id === record.currentNodeId,
-  );
-  if (!node || (node.execute !== undefined && node.execute !== "model")) {
-    return undefined;
-  }
-  if (!node.tools || node.tools.length === 0) return undefined;
-  return {
-    nodeId: node.id,
-    normalized: [...new Set(node.tools)],
-  };
-}
-
-function cloneJsonLike<T>(value: T): T {
-  return JSON.parse(JSON.stringify(value)) as T;
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {

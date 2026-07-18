@@ -137,6 +137,15 @@ contracts, and focused checklists that no longer fit here.
 
 - Status: Verified
 - Date: 2026-07-18
+- Scope: internal-import governance now follows Host Workflow Core episode
+  construction into `workflow-episode-runtime.ts`. No Core public export,
+  edge-package import, or package boundary changed.
+- Read: Core internal import allowlist, Host episode owner, and edge consumers.
+- Tests: internal-import and package-boundary gates pass in the final release
+  check.
+
+- Status: Verified
+- Date: 2026-07-18
 - Scope: Host Workflow operations now own orchestration around the existing
   Server Runtime `InFlightCommandDispatcher`; the dispatcher remains
   process-local coalescing only, and Workflow service/channel ownership and

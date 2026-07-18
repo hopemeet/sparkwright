@@ -11,6 +11,17 @@ See [session-store.md](session-store.md) and [../runtime/context-compaction.md](
 
 - Status: Verified
 - Date: 2026-07-18
+- Scope: checkpoint episode construction and Workflow resume episode
+  construction now route through `WorkflowEpisodeRuntime`; waiting input is
+  consumed and compensated during its projection preparation. HostRuntime
+  still resolves canonical run/workflow identity, authorization, and the
+  caller-owned HostExecution before delegation.
+- Read: Host resume envelopes, Workflow episode/durable owners, checkpoint and
+  pinned-definition paths, job-session isolation, and focused resume tests.
+- Tests: focused Host Workflow/protocol suites passed.
+
+- Status: Verified
+- Date: 2026-07-18
 - Scope: Host Workflow record lookup, durable resume-command processing,
   claimed-writer validation, waiting-input compensation, and canonical store
   ownership moved to `WorkflowRuntimeOperations`. HostRuntime retains the live
