@@ -11,6 +11,16 @@ See also [../maps/safety/approvals.md](../maps/safety/approvals.md) and [../maps
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-19
+- Scope: Host ownership behind `run.inject_message`, `run.cancel`, and
+  `approval.resolve` moved to the execution interaction collaborator. Request,
+  response, error, approval event, content-part, and correlation-id shapes are
+  unchanged.
+- Read: protocol request/event unions, Host server/runtime/interaction owner,
+  HostService lane routing, and focused protocol/SDK/client tests.
+- Tests: focused downstream gates are recorded with the commit.
+
+- Status: Verified
 - Date: 2026-07-18
 - Scope: Host capability inspection ownership moved behind the existing
   runtime facade. `capability.inspect` request/error and `CapabilitySnapshot`

@@ -10,6 +10,17 @@ See [tool-orchestration.md](tool-orchestration.md) and [../trace/raw-trace.md](.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-19
+- Scope: Host execution identity/driver projection, atomic user-message
+  acceptance, cancellation, approval interaction, disconnect cleanup, and
+  drain moved intact to `ExecutionInteractionOperations`. The owner reads the
+  sole HostRuntime-owned HostExecution; Core command queue/state semantics,
+  episode construction, event order, and lane admission are unchanged.
+- Read: Host interaction owner/runtime/execution/service, Server Runtime lane
+  coordinator, Core command acceptance and approval path, and focused tests.
+- Tests: owner-level and focused/downstream gates are recorded with the commit.
+
+- Status: Verified
 - Date: 2026-07-18
 - Scope: Host pre-Core environment assembly moved intact to
   `RunPreparationOperations`: execution plan/resources, model/config/security,
@@ -167,6 +178,7 @@ See [tool-orchestration.md](tool-orchestration.md) and [../trace/raw-trace.md](.
 - `packages/core/src/run-outcome.ts`
 - `packages/host/src/runtime.ts`
 - `packages/host/src/runtime/host-runtime.ts`
+- `packages/host/src/runtime/execution-interaction-operations.ts`
 - `packages/host/src/runtime/run-preparation-operations.ts`
 - `packages/host/src/runtime/agent-runtime-assembly.ts`
 

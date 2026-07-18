@@ -11,6 +11,17 @@ and [../session/session-store.md](../session/session-store.md) for session layou
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-19
+- Scope: Host approval request delivery and active execution message/cancel
+  routing moved behind `ExecutionInteractionOperations`. Core remains the raw
+  `approval.*`, `run.command.*`, and cancellation event owner; event payloads,
+  correlation ids, trace sinks, and ordering are unchanged.
+- Read: Host interaction/execution/runtime paths, Core command and approval
+  events, protocol projections, and focused tests.
+- Tests: focused Host/protocol/client gates and the final repository gate are
+  recorded with the commit.
+
+- Status: Verified
 - Date: 2026-07-18
 - Scope: pre-run buffered Skill/MCP/Agent diagnostics, trace resources,
   capability snapshot metadata, and run/store metadata assembly now live in

@@ -250,6 +250,24 @@ For `runtime/contracts.ts`, also run Host execution/service and the import graph
 gate; coordinator ports must not derive their signatures from `HostRuntime`
 class methods.
 
+For `runtime/execution-interaction-operations.ts`, run:
+
+```bash
+npm --workspace @sparkwright/host test -- test/execution-interaction-operations.test.ts test/host-execution.test.ts test/host-service.test.ts test/protocol.test.ts test/client-run.test.ts
+npm --workspace @sparkwright/server-runtime test -- test/execution-lanes.test.ts
+npm --workspace @sparkwright/sdk-node test -- test/round-trip.test.ts
+npm --workspace @sparkwright/cli test -- test/cli-approval.test.ts
+npm --workspace @sparkwright/tui test -- test/run-controller-approval.test.ts test/run-controller-session-mutation.test.ts test/sdk-cutover.test.ts
+npm --workspace @sparkwright/host run typecheck
+```
+
+Construct the owner directly for identity/driver projection, atomic message
+acceptance, approval event/timeout/response metadata, and disconnect cleanup.
+Preserve HostRuntime as the sole current HostExecution slot/factory and
+HostExecution as the only active-run, abort, waiter, completion, and disposal
+state owner. Ordinary inject/cancel must still enter through HostService and
+ExecutionLaneCoordinator; do not add a second live execution registry.
+
 For `host-service.ts`, `server.ts`, or runtime construction/admission changes,
 also run:
 

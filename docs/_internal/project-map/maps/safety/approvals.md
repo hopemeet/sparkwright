@@ -10,6 +10,18 @@ See [workspace-writes.md](workspace-writes.md) and [shell.md](shell.md).
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-19
+- Scope: Host approval channel construction, finite timeout, waiter
+  registration, `approval.requested` delivery, response metadata, disconnect
+  denial, and drain cleanup moved intact to
+  `ExecutionInteractionOperations`. Live waiters remain stored only in
+  HostExecution; policy ordering and audit payloads are unchanged.
+- Read: Core interaction/approval contracts, Host interaction owner and
+  HostExecution, protocol/IM resolution routes, and focused tests.
+- Tests: owner-level, Host protocol/service, SDK, CLI, and TUI approval routes
+  are recorded with the commit.
+
+- Status: Verified
 - Date: 2026-07-17T23:37:17+0800
 - Scope: CLI reference EventLog import moved to Core `/internal`; interaction,
   approval policy, resolution, and audit contracts are unchanged.
@@ -51,6 +63,7 @@ See [workspace-writes.md](workspace-writes.md) and [shell.md](shell.md).
 - `packages/host/src/runtime.ts`
 - `packages/host/src/runtime/host-runtime.ts`
 - `packages/host/src/client-approval.ts`
+- `packages/host/src/runtime/execution-interaction-operations.ts`
 - `packages/cli/src/cli-approval.ts`
 - `packages/tui/src/app.tsx`
 - `packages/tui/src/state/run-controller.ts`
@@ -130,7 +143,7 @@ policy requires approval
 
 ## Consumers
 
-- Host pending approval map.
+- Host execution interaction owner over the HostExecution pending approval map.
 - CLI `--access-mode` and the TUI runtime access switch.
 - TUI approval layer via host-client approval helpers.
 - Trace safety summary and verification.

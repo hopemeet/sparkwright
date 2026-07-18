@@ -12,6 +12,19 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-19
+- Scope: `runtime/execution-interaction-operations.ts` is the Host owner for
+  execution identity/driver projection, active message acceptance, the
+  approval-only interaction channel and timeout/resolution path, cancellation,
+  disconnect cleanup, and drain. It reads the one HostRuntime-owned
+  HostExecution through a narrow port and never creates or mirrors execution
+  state.
+- Read: HostRuntime/HostExecution/HostService, lane coordinator contracts, run
+  preparation's interaction seam, protocol routing, and focused tests.
+- Tests: direct owner coverage and final focused/repository gates are recorded
+  with the commit.
+
+- Status: Verified
 - Date: 2026-07-18
 - Scope: `runtime/run-preparation-operations.ts` is the Host owner for immutable
   execution planning, model/config/security resolution, Skill/MCP preparation,
@@ -308,6 +321,7 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 
 - `packages/host/src/runtime.ts` — stable named public facade
 - `packages/host/src/runtime/host-runtime.ts` — concrete HostRuntime composition and execution orchestration
+- `packages/host/src/runtime/execution-interaction-operations.ts` — execution identity/driver projection, message acceptance, approval channel/routing, cancellation cleanup, and drain
 - `packages/host/src/runtime/run-preparation-operations.ts` — immutable run plan, model/config/security, Skill/MCP, Agent/catalog, Workflow preparation, Hook/rule, capability snapshot, and metadata assembly
 - `packages/host/src/runtime/agent-runtime-assembly.ts` — configured/direct/indexed/parallel Agent and Delegate assembly, dynamic spawn/promotion, child grants/results, and background Agent task execution
 - `packages/host/src/runtime/capability-runtime-operations.ts` — effective capability inspection, last-run snapshot ownership/merge, automation projection, and capability index-failure diagnostics
@@ -377,7 +391,8 @@ Owns:
 - host tool catalog entries that preserve runtime tool source metadata
 - immutable per-run/per-inspect derivation of resolved access, workspace,
   confidential path inputs, skill/config roots, and shell sandbox status
-- host-level interaction channel and pending approval routing
+- host execution interaction/control routing through
+  `ExecutionInteractionOperations`
 - host Task protocol/control, actor revival, resume orphan handling, and
   workspace Task-root projection through `TaskRuntimeOperations`
 - host Workflow durable control-plane behavior through
@@ -448,6 +463,12 @@ Does not own:
   abort, live approval waiters, completion, and idempotent resource disposal.
   Core terminal for an episode does not complete the execution while the
   Workflow/todo run-chain driver selects a continuation.
+- `ExecutionInteractionOperations` owns the Host-facing projection and control
+  seam over that exact execution: identity/driver handles, atomic injected
+  message acceptance, approval registration/timeout/resolution and event
+  delivery, cancellation cleanup, and drain. It receives one read-only current
+  execution port from HostRuntime; it does not create HostExecution, replace
+  `currentExecution`, retain an active-run copy, or admit execution lanes.
 - `resolveExecutionPlan()` freezes workspace/session/model/access identity
   before `createExecutionResources()` creates a fresh LocalWorkspace, trace
   emitter, and session store handles. Live execution resources are not pooled.
@@ -506,8 +527,9 @@ Does not own:
   main catalog/admission, Workflow preparation, Hook/rules, capability
   snapshot, and run/store metadata. It receives the existing Task, Agent,
   Workflow episode, capability, and workspace-lease owners and does not copy
-  their state. HostRuntime provides only a narrow interaction-channel factory;
-  the preparation owner does not hold HostExecution or `currentExecution`.
+  their state. `ExecutionInteractionOperations` provides the narrow
+  interaction-channel factory through HostRuntime wiring; the preparation
+  owner does not hold HostExecution or `currentExecution`.
 - `CapabilityRuntimeOperations` owns the configured inspection catalog, the
   last successful run snapshot, configured/live merge, Cron/Task automation
   projection, and Skill index-failure trace sequence. It reuses the exact

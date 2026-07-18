@@ -136,6 +136,17 @@ contracts, and focused checklists that no longer fit here.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-19
+- Scope: Host execution driver handles and message acceptance moved behind the
+  Host interaction owner. Server Runtime's ExecutionLaneCoordinator still owns
+  only process-local lane admission, queued delivery, cancel dispatch, and
+  completion handoff; SDK/protocol behavior is unchanged.
+- Read: Host interaction/runtime/service contracts, Server Runtime execution
+  lanes, and SDK round-trip coverage.
+- Tests: focused Host service, Server Runtime lane, and SDK routes are recorded
+  with the commit.
+
+- Status: Verified
 - Date: 2026-07-18
 - Scope: internal-import governance now follows Host Workflow Core episode
   construction into `workflow-episode-runtime.ts`. No Core public export,

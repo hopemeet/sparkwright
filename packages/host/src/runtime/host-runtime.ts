@@ -3,7 +3,6 @@ import {
   asSessionId,
   createContextItemId,
   createSessionId,
-  type InteractionChannel,
   type ContentPart,
   type ContextItem,
   type RunId,
@@ -16,8 +15,11 @@ import {
   type WorkflowRunId,
   type WorkflowRunStatus,
 } from "@sparkwright/agent-runtime";
-import { type ExecutionHandle } from "@sparkwright/server-runtime";
-import type { HostExecutionMessage, HostRuntimeOptions } from "./contracts.js";
+import type { HostRuntimeOptions } from "./contracts.js";
+import {
+  contentPartsFromRunInput,
+  ExecutionInteractionOperations,
+} from "./execution-interaction-operations.js";
 import { CapabilityRuntimeOperations } from "./capability-runtime-operations.js";
 import {
   TaskRuntimeOperations,
@@ -57,11 +59,7 @@ import {
   type CapabilitySnapshot,
 } from "@sparkwright/protocol";
 import { buildAccessMetadata, resolveRunAccessFields } from "../run-access.js";
-import { nextMessageId, nowIso } from "../connection.js";
-import {
-  HostExecution,
-  type HostExecutionActiveRun,
-} from "../host-execution.js";
+import { HostExecution } from "../host-execution.js";
 import {
   findHostRunDirectory,
   forkHostSession,
@@ -79,41 +77,7 @@ import {
 export { sessionPreviewFromTranscriptLine } from "../session-queries.js";
 export { createDelegateAgentTool } from "../indexed-delegate-tool.js";
 
-/**
- * Strip the decorations the context builder wraps around a user goal: the
- * `<env>…</env>` preamble block and the leading `User request:` label (see
- * `packages/core/src/context.ts`). Collapses whitespace so the result is a clean
- * single-line preview.
- */
-function inputPartsFromPayload(
-  parts: readonly RunInputPart[] | undefined,
-): ContentPart[] {
-  if (!parts || parts.length === 0) return [];
-  const out: ContentPart[] = [];
-  for (const part of parts) {
-    if (part.type === "text") {
-      if (part.text.length > 0) {
-        out.push({
-          type: "text",
-          text: part.text,
-          ...(part.metadata ? { metadata: part.metadata } : {}),
-        });
-      }
-      continue;
-    }
-    if (!part.data && !part.uri) continue;
-    out.push({
-      type: part.type,
-      ...(part.data ? { data: part.data } : {}),
-      ...(part.uri ? { uri: part.uri } : {}),
-      ...(part.mediaType ? { mediaType: part.mediaType } : {}),
-      ...(part.name ? { name: part.name } : {}),
-      ...(part.metadata ? { metadata: part.metadata } : {}),
-    });
-  }
-  return out;
-}
-
+/** Project protocol input parts into the run's initial user context item. */
 function userInputContextItem(input: {
   content: string;
   parts: ContentPart[];
@@ -168,6 +132,7 @@ export class HostRuntime {
   private readonly agents: AgentRuntimeAssembly;
   private readonly capabilities: CapabilityRuntimeOperations;
   private readonly runPreparation: RunPreparationOperations;
+  private readonly interactions: ExecutionInteractionOperations;
   private currentExecution: HostExecution | null = null;
   // One abort for the complete interactive execution, including assembly and
   // every todo/workflow episode. Core run cancellation remains run-scoped.
@@ -205,6 +170,11 @@ export class HostRuntime {
       taskManager: this.tasks.manager,
       workspaceLeaseCoordinator: this.opts.workspaceLeaseCoordinator,
     });
+    this.interactions = new ExecutionInteractionOperations({
+      execution: { current: () => this.currentExecution },
+      emit: this.opts.emit,
+      approvalTimeoutMs: this.opts.approvalTimeoutMs,
+    });
     this.capabilities = new CapabilityRuntimeOperations({
       workspaceRoot: this.opts.workspaceRoot,
       sessionRootDir: sessionRootDirFor(this.opts),
@@ -235,12 +205,12 @@ export class HostRuntime {
       capabilities: this.capabilities,
       workflowEpisodes: this.workflowEpisodes,
       createInteractionChannel: (runIdHolder) =>
-        this.createInteractionChannel(runIdHolder),
+        this.interactions.createInteractionChannel(runIdHolder),
     });
   }
 
   hasActiveRun(): boolean {
-    return this.currentExecution?.activeRun != null;
+    return this.interactions.hasActiveRun();
   }
 
   /** @internal HostService lookup without mirroring execution truth. */
@@ -252,17 +222,7 @@ export class HostRuntime {
         runIds: readonly string[];
       }
     | undefined {
-    const execution = this.currentExecution;
-    return execution
-      ? {
-          executionId: execution.executionId,
-          ...(execution.sessionId ? { sessionId: execution.sessionId } : {}),
-          ...(execution.currentRunId()
-            ? { currentRunId: execution.currentRunId() }
-            : {}),
-          runIds: execution.runIdAliases(),
-        }
-      : undefined;
+    return this.interactions.executionIdentity();
   }
 
   /** @internal Canonical lane scope used by the process HostService. */
@@ -270,42 +230,8 @@ export class HostRuntime {
     return `${sessionRootDirFor(this.opts)}\0${sessionId}`;
   }
 
-  executionDriverHandle(
-    executionId: string,
-  ): ExecutionHandle<HostExecutionMessage, unknown> | undefined {
-    const execution = this.currentExecution;
-    if (
-      !execution ||
-      execution.executionId !== executionId ||
-      !execution.rootRunId
-    ) {
-      return undefined;
-    }
-    return {
-      rootRunId: execution.rootRunId,
-      currentRunId: () => execution.currentRunId() ?? execution.rootRunId!,
-      tryInject: (message) =>
-        this.acceptExecutionMessage(message.runId, message).ok
-          ? "accepted"
-          : "closed",
-      cancel: (reason) => {
-        execution.cancel(reason);
-      },
-      completion: execution.completion,
-    };
-  }
-
-  private get active(): HostExecutionActiveRun | null {
-    return this.currentExecution?.activeRun ?? null;
-  }
-
-  private set active(value: HostExecutionActiveRun | null) {
-    if (value) {
-      if (!this.currentExecution) this.currentExecution = new HostExecution();
-      this.currentExecution.attachRun(value);
-    } else {
-      this.currentExecution?.detachRun();
-    }
+  executionDriverHandle(executionId: string) {
+    return this.interactions.executionDriverHandle(executionId);
   }
 
   private beginExecution(
@@ -680,64 +606,6 @@ export class HostRuntime {
   private prepareHostRunEnvironment(input: RunPreparationInput) {
     return this.runPreparation.prepare(input);
   }
-  private createInteractionChannel(runIdHolder: {
-    value: string | null;
-  }): InteractionChannel {
-    return {
-      approve: (request) =>
-        new Promise((resolve) => {
-          const approvalId = request.id;
-          const currentRunId = runIdHolder.value;
-          if (!currentRunId) {
-            // Approval requested before runId was populated — should not happen
-            // because createRun returns synchronously, but guard rather than
-            // crash on `null!`.
-            resolve({ approvalId, decision: "denied" });
-            return;
-          }
-          const execution = this.currentExecution;
-          if (!execution) {
-            resolve({ approvalId, decision: "denied" });
-            return;
-          }
-          const timeout = setTimeout(() => {
-            execution.resolveApproval(approvalId, {
-              decision: "denied",
-              message: "Approval timed out.",
-            });
-          }, this.opts.approvalTimeoutMs ?? 300_000);
-          timeout.unref?.();
-          execution.addApproval({
-            approvalId,
-            runId: currentRunId,
-            resolve: (response) => {
-              clearTimeout(timeout);
-              resolve({ approvalId, ...response });
-            },
-          });
-          const details = request.details as { path?: unknown } | undefined;
-          this.opts.emit({
-            envelope: "event",
-            id: nextMessageId("evt"),
-            kind: "approval.requested",
-            timestamp: nowIso(),
-            payload: {
-              runId: currentRunId,
-              approvalId,
-              action: request.action,
-              summary: request.summary,
-              details: {
-                ...(typeof details?.path === "string"
-                  ? { path: details.path }
-                  : {}),
-                ...(request.details ?? {}),
-              },
-            },
-          });
-        }),
-    };
-  }
-
   private async resumeRunInner(
     payload: RunResumeRequestPayload,
     resolvedSessionId?: string,
@@ -1084,7 +952,7 @@ export class HostRuntime {
       { workspaceRoot: env.workspaceRoot, sessionRootDir: env.sessionRootDir },
       sessionId,
     );
-    const initialInputParts = inputPartsFromPayload(payload.input?.parts);
+    const initialInputParts = contentPartsFromRunInput(payload.input?.parts);
     const initialInputContext = userInputContextItem({
       content:
         initialInputParts.length > 0
@@ -1134,71 +1002,18 @@ export class HostRuntime {
     return this.opts.executionCoordinator.injectRunMessage(this, runId, input);
   }
 
-  private acceptExecutionMessage(
-    runId: string,
-    input: {
-      content: string;
-      parts?: readonly RunInputPart[];
-      metadata?: Record<string, unknown>;
-    },
-  ): { ok: true } | { ok: false; error: ProtocolError } {
-    if (!this.currentExecution?.ownsRun(runId)) {
-      return {
-        ok: false,
-        error: {
-          code: "run_not_found",
-          message: `no active run with id ${runId}`,
-        },
-      };
-    }
-    if (!input.content.trim()) {
-      return {
-        ok: false,
-        error: {
-          code: "invalid_payload",
-          message: "content must not be empty",
-        },
-      };
-    }
-    const parts = inputPartsFromPayload(input.parts);
-    const acceptance = this.currentExecution.tryInject(runId, {
-      content: input.content,
-      parts,
-      metadata: input.metadata,
-    });
-    if (acceptance !== "accepted") {
-      return {
-        ok: false,
-        error: {
-          code: "run_not_found",
-          message: `run ${runId} is no longer accepting messages (${acceptance})`,
-        },
-      };
-    }
-    return { ok: true };
-  }
-
   resolveApproval(
     approvalId: string,
     decision: "approved" | "denied",
     message?: string,
     autoApproved?: boolean,
   ): { ok: true } | { ok: false; error: ProtocolError } {
-    const resolved = this.currentExecution?.resolveApproval(approvalId, {
+    return this.interactions.resolveApproval(
+      approvalId,
       decision,
-      ...(message !== undefined ? { message } : {}),
-      ...(autoApproved !== undefined ? { autoApproved } : {}),
-    });
-    if (!resolved) {
-      return {
-        ok: false,
-        error: {
-          code: "approval_not_found",
-          message: `no pending approval with id ${approvalId}`,
-        },
-      };
-    }
-    return { ok: true };
+      message,
+      autoApproved,
+    );
   }
 
   /**
@@ -1206,15 +1021,11 @@ export class HostRuntime {
    * core does not leak file handles or hang on never-arriving decisions.
    */
   cleanup(): void {
-    this.currentExecution?.cleanup("client_disconnected");
+    this.interactions.cleanup();
   }
 
   async drain(): Promise<void> {
-    const execution = this.currentExecution;
-    if (!execution) return;
-    execution.cleanup("host_service_drain");
-    await execution.completion;
-    await execution.disposeResources();
+    await this.interactions.drain();
   }
 
   async listSessions(
