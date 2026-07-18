@@ -9,6 +9,7 @@ import {
 } from "@sparkwright/agent-runtime";
 import { InFlightCommandDispatcher } from "@sparkwright/server-runtime";
 import type { WorkspaceLeaseCoordinator } from "./workspace-lease-coordinator.js";
+import { workspaceTaskRootDir } from "./runtime/task-runtime-operations.js";
 
 export interface WorkspaceContextIdentity {
   workspaceRoot: string;
@@ -33,7 +34,7 @@ export class WorkspaceContext {
     this.workspaceRoot = resolve(identity.workspaceRoot);
     this.sessionRootDir = resolve(identity.sessionRootDir);
     this.workspaceLeaseCoordinator = workspaceLeaseCoordinator;
-    const taskRoot = join(this.workspaceRoot, ".sparkwright", "tasks");
+    const taskRoot = workspaceTaskRootDir(this.workspaceRoot);
     this.taskNotifications = new FileTaskNotificationOutbox({
       rootDir: taskRoot,
       createRoot: false,

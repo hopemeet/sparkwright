@@ -10,6 +10,18 @@ See [session-store.md](session-store.md) and [../runtime/context-compaction.md](
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-18
+- Scope: resume-time orphaned in-process Task detection/failure moved intact
+  from `HostRuntime` into the Host Task operations owner. Resume still fails
+  only pending/running records without a current-process live runner before
+  rebuilding the Core episode; checkpoint and durable-wait semantics are
+  unchanged.
+- Read: Host resume assembly, Task operations, Agent Runtime manager/store, and
+  focused protocol coverage.
+- Tests: Host protocol 59/59, Task revival/service 5/5, and Host typecheck
+  passed.
+
+- Status: Verified
 - Date: 2026-07-17T23:37:17+0800
 - Scope: checkpoint/file-run reference helpers moved to Core `/internal`;
   resume identity, replay, compaction anchors, and Host/CLI behavior are

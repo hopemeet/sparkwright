@@ -10,6 +10,16 @@ See [../safety/workspace-writes.md](../safety/workspace-writes.md), [../safety/s
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-18
+- Scope: Host-facing Task list/get/output/stop/join/promote operations and
+  bounded output polling now have one Task operations owner. Model-facing
+  `task_create`/`task`, TaskManager scheduling, tool policy, and result shapes
+  are unchanged.
+- Read: Host Task operations/projections and protocol routing, Agent Runtime
+  Task tools/manager, and focused Host tests.
+- Tests: Host Task revival/service/protocol 64/64 and Host typecheck passed.
+
+- Status: Verified
 - Date: 2026-07-17T23:37:17+0800
 - Scope: runtime consumers now import default prompt/event/workspace reference
   implementations through Core `/internal`; tool registry, batching, policy,

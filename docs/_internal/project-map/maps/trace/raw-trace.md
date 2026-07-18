@@ -11,6 +11,15 @@ and [../session/session-store.md](../session/session-store.md) for session layou
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-18
+- Scope: bounded Task output reading and terminal actor-to-notification
+  projection moved behind the Host Task operations owner. No event type,
+  payload, trace sink, or persistence path changed.
+- Read: Host Task operations/projections, Agent Runtime Task actor contracts,
+  Core notification injection, and protocol tests.
+- Tests: Host Task revival/service/protocol 64/64 and Host typecheck passed.
+
+- Status: Verified
 - Date: 2026-07-17T23:37:17+0800
 - Scope: EventLog/file trace reference implementations moved exclusively to
   Core `/internal`, and TraceSink ingestion is canonical `append`; raw event

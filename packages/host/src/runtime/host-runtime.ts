@@ -19,7 +19,6 @@ import {
   type ContextItem,
   type EventEmitter,
   type ModelAdapter,
-  type NotificationSource,
   type Policy,
   type RunId,
   type RunBudget,
@@ -27,7 +26,6 @@ import {
   type RunResult,
   type RuntimeContext,
   type SparkwrightEvent,
-  type TaskRevivalSource,
   type ToolDefinition,
   type ToolRequestPreviewOptions,
   type WorkflowHook,
@@ -42,7 +40,6 @@ import {
   type McpServerConfig,
 } from "@sparkwright/mcp-adapter";
 import {
-  FileTaskNotificationOutbox,
   FileWorkflowNotificationOutbox,
   FileWorkflowControlInbox,
   WorkflowControlCommandProcessor,
@@ -58,7 +55,6 @@ import {
   createAgentProfilePolicy,
   deriveChildAgentProfile,
   findSimilarSuccessfulDelegation,
-  taskNotificationInputFromRecord,
   rememberSuccessfulDelegation,
   readTodoLedger,
   TODO_CONTINUATION_REQUIRED_TOOL,
@@ -71,12 +67,7 @@ import {
   type DelegationLedgerHit,
   type DelegationLedgerKey,
   type DerivedChildAgentProfile,
-  type TaskId,
-  type AnyActorNotification,
-  type TaskOutputChunk,
-  type TaskRecord,
   type TaskRunnerController,
-  type TaskStatus,
   type TodoSupervisedRunInput,
   type SpawnedSubAgent,
   type WorkflowExecutableDefinition,
@@ -108,15 +99,13 @@ import {
   workflowCapabilitySummary,
 } from "./capability-assembly.js";
 import {
-  IMMEDIATE_NONE,
-  compareTaskRecordsNewestFirst,
-  isTerminalTaskStatus,
-  pendingNotificationFromTaskActor,
-  raceWithImmediate,
-  taskNotFoundError,
-  taskOutputChunkSnapshot,
-  taskRecordSnapshot,
-} from "./task-projections.js";
+  TaskRuntimeOperations,
+  type JoinRuntimeTaskResult,
+  type ListRuntimeTasksInput,
+  type PromoteRuntimeTaskResult,
+  type ReadRuntimeTaskOutputResult,
+  type StopRuntimeTaskResult,
+} from "./task-runtime-operations.js";
 export type { RuntimeOptions } from "./contracts.js";
 import {
   createWorkspaceMutationAdmission,
@@ -153,7 +142,6 @@ import {
   type WorkflowRunSnapshot,
   type RunInputPart,
   type SessionCompactionInspectReport,
-  type TaskOutputChunkSnapshot,
   type TaskRecordSnapshot,
   type CapabilitySnapshot,
   type CapabilityAutomationSummary,
@@ -748,11 +736,10 @@ export async function runHostAgentTask(
 /** One HostExecution attachment composed by the process HostService. */
 export class HostRuntime {
   private opts: HostRuntimeOptions;
-  private readonly taskNotifications: FileTaskNotificationOutbox;
+  private readonly tasks: TaskRuntimeOperations;
   private readonly workflowNotifications: FileWorkflowNotificationOutbox;
   private readonly workflowControls: FileWorkflowControlInbox;
   private readonly workflowControlDispatcher: InFlightCommandDispatcher;
-  private readonly taskManager: TaskManager;
   private currentExecution: HostExecution | null = null;
   // One abort for the complete interactive execution, including assembly and
   // every todo/workflow episode. Core run cancellation remains run-scoped.
@@ -768,11 +755,14 @@ export class HostRuntime {
         : {}),
     };
     const context = opts.workspaceContext;
-    this.taskNotifications = context.taskNotifications;
+    this.tasks = new TaskRuntimeOperations({
+      workspaceRoot: this.opts.workspaceRoot,
+      manager: context.taskManager,
+      notifications: context.taskNotifications,
+    });
     this.workflowNotifications = context.workflowNotifications;
     this.workflowControls = context.workflowControls;
     this.workflowControlDispatcher = context.workflowControlDispatcher;
-    this.taskManager = context.taskManager;
   }
 
   hasActiveRun(): boolean {
@@ -861,64 +851,12 @@ export class HostRuntime {
     this.currentExecution = null;
   }
 
-  private taskRootDir(): string {
-    return join(this.opts.workspaceRoot, ".sparkwright", "tasks");
-  }
-
   private workflowNotificationRootDir(): string {
     return join(this.opts.workspaceRoot, ".sparkwright", "workflow-actors");
   }
 
   private workflowStoreRootDir(): string {
     return workspaceWorkflowRunsDir({ workspaceRoot: this.opts.workspaceRoot });
-  }
-
-  private createTaskRevivalBridge(getRunId: () => RunId | undefined): {
-    notificationSource: NotificationSource;
-    taskRevivalSource: TaskRevivalSource;
-  } {
-    const matchesRun = (notification: AnyActorNotification): boolean => {
-      const runId = getRunId();
-      return (
-        runId !== undefined &&
-        notification.source.kind === "task" &&
-        "parentRunId" in notification.payload &&
-        notification.payload.parentRunId === runId
-      );
-    };
-    const matchesAwaitedRun = (notification: AnyActorNotification): boolean => {
-      if (!matchesRun(notification)) return false;
-      if (!("taskId" in notification.payload)) return false;
-      const record = this.taskManager.store.get(notification.payload.taskId);
-      return record?.awaited !== false;
-    };
-    const hasAwaitedPending = (): boolean => {
-      const runId = getRunId();
-      if (!runId) return false;
-      const hasActiveAwaited = this.taskManager.store
-        .list({ parentRunId: runId, awaited: true })
-        .some((task) => !isTerminalTaskStatus(task.status));
-      if (hasActiveAwaited) return true;
-      return this.taskNotifications.peek().some(matchesAwaitedRun);
-    };
-
-    const notificationSource: NotificationSource = {
-      drain: () =>
-        this.taskNotifications
-          .drain(matchesRun)
-          .map((notification) =>
-            pendingNotificationFromTaskActor(notification),
-          ),
-    };
-    const taskRevivalSource: TaskRevivalSource = {
-      hasAwaitedPending,
-      waitUntilAvailable: ({ signal }) =>
-        this.taskNotifications.waitUntilAvailable({
-          signal,
-          predicate: matchesAwaitedRun,
-        }),
-    };
-    return { notificationSource, taskRevivalSource };
   }
 
   private async finalizeWorkflowRecordAfterRun(
@@ -1151,46 +1089,11 @@ export class HostRuntime {
     });
   }
 
-  private async failOrphanedInProcessTasksForRun(
-    parentRunId: RunId,
-  ): Promise<void> {
-    const orphanable = this.taskManager.store
-      .list({ parentRunId })
-      .filter(
-        (task) =>
-          (task.status === "pending" || task.status === "running") &&
-          !this.taskManager.hasLiveRunner(task.id),
-      );
-    for (const task of orphanable) {
-      await this.taskManager.fail(task.id, {
-        code: "TASK_ORPHANED_IN_PROCESS",
-        message:
-          "Task was still pending or running when the host resumed this run, " +
-          "but in-process task execution cannot survive host exit.",
-        metadata: {
-          previousStatus: task.status,
-          parentRunId,
-        },
-      });
-    }
-  }
-
-  listTasks(input: {
-    status?: TaskStatus;
-    kind?: string;
-    parentRunId?: string;
-    limit?: number;
-  }): { ok: true; tasks: TaskRecordSnapshot[] } {
-    const tasks = this.taskManager.store
-      .list({
-        status: input.status,
-        kind: input.kind,
-        parentRunId: input.parentRunId as RunId | undefined,
-      })
-      .sort(compareTaskRecordsNewestFirst)
-      .slice(0, input.limit ?? 50)
-      .map(taskRecordSnapshot);
-    return { ok: true, tasks };
+  listTasks(input: ListRuntimeTasksInput): {
+    ok: true;
+    tasks: TaskRecordSnapshot[];
+  } {
+    return this.tasks.list(input);
   }
 
   getTask(
@@ -1198,145 +1101,27 @@ export class HostRuntime {
   ):
     | { ok: true; task: TaskRecordSnapshot }
     | { ok: false; error: ProtocolError } {
-    const id = taskId as unknown as TaskId;
-    const task = this.taskManager.store.get(id);
-    if (!task) return { ok: false, error: taskNotFoundError(taskId) };
-    return { ok: true, task: taskRecordSnapshot(task) };
+    return this.tasks.get(taskId);
   }
 
   async readTaskOutput(input: {
     taskId: string;
     fromSequence?: number;
     maxChunks?: number;
-  }): Promise<
-    | {
-        ok: true;
-        taskId: string;
-        chunks: TaskOutputChunkSnapshot[];
-        nextSequence: number;
-        complete: boolean;
-        status: TaskStatus;
-        error?: TaskRecord["error"];
-        lastOutputAt?: string;
-        stalled: boolean;
-      }
-    | { ok: false; error: ProtocolError }
-  > {
-    const id = input.taskId as unknown as TaskId;
-    const initial = this.taskManager.store.get(id);
-    if (!initial) return { ok: false, error: taskNotFoundError(input.taskId) };
-
-    const fromSequence = input.fromSequence ?? 0;
-    const maxChunks = input.maxChunks ?? 200;
-    const chunks: TaskOutputChunk[] = [];
-    const outputStream = this.taskManager.store.loadOutput(id, fromSequence);
-    const iterator = outputStream[Symbol.asyncIterator]();
-    try {
-      while (chunks.length < maxChunks) {
-        const next = await raceWithImmediate(iterator);
-        if (next === IMMEDIATE_NONE || next.done) break;
-        chunks.push(next.value);
-      }
-    } finally {
-      await iterator.return?.();
-    }
-
-    const latest = this.taskManager.store.get(id) ?? initial;
-    const lastSequence =
-      chunks.length > 0
-        ? chunks[chunks.length - 1]!.sequence
-        : fromSequence - 1;
-    return {
-      ok: true,
-      taskId: input.taskId,
-      chunks: chunks.map(taskOutputChunkSnapshot),
-      nextSequence: lastSequence + 1,
-      complete: isTerminalTaskStatus(latest.status),
-      status: latest.status,
-      ...(latest.error ? { error: latest.error } : {}),
-      ...(latest.lastOutputAt ? { lastOutputAt: latest.lastOutputAt } : {}),
-      stalled: latest.status === "running" && chunks.length === 0,
-    };
+  }): Promise<ReadRuntimeTaskOutputResult> {
+    return await this.tasks.readOutput(input);
   }
 
-  async stopTask(
-    taskId: string,
-  ): Promise<
-    | { ok: true; cancelled: boolean; status?: TaskStatus }
-    | { ok: false; error: ProtocolError }
-  > {
-    const id = taskId as unknown as TaskId;
-    const before = this.taskManager.store.get(id);
-    if (!before) return { ok: false, error: taskNotFoundError(taskId) };
-    if (isTerminalTaskStatus(before.status)) {
-      return { ok: true, cancelled: false, status: before.status };
-    }
-    const handle = this.taskManager.handle(id);
-    if (!handle) return { ok: true, cancelled: false, status: before.status };
-    await handle.cancel();
-    const after = this.taskManager.store.get(id);
-    return {
-      ok: true,
-      cancelled: after?.status === "cancelled",
-      ...(after?.status ? { status: after.status } : {}),
-    };
+  async stopTask(taskId: string): Promise<StopRuntimeTaskResult> {
+    return await this.tasks.stop(taskId);
   }
 
-  async joinTask(
-    taskId: string,
-  ): Promise<
-    | { ok: true; taskId: string; awaited: boolean; status: TaskStatus }
-    | { ok: false; error: ProtocolError }
-  > {
-    const id = taskId as unknown as TaskId;
-    const before = this.taskManager.store.get(id);
-    if (!before) return { ok: false, error: taskNotFoundError(taskId) };
-    const joined = isTerminalTaskStatus(before.status)
-      ? this.taskManager.store.update(id, { awaited: true })
-      : this.taskManager.store.update(id, { awaited: true });
-    if (
-      isTerminalTaskStatus(joined.status) &&
-      !this.taskNotifications
-        .peek(
-          (notification) =>
-            notification.source.kind === "task" &&
-            "taskId" in notification.payload &&
-            notification.payload.taskId === joined.id,
-        )
-        .some(Boolean)
-    ) {
-      this.taskNotifications.deliver(taskNotificationInputFromRecord(joined));
-    }
-    return {
-      ok: true,
-      taskId,
-      awaited: joined.awaited,
-      status: joined.status,
-    };
+  async joinTask(taskId: string): Promise<JoinRuntimeTaskResult> {
+    return await this.tasks.join(taskId);
   }
 
-  async promoteTask(taskId: string): Promise<
-    | {
-        ok: true;
-        taskId: string;
-        promoted: boolean;
-        awaited: boolean;
-        status: TaskStatus;
-      }
-    | { ok: false; error: ProtocolError }
-  > {
-    const id = taskId as unknown as TaskId;
-    if (!this.taskManager.store.get(id)) {
-      return { ok: false, error: taskNotFoundError(taskId) };
-    }
-    const promoted = this.taskManager.requestPromotion(id);
-    return {
-      ok: true,
-      taskId,
-      promoted: promoted.interruptedForegroundWait,
-      awaited: promoted.record.awaited,
-      status: promoted.record.status,
-    };
+  async promoteTask(taskId: string): Promise<PromoteRuntimeTaskResult> {
+    return await this.tasks.promote(taskId);
   }
 
   async inspectCapabilities(
@@ -2267,7 +2052,7 @@ export class HostRuntime {
       maxDepth: subagentMaxDepth,
       foregroundTimeoutMs:
         shellConfig?.foregroundTimeoutMs ?? RECOMMENDED_FOREGROUND_TIMEOUT_MS,
-      taskManager: this.taskManager,
+      taskManager: this.tasks.manager,
       backgroundTasks: runAccess.backgroundTasks,
       workspaceRoot,
       workspaceLeaseCoordinator,
@@ -2286,7 +2071,7 @@ export class HostRuntime {
       maxDepth: subagentMaxDepth,
       sessionId: input.sessionId,
       workspaceRoot,
-      taskManager: this.taskManager,
+      taskManager: this.tasks.manager,
       backgroundTasks: runAccess.backgroundTasks,
       foregroundTimeoutMs:
         shellConfig?.foregroundTimeoutMs ?? RECOMMENDED_FOREGROUND_TIMEOUT_MS,
@@ -2296,7 +2081,7 @@ export class HostRuntime {
       workspaceRoot,
       skillRoots: [...skillRoots],
       toolConfig,
-      taskManager: this.taskManager,
+      taskManager: this.tasks.manager,
       taskRunners: {
         agent: (controller, payload) =>
           runHostAgentTask(controller, payload, agentTaskDeps),
@@ -3276,7 +3061,7 @@ export class HostRuntime {
         },
       };
     }
-    await this.failOrphanedInProcessTasksForRun(payload.runId as RunId);
+    await this.tasks.failOrphanedInProcessTasksForRun(payload.runId as RunId);
 
     const modelRef = payload.model ?? this.opts.defaultModel;
     const access = resolveRunAccessFields(
@@ -3328,7 +3113,7 @@ export class HostRuntime {
         purpose: "todo_continuation",
       });
       const runRef: { current?: ReturnType<typeof createRun> } = {};
-      const taskBridge = this.createTaskRevivalBridge(
+      const taskBridge = this.tasks.createRevivalBridge(
         () => runRef.current?.record.id,
       );
       const run = createRun({
@@ -3406,7 +3191,7 @@ export class HostRuntime {
               const runRef: {
                 current?: ReturnType<typeof resumeRunFromCheckpoint>;
               } = {};
-              const taskBridge = this.createTaskRevivalBridge(
+              const taskBridge = this.tasks.createRevivalBridge(
                 () => runRef.current?.record.id,
               );
               const run = resumeRunFromCheckpoint(checkpoint, {
@@ -3601,7 +3386,7 @@ export class HostRuntime {
         purpose: todoContinuation ? "todo_continuation" : "main_agent",
       });
       const runRef: { current?: ReturnType<typeof createRun> } = {};
-      const taskBridge = this.createTaskRevivalBridge(
+      const taskBridge = this.tasks.createRevivalBridge(
         () => runRef.current?.record.id,
       );
       const run = createRun({
@@ -3873,7 +3658,7 @@ export class HostRuntime {
         purpose: overrides.runBudget ? "todo_continuation" : "main_agent",
       });
       const runRef: { current?: ReturnType<typeof createRun> } = {};
-      const taskBridge = this.createTaskRevivalBridge(
+      const taskBridge = this.tasks.createRevivalBridge(
         () => runRef.current?.record.id,
       );
       const run = createRun({
@@ -4159,7 +3944,7 @@ export class HostRuntime {
         workspaceRoot: this.opts.workspaceRoot,
         skillRoots: [...skillRoots],
         toolConfig,
-        taskManager: this.taskManager,
+        taskManager: this.tasks.manager,
         getParentRunId: () => "run_capability_snapshot" as RunId,
         todoPath: join(
           sessionRootDirFor(this.opts),
@@ -4234,7 +4019,7 @@ export class HostRuntime {
 
   private async inspectAutomationSummary(): Promise<CapabilityAutomationSummary> {
     const cronRoot = defaultCronRoot();
-    const taskRoot = this.taskRootDir();
+    const taskRoot = this.tasks.rootDir;
     const cronJobs = await readCronJobsForSnapshot(cronRoot);
     const tasks = readTasksForSnapshot(taskRoot);
     return {

@@ -8,6 +8,15 @@ cron, shell/task tools, and capability inspection.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-18
+- Scope: Host Task protocol/control and automation-root ownership moved into
+  `TaskRuntimeOperations`; capability snapshots still read the same canonical
+  `.sparkwright/tasks` store and expose the same Task inventory.
+- Read: Host Task operations, WorkspaceContext, capability assembly/runtime,
+  and protocol tests.
+- Tests: Host Task revival/service/protocol 64/64 and Host typecheck passed.
+
+- Status: Verified
 - Date: 2026-07-17T23:37:17+0800
 - Scope: Core implementation import routing changed only; Host capability
   assembly, inspection, schemas, and active tool/capability semantics are

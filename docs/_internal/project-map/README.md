@@ -219,6 +219,20 @@ trace/session inspection.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-18
+- Scope: Host Task runtime ownership now lives in one collaborator for protocol
+  queries/control, bounded output reads, actor revival, resume-time orphan
+  failure, and the canonical workspace Task root. `HostRuntime` keeps only thin
+  protocol/run-assembly delegation; WorkspaceContext still owns the durable
+  manager, store, and outbox.
+- Read: Host concrete runtime, Task operations/projections, WorkspaceContext,
+  Agent Runtime Task/actor contracts, routed runtime/capability/session/trace
+  maps, and test routes. MCP, workspace-write, capability payload, and raw
+  event contracts require no change.
+- Tests: Host Task revival/service/protocol focused suites and Host typecheck
+  passed; final repository gates are recorded with the commit.
+
+- Status: Verified
 - Date: 2026-07-18T08:08:47+0800
 - Scope: made configured Skill roots canonical across loading, Host security
   planning, doctor/reporting, statistics caches, CLI/TUI projections, and

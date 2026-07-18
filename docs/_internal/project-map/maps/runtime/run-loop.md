@@ -11,6 +11,17 @@ See [tool-orchestration.md](tool-orchestration.md) and [../trace/raw-trace.md](.
 
 - Status: Verified
 - Date: 2026-07-18
+- Scope: Host Task notification/revival construction and resume-time orphan
+  failure moved intact from `HostRuntime` into the canonical Task operations
+  collaborator. Core still consumes the same `NotificationSource` and
+  non-consuming `TaskRevivalSource`; run state, waits, and event order are
+  unchanged.
+- Read: Host Task operations/runtime assembly, Agent Runtime actor ports, Core
+  revival contracts, and focused Task/service/protocol tests.
+- Tests: Host Task revival/service/protocol 64/64 and Host typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-18
 - Scope: non-blocking user hooks bind through one provenance-aware event lane:
   the Host resolves a required descriptor/source and Core uses the run event
   log's replay/live subscription methods directly. Awaited workflow hooks and

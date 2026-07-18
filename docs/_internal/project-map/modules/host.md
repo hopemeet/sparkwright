@@ -13,6 +13,18 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 
 - Status: Verified
 - Date: 2026-07-18
+- Scope: `runtime/task-runtime-operations.ts` is the single Host owner for Task
+  protocol list/get/output/stop/join/promote behavior, bounded output polling,
+  actor revival projection, resume-time orphan failure, and the workspace Task
+  root. `HostRuntime` delegates to it and no longer carries those copies.
+- Read: HostRuntime, Task operations/projections, WorkspaceContext, Agent
+  Runtime manager/store/actor ports, protocol service routing, and focused
+  tests.
+- Tests: Host Task revival/service/protocol 64/64 and Host typecheck passed;
+  final repository gates are recorded with the commit.
+
+- Status: Verified
+- Date: 2026-07-18
 - Scope: Host configured event hooks remain the sole production
   `bindUserHooks()` consumer and already provide stable event-rule identity,
   `source: "project"`, the run abort signal, and the canonical replay-capable
@@ -233,7 +245,8 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 - `packages/host/src/runtime.ts` — stable named public facade
 - `packages/host/src/runtime/host-runtime.ts` — concrete HostRuntime composition and execution orchestration
 - `packages/host/src/runtime/capability-assembly.ts` — capability snapshot projection, summaries, automation reads, and merge
-- `packages/host/src/runtime/task-projections.ts` — task snapshots, notifications, terminal classification, and bounded output reads
+- `packages/host/src/runtime/task-runtime-operations.ts` — Host Task protocol/control, output reads, actor revival, orphan recovery, and canonical workspace root
+- `packages/host/src/runtime/task-projections.ts` — stateless task snapshots, notifications, and terminal classification
 - `packages/host/src/runtime/contracts.ts` — runtime construction and execution coordination ports
 - `packages/host/src/session-queries.ts` — canonical Host run lookup, completed-turn replay, compact-context anchoring, trace fact projection, and session queries
 - `packages/host/src/session-compaction.ts` — complete manual compaction operation from turn loading through artifact/event persistence
@@ -291,6 +304,8 @@ Owns:
 - immutable per-run/per-inspect derivation of resolved access, workspace,
   confidential path inputs, skill/config roots, and shell sandbox status
 - host-level interaction channel and pending approval routing
+- host Task protocol/control, actor revival, resume orphan handling, and
+  workspace Task-root projection through `TaskRuntimeOperations`
 - host-client approval helpers used by frontends that must not import core directly
 - session diagnostics bundle composition
 - shell live-process handoff into task state, including explicit/promotion
@@ -583,6 +598,12 @@ Does not own:
   `run.resume`, pending/running task records for the resumed run that do not
   have a current-process live runner are failed explicitly as orphaned
   in-process tasks.
+- `WorkspaceContext` remains the durable owner of the Task manager/store/outbox.
+  `TaskRuntimeOperations` is the sole Host behavior owner over those ports for
+  protocol queries/control, bounded output reads, revival delivery/readiness,
+  resume-time orphan failure, and the canonical `.sparkwright/tasks` root.
+  `HostRuntime` keeps only public protocol delegates and run-assembly references
+  to the collaborator's manager.
 - Host owns workflow asset discovery, parsing, and P1 projection compilation.
   `workflows/<asset>/workflow.md` folder assets are parsed with shared
   markdown-folder-asset plumbing, optional `config.yaml`, and per-node markdown

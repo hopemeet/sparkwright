@@ -8,7 +8,6 @@ import type {
   TaskTerminalActorNotification,
 } from "@sparkwright/agent-runtime";
 import type {
-  ProtocolError,
   TaskOutputChunkSnapshot,
   TaskRecordSnapshot,
 } from "@sparkwright/protocol";
@@ -147,28 +146,4 @@ function summarizeNotificationValue(value: unknown): string {
   return serialized.length > 500
     ? `${serialized.slice(0, 500)}...`
     : serialized;
-}
-
-export function taskNotFoundError(taskId: string): ProtocolError {
-  return {
-    code: "task_not_found",
-    message: `Task not found: ${taskId}`,
-  };
-}
-
-export const IMMEDIATE_NONE = Symbol("IMMEDIATE_NONE");
-type ImmediateNone = typeof IMMEDIATE_NONE;
-
-export async function raceWithImmediate<T>(
-  iterator: AsyncIterator<T>,
-): Promise<IteratorResult<T> | ImmediateNone> {
-  let settled = false;
-  const next = iterator.next().then((result) => {
-    settled = true;
-    return result;
-  });
-  await Promise.resolve();
-  await Promise.resolve();
-  if (settled) return next;
-  return IMMEDIATE_NONE;
 }

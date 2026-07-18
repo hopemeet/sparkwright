@@ -265,9 +265,16 @@ ordinary start/resume/inject/cancel always traverse its lane coordinator, and
 connection adapters receive the existing process service rather than creating
 one per connection.
 
-For `runtime/task-projections.ts`, run Host service/protocol and agent-task
-focused tests; keep TaskManager/store/outbox ownership outside the projection
-leaf.
+For `runtime/task-runtime-operations.ts` or `runtime/task-projections.ts`, run:
+
+```bash
+npm --workspace @sparkwright/host test -- test/task-revival.test.ts test/host-service.test.ts test/protocol.test.ts
+npm --workspace @sparkwright/host run typecheck
+```
+
+Keep TaskManager/store/outbox ownership in `WorkspaceContext`; Task runtime
+operations own Host protocol/control, output polling, revival, and resume
+orphan handling, while projections remain stateless.
 
 For `session-queries.ts` or `session-compaction.ts`, run the full Host protocol
 file plus Host typecheck. Preserve canonical session/agent run lookup,
