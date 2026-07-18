@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import {
   asSessionId,
@@ -40,15 +39,9 @@ import {
   type McpServerConfig,
 } from "@sparkwright/mcp-adapter";
 import {
-  FileWorkflowNotificationOutbox,
-  FileWorkflowControlInbox,
-  WorkflowControlCommandProcessor,
   type WorkflowControlCommand,
-  type WorkflowControlCommandEnvelope,
   type WorkflowControlSourceIdentity,
   FileWorkflowStore,
-  advanceWorkflowState,
-  assertSafeWorkflowRunId,
   type WorkflowLeaseBoundWriter,
   TaskManager,
   createAgentTool,
@@ -71,22 +64,14 @@ import {
   type TodoSupervisedRunInput,
   type SpawnedSubAgent,
   type WorkflowExecutableDefinition,
-  type WorkflowEvidenceRef,
   type WorkflowNodeDefinition,
-  type WorkflowNodeVerdictLogEntry,
   type WorkflowRunId,
   type WorkflowRunRecord,
-  type WorkflowRunFailure,
   type WorkflowRunStatus,
-  type WorkflowRuntimeState,
-  workspaceWorkflowRunsDir,
 } from "@sparkwright/agent-runtime";
 import { defaultCronRoot } from "@sparkwright/cron";
 import { RECOMMENDED_FOREGROUND_TIMEOUT_MS } from "@sparkwright/shell-tool";
-import {
-  InFlightCommandDispatcher,
-  type ExecutionHandle,
-} from "@sparkwright/server-runtime";
+import { type ExecutionHandle } from "@sparkwright/server-runtime";
 import type { HostExecutionMessage, HostRuntimeOptions } from "./contracts.js";
 import {
   buildCapabilitySnapshot,
@@ -106,6 +91,10 @@ import {
   type ReadRuntimeTaskOutputResult,
   type StopRuntimeTaskResult,
 } from "./task-runtime-operations.js";
+import {
+  WorkflowRuntimeOperations,
+  type WorkflowControlExecutionPort,
+} from "./workflow-runtime-operations.js";
 export type { RuntimeOptions } from "./contracts.js";
 import {
   createWorkspaceMutationAdmission,
@@ -256,10 +245,7 @@ import {
   pinWorkflowAssetPackage,
   verifyWorkflowPackageSnapshot,
 } from "../workflows.js";
-import {
-  createWorkflowProjectionHooks,
-  type WorkflowProjectionStateSnapshot,
-} from "../workflow-projection.js";
+import { createWorkflowProjectionHooks } from "../workflow-projection.js";
 import {
   DISCOVERY_TOOL_NAME,
   WORKSPACE_WRITE_TOOL_NAMES,
@@ -636,7 +622,6 @@ const MAIN_TODO_MAX_STALLED_CONTINUATIONS = 1;
 const MAIN_TODO_CONTINUATION_MAX_STEPS = 8;
 const MAIN_TODO_CONTINUATION_MAX_MODEL_CALLS = 8;
 const MAIN_TODO_CONTINUATION_MAX_TOOL_CALLS = 12;
-const WORKFLOW_LEASE_TTL_MS = 30 * 60 * 1000;
 
 const DELEGATED_AGENT_CONTRACT = [
   "Delegated agent contract:",
@@ -737,9 +722,7 @@ export async function runHostAgentTask(
 export class HostRuntime {
   private opts: HostRuntimeOptions;
   private readonly tasks: TaskRuntimeOperations;
-  private readonly workflowNotifications: FileWorkflowNotificationOutbox;
-  private readonly workflowControls: FileWorkflowControlInbox;
-  private readonly workflowControlDispatcher: InFlightCommandDispatcher;
+  private readonly workflows: WorkflowRuntimeOperations;
   private currentExecution: HostExecution | null = null;
   // One abort for the complete interactive execution, including assembly and
   // every todo/workflow episode. Core run cancellation remains run-scoped.
@@ -760,9 +743,12 @@ export class HostRuntime {
       manager: context.taskManager,
       notifications: context.taskNotifications,
     });
-    this.workflowNotifications = context.workflowNotifications;
-    this.workflowControls = context.workflowControls;
-    this.workflowControlDispatcher = context.workflowControlDispatcher;
+    this.workflows = new WorkflowRuntimeOperations({
+      workspaceRoot: this.opts.workspaceRoot,
+      notifications: context.workflowNotifications,
+      controls: context.workflowControls,
+      dispatcher: context.workflowControlDispatcher,
+    });
   }
 
   hasActiveRun(): boolean {
@@ -849,244 +835,6 @@ export class HostRuntime {
       execution.abortController.signal.aborted ? "cancelled" : "failed",
     );
     this.currentExecution = null;
-  }
-
-  private workflowNotificationRootDir(): string {
-    return join(this.opts.workspaceRoot, ".sparkwright", "workflow-actors");
-  }
-
-  private workflowStoreRootDir(): string {
-    return workspaceWorkflowRunsDir({ workspaceRoot: this.opts.workspaceRoot });
-  }
-
-  private async finalizeWorkflowRecordAfterRun(
-    env: PreparedHostRunEnvironment,
-    runId: RunId,
-    result: RunResult,
-  ): Promise<void> {
-    if (!env.workflowLease || !env.workflowRecord) return;
-    const latest = (await env.workflowLease.readFresh()) ?? env.workflowRecord;
-    if (latest.status === "waiting") {
-      this.deliverWorkflowNotification(latest);
-      await env.workflowLease?.release();
-      env.workflowLease = undefined;
-      env.workflowRecord = latest;
-      return;
-    }
-    if (isTerminalWorkflowRunStatus(latest.status)) {
-      this.deliverWorkflowNotification(latest);
-      await env.workflowLease?.release();
-      env.workflowLease = undefined;
-      env.workflowRecord = latest;
-      return;
-    }
-    if (result.state === "cancelled") {
-      env.workflowRecord = await mutateWorkflowRecord(
-        env.workflowLease,
-        latest,
-        {
-          status: "cancelled",
-          activeRunId: runId,
-          failure: {
-            kind: "cancelled",
-            code: "workflow.cancelled",
-            message: result.stopReason ?? "manual_cancelled",
-          },
-          metadata: { finalizedFromRunEnd: true },
-        },
-      );
-      this.deliverWorkflowNotification(env.workflowRecord);
-      await env.workflowLease?.release();
-      env.workflowLease = undefined;
-      return;
-    }
-    if (result.state === "failed") {
-      env.workflowRecord = await mutateWorkflowRecord(
-        env.workflowLease,
-        latest,
-        {
-          status: "failed",
-          activeRunId: runId,
-          failure: {
-            kind: "runtime",
-            code: "workflow.runtime",
-            message: result.stopReason
-              ? `Run failed before workflow completed: ${result.stopReason}`
-              : "Run failed before workflow completed.",
-            metadata: {
-              stopReason: result.stopReason,
-              runFailure: result.failure,
-            },
-          },
-          metadata: { finalizedFromRunEnd: true },
-        },
-      );
-      this.deliverWorkflowNotification(env.workflowRecord);
-      await env.workflowLease?.release();
-      env.workflowLease = undefined;
-      return;
-    }
-    if (result.state === "completed") {
-      env.workflowRecord = await mutateWorkflowRecord(
-        env.workflowLease,
-        latest,
-        {
-          status: "failed",
-          activeRunId: runId,
-          failure: {
-            kind: "runtime",
-            code: "workflow.runtime",
-            message: "Run completed before workflow reached a terminal state.",
-          },
-          metadata: { finalizedFromRunEnd: true },
-        },
-      );
-      this.deliverWorkflowNotification(env.workflowRecord);
-      await env.workflowLease?.release();
-      env.workflowLease = undefined;
-    }
-  }
-
-  private async finalizeWorkflowRecordAfterSupervisorError(
-    env: PreparedHostRunEnvironment,
-    runId: RunId | undefined,
-    cause: unknown,
-  ): Promise<void> {
-    if (!env.workflowLease || !env.workflowRecord) return;
-    const latest = (await env.workflowLease.readFresh()) ?? env.workflowRecord;
-    if (latest.status === "waiting") {
-      this.deliverWorkflowNotification(latest);
-      await env.workflowLease?.release();
-      env.workflowLease = undefined;
-      env.workflowRecord = latest;
-      return;
-    }
-    if (isTerminalWorkflowRunStatus(latest.status)) {
-      this.deliverWorkflowNotification(latest);
-      await env.workflowLease?.release();
-      env.workflowLease = undefined;
-      env.workflowRecord = latest;
-      return;
-    }
-    const message =
-      cause instanceof Error
-        ? cause.message
-        : cause
-          ? String(cause)
-          : "unknown";
-    env.workflowRecord = await mutateWorkflowRecord(env.workflowLease, latest, {
-      status: "failed",
-      ...(runId ? { activeRunId: runId } : {}),
-      failure: {
-        kind: "runtime",
-        code: "workflow.runtime",
-        message: `Run supervisor failed before workflow completed: ${message}`,
-        metadata: { supervisorError: message },
-      },
-      metadata: { finalizedFromSupervisorError: true },
-    });
-    this.deliverWorkflowNotification(env.workflowRecord);
-    await env.workflowLease?.release();
-    env.workflowLease = undefined;
-  }
-
-  private deliverWorkflowNotification(record: WorkflowRunRecord): void {
-    if (
-      record.status !== "completed" &&
-      record.status !== "failed" &&
-      record.status !== "waiting"
-    ) {
-      return;
-    }
-    if (record.status === "waiting" && !record.wait) return;
-    const wait = record.wait;
-    const runId = record.activeRunId ?? record.parentRunId;
-    const source = {
-      kind: "workflow" as const,
-      id: record.id,
-      ...(runId ? { runId } : {}),
-      ...(record.sessionId ? { sessionId: record.sessionId } : {}),
-    };
-    const routeHint = {
-      ...(runId ? { parentRunId: String(runId) } : {}),
-      ...(record.sessionId ? { sessionId: record.sessionId } : {}),
-    };
-    if (record.status === "waiting") {
-      this.workflowNotifications.deliver({
-        source,
-        routeHint,
-        type: "waiting",
-        correlationId: [
-          record.id,
-          "waiting",
-          record.currentNodeId ?? "unknown",
-          wait?.id ?? wait?.approvalId ?? wait?.taskId ?? "unspecified",
-        ].join(":"),
-        payload: {
-          workflowId: record.id,
-          name: record.assetName,
-          summary: `Workflow ${record.assetName} is waiting.`,
-          wait: record.wait!,
-          metadata: {
-            assetName: record.assetName,
-            version: record.version,
-            packageHash: record.packageHash,
-            packageHashPolicyVersion: record.packageHashPolicyVersion,
-            currentNodeId: record.currentNodeId,
-            generation: record.generation,
-            status: record.status,
-          },
-        },
-      });
-      return;
-    }
-    if (record.status === "completed") {
-      this.workflowNotifications.deliver({
-        source,
-        routeHint,
-        type: "completed",
-        correlationId: `${record.id}:completed`,
-        payload: {
-          workflowId: record.id,
-          name: record.assetName,
-          summary: `Workflow ${record.assetName} completed.`,
-          metadata: {
-            assetName: record.assetName,
-            version: record.version,
-            packageHash: record.packageHash,
-            packageHashPolicyVersion: record.packageHashPolicyVersion,
-          },
-        },
-      });
-      return;
-    }
-    const failure: WorkflowRunFailure = record.failure ?? {
-      kind: "runtime",
-      code: "workflow.runtime",
-      message: "Workflow failed.",
-    };
-    this.workflowNotifications.deliver({
-      source,
-      routeHint,
-      type: "failed",
-      correlationId: `${record.id}:failed`,
-      payload: {
-        workflowId: record.id,
-        name: record.assetName,
-        summary: `Workflow ${record.assetName} failed.`,
-        error: {
-          code: failure.code.startsWith("workflow.")
-            ? failure.code
-            : `workflow.${failure.kind}`,
-          message: failure.message,
-          metadata: {
-            ...failure.metadata,
-            kind: failure.kind,
-            nodeId: failure.nodeId,
-          },
-        },
-      },
-    });
   }
 
   listTasks(input: ListRuntimeTasksInput): {
@@ -1309,61 +1057,42 @@ export class HostRuntime {
       }
     | { ok: false; error: ProtocolError }
   > {
-    let requestedSessionId: string | undefined;
-    try {
-      requestedSessionId = payload.sessionId
-        ? asSessionId(payload.sessionId)
-        : undefined;
-    } catch (error) {
-      return {
-        ok: false,
-        error: {
-          code: "invalid_payload",
-          message: error instanceof Error ? error.message : String(error),
-        },
-      };
-    }
-    const workflows: WorkflowRunSnapshot[] = [];
-    const invalidEntries: Array<{
-      path: string;
-      code: string;
-      reason: string;
-    }> = [];
-    const seenWorkflowRunIds = new Set<string>();
-    const addRecord = (record: WorkflowRunRecord) => {
-      if (requestedSessionId && record.sessionId !== requestedSessionId) return;
-      if (payload.status && record.status !== payload.status) return;
-      const id = String(record.id);
-      if (seenWorkflowRunIds.has(id)) return;
-      seenWorkflowRunIds.add(id);
-      workflows.push(workflowRunSnapshot(record));
-    };
-    const workspaceStore = new FileWorkflowStore({
-      rootDir: this.workflowStoreRootDir(),
-      createRoot: false,
-    });
-    const workspaceListed = workspaceStore.list();
-    invalidEntries.push(...workspaceListed.invalidEntries);
-    for (const record of workspaceListed.records) {
-      addRecord(record);
-    }
-    workflows.sort((left, right) =>
-      (right.updatedAt ?? right.createdAt).localeCompare(
-        left.updatedAt ?? left.createdAt,
-      ),
-    );
+    return this.workflows.list(payload);
+  }
+
+  private workflowControlExecutionPort(): WorkflowControlExecutionPort {
     return {
-      ok: true,
-      workflows:
-        payload.limit && payload.limit > 0
-          ? workflows.slice(0, payload.limit)
-          : workflows,
-      ...(invalidEntries.length > 0 ? { invalidEntries } : {}),
+      hasExecution: () => this.currentExecution !== null,
+      processActiveControls: async (workflowRunId) => {
+        if (
+          this.active?.workflowRunId === workflowRunId &&
+          this.active.processWorkflowControls
+        ) {
+          await this.active.processWorkflowControls();
+        }
+      },
+      resume: async (payload) => {
+        if (this.currentExecution) {
+          return {
+            ok: false,
+            error: {
+              code: "internal_error",
+              message: "another run is already active on this connection",
+            },
+          };
+        }
+        const execution = this.beginExecution();
+        try {
+          return await this.resumeWorkflowRunInner(payload);
+        } finally {
+          this.releaseUnstartedExecution(execution);
+        }
+      },
     };
   }
 
   workflowActorInbox(): ActorInbox {
-    return this.workflowNotifications;
+    return this.workflows.actorInbox();
   }
 
   async controlWorkflow(input: {
@@ -1388,54 +1117,13 @@ export class HostRuntime {
       }
     | { ok: false; error: ProtocolError }
   > {
-    const located = await this.findWorkflowRunRecord(
-      input.workflowRunId as WorkflowRunId,
-      input.sessionId,
-    );
-    if (!located.ok) return located;
-    const { record, store, sessionId } = located;
-    const accepted = await this.workflowControls.accept(
-      {
-        workflowRunId: record.id,
-        commandId: input.commandId,
-        idempotencyKey: input.idempotencyKey,
-        source: input.source,
-        authorization: {
-          workspaceId: this.opts.workspaceRoot,
-          sessionId,
-          workflowRunId: record.id,
-          allowedCommandKinds: [input.command.kind],
-        },
-        expected: {
-          generation:
-            input.expected?.generation ?? store.canonicalGeneration(record.id),
-          status: input.expected?.status ?? record.status,
-          ...(input.expected?.waitId
-            ? { waitId: input.expected.waitId }
-            : record.wait?.id
-              ? { waitId: record.wait.id }
-              : {}),
-        },
-        command: input.command,
-        createdAt: new Date().toISOString(),
-        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1_000).toISOString(),
-      },
-      { trustedSystemSource: input.source.kind === "system" },
-    );
-    if (accepted.status === "conflict") {
-      return {
-        ok: false,
-        error: {
-          code: "invalid_payload",
-          message: `Workflow control idempotency conflict: ${accepted.commandId}`,
-        },
-      };
-    }
-    return this.processAcceptedWorkflowControl(accepted.envelope);
+    return this.workflows.control(input, this.workflowControlExecutionPort());
   }
 
   async processAcceptedWorkflowControl(
-    envelope: WorkflowControlCommandEnvelope,
+    envelope: Parameters<
+      WorkflowRuntimeOperations["processAcceptedControl"]
+    >[0],
   ): Promise<
     | {
         ok: true;
@@ -1446,92 +1134,9 @@ export class HostRuntime {
       }
     | { ok: false; error: ProtocolError }
   > {
-    const located = await this.findWorkflowRunRecord(
-      envelope.workflowRunId,
-      envelope.authorization.sessionId,
-    );
-    if (!located.ok) return located;
-    const { record, store, sessionId } = located;
-    return this.workflowControlDispatcher.dispatch(
-      envelope.commandId,
-      async () => {
-        if (
-          this.active?.workflowRunId === record.id &&
-          this.active.processWorkflowControls
-        ) {
-          await this.active.processWorkflowControls();
-        }
-        const existingOutcome = await this.workflowControls.outcome(
-          record.id,
-          envelope.commandId,
-        );
-        if (existingOutcome) {
-          return {
-            ok: true,
-            status: existingOutcome.status,
-            commandId: existingOutcome.commandId,
-            code: existingOutcome.code,
-          };
-        }
-        const processor = new WorkflowControlCommandProcessor({
-          inbox: this.workflowControls,
-          store,
-          workspaceId: this.opts.workspaceRoot,
-          owner: workflowLeaseOwner(),
-          leaseTtlMs: WORKFLOW_LEASE_TTL_MS,
-        });
-        const processed = await processor.processNext(
-          record.id,
-          envelope.commandId,
-        );
-        if (processed.status === "dispatch_required") {
-          if (this.currentExecution) {
-            return {
-              ok: true,
-              status: "accepted",
-              commandId: processed.envelope.commandId,
-              code: "dispatch_waiting",
-            };
-          }
-          const execution = this.beginExecution();
-          try {
-            const resumed = await this.resumeWorkflowRunInner({
-              workflowRunId: record.id,
-              sessionId,
-            });
-            await processor.completeDispatch(processed.envelope, {
-              applied: resumed.ok,
-              code: resumed.ok ? "resume_dispatched" : resumed.error.code,
-              ...(!resumed.ok ? { message: resumed.error.message } : {}),
-            });
-            return resumed.ok
-              ? {
-                  ok: true,
-                  status: "applied",
-                  commandId: processed.envelope.commandId,
-                  code: "resume_dispatched",
-                  runId: resumed.runId,
-                }
-              : resumed;
-          } finally {
-            this.releaseUnstartedExecution(execution);
-          }
-        }
-        if (processed.status === "terminal") {
-          return {
-            ok: true,
-            status: processed.outcome.status,
-            commandId: processed.outcome.commandId,
-            code: processed.outcome.code,
-          };
-        }
-        return {
-          ok: true,
-          status: processed.status === "busy" ? "accepted" : processed.status,
-          commandId: envelope.commandId,
-          ...(processed.status === "busy" ? { code: "consumer_busy" } : {}),
-        };
-      },
+    return this.workflows.processAcceptedControl(
+      envelope,
+      this.workflowControlExecutionPort(),
     );
   }
 
@@ -1549,24 +1154,10 @@ export class HostRuntime {
       }
     | { ok: false; error: ProtocolError }
   > {
-    const located = await this.findWorkflowRunRecord(
-      input.workflowRunId as WorkflowRunId,
-      input.sessionId,
+    return this.workflows.processControlCommand(
+      input,
+      this.workflowControlExecutionPort(),
     );
-    if (!located.ok) return located;
-    const envelope = this.workflowControls
-      .snapshot(located.record.id)
-      .commands.find((candidate) => candidate.commandId === input.commandId);
-    if (!envelope) {
-      return {
-        ok: false,
-        error: {
-          code: "invalid_payload",
-          message: `Durable workflow control command was not found: ${input.commandId}`,
-        },
-      };
-    }
-    return this.processAcceptedWorkflowControl(envelope);
   }
 
   async resumeWorkflowRun(
@@ -1587,7 +1178,11 @@ export class HostRuntime {
     }
     const execution = this.beginExecution();
     try {
-      return await this.resumeWorkflowRunThroughControl(payload, source);
+      return await this.workflows.resumeThroughControl(
+        payload,
+        source,
+        (resumePayload) => this.resumeWorkflowRunInner(resumePayload),
+      );
     } finally {
       this.releaseUnstartedExecution(execution);
     }
@@ -1600,16 +1195,8 @@ export class HostRuntime {
     | { ok: true; runId: string; workflowRunId: string; sessionId?: string }
     | { ok: false; error: ProtocolError }
   > {
-    if (writer.workflowRunId !== payload.workflowRunId) {
-      return {
-        ok: false,
-        error: {
-          code: "invalid_payload",
-          message:
-            "Claimed workflow writer identity does not match the resume request.",
-        },
-      };
-    }
+    const claimed = this.workflows.validateClaimedWriter(payload, writer);
+    if (!claimed.ok) return claimed;
     if (this.currentExecution) {
       return {
         ok: false,
@@ -1625,98 +1212,6 @@ export class HostRuntime {
     } finally {
       this.releaseUnstartedExecution(execution);
     }
-  }
-
-  private async resumeWorkflowRunThroughControl(
-    payload: WorkflowResumeRequestPayload,
-    source: WorkflowControlSourceIdentity,
-  ): Promise<
-    | { ok: true; runId: string; workflowRunId: string; sessionId?: string }
-    | { ok: false; error: ProtocolError }
-  > {
-    const located = await this.findWorkflowRunRecord(
-      payload.workflowRunId as WorkflowRunId,
-      payload.sessionId,
-    );
-    if (!located.ok) return located;
-    const { record, store, sessionId } = located;
-    const idempotencyKey =
-      typeof payload.metadata?.controlIdempotencyKey === "string"
-        ? payload.metadata.controlIdempotencyKey
-        : `workflow-resume-${randomUUID()}`;
-    const accepted = await this.workflowControls.accept({
-      workflowRunId: record.id,
-      idempotencyKey,
-      source,
-      authorization: {
-        workspaceId: this.opts.workspaceRoot,
-        sessionId,
-        workflowRunId: record.id,
-        allowedCommandKinds: ["resume_request"],
-      },
-      expected: {
-        generation: store.canonicalGeneration(record.id),
-        status: record.status,
-        ...(record.wait?.id ? { waitId: record.wait.id } : {}),
-      },
-      command: {
-        kind: "resume_request",
-        ...(record.wait?.id ? { waitId: record.wait.id } : {}),
-      },
-      createdAt: new Date().toISOString(),
-      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1_000).toISOString(),
-    });
-    if (accepted.status === "conflict") {
-      return {
-        ok: false,
-        error: {
-          code: "invalid_payload",
-          message: `Workflow control idempotency conflict: ${accepted.commandId}`,
-        },
-      };
-    }
-    const processor = new WorkflowControlCommandProcessor({
-      inbox: this.workflowControls,
-      store,
-      workspaceId: this.opts.workspaceRoot,
-      owner: workflowLeaseOwner(),
-      leaseTtlMs: WORKFLOW_LEASE_TTL_MS,
-    });
-    const processed = await processor.processNext(
-      record.id,
-      accepted.envelope.commandId,
-    );
-    if (processed.status === "terminal") {
-      return {
-        ok: false,
-        error: {
-          code: "invalid_payload",
-          message:
-            processed.outcome.message ??
-            `Workflow control command ${processed.outcome.code}.`,
-        },
-      };
-    }
-    if (processed.status !== "dispatch_required") {
-      return {
-        ok: false,
-        error: {
-          code: "internal_error",
-          message: `Workflow control command is ${processed.status}.`,
-        },
-      };
-    }
-    const resumed = await this.resumeWorkflowRunInner({
-      ...payload,
-      workflowRunId: processed.envelope.workflowRunId,
-      sessionId,
-    });
-    await processor.completeDispatch(processed.envelope, {
-      applied: resumed.ok,
-      code: resumed.ok ? "resume_dispatched" : resumed.error.code,
-      ...(!resumed.ok ? { message: resumed.error.message } : {}),
-    });
-    return resumed;
   }
 
   private async prepareHostRunEnvironment(input: {
@@ -2127,7 +1622,7 @@ export class HostRuntime {
     const pinnedWorkflow = selectedWorkflow
       ? await pinWorkflowAssetPackage({
           asset: selectedWorkflow,
-          snapshotRoot: join(this.workflowStoreRootDir(), "package-snapshots"),
+          snapshotRoot: join(this.workflows.rootDir, "package-snapshots"),
         })
       : undefined;
     const workflowDefinition = input.workflowRecord
@@ -2182,10 +1677,7 @@ export class HostRuntime {
       };
     }
     const workflowStore = workflowDefinition
-      ? (input.workflowStore ??
-        new FileWorkflowStore({
-          rootDir: this.workflowStoreRootDir(),
-        }))
+      ? (input.workflowStore ?? this.workflows.createStore())
       : undefined;
     let workflowRecord = input.workflowRecord;
     let workflowLease = input.workflowLease;
@@ -2201,15 +1693,15 @@ export class HostRuntime {
         input.workflowWaitingInputMetadata !== undefined
       ) {
         workflowRollbackRecord = workflowRecord;
-        workflowRecord = await consumeWorkflowActorWaitingInput(
+        workflowRecord = await this.workflows.consumeWaitingInput(
           workflowLease,
           workflowRecord,
-          { metadata: input.workflowWaitingInputMetadata },
+          input.workflowWaitingInputMetadata,
         );
-        if (isTerminalWorkflowRunStatus(workflowRecord.status)) {
+        if (this.workflows.isTerminalStatus(workflowRecord.status)) {
           const terminalStatus = workflowRecord.status;
           const rollbackWorkflowRunId = workflowRollbackRecord.id;
-          workflowRecord = await compensateWorkflowRecord(
+          workflowRecord = await this.workflows.compensate(
             workflowLease,
             workflowRecord,
             workflowRollbackRecord,
@@ -2230,11 +1722,11 @@ export class HostRuntime {
             definition: workflowDefinition,
             workflowRunId: input.workflowRecord?.id ?? input.workflowRunId,
             initialState: input.workflowRecord
-              ? runtimeStateFromWorkflowRecord(input.workflowRecord)
+              ? this.workflows.runtimeState(input.workflowRecord)
               : undefined,
             resumeVerificationNodeIds:
               input.workflowRecord?.resume.verifyOnResume === true
-                ? completedWorkflowNodeIds(
+                ? this.workflows.completedNodeIds(
                     input.workflowRecord,
                     workflowDefinition,
                   )
@@ -2243,12 +1735,12 @@ export class HostRuntime {
               if (!workflowLease || !workflowRecord) return;
               const latestRecord =
                 (await workflowLease.readFresh()) ?? workflowRecord;
-              workflowRecord = await persistWorkflowProjectionSnapshot(
+              workflowRecord = await this.workflows.persistProjectionSnapshot(
                 workflowLease,
                 latestRecord,
                 snapshot,
               );
-              this.deliverWorkflowNotification(workflowRecord);
+              this.workflows.deliverNotification(workflowRecord);
             },
             workspaceRoot,
             sandbox: shellConfig?.sandbox,
@@ -2285,8 +1777,8 @@ export class HostRuntime {
           const acquiredLease = await workflowStore.acquireWriter(
             workflowRunId,
             {
-              owner: workflowLeaseOwner(),
-              ttlMs: WORKFLOW_LEASE_TTL_MS,
+              owner: this.workflows.leaseOwner(),
+              ttlMs: this.workflows.leaseTtlMs(),
             },
           );
           if (!acquiredLease) {
@@ -2340,7 +1832,7 @@ export class HostRuntime {
       }
     } catch (error) {
       if (workflowRollbackRecord && workflowStore) {
-        workflowRecord = await compensateWorkflowRecord(
+        workflowRecord = await this.workflows.compensate(
           workflowLease,
           workflowRecord ?? workflowRollbackRecord,
           workflowRollbackRecord,
@@ -2687,7 +2179,7 @@ export class HostRuntime {
     const executionAbort = execution.abortController;
     execution.bindSession(sessionId);
     const runCleanups: Array<() => void> = [];
-    const stopWorkflowLeaseRefresh = startWorkflowLeaseRefresh(
+    const stopWorkflowLeaseRefresh = this.workflows.startLeaseRefresh(
       env.workflowLease,
     );
     execution.addCleanup(async () => {
@@ -2722,14 +2214,14 @@ export class HostRuntime {
           workflowActorEpisodeMetadata(
             workflowActorEpisodePlan(env, { purpose: "main_agent" }),
           );
-        env.workflowRecord = await mutateWorkflowRecord(
+        env.workflowRecord = await this.workflows.mutate(
           env.workflowLease,
           env.workflowRecord,
           {
             activeRunId: runId as RunId,
             appendRunId: runId as RunId,
             parentRunId: env.workflowRecord.parentRunId ?? (runId as RunId),
-            evidenceRefs: appendWorkflowEvidenceRef(
+            evidenceRefs: this.workflows.appendEvidenceRef(
               env.workflowRecord.evidenceRefs,
               { kind: "run", ref: runId },
             ),
@@ -2773,27 +2265,13 @@ export class HostRuntime {
                   !env.workflowRecord
                 )
                   return;
-                const processor = new WorkflowControlCommandProcessor({
-                  inbox: this.workflowControls,
+                env.workflowRecord = await this.workflows.processLiveControls({
                   store: env.workflowStore,
                   writer: env.workflowLease,
-                  workspaceId: this.opts.workspaceRoot,
+                  record: env.workflowRecord,
+                  cancel: () =>
+                    run.cancel({ reason: "workflow_control_cancel" }),
                 });
-                const result = await processor.processNext(
-                  env.workflowRecord.id,
-                );
-                if (
-                  result.status === "terminal" &&
-                  result.outcome.status === "applied" &&
-                  result.outcome.code === "applied" &&
-                  env.workflowRecord.status !== "cancelled"
-                ) {
-                  const fresh = await env.workflowLease.readFresh();
-                  if (fresh) env.workflowRecord = fresh;
-                }
-                if (env.workflowRecord.status === "cancelled") {
-                  run.cancel({ reason: "workflow_control_cancel" });
-                }
               },
             }
           : {}),
@@ -2916,11 +2394,13 @@ export class HostRuntime {
                 message: outcome.decision.message,
               }
             : undefined;
-        await this.finalizeWorkflowRecordAfterRun(
-          env,
+        const finalized = await this.workflows.finalizeAfterRun(
+          { record: env.workflowRecord, lease: env.workflowLease },
           lastRunId as RunId,
           outcome.result,
         );
+        env.workflowRecord = finalized.record;
+        env.workflowLease = finalized.lease;
         this.opts.emit({
           envelope: "event",
           id: nextMessageId("evt"),
@@ -2948,22 +2428,28 @@ export class HostRuntime {
           code: "internal_error",
           message,
         };
-        return this.finalizeWorkflowRecordAfterSupervisorError(
-          env,
-          lastRunId ? (lastRunId as RunId) : undefined,
-          err,
-        ).finally(() => {
-          this.opts.emit({
-            envelope: "event",
-            id: nextMessageId("evt"),
-            kind: "run.failed",
-            timestamp: nowIso(),
-            payload: {
-              runId: lastRunId,
-              failure,
-            },
+        return this.workflows
+          .finalizeAfterSupervisorError(
+            { record: env.workflowRecord, lease: env.workflowLease },
+            lastRunId ? (lastRunId as RunId) : undefined,
+            err,
+          )
+          .then((finalized) => {
+            env.workflowRecord = finalized.record;
+            env.workflowLease = finalized.lease;
+          })
+          .finally(() => {
+            this.opts.emit({
+              envelope: "event",
+              id: nextMessageId("evt"),
+              kind: "run.failed",
+              timestamp: nowIso(),
+              payload: {
+                runId: lastRunId,
+                failure,
+              },
+            });
           });
-        });
       })
       .finally(async () => {
         await execution.disposeResources();
@@ -3000,15 +2486,19 @@ export class HostRuntime {
     if (!latest) return;
     const episode = workflowEpisodeMetadataFromRun(run);
     const usage = run.usage();
-    env.workflowRecord = await mutateWorkflowRecord(env.workflowLease, latest, {
-      metadata: appendWorkflowEpisodeUsage(latest.metadata, {
-        runId: run.record.id,
-        stopReason: result.stopReason,
-        state: result.state,
-        ...(episode ? { episode } : {}),
-        usage,
-      }),
-    });
+    env.workflowRecord = await this.workflows.mutate(
+      env.workflowLease,
+      latest,
+      {
+        metadata: this.workflows.appendEpisodeUsage(latest.metadata, {
+          runId: run.record.id,
+          stopReason: result.stopReason,
+          state: result.state,
+          ...(episode ? { episode } : {}),
+          usage: usage as unknown as Record<string, unknown>,
+        }),
+      },
+    );
   }
 
   private async resumeRunInner(
@@ -3274,14 +2764,14 @@ export class HostRuntime {
     | { ok: true; runId: string; workflowRunId: string; sessionId?: string }
     | { ok: false; error: ProtocolError }
   > {
-    const located = await this.findWorkflowRunRecord(
+    const located = await this.workflows.findRecord(
       payload.workflowRunId as WorkflowRunId,
       payload.sessionId,
     );
     if (!located.ok) return located;
-    let { record } = located;
-    const { store, sessionId } = located;
-    if (isTerminalWorkflowRunStatus(record.status)) {
+    let { record } = located.location;
+    const { store, sessionId } = located.location;
+    if (this.workflows.isTerminalStatus(record.status)) {
       return {
         ok: false,
         error: {
@@ -3293,8 +2783,8 @@ export class HostRuntime {
     const lease =
       claimedWriter ??
       (await store.acquireWriter(record.id, {
-        owner: workflowLeaseOwner(),
-        ttlMs: WORKFLOW_LEASE_TTL_MS,
+        owner: this.workflows.leaseOwner(),
+        ttlMs: this.workflows.leaseTtlMs(),
       }));
     if (!lease) {
       return {
@@ -3350,7 +2840,7 @@ export class HostRuntime {
       workflowLease: lease,
       workflowWaitingInputMetadata:
         record.status === "waiting"
-          ? workflowWaitingInputMetadata(record, payload.metadata)
+          ? this.workflows.waitingInputMetadata(record, payload.metadata)
           : undefined,
       runMetadata: {
         resumedWorkflowRunId: record.id,
@@ -3462,7 +2952,7 @@ export class HostRuntime {
     if (!started.ok) {
       if (record.status === "waiting") {
         const current = (await lease.readFresh()) ?? record;
-        await compensateWorkflowRecord(
+        await this.workflows.compensate(
           lease,
           current,
           record,
@@ -3477,66 +2967,6 @@ export class HostRuntime {
       runId: started.runId,
       workflowRunId: record.id,
       sessionId,
-    };
-  }
-
-  private async findWorkflowRunRecord(
-    workflowRunId: WorkflowRunId,
-    sessionId?: string,
-  ): Promise<
-    | {
-        ok: true;
-        record: WorkflowRunRecord;
-        store: FileWorkflowStore;
-        sessionId: string;
-      }
-    | { ok: false; error: ProtocolError }
-  > {
-    let requestedSessionId: string | undefined;
-    try {
-      assertSafeWorkflowRunId(workflowRunId);
-      requestedSessionId = sessionId ? asSessionId(sessionId) : undefined;
-    } catch (error) {
-      return {
-        ok: false,
-        error: {
-          code: "invalid_payload",
-          message: error instanceof Error ? error.message : String(error),
-        },
-      };
-    }
-    const workspaceStore = new FileWorkflowStore({
-      rootDir: this.workflowStoreRootDir(),
-      createRoot: false,
-    });
-    const workspaceRecord = workspaceStore.get(workflowRunId);
-    if (
-      !workspaceRecord ||
-      (requestedSessionId && workspaceRecord.sessionId !== requestedSessionId)
-    ) {
-      return {
-        ok: false,
-        error: {
-          code: "run_not_found",
-          message: `Workflow run not found: ${workflowRunId}`,
-        },
-      };
-    }
-    const locatedSessionId = workspaceRecord.sessionId ?? requestedSessionId;
-    if (!locatedSessionId) {
-      return {
-        ok: false,
-        error: {
-          code: "invalid_payload",
-          message: `Workflow run ${workflowRunId} does not record a sessionId.`,
-        },
-      };
-    }
-    return {
-      ok: true,
-      record: workspaceRecord,
-      store: workspaceStore,
-      sessionId: locatedSessionId,
     };
   }
 
@@ -6524,38 +5954,6 @@ function objectField(
   return value as Record<string, unknown>;
 }
 
-function runtimeStateFromWorkflowRecord(
-  record: WorkflowRunRecord,
-): WorkflowRuntimeState {
-  return {
-    status:
-      record.status === "completed"
-        ? "completed"
-        : record.status === "failed"
-          ? "failed"
-          : "running",
-    ...(record.currentNodeId ? { currentNodeId: record.currentNodeId } : {}),
-    attempts: { ...record.attempts },
-    transitionLog: record.transitionLog.map((entry) => ({
-      ...entry,
-      verdict: cloneJsonLike(entry.verdict),
-      decision: cloneJsonLike(entry.decision),
-    })),
-    ...(record.parallelBranches
-      ? { parallelBranches: cloneJsonLike(record.parallelBranches) }
-      : {}),
-    ...(record.failure
-      ? {
-          failure: {
-            reason: record.failure.message,
-            nodeId: record.failure.nodeId,
-            metadata: record.failure.metadata,
-          },
-        }
-      : {}),
-  };
-}
-
 interface WorkflowActorEpisodePlan {
   model: ModelAdapter;
   modelRef: string;
@@ -6709,72 +6107,6 @@ function workflowEpisodeMetadataFromRun(
   return isPlainRecord(raw) ? cloneJsonLike(raw) : undefined;
 }
 
-function appendWorkflowEpisodeUsage(
-  metadata: Record<string, unknown>,
-  entry: {
-    runId: RunId;
-    state: RunResult["state"];
-    stopReason?: RunResult["stopReason"];
-    episode?: Record<string, unknown>;
-    usage: ReturnType<ReturnType<typeof createRun>["usage"]>;
-  },
-): Record<string, unknown> {
-  const entries = Array.isArray(metadata.workflowEpisodeUsage)
-    ? metadata.workflowEpisodeUsage.filter(isPlainRecord).map(cloneJsonLike)
-    : [];
-  const next = [
-    ...entries,
-    {
-      at: new Date().toISOString(),
-      runId: entry.runId,
-      state: entry.state,
-      ...(entry.stopReason ? { stopReason: entry.stopReason } : {}),
-      ...(entry.episode ? { episode: cloneJsonLike(entry.episode) } : {}),
-      usage: cloneJsonLike(entry.usage),
-    },
-  ];
-  return {
-    ...metadata,
-    workflowEpisodeUsage: next,
-    workflowUsage: summarizeWorkflowEpisodeUsage(next),
-  };
-}
-
-function summarizeWorkflowEpisodeUsage(
-  entries: readonly Record<string, unknown>[],
-): Record<string, unknown> {
-  let modelCalls = 0;
-  let toolCalls = 0;
-  let inputTokens = 0;
-  let outputTokens = 0;
-  let totalTokens = 0;
-  let cachedTokens = 0;
-  let costUsd = 0;
-  for (const entry of entries) {
-    const usage = isPlainRecord(entry.usage) ? entry.usage : {};
-    modelCalls += numericField(usage, "modelCalls");
-    toolCalls += numericField(usage, "toolCalls");
-    costUsd += numericField(usage, "costUsd");
-    const tokens = isPlainRecord(usage.tokens) ? usage.tokens : {};
-    inputTokens += numericField(tokens, "input");
-    outputTokens += numericField(tokens, "output");
-    totalTokens += numericField(tokens, "total");
-    cachedTokens += numericField(tokens, "cached");
-  }
-  return {
-    episodes: entries.length,
-    modelCalls,
-    toolCalls,
-    tokens: {
-      input: inputTokens,
-      output: outputTokens,
-      total: totalTokens,
-      cached: cachedTokens,
-    },
-    costUsd,
-  };
-}
-
 function resolveWorkflowEpisodeMaxSteps(
   profile: AgentProfile,
   runBudget: RunBudget | undefined,
@@ -6824,11 +6156,6 @@ function workflowModelTiers(
   );
 }
 
-function numericField(record: Record<string, unknown>, key: string): number {
-  const value = record[key];
-  return typeof value === "number" && Number.isFinite(value) ? value : 0;
-}
-
 function workflowEpisodeAllowedTools(
   record: WorkflowRunRecord | undefined,
 ): { nodeId: string; normalized: string[] } | undefined {
@@ -6844,482 +6171,6 @@ function workflowEpisodeAllowedTools(
     nodeId: node.id,
     normalized: [...new Set(node.tools)],
   };
-}
-
-// Actor-owned resume boundary for P3 input waits. The actor consumes the
-// external input event before it starts the next transient worker run.
-function workflowWaitingInputMetadata(
-  record: WorkflowRunRecord,
-  fallback: Record<string, unknown> | undefined,
-): Record<string, unknown> {
-  const staged = record.metadata.pendingWorkflowControlInput;
-  if (!isPlainRecord(staged) || typeof staged.value !== "string") {
-    return fallback ?? {};
-  }
-  return {
-    ...(fallback ?? {}),
-    workflowControlInput: {
-      value: staged.value,
-      commandId:
-        typeof staged.commandId === "string" ? staged.commandId : undefined,
-      waitId: typeof staged.waitId === "string" ? staged.waitId : undefined,
-      source: isPlainRecord(staged.source) ? staged.source : undefined,
-    },
-  };
-}
-
-async function consumeWorkflowActorWaitingInput(
-  writer: WorkflowLeaseBoundWriter | undefined,
-  record: WorkflowRunRecord,
-  input: { metadata?: Record<string, unknown> },
-): Promise<WorkflowRunRecord> {
-  if (!writer)
-    throw new Error(`Workflow run ${record.id} has no lease-bound writer.`);
-  if (record.status !== "waiting") return record;
-  if (!record.wait) {
-    throw new Error(`Workflow run ${record.id} is waiting without wait state.`);
-  }
-  if (record.wait.kind !== "input") {
-    throw new Error(
-      `Workflow run ${record.id} is waiting for ${record.wait.kind}; workflow.resume can only consume input waits in P3 Step 3.`,
-    );
-  }
-  if (!record.currentNodeId) {
-    throw new Error(
-      `Workflow run ${record.id} is waiting without a current node.`,
-    );
-  }
-  const node = record.definitionSnapshot.nodes.find(
-    (candidate) => candidate.id === record.currentNodeId,
-  );
-  if (!node || node.execute !== "human") {
-    throw new Error(
-      `Workflow run ${record.id} input wait is not positioned on a human node.`,
-    );
-  }
-  const attempt = record.attempts[node.id] ?? 1;
-  const verdict = {
-    status: "passed" as const,
-    reason: "human_input_received",
-    metadata: {
-      wait: record.wait,
-      resumeMetadata: input.metadata ?? {},
-    },
-  };
-  const advanced = advanceWorkflowState({
-    definition: record.definitionSnapshot,
-    state: runtimeStateFromWorkflowRecord(record),
-    verdict,
-  });
-  const at = new Date().toISOString();
-  const evidenceRef = {
-    kind: "fact" as const,
-    ref: `workflow-input:${record.id}:${at}`,
-    nodeId: node.id,
-    metadata: {
-      wait: record.wait,
-      resumeMetadata: input.metadata ?? {},
-    },
-  };
-  const status = workflowStatusFromRuntimeState(advanced.state);
-  const patch = {
-    status,
-    clearWait: true,
-    ...(advanced.state.currentNodeId
-      ? { currentNodeId: advanced.state.currentNodeId }
-      : {}),
-    attempts: advanced.state.attempts,
-    evidenceRefs: appendWorkflowEvidenceRef(record.evidenceRefs, evidenceRef),
-    verdictLog: [
-      ...record.verdictLog,
-      {
-        at,
-        nodeId: node.id,
-        attempt,
-        verdict,
-        evidenceRefs: [evidenceRef],
-      },
-    ],
-    transitionLog: advanced.state.transitionLog,
-    metadata: {
-      resumedFromWait: true,
-      consumedWaitKind: record.wait.kind,
-      consumedWaitNodeId: node.id,
-      pendingWorkflowControlInput: null,
-    },
-    ...(advanced.state.failure
-      ? {
-          failure: {
-            kind: "verdict" as const,
-            code: "workflow.verdict",
-            message: advanced.state.failure.reason,
-            ...(advanced.state.failure.nodeId
-              ? { nodeId: advanced.state.failure.nodeId }
-              : {}),
-            ...(advanced.state.failure.metadata
-              ? { metadata: advanced.state.failure.metadata }
-              : {}),
-          },
-        }
-      : {}),
-  };
-  return writer.mutate({
-    expectedRevision: record.recordRevision,
-    patch,
-    event: {
-      at,
-      type: "input",
-      workflowRunId: record.id,
-      parentRunId: record.parentRunId,
-      status,
-      metadata: {
-        wait: record.wait,
-        nodeId: node.id,
-        decision: advanced.decision,
-        resumeMetadata: input.metadata ?? {},
-      },
-    },
-  });
-}
-
-function workflowStatusFromRuntimeState(
-  state: WorkflowRuntimeState,
-): WorkflowRunStatus {
-  if (state.status === "completed") return "completed";
-  if (state.status === "failed") return "failed";
-  return "running";
-}
-
-async function mutateWorkflowRecord(
-  writer: WorkflowLeaseBoundWriter | undefined,
-  record: WorkflowRunRecord,
-  patch: Parameters<WorkflowLeaseBoundWriter["mutate"]>[0]["patch"],
-  eventType?: Parameters<
-    WorkflowLeaseBoundWriter["mutate"]
-  >[0]["event"]["type"],
-): Promise<WorkflowRunRecord> {
-  if (!writer)
-    throw new Error(`Workflow run ${record.id} has no lease-bound writer.`);
-  const status = patch.status ?? record.status;
-  const type =
-    eventType ??
-    (status === "completed"
-      ? "completed"
-      : status === "failed"
-        ? "failed"
-        : status === "cancelled"
-          ? "cancelled"
-          : status === "waiting"
-            ? "waiting"
-            : "updated");
-  return writer.mutate({
-    expectedRevision: record.recordRevision,
-    patch,
-    event: {
-      at: patch.now?.() ?? new Date().toISOString(),
-      type,
-      workflowRunId: record.id,
-      parentRunId: record.parentRunId,
-      status,
-      metadata: {
-        currentNodeId: patch.currentNodeId,
-        wait: patch.wait,
-        failure: patch.failure,
-      },
-    },
-  });
-}
-
-async function compensateWorkflowRecord(
-  writer: WorkflowLeaseBoundWriter | undefined,
-  current: WorkflowRunRecord,
-  prior: WorkflowRunRecord,
-  reason: string,
-): Promise<WorkflowRunRecord> {
-  if (!writer)
-    throw new Error(`Workflow run ${prior.id} has no lease-bound writer.`);
-  const at = new Date().toISOString();
-  return writer.compensate({
-    expectedRevision: current.recordRevision,
-    patch: {
-      status: prior.status,
-      ...(prior.currentNodeId ? { currentNodeId: prior.currentNodeId } : {}),
-      ...(prior.wait ? { wait: prior.wait } : { clearWait: true }),
-      attempts: prior.attempts,
-      parallelBranches: prior.parallelBranches,
-      evidenceRefs: prior.evidenceRefs,
-      verdictLog: prior.verdictLog,
-      transitionLog: prior.transitionLog,
-      ...(prior.failure ? { failure: prior.failure } : { clearFailure: true }),
-      metadata: {
-        compensationReason: reason,
-        compensatesRevision: current.recordRevision,
-      },
-      now: () => at,
-    },
-    event: {
-      at,
-      type: prior.status === "waiting" ? "waiting" : "updated",
-      workflowRunId: prior.id,
-      parentRunId: prior.parentRunId,
-      status: prior.status,
-      metadata: {
-        compensation: true,
-        reason,
-        compensatesRevision: current.recordRevision,
-      },
-    },
-  });
-}
-
-function completedWorkflowNodeIds(
-  record: WorkflowRunRecord,
-  definition: WorkflowExecutableDefinition,
-): string[] {
-  const currentNodeId = record.currentNodeId;
-  const verifierNodeIds = new Set(
-    definition.nodes
-      .filter((node) => (node.verify?.length ?? 0) > 0)
-      .map((node) => node.id),
-  );
-  const latestVerifierVerdicts = new Map<string, WorkflowNodeVerdictLogEntry>();
-  for (const entry of record.verdictLog) {
-    if (entry.nodeId === currentNodeId) continue;
-    if (!verifierNodeIds.has(entry.nodeId)) continue;
-    latestVerifierVerdicts.set(entry.nodeId, entry);
-  }
-  return definition.nodes
-    .map((node) => node.id)
-    .filter(
-      (nodeId) =>
-        latestVerifierVerdicts.get(nodeId)?.verdict.status === "passed",
-    );
-}
-
-function appendWorkflowEvidenceRef(
-  refs: readonly WorkflowEvidenceRef[],
-  ref: WorkflowEvidenceRef,
-): WorkflowEvidenceRef[] {
-  if (
-    refs.some(
-      (existing) =>
-        existing.kind === ref.kind &&
-        existing.ref === ref.ref &&
-        existing.nodeId === ref.nodeId &&
-        existing.verifierId === ref.verifierId,
-    )
-  ) {
-    return refs.map((existing) => ({ ...existing }));
-  }
-  return [...refs.map((existing) => ({ ...existing })), { ...ref }];
-}
-
-function workflowRunSnapshot(record: WorkflowRunRecord): WorkflowRunSnapshot {
-  return {
-    id: record.id,
-    generation: record.generation,
-    recordRevision: record.recordRevision,
-    ...(record.sessionId ? { sessionId: record.sessionId } : {}),
-    status: record.status,
-    assetName: record.assetName,
-    layer: record.layer,
-    ...(record.version ? { version: record.version } : {}),
-    packageHash: record.packageHash,
-    packageHashPolicyVersion: record.packageHashPolicyVersion,
-    ...(record.activeRunId ? { activeRunId: record.activeRunId } : {}),
-    runIds: record.runIds.map(String),
-    ...(record.currentNodeId ? { currentNodeId: record.currentNodeId } : {}),
-    attempts: { ...record.attempts },
-    ...(record.verdictLog.length > 0
-      ? {
-          latestVerdict: (() => {
-            const latest = record.verdictLog[record.verdictLog.length - 1]!;
-            return {
-              nodeId: latest.nodeId,
-              attempt: latest.attempt,
-              verdict: cloneJsonLike(latest.verdict) as Record<string, unknown>,
-              ...(latest.at ? { at: latest.at } : {}),
-            };
-          })(),
-        }
-      : {}),
-    ...(record.wait
-      ? {
-          wait: {
-            ...record.wait,
-            metadata: record.wait.metadata
-              ? { ...record.wait.metadata }
-              : undefined,
-          },
-        }
-      : {}),
-    ...(record.failure
-      ? {
-          failure: {
-            ...record.failure,
-            metadata: record.failure.metadata
-              ? { ...record.failure.metadata }
-              : undefined,
-          },
-        }
-      : {}),
-    resume: { ...record.resume },
-    ...(record.authorizationSnapshot
-      ? {
-          // Project only the presence + policy summary. The confidential path
-          // list and target path stay server-side (re-applied from the record
-          // on resume) so they are not broadcast in every list row.
-          authorizationSnapshot: {
-            hasTargetPath: Boolean(record.authorizationSnapshot.targetPath),
-            hasConfidentialPaths:
-              record.authorizationSnapshot.confidentialPaths.length > 0,
-            confidentialDefaults:
-              record.authorizationSnapshot.confidentialDefaults,
-            accessMode: record.authorizationSnapshot.accessMode,
-            backgroundTasks: record.authorizationSnapshot.backgroundTasks,
-          },
-        }
-      : {}),
-    createdAt: record.createdAt,
-    ...(record.updatedAt ? { updatedAt: record.updatedAt } : {}),
-    ...(record.completedAt ? { completedAt: record.completedAt } : {}),
-    metadata: { ...record.metadata },
-  };
-}
-
-async function persistWorkflowProjectionSnapshot(
-  writer: WorkflowLeaseBoundWriter,
-  record: WorkflowRunRecord,
-  snapshot: WorkflowProjectionStateSnapshot,
-): Promise<WorkflowRunRecord> {
-  if (isTerminalWorkflowRunStatus(record.status)) return record;
-  const state = snapshot.state;
-  const verdictLog =
-    snapshot.verdict && snapshot.nodeId && snapshot.attempt !== undefined
-      ? [
-          ...record.verdictLog,
-          {
-            at: new Date().toISOString(),
-            nodeId: snapshot.nodeId,
-            attempt: snapshot.attempt,
-            verdict: cloneJsonLike(snapshot.verdict),
-            evidenceRefs: snapshot.evidenceRefs?.map((ref) => ({
-              ...ref,
-              metadata: ref.metadata ? { ...ref.metadata } : undefined,
-            })),
-          },
-        ]
-      : record.verdictLog;
-  const evidenceRefs =
-    snapshot.evidenceRefs && snapshot.evidenceRefs.length > 0
-      ? snapshot.evidenceRefs.reduce(
-          (refs, ref) => appendWorkflowEvidenceRef(refs, ref),
-          record.evidenceRefs,
-        )
-      : record.evidenceRefs;
-  const status =
-    snapshot.phase === "waiting"
-      ? "waiting"
-      : (snapshot.terminalStatus ??
-        (state.status === "completed"
-          ? "completed"
-          : state.status === "failed"
-            ? "failed"
-            : "running"));
-  const failure = snapshot.failure
-    ? ({
-        kind: snapshot.failure.kind,
-        code: snapshot.failure.code,
-        message: snapshot.failure.message,
-        nodeId: snapshot.nodeId,
-        metadata: snapshot.failure.metadata,
-      } satisfies WorkflowRunFailure)
-    : undefined;
-  const projectionEpisodeMetadata = workflowProjectionEpisodeMetadata(
-    record,
-    snapshot,
-  );
-  const projectionAllowedTools = workflowProjectionAllowedTools(snapshot);
-  return mutateWorkflowRecord(writer, record, {
-    status,
-    currentNodeId: state.currentNodeId,
-    ...(snapshot.phase === "waiting" && snapshot.wait
-      ? { wait: snapshot.wait }
-      : record.wait
-        ? { clearWait: true }
-        : {}),
-    attempts: state.attempts,
-    ...(state.parallelBranches
-      ? { parallelBranches: cloneJsonLike(state.parallelBranches) }
-      : {}),
-    evidenceRefs,
-    verdictLog,
-    transitionLog: state.transitionLog,
-    ...(failure ? { failure } : {}),
-    metadata: {
-      lastProjectionPhase: snapshot.phase,
-      ...(projectionEpisodeMetadata
-        ? { workflowEpisode: projectionEpisodeMetadata }
-        : {}),
-      ...(projectionAllowedTools
-        ? { episodeAllowedTools: projectionAllowedTools.normalized }
-        : {}),
-      ...(snapshot.metadata ? { projectionMetadata: snapshot.metadata } : {}),
-    },
-  });
-}
-
-function workflowProjectionEpisodeMetadata(
-  record: WorkflowRunRecord,
-  snapshot: WorkflowProjectionStateSnapshot,
-): Record<string, unknown> | undefined {
-  const node = workflowProjectionModelNode(snapshot);
-  if (!node) return undefined;
-  const previous = isPlainRecord(record.metadata.workflowEpisode)
-    ? cloneJsonLike(record.metadata.workflowEpisode)
-    : {};
-  const nodeModelRef = workflowNodeModelRef(snapshot.definition, node);
-  return {
-    ...previous,
-    ...(nodeModelRef ? { modelRef: nodeModelRef } : {}),
-    nodeId: node.id,
-    attempt: snapshot.attempt ?? snapshot.state.attempts[node.id] ?? 1,
-    ...(node.runBudget ? { runBudget: { ...node.runBudget } } : {}),
-  };
-}
-
-function workflowProjectionAllowedTools(
-  snapshot: WorkflowProjectionStateSnapshot,
-): { nodeId: string; normalized: string[] } | undefined {
-  const node = workflowProjectionModelNode(snapshot);
-  if (!node?.tools || node.tools.length === 0) return undefined;
-  return {
-    nodeId: node.id,
-    normalized: [...new Set(node.tools)],
-  };
-}
-
-function workflowProjectionModelNode(
-  snapshot: WorkflowProjectionStateSnapshot,
-): WorkflowNodeDefinition | undefined {
-  if (snapshot.phase !== "node_started" || !snapshot.nodeId) return undefined;
-  const node = snapshot.definition.nodes.find(
-    (candidate) => candidate.id === snapshot.nodeId,
-  );
-  if (!node || (node.execute !== undefined && node.execute !== "model")) {
-    return undefined;
-  }
-  return node;
-}
-
-function isTerminalWorkflowRunStatus(status: WorkflowRunStatus): boolean {
-  return (
-    status === "completed" || status === "failed" || status === "cancelled"
-  );
-}
-
-function workflowLeaseOwner(): string {
-  return `host:${process.pid}`;
 }
 
 function cloneJsonLike<T>(value: T): T {
@@ -7396,16 +6247,4 @@ function extractPartialObservations(
   }
 
   return observations.slice(-maxObservations);
-}
-
-function startWorkflowLeaseRefresh(
-  lease: WorkflowLeaseBoundWriter | undefined,
-): () => void {
-  if (!lease) return () => {};
-  const refreshMs = Math.max(1_000, Math.floor(WORKFLOW_LEASE_TTL_MS / 2));
-  const timer = setInterval(() => {
-    void lease.refresh(WORKFLOW_LEASE_TTL_MS).catch(() => {});
-  }, refreshMs);
-  timer.unref?.();
-  return () => clearInterval(timer);
 }

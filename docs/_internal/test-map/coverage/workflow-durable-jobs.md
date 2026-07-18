@@ -16,6 +16,15 @@
 
 ## Current Evidence
 
+- 2026-07-18 Host ownership consolidation: `WorkflowRuntimeOperations` now
+  owns Host-side canonical lookup/list projection, notification delivery,
+  durable control processing, resume claims, terminal finalization, and
+  journal-bound mutation/projection helpers. Direct owner tests cover shared
+  roots/inbox/list projection and durable accept/dispatch/idempotency; existing
+  Host, Agent Runtime, and Server Runtime Workflow suites remain the behavior
+  backstop. No journal, notification, command, outcome, or protocol shape
+  changed.
+
 - 2026-07-17 canonical package identity convergence: Workflow mutation records
   require generation/revision, source layer, v2 package hash/policy, executable
   snapshot ref, and a matching snapshot-backed definition. Journal replay

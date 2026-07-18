@@ -11,6 +11,15 @@ See also [../maps/safety/approvals.md](../maps/safety/approvals.md) and [../maps
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-18
+- Scope: Host Workflow durable ownership moved behind the existing runtime
+  facade. `workflow.list`, `workflow.resume`, and `workflow.control` request,
+  response, snapshot, attribution, and error shapes are unchanged.
+- Read: protocol Workflow unions, Host facade/delegate methods, owner tests,
+  and focused protocol coverage.
+- Tests: focused Host protocol/Workflow suites passed.
+
+- Status: Verified
 - Date: 2026-07-17T20:55:00+0800
 - Scope: `CapabilitySkillSummary` requires policy-2 package identity and no
   longer exposes optional Markdown `contentHash`; Host schema and producer use

@@ -11,6 +11,17 @@ See [session-store.md](session-store.md) and [../runtime/context-compaction.md](
 
 - Status: Verified
 - Date: 2026-07-18
+- Scope: Host Workflow record lookup, durable resume-command processing,
+  claimed-writer validation, waiting-input compensation, and canonical store
+  ownership moved to `WorkflowRuntimeOperations`. HostRuntime retains the live
+  resume episode envelope and uses the same persisted job session and pinned
+  definition.
+- Read: Workflow owner/HostRuntime resume seam, Agent Runtime journal/control,
+  job-session contracts, and focused resume tests.
+- Tests: owner-level and focused Host/Agent Runtime Workflow suites passed.
+
+- Status: Verified
+- Date: 2026-07-18
 - Scope: resume-time orphaned in-process Task detection/failure moved intact
   from `HostRuntime` into the Host Task operations owner. Resume still fails
   only pending/running records without a current-process live runner before

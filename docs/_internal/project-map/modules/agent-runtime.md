@@ -9,6 +9,16 @@ See also [../maps/capabilities/agents.md](../maps/capabilities/agents.md), [../m
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-18
+- Scope: Host Workflow ownership consolidation continues to consume Agent
+  Runtime's existing journal store, lease-bound writer, actor inbox, and
+  durable control processor as ports. Their formats, fencing, idempotency, and
+  state-transition semantics are unchanged.
+- Read: Workflow store/journal/control/notification sources, new Host owner,
+  and focused Agent Runtime/Host tests.
+- Tests: focused Agent Runtime and Host Workflow suites passed.
+
+- Status: Verified
 - Date: 2026-07-17T23:37:17+0800
 - Scope: Agent Runtime imports default prompt reference implementations from
   Core `/internal`; Agent/Task/Todo/Workflow contracts are unchanged.

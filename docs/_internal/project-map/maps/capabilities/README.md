@@ -9,6 +9,16 @@ cron, shell/task tools, and capability inspection.
 
 - Status: Verified
 - Date: 2026-07-18
+- Scope: checked Host Workflow durable owner extraction. Workflow assets and
+  capability inspection remain live inventory, while durable records remain
+  workspace runtime state; no `workflow_start`, capability field, or tool
+  surface changed.
+- Read: Workflow capability discovery, Host owner/runtime seam, and focused
+  capability/protocol tests.
+- Tests: focused Host Workflow/protocol suites passed.
+
+- Status: Verified
+- Date: 2026-07-18
 - Scope: Host Task protocol/control and automation-root ownership moved into
   `TaskRuntimeOperations`; capability snapshots still read the same canonical
   `.sparkwright/tasks` store and expose the same Task inventory.

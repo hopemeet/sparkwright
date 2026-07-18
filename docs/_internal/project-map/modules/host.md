@@ -13,6 +13,20 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 
 - Status: Verified
 - Date: 2026-07-18
+- Scope: `runtime/workflow-runtime-operations.ts` is the single Host owner for
+  Workflow canonical roots/store lookup, list snapshots, actor notification
+  delivery, durable control acceptance/dispatch/outcomes, resume claims,
+  terminal finalization, and record mutation/compensation/projection helpers.
+  HostRuntime supplies only a narrow live-execution resume/control port and
+  keeps episode construction, current execution, and run assembly.
+- Read: HostRuntime, Workflow operations/WorkspaceContext/HostExecution,
+  workflow projection/assets, Agent Runtime journal/control/notification
+  contracts, Server Runtime dispatcher and focused tests.
+- Tests: owner-level 2/2 and focused Host Workflow 175/175 passed; final
+  cross-package and repository gates are recorded with the commit.
+
+- Status: Verified
+- Date: 2026-07-18
 - Scope: `runtime/task-runtime-operations.ts` is the single Host owner for Task
   protocol list/get/output/stop/join/promote behavior, bounded output polling,
   actor revival projection, resume-time orphan failure, and the workspace Task
@@ -247,6 +261,7 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 - `packages/host/src/runtime/capability-assembly.ts` — capability snapshot projection, summaries, automation reads, and merge
 - `packages/host/src/runtime/task-runtime-operations.ts` — Host Task protocol/control, output reads, actor revival, orphan recovery, and canonical workspace root
 - `packages/host/src/runtime/task-projections.ts` — stateless task snapshots, notifications, and terminal classification
+- `packages/host/src/runtime/workflow-runtime-operations.ts` — Host Workflow canonical roots/store, snapshots, actor notifications, durable controls/resume claims, finalization, and record persistence helpers
 - `packages/host/src/runtime/contracts.ts` — runtime construction and execution coordination ports
 - `packages/host/src/session-queries.ts` — canonical Host run lookup, completed-turn replay, compact-context anchoring, trace fact projection, and session queries
 - `packages/host/src/session-compaction.ts` — complete manual compaction operation from turn loading through artifact/event persistence
@@ -306,6 +321,9 @@ Owns:
 - host-level interaction channel and pending approval routing
 - host Task protocol/control, actor revival, resume orphan handling, and
   workspace Task-root projection through `TaskRuntimeOperations`
+- host Workflow durable control-plane behavior through
+  `WorkflowRuntimeOperations`; live Core episode execution remains in
+  `HostRuntime`
 - host-client approval helpers used by frontends that must not import core directly
 - session diagnostics bundle composition
 - shell live-process handoff into task state, including explicit/promotion
@@ -414,6 +432,10 @@ Does not own:
 - `WorkspaceContext` owns the shared TaskManager/store/outbox and Workflow
   notification/control adapters. It never owns live MCP, LocalWorkspace,
   mutable policy, event emitter, interaction channel, or active execution.
+- `WorkflowRuntimeOperations` consumes those exact WorkspaceContext adapters;
+  it does not construct a second inbox/outbox/dispatcher or hold HostExecution
+  state. Durable command processing can request one resume only through the
+  HostRuntime-owned execution port, preserving a single execution entrance.
 - `run-security-plan.ts` is the immutable boundary between config/access
   parsing and runtime assembly. A run and `capability.inspect` derive the same
   workspace, access, confidential paths, skill/config roots, and resolved shell

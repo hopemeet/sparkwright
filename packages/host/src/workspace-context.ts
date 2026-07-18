@@ -1,15 +1,18 @@
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 import {
   FileTaskNotificationOutbox,
   FileTaskStore,
   FileWorkflowControlInbox,
   FileWorkflowNotificationOutbox,
   TaskManager,
-  workspaceWorkflowRunsDir,
 } from "@sparkwright/agent-runtime";
 import { InFlightCommandDispatcher } from "@sparkwright/server-runtime";
 import type { WorkspaceLeaseCoordinator } from "./workspace-lease-coordinator.js";
 import { workspaceTaskRootDir } from "./runtime/task-runtime-operations.js";
+import {
+  workspaceWorkflowNotificationRootDir,
+  workspaceWorkflowRootDir,
+} from "./runtime/workflow-runtime-operations.js";
 
 export interface WorkspaceContextIdentity {
   workspaceRoot: string;
@@ -40,11 +43,11 @@ export class WorkspaceContext {
       createRoot: false,
     });
     this.workflowNotifications = new FileWorkflowNotificationOutbox({
-      rootDir: join(this.workspaceRoot, ".sparkwright", "workflow-actors"),
+      rootDir: workspaceWorkflowNotificationRootDir(this.workspaceRoot),
       createRoot: false,
     });
     this.workflowControls = new FileWorkflowControlInbox({
-      rootDir: workspaceWorkflowRunsDir({ workspaceRoot: this.workspaceRoot }),
+      rootDir: workspaceWorkflowRootDir(this.workspaceRoot),
       createRoot: false,
     });
     this.taskManager = new TaskManager({

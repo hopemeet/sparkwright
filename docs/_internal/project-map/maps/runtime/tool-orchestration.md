@@ -11,6 +11,15 @@ See [../safety/workspace-writes.md](../safety/workspace-writes.md), [../safety/s
 
 - Status: Verified
 - Date: 2026-07-18
+- Scope: checked Workflow durable ownership extraction. Per-episode model/tool
+  selection, Workflow catalog narrowing, deferred discovery, policy, and tool
+  execution remain in HostRuntime/run preparation and were not moved.
+- Read: Host Workflow owner seam, run preparation, projection tool clamps, and
+  focused Workflow hook tests.
+- Tests: focused Host Workflow/tool-orchestration coverage passed.
+
+- Status: Verified
+- Date: 2026-07-18
 - Scope: Host-facing Task list/get/output/stop/join/promote operations and
   bounded output polling now have one Task operations owner. Model-facing
   `task_create`/`task`, TaskManager scheduling, tool policy, and result shapes

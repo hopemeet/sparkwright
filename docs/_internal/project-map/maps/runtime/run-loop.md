@@ -11,6 +11,17 @@ See [tool-orchestration.md](tool-orchestration.md) and [../trace/raw-trace.md](.
 
 - Status: Verified
 - Date: 2026-07-18
+- Scope: Workflow durable finalization, notification, control pumping, and
+  record persistence moved behind `WorkflowRuntimeOperations`. HostRuntime
+  still exclusively constructs Core episodes, owns HostExecution/current run,
+  and supplies the narrow resume/control execution port; Core behavior and
+  event order are unchanged.
+- Read: HostRuntime/HostExecution/Workflow owner and projection, Core run-loop
+  contracts, and focused Workflow tests.
+- Tests: owner-level and focused Host Workflow suites passed.
+
+- Status: Verified
+- Date: 2026-07-18
 - Scope: Host Task notification/revival construction and resume-time orphan
   failure moved intact from `HostRuntime` into the canonical Task operations
   collaborator. Core still consumes the same `NotificationSource` and

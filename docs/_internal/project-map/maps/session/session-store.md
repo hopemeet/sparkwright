@@ -10,6 +10,16 @@ See [../trace/raw-trace.md](../trace/raw-trace.md) for raw event evidence.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-18
+- Scope: canonical workspace Workflow store construction and lookup now route
+  through `WorkflowRuntimeOperations`; storage remains journal-only at
+  `.sparkwright/workflow-runs`, with job sessions and control attribution
+  unchanged.
+- Read: WorkspaceContext, Workflow owner/store, Host resume/list paths, and
+  focused persistence tests.
+- Tests: focused Host and Agent Runtime Workflow suites passed.
+
+- Status: Verified
 - Date: 2026-07-17T23:37:17+0800
 - Scope: file-run reference implementations now enter through Core
   `/internal`; session layout, membership, replay, and Host ownership are

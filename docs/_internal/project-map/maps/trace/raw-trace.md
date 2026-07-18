@@ -12,6 +12,15 @@ and [../session/session-store.md](../session/session-store.md) for session layou
 
 - Status: Verified
 - Date: 2026-07-18
+- Scope: Workflow durable finalization and notification ownership moved within
+  Host only. Raw `workflow.*` lifecycle payloads, ordering, package identity,
+  evidence refs, and append-only trace ownership are unchanged.
+- Read: Host Workflow owner/projection/finalization, Core raw trace contracts,
+  and focused Workflow tests.
+- Tests: focused Host Workflow and protocol suites passed.
+
+- Status: Verified
+- Date: 2026-07-18
 - Scope: bounded Task output reading and terminal actor-to-notification
   projection moved behind the Host Task operations owner. No event type,
   payload, trace sink, or persistence path changed.

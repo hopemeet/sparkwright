@@ -136,6 +136,16 @@ contracts, and focused checklists that no longer fit here.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-18
+- Scope: Host Workflow operations now own orchestration around the existing
+  Server Runtime `InFlightCommandDispatcher`; the dispatcher remains
+  process-local coalescing only, and Workflow service/channel ownership and
+  durable truth are unchanged.
+- Read: Host Workflow owner, Server Runtime dispatcher/service/channel paths,
+  Agent Runtime control truth, and focused tests.
+- Tests: focused Host, Agent Runtime, and Server Runtime Workflow suites passed.
+
+- Status: Verified
 - Date: 2026-07-17T23:37:17+0800
 - Scope: edge packages use the explicit Core internal entry for reference
   prompt/runtime implementations, while Provider Registry exposes one fallback
