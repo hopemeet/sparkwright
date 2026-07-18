@@ -86,16 +86,19 @@ Focused route:
 
 ```bash
 npm --workspace @sparkwright/protocol run build
-npm --workspace @sparkwright/host test -- test/run-security-plan.test.ts test/client-run.test.ts test/protocol.test.ts
+npm --workspace @sparkwright/host test -- test/capability-runtime-operations.test.ts test/run-security-plan.test.ts test/client-run.test.ts test/protocol.test.ts
 npm --workspace @sparkwright/host test -- test/run-policy.test.ts
 npm --workspace @sparkwright/cli test -- test/cli.test.ts -t "direct-core|run resume defaults"
 npm --workspace @sparkwright/host run build
 npm --workspace @sparkwright/cli test -- test/cli.test.ts -t "capabilities inspect"
 ```
 
-For `packages/host/src/runtime/capability-assembly.ts`, keep HostRuntime as the
-snapshot-cache owner and run the import graph/facade gate in addition to this
-route.
+For `packages/host/src/runtime/capability-runtime-operations.ts` or
+`capability-assembly.ts`, keep `CapabilityRuntimeOperations` as the sole
+snapshot-cache/configured-inspection owner and run the import graph/facade gate
+in addition to this route. Construct the owner directly for snapshot merge,
+automation roots, MCP cleanup, and capability-index failure ordering. Preserve
+HostRuntime as generic live-run preparation and the sole MCP lifecycle port.
 
 For `packages/cli/src/commands/capabilities.ts`, run `capabilities
 inspect|delegates run` focused slices plus the full CLI golden. Assert the

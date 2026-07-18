@@ -10,6 +10,16 @@ See [../../modules/agent-runtime.md](../../modules/agent-runtime.md) for related
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-18
+- Scope: read-only Cron/Task automation projection for capability inspection
+  moved to `CapabilityRuntimeOperations`. It reads the same default Cron root
+  and the exact Task root owned by WorkspaceContext/TaskRuntimeOperations;
+  scheduling and persistence are unchanged.
+- Read: capability owner/assembly, Cron store, Task owner, and protocol test.
+- Tests: owner-level automation coverage and focused Host capability suites
+  passed.
+
+- Status: Verified
 - Date: 2026-07-17T23:37:17+0800
 - Scope: Cron runner imports Core workspace/trace reference implementations
   through `/internal`; scheduling, locking, policy, and persistence contracts
@@ -43,6 +53,7 @@ See [../../modules/agent-runtime.md](../../modules/agent-runtime.md) for related
 - `packages/cli/src/cli.ts`
 - `packages/cli/src/runners/direct-core-runner.ts`
 - `packages/host/src/tool-catalog.ts`
+- `packages/host/src/runtime/capability-runtime-operations.ts`
 - `packages/host/src/runtime.ts`
 - `packages/host/src/tools.ts`
 - `packages/tui/src/app.tsx`

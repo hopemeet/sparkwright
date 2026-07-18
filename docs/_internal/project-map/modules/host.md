@@ -13,6 +13,18 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 
 - Status: Verified
 - Date: 2026-07-18
+- Scope: `runtime/capability-runtime-operations.ts` is the Host owner for
+  effective capability inspection, configured/live snapshot merge and cache,
+  automation projection, and Skill index-failure diagnostics. HostRuntime
+  supplies one MCP preparation port and retains generic run preparation.
+- Read: HostRuntime/run preparation, capability assembly/security/config,
+  Agent assembly, WorkspaceContext Task ownership, protocol consumers, trace
+  persistence, and focused tests.
+- Tests: owner-level 2/2 and focused Host capability 222/222 passed; final
+  cross-package and repository gates are recorded with the commit.
+
+- Status: Verified
+- Date: 2026-07-18
 - Scope: `runtime/agent-runtime-assembly.ts` is the Host owner for configured
   Agent/Delegate runtime construction, dynamic spawn, parallel delegation,
   promotion, workspace grants, child result normalization, and the captured
@@ -285,6 +297,7 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 - `packages/host/src/runtime.ts` — stable named public facade
 - `packages/host/src/runtime/host-runtime.ts` — concrete HostRuntime composition and execution orchestration
 - `packages/host/src/runtime/agent-runtime-assembly.ts` — configured/direct/indexed/parallel Agent and Delegate assembly, dynamic spawn/promotion, child grants/results, and background Agent task execution
+- `packages/host/src/runtime/capability-runtime-operations.ts` — effective capability inspection, last-run snapshot ownership/merge, automation projection, and capability index-failure diagnostics
 - `packages/host/src/runtime/capability-assembly.ts` — capability snapshot projection, summaries, automation reads, and merge
 - `packages/host/src/runtime/task-runtime-operations.ts` — Host Task protocol/control, output reads, actor revival, orphan recovery, and canonical workspace root
 - `packages/host/src/runtime/task-projections.ts` — stateless task snapshots, notifications, and terminal classification
@@ -343,6 +356,8 @@ Owns:
 - provider pricing resolution for run metadata, session compaction usage hints,
   and `capability.inspect` diagnostics
 - skill, MCP, shell, cron, and agent capability preparation
+- effective capability inspection and snapshot-cache ownership through
+  `CapabilityRuntimeOperations`
 - host Agent/Delegate execution-surface construction through
   `AgentRuntimeAssembly`
 - host tool catalog entries that preserve runtime tool source metadata
@@ -471,6 +486,12 @@ Does not own:
   but it does not store `currentExecution`, construct HostExecution, admit
   lanes, or create a second execution entrance. HostRuntime continues to own
   generic `prepareHostRunEnvironment()` assembly and process facade wiring.
+- `CapabilityRuntimeOperations` owns the configured inspection catalog, the
+  last successful run snapshot, configured/live merge, Cron/Task automation
+  projection, and Skill index-failure trace sequence. It reuses the exact
+  WorkspaceContext TaskManager/root and receives one HostRuntime MCP
+  preparation port; it does not own live MCP state, HostExecution, run
+  preparation, or a second Task store.
 - `run-security-plan.ts` is the immutable boundary between config/access
   parsing and runtime assembly. A run and `capability.inspect` derive the same
   workspace, access, confidential paths, skill/config roots, and resolved shell

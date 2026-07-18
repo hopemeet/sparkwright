@@ -12,6 +12,15 @@ See [../../modules/agent-runtime.md](../../modules/agent-runtime.md) and [../../
 
 - Status: Verified
 - Date: 2026-07-18
+- Scope: configured Agent/Delegate capability inventory is now assembled for
+  inspection by `CapabilityRuntimeOperations`, reusing stateless
+  `AgentRuntimeAssembly` helpers. Live Agent execution assembly remains with
+  `AgentRuntimeAssembly`; identities, descriptors, and exposure are unchanged.
+- Read: capability owner, Agent assembly/tool catalogs, and protocol tests.
+- Tests: owner-level and focused Host capability suites passed.
+
+- Status: Verified
+- Date: 2026-07-18
 - Scope: Host configured Agent/Delegate assembly has one owner in
   `runtime/agent-runtime-assembly.ts`, covering profile/target resolution,
   direct/indexed/parallel delegates, dynamic spawn, child models/hooks/tools,

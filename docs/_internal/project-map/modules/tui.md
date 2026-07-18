@@ -11,6 +11,14 @@ See also [../maps/trace/export-diagnostics.md](../maps/trace/export-diagnostics.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-18
+- Scope: Host capability inspection ownership moved internally. TUI continues
+  to consume the same protocol snapshot and owns no capability reconstruction;
+  panel fields and rendering are unchanged.
+- Read: Host capability owner, protocol snapshot, and TUI capability consumer.
+- Tests: focused Host capability passed; TUI gates are recorded with the commit.
+
+- Status: Verified
 - Date: 2026-07-17T23:37:17+0800
 - Scope: `/create skill` is the only TUI Skill creation route. Removed the
   `/skill-create` command, dedicated create layer/dialog branch, action/parser

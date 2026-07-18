@@ -12,6 +12,15 @@ See also [../maps/safety/approvals.md](../maps/safety/approvals.md) and [../maps
 
 - Status: Verified
 - Date: 2026-07-18
+- Scope: Host capability inspection ownership moved behind the existing
+  runtime facade. `capability.inspect` request/error and `CapabilitySnapshot`
+  response shapes are unchanged.
+- Read: protocol snapshot/request types, capability owner/facade, and focused
+  protocol tests.
+- Tests: focused Host capability 222/222 passed.
+
+- Status: Verified
+- Date: 2026-07-18
 - Scope: Host Workflow durable ownership moved behind the existing runtime
   facade. `workflow.list`, `workflow.resume`, and `workflow.control` request,
   response, snapshot, attribution, and error shapes are unchanged.

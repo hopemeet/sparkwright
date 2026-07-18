@@ -10,6 +10,17 @@ See [../../modules/mcp-adapter.md](../../modules/mcp-adapter.md).
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-18
+- Scope: capability inspection moved behind `CapabilityRuntimeOperations` and
+  receives one HostRuntime MCP preparation port. Config/extra-server merge,
+  startup mode, status/tool-name projection, close ordering, and live-run MCP
+  ownership are unchanged.
+- Read: capability owner, Host MCP preparation helpers, adapter contracts, and
+  focused protocol/CLI coverage.
+- Tests: focused Host capability 222/222 passed; downstream gates are recorded
+  with the commit.
+
+- Status: Verified
 - Date: 2026-07-17T23:37:17+0800
 - Scope: Host runtime implementation imports moved to Core `/internal`; MCP
   discovery, transport, sandbox, tool governance, and inspection contracts are
@@ -33,6 +44,7 @@ See [../../modules/mcp-adapter.md](../../modules/mcp-adapter.md).
 - `packages/mcp-adapter/src/index.ts`
 - `packages/host/src/runtime.ts`
 - `packages/host/src/runtime/host-runtime.ts`
+- `packages/host/src/runtime/capability-runtime-operations.ts`
 - `packages/host/src/runtime/capability-assembly.ts`
 - `packages/cli/src/cli.ts`
 - `packages/tui/src/lib/create-capability.ts`

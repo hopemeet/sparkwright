@@ -10,6 +10,14 @@ See also [../maps/trace/summary-timeline-verify.md](../maps/trace/summary-timeli
 
 - Status: Verified
 - Date: 2026-07-18
+- Scope: Host capability inspection ownership moved internally; CLI still
+  treats the Host snapshot as the sole effective tool/delegate/sandbox source
+  and retains only additive diagnostics. Output contracts are unchanged.
+- Read: capability owner, Host protocol facade, and CLI capability consumer.
+- Tests: focused Host capability passed; CLI gates are recorded with the commit.
+
+- Status: Verified
+- Date: 2026-07-18
 - Scope: checked internal-import governance after Host Workflow episode
   extraction. CLI internal reference harness allowances and Host/protocol
   client boundaries are unchanged.

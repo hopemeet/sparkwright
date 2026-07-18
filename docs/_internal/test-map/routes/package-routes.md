@@ -265,6 +265,21 @@ ordinary start/resume/inject/cancel always traverse its lane coordinator, and
 connection adapters receive the existing process service rather than creating
 one per connection.
 
+For `runtime/capability-runtime-operations.ts` or
+`runtime/capability-assembly.ts`, run:
+
+```bash
+npm --workspace @sparkwright/host test -- test/capability-runtime-operations.test.ts test/run-security-plan.test.ts test/client-run.test.ts test/run-policy.test.ts test/protocol.test.ts test/config.test.ts test/tools.test.ts
+npm --workspace @sparkwright/cli test -- test/cli.test.ts -t "capabilities inspect"
+npm --workspace @sparkwright/host run typecheck
+```
+
+Construct the owner directly for configured/live merge, canonical automation
+roots, MCP close, and capability-index failure persistence/event order. Keep
+the last-run snapshot only in the capability owner, reuse the WorkspaceContext
+TaskManager/root, and leave generic run preparation plus live MCP lifecycle in
+HostRuntime behind one narrow port. Run the import/internal-import gates.
+
 For `runtime/task-runtime-operations.ts` or `runtime/task-projections.ts`, run:
 
 ```bash

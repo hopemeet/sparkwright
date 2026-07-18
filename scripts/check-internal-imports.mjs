@@ -27,6 +27,10 @@ const ALLOWED_CORE_INTERNAL_IMPORTS = new Map([
     "Host owns the current local reference harness and file-backed trace store.",
   ],
   [
+    "packages/host/src/runtime/capability-runtime-operations.ts",
+    "Host capability operations own Skill index-failure EventLog and session-scoped reference trace persistence.",
+  ],
+  [
     "packages/host/src/runtime/agent-runtime-assembly.ts",
     "Host Agent runtime assembly owns session-scoped child reference Core run stores.",
   ],

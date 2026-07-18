@@ -12,6 +12,17 @@ and [../session/session-store.md](../session/session-store.md) for session layou
 
 - Status: Verified
 - Date: 2026-07-18
+- Scope: fatal Skill index-failure trace persistence moved intact to
+  `CapabilityRuntimeOperations`. Canonical session storage, failure payload,
+  live Host event envelope, and the `run.created`, `capability.index.failed`,
+  `run.failed` ordering are unchanged.
+- Read: capability owner test, Core EventLog/session store, Host preparation
+  failure path, and protocol coverage.
+- Tests: direct owner trace/event-order coverage and focused Host capability
+  suites passed.
+
+- Status: Verified
+- Date: 2026-07-18
 - Scope: Agent/Delegate lifecycle emitter wiring, child run-store construction,
   promotion attribution, and terminal result normalization moved within Host to
   `AgentRuntimeAssembly`. Raw `subagent.*`, task, workspace-write, and session

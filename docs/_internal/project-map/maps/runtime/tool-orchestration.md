@@ -11,6 +11,16 @@ See [../safety/workspace-writes.md](../safety/workspace-writes.md), [../safety/s
 
 - Status: Verified
 - Date: 2026-07-18
+- Scope: inert effective-tool catalog construction for capability inspection
+  moved to `CapabilityRuntimeOperations`. It reuses Agent assembly helpers and
+  the shared TaskManager; generic live-run catalog construction, admission,
+  policy, approval, and execution remain in HostRuntime.
+- Read: capability owner, Agent assembly, Host catalogs/surface, security plan,
+  and focused capability/tool tests.
+- Tests: owner-level 2/2 and focused Host capability 222/222 passed.
+
+- Status: Verified
+- Date: 2026-07-18
 - Scope: Agent/Profile admission inputs, configured delegate child catalogs,
   direct/indexed/parallel delegate tools, dynamic spawn, child-scoped discovery,
   model/hook resolution, and background Agent task runner construction now live
@@ -128,6 +138,7 @@ See [../safety/workspace-writes.md](../safety/workspace-writes.md), [../safety/s
 - `packages/host/src/tool-catalog.ts`
 - `packages/host/src/tool-surface.ts`
 - `packages/host/src/run-security-plan.ts`
+- `packages/host/src/runtime/capability-runtime-operations.ts`
 - `packages/host/src/tools.ts`
 - `packages/host/src/shell.ts`
 - `packages/coding-tools/src/index.ts`

@@ -2,20 +2,13 @@ import { isAbsolute, join, relative, resolve } from "node:path";
 import {
   asSessionId,
   createContextItemId,
-  createRunId,
-  createDefaultPolicy,
   createSessionId,
-  createSessionRunStoreFactory,
   createRun,
-  FileSessionStore,
   type InteractionChannel,
   type ContentPart,
   type ContextItem,
   type EventEmitter,
   type RunId,
-  type RunRecord,
-  type RunResult,
-  type SparkwrightEvent,
   type WorkflowHook,
 } from "@sparkwright/core";
 import { prepareSkillsForRun } from "@sparkwright/skills";
@@ -29,26 +22,22 @@ import {
   type WorkflowControlSourceIdentity,
   FileWorkflowStore,
   type WorkflowLeaseBoundWriter,
-  type AgentProfile,
   type ActorInbox,
   type WorkflowRunId,
   type WorkflowRunRecord,
   type WorkflowRunStatus,
 } from "@sparkwright/agent-runtime";
-import { defaultCronRoot } from "@sparkwright/cron";
 import { RECOMMENDED_FOREGROUND_TIMEOUT_MS } from "@sparkwright/shell-tool";
 import { type ExecutionHandle } from "@sparkwright/server-runtime";
 import type { HostExecutionMessage, HostRuntimeOptions } from "./contracts.js";
 import {
-  buildCapabilitySnapshot,
+  capabilitySnapshotAgentProfiles,
   createSkillPreprocessOptions,
   inlineShellCapabilitySummary,
-  mergeCapabilitySnapshots,
   modelCapabilitySummary,
-  readCronJobsForSnapshot,
-  readTasksForSnapshot,
   workflowCapabilitySummary,
 } from "./capability-assembly.js";
+import { CapabilityRuntimeOperations } from "./capability-runtime-operations.js";
 import {
   TaskRuntimeOperations,
   type JoinRuntimeTaskResult,
@@ -65,29 +54,14 @@ import {
   WorkflowEpisodeRuntime,
   type WorkflowEpisodeEnvironment,
 } from "./workflow-episode-runtime.js";
-import {
-  AgentRuntimeAssembly,
-  applyMainAgentToolUse,
-  createConfiguredDelegateTools,
-  createDelegateParallelTool,
-  createDynamicSpawnAgentTool,
-  deriveConfiguredAgents,
-  describeConfiguredDelegateTools,
-  mainAgentProfile,
-  shouldExposeDelegateParallelTool,
-  snapshotOnlyChildRunStoreFactory,
-} from "./agent-runtime-assembly.js";
+import { AgentRuntimeAssembly } from "./agent-runtime-assembly.js";
 export type { RuntimeOptions } from "./contracts.js";
 import { type ResolvedShellSandboxConfig } from "@sparkwright/shell-sandbox";
 import type {
   CapabilityVerificationConfig,
   CapabilityWorkflowHookConfig,
 } from "../config-zod-schema.js";
-import {
-  createSessionFileRunStoreFactory,
-  EventLog,
-  loadCheckpointFromRunDir,
-} from "@sparkwright/core/internal";
+import { loadCheckpointFromRunDir } from "@sparkwright/core/internal";
 import {
   isTraceLevel,
   type TraceLevel,
@@ -102,11 +76,9 @@ import {
   type SessionCompactionInspectReport,
   type TaskRecordSnapshot,
   type CapabilitySnapshot,
-  type CapabilityAutomationSummary,
 } from "@sparkwright/protocol";
 import { loadHostConfig } from "../config/config-implementation.js";
 import type { CapabilityMcpConfig } from "../config/contracts.js";
-import { resolveAgentProfiles } from "../agent-profiles.js";
 import { MAIN_AGENT_ID } from "../agent-constants.js";
 import {
   buildAccessMetadata,
@@ -138,22 +110,14 @@ import {
   type SessionCompactResult,
 } from "../session-compaction.js";
 export { sessionPreviewFromTranscriptLine } from "../session-queries.js";
-import { createModel, inspectResolvedModelConfig } from "../model-factory.js";
+import { createModel } from "../model-factory.js";
 import {
   catalogToolDefinitions,
-  createConfiguredDelegateChildToolCatalog,
-  createDynamicChildToolCatalog,
   createMainHostToolCatalog,
   type HostToolCatalogEntry,
 } from "../tool-catalog.js";
-import { createDelegateAgentTool } from "../indexed-delegate-tool.js";
 export { createDelegateAgentTool } from "../indexed-delegate-tool.js";
 import { createSkillUsageRecorder } from "../skill-usage.js";
-import {
-  delegateToolName,
-  filterDirectDelegatesForExposure,
-  resolveAgentDelegateTools,
-} from "../delegate-capability.js";
 import {
   createConfiguredWorkflowHooks,
   createPartialSubagentFinalityDisclosureHook,
@@ -414,72 +378,6 @@ function resolveTraceLevel(input: {
   );
 }
 
-function summarizeCapabilitySnapshot(
-  snapshot: CapabilitySnapshot | null,
-): Record<string, unknown> {
-  if (!snapshot) {
-    return {
-      tools: 0,
-      skills: { indexed: 0, loaded: 0 },
-      mcp: { servers: 0, tools: 0 },
-      agents: { profiles: 0, delegateTools: 0 },
-      rules: { workflow: 0, events: 0 },
-    };
-  }
-  return {
-    ...(snapshot.model
-      ? {
-          model: {
-            modelRef: snapshot.model.modelRef,
-            providerKey: snapshot.model.providerKey,
-            modelId: snapshot.model.modelId,
-            pricing: snapshot.model.pricing,
-          },
-        }
-      : {}),
-    tools: snapshot.tools.length,
-    toolNames: snapshot.tools.map((tool) => tool.name),
-    skills: {
-      indexed: snapshot.skills.indexed.length,
-      loaded: snapshot.skills.loaded.length,
-      indexedNames: snapshot.skills.indexed.map((skill) => skill.name),
-      loadedNames: snapshot.skills.loaded.map((skill) => skill.name),
-    },
-    mcp: {
-      servers: snapshot.mcp.statuses.length,
-      tools: snapshot.mcp.statuses.reduce(
-        (sum, status) => sum + status.toolNames.length,
-        0,
-      ),
-      statuses: snapshot.mcp.statuses.map((status) => ({
-        serverName: status.serverName,
-        status: status.status,
-        toolNames: status.toolNames,
-      })),
-    },
-    agents: {
-      profiles: snapshot.agents.profiles.length,
-      profileIds: snapshot.agents.profiles.map((profile) => profile.id),
-      delegateTools: snapshot.agents.delegateTools.length,
-      delegateToolNames: snapshot.agents.delegateTools.map(
-        (delegate) => delegate.toolName,
-      ),
-    },
-    rules: {
-      workflow: snapshot.rules?.workflow.length ?? 0,
-      workflowNames: snapshot.rules?.workflow.map((rule) => rule.name) ?? [],
-      events: snapshot.rules?.events?.length ?? 0,
-      eventNames: snapshot.rules?.events?.map((rule) => rule.name) ?? [],
-    },
-    workflows: {
-      assets: snapshot.workflows?.assets.length ?? 0,
-      names: snapshot.workflows?.assets.map((asset) => asset.assetName) ?? [],
-      errors: snapshot.workflows?.errors?.length ?? 0,
-    },
-    shell: snapshot.shell,
-  };
-}
-
 /** One HostExecution attachment composed by the process HostService. */
 export class HostRuntime {
   private opts: HostRuntimeOptions;
@@ -487,10 +385,10 @@ export class HostRuntime {
   private readonly workflows: WorkflowRuntimeOperations;
   private readonly workflowEpisodes: WorkflowEpisodeRuntime;
   private readonly agents: AgentRuntimeAssembly;
+  private readonly capabilities: CapabilityRuntimeOperations;
   private currentExecution: HostExecution | null = null;
   // One abort for the complete interactive execution, including assembly and
   // every todo/workflow episode. Core run cancellation remains run-scoped.
-  private lastCapabilitySnapshot: CapabilitySnapshot | null = null;
 
   /** @internal Construct through HostService.createRuntime(). */
   constructor(opts: HostRuntimeOptions) {
@@ -524,6 +422,33 @@ export class HostRuntime {
     this.agents = new AgentRuntimeAssembly({
       taskManager: this.tasks.manager,
       workspaceLeaseCoordinator: this.opts.workspaceLeaseCoordinator,
+    });
+    this.capabilities = new CapabilityRuntimeOperations({
+      workspaceRoot: this.opts.workspaceRoot,
+      sessionRootDir: sessionRootDirFor(this.opts),
+      taskManager: this.tasks.manager,
+      taskRootDir: this.tasks.rootDir,
+      defaultModel: this.opts.defaultModel,
+      defaultAccessMode: this.opts.defaultAccessMode,
+      accessModeCeiling: this.opts.accessModeCeiling,
+      defaultBackgroundTasks: this.opts.defaultBackgroundTasks,
+      backgroundTasksCeiling: this.opts.backgroundTasksCeiling,
+      emit: this.opts.emit,
+      includeDevSkills: devSkillsEnabled,
+      prepareMcp: async ({ config, shellSandbox }) => {
+        const runtimeConfig = mergeRuntimeMcpConfig(
+          config,
+          this.opts.extraMcpServers,
+        );
+        return {
+          servers: runtimeConfig?.servers ?? [],
+          prepared: await createRuntimeMcpTools({
+            config: runtimeConfig,
+            workspaceRoot: this.opts.workspaceRoot,
+            shellSandbox,
+          }),
+        };
+      },
     });
   }
 
@@ -654,33 +579,7 @@ export class HostRuntime {
     | { ok: true; snapshot: CapabilitySnapshot }
     | { ok: false; error: ProtocolError }
   > {
-    try {
-      const access = resolveRunAccessFields(input, {
-        defaultAccessMode: this.opts.defaultAccessMode,
-        accessModeCeiling: this.opts.accessModeCeiling,
-        defaultBackgroundTasks: this.opts.defaultBackgroundTasks,
-        backgroundTasksCeiling: this.opts.backgroundTasksCeiling,
-      });
-      const configured = await this.inspectConfiguredCapabilities({
-        modelRef: input.model ?? input.modelRef,
-        access,
-      });
-      return {
-        ok: true,
-        snapshot: mergeCapabilitySnapshots(
-          configured,
-          this.lastCapabilitySnapshot,
-        ),
-      };
-    } catch (error) {
-      return {
-        ok: false,
-        error: {
-          code: "internal_error",
-          message: error instanceof Error ? error.message : String(error),
-        },
-      };
-    }
+    return await this.capabilities.inspect(input);
   }
 
   /**
@@ -1102,10 +1001,9 @@ export class HostRuntime {
         : null;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      await this.recordCapabilityIndexFailure({
+      await this.capabilities.recordIndexFailure({
         goal: input.goal,
         sessionId: input.sessionId,
-        sessionRootDir,
         traceLevel: input.traceLevel ?? "standard",
         message,
         source: extractSkillSourcePath(message),
@@ -1291,7 +1189,7 @@ export class HostRuntime {
     const eventRules = describeActiveEventRules({
       eventHooks: hookConfig?.events,
     });
-    this.lastCapabilitySnapshot = buildCapabilitySnapshot({
+    const capabilitySnapshot = this.capabilities.captureRunSnapshot({
       model: modelCapabilitySummary(model.resolved),
       access: input.access,
       toolCatalog,
@@ -1343,9 +1241,7 @@ export class HostRuntime {
           }
         : {}),
       resolvedModel: model.resolved,
-      capabilitySnapshot: summarizeCapabilitySnapshot(
-        this.lastCapabilitySnapshot,
-      ),
+      capabilitySnapshot: this.capabilities.summarize(capabilitySnapshot),
     };
     const runStoreMetadata: Record<string, unknown> = {
       ...runMetadata,
@@ -1414,99 +1310,6 @@ export class HostRuntime {
         runStoreMetadata,
       },
     };
-  }
-
-  private async recordCapabilityIndexFailure(input: {
-    goal: string;
-    sessionId: string;
-    sessionRootDir: string;
-    traceLevel: TraceLevel;
-    message: string;
-    source?: string;
-    targetPath?: string;
-    metadata: Record<string, unknown>;
-  }): Promise<void> {
-    const now = nowIso();
-    const runId = createRunId();
-    const run: RunRecord = {
-      id: runId,
-      goal: input.goal,
-      state: "failed",
-      stopReason: "model_completion_failed",
-      createdAt: now,
-      updatedAt: now,
-      metadata: {
-        source: "host",
-        failurePhase: "capability_index",
-        targetPath: input.targetPath ?? "README.md",
-        ...input.metadata,
-      },
-    };
-    const result: RunResult = {
-      signal: "failed",
-      state: "failed",
-      stopReason: "model_completion_failed",
-      message: input.message,
-      failure: {
-        category: "runtime",
-        code: "SKILL_INDEX_FAILED",
-        message: input.message,
-        retryable: false,
-      },
-      metadata: run.metadata,
-    };
-    const sessionStore = new FileSessionStore({
-      rootDir: input.sessionRootDir,
-    });
-    const store = createSessionRunStoreFactory({
-      sessionStore,
-      sessionId: input.sessionId,
-      runStoreFactory: createSessionFileRunStoreFactory({
-        sessionRootDir: input.sessionRootDir,
-        sessionId: input.sessionId,
-        agentId: MAIN_AGENT_ID,
-        traceLevel: input.traceLevel,
-      }),
-      metadata: { source: "host" },
-    })(run);
-    const events = new EventLog(runId);
-    const append = async (event: SparkwrightEvent) => {
-      await store.append(event);
-      this.opts.emit({
-        envelope: "event",
-        id: nextMessageId("evt"),
-        kind: "run.event",
-        timestamp: nowIso(),
-        payload: { runId, event },
-      });
-    };
-    await append(events.emit("run.created", { goal: input.goal }));
-    await append(
-      events.emit(
-        "capability.index.failed",
-        {
-          kind: "skills",
-          source: input.source,
-          message: input.message,
-          code: "SKILL_INDEX_FAILED",
-        },
-        {
-          source: "host",
-          failurePhase: "capability_index",
-          agentId: MAIN_AGENT_ID,
-        },
-      ),
-    );
-    await append(
-      events.emit("run.failed", {
-        reason: "capability_index_failed",
-        code: "SKILL_INDEX_FAILED",
-        message: input.message,
-        failure: result.failure,
-        metadata: run.metadata,
-      }),
-    );
-    await store.finish(run, result);
   }
 
   private createInteractionChannel(runIdHolder: {
@@ -1945,258 +1748,6 @@ export class HostRuntime {
     };
   }
 
-  private async inspectConfiguredCapabilities(input: {
-    modelRef?: string;
-    access: ResolvedRunAccess;
-  }): Promise<CapabilitySnapshot> {
-    const loadedConfig = await loadHostConfig(this.opts.workspaceRoot);
-    const baseToolConfig = loadedConfig.config.tools;
-    const shellConfig = loadedConfig.config.shell;
-    const skillConfig = loadedConfig.config.capabilities?.skills;
-    const mcpConfig = mergeRuntimeMcpConfig(
-      loadedConfig.config.capabilities?.mcp,
-      this.opts.extraMcpServers,
-    );
-    const agentConfig = loadedConfig.config.capabilities?.agents;
-    const automation = await this.inspectAutomationSummary();
-    const workflows = await loadLayeredWorkflowAssets(this.opts.workspaceRoot);
-    const model = await inspectResolvedModelConfig({
-      modelRef: input.modelRef ?? this.opts.defaultModel,
-      workspaceRoot: this.opts.workspaceRoot,
-    });
-    const resolvedProfiles = await resolveAgentProfiles(
-      this.opts.workspaceRoot,
-      agentConfig?.profiles,
-    );
-    const delegationTargets = resolveAgentDelegateTools(
-      resolvedProfiles,
-      agentConfig?.delegateTools,
-      {
-        includeAllChildProfiles: true,
-      },
-    );
-    const securityPlan = await prepareHostRunSecurityPlan({
-      workspaceRoot: this.opts.workspaceRoot,
-      access: input.access,
-      loadedConfig,
-    });
-    const skillRoots = securityPlan.skillRoots;
-    const shellSandbox = securityPlan.shellSandboxStatus;
-    const mcpShellSandbox = securityPlan.shellSandbox;
-    const existingPreparedSkillRoots = await existingSkillRoots(skillRoots);
-    const preparedSkills =
-      existingPreparedSkillRoots.length > 0
-        ? await prepareSkillsForRun({
-            goal: "",
-            skillRoots: existingPreparedSkillRoots,
-            agent: {
-              allowedSkills: skillConfig?.allowedSkills,
-              deniedSkills: skillConfig?.deniedSkills,
-            },
-            includeLoaderTool: skillConfig?.includeLoaderTool ?? true,
-            loadSelectedSkills: false,
-            resourceFileLimit: skillConfig?.resourceFileLimit,
-            includeDevSkills: devSkillsEnabled(),
-            agentId: MAIN_AGENT_ID,
-          })
-        : null;
-    const preparedMcp = await createRuntimeMcpTools({
-      config: mcpConfig,
-      workspaceRoot: this.opts.workspaceRoot,
-      shellSandbox: mcpShellSandbox,
-    });
-    try {
-      const mainAgent = mainAgentProfile(resolvedProfiles);
-      const toolConfig = applyMainAgentToolUse(baseToolConfig, mainAgent);
-      const dynamicChildToolCatalog = createDynamicChildToolCatalog({
-        workspaceRoot: this.opts.workspaceRoot,
-        toolConfig,
-      });
-      const delegateChildToolCatalog = createConfiguredDelegateChildToolCatalog(
-        {
-          workspaceRoot: this.opts.workspaceRoot,
-          toolConfig,
-          shell: shellConfig,
-          skillRoots: skillRoots.map((root) => root.root),
-          configPaths: loadedConfig.attempted.map((entry) => entry.path),
-        },
-      );
-      const derivedAgents = deriveConfiguredAgents(
-        mainAgent,
-        resolvedProfiles,
-        delegateChildToolCatalog,
-      );
-      const dynamicChildTools = catalogToolDefinitions(dynamicChildToolCatalog);
-      const delegateChildTools = catalogToolDefinitions(
-        delegateChildToolCatalog,
-      );
-      const allDelegateTools = createConfiguredDelegateTools({
-        getParent: () => undefined,
-        delegates: delegationTargets,
-        derivedAgents,
-        model: {
-          async complete() {
-            return { message: "" };
-          },
-        },
-        childTools: delegateChildTools,
-        workspaceRoot: this.opts.workspaceRoot,
-        parentRunPolicy: createDefaultPolicy(),
-        sandbox: shellConfig?.sandbox,
-        skillRoots: skillRoots.map((root) => root.root),
-        configPaths: loadedConfig.attempted.map((entry) => entry.path),
-        allowReadWriteWorkspaceAccess: input.access.shouldWrite,
-        maxDepth: agentConfig?.maxDepth,
-        // Snapshot only describes the tool; its body never runs here
-        // (getParent returns undefined and the tool throws first).
-        childRunStoreFactory: snapshotOnlyChildRunStoreFactory,
-      });
-      const directDelegates = filterDirectDelegatesForExposure(
-        delegationTargets,
-        agentConfig,
-        resolvedProfiles,
-      );
-      const directDelegateNames = new Set(
-        directDelegates.map((delegate) => delegateToolName(delegate)),
-      );
-      const delegateTools = allDelegateTools.filter((tool) =>
-        directDelegateNames.has(tool.name),
-      );
-      const delegateAgentTool = createDelegateAgentTool({
-        delegates: delegationTargets,
-        derivedAgents,
-        delegateTools: allDelegateTools,
-      });
-      const delegateParallelTool = shouldExposeDelegateParallelTool({
-        enabled: agentConfig?.enableParallelDelegates,
-        delegates: directDelegates,
-      })
-        ? createDelegateParallelTool({
-            getParent: () => undefined,
-            delegates: delegationTargets,
-            derivedAgents,
-            model: {
-              async complete() {
-                return { message: "" };
-              },
-            },
-            childTools: delegateChildTools,
-            parentRunPolicy: createDefaultPolicy(),
-            childRunStoreFactory: snapshotOnlyChildRunStoreFactory,
-            allowReadWriteWorkspaceAccess: input.access.shouldWrite,
-            maxDepth: agentConfig?.maxDepth,
-            workspaceRoot: this.opts.workspaceRoot,
-          })
-        : undefined;
-      const dynamicSpawnTool = createDynamicSpawnAgentTool({
-        getParent: () => undefined,
-        model: {
-          async complete() {
-            return { message: "" };
-          },
-        },
-        childTools: dynamicChildTools,
-        parentRunPolicy: createDefaultPolicy(),
-        childRunStoreFactory: snapshotOnlyChildRunStoreFactory,
-        maxDepth: agentConfig?.maxDepth,
-        workspaceRoot: this.opts.workspaceRoot,
-      });
-      const baseMainToolCatalog = createMainHostToolCatalog({
-        workspaceRoot: this.opts.workspaceRoot,
-        skillRoots: [...skillRoots],
-        toolConfig,
-        taskManager: this.tasks.manager,
-        getParentRunId: () => "run_capability_snapshot" as RunId,
-        todoPath: join(
-          sessionRootDirFor(this.opts),
-          "capability_snapshot",
-          "todo.md",
-        ),
-        preparedSkills,
-        preparedMcp,
-        delegateTools,
-        delegateAgentTool,
-        delegateParallelTool,
-        dynamicSpawnTool,
-        shell: shellConfig,
-        backgroundTasks: input.access.backgroundTasks,
-        configPaths: loadedConfig.attempted.map((entry) => entry.path),
-      });
-      const toolCatalog = admitToolsForAgentProfile(
-        baseMainToolCatalog,
-        mainAgent,
-        (entry) => entry.definition,
-        (entry, definition) => ({ ...entry, definition }),
-      );
-      return buildCapabilitySnapshot({
-        ...(model.ok ? { model: modelCapabilitySummary(model.resolved) } : {}),
-        access: input.access,
-        toolCatalog,
-        indexedSkills: preparedSkills?.indexedSkills ?? [],
-        loadedSkills: [],
-        skillInlineShell: inlineShellCapabilitySummary(
-          skillConfig?.inlineShell,
-          shellSandbox,
-        ),
-        mcpStatuses:
-          preparedMcp?.statuses ??
-          Object.fromEntries(
-            (mcpConfig?.servers ?? []).map((server) => [
-              server.name,
-              server.enabled === false
-                ? ({ status: "disabled" } as const)
-                : ({ status: "configured" } as const),
-            ]),
-          ),
-        mcpToolNameMap: preparedMcp?.toolNameMap ?? [],
-        agentProfiles: capabilitySnapshotAgentProfiles(
-          mainAgent,
-          resolvedProfiles,
-        ),
-        delegateTools: describeConfiguredDelegateTools({
-          delegates: delegationTargets,
-          derivedAgents,
-          delegateChildToolCatalog,
-          allowReadWriteWorkspaceAccess: input.access.shouldWrite,
-        }),
-        shellSandbox,
-        shellForegroundTimeoutMs:
-          shellConfig?.foregroundTimeoutMs ?? RECOMMENDED_FOREGROUND_TIMEOUT_MS,
-        shellPromotionAvailable: input.access.backgroundTasks === "enabled",
-        workflowRules: describeActiveWorkflowRules({
-          workflowHooks: loadedConfig.config.capabilities?.hooks?.workflow,
-          verification: loadedConfig.config.capabilities?.verification,
-        }),
-        eventRules: describeActiveEventRules({
-          eventHooks: loadedConfig.config.capabilities?.hooks?.events,
-        }),
-        workflows: workflowCapabilitySummary(workflows),
-        automation,
-      });
-    } finally {
-      await preparedMcp?.close();
-    }
-  }
-
-  private async inspectAutomationSummary(): Promise<CapabilityAutomationSummary> {
-    const cronRoot = defaultCronRoot();
-    const taskRoot = this.tasks.rootDir;
-    const cronJobs = await readCronJobsForSnapshot(cronRoot);
-    const tasks = readTasksForSnapshot(taskRoot);
-    return {
-      cron: {
-        rootDir: cronRoot,
-        total: cronJobs.length,
-        jobs: cronJobs.slice(0, 8),
-      },
-      tasks: {
-        rootDir: taskRoot,
-        total: tasks.length,
-        tasks: tasks.slice(0, 8),
-      },
-    };
-  }
-
   cancelRun(
     runId: string,
     reason?: string,
@@ -2367,14 +1918,4 @@ export class HostRuntime {
   > {
     return await forkHostSession(this.opts, sourceSessionId, forkAtSequence);
   }
-}
-
-function capabilitySnapshotAgentProfiles(
-  mainAgent: AgentProfile,
-  profiles: readonly AgentProfile[],
-): AgentProfile[] {
-  const byId = new Map<string, AgentProfile>();
-  byId.set(mainAgent.id, mainAgent);
-  for (const profile of profiles) byId.set(profile.id, profile);
-  return [...byId.values()];
 }

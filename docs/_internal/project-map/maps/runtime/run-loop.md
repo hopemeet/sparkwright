@@ -11,6 +11,16 @@ See [tool-orchestration.md](tool-orchestration.md) and [../trace/raw-trace.md](.
 
 - Status: Verified
 - Date: 2026-07-18
+- Scope: Host run preparation now records its completed capability snapshot
+  through `CapabilityRuntimeOperations`, which owns the last-run cache and
+  metadata summary projection. Model/tool/MCP/Skill/Agent/Hook preparation and
+  HostExecution remain in HostRuntime for the next ownership phase.
+- Read: Host run preparation, capability owner/assembly, execution ownership,
+  and focused tests.
+- Tests: focused Host capability 222/222 passed.
+
+- Status: Verified
+- Date: 2026-07-18
 - Scope: Agent child-run construction and captured background Agent task
   execution moved from HostRuntime to `AgentRuntimeAssembly`. The owner receives
   a caller-owned parent-run reference and existing process collaborators; it

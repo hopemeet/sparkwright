@@ -13,6 +13,7 @@ See [../../modules/skills.md](../../modules/skills.md). For mutating skills
 
 - `packages/skills/src/*`
 - `packages/host/src/runtime.ts`
+- `packages/host/src/runtime/capability-runtime-operations.ts`
 - `packages/host/src/skill-usage.ts`
 - `packages/host/src/skill-inline-shell.ts`
 - `packages/host/src/tools.ts`
@@ -39,6 +40,10 @@ skill roots
   proposals carry required artifact identity and policy-2 package identity.
 
 - Default host behavior exposes loader tool and does not auto-reside all selected skills.
+- Capability inspection indexes configured Skill roots without resident
+  selection through `CapabilityRuntimeOperations`; live-run loading remains in
+  HostRuntime run preparation. Fatal index diagnostics preserve the canonical
+  `run.created -> capability.index.failed -> run.failed` trace order.
 - Project skill root defaults to `.sparkwright/skills`.
 - Root precedence is `builtin -> user -> project -> configured`.
   `capabilities.skills.roots` supplies the canonical configured layer, which
