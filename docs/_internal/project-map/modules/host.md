@@ -13,6 +13,18 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 
 - Status: Verified
 - Date: 2026-07-18
+- Scope: `runtime/run-preparation-operations.ts` is the Host owner for immutable
+  execution planning, model/config/security resolution, Skill/MCP preparation,
+  Agent and main-catalog assembly, Workflow preparation, Hook/rule assembly,
+  capability snapshot capture, and run/store metadata. HostRuntime supplies one
+  approval interaction-channel seam and retains HostExecution/current state.
+- Read: HostRuntime/run preparation, execution and existing runtime owners,
+  tool/capability/security/session/trace contracts, and focused tests.
+- Tests: direct owner coverage and final focused/repository gates are recorded
+  with the commit.
+
+- Status: Verified
+- Date: 2026-07-18
 - Scope: `runtime/capability-runtime-operations.ts` is the Host owner for
   effective capability inspection, configured/live snapshot merge and cache,
   automation projection, and Skill index-failure diagnostics. HostRuntime
@@ -296,6 +308,7 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 
 - `packages/host/src/runtime.ts` — stable named public facade
 - `packages/host/src/runtime/host-runtime.ts` — concrete HostRuntime composition and execution orchestration
+- `packages/host/src/runtime/run-preparation-operations.ts` — immutable run plan, model/config/security, Skill/MCP, Agent/catalog, Workflow preparation, Hook/rule, capability snapshot, and metadata assembly
 - `packages/host/src/runtime/agent-runtime-assembly.ts` — configured/direct/indexed/parallel Agent and Delegate assembly, dynamic spawn/promotion, child grants/results, and background Agent task execution
 - `packages/host/src/runtime/capability-runtime-operations.ts` — effective capability inspection, last-run snapshot ownership/merge, automation projection, and capability index-failure diagnostics
 - `packages/host/src/runtime/capability-assembly.ts` — capability snapshot projection, summaries, automation reads, and merge
@@ -356,6 +369,7 @@ Owns:
 - provider pricing resolution for run metadata, session compaction usage hints,
   and `capability.inspect` diagnostics
 - skill, MCP, shell, cron, and agent capability preparation
+- complete run preparation ownership through `RunPreparationOperations`
 - effective capability inspection and snapshot-cache ownership through
   `CapabilityRuntimeOperations`
 - host Agent/Delegate execution-surface construction through
@@ -485,13 +499,22 @@ Does not own:
   HostRuntime. It may attach/detach Core episode runs and drive the actor chain,
   but it does not store `currentExecution`, construct HostExecution, admit
   lanes, or create a second execution entrance. HostRuntime continues to own
-  generic `prepareHostRunEnvironment()` assembly and process facade wiring.
+  process facade wiring and delegates generic preparation to
+  `RunPreparationOperations`.
+- `RunPreparationOperations` owns the complete pre-Core run environment:
+  immutable execution plan/resources, model/config/security, Skill/MCP, Agent,
+  main catalog/admission, Workflow preparation, Hook/rules, capability
+  snapshot, and run/store metadata. It receives the existing Task, Agent,
+  Workflow episode, capability, and workspace-lease owners and does not copy
+  their state. HostRuntime provides only a narrow interaction-channel factory;
+  the preparation owner does not hold HostExecution or `currentExecution`.
 - `CapabilityRuntimeOperations` owns the configured inspection catalog, the
   last successful run snapshot, configured/live merge, Cron/Task automation
   projection, and Skill index-failure trace sequence. It reuses the exact
   WorkspaceContext TaskManager/root and receives one HostRuntime MCP
-  preparation port; it does not own live MCP state, HostExecution, run
-  preparation, or a second Task store.
+  preparation port implemented by the canonical run-preparation MCP helper; it
+  does not own live MCP state, HostExecution, run preparation, or a second Task
+  store.
 - `run-security-plan.ts` is the immutable boundary between config/access
   parsing and runtime assembly. A run and `capability.inspect` derive the same
   workspace, access, confidential paths, skill/config roots, and resolved shell

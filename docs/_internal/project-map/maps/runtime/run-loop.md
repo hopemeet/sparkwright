@@ -11,6 +11,18 @@ See [tool-orchestration.md](tool-orchestration.md) and [../trace/raw-trace.md](.
 
 - Status: Verified
 - Date: 2026-07-18
+- Scope: Host pre-Core environment assembly moved intact to
+  `RunPreparationOperations`: execution plan/resources, model/config/security,
+  Skill/MCP, Agent/catalog, Workflow preparation, Hook/rules, snapshot, and
+  metadata. Core run construction remains in `WorkflowEpisodeRuntime`, while
+  HostExecution/current state and interaction routing remain in HostRuntime.
+- Read: preparation/episode/execution owners, Core construction boundary, and
+  focused start/resume/Workflow tests.
+- Tests: direct owner coverage and final focused/repository gates are recorded
+  with the commit.
+
+- Status: Verified
+- Date: 2026-07-18
 - Scope: Host run preparation now records its completed capability snapshot
   through `CapabilityRuntimeOperations`, which owns the last-run cache and
   metadata summary projection. Model/tool/MCP/Skill/Agent/Hook preparation and
@@ -155,6 +167,7 @@ See [tool-orchestration.md](tool-orchestration.md) and [../trace/raw-trace.md](.
 - `packages/core/src/run-outcome.ts`
 - `packages/host/src/runtime.ts`
 - `packages/host/src/runtime/host-runtime.ts`
+- `packages/host/src/runtime/run-preparation-operations.ts`
 - `packages/host/src/runtime/agent-runtime-assembly.ts`
 
 ## Data Flow
@@ -289,6 +302,10 @@ createRun/resumeRunFromCheckpoint
   exists. When flushed into the real run event log, warning-severity
   `capability.index.failed` events are diagnostics only and must not be treated
   as terminal failures.
+- `RunPreparationOperations` owns that complete pre-run environment and passes
+  it to `WorkflowEpisodeRuntime`. The episode owner remains the Core run
+  constructor/driver; preparation never begins/releases HostExecution or stores
+  current/active run state.
 - Host pre-run preparation can also emit `agent.routing.evaluated` after
   sorting configured delegate tools by profile routing hints for the current
   goal. This event is observability for tool ordering/labels only; it does not

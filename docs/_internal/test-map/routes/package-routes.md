@@ -277,8 +277,27 @@ npm --workspace @sparkwright/host run typecheck
 Construct the owner directly for configured/live merge, canonical automation
 roots, MCP close, and capability-index failure persistence/event order. Keep
 the last-run snapshot only in the capability owner, reuse the WorkspaceContext
-TaskManager/root, and leave generic run preparation plus live MCP lifecycle in
-HostRuntime behind one narrow port. Run the import/internal-import gates.
+TaskManager/root, and route generic/live MCP preparation through the canonical
+run-preparation helper behind one narrow port. Run the import/internal-import
+gates.
+
+For `runtime/run-preparation-operations.ts`, run:
+
+```bash
+npm --workspace @sparkwright/host test -- test/run-preparation-operations.test.ts test/run-security-plan.test.ts test/run-policy.test.ts test/client-run.test.ts test/tools.test.ts test/workflow-hooks.test.ts test/workflows.test.ts test/protocol.test.ts test/host-service.test.ts
+npm --workspace @sparkwright/agent-runtime test -- test/index.test.ts test/workflows.test.ts
+npm --workspace @sparkwright/host run typecheck
+npm --workspace @sparkwright/agent-runtime run typecheck
+```
+
+Construct the owner directly to cover the plan/model/config/security -> Skill/
+MCP -> Agent/main catalog -> Workflow preparation -> Hook/rule -> capability
+snapshot/metadata chain. Preserve `HostRuntime` as the sole HostExecution and
+current-execution owner, `WorkflowEpisodeRuntime` as the live Core episode
+constructor/driver, and one narrow Host interaction-channel factory. Do not
+create a second TaskManager, workspace lease coordinator, snapshot cache, or
+MCP configuration path. Broaden to CLI/TUI and the repository release gate
+because prepared catalogs and metadata feed both surfaces.
 
 For `runtime/task-runtime-operations.ts` or `runtime/task-projections.ts`, run:
 

@@ -98,7 +98,8 @@ For `packages/host/src/runtime/capability-runtime-operations.ts` or
 snapshot-cache/configured-inspection owner and run the import graph/facade gate
 in addition to this route. Construct the owner directly for snapshot merge,
 automation roots, MCP cleanup, and capability-index failure ordering. Preserve
-HostRuntime as generic live-run preparation and the sole MCP lifecycle port.
+`RunPreparationOperations` as generic live-run preparation and the canonical
+MCP preparation port; HostRuntime remains the interaction/execution facade.
 
 For `packages/cli/src/commands/capabilities.ts`, run `capabilities
 inspect|delegates run` focused slices plus the full CLI golden. Assert the

@@ -11,6 +11,17 @@ See [../safety/workspace-writes.md](../safety/workspace-writes.md), [../safety/s
 
 - Status: Verified
 - Date: 2026-07-18
+- Scope: live main-catalog construction, Agent-prepared tools, main-profile
+  admission, Skill/MCP tools, and capability snapshot catalog projection moved
+  from HostRuntime to `RunPreparationOperations`. Tool identities, filtering,
+  policy, approval, lease wrapping, and Core execution order are unchanged.
+- Read: run preparation owner, Agent assembly, catalog/surface, capability and
+  workspace lease contracts, plus focused tool/run tests.
+- Tests: direct owner coverage and final focused/repository gates are recorded
+  with the commit.
+
+- Status: Verified
+- Date: 2026-07-18
 - Scope: inert effective-tool catalog construction for capability inspection
   moved to `CapabilityRuntimeOperations`. It reuses Agent assembly helpers and
   the shared TaskManager; generic live-run catalog construction, admission,
@@ -144,6 +155,7 @@ See [../safety/workspace-writes.md](../safety/workspace-writes.md), [../safety/s
 - `packages/coding-tools/src/index.ts`
 - `packages/coding-tools/src/unified-diff.ts`
 - `packages/host/src/runtime/host-runtime.ts`
+- `packages/host/src/runtime/run-preparation-operations.ts`
 - `packages/host/src/runtime/agent-runtime-assembly.ts`
 
 ## Data Flow

@@ -12,6 +12,16 @@ and [../session/session-store.md](../session/session-store.md) for session layou
 
 - Status: Verified
 - Date: 2026-07-18
+- Scope: pre-run buffered Skill/MCP/Agent diagnostics, trace resources,
+  capability snapshot metadata, and run/store metadata assembly now live in
+  `RunPreparationOperations`. Event types, payloads, flush order, trace level,
+  and storage layout are unchanged.
+- Read: preparation owner, capability failure owner, episode flush path, and
+  raw trace contracts.
+- Tests: direct owner and focused trace/run gates are recorded with the commit.
+
+- Status: Verified
+- Date: 2026-07-18
 - Scope: fatal Skill index-failure trace persistence moved intact to
   `CapabilityRuntimeOperations`. Canonical session storage, failure payload,
   live Host event envelope, and the `run.created`, `capability.index.failed`,

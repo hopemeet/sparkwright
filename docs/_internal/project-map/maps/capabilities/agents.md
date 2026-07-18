@@ -12,6 +12,16 @@ See [../../modules/agent-runtime.md](../../modules/agent-runtime.md) and [../../
 
 - Status: Verified
 - Date: 2026-07-18
+- Scope: per-run Agent assembly is now orchestrated by
+  `RunPreparationOperations` through the existing `AgentRuntimeAssembly` owner,
+  then admitted into the main catalog and capability snapshot. Agent identities,
+  routing, grants, models, hooks, promotion, and result semantics are unchanged.
+- Read: preparation/Agent owners, main catalog/snapshot seams, and focused tests.
+- Tests: direct owner plus focused Agent/Delegate gates are recorded with the
+  commit.
+
+- Status: Verified
+- Date: 2026-07-18
 - Scope: configured Agent/Delegate capability inventory is now assembled for
   inspection by `CapabilityRuntimeOperations`, reusing stateless
   `AgentRuntimeAssembly` helpers. Live Agent execution assembly remains with

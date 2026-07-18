@@ -10,6 +10,16 @@ See also [../maps/capabilities/agents.md](../maps/capabilities/agents.md), [../m
 
 - Status: Verified
 - Date: 2026-07-18
+- Scope: Host `RunPreparationOperations` now invokes the existing
+  `AgentRuntimeAssembly` as one preparation port. Agent Runtime remains
+  model/config-free and retains portable Task/Agent/Workflow contracts; no
+  execution, store, or protocol ownership moved into this package.
+- Read: Host preparation/Agent owners and portable Agent Runtime contracts.
+- Tests: focused Host owner/Agent and Agent Runtime gates are recorded with the
+  commit.
+
+- Status: Verified
+- Date: 2026-07-18
 - Scope: Host `AgentRuntimeAssembly` now composes Agent Runtime's portable
   profile derivation, spawn/invocation lifecycle, task runner, delegation
   ledger, and result contracts behind one Host owner. Agent Runtime does not

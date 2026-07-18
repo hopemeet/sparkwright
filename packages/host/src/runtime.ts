@@ -1,8 +1,8 @@
 export {
   HostRuntime,
-  assembleRuntimeWorkflowHooks,
   sessionPreviewFromTranscriptLine,
 } from "./runtime/host-runtime.js";
+export { assembleRuntimeWorkflowHooks } from "./runtime/run-preparation-operations.js";
 export {
   assertReadOnlyChildCanSatisfyGoal,
   createConfiguredDelegateTools,
@@ -14,7 +14,7 @@ export {
   runHostAgentTask,
 } from "./runtime/agent-runtime-assembly.js";
 export { createDelegateAgentTool } from "./indexed-delegate-tool.js";
-export type { RuntimeWorkflowHookAssemblyOptions } from "./runtime/host-runtime.js";
+export type { RuntimeWorkflowHookAssemblyOptions } from "./runtime/run-preparation-operations.js";
 export type {
   HostAgentTaskRunnerDeps,
   InProcessDelegateWorkflowHooksForProfile,

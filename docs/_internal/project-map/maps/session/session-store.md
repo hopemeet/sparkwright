@@ -11,6 +11,16 @@ See [../trace/raw-trace.md](../trace/raw-trace.md) for raw event evidence.
 
 - Status: Verified
 - Date: 2026-07-18
+- Scope: per-run `FileSessionStore`, workspace/trace resources, and run/store
+  metadata are now assembled by `RunPreparationOperations`; canonical session
+  layout, Workflow journal layout, job/control-session isolation, and formats
+  are unchanged.
+- Read: preparation resources/metadata, episode store use, and session maps.
+- Tests: direct owner and focused start/resume gates are recorded with the
+  commit.
+
+- Status: Verified
+- Date: 2026-07-18
 - Scope: WorkflowEpisodeRuntime now constructs fresh and resumed Core episode
   run stores using the existing canonical session-store factories. Job/control
   session separation, paths, metadata, checkpoint layout, and Workflow journal

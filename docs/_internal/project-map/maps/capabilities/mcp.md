@@ -11,6 +11,17 @@ See [../../modules/mcp-adapter.md](../../modules/mcp-adapter.md).
 
 - Status: Verified
 - Date: 2026-07-18
+- Scope: canonical config/extra-server merge, startup/schema mode selection,
+  live MCP preparation, workspace-cwd disclosure, and inspection MCP port now
+  live in `run-preparation-operations.ts`. MCP tools/status, sandbox inputs,
+  close lifecycle, and adapter behavior are unchanged.
+- Read: run preparation owner, capability inspection owner, MCP adapter, and
+  focused run/capability tests.
+- Tests: owner-level and final focused/repository gates are recorded with the
+  commit.
+
+- Status: Verified
+- Date: 2026-07-18
 - Scope: capability inspection moved behind `CapabilityRuntimeOperations` and
   receives one HostRuntime MCP preparation port. Config/extra-server merge,
   startup mode, status/tool-name projection, close ordering, and live-run MCP
@@ -44,6 +55,7 @@ See [../../modules/mcp-adapter.md](../../modules/mcp-adapter.md).
 - `packages/mcp-adapter/src/index.ts`
 - `packages/host/src/runtime.ts`
 - `packages/host/src/runtime/host-runtime.ts`
+- `packages/host/src/runtime/run-preparation-operations.ts`
 - `packages/host/src/runtime/capability-runtime-operations.ts`
 - `packages/host/src/runtime/capability-assembly.ts`
 - `packages/cli/src/cli.ts`

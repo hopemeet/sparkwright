@@ -11,6 +11,15 @@ See [approvals.md](approvals.md) and [../runtime/tool-orchestration.md](../runti
 
 - Status: Verified
 - Date: 2026-07-18
+- Scope: immutable access/security resolution, fresh mutable run policy,
+  process workspace-lease injection, and main catalog mutation wrapping now
+  route through `RunPreparationOperations`. Approval, write authority, lease,
+  and event semantics are unchanged.
+- Read: preparation/security/policy/catalog owners and workspace lease map.
+- Tests: owner-level and focused access/tool gates are recorded with the commit.
+
+- Status: Verified
+- Date: 2026-07-18
 - Scope: Agent workspace-write grant compilation, configured child admission,
   promotion handoff, and delegate lease wiring moved into
   `AgentRuntimeAssembly`. The owner reuses the process workspace lease

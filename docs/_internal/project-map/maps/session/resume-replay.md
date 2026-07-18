@@ -11,6 +11,17 @@ See [session-store.md](session-store.md) and [../runtime/context-compaction.md](
 
 - Status: Verified
 - Date: 2026-07-18
+- Scope: fresh, checkpoint-resume, and Workflow-resume envelopes now obtain the
+  same prepared environment through `RunPreparationOperations`. Canonical run
+  lookup, pinned Workflow verification/wait compensation, and live episode
+  construction remain with their existing owners.
+- Read: Host resume envelopes, preparation/episode/durable owners, and session
+  contracts.
+- Tests: direct owner and focused resume/Workflow gates are recorded with the
+  commit.
+
+- Status: Verified
+- Date: 2026-07-18
 - Scope: checkpoint episode construction and Workflow resume episode
   construction now route through `WorkflowEpisodeRuntime`; waiting input is
   consumed and compensated during its projection preparation. HostRuntime

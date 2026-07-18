@@ -1,42 +1,23 @@
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { resolve } from "node:path";
 import {
   asSessionId,
   createContextItemId,
   createSessionId,
-  createRun,
   type InteractionChannel,
   type ContentPart,
   type ContextItem,
-  type EventEmitter,
   type RunId,
-  type WorkflowHook,
 } from "@sparkwright/core";
-import { prepareSkillsForRun } from "@sparkwright/skills";
-import {
-  createLazyMcpToolsForRun,
-  prepareMcpToolsForRun,
-  type McpServerConfig,
-} from "@sparkwright/mcp-adapter";
 import {
   type WorkflowControlCommand,
   type WorkflowControlSourceIdentity,
-  FileWorkflowStore,
   type WorkflowLeaseBoundWriter,
   type ActorInbox,
   type WorkflowRunId,
-  type WorkflowRunRecord,
   type WorkflowRunStatus,
 } from "@sparkwright/agent-runtime";
-import { RECOMMENDED_FOREGROUND_TIMEOUT_MS } from "@sparkwright/shell-tool";
 import { type ExecutionHandle } from "@sparkwright/server-runtime";
 import type { HostExecutionMessage, HostRuntimeOptions } from "./contracts.js";
-import {
-  capabilitySnapshotAgentProfiles,
-  createSkillPreprocessOptions,
-  inlineShellCapabilitySummary,
-  modelCapabilitySummary,
-  workflowCapabilitySummary,
-} from "./capability-assembly.js";
 import { CapabilityRuntimeOperations } from "./capability-runtime-operations.js";
 import {
   TaskRuntimeOperations,
@@ -50,17 +31,15 @@ import {
   WorkflowRuntimeOperations,
   type WorkflowControlExecutionPort,
 } from "./workflow-runtime-operations.js";
-import {
-  WorkflowEpisodeRuntime,
-  type WorkflowEpisodeEnvironment,
-} from "./workflow-episode-runtime.js";
+import { WorkflowEpisodeRuntime } from "./workflow-episode-runtime.js";
 import { AgentRuntimeAssembly } from "./agent-runtime-assembly.js";
+import {
+  RunPreparationOperations,
+  devSkillsEnabled,
+  prepareRuntimeMcpInspection,
+  type RunPreparationInput,
+} from "./run-preparation-operations.js";
 export type { RuntimeOptions } from "./contracts.js";
-import { type ResolvedShellSandboxConfig } from "@sparkwright/shell-sandbox";
-import type {
-  CapabilityVerificationConfig,
-  CapabilityWorkflowHookConfig,
-} from "../config-zod-schema.js";
 import { loadCheckpointFromRunDir } from "@sparkwright/core/internal";
 import {
   isTraceLevel,
@@ -77,24 +56,12 @@ import {
   type TaskRecordSnapshot,
   type CapabilitySnapshot,
 } from "@sparkwright/protocol";
-import { loadHostConfig } from "../config/config-implementation.js";
-import type { CapabilityMcpConfig } from "../config/contracts.js";
-import { MAIN_AGENT_ID } from "../agent-constants.js";
-import {
-  buildAccessMetadata,
-  resolveRunAccessFields,
-  type ResolvedRunAccess,
-} from "../run-access.js";
-import { prepareHostRunSecurityPlan } from "../run-security-plan.js";
-import { createHostRunPolicy } from "../run-policy.js";
-import { existingSkillRoots } from "../skill-roots.js";
+import { buildAccessMetadata, resolveRunAccessFields } from "../run-access.js";
 import { nextMessageId, nowIso } from "../connection.js";
 import {
   HostExecution,
   type HostExecutionActiveRun,
 } from "../host-execution.js";
-import { resolveExecutionPlan } from "../execution-plan.js";
-import { createExecutionResources } from "../execution-resources.js";
 import {
   findHostRunDirectory,
   forkHostSession,
@@ -110,189 +77,7 @@ import {
   type SessionCompactResult,
 } from "../session-compaction.js";
 export { sessionPreviewFromTranscriptLine } from "../session-queries.js";
-import { createModel } from "../model-factory.js";
-import {
-  catalogToolDefinitions,
-  createMainHostToolCatalog,
-  type HostToolCatalogEntry,
-} from "../tool-catalog.js";
 export { createDelegateAgentTool } from "../indexed-delegate-tool.js";
-import { createSkillUsageRecorder } from "../skill-usage.js";
-import {
-  createConfiguredWorkflowHooks,
-  createPartialSubagentFinalityDisclosureHook,
-  type CreateConfiguredWorkflowHooksOptions,
-} from "../workflow-hooks.js";
-import { createVerificationWorkflowHooks } from "../verification.js";
-import { createDocumentedCommandWorkflowHooks } from "../documented-command-check.js";
-import {
-  describeActiveEventRules,
-  describeActiveWorkflowRules,
-} from "../active-rules.js";
-import { loadLayeredWorkflowAssets } from "../workflows.js";
-import { createWorkflowProjectionHooks } from "../workflow-projection.js";
-import { admitToolsForAgentProfile } from "../tool-surface.js";
-
-/**
- * Skills flagged `metadata.devOnly: true` (test/development fixtures) are kept
- * out of run candidate sets unless `SPARKWRIGHT_DEV_SKILLS` is explicitly
- * enabled. This stops smoke-test skills from mis-triggering in real sessions.
- */
-function devSkillsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  const value = env.SPARKWRIGHT_DEV_SKILLS;
-  return value === "1" || value === "true";
-}
-
-type RuntimeMcpConfig = Omit<CapabilityMcpConfig, "servers"> & {
-  servers?: McpServerConfig[];
-};
-
-function mergeRuntimeMcpConfig(
-  config: CapabilityMcpConfig | undefined,
-  extraServers: readonly McpServerConfig[] | undefined,
-): RuntimeMcpConfig | undefined {
-  const hasExtraServers = (extraServers?.length ?? 0) > 0;
-  const servers = [
-    ...((config?.servers ?? []) as McpServerConfig[]),
-    ...(extraServers ?? []),
-  ];
-  if (!config && servers.length === 0) return undefined;
-  return {
-    ...(config ?? {}),
-    ...(config?.startup
-      ? {}
-      : hasExtraServers
-        ? { startup: "prepare" as const }
-        : {}),
-    ...(servers.length > 0 ? { servers } : {}),
-  };
-}
-
-function mcpStartupMode(
-  config: RuntimeMcpConfig | undefined,
-): "lazy" | "prepare" | "eager" {
-  return config?.startup ?? "lazy";
-}
-
-function mcpToolSchemaLoad(
-  config: RuntimeMcpConfig,
-): NonNullable<RuntimeMcpConfig["toolSchemaLoad"]> {
-  return (
-    config.toolSchemaLoad ?? (config.startup === "eager" ? "eager" : "defer")
-  );
-}
-
-async function createRuntimeMcpTools(input: {
-  config: RuntimeMcpConfig | undefined;
-  workspaceRoot: string;
-  emitter?: EventEmitter;
-  agentId?: string;
-  shellSandbox?: ResolvedShellSandboxConfig;
-}): Promise<PreparedMcp | null> {
-  const config = input.config;
-  if (!config?.servers?.length) return null;
-  const common = {
-    servers: config.servers,
-    defaultTimeoutMs: config.defaultTimeoutMs,
-    namePrefix: config.namePrefix,
-    toolSchemaLoad: mcpToolSchemaLoad(config),
-    policy: config.defaultPolicy,
-    emitter: input.emitter,
-    agentId: input.agentId,
-    shellSandbox: input.shellSandbox,
-  };
-  const startup = mcpStartupMode(config);
-  const prepared =
-    startup === "lazy"
-      ? createLazyMcpToolsForRun(common)
-      : await prepareMcpToolsForRun(common);
-  return prepared;
-}
-
-function configuredMcpWorkspaceCwdServers(
-  config: RuntimeMcpConfig | undefined,
-  workspaceRoot: string,
-): string[] {
-  if (!config?.servers?.length) return [];
-  return config.servers
-    .filter((server) => {
-      if (server.type !== "stdio" || server.enabled === false || !server.cwd) {
-        return false;
-      }
-      const cwd = isAbsolute(server.cwd)
-        ? server.cwd
-        : resolve(workspaceRoot, server.cwd);
-      return isSameOrInsidePath(workspaceRoot, cwd);
-    })
-    .map((server) => server.name);
-}
-
-function isSameOrInsidePath(parent: string, candidate: string): boolean {
-  const parentPath = resolve(parent);
-  const candidatePath = resolve(candidate);
-  const rel = relative(parentPath, candidatePath);
-  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
-}
-
-function requireActiveRunId(value: string | null): RunId {
-  if (!value) {
-    throw new Error("Task tool invoked before a run id was assigned.");
-  }
-  return value as RunId;
-}
-
-type PreparedSkills = Awaited<ReturnType<typeof prepareSkillsForRun>>;
-type PreparedMcp = Awaited<ReturnType<typeof prepareMcpToolsForRun>>;
-
-interface PreparedHostRunEnvironment extends WorkflowEpisodeEnvironment {
-  preparedSkills: PreparedSkills | null;
-  preparedMcp: PreparedMcp | null;
-  toolCatalog: HostToolCatalogEntry[];
-  workflowProjection?: ReturnType<typeof createWorkflowProjectionHooks>;
-}
-
-export interface RuntimeWorkflowHookAssemblyOptions extends Omit<
-  CreateConfiguredWorkflowHooksOptions,
-  "hooks"
-> {
-  workflowHooks?: CapabilityWorkflowHookConfig[];
-  workflowActive?: boolean;
-  projectionHooks?: WorkflowHook[];
-  verification?: CapabilityVerificationConfig;
-  documentedCommand: {
-    goal: string;
-    shouldWrite: boolean;
-  };
-}
-
-export function assembleRuntimeWorkflowHooks(
-  options: RuntimeWorkflowHookAssemblyOptions,
-): WorkflowHook[] {
-  const verificationHooks = createVerificationWorkflowHooks({
-    ...options,
-    verification: options.verification,
-  });
-  const documentedCommandHooks = createDocumentedCommandWorkflowHooks({
-    ...options,
-    workspaceRoot: options.workspaceRoot,
-    goal: options.documentedCommand.goal,
-    shouldWrite: options.documentedCommand.shouldWrite,
-  });
-  const projectionHooks = options.projectionHooks ?? [];
-  const workflowActive =
-    options.workflowActive === true || projectionHooks.length > 0;
-  return [
-    ...createConfiguredWorkflowHooks({
-      ...options,
-      hooks: options.workflowHooks,
-      workflowActive,
-    }),
-    ...verificationHooks,
-    ...documentedCommandHooks,
-    ...projectionHooks,
-    createPartialSubagentFinalityDisclosureHook(),
-  ];
-}
 
 /**
  * Strip the decorations the context builder wraps around a user goal: the
@@ -361,10 +146,6 @@ function userInputContextItem(input: {
  * (last user message). We surface the goal. Falls back to a top-level `content`
  * string, then the raw line, for other/legacy shapes.
  */
-function extractSkillSourcePath(message: string): string | undefined {
-  return message.match(/(?:^|\s)(\/[^\n:]+SKILL\.md)\b/)?.[1];
-}
-
 function resolveTraceLevel(input: {
   traceLevel?: TraceLevel;
   metadata?: Record<string, unknown>;
@@ -386,6 +167,7 @@ export class HostRuntime {
   private readonly workflowEpisodes: WorkflowEpisodeRuntime;
   private readonly agents: AgentRuntimeAssembly;
   private readonly capabilities: CapabilityRuntimeOperations;
+  private readonly runPreparation: RunPreparationOperations;
   private currentExecution: HostExecution | null = null;
   // One abort for the complete interactive execution, including assembly and
   // every todo/workflow episode. Core run cancellation remains run-scoped.
@@ -435,20 +217,25 @@ export class HostRuntime {
       backgroundTasksCeiling: this.opts.backgroundTasksCeiling,
       emit: this.opts.emit,
       includeDevSkills: devSkillsEnabled,
-      prepareMcp: async ({ config, shellSandbox }) => {
-        const runtimeConfig = mergeRuntimeMcpConfig(
+      prepareMcp: ({ config, shellSandbox }) =>
+        prepareRuntimeMcpInspection({
           config,
-          this.opts.extraMcpServers,
-        );
-        return {
-          servers: runtimeConfig?.servers ?? [],
-          prepared: await createRuntimeMcpTools({
-            config: runtimeConfig,
-            workspaceRoot: this.opts.workspaceRoot,
-            shellSandbox,
-          }),
-        };
-      },
+          extraServers: this.opts.extraMcpServers,
+          workspaceRoot: this.opts.workspaceRoot,
+          shellSandbox,
+        }),
+    });
+    this.runPreparation = new RunPreparationOperations({
+      workspaceRoot: this.opts.workspaceRoot,
+      sessionRootDir: this.opts.sessionRootDir,
+      extraMcpServers: this.opts.extraMcpServers,
+      workspaceLeaseCoordinator: this.opts.workspaceLeaseCoordinator,
+      taskManager: this.tasks.manager,
+      agents: this.agents,
+      capabilities: this.capabilities,
+      workflowEpisodes: this.workflowEpisodes,
+      createInteractionChannel: (runIdHolder) =>
+        this.createInteractionChannel(runIdHolder),
     });
   }
 
@@ -890,428 +677,9 @@ export class HostRuntime {
     }
   }
 
-  private async prepareHostRunEnvironment(input: {
-    goal: string;
-    modelRef?: string;
-    access: ResolvedRunAccess;
-    sessionId: string;
-    targetPath?: string;
-    confidentialPaths?: readonly string[];
-    confidentialDefaults?: boolean;
-    traceLevel?: TraceLevel;
-    workflowName?: string;
-    workflowRunId?: WorkflowRunId;
-    controlSessionId?: string;
-    workflowStore?: FileWorkflowStore;
-    workflowRecord?: WorkflowRunRecord;
-    workflowLease?: WorkflowLeaseBoundWriter;
-    workflowWaitingInputMetadata?: Record<string, unknown>;
-    runMetadata?: Record<string, unknown>;
-    runStoreMetadata?: Record<string, unknown>;
-  }): Promise<
-    | { ok: true; env: PreparedHostRunEnvironment }
-    | { ok: false; error: ProtocolError }
-  > {
-    const plan = resolveExecutionPlan({
-      workspaceRoot: this.opts.workspaceRoot,
-      sessionRootDir: this.opts.sessionRootDir,
-      sessionId: input.sessionId,
-      goal: input.goal,
-      modelRef: input.modelRef,
-      targetPath: input.targetPath,
-      traceLevel: input.traceLevel,
-      access: input.access,
-    });
-    const model = await createModel({
-      modelRef: plan.modelRef,
-      goal: plan.goal,
-      workspaceRoot: plan.workspaceRoot,
-      targetPath: plan.targetPath,
-    });
-    if (!model.ok) {
-      return {
-        ok: false,
-        error: { code: "invalid_payload", message: model.message },
-      };
-    }
-
-    const workspaceRoot = plan.workspaceRoot;
-    const workspaceLeaseCoordinator = this.opts.workspaceLeaseCoordinator;
-    const resources = createExecutionResources(plan);
-    const { workspace, trace, pendingExtensionEvents } = resources;
-    const sessionRootDir = plan.sessionRootDir;
-    const skillUsageRecorder = createSkillUsageRecorder(workspaceRoot);
-    const runIdHolder: { value: string | null } = { value: null };
-    const interactionChannel = this.createInteractionChannel(runIdHolder);
-    const loadedConfig = await loadHostConfig(workspaceRoot);
-    const baseToolConfig = loadedConfig.config.tools;
-    const shellConfig = loadedConfig.config.shell;
-    const hookConfig = loadedConfig.config.capabilities?.hooks;
-    const skillConfig = loadedConfig.config.capabilities?.skills;
-    const mcpConfig = mergeRuntimeMcpConfig(
-      loadedConfig.config.capabilities?.mcp,
-      this.opts.extraMcpServers,
-    );
-    const agentConfig = loadedConfig.config.capabilities?.agents;
-    const writeGuardrails = loadedConfig.config.write;
-    const securityPlan = await prepareHostRunSecurityPlan({
-      workspaceRoot,
-      access: input.access,
-      loadedConfig,
-      requestConfidentialPaths: input.confidentialPaths,
-      requestConfidentialDefaults: input.confidentialDefaults,
-    });
-    const runAccess = securityPlan.access;
-    const confidentialPaths = securityPlan.confidentialPaths;
-    const confidentialDefaults = securityPlan.confidentialDefaults;
-    const skillRoots = securityPlan.skillRoots;
-    const shellSandbox = securityPlan.shellSandboxStatus;
-    const mcpShellSandbox = securityPlan.shellSandbox;
-    const skillPreprocess = createSkillPreprocessOptions({
-      skillConfig,
-      emitter: pendingExtensionEvents,
-      sandbox: mcpShellSandbox,
-      workspaceRoot,
-    });
-    const existingPreparedSkillRoots = await existingSkillRoots(skillRoots);
-    let preparedSkills: PreparedSkills | null = null;
-    try {
-      preparedSkills = existingPreparedSkillRoots.length
-        ? await prepareSkillsForRun({
-            goal: input.goal,
-            skillRoots: existingPreparedSkillRoots,
-            agent: {
-              allowedSkills: skillConfig?.allowedSkills,
-              deniedSkills: skillConfig?.deniedSkills,
-            },
-            // Default to on-demand loading: expose the skill_load tool and let
-            // the model pull bodies it judges relevant, rather than auto-residing
-            // matcher-selected skills (which both pollutes context and double-
-            // injects when the loader tool is also on). A config can opt back into
-            // auto-resident by setting loadSelectedSkills: true.
-            includeLoaderTool: skillConfig?.includeLoaderTool ?? true,
-            loadSelectedSkills: skillConfig?.loadSelectedSkills ?? false,
-            maxSelectedSkills: skillConfig?.maxSelectedSkills,
-            resourceFileLimit: skillConfig?.resourceFileLimit,
-            includeDevSkills: devSkillsEnabled(),
-            emitter: pendingExtensionEvents,
-            agentId: MAIN_AGENT_ID,
-            preprocess: skillPreprocess,
-          })
-        : null;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      await this.capabilities.recordIndexFailure({
-        goal: input.goal,
-        sessionId: input.sessionId,
-        traceLevel: input.traceLevel ?? "standard",
-        message,
-        source: extractSkillSourcePath(message),
-        targetPath: input.targetPath,
-        metadata: input.runStoreMetadata ?? input.runMetadata ?? {},
-      });
-      return {
-        ok: false,
-        error: { code: "internal_error", message },
-      };
-    }
-    const parentRunRef: { current?: ReturnType<typeof createRun> } = {};
-    const mcpEventEmitter: EventEmitter = {
-      emit<TPayload>(
-        type: Parameters<EventEmitter["emit"]>[0],
-        payload: TPayload,
-        metadata?: Record<string, unknown>,
-      ) {
-        return (parentRunRef.current?.events ?? pendingExtensionEvents).emit(
-          type,
-          payload,
-          metadata,
-        );
-      },
-    };
-    const preparedMcp = await createRuntimeMcpTools({
-      config: mcpConfig,
-      workspaceRoot,
-      emitter: mcpEventEmitter,
-      agentId: MAIN_AGENT_ID,
-      shellSandbox: mcpShellSandbox,
-    });
-    const traceLevel =
-      input.traceLevel ?? loadedConfig.config.traceLevel ?? "standard";
-    const parentRunPolicy = createHostRunPolicy({
-      permissionMode: runAccess.permissionMode,
-      shouldWrite: runAccess.shouldWrite,
-      targetPath: input.targetPath,
-      confidentialPaths,
-      confidentialDefaults,
-      writeGuardrails,
-    });
-    const sessionStore = resources.sessionStore;
-    const agentRuntime = await this.agents.prepareRun({
-      goal: input.goal,
-      workspaceRoot,
-      ...(input.targetPath ? { targetPath: input.targetPath } : {}),
-      sessionId: input.sessionId,
-      sessionRootDir,
-      sessionStore,
-      traceLevel,
-      baseToolConfig,
-      ...(agentConfig ? { agentConfig } : {}),
-      ...(loadedConfig.config.runBudget
-        ? { runBudget: loadedConfig.config.runBudget }
-        : {}),
-      ...(loadedConfig.config.maxSteps !== undefined
-        ? { maxSteps: loadedConfig.config.maxSteps }
-        : {}),
-      ...(shellConfig ? { shell: shellConfig } : {}),
-      ...(hookConfig?.http ? { hookHttp: hookConfig.http } : {}),
-      skillRoots: skillRoots.map((root) => root.root),
-      configPaths: loadedConfig.attempted.map((entry) => entry.path),
-      pendingEvents: pendingExtensionEvents,
-      parentRunRef,
-      parentModel: model.adapter,
-      parentModelRef: model.resolved.modelRef,
-      parentRunPolicy,
-      interactionChannel,
-      allowReadWriteWorkspaceAccess: runAccess.shouldWrite,
-      backgroundTasks: runAccess.backgroundTasks,
-    });
-    const {
-      mainAgent,
-      derivedAgents,
-      toolConfig,
-      delegateTools,
-      delegateAgentTool,
-      delegateParallelTool,
-      dynamicSpawnTool,
-    } = agentRuntime;
-    const resolvedProfiles = agentRuntime.resolvedProfiles;
-    const delegateDescriptors = agentRuntime.delegateDescriptors;
-    const baseMainToolCatalog = createMainHostToolCatalog({
-      workspaceRoot,
-      skillRoots: [...skillRoots],
-      toolConfig,
-      taskManager: this.tasks.manager,
-      taskRunners: {
-        agent: agentRuntime.taskRunner,
-      },
-      getParentRunId: () => requireActiveRunId(runIdHolder.value),
-      getRunEvents: () => parentRunRef.current?.events,
-      todoPath: join(sessionRootDir, input.sessionId, "todo.md"),
-      preparedSkills,
-      preparedMcp,
-      delegateTools,
-      delegateAgentTool,
-      delegateParallelTool,
-      dynamicSpawnTool,
-      shell: shellConfig,
-      backgroundTasks: runAccess.backgroundTasks,
-      configPaths: loadedConfig.attempted.map((entry) => entry.path),
-      workspaceLeaseCoordinator,
-    });
-    const toolCatalog = admitToolsForAgentProfile(
-      baseMainToolCatalog,
-      mainAgent,
-      (entry) => entry.definition,
-      (entry, definition) => ({ ...entry, definition }),
-    );
-    const tools = catalogToolDefinitions(toolCatalog);
-    const admittedDelegateParallelTool = delegateParallelTool
-      ? tools.find((tool) => tool.name === delegateParallelTool.name)
-      : undefined;
-    const workflows = await loadLayeredWorkflowAssets(workspaceRoot);
-    const workflowEpisode = await this.workflowEpisodes.prepare({
-      goal: input.goal,
-      sessionId: input.sessionId,
-      sessionRootDir,
-      workspaceRoot,
-      workflows,
-      parentModelRef: model.resolved.modelRef,
-      ...(input.workflowName ? { workflowName: input.workflowName } : {}),
-      ...(input.workflowRunId ? { workflowRunId: input.workflowRunId } : {}),
-      ...(input.controlSessionId
-        ? { controlSessionId: input.controlSessionId }
-        : {}),
-      ...(input.workflowStore ? { workflowStore: input.workflowStore } : {}),
-      ...(input.workflowRecord ? { workflowRecord: input.workflowRecord } : {}),
-      ...(input.workflowLease ? { workflowLease: input.workflowLease } : {}),
-      ...(input.workflowWaitingInputMetadata !== undefined
-        ? { workflowWaitingInputMetadata: input.workflowWaitingInputMetadata }
-        : {}),
-      ...(input.targetPath ? { targetPath: input.targetPath } : {}),
-      ...(confidentialPaths ? { confidentialPaths } : {}),
-      ...(confidentialDefaults !== undefined ? { confidentialDefaults } : {}),
-      access: runAccess,
-      ...(input.runMetadata ? { runMetadata: input.runMetadata } : {}),
-      ...(shellConfig?.sandbox ? { shellSandbox: shellConfig.sandbox } : {}),
-      ...(hookConfig?.http ? { hookHttp: hookConfig.http } : {}),
-      skillRoots: skillRoots.map((root) => root.root),
-      configPaths: loadedConfig.attempted.map((entry) => entry.path),
-      parentRunRef,
-      tools,
-      ...(delegateAgentTool ? { delegateAgentTool } : {}),
-      ...(admittedDelegateParallelTool
-        ? { delegateParallelTool: admittedDelegateParallelTool }
-        : {}),
-    });
-    if (!workflowEpisode.ok) return workflowEpisode;
-    const workflowModelAdapters =
-      workflowEpisode.prepared.workflowModelAdapters;
-    const workflowProjection = workflowEpisode.prepared.workflowProjection;
-    const workflowStore = workflowEpisode.prepared.workflowStore;
-    const workflowRecord = workflowEpisode.prepared.workflowRecord;
-    const workflowLease = workflowEpisode.prepared.workflowLease;
-    const workflowHooks = assembleRuntimeWorkflowHooks({
-      workflowHooks: hookConfig?.workflow,
-      workflowActive: workflowProjection !== undefined,
-      projectionHooks: workflowProjection?.hooks,
-      verification: loadedConfig.config.capabilities?.verification,
-      workspaceRoot,
-      sandbox: shellConfig?.sandbox,
-      http: hookConfig?.http,
-      skillRoots: skillRoots.map((root) => root.root),
-      configPaths: loadedConfig.attempted.map((entry) => entry.path),
-      getRun: () => parentRunRef.current,
-      agentTool: delegateAgentTool,
-      documentedCommand: {
-        goal: input.goal,
-        shouldWrite: runAccess.shouldWrite,
-      },
-    });
-    const workflowRules = describeActiveWorkflowRules({
-      workflowHooks: hookConfig?.workflow,
-      verification: loadedConfig.config.capabilities?.verification,
-      documentedCommand: {
-        goal: input.goal,
-        shouldWrite: runAccess.shouldWrite,
-      },
-    });
-    const eventRules = describeActiveEventRules({
-      eventHooks: hookConfig?.events,
-    });
-    const capabilitySnapshot = this.capabilities.captureRunSnapshot({
-      model: modelCapabilitySummary(model.resolved),
-      access: input.access,
-      toolCatalog,
-      indexedSkills: preparedSkills?.indexedSkills ?? [],
-      loadedSkills: preparedSkills?.loadedSkills ?? [],
-      skillInlineShell: inlineShellCapabilitySummary(
-        skillConfig?.inlineShell,
-        shellSandbox,
-      ),
-      mcpStatuses: preparedMcp?.statuses ?? {},
-      mcpToolNameMap: preparedMcp?.toolNameMap ?? [],
-      agentProfiles: capabilitySnapshotAgentProfiles(
-        mainAgent,
-        resolvedProfiles,
-      ),
-      delegateTools: delegateDescriptors,
-      shellSandbox,
-      shellForegroundTimeoutMs:
-        shellConfig?.foregroundTimeoutMs ?? RECOMMENDED_FOREGROUND_TIMEOUT_MS,
-      shellPromotionAvailable: runAccess.backgroundTasks === "enabled",
-      workflowRules,
-      eventRules,
-      workflows: workflowCapabilitySummary(workflows),
-    });
-
-    const mcpWorkspaceCwdServers = configuredMcpWorkspaceCwdServers(
-      mcpConfig,
-      workspaceRoot,
-    );
-    const runMetadata: Record<string, unknown> = {
-      source: "host",
-      ...(input.runMetadata ?? {}),
-      sessionId: input.sessionId,
-      workspaceRoot,
-      permissionMode: runAccess.permissionMode,
-      traceLevel,
-      ...(mcpWorkspaceCwdServers.length > 0 ? { mcpWorkspaceCwdServers } : {}),
-      ...(input.modelRef ? { requestedModel: input.modelRef } : {}),
-      ...(workflowRecord && workflowProjection
-        ? {
-            workflow: {
-              workflowRunId: workflowRecord.id,
-              assetName: workflowRecord.assetName,
-              version: workflowRecord.version,
-              packageHash: workflowRecord.packageHash,
-              packageHashPolicyVersion: workflowRecord.packageHashPolicyVersion,
-              verifyOnResume: workflowRecord.resume.verifyOnResume,
-            },
-          }
-        : {}),
-      resolvedModel: model.resolved,
-      capabilitySnapshot: this.capabilities.summarize(capabilitySnapshot),
-    };
-    const runStoreMetadata: Record<string, unknown> = {
-      ...runMetadata,
-      ...(input.runStoreMetadata ?? {}),
-      ...(preparedSkills
-        ? {
-            indexedSkills: preparedSkills.indexedSkills,
-            loadedSkills: preparedSkills.loadedSkills,
-          }
-        : {}),
-      ...(preparedMcp
-        ? {
-            mcpStatuses: preparedMcp.statuses,
-            mcpToolNameMap: preparedMcp.toolNameMap,
-          }
-        : {}),
-      ...(resolvedProfiles.length
-        ? {
-            agentProfiles: [
-              mainAgent,
-              ...derivedAgents.map((agent) => agent.effectiveProfile),
-            ],
-          }
-        : {}),
-    };
-    runStoreMetadata.traceLevel = traceLevel;
-
-    return {
-      ok: true,
-      env: {
-        workspaceRoot,
-        workspace,
-        sessionRootDir,
-        trace,
-        pendingExtensionEvents,
-        skillUsageRecorder,
-        runIdHolder,
-        interactionChannel,
-        model: model.adapter,
-        modelRef: model.resolved.modelRef,
-        resolvedModel: model.resolved,
-        workflowModelAdapters,
-        preparedSkills,
-        preparedMcp,
-        mainAgent,
-        toolCatalog,
-        tools,
-        workflowHooks,
-        workflowProjection,
-        workflowStore,
-        workflowRecord,
-        workflowLease,
-        eventHookConfig: hookConfig?.events,
-        hookSandbox: shellConfig?.sandbox,
-        hookHttp: hookConfig?.http,
-        hookSkillRoots: skillRoots.map((root) => root.root),
-        hookConfigPaths: loadedConfig.attempted.map((entry) => entry.path),
-        delegateAgentTool,
-        sessionStore,
-        parentRunRef,
-        traceLevel,
-        writeGuardrails,
-        confidentialPaths,
-        confidentialDefaults,
-        runMetadata,
-        runStoreMetadata,
-      },
-    };
+  private prepareHostRunEnvironment(input: RunPreparationInput) {
+    return this.runPreparation.prepare(input);
   }
-
   private createInteractionChannel(runIdHolder: {
     value: string | null;
   }): InteractionChannel {

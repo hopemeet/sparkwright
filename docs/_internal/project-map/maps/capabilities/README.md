@@ -9,6 +9,17 @@ cron, shell/task tools, and capability inspection.
 
 - Status: Verified
 - Date: 2026-07-18
+- Scope: live model/Skill/MCP/Agent/tool/Hook capability preparation and final
+  run snapshot capture now route through `RunPreparationOperations`, while
+  `CapabilityRuntimeOperations` remains the sole configured-inspection and
+  last-run snapshot owner. Snapshot shape and protocol behavior are unchanged.
+- Read: preparation/capability owners, assembly helpers, security/tool maps,
+  and focused capability/run tests.
+- Tests: direct owner coverage and final focused/repository gates are recorded
+  with the commit.
+
+- Status: Verified
+- Date: 2026-07-18
 - Scope: Host effective capability inspection now has one runtime owner in
   `CapabilityRuntimeOperations`, including configured inventory, automation,
   last-run snapshot merge, and Skill index-failure diagnostics. Snapshot shape,
@@ -145,6 +156,7 @@ cron, shell/task tools, and capability inspection.
 
 - `packages/host/src/runtime.ts`
 - `packages/host/src/runtime/host-runtime.ts`
+- `packages/host/src/runtime/run-preparation-operations.ts`
 - `packages/host/src/runtime/capability-runtime-operations.ts`
 - `packages/host/src/runtime/capability-assembly.ts`
 - `packages/host/src/active-rules.ts`
@@ -162,7 +174,7 @@ cron, shell/task tools, and capability inspection.
 ```txt
 config + workspace capability roots
   -> CapabilityRuntimeOperations configured inspection
-  -> HostRuntime generic live-run preparation
+  -> RunPreparationOperations generic live-run preparation
   -> host tool catalog
   -> CLI diagnostic catalog profile for direct-core/cron runs
   -> tools/context/events/snapshot
@@ -175,8 +187,8 @@ config + workspace capability roots
 - Capability inspection is diagnostic; it does not replace run trace.
 - `CapabilityRuntimeOperations` is the sole Host owner of the last-run
   capability snapshot and configured/live merge. `capability-assembly.ts`
-  remains stateless projection code; HostRuntime captures each prepared run
-  through the owner and keeps the generic run-preparation lifecycle.
+  remains stateless projection code; `RunPreparationOperations` captures each
+  prepared run through the owner and owns the generic preparation lifecycle.
 - Live Host capability catalogs may wrap actual workspace mutation execution in
   a process-local lease after filtering. This is runtime coordination, not a
   new capability or inspection field; inert `capability.inspect` catalogs do

@@ -11,6 +11,16 @@ See [workspace-writes.md](workspace-writes.md) and [../../modules/coding-tools.m
 
 - Status: Verified
 - Date: 2026-07-18
+- Scope: resolved Shell configuration/sandbox inputs now flow through
+  `RunPreparationOperations` into MCP, Skill, Agent, Workflow, Hook, catalog,
+  and snapshot preparation. Shell execution, approval, sandbox launch,
+  promotion, and mutation audit behavior are unchanged.
+- Read: preparation/security/catalog seams and Shell/process owners.
+- Tests: owner-level and focused tool/process gates are recorded with the
+  commit.
+
+- Status: Verified
+- Date: 2026-07-18
 - Scope: configured in-process delegate shell catalog and child approval/lease
   wiring moved to `AgentRuntimeAssembly`; shell parsing, sandbox launch,
   mutation audit, policy, and process lifecycle remain with their existing
