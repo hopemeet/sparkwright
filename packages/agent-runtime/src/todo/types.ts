@@ -1,17 +1,14 @@
 // AI maintenance note: Todo data model is intentionally simple — a flat list
 // of TodoItems with a `depth` field that captures nesting. The serialized form
-// is a GitHub-flavored Markdown checkbox list using a 6-state alphabet:
+// is a GitHub-flavored Markdown checkbox list using a 4-state alphabet:
 //
 //   - [ ]            pending
 //   - [ ] 🔄         in_progress
 //   - [x]            completed
 //   - [ ] ⛔         blocked
-//   - [ ] ❌         failed
-//   - [~]            skipped (cancelled / no-op)
 //
-// `[x]` and `[ ]` round-trip through GFM checkbox renderers cleanly. The emoji
-// suffixes (`🔄`, `❌`) are GFM-tolerant: renderers treat them as ordinary
-// trailing text. `[~]` is non-standard but renders harmlessly as a bullet.
+// `[x]` and `[ ]` round-trip through GFM checkbox renderers cleanly. The
+// `🔄` suffix is GFM-tolerant and renders as ordinary trailing text.
 
 /**
  * Lifecycle states for a todo item. Maps 1:1 to a marker in the serialized
@@ -20,43 +17,18 @@
  * @public
  * @stability experimental v0.1
  */
-export type TodoStatus =
-  | "pending"
-  | "in_progress"
-  | "completed"
-  | "blocked"
-  | "failed"
-  | "skipped";
+export type TodoStatus = "pending" | "in_progress" | "completed" | "blocked";
 
 export type TodoPriority = "high" | "medium" | "low";
 
-export type TodoEvidence =
-  | { kind: "file_changed"; path: string }
-  | { kind: "command"; command: string; exitCode: number }
-  | { kind: "test"; command: string; passed: boolean }
-  | { kind: "artifact"; artifactId: string }
-  | { kind: "trace_event"; eventId: string };
-
-export type TodoOwner =
-  | "primary"
-  | "supervisor"
-  | `subagent:${string}`
-  | string;
-
 /**
  * A single todo entry. `depth` is the indentation level (0 = top-level).
- * `note` is optional free-text shown after the title — typically a reason for
- * `failed`, `blocked`, or `skipped` items.
+ * `depth` preserves nested Markdown presentation; scheduling never reads it.
  *
  * @public
  * @stability experimental v0.1
  */
 export interface TodoItem {
-  /**
-   * Optional stable item id. Hosts should set this when they need to correlate
-   * evidence or child-agent results across whole-file rewrites.
-   */
-  id?: string;
   /**
    * Human-readable task text.
    */
@@ -64,10 +36,6 @@ export interface TodoItem {
   status: TodoStatus;
   depth: number;
   priority?: TodoPriority;
-  doneWhen?: string;
-  evidence?: TodoEvidence[];
-  owner?: TodoOwner;
-  note?: string;
 }
 
 export interface TodoLedger {
@@ -82,8 +50,6 @@ export interface TodoSummary {
   inProgress: number;
   completed: number;
   blocked: number;
-  failed: number;
-  skipped: number;
   unfinished: number;
   hasUnfinished: boolean;
 }

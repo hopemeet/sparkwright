@@ -197,6 +197,16 @@ list --run/--session`); failed drafts self-clean. See
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-19
+- Scope: reviewed skill statistics after terminal outcome migration. Skill
+  success/failure accounting now reads persisted assessment where semantic run
+  health is needed; Skill discovery, authoring, mutation, and package contracts
+  are unchanged.
+- Read: Host skill statistics and unchanged Skill ownership surfaces.
+- Tests: affected Host and CLI Skill coverage passed before final real-model
+  canaries.
+
+- Status: Verified
 - Date: 2026-07-18T08:52:13+0800
 - Scope: Skill statistics expose one load-failure DTO,
   `loadFailures.total/byMode/byStatus`. Host aggregation and caches no longer
@@ -257,7 +267,7 @@ list --run/--session`); failed drafts self-clean. See
 - Tests: Skills focused/full tests and typecheck; Host skill-evolution focused
   tests and typecheck; test typecheck; project-map drift check.
 
-- Status: Reviewed
+- Status: Verified
 - Date: 2026-07-16T11:49:00+0800
 - Scope: reviewed during cumulative branch drift checking; Skill loading and
   usage code uses canonical built-in tool names but does not consume Host

@@ -1571,6 +1571,59 @@ describe("SparkwrightRun", () => {
     });
   });
 
+  it("lets a tool with its own duplicate ledger execute a sequential repeat", async () => {
+    let executed = 0;
+    const delegated = defineTool({
+      name: "delegated",
+      description: "Reuse or retry an exact delegated request.",
+      inputSchema: { type: "object" },
+      policy: { risk: "safe" },
+      governance: { idempotency: "conditional" },
+      managesRepeatedCalls: () => true,
+      execute() {
+        executed += 1;
+        return { alreadyCompleted: executed > 1 };
+      },
+    });
+    let modelCalls = 0;
+    const run = createRun({
+      goal: "delegate once and reuse the result",
+      tools: [delegated],
+      maxSteps: 6,
+      model: {
+        async complete() {
+          modelCalls += 1;
+          if (modelCalls <= 2) {
+            return {
+              toolCalls: [
+                { toolName: "delegated", arguments: { goal: "same" } },
+              ],
+            };
+          }
+          return { message: "done" };
+        },
+      },
+    });
+
+    const result = await run.start();
+
+    expect(executed).toBe(2);
+    expect(result).toMatchObject({
+      signal: "completed",
+      stopReason: "final_answer",
+    });
+    expect(
+      run.events
+        .all()
+        .some(
+          (event) =>
+            event.type === "tool.failed" &&
+            (event.payload as { error?: { code?: string } }).error?.code ===
+              "REPEATED_TOOL_CALL_SKIPPED",
+        ),
+    ).toBe(false);
+  });
+
   it("renders tool-owned repeated state observation guidance as a completed skip", async () => {
     let executed = 0;
     const observe = defineTool({
@@ -2402,17 +2455,21 @@ describe("SparkwrightRun", () => {
 
     expect(result).toMatchObject({
       signal: "completed",
-      metadata: {
-        outcome: {
-          kind: "completed_with_tool_failures",
-          toolFailures: { count: 1, codes: ["TOOL_NOT_FOUND"] },
-        },
+      assessment: {
+        health: "failing",
+        issues: [
+          {
+            code: "UNRESOLVED_TOOL_FAILURE",
+            count: 1,
+            details: { codes: ["TOOL_NOT_FOUND"] },
+          },
+        ],
       },
     });
     expect(completed?.payload).toMatchObject({
-      outcome: {
-        kind: "completed_with_tool_failures",
-        toolFailures: { count: 1, codes: ["TOOL_NOT_FOUND"] },
+      assessment: {
+        health: "failing",
+        issues: [{ code: "UNRESOLVED_TOOL_FAILURE", count: 1 }],
       },
     });
   });
@@ -2466,17 +2523,21 @@ describe("SparkwrightRun", () => {
 
     expect(result).toMatchObject({
       signal: "completed",
-      metadata: {
-        outcome: {
-          kind: "completed_with_recovered_tool_failures",
-          toolFailures: { count: 1, codes: ["TOOL_ARGUMENTS_INVALID"] },
-        },
+      assessment: {
+        health: "degraded",
+        issues: [
+          {
+            code: "RECOVERED_TOOL_FAILURE",
+            count: 1,
+            details: { codes: ["TOOL_ARGUMENTS_INVALID"] },
+          },
+        ],
       },
     });
     expect(completed?.payload).toMatchObject({
-      outcome: {
-        kind: "completed_with_recovered_tool_failures",
-        toolFailures: { count: 1, codes: ["TOOL_ARGUMENTS_INVALID"] },
+      assessment: {
+        health: "degraded",
+        issues: [{ code: "RECOVERED_TOOL_FAILURE", count: 1 }],
       },
     });
   });
@@ -2527,11 +2588,14 @@ describe("SparkwrightRun", () => {
 
     expect(result).toMatchObject({
       signal: "completed",
-      metadata: {
-        outcome: {
-          kind: "completed_with_tool_failures",
-          toolFailures: { count: 1, codes: ["TOOL_ARGUMENTS_INVALID"] },
-        },
+      assessment: {
+        health: "failing",
+        issues: [
+          {
+            code: "UNRESOLVED_TOOL_FAILURE",
+            details: { codes: ["TOOL_ARGUMENTS_INVALID"] },
+          },
+        ],
       },
     });
   });
@@ -2584,11 +2648,14 @@ describe("SparkwrightRun", () => {
 
     expect(result).toMatchObject({
       signal: "completed",
-      metadata: {
-        outcome: {
-          kind: "completed_with_tool_failures",
-          toolFailures: { count: 1, codes: ["TOOL_ARGUMENTS_INVALID"] },
-        },
+      assessment: {
+        health: "failing",
+        issues: [
+          {
+            code: "UNRESOLVED_TOOL_FAILURE",
+            details: { codes: ["TOOL_ARGUMENTS_INVALID"] },
+          },
+        ],
       },
     });
   });

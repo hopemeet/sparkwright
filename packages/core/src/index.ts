@@ -124,21 +124,16 @@ export type {
   ClassifiedCommandSuccess,
   ClassifiedToolFailure,
   CommandOutcomeSummary,
-  CompletedRunOutcome,
   ToolFailureCategory,
-  ToolOutcomeSnapshot,
   ToolOutcomeSummary,
   VerificationProfileResult,
 } from "./run-outcome.js";
 export {
   analyzeCommandOutcomesFromFactLedger,
-  analyzeCommandOutcomes,
   analyzeToolOutcomes,
   analyzeVerificationProfileResults,
   classifyToolFailure,
-  completedRunOutcomeFromEvents,
   isPolicyOrApprovalFailure,
-  toolOutcomeSnapshot,
   toolTargetFingerprint,
   verificationProfileResultsFromFactLedger,
 } from "./run-outcome.js";
@@ -156,7 +151,6 @@ export {
   effectiveShellExitCode,
   hookCommandFactFromWorkflowHookCompleted,
   isShellToolName,
-  isVerificationGoal,
   isVerificationRelevantCommand,
   shellCommandFactFromToolCompleted,
   shellCommandRequestFromEvent,
@@ -176,6 +170,23 @@ export type {
   FactLedgerWriteFact,
 } from "./fact-ledger.js";
 export { FactLedger, factLedgerSnapshotFromUnknown } from "./fact-ledger.js";
+export { projectFactLedgerSnapshot } from "./fact-ledger.js";
+
+export type {
+  AssessRunOptions,
+  RunAssessment,
+  RunAssessmentHealth,
+  RunIssue,
+  RunIssueDisposition,
+  RunIssueKind,
+  VerificationResult,
+  VerificationStatus,
+} from "./run-assessment.js";
+export {
+  assessRun,
+  isResumableRunFailureReason,
+  runAssessmentFromUnknown,
+} from "./run-assessment.js";
 
 // Display-safe path projection helpers shared by diagnostics/UI layers.
 export type { WorkspaceDisplayPathOptions } from "./path-display.js";

@@ -125,6 +125,18 @@ export function createDelegateAgentTool(input: {
         return false;
       }
     },
+    managesRepeatedCalls(args) {
+      try {
+        const task = parseDelegateAgentArgs(args);
+        const target = resolveTarget(task);
+        return (
+          target.tool.managesRepeatedCalls?.(delegateAgentToolArgs(task)) ===
+          true
+        );
+      } catch {
+        return false;
+      }
+    },
     async execute(args: unknown, ctx): Promise<unknown> {
       const task = parseDelegateAgentArgs(args);
       const target = resolveTarget(task);

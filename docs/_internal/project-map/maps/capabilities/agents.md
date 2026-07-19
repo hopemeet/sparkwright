@@ -11,6 +11,38 @@ See [../../modules/agent-runtime.md](../../modules/agent-runtime.md) and [../../
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-19
+- Scope: Agent completion and reuse share canonical predicates. Parallel
+  aggregation treats completed-signal partial children as incomplete, while
+  duplicate-management bypass opens only for exact complete+clean cache hits.
+  Partial/unhealthy repeats remain under Core's existing guard.
+- Read: Agent Runtime result/ledger/tool, Host parallel/dynamic assembly, Core
+  repeated-call handling, and focused/full tests.
+- Tests: Agent Runtime 235/235 and Host 592/592.
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: complete+clean delegation reuse is now reachable from real sequential
+  model calls. Direct/indexed/parallel/dynamic Agent tools own duplicate
+  handling only for an existing cache hit; Core retains exact-repeat ownership
+  for uncached partial/unhealthy outcomes.
+- Read: Agent Runtime result/ledger/tool, Host Agent assembly/indexed router,
+  Core repeat guard, focused tests, and real Terra traces.
+- Tests: Agent Runtime result/ledger 10/10; Host Agent tools/spawn 117/117;
+  fixed Terra session used two indexed calls and one child run.
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: Agent results have two independent axes: finality
+  (`complete`/`incomplete`) and Core assessment health. Direct, delegated,
+  parallel, lifecycle, ledger, compacted-session, and cached-result paths retain
+  the child assessment; only complete+clean results are reusable.
+- Read: Agent Runtime result projector/types/ledger, Host Agent assembly/tool
+  responses, Core diagnostics/compaction, and TUI rendering.
+- Tests: Agent Runtime 234/234 and Host 591/591 passed, including an unhealthy
+  complete child case.
+
+- Status: Verified
 - Date: 2026-07-18
 - Scope: per-run Agent assembly is now orchestrated by
   `RunPreparationOperations` through the existing `AgentRuntimeAssembly` owner,
@@ -397,7 +429,10 @@ configured profiles/delegates
   dynamic `spawn_agent` all read and write this ledger so a later equivalent
   delegation can return the previous child result with `alreadyCompleted: true`
   instead of spawning a duplicate child. The ledger does not reuse failed,
-  step-limited, or truncated children. Equivalence is exact after conservative
+  unhealthy, step-limited, or truncated children. Agent tools declare their
+  tool-owned duplicate protocol so a sequential exact repeat reaches this
+  ledger instead of being intercepted by Core's generic repeat nudge.
+  Equivalence is exact after conservative
   Unicode/case/whitespace normalization; fuzzy directory-listing or text
   similarity must not cross target paths.
 - The indexed `delegate_agent` router is a Host-owned adapter in

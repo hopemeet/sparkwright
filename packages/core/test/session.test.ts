@@ -304,6 +304,12 @@ describe("session", () => {
       signal: "completed",
       state: "completed",
       stopReason: "final_answer",
+      assessment: {
+        schemaVersion: "run-assessment.v1",
+        health: "clean",
+        issues: [],
+        verification: [],
+      },
       metadata: {},
     });
 
@@ -367,6 +373,12 @@ describe("session", () => {
         signal: "completed",
         state: "completed",
         stopReason: "final_answer",
+        assessment: {
+          schemaVersion: "run-assessment.v1",
+          health: "clean",
+          issues: [],
+          verification: [],
+        },
         metadata: {},
       });
 

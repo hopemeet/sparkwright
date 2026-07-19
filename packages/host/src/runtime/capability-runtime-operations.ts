@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import {
+  assessRun,
   createDefaultPolicy,
   createRunId,
   createSessionRunStoreFactory,
@@ -182,7 +183,7 @@ export class CapabilityRuntimeOperations {
       metadata: {
         source: "host",
         failurePhase: "capability_index",
-        targetPath: input.targetPath ?? "README.md",
+        ...(input.targetPath ? { targetPath: input.targetPath } : {}),
         ...input.metadata,
       },
     };
@@ -197,6 +198,13 @@ export class CapabilityRuntimeOperations {
         message: input.message,
         retryable: false,
       },
+      assessment: assessRun([], {
+        terminal: {
+          state: "failed",
+          reason: "model_completion_failed",
+          failure: { code: "SKILL_INDEX_FAILED" },
+        },
+      }),
       metadata: run.metadata,
     };
     const sessionStore = new FileSessionStore({
@@ -241,6 +249,7 @@ export class CapabilityRuntimeOperations {
         code: "SKILL_INDEX_FAILED",
         message: input.message,
         failure: result.failure,
+        assessment: result.assessment,
         metadata: run.metadata,
       }),
     );

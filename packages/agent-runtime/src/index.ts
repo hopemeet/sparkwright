@@ -60,6 +60,11 @@ import {
   rememberSuccessfulDelegation,
   withAlreadyCompletedNote,
 } from "./agents/delegation-ledger.js";
+import {
+  isAgentToolResult,
+  projectAgentInvocationResult,
+  runResultStepLimitReached,
+} from "./agents/result.js";
 import type {
   AgentAssetIdentity,
   PreparedAgentInvocation,
@@ -85,6 +90,16 @@ export {
   rememberSuccessfulDelegation,
   withAlreadyCompletedNote,
 } from "./agents/delegation-ledger.js";
+export {
+  assessmentNote,
+  childAssessment,
+  isCompleteAgentResult,
+  isAgentToolResult,
+  isReusableAgentResult,
+  projectAgentInvocationResult,
+  runResultStepLimitReached,
+  runResultTruncated,
+} from "./agents/result.js";
 export type {
   AgentAssetIdentity,
   AgentInvocationProtocol,
@@ -1106,18 +1121,23 @@ function subagentTerminalProjection(
   finality: "complete" | "partial";
   stepLimitReached?: boolean;
   truncated?: boolean;
+  assessment?: import("@sparkwright/core").RunAssessment;
 } {
   const payload = isRecord(event.payload) ? event.payload : {};
   const metadata = isRecord(payload.metadata) ? payload.metadata : undefined;
   const stepLimitReached =
     payload.stepLimitReached === true || metadata?.stepLimitReached === true;
   const truncated = payload.truncated === true || metadata?.truncated === true;
+  const assessment = isRecord(payload.assessment)
+    ? (payload.assessment as unknown as import("@sparkwright/core").RunAssessment)
+    : undefined;
   if (truncated) {
     return {
       terminalState: "truncated",
       finality: "partial",
       stepLimitReached,
       truncated: true,
+      ...(assessment ? { assessment } : {}),
     };
   }
   if (stepLimitReached) {
@@ -1125,10 +1145,15 @@ function subagentTerminalProjection(
       terminalState: "step_limit",
       finality: "partial",
       stepLimitReached: true,
+      ...(assessment ? { assessment } : {}),
     };
   }
   if (eventType === "run.cancelled")
-    return { terminalState: "cancelled", finality: "partial" };
+    return {
+      terminalState: "cancelled",
+      finality: "partial",
+      ...(assessment ? { assessment } : {}),
+    };
   if (eventType === "run.failed") {
     if (runFailureWasAbort(payload)) {
       return { terminalState: "cancelled", finality: "partial" };
@@ -1142,9 +1167,14 @@ function subagentTerminalProjection(
     return {
       terminalState: stopReason === "blocking_limit" ? "blocked" : "failed",
       finality: "partial",
+      ...(assessment ? { assessment } : {}),
     };
   }
-  return { terminalState: "completed", finality: "complete" };
+  return {
+    terminalState: "completed",
+    finality: "complete",
+    ...(assessment ? { assessment } : {}),
+  };
 }
 
 function runFailureWasAbort(payload: Record<string, unknown>): boolean {
@@ -1326,6 +1356,22 @@ export function createAgentTool(
       sideEffects: ["external"],
       idempotency: "conditional",
     },
+    managesRepeatedCalls: (args) => {
+      const parent = getParent();
+      if (!parent) return false;
+      try {
+        const parsed = parseAgentToolArgs(args);
+        return Boolean(
+          findSimilarSuccessfulDelegation(
+            parent,
+            delegationLedgerKey,
+            parsed.goal,
+          ),
+        );
+      } catch {
+        return false;
+      }
+    },
     ...(options.isConcurrencySafe
       ? { isConcurrencySafe: options.isConcurrencySafe }
       : {}),
@@ -1375,9 +1421,6 @@ export function createAgentTool(
         result,
         usage,
       });
-      if (result.signal !== "completed") {
-        throw new AgentToolRunError(name, output, result);
-      }
       const stepLimitReached = runResultStepLimitReached(result);
       const structured = isAgentToolResult(output)
         ? output
@@ -1387,12 +1430,15 @@ export function createAgentTool(
             result,
             usage,
           });
-      if (stepLimitReached) {
-        return withStepLimitReachedNote(output, structured);
-      }
       rememberSuccessfulDelegation(parent, delegationLedgerKey, parsed.goal, {
         ...structured,
       });
+      if (result.signal !== "completed") {
+        throw new AgentToolRunError(name, output, result);
+      }
+      if (stepLimitReached) {
+        return withStepLimitReachedNote(output, structured);
+      }
       return output;
     },
   });
@@ -1440,34 +1486,12 @@ function defaultSummarize(input: AgentToolSummarizeInput): AgentToolResult {
 export function summarizeDelegationResult(
   input: AgentToolSummarizeInput,
 ): DelegationLedgerResult {
-  const stepLimitReached = runResultStepLimitReached(input.result);
-  const truncated = runResultTruncated(input.result) || stepLimitReached;
-  return {
+  return projectAgentInvocationResult({
     childRunId: input.childRunId,
     spanId: input.spanId,
-    signal: input.result.signal,
-    stopReason: input.result.stopReason,
-    message: input.result.message,
-    tokens: input.usage.tokens.total,
-    costUsd: input.usage.costUsd,
-    toolCalls: input.usage.toolCalls,
-    modelCalls: input.usage.modelCalls,
-    ...(stepLimitReached ? { stepLimitReached: true } : {}),
-    ...(truncated ? { truncated: true } : {}),
-  };
-}
-
-function runResultStepLimitReached(result: RunResult): boolean {
-  return (
-    (result.metadata as { stepLimitReached?: unknown } | undefined)
-      ?.stepLimitReached === true
-  );
-}
-
-function runResultTruncated(result: RunResult): boolean {
-  return (
-    (result.metadata as { truncated?: unknown } | undefined)?.truncated === true
-  );
+    result: input.result,
+    usage: input.usage,
+  });
 }
 
 function withStepLimitReachedNote(
@@ -1506,14 +1530,4 @@ class AgentToolRunError extends Error {
       output,
     };
   }
-}
-
-function isAgentToolResult(value: unknown): value is AgentToolResult {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    typeof (value as { childRunId?: unknown }).childRunId === "string" &&
-    typeof (value as { spanId?: unknown }).spanId === "string" &&
-    typeof (value as { signal?: unknown }).signal === "string"
-  );
 }

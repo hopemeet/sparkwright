@@ -12,12 +12,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { defineTool, type ToolDefinition } from "@sparkwright/core";
-import {
-  itemsOnly,
-  parseTodoMarkdown,
-  serializeTodoMarkdown,
-  type TodoEntry,
-} from "./markdown.js";
+import { serializeTodoMarkdown, type TodoEntry } from "./markdown.js";
 import type { TodoItem, TodoPriority, TodoStatus } from "./types.js";
 
 const VALID_STATUSES: ReadonlySet<TodoStatus> = new Set([
@@ -25,8 +20,6 @@ const VALID_STATUSES: ReadonlySet<TodoStatus> = new Set([
   "in_progress",
   "completed",
   "blocked",
-  "failed",
-  "skipped",
 ]);
 
 // Models routinely reach for status words from other todo systems (the very
@@ -50,10 +43,8 @@ const STATUS_ALIASES: ReadonlyMap<string, TodoStatus> = new Map([
   ["complete", "completed"],
   ["completed", "completed"],
   ["finished", "completed"],
-  ["cancelled", "skipped"],
-  ["canceled", "skipped"],
-  ["skip", "skipped"],
-  ["error", "failed"],
+  ["cancelled", "blocked"],
+  ["canceled", "blocked"],
   ["blocked_on", "blocked"],
 ]);
 
@@ -86,12 +77,6 @@ export interface CreateTodoToolsOptions {
    * so a single tool bundle can serve many runs.
    */
   getTodoPath(): string;
-  /**
-   * Optional run-scoped call budget. The todo ledger is bookkeeping, not the
-   * work itself; a run that keeps calling todo_write after this limit should
-   * stop updating the list and answer or use a concrete non-todo tool.
-   */
-  maxWritesPerRun?: number;
 }
 
 /**
@@ -99,7 +84,7 @@ export interface CreateTodoToolsOptions {
  * tool is exposed to the model: every write returns the updated list and how
  * many items remain, so there is no need for a separate read tool (which a weak
  * model otherwise burns calls re-fetching state already in its context). The
- * supervisor reads the ledger from disk through its own helper, not this tool.
+ * runtime consumers read the ledger from disk through their own helper.
  *
  * @public
  * @stability experimental v0.1
@@ -127,13 +112,12 @@ export function createTodoWriteTool(
   // Per-tool-instance (per run-chain) counter of consecutive no-op writes,
   // reset on any write that actually changes the ledger.
   let consecutiveNoops = 0;
-  const writesByRun = new Map<string, number>();
   return defineTool({
     name: "todo_write",
     description: [
       "Create and maintain the run's todo list — a short checklist that tracks multi-step work and shows progress. Each call replaces the whole list, so pass every task, in order, every time.",
       "Use this for work with at least three substantive dependent steps, multiple phases, or recovery that benefits from a durable checklist. Do not create a todo list for a simple one-file change, a single command, or merely because a background process runs for a long time.",
-      "Each item has a `title` and a `status` (one of: pending, in_progress, completed, blocked, failed, skipped; synonyms like 'todo'/'done' are accepted). Keep at most one item in_progress at a time.",
+      "Each item has a `title` and a `status` (one of: pending, in_progress, completed, blocked; synonyms like 'todo'/'done' are accepted). Keep at most one item in_progress at a time.",
       "Use in_progress for the current active item, and completed only when its work is actually finished — based on real results, never on intent, and never by loosening what counts as done. Never mark an item completed before its result is in.",
       "Child agents may not call this tool.",
     ].join("\n"),
@@ -172,8 +156,7 @@ export function createTodoWriteTool(
     // doom loop. Without this, a benign duplicate ledger write (e.g. the model
     // restating the plan) tripped REPEATED_TOOL_CALL_SKIPPED and burned a turn.
     governance: { sideEffects: ["none"], idempotency: "idempotent" },
-    async execute(args: unknown, ctx): Promise<TodoWriteResult> {
-      const runId = ctx.run?.id ?? "__standalone__";
+    async execute(args: unknown): Promise<TodoWriteResult> {
       const items = parseWriteArgs(args);
       const path = options.getTodoPath();
       const entries: TodoEntry[] = items.map((item) => ({
@@ -198,21 +181,6 @@ export function createTodoWriteTool(
         }
         return result;
       }
-      if (options.maxWritesPerRun !== undefined) {
-        const nextCount = (writesByRun.get(runId) ?? 0) + 1;
-        if (nextCount > options.maxWritesPerRun) {
-          const currentItems = itemsOnly(parseTodoMarkdown(current));
-          return {
-            ...renderWriteEcho(currentItems),
-            saved: false,
-            rejectedTodos: echo.todos,
-            hint:
-              `todo_write changed too many times in this run (limit: ${options.maxWritesPerRun}). ` +
-              "The proposed update was not saved; todos reflects the current ledger. Do not update the ledger again. Take a concrete non-todo action on the current task, or give your final answer with the current status.",
-          };
-        }
-        writesByRun.set(runId, nextCount);
-      }
       consecutiveNoops = 0;
       await mkdir(dirname(path), { recursive: true });
       await writeFile(path, text, "utf8");
@@ -232,8 +200,7 @@ export function createTodoWriteTool(
  */
 export interface TodoWriteResult {
   /**
-   * Whether this write changed the list on disk (false = byte-identical no-op
-   * or rejected proposed update).
+   * Whether this write changed the list on disk (false = byte-identical no-op).
    *
    * @reserved Public tool-result field consumed by the model reading the
    * serialized todo_write result, not by an in-process TS reader.
@@ -244,7 +211,7 @@ export interface TodoWriteResult {
   total: number;
   completed: number;
   /**
-   * Count of items still open (not completed/skipped/failed).
+   * Count of items still open (not completed).
    *
    * @reserved Public tool-result field consumed by the model reading the
    * serialized todo_write result, not by an in-process TS reader.
@@ -252,29 +219,17 @@ export interface TodoWriteResult {
   remaining: number;
   /**
    * The current resulting list, lean (title + status) so the model re-emits lean
-   * items. When saved is false because a proposed update was rejected, this
-   * remains the committed ledger rather than the rejected proposal.
+   * items.
    *
    * @reserved Public tool-result field consumed by the model reading the
    * serialized todo_write result, not by an in-process TS reader.
    */
   todos: { title: string; status: TodoStatus }[];
-  /**
-   * Rejected proposed list, present only when saved:false rejected a change.
-   *
-   * @reserved Public tool-result field consumed by the model reading the
-   * serialized todo_write result, not by an in-process TS reader.
-   */
-  rejectedTodos?: { title: string; status: TodoStatus }[];
   /** Anti-churn nudge, present only after repeated no-op writes. */
   hint?: string;
 }
 
-const DONE_STATUSES: ReadonlySet<TodoStatus> = new Set([
-  "completed",
-  "skipped",
-  "failed",
-]);
+const DONE_STATUSES: ReadonlySet<TodoStatus> = new Set(["completed"]);
 
 function renderWriteEcho(
   items: TodoItem[],

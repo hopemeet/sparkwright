@@ -12,6 +12,16 @@ and [../session/session-store.md](../session/session-store.md) for session layou
 
 - Status: Verified
 - Date: 2026-07-19
+- Scope: raw terminal events persist `RunAssessment` and fact-ledger evidence.
+  Trace diagnostics consume that canonical assessment for complete runs, while
+  incomplete observations may replay raw facts; unhealthy completed subagents
+  emit a dedicated diagnostic without being relabeled incomplete.
+- Read: terminal event assembly, trace diagnostics, Agent lifecycle emission,
+  Workflow observation, and trace fixtures/tests.
+- Tests: Core trace 130/130 plus affected Host/CLI fixtures passed.
+
+- Status: Verified
+- Date: 2026-07-19
 - Scope: Host start/resume execution lifecycle wiring now has one explicit
   envelope and no inner fallback execution entrance. The same HostExecution,
   episode owner, EventLog, trace sink, approval/cancel paths, event payloads,

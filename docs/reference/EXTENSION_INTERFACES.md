@@ -259,6 +259,14 @@ const sendMessage = defineTool({
 });
 ```
 
+Tools that own a conservative sequential-duplicate protocol may implement
+`managesRepeatedCalls(args)`. Return `true` only when the tool can safely
+decide whether to reuse a prior clean result or retry an unhealthy attempt.
+Core will then execute a verbatim repeat instead of intercepting it with the
+generic repeated-call nudge. A prior tool failure or explicit no-progress
+result still goes through the generic guard. This hook does not change replay
+risk; `governance.idempotency` remains the sole replay-safety declaration.
+
 Tool origin should be carried in metadata where useful:
 
 ```ts
@@ -984,9 +992,6 @@ outcomes are preserved for the rare cases where declarations drift. Paths follow
 import {
   createTodoTools,
   createAgentProfilePolicy,
-  readTodoLedger,
-  renderTodoLedgerContext,
-  runTodoSupervised,
 } from "@sparkwright/agent-runtime";
 
 const { todoWrite } = createTodoTools({
@@ -1010,42 +1015,16 @@ const childPolicy = createAgentProfilePolicy({
 
 The on-disk format is GFM-compatible Markdown backed by the structured
 `TodoLedger` API. Its status alphabet is `[ ]` pending, `[ ] 🔄` in-progress,
-`[x]` completed, `[ ] ⛔` blocked, `[ ] ❌` failed, and `[~]` skipped.
+`[x]` completed, and `[ ] ⛔` blocked.
 `todo_write` rewrites the file whole. Its model-facing item DTO is strict:
 `title`, `status`, and optional `priority`. The Markdown/parser APIs retain the
-richer internal ledger fields for host-owned correlation and evidence.
+richer presentation-only `depth` field.
 
-Todo status changes are self-reporting, not proof of progress. Supervisors
-should treat external trace/workspace signals (`workspace.write.completed`,
-`tool.completed`, `artifact.created`) and host-owned item evidence as the
-progress source of truth.
-
-For long-running or background agentic work, wrap ordinary runs with
-`runTodoSupervised` rather than putting todo behavior into core or
-`spawnSubAgent`:
-
-```ts
-await runTodoSupervised({
-  todoPath: `${sessionDir}/todo.md`,
-  maxContinuations: 3,
-  maxStalledContinuations: 1,
-  async runOnce(input) {
-    const ledger = await readTodoLedger(`${sessionDir}/todo.md`);
-    const context = [
-      renderTodoLedgerContext(ledger, { sessionId }),
-      ...(input.continuation ? [input.continuation.context] : []),
-    ];
-    // Create a normal run/session turn here. If input.continuation is present,
-    // pass its prompt as a synthetic continuation message, not as user text.
-    return { result, events };
-  },
-});
-```
-
-The supervisor audits terminal runs after they end. If the ledger is unfinished
-and continuation is safe, it emits a synthetic continuation request:
-`source="todo_supervisor"`, `reason="unfinished_todo"`. Hooks/plugins may veto
-that continuation, but should not directly recurse into the model loop.
+Todo status changes are self-reporting plan state, not execution proof and not a
+scheduler. Ordinary runs remain single-episode even when the ledger has open
+items. The host reads a non-empty ledger into the next real session turn and may
+attach a terminal `todoAdvisory`; only durable Workflow state may request a
+cross-episode continuation.
 
 ### Sub-agent result protocol
 

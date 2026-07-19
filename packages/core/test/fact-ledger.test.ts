@@ -59,6 +59,44 @@ describe("FactLedger", () => {
     });
   });
 
+  it("does not promote ordinary commands from verification-like goal prose", () => {
+    const log = new EventLog(createRunId());
+    const ledger = new FactLedger();
+    log.subscribe((event) => ledger.observeEvent(event));
+
+    log.emit("run.created", {
+      goal: "Verify the README title, then run the ordinary diagnostic.",
+    });
+    for (const [id, command, exitCode] of [
+      ["call_ok", "node diagnostic-ok.js", 0],
+      ["call_fail", "node diagnostic.js", 7],
+    ] as const) {
+      log.emit("tool.requested", {
+        id,
+        toolName: "bash",
+        arguments: { command },
+      });
+      log.emit("tool.completed", {
+        toolCallId: id,
+        toolName: "bash",
+        output: { exitCode, timedOut: false },
+      });
+    }
+
+    expect(ledger.snapshot().commands).toEqual([
+      expect.objectContaining({
+        command: "node diagnostic-ok.js",
+        exitCode: 0,
+        verificationRelevant: false,
+      }),
+      expect.objectContaining({
+        command: "node diagnostic.js",
+        exitCode: 7,
+        verificationRelevant: false,
+      }),
+    ]);
+  });
+
   it("treats untracked write-capable boundaries as epoch bumps", () => {
     const log = new EventLog(createRunId());
     const ledger = new FactLedger();

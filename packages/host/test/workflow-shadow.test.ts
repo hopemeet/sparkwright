@@ -105,8 +105,6 @@ describe("workflow shadow", () => {
           "        command: bash",
           '        args: ["-lc", "npm test -- docs"]',
           "        authorized: true",
-          "      - id: todos",
-          "        kind: todo_clear",
           "---",
           "## implement",
           "Update and verify.",
@@ -135,10 +133,6 @@ describe("workflow shadow", () => {
         expect.objectContaining({
           id: "command:8",
           kind: "verification_command",
-          status: "matched",
-        }),
-        expect.objectContaining({
-          id: "todo_clear",
           status: "matched",
         }),
       ]),
@@ -179,7 +173,6 @@ describe("workflow shadow", () => {
           id: "command:8",
           status: "missing",
         }),
-        expect.objectContaining({ id: "todo_clear", status: "missing" }),
       ]),
     );
   });
@@ -202,8 +195,6 @@ describe("workflow shadow", () => {
           "        command: bash",
           '        args: ["-lc", "npm run lint"]',
           "        authorized: true",
-          "      - id: todos",
-          "        kind: todo_clear",
           "---",
           "## check",
           "Check without writes.",
@@ -229,7 +220,6 @@ describe("workflow shadow", () => {
       expect.arrayContaining([
         expect.objectContaining({ id: "tool:grep:unobserved" }),
         expect.objectContaining({ id: "command:lint:unobserved" }),
-        expect.objectContaining({ id: "todo_clear:todos:unobserved" }),
       ]),
     );
   });
@@ -331,8 +321,6 @@ describe("workflow shadow", () => {
         "        command: bash",
         '        args: ["-lc", "npm test -- docs"]',
         "        authorized: true",
-        "      - id: todos",
-        "        kind: todo_clear",
         "---",
         "## implement",
         "Implement.",

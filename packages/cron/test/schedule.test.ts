@@ -693,11 +693,11 @@ describe("CronStore", () => {
     });
 
     expect(result.result.ok).toBe(false);
-    expect(result.result.message).toContain("failing outcome");
+    expect(result.result.message).toContain("assessment=failing");
     const after = await store.getJob(job.id);
     expect(after.state).toBe("error");
     expect(after.lastStatus).toBe("error");
-    expect(after.lastError).toContain("failing outcome");
+    expect(after.lastError).toContain("assessment=failing");
     expect(after.lastRunId).toMatch(/^run_/);
     expect(after.lastTracePath).toContain(`cron-${job.id}`);
     expect(after.lastOutputPath).toBeNull();

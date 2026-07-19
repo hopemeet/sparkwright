@@ -328,7 +328,9 @@ Current event types:
   `agentId`, `subagentDepth`, `delegateTool`, `entrypoint`, and `protocol`
   (`in_process`, `acp`, or `external_command`). Process-backed invocations also
   include `workspaceAccess` when known. Terminal
-  payloads add `terminalState` and `finality`; SparkWright child runs also add
+  payloads add `terminalState`, `finality`, and the child's `assessment`.
+  Finality and health are independent: a child can be complete but degraded or
+  failing, and callers must preserve both. SparkWright child runs also add
   `stepLimitReached` / `truncated` when the child outcome reports them. Agent
   admission failures may go directly from requested to failed and must not emit
   started. External-command delegate terminal
@@ -535,17 +537,26 @@ Field semantics:
 ```json
 {
   "reason": "final_answer",
-  "message": "Completed approval-gated write path for README.md."
+  "message": "Completed approval-gated write path for README.md.",
+  "assessment": {
+    "schemaVersion": "run-assessment.v1",
+    "health": "clean",
+    "issues": [],
+    "verification": []
+  }
 }
 ```
 
+Every terminal payload includes the Core-owned `assessment`. Its bounded
+`health`, `issues`, and structured `verification` are the only semantic run
+verdict; consumers must not infer another verdict from assistant prose.
 Completed final-answer payloads may also include `factLedger` with
 `schemaVersion:"fact-ledger.v1"`. The ledger records raw command facts
 (`exitCode`/`timedOut`), command initiator (`model-initiated` or
 `verifier-launched`), verifier `expect`/`satisfied` results, optional
 `verificationSource`, workspace write epochs, and stale markers. Consumers
-should prefer it over recomputing command facts from compact traces when
-present.
+should use it as audit evidence rather than recomputing command facts from
+compact traces. It does not replace or compete with `assessment`.
 
 `run.failed` payloads should include a reason, stable error code, human-readable message, structured failure, and optional metadata:
 

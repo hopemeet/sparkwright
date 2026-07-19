@@ -220,7 +220,7 @@ async function realCreateSkillCase() {
       : undefined;
   const historyIds = await listHistoryIds(workspace, "release-reviewer");
   const failures = toolFailures(trace.events);
-  const outcome = runOutcome(trace.events);
+  const assessment = runAssessment(trace.events);
   const recoveredCreateSkillFailures =
     failures.length > 0 &&
     // This canary specifically asserts the runtime repeat-skip recovery path.
@@ -232,7 +232,8 @@ async function realCreateSkillCase() {
         failure.toolName === "create_skill" &&
         failure.code === "REPEATED_TOOL_CALL_SKIPPED",
     ) &&
-    outcome?.failing === false;
+    assessment?.health === "degraded" &&
+    assessment.issues?.some((issue) => issue.code === "RECOVERED_TOOL_FAILURE");
   const ok =
     result.exitCode === 0 &&
     requests.includes("tool_search") &&
@@ -278,7 +279,7 @@ async function realCreateSkillCase() {
           proposalMetadata,
           historyIds,
           failures,
-          outcome,
+          assessment,
           capabilityMutations: count(
             trace.events,
             "capability.mutation.completed",
@@ -582,9 +583,9 @@ function toolFailures(events) {
     }));
 }
 
-function runOutcome(events) {
+function runAssessment(events) {
   return events.findLast((event) => event.type === "run.completed")?.payload
-    ?.outcome;
+    ?.assessment;
 }
 
 function has(events, type) {

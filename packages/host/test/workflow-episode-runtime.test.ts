@@ -17,6 +17,7 @@ import { TaskRuntimeOperations } from "../src/runtime/task-runtime-operations.js
 import {
   WorkflowEpisodeRuntime,
   resolveWorkflowActorEpisodePlan,
+  resolveWorkflowEpisodeMaxSteps,
 } from "../src/runtime/workflow-episode-runtime.js";
 import { WorkflowRuntimeOperations } from "../src/runtime/workflow-runtime-operations.js";
 
@@ -31,6 +32,24 @@ afterEach(async () => {
 });
 
 describe("WorkflowEpisodeRuntime", () => {
+  it("keeps step and model-call budgets independent", () => {
+    expect(
+      resolveWorkflowEpisodeMaxSteps({
+        id: "main",
+        name: "Main",
+        runBudget: { maxModelCalls: 1 },
+      }),
+    ).toBe(100);
+    expect(
+      resolveWorkflowEpisodeMaxSteps({
+        id: "main",
+        name: "Main",
+        maxSteps: 3,
+        runBudget: { maxModelCalls: 1 },
+      }),
+    ).toBe(3);
+  });
+
   it("prepares fresh projection state and resolves the node episode surface", async () => {
     const workspace = await mkdtemp(
       join(tmpdir(), "sparkwright-workflow-episode-"),

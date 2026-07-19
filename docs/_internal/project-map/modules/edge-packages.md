@@ -137,6 +137,16 @@ contracts, and focused checklists that no longer fit here.
 
 - Status: Verified
 - Date: 2026-07-19
+- Scope: reviewed downstream SDK/package boundaries for the assessment
+  refactor. SDK Core now exposes Host `ExecutionAssessment` on collected runs;
+  no transport, ACP, server-runtime, or package-boundary ownership moved.
+- Read: SDK Core client/root exports, protocol DTOs, Host response assembly,
+  and edge-package consumers.
+- Tests: SDK Core 10/10 and affected protocol/Host suites passed before final
+  release verification.
+
+- Status: Verified
+- Date: 2026-07-19
 - Scope: Host execution driver handles and message acceptance moved behind the
   Host interaction owner. Server Runtime's ExecutionLaneCoordinator still owns
   only process-local lane admission, queued delivery, cancel dispatch, and

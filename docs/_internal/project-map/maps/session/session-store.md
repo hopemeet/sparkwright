@@ -11,6 +11,26 @@ See [../trace/raw-trace.md](../trace/raw-trace.md) for raw event evidence.
 
 - Status: Verified
 - Date: 2026-07-19
+- Scope: session consistency now evaluates cancellation-owned tool aborts in
+  their run-local terminal context. This changes findings only; session layout,
+  trace storage, repair actions, and result files are unchanged.
+- Read: session trace consistency, canonical/legacy cancellation terminals,
+  run stores, and retained real session directories.
+- Tests: Core trace/session consistency 140/140; two real cancellation session
+  directories validate with no findings.
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: session terminal records now retain Core assessment/fact-ledger facts,
+  Host responses expose aggregated execution assessment, and compacted Agent
+  signals preserve health. Canonical session directory and run-store layout are
+  unchanged.
+- Read: Core terminal/session storage, Host session queries/execution, CLI/TUI
+  consumers, protocol and SDK projections.
+- Tests: Core, Host, Protocol, SDK Core, and focused CLI/TUI suites passed.
+
+- Status: Verified
+- Date: 2026-07-19
 - Scope: the final HostRuntime composition audit changes only live execution
   admission wiring. The explicit HostExecution passed to fresh/resume episode
   owners still uses the same session query, run-store, Workflow journal, and

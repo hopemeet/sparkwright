@@ -459,8 +459,8 @@ export class EventStore {
 
   /**
    * Append a calm, TUI-local divider line (not a host event). Used for the
-   * todo-supervisor continuation banner ("↻ continuing …") so the user sees a
-   * superseded-and-resumed boundary without it looking like their own input.
+   * workflow continuation banner ("↻ continuing …") so the user sees an
+   * episode boundary without it looking like their own input.
    */
   appendNotice(text: string): void {
     const event = {

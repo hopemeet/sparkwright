@@ -11,19 +11,22 @@ import {
   type RepeatedToolRequest,
 } from "./run-health.js";
 import {
-  analyzeCommandOutcomes,
   analyzeCommandOutcomesFromFactLedger,
   analyzeToolOutcomes,
   isPolicyOrApprovalFailure,
-  toolOutcomeSnapshot,
   type CommandOutcomeSummary,
-  type ToolOutcomeSnapshot,
 } from "./run-outcome.js";
 import { isShellToolName, stableDiagnosticJson } from "./fact-classifier.js";
 import {
   factLedgerSnapshotFromUnknown,
+  projectFactLedgerSnapshot,
   type FactLedgerSnapshot,
 } from "./fact-ledger.js";
+import {
+  isResumableRunFailureReason,
+  runAssessmentFromUnknown,
+  type RunAssessment,
+} from "./run-assessment.js";
 import { serializeEventJsonl } from "./trace-codec.js";
 
 export interface TraceSummary {
@@ -37,6 +40,12 @@ export interface TraceSummary {
   agentIds: string[];
   /** @reserved Public trace-summary field consumed by multi-agent diagnostics UIs. */
   subagentIds: string[];
+  /** Whether terminal health came from persisted assessments or partial replay. */
+  assessmentObservation: {
+    completeness: "terminal" | "incomplete" | "mixed";
+    terminalRuns: number;
+    incompleteRuns: number;
+  };
   /** @reserved Public trace-summary field consumed by analytics UIs. */
   byType: Record<string, number>;
   /** @reserved Public trace-summary field consumed by analytics UIs. */
@@ -245,6 +254,7 @@ interface TraceReportFacts {
   reportableFailures: ReportableFailureLedger;
   terminalRunAnomalies: TerminalRunAnomaly[];
   incompleteSubagents: IncompleteSubagentTerminal[];
+  unhealthySubagents: UnhealthySubagentTerminal[];
   inFlightDuplicateStorms: Array<{ label: string; count: number }>;
   repeatedApprovalDenials: Array<{ label: string; count: number }>;
   untrackedWriteAccess: UntrackedWriteAccessMarker[];
@@ -362,6 +372,7 @@ function collectTraceReportFacts(
   const reportableFailures = collectReportableFailures(events);
   const terminalRunAnomalies = collectTerminalRunAnomalies(events);
   const incompleteSubagents = collectIncompleteSubagentTerminals(events);
+  const unhealthySubagents = collectUnhealthySubagentTerminals(events);
   const inFlightDuplicateStorms = collectInFlightDuplicateStorms(events);
   const repeatedApprovalDenials = collectRepeatedApprovalDenials(events);
   const untrackedWriteAccess = collectUntrackedWriteAccessMarkers(events);
@@ -389,6 +400,7 @@ function collectTraceReportFacts(
     reportableFailures,
     terminalRunAnomalies,
     incompleteSubagents,
+    unhealthySubagents,
     inFlightDuplicateStorms,
     repeatedApprovalDenials,
     untrackedWriteAccess,
@@ -537,11 +549,25 @@ function analyzeMultiAgentAuditability({
 }: TraceReportContext): TraceReportFinding[] {
   const {
     incompleteSubagents,
+    unhealthySubagents,
     inFlightDuplicateStorms,
     repeatedApprovalDenials,
     untrackedWriteAccess,
   } = facts;
   const findings: TraceReportFinding[] = [];
+
+  if (unhealthySubagents.length > 0) {
+    findings.push({
+      severity: unhealthySubagents.some((item) => item.health === "failing")
+        ? "high"
+        : "medium",
+      code: "SUBAGENT_UNHEALTHY",
+      title: "Completed sub-agent results include health caveats",
+      evidence: unhealthySubagents.slice(0, 5).map((item) => item.label),
+      recommendation:
+        "Inspect each child's persisted assessment and preserve its issue codes when using the child result; completion does not imply a clean outcome.",
+    });
+  }
 
   const unverifiedIncompleteSubagents = incompleteSubagents.filter(
     (item) => item.verifiedAfterChildWrite === undefined,
@@ -1690,6 +1716,11 @@ export function summarizeTraceJsonl(jsonl: string): TraceSummary {
     sessionIds: [],
     agentIds: [],
     subagentIds: [],
+    assessmentObservation: {
+      completeness: "incomplete",
+      terminalRuns: 0,
+      incompleteRuns: 0,
+    },
     byType,
     terminalStates,
     toolCalls,
@@ -1820,6 +1851,19 @@ export function summarizeTraceJsonl(jsonl: string): TraceSummary {
   summary.sessionIds = [...sessionIds].sort();
   summary.agentIds = [...agentIds].sort();
   summary.subagentIds = [...subagentIds].sort();
+  const assessmentRuns = eventsGroupedByRun(events).map((group) =>
+    persistedRunAssessment(group),
+  );
+  summary.assessmentObservation.terminalRuns =
+    assessmentRuns.filter(Boolean).length;
+  summary.assessmentObservation.incompleteRuns =
+    assessmentRuns.length - summary.assessmentObservation.terminalRuns;
+  summary.assessmentObservation.completeness =
+    summary.assessmentObservation.terminalRuns === assessmentRuns.length
+      ? "terminal"
+      : summary.assessmentObservation.terminalRuns === 0
+        ? "incomplete"
+        : "mixed";
   summary.workspaceReads.uniquePaths = Object.keys(workspaceReadPaths).length;
   summary.workspaceReads.duplicatePaths = Object.fromEntries(
     Object.entries(workspaceReadPaths)
@@ -2166,11 +2210,12 @@ function collectReportableFailures(
   const failures: ReportableFailure[] = [];
   const byCode: Record<string, number> = {};
 
-  for (const event of events) {
+  for (const [index, event] of events.entries()) {
     if (isExpectedDenialEvent(event)) continue;
     if (!isTraceErrorEvent(event)) continue;
     if (event.type === "tool.failed") continue;
     if (isToolFailureCompanionEvent(event, toolFailureCallIds)) continue;
+    if (isSupersededResumableRunFailure(events, index)) continue;
 
     const code = traceErrorCode(event) ?? event.type;
     failures.push({
@@ -2182,6 +2227,45 @@ function collectReportableFailures(
   }
 
   return { failures, byCode };
+}
+
+function isSupersededResumableRunFailure(
+  events: readonly SparkwrightEvent[],
+  index: number,
+): boolean {
+  const event = events[index];
+  if (event?.type !== "run.failed" || !isRecord(event.payload)) return false;
+  const assessment = runAssessmentFromUnknown(event.payload.assessment);
+  const resumable = assessment?.issues.some(
+    (issue) =>
+      issue.kind === "run_failure" &&
+      typeof issue.details?.reason === "string" &&
+      isResumableRunFailureReason(issue.details.reason),
+  );
+  if (!resumable) return false;
+  const workflowRunId = workflowRunIdForTraceRun(events, event.runId);
+  if (!workflowRunId) return false;
+  return events
+    .slice(index + 1)
+    .some(
+      (candidate) =>
+        candidate.runId !== event.runId &&
+        isRunTerminalEvent(candidate) &&
+        workflowRunIdForTraceRun(events, candidate.runId) === workflowRunId,
+    );
+}
+
+function workflowRunIdForTraceRun(
+  events: readonly SparkwrightEvent[],
+  runId: string,
+): string | undefined {
+  for (const event of events) {
+    if (event.runId !== runId || !event.type.startsWith("workflow.")) continue;
+    if (!isRecord(event.payload)) continue;
+    const workflowRunId = stringValue(event.payload.workflowRunId);
+    if (workflowRunId) return workflowRunId;
+  }
+  return undefined;
 }
 
 function reportableFailureLabel(event: SparkwrightEvent, code: string): string {
@@ -2214,31 +2298,59 @@ function collectClassifiedToolFailures(
   summary: TraceSummary,
   events: readonly SparkwrightEvent[],
 ): void {
-  // Recompute from the raw events only when every failed tool call still carries
-  // its request arguments — that is exactly the detail same-target recovery (and
-  // the destructive-mutation-then-not-found diagnostic) needs, so the recompute
-  // is reliable for *all* failures and reflects the current classification even
-  // for traces whose persisted snapshot predates a classifier change. Otherwise
-  // (older/compacted runs that stripped those arguments, including mixed traces
-  // where only some runs retain them) defer to the persisted snapshot so a
-  // recorded recovery is not flipped back to an unresolved failure.
-  const snapshot = everyFailedToolCallHasRequestArgs(events)
-    ? toolOutcomeSnapshot(events)
-    : (persistedToolOutcome(events) ?? toolOutcomeSnapshot(events));
-  if (!snapshot) return;
-  summary.toolFailures.unresolved.total = snapshot.unresolved.total;
-  summary.toolFailures.unresolved.byCode = { ...snapshot.unresolved.byCode };
-  summary.toolFailures.recovered.total = snapshot.recovered.total;
-  summary.toolFailures.recovered.byCode = { ...snapshot.recovered.byCode };
-  if (snapshot.mutationFollowups) {
-    summary.toolFailures.mutationFollowups.total =
-      snapshot.mutationFollowups.count;
-    summary.toolFailures.mutationFollowups.targets = [
-      ...snapshot.mutationFollowups.targets,
-    ];
+  const unresolvedByCode: Record<string, number> = {};
+  const recoveredByCode: Record<string, number> = {};
+  let unresolvedTotal = 0;
+  let recoveredTotal = 0;
+  const mutationTargets = new Set<string>();
+  let mutationCount = 0;
+
+  for (const group of eventsGroupedByRun(events)) {
+    const assessment = persistedRunAssessment(group);
+    if (assessment) {
+      const unresolved = assessment.issues.find(
+        (issue) => issue.code === "UNRESOLVED_TOOL_FAILURE",
+      );
+      const recovered = assessment.issues.find(
+        (issue) => issue.code === "RECOVERED_TOOL_FAILURE",
+      );
+      unresolvedTotal += unresolved?.count ?? 0;
+      recoveredTotal += recovered?.count ?? 0;
+      mergeCounts(unresolvedByCode, unresolved?.details?.codeCounts);
+      mergeCounts(recoveredByCode, recovered?.details?.codeCounts);
+    } else {
+      // An incomplete trace has no formal verdict. Replay only into a bounded
+      // diagnostic observation; callers can see `assessmentObservation` is not
+      // terminal and must not treat these counts as an official assessment.
+      const observed = analyzeToolOutcomes(group);
+      unresolvedTotal += observed.unresolvedFailures.length;
+      recoveredTotal += observed.recoveredFailures.length;
+      mergeCounts(
+        unresolvedByCode,
+        tallyFailureCodes(observed.unresolvedFailures),
+      );
+      mergeCounts(
+        recoveredByCode,
+        tallyFailureCodes(observed.recoveredFailures),
+      );
+    }
+    if (everyFailedToolCallHasRequestArgs(group)) {
+      const observed = analyzeToolOutcomes(group);
+      mutationCount += observed.mutationFollowupFailures.length;
+      for (const failure of observed.mutationFollowupFailures) {
+        if (failure.targetKey) mutationTargets.add(failure.targetKey);
+      }
+    }
   }
 
-  for (const [code, count] of Object.entries(snapshot.unresolved.byCode)) {
+  summary.toolFailures.unresolved.total = unresolvedTotal;
+  summary.toolFailures.unresolved.byCode = unresolvedByCode;
+  summary.toolFailures.recovered.total = recoveredTotal;
+  summary.toolFailures.recovered.byCode = recoveredByCode;
+  summary.toolFailures.mutationFollowups.total = mutationCount;
+  summary.toolFailures.mutationFollowups.targets = [...mutationTargets];
+
+  for (const [code, count] of Object.entries(unresolvedByCode)) {
     summary.errorCount += count;
     summary.errorCodes[code] = (summary.errorCodes[code] ?? 0) + count;
   }
@@ -2292,56 +2404,6 @@ function everyFailedToolCallHasRequestArgs(
   return sawFailure;
 }
 
-/** The tool-outcome snapshot persisted on `run.completed`, if present. */
-function persistedToolOutcome(
-  events: readonly SparkwrightEvent[],
-): ToolOutcomeSnapshot | undefined {
-  for (let index = events.length - 1; index >= 0; index--) {
-    const event = events[index];
-    if (event?.type !== "run.completed" || !isRecord(event.payload)) continue;
-    const raw = event.payload.toolOutcome;
-    if (!isRecord(raw)) return undefined;
-    return {
-      unresolved: tallyFromRaw(raw.unresolved),
-      recovered: tallyFromRaw(raw.recovered),
-      ...(isRecord(raw.mutationFollowups)
-        ? { mutationFollowups: mutationFollowupsFromRaw(raw.mutationFollowups) }
-        : {}),
-    };
-  }
-  return undefined;
-}
-
-function tallyFromRaw(raw: unknown): {
-  total: number;
-  byCode: Record<string, number>;
-} {
-  if (!isRecord(raw)) return { total: 0, byCode: {} };
-  const byCode: Record<string, number> = {};
-  if (isRecord(raw.byCode)) {
-    for (const [code, count] of Object.entries(raw.byCode)) {
-      if (typeof count === "number") byCode[code] = count;
-    }
-  }
-  return {
-    total: typeof raw.total === "number" ? raw.total : 0,
-    byCode,
-  };
-}
-
-function mutationFollowupsFromRaw(raw: Record<string, unknown>): {
-  count: number;
-  targets: string[];
-} {
-  const targets = Array.isArray(raw.targets)
-    ? raw.targets.filter((value): value is string => typeof value === "string")
-    : [];
-  return {
-    count: typeof raw.count === "number" ? raw.count : 0,
-    targets,
-  };
-}
-
 function collectCommandFailures(
   summary: TraceSummary,
   events: readonly SparkwrightEvent[],
@@ -2369,13 +2431,11 @@ function commandFailureProjectionForRun(
   events: readonly SparkwrightEvent[],
 ): CommandFailureProjection | undefined {
   const ledger = persistedFactLedger(events);
-  if (ledger) {
-    return commandFailureProjectionFromSummary(
-      analyzeCommandOutcomesFromFactLedger(ledger),
-    );
-  }
-  if (events.some((event) => event.type === "run.completed")) return undefined;
-  return commandFailureProjectionFromSummary(analyzeCommandOutcomes(events));
+  return commandFailureProjectionFromSummary(
+    analyzeCommandOutcomesFromFactLedger(
+      ledger ?? projectFactLedgerSnapshot(events),
+    ),
+  );
 }
 
 function eventsGroupedByRun(
@@ -2487,10 +2547,55 @@ function persistedFactLedger(
 ): FactLedgerSnapshot | undefined {
   for (let index = events.length - 1; index >= 0; index--) {
     const event = events[index];
-    if (event?.type !== "run.completed" || !isRecord(event.payload)) continue;
-    return factLedgerSnapshotFromUnknown(event.payload.factLedger);
+    if (
+      event?.type !== "run.completed" &&
+      event?.type !== "run.failed" &&
+      event?.type !== "run.cancelled"
+    )
+      continue;
+    if (!isRecord(event.payload)) continue;
+    const snapshot = factLedgerSnapshotFromUnknown(event.payload.factLedger);
+    if (snapshot) return snapshot;
   }
   return undefined;
+}
+
+function persistedRunAssessment(
+  events: readonly SparkwrightEvent[],
+): RunAssessment | undefined {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (
+      event?.type !== "run.completed" &&
+      event?.type !== "run.failed" &&
+      event?.type !== "run.cancelled"
+    )
+      continue;
+    if (!isRecord(event.payload)) continue;
+    const assessment = runAssessmentFromUnknown(event.payload.assessment);
+    if (assessment) return assessment;
+  }
+  return undefined;
+}
+
+function mergeCounts(
+  target: Record<string, number>,
+  source: Record<string, number> | undefined,
+): void {
+  for (const [code, count] of Object.entries(source ?? {})) {
+    target[code] = (target[code] ?? 0) + count;
+  }
+}
+
+function tallyFailureCodes(
+  failures: ReadonlyArray<{ code?: string }>,
+): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const failure of failures) {
+    const code = failure.code ?? "unknown";
+    counts[code] = (counts[code] ?? 0) + 1;
+  }
+  return counts;
 }
 
 function collectSafetySummary(
@@ -2905,6 +3010,50 @@ function collectTerminalRunAnomalies(
 interface IncompleteSubagentTerminal {
   label: string;
   verifiedAfterChildWrite?: VerifiedAfterChildWriteEvidence;
+}
+
+interface UnhealthySubagentTerminal {
+  health: Exclude<RunAssessment["health"], "clean">;
+  label: string;
+}
+
+function collectUnhealthySubagentTerminals(
+  events: readonly SparkwrightEvent[],
+): UnhealthySubagentTerminal[] {
+  const out: UnhealthySubagentTerminal[] = [];
+  for (const event of events) {
+    if (event.type !== "subagent.completed" || !isRecord(event.payload)) {
+      continue;
+    }
+    const assessment = runAssessmentFromUnknown(event.payload.assessment);
+    if (!assessment || assessment.health === "clean") continue;
+    const name = stringValue(
+      event.metadata.agentName,
+      event.metadata.childAgentId,
+      event.metadata.agentProfileId,
+      event.metadata.agentId,
+      event.payload.childRunId,
+      "subagent",
+    )!;
+    const childRunId = stringValue(
+      event.metadata.childRunId,
+      event.payload.childRunId,
+    );
+    const codes = assessment.issues
+      .map((issue) => issue.code)
+      .filter((code, index, all) => all.indexOf(code) === index)
+      .slice(0, 5);
+    const pieces = [
+      `${name} completed with ${assessment.health} health`,
+      childRunId ? `child ${childRunId}` : undefined,
+      codes.length > 0 ? `issues ${codes.join(", ")}` : undefined,
+    ].filter((value): value is string => typeof value === "string");
+    out.push({
+      health: assessment.health,
+      label: truncateDiagnostic(pieces.join(" · "), 260),
+    });
+  }
+  return out;
 }
 
 interface VerifiedAfterChildWriteEvidence {

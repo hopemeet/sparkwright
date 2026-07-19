@@ -585,6 +585,28 @@ describe("TUI ↔ host via sdk-node", () => {
     controller.shutdown();
   });
 
+  it("loads the initial session without remounting the transcript header", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-tui-"));
+    const sessionRoot = await mkdtemp(
+      join(tmpdir(), "sparkwright-tui-sessions-"),
+    );
+    const sessionId = "session_initial";
+    await mkdir(join(sessionRoot, sessionId), { recursive: true });
+    const store = new EventStore();
+    const controller = new RunController({
+      workspaceRoot: workspace,
+      sessionRootDir: sessionRoot,
+      initialSessionId: sessionId,
+      modelName: "deterministic",
+      store,
+    });
+
+    await controller.switchSession(sessionId);
+
+    expect(store.getSnapshot().clearGeneration).toBe(0);
+    controller.shutdown();
+  });
+
   it("surfaces skill load failures from the host event stream", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "sparkwright-tui-"));
     await writeFile(join(workspace, "README.md"), "# Demo\n", "utf8");

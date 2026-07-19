@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import {
+  assessRun,
   createRunId,
   createSessionId,
   createSessionRunStoreFactory,
@@ -86,6 +87,13 @@ export async function writeHostStartFailureTrace(
       message: input.message,
       retryable: false,
     },
+    assessment: assessRun([], {
+      terminal: {
+        state: "failed",
+        reason: "model_completion_failed",
+        failure: { code: "HOST_START_FAILED" },
+      },
+    }),
     metadata,
   };
 
@@ -143,6 +151,7 @@ export async function writeHostStartFailureTrace(
             message: input.message,
             retryable: false,
           },
+          assessment: result.assessment,
           metadata,
         },
         { source: input.source },

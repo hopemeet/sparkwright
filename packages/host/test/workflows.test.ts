@@ -681,34 +681,26 @@ describe("workflow assets", () => {
     ]);
   });
 
-  it("parses todo_clear verifiers", () => {
-    const detail = parseWorkflowMarkdownAsset({
-      assetName: "todo-clear",
-      dir: "/tmp/todo-clear",
-      sourcePath: "/tmp/todo-clear/workflow.md",
-      raw: [
-        "---",
-        "nodes:",
-        "  - id: finish",
-        "    execute: model",
-        "    verify:",
-        "      - kind: todo_clear",
-        "        name: todos-done",
-        "        metadata:",
-        "          owner: self-hosting",
-        "---",
-        "## finish",
-        "Finish the todo-backed work.",
-      ].join("\n"),
-    });
-
-    expect(detail.definition.nodes[0]?.verify).toEqual([
-      {
-        id: "todos-done",
-        kind: "todo_clear",
-        metadata: { owner: "self-hosting" },
-      },
-    ]);
+  it("rejects removed todo_clear verifiers", () => {
+    expect(() =>
+      parseWorkflowMarkdownAsset({
+        assetName: "todo-clear",
+        dir: "/tmp/todo-clear",
+        sourcePath: "/tmp/todo-clear/workflow.md",
+        raw: [
+          "---",
+          "nodes:",
+          "  - id: finish",
+          "    execute: model",
+          "    verify:",
+          "      - kind: todo_clear",
+          "        name: todos-done",
+          "---",
+          "## finish",
+          "Finish the work.",
+        ].join("\n"),
+      }),
+    ).toThrow(/kind must be command or diff_scope/);
   });
 
   it("parses P4 script nodes with asset-local paths and capability declarations", () => {
@@ -1249,19 +1241,19 @@ describe("workflow assets", () => {
 
   it("continues a bounded workflow episode without letting RunEnd claim terminal ownership", async () => {
     const workspace = await tempWorkspace();
-    const sessionId = "sess_workflow_todo_continuation";
+    const sessionId = "sess_workflow_budget_continuation";
     await writeFile(join(workspace, "README.md"), "# Demo\n", "utf8");
     await writeWorkflow(
       workspace,
-      "todo-continuation",
+      "budget-continuation",
       [
         "---",
         "nodes:",
         "  - id: main",
         "    execute: model",
-        "    tools: [read, todo_write]",
+        "    tools: [read]",
         "    runBudget:",
-        "      maxToolCalls: 2",
+        "      maxToolCalls: 1",
         "---",
         "## main",
         "Finish the tracked review.",
@@ -1272,33 +1264,13 @@ describe("workflow assets", () => {
       {
         toolCalls: [
           {
-            toolName: "tool_search",
-            arguments: { query: "select:todo_write" },
-          },
-        ],
-      },
-      {
-        toolCalls: [
-          {
-            toolName: "todo_write",
-            arguments: {
-              items: [{ title: "review", status: "pending" }],
-            },
+            toolName: "read",
+            arguments: { path: "README.md" },
           },
         ],
       },
       {
         toolCalls: [{ toolName: "read", arguments: { path: "README.md" } }],
-      },
-      {
-        toolCalls: [
-          {
-            toolName: "todo_write",
-            arguments: {
-              items: [{ title: "review", status: "completed" }],
-            },
-          },
-        ],
       },
       { message: "done" },
     ]);
@@ -1311,9 +1283,9 @@ describe("workflow assets", () => {
 
     try {
       const started = await runtime.startRun({
-        goal: "run bounded todo continuation workflow",
+        goal: "run bounded workflow continuation",
         sessionId,
-        workflow: "todo-continuation",
+        workflow: "budget-continuation",
       });
 
       expect(started).toMatchObject({ ok: true });

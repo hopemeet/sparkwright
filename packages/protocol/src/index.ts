@@ -1253,14 +1253,7 @@ export interface ApprovalRequestedEventPayload {
   details?: Record<string, unknown>;
 }
 
-/**
- * Emitted when a todo-aware supervisor auto-continues an unfinished run: the
- * previous run reached a resumable terminal state with todos still open, so a
- * fresh run is started to carry on. The logical turn is still in progress — a
- * client should keep showing "running" (re-pointing at `runId`) rather than
- * treating the previous run's terminal as the end of the turn. No `run.completed`
- * is emitted for the superseded run; only the final run of the chain completes.
- */
+/** Emitted when a durable Workflow starts another Core episode. */
 export interface RunContinuationEventPayload {
   /** The new run carrying the continuation. */
   runId: string;
@@ -1275,8 +1268,46 @@ export interface RunContinuationEventPayload {
   previousRunId: string;
   /** 1 for the first continuation, incrementing thereafter. */
   continuationCount: number;
-  /** Audit reason, currently always "unfinished_todo". */
-  reason: string;
+  reason: "workflow_record_active";
+}
+
+export interface AssessmentIssuePayload {
+  code: string;
+  kind: string;
+  disposition: "degraded" | "failing";
+  count: number;
+  details?: Record<string, unknown>;
+}
+
+export interface VerificationResultPayload {
+  id: string;
+  source: "command" | "profile" | "documented_command";
+  status: "passed" | "failed" | "timed_out" | "stale";
+  sequence?: number;
+  command?: string;
+  profile?: string;
+  verifierId?: string;
+  exitCode?: number | null;
+}
+
+export interface RunAssessmentPayload {
+  schemaVersion: "run-assessment.v1";
+  health: "clean" | "degraded" | "failing";
+  issues: AssessmentIssuePayload[];
+  verification: VerificationResultPayload[];
+}
+
+export interface ExecutionAssessmentPayload {
+  schemaVersion: "execution-assessment.v1";
+  health: "clean" | "degraded" | "failing";
+  issues: AssessmentIssuePayload[];
+  verification: VerificationResultPayload[];
+  /** @reserved Public execution summary count consumed by protocol/SDK clients. */
+  episodeCount: number;
+  rootRunId?: string;
+  /** @reserved Public execution terminal identity consumed by protocol/SDK clients. */
+  finalRunId?: string;
+  episodes: Array<{ runId: string; assessment: RunAssessmentPayload }>;
 }
 
 export interface RunCompletedEventPayload {
@@ -1285,23 +1316,19 @@ export interface RunCompletedEventPayload {
   stopReason?: string;
   /** Final answer text when the run ended by producing one. */
   message?: string;
-  /** Present when the run completed with a non-clean outcome summary. */
-  outcome?: object;
+  /** Host-owned assessment of the complete execution, including all episodes. */
+  assessment: ExecutionAssessmentPayload;
   /** Present when `state` is `failed` or `cancelled` and a structured cause is available. */
   failure?: RunFailureEnvelope;
-  /**
-   * Present when the run chain ended by handing back to the human while todos
-   * were still unfinished (continuation limit reached, stalled without
-   * external progress, or a non-resumable stop). Clients should surface this
-   * distinctly from a clean completion.
-   */
-  todoHandoff?: { reason: string; message: string };
+  /** Advisory plan state; it never changes terminal ownership or scheduling. */
+  todoAdvisory?: { unfinished: number; blocked: number; message: string };
 }
 
 export interface RunFailedEventPayload {
   runId: string;
   /** Canonical terminal failure. */
   failure: RunFailureEnvelope;
+  assessment: ExecutionAssessmentPayload;
 }
 
 export type HostEvent =

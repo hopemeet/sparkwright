@@ -16,6 +16,47 @@
 
 ## Current Evidence
 
+- 2026-07-19 real Terra positive/negative controls verified that a later
+  completed episode suppresses only resumable failure history from the same
+  durable `workflowRunId`; an independent later success in the same session
+  does not hide `TRACE_ERRORS`. The positive trace completed with a node
+  verifier and an `ok` report. The adjacent budget-dimension P3 is fixed:
+  Host no longer projects `maxModelCalls` into `maxSteps`, and a fresh real
+  Terra Workflow preserved `MAX_MODEL_CALLS_EXCEEDED` across four bounded
+  continuations before a verified completion. See
+  [../runs/2026-07-19-real-model-fix-verification.md](../runs/2026-07-19-real-model-fix-verification.md).
+
+- 2026-07-19 fix verification shares Core's existing resumable-failure reason
+  predicate with Host aggregation and trace diagnostics. The retained
+  three-episode trace now preserves both budget-stop events while deriving a
+  `passed_with_issues` report from the superseding terminal for the same
+  `workflowRunId`. Core 641/641 and Host 592/592 passed.
+
+- 2026-07-19 Terra follow-up ran a three-episode Workflow whose first exact
+  read failed, next episode recovered the same target, and final episode passed
+  `npm test`. The durable record completed and canonical execution assessment
+  stayed degraded only for recovered history, but the pre-fix offline report
+  returned failed because it treated two authorized resumable budget terminals
+  as `TRACE_ERRORS`. This cross-consumer parity check now passes. See
+  [../runs/2026-07-19-real-terra-refactor-qa-follow-up.md](../runs/2026-07-19-real-terra-refactor-qa-follow-up.md).
+
+- 2026-07-19 real Terra budget continuation used a temporary two-node Workflow
+  whose nodes each allowed one model call. In
+  `session_workflow_76631a32a93b47c9a2f1d3f28c61ed84`, the first Core run
+  persisted `first -> second`, then terminated with
+  `MAX_MODEL_CALLS_EXCEEDED`; the durable record authorized a second Core run
+  at `second`, which completed the Workflow. Trace verification and session
+  check were both clean across the two terminal runs.
+
+- 2026-07-19 continuation ownership narrowing: the durable Workflow record is
+  the sole episode-continuation authority. `WorkflowRuntimeOperations` returns
+  an explicit decision after each episode; no record means one ordinary
+  episode, nonterminal fresh records may continue under the cap, unrecoverable
+  failures and waiting/terminal records stop. Todo is advisory and its former
+  supervisor/handoff path is deleted. Direct decision tests cover no-record,
+  resumable, unrecoverable, cap, waiting, and terminal cases; full Host coverage
+  passes.
+
 - 2026-07-18 Host live episode ownership consolidation:
   `WorkflowEpisodeRuntime` owns pinned projection preparation, waiting-input
   consumption/compensation, fresh/checkpoint/workflow-resume Core run

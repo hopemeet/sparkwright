@@ -86,7 +86,7 @@ describe("workflow distill", () => {
     expect(report.markdown).toContain("## inspect");
     expect(report.markdown).toContain("## implement");
     expect(report.markdown).toContain("kind: diff_scope");
-    expect(report.markdown).toContain("kind: todo_clear");
+    expect(report.markdown).not.toContain("kind: todo_clear");
     expect(report.markdown).toContain("npm test -- docs");
     expect(
       parseWorkflowMarkdownAsset({

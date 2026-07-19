@@ -558,7 +558,7 @@ describe("@sparkwright/sdk-core Client", () => {
         runId: "run_2",
         previousRunId: "run_1",
         continuationCount: 1,
-        reason: "unfinished_todo",
+        reason: "workflow_record_active",
       },
     });
     transport.receive({
@@ -571,10 +571,15 @@ describe("@sparkwright/sdk-core Client", () => {
         state: "completed",
         stopReason: "final_answer",
         message: "done",
-        outcome: {
-          kind: "completed_with_tool_failures",
-          toolFailures: { count: 1, codes: ["TOOL_ARGUMENTS_INVALID"] },
-        },
+        assessment: executionAssessment("failing", [
+          {
+            code: "UNRESOLVED_TOOL_FAILURE",
+            kind: "tool_failure",
+            disposition: "failing",
+            count: 1,
+            details: { codes: ["TOOL_ARGUMENTS_INVALID"] },
+          },
+        ]),
       },
     });
 
@@ -583,9 +588,10 @@ describe("@sparkwright/sdk-core Client", () => {
       runIds: ["run_1", "run_2"],
       terminal: { payload: { runId: "run_2" } },
       finalAnswer: "done",
-      outcome: {
-        kind: "completed_with_tool_failures",
-        toolFailures: { count: 1, codes: ["TOOL_ARGUMENTS_INVALID"] },
+      assessment: {
+        schemaVersion: "execution-assessment.v1",
+        health: "failing",
+        issues: [expect.objectContaining({ code: "UNRESOLVED_TOOL_FAILURE" })],
       },
       toolFailures: [{ type: "tool.failed" }],
       artifacts: [{ type: "artifact.created" }],
@@ -632,6 +638,14 @@ describe("@sparkwright/sdk-core Client", () => {
           code: "internal_error",
           message: "host failed",
         },
+        assessment: executionAssessment("failing", [
+          {
+            code: "internal_error",
+            kind: "run_failure",
+            disposition: "failing",
+            count: 1,
+          },
+        ]),
       },
     });
 
@@ -644,3 +658,23 @@ describe("@sparkwright/sdk-core Client", () => {
     });
   });
 });
+
+function executionAssessment(
+  health: "clean" | "degraded" | "failing",
+  issues: Array<{
+    code: string;
+    kind: string;
+    disposition: "degraded" | "failing";
+    count: number;
+    details?: Record<string, unknown>;
+  }> = [],
+) {
+  return {
+    schemaVersion: "execution-assessment.v1" as const,
+    health,
+    issues,
+    verification: [],
+    episodeCount: 0,
+    episodes: [],
+  };
+}

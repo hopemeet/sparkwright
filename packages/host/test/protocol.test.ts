@@ -2253,9 +2253,10 @@ describe("host protocol", () => {
         kind: "run.start",
         timestamp: TIMESTAMP,
         payload: {
-          goal: "inspect missing default target",
+          goal: "inspect an explicit missing target",
           model: "deterministic",
           accessMode: "ask",
+          targetPath: "missing.txt",
         },
       });
 
@@ -2275,17 +2276,21 @@ describe("host protocol", () => {
         payload: {
           state: "completed",
           stopReason: "final_answer",
-          outcome: {
-            kind: "completed_with_tool_failures",
-            toolFailures: { count: 1 },
+          assessment: {
+            health: "failing",
+            issues: [{ code: "UNRESOLVED_TOOL_FAILURE", count: 1 }],
           },
         },
       });
       const codes = (
         completed as {
-          payload?: { outcome?: { toolFailures?: { codes?: unknown[] } } };
+          payload?: {
+            assessment?: {
+              issues?: Array<{ details?: { codes?: unknown[] } }>;
+            };
+          };
         }
-      ).payload?.outcome?.toolFailures?.codes;
+      ).payload?.assessment?.issues?.[0]?.details?.codes;
       expect(codes).toHaveLength(1);
       expect(["TOOL_NOT_FOUND", "ENOENT"]).toContain(codes?.[0]);
     } finally {
@@ -2746,7 +2751,7 @@ describe("host protocol", () => {
     }
   });
 
-  it("hands off unfinished todos after a final resumed answer", async () => {
+  it("reports unfinished todos as advisory after a final resumed answer", async () => {
     const workspace = await mkdtemp(
       join(tmpdir(), "sparkwright-host-resume-todo-"),
     );
@@ -2849,7 +2854,7 @@ describe("host protocol", () => {
         kind: "run.completed",
         payload: {
           state: "completed",
-          todoHandoff: { reason: "non_resumable_stop_reason" },
+          todoAdvisory: { unfinished: 1, blocked: 0 },
         },
       });
       expect(

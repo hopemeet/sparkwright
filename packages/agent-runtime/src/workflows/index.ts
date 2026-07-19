@@ -18,7 +18,6 @@ export type {
   WorkflowJoinNodeDefinition,
   WorkflowTaskNodeDefinition,
   WorkflowTaskNodeMode,
-  WorkflowTodoClearVerifierDefinition,
   WorkflowNodeVerdict,
   WorkflowNodeVerdictLogEntry,
   WorkflowResumePolicy,

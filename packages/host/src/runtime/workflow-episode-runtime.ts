@@ -22,10 +22,10 @@ import {
 } from "@sparkwright/core/internal";
 import {
   readTodoLedger,
-  TODO_CONTINUATION_REQUIRED_TOOL,
+  runWorkflowRunChain,
+  summarizeTodoLedger,
   type AgentProfile,
   type FileWorkflowStore,
-  type TodoSupervisedRunInput,
   type WorkflowExecutableDefinition,
   type WorkflowLeaseBoundWriter,
   type WorkflowNodeDefinition,
@@ -72,12 +72,19 @@ import {
 import type { TaskRuntimeOperations } from "./task-runtime-operations.js";
 import type { WorkflowRuntimeOperations } from "./workflow-runtime-operations.js";
 
-const MAIN_TODO_MAX_CONTINUATIONS = 4;
-const MAIN_TODO_MAX_STALLED_CONTINUATIONS = 1;
-const MAIN_TODO_CONTINUATION_MAX_STEPS = 8;
-const MAIN_TODO_CONTINUATION_MAX_MODEL_CALLS = 8;
-const MAIN_TODO_CONTINUATION_MAX_TOOL_CALLS = 12;
+const WORKFLOW_MAX_CONTINUATIONS = 4;
 const MAIN_AGENT_MAX_STEPS_BACKSTOP = 100;
+
+interface WorkflowEpisodeContinuation {
+  reason: "workflow_record_active";
+  previousRunId: string;
+  stopReason: NonNullable<RunResult["stopReason"]>;
+}
+
+interface WorkflowEpisodeChainInput {
+  continuation?: WorkflowEpisodeContinuation;
+  continuationCount: number;
+}
 
 export interface WorkflowEpisodeEnvironment {
   workspaceRoot: string;
@@ -141,7 +148,7 @@ export interface WorkflowActorEpisodePlan {
   nodeId?: string;
   attempt?: number;
   runBudget?: RunBudget;
-  budgetScope: "main_agent" | "todo_continuation";
+  budgetScope: "main_agent" | "workflow_continuation";
   toolSurface: ResolvedToolSurface;
 }
 
@@ -340,10 +347,6 @@ export class WorkflowEpisodeRuntime {
               (workflowRecord?.evidenceRefs ?? []).filter(
                 (ref) => ref.nodeId === nodeId,
               ),
-            readTodoLedger: () =>
-              readTodoLedger(
-                join(input.sessionRootDir, input.sessionId, "todo.md"),
-              ),
             runEndTerminalOwner: "episode_chain",
             allowScriptWrite: input.access.shouldWrite,
             agentTool: input.delegateAgentTool,
@@ -462,14 +465,10 @@ export class WorkflowEpisodeRuntime {
     { ok: true; runId: string } | { ok: false; error: ProtocolError }
   > {
     const { env, payload, sessionId } = input;
-    const buildRun = (
-      goal: string,
-      extraContext: ContextItem[],
-      overrides: { maxSteps?: number; runBudget?: RunBudget } = {},
-    ) => {
+    const buildRun = (goal: string, extraContext: ContextItem[]) => {
       const episode = resolveWorkflowActorEpisodePlan(env, {
-        fallbackRunBudget: overrides.runBudget ?? env.mainAgent.runBudget,
-        purpose: overrides.runBudget ? "todo_continuation" : "main_agent",
+        fallbackRunBudget: env.mainAgent.runBudget,
+        purpose: "main_agent",
       });
       const runRef: { current?: ReturnType<typeof createRun> } = {};
       const taskBridge = this.tasks.createRevivalBridge(
@@ -499,9 +498,7 @@ export class WorkflowEpisodeRuntime {
         tools: episode.toolSurface.tools,
         workflowHooks: env.workflowHooks,
         model: episode.model,
-        maxSteps:
-          overrides.maxSteps ??
-          resolveWorkflowEpisodeMaxSteps(env.mainAgent, episode.runBudget),
+        maxSteps: resolveWorkflowEpisodeMaxSteps(env.mainAgent),
         ...(episode.runBudget !== undefined
           ? { runBudget: episode.runBudget }
           : {}),
@@ -519,26 +516,22 @@ export class WorkflowEpisodeRuntime {
       execution: input.execution,
       episodeKind: "run_start",
       env,
-      todoPath: join(env.sessionRootDir, sessionId, "todo.md"),
       sessionId,
-      buildRun: (supervisedInput) => {
-        const goal = supervisedInput.continuation?.prompt ?? payload.goal;
-        const extraContext = supervisedInput.continuation
+      buildRun: (episodeInput) => {
+        const goal = episodeInput.continuation
+          ? workflowContinuationGoal(env.workflowRecord)
+          : payload.goal;
+        const extraContext = episodeInput.continuation
           ? [
               ...(input.initialInputContext ? [input.initialInputContext] : []),
               ...chainTurns,
-              supervisedInput.continuation.context,
             ]
           : input.initialInputContext
             ? [input.initialInputContext]
             : [];
-        if (!supervisedInput.continuation) return buildRun(goal, extraContext);
-        return buildRun(goal, extraContext, {
-          maxSteps: resolveTodoContinuationMaxSteps(env.mainAgent),
-          runBudget: resolveTodoContinuationRunBudget(env.mainAgent),
-        });
+        return buildRun(goal, extraContext);
       },
-      afterRun: (_supervisedInput, run, result) => {
+      afterRun: (_episodeInput, run, result) => {
         const runId = run.record.id;
         if (chainTurns.length === 0) {
           chainTurns.push(
@@ -582,8 +575,8 @@ export class WorkflowEpisodeRuntime {
       extraContext: ContextItem[],
     ) => {
       const episode = resolveWorkflowActorEpisodePlan(env, {
-        fallbackRunBudget: resolveTodoContinuationRunBudget(env.mainAgent),
-        purpose: "todo_continuation",
+        fallbackRunBudget: env.mainAgent.runBudget,
+        purpose: "workflow_continuation",
       });
       const runRef: { current?: ReturnType<typeof createRun> } = {};
       const taskBridge = this.tasks.createRevivalBridge(
@@ -609,7 +602,7 @@ export class WorkflowEpisodeRuntime {
         tools: episode.toolSurface.tools,
         workflowHooks: env.workflowHooks,
         model: episode.model,
-        maxSteps: resolveTodoContinuationMaxSteps(env.mainAgent),
+        maxSteps: resolveWorkflowEpisodeMaxSteps(env.mainAgent),
         runBudget: episode.runBudget,
         metadata: workflowActorEpisodeRunMetadata(env.runMetadata, episode),
         notificationSources: [taskBridge.notificationSource],
@@ -625,13 +618,11 @@ export class WorkflowEpisodeRuntime {
       execution: input.execution,
       episodeKind: "run_resume",
       env,
-      todoPath: join(env.sessionRootDir, sessionId, "todo.md"),
       sessionId,
-      buildRun: (supervisedInput) =>
-        supervisedInput.continuation
-          ? buildContinuationRun(supervisedInput.continuation.prompt, [
+      buildRun: (episodeInput) =>
+        episodeInput.continuation
+          ? buildContinuationRun(workflowContinuationGoal(env.workflowRecord), [
               ...chainTurns,
-              supervisedInput.continuation.context,
             ])
           : (() => {
               const episode = resolveWorkflowActorEpisodePlan(env, {
@@ -662,10 +653,7 @@ export class WorkflowEpisodeRuntime {
                 }),
                 tools: episode.toolSurface.tools,
                 model: episode.model,
-                maxSteps: resolveWorkflowEpisodeMaxSteps(
-                  env.mainAgent,
-                  episode.runBudget,
-                ),
+                maxSteps: resolveWorkflowEpisodeMaxSteps(env.mainAgent),
                 ...(episode.runBudget !== undefined
                   ? { runBudget: episode.runBudget }
                   : {}),
@@ -685,7 +673,7 @@ export class WorkflowEpisodeRuntime {
               runRef.current = run;
               return run;
             })(),
-      afterRun: (_supervisedInput, run, result) => {
+      afterRun: (_episodeInput, run, result) => {
         const runId = run.record.id;
         if (chainTurns.length === 0) {
           chainTurns.push(
@@ -727,13 +715,11 @@ export class WorkflowEpisodeRuntime {
     const buildRun = (
       goal: string,
       extraContext: ContextItem[],
-      todoContinuation = false,
+      continuation = false,
     ) => {
       const episode = resolveWorkflowActorEpisodePlan(env, {
-        fallbackRunBudget: todoContinuation
-          ? resolveTodoContinuationRunBudget(env.mainAgent)
-          : env.mainAgent.runBudget,
-        purpose: todoContinuation ? "todo_continuation" : "main_agent",
+        fallbackRunBudget: env.mainAgent.runBudget,
+        purpose: continuation ? "workflow_continuation" : "main_agent",
       });
       const runRef: { current?: ReturnType<typeof createRun> } = {};
       const taskBridge = this.tasks.createRevivalBridge(
@@ -763,10 +749,7 @@ export class WorkflowEpisodeRuntime {
         tools: episode.toolSurface.tools,
         workflowHooks: env.workflowHooks,
         model: episode.model,
-        maxSteps: resolveWorkflowEpisodeMaxSteps(
-          env.mainAgent,
-          episode.runBudget,
-        ),
+        maxSteps: resolveWorkflowEpisodeMaxSteps(env.mainAgent),
         ...(episode.runBudget !== undefined
           ? { runBudget: episode.runBudget }
           : {}),
@@ -783,15 +766,10 @@ export class WorkflowEpisodeRuntime {
       execution: input.execution,
       episodeKind: "workflow_resume",
       env,
-      todoPath: join(env.sessionRootDir, sessionId, "todo.md"),
       sessionId,
-      buildRun: (supervisedInput) =>
-        supervisedInput.continuation
-          ? buildRun(
-              supervisedInput.continuation.prompt,
-              [supervisedInput.continuation.context],
-              true,
-            )
+      buildRun: (episodeInput) =>
+        episodeInput.continuation
+          ? buildRun(workflowContinuationGoal(env.workflowRecord), [], true)
           : buildRun(
               `Resume workflow ${record.assetName} at node ${record.currentNodeId ?? "(unknown)"}.`,
               [],
@@ -804,12 +782,11 @@ export class WorkflowEpisodeRuntime {
     episodeKind: "run_start" | "run_resume" | "workflow_resume";
     env: WorkflowEpisodeEnvironment;
     sessionId: string;
-    todoPath: string;
     buildRun: (
-      supervisedInput: TodoSupervisedRunInput,
+      episodeInput: WorkflowEpisodeChainInput,
     ) => ReturnType<typeof createRun>;
     afterRun?: (
-      supervisedInput: TodoSupervisedRunInput,
+      episodeInput: WorkflowEpisodeChainInput,
       run: ReturnType<typeof createRun>,
       result: RunResult,
     ) => void | Promise<void>;
@@ -955,40 +932,28 @@ export class WorkflowEpisodeRuntime {
       rejectFirstRunId = reject;
     });
     let firstRunStarted = false;
-    let previousRunId: string | undefined;
     let lastRunId = "";
     let executionTerminalState: "completed" | "failed" | "cancelled" = "failed";
 
-    const supervised = execution.runEpisodeChain({
-      todoPath: input.todoPath,
-      sessionId,
-      maxContinuations: MAIN_TODO_MAX_CONTINUATIONS,
-      maxStalledContinuations: MAIN_TODO_MAX_STALLED_CONTINUATIONS,
-      continuationToolAvailability: (requiredTool) => {
-        const plan = resolveWorkflowActorEpisodePlan(env, {
-          fallbackRunBudget: resolveTodoContinuationRunBudget(env.mainAgent),
-          purpose: "todo_continuation",
-        }).toolSurface;
-        const toolName = plan.missingRequiredTools.find(
-          (name) => name === requiredTool,
-        );
-        return toolName
-          ? {
-              available: false as const,
-              toolName,
-              reason: "not admitted for this run episode",
-            }
-          : { available: true as const };
-      },
-      runOnce: async (supervisedInput) => {
-        const run = input.buildRun(supervisedInput);
+    const chain = runWorkflowRunChain<
+      WorkflowEpisodeContinuation,
+      { result: RunResult; runId: string; events: SparkwrightEvent[] },
+      { result: RunResult }
+    >({
+      runOnce: async (episodeInput) => {
+        if (executionAbort.signal.aborted) {
+          throw Object.assign(new Error("Interactive execution cancelled."), {
+            name: "AbortError",
+          });
+        }
+        const run = input.buildRun(episodeInput);
         const runId = run.record.id;
         lastRunId = runId;
         const collected = await registerActiveRun(run, runId);
         if (!firstRunStarted) {
           firstRunStarted = true;
           resolveFirstRunId(runId);
-        } else if (supervisedInput.continuation) {
+        } else if (episodeInput.continuation) {
           this.emit({
             envelope: "event",
             id: nextMessageId("evt"),
@@ -996,19 +961,19 @@ export class WorkflowEpisodeRuntime {
             timestamp: nowIso(),
             payload: {
               runId,
-              previousRunId: previousRunId ?? runId,
-              continuationCount:
-                supervisedInput.continuation.metadata.continuationCount,
-              reason: supervisedInput.continuation.metadata.reason,
+              previousRunId: episodeInput.continuation.previousRunId,
+              continuationCount: episodeInput.continuationCount,
+              reason: episodeInput.continuation.reason,
             },
           });
         }
         const result = await run.start();
-        previousRunId = runId;
-        await input.afterRun?.(supervisedInput, run, result);
+        await input.afterRun?.(episodeInput, run, result);
         await this.recordUsage(env, run, result);
+        execution.recordEpisode(runId, result);
         if (executionAbort.signal.aborted) {
           return {
+            runId,
             result: {
               ...result,
               state: "cancelled" as const,
@@ -1017,25 +982,39 @@ export class WorkflowEpisodeRuntime {
             events: collected,
           };
         }
-        return { result, events: collected };
+        return { result, runId, events: collected };
+      },
+      decide: async ({ output, continuationCount }) => {
+        const decision = await this.workflows.decideEpisodeAfterRun({
+          state: { record: env.workflowRecord, lease: env.workflowLease },
+          result: output.result,
+          continuationCount,
+          maxContinuations: WORKFLOW_MAX_CONTINUATIONS,
+        });
+        env.workflowRecord = decision.state.record;
+        env.workflowLease = decision.state.lease;
+        if (decision.kind === "continue") {
+          return {
+            kind: "continue",
+            continuation: {
+              reason: decision.reason,
+              previousRunId: output.runId,
+              stopReason: decision.stopReason,
+            },
+          };
+        }
+        return { kind: "terminal", terminal: { result: output.result } };
       },
     });
 
-    supervised
-      .then(async (outcome) => {
+    chain
+      .then(async ({ terminal: outcome }) => {
         executionTerminalState =
           outcome.result.state === "cancelled"
             ? "cancelled"
             : outcome.result.state === "failed"
               ? "failed"
               : "completed";
-        const handoff =
-          !executionAbort.signal.aborted && outcome.decision.kind === "handoff"
-            ? {
-                reason: outcome.decision.reason,
-                message: outcome.decision.message,
-              }
-            : undefined;
         const finalized = await this.workflows.finalizeAfterRun(
           { record: env.workflowRecord, lease: env.workflowLease },
           lastRunId as RunId,
@@ -1043,6 +1022,34 @@ export class WorkflowEpisodeRuntime {
         );
         env.workflowRecord = finalized.record;
         env.workflowLease = finalized.lease;
+        if (env.workflowRecord?.status === "failed") {
+          execution.recordHostIssue({
+            code: "WORKFLOW_EXECUTION_FAILED",
+            kind: "workflow_failure",
+            disposition: "failing",
+            count: 1,
+            details: { reason: "durable workflow record is failed" },
+          });
+        } else if (env.workflowRecord?.status === "cancelled") {
+          execution.recordHostIssue({
+            code: "WORKFLOW_EXECUTION_CANCELLED",
+            kind: "run_cancelled",
+            disposition: "failing",
+            count: 1,
+            details: { reason: "durable workflow record is cancelled" },
+          });
+        }
+        const assessment = execution.assessment();
+        const todoSummary = summarizeTodoLedger(
+          await readTodoLedger(join(env.sessionRootDir, sessionId, "todo.md")),
+        );
+        const todoAdvisory = todoSummary.hasUnfinished
+          ? {
+              unfinished: todoSummary.unfinished,
+              blocked: todoSummary.blocked,
+              message: `${todoSummary.unfinished} todo item(s) remain open; continue with a new session turn if desired.`,
+            }
+          : undefined;
         this.emit({
           envelope: "event",
           id: nextMessageId("evt"),
@@ -1052,13 +1059,14 @@ export class WorkflowEpisodeRuntime {
             runId: lastRunId,
             state: outcome.result.state,
             stopReason: outcome.result.stopReason,
-            ...(outcome.result.metadata.outcome
-              ? { outcome: outcome.result.metadata.outcome }
+            ...(outcome.result.message
+              ? { message: outcome.result.message }
               : {}),
+            assessment,
+            ...(todoAdvisory ? { todoAdvisory } : {}),
             ...(outcome.result.failure
               ? { failure: outcome.result.failure }
               : {}),
-            ...(handoff ? { todoHandoff: handoff } : {}),
           },
         });
       })
@@ -1070,6 +1078,13 @@ export class WorkflowEpisodeRuntime {
           code: "internal_error",
           message,
         };
+        execution.recordHostIssue({
+          code: failure.code,
+          kind: "run_failure",
+          disposition: "failing",
+          count: 1,
+          details: { reason: failure.message },
+        });
         return this.workflows
           .finalizeAfterSupervisorError(
             { record: env.workflowRecord, lease: env.workflowLease },
@@ -1086,7 +1101,11 @@ export class WorkflowEpisodeRuntime {
               id: nextMessageId("evt"),
               kind: "run.failed",
               timestamp: nowIso(),
-              payload: { runId: lastRunId, failure },
+              payload: {
+                runId: lastRunId,
+                failure,
+                assessment: execution.assessment(),
+              },
             });
           });
       })
@@ -1214,9 +1233,6 @@ export function resolveWorkflowActorEpisodePlan(
   const toolSurface = resolveRunToolSurface({
     tools: env.tools,
     workflowAllowedTools: workflowAllowedTools?.normalized,
-    ...(options.purpose === "todo_continuation"
-      ? { requiredTools: [TODO_CONTINUATION_REQUIRED_TOOL] }
-      : {}),
   });
   const runBudget = narrowRunBudgets(
     options.fallbackRunBudget,
@@ -1269,53 +1285,17 @@ function chainTurn(
   };
 }
 
-function resolveMainAgentMaxSteps(profile: AgentProfile): number {
-  if (profile.maxSteps !== undefined) return profile.maxSteps;
-  const modelCallBudget = profile.runBudget?.maxModelCalls;
-  if (modelCallBudget !== undefined && modelCallBudget >= 1) {
-    return modelCallBudget;
+function workflowContinuationGoal(
+  record: WorkflowRunRecord | undefined,
+): string {
+  if (!record) {
+    return "Continue the active workflow from its durable runtime state.";
   }
-  return MAIN_AGENT_MAX_STEPS_BACKSTOP;
+  return `Continue workflow ${record.assetName} from durable state at node ${record.currentNodeId ?? "(runtime transition)"}.`;
 }
 
-function resolveTodoContinuationMaxSteps(profile: AgentProfile): number {
-  return Math.min(
-    resolveMainAgentMaxSteps(profile),
-    MAIN_TODO_CONTINUATION_MAX_STEPS,
-  );
-}
-
-function resolveTodoContinuationRunBudget(profile: AgentProfile): RunBudget {
-  return {
-    ...(profile.runBudget ?? {}),
-    maxModelCalls: minBudgetValue(
-      profile.runBudget?.maxModelCalls,
-      MAIN_TODO_CONTINUATION_MAX_MODEL_CALLS,
-    ),
-    maxToolCalls: minBudgetValue(
-      profile.runBudget?.maxToolCalls,
-      MAIN_TODO_CONTINUATION_MAX_TOOL_CALLS,
-    ),
-  };
-}
-
-function minBudgetValue(
-  configured: number | undefined,
-  continuationLimit: number,
-): number {
-  return configured === undefined
-    ? continuationLimit
-    : Math.min(configured, continuationLimit);
-}
-
-function resolveWorkflowEpisodeMaxSteps(
-  profile: AgentProfile,
-  runBudget: RunBudget | undefined,
-): number {
-  const base = resolveMainAgentMaxSteps(profile);
-  return runBudget?.maxModelCalls !== undefined
-    ? Math.min(base, runBudget.maxModelCalls)
-    : base;
+export function resolveWorkflowEpisodeMaxSteps(profile: AgentProfile): number {
+  return profile.maxSteps ?? MAIN_AGENT_MAX_STEPS_BACKSTOP;
 }
 
 function narrowRunBudgets(

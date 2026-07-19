@@ -134,7 +134,16 @@ completed prior turns
 
 ## Last Verified
 
-- Status: Reviewed
+- Status: Verified
+- Date: 2026-07-19
+- Scope: reviewed session compaction after Agent health propagation. Compact
+  Agent terminal signals now include health alongside finality so unhealthy
+  completed children remain visible after rehydration; compaction ownership and
+  budgeting are otherwise unchanged.
+- Read: Core session compaction, Host session queries, and focused tests.
+- Tests: Core compaction coverage passed within Core 638/638.
+
+- Status: Verified
 - Date: 2026-07-16T11:49:00+0800
 - Scope: reviewed after protocol 2.0 failure-envelope consolidation and the
   branch's Core context naming cleanup; compaction stages do not read Host

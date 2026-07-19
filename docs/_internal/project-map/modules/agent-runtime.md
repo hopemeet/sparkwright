@@ -2,11 +2,45 @@
 
 ## Purpose
 
-`@sparkwright/agent-runtime` contains reusable agent-side runtime helpers outside the core run loop: task management, todo ledger supervision, concurrency/worktree coordination, and result protocols.
+`@sparkwright/agent-runtime` contains reusable agent-side runtime helpers outside the core run loop: task management, advisory Todo plan state, concurrency/worktree coordination, durable Workflows, and Agent result protocols.
 
 See also [../maps/capabilities/agents.md](../maps/capabilities/agents.md), [../maps/capabilities/cron.md](../maps/capabilities/cron.md), and [../maps/runtime/tool-orchestration.md](../maps/runtime/tool-orchestration.md).
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: `isCompleteAgentResult()` and `isReusableAgentResult()` are the shared
+  finality/cache predicates. Agent tools bypass Core duplicate suppression only
+  when the exact complete+clean parent-scoped cache entry already exists;
+  partial and unhealthy outcomes remain uncached and guarded without a retry
+  counter or negative cache.
+- Read: Agent result projector, delegation ledger/tool, Host direct/indexed/
+  parallel/dynamic assembly, and Core repeated-call seam.
+- Tests: Agent Runtime 235/235 and Host 592/592.
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: AgentTool now explicitly owns sequential duplicate handling so exact
+  calls reach the parent-scoped complete+clean ledger. Core still guards
+  partial/unhealthy results and prior tool failures/no-progress.
+- Read: AgentTool, result projector, delegation ledger, Host indexed/dynamic
+  wrappers, Core repeat seam, focused tests, and real Terra reuse trace.
+- Tests: Agent Runtime result/ledger 10/10; Host Agent tools/spawn 117/117;
+  real fixed run emitted two calls and one child lifecycle.
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: Agent results now carry orthogonal finality and canonical Core
+  assessment through direct, delegated, parallel, lifecycle, ledger, and cache
+  paths. Complete-but-unhealthy children remain complete and are never cached
+  as clean successes. Todo is reduced to four-state advisory plan data; its
+  supervisor, continuation prompts, write counters, required-tool forcing, and
+  `todo_clear` ownership are removed.
+- Read: Agent result projector/types/lifecycle/delegation ledger, Todo
+  ledger/tools/types, Workflow contracts, Host assembly, and full Agent Runtime
+  coverage.
+- Tests: Agent Runtime 234/234 and Host 591/591 passed in final gates.
 
 - Status: Verified
 - Date: 2026-07-18
@@ -460,8 +494,10 @@ Does not own:
   ledger rather than a `createAgentTool` closure-local cache. Ledger keys include
   the delegation surface identity (`agent_tool`, configured delegate, or dynamic
   spawn) plus the stable child/profile/scope fields needed to avoid reusing a
-  different agent's answer. Only completed, non-`stepLimitReached`,
-  non-truncated results are reusable. Goal reuse requires equality of a narrow
+  different agent's answer. Only complete, clean, non-`stepLimitReached`,
+  non-truncated results with canonical assessment are reusable. AgentTool owns
+  the sequential duplicate protocol so exact repeats can reach this ledger;
+  unhealthy results are not cached. Goal reuse requires equality of a narrow
   normalized fingerprint (Unicode normalization, case folding, trim, and
   whitespace collapse); fuzzy intent or character-overlap scoring must not
   reuse results across different paths or targets.

@@ -29,13 +29,14 @@ import {
   cliExitCodeForRun,
   completedRunHasCliIssues,
   createCliRunEventSummary,
+  hasCliRunAssessment,
+  setCliRunAssessment,
   summarizeDeniedWorkspaceWrites,
   summarizeDocumentedCommandFailures,
   summarizeRunFailure,
   summarizeSkillLoadFailures,
   summarizeTerminalRunFailure,
   summarizeUnhandledToolFailures,
-  summarizeUnsupportedFinalClaims,
   summarizeVerificationCommandFailures,
   summarizeVerificationProfileResults,
   summarizeWorkspaceMutations,
@@ -228,6 +229,10 @@ async function runHostLifecycle(
         runId = msg.payload.runId;
         runState = msg.payload.state;
         stopReason = msg.payload.stopReason;
+        setCliRunAssessment(eventSummary, msg.payload.assessment);
+        if (msg.payload.todoAdvisory) {
+          writeLine(io.stderr, `Todo: ${msg.payload.todoAdvisory.message}`);
+        }
         if (runState !== "completed") {
           const failure = getRunFailure(msg.payload);
           failedMessage =
@@ -431,19 +436,21 @@ async function runHostLifecycle(
     }
     const skillLoadFailureSummary = summarizeSkillLoadFailures(eventSummary);
     if (skillLoadFailureSummary) writeLine(io.stderr, skillLoadFailureSummary);
-    const verificationSummary =
-      summarizeVerificationCommandFailures(eventSummary);
+    const hasAssessment = hasCliRunAssessment(eventSummary);
+    const verificationSummary = hasAssessment
+      ? summarizeVerificationCommandFailures(eventSummary)
+      : undefined;
     if (verificationSummary) writeLine(io.stderr, verificationSummary);
-    const documentedCommandSummary =
-      summarizeDocumentedCommandFailures(eventSummary);
+    const documentedCommandSummary = hasAssessment
+      ? summarizeDocumentedCommandFailures(eventSummary)
+      : undefined;
     if (documentedCommandSummary)
       writeLine(io.stderr, documentedCommandSummary);
-    const unsupportedClaimSummary =
-      summarizeUnsupportedFinalClaims(eventSummary);
-    if (unsupportedClaimSummary) writeLine(io.stderr, unsupportedClaimSummary);
     const deniedWriteSummary = summarizeDeniedWorkspaceWrites(eventSummary);
     if (deniedWriteSummary) writeLine(io.stderr, deniedWriteSummary);
-    const failureSummary = summarizeUnhandledToolFailures(eventSummary);
+    const failureSummary = hasAssessment
+      ? summarizeUnhandledToolFailures(eventSummary)
+      : undefined;
     if (failureSummary) writeLine(io.stderr, failureSummary);
     const exitCode = cliExitCodeForRun({
       failedMessage,
@@ -458,8 +465,11 @@ async function runHostLifecycle(
       stopReason,
     };
   } finally {
+    const hasAssessment = hasCliRunAssessment(eventSummary);
     const displayState =
-      runState === "completed" && completedRunHasCliIssues(eventSummary)
+      runState === "completed" &&
+      hasAssessment &&
+      completedRunHasCliIssues(eventSummary)
         ? "completed_with_issues"
         : (runState ?? "unknown");
     writeLine(
@@ -481,8 +491,9 @@ async function runHostLifecycle(
           eventSummary.untrackedWriteCapableProcesses,
       }),
     );
-    const verificationProfileSummary =
-      summarizeVerificationProfileResults(eventSummary);
+    const verificationProfileSummary = hasAssessment
+      ? summarizeVerificationProfileResults(eventSummary)
+      : undefined;
     if (verificationProfileSummary)
       writeLine(io.stdout, verificationProfileSummary);
     if (tracePath && existsSync(tracePath))

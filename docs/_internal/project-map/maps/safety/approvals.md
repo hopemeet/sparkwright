@@ -11,6 +11,16 @@ See [workspace-writes.md](workspace-writes.md) and [shell.md](shell.md).
 
 - Status: Verified
 - Date: 2026-07-19
+- Scope: reviewed approval consumers after assessment and target-scope changes.
+  Explicit targets still narrow policy; absence of `--target` no longer
+  invents `README.md`. Approval evaluation remains the same canonical tool
+  decision stage and expected denials are recorded as degraded issues.
+- Read: CLI target contracts, Core assessment/policy, Host tool assembly, and
+  protocol/TUI approval surfaces.
+- Tests: Core policy/run, Host protocol/tools, and CLI target regressions passed.
+
+- Status: Verified
+- Date: 2026-07-19
 - Scope: Host approval channel construction, finite timeout, waiter
   registration, `approval.requested` delivery, response metadata, disconnect
   denial, and drain cleanup moved intact to

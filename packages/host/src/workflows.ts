@@ -16,7 +16,6 @@ import type {
   WorkflowScriptNodeDefinition,
   WorkflowTaskNodeDefinition,
   WorkflowTaskNodeMode,
-  WorkflowTodoClearVerifierDefinition,
   WorkflowTransitionDefinition,
   WorkflowVerifierDefinition,
   WorkflowVerifierExpectation,
@@ -835,12 +834,9 @@ function parseWorkflowVerifier(
   if (kind === "diff_scope") {
     return parseWorkflowDiffScopeVerifier(raw, nodeId, index);
   }
-  if (kind === "todo_clear") {
-    return parseWorkflowTodoClearVerifier(raw, nodeId, index);
-  }
   if (kind !== "command") {
     throw new Error(
-      `Workflow node ${nodeId} verifier ${index + 1} kind must be command, diff_scope, or todo_clear for P6b.`,
+      `Workflow node ${nodeId} verifier ${index + 1} kind must be command or diff_scope.`,
     );
   }
   const command = optionalString(raw.command);
@@ -893,23 +889,6 @@ function parseWorkflowDiffScopeVerifier(
     ...(optionalStringArray(raw.exclude)
       ? { exclude: optionalStringArray(raw.exclude) }
       : {}),
-    ...(optionalRecord(raw.metadata)
-      ? { metadata: optionalRecord(raw.metadata) }
-      : {}),
-  };
-}
-
-function parseWorkflowTodoClearVerifier(
-  raw: Record<string, unknown>,
-  nodeId: string,
-  index: number,
-): WorkflowTodoClearVerifierDefinition {
-  return {
-    id:
-      optionalString(raw.id) ??
-      optionalString(raw.name) ??
-      `${nodeId}:todo_clear:${index + 1}`,
-    kind: "todo_clear",
     ...(optionalRecord(raw.metadata)
       ? { metadata: optionalRecord(raw.metadata) }
       : {}),

@@ -153,6 +153,14 @@ skill roots
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-19
+- Scope: reviewed Host skill-stat consumers after assessment consolidation.
+  Persisted Core health replaces the removed outcome sidecar where semantic
+  status is needed; Skill package/application contracts are unchanged.
+- Read: Host skill stats and current Skill capability ownership.
+- Tests: affected Host/CLI Skill coverage passed.
+
+- Status: Verified
 - Date: 2026-07-18T08:52:13+0800
 - Scope: Skill stats load failures now have one structured counter/classifier
   contract. The parallel summary field and its merge/increment/serialization
@@ -183,7 +191,7 @@ skill roots
   protocol schema and CLI stats consumers.
 - Tests: Skills 73/73; focused Host Skill/protocol 81/81; focused CLI Skill gates 5/5; affected typechecks.
 
-- Status: Reviewed
+- Status: Verified
 - Date: 2026-07-16T11:49:00+0800
 - Scope: reviewed during cumulative branch drift checking; Skill capability
   discovery is independent of Host `run.failed` serialization and requires no

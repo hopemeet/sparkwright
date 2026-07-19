@@ -10,6 +10,38 @@ See [../safety/workspace-writes.md](../safety/workspace-writes.md), [../safety/s
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-19
+- Scope: `managesRepeatedCalls(args)` is a narrow complete+clean cache-hit
+  bypass for Agent tools, not a blanket retry exemption. Parallel delegation
+  uses the same canonical finality predicate, and shell verification facts come
+  from explicit command shapes rather than goal-text heuristics.
+- Read: Core tool repeat/fact paths, Agent Runtime result/ledger, Host Agent
+  assembly, and affected full tests.
+- Tests: Core 641/641, Agent Runtime 235/235, Host 592/592.
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: tool orchestration distinguishes generic repeat suppression from a
+  tool-owned conservative duplicate ledger. Agent direct/indexed/parallel/
+  dynamic tools opt in through `managesRepeatedCalls(args)` only for an exact
+  reusable cache hit; replay risk still reads only governance idempotency.
+- Read: Core ToolDefinition/repeat path, Agent Runtime cache, Host wrappers,
+  focused tests, and pre/post-fix Terra traces.
+- Tests: Core run 128/128; Host Agent tool/spawn 117/117; real indexed reuse
+  returned `alreadyCompleted:true` in 2ms without a second child.
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: tool facts feed Core's canonical assessment; downstream CLI, Cron,
+  Host, Agent, and TUI consumers no longer re-judge prose or reconstruct a
+  parallel outcome. Todo exposes only advisory plan writes and cannot force
+  tools, clear verification, or schedule another episode.
+- Read: fact/outcome/assessment projectors, Host tool catalog/surface, Todo
+  tools, CLI/TUI projections, and regression coverage.
+- Tests: affected Core, Agent Runtime, Host, CLI, and TUI suites passed/focused
+  before final release verification.
+
+- Status: Verified
 - Date: 2026-07-18
 - Scope: live main-catalog construction, Agent-prepared tools, main-profile
   admission, Skill/MCP tools, and capability snapshot catalog projection moved
@@ -238,6 +270,9 @@ model tool calls
   tool-name switches in the run loop.
 - Workspace writes must produce request, approval/policy evidence, artifact/write terminal events.
 - Repeated idempotent/no-op calls should not invent false failures.
+- Exact sequential calls to tools with `managesRepeatedCalls(args)` reach the
+  tool-owned cache/retry protocol when no prior failure/no-progress result is
+  present. This is not an idempotency or replay-safety declaration.
 - State-observation tools may provide bounded repeated-call guidance. The
   generic repeat guard then records a completed skipped observation and lets
   the model choose a blocking or incremental control surface without core

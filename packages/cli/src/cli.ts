@@ -17,6 +17,7 @@ import {
 } from "@sparkwright/agent-runtime";
 import {
   asSessionId,
+  assessRun,
   createSessionId,
   createContextItemId,
   createRunId,
@@ -354,10 +355,6 @@ export async function runCli(
     ? startDirectCoreRun(
         {
           ...runInput,
-          policyTargetPath:
-            runInput.targetPathSource === "cli"
-              ? runInput.targetPath
-              : undefined,
           contextItems: contextItemsForCliInput(
             runInput.goal,
             loadedInput.input,
@@ -373,10 +370,6 @@ export async function runCli(
           modelName:
             runInput.modelNameSource === "cli" ? runInput.modelName : undefined,
           workflowName: runInput.workflowName,
-          targetPath:
-            runInput.targetPathSource === "cli"
-              ? runInput.targetPath
-              : undefined,
           input: loadedInput.input,
         },
         io,
@@ -539,7 +532,7 @@ async function validateCliRunInput(
   const validation = await validateRunInput({
     workspaceRoot: parsed.workspaceRoot,
     targetPath: parsed.targetPath,
-    requireTargetExists: parsed.targetPathSource === "cli",
+    requireTargetExists: parsed.targetPath !== undefined,
     modelName: parsed.modelNameSource === "cli" ? parsed.modelName : undefined,
     validateModel: parsed.modelNameSource === "cli",
     env,
@@ -587,6 +580,13 @@ function writeValidationFailureTrace(
       traceLevel: parsed.traceLevel,
     });
     const events = new EventLog(runId);
+    const assessment = assessRun([], {
+      terminal: {
+        state: "failed",
+        reason: "validation_failed",
+        failure: { code: "RUN_INPUT_VALIDATION_FAILED" },
+      },
+    });
     const metadata = { sessionId: parsed.sessionId, agentId: "main" };
     store.append(events.emit("run.created", { goal: parsed.goal }, metadata));
     store.append(
@@ -615,6 +615,7 @@ function writeValidationFailureTrace(
           reason: "validation_failed",
           code: "RUN_INPUT_VALIDATION_FAILED",
           message: validation.errors.join("\n"),
+          assessment,
         },
         metadata,
       ),
@@ -629,6 +630,7 @@ function writeValidationFailureTrace(
         code: "RUN_INPUT_VALIDATION_FAILED",
         message: validation.errors.join("\n"),
       },
+      assessment,
       metadata: {},
     });
     return store.tracePath;
@@ -726,8 +728,7 @@ function parseArgs(
     defaults.workspace ? "config" : "default";
   let sessionRootDir: string | undefined;
   let sessionRootDirSource: ParsedArgs["sessionRootDirSource"] = "default";
-  let targetPath = "README.md";
-  let targetPathSource: ParsedArgs["targetPathSource"] = "default";
+  let targetPath: string | undefined;
   const confidentialPaths: string[] = [...(defaults.confidentialPaths ?? [])];
   const confidentialDefaults = defaults.confidentialDefaults ?? true;
   const imagePaths: string[] = [];
@@ -823,7 +824,6 @@ function parseArgs(
           message: "Usage: --target requires a workspace-relative path",
         };
       targetPath = value;
-      targetPathSource = "cli";
       args.splice(index, 2);
       index -= 1;
       continue;
@@ -1349,7 +1349,6 @@ function parseArgs(
       sessionRootDir: resolvedSessionRootDir,
       sessionRootDirSource,
       targetPath,
-      targetPathSource,
       confidentialPaths,
       confidentialDefaults,
       imagePaths,

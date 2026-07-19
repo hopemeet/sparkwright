@@ -64,6 +64,26 @@ export interface WorkflowRecordState {
   lease?: WorkflowLeaseBoundWriter;
 }
 
+export type WorkflowEpisodeDecision =
+  | { kind: "terminal"; state: WorkflowRecordState }
+  | {
+      kind: "continue";
+      state: WorkflowRecordState;
+      reason: "workflow_record_active";
+      stopReason: NonNullable<RunResult["stopReason"]>;
+    };
+
+const RESUMABLE_WORKFLOW_EPISODE_STOP_REASONS = new Set<
+  NonNullable<RunResult["stopReason"]>
+>([
+  "max_steps_exceeded",
+  "max_duration_exceeded",
+  "max_model_calls_exceeded",
+  "max_tool_calls_exceeded",
+  "token_budget_exceeded",
+  "cost_budget_exceeded",
+]);
+
 export function workspaceWorkflowRootDir(workspaceRoot: string): string {
   return workspaceWorkflowRunsDir({ workspaceRoot });
 }
@@ -360,6 +380,43 @@ export class WorkflowRuntimeOperations {
     this.deliverNotification(record);
     await state.lease.release();
     return { record };
+  }
+
+  /**
+   * Workflow's sole cross-episode scheduling decision. Todo state is
+   * intentionally absent: durable workflow state and objective run stops own
+   * continuation, while ordinary runs (no record) are always single-episode.
+   */
+  async decideEpisodeAfterRun(input: {
+    state: WorkflowRecordState;
+    result: RunResult;
+    continuationCount: number;
+    maxContinuations: number;
+  }): Promise<WorkflowEpisodeDecision> {
+    const { state, result } = input;
+    if (!state.record || !state.lease) {
+      return { kind: "terminal", state };
+    }
+    const record = (await state.lease.readFresh()) ?? state.record;
+    const freshState = { record, lease: state.lease };
+    if (record.status !== "running") {
+      return { kind: "terminal", state: freshState };
+    }
+    const stopReason = result.stopReason;
+    if (
+      result.state !== "failed" ||
+      !stopReason ||
+      !RESUMABLE_WORKFLOW_EPISODE_STOP_REASONS.has(stopReason) ||
+      input.continuationCount >= input.maxContinuations
+    ) {
+      return { kind: "terminal", state: freshState };
+    }
+    return {
+      kind: "continue",
+      state: freshState,
+      reason: "workflow_record_active",
+      stopReason,
+    };
   }
 
   async finalizeAfterSupervisorError(

@@ -67,7 +67,6 @@ export function shellCommandRequestFromEvent(
 export function shellCommandFactFromToolCompleted(
   event: SparkwrightEvent,
   request: ShellCommandRequestFact | undefined,
-  options: { verificationGoal: boolean },
 ): ClassifiedCommandFactInput | undefined {
   if (event.type !== "tool.completed" || !isRecord(event.payload)) {
     return undefined;
@@ -101,7 +100,7 @@ export function shellCommandFactFromToolCompleted(
     commandKey: commandIdentity(command),
     exitCode,
     timedOut,
-    verificationRelevant: isVerificationRelevantCommand(command, options),
+    verificationRelevant: isVerificationRelevantCommand(command),
   };
 }
 
@@ -252,28 +251,14 @@ export function commandIdentity(
   return normalized || undefined;
 }
 
-export function isVerificationGoal(goal: string | undefined): boolean {
-  if (!goal) return false;
-  const text = goal.toLowerCase();
-  return (
-    /\b(run|execute)\s+(the\s+)?(tests?|test suite|command|cli)\b/.test(text) ||
-    /\b(cargo test|pytest|npm test|pnpm test|yarn test|go test)\b/.test(text) ||
-    /\bverify\b/.test(text) ||
-    /\btest(s|ing)?\b/.test(text)
-  );
-}
-
 export function isVerificationRelevantCommand(
   command: string | undefined,
-  options: { verificationGoal: boolean },
 ): boolean {
   if (!command) return false;
   const normalized = stripLeadingEnvAssignments(
     commandIdentity(command) ?? command,
   ).toLowerCase();
-  if (isExplicitVerificationCommand(normalized)) return true;
-  if (!options.verificationGoal) return false;
-  return !isProbeCommand(normalized);
+  return isExplicitVerificationCommand(normalized);
 }
 
 export function isExplicitVerificationCommand(command: string): boolean {
@@ -299,16 +284,6 @@ export function stripLeadingEnvAssignments(command: string): string {
     rest = rest.slice(match[0].length).trimStart();
   }
   return rest;
-}
-
-export function isProbeCommand(command: string): boolean {
-  return (
-    /^(pwd|ls|find|rg|grep|cat|sed|head|tail|wc|stat)\b/.test(command) ||
-    /^(which|command\s+-v)\b/.test(command) ||
-    /^node(?:\s+\S+)*\s+-e\b/.test(command) ||
-    /\b(--version|-v)\b/.test(command) ||
-    /\bpython(?:\d+(?:\.\d+)*)?\s+--version\b/.test(command)
-  );
 }
 
 export function stableDiagnosticJson(value: unknown): string {

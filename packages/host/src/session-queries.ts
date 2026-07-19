@@ -27,6 +27,10 @@ import type {
   SessionCompactionInspectEvent,
   SessionCompactionInspectReport,
 } from "@sparkwright/protocol";
+import {
+  readTodoLedger,
+  renderTodoLedgerContext,
+} from "@sparkwright/agent-runtime";
 
 export interface SessionQueryContext {
   workspaceRoot: string;
@@ -132,8 +136,21 @@ export async function loadHostSessionConversation(
     sessionRootDir,
     sessionId,
   });
+  const todoLedger = await readTodoLedger(
+    join(sessionRootDir, sessionId, "todo.md"),
+  );
+  const todoContext =
+    todoLedger.items.length > 0
+      ? [
+          renderTodoLedgerContext(todoLedger, {
+            sessionId,
+            title:
+              "Current session plan (advisory; it does not control execution)",
+          }),
+        ]
+      : [];
   if (turns.length === 0) {
-    return compact
+    const compactContext = compact
       ? [
           sessionCompactWarningContextItem(
             sessionId,
@@ -142,6 +159,7 @@ export async function loadHostSessionConversation(
           ),
         ]
       : [];
+    return [...compactContext, ...todoContext];
   }
 
   const items: ContextItem[] = [];
@@ -167,7 +185,7 @@ export async function loadHostSessionConversation(
   for (const turn of turns.slice(startAt)) {
     items.push(...sessionTurnToContextItems(turn));
   }
-  return items;
+  return [...items, ...todoContext];
 }
 
 export async function loadCompletedHostSessionTurns(
@@ -722,6 +740,7 @@ function collectSessionTraceFact(
       childRunId,
       finality,
       role: recordString(event.payload, "role"),
+      health: findNestedString(event.payload, "health"),
     });
     return;
   }
@@ -740,6 +759,7 @@ function collectSessionTraceFact(
       childRunId,
       finality: findNestedString(event.payload, "finality"),
       role: findNestedString(event.payload, "role"),
+      health: findNestedString(event.payload, "health"),
     });
   }
 }

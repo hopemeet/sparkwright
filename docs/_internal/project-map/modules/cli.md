@@ -9,6 +9,27 @@ See also [../maps/trace/summary-timeline-verify.md](../maps/trace/summary-timeli
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-19
+- Scope: the internal Direct Core diagnostic entry uses Host's canonical
+  runtime workflow-hook assembly. Required verification profiles, configured
+  hooks, documented-command checks, and terminal summaries therefore use the
+  same semantics as Host runs instead of a reduced CLI-local list.
+- Read: Direct Core runner, Host run-preparation hook assembly, verification
+  projection, CLI outcome formatting, and parity regression.
+- Tests: CLI 191/191; direct-Core required-profile regression passed.
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: CLI run/resume commands no longer synthesize `README.md` as an implicit
+  target. Online semantic status and exit code consume Core's persisted
+  terminal assessment only and fail closed when that assessment is absent;
+  prose unsupported-claim warnings are removed.
+- Read: parser contracts, host/direct runners, run outcome projection, trace
+  session command, real-model scripts, and CLI regression tests.
+- Tests: CLI 190/190 except one fixed fixture omission, with the focused fix
+  passing before final full/release verification.
+
+- Status: Verified
 - Date: 2026-07-18
 - Scope: Host capability inspection ownership moved internally; CLI still
   treats the Host snapshot as the sole effective tool/delegate/sandbox source

@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import {
+  assessRun,
   createApprovalRequest,
   createRun,
   createSessionId,
@@ -392,6 +393,19 @@ function createDelegateRunPersistence(input: {
               signal: "completed",
               state: "completed",
               stopReason: "final_answer",
+              assessment: {
+                schemaVersion: "run-assessment.v1",
+                health: "degraded",
+                issues: [
+                  {
+                    code: "EXTERNAL_ASSESSMENT_UNAVAILABLE",
+                    kind: "assessment_unavailable",
+                    disposition: "degraded",
+                    count: 1,
+                  },
+                ],
+                verification: [],
+              },
               metadata: {
                 source: input.source,
               },
@@ -410,6 +424,15 @@ function createDelegateRunPersistence(input: {
                   source: input.source,
                 },
               },
+              assessment: assessRun([], {
+                terminal: {
+                  state: "failed",
+                  reason: "state_transition_invalid",
+                  failure: {
+                    code: finishInput.code ?? "DELEGATE_EXECUTION_FAILED",
+                  },
+                },
+              }),
               metadata: {
                 source: input.source,
               },
@@ -420,12 +443,13 @@ function createDelegateRunPersistence(input: {
       input.parent.events.emit(
         finishInput.state === "completed" ? "run.completed" : "run.failed",
         finishInput.state === "completed"
-          ? { reason: result.stopReason }
+          ? { reason: result.stopReason, assessment: result.assessment }
           : {
               reason: result.stopReason,
               code: finishInput.code ?? "DELEGATE_EXECUTION_FAILED",
               message: finishInput.message,
               failure: result.failure,
+              assessment: result.assessment,
               metadata: result.metadata,
             },
       );

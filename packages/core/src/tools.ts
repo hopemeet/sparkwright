@@ -262,6 +262,14 @@ export interface ToolDefinition<TArgs = unknown, TResult = unknown> {
    */
   repeatedCallGuidanceForArgs?(args: TArgs): string | undefined;
   /**
+   * Return true when this tool owns sequential duplicate handling for these
+   * arguments. The generic doom-loop guard will execute a verbatim repeat so
+   * the tool can return a conservative cached result or retry an unhealthy
+   * prior attempt. This does not exempt a repeat after the tool itself failed
+   * or explicitly reported no progress.
+   */
+  managesRepeatedCalls?(args: TArgs): boolean;
+  /**
    * When true, a tool loader may hide this tool from the initial provider
    * request and expose it through a discovery/search surface.
    */

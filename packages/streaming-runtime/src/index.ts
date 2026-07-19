@@ -1,4 +1,5 @@
 import {
+  assessRun,
   ToolRegistry,
   createApprovalRequest,
   createContextItemId,
@@ -341,16 +342,21 @@ class AfterTurnStreamingRun implements StreamingRunHandle {
       metadata: input.metadata ?? {},
     });
     this.setState("cancelled", "manual_cancelled");
+    const assessment = assessRun(this.events.all(), {
+      terminal: { state: "cancelled", reason: "manual_cancelled" },
+    });
     this.events.emit("run.cancelled", {
       reason: "manual_cancelled",
       message: input.reason ?? "Run cancelled.",
       metadata: input.metadata ?? {},
+      assessment,
     });
     this.result = {
       signal: "cancelled",
       state: "cancelled",
       stopReason: "manual_cancelled",
       message: input.reason,
+      assessment,
       metadata: input.metadata ?? {},
     };
     return this.result;
@@ -1228,15 +1234,20 @@ class AfterTurnStreamingRun implements StreamingRunHandle {
     payload: { message?: string },
   ): RunResult {
     this.setState("completed", reason);
+    const assessment = assessRun(this.events.all(), {
+      terminal: { state: "completed", reason },
+    });
     this.events.emit("run.completed", {
       reason,
       ...payload,
+      assessment,
     });
     this.result = {
       signal: "completed",
       state: "completed",
       stopReason: reason,
       message: payload.message,
+      assessment,
       metadata: omitUndefined(payload),
     };
     return this.result;
@@ -1257,18 +1268,23 @@ class AfterTurnStreamingRun implements StreamingRunHandle {
       message,
       metadata: omitUndefined(metadata),
     };
+    const assessment = assessRun(this.events.all(), {
+      terminal: { state: "failed", reason, failure: { code } },
+    });
     this.events.emit("run.failed", {
       reason,
       code,
       message,
       failure,
       metadata,
+      assessment,
     });
     this.result = {
       signal: "failed",
       state: "failed",
       stopReason: reason,
       failure,
+      assessment,
       metadata: omitUndefined(metadata),
     };
     return this.result;

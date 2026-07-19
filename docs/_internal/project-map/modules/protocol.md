@@ -12,6 +12,16 @@ See also [../maps/safety/approvals.md](../maps/safety/approvals.md) and [../maps
 
 - Status: Verified
 - Date: 2026-07-19
+- Scope: terminal run DTOs require Core `RunAssessment`; Host run completion
+  carries `ExecutionAssessment`; Agent tool results carry finality plus
+  assessment; Workflow continuation exposes only durable-record activity, and
+  Todo is advisory rather than a scheduler handoff.
+- Read: TypeScript protocol DTOs, JSON schema, Host protocol fixtures, SDK
+  collection, and reference protocol documents.
+- Tests: Protocol 5/5, SDK Core 10/10, and Host protocol coverage passed.
+
+- Status: Verified
+- Date: 2026-07-19
 - Scope: Host ownership behind `run.inject_message`, `run.cancel`, and
   `approval.resolve` moved to the execution interaction collaborator. Request,
   response, error, approval event, content-part, and correlation-id shapes are

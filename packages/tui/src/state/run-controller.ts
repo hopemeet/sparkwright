@@ -103,13 +103,6 @@ interface PendingApprovalContext {
 }
 
 /**
- * Preamble of the synthetic goal a todo-supervisor continuation run carries
- * (see buildTodoContinuationPrompt in @sparkwright/agent-runtime). Used on
- * replay to tell a continuation run apart from a real user turn.
- */
-const TODO_CONTINUATION_GOAL_PREFIX = "Continue from the todo ledger.";
-
-/**
  * Drives runs against a Sparkwright host. The host is launched lazily on
  * first run (spawned child by default, or attached to SPARKWRIGHT_HOST_URL
  * when set — see @sparkwright/sdk-node).
@@ -143,8 +136,8 @@ export class RunController {
   private resolvingApproval = false;
   private currentSessionEvents: unknown[] = [];
   // The most recent user goal submitted via start(), kept so /retry can re-run
-  // it. start() only ever receives real user goals (todo-continuation runs are
-  // driven by the host/replay path, not start()), so no filtering is needed.
+  // it. Workflow continuation episodes are driven by the host/replay path, not
+  // start(), so no filtering is needed.
   private lastGoal: string | null = null;
   private pendingInputParts: RunInputPart[] = [];
 
@@ -199,8 +192,10 @@ export class RunController {
   async switchSession(id: string): Promise<boolean> {
     if (!this.allowSessionMutation("switch sessions")) return false;
     const safe = validateSessionId(id);
+    const needsReset =
+      this.sessionId !== safe || this.store.getSnapshot().events.length > 0;
     this.sessionId = safe;
-    this.store.reset();
+    if (needsReset) this.store.reset();
     this.store.setSessionId(safe);
     const events = await loadSessionEvents(this.sessionRootDir(), safe);
     this.currentSessionEvents = events.slice();
@@ -234,17 +229,7 @@ export class RunController {
         payload.goal.trim() &&
         !injectedForRun.has(runKey)
       ) {
-        // A todo-supervisor continuation run carries a synthetic goal, not the
-        // user's input. run.continuation is a host event (not in the persisted
-        // trace), so on replay we detect the continuation by its goal preamble
-        // and render a divider instead of a fake user bubble.
-        if (payload.goal.startsWith(TODO_CONTINUATION_GOAL_PREFIX)) {
-          this.store.appendNotice(
-            "previous answer provisional · continuing — todos unfinished",
-          );
-        } else {
-          this.store.appendUserMessage(payload.goal);
-        }
+        this.store.appendUserMessage(payload.goal);
         injectedForRun.add(runKey);
       }
       if (STREAM_ONLY.has(ev.type)) continue;
@@ -1017,15 +1002,13 @@ export class RunController {
     );
 
     client.on("run.continuation", (msg) => {
-      // The todo supervisor superseded the prior run with a fresh one because
-      // todos were still open. The turn is NOT over: re-point at the new runId
-      // and keep "running" (the host suppresses the intermediate run.completed,
-      // so no terminal arrives until the chain truly ends). Show a calm divider.
+      // A durable Workflow started a fresh Core episode; the logical execution
+      // is still active and only the final episode emits the terminal event.
       this.activeRunId = msg.payload.runId;
       this.cancelRequested = false;
       this.store.setStatus("running");
       this.store.appendNotice(
-        `previous answer provisional · continuing (#${msg.payload.continuationCount}) — todos unfinished`,
+        `workflow continuing in episode #${msg.payload.continuationCount + 1}`,
       );
     });
 
@@ -1033,28 +1016,16 @@ export class RunController {
       this.activeRunId = null;
       this.cleanupExecution(client);
       this.store.setStopReason(msg.payload.stopReason ?? null);
-      const handoff = msg.payload.todoHandoff;
-      if (handoff) {
-        // The chain stopped with todos still open (limit/stalled/non-resumable).
-        // Surface it distinctly from a clean finish so the user knows work
-        // remains and why it was handed back.
-        this.store.appendNotice(`handed back: ${handoff.message}`);
+      const terminalState = msg.payload.state;
+      const userCancelled =
+        msg.payload.stopReason === "manual_cancelled" ||
+        msg.payload.stopReason === "user_cancelled";
+      if (userCancelled) {
         this.store.setStatus("done");
+      } else if (terminalState === "failed" || terminalState === "cancelled") {
+        this.store.setError(runFailureMessage(msg.payload));
       } else {
-        const terminalState = msg.payload.state;
-        const userCancelled =
-          msg.payload.stopReason === "manual_cancelled" ||
-          msg.payload.stopReason === "user_cancelled";
-        if (userCancelled) {
-          this.store.setStatus("done");
-        } else if (
-          terminalState === "failed" ||
-          terminalState === "cancelled"
-        ) {
-          this.store.setError(runFailureMessage(msg.payload));
-        } else {
-          this.store.setStatus("done");
-        }
+        this.store.setStatus("done");
       }
     });
 

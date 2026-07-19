@@ -844,7 +844,7 @@ async function spawnFinalityCase() {
     workspace,
     write: "no",
     expectedTrace:
-      "tool_search -> spawn_agent output finality=complete, inherited maxSteps visible in promotionHint, child uses read only",
+      "tool_search -> spawn_agent output finality=complete with clean assessment, inherited maxSteps visible in promotionHint, child uses read only",
     failureRule:
       "Fails if dynamic spawn exposes bash/write tools, marks a complete child partial, or falls back to the old maxSteps default.",
     harness: true,
@@ -856,7 +856,7 @@ async function spawnFinalityCase() {
         (event) =>
           event.payload?.toolName === "spawn_agent" &&
           event.payload?.output?.finality === "complete" &&
-          event.payload?.output?.truncated === false &&
+          event.payload?.output?.assessment?.health === "clean" &&
           event.payload?.output?.promotionHint?.suggestedProfile?.maxSteps ===
             20,
       ) &&
@@ -973,7 +973,7 @@ async function acpStartupCase() {
       workspace,
       write: "no",
       expectedTrace:
-        "run.created, skill.indexed, agent.profile.derived, workspace.read, run.completed; run metadata source acp",
+        "run.created, skill.indexed, agent.profile.derived, list_dir tool.completed, run.completed; run metadata source acp",
       failureRule:
         "Fails if ACP init/session/prompt fails, stopReason is not end_turn, or trace metadata is not source=acp.",
       harness: true,
@@ -982,7 +982,12 @@ async function acpStartupCase() {
         response.stopReason === "end_turn" &&
         metadata?.source === "acp" &&
         has(events, "run.created") &&
-        has(events, "workspace.read") &&
+        eventWith(
+          events,
+          "tool.completed",
+          (event) => event.payload?.toolName === "list_dir",
+        ) &&
+        !has(events, "workspace.read") &&
         has(events, "run.completed") &&
         updates.some((update) => update.update?.sessionUpdate === "tool_call"),
     });

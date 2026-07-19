@@ -37,7 +37,7 @@ export type WorkflowShadowCheckStatus = "matched" | "missing" | "unobserved";
 
 export interface WorkflowShadowCheck {
   id: string;
-  kind: "tool" | "write_path" | "verification_command" | "todo_clear";
+  kind: "tool" | "write_path" | "verification_command";
   status: WorkflowShadowCheckStatus;
   message: string;
   nodeId?: string;
@@ -88,7 +88,6 @@ interface WorkflowShadowDeclarations {
     verifierId: string;
     include?: string[];
   }>;
-  todoClear: Array<{ nodeId: string; verifierId: string }>;
   commands: Array<{
     nodeId: string;
     verifierId?: string;
@@ -286,31 +285,6 @@ function buildChecks(input: {
     }
   }
 
-  if (input.observation.sawTodoWrite) {
-    const declaration = input.declarations.todoClear[0];
-    checks.push({
-      id: "todo_clear",
-      kind: "todo_clear",
-      status: declaration ? "matched" : "missing",
-      message: declaration
-        ? "trace used todo_write and workflow declares todo_clear"
-        : "trace used todo_write but workflow does not declare todo_clear",
-      ...(declaration ? { nodeId: declaration.nodeId } : {}),
-      observed: "todo_write",
-    });
-  } else {
-    for (const declaration of input.declarations.todoClear) {
-      checks.push({
-        id: `todo_clear:${declaration.verifierId}:unobserved`,
-        kind: "todo_clear",
-        status: "unobserved",
-        message: `workflow declares todo_clear ${declaration.verifierId}, but the trace did not use todo_write`,
-        nodeId: declaration.nodeId,
-        expected: declaration.verifierId,
-      });
-    }
-  }
-
   return checks;
 }
 
@@ -322,7 +296,6 @@ function collectDeclarations(
     modelTools: new Map(),
     nonModelTools: new Map(),
     diffScopes: [],
-    todoClear: [],
     commands: [],
   };
   for (const node of definition.nodes) {
@@ -368,10 +341,6 @@ function collectVerifierDeclaration(
       verifierId: verifier.id,
       ...(verifier.include ? { include: verifier.include } : {}),
     });
-    return;
-  }
-  if (verifier.kind === "todo_clear") {
-    declarations.todoClear.push({ nodeId, verifierId: verifier.id });
     return;
   }
   declarations.commands.push({

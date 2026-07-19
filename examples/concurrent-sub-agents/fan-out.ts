@@ -134,7 +134,7 @@ async function runLeader(
       await wt.release({ keep: true });
       outcomes.push({
         plan,
-        finalStatus: "failed",
+        finalStatus: "blocked",
         note: `bad output: ${parsed.reason}`,
       });
       continue;
@@ -145,7 +145,7 @@ async function runLeader(
       await wt.release({ keep: true });
       outcomes.push({
         plan,
-        finalStatus: "failed",
+        finalStatus: "blocked",
         note: `wrote outside partition: ${audit.violations.join(", ")}`,
       });
       continue;
@@ -155,7 +155,7 @@ async function runLeader(
       await wt.release({ keep: parsed.value.retryable });
       outcomes.push({
         plan,
-        finalStatus: "failed",
+        finalStatus: "blocked",
         note: parsed.value.notes,
       });
       continue;
@@ -167,7 +167,7 @@ async function runLeader(
       await wt.release({ keep: true });
       outcomes.push({
         plan,
-        finalStatus: "failed",
+        finalStatus: "blocked",
         note: `merge conflict on ${merge.conflictedFiles.join(", ")}`,
       });
       continue;
@@ -285,7 +285,10 @@ async function main(): Promise<void> {
     const rogue = outcomes.find((o) => o.plan.taskId === "rogue")!;
     assert(auth.finalStatus === "completed", "auth must complete");
     assert(billing.finalStatus === "completed", "billing must complete");
-    assert(rogue.finalStatus === "failed", "rogue must fail the writes audit");
+    assert(
+      rogue.finalStatus === "blocked",
+      "rogue must be blocked by the writes audit",
+    );
     assert(
       (rogue.note ?? "").includes("outside partition"),
       "rogue note must explain the violation",
@@ -320,8 +323,8 @@ async function main(): Promise<void> {
       "todo: billing done",
     );
     assert(
-      finalTodo.includes("- [ ] ❌ rogue agent writes outside its partition"),
-      "todo: rogue marked failed",
+      finalTodo.includes("- [ ] ⛔ rogue agent writes outside its partition"),
+      "todo: rogue marked blocked",
     );
 
     console.log("\n✓ concurrent-sub-agents demo finished");

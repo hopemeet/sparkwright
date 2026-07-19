@@ -212,7 +212,7 @@ describe("host spawn_agent wiring", () => {
 
       expect(output.signal).toBe("completed");
       // Child finished on step 2 of 3 — it had budget to spare.
-      expect(output.stepLimitReached).toBe(false);
+      expect(output.stepLimitReached).not.toBe(true);
 
       // (1) The child's own trace is persisted under its agent directory.
       const childTrace = await readFileWhenReady(
@@ -1550,16 +1550,16 @@ describe("host spawn_agent wiring", () => {
         childRunStoreFactory,
       });
 
-      const output = (await spawnTool.execute(
-        {
-          goal: "list files",
-          role: "inspector",
-          prompt: "List the files.",
-          allowedTools: ["glob"],
-          maxSteps: 1,
-        },
-        { run: parent.record } as never,
-      )) as {
+      const args = {
+        goal: "list files",
+        role: "inspector",
+        prompt: "List the files.",
+        allowedTools: ["glob"],
+        maxSteps: 1,
+      };
+      const output = (await spawnTool.execute(args, {
+        run: parent.record,
+      } as never)) as {
         signal: string;
         stopReason: string;
         stepLimitReached?: boolean;
@@ -1573,8 +1573,10 @@ describe("host spawn_agent wiring", () => {
       expect(output.stepLimitReached).toBe(true);
       expect(output.truncated).toBe(true);
       expect(output.finality).toBe("partial");
-      expect(output.message).toContain("hit its step budget");
-      expect(output.message).toContain("partial list");
+      expect(output.message).toBe(
+        "partial list: README.md, ... (more omitted)",
+      );
+      expect(spawnTool.managesRepeatedCalls?.(args)).toBe(false);
     } finally {
       // Child session-store writes can still be flushing as the run resolves;
       // retry the cleanup rather than racing them into an ENOTEMPTY.

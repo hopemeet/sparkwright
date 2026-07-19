@@ -295,8 +295,6 @@ export async function handleSessionResumeCommand(
     ...parsed,
     sessionId: session.id,
     contextItems,
-    policyTargetPath:
-      parsed.targetPathSource === "cli" ? parsed.targetPath : undefined,
   };
   return parsed.directCore
     ? startDirectCoreRun(runInput, io, env)
@@ -334,8 +332,7 @@ export async function handleRunResumeCommand(
         modelName:
           parsed.modelNameSource === "cli" ? parsed.modelName : undefined,
         sessionId: parsed.sessionId,
-        targetPath:
-          parsed.targetPathSource === "cli" ? parsed.targetPath : undefined,
+        targetPath: parsed.targetPath,
         confidentialPaths: parsed.confidentialPaths,
         confidentialDefaults: parsed.confidentialDefaults,
         traceLevel: parsed.traceLevel,
@@ -440,8 +437,7 @@ export async function handleRunResumeCommand(
   const policy = createHostRunPolicy({
     permissionMode,
     shouldWrite,
-    targetPath:
-      parsed.targetPathSource === "cli" ? parsed.targetPath : undefined,
+    targetPath: parsed.targetPath,
     writeGuardrails: loadedConfig.config.write,
     confidentialDefaults: parsed.confidentialDefaults,
     confidentialPaths: parsed.confidentialPaths,

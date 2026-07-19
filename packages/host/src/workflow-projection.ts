@@ -15,9 +15,6 @@ import {
   advanceWorkflowState,
   assertWorkflowRuntimeDefinition,
   createInitialWorkflowRuntimeState,
-  hasUnfinishedTodo,
-  summarizeTodoLedger,
-  type TodoLedger,
   type WorkflowCommandVerifierDefinition,
   type WorkflowDiffScopeVerifierDefinition,
   type WorkflowDefinition,
@@ -28,7 +25,6 @@ import {
   type WorkflowParallelBranchState,
   type PinnedWorkflowDefinition,
   type WorkflowRuntimeState,
-  type WorkflowTodoClearVerifierDefinition,
   type WorkflowTransitionDecision,
   type WorkflowTransitionDefinition,
   type WorkflowVerifierDefinition,
@@ -61,7 +57,6 @@ export interface CreateWorkflowProjectionHooksOptions extends Omit<
     snapshot: WorkflowProjectionStateSnapshot,
   ) => void | Promise<void>;
   getEvidenceRefs?: (nodeId: string) => readonly WorkflowEvidenceRef[];
-  readTodoLedger?: () => TodoLedger | Promise<TodoLedger>;
   allowScriptWrite?: boolean;
   isToolAvailable?: (toolName: string) => boolean;
   isScopedToolSearchAvailable?: () => boolean;
@@ -1217,8 +1212,6 @@ export function createWorkflowProjectionHooks(
                   hookName: familyName,
                   node,
                   nodeEntryWriteEpoch: undefined,
-                  readTodoLedger: options.readTodoLedger,
-                  runId: input.run.id,
                 });
                 return {
                   node,
@@ -1287,8 +1280,6 @@ export function createWorkflowProjectionHooks(
             nodeEntryWriteEpoch: nodeEntryEpochs.get(
               `${node.id}:${state.attempts[node.id] ?? 1}`,
             ),
-            readTodoLedger: options.readTodoLedger,
-            runId: input.run.id,
           });
           const completedAttempt = state.attempts[node.id] ?? 1;
           const advanced = advanceWorkflowState({
@@ -1752,8 +1743,6 @@ async function nodeVerdictFromLedger(input: {
   hookName: string;
   node: WorkflowNodeDefinition;
   nodeEntryWriteEpoch: number | undefined;
-  readTodoLedger?: () => TodoLedger | Promise<TodoLedger>;
-  runId: string;
 }): Promise<WorkflowNodeVerdictEvaluation> {
   const verifiers = input.node.verify ?? [];
   if (verifiers.length === 0) {
@@ -1766,10 +1755,7 @@ async function nodeVerdictFromLedger(input: {
       evidenceRefs: [],
     };
   }
-  const factVerifiers = verifiers.filter(
-    (verifier) => verifier.kind !== "todo_clear",
-  );
-  if (!input.snapshot && factVerifiers.length > 0) {
+  if (!input.snapshot) {
     return {
       verdict: {
         status: "runtime_error",
@@ -1780,14 +1766,6 @@ async function nodeVerdictFromLedger(input: {
   }
   const results = await Promise.all(
     verifiers.map((verifier) => {
-      if (verifier.kind === "todo_clear") {
-        return evaluateTodoClearVerifier({
-          node: input.node,
-          verifier,
-          readTodoLedger: input.readTodoLedger,
-          runId: input.runId,
-        });
-      }
       if (verifier.kind === "diff_scope") {
         return evaluateDiffScopeVerifier({
           snapshot: input.snapshot!,
@@ -1962,80 +1940,6 @@ function evaluateDiffScopeVerifier(input: {
         path: write.path,
         writeEpoch: write.writeEpoch,
       })),
-    },
-  };
-}
-
-async function evaluateTodoClearVerifier(input: {
-  node: WorkflowNodeDefinition;
-  verifier: WorkflowTodoClearVerifierDefinition;
-  readTodoLedger?: () => TodoLedger | Promise<TodoLedger>;
-  runId: string;
-}): Promise<WorkflowVerifierCheckResult> {
-  if (!input.readTodoLedger) {
-    const message = `Workflow todo_clear verifier "${input.verifier.id}" requires a todo ledger provider.`;
-    return {
-      verifier: input.verifier,
-      satisfied: false,
-      evidenceRefs: [],
-      runtimeError: message,
-      failure: {
-        verifierId: input.verifier.id,
-        kind: input.verifier.kind,
-        missingProvider: true,
-      },
-    };
-  }
-
-  let ledger: TodoLedger;
-  try {
-    ledger = await input.readTodoLedger();
-  } catch (cause) {
-    const message = `Workflow todo_clear verifier "${input.verifier.id}" failed to read the todo ledger: ${
-      cause instanceof Error ? cause.message : String(cause)
-    }`;
-    return {
-      verifier: input.verifier,
-      satisfied: false,
-      evidenceRefs: [],
-      runtimeError: message,
-      failure: {
-        verifierId: input.verifier.id,
-        kind: input.verifier.kind,
-        readFailed: true,
-        message,
-      },
-    };
-  }
-
-  const summary = summarizeTodoLedger(ledger);
-  const unfinished = ledger.items
-    .filter((item) => item.status !== "completed" && item.status !== "skipped")
-    .map((item) => ({
-      title: item.title,
-      status: item.status,
-      ...(item.id ? { id: item.id } : {}),
-    }));
-  return {
-    verifier: input.verifier,
-    satisfied: !hasUnfinishedTodo(ledger),
-    evidenceRefs: [
-      {
-        kind: "run",
-        ref: input.runId,
-        nodeId: input.node.id,
-        verifierId: input.verifier.id,
-        metadata: {
-          kind: "todo_clear",
-          summary,
-        },
-      },
-    ],
-    failure: {
-      verifierId: input.verifier.id,
-      kind: input.verifier.kind,
-      summary,
-      unfinished,
     },
   };
 }

@@ -11,6 +11,49 @@ See [tool-orchestration.md](tool-orchestration.md) and [../trace/raw-trace.md](.
 
 - Status: Verified
 - Date: 2026-07-19
+- Scope: Host Workflow episodes no longer translate `maxModelCalls` into a
+  competing step ceiling. Explicit profile `maxSteps`, Core work-budget
+  accounts, and Workflow chain caps remain separate owners with their own
+  terminal codes.
+- Read: Host Workflow episode construction/continuation, Core budget checks,
+  durable Workflow decider, focused tests, and a real Terra Workflow trace.
+- Tests: Host Workflow/protocol 103/103; real one-call episodes emitted
+  `MAX_MODEL_CALLS_EXCEEDED`, then the durable Workflow completed and verified.
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: Agent repeated-call ownership is argument- and cache-aware. Exact
+  complete+clean repeats reach the parent ledger; uncached partial/unhealthy
+  repeats remain under the generic Core guard. Formal verification no longer
+  depends on goal prose, and superseded resumable episode failures share one
+  Core predicate across Host aggregation and trace report.
+- Read: Core run/fact/assessment/trace paths, Agent result/ledger/tool, Host
+  execution/Agent assembly, and full affected-package tests.
+- Tests: Core 641/641, Agent Runtime 235/235, Host 592/592.
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: exact sequential Agent delegation repeats can reach the shared
+  complete+clean result ledger through `ToolDefinition.managesRepeatedCalls`.
+  Generic tools, same-turn duplicates, prior failures/no-progress results, and
+  replay-risk classification are unchanged.
+- Read: Core repeat path, Agent Runtime delegate cache, Host indexed/direct/
+  parallel/dynamic wrappers, focused tests, and real Terra traces.
+- Tests: Core run 128/128; Host Agent tool/spawn 117/117; real fixed session
+  produced two delegate tool calls, one child run, and no repeat failure.
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: every Core episode terminates with a persisted `RunAssessment`; Host
+  folds those into one `ExecutionAssessment`. Ordinary executions stop after
+  one episode. Only a fresh, nonterminal durable Workflow record may authorize
+  another bounded episode; Todo state has no continuation authority.
+- Read: Core run assessment/terminal assembly, Host execution driver, Workflow
+  episode/record decider, and related tests.
+- Tests: Core 638/638 and Host 591/591 passed in final gates.
+
+- Status: Verified
+- Date: 2026-07-19
 - Scope: Host fresh/start and checkpoint/Workflow resume paths now enter one
   HostRuntime execution envelope and receive its exact HostExecution as an
   explicit argument. Busy rejection, abort scope, release-on-preparation
@@ -241,6 +284,9 @@ createRun/resumeRunFromCheckpoint
 - Do not infer terminal run outcome from `model.completed` or `tool.completed`.
 - State transitions emit diagnostics when rejected.
 - Budget and max-step behavior are part of runtime semantics.
+- Host must not derive `maxSteps` from `runBudget.maxModelCalls`; the former is
+  an explicit foreground step limit (or Host backstop), while the latter is a
+  Core resource-budget dimension with its own stop reason and failure code.
 - Ordinary work budgets use a synchronous Core account protocol. A run reserves
   model/tool calls against its local account and every inherited ancestor-tree
   account before work starts, then records provider token/cost usage into the
@@ -263,6 +309,11 @@ createRun/resumeRunFromCheckpoint
   repeated calls keep the normal argument/runtime failure classification.
   Tool-owned repeated-observation guidance applies only when there is no prior
   failure, so a friendly completed nudge cannot mask failed state observation.
+- A tool may instead declare `managesRepeatedCalls(args)` when it owns an exact
+  duplicate ledger. Core then executes only a clean sequential verbatim repeat
+  so the tool can return cached evidence or retry an unhealthy result. The
+  exemption never applies after a tool failure/no-progress result and does not
+  affect same-turn duplicate suppression.
 - Completed-run outcome treats read-confidentiality denials as expected policy
   denials. A run can still complete successfully after a denied confidential
   read if the model produces a final answer; the denial remains visible through

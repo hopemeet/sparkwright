@@ -91,6 +91,14 @@ session trace.jsonl
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-19
+- Scope: reviewed TUI/export consumers for the assessment migration. Committed
+  run facts and Agent lifecycle rows render canonical health/issues; export
+  storage, navigation, and raw event ownership are unchanged.
+- Read: TUI event stream/store/controller and Core trace diagnostics.
+- Tests: focused Ink rendering and Core trace coverage passed.
+
+- Status: Verified
 - Date: 2026-07-17T23:37:17+0800
 - Scope: TUI removed the `/skill-create` layer wiring; event rendering,
   transcript export, trace diagnostics, and `/export` storage remain unchanged.

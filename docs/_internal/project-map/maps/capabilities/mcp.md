@@ -10,6 +10,15 @@ See [../../modules/mcp-adapter.md](../../modules/mcp-adapter.md).
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-19
+- Scope: reviewed because Host runtime episode/tool assembly changed. MCP
+  discovery, lazy startup, cwd disclosure, governance, and tool execution
+  contracts are unchanged; MCP tool facts participate in Core assessment like
+  other tool calls.
+- Read: Host runtime/tool assembly and MCP capability boundaries.
+- Tests: affected Host/CLI suites passed before final real-model canaries.
+
+- Status: Verified
 - Date: 2026-07-18
 - Scope: canonical config/extra-server merge, startup/schema mode selection,
   live MCP preparation, workspace-cwd disclosure, and inspection MCP port now

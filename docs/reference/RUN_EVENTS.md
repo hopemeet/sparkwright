@@ -196,8 +196,8 @@ Backend guidance:
 ## Terminal Events
 
 A run reaches a terminal state through `run.completed`, `run.failed`, or
-`run.cancelled`. The returned `RunResult` is the strongest programmatic outcome;
-events are the replayable audit trail.
+`run.cancelled`. The returned `RunResult` and terminal event carry the same
+Core-owned `RunAssessment`; events remain the replayable audit trail.
 
 Stable consumption rules:
 
@@ -206,17 +206,22 @@ Stable consumption rules:
   returned result before marking the run cancelled.
 - Use `run.failed.payload.failure` and `stopReason` when available for error
   categorization.
+- Use `payload.assessment.health`, `issues`, and `verification` for semantic
+  terminal status. Do not reclassify a completed run from assistant prose or a
+  downstream reconstruction. A missing assessment from a current emitter is a
+  protocol error and should fail closed.
 - Treat failure `metadata.cause` as a bounded diagnostic summary when present.
   Raw provider request bodies, prompt input, and tool schemas must not be
   persisted on terminal failure events; structured provider classification lives
   in `metadata.modelError` when available.
 - Once a terminal event is seen, ignore later state-transition attempts except
   to surface `run.state_transition.rejected` as diagnostics.
-- Completed final-answer events may carry `factLedger` as the persisted
+- Terminal events carry `assessment` as the bounded semantic projection and
+  may also carry `factLedger` as the persisted
   command/verification fact snapshot. Profile/documented-command facts identify
   verification with explicit `verificationSource`, `profile`, `verifierId`,
   and `expect` fields; `hookName` is only a correlation label. The ledger is an
-  audit snapshot on the terminal event, not a new event family.
+  audit snapshot on the terminal event, not a second terminal verdict.
 
 For durable stores, update the run record and write `result.json` at terminal
 completion, but keep `trace.jsonl` append-only.

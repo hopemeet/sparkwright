@@ -5,15 +5,15 @@
 - Pattern ID: `prompt-induced-tool-loop`
 - Status: `watch`
 - First seen: 2026-06-22
-- Last seen: 2026-07-07
-- Recorded count: 9
+- Last seen: 2026-07-19
+- Recorded count: 12
 
 | Cause                   | Count |
 | ----------------------- | ----: |
-| `product_bug`           |     3 |
+| `product_bug`           |     5 |
 | `test_bug`              |     1 |
 | `prompt_underspecified` |     3 |
-| `model_variance`        |     2 |
+| `model_variance`        |     3 |
 | `environment`           |     0 |
 | `stale_dist`            |     0 |
 | `dirty_workspace`       |     0 |
@@ -101,6 +101,54 @@ hint, and terminal task notifications did not put the child result in body
 text. Trace:
 `/tmp/sparkwright-agent-skill-bg.JCm3sJ/.sparkwright/sessions/session_mra7xnvxy6d8rxwi/trace.jsonl`.
 
+On 2026-07-19, a strong real `openai/gpt-5.6-terra` coding prompt under
+non-interactive `accept-edits` applied two files but could not obtain approval
+for the required bash verification. The model correctly reported the block,
+yet the unfinished Todo triggered synthetic continuations with the same fixed
+approval posture. Across three episodes the session requested the denied bash
+six times, consumed 181,947 tokens, hit one continuation
+`MAX_STEPS_EXCEEDED`, and was manually cancelled. Same-run repeated-denial
+guarding worked once, but the denial constraint did not stop or redirect the
+next episode. Classify this instance as a cross-episode product guardrail gap,
+while the initial missing `bypass` posture remains a QA setup choice. Trace:
+`/Applications/xgw/projects/AI-native/project/test/.sparkwright/sessions/session_mrqz3ajhmx78mgqs/trace.jsonl`.
+
+Source inspection found the amplification chain. The main run tried to mark the
+verification Todo `blocked`, but `todo_write` rejected that fifth mutation
+because `MAIN_TODO_MAX_WRITES_PER_RUN` is 4, leaving the ledger item
+`in_progress`. `auditTodoAfterTerminal()` then saw a final answer, zero blocked
+items, and real write progress, so it requested reconciliation. Each
+continuation creates a fresh Core run, resetting `lastFailedToolTarget`; the
+fixed approval denial is therefore retried before the same-run guard can help.
+The Host stall limit is bounded (`maxStalledContinuations=1`), but it is checked
+using the accumulated count before the current episode, so one first stalled
+continuation runs to its 8-step ceiling and a second stalled episode must
+finish before handoff. With full session context, those two bounded episodes
+still consumed about 93K additional tokens. The defect is not an unbounded
+loop; it is missing cross-episode terminal-constraint propagation combined
+with a rejected blocked-state update and an expensive two-episode stall path.
+
+Post-refactor on 2026-07-19, a target-less Terra resume explicitly instructed
+the model to read two files directly and answer once. It repeated the same two
+successful reads across seven turns, with compaction between batches, before
+answering on turn eight (`session_cli_assessment_refactor_20260719`). The run
+remained one Core episode, completed cleanly, and did not involve Todo-driven
+continuation, so classify this occurrence as same-run `model_variance` rather
+than a recurrence of the removed Host scheduling bug. It still consumed 71,467
+tokens and is useful evidence for future repeated-read feedback work.
+
+Later on 2026-07-19, a strong Terra prompt explicitly requested exactly one
+indexed partial delegation. The first child correctly ended step-limited and
+was correctly excluded from the successful-result cache, but the parent made
+the identical request 16 times. Agent tools advertised
+`managesRepeatedCalls:true`, so Core reset the generic duplicate count on every
+call; the Agent ledger had no reusable clean result and therefore spawned a new
+child each time. The run consumed 168,289 tokens and 51 model/tool calls before
+verified manual cancellation. Classify the model's repeat as the trigger and
+the absence of an outcome-aware bounded circuit as a product amplification bug.
+Session: `session_qa_agent_partial_20260719`; root run:
+`run_mrri00480x4c7b35`.
+
 ## Diagnostic Move
 
 Classify the repeated calls:
@@ -133,9 +181,26 @@ Then check whether the prompt gave a clear stopping condition.
 - For background tasks, avoid treating a failed parent run as failed child
   execution until the durable task record and `subagent.*` terminal events are
   checked.
+- For Agent-owned repeat handling, allow complete+clean cache reuse but bound
+  identical partial/unhealthy respawns; never turn `managesRepeatedCalls` into
+  an unlimited exemption from no-progress detection.
 
 ## Mitigation
 
+- 2026-07-19: Agent duplicate ownership is now conditional on an existing
+  complete+clean cache hit. Partial and unhealthy results remain uncached and
+  leave `managesRepeatedCalls(args)` false, so Core's existing exact-repeat
+  guard bounds the next identical no-progress request. No retry counter or
+  negative result cache was added.
+- 2026-07-19: removed Todo-driven episode continuation, per-run Todo write
+  counters, forced reconciliation prompts, and Todo-required tool scheduling.
+  Ordinary runs now stop after one Core episode; only a fresh nonterminal
+  durable Workflow record can continue. This closes the cross-episode fixed
+  approval-denial amplification seen in the Terra run while leaving unrelated
+  same-run/model loop patterns under watch.
+- A post-refactor real coding resume left three Todo items open, printed the
+  advisory warning, and stopped after its clean episode. This confirms the
+  Host no longer converts open Todo state into another scheduled run.
 - 2026-06-29: `read_file` now returns structured `nextOffset` for valid
   paginated windows, and live `RunHealthAnalyzer` feedback now includes the
   next unread offset when a model pages backwards to an already-read unchanged
@@ -155,4 +220,5 @@ Then check whether the prompt gave a clear stopping condition.
 - Run note: [../runs/2026-07-01-real-nano-dci-grep-partial.md](../runs/2026-07-01-real-nano-dci-grep-partial.md)
 - Run note: [../runs/2026-07-01-real-mini-background-task-qa.md](../runs/2026-07-01-real-mini-background-task-qa.md)
 - Run note: [../runs/2026-07-07-real-mini-agent-skill-multidirection-qa.md](../runs/2026-07-07-real-mini-agent-skill-multidirection-qa.md)
+- Run note: [../runs/2026-07-19-real-terra-broad-refactor-qa.md](../runs/2026-07-19-real-terra-broad-refactor-qa.md)
 - Root-cause pattern: [task-create-agent-low-signal-result-feedback.md](task-create-agent-low-signal-result-feedback.md)

@@ -116,6 +116,18 @@ export function safelyRepeatedCallGuidance(
   }
 }
 
+export function safelyManagesRepeatedCalls(
+  tool: ToolDefinition | undefined,
+  args: unknown,
+): boolean {
+  if (!tool?.managesRepeatedCalls) return false;
+  try {
+    return tool.managesRepeatedCalls(args) === true;
+  } catch {
+    return false;
+  }
+}
+
 export function toolFailureContext(result: ToolResult): {
   category: ToolFailureCategory;
   expectedDenial?: boolean;

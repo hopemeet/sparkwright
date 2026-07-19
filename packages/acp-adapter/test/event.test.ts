@@ -140,6 +140,24 @@ describe("ACP event mapping", () => {
           runId: "run_1",
           state: "completed",
           stopReason: "completed",
+          assessment: {
+            schemaVersion: "execution-assessment.v1",
+            health: "clean",
+            issues: [],
+            verification: [],
+            episodeCount: 1,
+            episodes: [
+              {
+                runId: "run_1",
+                assessment: {
+                  schemaVersion: "run-assessment.v1",
+                  health: "clean",
+                  issues: [],
+                  verification: [],
+                },
+              },
+            ],
+          },
         },
       }),
     ).toEqual([]);

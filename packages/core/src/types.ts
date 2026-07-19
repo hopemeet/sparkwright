@@ -24,6 +24,7 @@ import type {
   PromptMessage,
 } from "./context.js";
 import type { ToolDescriptor, ToolProgressUpdate } from "./tools.js";
+import type { RunAssessment } from "./run-assessment.js";
 
 export type RunState =
   | "created"
@@ -89,6 +90,8 @@ export interface RunResult {
   stopReason?: RunStopReason;
   message?: string;
   failure?: RunFailure;
+  /** Core-owned terminal assessment. Present for every terminal result. */
+  assessment: RunAssessment;
   metadata: Record<string, unknown>;
 }
 

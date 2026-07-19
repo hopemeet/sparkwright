@@ -79,10 +79,7 @@ import {
   runToolBatch,
   type RequestedToolCall,
 } from "./tool-orchestration.js";
-import {
-  completedRunOutcomeFromEvents,
-  toolOutcomeSnapshot,
-} from "./run-outcome.js";
+import { assessRun } from "./run-assessment.js";
 import { FactLedger } from "./fact-ledger.js";
 import { ControlledWorkspace } from "./workspace.js";
 import type { WorkspaceCheckpointStore } from "./workspace-checkpoint.js";
@@ -159,6 +156,7 @@ import {
   isRepeatedToolCall,
   repeatedToolCallNudgeMessage,
   repeatedToolCallNudgeMetadata,
+  safelyManagesRepeatedCalls,
   safelyRepeatedCallGuidance,
   semanticToolTarget,
   shouldRequestContextCompaction,
@@ -1022,6 +1020,14 @@ export class SparkwrightRun implements RunHandle {
         state: "failed",
         stopReason: this.record.stopReason ?? "model_completion_failed",
         message: err instanceof Error ? err.message : String(err),
+        assessment: assessRun(this.events.all(), {
+          factLedger: this.factLedger.snapshot(),
+          terminal: {
+            state: "failed",
+            reason: this.record.stopReason ?? "model_completion_failed",
+            failure: { code: "UNEXPECTED_RUN_FAILURE" },
+          },
+        }),
         metadata: {},
       };
       await this.safeStoreFinish(fallback);
@@ -2501,13 +2507,19 @@ export class SparkwrightRun implements RunHandle {
       reason: "manual_cancelled",
       message: input.reason ?? "Run cancelled.",
       metadata: input.metadata ?? {},
+      factLedger: this.factLedger.snapshot(),
     };
-    this.events.emit("run.cancelled", payload);
+    const assessment = assessRun(this.events.all(), {
+      factLedger: payload.factLedger,
+      terminal: { state: "cancelled", reason: "manual_cancelled" },
+    });
+    this.events.emit("run.cancelled", { ...payload, assessment });
     this.result = {
       signal: "cancelled",
       state: "cancelled",
       stopReason: "manual_cancelled",
       message: payload.message,
+      assessment,
       metadata: payload.metadata,
     };
     this.kickWorkflowHookPhase("RunEnd", {
@@ -2810,24 +2822,28 @@ export class SparkwrightRun implements RunHandle {
       state.previousToolCall,
       requestedCall,
     );
-    // An idempotent tool repeating verbatim is a harmless no-op — it returns the
-    // same result with no side effect (e.g. rewriting an unchanged todo ledger)
-    // — not the start of a doom loop. Such tools carry their own no-op handling
-    // that course-corrects the model, so the generic repeat guard must defer to
-    // them rather than burning a turn on REPEATED_TOOL_CALL_SKIPPED. A repeated
-    // *failure* or explicit no-progress result on the same target still counts
-    // even for idempotent tools, so the exemption requires no remembered
-    // failure/no-op target.
-    const benignIdempotentRepeat =
+    // An idempotent tool repeating verbatim is a harmless no-op, while a tool
+    // with `managesRepeatedCalls` owns a conservative cache/retry protocol.
+    // Neither is the start of a generic doom loop, so the repeat guard defers
+    // and lets the tool handle the call. A repeated *failure* or explicit
+    // no-progress result on the same target still counts, so both exemptions
+    // require no remembered failure/no-op target.
+    const toolManagedRepeat =
       verbatimRepeat &&
       !priorFailure &&
       !priorNoop &&
-      this.tools.get(requestedCall.toolName)?.governance?.idempotency ===
-        "idempotent";
-    if (
-      (verbatimRepeat || priorFailure || priorNoop) &&
-      !benignIdempotentRepeat
-    ) {
+      safelyManagesRepeatedCalls(
+        this.tools.get(requestedCall.toolName),
+        requestedCall.arguments,
+      );
+    const benignRepeat =
+      verbatimRepeat &&
+      !priorFailure &&
+      !priorNoop &&
+      (toolManagedRepeat ||
+        this.tools.get(requestedCall.toolName)?.governance?.idempotency ===
+          "idempotent");
+    if ((verbatimRepeat || priorFailure || priorNoop) && !benignRepeat) {
       state.repeatedToolCallCount += 1;
     } else {
       state.previousToolCall = requestedCall;
@@ -4663,23 +4679,15 @@ export class SparkwrightRun implements RunHandle {
       return this.result;
     }
     const factLedger = this.factLedger.snapshot();
-    const outcome =
-      reason === "final_answer"
-        ? completedRunOutcomeFromEvents(
-            this.events.all(),
-            typeof payload.message === "string" ? payload.message : undefined,
-            { factLedger },
-          )
-        : undefined;
-    // Persist the canonical fact ledger plus the terminal projections consumed
-    // by status and tool-failure diagnostics.
-    const toolOutcome = toolOutcomeSnapshot(this.events.all());
+    const assessment = assessRun(this.events.all(), {
+      factLedger,
+      terminal: { state: "completed", reason },
+    });
     const completedPayload = {
       reason,
       ...payload,
       factLedger,
-      ...(outcome ? { outcome } : {}),
-      ...(toolOutcome ? { toolOutcome } : {}),
+      assessment,
     };
     this.setState("completed", reason);
     this.events.emit("run.completed", completedPayload);
@@ -4694,10 +4702,8 @@ export class SparkwrightRun implements RunHandle {
       state: "completed",
       stopReason: reason,
       message: typeof payloadMessage === "string" ? payloadMessage : undefined,
-      metadata: omitUndefined({
-        ...rest,
-        ...(outcome ? { outcome } : {}),
-      }),
+      assessment,
+      metadata: omitUndefined({ ...rest }),
     };
     return this.result;
   }
@@ -4725,12 +4731,19 @@ export class SparkwrightRun implements RunHandle {
           : undefined,
       metadata: failureMetadata,
     };
+    const factLedger = this.factLedger.snapshot();
+    const assessment = assessRun(this.events.all(), {
+      factLedger,
+      terminal: { state: "failed", reason, failure: { code } },
+    });
     this.setState("failed", reason);
     this.events.emit("run.failed", {
       reason,
       code,
       message,
       failure,
+      factLedger,
+      assessment,
       metadata: { ...safeMetadata },
     });
     this.kickWorkflowHookPhase("RunEnd", {
@@ -4743,6 +4756,7 @@ export class SparkwrightRun implements RunHandle {
       state: "failed",
       stopReason: reason,
       failure,
+      assessment,
       metadata: { ...safeMetadata },
     };
     return this.result;

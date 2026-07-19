@@ -188,6 +188,24 @@ describe("ImGateway", () => {
           runId: "run_delivery_retry",
           state: "completed",
           message: "hello",
+          assessment: {
+            schemaVersion: "execution-assessment.v1",
+            health: "clean",
+            issues: [],
+            verification: [],
+            episodeCount: 1,
+            episodes: [
+              {
+                runId: "run_delivery_retry",
+                assessment: {
+                  schemaVersion: "run-assessment.v1",
+                  health: "clean",
+                  issues: [],
+                  verification: [],
+                },
+              },
+            ],
+          },
         },
       };
       adapter.failNextMessage = true;

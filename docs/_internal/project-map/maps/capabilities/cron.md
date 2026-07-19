@@ -10,6 +10,15 @@ See [../../modules/agent-runtime.md](../../modules/agent-runtime.md) for related
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-19
+- Scope: Cron semantic scheduling outcome consumes the terminal Core
+  assessment rather than a Cron-owned reconstruction. Expected policy denial
+  remains a Cron failure policy even though Core classifies it as degraded;
+  Agent/Todo contract review found no separate Cron continuation owner.
+- Read: Cron runner/tests, Core assessment, and Agent Runtime route hits.
+- Tests: Cron 20/20 passed.
+
+- Status: Verified
 - Date: 2026-07-18
 - Scope: read-only Cron/Task automation projection for capability inspection
   moved to `CapabilityRuntimeOperations`. It reads the same default Cron root

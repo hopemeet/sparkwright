@@ -1282,6 +1282,9 @@ describe("createAgentTool / mountAgentTool", () => {
     } as never);
 
     expect(first).toMatchObject({ signal: "completed" });
+    expect(tool.managesRepeatedCalls?.({ goal: "Inspect README.md" })).toBe(
+      true,
+    );
     expect(second).toMatchObject({
       signal: "completed",
       alreadyCompleted: true,
@@ -1328,6 +1331,9 @@ describe("createAgentTool / mountAgentTool", () => {
       signal: "completed",
       message: "directory result 1",
     });
+    expect(
+      tool.managesRepeatedCalls?.({ goal: "inspect the workspace carefully" }),
+    ).toBe(false);
     expect(second).toMatchObject({
       signal: "completed",
       message: "directory result 2",

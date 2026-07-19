@@ -60,6 +60,8 @@ Core owns:
 - state transitions: `created`, `running`, `waiting_approval`, `completed`,
   `failed`, `cancelled`
 - stop reasons and terminal result signals
+- the bounded `RunAssessment` semantic projection (`health`, `issues`, and
+  structured verification) persisted on terminal results/events
 - tool/model/approval/workspace lifecycle events
 - budget and usage checks
 - cancellation and command injection
@@ -74,6 +76,10 @@ Persistence boundary:
   persisted.
 
 Default implementation: `FileRunStore`.
+
+Embedders may aggregate multiple episode assessments for an execution, but they
+must not replace Core's per-run assessment with prose parsing or an independent
+tool-outcome verdict. Agent finality is a separate axis from assessment health.
 
 ### 2. Session State
 

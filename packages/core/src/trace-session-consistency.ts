@@ -237,9 +237,23 @@ function validateToolFailureSafety(
     });
   }
 
-  const unresolved = analyzeToolOutcomes(events).unresolvedFailures.filter(
-    (failure) => !failure.toolCallId || !escapeCallIds.has(failure.toolCallId),
-  );
+  const eventsByRun = new Map<string, SparkwrightEvent[]>();
+  for (const event of events) {
+    const runEvents = eventsByRun.get(event.runId) ?? [];
+    runEvents.push(event);
+    eventsByRun.set(event.runId, runEvents);
+  }
+  const unresolved = [...eventsByRun.values()]
+    .flatMap((runEvents) => {
+      const cancellationOwned = hasUnambiguousCancelledTerminal(runEvents);
+      return analyzeToolOutcomes(runEvents).unresolvedFailures.filter(
+        (failure) => !(cancellationOwned && failure.code === "TOOL_ABORTED"),
+      );
+    })
+    .filter(
+      (failure) =>
+        !failure.toolCallId || !escapeCallIds.has(failure.toolCallId),
+    );
   if (unresolved.length > 0) {
     const byCode: Record<string, number> = {};
     for (const failure of unresolved) {
@@ -253,6 +267,43 @@ function validateToolFailureSafety(
       metadata: { count: unresolved.length, byCode },
     });
   }
+}
+
+/**
+ * Recognizes the canonical cancellation terminal and its legacy paired
+ * projection without relying on physical event order. Any duplicate or
+ * conflicting terminal keeps TOOL_ABORTED visible for conservative diagnosis.
+ */
+function hasUnambiguousCancelledTerminal(
+  events: readonly SparkwrightEvent[],
+): boolean {
+  let cancelledCount = 0;
+  let legacyCancelledCompletedCount = 0;
+  let conflictingTerminalCount = 0;
+
+  for (const event of events) {
+    if (event.type === "run.cancelled") {
+      cancelledCount += 1;
+      continue;
+    }
+    if (event.type === "run.failed") {
+      conflictingTerminalCount += 1;
+      continue;
+    }
+    if (event.type !== "run.completed") continue;
+    if (isRecord(event.payload) && event.payload.state === "cancelled") {
+      legacyCancelledCompletedCount += 1;
+    } else {
+      conflictingTerminalCount += 1;
+    }
+  }
+
+  return (
+    conflictingTerminalCount === 0 &&
+    cancelledCount <= 1 &&
+    legacyCancelledCompletedCount <= 1 &&
+    cancelledCount + legacyCancelledCompletedCount >= 1
+  );
 }
 
 export async function repairSessionTraceConsistency({

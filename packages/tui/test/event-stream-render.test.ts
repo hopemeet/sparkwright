@@ -572,7 +572,7 @@ describe("EventStream committed rendering", () => {
     expect(text).not.toContain("print_numbers.py completed");
   });
 
-  it("uses the canonical terminal outcome when live command details are absent", async () => {
+  it("uses the canonical terminal assessment when live command details are absent", async () => {
     const text = await renderToText(
       stream([
         ev("run.started", 1, {}),
@@ -582,14 +582,30 @@ describe("EventStream committed rendering", () => {
         }),
         ev("run.completed", 3, {
           reason: "final_answer",
-          outcome: {
-            kind: "completed_with_verification_failures",
-            failing: true,
-            commandFailures: {
-              count: 1,
-              lastCommand: "npm test",
-              lastExitCode: 1,
-            },
+          assessment: {
+            schemaVersion: "run-assessment.v1",
+            health: "failing",
+            issues: [
+              {
+                code: "VERIFICATION_FAILED",
+                kind: "verification_failure",
+                disposition: "failing",
+                count: 1,
+                details: {
+                  lastCommand: "npm test",
+                  lastExitCode: 1,
+                },
+              },
+            ],
+            verification: [
+              {
+                id: "command:npm-test",
+                source: "command",
+                status: "failed",
+                command: "npm test",
+                exitCode: 1,
+              },
+            ],
           },
         }),
       ]),
@@ -705,6 +721,19 @@ describe("EventStream committed rendering", () => {
           stepLimitReached: true,
           childRunId: "run_child_1234567890",
           parentRunId: "run_parent",
+          assessment: {
+            schemaVersion: "run-assessment.v1",
+            health: "failing",
+            issues: [
+              {
+                code: "UNRESOLVED_TOOL_FAILURE",
+                kind: "tool_failure",
+                disposition: "failing",
+                count: 1,
+              },
+            ],
+            verification: [],
+          },
         },
         {
           agentName: "reviewer",
@@ -734,13 +763,15 @@ describe("EventStream committed rendering", () => {
       ),
     ];
 
-    const text = await renderToText(stream(events));
+    const text = await renderToText(stream(events), 220);
 
     expect(text).toContain("└─ reviewer requested");
     expect(text).toContain("depth 1");
     expect(text).toContain("via delegate_review");
     expect(text).toContain("audit docs");
     expect(text).toContain("reviewer completed · step_limit");
+    expect(text).toContain("health failing");
+    expect(text).toContain("issues UNRESOLVED_TOOL_FAILURE");
     expect(text).toContain("└─ nested requested");
     expect(text).toContain("depth 2");
     expect(text).toContain("spawn_agent");
@@ -748,20 +779,19 @@ describe("EventStream committed rendering", () => {
     expect(text).not.toContain('"terminalState"');
   });
 
-  it("suppresses internal cancel/state-machine events but keeps the cancel card", async () => {
+  it("renders a sole run.cancelled terminal without leaking state-machine events", async () => {
     const events = [
-      ev("run.cancelled", 1, {}),
+      ev("run.cancelled", 1, { reason: "user_cancelled" }),
       ev("run.cancel_requested", 2, {}),
       ev("run.state_transition.rejected", 3, {}),
-      ev("run.completed", 4, { state: "cancelled", reason: "user_cancelled" }),
     ];
     const text = await renderToText(stream(events));
-    // none of the internal events leak as raw "[seq] type" debug rows
+    // Internal event names stay hidden while the terminal gets one footer.
     expect(text).not.toContain("run.cancelled");
     expect(text).not.toContain("cancel_requested");
     expect(text).not.toContain("state_transition");
-    // but the user-facing cancel card from run.completed is still shown
-    expect(text).toContain("run cancelled");
+    expect(text.match(/run cancelled/g)).toHaveLength(1);
+    expect(text).toContain("user_cancelled");
   });
 
   it("suppresses internal run budget events", async () => {

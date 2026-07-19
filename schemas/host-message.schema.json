@@ -359,6 +359,7 @@
             "host.log",
             "run.event",
             "approval.requested",
+            "run.continuation",
             "run.completed",
             "run.failed"
           ]
@@ -395,6 +396,14 @@
           "then": {
             "properties": {
               "payload": { "$ref": "#/$defs/ApprovalRequestedEventPayload" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "run.continuation" } } },
+          "then": {
+            "properties": {
+              "payload": { "$ref": "#/$defs/RunContinuationEventPayload" }
             }
           }
         },
@@ -1693,21 +1702,116 @@
       },
       "additionalProperties": false
     },
+    "RunContinuationEventPayload": {
+      "type": "object",
+      "required": ["runId", "previousRunId", "continuationCount", "reason"],
+      "properties": {
+        "runId": { "type": "string", "minLength": 1 },
+        "previousRunId": { "type": "string", "minLength": 1 },
+        "continuationCount": { "type": "integer", "minimum": 1 },
+        "reason": { "const": "workflow_record_active" }
+      },
+      "additionalProperties": false
+    },
+    "AssessmentIssuePayload": {
+      "type": "object",
+      "required": ["code", "kind", "disposition", "count"],
+      "properties": {
+        "code": { "type": "string" },
+        "kind": { "type": "string" },
+        "disposition": { "enum": ["degraded", "failing"] },
+        "count": { "type": "integer", "minimum": 1 },
+        "details": { "type": "object" }
+      },
+      "additionalProperties": false
+    },
+    "VerificationResultPayload": {
+      "type": "object",
+      "required": ["id", "source", "status"],
+      "properties": {
+        "id": { "type": "string" },
+        "source": { "enum": ["command", "profile", "documented_command"] },
+        "status": { "enum": ["passed", "failed", "timed_out", "stale"] },
+        "sequence": { "type": "integer", "minimum": 0 },
+        "command": { "type": "string" },
+        "profile": { "type": "string" },
+        "verifierId": { "type": "string" },
+        "exitCode": { "type": ["integer", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "RunAssessmentPayload": {
+      "type": "object",
+      "required": ["schemaVersion", "health", "issues", "verification"],
+      "properties": {
+        "schemaVersion": { "const": "run-assessment.v1" },
+        "health": { "enum": ["clean", "degraded", "failing"] },
+        "issues": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/AssessmentIssuePayload" }
+        },
+        "verification": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/VerificationResultPayload" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "ExecutionAssessmentPayload": {
+      "type": "object",
+      "required": [
+        "schemaVersion",
+        "health",
+        "issues",
+        "verification",
+        "episodeCount",
+        "episodes"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "execution-assessment.v1" },
+        "health": { "enum": ["clean", "degraded", "failing"] },
+        "issues": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/AssessmentIssuePayload" }
+        },
+        "verification": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/VerificationResultPayload" }
+        },
+        "episodeCount": { "type": "integer", "minimum": 0 },
+        "rootRunId": { "type": "string" },
+        "finalRunId": { "type": "string" },
+        "episodes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["runId", "assessment"],
+            "properties": {
+              "runId": { "type": "string" },
+              "assessment": { "$ref": "#/$defs/RunAssessmentPayload" }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
     "RunCompletedEventPayload": {
       "type": "object",
-      "required": ["runId", "state"],
+      "required": ["runId", "state", "assessment"],
       "properties": {
         "runId": { "type": "string", "minLength": 1 },
         "state": { "type": "string" },
         "stopReason": { "type": "string" },
         "message": { "type": "string" },
-        "outcome": { "type": "object" },
+        "assessment": { "$ref": "#/$defs/ExecutionAssessmentPayload" },
         "failure": { "$ref": "#/$defs/RunFailureEnvelope" },
-        "todoHandoff": {
+        "todoAdvisory": {
           "type": "object",
-          "required": ["reason", "message"],
+          "required": ["unfinished", "blocked", "message"],
           "properties": {
-            "reason": { "type": "string", "minLength": 1 },
+            "unfinished": { "type": "integer", "minimum": 1 },
+            "blocked": { "type": "integer", "minimum": 0 },
             "message": { "type": "string" }
           },
           "additionalProperties": false
@@ -1717,10 +1821,11 @@
     },
     "RunFailedEventPayload": {
       "type": "object",
-      "required": ["runId", "failure"],
+      "required": ["runId", "failure", "assessment"],
       "properties": {
         "runId": { "type": "string", "minLength": 1 },
-        "failure": { "$ref": "#/$defs/RunFailureEnvelope" }
+        "failure": { "$ref": "#/$defs/RunFailureEnvelope" },
+        "assessment": { "$ref": "#/$defs/ExecutionAssessmentPayload" }
       },
       "additionalProperties": false
     }

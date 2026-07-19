@@ -2,11 +2,14 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import type { RunResult } from "@sparkwright/core";
 import {
   FileWorkflowControlInbox,
   FileWorkflowNotificationOutbox,
   type WorkflowControlSourceIdentity,
   type WorkflowDefinition,
+  type WorkflowLeaseBoundWriter,
+  type WorkflowRunRecord,
   type WorkflowRunId,
 } from "@sparkwright/agent-runtime";
 import { InFlightCommandDispatcher } from "@sparkwright/server-runtime";
@@ -152,7 +155,131 @@ describe("WorkflowRuntimeOperations", () => {
     });
     expect(resumeCalls).toBe(0);
   });
+
+  it("continues only active durable workflows after objective resumable stops", async () => {
+    const { operations } = await createOperations();
+    const record = await createRunningRecord(operations);
+    const lease = leaseReturning(record);
+
+    await expect(
+      operations.decideEpisodeAfterRun({
+        state: {},
+        result: runResult("failed", "max_steps_exceeded"),
+        continuationCount: 0,
+        maxContinuations: 4,
+      }),
+    ).resolves.toMatchObject({ kind: "terminal" });
+
+    await expect(
+      operations.decideEpisodeAfterRun({
+        state: { record, lease },
+        result: runResult("failed", "max_steps_exceeded"),
+        continuationCount: 0,
+        maxContinuations: 4,
+      }),
+    ).resolves.toMatchObject({
+      kind: "continue",
+      reason: "workflow_record_active",
+      stopReason: "max_steps_exceeded",
+    });
+
+    await expect(
+      operations.decideEpisodeAfterRun({
+        state: { record, lease },
+        result: runResult("failed", "max_model_calls_exceeded"),
+        continuationCount: 0,
+        maxContinuations: 4,
+      }),
+    ).resolves.toMatchObject({
+      kind: "continue",
+      reason: "workflow_record_active",
+      stopReason: "max_model_calls_exceeded",
+    });
+
+    await expect(
+      operations.decideEpisodeAfterRun({
+        state: { record, lease },
+        result: runResult("failed", "model_completion_failed"),
+        continuationCount: 0,
+        maxContinuations: 4,
+      }),
+    ).resolves.toMatchObject({ kind: "terminal" });
+
+    await expect(
+      operations.decideEpisodeAfterRun({
+        state: { record, lease },
+        result: runResult("failed", "max_steps_exceeded"),
+        continuationCount: 4,
+        maxContinuations: 4,
+      }),
+    ).resolves.toMatchObject({ kind: "terminal" });
+  });
+
+  it.each(["completed", "failed", "waiting", "cancelled"] as const)(
+    "does not continue a fresh durable workflow in %s state",
+    async (status) => {
+      const { operations } = await createOperations();
+      const record = await createRunningRecord(operations);
+      const fresh = { ...record, status } as WorkflowRunRecord;
+
+      await expect(
+        operations.decideEpisodeAfterRun({
+          state: { record, lease: leaseReturning(fresh) },
+          result: runResult("failed", "max_steps_exceeded"),
+          continuationCount: 0,
+          maxContinuations: 4,
+        }),
+      ).resolves.toMatchObject({
+        kind: "terminal",
+        state: { record: { status } },
+      });
+    },
+  );
 });
+
+async function createRunningRecord(
+  operations: WorkflowRuntimeOperations,
+): Promise<WorkflowRunRecord> {
+  const id = `workflow_decider_${tempDirs.length}` as WorkflowRunId;
+  const writer = await operations.createStore().acquireWriter(id, {
+    owner: "decider-test",
+  });
+  if (!writer) throw new Error("Could not acquire workflow writer.");
+  const record = await writer.create({
+    id,
+    sessionId: `session_decider_${tempDirs.length}`,
+    ...workflowPin(id),
+    currentNodeId: "main",
+    attempts: { main: 1 },
+  });
+  await writer.release();
+  return record;
+}
+
+function leaseReturning(record: WorkflowRunRecord): WorkflowLeaseBoundWriter {
+  return {
+    readFresh: async () => record,
+  } as WorkflowLeaseBoundWriter;
+}
+
+function runResult(
+  state: RunResult["state"],
+  stopReason: RunResult["stopReason"],
+): RunResult {
+  return {
+    signal: state === "completed" ? "completed" : "failed",
+    state,
+    stopReason,
+    message: String(stopReason),
+    assessment: {
+      schemaVersion: "run-assessment.v1",
+      health: state === "completed" ? "clean" : "failing",
+      issues: [],
+      verification: [],
+    },
+    metadata: {},
+  };
+}
 
 async function createOperations(): Promise<{
   operations: WorkflowRuntimeOperations;

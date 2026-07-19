@@ -10,6 +10,16 @@ See [workspace-writes.md](workspace-writes.md) and [../../modules/coding-tools.m
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-19
+- Scope: reviewed shell and Workflow verifier paths after removing
+  `todo_clear`. Structured command/profile verification remains fact-ledger
+  evidence in Core assessment; shell sandboxing, cwd, approval, and rollback
+  contracts are unchanged.
+- Read: Host Workflow projection/distill/shadow changes, runtime assembly, and
+  Core verification projection.
+- Tests: affected Core/Host/CLI shell and Workflow suites passed.
+
+- Status: Verified
 - Date: 2026-07-18
 - Scope: resolved Shell configuration/sandbox inputs now flow through
   `RunPreparationOperations` into MCP, Skill, Agent, Workflow, Hook, catalog,

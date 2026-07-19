@@ -11,6 +11,39 @@ See [raw-trace.md](raw-trace.md) for source data and [export-diagnostics.md](exp
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-19
+- Scope: session check reconciles tool failures per run and treats
+  cancellation-owned `TOOL_ABORTED` as resolved for canonical and legacy
+  cancellation terminals. Conflicting terminals, cross-run failures, and
+  workspace boundary attempts remain visible.
+- Read: Core session consistency, run-outcome analysis, terminal compatibility,
+  focused fixtures, and retained real cancellation traces.
+- Tests: Core trace/session consistency 140/140; fresh and historical real
+  cancellation sessions both return `ok:true` with no findings.
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: trace report preserves every episode terminal but does not elevate a
+  resumable `run.failed` to `TRACE_ERRORS` after a later episode terminal for
+  the same `workflowRunId` supersedes it. The reason predicate is shared with Host
+  execution assessment; non-resumable and final failures remain reportable.
+- Read: Core run assessment/trace diagnostics, Host execution aggregation,
+  retained real Workflow trace, and report tests.
+- Tests: Core trace 132/132 and full Core 641/641; retained trace now returns
+  `passed_with_issues` with only `RECOVERED_TOOL_FAILURES`.
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: online CLI status and offline trace summary/verify share the persisted
+  Core assessment for complete runs. Verification is structured fact-ledger
+  evidence; prose command-subclaim inference and the old tool-outcome sidecar
+  are removed. Missing terminal assessment fails closed.
+- Read: Core assessment/fact ledger/diagnostics, CLI outcome/trace commands,
+  fixtures, and real regression scripts.
+- Tests: Core trace 130/130 and CLI focused/full regression coverage passed
+  before final repository gates.
+
+- Status: Verified
 - Date: 2026-07-17T23:37:17+0800
 - Scope: CLI and Core reference trace implementations moved behind the explicit
   internal entry; summary/timeline/report/verify algorithms and output shapes
@@ -63,6 +96,9 @@ trace.jsonl
 
 - Summary counts event types, runs, sessions, agents, subagents, tools, usage,
   errors, approvals, safety, reads, and artifacts.
+- Session consistency groups tool outcome analysis by `runId`. Only an
+  unambiguous logical cancellation owns `TOOL_ABORTED`; terminal conflicts and
+  workspace path escapes are never erased by cancellation reconciliation.
 - Summary separates persisted actor ids from child/delegate identities:
   `agentIds` comes from event metadata `agentId`, while `subagentIds` is
   derived only from `subagent.*` events and prefers `metadata.childAgentId`,

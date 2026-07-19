@@ -4,6 +4,7 @@ import {
   isEvent,
   isResponse,
   type EventKind,
+  type ExecutionAssessmentPayload,
   type HostEvent,
   type HostMessage,
   type HostRequest,
@@ -92,7 +93,7 @@ export interface CollectedRun {
   runEvents: unknown[];
   /** @reserved Public collected-run field consumed by SDK consumers. */
   finalAnswer?: string;
-  outcome?: unknown;
+  assessment: ExecutionAssessmentPayload;
   failure?: unknown;
   toolFailures: unknown[];
   artifacts: unknown[];
@@ -282,10 +283,7 @@ export class Client extends TypedEmitter<ClientEventMap> {
           terminalEvent.kind === "run.completed"
             ? terminalEvent.payload.message
             : undefined,
-        outcome:
-          terminalEvent.kind === "run.completed"
-            ? terminalEvent.payload.outcome
-            : undefined,
+        assessment: terminalEvent.payload.assessment,
         failure: getRunFailure(terminalEvent.payload),
         toolFailures,
         artifacts,

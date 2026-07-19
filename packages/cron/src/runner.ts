@@ -1,18 +1,14 @@
 import { join } from "node:path";
 import {
-  analyzeToolOutcomes,
   compileRunAccessMode,
-  completedRunOutcomeFromEvents,
   createDefaultPromptInspector,
   createPermissionModePolicy,
   createRun,
   wrapPromptBuilderWithInspector,
   type InteractionChannel,
-  type ClassifiedToolFailure,
-  type CompletedRunOutcome,
   type ModelAdapter,
+  type RunAssessment,
   type RunAccessMode,
-  type SparkwrightEvent,
   type ToolDefinition,
 } from "@sparkwright/core";
 import {
@@ -102,7 +98,7 @@ export async function runCronJob(
   const verdict = cronRunVerdict({
     state: result.state,
     message,
-    events: run.events.all(),
+    assessment: result.assessment,
   });
   const tracePath = join(sessionRootDir, `cron-${job.id}`, "trace.jsonl");
   const silent = verdict.message.trimStart().startsWith("[SILENT]");
@@ -136,87 +132,52 @@ const denyInteractions: InteractionChannel = {
 function cronRunVerdict(input: {
   state: string;
   message: string;
-  events: readonly SparkwrightEvent[];
+  assessment: RunAssessment;
 }): { ok: boolean; message: string } {
   if (input.state !== "completed") {
     return { ok: false, message: input.message };
   }
 
-  const outcome = completedRunOutcomeFromEvents(input.events, input.message);
-  if (outcome?.failing) {
+  if (input.assessment.health === "failing") {
     return {
       ok: false,
-      message: formatFailingOutcome(outcome),
+      message: formatFailingAssessment(input.assessment),
     };
   }
 
-  const denials = analyzeToolOutcomes(input.events).policyDenials;
-  if (denials.length > 0) {
+  const denial = input.assessment.issues.find(
+    (issue) => issue.code === "EXPECTED_DENIAL",
+  );
+  if (denial) {
     return {
       ok: false,
-      message: formatPolicyDenials(denials),
+      message: formatPolicyDenial(denial),
     };
   }
 
   return { ok: true, message: input.message };
 }
 
-function formatFailingOutcome(outcome: CompletedRunOutcome): string {
-  const details = [
-    outcome.toolFailures
-      ? `${outcome.toolFailures.count} unresolved tool failure${plural(
-          outcome.toolFailures.count,
-        )}${formatCodes(outcome.toolFailures.codes)}`
-      : undefined,
-    outcome.commandFailures
-      ? `${outcome.commandFailures.count} unresolved verification command failure${plural(
-          outcome.commandFailures.count,
-        )}${formatLastCommand(outcome.commandFailures.lastCommand)}`
-      : undefined,
-    outcome.verificationProfileFailures
-      ? `${outcome.verificationProfileFailures.count} verification profile failure${plural(
-          outcome.verificationProfileFailures.count,
-        )}${formatLastId(outcome.verificationProfileFailures.lastId)}`
-      : undefined,
-  ].filter((detail): detail is string => Boolean(detail));
+function formatFailingAssessment(assessment: RunAssessment): string {
+  const details = assessment.issues
+    .filter((issue) => issue.disposition === "failing")
+    .map((issue) => `${issue.code}=${issue.count}`);
   const suffix = details.length > 0 ? `: ${details.join("; ")}` : "";
-  return `cron run completed with failing outcome (${outcome.kind})${suffix}.`;
+  return `cron run completed with assessment=failing${suffix}.`;
 }
 
-function formatPolicyDenials(
-  denials: readonly ClassifiedToolFailure[],
-): string {
-  const codes = [
-    ...new Set(
-      denials
-        .map((failure) => failure.code)
-        .filter((code): code is string => Boolean(code)),
-    ),
-  ];
-  const toolNames = [
-    ...new Set(
-      denials
-        .map((failure) => failure.toolName)
-        .filter((toolName): toolName is string => Boolean(toolName)),
-    ),
-  ];
+function formatPolicyDenial(denial: RunAssessment["issues"][number]): string {
+  const codes = denial.details?.codes ?? [];
+  const toolNames = denial.details?.toolNames ?? [];
   const toolSuffix =
     toolNames.length > 0 ? ` from ${toolNames.slice(0, 3).join(", ")}` : "";
-  return `cron run encountered ${denials.length} approval/policy denial${plural(
-    denials.length,
+  return `cron run encountered ${denial.count} approval/policy denial${plural(
+    denial.count,
   )}${toolSuffix}${formatCodes(codes)}; unattended job did not complete.`;
 }
 
 function formatCodes(codes: readonly string[]): string {
   return codes.length > 0 ? ` (${codes.slice(0, 3).join(", ")})` : "";
-}
-
-function formatLastCommand(command: string | undefined): string {
-  return command ? `; last command: ${command}` : "";
-}
-
-function formatLastId(id: string | undefined): string {
-  return id ? `; last id: ${id}` : "";
 }
 
 function plural(count: number): string {

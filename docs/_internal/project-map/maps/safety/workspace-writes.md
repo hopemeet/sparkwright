@@ -10,6 +10,16 @@ See [approvals.md](approvals.md) and [../runtime/tool-orchestration.md](../runti
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-19
+- Scope: reviewed write safety around the Host execution/Workflow refactor.
+  Removing implicit `README.md` scope broadens only to the existing configured
+  workspace ceiling; explicit targets still narrow writes. Assessment and
+  Workflow continuation changes do not bypass workspace policy or rollback.
+- Read: HostExecution, Agent/Workflow runtime assembly, CLI target handling,
+  and workspace-write regressions.
+- Tests: Core workspace and full Host/CLI write-policy coverage passed.
+
+- Status: Verified
 - Date: 2026-07-18
 - Scope: immutable access/security resolution, fresh mutable run policy,
   process workspace-lease injection, and main catalog mutation wrapping now

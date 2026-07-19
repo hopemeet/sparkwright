@@ -12,6 +12,14 @@ See also [../maps/runtime/tool-orchestration.md](../maps/runtime/tool-orchestrat
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-19
+- Scope: reviewed because Host tool catalog/surface changed while removing Todo
+  scheduler-only tools and forcing. Coding-tool execution, governance,
+  workspace-write, and canonical tool-identity contracts are unchanged.
+- Read: Host catalog/surface changes and coding-tool orchestration boundaries.
+- Tests: affected Host tool coverage passed before final repository gates.
+
+- Status: Verified
 - Date: 2026-07-17T23:37:17+0800
 - Scope: coding-tools tests opt into Core's internal LocalWorkspace reference;
   coding tool names, schemas, governance, and execution behavior are unchanged.

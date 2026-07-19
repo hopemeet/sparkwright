@@ -12,6 +12,23 @@ Conventions:
 
 ## Unreleased
 
+- Terminal assessment consolidation: breaking — every current terminal run
+  event/result carries Core `RunAssessment`; Host completion carries aggregated
+  `ExecutionAssessment`; Agent terminal results carry independent `finality`
+  and `assessment`. The parallel completed-run outcome projection and prose
+  claim inference are removed. Missing assessment is invalid and consumers
+  should fail closed.
+
+- Workflow/Todo continuation: breaking — Todo is four-state advisory plan data
+  and no longer owns episode continuation, tool forcing, write counters,
+  required-tool checks, or `todo_clear`. Only a fresh nonterminal durable
+  Workflow record can authorize another bounded episode; ordinary runs execute
+  one episode.
+
+- CLI target handling: breaking correction — `run` and session resume no
+  longer synthesize `README.md` when `--target` is absent. An explicit target
+  still narrows scope; omission uses the configured workspace policy ceiling.
+
 - Skill capability and trace identity: breaking consolidation — indexed and
   resident-loaded Skills publish required `packageHash` plus
   `packageHashPolicyVersion: 2`; the Markdown-only `contentHash` projection is
@@ -65,8 +82,8 @@ Conventions:
   `factLedger` (`schemaVersion: "fact-ledger.v1"`) with raw command facts,
   verifier result satisfaction, optional `verificationSource`, workspace write
   epochs, and stale markers.
-  Command/verification diagnostics derive from this canonical ledger; terminal
-  status consumers use the bounded `outcome` projection.
+  Command/verification diagnostics derive from this canonical ledger. This
+  historical additive step is superseded by required `RunAssessment` above.
 
 - `event.schema.json`: additive — reserves `workflow.started`,
   `workflow.node.started`, `workflow.node.completed`, `workflow.waiting`,

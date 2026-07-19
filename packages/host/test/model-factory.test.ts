@@ -178,11 +178,11 @@ describe("deterministic demo model", () => {
 
       await expect(created.adapter.complete(childA)).resolves.toMatchObject({
         message: expect.stringContaining('goal: "child A goal"'),
-        toolCalls: [{ toolName: "read", arguments: { path: "README.md" } }],
+        toolCalls: [{ toolName: "list_dir", arguments: { path: "." } }],
       });
       await expect(created.adapter.complete(childB)).resolves.toMatchObject({
         message: expect.stringContaining('goal: "child B goal"'),
-        toolCalls: [{ toolName: "read", arguments: { path: "README.md" } }],
+        toolCalls: [{ toolName: "list_dir", arguments: { path: "." } }],
       });
       await expect(
         created.adapter.complete({ ...childA, step: 2 }),

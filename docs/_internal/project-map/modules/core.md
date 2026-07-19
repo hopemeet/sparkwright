@@ -13,6 +13,52 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md),
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-19
+- Scope: session consistency now classifies unresolved tool outcomes per
+  `runId` and excludes only `TOOL_ABORTED` owned by one unambiguous cancelled
+  terminal. Sole `run.cancelled`, legacy cancelled `run.completed`, and their
+  compatible pair are accepted; conflicting terminals and workspace escapes
+  remain diagnostic findings.
+- Read: session-consistency projection, run-outcome classifier, terminal event
+  compatibility, trace tests, and two retained real cancellation sessions.
+- Tests: Core trace/session consistency 140/140; both retained real sessions
+  now return no findings.
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: formal shell verification now comes only from explicit command shape
+  or structured verifier provenance; goal prose is not runtime authority. Core
+  also exports the existing resumable-run-failure predicate so Host execution
+  aggregation and offline trace report share it. Trace report suppresses only
+  a resumable failure superseded by a later episode terminal for the same
+  durable Workflow.
+- Read: FactLedger/classifier, run assessment, trace diagnostics, Host execution
+  aggregation, CLI consumers, and retained real Workflow trace.
+- Tests: Core 641/641; retained three-episode trace reports
+  `passed_with_issues` without `TRACE_ERRORS`.
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: the repeated-call guard now has one argument-aware tool-owned escape
+  hatch for conservative duplicate ledgers. `managesRepeatedCalls(args)` lets
+  Agent delegation reach an existing complete+clean cache; partial, unhealthy,
+  prior-failure, and no-progress repeats remain under Core's guard.
+- Read: ToolDefinition, run-loop repeat classifiers, Agent Runtime ledger,
+  Host indexed/direct/dynamic delegation wrappers, focused and real tests.
+- Tests: Core run 128/128; Host Agent tools/spawn 117/117; real Terra indexed
+  delegation reused one child with `alreadyCompleted:true`.
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: Core now owns the single-run `RunAssessment` projection. Terminal
+  results/events persist bounded health, issue, and verification facts derived
+  from the raw event stream plus the fact ledger; prose claim parsing and the
+  parallel completed-run outcome shape are removed.
+- Read: run/fact-ledger/outcome/assessment sources, trace diagnostics, terminal
+  event assembly, public exports, and focused/full Core tests.
+- Tests: Core 638/638 passed in final repository verification.
+
+- Status: Verified
 - Date: 2026-07-18
 - Scope: Host Core run/resume construction for Workflow-aware episodes moved
   into `WorkflowEpisodeRuntime` without changing Core run, checkpoint,
@@ -134,6 +180,7 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md),
 - `packages/core/src/workflow-hooks.ts`
 - `packages/core/src/fact-classifier.ts`
 - `packages/core/src/fact-ledger.ts`
+- `packages/core/src/run-assessment.ts`
 - `packages/core/src/run-outcome.ts`
 - `packages/core/src/policy.ts`
 - `packages/core/src/environment.ts`
@@ -197,6 +244,10 @@ Does not own:
 - `ToolDefinition.governance.idempotency` is the only replay-safety semantic.
   Network-class failures on `conditional` / `non_idempotent` tools emit
   `tool.replay_risk`; `idempotent` or undeclared tools do not.
+- `ToolDefinition.managesRepeatedCalls(args)` is separate from replay safety.
+  It permits a sequential verbatim call to reach a tool-owned conservative
+  cache/retry protocol only when no prior tool failure or explicit no-progress
+  result exists. Throws and false fail closed to the generic repeat guard.
 - `ToolDefinition.validateInput()` is the small runtime-level semantic input
   validation seam. Core calls it after JSON schema validation and before
   `policyForArgs()` / policy / approval. It must validate only, not mutate
@@ -299,6 +350,10 @@ Does not own:
   as an informational classification advisory, not a correctness failure;
   finite commands should normally be classified as jobs.
 - `traceId`, `spanId`, and `parentSpanId` are correlation fields only.
+- Session tool-failure consistency is run-local. It may suppress
+  `TOOL_ABORTED` only when the same run has one non-conflicting logical
+  cancelled terminal; a cancellation in another run, a failed/completed
+  conflict, or a workspace path escape cannot inherit that suppression.
 - `trace.ts` is the stable named facade used by `index.ts` and `internal.ts`;
   storage lives in `trace-store.ts`, diagnostics live in
   `trace-diagnostics.ts`, session consistency/repair lives in

@@ -11,6 +11,7 @@ import {
   type ArtifactId,
 } from "../src/ids.js";
 import type { RunRecord } from "../src/types.js";
+import type { RunAssessment } from "../src/run-assessment.js";
 import {
   createSessionRunStoreFactory,
   FileSessionStore,
@@ -34,6 +35,12 @@ import {
 } from "../src/trace.js";
 
 const TEST_SESSION_ID = "session_trace_test";
+const CLEAN_ASSESSMENT: RunAssessment = {
+  schemaVersion: "run-assessment.v1",
+  health: "clean",
+  issues: [],
+  verification: [],
+};
 
 function sessionStoreOptions(
   sessionRootDir: string,
@@ -1791,6 +1798,56 @@ describe("trace", () => {
     ).toBe(false);
   });
 
+  it("reports completed but unhealthy sub-agents independently from finality", () => {
+    const log = new EventLog(createRunId());
+    const childRunId = createRunId();
+    const events: SparkwrightEvent[] = [
+      log.emit("run.created", { goal: "use an unhealthy review" }),
+      log.emit(
+        "subagent.completed",
+        {
+          childRunId,
+          terminalState: "completed",
+          finality: "complete",
+          assessment: {
+            schemaVersion: "run-assessment.v1",
+            health: "failing",
+            issues: [
+              {
+                code: "UNRESOLVED_TOOL_FAILURE",
+                kind: "tool_failure",
+                disposition: "failing",
+                count: 1,
+              },
+            ],
+            verification: [],
+          },
+        },
+        { agentName: "reviewer", childRunId, subagentDepth: 1 },
+      ),
+      log.emit("run.completed", { state: "completed" }),
+    ];
+
+    const report = buildTraceReportJsonl(
+      events.map(serializeEventJsonl).join(""),
+    );
+
+    expect(report.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: "high",
+          code: "SUBAGENT_UNHEALTHY",
+          evidence: expect.arrayContaining([
+            expect.stringContaining("UNRESOLVED_TOOL_FAILURE"),
+          ]),
+        }),
+      ]),
+    );
+    expect(
+      report.findings.some((finding) => finding.code === "SUBAGENT_INCOMPLETE"),
+    ).toBe(false);
+  });
+
   it("keeps incomplete sub-agent severity high when verification predates the child write", () => {
     const parentRunId = createRunId();
     const parentLog = new EventLog(parentRunId);
@@ -1962,13 +2019,11 @@ describe("trace", () => {
     );
   });
 
-  it("recomputes over raw events so a stale persisted snapshot does not mask the new classification", () => {
+  it("keeps terminal assessment authoritative while still deriving structural diagnostics", () => {
     const log = new EventLog(createRunId());
-    // The run was recorded BEFORE the destructive-mutation classifier existed,
-    // so its persisted run.completed.toolOutcome lacks `mutationFollowups` and
-    // still counts the post-deletion not-found as unresolved. Because the raw
-    // events retain tool.requested arguments, the report must recompute and
-    // surface the correct classification instead of trusting the stale snapshot.
+    // A persisted semantic assessment can remain failing while structural
+    // diagnostics independently recognize a mutation-followup pattern from the
+    // raw arguments. The report keeps both facts instead of replacing either.
     const jsonl = [
       log.emit("run.created", { goal: "Delete the testcron job" }),
       log.emit("tool.requested", {
@@ -1998,10 +2053,18 @@ describe("trace", () => {
       }),
       log.emit("run.completed", {
         reason: "final_answer",
-        // Stale snapshot shape from before the classifier change.
-        toolOutcome: {
-          unresolved: { total: 1, byCode: { TOOL_EXECUTION_FAILED: 1 } },
-          recovered: { total: 0, byCode: {} },
+        assessment: {
+          schemaVersion: "run-assessment.v1",
+          health: "failing",
+          issues: [
+            {
+              code: "UNRESOLVED_TOOL_FAILURE",
+              kind: "tool_failure",
+              disposition: "failing",
+              count: 1,
+            },
+          ],
+          verification: [],
         },
       }),
     ]
@@ -2010,7 +2073,7 @@ describe("trace", () => {
 
     const report = buildTraceReportJsonl(jsonl);
 
-    expect(report.findings.map((finding) => finding.code)).not.toContain(
+    expect(report.findings.map((finding) => finding.code)).toContain(
       "UNRESOLVED_TOOL_FAILURES",
     );
     expect(report.findings).toEqual(
@@ -2022,7 +2085,7 @@ describe("trace", () => {
     );
   });
 
-  it("falls back to the persisted snapshot when raw events stripped tool.requested arguments", () => {
+  it("reads persisted assessment when request arguments were stripped", () => {
     const log = new EventLog(createRunId());
     // A compacted trace whose tool.requested events no longer carry arguments
     // cannot be reclassified, so the persisted snapshot (here: already recovered)
@@ -2038,9 +2101,18 @@ describe("trace", () => {
       }),
       log.emit("run.completed", {
         reason: "final_answer",
-        toolOutcome: {
-          unresolved: { total: 0, byCode: {} },
-          recovered: { total: 1, byCode: { EBUSY: 1 } },
+        assessment: {
+          schemaVersion: "run-assessment.v1",
+          health: "degraded",
+          issues: [
+            {
+              code: "RECOVERED_TOOL_FAILURE",
+              kind: "tool_recovery",
+              disposition: "degraded",
+              count: 1,
+            },
+          ],
+          verification: [],
         },
       }),
     ]
@@ -2054,7 +2126,7 @@ describe("trace", () => {
     );
   });
 
-  it("does not let an args-bearing run force a recompute that misclassifies a stripped run in a mixed trace", () => {
+  it("keeps assessment ownership per run in a mixed trace", () => {
     const log = new EventLog(createRunId());
     // Mixed multi-run trace: a newer run still carries request arguments, but an
     // older/compacted run stripped them and recorded its EBUSY failure as
@@ -2075,7 +2147,15 @@ describe("trace", () => {
         status: "completed",
         output: { path: "x.txt" },
       }),
-      log.emit("run.completed", { reason: "final_answer" }),
+      log.emit("run.completed", {
+        reason: "final_answer",
+        assessment: {
+          schemaVersion: "run-assessment.v1",
+          health: "clean",
+          issues: [],
+          verification: [],
+        },
+      }),
       // Older/compacted run: request args stripped, persisted snapshot recovered.
       log.emit("run.created", { goal: "older compacted run" }),
       log.emit("tool.requested", { id: "call_busy", toolName: "read" }),
@@ -2087,9 +2167,18 @@ describe("trace", () => {
       }),
       log.emit("run.completed", {
         reason: "final_answer",
-        toolOutcome: {
-          unresolved: { total: 0, byCode: {} },
-          recovered: { total: 1, byCode: { EBUSY: 1 } },
+        assessment: {
+          schemaVersion: "run-assessment.v1",
+          health: "degraded",
+          issues: [
+            {
+              code: "RECOVERED_TOOL_FAILURE",
+              kind: "tool_recovery",
+              disposition: "degraded",
+              count: 1,
+            },
+          ],
+          verification: [],
         },
       }),
     ]
@@ -3507,6 +3596,107 @@ describe("trace", () => {
     );
   });
 
+  it("does not report a superseded resumable episode failure as terminal", () => {
+    const failedLog = new EventLog(createRunId());
+    const completedLog = new EventLog(createRunId());
+    const sessionMetadata = { sessionId: "session_workflow" };
+    const failedAssessment: RunAssessment = {
+      schemaVersion: "run-assessment.v1",
+      health: "failing",
+      issues: [
+        {
+          code: "MAX_STEPS_EXCEEDED",
+          kind: "run_failure",
+          disposition: "failing",
+          count: 1,
+          details: { reason: "max_steps_exceeded" },
+        },
+      ],
+      verification: [],
+    };
+    const jsonl = [
+      failedLog.emit("run.created", { goal: "workflow" }, sessionMetadata),
+      failedLog.emit(
+        "workflow.node.started",
+        { workflowRunId: "workflow_1", nodeId: "implement" },
+        sessionMetadata,
+      ),
+      failedLog.emit(
+        "run.failed",
+        {
+          reason: "max_steps_exceeded",
+          code: "MAX_STEPS_EXCEEDED",
+          assessment: failedAssessment,
+        },
+        sessionMetadata,
+      ),
+      completedLog.emit("run.created", { goal: "continue" }, sessionMetadata),
+      completedLog.emit(
+        "workflow.node.completed",
+        { workflowRunId: "workflow_1", nodeId: "implement" },
+        sessionMetadata,
+      ),
+      completedLog.emit(
+        "run.completed",
+        { state: "completed", assessment: CLEAN_ASSESSMENT },
+        sessionMetadata,
+      ),
+    ]
+      .map(serializeEventJsonl)
+      .join("");
+
+    const report = buildTraceReportJsonl(jsonl);
+
+    expect(report.findings.map((finding) => finding.code)).not.toContain(
+      "TRACE_ERRORS",
+    );
+  });
+
+  it("keeps a resumable failure from an independent earlier run reportable", () => {
+    const failedLog = new EventLog(createRunId());
+    const completedLog = new EventLog(createRunId());
+    const sessionMetadata = { sessionId: "session_shared" };
+    const jsonl = [
+      failedLog.emit("run.created", { goal: "first" }, sessionMetadata),
+      failedLog.emit(
+        "run.failed",
+        {
+          reason: "max_steps_exceeded",
+          code: "MAX_STEPS_EXCEEDED",
+          assessment: {
+            schemaVersion: "run-assessment.v1",
+            health: "failing",
+            issues: [
+              {
+                code: "MAX_STEPS_EXCEEDED",
+                kind: "run_failure",
+                disposition: "failing",
+                count: 1,
+                details: { reason: "max_steps_exceeded" },
+              },
+            ],
+            verification: [],
+          },
+        },
+        sessionMetadata,
+      ),
+      completedLog.emit("run.created", { goal: "later" }, sessionMetadata),
+      completedLog.emit(
+        "run.completed",
+        { state: "completed", assessment: CLEAN_ASSESSMENT },
+        sessionMetadata,
+      ),
+    ]
+      .map(serializeEventJsonl)
+      .join("");
+
+    const report = buildTraceReportJsonl(jsonl);
+
+    expect(report.findings.map((finding) => finding.code)).toContain(
+      "TRACE_ERRORS",
+    );
+  });
+
   it("keeps foreground untracked workspace mutation guards as expected denials", () => {
     const run = createRunRecord();
     const log = new EventLog(run.id);
@@ -3568,14 +3758,24 @@ describe("trace", () => {
     expect(summary.safety.capabilityMutations.completed).toBe(1);
   });
 
-  it("classifies tool outcomes from standard payloads", () => {
+  it("classifies standard traces with and without a terminal assessment", () => {
     const run = createRunRecord();
     // The verdict computed over full events: the failure on a.txt is NOT
     // recovered, because the later success is on a *different* file (b.txt) and
     // EBUSY is not a not-found code.
-    const toolOutcome = {
-      unresolved: { total: 1, byCode: { EBUSY: 1 } },
-      recovered: { total: 0, byCode: {} },
+    const assessment = {
+      schemaVersion: "run-assessment.v1",
+      health: "failing",
+      issues: [
+        {
+          code: "UNRESOLVED_TOOL_FAILURE",
+          kind: "tool_failure",
+          disposition: "failing",
+          count: 1,
+          details: { codes: ["EBUSY"] },
+        },
+      ],
+      verification: [],
     };
     const buildEvents = (withVerdict: boolean) => {
       const log = new EventLog(run.id);
@@ -3605,7 +3805,7 @@ describe("trace", () => {
         }),
         log.emit(
           "run.completed",
-          withVerdict ? { reason: "final_answer", toolOutcome } : {},
+          withVerdict ? { reason: "final_answer", assessment } : {},
         ),
       ];
       return summarizeTraceJsonl(
@@ -4761,6 +4961,7 @@ describe("trace", () => {
       signal: "completed",
       state: "completed",
       stopReason: "final_answer",
+      assessment: CLEAN_ASSESSMENT,
       metadata: {},
     });
 
@@ -4820,6 +5021,7 @@ describe("trace", () => {
       signal: "completed",
       state: "completed",
       stopReason: "final_answer",
+      assessment: CLEAN_ASSESSMENT,
       metadata: {},
     });
 
@@ -4887,6 +5089,7 @@ describe("trace", () => {
       signal: "completed",
       state: "completed",
       stopReason: "final_answer",
+      assessment: CLEAN_ASSESSMENT,
       metadata: {},
     });
 
@@ -4941,6 +5144,7 @@ describe("trace", () => {
       signal: "completed",
       state: "completed",
       stopReason: "final_answer",
+      assessment: CLEAN_ASSESSMENT,
       metadata: {},
     });
 
@@ -5005,6 +5209,7 @@ describe("trace", () => {
       signal: "completed",
       state: "completed",
       stopReason: "final_answer",
+      assessment: CLEAN_ASSESSMENT,
       metadata: {},
     });
 
@@ -5053,6 +5258,7 @@ describe("trace", () => {
       signal: "completed",
       state: "completed",
       stopReason: "final_answer",
+      assessment: CLEAN_ASSESSMENT,
       metadata: {},
     });
 
@@ -5097,6 +5303,7 @@ describe("trace", () => {
       signal: "completed",
       state: "completed",
       stopReason: "final_answer",
+      assessment: CLEAN_ASSESSMENT,
       metadata: {},
     });
     const sessionPath = join(root, "session_repair", "session.json");
@@ -5153,6 +5360,7 @@ describe("trace", () => {
       state: "completed",
       stopReason: "final_answer",
       message: "done",
+      assessment: CLEAN_ASSESSMENT,
       metadata: {
         message: "done",
       },
@@ -5727,6 +5935,7 @@ describe("trace", () => {
       state: "completed",
       stopReason: "final_answer",
       message: "done",
+      assessment: CLEAN_ASSESSMENT,
       metadata: {},
     });
 
@@ -5778,6 +5987,7 @@ describe("trace", () => {
       state: "completed",
       stopReason: "final_answer",
       message: "ok",
+      assessment: CLEAN_ASSESSMENT,
       metadata: {},
     });
 

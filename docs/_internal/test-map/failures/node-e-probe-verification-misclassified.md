@@ -5,12 +5,12 @@
 - Pattern ID: `node-e-probe-verification-misclassified`
 - Status: `fixed`
 - First seen: 2026-06-29
-- Last seen: 2026-06-29
-- Recorded count: 1
+- Last seen: 2026-07-19
+- Recorded count: 2
 
 | Cause                   | Count |
 | ----------------------- | ----: |
-| `product_bug`           |     1 |
+| `product_bug`           |     2 |
 | `test_bug`              |     0 |
 | `prompt_underspecified` |     0 |
 | `model_variance`        |     0 |
@@ -57,10 +57,10 @@ classification rather than trust stale persisted snapshots.
 
 ## Prevention
 
-- Treat `node -e` as a probe/ad-hoc command unless it is wrapped by an explicit
-  test runner.
-- Prefer recomputed command outcomes when raw shell command evidence is
-  complete; keep persisted snapshots for standard/legacy traces without args.
+- Never use goal prose to grant verifier authority. Explicit test/check command
+  shapes and structured verifier provenance are the only formal sources.
+- Consume the persisted terminal FactLedger when available; replay through the
+  same projector only for incomplete traces.
 
 ## Fix
 
@@ -70,6 +70,38 @@ classification rather than trust stale persisted snapshots.
   outcomes when all shell completions have command evidence.
 - Added focused coverage in `packages/core/test/run-outcome.test.ts` and
   `packages/core/test/trace.test.ts`.
+
+## Reopened General Case
+
+On 2026-07-19, current-source real Terra showed that the command-specific
+`node -e` mitigation did not remove the underlying goal-prose authority. With
+no configured verifier, a goal containing `Verify` caused ordinary
+`node diagnostic.js` exit 7 to become a formal failed verification and caused
+ordinary `node diagnostic-ok.js` exit 0 to become a formal passed receipt.
+The final answers explicitly denied making a verification claim.
+
+- Failing control: session `session_mrrhzln9a0tdci8t`, run
+  `run_mrrhzlu2d1vlg57d`.
+- Passing control: session `session_mrri12viaczwn31n`, run
+  `run_mrri132c36a3h0t4`.
+- Trace root:
+  `/Applications/xgw/projects/AI-native/project/test/qa_cli_agent_20260719_outcome/ordinary_command/.sparkwright/sessions`.
+
+The remaining root is `FactLedger.observeGoal()` plus
+`isVerificationGoal(goal)`: once the goal matches `/verify|test/`, every
+non-probe command is verification-relevant and `run-assessment.ts` projects it
+as formal verification. Prevention must remove goal prose as verifier
+authority, not extend the probe allowlist one command at a time.
+
+## General Fix
+
+- 2026-07-19: removed goal-text observation and `isVerificationGoal()`.
+  Ordinary shell commands no longer become verification facts because a goal
+  contains `verify` or `test`; only explicit verification command shapes and
+  structured verifier hooks produce receipts.
+- Added a positive/negative ordinary-command regression under verification-like
+  goal prose in `packages/core/test/fact-ledger.test.ts`.
+- Full Core coverage passed (640 tests).
 
 ## Related
 

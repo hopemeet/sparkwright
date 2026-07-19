@@ -8,6 +8,16 @@ cron, shell/task tools, and capability inspection.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-19
+- Scope: reviewed capability assembly after Todo scheduler removal and Workflow
+  continuation narrowing. The Todo surface is advisory plan state; durable
+  Workflow records own continuation. Agent health is carried as assessment,
+  while MCP/Skill discovery and capability ownership remain unchanged.
+- Read: Host tool/capability assembly, Agent/Todo/Workflow contracts, and
+  downstream protocol surfaces.
+- Tests: affected Host, Agent Runtime, CLI, and protocol suites passed.
+
+- Status: Verified
 - Date: 2026-07-18
 - Scope: live model/Skill/MCP/Agent/tool/Hook capability preparation and final
   run snapshot capture now route through `RunPreparationOperations`, while

@@ -13,6 +13,41 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 
 - Status: Verified
 - Date: 2026-07-19
+- Scope: Workflow episode construction keeps step and resource budgets as
+  independent limiters. Host derives Core `maxSteps` only from the explicit
+  Agent profile value (or the 100-step backstop) and passes node/profile
+  `runBudget.maxModelCalls` unchanged so Core owns the model-call terminal.
+- Read: Workflow episode planning/construction at fresh, checkpoint, and
+  Workflow-resume entry points; Core budget terminals; durable continuation.
+- Tests: Host Workflow/protocol 103/103 and real Terra durable Workflow; every
+  one-call boundary emitted `MAX_MODEL_CALLS_EXCEEDED` and the Workflow passed.
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: Host Agent parallel aggregation consumes canonical child finality and
+  keeps incomplete separate from unhealthy. Direct Core reuses Host's exported
+  runtime hook assembly, including required verification profiles. Execution
+  assessment and Core trace diagnostics share one resumable-failure predicate.
+- Read: Agent runtime assembly, run hook preparation, execution assessment,
+  Direct Core runner, Core trace/finality contracts, and focused/full tests.
+- Tests: Host 592/592; CLI 191/191; required-profile Direct Core regression and
+  retained three-episode Workflow trace both pass.
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: `HostExecution` aggregates episode-level Core assessments into one
+  `ExecutionAssessment`, with later verification superseding earlier results
+  and resumable episode budget failures excluded after successful continuation.
+  Episode continuation is now a durable Workflow-record decision owned by
+  `WorkflowRuntimeOperations`; ordinary runs execute one episode and no Todo
+  supervisor participates in scheduling.
+- Read: execution assessment/driver, Workflow episode and durable runtime
+  owners, Agent assembly, protocol projection, and full Host tests.
+- Tests: Host 591/591 passed, including direct assessment aggregation and
+  continuation-decision coverage.
+
+- Status: Verified
+- Date: 2026-07-19
 - Scope: the final `HostRuntime` composition audit consolidates every
   HostExecution begin/busy/release sequence behind one private execution
   envelope. Start, checkpoint resume, Workflow resume, service-detached start,
@@ -811,6 +846,9 @@ Does not own:
   entry: `workflows.ts` parses the node fields, `runtime.ts` resolves model
   refs through the configured model-tier surface, passes the selected adapter
   and per-attempt budget to `createRun()`, and records `workflowEpisode`,
+  without projecting `runBudget.maxModelCalls` into `maxSteps`. Explicit
+  profile `maxSteps` remains a separate limiter and otherwise uses the Host
+  backstop.
   per-episode usage snapshots, and aggregate `workflowUsage` on
   `WorkflowRunRecord.metadata`. Retry escalation inside one core run is not
   implemented until model-node boundaries become separate worker episodes.

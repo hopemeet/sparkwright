@@ -4,6 +4,7 @@ import type {
   DelegationLedgerKey,
   DelegationLedgerResult,
 } from "./types.js";
+import { isReusableAgentResult } from "./result.js";
 
 interface DelegationLedgerEntry {
   key: string;
@@ -46,7 +47,7 @@ export function rememberSuccessfulDelegation(
   goal: string,
   result: DelegationLedgerResult,
 ): boolean {
-  if (!isReusableDelegationResult(result)) return false;
+  if (!isReusableAgentResult(result)) return false;
   const entries = delegationLedgersByParent.get(parent) ?? [];
   entries.push({
     key: delegationLedgerKeyString(key),
@@ -69,14 +70,6 @@ export function withAlreadyCompletedNote(
     alreadyCompleted: true,
     note: "A similar delegation already completed in this parent run; summarize the previous child result instead of spawning another child agent.",
   };
-}
-
-function isReusableDelegationResult(result: DelegationLedgerResult): boolean {
-  return (
-    result.signal === "completed" &&
-    result.stepLimitReached !== true &&
-    result.truncated !== true
-  );
 }
 
 function delegationLedgerKeyString(key: DelegationLedgerKey): string {

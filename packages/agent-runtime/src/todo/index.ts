@@ -3,10 +3,8 @@
 // so JSDoc/`@stability` tags stay with their definitions.
 
 export type {
-  TodoEvidence,
   TodoItem,
   TodoLedger,
-  TodoOwner,
   TodoPriority,
   TodoStatus,
   TodoSummary,
@@ -23,17 +21,7 @@ export {
 export type { CreateTodoToolsOptions, TodoWriteResult } from "./tools.js";
 export { createTodoTools, createTodoWriteTool } from "./tools.js";
 
-export type {
-  TodoDirective,
-  TodoTerminalAuditDecision,
-  TodoTerminalAuditOptions,
-} from "./ledger.js";
 export {
-  TODO_CONTINUATION_REQUIRED_TOOL,
-  auditTodoAfterTerminal,
-  buildTodoContinuationPrompt,
-  computeTodoDirective,
-  hasExternalProgressEvidence,
   hasUnfinishedTodo,
   readTodoLedger,
   renderTodoLedgerContext,
@@ -41,12 +29,3 @@ export {
   unfinishedTodoItems,
   writeTodoLedger,
 } from "./ledger.js";
-
-export type {
-  RunTodoSupervisedOptions,
-  TodoContinuationRequest,
-  TodoSupervisedRunInput,
-  TodoSupervisedRunOutput,
-  TodoSupervisedRunResult,
-} from "./supervisor.js";
-export { runTodoSupervised } from "./supervisor.js";

@@ -11,6 +11,27 @@ See [session-store.md](session-store.md) and [../runtime/context-compaction.md](
 
 - Status: Verified
 - Date: 2026-07-19
+- Scope: fresh and continued durable Workflow episodes preserve exact budget
+  ownership. A model-call budget stop remains `max_model_calls_exceeded`, is
+  eligible for bounded durable continuation, and is not rewritten as a step
+  limit on resume.
+- Read: Workflow episode builder, durable continuation decider, Core budget
+  terminal projection, focused tests, and real multi-episode trace.
+- Tests: Host Workflow/protocol 103/103; real Terra Workflow completed after
+  four exact model-call budget terminals and a verified final episode.
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: CLI fresh and resumed runs carry no target unless the caller supplies
+  one. Runtime continuation after an episode is authorized only by the current
+  durable Workflow record and bounded by episode caps; ordinary sessions and
+  Todo plans never trigger an implicit run-chain.
+- Read: CLI contracts/runners, Host Workflow record decider/episode driver,
+  protocol continuation DTOs, and resume regressions.
+- Tests: CLI target regressions and Host Workflow decision coverage passed.
+
+- Status: Verified
+- Date: 2026-07-19
 - Scope: checkpoint and Workflow resume now receive the already-admitted
   HostExecution explicitly from the single HostRuntime execution envelope.
   Canonical run lookup, checkpoint/from-trace behavior, pinned Workflow

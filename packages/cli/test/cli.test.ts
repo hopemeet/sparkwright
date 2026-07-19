@@ -600,7 +600,7 @@ describe.sequential("runCli", () => {
     expect(parsed.name).toBe("readme-daily 2");
   });
 
-  it("returns a failed exit code when cron tick has a failed job", async () => {
+  it("does not infer a default README target for cron jobs", async () => {
     const root = await harness.tempDir("sparkwright-cron-cli-");
     const okWorkspace = await createWorkspace("# Demo\n");
     const badWorkspace = await createWorkspace("# Demo\n");
@@ -662,11 +662,11 @@ describe.sequential("runCli", () => {
       },
     );
 
-    expect(tick.exitCode).toBe(1);
+    expect(tick.exitCode).toBe(0);
     expect(JSON.parse(tickOutput.stdoutText())).toMatchObject({
       attempted: 2,
-      completed: 1,
-      failed: 1,
+      completed: 2,
+      failed: 0,
       skippedBecauseLocked: false,
       skippedBecauseJobLocked: 0,
     });
@@ -692,8 +692,7 @@ describe.sequential("runCli", () => {
       },
     });
     expect(JSON.parse(badStatusOutput.stdoutText())).toMatchObject({
-      lastStatus: "error",
-      lastError: expect.stringContaining("failing outcome"),
+      lastStatus: "ok",
     });
   });
 
@@ -1226,7 +1225,7 @@ describe.sequential("runCli", () => {
     expect(checkOutput.stdoutText()).toContain("SESSION_EVENTS_MISSING");
   });
 
-  it("returns a failed exit code and clear final answer for unhandled tool failures", async () => {
+  it("runs without an implicit target when --target is omitted", async () => {
     const workspace = await harness.tempDir("sparkwright-cli-");
     const output = createOutputCapture();
 
@@ -1249,19 +1248,20 @@ describe.sequential("runCli", () => {
       },
     );
 
-    expect(result.exitCode).toBe(1);
+    expect(result.exitCode).toBe(0);
     expect(result.runState).toBe("completed");
-    expect(output.stderrText()).toContain("unhandled tool failure");
+    expect(output.stderrText()).not.toContain("unhandled tool failure");
     expect(output.stdoutText()).toContain("run.completed final_answer");
 
     const events = await readTrace(result.tracePath);
-    expect(events.map((event) => event.type)).toContain("tool.failed");
+    expect(events.map((event) => event.type)).not.toContain("tool.failed");
     const completed = events.find((event) => event.type === "run.completed");
-    expect(completed?.payload?.message).toContain("Could not read README.md");
-    expect(completed?.payload?.message).not.toContain("Read README.md.");
-    expect(completed?.payload?.outcome).toMatchObject({
-      kind: "completed_with_tool_failures",
-      toolFailures: { count: 1, codes: ["ENOENT"] },
+    expect(completed?.payload?.message).toContain(
+      "No explicit target was provided",
+    );
+    expect(completed?.payload?.assessment).toMatchObject({
+      health: "clean",
+      issues: [],
     });
   });
 
@@ -1725,11 +1725,9 @@ describe.sequential("runCli", () => {
     expect(output.stderrText()).toContain(
       "Run completed with 1 denied workspace write; requested mutation was not applied.",
     );
-    // A denied workspace write is expected-by-policy, not a failure: the label
-    // matches the (0) exit code and the denial is surfaced via the stderr
-    // advisory above (see PR #22 / run-outcome-consistency.test.ts).
-    expect(output.stdoutText()).toContain("Run completed (");
-    expect(output.stdoutText()).not.toContain("Run completed_with_issues");
+    // A denied workspace write is degraded rather than failing: the CLI keeps
+    // exit 0 while visibly preserving the persisted assessment caveat.
+    expect(output.stdoutText()).toContain("Run completed_with_issues");
 
     const events = await readTrace(result.tracePath);
     expect(events.map((event) => event.type)).toEqual(
@@ -3157,8 +3155,6 @@ describe.sequential("runCli", () => {
         "        command: bash",
         '        args: ["-lc", "npm test -- docs"]',
         "        authorized: true",
-        "      - id: todos",
-        "        kind: todo_clear",
         "---",
         "## implement",
         "Update and verify.",
@@ -3293,11 +3289,7 @@ describe.sequential("runCli", () => {
     };
     expect(report.ok).toBe(true);
     expect(report.summary.missing).toBe(0);
-    expect(report.checks).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ id: "todo_clear", status: "matched" }),
-      ]),
-    );
+    expect(report.checks).toEqual(expect.any(Array));
     await expect(access(join(sessionDir, "workflow-runs"))).rejects.toThrow();
   });
 
@@ -4004,9 +3996,19 @@ describe.sequential("runCli", () => {
         ),
         traceEvent(6, runId, "run.completed", {
           status: "completed",
-          toolOutcome: {
-            unresolved: { total: 2, byCode: { EACCES: 1, ENOENT: 1 } },
-            recovered: { total: 0, byCode: {} },
+          assessment: {
+            schemaVersion: "run-assessment.v1",
+            health: "failing",
+            issues: [
+              {
+                code: "UNRESOLVED_TOOL_FAILURE",
+                kind: "tool_failure",
+                disposition: "failing",
+                count: 2,
+                details: { codes: ["EACCES", "ENOENT"] },
+              },
+            ],
+            verification: [],
           },
         }),
         traceEvent(
@@ -4038,9 +4040,11 @@ describe.sequential("runCli", () => {
         ),
         traceEvent(9, residentRunId, "run.completed", {
           status: "completed",
-          toolOutcome: {
-            unresolved: { total: 0, byCode: {} },
-            recovered: { total: 0, byCode: {} },
+          assessment: {
+            schemaVersion: "run-assessment.v1",
+            health: "clean",
+            issues: [],
+            verification: [],
           },
         }),
       ].join(""),
@@ -4077,9 +4081,11 @@ describe.sequential("runCli", () => {
         ),
         traceEvent(12, agentRunId, "run.completed", {
           status: "completed",
-          toolOutcome: {
-            unresolved: { total: 0, byCode: {} },
-            recovered: { total: 0, byCode: {} },
+          assessment: {
+            schemaVersion: "run-assessment.v1",
+            health: "clean",
+            issues: [],
+            verification: [],
           },
         }),
       ].join(""),
@@ -4649,9 +4655,19 @@ describe.sequential("runCli", () => {
         ),
         traceEvent(5, runId, "run.completed", {
           status: "completed",
-          toolOutcome: {
-            unresolved: { total: 1, byCode: { ENOENT: 1 } },
-            recovered: { total: 0, byCode: {} },
+          assessment: {
+            schemaVersion: "run-assessment.v1",
+            health: "failing",
+            issues: [
+              {
+                code: "UNRESOLVED_TOOL_FAILURE",
+                kind: "tool_failure",
+                disposition: "failing",
+                count: 1,
+                details: { codes: ["ENOENT"] },
+              },
+            ],
+            verification: [],
           },
         }),
       ].join(""),
@@ -4855,9 +4871,11 @@ describe.sequential("runCli", () => {
         ),
         traceEvent(23, codeRunId, "run.completed", {
           status: "completed",
-          toolOutcome: {
-            unresolved: { total: 0, byCode: {} },
-            recovered: { total: 0, byCode: {} },
+          assessment: {
+            schemaVersion: "run-assessment.v1",
+            health: "clean",
+            issues: [],
+            verification: [],
           },
         }),
       ].join(""),
@@ -4892,9 +4910,11 @@ describe.sequential("runCli", () => {
         ),
         traceEvent(33, otherRunId, "run.completed", {
           status: "completed",
-          toolOutcome: {
-            unresolved: { total: 0, byCode: {} },
-            recovered: { total: 0, byCode: {} },
+          assessment: {
+            schemaVersion: "run-assessment.v1",
+            health: "clean",
+            issues: [],
+            verification: [],
           },
         }),
       ].join(""),
@@ -7281,7 +7301,15 @@ describe.sequential("runCli", () => {
     const workspace = await createWorkspace("# Demo\n");
     const runOutput = createOutputCapture();
     const run = await runCli(
-      ["run", "--direct-core", "inspect", "--workspace", workspace],
+      [
+        "run",
+        "--direct-core",
+        "inspect",
+        "--workspace",
+        workspace,
+        "--target",
+        "README.md",
+      ],
       {
         io: { stdout: runOutput.stdout, stderr: runOutput.stderr },
       },
@@ -9121,6 +9149,81 @@ describe.sequential("runCli", () => {
     ).toBe(false);
   });
 
+  it("runs configured verification profiles in direct-core diagnostics", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+    await writeFile(
+      join(workspace, ".sparkwright", "config.json"),
+      JSON.stringify({
+        capabilities: {
+          verification: {
+            mode: "require",
+            profiles: {
+              fast: [
+                {
+                  id: "unit",
+                  kind: "custom",
+                  command: process.execPath,
+                  args: ["-e", "process.exit(0)"],
+                },
+              ],
+            },
+          },
+        },
+      }),
+      "utf8",
+    );
+    const output = createOutputCapture();
+
+    const run = await runCli(
+      [
+        "run",
+        "write and verify README",
+        "--direct-core",
+        "--workspace",
+        workspace,
+        "--model",
+        "deterministic",
+        "--target",
+        "README.md",
+        "--access-mode",
+        "accept-edits",
+        "--trace-level",
+        "debug",
+      ],
+      {
+        env: {
+          ...process.env,
+          SPARKWRIGHT_ENABLE_DIRECT_CORE: "1",
+        },
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(run.exitCode, output.stderrText()).toBe(0);
+    expect(output.stdoutText()).toContain("Verification: 1 passed (unit).");
+    const traceEvents = await readTrace(run.tracePath);
+    expect(
+      traceEvents.some((event) => {
+        if (event.type !== "workflow_hook.completed") return false;
+        const payload = event.payload as
+          | {
+              hookName?: string;
+              result?: { metadata?: { verifierId?: string } };
+            }
+          | undefined;
+        return (
+          payload?.hookName === "workflow:verification_fast" &&
+          payload.result?.metadata?.verifierId === "unit"
+        );
+      }),
+    ).toBe(true);
+  });
+
   it("normalizes relative --workspace before host tools resolve absolute paths", async () => {
     const workspace = await createWorkspace("# Demo\n");
     const output = createOutputCapture();
@@ -9393,10 +9496,23 @@ describe.sequential("runCli", () => {
     const completed = traceEvents.find(
       (event) => event.type === "run.completed",
     );
-    expect(completed?.payload?.outcome).toMatchObject({
-      kind: "completed_with_recovered_tool_failures",
-      toolFailures: { count: 1, codes: ["TOOL_ARGUMENTS_INVALID"] },
+    expect(completed?.payload?.assessment).toMatchObject({
+      health: "degraded",
     });
+    expect(
+      (completed?.payload?.assessment as { issues?: unknown[] } | undefined)
+        ?.issues,
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "RECOVERED_TOOL_FAILURE",
+          count: 1,
+          details: expect.objectContaining({
+            codes: ["TOOL_ARGUMENTS_INVALID"],
+          }),
+        }),
+      ]),
+    );
   });
 
   it("treats skipped repeated calls after a successful result as recovered", async () => {
@@ -9462,10 +9578,23 @@ describe.sequential("runCli", () => {
     const completed = traceEvents.find(
       (event) => event.type === "run.completed",
     );
-    expect(completed?.payload?.outcome).toMatchObject({
-      kind: "completed_with_recovered_tool_failures",
-      toolFailures: { count: 1, codes: ["REPEATED_TOOL_CALL_SKIPPED"] },
+    expect(completed?.payload?.assessment).toMatchObject({
+      health: "degraded",
     });
+    expect(
+      (completed?.payload?.assessment as { issues?: unknown[] } | undefined)
+        ?.issues,
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "RECOVERED_TOOL_FAILURE",
+          count: 1,
+          details: expect.objectContaining({
+            codes: ["REPEATED_TOOL_CALL_SKIPPED"],
+          }),
+        }),
+      ]),
+    );
 
     const summaryOutput = createOutputCapture();
     const summary = await runCli(

@@ -1912,10 +1912,16 @@ function unresolvedToolFailureTotal(
   event: SparkwrightEvent,
 ): number | undefined {
   if (!isRecord(event.payload)) return undefined;
-  const outcome = event.payload.toolOutcome;
-  if (!isRecord(outcome) || !isRecord(outcome.unresolved)) return undefined;
-  return typeof outcome.unresolved.total === "number"
-    ? outcome.unresolved.total
+  const assessment = event.payload.assessment;
+  if (!isRecord(assessment) || !Array.isArray(assessment.issues)) {
+    return undefined;
+  }
+  const issue = assessment.issues.find(
+    (candidate) =>
+      isRecord(candidate) && candidate.code === "UNRESOLVED_TOOL_FAILURE",
+  );
+  return isRecord(issue) && typeof issue.count === "number"
+    ? issue.count
     : undefined;
 }
 

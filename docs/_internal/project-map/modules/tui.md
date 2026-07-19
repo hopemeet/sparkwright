@@ -11,6 +11,26 @@ See also [../maps/trace/export-diagnostics.md](../maps/trace/export-diagnostics.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-19
+- Scope: EventStream renders a sole canonical `run.cancelled` terminal and its
+  run facts. RunController no longer creates an unpersisted Todo advisory row;
+  live and replay use the Todo band. Initial same-session restore skips the
+  empty-store reset, so EventStream's static header is not remounted.
+- Read: EventStream, RunController, EventStore reset/session flow, Todo band,
+  protocol terminal shape, and Ink/SDK regressions.
+- Tests: TUI 417/417; sole-cancel and initial-session regressions passed.
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: TUI terminal facts read canonical assessments, Agent lifecycle rows
+  expose child health/issues independently of terminal finality, and Todo no
+  longer manufactures client-side continuation episodes.
+- Read: event store/stream, run controller, Todo band, protocol DTOs, and Ink
+  rendering regressions.
+- Tests: focused assessment/Agent rendering passed; full TUI rerun is part of
+  final repository verification.
+
+- Status: Verified
 - Date: 2026-07-18
 - Scope: Host capability inspection ownership moved internally. TUI continues
   to consume the same protocol snapshot and owns no capability reconstruction;

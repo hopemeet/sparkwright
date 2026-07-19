@@ -10,6 +10,11 @@
     "main"
   ],
   "subagentIds": [],
+  "assessmentObservation": {
+    "completeness": "terminal",
+    "terminalRuns": 1,
+    "incompleteRuns": 0
+  },
   "byType": {
     "run.created": 1,
     "run.started": 1,

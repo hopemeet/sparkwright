@@ -23,8 +23,8 @@ export interface ParsedArgs {
   workspaceRootSource: "default" | "config" | "cli";
   sessionRootDir: string;
   sessionRootDirSource: "default" | "cli";
-  targetPath: string;
-  targetPathSource: "default" | "cli";
+  /** Explicit workspace-relative target. Omitted means the run is untargeted. */
+  targetPath?: string;
   /** Workspace-relative paths/globs whose contents the run must not read. */
   confidentialPaths: string[];
   /** Whether the built-in conservative confidential path defaults are active. */

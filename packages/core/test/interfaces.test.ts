@@ -106,6 +106,12 @@ describe("extension interfaces (compile-time)", () => {
     const result: RunResult = {
       signal: "completed",
       state: "completed",
+      assessment: {
+        schemaVersion: "run-assessment.v1",
+        health: "clean",
+        issues: [],
+        verification: [],
+      },
       metadata: {},
     };
 

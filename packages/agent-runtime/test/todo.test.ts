@@ -1,25 +1,18 @@
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  auditTodoAfterTerminal,
-  buildTodoContinuationPrompt,
-  computeTodoDirective,
-  createAgentProfilePolicy,
   createTodoTools,
   createTodoWriteTool,
-  hasExternalProgressEvidence,
   hasUnfinishedTodo,
   itemsOnly,
   parseTodoMarkdown,
   readTodoLedger,
   renderTodoLedgerContext,
-  runTodoSupervised,
   serializeTodoMarkdown,
   summarizeTodoLedger,
   type TodoItem,
-  type TodoLedger,
   type TodoWriteResult,
 } from "../src/index.js";
 
@@ -38,375 +31,137 @@ async function tempPath(): Promise<string> {
   return join(dir, ".sparkwright", "sessions", "s1", "todo.md");
 }
 
-describe("parseTodoMarkdown", () => {
-  it("parses all five states", () => {
-    const md = [
-      "- [ ] pending one",
-      "- [ ] 🔄 in progress",
-      "- [x] completed",
-      "- [ ] ❌ failed",
-      "- [~] skipped (reason)",
-    ].join("\n");
-    const items = itemsOnly(parseTodoMarkdown(md));
-    expect(items.map((i) => i.status)).toEqual([
-      "pending",
-      "in_progress",
-      "completed",
-      "failed",
-      "skipped",
-    ]);
-    expect(items[4]!.title).toBe("skipped");
-    expect(items[4]!.note).toBe("reason");
-  });
+describe("Todo Markdown", () => {
+  it("parses the four advisory states, nesting, and priority", () => {
+    const items = itemsOnly(
+      parseTodoMarkdown(
+        [
+          "- [ ] pending",
+          "  priority: high",
+          "  - [ ] 🔄 active",
+          "- [x] completed",
+          "- [ ] ⛔ blocked",
+        ].join("\n"),
+      ),
+    );
 
-  it("parses metadata and evidence blocks", () => {
-    const md = [
-      "- [ ] ⛔ fix flaky test (needs logs)",
-      "  id: t1",
-      "  priority: high",
-      "  done-when: regression passes",
-      "  owner: primary",
-      "  evidence:",
-      "    - file_changed: packages/core/src/run.ts",
-      "    - command: npm test (exit 0)",
-      "    - test: npm test -- todo (passed)",
-    ].join("\n");
-    const [item] = itemsOnly(parseTodoMarkdown(md));
-    expect(item).toMatchObject({
-      id: "t1",
-      title: "fix flaky test",
-      status: "blocked",
-      priority: "high",
-      doneWhen: "regression passes",
-      owner: "primary",
-      note: "needs logs",
-    });
-    expect(item?.evidence).toEqual([
-      { kind: "file_changed", path: "packages/core/src/run.ts" },
-      { kind: "command", command: "npm test", exitCode: 0 },
-      { kind: "test", command: "npm test -- todo", passed: true },
-    ]);
-  });
-
-  it("captures depth from indentation", () => {
-    const md = ["- [ ] top", "  - [x] nested", "    - [ ] deeper"].join("\n");
-    const items = itemsOnly(parseTodoMarkdown(md));
-    expect(items.map((i) => i.depth)).toEqual([0, 1, 2]);
-  });
-
-  it("preserves blank lines and comments through round-trip", () => {
-    const md = ["# Stage 1", "", "- [x] done", "- [ ] next", ""].join("\n");
-    const entries = parseTodoMarkdown(md);
-    const out = serializeTodoMarkdown(entries);
-    expect(out).toBe(md);
-  });
-});
-
-describe("serializeTodoMarkdown", () => {
-  it("emits the expected marker for each status", () => {
-    const items: TodoItem[] = [
-      { title: "a", status: "pending", depth: 0 },
-      { title: "b", status: "in_progress", depth: 0 },
-      { title: "c", status: "completed", depth: 0 },
+    expect(items).toEqual([
+      { title: "pending", status: "pending", depth: 0, priority: "high" },
+      { title: "active", status: "in_progress", depth: 1 },
+      { title: "completed", status: "completed", depth: 0 },
       { title: "blocked", status: "blocked", depth: 0 },
-      { title: "d", status: "failed", depth: 0, note: "reason" },
-      { title: "e", status: "skipped", depth: 1 },
-    ];
-    const out = serializeTodoMarkdown(
-      items.map((i) => ({ kind: "item", ...i })),
-    );
-    expect(out).toBe(
-      [
-        "- [ ] a",
-        "- [ ] 🔄 b",
-        "- [x] c",
-        "- [ ] ⛔ blocked",
-        "- [ ] ❌ d (reason)",
-        "  - [~] e",
-        "",
-      ].join("\n"),
-    );
+    ]);
   });
 
-  it("round-trips new metadata fields", () => {
-    const items: TodoItem[] = [
+  it("round-trips comments and the minimal item shape", () => {
+    const entries = [
+      { kind: "comment" as const, text: "# Plan" },
+      { kind: "blank" as const },
       {
-        id: "todo-1",
-        title: "run tests",
-        status: "pending",
+        kind: "item" as const,
+        title: "verify",
+        status: "in_progress" as const,
         depth: 0,
-        priority: "high",
-        doneWhen: "tests pass",
-        owner: "supervisor",
-        evidence: [
-          { kind: "artifact", artifactId: "artifact_1" },
-          { kind: "trace_event", eventId: "event_1" },
-        ],
+        priority: "medium" as const,
       },
     ];
-    const out = serializeTodoMarkdown(
-      items.map((i) => ({ kind: "item", ...i })),
-    );
-    const parsed = itemsOnly(parseTodoMarkdown(out));
-    expect(parsed).toEqual(items);
+    const markdown = serializeTodoMarkdown(entries);
+    expect(markdown).toContain("# Plan\n\n- [ ] 🔄 verify");
+    expect(parseTodoMarkdown(markdown)).toEqual(entries);
   });
 });
 
-describe("createTodoWriteTool", () => {
-  it("write creates the file and echoes the resulting state", async () => {
+describe("todo_write", () => {
+  it("writes the session ledger and echoes current progress", async () => {
     const path = await tempPath();
-    const write = createTodoWriteTool({ getTodoPath: () => path });
-    const items = [
-      { title: "stage 0", status: "completed" },
-      { title: "stage 1", status: "in_progress" },
-      { title: "stage 2", status: "pending" },
-    ];
-    const writeRes = (await write.execute(
-      { items },
-      {} as never,
-    )) as TodoWriteResult;
-    expect(writeRes.saved).toBe(true);
-    expect(writeRes.total).toBe(3);
-    expect(writeRes.completed).toBe(1);
-    expect(writeRes.remaining).toBe(2);
-    expect(writeRes.todos).toEqual([
-      { title: "stage 0", status: "completed" },
-      { title: "stage 1", status: "in_progress" },
-      { title: "stage 2", status: "pending" },
-    ]);
-    expect(writeRes.summary).toContain("1/3 done");
-    expect(writeRes.summary).toContain("stage 1");
-
-    const onDisk = await readFile(path, "utf8");
-    expect(onDisk).toContain("- [x] stage 0");
-    expect(onDisk).toContain("- [ ] 🔄 stage 1");
-    expect(onDisk).toContain("- [ ] stage 2");
-  });
-
-  it("exposes and accepts only the canonical model-facing item fields", async () => {
-    const path = await tempPath();
-    const write = createTodoWriteTool({ getTodoPath: () => path });
-    const schema = write.inputSchema as {
-      properties: {
-        items: {
-          items: {
-            properties: Record<string, unknown>;
-            required?: string[];
-            additionalProperties?: boolean;
-          };
-        };
-      };
-      additionalProperties?: boolean;
-    };
-    expect(Object.keys(schema.properties.items.items.properties)).toEqual([
-      "title",
-      "status",
-      "priority",
-    ]);
-    expect(schema.properties.items.items.required).toEqual(["title", "status"]);
-    expect(schema.properties.items.items.additionalProperties).toBe(false);
-    expect(schema.additionalProperties).toBe(false);
-
-    await write.execute(
+    const tool = createTodoWriteTool({ getTodoPath: () => path });
+    const result = (await tool.execute(
       {
         items: [
-          { title: "implement ledger", status: "blocked", priority: "medium" },
+          { title: "inspect", status: "completed" },
+          { title: "implement", status: "in_progress" },
+          { title: "verify", status: "pending" },
         ],
       },
       {} as never,
-    );
-    const ledger = await readTodoLedger(path);
-    expect(ledger.items[0]).toMatchObject({
-      title: "implement ledger",
-      status: "blocked",
-      priority: "medium",
-    });
+    )) as TodoWriteResult;
 
-    await expect(
-      write.execute(
-        { items: [{ content: "legacy", status: "pending" }] },
-        {} as never,
-      ),
-    ).rejects.toThrow(/unsupported field\(s\): content/);
-    await expect(
-      write.execute(
+    expect(result).toMatchObject({
+      saved: true,
+      total: 3,
+      completed: 1,
+      remaining: 2,
+    });
+    expect(await readFile(path, "utf8")).toContain("- [ ] 🔄 implement");
+  });
+
+  it("keeps identical writes as no-ops", async () => {
+    const path = await tempPath();
+    const tool = createTodoWriteTool({ getTodoPath: () => path });
+    const args = { items: [{ title: "inspect", status: "pending" }] };
+
+    await tool.execute(args, {} as never);
+    const duplicate = (await tool.execute(
+      args,
+      {} as never,
+    )) as TodoWriteResult;
+    expect(duplicate.saved).toBe(false);
+    expect(duplicate.hint).toContain("unchanged");
+  });
+
+  it("does not impose a hidden write-count budget", async () => {
+    const path = await tempPath();
+    const tool = createTodoWriteTool({ getTodoPath: () => path });
+    let last: TodoWriteResult | undefined;
+    for (let index = 0; index < 5; index += 1) {
+      last = (await tool.execute(
         {
-          items: [{ title: "rich", status: "pending", doneWhen: "tests pass" }],
+          items: [
+            {
+              title: `revision ${index}`,
+              status: index === 4 ? "completed" : "in_progress",
+            },
+          ],
         },
         {} as never,
-      ),
-    ).rejects.toThrow(/unsupported field\(s\): doneWhen/);
+      )) as TodoWriteResult;
+    }
+    expect(last).toMatchObject({ saved: true, completed: 1, remaining: 0 });
   });
 
-  it("write rejects invalid status values", async () => {
+  it("accepts common status synonyms into the four-state model", async () => {
     const path = await tempPath();
-    const write = createTodoWriteTool({ getTodoPath: () => path });
-    await expect(
-      write.execute({ items: [{ title: "bad", status: "wat" }] }, {} as never),
-    ).rejects.toThrow(/status must be one of/);
-  });
-
-  it("write is not approval-gated (internal ledger, no write side effect)", () => {
-    const write = createTodoWriteTool({ getTodoPath: () => "/tmp/x/todo.md" });
-    expect(write.policy?.risk).toBe("safe");
-    expect(write.governance?.sideEffects ?? ["none"]).not.toContain("write");
-  });
-
-  it("write skips a byte-identical rewrite as a no-op", async () => {
-    const path = await tempPath();
-    const write = createTodoWriteTool({ getTodoPath: () => path });
-    const items = [{ title: "a", status: "pending" }];
-    const first = (await write.execute(
-      { items },
-      {} as never,
-    )) as TodoWriteResult;
-    expect(first.saved).toBe(true);
-    const mtime1 = (await stat(path)).mtimeMs;
-    const second = (await write.execute(
-      { items },
-      {} as never,
-    )) as TodoWriteResult;
-    expect(second.saved).toBe(false);
-    // The file was not rewritten.
-    expect((await stat(path)).mtimeMs).toBe(mtime1);
-  });
-
-  it("nudges after repeated no-op writes, and resets on a real change", async () => {
-    const path = await tempPath();
-    const write = createTodoWriteTool({ getTodoPath: () => path });
-    const items = [{ title: "a", status: "pending" }];
-    const run = (todoItems: unknown[]) =>
-      write.execute(
-        { items: todoItems },
-        {} as never,
-      ) as Promise<TodoWriteResult>;
-    // First write changes the file — no nudge.
-    expect((await run(items)).hint).toBeUndefined();
-    // 1st no-op: nudge immediately so bookkeeping churn does not burn turns.
-    const nudged = await run(items);
-    expect(nudged.saved).toBe(false);
-    expect(nudged.hint).toMatch(/calling todo_write again/);
-    // A real change resets the counter.
-    const changed = [{ title: "a", status: "completed" }];
-    expect((await run(changed)).hint).toBeUndefined();
-    expect((await run(changed)).hint).toMatch(/calling todo_write again/);
-  });
-
-  it("enforces an optional run-scoped write budget for real changes", async () => {
-    const path = await tempPath();
-    const write = createTodoWriteTool({
-      getTodoPath: () => path,
-      maxWritesPerRun: 2,
-    });
-    const ctx = (runId: string) => ({ run: { id: runId } }) as never;
-
-    await write.execute(
-      { items: [{ title: "a", status: "pending" }] },
-      ctx("run-1"),
-    );
-    await write.execute(
-      { items: [{ title: "a", status: "in_progress" }] },
-      ctx("run-1"),
-    );
-    await expect(
-      write.execute(
-        { items: [{ title: "a", status: "in_progress" }] },
-        ctx("run-1"),
-      ),
-    ).resolves.toMatchObject({
-      saved: false,
-      hint: expect.stringContaining("calling todo_write again"),
-    });
-
-    const rejected = (await write.execute(
-      { items: [{ title: "a", status: "completed" }] },
-      ctx("run-1"),
-    )) as TodoWriteResult;
-    expect(rejected).toMatchObject({
-      saved: false,
-      hint: expect.stringContaining("too many times"),
-      todos: [{ title: "a", status: "in_progress" }],
-      rejectedTodos: [{ title: "a", status: "completed" }],
-    });
-
-    await expect(
-      write.execute(
-        { items: [{ title: "b", status: "pending" }] },
-        ctx("run-2"),
-      ),
-    ).resolves.toMatchObject({ saved: true });
-  });
-
-  it("write accepts common status synonyms (todo/done) case-insensitively", async () => {
-    const path = await tempPath();
-    const write = createTodoWriteTool({ getTodoPath: () => path });
-    await write.execute(
+    const tool = createTodoWriteTool({ getTodoPath: () => path });
+    await tool.execute(
       {
         items: [
           { title: "a", status: "todo" },
-          { title: "b", status: "Done" },
-          { title: "c", status: "WIP" },
+          { title: "b", status: "done" },
+          { title: "c", status: "wip" },
           { title: "d", status: "cancelled" },
         ],
       },
       {} as never,
     );
-    const ledger = await readTodoLedger(path);
-    expect(ledger.items.map((i) => i.status)).toEqual([
-      "pending",
-      "completed",
-      "in_progress",
-      "skipped",
-    ]);
+    expect(
+      (await readTodoLedger(path)).items.map((item) => item.status),
+    ).toEqual(["pending", "completed", "in_progress", "blocked"]);
   });
 
-  it("createTodoTools exposes only the write tool to the model", async () => {
-    const path = await tempPath();
-    const { todoWrite, all } = createTodoTools({
-      getTodoPath: () => path,
-    });
-    expect(all().map((t) => t.name)).toEqual(["todo_write"]);
-    await todoWrite.execute(
-      { items: [{ title: "x", status: "pending" }] },
-      {} as never,
-    );
-    const ledger = await readTodoLedger(path);
-    expect(ledger.items).toHaveLength(1);
-  });
-
-  it("keeps cadence guidance out of the todo_write schema text", async () => {
-    const path = await tempPath();
-    const todoWrite = createTodoWriteTool({ getTodoPath: () => path });
-    expect(todoWrite.description).toContain("one item in_progress");
-    expect(todoWrite.description).toContain(
-      "Never mark an item completed before its result is in.",
-    );
-    expect(todoWrite.description).toContain(
-      "Do not create a todo list for a simple one-file change",
-    );
-    expect(todoWrite.description).not.toContain("same message");
-    expect(todoWrite.description).not.toContain("same turn");
-    expect(todoWrite.description).not.toContain("separate turn");
-    expect(todoWrite.description).not.toContain("bookkeeping");
+  it("exposes only todo_write", () => {
+    const tools = createTodoTools({ getTodoPath: () => "/tmp/todo.md" });
+    expect(tools.all().map((tool) => tool.name)).toEqual(["todo_write"]);
   });
 });
 
-describe("TodoLedger helpers", () => {
-  it("reads, summarizes, and renders todo context", async () => {
-    const path = await tempPath();
-    const write = createTodoWriteTool({ getTodoPath: () => path });
-    await write.execute(
-      {
-        items: [
-          { title: "done", status: "completed" },
-          { title: "next", status: "pending", priority: "high" },
-          { title: "blocked", status: "blocked" },
-        ],
-      },
-      {} as never,
-    );
-    const ledger = await readTodoLedger(path);
-    const summary = summarizeTodoLedger(ledger);
+describe("Todo advisory helpers", () => {
+  it("summarizes and renders the current plan without scheduling semantics", () => {
+    const items: TodoItem[] = [
+      { title: "done", status: "completed", depth: 0 },
+      { title: "next", status: "pending", depth: 0 },
+      { title: "wait", status: "blocked", depth: 0 },
+    ];
+    const summary = summarizeTodoLedger(items);
     expect(summary).toMatchObject({
       total: 3,
       completed: 1,
@@ -415,437 +170,12 @@ describe("TodoLedger helpers", () => {
       unfinished: 2,
       hasUnfinished: true,
     });
+    const ledger = {
+      schemaVersion: "todo-ledger.v1" as const,
+      items,
+      metadata: {},
+    };
     expect(hasUnfinishedTodo(ledger)).toBe(true);
-    const context = renderTodoLedgerContext(ledger, { sessionId: "s1" });
-    expect(context.source).toEqual({ kind: "todo_ledger", uri: "s1" });
-    expect(context.content).toContain("pending: next");
-    expect(context.metadata.todoLedger).toBe(true);
-  });
-
-  it("reconciles unfinished actionable todos after a final answer with progress", async () => {
-    const ledger = {
-      schemaVersion: "todo-ledger.v1" as const,
-      metadata: {},
-      items: [{ title: "next", status: "pending" as const, depth: 0 }],
-    };
-    const decision = auditTodoAfterTerminal(ledger, {
-      result: {
-        signal: "completed",
-        state: "completed",
-        stopReason: "final_answer",
-        metadata: {},
-      },
-      events: [{ type: "workspace.write.completed" } as never],
-      maxContinuations: 3,
-      continuationCount: 0,
-    });
-    expect(decision).toMatchObject({
-      kind: "continue",
-      reason: "unfinished_todo",
-    });
-    expect(decision.kind === "continue" ? decision.prompt : "").toContain(
-      "reconcile",
-    );
-  });
-
-  it("hands off unfinished todos after a final answer without progress", () => {
-    const ledger = {
-      schemaVersion: "todo-ledger.v1" as const,
-      metadata: {},
-      items: [{ title: "next", status: "pending" as const, depth: 0 }],
-    };
-    const decision = auditTodoAfterTerminal(ledger, {
-      result: {
-        signal: "completed",
-        state: "completed",
-        stopReason: "final_answer",
-        metadata: {},
-      },
-      events: [{ type: "workspace.read" } as never],
-      maxContinuations: 3,
-      continuationCount: 0,
-    });
-    expect(decision).toMatchObject({
-      kind: "handoff",
-      reason: "non_resumable_stop_reason",
-    });
-  });
-
-  it("hands off blocked todos after a final answer even with progress", () => {
-    const ledger = {
-      schemaVersion: "todo-ledger.v1" as const,
-      metadata: {},
-      items: [{ title: "needs user", status: "blocked" as const, depth: 0 }],
-    };
-    const decision = auditTodoAfterTerminal(ledger, {
-      result: {
-        signal: "completed",
-        state: "completed",
-        stopReason: "final_answer",
-        metadata: {},
-      },
-      events: [{ type: "workspace.write.completed" } as never],
-    });
-    expect(decision).toMatchObject({
-      kind: "handoff",
-      reason: "non_resumable_stop_reason",
-    });
-  });
-
-  it("recommends continuation only for resumable terminal reasons", async () => {
-    const ledger = {
-      schemaVersion: "todo-ledger.v1" as const,
-      metadata: {},
-      items: [{ title: "next", status: "pending" as const, depth: 0 }],
-    };
-    const decision = auditTodoAfterTerminal(ledger, {
-      result: {
-        signal: "failed",
-        state: "failed",
-        stopReason: "max_steps_exceeded",
-        metadata: {},
-      },
-      events: [{ type: "workspace.write.completed" } as never],
-      maxContinuations: 3,
-      continuationCount: 0,
-    });
-    expect(decision.kind).toBe("continue");
-    // The "what next" branch is now a structured, testable directive rather than
-    // free-form prose.
-    expect(
-      decision.kind === "continue" ? decision.directive : undefined,
-    ).toEqual({ kind: "next_open_item", title: "next" });
-    expect(decision.kind === "continue" ? decision.prompt : "").toContain(
-      "Next open item: next.",
-    );
-  });
-
-  it("derives next_open_item from the first actionable item", () => {
-    const ledger: TodoLedger = {
-      schemaVersion: "todo-ledger.v1",
-      metadata: {},
-      items: [
-        { title: "done one", status: "completed", depth: 0 },
-        { title: "do this", status: "in_progress", depth: 0 },
-        { title: "later", status: "pending", depth: 0 },
-      ],
-    };
-    expect(computeTodoDirective(ledger)).toEqual({
-      kind: "next_open_item",
-      title: "do this",
-    });
-    const prompt = buildTodoContinuationPrompt(ledger);
-    expect(prompt).toContain("Next open item: do this.");
-    expect(prompt).toContain("Todo ledger is reconciled");
-    expect(prompt).toContain("unless a task.completed observation is present");
-  });
-
-  it("derives all_blocked when every unfinished item is blocked", () => {
-    const ledger: TodoLedger = {
-      schemaVersion: "todo-ledger.v1",
-      metadata: {},
-      items: [
-        { title: "shipped", status: "completed", depth: 0 },
-        { title: "needs creds", status: "blocked", depth: 0 },
-        { title: "needs review", status: "blocked", depth: 0 },
-      ],
-    };
-    expect(computeTodoDirective(ledger)).toEqual({
-      kind: "all_blocked",
-      titles: ["needs creds", "needs review"],
-    });
-    const prompt = buildTodoContinuationPrompt(ledger);
-    expect(prompt).toContain("Every remaining item is blocked");
-    expect(prompt).toContain("needs creds; needs review");
-    // No actionable item, so it must NOT tell the model to act on a next item.
-    expect(prompt).not.toContain("Next open item:");
-  });
-
-  it("does not count reads or empty tool calls as external progress", () => {
-    // A tool.completed (e.g. an empty glob in a dead-end path) is NOT progress:
-    // counting it let a model thrash forever without the stall guard firing.
-    expect(
-      hasExternalProgressEvidence([
-        { type: "tool.completed" } as never,
-        { type: "workspace.read" } as never,
-      ]),
-    ).toBe(false);
-    expect(
-      hasExternalProgressEvidence([
-        { type: "workspace.write.completed" } as never,
-      ]),
-    ).toBe(true);
-  });
-
-  it("hands off a stalled continuation when only reads occur", () => {
-    const ledger = {
-      schemaVersion: "todo-ledger.v1" as const,
-      metadata: {},
-      items: [{ title: "next", status: "pending" as const, depth: 0 }],
-    };
-    const decision = auditTodoAfterTerminal(ledger, {
-      result: {
-        signal: "failed",
-        state: "failed",
-        stopReason: "max_steps_exceeded",
-        metadata: {},
-      },
-      // Only a read happened — no external side effect.
-      events: [{ type: "tool.completed" } as never],
-      maxContinuations: 5,
-      continuationCount: 1,
-      maxStalledContinuations: 2,
-      stalledContinuationCount: 2,
-    });
-    expect(decision).toMatchObject({
-      kind: "handoff",
-      reason: "stalled_without_progress",
-    });
-  });
-});
-
-describe("runTodoSupervised", () => {
-  it("hands off before emitting an impossible continuation prompt", async () => {
-    const ledger: TodoLedger = {
-      schemaVersion: "todo-ledger.v1",
-      metadata: {},
-      items: [{ title: "finish work", status: "pending", depth: 0 }],
-    };
-    let runs = 0;
-    const result = await runTodoSupervised({
-      readLedger: () => ledger,
-      maxContinuations: 2,
-      continuationToolAvailability: (toolName) => ({
-        available: false,
-        toolName,
-        reason: "workflow_narrowed",
-      }),
-      runOnce() {
-        runs += 1;
-        return {
-          result: {
-            signal: "failed",
-            state: "failed",
-            stopReason: "max_steps_exceeded",
-            metadata: {},
-          },
-          events: [{ type: "workspace.write.completed" } as never],
-        };
-      },
-    });
-
-    expect(runs).toBe(1);
-    expect(result.decision).toMatchObject({
-      kind: "handoff",
-      reason: "required_tool_unavailable",
-    });
-    expect(result.decision).toHaveProperty(
-      "message",
-      expect.stringContaining("todo_write"),
-    );
-  });
-
-  it("uses one reconciliation continuation when a final answer leaves progressed work open", async () => {
-    let ledger: TodoLedger = {
-      schemaVersion: "todo-ledger.v1",
-      metadata: {},
-      items: [
-        { title: "confirm background launch", status: "in_progress", depth: 0 },
-      ],
-    };
-    let runs = 0;
-    const result = await runTodoSupervised({
-      readLedger: () => ledger,
-      maxContinuations: 2,
-      runOnce(input) {
-        runs += 1;
-        if (input.continuation) {
-          ledger = {
-            ...ledger,
-            items: [{ ...ledger.items[0]!, status: "completed" }],
-          };
-        }
-        return {
-          result: {
-            signal: "completed",
-            state: "completed",
-            stopReason: "final_answer",
-            metadata: {},
-          },
-          events: input.continuation
-            ? []
-            : ([{ type: "task.started" }] as never),
-        };
-      },
-    });
-
-    expect(runs).toBe(2);
-    expect(result.continuationCount).toBe(1);
-    expect(result.decision.kind).toBe("complete");
-  });
-
-  it("creates synthetic continuation requests until the ledger is complete", async () => {
-    let ledger: TodoLedger = {
-      schemaVersion: "todo-ledger.v1",
-      metadata: {},
-      items: [{ title: "finish work", status: "pending", depth: 0 }],
-    };
-    const continuationPrompts: string[] = [];
-    const result = await runTodoSupervised({
-      readLedger: () => ledger,
-      maxContinuations: 2,
-      runOnce(input) {
-        if (input.continuation) {
-          continuationPrompts.push(input.continuation.prompt);
-          expect(input.continuation.metadata.synthetic).toBe(true);
-          expect(input.continuation.context.source?.kind).toBe("todo_ledger");
-          ledger = {
-            ...ledger,
-            items: [
-              { title: "finish work", status: "completed" as const, depth: 0 },
-            ],
-          };
-        }
-        return {
-          result: {
-            signal: input.continuation ? "completed" : "failed",
-            state: input.continuation ? "completed" : "failed",
-            stopReason: input.continuation
-              ? "final_answer"
-              : "max_steps_exceeded",
-            metadata: {},
-          },
-          events: [{ type: "workspace.write.completed" } as never],
-        };
-      },
-    });
-
-    expect(continuationPrompts).toHaveLength(1);
-    expect(continuationPrompts[0]).toContain("Next open item: finish work.");
-    expect(result.decision.kind).toBe("complete");
-    expect(result.continuationCount).toBe(1);
-  });
-
-  it("does not stall resumable read-only runs that complete items without write events", async () => {
-    // A multi-step investigation: each round completes one more item but emits
-    // no workspace.write/artifact events (pure reads). The event-only progress
-    // signal never fires, yet the newly-completed item must count as progress
-    // so the supervisor keeps continuing instead of handing off as "stalled".
-    const titles = ["step-1", "step-2", "step-3"];
-    let completedCount = 0;
-    let ledger: TodoLedger = {
-      schemaVersion: "todo-ledger.v1",
-      metadata: {},
-      items: titles.map((title) => ({
-        title,
-        status: "pending" as const,
-        depth: 0,
-      })),
-    };
-    let handoffs = 0;
-    const result = await runTodoSupervised({
-      readLedger: () => ledger,
-      maxContinuations: 10,
-      // Tight stall budget: without the completed-item progress signal this
-      // would hand off after 2 read-only rounds.
-      maxStalledContinuations: 2,
-      onDecision(decision) {
-        if (decision.kind === "handoff") handoffs += 1;
-      },
-      runOnce() {
-        completedCount = Math.min(completedCount + 1, titles.length);
-        ledger = {
-          ...ledger,
-          items: titles.map((title, i) => ({
-            title,
-            status:
-              i < completedCount
-                ? ("completed" as const)
-                : ("pending" as const),
-            depth: 0,
-          })),
-        };
-        return {
-          result: {
-            signal: completedCount >= titles.length ? "completed" : "failed",
-            state: completedCount >= titles.length ? "completed" : "failed",
-            stopReason:
-              completedCount >= titles.length
-                ? "final_answer"
-                : "max_steps_exceeded",
-            metadata: {},
-          },
-          // Read-only: no workspace.write/anchored_edit/artifact events.
-          events: [{ type: "workspace.read" } as never],
-        };
-      },
-    });
-
-    expect(handoffs).toBe(0);
-    expect(result.decision.kind).toBe("complete");
-    expect(result.stalledContinuationCount).toBe(0);
-  });
-
-  it("does not count already-completed resumed ledger items as new progress", async () => {
-    const ledger: TodoLedger = {
-      schemaVersion: "todo-ledger.v1",
-      metadata: {},
-      items: [
-        { title: "already done", status: "completed", depth: 0 },
-        { title: "still open", status: "pending", depth: 0 },
-      ],
-    };
-
-    const result = await runTodoSupervised({
-      readLedger: () => ledger,
-      maxContinuations: 10,
-      maxStalledContinuations: 0,
-      runOnce() {
-        return {
-          result: {
-            signal: "failed",
-            state: "failed",
-            stopReason: "max_steps_exceeded",
-            metadata: {},
-          },
-          events: [{ type: "workspace.read" } as never],
-        };
-      },
-    });
-
-    expect(result.decision).toMatchObject({
-      kind: "handoff",
-      reason: "stalled_without_progress",
-    });
-  });
-});
-
-describe("policy denies todo_write for child agents", () => {
-  it("a CapabilityRule on the child profile denies tool.execute on todo_write", async () => {
-    // Recipe: deny on action="tool.execute" with resource="todo_write".
-    const childPolicy = createAgentProfilePolicy({
-      id: "worker",
-      allowedTools: ["read", "todo_write"],
-      policy: [
-        {
-          action: "tool.execute",
-          resource: "todo_write",
-          effect: "deny",
-          reason: "Only the Leader (primary agent) may update the todo file.",
-        },
-      ],
-    });
-    await expect(
-      childPolicy.decide({
-        action: "tool.execute",
-        resource: { kind: "tool", name: "todo_write" },
-      }),
-    ).resolves.toMatchObject({ decision: "deny" });
-    await expect(
-      childPolicy.decide({
-        action: "tool.execute",
-        resource: { kind: "tool", name: "read" },
-      }),
-    ).resolves.toMatchObject({ decision: "allow" });
+    expect(renderTodoLedgerContext(ledger).content).toContain("pending: next");
   });
 });

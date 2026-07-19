@@ -10,6 +10,7 @@ import {
   type Policy,
   type RunBudget,
   type RunId,
+  type RunAssessment,
   type RunResult,
   type RuntimeContext,
   type SparkwrightEvent,
@@ -23,7 +24,9 @@ import {
   createAgentTool,
   deriveChildAgentProfile,
   findSimilarSuccessfulDelegation,
+  isCompleteAgentResult,
   rememberSuccessfulDelegation,
+  projectAgentInvocationResult,
   spawnSubAgent,
   summarizeDelegationResult,
   withAlreadyCompletedNote,
@@ -715,6 +718,8 @@ interface DelegateParallelChildSummary {
   childRunId?: string;
   spanId?: string;
   signal: string;
+  finality?: "complete" | "partial";
+  assessment?: RunAssessment;
   stopReason?: string;
   message?: string;
   stepLimitReached?: boolean;
@@ -1069,6 +1074,26 @@ export function createDelegateParallelTool(input: {
       sideEffects: ["read"],
       idempotency: "conditional",
     },
+    managesRepeatedCalls: (args) => {
+      const parent = input.getParent();
+      if (!parent) return false;
+      try {
+        const tasks = parseDelegateParallelArgs(args);
+        return tasks.every((task) => {
+          const spec = eligibleByAgentId.get(task.agentId);
+          if (!spec) return false;
+          return Boolean(
+            findSimilarSuccessfulDelegation(
+              parent,
+              configuredDelegateLedgerKey(spec.profile.id, spec.toolName),
+              task.goal,
+            ),
+          );
+        });
+      } catch {
+        return false;
+      }
+    },
     previewArgs(args) {
       const parsed = previewDelegateParallelArgs(args);
       return parsed.length > 0
@@ -1250,21 +1275,25 @@ export function createDelegateParallelTool(input: {
           }
         }),
       );
-      const completed = results.filter(
-        (result) => result.signal === "completed",
+      const completed = results.filter(isCompleteAgentResult).length;
+      const incomplete = results.length - completed;
+      const unhealthy = results.filter(
+        (result) =>
+          isCompleteAgentResult(result) &&
+          result.assessment?.health !== "clean",
       ).length;
-      const failed = results.length - completed;
       const output = {
         mode: "parallel",
         completed,
-        failed,
+        incomplete,
+        unhealthy,
         results,
         usage: aggregateDelegateParallelUsage(results),
       };
-      if (failed > 0) {
+      if (incomplete > 0) {
         throw Object.assign(
           new Error(
-            `delegate_parallel completed ${completed}/${results.length} delegate(s); ${failed} did not complete.`,
+            `delegate_parallel completed ${completed}/${results.length} delegate(s); ${incomplete} did not complete.`,
           ),
           {
             code: "DELEGATE_PARALLEL_INCOMPLETE",
@@ -1652,6 +1681,30 @@ export function createDynamicSpawnAgentTool(input: {
       sideEffects: ["read"],
       idempotency: "conditional",
     },
+    managesRepeatedCalls: (args) => {
+      const parent = input.getParent();
+      if (!parent) return false;
+      try {
+        const prepared = prepareDynamicSpawnAgentRequest({
+          args,
+          childTools: input.childTools,
+          entrypoint: input.entrypoint ?? "spawn_agent",
+        });
+        return Boolean(
+          findSimilarSuccessfulDelegation(
+            parent,
+            dynamicSpawnLedgerKey({
+              role: prepared.parsed.role,
+              prompt: prepared.parsed.prompt,
+              allowedTools: prepared.childTools.map((tool) => tool.name),
+            }),
+            prepared.parsed.goal,
+          ),
+        );
+      } catch {
+        return false;
+      }
+    },
     policyForArgs(args: unknown) {
       return (
         agentWorkspaceWriteGrantPolicyForPayload(
@@ -1699,58 +1752,12 @@ export function createDynamicSpawnAgentTool(input: {
           'Tool "spawn_agent" refused to nest: parent run is itself a sub-agent.',
         );
       }
-      const parsed = parseDynamicSpawnAgentArgs(args);
-      const supportedTools = new Set<string>([
-        ...AGENT_READ_ONLY_CHILD_TOOLS,
-        ...AGENT_WORKSPACE_WRITE_CHILD_TOOLS,
-      ]);
-      const toolRequest = resolveAgentSpawnToolRequest({
-        allowedTools: parsed.allowedTools,
-        grant: parsed.grant,
-        toolName: input.entrypoint ?? "spawn_agent",
-      });
-      const requestedTools = toolRequest.requestedTools;
-      const availableTools = new Map(
-        input.childTools.map((tool) => [tool.name, tool]),
-      );
-      const invalidTools = requestedTools.filter(
-        (name) => !supportedTools.has(name) || !availableTools.has(name),
-      );
-      if (invalidTools.length > 0) {
-        throw new Error(
-          `spawn_agent only supports enabled child tools: ${invalidTools.join(
-            ", ",
-          )}`,
-        );
-      }
-      const childTools = requestedTools
-        .map((name) => availableTools.get(name))
-        .filter((tool): tool is ToolDefinition => tool !== undefined);
-      if (
-        childTools.some(
-          (tool) =>
-            tool.name !== DISCOVERY_TOOL_NAME && tool.deferLoading === true,
-        )
-      ) {
-        const discovery = availableTools.get(DISCOVERY_TOOL_NAME);
-        if (
-          discovery &&
-          !childTools.some((tool) => tool.name === discovery.name)
-        ) {
-          childTools.push(
-            createScopedToolSearch(childTools, {
-              kind: "local",
-              name: "@sparkwright/host.dynamic-child-scoped-tool-search",
-              metadata: { dynamicChildScoped: true },
-            }),
-          );
-        }
-      }
-      if (childTools.length === 0) {
-        throw new Error(
-          "spawn_agent requires at least one enabled child tool.",
-        );
-      }
+      const { parsed, toolRequest, childTools } =
+        prepareDynamicSpawnAgentRequest({
+          args,
+          childTools: input.childTools,
+          entrypoint: input.entrypoint ?? "spawn_agent",
+        });
 
       assertReadOnlyChildCanSatisfyGoal({
         goal: parsed.goal,
@@ -1939,16 +1946,12 @@ async function completeDynamicSpawnAgent(
       true || stepLimitReached;
   const finality =
     result.signal !== "completed" || childTruncated ? "partial" : "complete";
-  const resultMessage =
-    typeof result.message === "string" ? result.message : undefined;
-  const message =
-    stepLimitReached && resultMessage
-      ? [
-          "Warning: this child hit its step budget and wrapped up early; its answer may be incomplete. Do not re-spawn the same scope unless you raise maxSteps or need a different concrete scope; summarize from the partial result when possible.",
-          "",
-          resultMessage,
-        ].join("\n")
-      : result.message;
+  const projected = projectAgentInvocationResult({
+    childRunId: spawned.childRunId,
+    spanId: spawned.spanId,
+    result,
+    usage,
+  });
   // A child that failed (doom-loop, step-limit, error) never emitted a final
   // answer, so salvage its most recent successful tool results — otherwise
   // the parent only sees an error string and must re-spawn to rediscover the
@@ -1958,16 +1961,9 @@ async function completeDynamicSpawnAgent(
       ? undefined
       : extractPartialObservations(spawned.run.events.all(), 3);
   const output = {
-    childRunId: spawned.childRunId,
-    spanId: spawned.spanId,
+    ...projected,
     agentId,
     role,
-    signal: result.signal,
-    stopReason: result.stopReason,
-    stepLimitReached,
-    truncated: childTruncated,
-    finality,
-    message,
     ...(partialObservations && partialObservations.length > 0
       ? { partialObservations }
       : {}),
@@ -1988,12 +1984,7 @@ async function completeDynamicSpawnAgent(
     },
   };
   rememberSuccessfulDelegation(parent, ledgerKey, goal, {
-    ...summarizeDelegationResult({
-      childRunId: spawned.childRunId,
-      spanId: spawned.spanId,
-      result,
-      usage,
-    }),
+    ...projected,
     output,
   });
   if (result.signal !== "completed") {
@@ -2026,6 +2017,7 @@ async function completeDynamicSpawnAgent(
           stepLimitReached,
           truncated: childTruncated,
           finality,
+          assessment: projected.assessment,
           ...(childMessage ? { childMessage } : {}),
           ...(partialObservations && partialObservations.length > 0
             ? { partialObservations }
@@ -2247,25 +2239,17 @@ function summarizeDelegateParallelChild(input: {
   result: RunResult;
   usage: ReturnType<ReturnType<typeof createRun>["usage"]>;
 }): DelegateParallelChildSummary {
-  const stepLimitReached = delegateParallelStepLimitReached(input.result);
-  const truncated = delegateParallelTruncated(input.result) || stepLimitReached;
+  const projected = projectAgentInvocationResult({
+    childRunId: input.childRunId,
+    spanId: input.spanId,
+    result: input.result,
+    usage: input.usage,
+  });
   return {
+    ...projected,
     index: input.index,
     toolName: input.spec.toolName,
     profileId: input.spec.profile.id,
-    childRunId: input.childRunId,
-    spanId: input.spanId,
-    signal: input.result.signal,
-    stopReason: input.result.stopReason,
-    ...(typeof input.result.message === "string"
-      ? { message: input.result.message }
-      : {}),
-    ...(stepLimitReached ? { stepLimitReached: true } : {}),
-    ...(truncated ? { truncated: true } : {}),
-    tokens: input.usage.tokens.total,
-    costUsd: input.usage.costUsd,
-    toolCalls: input.usage.toolCalls,
-    modelCalls: input.usage.modelCalls,
   };
 }
 
@@ -2283,6 +2267,8 @@ function summarizeCachedDelegateParallelChild(input: {
     childRunId: result.childRunId,
     spanId: result.spanId,
     signal: result.signal,
+    finality: result.finality,
+    assessment: result.assessment,
     stopReason: result.stopReason,
     ...(typeof result.message === "string" ? { message: result.message } : {}),
     ...(result.stepLimitReached ? { stepLimitReached: true } : {}),
@@ -2317,16 +2303,6 @@ function sumNumberFields(
   field: "tokens" | "costUsd" | "toolCalls" | "modelCalls",
 ): number {
   return results.reduce((sum, result) => sum + (result[field] ?? 0), 0);
-}
-
-function delegateParallelStepLimitReached(result: RunResult): boolean {
-  const metadata = isPlainRecord(result.metadata) ? result.metadata : {};
-  return metadata.stepLimitReached === true;
-}
-
-function delegateParallelTruncated(result: RunResult): boolean {
-  const metadata = isPlainRecord(result.metadata) ? result.metadata : {};
-  return metadata.truncated === true;
 }
 
 function dynamicSpawnLedgerKey(input: {
@@ -2376,6 +2352,9 @@ function summarizeAgentTaskOutput(output: unknown): Record<string, unknown> {
     ...(typeof output.finality === "string"
       ? { finality: output.finality }
       : {}),
+    ...(isPlainRecord(output.assessment)
+      ? { assessment: output.assessment }
+      : {}),
     ...(typeof output.truncated === "boolean"
       ? { truncated: output.truncated }
       : {}),
@@ -2419,6 +2398,61 @@ function parseDynamicSpawnAgentArgs(args: unknown): {
     maxSteps,
     metadata,
   };
+}
+
+function prepareDynamicSpawnAgentRequest(input: {
+  args: unknown;
+  childTools: readonly ToolDefinition[];
+  entrypoint: string;
+}): {
+  parsed: ReturnType<typeof parseDynamicSpawnAgentArgs>;
+  toolRequest: ReturnType<typeof resolveAgentSpawnToolRequest>;
+  childTools: ToolDefinition[];
+} {
+  const parsed = parseDynamicSpawnAgentArgs(input.args);
+  const supportedTools = new Set<string>([
+    ...AGENT_READ_ONLY_CHILD_TOOLS,
+    ...AGENT_WORKSPACE_WRITE_CHILD_TOOLS,
+  ]);
+  const toolRequest = resolveAgentSpawnToolRequest({
+    allowedTools: parsed.allowedTools,
+    grant: parsed.grant,
+    toolName: input.entrypoint,
+  });
+  const availableTools = new Map(
+    input.childTools.map((tool) => [tool.name, tool]),
+  );
+  const invalidTools = toolRequest.requestedTools.filter(
+    (name) => !supportedTools.has(name) || !availableTools.has(name),
+  );
+  if (invalidTools.length > 0) {
+    throw new Error(
+      `spawn_agent only supports enabled child tools: ${invalidTools.join(", ")}`,
+    );
+  }
+  const childTools = toolRequest.requestedTools
+    .map((name) => availableTools.get(name))
+    .filter((tool): tool is ToolDefinition => tool !== undefined);
+  if (
+    childTools.some(
+      (tool) => tool.name !== DISCOVERY_TOOL_NAME && tool.deferLoading === true,
+    )
+  ) {
+    const discovery = availableTools.get(DISCOVERY_TOOL_NAME);
+    if (discovery && !childTools.some((tool) => tool.name === discovery.name)) {
+      childTools.push(
+        createScopedToolSearch(childTools, {
+          kind: "local",
+          name: "@sparkwright/host.dynamic-child-scoped-tool-search",
+          metadata: { dynamicChildScoped: true },
+        }),
+      );
+    }
+  }
+  if (childTools.length === 0) {
+    throw new Error("spawn_agent requires at least one enabled child tool.");
+  }
+  return { parsed, toolRequest, childTools };
 }
 
 function previewRecord(value: unknown): Record<string, unknown> {

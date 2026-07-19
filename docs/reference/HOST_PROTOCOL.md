@@ -980,15 +980,20 @@ Terminal event for a core run that reached a final state. `state` may be
 `completed`, `failed`, or `cancelled`; host/runtime protocol errors are reported
 with `run.failed` instead.
 
-| Field         | Type   | Notes                                                         |
-| ------------- | ------ | ------------------------------------------------------------- |
-| `runId`       | string |                                                               |
-| `state`       | string | Final RunState.                                               |
-| `stopReason`  | string | Optional. `manual_cancelled` for user-cancelled.              |
-| `message`     | string | Optional final answer text for successful final-answer runs.  |
-| `outcome`     | object | Optional structured non-clean completion summary.             |
-| `failure`     | object | Optional structured cause for `failed` or `cancelled` states. |
-| `todoHandoff` | object | Optional unfinished-todo handoff reason and message.          |
+| Field          | Type   | Notes                                                                      |
+| -------------- | ------ | -------------------------------------------------------------------------- |
+| `runId`        | string |                                                                            |
+| `state`        | string | Final RunState.                                                            |
+| `stopReason`   | string | Optional. `manual_cancelled` for user-cancelled.                           |
+| `message`      | string | Optional final answer text for successful final-answer runs.               |
+| `assessment`   | object | Required Host execution assessment aggregated across every Core episode.   |
+| `failure`      | object | Optional structured cause for `failed` or `cancelled` states.              |
+| `todoAdvisory` | object | Optional unfinished/blocked counts and message; never schedules execution. |
+
+`assessment` has schema version `execution-assessment.v1`, a `health` value of
+`clean`, `degraded`, or `failing`, bounded issue and verification arrays, and
+per-episode `run-assessment.v1` records. Clients should use this persisted
+projection instead of reinterpreting raw terminal events.
 
 `failure` uses `{ category, code, message, retryable, metadata }`. Providers may
 include model-specific details such as HTTP status, timeout kind, or retryability

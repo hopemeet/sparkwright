@@ -17,6 +17,7 @@ export type {
   ApprovalRequestedEventPayload,
   ApprovalResolveRequestPayload,
   EventKind,
+  ExecutionAssessmentPayload,
   HandshakeRequestPayload,
   HostEvent,
   HostLogEventPayload,

@@ -16,7 +16,6 @@ type AdmissionProfile = Pick<AgentProfile, "allowedTools" | "deniedTools">;
 
 export interface ResolvedToolSurface {
   tools: ToolDefinition[];
-  missingRequiredTools: string[];
 }
 
 /**
@@ -65,13 +64,11 @@ export function admitToolsForAgentProfile<T>(
 /**
  * Resolve the final tool surface for one model episode. Inputs have already
  * passed source/config/Profile admission; this step can only narrow Workflow
- * tools, rebuild admitted discovery, or eagerly expose an admitted required
- * schema. It never restores a missing tool.
+ * tools or rebuild admitted discovery. It never restores a missing tool.
  */
 export function resolveRunToolSurface(input: {
   tools: readonly ToolDefinition[];
   workflowAllowedTools?: readonly string[];
-  requiredTools?: readonly string[];
 }): ResolvedToolSurface {
   const workflowAllowed = input.workflowAllowedTools
     ? new Set(input.workflowAllowedTools)
@@ -98,17 +95,7 @@ export function resolveRunToolSurface(input: {
     }
   }
 
-  const missingRequiredTools: string[] = [];
-  for (const requiredTool of new Set(input.requiredTools ?? [])) {
-    const index = tools.findIndex((tool) => tool.name === requiredTool);
-    if (index < 0) {
-      missingRequiredTools.push(requiredTool);
-    } else if (isDeferredOnly(tools[index]!)) {
-      tools[index] = { ...tools[index]!, alwaysLoad: true };
-    }
-  }
-
-  return { tools, missingRequiredTools };
+  return { tools };
 }
 
 export function agentProfileAdmitsTool(

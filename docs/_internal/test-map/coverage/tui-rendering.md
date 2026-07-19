@@ -18,7 +18,7 @@
 ## Current Confidence
 
 - Status: `Partially Verified`
-- Last reviewed: 2026-07-17
+- Last reviewed: 2026-07-19
 - Evidence source: 2026-06-22 TUI status-bar and event-stream render tests
   passed; PTY first-screen capture at 24x100 showed a single static
   `SparkWright` header and no duplicate brand text in live status/input areas.
@@ -34,6 +34,47 @@
   indicator without repeating the static brand.
 
 ## Covered
+
+- 2026-07-19 real Terra PTY fix verification passed fresh 80/100/120-column
+  single-header frames, sole-terminal Esc cancellation live/replay, canonical
+  Todo 1/3 live/replay without another Core run, Agent partial/unhealthy replay,
+  ask-mode approval accept/deny, and `/capabilities`. The cancellation screen
+  is fixed; the adjacent session-consistency warning is also fixed by run-local
+  cancellation ownership, with both retained real cancel sessions now clean. See
+  [../runs/2026-07-19-real-model-fix-verification.md](../runs/2026-07-19-real-model-fix-verification.md).
+
+- 2026-07-19 deterministic fix verification renders a sole `run.cancelled`
+  terminal with exactly one footer, removes the live-only Todo advisory notice
+  in favor of the canonical Todo band, and keeps `clearGeneration` stable while
+  restoring the already-selected initial session so EventStream's static header
+  is not remounted. Full TUI coverage passed (417/417). A real multi-width PTY
+  rerun remains useful visual confirmation.
+
+- 2026-07-19 Terra full-App PTY follow-up covered approval accept/deny,
+  pending-Todo completion without continuation, fresh-user resume, Esc cancel,
+  live/replay, and first frames at 80/100/120 columns. It found a sole
+  `run.cancelled` terminal has no run footer, Todo advisory notices disappear
+  on replay 2/2, and the existing static-header duplication remained visible
+  at 3/3 widths before the deterministic fixes above. See
+  [../runs/2026-07-19-real-terra-refactor-qa-follow-up.md](../runs/2026-07-19-real-terra-refactor-qa-follow-up.md).
+
+- Post-refactor real Terra PTY session
+  `session_tui_assessment_refactor_20260719` rendered a clean two-bullet code
+  review and `/capabilities` at 120x32. Trace/session checks reported zero
+  failures, approvals, writes, or findings; the terminal assessment was clean,
+  and no raw assessment/protocol payload leaked into the screen.
+
+- 2026-07-19 assessment-consolidation coverage renders canonical terminal
+  health/verification facts and shows subagent health/issues independently of
+  completion finality. Todo UI remains advisory and no longer synthesizes a
+  continuation run. Focused Ink tests cover unhealthy completed children and
+  terminal assessment fallback behavior.
+
+- 2026-07-19 real `openai/gpt-5.6-terra` PTY QA rechecked read-only streaming,
+  `/capabilities`, `/help`, `/sessions`, and ask-mode shell approval at 96/120
+  columns. The approval card accepted `y`, the command completed, no writes
+  occurred, and trace report/verify plus session check passed. The fenced-code
+  language row (`│ text`) was confirmed as intentional renderer behavior.
 
 - 2026-07-17 capability-panel tests render configured delegates from the
   required current-run approval fact after removal of the config echo.
@@ -188,3 +229,4 @@ Use a real PTY QA pass when changing the app shell or interactive layout.
 - [../failures/tui-sessions-custom-root-empty-label.md](../failures/tui-sessions-custom-root-empty-label.md)
 - [../failures/tui-export-missing-user-goal.md](../failures/tui-export-missing-user-goal.md)
 - [../failures/tui-task-output-event-spam.md](../failures/tui-task-output-event-spam.md)
+- [../failures/cancelled-tool-abort-session-check-warning.md](../failures/cancelled-tool-abort-session-check-warning.md)

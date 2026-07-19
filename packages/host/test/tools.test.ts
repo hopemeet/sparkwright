@@ -1378,6 +1378,12 @@ describe("host tools", () => {
     ).toMatchObject({
       policy: { risk: "safe", requiresApproval: true },
     });
+    expect(
+      delegateAgent.managesRepeatedCalls?.({
+        agentId: "reader",
+        goal: "Inspect README.md.",
+      }),
+    ).toBe(false);
 
     const indexedResult = (await delegateAgent.execute(
       { agentId: "reader", goal: "Inspect README.md." },
@@ -1401,6 +1407,22 @@ describe("host tools", () => {
     expect(
       terminalLifecycleCount(parent.events.all(), indexedResult.childRunId),
     ).toBe(1);
+    expect(childCalls).toBe(1);
+    expect(
+      delegateAgent.managesRepeatedCalls?.({
+        agentId: "reader",
+        goal: "Inspect README.md.",
+      }),
+    ).toBe(true);
+
+    const reusedResult = (await delegateAgent.execute(
+      { agentId: "reader", goal: "Inspect README.md." },
+      { run: parent.record } as never,
+    )) as { alreadyCompleted?: boolean; childRunId: string };
+    expect(reusedResult).toMatchObject({
+      alreadyCompleted: true,
+      childRunId: indexedResult.childRunId,
+    });
     expect(childCalls).toBe(1);
   });
 
@@ -1514,7 +1536,7 @@ describe("host tools", () => {
             mode: "child",
             prompt: "Review.",
             allowedTools: [],
-            maxSteps: 1,
+            maxSteps: 2,
           },
           inheritedPolicy: [],
           effectivePolicy: [],
@@ -1530,7 +1552,7 @@ describe("host tools", () => {
             mode: "child",
             prompt: "Audit.",
             allowedTools: [],
-            maxSteps: 1,
+            maxSteps: 2,
           },
           inheritedPolicy: [],
           effectivePolicy: [],
@@ -1583,7 +1605,8 @@ describe("host tools", () => {
     )) as {
       mode: string;
       completed: number;
-      failed: number;
+      incomplete: number;
+      unhealthy: number;
       results: Array<{
         toolName: string;
         message: string;
@@ -1595,7 +1618,8 @@ describe("host tools", () => {
     expect(output).toMatchObject({
       mode: "parallel",
       completed: 2,
-      failed: 0,
+      incomplete: 0,
+      unhealthy: 0,
       results: [
         { toolName: "delegate_reviewer", message: "reviewer done" },
         { toolName: "delegate_auditor", message: "auditor done" },
@@ -1618,6 +1642,195 @@ describe("host tools", () => {
         terminalLifecycleCount(parent.events.all(), result.childRunId),
       ).toBe(1);
     }
+  });
+
+  it("counts completed-signal partial delegates as incomplete", async () => {
+    const ctx = await createWorkspace({ "README.md": "# Demo\n" });
+    const parent = createRun({
+      goal: "parent",
+      model: {
+        async complete() {
+          return { message: "parent done" };
+        },
+      },
+      workspace: new LocalWorkspace(ctx.workspaceRoot),
+      maxSteps: 2,
+    });
+    const parallel = createDelegateParallelTool({
+      getParent: () => parent,
+      delegates: [{ profileId: "partial", toolName: "delegate_partial" }],
+      derivedAgents: [
+        {
+          effectiveProfile: {
+            id: "partial",
+            name: "Partial",
+            mode: "child",
+            prompt: "Inspect both files.",
+            allowedTools: [],
+            maxSteps: 1,
+          },
+          inheritedPolicy: [],
+          effectivePolicy: [],
+          parentAgentDenyCount: 0,
+          parentRunDenyCount: 0,
+          childDenyCount: 0,
+          effectiveToolCount: 0,
+        },
+      ],
+      model: {
+        async complete() {
+          return { message: "partial answer" };
+        },
+      },
+      childTools: [],
+      parentRunPolicy: createDefaultPolicy(),
+      allowReadWriteWorkspaceAccess: false,
+      childRunStoreFactory: () => undefined as never,
+    });
+
+    await expect(
+      parallel.execute(
+        { delegates: [{ agentId: "partial", goal: "Inspect both files." }] },
+        { run: parent.record } as never,
+      ),
+    ).rejects.toMatchObject({
+      code: "DELEGATE_PARALLEL_INCOMPLETE",
+      metadata: {
+        completed: 0,
+        incomplete: 1,
+        unhealthy: 0,
+        results: [
+          expect.objectContaining({
+            signal: "completed",
+            finality: "partial",
+            stepLimitReached: true,
+          }),
+        ],
+      },
+    });
+  });
+
+  it("counts completed unhealthy delegates separately from incomplete delegates", async () => {
+    const ctx = await createWorkspace({ "README.md": "# Demo\n" });
+    const failingProbe = defineTool({
+      name: "failing_probe",
+      description: "Return a deterministic diagnostic failure.",
+      inputSchema: { type: "object" },
+      policy: { risk: "safe" },
+      async execute() {
+        throw new Error("probe failed");
+      },
+    });
+    const calls = new Map<string, number>();
+    const childModel = (profileId: string): ModelAdapter => ({
+      async complete() {
+        const call = (calls.get(profileId) ?? 0) + 1;
+        calls.set(profileId, call);
+        if (profileId === "reviewer" && call === 1) {
+          return {
+            toolCalls: [{ toolName: "failing_probe", arguments: {} }],
+          };
+        }
+        return { message: `${profileId} done` };
+      },
+    });
+    const parent = createRun({
+      goal: "parent",
+      model: childModel("parent"),
+      workspace: new LocalWorkspace(ctx.workspaceRoot),
+      maxSteps: 3,
+    });
+    const parallel = createDelegateParallelTool({
+      getParent: () => parent,
+      delegates: [
+        { profileId: "reviewer", toolName: "delegate_reviewer" },
+        { profileId: "auditor", toolName: "delegate_auditor" },
+      ],
+      derivedAgents: [
+        {
+          effectiveProfile: {
+            id: "reviewer",
+            name: "Reviewer",
+            mode: "child",
+            prompt: "Review.",
+            allowedTools: ["failing_probe"],
+            maxSteps: 3,
+          },
+          inheritedPolicy: [],
+          effectivePolicy: [],
+          parentAgentDenyCount: 0,
+          parentRunDenyCount: 0,
+          childDenyCount: 0,
+          effectiveToolCount: 1,
+        },
+        {
+          effectiveProfile: {
+            id: "auditor",
+            name: "Auditor",
+            mode: "child",
+            prompt: "Audit.",
+            allowedTools: [],
+            maxSteps: 2,
+          },
+          inheritedPolicy: [],
+          effectivePolicy: [],
+          parentAgentDenyCount: 0,
+          parentRunDenyCount: 0,
+          childDenyCount: 0,
+          effectiveToolCount: 0,
+        },
+      ],
+      model: childModel("fallback"),
+      modelForProfile: async (profileId) => childModel(profileId),
+      childTools: [failingProbe],
+      parentRunPolicy: createDefaultPolicy(),
+      allowReadWriteWorkspaceAccess: false,
+      childRunStoreFactory: () => undefined as never,
+    });
+
+    const output = (await parallel.execute(
+      {
+        delegates: [
+          { agentId: "reviewer", goal: "Review the patch." },
+          { agentId: "auditor", goal: "Audit the patch." },
+        ],
+      },
+      { run: parent.record } as never,
+    )) as {
+      completed: number;
+      incomplete: number;
+      unhealthy: number;
+      results: Array<{
+        profileId: string;
+        signal: string;
+        assessment: { health: string; issues: Array<{ code: string }> };
+      }>;
+    };
+
+    expect(output).toMatchObject({
+      completed: 2,
+      incomplete: 0,
+      unhealthy: 1,
+    });
+    expect(output.results).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          profileId: "reviewer",
+          signal: "completed",
+          assessment: expect.objectContaining({
+            health: "failing",
+            issues: [
+              expect.objectContaining({ code: "UNRESOLVED_TOOL_FAILURE" }),
+            ],
+          }),
+        }),
+        expect.objectContaining({
+          profileId: "auditor",
+          signal: "completed",
+          assessment: expect.objectContaining({ health: "clean" }),
+        }),
+      ]),
+    );
   });
 
   it("applies profile workflow hooks to delegate_parallel child runs", async () => {
@@ -1672,7 +1885,7 @@ describe("host tools", () => {
           mode: "child" as const,
           prompt: "Audit.",
           allowedTools: [],
-          maxSteps: 1,
+          maxSteps: 2,
         },
         inheritedPolicy: [],
         effectivePolicy: [],
@@ -1740,7 +1953,8 @@ describe("host tools", () => {
       caught as {
         metadata?: {
           completed: number;
-          failed: number;
+          incomplete: number;
+          unhealthy: number;
           results: Array<{
             profileId: string;
             signal: string;
@@ -1750,7 +1964,11 @@ describe("host tools", () => {
         };
       }
     ).metadata;
-    expect(metadata).toMatchObject({ completed: 1, failed: 1 });
+    expect(metadata).toMatchObject({
+      completed: 1,
+      incomplete: 1,
+      unhealthy: 0,
+    });
     expect(metadata?.results).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -2045,6 +2263,7 @@ describe("host tools", () => {
     const first = await spawnAgent.execute(args, {
       run: parent.record,
     } as never);
+    expect(spawnAgent.managesRepeatedCalls?.(args)).toBe(true);
     const second = await spawnAgent.execute(args, {
       run: parent.record,
     } as never);
