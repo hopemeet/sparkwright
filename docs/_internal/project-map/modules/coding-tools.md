@@ -9,6 +9,57 @@ See also [../maps/runtime/tool-orchestration.md](../maps/runtime/tool-orchestrat
 
 ## Main Files
 
+## Last Verified
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: reviewed because Host tool catalog/surface changed while removing Todo
+  scheduler-only tools and forcing. Coding-tool execution, governance,
+  workspace-write, and canonical tool-identity contracts are unchanged.
+- Read: Host catalog/surface changes and coding-tool orchestration boundaries.
+- Tests: affected Host tool coverage passed before final repository gates.
+
+- Status: Verified
+- Date: 2026-07-17T23:37:17+0800
+- Scope: coding-tools tests opt into Core's internal LocalWorkspace reference;
+  coding tool names, schemas, governance, and execution behavior are unchanged.
+- Read: affected test import, Core barrels, and package route.
+- Tests: coding-tools coverage is included in the final release gate.
+
+- Status: Verified
+- Date: 2026-07-17T13:00:00+0800
+- Scope: `list_dir` remains a current read-only discovery tool and is now
+  classified as canonical advanced/deferred instead of carrying a dedicated
+  legacy exposure tier.
+- Read: Coding tool implementation/tests, Host identities/catalog/selectors,
+  child tool grants, capability consumers, and tool-orchestration map.
+- Tests: Host tools 88/88 and typecheck; TUI capability 8/8; coding-tool
+  behavior itself is unchanged.
+
+- Status: Verified
+- Date: 2026-07-16T23:55:17+0800
+- Scope: the Host-owned `create_agent` input boundary now recognizes only
+  canonical `model: "inherit"`; coding tool policy, approval, execution, and
+  result contracts are unchanged.
+- Read: Host tool definition/parser/tests and tool orchestration contracts.
+- Tests: Host Agent profile/tools 125/125; Host typecheck; repository test
+  typecheck; project-map drift; full release gate.
+
+- Status: Verified
+- Date: 2026-07-16T21:02:00+0800
+- Scope: Shell background task persistence and deduplication use only
+  `shell.background`; removed the promotion-named persisted-kind reader.
+- Read: Host Shell wrapper, shell-tool handoff contract, task fixtures, and
+  Shell/tool orchestration maps.
+- Tests: focused Host Shell/protocol tests and affected downstream suites;
+  affected typechecks; project-map drift check.
+
+- Status: Verified
+- Date: 2026-07-16T12:45:00+0800
+- Scope: Coding tool names and behavior are unchanged; their write/approval gates now consume the access plan derived from canonical accessMode.
+- Read: routed production sources and focused access-policy tests.
+- Tests: npm run typecheck:test; focused Host/Core tests.
+
 - `packages/host/src/tool-catalog.ts`
 - `packages/host/src/tool-selectors.ts`
 - `packages/host/src/tools.ts`
@@ -41,8 +92,8 @@ Does not own:
 
 - Workspace mutation must go through core policy, approval, event, and artifact paths.
 - Default public model-facing coding names are `read`, `write`, `edit`, `bash`,
-  `glob`, and `grep`; implementation names are legacy aliases and should not
-  appear in new prompt guidance or user docs.
+  `glob`, and `grep`; these are the registered callable names used by prompts,
+  configuration, policy, traces, and user docs.
 - `write` is the whole-file create/replace surface for new files and nested
   paths; it uses the same workspace write path as anchored edits and patches
   and belongs to the `workspace.write` selector.
@@ -57,9 +108,8 @@ Does not own:
 - Explicit background shell calls detach only after that gate, distinguish
   explicit origin from timeout promotion, support job/service lifecycle hints,
   and reuse an equivalent active explicit task before spawning a process.
-- Shell embedders use the neutral `onBackground` handoff and new host records use
-  `shell.background`; deprecated `onPromote` and active legacy
-  `shell.promoted` records remain compatibility inputs.
+- Shell embedders use the neutral `onBackground` handoff; Host task records and
+  active-task deduplication use only `shell.background`.
 - The handoff carries the resolved `{ awaited, lifetime }` policy, so hosts do
   not re-derive execution semantics from `backgroundOrigin`.
 - `task_create` remains eager on the main host catalog, while existing-task
@@ -140,6 +190,31 @@ Does not own:
   smokes should use `write`, `edit_anchored_text`, or `edit`.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-16
+- Scope: coding and shell factories now register `read`, `write`, `edit`, and
+  `bash` directly; removed callable names are no longer exported, registered, or
+  accepted by shared Core/Host alias infrastructure.
+- Read: coding/shell factories, Host identity/catalog assembly, Core registry,
+  public documentation, and focused tool tests.
+
+- Status: Verified
+- Date: 2026-07-16T10:44:25+0800
+- Scope: shell handoff documentation now points to the canonical Task output
+  action; shell execution and handoff behavior are unchanged.
+- Read: shell handoff result docs and Task model surface.
+- Tests: repository test typecheck passed; no coding-tool contract changed.
+
+- Status: Verified
+- Date: 2026-07-16T10:32:50+0800
+- Scope: removed the shell promotion-named handoff aliases and callback fallback;
+  `onBackground` and the `ShellBackgroundHandoff*` types are the only public
+  construction API.
+- Read: shell-tool public exports/options/validation, all production call sites,
+  shell tests, and handoff docs.
+- Tests: shell-tool 42/42, build/typecheck, Host tools 89/89, and repository test
+  typecheck passed; full release gate passed.
 
 - Status: Verified
 - Date: 2026-07-16T08:47:59+0800
@@ -328,7 +403,7 @@ test/index.test.ts -t "todo-planning"`; `npm --workspace
 
 - Status: Verified
 - Date: 2026-06-28T20:30:50+0800
-- Scope: host-wrapped coding tool `read_file` now carries explicit read-only
+- Scope: host-wrapped coding tool `read` now carries explicit read-only
   governance side effects while preserving the `local:@sparkwright/coding-tools`
   catalog origin and existing repeated-read behavior.
 - Read: `packages/host/src/tools.ts`,

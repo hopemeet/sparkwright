@@ -3,7 +3,7 @@
 ## Current Confidence
 
 - Status: `Partially Verified`
-- Last reviewed: 2026-07-14
+- Last reviewed: 2026-07-19
 - Evidence source: 2026-06-22 focused host/agent tests passed and real
   `openai/gpt-5.4-mini` read-only dynamic `spawn_agent` canaries produced valid
   trace/session structure. A configured read/write delegate canary wrote through
@@ -39,10 +39,93 @@
   current v1 lifecycle is flat. 2026-07-14 deterministic verification covered
   argument-level Agent concurrency admission, exact delegation fingerprints,
   and same-millisecond ACP/external child-id uniqueness across Core,
-  agent-runtime, and Host focused suites.
+  agent-runtime, and Host focused suites. 2026-07-17 focused verification
+  removed the external-command aggregate truncation alias while preserving
+  stream-specific tool/trace results and direct CLI execution. A later
+  2026-07-17 pass removed the ACP/external-command tool-result `agentId`
+  profile alias while retaining canonical `agentProfileId` and lifecycle actor
+  attribution. The current semantic-consolidation pass also removed the
+  delegate `requiresApproval` capability echo and verified the required
+  current-run approval fact across Host protocol, CLI inspect, and TUI panel.
+  The 2026-07-18 ownership pass added a direct `AgentRuntimeAssembly` test and
+  reran 359 Host Agent/Delegate/tool/protocol tests plus 77 Agent Runtime
+  invocation/supervisor/ledger/result tests without changing capability or
+  lifecycle behavior.
 
 ## Covered
 
+- 2026-07-19 real `openai/gpt-5.6-terra` fix verification proved the complete
+  cache boundary end to end: complete+clean exact reuse returned the same child
+  with `alreadyCompleted:true`, while partial and complete-but-failing results
+  created only one child and stayed under Core's exact-repeat guard. Mixed
+  parallel aggregation reported `completed:1`, `incomplete:1`, `unhealthy:0`.
+  TUI replay kept child finality and health independent. See
+  [../runs/2026-07-19-real-model-fix-verification.md](../runs/2026-07-19-real-model-fix-verification.md).
+
+- 2026-07-19 deterministic fix verification closes both Agent finality gaps
+  found by the Terra follow-up. Parallel aggregation now counts only canonical
+  complete children, and repeated-call bypass opens only for an existing
+  complete+clean cache hit; partial/unhealthy repeats remain under Core's
+  exact-repeat guard without a retry counter or negative cache. Agent Runtime
+  235/235 and Host 592/592 passed.
+
+- 2026-07-19 Terra follow-up verified complete+clean configured reuse 3/3,
+  unhealthy/degraded no-cache, dynamic spawn reuse, clean parallel execution,
+  awaited background delivery, parent recovery, raw message/assessment
+  preservation, and session trees. It also found that parallel aggregation
+  found that parallel aggregation counted completed-signal partial children as
+  complete 3/3, and that identical uncached partial delegates could respawn 16
+  times because tool-owned repeat handling had no bounded no-progress circuit.
+  Both defects are fixed by the deterministic verification above. See
+  [../runs/2026-07-19-real-terra-refactor-qa-follow-up.md](../runs/2026-07-19-real-terra-refactor-qa-follow-up.md).
+
+- Post-refactor `openai/gpt-5.6-terra` canaries passed Agent creation and
+  indexed delegation in `session_mrrf52btd88ca2qu` and
+  `session_mrrf5cj94ragy1va`. The delegated trace keeps `main` and
+  `mini_reviewer` attribution separate while returning canonical child
+  assessment through the parent result.
+
+- 2026-07-19 real `openai/gpt-5.6-terra` Agent regression exposed a useful but
+  unhealthy completed child whose assessment was lost at the parent boundary.
+  The fix adds a canonical Agent result projection carrying independent
+  finality and Core assessment through direct/indexed/parallel results,
+  lifecycle, delegation ledger, session compaction, and TUI/trace consumers;
+  only complete+clean results are cached. Deterministic coverage includes a
+  complete-but-failing parallel child and missing-assessment fail-closed cases.
+  See
+  [../failures/delegate-child-failing-outcome-not-propagated.md](../failures/delegate-child-failing-outcome-not-propagated.md) and
+  [../runs/2026-07-19-real-terra-broad-refactor-qa.md](../runs/2026-07-19-real-terra-broad-refactor-qa.md).
+
+- Real Terra sessions now cover both health branches and reuse. In
+  `session_cli_child_partial_unhealthy_20260719`, the child retained a useful
+  `positive_count` observation while its required assessment remained failing
+  for unresolved `ENOENT`; the parent disclosed that caveat. The first clean
+  same-goal reuse attempt was incorrectly intercepted by Core's repeat guard;
+  after the tool-owned duplicate fix,
+  `session_cli_child_clean_reuse_fixed_20260719` emitted two indexed delegate
+  calls, one child lifecycle, and a 2ms second result with
+  `alreadyCompleted:true`. See
+  [../failures/delegation-reuse-blocked-by-repeated-tool-guard.md](../failures/delegation-reuse-blocked-by-repeated-tool-guard.md).
+
+- `AgentRuntimeAssembly` owner-level coverage constructs configured direct,
+  indexed, and parallel delegates together with dynamic spawn and the captured
+  background Agent task runner, while focused integration suites cover their
+  policy, approval, workspace, trace, promotion, and process-adapter behavior.
+
+- 2026-07-17 delegate capability coverage locks
+  `approvalRequiredUnderCurrentRun` as the only rendered approval boolean and
+  rejects the removed config echo in CLI JSON output.
+- 2026-07-17 ACP/external-command result identity coverage rejects the removed
+  top-level `agentId` alias on both success paths and external nonzero-exit
+  metadata, while locking canonical `agentProfileId` and unchanged lifecycle
+  actor/child identity.
+- 2026-07-17 external-command delegate result coverage locks stream-specific
+  `stdoutTruncated` / `stderrTruncated` fields on both the tool result and
+  `subagent.completed`, and rejects the removed aggregate compatibility alias.
+- 2026-07-17 canonical exposure verification removed the global
+  `exposeChildrenAsDelegates` path. Generic targets remain indexed, direct
+  aliases use `exposure` / pins / per-profile opt-in, and explicit aliases stay
+  available to the user-selected `delegates run` entrypoint.
 - 2026-07-15 tool-decision audit physically applied main/child Profile allow
   and deny after upstream catalog admission, normalized exact built-in aliases,
   and retained MCP wildcard matching. A real restricted main Profile exposed
@@ -64,6 +147,10 @@
 - Child agents cannot receive `task_create` or call dynamic `spawn_agent` again
   in v1. Focused tests reject the removed `allowNestedBackgroundTasks` config
   and reject a dynamic spawn whose parent is already a sub-agent.
+- Model-facing `task_create` scheduling is covered through canonical `mode`
+  values only. Focused Agent Runtime coverage rejects the removed `awaited`
+  input field while preserving durable/result `awaited` state for revival and
+  Activity Drawer consumers.
 
 - Dynamic `spawn_agent` children emit parent-visible sub-agent lifecycle events.
 - Configured in-process delegates can write through the parent approval path.
@@ -158,7 +245,7 @@
   `exposure: "all"` / pins / `exposeAsDelegate`.
 - 2026-06-27 real `openai/gpt-5.4-mini` indexed delegation QA verified that
   hidden named delegates are no longer model-facing, generic target parsing
-  tolerates model-supplied legacy `toolName` noise, `delegate_parallel`
+  selects delegates by canonical `agentId`, `delegate_parallel`
   completes after prior `delegate_agent` calls by reusing ledger results, and
   trace/session checks pass with no duplicate sub-agent spawns. See
   [../runs/2026-06-27-indexed-agent-real-mini-qa.md](../runs/2026-06-27-indexed-agent-real-mini-qa.md).
@@ -437,6 +524,8 @@ npm --workspace @sparkwright/tui test -- test/event-stream-render.test.ts test/c
 - [../failures/deterministic-demo-adapter-run-goal-state.md](../failures/deterministic-demo-adapter-run-goal-state.md)
 - [../failures/model-skips-verification.md](../failures/model-skips-verification.md)
 - [../failures/prompt-induced-tool-loop.md](../failures/prompt-induced-tool-loop.md)
+- [../failures/delegate-child-failing-outcome-not-propagated.md](../failures/delegate-child-failing-outcome-not-propagated.md)
+- [../failures/delegation-reuse-blocked-by-repeated-tool-guard.md](../failures/delegation-reuse-blocked-by-repeated-tool-guard.md)
 - [../failures/task-action-empty-id-recovery.md](../failures/task-action-empty-id-recovery.md)
 - [../failures/task-list-resume-run-scope.md](../failures/task-list-resume-run-scope.md)
 - [../failures/trace-background-agent-low-progress.md](../failures/trace-background-agent-low-progress.md)

@@ -258,4 +258,24 @@ describe("EventStore todo ledger projection", () => {
       { title: "Summarize result", status: "completed", depth: 0 },
     ]);
   });
+
+  it("does not treat content as an alternate todo title", () => {
+    const store = new EventStore();
+    store.appendEvent(
+      ev(
+        "tool.completed",
+        {
+          toolCallId: "call_1",
+          output: {
+            saved: true,
+            todos: [{ content: "legacy title", status: "pending" }],
+          },
+        },
+        1,
+      ),
+    );
+    expect(store.getSnapshot().todoItems).toEqual([
+      { title: "(untitled)", status: "pending", depth: 0 },
+    ]);
+  });
 });

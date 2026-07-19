@@ -8,6 +8,65 @@ health, and structural validity without replacing the raw trace.
 
 See [raw-trace.md](raw-trace.md) for source data and [export-diagnostics.md](export-diagnostics.md) for product-facing export distinctions.
 
+## Last Verified
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: session check reconciles tool failures per run and treats
+  cancellation-owned `TOOL_ABORTED` as resolved for canonical and legacy
+  cancellation terminals. Conflicting terminals, cross-run failures, and
+  workspace boundary attempts remain visible.
+- Read: Core session consistency, run-outcome analysis, terminal compatibility,
+  focused fixtures, and retained real cancellation traces.
+- Tests: Core trace/session consistency 140/140; fresh and historical real
+  cancellation sessions both return `ok:true` with no findings.
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: trace report preserves every episode terminal but does not elevate a
+  resumable `run.failed` to `TRACE_ERRORS` after a later episode terminal for
+  the same `workflowRunId` supersedes it. The reason predicate is shared with Host
+  execution assessment; non-resumable and final failures remain reportable.
+- Read: Core run assessment/trace diagnostics, Host execution aggregation,
+  retained real Workflow trace, and report tests.
+- Tests: Core trace 132/132 and full Core 641/641; retained trace now returns
+  `passed_with_issues` with only `RECOVERED_TOOL_FAILURES`.
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: online CLI status and offline trace summary/verify share the persisted
+  Core assessment for complete runs. Verification is structured fact-ledger
+  evidence; prose command-subclaim inference and the old tool-outcome sidecar
+  are removed. Missing terminal assessment fails closed.
+- Read: Core assessment/fact ledger/diagnostics, CLI outcome/trace commands,
+  fixtures, and real regression scripts.
+- Tests: Core trace 130/130 and CLI focused/full regression coverage passed
+  before final repository gates.
+
+- Status: Verified
+- Date: 2026-07-17T23:37:17+0800
+- Scope: CLI and Core reference trace implementations moved behind the explicit
+  internal entry; summary/timeline/report/verify algorithms and output shapes
+  are unchanged.
+- Read: Core barrels/trace store and CLI trace/outcome consumers.
+- Tests: Core interface exports 4/4, CLI outcome 23/23, and affected typechecks.
+
+- Status: Verified
+- Date: 2026-07-16T13:36:30+0800
+- Scope: Trace projections retain `validation.failed` finding-code diagnostics but no longer expect validation-hook lifecycle spans.
+- Read: trace codecs/diagnostics/consistency checks, schemas, and focused trace tests.
+- Tests: focused trace tests; npm run build; npm run typecheck:test; npm run release:check.
+
+- Date: 2026-07-16T12:45:00+0800
+- Scope: Trace summaries keep approval/write outcome facts; run metadata now records canonical accessMode only.
+- Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.
+- Tests: focused access/policy/protocol/CLI/TUI/ACP/Workflow tests; npm run typecheck:test; npm run schema:check.
+
+- Date: 2026-07-16T11:52:29+0800
+- Scope: reviewed protocol 2.0 terminal failure envelope changes; summary,
+  timeline, report, and verify continue to derive from Core trace events and do
+  not consume the removed Host wire-level `run.failed.error` projection.
+
 ## Main Files
 
 - `packages/core/src/trace.ts`
@@ -37,6 +96,9 @@ trace.jsonl
 
 - Summary counts event types, runs, sessions, agents, subagents, tools, usage,
   errors, approvals, safety, reads, and artifacts.
+- Session consistency groups tool outcome analysis by `runId`. Only an
+  unambiguous logical cancellation owns `TOOL_ABORTED`; terminal conflicts and
+  workspace path escapes are never erased by cancellation reconciliation.
 - Summary separates persisted actor ids from child/delegate identities:
   `agentIds` comes from event metadata `agentId`, while `subagentIds` is
   derived only from `subagent.*` events and prefers `metadata.childAgentId`,
@@ -46,9 +108,8 @@ trace.jsonl
   write-capable process boundaries. MCP tools are summarized as normal
   tool calls; filesystem side effects outside managed workspace APIs are not
   counted as managed writes.
-- Approval auto-approval counts prefer structured
-  `approval.resolved.payload.autoApproved`; old traces without the field fall
-  back to resolver message text for compatibility.
+- Approval auto-approval counts use structured
+  `approval.resolved.payload.autoApproved`; message text is not a data model.
 - Timeline projects events into phases and groups by event family.
 - Timeline phase projection sorts by aggregate evidence
   (`timestamp`, scoped `monotonicUs` when both events share a trace/agent
@@ -71,9 +132,9 @@ trace.jsonl
   repeated command failures,
   recovered/unresolved failures, safety posture, and cost-reporting gaps.
 - Completed-run verification profile summaries prefer terminal FactLedger
-  verification-result snapshots, including `verificationSource:"profile"`;
-  legacy `verification:<profile>:<id>` hookName parsing remains a fallback for
-  old traces.
+  verification-result snapshots. Profile/documented-command identity is read
+  from explicit `verificationSource`, `profile`, and `verifierId` fields;
+  `hookName` remains a label rather than an encoded identity channel.
 - Report workspace-read volume findings derive tool attribution from existing
   span correlation (`spanId` / `parentSpanId`) when available. This keeps the
   public summary `workspaceReads` total intact while report evidence can split
@@ -151,20 +212,15 @@ trace.jsonl
   usage exists through `run.started.payload.resolvedModel.pricing` and
   `CapabilitySnapshot.model.pricing`; trace diagnostics should treat this as
   advisory startup evidence, not as a run failure.
-- Persisted command-outcome snapshots keep legacy `verification.lastCommand`
-  scoped to the last unresolved verification failure. Recovered verification
-  failures are preserved separately as `lastFailure*` plus
-  `lastSuccessfulVerificationCommand` so summaries can distinguish "failed
-  then passed" from "still failing".
 - When `run.completed.factLedger` is present, trace summary command-failure
-  diagnostics prefer each run's ledger projection over legacy `commandOutcome`
-  and raw-event recompute. Multi-run traces aggregate per-run projections so a
+  diagnostics project each run's canonical ledger. Multi-run traces aggregate
+  per-run projections so a
   clean later ledger cannot mask an earlier run's failures. The ledger projection
   includes non-stale model-initiated command facts plus verification-relevant
   verifier-launched command facts, so workflow command verifiers are visible in
   `commandFailures.verification` even when they did not originate from a model
-  shell tool call. Older runs without a ledger keep the existing
-  `commandOutcome`/offline recompute compatibility path.
+  shell tool call. Incomplete live traces without a terminal ledger are derived
+  from their current command events.
 - Completed-run outcome projection treats host-emitted `workflow.failed` events
   as failing workflow evidence for the enclosing P1 workflow run. Core does not
   synthesize those events; the projection is over raw trace facts emitted by
@@ -235,6 +291,13 @@ trace.jsonl
   guard.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-16T10:44:25+0800
+- Scope: reviewed Task tool-name consolidation; summary Task lifecycle evidence
+  now derives only from the two canonical model-facing Task tools.
+- Read: Core trace Task evidence projection and summary consumers.
+- Tests: Core trace 131/131 and repository test typecheck passed.
 
 - Status: Verified
 - Date: 2026-07-15T23:51:43+0800
@@ -416,8 +479,8 @@ test/workflows.test.ts test/workflow-hooks.test.ts -t "workflow"`.
 - Date: 2026-07-04T16:47:47+0800
 - Scope: workflow-runtime-v1 P1.5 outcome diagnostics: completed-run command
   and verification profile outcomes prefer terminal FactLedger snapshots with
-  `verificationSource`, while old `verification:` hookName traces remain
-  readable as fallback.
+  explicit `verificationSource`, `profile`, and `verifierId` metadata; hook
+  names are not decoded as a fallback identity format.
 - Read: `packages/core/src/run-outcome.ts`,
   `packages/core/src/fact-ledger.ts`,
   `packages/core/test/run-outcome.test.ts`,
@@ -433,9 +496,9 @@ profile|Verification:|experimental gate|--workflow"`;
 
 - Status: Verified
 - Date: 2026-07-04T10:10:34+0800
-- Scope: workflow-runtime-v1 S2 diagnostics: trace summary now prefers
-  per-run persisted FactLedger snapshots for command failures and keeps the
-  offline recompute/legacy commandOutcome fallback for old traces.
+- Scope: workflow-runtime-v1 S2 diagnostics: trace summary projects per-run
+  persisted FactLedger snapshots for command failures and recomputes only for
+  incomplete live traces without a terminal ledger.
 - Read: `packages/core/src/trace-diagnostics.ts`,
   `packages/core/src/fact-ledger.ts`,
   `packages/core/src/run-outcome.ts`,

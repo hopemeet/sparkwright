@@ -25,6 +25,13 @@ const completed: DelegationLedgerResult = {
   costUsd: 0,
   toolCalls: 1,
   modelCalls: 1,
+  finality: "complete",
+  assessment: {
+    schemaVersion: "run-assessment.v1",
+    health: "clean",
+    issues: [],
+    verification: [],
+  },
 };
 
 describe("delegation ledger", () => {
@@ -55,6 +62,23 @@ describe("delegation ledger", () => {
     { signal: "failed" as const },
     { stepLimitReached: true },
     { truncated: true },
+    { finality: "partial" as const },
+    {
+      assessment: {
+        schemaVersion: "run-assessment.v1" as const,
+        health: "degraded" as const,
+        issues: [],
+        verification: [],
+      },
+    },
+    {
+      assessment: {
+        schemaVersion: "run-assessment.v1" as const,
+        health: "failing" as const,
+        issues: [],
+        verification: [],
+      },
+    },
   ])("does not remember non-reusable result %#", (override) => {
     const parent = {} as RunHandle;
     expect(

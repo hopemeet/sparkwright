@@ -9,15 +9,381 @@ session stores, and protocol-facing runtime methods.
 See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 [../maps/capabilities/README.md](../maps/capabilities/README.md).
 
+## Last Verified
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: Workflow episode construction keeps step and resource budgets as
+  independent limiters. Host derives Core `maxSteps` only from the explicit
+  Agent profile value (or the 100-step backstop) and passes node/profile
+  `runBudget.maxModelCalls` unchanged so Core owns the model-call terminal.
+- Read: Workflow episode planning/construction at fresh, checkpoint, and
+  Workflow-resume entry points; Core budget terminals; durable continuation.
+- Tests: Host Workflow/protocol 103/103 and real Terra durable Workflow; every
+  one-call boundary emitted `MAX_MODEL_CALLS_EXCEEDED` and the Workflow passed.
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: Host Agent parallel aggregation consumes canonical child finality and
+  keeps incomplete separate from unhealthy. Direct Core reuses Host's exported
+  runtime hook assembly, including required verification profiles. Execution
+  assessment and Core trace diagnostics share one resumable-failure predicate.
+- Read: Agent runtime assembly, run hook preparation, execution assessment,
+  Direct Core runner, Core trace/finality contracts, and focused/full tests.
+- Tests: Host 592/592; CLI 191/191; required-profile Direct Core regression and
+  retained three-episode Workflow trace both pass.
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: `HostExecution` aggregates episode-level Core assessments into one
+  `ExecutionAssessment`, with later verification superseding earlier results
+  and resumable episode budget failures excluded after successful continuation.
+  Episode continuation is now a durable Workflow-record decision owned by
+  `WorkflowRuntimeOperations`; ordinary runs execute one episode and no Todo
+  supervisor participates in scheduling.
+- Read: execution assessment/driver, Workflow episode and durable runtime
+  owners, Agent assembly, protocol projection, and full Host tests.
+- Tests: Host 591/591 passed, including direct assessment aggregation and
+  continuation-decision coverage.
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: the final `HostRuntime` composition audit consolidates every
+  HostExecution begin/busy/release sequence behind one private execution
+  envelope. Start, checkpoint resume, Workflow resume, service-detached start,
+  control resume, and claimed-writer resume pass that exact execution to their
+  inner envelope; no inner method can silently construct a second execution.
+  The Agent assembly reference is retained only by run preparation after
+  constructor wiring.
+- Read: HostRuntime/HostExecution/HostService, lane coordinator contracts,
+  Task/Workflow/episode/Agent/capability/preparation/interaction owners,
+  session modules, protocol consumers, and focused tests.
+- Tests: focused Host composition, Workflow, protocol, and downstream/final
+  repository gates are recorded with the commit.
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: `runtime/execution-interaction-operations.ts` is the Host owner for
+  execution identity/driver projection, active message acceptance, the
+  approval-only interaction channel and timeout/resolution path, cancellation,
+  disconnect cleanup, and drain. It reads the one HostRuntime-owned
+  HostExecution through a narrow port and never creates or mirrors execution
+  state.
+- Read: HostRuntime/HostExecution/HostService, lane coordinator contracts, run
+  preparation's interaction seam, protocol routing, and focused tests.
+- Tests: direct owner coverage and final focused/repository gates are recorded
+  with the commit.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: `runtime/run-preparation-operations.ts` is the Host owner for immutable
+  execution planning, model/config/security resolution, Skill/MCP preparation,
+  Agent and main-catalog assembly, Workflow preparation, Hook/rule assembly,
+  capability snapshot capture, and run/store metadata. HostRuntime supplies one
+  approval interaction-channel seam and retains HostExecution/current state.
+- Read: HostRuntime/run preparation, execution and existing runtime owners,
+  tool/capability/security/session/trace contracts, and focused tests.
+- Tests: direct owner coverage and final focused/repository gates are recorded
+  with the commit.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: `runtime/capability-runtime-operations.ts` is the Host owner for
+  effective capability inspection, configured/live snapshot merge and cache,
+  automation projection, and Skill index-failure diagnostics. HostRuntime
+  supplies one MCP preparation port and retains generic run preparation.
+- Read: HostRuntime/run preparation, capability assembly/security/config,
+  Agent assembly, WorkspaceContext Task ownership, protocol consumers, trace
+  persistence, and focused tests.
+- Tests: owner-level 2/2 and focused Host capability 222/222 passed; final
+  cross-package and repository gates are recorded with the commit.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: `runtime/agent-runtime-assembly.ts` is the Host owner for configured
+  Agent/Delegate runtime construction, dynamic spawn, parallel delegation,
+  promotion, workspace grants, child result normalization, and the captured
+  background Agent task runner. It reuses the process TaskManager and workspace
+  lease coordinator and does not own HostExecution, current run, or lane state.
+- Read: HostRuntime/HostExecution/WorkspaceContext, Agent assembly and adapters,
+  Agent Runtime invocation/task/ledger contracts, safety and trace maps, and
+  focused tests.
+- Tests: owner-level 1/1, focused Host 359/359, and focused Agent Runtime 77/77
+  passed; final repository gates are recorded with the commit.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: `runtime/workflow-episode-runtime.ts` is the Host owner for live
+  Workflow-aware episode preparation and execution: projection/wait input,
+  per-node model/tool/budget planning, Core run construction, actor chain,
+  control pumping, usage, and terminal completion. It drives the exact
+  HostExecution passed by HostRuntime and never owns current execution state.
+- Read: HostRuntime, Workflow episode/durable owners, HostExecution, projection
+  hooks/assets, Core run/session stores, Agent Runtime todo supervision, and
+  focused tests.
+- Tests: owner-level 1/1 and focused Host Workflow 175/175 passed; final
+  cross-package and repository gates are recorded with the commit.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: `runtime/workflow-runtime-operations.ts` is the single Host owner for
+  Workflow canonical roots/store lookup, list snapshots, actor notification
+  delivery, durable control acceptance/dispatch/outcomes, resume claims,
+  terminal finalization, and record mutation/compensation/projection helpers.
+  HostRuntime supplies only a narrow live-execution resume/control port and
+  keeps episode construction, current execution, and run assembly.
+- Read: HostRuntime, Workflow operations/WorkspaceContext/HostExecution,
+  workflow projection/assets, Agent Runtime journal/control/notification
+  contracts, Server Runtime dispatcher and focused tests.
+- Tests: owner-level 2/2 and focused Host Workflow 175/175 passed; final
+  cross-package and repository gates are recorded with the commit.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: `runtime/task-runtime-operations.ts` is the single Host owner for Task
+  protocol list/get/output/stop/join/promote behavior, bounded output polling,
+  actor revival projection, resume-time orphan failure, and the workspace Task
+  root. `HostRuntime` delegates to it and no longer carries those copies.
+- Read: HostRuntime, Task operations/projections, WorkspaceContext, Agent
+  Runtime manager/store/actor ports, protocol service routing, and focused
+  tests.
+- Tests: Host Task revival/service/protocol 64/64 and Host typecheck passed;
+  final repository gates are recorded with the commit.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: Host configured event hooks remain the sole production
+  `bindUserHooks()` consumer and already provide stable event-rule identity,
+  `source: "project"`, the run abort signal, and the canonical replay-capable
+  run event log.
+- Read: Host workflow-hook binding, Core user-hook contract/tests, extension
+  reference, and run-loop route.
+- Tests: focused Core user-hook and Host workflow-hook tests plus Host typecheck;
+  full downstream coverage is included in the repository release gate.
+
+- Status: Verified
+- Date: 2026-07-17T23:37:17+0800
+- Scope: Host reference runtime/storage/workspace consumers import explicit
+  Core internals after the public root was narrowed; Host composition,
+  execution, delegate, snapshot, trace, policy, and protocol behavior did not
+  change.
+- Read: all affected Host imports, Core public/internal exports, and internal
+  import governance.
+- Tests: Host typecheck/build and downstream focused suites passed; full Host
+  coverage is part of the final release gate.
+
+- Status: Verified
+- Date: 2026-07-17T23:04:01+0800
+- Scope: session operations have one Host owner. `session-queries.ts` locates
+  canonical session/agent run directories, projects completed conversation
+  turns and trace facts, anchors compact context, and serves session queries;
+  `session-compaction.ts` loads those turns before compacting. HostRuntime keeps
+  only protocol/execution delegation and no session filesystem reader copy.
+- Read: concrete HostRuntime, session query/compaction modules, canonical Core
+  session/trace stores, resume and compaction protocol coverage.
+- Tests: Host protocol 59/59 and full Host 577/577; Host typecheck; repository
+  test typecheck; import graph and project-map drift gates; full release gate.
+
+- Status: Verified
+- Date: 2026-07-17T22:15:00+0800
+- Scope: HostService is the sole HostRuntime composition and ordinary execution
+  entry. Runtime context, workspace lease, and execution coordinator are
+  required internal dependencies; start/resume/inject/cancel have no direct
+  fallback; and serveConnection requires the process-owned service.
+- Read: runtime contracts/concrete facade, HostService, connection server,
+  stdio/WS composition, protocol/Workflow/task-revival tests, and SDK round-trip.
+- Tests: Host service/task-revival 5/5; protocol 58/58; Workflow 35/35; Host
+  typecheck; full `npm run release:check`.
+
+- Status: Verified
+- Date: 2026-07-17T20:55:00+0800
+- Scope: Host Skill composition consumes one v2 package identity across reports,
+  doctor, runtime capability snapshots, trace-derived stats, managed proposals,
+  history, and suggestion keys. Content/name-only stats readers and artifact
+  fallbacks were removed.
+- Read: Host Skill report/doctor/stats/evolution/registry/tools, runtime capability assembly, CLI consumers, and focused tests.
+- Tests: Host Skill/protocol 81/81; focused CLI Skill gates 5/5; Host/CLI/test typechecks.
+
+- Status: Verified
+- Date: 2026-07-17T17:20:00+0800
+- Scope: Host Workflow execution and observation use one package identity.
+  Fresh start persists the required pinned v2 package, resume verifies that
+  snapshot and its snapshot-backed definition, lifecycle/notification/run
+  metadata publishes package identity instead of Markdown `contentHash`, and
+  offline shadow pins the candidate package in an ephemeral snapshot before
+  comparison without creating Workflow run state.
+- Read: Workflow asset pinning, runtime start/resume/projection/notification,
+  shadow/distill trace boundary, asset stats, and focused tests.
+- Tests: Host Workflow/shadow/distill/stats/protocol focused suites and Host
+  typecheck passed before the full release gate.
+
+- Status: Verified
+- Date: 2026-07-17T13:00:00+0800
+- Scope: Host tool and delegate capability assembly has one semantic source:
+  `list_dir` is an advanced deferred tool, delegate descriptors project only
+  current-run approval facts, and replay behavior reads tool governance.
+- Read: tool identities/catalog/selectors, Host tool definitions, delegate
+  capability/runtime assembly, protocol/schema consumers, and focused tests.
+- Tests: Host tools 88/88; capability/delegate protocol 14/14; Host typecheck;
+  downstream CLI/TUI capability tests passed.
+
+- Status: Verified
+- Date: 2026-07-17T09:43:00+0800
+- Scope: external configuration now has one canonical input shape: identity,
+  policy, run, and UI-owned fields are grouped-only; active root fields remain
+  workspace, shell foreground timing, tools, tasks, and capabilities. Removed
+  root aliases, shell.sandbox, grouped-vs-flat conflicts, and the TUI second
+  parser are gone.
+- Read: Host schema/contracts/loader, CLI init/writers/doctor/real-regression
+  helpers, TUI config projection, generated schema and fixtures, public config
+  references, and routed project/test-map pages.
+- Tests: Host config/protocol 115/115; CLI config schema 6/6 and full 155/155;
+  TUI config/capability/status consumers 17/17; Agent Runtime, Host, CLI, and
+  TUI typechecks; repository test typecheck; schema check; project-map drift;
+  full release gate including regression matrix and install smokes.
+
+- Status: Verified
+- Date: 2026-07-17T08:25:00+0800
+- Scope: process delegate tool results have one configured-profile identity:
+  `agentProfileId`. Removed the duplicate `agentId` field from ACP and
+  external-command success results and external nonzero-exit metadata without
+  changing parent/child lifecycle attribution.
+- Read: ACP/external-command adapters, direct delegate runner, Host/CLI/TUI
+  consumers, Core trace projections, public references, and focused tests.
+- Tests: Host ACP/external-command 30/30 and delegate protocol 8/8; CLI direct
+  delegate 1/1; Core trace 4/4; Host and repository test typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-17T01:07:28+0800
+- Scope: external-command delegate output truncation has one representation:
+  the stream-specific `stdoutTruncated` and `stderrTruncated` fields. Removed
+  the divergent aggregate compatibility alias from tool and terminal trace
+  results.
+- Read: external-command adapter, traced process summary, direct delegate CLI
+  path, Core trace consumers, public process-output references, and focused
+  tests.
+- Tests: Host external-command 20/20 and delegate protocol 8/8; CLI direct
+  delegate 1/1; Core trace 4/4; Host build/typecheck and repository test
+  typecheck; project-map drift; full release gate passed.
+
+- Status: Verified
+- Date: 2026-07-17T00:08:26+0800
+- Scope: Agent direct exposure has one policy surface: `exposure`,
+  `pinnedDelegates`, and per-profile `exposeAsDelegate`. The retired
+  `exposeChildrenAsDelegates` config reader, resolver branch, and direct-filter
+  branch are gone. `delegates run` retains explicit aliases and admits
+  synthesized aliases only through the canonical exposure policy.
+- Read: Host config schema/parser/contracts, delegate resolver/filter/direct
+  runner, CLI config serializer, public Agent guidance, and focused tests.
+- Tests: Host Agent/config/tools 184/184; focused Host protocol 4/4; CLI
+  Agent/delegate/capability 9/9; Agent Runtime, Host, and CLI typechecks;
+  repository test typecheck; schema check; project-map drift; full release gate.
+
+- Status: Verified
+- Date: 2026-07-16T23:55:17+0800
+- Scope: `create_agent` accepts only canonical `model: "inherit"` for model
+  inheritance; it normalizes that marker to omission and rejects the removed
+  `model: "default"` compatibility alias.
+- Read: Markdown Agent tool schema/parser/serializer, discovery validation,
+  current user/manual guidance, and focused tests.
+- Tests: Agent profile/tools 125/125; capability protocol 5/5; CLI
+  Agent/capability routes 7/7; Host and CLI typechecks; repository test
+  typecheck; project-map drift; full release gate.
+
+- Status: Verified
+- Date: 2026-07-16T23:38:00+0800
+- Scope: Agent.md discovery derives `AgentProfile.id` only from the `.md`
+  filename stem; frontmatter cannot redirect identity, and `create_agent`
+  accepts only its canonical `name` input.
+- Read: Agent profile scanner/parser, Markdown authoring tool, collision/report
+  paths, public guides/manual, and focused tests.
+- Tests: Agent profile/tools 125/125; protocol collision 1/1; CLI
+  Agent/capability routes 7/7; Host, Agent Runtime, and CLI typechecks;
+  repository test typecheck; project-map drift; full release gate.
+
+- Status: Verified
+- Date: 2026-07-16T23:05:00+0800
+- Scope: Host task revival and workflow notification delivery consume the
+  direct actor sink/inbox surfaces; task projection reads canonical terminal
+  actor payload/route facts with no task notification conversion layer.
+- Read: Host workspace/runtime/task projections, Agent Runtime inboxes,
+  workflow channel consumers, and focused tests.
+- Tests: Host task/workflow/protocol/Agent 122/122; Agent Runtime task/workflow 90/90;
+  server-runtime 3/3; IM gateway 6/6; repository test typecheck; full release
+  gate.
+
+- Status: Verified
+- Date: 2026-07-16T22:26:54+0800
+- Scope: audited every Host workflow list/get/resume/control/event consumer
+  after Agent Runtime made the workspace workflow journal the only durable
+  record/event layout; no Host sidecar reader or direct file consumer remains.
+- Read: Host runtime/workspace/asset-stats consumers, CLI/TUI/server-runtime
+  adapters, protocol docs, and Agent Runtime store/journal.
+- Tests: Host workflow/protocol focused suites and typecheck; repository test
+  typecheck; full release gate.
+
+- Status: Verified
+- Date: 2026-07-16T21:02:00+0800
+- Scope: Host Shell task creation and active-task deduplication use only the
+  canonical `shell.background` persisted kind; the promotion-named task reader
+  was removed.
+- Read: Host Shell handoff/deduplication, task store consumers, Host/SDK/TUI
+  fixtures, and Shell/task maps.
+- Tests: focused Host Shell/protocol, Core trace/ledger, CLI summary, SDK, and
+  TUI rendering suites; affected typechecks; project-map drift check.
+
+- Status: Verified
+- Date: 2026-07-16T19:25:00+0800
+- Scope: Session list previews read user goals only from canonical transcript
+  prompt `messages`; the old top-level `content` shape is no longer parsed.
+- Read: Host session queries/tests, Core transcript writer, session-store map,
+  and state/trace reference.
+- Tests: Host session-preview focused tests and typecheck; test typecheck;
+  project-map drift check.
+
+- Status: Verified
+- Date: 2026-07-16T14:10:00+0800
+- Scope: Host run resume resolves runs only from canonical session storage; the workspace `.sparkwright/runs/<run-id>` lookup and attach-to-new-session compatibility path were removed.
+- Read: Host run lookup/resume, Core trace storage, protocol tests, and Host protocol reference.
+- Tests: Host protocol focused tests; npm run build; npm run typecheck:test; npm run release:check.
+
+- Date: 2026-07-16T13:50:10+0800
+- Scope: Workflow list/resume now resolve only workspace `.sparkwright/workflow-runs/`; session enumeration, duplicate precedence, and located-store fallback were removed.
+- Read: Host workflow list/resume/control paths, Agent Runtime store helpers, protocol fixtures, focused tests, and current docs.
+- Tests: npm run build; npm run typecheck:test; Agent Runtime workflow tests (25); Host workflow/protocol tests (94).
+
+- Date: 2026-07-16T13:36:30+0800
+- Scope: Host workflow actions now use the workflow-owned `WorkflowHookFinding` type; no host production path supplied the removed Core validation-hook lane.
+- Read: host workflow hook compiler/executor, core workflow contracts, focused tests, and current hook documentation.
+- Tests: focused Host workflow tests; npm run build; npm run typecheck:test; npm run release:check.
+
+- Date: 2026-07-16T13:21:00+0800
+- Scope: Host routes pending approvals through an approval-only `InteractionChannel`; main runs, configured delegates, and dynamic child grants no longer carry a parallel resolver field.
+- Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.
+- Tests: focused access/policy/protocol/CLI/TUI/ACP/Workflow tests; npm run typecheck:test; npm run schema:check.
+
+- Date: 2026-07-16T11:52:29+0800
+- Scope: Host protocol failure producers emit only the required
+  `run.failed.failure` envelope under protocol 2.0. Built-in tool identity and
+  delegate target inputs remain single-track.
+
 ## Main Files
 
-- `packages/host/src/runtime.ts` — stable named compatibility facade
-- `packages/host/src/runtime/host-runtime.ts` — concrete HostRuntime composition and execution orchestration
+- `packages/host/src/runtime.ts` — stable named public facade
+- `packages/host/src/runtime/host-runtime.ts` — concrete process facade,
+  single HostExecution envelope, and runtime collaborator wiring
+- `packages/host/src/runtime/execution-interaction-operations.ts` — execution identity/driver projection, message acceptance, approval channel/routing, cancellation cleanup, and drain
+- `packages/host/src/runtime/run-preparation-operations.ts` — immutable run plan, model/config/security, Skill/MCP, Agent/catalog, Workflow preparation, Hook/rule, capability snapshot, and metadata assembly
+- `packages/host/src/runtime/agent-runtime-assembly.ts` — configured/direct/indexed/parallel Agent and Delegate assembly, dynamic spawn/promotion, child grants/results, and background Agent task execution
+- `packages/host/src/runtime/capability-runtime-operations.ts` — effective capability inspection, last-run snapshot ownership/merge, automation projection, and capability index-failure diagnostics
 - `packages/host/src/runtime/capability-assembly.ts` — capability snapshot projection, summaries, automation reads, and merge
-- `packages/host/src/runtime/task-projections.ts` — task snapshots, notifications, terminal classification, and bounded output reads
+- `packages/host/src/runtime/task-runtime-operations.ts` — Host Task protocol/control, output reads, actor revival, orphan recovery, and canonical workspace root
+- `packages/host/src/runtime/task-projections.ts` — stateless task snapshots, notifications, and terminal classification
+- `packages/host/src/runtime/workflow-runtime-operations.ts` — Host Workflow canonical roots/store, snapshots, actor notifications, durable controls/resume claims, finalization, and record persistence helpers
+- `packages/host/src/runtime/workflow-episode-runtime.ts` — Host Workflow-aware projection preparation, Core episode construction, actor chain, live control pump, usage, and execution completion
 - `packages/host/src/runtime/contracts.ts` — runtime construction and execution coordination ports
-- `packages/host/src/session-queries.ts`
-- `packages/host/src/session-compaction.ts`
+- `packages/host/src/session-queries.ts` — canonical Host run lookup, completed-turn replay, compact-context anchoring, trace fact projection, and session queries
+- `packages/host/src/session-compaction.ts` — complete manual compaction operation from turn loading through artifact/event persistence
 - `packages/host/src/run-access.ts`
 - `packages/host/src/run-security-plan.ts`
 - `packages/host/src/run-policy.ts`
@@ -63,15 +429,28 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 
 Owns:
 
+- the sole HostExecution slot/factory and the explicit start/resume execution
+  envelope passed to every live episode
 - host protocol method implementations such as `run.start`, `run.resume`, `session.inspect`, `session.compact`, and `capability.inspect`
 - provider/model construction for local host runs
 - provider pricing resolution for run metadata, session compaction usage hints,
   and `capability.inspect` diagnostics
 - skill, MCP, shell, cron, and agent capability preparation
+- complete run preparation ownership through `RunPreparationOperations`
+- effective capability inspection and snapshot-cache ownership through
+  `CapabilityRuntimeOperations`
+- host Agent/Delegate execution-surface construction through
+  `AgentRuntimeAssembly`
 - host tool catalog entries that preserve runtime tool source metadata
 - immutable per-run/per-inspect derivation of resolved access, workspace,
   confidential path inputs, skill/config roots, and shell sandbox status
-- host-level approval resolver and pending approval routing
+- host execution interaction/control routing through
+  `ExecutionInteractionOperations`
+- host Task protocol/control, actor revival, resume orphan handling, and
+  workspace Task-root projection through `TaskRuntimeOperations`
+- host Workflow durable control-plane behavior through
+  `WorkflowRuntimeOperations`, and live Workflow-aware Core episode execution
+  through `WorkflowEpisodeRuntime`
 - host-client approval helpers used by frontends that must not import core directly
 - session diagnostics bundle composition
 - shell live-process handoff into task state, including explicit/promotion
@@ -116,19 +495,19 @@ Does not own:
   presentation. Other Skill entrypoints are not unified yet.
 
 - Host's model-facing Markdown Agent authoring surface uses canonical `name` as
-  the filename stem and public identity. Runtime `AgentProfile.id` remains an
-  internal compatibility field, legacy Markdown `id` overrides remain
-  readable, and new files omit inferred child mode and inherited budgets.
+  the filename stem and public identity. Markdown discovery derives runtime
+  `AgentProfile.id` from that filename stem only; frontmatter does not override
+  it. New files omit inferred child mode and inherited budgets.
   Explicit model refs are resolved against current layered config before write.
-  Authoring aliases `inherit` / `default` normalize to omission, the sole
-  persisted inheritance form. Markdown discovery drops and reports invalid
-  model-ref syntax instead of advertising profiles that fail only when
-  delegated.
+  The authoring-only `inherit` marker normalizes to omission, the sole persisted
+  inheritance form. Markdown discovery drops and reports invalid model-ref
+  syntax instead of advertising profiles that fail only when delegated.
 
-- One active HostExecution per compatibility runtime facade.
+- One active HostExecution per HostService-composed runtime facade.
 - One execution-wide abort spans assembly
-  and all todo/workflow episodes on that connection. Disconnect and legacy
-  cancel trip the same abort; Core run cancellation remains run-scoped.
+  and all todo/workflow episodes on that connection. Disconnect and
+  service-coordinated cancel trip the same abort; Core run cancellation remains
+  run-scoped.
 - Background Agent `task_create` tools capture their model, policy, session,
   child-store, permission, and workspace-lease dependencies in an inline Task
   runner. Host has no mutable latest-run Agent dependency slot.
@@ -137,20 +516,32 @@ Does not own:
   abort, live approval waiters, completion, and idempotent resource disposal.
   Core terminal for an episode does not complete the execution while the
   Workflow/todo run-chain driver selects a continuation.
+- `ExecutionInteractionOperations` owns the Host-facing projection and control
+  seam over that exact execution: identity/driver handles, atomic injected
+  message acceptance, approval registration/timeout/resolution and event
+  delivery, cancellation cleanup, and drain. It receives one read-only current
+  execution port from HostRuntime; it does not create HostExecution, replace
+  `currentExecution`, retain an active-run copy, or admit execution lanes.
 - `resolveExecutionPlan()` freezes workspace/session/model/access identity
   before `createExecutionResources()` creates a fresh LocalWorkspace, trace
   emitter, and session store handles. Live execution resources are not pooled.
 - `HostService` is the process composition root and the only production
-  `HostRuntime` factory. It keys `WorkspaceContext` by canonical workspace and
-  session-store roots, shares one workspace mutation lease coordinator per
-  canonical workspace, attaches runtime facades, provides execution/run alias
-  lookup without copying execution truth, and drains attached runtimes.
+  and test `HostRuntime` factory. `HostRuntime` requires its service-owned
+  `WorkspaceContext`, workspace mutation lease coordinator, and execution
+  coordinator at construction; it has no self-composition fallback.
+  `HostService` keys `WorkspaceContext` by canonical workspace and session-store
+  roots, shares one workspace mutation lease coordinator per canonical
+  workspace, attaches runtime facades, provides execution/run alias lookup
+  without copying execution truth, and drains attached runtimes.
 - `HostService` owns one in-memory `ExecutionLaneCoordinator` and is the
   canonical production path for ordinary start, resume, inject, and cancel.
   Lane identity is canonical session-store root plus persisted session id.
   Same-lane executions serialize; different lanes may consume the bounded
   process capacity concurrently. Core episode terminal does not release the
   lane until `HostExecution.completion` settles.
+- `serveConnection()` receives the existing process HostService. The connection
+  server never creates a per-connection coordinator; stdio/WS and embedders own
+  service construction and sharing.
 - `HostService` also owns ordinary IM session bindings, exact subject
   authorization, approval-to-execution routing, retained runtime attachment,
   and per-binding delivery cursors over a bounded event-projection outbox.
@@ -173,12 +564,37 @@ Does not own:
   a fixed protocol-client attribution.
 - `WorkspaceContext` owns the shared TaskManager/store/outbox and Workflow
   notification/control adapters. It never owns live MCP, LocalWorkspace,
-  mutable policy, event emitter, approval resolver, or active execution.
+  mutable policy, event emitter, interaction channel, or active execution.
+- `WorkflowRuntimeOperations` consumes those exact WorkspaceContext adapters;
+  it does not construct a second inbox/outbox/dispatcher or hold HostExecution
+  state. Durable command processing can request one resume only through the
+  HostRuntime-owned execution port, preserving a single execution entrance.
+- `WorkflowEpisodeRuntime` receives the exact HostExecution created by
+  HostRuntime. It may attach/detach Core episode runs and drive the actor chain,
+  but it does not store `currentExecution`, construct HostExecution, admit
+  lanes, or create a second execution entrance. HostRuntime continues to own
+  process facade wiring and delegates generic preparation to
+  `RunPreparationOperations`.
+- `RunPreparationOperations` owns the complete pre-Core run environment:
+  immutable execution plan/resources, model/config/security, Skill/MCP, Agent,
+  main catalog/admission, Workflow preparation, Hook/rules, capability
+  snapshot, and run/store metadata. It receives the existing Task, Agent,
+  Workflow episode, capability, and workspace-lease owners and does not copy
+  their state. `ExecutionInteractionOperations` provides the narrow
+  interaction-channel factory through HostRuntime wiring; the preparation
+  owner does not hold HostExecution or `currentExecution`.
+- `CapabilityRuntimeOperations` owns the configured inspection catalog, the
+  last successful run snapshot, configured/live merge, Cron/Task automation
+  projection, and Skill index-failure trace sequence. It reuses the exact
+  WorkspaceContext TaskManager/root and receives one HostRuntime MCP
+  preparation port implemented by the canonical run-preparation MCP helper; it
+  does not own live MCP state, HostExecution, run preparation, or a second Task
+  store.
 - `run-security-plan.ts` is the immutable boundary between config/access
   parsing and runtime assembly. A run and `capability.inspect` derive the same
   workspace, access, confidential paths, skill/config roots, and resolved shell
   sandbox inputs there. It must not own prepared tools/processes, approval
-  resolvers, traces, Workflow state, or Core's mutable per-run mutation policy.
+  channels, traces, Workflow state, or Core's mutable per-run mutation policy.
 - `run-policy.ts` is the stateful companion factory. Every call creates a fresh
   layered policy and fresh mutation `writtenPaths` state. Host runtime and the
   internal CLI direct-core start/resume paths share its target/default
@@ -190,16 +606,15 @@ Does not own:
 - Workflow Script execution receives write access only when both the resolved
   run access and the script's declared capabilities allow `write`. Command
   hooks are likewise strengthened to fail-closed no-write when run metadata
-  explicitly carries `shouldWrite:false`; missing metadata retains the legacy
-  embedder contract.
+  carries `accessMode: read-only`.
 - CLI `capabilities inspect` treats the Host `CapabilitySnapshot` as required
   for effective tool, delegate, and sandbox facts. It may add CLI-only config
   diagnostics and optional MCP resolution detail, but it no longer reconstructs
   a fallback Host tool catalog or independently reports sandbox availability.
 - Session root defaults to `<workspace>/.sparkwright/sessions`.
-- Host protocol `run.failed` events emitted by runtime carry canonical
-  `failure` and deprecated compatibility `error`; failed core completions remain
-  `run.completed` with optional `failure`.
+- Host protocol `run.failed` events emitted by runtime carry only required
+  `failure`; failed Core completions remain `run.completed` with optional
+  `failure`.
 - `run.start` and `run.inject_message` accept protocol `input.parts`; host
   normalizes them into core `ContextItem.parts` while keeping `goal`/`content`
   as text summaries.
@@ -229,6 +644,16 @@ Does not own:
   user and project layers. Within a layer, JSON wins over YAML/YML and multiple
   files are reported as a non-fatal same-layer conflict; explicit
   `$SPARKWRIGHT_CONFIG` still loads as the final file layer.
+- External config has one canonical shape: model/providers live under
+  `identity`, confidential/write/sandbox policy under `policy`, run defaults
+  under `run`, and TUI preferences under `ui`. `workspace`,
+  `shell.foregroundTimeoutMs`, `tools`, `tasks`, and `capabilities` remain
+  canonical root fields. Removed root aliases and `shell.sandbox` are rejected
+  by both the runtime loader and generated schema instead of being ignored.
+- The Host loader validates and merges `ui.theme`, `ui.mouse`,
+  `ui.keybindings`, and `ui.vim`; TUI consumes that loaded carrier and does not
+  re-read or independently normalize config files. Keybindings merge by action
+  across layers.
 - `shell.foregroundTimeoutMs` is the single configurable foreground shell
   budget. It defaults to 300000 ms, is capped at 600000 ms, flows through the
   host tool catalog to main and configured-delegate child shell tools, and is
@@ -239,8 +664,8 @@ Does not own:
   config section types in `config.ts` are re-exported from this Zod source where
   the shape is host-owned. Runtime loader validation now shares the Zod source
   for primitive field checks (strings, arrays, booleans, numbers, string
-  records). Section key validation for `tools`, `write`, `runBudget`,
-  `approvals`, `shell`, shell sandbox subsections, `capabilities`,
+  records). Section key validation for `tools`, `write`, `runBudget`, `shell`,
+  shell sandbox subsections, `capabilities`,
   `capabilities.skills` subsections, `capabilities.hooks`/workflow hook
   subsections, `capabilities.verification` subsections, `capabilities.mcp`,
   `capabilities.mcp.defaultPolicy`, `capabilities.agents`, and
@@ -254,25 +679,27 @@ Does not own:
   enum/literal checks for trace level, shell sandbox modes, skill evolution,
   workflow hooks, verification, MCP startup/schema-load modes, and agent
   profile modes also reuse Zod-exported option lists. Root/shared scalar
-  validation for `model`, `workspace`, `confidentialPaths`, `maxSteps`, and
-  `run.accessMode` also consumes the Zod source while preserving host loader
-  partial recovery. Strict root unknown-key validation remains a
-  `sparkwright config validate` / generated JSON Schema responsibility; the
-  runtime host loader intentionally ignores unknown root keys for UI/future
-  compatibility. Externally-owned schemas (`capabilities.mcp.servers` and
+  validation for `identity.model`, `workspace`,
+  `policy.confidentialPaths`, `run.maxSteps`, and `run.accessMode` also
+  consumes the Zod source while preserving host loader partial recovery.
+  Runtime loading and generated JSON Schema both reject unknown root keys.
+  Externally-owned schemas (`capabilities.mcp.servers` and
   `capabilities.agents.profiles`) remain integration edges, with host runtime
   validation preserving existing partial parsing and source-relative path
   resolution.
 - Host approval resolution preserves optional resolver `message` and
   `autoApproved` fields so trace summaries can distinguish auto-approved
-  decisions from manual approvals without parsing prose.
-- Host protocol `run.start` and `run.resume` pass `shouldWrite` as the
-  workspace-write capability gate into core policy. Read-only runs
-  (`shouldWrite: false`) keep the hard-deny write gate; interactive TUI clients
-  that need write approvals send `shouldWrite: true` with an approval-oriented
-  `permissionMode`.
+  decisions from manual approvals without parsing prose. Core approval trace
+  events carry the canonical request (`id`) and response (`approvalId`) shapes;
+  Host delegates do not emit alternate compact envelopes.
+- Host protocol `run.start`, `run.resume`, and `workflow.resume` accept only
+  `accessMode` for run autonomy. Host resolves ceilings once, freezes the
+  canonical mode in the security plan, and compiles internal write/approval
+  policy from it.
 - Host start/resume/workflow-resume run policies pass `confidentialPaths` and
   `confidentialDefaults` through core `resolveRunConfidentialPaths()`.
+  External config owns these as `policy.confidentialPaths` and
+  `policy.confidentialDefaults`; the compiled carrier remains flat.
   `confidentialDefaults` defaults to true and may be set false by config or
   protocol clients to opt out of SparkWright's built-in conservative read-deny
   list while retaining any explicit `confidentialPaths`.
@@ -281,32 +708,21 @@ Does not own:
   record. `workflow.resume` reapplies those persisted values when the client
   omits them, preserving the authorization boundary without broadcasting paths.
 - `run.accessMode` is the single user-facing run autonomy knob. The protocol
-  `RunStart`/`RunResume` payloads accept optional `accessMode`
-  (`read-only`/`ask`/`accept-edits`/`bypass`); `host/src/run-access.ts`
-  (`resolveRunAccessFields`) compiles it to `permissionMode` + `shouldWrite` and,
-  when a conflicting legacy `permissionMode`/`shouldWrite` is also present,
-  prefers `accessMode` and records the overridden field names in run metadata
-  (`accessMode`, `accessModeOverrodeLegacyFields`) via `buildAccessMetadata`.
-  When `accessMode` is absent the previous `permissionMode`/`shouldWrite`/default
-  path is used, but host runtime defaults can still clamp legacy fields through
-  an `accessModeCeiling`. The mapping primitive lives in core
+  run payloads accept optional `accessMode`
+  (`read-only`/`ask`/`accept-edits`/`bypass`); omission defaults to
+  `read-only`. `host/src/run-access.ts` validates/clamps the mode against an
+  `accessModeCeiling` and compiles the immutable internal execution fields.
+  The mapping primitive lives in core
   (`compileRunAccessMode`/`clampAccessMode`/`ACCESS_MODES`), mirrored as a wire
   type in `@sparkwright/protocol`. `server.ts` validates the `accessMode` enum at
   the wire boundary.
-- `permissionMode` is no longer a user-facing config/CLI surface; it is an
-  internal compile target only. Config exposes `run.accessMode` (the flat
-  `permissionMode`/`policy.permissionMode` fields were removed, and
-  `ui.tuiPermissionMode` was removed instead of keeping a second persisted
-  autonomy axis). The loader (`config.ts`) derives the internal
-  `SharedConfig.permissionMode` from `accessMode`. Project `run.accessMode` is
-  also exposed as `accessModeCeiling`; lower layers, CLI flags, host clients, and
+- Core permission/write fields are internal compile targets only. Config
+  exposes `run.accessMode`; project `run.accessMode` is also exposed as
+  `accessModeCeiling`. Lower layers, CLI flags, host clients, and
   TUI runtime switches are clamped to that ceiling while stricter requests remain
-  effective. The CLI flag is `--access-mode` (compiled to
-  `permissionMode`/`shouldWrite` locally after ceiling clamp); `tui`/`acp` launch
-  flags are also `--access-mode`. The internal host↔host
-  spawn IPC (`host/src/main.ts` + `client-spawn.ts`) still speaks the low-level
-  `--permission-mode` contract. `approvals.cronMode` remains a low-level
-  `permissionMode` field; `dont_ask` has no `accessMode` equivalent by design.
+  effective. CLI, TUI, ACP, Cron, and host↔host spawn use `--access-mode` or
+  the matching typed field; there are no separate approval shortcut flags or
+  persisted approval-default scopes.
 - TUI approval auto-policy goes through `@sparkwright/host` helpers; TUI source
   must not import `@sparkwright/core` directly.
 - Host client input helpers build protocol `RunInputPart` image attachments and
@@ -317,8 +733,8 @@ Does not own:
   filters. `tools.use` is a selector whitelist expanded at the host catalog
   layer where source metadata is still available, `allowed`/`disabled` trim the
   prepared catalog by concrete name, and `defer` only changes schema loading
-  for tools that remain. The effective config canonicalizes legacy selector and
-  tool aliases.
+  for tools that remain. Selectors and concrete tool names are exact; removed
+  built-in names fail validation instead of being normalized.
 - Main, dynamic-spawn child, configured-delegate child, and diagnostic tool
   lists are derived from `tool-catalog.ts`; dynamic `spawn_agent` uses a
   dynamic child catalog that defaults to read-only tools but can expose managed
@@ -347,8 +763,8 @@ Does not own:
   agent-runtime, including action-specific non-empty id constraints, so
   `tool_search select:task` gives the provider the same guidance the runtime
   validates.
-- Host wires the shared `TaskManager` notification sink into a durable
-  `FileTaskNotificationOutbox` that backs per-run core notification/revival
+- Host wires the shared `TaskManager` actor sink into a durable
+  `FileTaskNotificationOutbox` whose direct actor inbox backs per-run core notification/revival
   sources. All terminal task notifications for the run can be injected through
   `run.notification.injected`; only awaited tasks wake core's internal
   `waiting_tasks` state. Injected terminal task notification body text includes
@@ -358,6 +774,12 @@ Does not own:
   `run.resume`, pending/running task records for the resumed run that do not
   have a current-process live runner are failed explicitly as orphaned
   in-process tasks.
+- `WorkspaceContext` remains the durable owner of the Task manager/store/outbox.
+  `TaskRuntimeOperations` is the sole Host behavior owner over those ports for
+  protocol queries/control, bounded output reads, revival delivery/readiness,
+  resume-time orphan failure, and the canonical `.sparkwright/tasks` root.
+  `HostRuntime` keeps only public protocol delegates and run-assembly references
+  to the collaborator's manager.
 - Host owns workflow asset discovery, parsing, and P1 projection compilation.
   `workflows/<asset>/workflow.md` folder assets are parsed with shared
   markdown-folder-asset plumbing, optional `config.yaml`, and per-node markdown
@@ -372,18 +794,19 @@ Does not own:
   `workflow.*` lifecycle events, and runtime interruption facts. It delegates
   transition decisions to the portable agent-runtime state machine.
 - Workflow runs are durable host-orchestrated records. After P9a, fresh runs
-  write `FileWorkflowStore` records under the workspace-level
-  `.sparkwright/workflow-runs/` store while retaining `sessionId` on each
-  record; legacy `<sessionRoot>/<sessionId>/workflow-runs/` records remain
-  list/resume compatible. Host acquires the workflow run's single-writer lease
-  before fresh record creation or resume, pins the compiled workflow definition
-  snapshot, persists projection snapshots into current node, attempts,
+  write `FileWorkflowStore` journal entries under workspace-level
+  `.sparkwright/workflow-runs/<workflowRunId>.journal/` while retaining
+  `sessionId` on each record. List, resume, control, notification, event-log,
+  and supervisor paths all replay this one canonical store; Host does not read
+  record or event sidecars. Host acquires the workflow run's single-writer lease
+  before fresh record creation or resume, pins the v2 executable package and
+  its snapshot-backed definition, persists projection snapshots into current node, attempts,
   verdict/transition logs, and run/fact evidence refs, refreshes a single-writer
   lease while the run chain is active, and releases the lease on terminal/
-  rejected paths. `workflow resume` uses the pinned definition and the located
+  rejected paths. `workflow resume` verifies and uses the pinned executable
+  package and workspace
   store, not the live asset folder or a reconstructed session-root store;
-  workspace-level records are preferred over matching legacy session-local
-  copies for the same `workflowRunId`/`sessionId`; `verifyOnResume` re-runs
+  `verifyOnResume` re-runs
   verifier nodes whose latest stored verdict is passed before trusting the
   stored position. Waiting-input resume does not consume the durable wait until
   host run preparation has succeeded; if a later pre-run failure occurs, host
@@ -396,8 +819,9 @@ Does not own:
 - Host delivers completed/failed workflow terminal notifications and P3
   `waiting` notifications through the workflow actor inbox with
   `payload.workflowId === WorkflowRunRecord.id`; waiting notifications are
-  backed by `FileWorkflowNotificationOutbox`, not the legacy task notification
-  format. Durable truth lives in `WorkflowRunRecord` / store events.
+  backed by `FileWorkflowNotificationOutbox`. Task and workflow outboxes use
+  distinct typed durable entries but implement the same direct actor ports.
+  Durable truth lives in `WorkflowRunRecord` / store events.
 - P3 Step 4a retired `startSupervisedRunChain()`. Fresh run, `run.resume`, and
   `workflow.resume` now enter `startWorkflowActorEpisodeChain()`: the
   workflow/todo actor owns the chain shape through agent-runtime's
@@ -416,12 +840,15 @@ Does not own:
   contains deferred tools, host appends a scoped `tool_search` whose descriptor
   source is the narrowed catalog only; PreToolUse allows only that marked scoped
   tool_search without reopening the parent catalog. The clamp compares allowed
-  tool names canonically, so legacy declarations such as `tools: [read_file]`
+  tool names canonically, so legacy declarations such as `tools: [read]`
   still allow the canonical worker tool `read`.
 - P3 Step 4b.2 routes active model-node `model` and `runBudget` at worker
   entry: `workflows.ts` parses the node fields, `runtime.ts` resolves model
   refs through the configured model-tier surface, passes the selected adapter
   and per-attempt budget to `createRun()`, and records `workflowEpisode`,
+  without projecting `runBudget.maxModelCalls` into `maxSteps`. Explicit
+  profile `maxSteps` remains a separate limiter and otherwise uses the Host
+  backstop.
   per-episode usage snapshots, and aggregate `workflowUsage` on
   `WorkflowRunRecord.metadata`. Retry escalation inside one core run is not
   implemented until model-node boundaries become separate worker episodes.
@@ -446,8 +873,8 @@ Does not own:
   telemetry/progress, and scripts report effects through host API methods such
   as `progress`, `getEvidence(nodeId)`, governed `invoke(type:"command")`,
   `complete`, and `fail`. Script-declared write capability is fail-closed when
-  the parent run lacks `shouldWrite`; scripts do not write trace directly and do
-  not receive raw host capabilities.
+  the parent run uses `accessMode: read-only`; scripts do not write trace
+  directly and do not receive raw host capabilities.
 - P4 keeps node-boundary compaction and retry-time model escalation out of
   host execution. There is still no `workflow_start` tool; script nodes do not
   introduce an expression language, and data flow between nodes remains
@@ -538,6 +965,13 @@ Does not own:
 - Host-owned task tools pass default concurrency caps to agent-runtime
   (`global=4`, `agent=1`) unless configured. Cap violations are recoverable
   tool errors and must not become an internal host queue.
+- `AgentRuntimeAssembly` receives per-run inputs plus the existing process
+  `TaskManager` and workspace lease coordinator. It owns Agent profile/target
+  resolution, direct/indexed/parallel delegate construction, dynamic spawn,
+  child model/hook/catalog/policy assembly, promotion, grant, result, and
+  background Agent task-runner behavior. It does not copy HostExecution,
+  current-run, active-run, or lane state; child tools resolve the caller-owned
+  parent run only through the narrow per-run reference supplied by HostRuntime.
 - Host Agent tools classify Core same-turn concurrency from effective call
   capability rather than their static read-shaped wrapper. Dynamic
   `spawn_agent` remains concurrent only without a workspace-write grant;
@@ -553,10 +987,10 @@ Does not own:
   controls for TUI and other clients. They do not reuse model-facing task tool
   JSON: join marks a task awaited, while promote forwards a manual foreground
   promotion signal into `TaskManager`.
-- `tool-identities.ts` maps implementation names to the canonical public
-  model-facing surface (`read`, `write`, `edit`, `bash`, `glob`, `grep`),
-  records legacy aliases, classifies default exposure tier, and records related
-  or required tools such as the anchored verified-edit pair.
+- `tool-identities.ts` records the canonical public model-facing surface
+  (`read`, `write`, `edit`, `bash`, `glob`, `grep`), classifies default exposure
+  tier, and records related or required tools such as the anchored verified-edit
+  pair. The callable definitions use those exact names.
 - Dynamic `spawn_agent` output includes child identity/finality facts for the
   parent (`childRunId`, `role`, `stepLimitReached`, `truncated`, and
   `finality`). A child answer produced on the last allowed step remains a
@@ -573,8 +1007,8 @@ Does not own:
   background agent tasks. `capabilities.agents.maxDepth` still bounds ordinary
   child/delegate spawning but is not a nested-background opt-in.
 - Background `agent` tasks use the shared `runHostAgentTask()` helper. The task
-  controller signal is the child run's abort owner, so `task_stop` cancels the
-  child lifecycle independently of the foreground parent turn. The helper also
+  controller signal is the child run's abort owner, so `task(action:"stop")`
+  cancels the child lifecycle independently of the foreground parent turn. The helper also
   threads the controller task id into dynamic-spawn metadata so parent-visible
   `subagent.*` terminal events for `entrypoint:"agent_task"` can be joined back
   to `task_create` outputs.
@@ -637,8 +1071,9 @@ Does not own:
   `exposeAsDelegate: false` and is not explicitly configured as a delegate.
   `capabilities.agents.exposure` defaults to `indexed`; direct `delegate_*`
   tools are exposed only for `pinnedDelegates`, per-profile
-  `exposeAsDelegate: true`, legacy `exposeChildrenAsDelegates: true`, or
-  `exposure: "all"`.
+  `exposeAsDelegate: true`, or `exposure: "all"`. Direct `delegates run`
+  additionally accepts explicit inline/config aliases because it is a
+  user-selected diagnostic entrypoint rather than the model-facing tool list.
 - Host evaluates configured delegate routing hints (`triggers` and
   `when.keywords`) during run preparation only. It reuses the skill matcher to
   sort and label delegates for the current goal, records the decision in
@@ -648,16 +1083,16 @@ Does not own:
 - `capabilities.agents.enableParallelDelegates` is a host-owned opt-in that
   appends `delegate_parallel` to the main host tool catalog as an `agents`
   source tool. Version 1 is foreground/blocking, starts all accepted children
-  before awaiting them, targets configured delegates by `agentId` (preferred) or
-  legacy `toolName`, and only accepts configured in-process delegates whose
+  before awaiting them, targets configured delegates by `agentId`, and only
+  accepts configured in-process delegates whose
   effective child tool set has `workspaceAccess: "none"` and no `shell`.
   ACP, external-command, workspace-writing, and shell-capable delegates fail
   closed before any child is spawned. If a directly exposed delegate already
   owns the reserved `delegate_parallel` tool name, host drops the built-in tool
   and emits a warning-severity `capability.index.failed` event.
-- Configured in-process delegate child runs receive the host approval resolver
-  so workspace-write and shell approval requests route through the parent run's
-  CLI/TUI approval path; they do not receive an interaction channel.
+- Configured in-process delegate child runs receive an approval-only Host
+  interaction channel, so workspace-write and shell approval requests route
+  through the parent run's CLI/TUI path without exposing `ask` or `notify`.
 - Profile `hooks` authoring is parsed into the neutral `AgentProfile.hooks`
   carrier from Agent.md frontmatter and `capabilities.agents.profiles[].hooks`.
   Profile hooks are workflow-only, restricted to `command`, `block`, `context`,
@@ -685,6 +1120,9 @@ Does not own:
   `approvalRunOptions`). They use `gatedByRunWrite` when the parent run has not
   enabled workspace writes; that field is a capability gate, not an approval
   reason.
+- Configured in-process Agent tools receive that capability-derived policy as
+  their sole Agent-tool policy input. Host does not also pass the delegate's
+  standalone approval flag into agent-runtime.
 - `capability.inspect` describes ACP, external-command, and configured
   in-process delegates in `agents.delegateTools`; CLI and TUI consume that
   snapshot descriptor instead of maintaining a local in-process delegate
@@ -794,14 +1232,13 @@ Does not own:
   in-process, ACP, and external delegates retain a lease for their full
   execution. Dynamic Agent grant/delegate dispatch tools are not themselves
   wrapped because their child owns the mutation window.
-- `session-queries.ts` owns session listing, trace inspection, compaction
-  inspection, transcript previews, and session fork queries. `runtime.ts`
-  delegates those protocol-compatible operations without retaining duplicate
-  implementations.
-- `session-compaction.ts` owns manual compaction preparation, optional
-  summarizer model assembly, artifact writes, and compaction event recording.
-  Runtime supplies completed immutable turns and does not retain a second
-  compaction implementation.
+- `session-queries.ts` owns canonical session/agent run lookup, completed-turn
+  replay, raw-trace fact projection, compact-context anchoring, session listing,
+  trace/compaction inspection, transcript previews, and session fork queries.
+  `HostRuntime` delegates without retaining filesystem readers or projections.
+- `session-compaction.ts` owns the complete manual compaction operation:
+  completed-turn loading, optional summarizer model assembly, artifact writes,
+  and compaction event recording. Runtime does not prepare a parallel turn list.
 - Same-owner acquisition is reference-counted and reentrant, so a child holding
   its execution lease can call managed write tools. A descendant request that
   would wait on an ancestor fails fast instead of entering a run-chain
@@ -867,6 +1304,12 @@ Does not own:
   bounded `progressCount` / `progressDropped` / `progressHead` /
   `progressTail` summaries on the delegate tool result and
   `subagent.completed.payload.result`, not routed as `extension.process.*`.
+  Delegate output truncation is represented only by the canonical
+  `stdoutTruncated` and `stderrTruncated` fields; there is no aggregate
+  compatibility alias.
+  ACP and external-command delegate tool results identify the configured
+  profile only through `agentProfileId`; result and error metadata must not
+  reuse `agentId`, which is reserved for run/lifecycle actor attribution.
   Read/write ACP and external command delegates emit
   `workspace.write.untracked_access_granted` when direct workspace access is
   granted; this is a boundary marker, not a managed write event.
@@ -889,8 +1332,10 @@ Does not own:
   to complete. Handoff is an untracked write-capable boundary rather than a
   per-file attribution point: background tasks emit
   `workspace.write.untracked_access_granted` with
-  `protocol: "background_shell"`, `backgroundOrigin`, and sandbox status, and do not run the
-  foreground shell's post-completion workspace snapshot rollback.
+  `protocol: "background_shell"`, `backgroundOrigin`, and sandbox status, and
+  do not run the foreground shell's post-completion workspace snapshot
+  rollback. Task creation and active-task deduplication use only the persisted
+  kind `shell.background`.
 - Host protocol task inspection (`task.list`, `task.get`, `task.output`,
   `task.stop`) is implemented in `runtime.ts` over `TaskStore` and dispatched
   from `server.ts`. `task.list` is workspace-scoped unless the client supplies
@@ -942,6 +1387,24 @@ Does not own:
   remain adapter-native and need continued cross-entrypoint characterization.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-16T10:44:25+0800
+- Scope: Host Task model surface remains exactly `task_create` plus `task`; UI
+  and SDK task protocol methods remain the separate product control plane.
+- Read: Host tool catalog, protocol Task requests, agent task runner, and
+  agent-runtime Task exports.
+- Tests: Host protocol/Agent-task 61/61, agent-runtime Task 69/69/build, and
+  repository test typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-16T10:27:51+0800
+- Scope: configured in-process delegate assembly now passes only the complete
+  capability-derived spawn policy into agent-runtime.
+- Read: Host runtime delegate assembly, shared capability policy projection,
+  Agent-tool contract, and focused delegate policy tests.
+- Tests: Host tools 89/89, Host typecheck, agent-runtime index 45/45/build, and
+  repository test typecheck passed.
 
 - Status: Verified
 - Date: 2026-07-16T09:29:05+0800
@@ -2135,8 +2598,8 @@ workflow hooks"`; `npm --workspace @sparkwright/host run typecheck`;
 - Status: Verified
 - Date: 2026-07-04T09:30:36+0800
 - Scope: workflow-runtime-v1 S2 host consumer boundary: verification Stop gate
-  now reads core FactLedger snapshots while verification hook assembly and the
-  legacy `verification:` hookName protocol remain host-owned.
+  now reads core FactLedger snapshots while verification hook assembly and
+  explicit verification identity metadata remain host-owned.
 - Read: `packages/host/src/verification.ts`,
   `packages/host/test/workflow-hooks.test.ts`,
   `packages/core/src/workflow-hooks.ts`,
@@ -2379,7 +2842,7 @@ test/shell-tool.test.ts`;
 
 - Status: Verified
 - Date: 2026-06-29T17:40:00+0800
-- Scope: host `read_file` pagination now returns structured `nextOffset` for
+- Scope: host `read` pagination now returns structured `nextOffset` for
   valid line-window continuation, while preserving prose guidance and the
   non-recoverable long-line mid-cut behavior.
 - Read: `packages/host/src/tools.ts`, `packages/host/test/tools.test.ts`,
@@ -2404,7 +2867,7 @@ test/shell-tool.test.ts`;
 
 - Status: Verified
 - Date: 2026-06-28T20:30:50+0800
-- Scope: `read_file` now declares explicit read-only governance metadata
+- Scope: `read` now declares explicit read-only governance metadata
   (`sideEffects: ["read"]`) with the coding-tools origin so core read-only
   approval policy can trust tool metadata instead of using a tool-name special
   case; catalog/capability origin snapshots remain stable.

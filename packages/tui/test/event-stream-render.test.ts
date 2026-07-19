@@ -191,7 +191,7 @@ describe("EventStream committed rendering", () => {
         path: "src/cart.js",
       }),
       ev("tool.completed", 3, {
-        toolName: "apply_patch",
+        toolName: "edit",
         output: {
           path: "src/cart.js",
           changed: true,
@@ -233,7 +233,7 @@ describe("EventStream committed rendering", () => {
         mode: "serial",
       }),
       ev("tool.requested", 2, {
-        toolName: "apply_patch",
+        toolName: "edit",
         arguments: {
           path: "src/cart.js",
           patch:
@@ -242,14 +242,14 @@ describe("EventStream committed rendering", () => {
       }),
     ];
     const text = await renderToText(stream(events), 72);
-    expect(text).toContain("⚙ apply_patch");
+    expect(text).toContain("⚙ edit");
     expect(text).not.toContain("batch  1 tool");
   });
 
-  it("renders shell tool requests as commands instead of raw JSON", async () => {
+  it("renders bash tool requests as commands instead of raw JSON", async () => {
     const events = [
       ev("tool.requested", 1, {
-        toolName: "shell",
+        toolName: "bash",
         arguments: {
           command: "npm test",
           timeoutMs: 120000,
@@ -258,7 +258,7 @@ describe("EventStream committed rendering", () => {
       }),
     ];
     const text = await renderToText(stream(events), 72);
-    expect(text).toContain("⚙ shell  $ npm test");
+    expect(text).toContain("⚙ bash  $ npm test");
     expect(text).not.toContain('"command"');
   });
 
@@ -274,7 +274,7 @@ describe("EventStream committed rendering", () => {
         },
       }),
       ev("tool.requested", 2, {
-        toolName: "read_file",
+        toolName: "read",
         arguments: { path: "README.md", offset: 1, limit: 20 },
       }),
       ev("tool.requested", 3, {
@@ -284,7 +284,7 @@ describe("EventStream committed rendering", () => {
     ];
     const text = await renderToText(stream(events), 100);
     expect(text).toContain("⚙ list_dir  . recursive");
-    expect(text).toContain("⚙ read_file  README.md:1 +20");
+    expect(text).toContain("⚙ read  README.md:1 +20");
     expect(text).toContain("⚙ glob  packages/*/package.json");
     expect(text).not.toContain('"recursive"');
     expect(text).not.toContain('"maxEntries"');
@@ -386,7 +386,7 @@ describe("EventStream committed rendering", () => {
   it("renders shell results as compact output summaries", async () => {
     const events = [
       ev("tool.completed", 1, {
-        toolName: "shell",
+        toolName: "bash",
         output: {
           stdout:
             "\n> calc-fixture@0.0.0 test\n> node test/run-tests.mjs\n\ntests passed\n",
@@ -427,7 +427,7 @@ describe("EventStream committed rendering", () => {
     const events = [
       ev("task.started", 1, {
         taskId: "task_mqzd1c1b30yc24hj",
-        kind: "shell.promoted",
+        kind: "shell.background",
         command: "node bg-task.js",
       }),
       ev("task.output", 2, {
@@ -445,7 +445,7 @@ describe("EventStream committed rendering", () => {
         4,
         {
           taskId: "task_mqzd1c1b30yc24hj",
-          kind: "shell.promoted",
+          kind: "shell.background",
           command: "node bg-task.js",
           result: { exitCode: 0 },
           progressCount: 2,
@@ -515,13 +515,13 @@ describe("EventStream committed rendering", () => {
         decision: "approved",
       }),
       ev("tool.requested", 4, {
-        toolName: "shell",
+        toolName: "bash",
         arguments: {
           command: "npm test",
         },
       }),
       ev("tool.completed", 5, {
-        toolName: "shell",
+        toolName: "bash",
         output: {
           stdout: "tests passed\n",
           stderr: "",
@@ -570,6 +570,48 @@ describe("EventStream committed rendering", () => {
     expect(text).toContain("run facts tools 1");
     expect(text).not.toContain("last command:");
     expect(text).not.toContain("print_numbers.py completed");
+  });
+
+  it("uses the canonical terminal assessment when live command details are absent", async () => {
+    const text = await renderToText(
+      stream([
+        ev("run.started", 1, {}),
+        ev("tool.completed", 2, {
+          toolName: "bash",
+          output: { exitCode: 1, timedOut: false },
+        }),
+        ev("run.completed", 3, {
+          reason: "final_answer",
+          assessment: {
+            schemaVersion: "run-assessment.v1",
+            health: "failing",
+            issues: [
+              {
+                code: "VERIFICATION_FAILED",
+                kind: "verification_failure",
+                disposition: "failing",
+                count: 1,
+                details: {
+                  lastCommand: "npm test",
+                  lastExitCode: 1,
+                },
+              },
+            ],
+            verification: [
+              {
+                id: "command:npm-test",
+                source: "command",
+                status: "failed",
+                command: "npm test",
+                exitCode: 1,
+              },
+            ],
+          },
+        }),
+      ]),
+    );
+
+    expect(text).toContain("last command: npm test failed");
   });
 
   it("renders terminal task updates that arrive during final model generation", async () => {
@@ -635,12 +677,12 @@ describe("EventStream committed rendering", () => {
     expect(text).not.toContain("MODEL_COMPLETION_FAILED");
   });
 
-  it("renders run.failed messages from legacy error projections", async () => {
+  it("renders canonical run.failed failure messages", async () => {
     const text = await renderToText(
       stream([
         ev("run.failed", 1, {
           runId: "run_1",
-          error: {
+          failure: {
             code: "internal_error",
             message: "host failed",
           },
@@ -679,6 +721,19 @@ describe("EventStream committed rendering", () => {
           stepLimitReached: true,
           childRunId: "run_child_1234567890",
           parentRunId: "run_parent",
+          assessment: {
+            schemaVersion: "run-assessment.v1",
+            health: "failing",
+            issues: [
+              {
+                code: "UNRESOLVED_TOOL_FAILURE",
+                kind: "tool_failure",
+                disposition: "failing",
+                count: 1,
+              },
+            ],
+            verification: [],
+          },
         },
         {
           agentName: "reviewer",
@@ -708,13 +763,15 @@ describe("EventStream committed rendering", () => {
       ),
     ];
 
-    const text = await renderToText(stream(events));
+    const text = await renderToText(stream(events), 220);
 
     expect(text).toContain("└─ reviewer requested");
     expect(text).toContain("depth 1");
     expect(text).toContain("via delegate_review");
     expect(text).toContain("audit docs");
     expect(text).toContain("reviewer completed · step_limit");
+    expect(text).toContain("health failing");
+    expect(text).toContain("issues UNRESOLVED_TOOL_FAILURE");
     expect(text).toContain("└─ nested requested");
     expect(text).toContain("depth 2");
     expect(text).toContain("spawn_agent");
@@ -722,20 +779,19 @@ describe("EventStream committed rendering", () => {
     expect(text).not.toContain('"terminalState"');
   });
 
-  it("suppresses internal cancel/state-machine events but keeps the cancel card", async () => {
+  it("renders a sole run.cancelled terminal without leaking state-machine events", async () => {
     const events = [
-      ev("run.cancelled", 1, {}),
+      ev("run.cancelled", 1, { reason: "user_cancelled" }),
       ev("run.cancel_requested", 2, {}),
       ev("run.state_transition.rejected", 3, {}),
-      ev("run.completed", 4, { state: "cancelled", reason: "user_cancelled" }),
     ];
     const text = await renderToText(stream(events));
-    // none of the internal events leak as raw "[seq] type" debug rows
+    // Internal event names stay hidden while the terminal gets one footer.
     expect(text).not.toContain("run.cancelled");
     expect(text).not.toContain("cancel_requested");
     expect(text).not.toContain("state_transition");
-    // but the user-facing cancel card from run.completed is still shown
-    expect(text).toContain("run cancelled");
+    expect(text.match(/run cancelled/g)).toHaveLength(1);
+    expect(text).toContain("user_cancelled");
   });
 
   it("suppresses internal run budget events", async () => {

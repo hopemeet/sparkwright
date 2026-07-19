@@ -1,9 +1,17 @@
 # Agent.md Authoring Redesign
 
-Status: Draft for review
-Date: 2026-06-28
+Status: Implemented authoring/runtime contract; retained as implementation history
+Date: 2026-07-18
 Branch: feat/access-mode (builds on the Access-mode + agent-capability work)
 
+> The neutral hook carrier, Markdown parser and validation, schema surface,
+> in-process resolver, child-run forwarding, isolation, and rewrite-before-
+> governance behavior are implemented. Current source and the Agent capability
+> map are authoritative; the delivery split and open questions below preserve
+> the design history. A richer inspect explanation for hooks ignored across
+> process-agent boundaries remains optional UX, not an incomplete runtime
+> contract.
+>
 > Relationship to other proposals: this is a focused, authoring-experience
 > slice of `agent-access-config-redesign.md` (the "agent definition" layer) and
 > sits next to `agent-capability-upgrade.md` (indexed exposure, generic
@@ -19,7 +27,7 @@ sub-agent forces the user to learn several overlapping knobs:
 ```yaml
 mode: child
 use: [workspace.read]
-allowedTools: [read_file, glob, grep]
+allowedTools: [read, glob, grep]
 delegateTool:
   toolName: delegate_reviewer
 ```
@@ -31,10 +39,10 @@ Target authoring experience — short, declarative, capability-first:
 name: db-reader
 description: Execute read-only database queries.
 model: anthropic/claude-haiku-4-5 # optional: per-agent model
-use: [workspace.read, shell] # the only recommended capability axis
+use: [workspace.read, bash] # the only recommended capability axis
 hooks: # per-agent deterministic guardrails
   PreToolUse:
-    - matcher: shell
+    - matcher: bash
       action:
         type: command
         command: ./scripts/validate-readonly-query.sh
@@ -153,7 +161,7 @@ Two things to keep nailed:
 ### D2 — `use` is the recommended capability declaration
 
 - Recommend only `use: [...]` with the existing high-level selectors:
-  `workspace.read`, `workspace.write`, `shell`, `planning`, `skills`, `agents`,
+  `workspace.read`, `workspace.write`, `bash`, `planning`, `skills`, `agents`,
   `tasks`, `cron`, `mcp`, `mcp:<server>`.
 - Do **not** introduce `tool:<name>`; keep it simple.
 - `allowedTools` / `tools` stay functional as a legacy precise allowlist. When
@@ -169,7 +177,7 @@ Frontmatter sugar:
 ```yaml
 hooks:
   PreToolUse:
-    - matcher: shell
+    - matcher: bash
       action:
         type: command
         command: ./scripts/validate-readonly-query.sh
@@ -184,7 +192,7 @@ compiles to the existing `CapabilityWorkflowHookConfig` shape:
 {
   name: "db-reader.PreToolUse.0",
   hook: "PreToolUse",
-  matcher: { toolName: "shell" },
+  matcher: { toolName: "bash" },
   action: { type: "command", command: "...", stdin: "json",
             blockOnFailure: true, injectOutput: "onFailure" },
 }
@@ -283,7 +291,7 @@ Targeted cases:
 - Forward plumbing (P2-a): a `spawnSubAgent` unit test with a `createRun`
   override asserts `CreateRunOptions.workflowHooks` is populated — typecheck
   alone does not catch "field added but never forwarded".
-- Hooks isolation: an Agent.md `PreToolUse` command blocks that agent's `shell`
+- Hooks isolation: an Agent.md `PreToolUse` command blocks that agent's `bash`
   call; the same hook does not affect the main run or other agents.
 - Entrypoint consistency: identical hook behavior whether the agent is reached
   via a named delegate or the indexed `delegate_agent`.
@@ -301,18 +309,17 @@ Targeted cases:
 - Doc lead examples use only `use: [...]` (+ optional `model`).
 - `allowedTools` / `tools` still work but are not the recommended path.
 - Agent.md `hooks.PreToolUse` runs the validation command before that agent's
-  `shell` call, and never affects the main agent or other agents.
+  `bash` call, and never affects the main agent or other agents.
 - Agent.md-authored `PreToolUse` obeys the P10a two-stage rule: rewrite-stage
   output is applied first, governance/clamp runs on rewritten arguments, and
   forbidden governance/rewrite effects still fail closed.
 
 ## Open questions
 
-1. ~~`matcher: shell` matches the concrete tool name.~~ **Closed (verified):**
-   the `shell` selector matches `source === "shell"` (`tool-selectors.ts:163`),
-   the delegate child catalog tags the host shell tool `source: "shell"`
-   (`tool-catalog.ts:91`), and the underlying default tool name is `"shell"`
-   (`packages/shell-tool/src/tool.ts:232`).
-2. Should P0 ship independently of P2, or land the whole authoring redesign as
-   one reviewed unit? (P0 + P1 are low-risk and independently verifiable.)
-3. Inspect surface for "hooks ignored on ACP/external" — in-scope now or follow-up?
+1. **Closed:** `matcher: bash` matches the exact concrete tool name. The `bash`
+   selector selects catalog entries whose internal source is `shell`; the source
+   classification is not a second callable identity.
+2. **Closed by implementation:** P0-P2 landed as independently reviewable
+   slices and now form one canonical authoring/runtime contract.
+3. Optional follow-up: whether inspect should explain that Agent.md hooks do not
+   cross ACP/external-command process boundaries.

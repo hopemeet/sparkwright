@@ -1,16 +1,15 @@
 import {
-  analyzeCommandOutcomes,
-  analyzeToolOutcomes,
-  analyzeVerificationProfileResults,
-  completedRunOutcomeFromEvents,
+  runAssessmentFromUnknown,
+  type RunAssessment,
   type SparkwrightEvent,
-  type VerificationProfileResult,
 } from "@sparkwright/core";
-
-export type { VerificationProfileResult };
 
 export interface CliRunEventSummary {
   events: SparkwrightEvent[];
+  terminalAssessment?: Pick<
+    RunAssessment,
+    "health" | "issues" | "verification"
+  >;
   toolFailures: Array<{ code?: string }>;
   skillFailures: CliSkillFailureSummary[];
   writeCompleted: number;
@@ -94,24 +93,47 @@ export function updateCliRunEventSummary(
     summary.runFailure = runFailureSummary(event);
 }
 
+export function setCliRunAssessment(
+  summary: CliRunEventSummary,
+  assessment: unknown,
+): void {
+  if (!isRecord(assessment)) {
+    throw new Error("Terminal execution assessment is invalid.");
+  }
+  const parsed = runAssessmentFromUnknown({
+    schemaVersion: "run-assessment.v1",
+    health: assessment.health,
+    issues: assessment.issues,
+    verification: assessment.verification,
+  });
+  if (!parsed) {
+    throw new Error("Terminal execution assessment is invalid.");
+  }
+  summary.terminalAssessment = parsed;
+}
+
+export function hasCliRunAssessment(summary: CliRunEventSummary): boolean {
+  return Boolean(
+    summary.terminalAssessment ?? attachedRunAssessment(summary.events),
+  );
+}
+
 export function unhandledToolFailureCount(summary: CliRunEventSummary): number {
-  return analyzeToolOutcomes(summary.events).unresolvedFailures.length;
+  return assessmentIssue(summary, "UNRESOLVED_TOOL_FAILURE")?.count ?? 0;
 }
 
 export function unresolvedVerificationCommandFailureCount(
   summary: CliRunEventSummary,
 ): number {
-  return analyzeCommandOutcomes(summary.events).unresolvedVerificationFailures
-    .length;
+  return runAssessment(summary).verification.filter(
+    (result) =>
+      result.source === "command" &&
+      (result.status === "failed" || result.status === "timed_out"),
+  ).length;
 }
 
 export function completedRunHasCliIssues(summary: CliRunEventSummary): boolean {
-  // The status label projects the same failing verdict as the exit code, so the
-  // two cannot diverge. Expected-by-policy outcomes are not failures and are
-  // surfaced separately instead: denied workspace writes via
-  // summarizeDeniedWorkspaceWrites, unsupported final-answer claims (the
-  // prose-based detector is unreliable) via summarizeUnsupportedFinalClaims.
-  return runOutcomeFailing(summary);
+  return runAssessment(summary).health !== "clean";
 }
 
 export function cliExitCodeForRun(input: {
@@ -119,60 +141,53 @@ export function cliExitCodeForRun(input: {
   runState?: string;
   events: CliRunEventSummary;
 }): number {
-  // Terminal failures are not represented in the completed-run outcome (which
-  // is only produced on `final_answer`), so they stay as explicit checks.
+  // Transport-level terminal failures remain explicit checks.
   if (input.failedMessage) return 1;
   if (input.runState === "failed" || input.runState === "cancelled") return 1;
-  // Everything else is a projection of the single run outcome's `failing` flag,
-  // which core already computed (preferred) or, for callers that did not carry
-  // it, the same `completedRunOutcomeFromEvents` core uses — so the two cannot
-  // diverge. Recovered tool failures and unsupported claims are non-failing.
+  // Semantic exit status is a projection of Core's persisted assessment.
   return runOutcomeFailing(input.events) ? 1 : 0;
 }
 
-/**
- * Whether the completed run is failing, preferring the `failing` flag core
- * already attached to `run.completed`, falling back to recomputing it from
- * events with the same core function.
- */
+/** Whether Core's persisted terminal assessment marks the run as failing. */
 function runOutcomeFailing(summary: CliRunEventSummary): boolean {
-  const outcome = completedRunOutcome(summary);
-  return isRecord(outcome) && outcome.failing === true;
+  return runAssessment(summary).health === "failing";
 }
 
-function completedRunOutcome(summary: CliRunEventSummary): unknown {
-  return (
-    attachedRunOutcome(summary.events) ??
-    completedRunOutcomeFromEvents(
-      summary.events,
-      finalMessageFromEvents(summary.events),
-    )
-  );
-}
-
-function attachedRunOutcome(
+function attachedRunAssessment(
   events: readonly SparkwrightEvent[],
-): Record<string, unknown> | undefined {
+): RunAssessment | undefined {
   for (let index = events.length - 1; index >= 0; index--) {
     const event = events[index];
-    if (event?.type !== "run.completed" || !isRecord(event.payload)) continue;
-    const outcome = isRecord(event.payload.outcome)
-      ? event.payload.outcome
-      : undefined;
-    return outcome;
+    if (
+      event?.type !== "run.completed" &&
+      event?.type !== "run.failed" &&
+      event?.type !== "run.cancelled"
+    ) {
+      continue;
+    }
+    if (!isRecord(event.payload)) continue;
+    const assessment = runAssessmentFromUnknown(event.payload.assessment);
+    if (assessment) return assessment;
   }
   return undefined;
 }
 
-function finalMessageFromEvents(
-  events: readonly SparkwrightEvent[],
-): string | undefined {
-  for (let index = events.length - 1; index >= 0; index--) {
-    const event = events[index];
-    if (event?.type !== "run.completed" || !isRecord(event.payload)) continue;
-    return stringValue(event.payload.message);
+function runAssessment(summary: CliRunEventSummary): RunAssessment {
+  const attached = attachedRunAssessment(summary.events);
+  const assessment = summary.terminalAssessment ?? attached;
+  if (!assessment) {
+    throw new Error("Terminal run assessment is unavailable.");
   }
-  return undefined;
+  return {
+    schemaVersion: "run-assessment.v1",
+    health: assessment.health,
+    issues: assessment.issues,
+    verification: assessment.verification,
+  };
+}
+
+function assessmentIssue(summary: CliRunEventSummary, code: string) {
+  return runAssessment(summary).issues.find((issue) => issue.code === code);
 }
 
 export function summarizeWorkspaceMutations(input: {
@@ -276,31 +291,39 @@ export function summarizeUnhandledToolFailures(
 export function summarizeVerificationCommandFailures(
   summary: CliRunEventSummary,
 ): string | undefined {
-  const failures = analyzeCommandOutcomes(
-    summary.events,
-  ).unresolvedVerificationFailures;
+  const failures = runAssessment(summary).verification.filter(
+    (result) =>
+      result.source === "command" &&
+      (result.status === "failed" || result.status === "timed_out"),
+  );
   if (failures.length === 0) return undefined;
   const last = failures.at(-1);
   const command = last?.command ? ` Last failed command: ${last.command}.` : "";
-  const status = last?.timedOut
-    ? "timed out"
-    : last
-      ? `exitCode=${last.exitCode}`
-      : "failed";
+  const status =
+    last?.status === "timed_out"
+      ? "timed out"
+      : last
+        ? `exitCode=${last.exitCode}`
+        : "failed";
   return `Run completed with verification failures; exiting 1 (${failures.length} unresolved command failure${failures.length === 1 ? "" : "s"}, ${status}).${command}`;
 }
 
 export function summarizeVerificationProfileResults(
   summary: CliRunEventSummary,
 ): string | undefined {
-  const results = verificationProfileResults(summary);
+  const results = runAssessment(summary).verification.filter(
+    (result) => result.source === "profile",
+  );
   if (results.length === 0) return undefined;
-  const passed = results.filter((result) => result.status === "passed");
-  const failed = results.filter((result) => result.status === "failed");
+  const current = results.filter((result) => result.status !== "stale");
+  const passed = current.filter((result) => result.status === "passed");
+  const failed = current.filter(
+    (result) => result.status === "failed" || result.status === "timed_out",
+  );
   const parts: string[] = [];
   if (passed.length > 0) {
     parts.push(
-      `${passed.length} passed (${passed.map((result) => result.id).join(", ")})`,
+      `${passed.length} passed (${passed.map((result) => result.verifierId ?? result.id).join(", ")})`,
     );
   }
   if (failed.length > 0) {
@@ -314,38 +337,20 @@ export function summarizeVerificationProfileResults(
 export function summarizeDocumentedCommandFailures(
   summary: CliRunEventSummary,
 ): string | undefined {
-  const outcome = completedRunOutcome(summary);
-  const failures =
-    isRecord(outcome) && isRecord(outcome.documentedCommandFailures)
-      ? outcome.documentedCommandFailures
-      : undefined;
-  const count =
-    typeof failures?.count === "number" && Number.isFinite(failures.count)
-      ? failures.count
-      : 0;
+  const failures = runAssessment(summary).verification.filter(
+    (result) =>
+      result.source === "documented_command" &&
+      (result.status === "failed" || result.status === "timed_out"),
+  );
+  const count = failures.length;
   if (count === 0) return undefined;
-  const lastId = stringValue(failures?.lastId);
-  const lastExitCode =
-    typeof failures?.lastExitCode === "number" ||
-    failures?.lastExitCode === null
-      ? failures.lastExitCode
-      : undefined;
+  const lastFailure = failures.at(-1);
+  const lastId = lastFailure?.verifierId ?? lastFailure?.id;
+  const lastExitCode = lastFailure?.exitCode;
   const status =
     lastExitCode !== undefined ? `, last exitCode=${lastExitCode}` : "";
   const last = lastId ? ` Last failed check: ${lastId}.` : "";
   return `Run completed with documented-command verification failures; exiting 1 (${count} failed check${count === 1 ? "" : "s"}${status}).${last}`;
-}
-
-export function summarizeUnsupportedFinalClaims(
-  summary: CliRunEventSummary,
-): string | undefined {
-  const claims = unsupportedFinalClaims(summary);
-  if (claims.length === 0) return undefined;
-  const first = claims[0];
-  const command = first?.command
-    ? ` First unsupported command: ${first.command}.`
-    : "";
-  return `Run completed with ${claims.length} unsupported final-answer claim${claims.length === 1 ? "" : "s"}; see trace outcome for evidence details.${command}`;
 }
 
 export function summarizeSkillLoadFailures(
@@ -446,21 +451,16 @@ function summarizeCliRunFailureSummary(
   return `${prefix}: ${message}${details.length > 0 ? ` (${details.join(", ")})` : ""}`;
 }
 
-function verificationProfileResults(
-  summary: CliRunEventSummary,
-): VerificationProfileResult[] {
-  // Delegate to the single core parser so the CLI exit-code path and the run
-  // `outcome` can never disagree on whether a verification profile failed.
-  return analyzeVerificationProfileResults(summary.events);
-}
-
-function formatVerificationFailure(result: VerificationProfileResult): string {
-  const status = result.timedOut
-    ? "timed out"
-    : result.exitCode !== undefined
-      ? `exitCode=${result.exitCode}`
-      : "failed";
-  return `${result.id} ${status}`;
+function formatVerificationFailure(
+  result: RunAssessment["verification"][number],
+): string {
+  const status =
+    result.status === "timed_out"
+      ? "timed out"
+      : result.exitCode !== undefined
+        ? `exitCode=${result.exitCode}`
+        : "failed";
+  return `${result.verifierId ?? result.id} ${status}`;
 }
 
 function toolFailureCode(event: SparkwrightEvent): string | undefined {
@@ -551,29 +551,6 @@ function runFailureSummary(event: SparkwrightEvent): CliRunFailureSummary {
       : {}),
     metadata: isRecord(payload.metadata) ? payload.metadata : undefined,
   };
-}
-
-function unsupportedFinalClaims(
-  summary: CliRunEventSummary,
-): Array<{ command?: string }> {
-  const claims: Array<{ command?: string }> = [];
-  for (const event of summary.events) {
-    if (event.type !== "run.completed" || !isRecord(event.payload)) continue;
-    const outcome = isRecord(event.payload.outcome)
-      ? event.payload.outcome
-      : undefined;
-    const unsupported = isRecord(outcome?.unsupportedFinalClaims)
-      ? outcome.unsupportedFinalClaims
-      : undefined;
-    const rawClaims = Array.isArray(unsupported?.claims)
-      ? unsupported.claims
-      : [];
-    for (const raw of rawClaims) {
-      if (!isRecord(raw)) continue;
-      claims.push({ command: stringValue(raw.command) });
-    }
-  }
-  return claims;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -17,15 +17,18 @@ import {
   createRun,
   createUsageTracker,
   defineTool,
-  FileRunStore,
-  LocalWorkspace,
   resumeRunFromCheckpoint,
   type CreateRunOptions,
   type ModelAdapter,
   type WorkflowHook,
 } from "@sparkwright/core";
+import { FileRunStore, LocalWorkspace } from "@sparkwright/core/internal";
 
 const tempDirs: string[] = [];
+const SAFE_AGENT_TOOL_POLICY = {
+  risk: "safe",
+  requiresApproval: false,
+} as const;
 
 afterEach(async () => {
   await Promise.all(
@@ -93,7 +96,7 @@ describe("agent-runtime", () => {
       runOptions.policy.decide({
         action: "tool.execute",
         metadata: {
-          toolName: "shell",
+          toolName: "bash",
         },
       }),
     ).resolves.toMatchObject({
@@ -148,7 +151,7 @@ describe("agent-runtime", () => {
     const child: AgentProfile = {
       id: "explore",
       use: ["workspace.read", "mcp:demo", "skills"],
-      allowedTools: ["read", "grep", "shell"],
+      allowedTools: ["read", "grep", "bash"],
       maxSteps: 12,
       runBudget: {
         maxToolCalls: 20,
@@ -285,7 +288,7 @@ describe("agent-runtime", () => {
       policy.decide({
         action: "tool.execute",
         metadata: {
-          toolName: "shell",
+          toolName: "bash",
         },
       }),
     ).resolves.toMatchObject({
@@ -328,7 +331,7 @@ describe("agent-runtime", () => {
           name: "read",
         },
         metadata: {
-          toolName: "shell",
+          toolName: "bash",
         },
       }),
     ).resolves.toMatchObject({
@@ -665,7 +668,7 @@ describe("spawnSubAgent", () => {
 
     // A child tool that captures whether `ctx.workspace` was populated at
     // execution time — the exact thing that was undefined before inheritance,
-    // making `read_file` throw "Workspace is not configured" in sub-agents.
+    // making `read` throw "Workspace is not configured" in sub-agents.
     let childCtxHadWorkspace: boolean | undefined;
     const probe = defineTool({
       name: "probe",
@@ -740,9 +743,11 @@ describe("spawnSubAgent", () => {
       model: childModel,
       tools: [riskyTool],
       maxSteps: 3,
-      approvalResolver: (request) => {
-        approvals += 1;
-        return { approvalId: request.id, decision: "approved" };
+      interactionChannel: {
+        approve: (request) => {
+          approvals += 1;
+          return { approvalId: request.id, decision: "approved" };
+        },
       },
     });
 
@@ -1159,6 +1164,7 @@ describe("createAgentTool / mountAgentTool", () => {
     });
 
     mountAgentTool(parent, {
+      policy: SAFE_AGENT_TOOL_POLICY,
       buildSpawnInput: (input) => ({
         goal: input.goal,
         model: childModel,
@@ -1182,6 +1188,7 @@ describe("createAgentTool / mountAgentTool", () => {
       maxSteps: 1,
     });
     const tool = createAgentTool(() => parent, {
+      policy: SAFE_AGENT_TOOL_POLICY,
       buildSpawnInput: (input) => ({
         goal: input.goal,
         model: {
@@ -1204,6 +1211,7 @@ describe("createAgentTool / mountAgentTool", () => {
       toolCalls: 0,
       modelCalls: 1,
     });
+    expect(tool.policy).toEqual(SAFE_AGENT_TOOL_POLICY);
     expect(typeof output).toBe("object");
   });
 
@@ -1218,6 +1226,7 @@ describe("createAgentTool / mountAgentTool", () => {
       maxSteps: 1,
     });
     const tool = createAgentTool(() => parent, {
+      policy: SAFE_AGENT_TOOL_POLICY,
       buildSpawnInput: (input) => ({
         goal: input.goal,
         model: {
@@ -1252,6 +1261,7 @@ describe("createAgentTool / mountAgentTool", () => {
       maxSteps: 1,
     });
     const tool = createAgentTool(() => parent, {
+      policy: SAFE_AGENT_TOOL_POLICY,
       buildSpawnInput: (input) => ({
         goal: input.goal,
         model: {
@@ -1272,6 +1282,9 @@ describe("createAgentTool / mountAgentTool", () => {
     } as never);
 
     expect(first).toMatchObject({ signal: "completed" });
+    expect(tool.managesRepeatedCalls?.({ goal: "Inspect README.md" })).toBe(
+      true,
+    );
     expect(second).toMatchObject({
       signal: "completed",
       alreadyCompleted: true,
@@ -1292,6 +1305,7 @@ describe("createAgentTool / mountAgentTool", () => {
       maxSteps: 1,
     });
     const tool = createAgentTool(() => parent, {
+      policy: SAFE_AGENT_TOOL_POLICY,
       buildSpawnInput: (input) => ({
         goal: input.goal,
         model: {
@@ -1317,6 +1331,9 @@ describe("createAgentTool / mountAgentTool", () => {
       signal: "completed",
       message: "directory result 1",
     });
+    expect(
+      tool.managesRepeatedCalls?.({ goal: "inspect the workspace carefully" }),
+    ).toBe(false);
     expect(second).toMatchObject({
       signal: "completed",
       message: "directory result 2",
@@ -1337,6 +1354,7 @@ describe("createAgentTool / mountAgentTool", () => {
       maxSteps: 1,
     });
     const tool = createAgentTool(() => parent, {
+      policy: SAFE_AGENT_TOOL_POLICY,
       buildSpawnInput: (input) => ({
         goal: input.goal,
         model: {
@@ -1730,6 +1748,7 @@ describe("createAgentTool / mountAgentTool", () => {
     });
 
     const tool = createAgentTool(() => subParent, {
+      policy: SAFE_AGENT_TOOL_POLICY,
       forbidNesting: true,
       buildSpawnInput: (input) => ({
         goal: input.goal,

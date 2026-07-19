@@ -81,7 +81,8 @@ describe("runTui startup validation", () => {
 
       expect(result.exitCode).toBe(0);
       expect(stdout.text()).toContain("Usage: sparkwright tui");
-      expect(stdout.text()).toContain("--write");
+      expect(stdout.text()).toContain("--access-mode");
+      expect(stdout.text()).not.toContain("--write");
     } finally {
       stdout.restore();
     }

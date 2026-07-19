@@ -77,9 +77,7 @@ async function staticToolDisabledCase() {
     result.exitCode === 0 &&
     includesAll(toolNames, ["list_skills", "create_skill", "update_skill"]) &&
     !toolNames.includes("bash") &&
-    !toolNames.includes("shell") &&
-    toolNames.includes("read") &&
-    !toolNames.includes("read_file");
+    toolNames.includes("read");
 
   record({
     id: "SKILL_TOOLS_ALLOWLIST",
@@ -122,8 +120,8 @@ async function scriptedShellManagedPackageGuardCase() {
       workspace,
       "--model",
       "scripted",
-      "--write",
-      "--yes",
+      "--access-mode",
+      "bypass",
       "--trace-level",
       "debug",
     ],
@@ -184,8 +182,8 @@ async function realCreateSkillCase() {
     workspace,
     "--model",
     requestedModel,
-    "--write",
-    "--yes",
+    "--access-mode",
+    "bypass",
     "--trace-level",
     "debug",
   ]);
@@ -222,7 +220,7 @@ async function realCreateSkillCase() {
       : undefined;
   const historyIds = await listHistoryIds(workspace, "release-reviewer");
   const failures = toolFailures(trace.events);
-  const outcome = runOutcome(trace.events);
+  const assessment = runAssessment(trace.events);
   const recoveredCreateSkillFailures =
     failures.length > 0 &&
     // This canary specifically asserts the runtime repeat-skip recovery path.
@@ -234,13 +232,13 @@ async function realCreateSkillCase() {
         failure.toolName === "create_skill" &&
         failure.code === "REPEATED_TOOL_CALL_SKIPPED",
     ) &&
-    outcome?.failing === false;
+    assessment?.health === "degraded" &&
+    assessment.issues?.some((issue) => issue.code === "RECOVERED_TOOL_FAILURE");
   const ok =
     result.exitCode === 0 &&
     requests.includes("tool_search") &&
     requests.includes("create_skill") &&
     !requests.includes("bash") &&
-    !requests.includes("shell") &&
     (failures.length === 0 || recoveredCreateSkillFailures) &&
     skillEntries.includes("SKILL.md") &&
     proposals.length === 1 &&
@@ -281,7 +279,7 @@ async function realCreateSkillCase() {
           proposalMetadata,
           historyIds,
           failures,
-          outcome,
+          assessment,
           capabilityMutations: count(
             trace.events,
             "capability.mutation.completed",
@@ -321,8 +319,8 @@ async function realUpdateSkillProposalCase() {
     workspace,
     "--model",
     requestedModel,
-    "--write",
-    "--yes",
+    "--access-mode",
+    "bypass",
     "--trace-level",
     "debug",
   ]);
@@ -341,7 +339,6 @@ async function realUpdateSkillProposalCase() {
     requests.includes("tool_search") &&
     includesAll(requests, ["list_skills", "update_skill"]) &&
     !requests.includes("bash") &&
-    !requests.includes("shell") &&
     !has(trace.events, "tool.failed") &&
     proposals.length === 1 &&
     beforeHash === afterHash &&
@@ -586,9 +583,9 @@ function toolFailures(events) {
     }));
 }
 
-function runOutcome(events) {
+function runAssessment(events) {
   return events.findLast((event) => event.type === "run.completed")?.payload
-    ?.outcome;
+    ?.assessment;
 }
 
 function has(events, type) {

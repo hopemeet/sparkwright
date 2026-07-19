@@ -50,7 +50,7 @@ describe("Skill evidence suggestions", () => {
   it("does not suggest non-actionable identity or evolution bookkeeping findings", () => {
     expect(
       collectSkillEvidenceSuggestions({
-        findings: [{ ...finding, code: "LEGACY_SKILL_IDENTITY" }],
+        findings: [{ ...finding, code: "SKILL_EVOLUTION_ACTIVITY" }],
         proposals: [],
       }),
     ).toEqual([]);

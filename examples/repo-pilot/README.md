@@ -10,8 +10,7 @@ npm run build
 npm exec sparkwright -- run "inspect this example" \
   --workspace examples/repo-pilot \
   --target README.md \
-  --write \
-  --yes \
+  --access-mode bypass \
   --trace-level standard
 ```
 
@@ -21,25 +20,25 @@ The same flow from this directory:
 node ../../packages/cli/dist/index.js run "exercise the golden path" \
   --workspace . \
   --target README.md \
-  --write \
-  --yes
+  --access-mode bypass
 ```
 
-To inspect the approval prompt, omit `--yes`:
+To inspect the approval prompt, use `--access-mode ask`:
 
 ```bash
 npm exec sparkwright -- run "exercise the golden path" \
   --workspace examples/repo-pilot \
   --target README.md \
-  --write
+  --access-mode ask
 ```
 
-For a read-only smoke test, omit `--write`:
+For a read-only smoke test, use `--access-mode read-only` (the default):
 
 ```bash
 npm exec sparkwright -- run "inspect this example" \
   --workspace examples/repo-pilot \
   --target README.md \
+  --access-mode read-only \
   --trace-level minimal
 ```
 
@@ -68,6 +67,6 @@ This example proves:
 
 ## Sparkwright CLI Golden Path
 
-The CLI uses a deterministic model for this example. It first calls `read_file`, then optionally calls `append_file` when `--write` is set. Workspace writes still flow through the core approval and artifact path, so the run leaves a readable trace under `.sparkwright/sessions/<session-id>/trace.jsonl`.
+The CLI uses a deterministic model for this example. It first calls `read`, then optionally calls `append_file` when the access mode enables writes. Workspace writes still flow through the core approval and artifact path, so the run leaves a readable trace under `.sparkwright/sessions/<session-id>/trace.jsonl`.
 
 Each session directory contains `trace.jsonl`, `agents/main/runs/<run-id>/run.json`, and an `artifacts/` directory when a write is proposed. In the write path, look for `workspace.write.requested`, `artifact.created`, `approval.requested`, `approval.resolved`, and either `workspace.write.completed` or `workspace.write.denied`.

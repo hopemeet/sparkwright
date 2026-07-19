@@ -6,78 +6,53 @@ import {
 } from "../src/approval-policy.js";
 
 describe("approval policy", () => {
-  it("normalizes approval flags and permission modes", () => {
-    expect(createApprovalPolicy({})).toEqual({
+  it("derives approval behavior from the canonical access mode", () => {
+    expect(createApprovalPolicy("read-only")).toEqual({
       enforcement: "ask",
       scopes: [],
     });
-    expect(createApprovalPolicy({ approveShellSafe: true })).toEqual({
-      enforcement: "auto",
-      scopes: ["safe_shell"],
+    expect(createApprovalPolicy("ask")).toEqual({
+      enforcement: "ask",
+      scopes: [],
     });
-    expect(createApprovalPolicy({ approveAll: true })).toEqual({
+    expect(createApprovalPolicy("accept-edits")).toEqual({
       enforcement: "auto",
-      scopes: ["all"],
+      scopes: ["workspace_edits"],
     });
-    expect(
-      createApprovalPolicy({ permissionMode: "bypass_permissions" }),
-    ).toEqual({
+    expect(createApprovalPolicy("bypass")).toEqual({
       enforcement: "bypass",
       scopes: ["all"],
     });
-    expect(createApprovalPolicy({ permissionMode: "dont_ask" })).toEqual({
-      enforcement: "deny",
-      scopes: [],
-    });
   });
 
-  it("auto-approves safe shell commands only when that scope is enabled", () => {
-    const safeShell = request({
-      action: "tool.execute",
-      summary: "Run tool shell",
-      details: { toolName: "shell", arguments: { command: "npm test" } },
-    });
-    const unsafeShell = request({
-      action: "tool.execute",
-      summary: "Run tool shell",
-      details: {
-        toolName: "shell",
-        arguments: { command: "curl example.com" },
-      },
-    });
-    const policy = createApprovalPolicy({ approveShellSafe: true });
-
-    expect(resolveApprovalByPolicy(policy, safeShell)).toMatchObject({
-      decision: "approved",
-      message: "Auto-approved by --yes-shell-safe.",
-    });
-    expect(resolveApprovalByPolicy(policy, unsafeShell)).toBeUndefined();
-  });
-
-  it("bypasses approval prompts but dont_ask denies them", () => {
-    const approval = request({
-      action: "tool.execute",
-      summary: "Run tool shell",
-      details: { toolName: "shell", arguments: { command: "node -v" } },
-    });
-
+  it("accept-edits auto-approves workspace writes only", () => {
+    const policy = createApprovalPolicy("accept-edits");
     expect(
       resolveApprovalByPolicy(
-        createApprovalPolicy({ permissionMode: "bypass_permissions" }),
-        approval,
+        policy,
+        request({ action: "workspace.write", summary: "Write README" }),
       ),
     ).toMatchObject({
       decision: "approved",
-      message: "Auto-approved by bypass_permissions.",
+      message: "Auto-approved by accept-edits access mode.",
     });
     expect(
       resolveApprovalByPolicy(
-        createApprovalPolicy({ permissionMode: "dont_ask" }),
-        approval,
+        policy,
+        request({ action: "tool.execute", summary: "Run bash" }),
+      ),
+    ).toBeUndefined();
+  });
+
+  it("bypass auto-approves any approval request", () => {
+    expect(
+      resolveApprovalByPolicy(
+        createApprovalPolicy("bypass"),
+        request({ action: "tool.execute", summary: "Run bash" }),
       ),
     ).toMatchObject({
-      decision: "denied",
-      message: "Approval denied by dont_ask mode.",
+      decision: "approved",
+      message: "Auto-approved by bypass access mode.",
     });
   });
 });

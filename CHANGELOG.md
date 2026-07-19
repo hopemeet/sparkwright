@@ -111,7 +111,12 @@ All notable changes to Sparkwright will be documented in this file.
 
 ### Changed
 
-- `@sparkwright/agent-runtime` `InMemoryTaskNotificationQueue` bounded
+- Markdown Agent authoring accepts only canonical `model: "inherit"` for model
+  inheritance. The `model: "default"` compatibility alias is no longer read.
+- Markdown Agent identity now comes only from the `.md` filename stem.
+  Frontmatter `id` and the hidden `create_agent` `id` argument are no longer
+  read; model-facing authoring uses canonical `name`.
+- `@sparkwright/agent-runtime` `InMemoryActorNotificationQueue` bounded
   capacity semantics changed for reliable task notifications. When
   `maxBufferedNotifications` is set, lossy actor notifications may still be
   dropped under capacity pressure, but reliable terminal task notifications are
@@ -121,6 +126,10 @@ All notable changes to Sparkwright will be documented in this file.
   queue unbounded, increase the capacity, drain terminal notifications more
   aggressively, or handle the retryable capacity error through their
   `TaskManager` sink error/retry path.
+- Task and workflow notification delivery now use
+  `ActorNotificationSink` / `ActorInbox` directly. The task-specific sink/DTO,
+  adapter accessors, duplicate in-memory view, and legacy task notification file
+  shape were removed; durable task entries persist canonical actor inputs.
 - External ACP and external-command delegates no longer receive direct project
   workspace access by default. Delegates run from an isolated temporary cwd and
   `{{workspaceRoot}}` / configured `cwd` are rejected unless the profile

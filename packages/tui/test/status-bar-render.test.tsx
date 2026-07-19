@@ -127,7 +127,7 @@ describe("StatusBar", () => {
               sequence: 1,
               payload: {
                 taskId: "task_mqzd1c1b30yc24hj",
-                kind: "shell.promoted",
+                kind: "shell.background",
               },
             },
             {
@@ -135,7 +135,7 @@ describe("StatusBar", () => {
               sequence: 2,
               payload: {
                 taskId: "task_mqzd1c1b30yc24hj",
-                protocol: "promoted_shell",
+                protocol: "background_shell",
               },
             },
           ],

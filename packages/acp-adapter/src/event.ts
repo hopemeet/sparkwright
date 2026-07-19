@@ -270,8 +270,7 @@ function kindForAction(action: string): ToolKind {
   if (normalized.includes("read")) return "read";
   if (normalized.includes("grep") || normalized.includes("glob"))
     return "search";
-  if (normalized.includes("shell") || normalized.includes("bash"))
-    return "execute";
+  if (normalized.includes("bash")) return "execute";
   return "other";
 }
 

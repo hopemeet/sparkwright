@@ -66,7 +66,7 @@ Non-goals for the MVP:
 | Concern                       | Current reality                                                                                                               | Source                                                |
 | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
 | Model factory                 | Per-call, any raw ref, returns its own adapter; `inspectResolvedModelConfig` resolves ref+pricing without building an adapter | `model-factory.ts`                                    |
-| Active model                  | Single top-level `model` plus grouped `identity.model` flattening                                                             | `config-zod-schema.ts` / `config.ts`                  |
+| Active model                  | `identity.model` is the sole external config input; Host compiles it into the internal flat carrier                           | `config-zod-schema.ts` / `config.ts`                  |
 | Provider registry             | `providers.<name>` owns transport, credentials, provider options, physical model metadata, and pricing                        | `config-zod-schema.ts` / `config.ts`                  |
 | Compaction model              | `tasks.compaction.model` + `tasks.compaction.budget`; already wired                                                           | `runtime.ts`                                          |
 | Profile model                 | `profile.model` is carried from config/Agent.md and used by configured in-process delegates                                   | `agent-profiles.ts`, `runtime.ts`, `model-factory.ts` |
@@ -97,7 +97,7 @@ and delegate defaults; it does not require alias machinery or usage reshaping.
 The agents fields intentionally use flat camelCase (`spawnModel`,
 `delegateModel`) rather than nested `spawn.model` / `delegate.model` to match
 the existing `capabilities.agents` style (`pinnedDelegates`,
-`enableParallelDelegates`, `exposeChildrenAsDelegates`). `tasks.compaction.model`
+`enableParallelDelegates`, `exposure`). `tasks.compaction.model`
 stays task-shaped because `tasks.<name>` is already a per-task namespace.
 
 ### Resolution Order
@@ -183,7 +183,7 @@ Agent-specific model selection stays with the agent profile:
 name: Critic
 mode: child
 model: anthropic/claude-opus-4-8
-allowedTools: [read_file, grep]
+allowedTools: [read, grep]
 maxSteps: 4
 delegateTool: delegate_critic
 ---
@@ -285,6 +285,23 @@ need.
 - Config schema source: `packages/host/src/config-zod-schema.ts`
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: aligned the model design catalog with grouped-only external config;
+  internal model resolution and scope-specific inheritance remain unchanged.
+- Read: Host config schema/normalization and model factory/runtime consumers.
+- Tests: grouped-config release gate recorded with the implementation commit;
+  this documentation-only correction is covered by the current release gate.
+
+- Status: Verified
+- Date: 2026-07-17T23:37:17+0800
+- Scope: Provider Registry removed the `createFallbackChain` alias and retains
+  only canonical `createProviderFallbackChain`; model resolution, adapter
+  construction, and Core model fallback behavior are unchanged.
+- Read: Provider Registry source/tests/README, Core model helpers, and Host
+  model consumer boundary.
+- Tests: Provider Registry 7/7 and affected typechecks/build passed.
 
 - Status: Verified
 - Date: 2026-06-28T14:13:14+0800

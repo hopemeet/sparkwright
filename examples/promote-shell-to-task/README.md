@@ -5,7 +5,7 @@ End-to-end demo wiring three SparkWright pieces:
 - **`@sparkwright/shell-tool`** — runs commands through a streaming
   `ExecutionEnvironment`, enforces a foreground deadline.
 - **`@sparkwright/agent-runtime`** — `TaskManager` adopts the live process when
-  the deadline fires; `InMemoryTaskNotificationQueue` buffers terminal
+  the deadline fires; `InMemoryActorNotificationQueue` buffers terminal
   notifications for the agent loop.
 - **`@sparkwright/core`** — provides the `LiveShellHandle` /
   `ShellStreamingResult` contracts the bridge depends on.
@@ -19,7 +19,7 @@ shell-tool ── onBackground ──▶ TaskManager.spawn (adopts LiveShellHand
                               terminal status reached
                                           │
                                           ▼
-                          InMemoryTaskNotificationQueue
+                          InMemoryActorNotificationQueue
                                           │
                                           ▼
                        agent loop drains on its next turn
@@ -29,8 +29,8 @@ shell-tool ── onBackground ──▶ TaskManager.spawn (adopts LiveShellHand
 - **Long command (`sleep`)** exceeds the 30 ms foreground ceiling; the live
   process is **not killed** — it is handed to `TaskManager.spawn`, which
   drains stdout/stderr into the task store. The shell tool returns
-  `{ promoted: true, taskId }`. When the task finishes, a `TaskNotification`
-  lands in the queue.
+  `{ promoted: true, taskId }`. When the task finishes, a terminal task actor
+  notification lands in the queue.
 
 ## Run
 
@@ -53,13 +53,14 @@ hermetic. To run real shells:
 2. Pass that environment to `createShellTool` along with
    `foregroundTimeoutMs: RECOMMENDED_FOREGROUND_TIMEOUT_MS` and the
    `onBackground` bridge shown in [`promote.ts`](./promote.ts).
-3. Mount your `InMemoryTaskNotificationQueue` (or a custom
-   `TaskNotificationSink`) into the agent loop so notifications are
+3. Mount your `InMemoryActorNotificationQueue` (or a custom
+   `ActorNotificationSink` + `ActorInbox`) into the agent loop so notifications are
    converted into the next turn's user-visible content.
 
 ## Closing the loop with `@sparkwright/streaming-runtime`
 
-The demo's `notifications.waitForNext()` call is just for the smoke test.
+The demo uses non-consuming `waitUntilAvailable()` followed by `drain()` for
+the smoke test.
 In a real agent, hand the queue to `createStreamingRun` via the
 `notificationSources` option — every turn drains pending notifications and
 injects them as user-role context items before the model is invoked:
@@ -67,7 +68,7 @@ injects them as user-role context items before the model is invoked:
 ```ts
 import { createStreamingRun } from "@sparkwright/streaming-runtime";
 
-const queue = new InMemoryTaskNotificationQueue();
+const queue = new InMemoryActorNotificationQueue();
 const manager = new TaskManager({ notificationSink: queue /* ... */ });
 
 const run = createStreamingRun({
@@ -78,9 +79,13 @@ const run = createStreamingRun({
     {
       drain: () =>
         queue.drain().map((n) => ({
-          content: `<task-notification taskId="${n.taskId}" status="${n.status}">${n.summary}</task-notification>`,
-          source: { kind: "task-notification", uri: String(n.taskId) },
-          metadata: { taskId: n.taskId, status: n.status, kind: n.kind },
+          content: `<task-notification taskId="${n.source.id}" status="${n.type}">${n.payload.summary}</task-notification>`,
+          source: { kind: "task-notification", uri: String(n.source.id) },
+          metadata: {
+            taskId: n.source.id,
+            status: n.type,
+            kind: n.payload.kind,
+          },
         })),
     },
   ],

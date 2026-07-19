@@ -22,7 +22,6 @@ import {
 } from "@agentclientprotocol/sdk";
 import {
   runFailureMessage,
-  type PermissionMode,
   type RunAccessMode,
   type TraceLevel,
 } from "@sparkwright/protocol";
@@ -40,9 +39,7 @@ export interface SparkwrightAcpAgentOptions {
   defaultWorkspaceRoot: string;
   defaultModel?: string;
   defaultAccessMode?: RunAccessMode;
-  defaultPermissionMode?: PermissionMode;
   defaultTraceLevel?: TraceLevel;
-  defaultShouldWrite?: boolean;
   defaultSessionRootDir?: string;
   agentName?: string;
   agentVersion?: string;
@@ -75,9 +72,7 @@ export class SparkwrightAcpAgent implements Agent {
       hostService: this.hostService,
       defaultModel: options.defaultModel,
       defaultAccessMode: options.defaultAccessMode,
-      defaultPermissionMode: options.defaultPermissionMode,
       defaultTraceLevel: options.defaultTraceLevel,
-      defaultShouldWrite: options.defaultShouldWrite,
       sessionRootDir: options.defaultSessionRootDir,
       emit: (session, event) => {
         const routed = this.enqueueHostEvent(session, event);
@@ -200,23 +195,14 @@ export class SparkwrightAcpAgent implements Agent {
       goal,
       sessionId: session.sessionId,
       model: this.options.defaultModel,
-      accessMode: this.options.defaultAccessMode,
-      permissionMode: this.options.defaultAccessMode
-        ? undefined
-        : this.options.defaultPermissionMode,
+      accessMode: this.options.defaultAccessMode ?? "read-only",
       traceLevel: this.options.defaultTraceLevel ?? "standard",
-      shouldWrite: this.options.defaultShouldWrite === true,
       metadata: {
         source: "acp",
         acpSessionId: session.sessionId,
         workspaceRoot: session.cwd,
-        ...(this.options.defaultAccessMode
-          ? { accessMode: this.options.defaultAccessMode }
-          : {
-              permissionMode: this.options.defaultPermissionMode ?? "default",
-            }),
+        accessMode: this.options.defaultAccessMode ?? "read-only",
         traceLevel: this.options.defaultTraceLevel ?? "standard",
-        shouldWrite: this.options.defaultShouldWrite === true,
       },
     });
 
@@ -318,9 +304,7 @@ export class SparkwrightAcpAgent implements Agent {
       workspaceRoot: cwd,
       defaultModel: this.options.defaultModel,
       defaultAccessMode: this.options.defaultAccessMode,
-      defaultPermissionMode: this.options.defaultPermissionMode,
       defaultTraceLevel: this.options.defaultTraceLevel,
-      defaultShouldWrite: this.options.defaultShouldWrite,
       emit: () => {},
     });
     try {

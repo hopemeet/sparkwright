@@ -14,7 +14,6 @@ export interface WorkflowTraceObservation {
   readPaths: string[];
   writePaths: string[];
   verificationCommands: WorkflowTraceObservedCommand[];
-  sawTodoWrite: boolean;
 }
 
 interface RequestedTool {
@@ -79,16 +78,6 @@ export function observeWorkflowTraceEvents(
     requestedTools,
     afterSequence: lastWriteSequence,
   });
-  const sawTodoWrite = events.some((event) => {
-    const payload = recordValue(event.payload);
-    const id = stringValue(payload?.id) ?? stringValue(payload?.toolCallId);
-    return (
-      event.type === "tool.requested" &&
-      (!id || !failedToolCallIds.has(id)) &&
-      eventToolName(payload) === "todo_write"
-    );
-  });
-
   return {
     eventCount: events.length,
     ...(goal ? { goal } : {}),
@@ -97,7 +86,6 @@ export function observeWorkflowTraceEvents(
     readPaths,
     writePaths,
     verificationCommands,
-    sawTodoWrite,
   };
 }
 
@@ -198,7 +186,6 @@ export function normalizeWorkflowToolName(
 ): string | undefined {
   const normalized = toolName.trim();
   switch (normalized) {
-    case "read_file":
     case "read":
       return "read";
     case "grep":
@@ -207,13 +194,11 @@ export function normalizeWorkflowToolName(
     case "glob":
     case "list_dir":
       return "glob";
-    case "write_file":
     case "write":
       return "write";
     case "edit_anchored_text":
     case "edit":
       return "edit";
-    case "shell":
     case "bash":
       return "bash";
     case "todo_write":

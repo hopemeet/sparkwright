@@ -99,9 +99,11 @@ export async function prepareIsolatedUserConfig(availability, options) {
     join(targetDir, "config.json"),
     `${JSON.stringify(
       {
-        model: options.requestedModel,
-        providers: {
-          [availability.provider]: providerForFixture,
+        identity: {
+          model: options.requestedModel,
+          providers: {
+            [availability.provider]: providerForFixture,
+          },
         },
       },
       null,
@@ -112,18 +114,14 @@ export async function prepareIsolatedUserConfig(availability, options) {
 }
 
 function providerConfigFromEffectiveReport(report, provider) {
-  return (
-    report.config?.providers?.[provider] ??
-    report.config?.identity?.providers?.[provider]
-  );
+  return report.config?.providers?.[provider];
 }
 
 async function providerConfigFromFiles(files, provider) {
   for (const file of files) {
     if (!existsSync(file)) continue;
     const config = await readConfigFile(file).catch(() => undefined);
-    const providerConfig =
-      config?.providers?.[provider] ?? config?.identity?.providers?.[provider];
+    const providerConfig = config?.identity?.providers?.[provider];
     if (providerConfig) return providerConfig;
   }
   return undefined;
@@ -138,16 +136,8 @@ async function readConfigFile(file) {
 function configFilesForProvider(report, provider) {
   const files = [];
   const providerSource = report.sources?.providers?.[provider];
-  const identityProviderSource =
-    report.sources?.identity?.providers?.[provider];
   const modelSource = report.sources?.model;
-  const identityModelSource = report.sources?.identity?.model;
-  for (const source of [
-    providerSource,
-    identityProviderSource,
-    modelSource,
-    identityModelSource,
-  ]) {
+  for (const source of [providerSource, modelSource]) {
     const file = fileFromSource(source);
     if (file) files.push(file);
   }

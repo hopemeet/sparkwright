@@ -109,8 +109,8 @@ async function writeApprovedCase() {
     workspace,
     "--target",
     "README.md",
-    "--write",
-    "--yes",
+    "--access-mode",
+    "accept-edits",
     "--model",
     "deterministic",
     "--trace-level",
@@ -120,24 +120,19 @@ async function writeApprovedCase() {
   const readme = await readFile(join(workspace, "README.md"), "utf8");
   record({
     id: "WA",
-    name: "diagnostics: write approved direct-core",
+    name: "diagnostics: accepted edit direct-core",
     command: commandString(result.command),
     prompt,
     workspace,
-    write: "yes, approved",
+    write: "yes, accept-edits",
     expectedTrace:
-      "approval.requested, approval.resolved approved, artifact.created, workspace.write.completed",
+      "artifact.created, workspace.write.completed; no approval prompt",
     failureRule:
       "Fails if the write is not applied, no diff artifact is created, or a denied write appears.",
     harness: true,
     ok:
       result.exitCode === 0 &&
-      has(trace.events, "approval.requested") &&
-      eventWith(
-        trace.events,
-        "approval.resolved",
-        (event) => event.payload?.decision === "approved",
-      ) &&
+      !has(trace.events, "approval.requested") &&
       has(trace.events, "artifact.created") &&
       has(trace.events, "workspace.write.completed") &&
       !has(trace.events, "workspace.write.denied") &&
@@ -159,7 +154,8 @@ async function writeDeniedCase() {
       workspace,
       "--target",
       "README.md",
-      "--write",
+      "--access-mode",
+      "ask",
       "--model",
       "deterministic",
       "--trace-level",
@@ -289,7 +285,7 @@ async function skillLoadingCase() {
   await writeFile(
     join(workspace, ".sparkwright", "config.json"),
     JSON.stringify({
-      model: "deterministic",
+      identity: { model: "deterministic" },
       capabilities: {
         skills: {
           roots: ["../skills"],
@@ -358,7 +354,7 @@ async function mcpFailureCase() {
   await writeFile(
     join(workspace, ".sparkwright", "config.json"),
     JSON.stringify({
-      model: "deterministic",
+      identity: { model: "deterministic" },
       capabilities: {
         mcp: {
           servers: [
@@ -421,6 +417,8 @@ async function mcpFailureCase() {
       "scripted",
       "--trace-level",
       "debug",
+      "--access-mode",
+      "bypass",
     ],
     {
       env: {
@@ -494,8 +492,9 @@ async function delegateCwdCase() {
   const workspace = await workspaceWithReadme("sparkwright-reg-delegate-cwd-");
   const sessionId = "session_reg_delegate_cwd";
   await writeProjectConfig(workspace, {
-    shell: { foregroundTimeoutMs: 1_000, sandbox: { mode: "off" } },
-    maxSteps: 20,
+    shell: { foregroundTimeoutMs: 1_000 },
+    policy: { sandbox: { mode: "off" } },
+    run: { maxSteps: 20 },
     capabilities: {
       agents: {
         profiles: [
@@ -526,6 +525,8 @@ async function delegateCwdCase() {
       "debug",
       "--session-id",
       sessionId,
+      "--access-mode",
+      "bypass",
     ],
     {
       env: {
@@ -594,8 +595,9 @@ async function delegateCwdCase() {
 async function shellPromotionCase() {
   const workspace = await workspaceWithReadme("sparkwright-reg-promote-");
   await writeProjectConfig(workspace, {
-    shell: { foregroundTimeoutMs: 20, sandbox: { mode: "off" } },
-    maxSteps: 20,
+    shell: { foregroundTimeoutMs: 20 },
+    policy: { sandbox: { mode: "off" } },
+    run: { maxSteps: 20 },
   });
   const prompt = "Promote a long Bash command and inspect tasks.";
   const result = await runCli(
@@ -608,8 +610,8 @@ async function shellPromotionCase() {
       "scripted",
       "--trace-level",
       "debug",
-      "--write",
-      "--yes",
+      "--access-mode",
+      "bypass",
     ],
     {
       env: {
@@ -684,8 +686,9 @@ async function delegateNoTaskManagerTimeoutCase() {
   const workspace = await workspaceWithReadme("sparkwright-reg-no-taskmgr-");
   const sessionId = "session_reg_delegate_no_taskmgr";
   await writeProjectConfig(workspace, {
-    shell: { foregroundTimeoutMs: 20, sandbox: { mode: "off" } },
-    maxSteps: 20,
+    shell: { foregroundTimeoutMs: 20 },
+    policy: { sandbox: { mode: "off" } },
+    run: { maxSteps: 20 },
     capabilities: {
       agents: {
         profiles: [
@@ -716,8 +719,8 @@ async function delegateNoTaskManagerTimeoutCase() {
       "debug",
       "--session-id",
       sessionId,
-      "--write",
-      "--yes",
+      "--access-mode",
+      "bypass",
     ],
     {
       env: {
@@ -786,7 +789,7 @@ async function delegateNoTaskManagerTimeoutCase() {
 async function spawnFinalityCase() {
   const workspace = await workspaceWithReadme("sparkwright-reg-spawn-");
   const prompt = "Spawn a read-only child and verify finality.";
-  await writeProjectConfig(workspace, { maxSteps: 20 });
+  await writeProjectConfig(workspace, { run: { maxSteps: 20 } });
   const result = await runCli(
     [
       "run",
@@ -841,7 +844,7 @@ async function spawnFinalityCase() {
     workspace,
     write: "no",
     expectedTrace:
-      "tool_search -> spawn_agent output finality=complete, inherited maxSteps visible in promotionHint, child uses read only",
+      "tool_search -> spawn_agent output finality=complete with clean assessment, inherited maxSteps visible in promotionHint, child uses read only",
     failureRule:
       "Fails if dynamic spawn exposes bash/write tools, marks a complete child partial, or falls back to the old maxSteps default.",
     harness: true,
@@ -853,16 +856,13 @@ async function spawnFinalityCase() {
         (event) =>
           event.payload?.toolName === "spawn_agent" &&
           event.payload?.output?.finality === "complete" &&
-          event.payload?.output?.truncated === false &&
+          event.payload?.output?.assessment?.health === "clean" &&
           event.payload?.output?.promotionHint?.suggestedProfile?.maxSteps ===
             20,
       ) &&
-      !traceText.includes('"toolName":"read_file"') &&
-      !traceText.includes('"toolName":"shell"') &&
+      traceText.includes('"toolName":"read"') &&
       !traceText.includes('"toolName":"bash"') &&
-      !traceText.includes('"toolName":"write_file"') &&
       !traceText.includes('"toolName":"write"') &&
-      !traceText.includes('"toolName":"apply_patch"') &&
       !traceText.includes('"toolName":"edit"'),
   });
 }
@@ -973,7 +973,7 @@ async function acpStartupCase() {
       workspace,
       write: "no",
       expectedTrace:
-        "run.created, skill.indexed, agent.profile.derived, workspace.read, run.completed; run metadata source acp",
+        "run.created, skill.indexed, agent.profile.derived, list_dir tool.completed, run.completed; run metadata source acp",
       failureRule:
         "Fails if ACP init/session/prompt fails, stopReason is not end_turn, or trace metadata is not source=acp.",
       harness: true,
@@ -982,7 +982,12 @@ async function acpStartupCase() {
         response.stopReason === "end_turn" &&
         metadata?.source === "acp" &&
         has(events, "run.created") &&
-        has(events, "workspace.read") &&
+        eventWith(
+          events,
+          "tool.completed",
+          (event) => event.payload?.toolName === "list_dir",
+        ) &&
+        !has(events, "workspace.read") &&
         has(events, "run.completed") &&
         updates.some((update) => update.update?.sessionUpdate === "tool_call"),
     });

@@ -1,11 +1,4 @@
-import {
-  access,
-  mkdtemp,
-  mkdir,
-  readFile,
-  symlink,
-  writeFile,
-} from "node:fs/promises";
+import { access, mkdtemp, mkdir, symlink, writeFile } from "node:fs/promises";
 import { join, win32 } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
@@ -14,88 +7,52 @@ import {
   createSkillLockfile,
   createSkillLoaderTool,
   createLoadedSkillContext,
-  createSkillPackageHasher,
   computeAssetPackageHash,
-  computeSkillPackageHash,
   filterSkillsForAgent,
   isDevSkill,
   listSkillResourceFiles,
-  listSkillPackageFiles,
   listAssetPackageFiles,
   lockSkills,
   loadSkill,
   loadSkills,
-  parseSkill,
+  markdownAssetContentHash,
+  parseSkillManifest,
   prepareSkillsForRun,
   rankIndexedSkillsByGoal,
   selectSkills,
-  snapshotSkillPackage,
   snapshotAssetPackage,
   assetPackagePathsOverlap,
+  type SkillDefinition,
   type SkillIndexEntry,
 } from "../src/index.js";
 
+function definitionFromMarkdown(
+  content: string,
+  sourcePath = "SKILL.md",
+): SkillDefinition {
+  const manifest = parseSkillManifest(content, sourcePath);
+  const metadata: Record<string, unknown> = { ...(manifest.metadata ?? {}) };
+  if (manifest.version && metadata.version === undefined) {
+    metadata.version = manifest.version;
+  }
+  return {
+    name: manifest.name,
+    description: manifest.description,
+    license: manifest.license,
+    compatibility: manifest.compatibility,
+    allowedTools: manifest.allowedTools,
+    version: manifest.version,
+    triggers: manifest.triggers,
+    body: manifest.instructions,
+    sourcePath,
+    contentHash: markdownAssetContentHash(content),
+    packageHash: `sha256:${markdownAssetContentHash(content)}`,
+    packageHashPolicyVersion: 2,
+    metadata,
+  };
+}
+
 describe("skills", () => {
-  it("parses SKILL.md frontmatter and body", () => {
-    const skill = parseSkill(`---
-name: dingtalk-notifier
-description: Sends DingTalk group notifications.
-metadata:
-  version: 1.0.0
-license: MIT
-compatibility: generic
-allowed-tools: read shell
----
-# DingTalk
-
-Use the DingTalk webhook only when asked.
-`);
-
-    expect(skill.name).toBe("dingtalk-notifier");
-    expect(skill.description).toBe("Sends DingTalk group notifications.");
-    expect(skill.license).toBe("MIT");
-    expect(skill.compatibility).toEqual(["generic"]);
-    expect(skill.allowedTools).toEqual(["read", "shell"]);
-    expect(skill.metadata.version).toBe("1.0.0");
-    expect(skill.body).toContain("Use the DingTalk webhook");
-    expect(skill.contentHash).toHaveLength(64);
-  });
-
-  it("rejects missing required frontmatter", () => {
-    expect(() =>
-      parseSkill(`---
-description: Missing a name.
----
-Body
-`),
-    ).toThrow(/name/);
-  });
-
-  it("accepts unknown frontmatter keys without throwing", () => {
-    // Schema declares additionalProperties: true, so unknown top-level
-    // frontmatter keys must be tolerated by the parser as well.
-    const skill = parseSkill(`---
-name: lenient-skill
-description: Has a future field the parser does not know.
-futureExperimentalField: someValue
-anotherUnknownKey: 42
----
-body
-`);
-    expect(skill.name).toBe("lenient-skill");
-  });
-
-  it("rejects invalid skill names", () => {
-    expect(() =>
-      parseSkill(`---
-name: Bad Skill
-description: Invalid names are rejected.
----
-Body
-`),
-    ).toThrow(/lowercase letters/);
-  });
-
   it("loads skill directories from a root", async () => {
     const root = await mkdtemp(join(tmpdir(), "sparkwright-skills-"));
     await mkdir(join(root, "reviewer"));
@@ -113,6 +70,10 @@ Review carefully.
 
     expect(skills).toHaveLength(1);
     expect(skills[0]?.sourcePath).toBe(join(root, "reviewer", "SKILL.md"));
+    expect(skills[0]).toMatchObject({
+      packageHash: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
+      packageHashPolicyVersion: 2,
+    });
   });
 
   it("loads nested SKILL.md packages during run preparation", async () => {
@@ -137,101 +98,6 @@ Deep body.
     expect(prepared.indexedSkills.map((skill) => skill.name)).toEqual([
       "deep-skill",
     ]);
-  });
-
-  it("hashes and snapshots the full supported skill package deterministically", async () => {
-    const root = await mkdtemp(join(tmpdir(), "sparkwright-skill-package-"));
-    const skillDir = join(root, "reviewer");
-    await mkdir(join(skillDir, "references"), { recursive: true });
-    await mkdir(join(skillDir, "templates", "nested"), { recursive: true });
-    await mkdir(join(skillDir, "scripts"), { recursive: true });
-    await mkdir(join(skillDir, "scratch"), { recursive: true });
-    await writeFile(
-      join(skillDir, "SKILL.md"),
-      `---
-name: reviewer
-description: Reviews code changes.
----
-Review carefully.
-`,
-    );
-    await writeFile(join(skillDir, "references", "guide.md"), "guide\n");
-    await writeFile(
-      join(skillDir, "templates", "nested", "note.txt"),
-      "note\n",
-    );
-    await writeFile(join(skillDir, "scripts", "check.sh"), "echo ok\n");
-    await writeFile(join(skillDir, "scratch", "ignored.txt"), "ignored\n");
-
-    const before = await computeSkillPackageHash(skillDir);
-    expect(before.packageHash).toMatch(/^sha256:[a-f0-9]{64}$/);
-    expect(before.files.map((file) => file.relativePath)).toEqual([
-      "SKILL.md",
-      "references/guide.md",
-      "scripts/check.sh",
-      "templates/nested/note.txt",
-    ]);
-
-    await writeFile(join(skillDir, "scratch", "ignored.txt"), "changed\n");
-    await expect(computeSkillPackageHash(skillDir)).resolves.toMatchObject({
-      packageHash: before.packageHash,
-    });
-
-    await writeFile(join(skillDir, "references", "guide.md"), "new guide\n");
-    const after = await computeSkillPackageHash(skillDir);
-    expect(after.packageHash).not.toBe(before.packageHash);
-
-    const snapshotDir = join(root, "snapshot");
-    const snapshot = await snapshotSkillPackage(skillDir, snapshotDir);
-    expect(snapshot.files.map((file) => file.relativePath)).toEqual(
-      after.files.map((file) => file.relativePath),
-    );
-    await expect(
-      readFile(join(snapshotDir, "references", "guide.md"), "utf8"),
-    ).resolves.toBe("new guide\n");
-    await expect(
-      access(join(snapshotDir, "scratch", "ignored.txt")),
-    ).rejects.toMatchObject({ code: "ENOENT" });
-
-    const listed = await listSkillPackageFiles(skillDir);
-    expect(listed.map((file) => file.relativePath)).toEqual(
-      after.files.map((file) => file.relativePath),
-    );
-  });
-
-  it("caches package hashes by package fingerprint and supports guard limits", async () => {
-    const root = await mkdtemp(
-      join(tmpdir(), "sparkwright-skill-package-cache-"),
-    );
-    const skillDir = join(root, "reviewer");
-    await mkdir(join(skillDir, "references"), { recursive: true });
-    await writeFile(
-      join(skillDir, "SKILL.md"),
-      `---
-name: reviewer
-description: Reviews code changes.
----
-Review carefully.
-`,
-    );
-    await writeFile(join(skillDir, "references", "guide.md"), "guide\n");
-
-    const hasher = createSkillPackageHasher();
-    const first = await hasher.compute(skillDir);
-    const second = await hasher.compute(skillDir);
-    expect(second.packageHash).toBe(first.packageHash);
-    expect(hasher.size).toBe(1);
-
-    await writeFile(join(skillDir, "references", "guide.md"), "new guide\n");
-    const after = await hasher.compute(skillDir);
-    expect(after.packageHash).not.toBe(first.packageHash);
-
-    await expect(
-      createSkillPackageHasher({ maxBytes: 1 }).compute(skillDir),
-    ).rejects.toThrow(/byte limit/);
-    await expect(
-      computeSkillPackageHash(skillDir, { maxFiles: 1 }),
-    ).rejects.toThrow(/file limit/);
   });
 
   it("enumerates v2 asset packages consistently with exclusions and limits", async () => {
@@ -368,25 +234,25 @@ Strong body.
 
     const skills = await loadSkills([
       { root: weak, layer: "builtin" },
-      { root: strong, layer: "project" },
+      { root: strong, layer: "configured" },
     ]);
 
     expect(skills).toHaveLength(1);
     expect(skills[0]).toMatchObject({
       description: "Strong reviewer.",
       body: "Strong body.",
-      metadata: { sparkwrightLayer: "project" },
+      metadata: { sparkwrightLayer: "configured" },
     });
   });
 
   it("selects skills deterministically from the goal", () => {
-    const dingtalk = parseSkill(`---
+    const dingtalk = definitionFromMarkdown(`---
 name: dingtalk-notifier
 description: Sends DingTalk group notifications.
 ---
 Notify safely.
 `);
-    const reviewer = parseSkill(`---
+    const reviewer = definitionFromMarkdown(`---
 name: code-reviewer
 description: Reviews code changes.
 ---
@@ -578,13 +444,15 @@ Body
     expect(indexed.metadata.sourcePackage).toBe("@sparkwright/skills");
     const indexedSkills = indexed.metadata.skills as Array<{
       name: string;
-      packageHash?: string;
+      packageHash: string;
+      packageHashPolicyVersion: 2;
     }>;
     expect(indexedSkills).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           name: "code-reviewer",
           packageHash: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
+          packageHashPolicyVersion: 2,
         }),
       ]),
     );
@@ -653,13 +521,13 @@ Bad body.
   });
 
   it("filters skills by agent access policy", () => {
-    const notifier = parseSkill(`---
+    const notifier = definitionFromMarkdown(`---
 name: dingtalk-notifier
 description: Sends DingTalk group notifications.
 ---
 Notify safely.
 `);
-    const reviewer = parseSkill(`---
+    const reviewer = definitionFromMarkdown(`---
 name: code-reviewer
 description: Reviews code changes.
 ---
@@ -681,7 +549,7 @@ Review safely.
   });
 
   it("creates a deterministic serializable skill lockfile", () => {
-    const dingtalk = parseSkill(
+    const dingtalk = definitionFromMarkdown(
       `---
 name: dingtalk-notifier
 description: Sends DingTalk group notifications.
@@ -692,7 +560,7 @@ Notify safely.
 `,
       "/skills/dingtalk/SKILL.md",
     );
-    const reviewer = parseSkill(
+    const reviewer = definitionFromMarkdown(
       `---
 name: code-reviewer
 description: Reviews code changes.
@@ -715,7 +583,8 @@ Review safely.
         {
           name: "code-reviewer",
           sourcePath: "/skills/reviewer/SKILL.md",
-          contentHash: reviewer.contentHash,
+          packageHash: reviewer.packageHash,
+          packageHashPolicyVersion: 2,
           metadata: {
             owner: "platform",
           },
@@ -723,7 +592,8 @@ Review safely.
         {
           name: "dingtalk-notifier",
           sourcePath: "/skills/dingtalk/SKILL.md",
-          contentHash: dingtalk.contentHash,
+          packageHash: dingtalk.packageHash,
+          packageHashPolicyVersion: 2,
           version: "1.2.3",
           metadata: {
             version: "1.2.3",
@@ -740,7 +610,8 @@ Review safely.
         name: "code-reviewer",
         description: "Reviews code changes.",
         sourcePath: "/skills/reviewer/SKILL.md",
-        contentHash: "abc123",
+        packageHash: "sha256:abc123",
+        packageHashPolicyVersion: 2,
         version: "indexed-version",
         metadata: {
           version: "metadata-version",
@@ -752,7 +623,8 @@ Review safely.
       {
         name: "code-reviewer",
         sourcePath: "/skills/reviewer/SKILL.md",
-        contentHash: "abc123",
+        packageHash: "sha256:abc123",
+        packageHashPolicyVersion: 2,
         version: "indexed-version",
         metadata: {
           version: "metadata-version",
@@ -1032,7 +904,7 @@ Write clearly.
   });
 
   it("creates traceable loaded skill context", () => {
-    const skill = parseSkill(`---
+    const skill = definitionFromMarkdown(`---
 name: code-reviewer
 description: Reviews code changes.
 metadata:
@@ -1065,6 +937,8 @@ describe("rankIndexedSkillsByGoal", () => {
     description: "",
     sourcePath: `/skills/${overrides.name ?? "skill"}/SKILL.md`,
     contentHash: "hash",
+    packageHash: "sha256:hash",
+    packageHashPolicyVersion: 2,
     metadata: {},
     ...overrides,
   });

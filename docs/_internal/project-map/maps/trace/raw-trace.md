@@ -8,6 +8,174 @@ what happened without relying on product UI state.
 See [summary-timeline-verify.md](summary-timeline-verify.md) for derived views
 and [../session/session-store.md](../session/session-store.md) for session layout.
 
+## Last Verified
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: raw terminal events persist `RunAssessment` and fact-ledger evidence.
+  Trace diagnostics consume that canonical assessment for complete runs, while
+  incomplete observations may replay raw facts; unhealthy completed subagents
+  emit a dedicated diagnostic without being relabeled incomplete.
+- Read: terminal event assembly, trace diagnostics, Agent lifecycle emission,
+  Workflow observation, and trace fixtures/tests.
+- Tests: Core trace 130/130 plus affected Host/CLI fixtures passed.
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: Host start/resume execution lifecycle wiring now has one explicit
+  envelope and no inner fallback execution entrance. The same HostExecution,
+  episode owner, EventLog, trace sink, approval/cancel paths, event payloads,
+  and ordering remain in use; no trace vocabulary or persistence changed.
+- Read: HostRuntime/HostExecution, episode/preparation/interaction owners, Core
+  trace boundaries, and focused start/resume tests.
+- Tests: focused Host composition/protocol and final repository gates are
+  recorded with the commit.
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: Host approval request delivery and active execution message/cancel
+  routing moved behind `ExecutionInteractionOperations`. Core remains the raw
+  `approval.*`, `run.command.*`, and cancellation event owner; event payloads,
+  correlation ids, trace sinks, and ordering are unchanged.
+- Read: Host interaction/execution/runtime paths, Core command and approval
+  events, protocol projections, and focused tests.
+- Tests: focused Host/protocol/client gates and the final repository gate are
+  recorded with the commit.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: pre-run buffered Skill/MCP/Agent diagnostics, trace resources,
+  capability snapshot metadata, and run/store metadata assembly now live in
+  `RunPreparationOperations`. Event types, payloads, flush order, trace level,
+  and storage layout are unchanged.
+- Read: preparation owner, capability failure owner, episode flush path, and
+  raw trace contracts.
+- Tests: direct owner and focused trace/run gates are recorded with the commit.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: fatal Skill index-failure trace persistence moved intact to
+  `CapabilityRuntimeOperations`. Canonical session storage, failure payload,
+  live Host event envelope, and the `run.created`, `capability.index.failed`,
+  `run.failed` ordering are unchanged.
+- Read: capability owner test, Core EventLog/session store, Host preparation
+  failure path, and protocol coverage.
+- Tests: direct owner trace/event-order coverage and focused Host capability
+  suites passed.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: Agent/Delegate lifecycle emitter wiring, child run-store construction,
+  promotion attribution, and terminal result normalization moved within Host to
+  `AgentRuntimeAssembly`. Raw `subagent.*`, task, workspace-write, and session
+  trace payloads, ordering, and persistence remain unchanged.
+- Read: Host Agent assembly/adapters, Agent Runtime invocation/result contracts,
+  Core trace storage, and focused tests.
+- Tests: focused Host Agent/Delegate/protocol and Agent Runtime suites passed.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: Workflow durable finalization and notification ownership moved within
+  Host only. Raw `workflow.*` lifecycle payloads, ordering, package identity,
+  evidence refs, and append-only trace ownership are unchanged.
+- Read: Host Workflow owner/projection/finalization, Core raw trace contracts,
+  and focused Workflow tests.
+- Tests: focused Host Workflow and protocol suites passed.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: bounded Task output reading and terminal actor-to-notification
+  projection moved behind the Host Task operations owner. No event type,
+  payload, trace sink, or persistence path changed.
+- Read: Host Task operations/projections, Agent Runtime Task actor contracts,
+  Core notification injection, and protocol tests.
+- Tests: Host Task revival/service/protocol 64/64 and Host typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-17T23:37:17+0800
+- Scope: EventLog/file trace reference implementations moved exclusively to
+  Core `/internal`, and TraceSink ingestion is canonical `append`; raw event
+  envelopes, filtering, redaction, and persistence layout are unchanged.
+- Read: Core barrels/storage/trace store and Host/CLI/Perfetto consumers.
+- Tests: Core interface 4/4, Perfetto 18/18, CLI 23/23, affected typechecks.
+
+- Status: Verified
+- Date: 2026-07-17T23:04:01+0800
+- Scope: session conversation trace-fact projection moved intact from
+  HostRuntime to `session-queries.ts`. It still reads the canonical session
+  aggregate trace and does not add an event family, alternate trace file, or
+  persistence path.
+- Read: Host session replay projection, Core trace store/codec contracts, and
+  resume/compaction protocol coverage.
+- Tests: Host protocol 59/59 and full Host 577/577; Host typecheck; full release
+  gate.
+
+- Status: Verified
+- Date: 2026-07-17T20:55:00+0800
+- Scope: Skill indexed/resident-loaded lifecycle metadata now carries required
+  v2 package identity and omits Markdown `contentHash`; stats ignore events
+  without that canonical identity instead of inventing legacy/unknown buckets.
+- Read: Skills emitter, Core on-demand companion events, Host stats reader,
+  public trace references, and focused Skills/CLI tests.
+- Tests: Skills 73/73; focused CLI Skill stats/catalog gates; Host protocol tests.
+
+- Status: Verified
+- Date: 2026-07-17T17:20:00+0800
+- Scope: Workflow lifecycle events emitted by real Host execution attribute the
+  pinned v2 `packageHash`/policy at event time and no longer publish the
+  Markdown `contentHash` identity. Event names and trace storage are unchanged.
+- Read: Host Workflow projection/runtime metadata, Core event vocabulary,
+  distill/shadow observation, and focused Workflow tests.
+- Tests: Host Workflow/hook/distill/shadow focused tests and repository test
+  typecheck passed before the full release gate.
+
+- Status: Verified
+- Date: 2026-07-17T01:07:28+0800
+- Scope: external-command terminal subagent results no longer persist the
+  aggregate truncation compatibility alias; stream-specific flags and the
+  canonical `ProcessOutputSummary` remain unchanged.
+- Read: Host terminal result projection, Core event/trace consumers, CLI
+  direct-run output, Agent trace coverage, and public trace references.
+- Tests: Host external-command 20/20 and delegate protocol 8/8; CLI direct
+  delegate 1/1; Core trace 4/4; repository test typecheck passed; project-map
+  drift and full release gate passed.
+
+- Status: Verified
+- Date: 2026-07-16T21:02:00+0800
+- Scope: Background Shell trace fixtures and TUI rendering use only the
+  canonical `background_shell` untracked-access marker.
+- Read: Host marker producer, Core trace/FactLedger diagnostics, CLI summary,
+  TUI event renderer, and focused tests.
+- Tests: focused Core trace/ledger, CLI summary, and TUI rendering suites;
+  affected typechecks; project-map drift check.
+
+- Status: Verified
+- Date: 2026-07-16T18:30:00+0800
+- Scope: Trace JSONL readers require the canonical event envelope; required top-level fields are no longer synthesized for older rows.
+- Read: Core event schema, trace parser/consumers, trace tests, and protocol references.
+- Tests: Core trace focused tests; Core typecheck; project-map drift check.
+
+- Status: Verified
+- Date: 2026-07-16T14:10:00+0800
+- Scope: File-backed raw trace persistence is session-only; each event is appended to canonical session and agent aggregate traces, and run directories retain only state plus trace pointers.
+- Read: Core trace store/codec/tests, session layout maps, protocol references, and trace sink examples.
+- Tests: Core trace/interfaces focused tests; npm run build; npm run typecheck:test; npm run release:check.
+
+- Date: 2026-07-16T13:36:30+0800
+- Scope: Raw trace vocabulary dropped dead validation-hook start/completed events and result-validation timing; `validation.failed` remains for current run-input and extension failure evidence.
+- Read: Core event/trace codecs, schema, CLI producer, TUI consumer, and trace tests.
+- Tests: focused trace/schema tests; npm run build; npm run typecheck:test; npm run release:check.
+
+- Date: 2026-07-16T12:45:00+0800
+- Scope: Raw run metadata records canonical accessMode; approval and workspace-write events are unchanged.
+- Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.
+- Tests: focused access/policy/protocol/CLI/TUI/ACP/Workflow tests; npm run typecheck:test; npm run schema:check.
+
+- Date: 2026-07-16T11:52:29+0800
+- Scope: reviewed protocol 2.0 terminal failure envelope changes; Core raw trace
+  events remain the durable source contract and do not persist the removed Host
+  wire-level `run.failed.error` projection.
+
 ## Main Files
 
 - `packages/core/src/trace.ts`
@@ -26,15 +194,19 @@ EventLog emits full event
   -> FileRunStore.prepareTraceEvent() in trace-store.ts
   -> filterTraceEvent(level) in trace-codec.ts
   -> redactor
-  -> append trace.jsonl
+  -> append session and agent trace.jsonl
   -> materialize artifact files when needed
 ```
 
 ## Contracts
 
-- JSONL: one serialized `SparkwrightEvent` per line.
+- JSONL: one serialized canonical `SparkwrightEvent` per line. Readers require
+  `id`, `runId`, `type`, `timestamp`, positive `sequence`, `payload`, and object
+  `metadata`; they do not synthesize omitted envelope fields.
 - Events are ordered by run-local `sequence`.
 - `trace.jsonl` is append-only.
+- Durable file traces live only at session and agent scope. Per-run directories
+  contain state/checkpoint files and a `trace-pointer.json`, not another trace.
 - Cross-run append order is not a chronological invariant: multi-agent traces
   may append a child run block before the parent's later tail. Timeline readers
   can project aggregate order, but `trace verify` must preserve the append-only
@@ -51,9 +223,11 @@ EventLog emits full event
   input; preview must not become a policy or replay source.
 - Terminal `tool.completed` / `tool.failed` metadata may include stage timing
   fields (`schemaValidationMs`, `inputValidationMs`, `policyForArgsMs`,
-  `policyDecisionMs`, `approvalWaitMs`, `executionMs`,
-  `resultValidationMs`). These are diagnostics on existing terminal events;
+  `policyDecisionMs`, `approvalWaitMs`, `executionMs`). These are diagnostics on existing terminal events;
   they do not change span closure or event-family semantics.
+- `tool.failed` uses the canonical nested error envelope. Its failure code is
+  read only from `payload.error.code`; root-level `errorCode` fields belong to
+  other event-family contracts and are not a tool-failure alias.
 - `workspace.read.denied` is the raw trace evidence for read-scope policy
   denial. It pairs with the enclosing read tool's `tool.failed`
   `READ_SCOPE_DENIED`; successful reads continue to use `workspace.read`.
@@ -63,6 +237,8 @@ EventLog emits full event
   `workflow.failed`, and `workflow.cancelled`. P3 human nodes are the first
   `workflow.waiting` emitter; durable workflow waiting truth still lives in
   `WorkflowRunRecord.wait`, not in trace replay alone.
+  Host-instantiated projections attach the pinned v2 package hash/policy to
+  these lifecycle payloads; Markdown `contentHash` is not execution identity.
 - P2 `WorkflowRunRecord.evidenceRefs` may point at raw trace/fact evidence
   such as run ids and FactLedger verifier result ids, but workflow records do
   not copy raw trace payloads and raw trace remains the audit source rather than
@@ -101,6 +277,9 @@ EventLog emits full event
   primitives are implemented in the dependency-leaf `trace-codec.ts`.
 - `artifact.created` remains the materialization boundary for large process
   stdout/stderr logs referenced by `ProcessOutputSummary.artifactIds`.
+- External-command `subagent.completed.payload.result` reports truncation only
+  through stream-specific `stdoutTruncated` and `stderrTruncated` fields; raw
+  trace does not retain an aggregate compatibility alias.
 - Promoted shell task output is traced as `task.output` under the task span and
   summarized on terminal `task.*`; it does not create `extension.process.*`
   lifecycle rows.
@@ -139,10 +318,9 @@ EventLog emits full event
   process boundaries granted workspace write capability outside managed
   `workspace.write.*` APIs. External command delegates use it when direct
   read/write workspace access is granted; background shell tasks use it with
-  `protocol: "background_shell"`, `backgroundOrigin`, and sandbox status. The
-  TUI also accepts historical `promoted_shell` markers. It records access granted /
-  untracked-write-capable only and is not counted as a managed
-  `workspace.write.completed` event.
+  `protocol: "background_shell"`, `backgroundOrigin`, and sandbox status. It
+  records access granted / untracked-write-capable only and is not counted as a
+  managed `workspace.write.completed` event.
 - Skill inline shell preprocessing, when enabled, uses
   `extension.process.*` with `kind: skill_script`; events may be buffered during
   pre-run skill loading and flushed once the run event log exists.
@@ -192,6 +370,9 @@ EventLog emits full event
 - Add trace-level payload handling for new large event types.
 - Keep artifacts out of large inline payloads.
 - Check `transcript.jsonl` behavior if event-to-transcript mapping changes.
+- Prompt transcript rehydration resolves `systemRef` only through the owning
+  session's `blobs/` directory; transcript rows do not carry an inline system
+  prefix identity or alternate reader path.
 - Verify redaction still applies to trace and artifacts.
 - Update docs and schemas when event envelope changes.
 
@@ -210,6 +391,20 @@ EventLog emits full event
   double-spilling tool-owned artifacts and honor `resultSize.neverPersist`.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-16T10:44:25+0800
+- Scope: Task terminal evidence now recognizes only canonical `task_create` and
+  `task` tool events; raw event vocabulary is unchanged.
+- Read: Core Task trace collector and canonical Task tool result shapes.
+- Tests: Core trace 131/131 and repository test typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-16T10:27:51+0800
+- Scope: reviewed configured Agent-tool policy input consolidation; emitted
+  tool/subagent event vocabulary and trace metadata are unchanged.
+- Read: Agent-tool definition, Host delegate assembly, and raw trace contracts.
+- Tests: agent-runtime index 45/45, Host tools 89/89, and affected typechecks passed.
 
 - Status: Read-only
 - Date: 2026-07-16T08:56:29+0800
@@ -432,7 +627,7 @@ test/cli.test.ts -t "confidential"`.
   inventory. Raw trace JSONL locations, event envelopes, event families,
   filtering, and redaction are unchanged.
 - Read: `packages/host/src/runtime.ts`, `packages/host/test/protocol.test.ts`,
-  `packages/core/src/trace-store.ts`, `docs/_internal/proposals/consolidation-agenda.md`.
+  `packages/core/src/trace-store.ts`, `docs/_internal/reviews/consolidation-agenda.md`.
 - Tests: `npm --workspace @sparkwright/host test --
 test/protocol.test.ts -t "inspect reports inline agent profiles"`;
   `npm --workspace @sparkwright/host run typecheck`; `npm --workspace
@@ -542,8 +737,9 @@ test/workflows.test.ts test/workflow-hooks.test.ts -t "workflow"`.
 - Date: 2026-07-04T16:47:47+0800
 - Scope: workflow-runtime-v1 P1.5 raw trace update: terminal FactLedger
   snapshots can carry `verificationSource` for projection-backed profile and
-  documented-command verifier results; legacy `verification:` hook names remain
-  old-trace compatibility only.
+  documented-command verifier results. Current projection events also carry
+  explicit `profile`, `verifierId`, and `expect`; consumers do not infer these
+  fields from `hookName`.
 - Read: `packages/core/src/fact-ledger.ts`,
   `packages/core/src/run-outcome.ts`,
   `packages/host/src/workflow-projection.ts`,

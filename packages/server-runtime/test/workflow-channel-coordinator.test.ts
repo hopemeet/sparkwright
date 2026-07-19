@@ -12,7 +12,7 @@ import { WorkflowChannelCoordinator } from "../src/workflow-channel-coordinator.
 const workflowRunId = "workflow_channel_delivery" as WorkflowRunId;
 
 function emitWaiting(outbox: FileWorkflowNotificationOutbox): void {
-  outbox.asActorSink().deliver({
+  outbox.deliver({
     source: {
       kind: "workflow",
       id: workflowRunId,

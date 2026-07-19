@@ -14,6 +14,7 @@ import {
   FileWorkflowChannelStore,
   FileWorkflowStore,
   type WorkflowRunId,
+  type WorkflowRunRecord,
 } from "@sparkwright/agent-runtime";
 import { EventStore } from "../src/state/event-store.js";
 import { RunController } from "../src/state/run-controller.js";
@@ -77,21 +78,16 @@ async function waitForError(store: EventStore): Promise<void> {
 async function waitForWorkflowRecords(
   workspace: string,
   count: number,
-): Promise<Array<Record<string, unknown>>> {
+): Promise<WorkflowRunRecord[]> {
   const root = join(workspace, ".sparkwright", "workflow-runs");
   const deadline = Date.now() + 5_000;
   while (Date.now() < deadline) {
     try {
-      const files = (await readdir(root)).filter((file) =>
-        file.endsWith(".json"),
-      );
-      if (files.length >= count) {
-        return Promise.all(
-          files.map(async (file) =>
-            JSON.parse(await readFile(join(root, file), "utf8")),
-          ),
-        );
-      }
+      const records = new FileWorkflowStore({
+        rootDir: root,
+        createRoot: false,
+      }).list().records;
+      if (records.length >= count) return records;
     } catch {
       // The workflow store is created lazily.
     }
@@ -130,15 +126,24 @@ describe("TUI ↔ host via sdk-node", () => {
       owner: "tui-channel-test",
     });
     if (!writer) throw new Error("missing workflow writer");
+    const packageSnapshotRef = `/snapshots/${workflowRunId}`;
+    const packageHash = "sha256:tui-channel";
     await writer.create({
       id: workflowRunId,
       sessionId: "session_workflow_tui_channel",
       assetName: "demo",
-      contentHash: "demo-hash",
+      layer: "project",
+      packageHash,
+      packageHashPolicyVersion: 2,
+      packageSnapshotRef,
       currentNodeId: "main",
       definitionSnapshot: {
         assetName: "demo",
-        contentHash: "demo-hash",
+        sourceDir: packageSnapshotRef,
+        layer: "project",
+        packageHash,
+        packageHashPolicyVersion: 2,
+        packageSnapshotRef,
         nodes: [{ id: "main", body: "Finish." }],
       },
     });
@@ -397,7 +402,7 @@ describe("TUI ↔ host via sdk-node", () => {
     await mkdir(join(workspace, ".sparkwright"), { recursive: true });
     await writeFile(
       join(workspace, ".sparkwright", "config.json"),
-      JSON.stringify({ model: "deterministic" }),
+      JSON.stringify({ identity: { model: "deterministic" } }),
       "utf8",
     );
     const store = new EventStore();
@@ -473,9 +478,11 @@ describe("TUI ↔ host via sdk-node", () => {
     await writeFile(
       join(workspace, ".sparkwright", "config.json"),
       JSON.stringify({
-        model: "openai/gpt-5.4-nano",
-        providers: {
-          openai: {},
+        identity: {
+          model: "openai/gpt-5.4-nano",
+          providers: {
+            openai: {},
+          },
         },
       }),
       "utf8",
@@ -578,6 +585,28 @@ describe("TUI ↔ host via sdk-node", () => {
     controller.shutdown();
   });
 
+  it("loads the initial session without remounting the transcript header", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-tui-"));
+    const sessionRoot = await mkdtemp(
+      join(tmpdir(), "sparkwright-tui-sessions-"),
+    );
+    const sessionId = "session_initial";
+    await mkdir(join(sessionRoot, sessionId), { recursive: true });
+    const store = new EventStore();
+    const controller = new RunController({
+      workspaceRoot: workspace,
+      sessionRootDir: sessionRoot,
+      initialSessionId: sessionId,
+      modelName: "deterministic",
+      store,
+    });
+
+    await controller.switchSession(sessionId);
+
+    expect(store.getSnapshot().clearGeneration).toBe(0);
+    controller.shutdown();
+  });
+
   it("surfaces skill load failures from the host event stream", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "sparkwright-tui-"));
     await writeFile(join(workspace, "README.md"), "# Demo\n", "utf8");
@@ -629,8 +658,10 @@ describe("TUI ↔ host via sdk-node", () => {
     await writeFile(
       join(workspace, ".sparkwright", "config.json"),
       JSON.stringify({
-        model: "openai/gpt-test",
-        providers: { openai: {} },
+        identity: {
+          model: "openai/gpt-test",
+          providers: { openai: {} },
+        },
       }),
       "utf8",
     );
@@ -696,8 +727,7 @@ describe("TUI ↔ host via sdk-node", () => {
     const runJson = JSON.parse(
       await readFile(join(runsDir, runIds[0]!, "run.json"), "utf8"),
     ) as { metadata?: Record<string, unknown> };
-    expect(runJson.metadata?.permissionMode).toBe("default");
-    expect(runJson.metadata?.shouldWrite).toBe(true);
+    expect(runJson.metadata?.accessMode).toBe("ask");
     expect(runJson.metadata).not.toHaveProperty("allowWorkspaceWriteApproval");
     expect(runJson.metadata?.source).toBe("tui");
     expect(runJson.metadata?.traceLevel).toBe("debug");
@@ -741,8 +771,7 @@ describe("TUI ↔ host via sdk-node", () => {
       const runJson = JSON.parse(
         await readFile(join(runsDir, runIds[0]!, "run.json"), "utf8"),
       ) as { metadata?: Record<string, unknown> };
-      expect(runJson.metadata?.permissionMode).toBe("plan");
-      expect(runJson.metadata?.shouldWrite).toBe(false);
+      expect(runJson.metadata?.accessMode).toBe("read-only");
       expect(runJson.metadata).not.toHaveProperty(
         "allowWorkspaceWriteApproval",
       );
@@ -765,7 +794,7 @@ describe("TUI ↔ host via sdk-node", () => {
         message: "read README",
         toolCalls: [
           {
-            toolName: "read_file",
+            toolName: "read",
             arguments: { path: "README.md", offset: 1, limit: 20 },
           },
         ],
@@ -797,7 +826,7 @@ describe("TUI ↔ host via sdk-node", () => {
         snap.events.some((event) => {
           const payload = event.payload as { toolName?: string } | undefined;
           return (
-            event.type === "tool.completed" && payload?.toolName === "read_file"
+            event.type === "tool.completed" && payload?.toolName === "read"
           );
         }),
       ).toBe(true);
@@ -820,7 +849,7 @@ describe("TUI ↔ host via sdk-node", () => {
         message: "run a short shell command",
         toolCalls: [
           {
-            toolName: "shell",
+            toolName: "bash",
             arguments: { command: "sleep 0" },
           },
         ],
@@ -841,7 +870,7 @@ describe("TUI ↔ host via sdk-node", () => {
       const pending = store.getSnapshot().pendingApproval;
       expect(pending).toMatchObject({
         action: "tool.execute",
-        toolName: "shell",
+        toolName: "bash",
         toolArgs: { command: "sleep 0" },
         policy: {
           reason: "Allowed by default policy.",
@@ -856,7 +885,7 @@ describe("TUI ↔ host via sdk-node", () => {
         snap.events.some((event) => {
           const payload = event.payload as { toolName?: string } | undefined;
           return (
-            event.type === "tool.completed" && payload?.toolName === "shell"
+            event.type === "tool.completed" && payload?.toolName === "bash"
           );
         }),
       ).toBe(true);
@@ -867,7 +896,7 @@ describe("TUI ↔ host via sdk-node", () => {
             | undefined;
           return (
             event.type === "tool.failed" &&
-            payload?.toolName === "shell" &&
+            payload?.toolName === "bash" &&
             payload.error?.code === "TOOL_DENIED"
           );
         }),
@@ -891,7 +920,7 @@ describe("TUI ↔ host via sdk-node", () => {
         message: "run a short shell command",
         toolCalls: [
           {
-            toolName: "shell",
+            toolName: "bash",
             arguments: { command: "sleep 0" },
           },
         ],
@@ -912,7 +941,7 @@ describe("TUI ↔ host via sdk-node", () => {
 
       expect(store.getSnapshot().pendingApproval).toMatchObject({
         action: "tool.execute",
-        toolName: "shell",
+        toolName: "bash",
       });
 
       void controller.resolveApproval("allow-once");
@@ -936,7 +965,7 @@ describe("TUI ↔ host via sdk-node", () => {
         message: "run a short shell command",
         toolCalls: [
           {
-            toolName: "shell",
+            toolName: "bash",
             arguments: { command: "sleep 0" },
           },
         ],
@@ -991,7 +1020,7 @@ describe("TUI ↔ host via sdk-node", () => {
         message: "patch readme",
         toolCalls: [
           {
-            toolName: "apply_patch",
+            toolName: "edit",
             arguments: {
               path: "README.md",
               patch:
@@ -1038,7 +1067,7 @@ describe("TUI ↔ host via sdk-node", () => {
             typeof event.payload === "object" &&
             event.payload !== null &&
             "toolName" in event.payload &&
-            event.payload.toolName === "apply_patch",
+            event.payload.toolName === "edit",
         ),
       ).toBe(true);
       await expect(

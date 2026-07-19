@@ -88,12 +88,8 @@ export interface UserHookInvocation<TPayload = unknown> {
   event: SparkwrightEvent<TPayload>;
   /** Free-form host-defined metadata (e.g. the configured command string). */
   metadata?: Record<string, unknown>;
-  /**
-   * Origin of the hook configuration. Optional for back-compat; hosts that
-   * layer multiple settings files should populate it via `resolveDescriptor`
-   * so traces and the `allowManagedOnly` policy can apply consistently.
-   */
-  source?: UserHookSource;
+  /** Origin of the hook configuration used by trace and policy. */
+  source: UserHookSource;
   /**
    * Aborts when the run is cancelled or torn down. Long-running runners
    * should observe it and return early instead of fighting the run lifecycle.
@@ -168,23 +164,21 @@ export interface UserHookDescriptor {
   hookId: string;
   hookName: string;
   metadata?: Record<string, unknown>;
-  source?: UserHookSource;
+  source: UserHookSource;
 }
 
 export interface BindUserHooksOptions {
   events: EventEmitter & {
-    subscribe?: (handler: (event: SparkwrightEvent) => void) => () => void;
-    subscribeWithReplay?: (
-      handler: (event: SparkwrightEvent) => void,
-    ) => () => void;
+    subscribe(handler: (event: SparkwrightEvent) => void): () => void;
+    subscribeWithReplay(handler: (event: SparkwrightEvent) => void): () => void;
   };
   runner: UserHookRunner;
   /**
-   * Override the hook id / name / source attached to invocations. Useful
-   * when one runner instance handles multiple host-side declarations and
-   * wants to label them distinctly per trigger.
+   * Resolve the required hook id / name / source attached to invocations.
+   * One runner instance can use this to label multiple host-side declarations
+   * distinctly per trigger.
    */
-  resolveDescriptor?(
+  resolveDescriptor(
     trigger: UserHookTrigger,
     event: SparkwrightEvent,
   ): UserHookDescriptor;
@@ -230,14 +224,6 @@ export interface BindUserHooksOptions {
  */
 export function bindUserHooks(options: BindUserHooksOptions): () => void {
   const { events } = options;
-  if (
-    typeof events.subscribe !== "function" &&
-    typeof events.subscribeWithReplay !== "function"
-  ) {
-    throw new Error(
-      "bindUserHooks requires an EventEmitter that exposes subscribe()",
-    );
-  }
   const triggers = new Set(options.runner.triggers());
   if (triggers.size === 0) return () => undefined;
 
@@ -247,9 +233,10 @@ export function bindUserHooks(options: BindUserHooksOptions): () => void {
 
   const dispatch = (event: SparkwrightEvent): void => {
     if (!triggers.has(event.type as UserHookTrigger)) return;
-    const descriptor: UserHookDescriptor = options.resolveDescriptor
-      ? options.resolveDescriptor(event.type as UserHookTrigger, event)
-      : { hookId: `${event.type}:default`, hookName: event.type };
+    const descriptor = options.resolveDescriptor(
+      event.type as UserHookTrigger,
+      event,
+    );
 
     if (allowManagedOnly && descriptor.source !== "managed") {
       // Policy drop — do not emit any user_hook.* events for non-managed
@@ -340,12 +327,10 @@ export function bindUserHooks(options: BindUserHooksOptions): () => void {
       });
   };
 
-  if (replay && typeof events.subscribeWithReplay === "function") {
+  if (replay) {
     return events.subscribeWithReplay(dispatch);
   }
-  // Older / minimal emitters: fall back to plain subscribe; replay just won't
-  // happen, which matches the pre-replay behaviour.
-  return events.subscribe!(dispatch);
+  return events.subscribe(dispatch);
 }
 
 /**

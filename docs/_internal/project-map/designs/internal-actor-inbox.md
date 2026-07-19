@@ -5,8 +5,8 @@
 > completed/failed notification input as a durable terminal probe, while Step
 > 2+ receiver policy extraction and workflow actor runtime work remain future
 > slices. This is a design catalog entry, not
-> an active routing map. It records the current design contract for generalizing
-> the existing task notification mechanism into a small internal actor inbox.
+> an active routing map. It records the design that generalized task
+> notification delivery into the canonical internal actor inbox.
 > Current source
 > contracts still live in
 > [../modules/agent-runtime.md](../modules/agent-runtime.md),
@@ -24,10 +24,10 @@
 > `packages/host/src/traced-process-runner.ts`, and
 > `packages/streaming-runtime/src/index.ts`.
 >
-> First implementation slice: viable as an extraction from the current task
-> notification outbox/revival path. The main host still persists terminal task
-> notifications and injects them through core `NotificationSource`; Step 1 keeps
-> the host on the task-specific bridge while the generic abstraction incubates.
+> The main host persists terminal task actor inputs and injects their
+> receiver-owned projection through core `NotificationSource`. Producer and
+> consumer storage surfaces are actor-native; the Host revival policy remains
+> task-specific by design.
 >
 > Package D note (2026-07-11): durable workflow control is intentionally a
 > separate typed command inbox. It may reuse validation/storage patterns from
@@ -46,7 +46,8 @@
 SparkWright has several local communication mechanisms, each correct for its
 own boundary:
 
-- background tasks use `TaskNotificationSink` plus task output/status storage;
+- background tasks use `ActorNotificationSink` / `ActorInbox` plus task
+  output/status storage;
 - sub-agents expose parent-visible `subagent.*` lifecycle events while child
   runs keep their own `run.*` streams;
 - workflow hooks synchronously steer the run loop with
@@ -66,8 +67,8 @@ notification shape just enough for another internal actor to use it.
 
 ## 2. Goals
 
-- Grow from the existing `TaskNotificationSink` / queue model instead of
-  introducing a parallel notification system.
+- Keep one `ActorNotificationSink` / `ActorInbox` model rather than a parallel
+  task notification system.
 - Keep trace as an audit projection, not a communication bus.
 - Keep external transports outside the internal actor model. MCP, ACP, and
   process stderr remain adapter ports with their own capabilities and limits.
@@ -111,13 +112,10 @@ notification shape just enough for another internal actor to use it.
 
 Verified by reading source during this design refresh:
 
-- `packages/agent-runtime/src/tasks/notifications.ts` now defines the split
-  `ActorNotificationSink` / `ActorInbox` types beside the compatible
-  transport-agnostic `TaskNotificationSink`. The typed actor union includes task
-  and workflow notification inputs; workflow remains a design probe only.
-  Legacy `TaskNotification` is still terminal only, carries `taskId`,
-  `parentRunId`, optional `targetRunId`, `summary`, terminal payload/error,
-  optional `outputRef`, and `deliveredAt`.
+- `packages/agent-runtime/src/tasks/notifications.ts` defines the split
+  `ActorNotificationSink` / `ActorInbox` ports and typed task/workflow unions.
+  `TaskManager` produces terminal task actor inputs directly; there is no
+  task-specific sink, notification DTO, or conversion API.
 - `TaskManager` calls its notification sink once after a task reaches a
   terminal state. If the sink throws transiently, the manager pushes the
   notification into its in-process `pendingNotifications()` retry queue, calls
@@ -126,33 +124,24 @@ Verified by reading source during this design refresh:
   `INVALID_ACTOR_NOTIFICATION`, and `UNSUPPORTED_ACTOR_NOTIFICATION` call
   `onSinkError` but do not enter the pending retry queue. The task store
   remains the source of truth.
-- `InMemoryTaskNotificationQueue` now exposes three consumer primitives:
+- `InMemoryActorNotificationQueue` directly implements both actor ports and
+  exposes three consumer primitives:
   `peek()` snapshots without consuming, `drain(predicate?)` consumes matching
   notifications, and `waitUntilAvailable({ signal, predicate })` waits without
-  consuming. It also still has consuming `waitForNext()` for legacy task API
-  compatibility, but `ActorInbox` adapters expose only the non-consuming wait
-  plus predicate peek/drain. Its optional `maxBufferedNotifications` cap no
+  consuming. Its optional `maxBufferedNotifications` cap no
   longer silently drops reliable terminal entries; drop-oldest/drop-self is
   limited to lossy actor notifications.
 - `FileTaskNotificationOutbox` is the durable counterpart for task terminal
-  notifications. `deliver()` appends one JSON entry under
-  `task-notifications/`; consumers can `peek(predicate?)`,
-  `drain(predicate?)`, `ack(id)`, or non-consumingly
-  `waitUntilAvailable({ signal, predicate })`. Its actor adapter derives
+  notifications and directly implements both actor ports. Canonical
+  `sparkwright-task-notification.v1` entries store
+  `{schemaVersion,id,createdAt,input}` under `task-notifications/`, preserving
+  actor routing, correlation, output, and context-hint fields. It derives
   inbox-scoped `sequence` lazily from stable file order with an in-process
-  high-water mark and does not change the existing JSON entry format. Because
-  that format is still `TaskNotification`, the file-backed actor sink accepts
-  only terminal task actor notifications that are expressible without losing
-  actor envelope fields; workflow inputs, task progress/output inputs, or
-  actor-only fields such as `source.sessionId`, `routeHint.sessionId`,
-  `correlationId`, and `suggestedContext` reject with a typed non-retryable
-  unsupported-actor error. The actor inbox view skips unreadable or
-  actor-invalid durable entries and exposes diagnostics through
-  `invalidActorEntries()`; this keeps a single stale/bad file from wedging
-  actor `peek()`, `drain()`, or readiness waits. The legacy task listing path
-  remains strict for corrupt JSON.
+  high-water mark. Workflow or non-terminal task inputs reject with typed
+  non-retryable unsupported-actor errors. Unreadable or actor-invalid entries
+  are skipped and exposed through `invalidEntries()`.
 - The main host runtime constructs `TaskManager` with `FileTaskStore` and
-  `FileTaskNotificationOutbox` as `notificationSink`. The host task path is
+  `FileTaskNotificationOutbox` as its actor sink. The host task path is
   therefore already durable at the notification edge; a generic in-memory-only
   `ActorInbox` cannot replace it.
 - `NotificationSource` and `TaskRevivalSource` live in
@@ -237,15 +226,14 @@ This deliberately does not reserve `run` or `agent`. Agent lifecycle remains on
 `subagent.*` and bounded tool results. A task payload's `kind:"agent"` selects a
 task runner and is distinct from `ActorRef.kind`.
 
-For the current task path, `TaskNotification.parentRunId` is the receiver/owner
-run scope used by host filtering. The generic envelope must preserve that
-field explicitly during migration instead of hiding it behind an ambiguous
-actor id. A task notification should map to:
+For the current task path, `payload.parentRunId` is the receiver/owner run scope
+used by host filtering. The actor input preserves it explicitly rather than
+hiding it behind an ambiguous actor id. A task notification carries:
 
 - `source: { kind: "task", id: taskId, runId: parentRunId }`;
 - `routeHint.parentRunId = parentRunId`;
-- `routeHint.targetRunId = targetRunId` when the old notification supplied one;
-- old `deliveredAt` remains task payload/metadata because it records the task
+- `routeHint.targetRunId` when a producer targets a child run;
+- `deliveredAt` remains task payload/metadata because it records the task
   terminal notification timestamp; generic `createdAt` is assigned when the
   actor inbox accepts the notification.
 
@@ -260,8 +248,8 @@ Acceptance must normalize route facts before storage:
   with `INVALID_ROUTE`. `parentRunId` is the durable replay filter; silent
   re-routing is not allowed. `routeHint.targetRunId` is exempt — targeting a
   different run than the owner is its purpose;
-- the MVP has no separate `targetHint` input. Existing task `targetRunId`
-  migrates directly to `routeHint.targetRunId`;
+- the MVP has no separate `targetHint` input; task targets use
+  `routeHint.targetRunId` directly;
 - defer non-run target hints until a concrete workflow/supervisor receiver
   needs them.
 
@@ -336,9 +324,8 @@ may not be able to guarantee.
 For durable adapters, `sequence` is a consumer-observed ordering contract, not
 necessarily a persisted counter. A file-backed adapter may lazily derive
 monotonic sequence numbers from its stable sorted storage ids when draining or
-peeking. The first slice should not force a task outbox file-format migration
-only to add a counter, and a single durable counter would be fragile for future
-cross-process writers. If a durable adapter derives sequence from sorted storage
+peeking; a single durable counter would be fragile for future cross-process
+writers. If a durable adapter derives sequence from sorted storage
 ids, the monotonic guarantee is strict within a returned `peek()`/`drain()`
 batch. Across batches it must either maintain a high-water mark or document the
 cross-batch order as best-effort so a late-arriving older storage id cannot
@@ -444,8 +431,8 @@ workflow `source.id` that differs from `payload.workflowId`, or a task
 `payload.parentRunId` that differs from the normalized route parent. `code:
 "UNSUPPORTED_ACTOR_NOTIFICATION"` covers adapters that cannot support a valid
 actor input without changing their storage contract; the current
-`FileTaskNotificationOutbox` uses it for non-terminal-task actor inputs and
-legacy-file-format lossy actor envelope fields. These codes are non-retryable
+`FileTaskNotificationOutbox` uses it for workflow and non-terminal-task actor
+inputs. These codes are non-retryable
 for the same poison-queue reason as `INVALID_ROUTE`.
 
 For reliable terminal notifications, the reliability guarantee is carried by
@@ -559,15 +546,15 @@ Status: implemented as typed workflow notification input variants in
 `packages/agent-runtime/src/tasks/notifications.ts`; no workflow actor runtime
 is implemented.
 
-### Step 1: Adapt existing task notification stores to the split interfaces — implemented in agent-runtime
+### Step 1: Make task notification stores implement the split interfaces — implemented in agent-runtime
 
-Refactor or wrap the current task notification surfaces to satisfy split
+Refactor the task notification surfaces to satisfy split
 producer/consumer interfaces while preserving task semantics and host behavior:
 
 - terminal notification after terminal transition;
 - task store remains source of truth;
 - output remains in task output storage or an `outputRef`;
-- both `InMemoryTaskNotificationQueue` and `FileTaskNotificationOutbox` expose
+- both `InMemoryActorNotificationQueue` and `FileTaskNotificationOutbox` expose
   the consumer primitives the host already uses;
 - accepted notifications normalize route facts before storage and reject
   contradictory explicit route facts with `INVALID_ROUTE`;
@@ -576,21 +563,21 @@ producer/consumer interfaces while preserving task semantics and host behavior:
 - permanent input validation or unsupported-adapter errors are not queued for
   transient retry;
 - producer-facing delivery results do not expose inbox sequence;
-- file-backed sequence is derived lazily from stable outbox ordering unless a
-  later durable design deliberately migrates the file format; cross-batch
+- file-backed sequence is derived lazily from stable outbox ordering; cross-batch
   monotonicity uses a high-water mark or is explicitly best-effort;
-- the file-backed actor sink is intentionally task-terminal-only for this
-  slice and rejects actor-only envelope fields that the legacy JSON format
-  cannot preserve;
+- the file-backed actor sink is intentionally task-terminal-only and its
+  canonical input entry preserves actor-only envelope fields;
 - no durable behavior regression and no host product behavior regression.
 
 Focused tests should prove existing task notification behavior still works for
 both in-memory embedders and the file-backed host path.
 
-Status: implemented for `InMemoryTaskNotificationQueue`,
-`FileTaskNotificationOutbox`, and `TaskManager` retry classification. The host
-still uses the task-specific `createTaskRevivalBridge()` receiver path; Step 2
-will extract receiver policy/context projection.
+Status: implemented for `InMemoryActorNotificationQueue`,
+`FileTaskNotificationOutbox`, `FileWorkflowNotificationOutbox`, and
+`TaskManager` retry classification. Implementations satisfy actor ports
+directly; the task DTO/buffer/file layout and `asActor*` adapters are removed.
+The Host still owns task-specific receiver policy in
+`createTaskRevivalBridge()`.
 
 ### Step 2: Extract the receiver policy/context projection shape
 
@@ -599,7 +586,7 @@ explicit receiver policy abstraction:
 
 - route predicate: today `parentRunId` and optional `targetRunId`;
 - awaited predicate: today `TaskRecord.awaited !== false`;
-- context projection: today `pendingNotificationFromTask()`;
+- context projection: today `pendingNotificationFromTaskActor()`;
 - non-consuming readiness wait: today task outbox `waitUntilAvailable()`.
 
 This can start as a task-only adapter. If it is not in the first code slice,
@@ -616,9 +603,9 @@ model context.
 
 ### Step 4: Revisit generic durability
 
-Task notifications already have a durable file outbox. Only after workflow
-usage exists should the design decide whether that task-shaped outbox becomes a
-generic durable actor inbox or remains an adapter beside a new storage root.
+Task and workflow notifications now have separate typed durable outboxes behind
+the same actor ports. Only concrete cross-kind needs should justify a shared
+storage root or generic durable implementation.
 Ack, at-least-once delivery, seen-id deduplication, retention, dead-letter
 handling, and GC should be driven by that concrete workflow need.
 
@@ -631,9 +618,9 @@ handling, and GC should be driven by that concrete workflow need.
   enum.
 - Notifications are lifecycle/observation records, not arbitrary commands.
 - `source` is required; route fields such as `parentRunId` remain explicit
-  compatibility facts and are normalized at acceptance.
-- `source.runId` backfills missing `routeHint.parentRunId`; existing task
-  `targetRunId` maps directly to `routeHint.targetRunId`. Non-run target hints
+  routing facts and are normalized at acceptance.
+- `source.runId` backfills missing `routeHint.parentRunId`; task targets use
+  `routeHint.targetRunId`. Non-run target hints
   are deferred until a concrete receiver requires them.
 - Explicit `routeHint.parentRunId`/`routeHint.sessionId` values that contradict
   the corresponding `source` fields are rejected with `INVALID_ROUTE`;
@@ -641,13 +628,11 @@ handling, and GC should be driven by that concrete workflow need.
 - Actor identity must be internally consistent. Task `source.id` matches
   `payload.taskId`, workflow `source.id` matches `payload.workflowId`, and task
   `payload.parentRunId` matches the normalized route parent.
-- Current file-backed actor delivery accepts only terminal task notifications
-  that can round-trip through the legacy `TaskNotification` JSON entry format.
-  Unsupported actor kinds/types or actor-only envelope fields reject with
-  `UNSUPPORTED_ACTOR_NOTIFICATION` instead of being persisted lossy.
+- Current file-backed task actor delivery accepts terminal task inputs and
+  persists their full actor envelope. Unsupported actor kinds/types reject with
+  `UNSUPPORTED_ACTOR_NOTIFICATION`.
 - Current file-backed actor consumption skips unreadable or actor-invalid
-  durable entries and exposes diagnostics through `invalidActorEntries()`;
-  legacy task listing remains strict for corrupt JSON.
+  durable entries and exposes diagnostics through `invalidEntries()`.
 - Producer-provided `correlationId` is an optional correlation fact only.
   Inbox/outbox storage ids and sequence numbers are assigned by the accepting
   consumer.
@@ -660,9 +645,8 @@ handling, and GC should be driven by that concrete workflow need.
   high-water mark or document cross-batch ordering as best-effort.
 - `ActorInbox` exposes predicate `drain()`, non-consuming predicate `peek()`,
   and non-consuming predicate `waitUntilAvailable()`.
-- `ActorInbox` does not expose a consuming wait convenience; old
-  `waitForNext()` behavior is replaced by `waitUntilAvailable(predicate)` plus
-  `drain(predicate)`.
+- `ActorInbox` does not expose a consuming wait convenience; readiness plus
+  consumption is `waitUntilAvailable(predicate)` followed by `drain(predicate)`.
 - Producers cannot set `qos`; it is derived from notification type.
 - Reliable notifications are never silently dropped by an inbox. Producer-side
   outbox/retry remains responsible for sink failures and must not be confused
@@ -686,9 +670,8 @@ handling, and GC should be driven by that concrete workflow need.
 - Trace projection is downstream of accepted notifications. Producers do not
   write span ids or raw trace events through the inbox.
 - Model context injection is receiver-owned. `suggestedContext` is advisory.
-- Existing task notification public APIs should remain compatible while actor
-  notification adapters are introduced. Do not force embedders to migrate in the
-  first slice.
+- Task and workflow producers/consumers use only the actor ports; do not add a
+  task-shaped compatibility DTO, buffer, or adapter beside them.
 
 ## 9. First-Slice Test Plan
 
@@ -805,8 +788,8 @@ npm --workspace @sparkwright/host run typecheck
 - Creating a second host context-injection path instead of generalizing
   `NotificationSource` and `createTaskRevivalBridge()` would weaken the current
   receiver boundary.
-- Replacing the task notification public API in one step would create avoidable
-  embedder breakage; keep compatibility adapters during the first slice.
+- Reintroducing a task-shaped DTO or adapter would recreate two notification
+  ownership surfaces and lossy durable conversion.
 
 ## 12. Active Map Routing
 
@@ -837,6 +820,18 @@ Likely touched source:
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T23:05:00+0800
+- Scope: completed the actor-notification consolidation follow-up: TaskManager,
+  in-memory task queue, task/workflow file outboxes, Host revival, and workflow
+  channel consumers use the actor ports directly; task compatibility DTOs,
+  adapters, duplicate buffers, and legacy durable entries are removed.
+- Read: all actor notification definitions/implementations/consumers, focused
+  tests, examples/reference docs, and active routed maps.
+- Tests: Agent Runtime task/workflow 90/90; Host task/workflow/protocol/Agent 122/122;
+  server-runtime 3/3; IM gateway 6/6; repository test typecheck; full release
+  gate.
+
+- Status: Verified
 - Date: 2026-07-14
 - Scope: aligned the actor source-kind type with the implemented task/workflow
   notification unions and removed speculative run/Agent routing capacity.
@@ -865,7 +860,7 @@ test/doc-store.test.ts`.
 - Date: 2026-07-03T08:52:33+0800
 - Scope: partial implementation checkpoint: Step 0 workflow notification input
   probes and Step 1 split producer/consumer actor notification interfaces are
-  implemented in agent-runtime. `InMemoryTaskNotificationQueue` and
+  implemented in agent-runtime. The then-named in-memory task queue and
   `FileTaskNotificationOutbox` now adapt to actor sink/inbox surfaces while
   preserving legacy task APIs; route normalization, typed non-retry handling
   for route conflicts, actor identity splits, and unsupported file-backed actor

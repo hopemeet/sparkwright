@@ -7,12 +7,62 @@ and creation/update flows through CLI/TUI/host tooling.
 
 See [../../modules/agent-runtime.md](../../modules/agent-runtime.md) for related task execution concepts.
 
+## Last Verified
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: Cron semantic scheduling outcome consumes the terminal Core
+  assessment rather than a Cron-owned reconstruction. Expected policy denial
+  remains a Cron failure policy even though Core classifies it as degraded;
+  Agent/Todo contract review found no separate Cron continuation owner.
+- Read: Cron runner/tests, Core assessment, and Agent Runtime route hits.
+- Tests: Cron 20/20 passed.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: read-only Cron/Task automation projection for capability inspection
+  moved to `CapabilityRuntimeOperations`. It reads the same default Cron root
+  and the exact Task root owned by WorkspaceContext/TaskRuntimeOperations;
+  scheduling and persistence are unchanged.
+- Read: capability owner/assembly, Cron store, Task owner, and protocol test.
+- Tests: owner-level automation coverage and focused Host capability suites
+  passed.
+
+- Status: Verified
+- Date: 2026-07-17T23:37:17+0800
+- Scope: Cron runner imports Core workspace/trace reference implementations
+  through `/internal`; scheduling, locking, policy, and persistence contracts
+  are unchanged.
+- Read: Cron runner/tests, Agent/Project Context downstream builds, Core
+  barrels, and package route.
+- Tests: Cron 20/20 and Cron typecheck passed.
+
+- Status: Read-only
+- Date: 2026-07-16T23:05:00+0800
+- Scope: checked the routed Task notification consolidation; Cron stores,
+  scheduling, run success, and tool contracts do not consume the removed
+  task-specific notification surface and are unchanged.
+- Read: Agent Runtime task notification consumers and Cron capability boundary.
+- Tests: no Cron-specific behavior rerun; cross-package focused suites and
+  repository test typecheck and the full release gate covered changed
+  consumers.
+
+- Status: Verified
+- Date: 2026-07-16T13:21:00+0800
+- Scope: Cron accepts only `InteractionChannel`; unattended default is `ask` plus a deny-only approval handler, while CLI omission stays read-only.
+- Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.
+- Tests: focused access/policy/protocol/CLI/TUI/ACP/Workflow tests; npm run typecheck:test; npm run schema:check.
+
+- Date: 2026-07-16
+- Scope: reviewed after the portable workflow delegate identity change; cron contracts and execution paths are unaffected.
+
 ## Main Files
 
 - `packages/cron/src/*`
 - `packages/cli/src/cli.ts`
 - `packages/cli/src/runners/direct-core-runner.ts`
 - `packages/host/src/tool-catalog.ts`
+- `packages/host/src/runtime/capability-runtime-operations.ts`
 - `packages/host/src/runtime.ts`
 - `packages/host/src/tools.ts`
 - `packages/tui/src/app.tsx`
@@ -60,8 +110,11 @@ cron config/state
 - Cron create results expose the requested effective name and whether storage
   adjusted it. CLI and TUI unique-create flows surface that auto-suffixing so
   users can see when `name 2` was created instead of the requested name.
-- `approvals.cronMode` supplies the default permission mode for unattended cron
-  commands; explicit CLI flags still override it.
+- Cron run/tick accepts the same `accessMode` as other run entrypoints and
+  compiles it to the internal execution policy. The reusable runner defaults
+  to `ask` with a deny-only resolver, preserving unattended safe-tool execution
+  while rejecting actions that actually require approval; CLI omission still
+  resolves to its canonical `read-only` default before calling Cron.
 - CLI cron run/tick paths use `createConfiguredCliTools`, which flattens the
   host CLI diagnostic catalog profile, applies configured tool selectors, and
   filters recursive `cron` execution in `@sparkwright/cron`.
@@ -101,6 +154,20 @@ cron config/state
   tool, verification, mutation, or denial signal exists.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-16T10:44:25+0800
+- Scope: reviewed after Task model-surface consolidation; cron does not register
+  or consume the removed Task control factories.
+- Read: Task factory consumers and cron capability boundary.
+- Tests: repository test typecheck passed; no cron contract changed.
+
+- Status: Verified
+- Date: 2026-07-16T10:27:51+0800
+- Scope: reviewed after the Agent-tool policy contract changed; cron task and
+  tool policy assembly do not call the Agent-tool factory and are unchanged.
+- Read: agent-runtime call sites and cron capability boundaries.
+- Tests: repository test typecheck passed; no cron contract changed.
 
 - Status: Verified
 - Date: 2026-07-15
@@ -176,7 +243,7 @@ test/doc-store.test.ts`; cron behavior not rerun for this implementation-only
   command/tool contracts.
 - Read: `packages/cron/src/store.ts`, `packages/cron/package.json`,
   `packages/agent-runtime/src/doc-store/index.ts`,
-  `docs/_internal/proposals/consolidation-agenda.md`,
+  `docs/_internal/reviews/consolidation-agenda.md`,
   `docs/_internal/proposals/substrate-sequencing.md`.
 - Tests: `npm --workspace @sparkwright/cron test -- test/schedule.test.ts`;
   `npm --workspace @sparkwright/cron run typecheck`; `npm run

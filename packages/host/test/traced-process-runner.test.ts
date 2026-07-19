@@ -4,11 +4,11 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   createRunId,
-  EventLog,
   openSpan,
   type ShellExecutionResult,
   type ShellStreamingResult,
 } from "@sparkwright/core";
+import { EventLog } from "@sparkwright/core/internal";
 import {
   resolveShellSandboxConfig,
   type ShellSandboxRuntime,

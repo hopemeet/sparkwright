@@ -54,7 +54,6 @@ export interface ToolSearchMatch {
   inputSchema: unknown;
   outputSchema?: unknown;
   canonicalName?: string;
-  legacyNames?: string[];
   defaultExposureTier?: string;
   relatedTools?: string[];
   requiresTool?: string[];
@@ -166,10 +165,7 @@ export function createToolSearchTool(
           .filter((s) => s.length > 0);
         const matches: ToolSearchMatch[] = [];
         for (const name of names) {
-          const descriptor = pool.find(
-            (entry) =>
-              entry.name === name || (entry.legacyNames ?? []).includes(name),
-          );
+          const descriptor = pool.find((entry) => entry.name === name);
           if (descriptor) {
             matches.push(descriptorToMatch(descriptor, 0));
           }
@@ -238,8 +234,7 @@ function tokenize(value: string): string[] {
 
 function scoreDescriptor(descriptor: ToolDescriptor, tokens: string[]): number {
   if (tokens.length === 0) return 0;
-  const haystack =
-    `${descriptor.name} ${(descriptor.legacyNames ?? []).join(" ")} ${descriptor.description}`.toLowerCase();
+  const haystack = `${descriptor.name} ${descriptor.description}`.toLowerCase();
   let score = 0;
   for (const token of tokens) {
     if (!token) continue;
@@ -259,7 +254,6 @@ function descriptorToMatch(
     inputSchema: descriptor.inputSchema,
     outputSchema: descriptor.outputSchema,
     canonicalName: descriptor.canonicalName,
-    legacyNames: descriptor.legacyNames,
     defaultExposureTier: descriptor.defaultExposureTier,
     relatedTools: descriptor.relatedTools,
     requiresTool: descriptor.requiresTool,

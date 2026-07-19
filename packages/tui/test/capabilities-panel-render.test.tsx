@@ -243,7 +243,7 @@ describe("CapabilitiesPanel rendering", () => {
                 protocol: "in_process",
                 model: "anthropic/claude",
                 risk: "safe",
-                requiresApproval: false,
+                approvalRequiredUnderCurrentRun: false,
                 forbidNesting: true,
                 sideEffects: ["model", "workspace"],
                 workspaceAccess: "read_write",
@@ -275,7 +275,7 @@ describe("CapabilitiesPanel rendering", () => {
     expect(text).toContain("anthropic/claude");
     expect(text).toContain("relevant");
     expect(text).toContain("workspace read_write");
-    expect(text).toContain("requires --write");
+    expect(text).toContain("requires write access");
   });
 
   it("does not count the built-in primary main profile as a configured agent", async () => {
@@ -332,7 +332,7 @@ describe("CapabilitiesPanel rendering", () => {
                 name: "record-tool",
                 source: "config",
                 trigger: "tool.completed",
-                matcher: "toolName=shell",
+                matcher: "toolName=bash",
                 action: "command: node; injectOutput=always",
                 blockingPotential: false,
                 enabled: true,

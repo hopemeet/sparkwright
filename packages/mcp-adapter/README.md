@@ -27,7 +27,7 @@ try {
     goal,
     model,
     tools: [...normalTools, ...mcp.tools],
-    approvalResolver,
+    interactionChannel,
     metadata: {
       mcpStatuses: mcp.statuses,
       mcpToolNameMap: mcp.toolNameMap,

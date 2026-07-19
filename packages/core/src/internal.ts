@@ -12,11 +12,13 @@
 
 export { EventLog } from "./events.js";
 export {
+  bindStorageDegradationEvents,
   buildTraceTimeline,
   buildTraceTimelineFile,
   buildTraceTimelineJsonl,
   createSessionFileRunStoreFactory,
   FileRunStore,
+  loadCheckpointFromRunDir,
   MemoryTrace,
   loadTraceEventsFile,
   loadTraceEventsJsonl,
@@ -27,6 +29,7 @@ export {
 } from "./trace.js";
 export type {
   FileRunStoreOptions,
+  LoadCheckpointFromRunDirOptions,
   RepairSessionTraceConsistencyOptions,
   SessionTraceConsistencyFinding,
   SessionTraceConsistencyReport,
@@ -43,23 +46,42 @@ export type {
 } from "./trace.js";
 export { LocalWorkspace, ControlledWorkspace } from "./workspace.js";
 export type { ControlledWorkspaceOptions } from "./workspace.js";
+export { WorkspaceCheckpointStore } from "./workspace-checkpoint.js";
+export type {
+  WorkspaceCheckpointFile,
+  WorkspaceCheckpointMeta,
+  WorkspaceCheckpointRestoreTarget,
+  WorkspaceCheckpointStoreOptions,
+  WorkspaceRollbackResult,
+} from "./workspace-checkpoint.js";
 export { atomicWriteText, atomicWriteTextSync } from "./file-atomic.js";
 export type { AtomicTextWriteOptions } from "./file-atomic.js";
 export {
   DefaultObservationFormatter,
   DefaultContextAssembler,
+  CompactingContextAssembler,
   SectionedPromptBuilder,
   DefaultPromptBuilder,
   createDefaultPromptSections,
+  createAppPromptSection,
+  createEnvironmentSection,
+  createToolGuidanceSection,
+  createModelAdaptiveSection,
   compilePromptCacheBlocks,
 } from "./context.js";
 export type {
+  AppPromptSectionOptions,
   DefaultObservationFormatterOptions,
   DefaultContextAssemblerOptions,
   SectionedPromptBuilderOptions,
   DefaultPromptBuilderOptions,
+  EnvironmentSectionInput,
+  EnvironmentSectionOptions,
+  ModelAdaptiveRule,
+  ModelAdaptiveSectionOptions,
   PromptCacheBlock,
   PromptCacheBlocks,
+  ToolGuidanceSectionOptions,
 } from "./context.js";
 export { SparkwrightRun } from "./run.js";
 export {

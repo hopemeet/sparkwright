@@ -6,6 +6,15 @@
 > section could be misread as P1 work it carries an explicit phase label.
 > Current Facts are source-verified; substrate ownership and build order
 > defer to `substrate-sequencing.md`.
+> Storage convergence (2026-07-16): the accepted runtime now persists workflow
+> record/event truth only in `<workflowRunId>.journal/`. P2/P9a wording about
+> record JSON, event JSONL, or legacy-store compatibility is implementation
+> history, not a current compatibility requirement.
+> Package-identity convergence (2026-07-17): durable runs now require source
+> layer, generation/revision, v2 `packageHash`/policy, executable snapshot ref,
+> and a matching snapshot-backed definition. Earlier `{assetName, version,
+contentHash}` pin wording is implementation history; Markdown `contentHash`
+> remains only a live-parser fingerprint and is not durable execution identity.
 >
 > Review history: six source-verified passes (2026-07-03 ×2,
 > 2026-07-04 ×3) plus a consolidation sweep; provenance is tagged inline —
@@ -81,8 +90,8 @@ constraints. Substrate references (S1–S4) resolve to
 - 2026-07-04 — S3 per-source forced-continuation budget implemented on
   `feat/forced-turn-budget`: corrected S3 ratification recorded in
   `substrate-sequencing.md`; core now has one `revival` / `workflow` source
-  budget mechanism, `revival` preserves `maxRevivalTurns` and
-  `revivalTurnsUsed` compatibility, `workflow` is registered with no P1
+  budget mechanism, `revival` preserves `revivalTurnsUsed` terminal metadata,
+  `workflow` is registered with no P1
   consumers yet, and source exhaustion emits `run.budget.exceeded` plus
   FactLedger `budgetExceeded` facts without directly failing the run.
 - 2026-07-04 — P1 projection implemented locally on `feat/workflow-p1`:
@@ -209,9 +218,8 @@ constraints. Substrate references (S1–S4) resolve to
   `tool_search` whose search source is only the narrowed catalog, and the
   PreToolUse clamp treats that available infrastructure tool as allowed. This
   preserves deferred schema loading without reopening the full parent catalog.
-  The same follow-up keeps the clamp's allowlist comparison canonicalized, so
-  legacy workflow declarations such as `tools: [read_file]` continue to allow
-  the canonical worker tool `read`.
+  Workflow declarations and the clamp now compare the same exact callable
+  names; `tools: [read]` allows `read` without a normalization layer.
   Treat "landed" here as implementation status, not a PR-ready correctness
   claim; this follow-up belongs to P3 acceptance hardening before merge.
 - 2026-07-05 — P3 Step 4b.2 D6 worker-entry budget/model facts landed:
@@ -369,7 +377,7 @@ commit-pinned before implementation starts.
   `workflow` forced-continuation source instead of `maxSteps`; non-workflow
   validation continuations still consume normal step budget. Revival turns
   ride the same core per-source budget under the `revival` source, with
-  `maxRevivalTurns` kept as the legacy alias.
+  `forcedContinuationBudgets.revival` as the sole configuration input.
 - Command facts still arrive through **two evidence channels**:
   model-initiated shell `tool.*` events and hook-launched
   `workflow_hook.completed` `result.metadata.exitCode` events. S2 moved
@@ -601,9 +609,9 @@ Four constraints from reading the run loop, each binding for P1:
    `payload.events` — a pattern that dies on cross-run resume (fresh event
    log). But writing a workflow-private evidence copy at `PostToolUse`
    would just trade the event-scan problem for a stale-state problem and
-   add a fifth "did the command pass" extractor beside verification.ts,
-   `commandOutcomeSnapshot` (run-outcome), trace-diagnostics recompute,
-   and run-health. Instead: extract the fact-classification primitives
+   add another "did the command pass" extractor beside verification.ts,
+   the former compact terminal snapshot, trace-diagnostics recompute, and
+   run-health. Instead: extract the fact-classification primitives
    into core (the `run-health.ts` shared-threshold precedent), run a live
    in-run `FactLedger` over them (command/verifier facts, write set,
    global write epoch), and expose it to hooks. Workflow verdicts
@@ -1425,8 +1433,8 @@ gate.
     the verifier layer, run-outcome reads satisfaction.** (Fourth pass;
     channel corrected by the fifth.) An `expect: nonzero` verifier (the
     reproduce node) intentionally runs failing commands. Fifth-pass
-    correction: the live taint channel is **not** `commandOutcomeSnapshot`
-    — it never sees hook-launched commands — but
+    correction: the live taint channel is **not** the former compact command
+    snapshot — it never sees hook-launched commands — but
     `analyzeVerificationProfileResults`' hookName-metadata channel and its
     CLI exit-path consumer (Current Facts, two-channel bullet). Either
     way, decision 3's "verdicts never taint run outcome" was silently

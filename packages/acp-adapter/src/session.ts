@@ -9,7 +9,6 @@ import type { McpServerConfig } from "@sparkwright/mcp-adapter";
 import type { AgentSideConnection, SessionId } from "@agentclientprotocol/sdk";
 import type {
   HostEvent,
-  PermissionMode,
   RunAccessMode,
   TraceLevel,
 } from "@sparkwright/protocol";
@@ -25,9 +24,7 @@ export interface AcpSessionInfo {
 export interface AcpSessionStoreOptions {
   defaultModel?: string;
   defaultAccessMode?: RunAccessMode;
-  defaultPermissionMode?: PermissionMode;
   defaultTraceLevel?: TraceLevel;
-  defaultShouldWrite?: boolean;
   /**
    * Root directory under which per-session artifacts (trace, transcript,
    * blobs, …) are written. When omitted, HostRuntime falls back to
@@ -110,9 +107,7 @@ export class AcpSessionStore {
           : {}),
         defaultModel: this.options.defaultModel,
         defaultAccessMode: this.options.defaultAccessMode,
-        defaultPermissionMode: this.options.defaultPermissionMode,
         defaultTraceLevel: this.options.defaultTraceLevel,
-        defaultShouldWrite: this.options.defaultShouldWrite,
         emit: (event) => this.options.emit(session, event),
       }),
     };

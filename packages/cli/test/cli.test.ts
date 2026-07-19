@@ -1,11 +1,11 @@
 import {
   access,
   mkdir,
-  readdir,
   readFile,
   realpath,
   rm,
   stat,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { existsSync } from "node:fs";
@@ -45,7 +45,7 @@ import {
   createOutputCapture,
   createProviderMock,
   mcpEchoServerConfig,
-  mcpFixtureShellConfig,
+  mcpFixtureSandboxConfig,
   readTrace,
   traceEvent,
   writeWorkflowAsset,
@@ -67,6 +67,35 @@ const TRACE_DIAGNOSTIC_SNAPSHOT_COMMANDS = [
   "verify",
 ] as const;
 const TRACE_DIAGNOSTIC_SNAPSHOT_FORMATS = ["text", "json"] as const;
+
+function workflowPinFixture(
+  id: WorkflowRunId,
+  assetName: string,
+  body = "Fixture workflow.",
+  nodeId = "main",
+  version?: string,
+) {
+  const packageSnapshotRef = `/snapshots/${id}`;
+  const packageHash = `sha256:${id}`;
+  return {
+    assetName,
+    layer: "project" as const,
+    ...(version ? { version } : {}),
+    packageHash,
+    packageHashPolicyVersion: 2 as const,
+    packageSnapshotRef,
+    definitionSnapshot: {
+      assetName,
+      ...(version ? { version } : {}),
+      sourceDir: packageSnapshotRef,
+      layer: "project" as const,
+      packageHash,
+      packageHashPolicyVersion: 2 as const,
+      packageSnapshotRef,
+      nodes: [{ id: nodeId, body }],
+    },
+  };
+}
 
 describe.sequential("runCli", () => {
   let harness: ReturnType<typeof createCliTestHarness>;
@@ -185,35 +214,6 @@ describe.sequential("runCli", () => {
         ],
         goal: "inspect",
       },
-      {
-        name: "unknown flags remain goal text",
-        argv: [
-          "run",
-          "inspect",
-          "--mystery",
-          "value",
-          "--workspace",
-          workspace,
-          "--model",
-          "deterministic",
-          "--direct-core",
-        ],
-        goal: "inspect --mystery value",
-      },
-      {
-        name: "double dash is goal text rather than a terminator",
-        argv: [
-          "run",
-          "inspect",
-          "--",
-          "--workspace",
-          workspace,
-          "--model",
-          "deterministic",
-          "--direct-core",
-        ],
-        goal: "inspect --",
-      },
     ];
 
     for (const testCase of cases) {
@@ -224,6 +224,13 @@ describe.sequential("runCli", () => {
       );
       expect(created?.payload?.goal, testCase.name).toBe(testCase.goal);
     }
+  });
+
+  it("rejects unknown run options instead of treating them as goal text", async () => {
+    const result = await runCli(["run", "inspect", "--mystery", "value"], {
+      io: { stdinIsTTY: false },
+    });
+    expect(result.exitCode).toBe(1);
   });
 
   it("restores explicit process environment overrides through the cleanup stack", async () => {
@@ -593,7 +600,7 @@ describe.sequential("runCli", () => {
     expect(parsed.name).toBe("readme-daily 2");
   });
 
-  it("returns a failed exit code when cron tick has a failed job", async () => {
+  it("does not infer a default README target for cron jobs", async () => {
     const root = await harness.tempDir("sparkwright-cron-cli-");
     const okWorkspace = await createWorkspace("# Demo\n");
     const badWorkspace = await createWorkspace("# Demo\n");
@@ -643,7 +650,8 @@ describe.sequential("runCli", () => {
         okWorkspace,
         "--model",
         "deterministic",
-        "--yes-edits",
+        "--access-mode",
+        "accept-edits",
       ],
       {
         io: {
@@ -654,11 +662,11 @@ describe.sequential("runCli", () => {
       },
     );
 
-    expect(tick.exitCode).toBe(1);
+    expect(tick.exitCode).toBe(0);
     expect(JSON.parse(tickOutput.stdoutText())).toMatchObject({
       attempted: 2,
-      completed: 1,
-      failed: 1,
+      completed: 2,
+      failed: 0,
       skippedBecauseLocked: false,
       skippedBecauseJobLocked: 0,
     });
@@ -684,8 +692,7 @@ describe.sequential("runCli", () => {
       },
     });
     expect(JSON.parse(badStatusOutput.stdoutText())).toMatchObject({
-      lastStatus: "error",
-      lastError: expect.stringContaining("failing outcome"),
+      lastStatus: "ok",
     });
   });
 
@@ -917,16 +924,12 @@ describe.sequential("runCli", () => {
     expect(result.exitCode).toBe(0);
     expect(result.sessionId).toMatch(/^session_workflow_/);
     expect(result.sessionId).not.toBe("session_cli_control");
-    const recordFiles = (
-      await readdir(join(workspace, ".sparkwright", "workflow-runs"))
-    ).filter((file) => file.endsWith(".json"));
-    expect(recordFiles).toHaveLength(1);
-    const record = JSON.parse(
-      await readFile(
-        join(workspace, ".sparkwright", "workflow-runs", recordFiles[0]!),
-        "utf8",
-      ),
-    );
+    const records = new FileWorkflowStore({
+      rootDir: join(workspace, ".sparkwright", "workflow-runs"),
+      createRoot: false,
+    }).list().records;
+    expect(records).toHaveLength(1);
+    const record = records[0];
     expect(record).toMatchObject({
       sessionId: result.sessionId,
       metadata: { controlSessionId: "session_cli_control" },
@@ -1007,7 +1010,6 @@ describe.sequential("runCli", () => {
           protocol: "in_process",
           model: "deterministic",
           risk: "safe",
-          requiresApproval: false,
           approvalRequiredUnderCurrentRun: false,
           approvalReasons: [],
           approvalRunOptions: { shouldWrite: false },
@@ -1031,6 +1033,11 @@ describe.sequential("runCli", () => {
           gatedByRunWrite: true,
           routing: { keywords: ["write", "patch"] },
         }),
+      ]),
+    );
+    expect(report.agents?.delegateTools).toEqual(
+      expect.not.arrayContaining([
+        expect.objectContaining({ requiresApproval: expect.any(Boolean) }),
       ]),
     );
   });
@@ -1218,7 +1225,7 @@ describe.sequential("runCli", () => {
     expect(checkOutput.stdoutText()).toContain("SESSION_EVENTS_MISSING");
   });
 
-  it("returns a failed exit code and clear final answer for unhandled tool failures", async () => {
+  it("runs without an implicit target when --target is omitted", async () => {
     const workspace = await harness.tempDir("sparkwright-cli-");
     const output = createOutputCapture();
 
@@ -1241,80 +1248,21 @@ describe.sequential("runCli", () => {
       },
     );
 
-    expect(result.exitCode).toBe(1);
+    expect(result.exitCode).toBe(0);
     expect(result.runState).toBe("completed");
-    expect(output.stderrText()).toContain("unhandled tool failure");
+    expect(output.stderrText()).not.toContain("unhandled tool failure");
     expect(output.stdoutText()).toContain("run.completed final_answer");
 
     const events = await readTrace(result.tracePath);
-    expect(events.map((event) => event.type)).toContain("tool.failed");
+    expect(events.map((event) => event.type)).not.toContain("tool.failed");
     const completed = events.find((event) => event.type === "run.completed");
-    expect(completed?.payload?.message).toContain("Could not read README.md");
-    expect(completed?.payload?.message).not.toContain("Read README.md.");
-    expect(completed?.payload?.outcome).toMatchObject({
-      kind: "completed_with_tool_failures",
-      toolFailures: { count: 1, codes: ["ENOENT"] },
+    expect(completed?.payload?.message).toContain(
+      "No explicit target was provided",
+    );
+    expect(completed?.payload?.assessment).toMatchObject({
+      health: "clean",
+      issues: [],
     });
-  });
-
-  it("clarifies that --yes without --write still applies to risky non-write approvals", async () => {
-    const workspace = await createWorkspace("# Demo\n");
-    const output = createOutputCapture();
-
-    const result = await runCli(
-      [
-        "run",
-        "--direct-core",
-        "inspect temp",
-        "--workspace",
-        workspace,
-        "--yes",
-        "--model",
-        "deterministic",
-      ],
-      {
-        io: {
-          stdout: output.stdout,
-          stderr: output.stderr,
-          stdinIsTTY: false,
-        },
-      },
-    );
-
-    expect(result.exitCode).toBe(0);
-    expect(output.stderrText()).toContain(
-      "Warning: --yes does not enable workspace writes without --write; it can still approve other risky actions.",
-    );
-    expect(output.stdoutText()).toContain("run.completed final_answer");
-  });
-
-  it("does not warn that --yes-shell-safe is ineffective without --write", async () => {
-    const workspace = await createWorkspace("# Demo\n");
-    const output = createOutputCapture();
-
-    const result = await runCli(
-      [
-        "run",
-        "--direct-core",
-        "inspect temp",
-        "--workspace",
-        workspace,
-        "--yes-shell-safe",
-        "--model",
-        "deterministic",
-      ],
-      {
-        io: {
-          stdout: output.stdout,
-          stderr: output.stderr,
-          stdinIsTTY: false,
-        },
-      },
-    );
-
-    expect(result.exitCode).toBe(0);
-    expect(output.stderrText()).not.toContain("has no effect without --write");
-    expect(output.stdoutText()).toContain("run.completed final_answer");
   });
 
   it("runs the read-only golden path and writes a trace", async () => {
@@ -1509,8 +1457,6 @@ describe.sequential("runCli", () => {
     expect(runJson.metadata).toMatchObject({
       source: "cli",
       accessMode: "read-only",
-      permissionMode: "plan",
-      shouldWrite: false,
     });
   });
 
@@ -1595,6 +1541,8 @@ describe.sequential("runCli", () => {
         workspace,
         "--model",
         "scripted",
+        "--access-mode",
+        "ask",
         "--trace-level",
         "debug",
       ],
@@ -1652,7 +1600,7 @@ describe.sequential("runCli", () => {
     await writeFile(join(workspace, ".env"), "API_TOKEN=abc\n", "utf8");
     await writeFile(
       join(workspace, ".sparkwright", "config.json"),
-      JSON.stringify({ confidentialDefaults: false }),
+      JSON.stringify({ policy: { confidentialDefaults: false } }),
       "utf8",
     );
     const output = createOutputCapture();
@@ -1755,7 +1703,8 @@ describe.sequential("runCli", () => {
         workspace,
         "--target",
         "README.md",
-        "--write",
+        "--access-mode",
+        "ask",
       ],
       {
         io: {
@@ -1776,11 +1725,9 @@ describe.sequential("runCli", () => {
     expect(output.stderrText()).toContain(
       "Run completed with 1 denied workspace write; requested mutation was not applied.",
     );
-    // A denied workspace write is expected-by-policy, not a failure: the label
-    // matches the (0) exit code and the denial is surfaced via the stderr
-    // advisory above (see PR #22 / run-outcome-consistency.test.ts).
-    expect(output.stdoutText()).toContain("Run completed (");
-    expect(output.stdoutText()).not.toContain("Run completed_with_issues");
+    // A denied workspace write is degraded rather than failing: the CLI keeps
+    // exit 0 while visibly preserving the persisted assessment caveat.
+    expect(output.stdoutText()).toContain("Run completed_with_issues");
 
     const events = await readTrace(result.tracePath);
     expect(events.map((event) => event.type)).toEqual(
@@ -1803,7 +1750,7 @@ describe.sequential("runCli", () => {
     );
   });
 
-  it("auto-approves writes with --yes and records the write path", async () => {
+  it("auto-approves writes in bypass mode and records the write path", async () => {
     const workspace = await createWorkspace("# Demo\n");
     await enableWorkspaceTools(workspace, ["read", "edit_anchored_text"]);
     const output = createOutputCapture();
@@ -1817,8 +1764,8 @@ describe.sequential("runCli", () => {
         workspace,
         "--target",
         "README.md",
-        "--write",
-        "--yes",
+        "--access-mode",
+        "bypass",
       ],
       {
         io: {
@@ -1830,7 +1777,7 @@ describe.sequential("runCli", () => {
     );
 
     expect(result.exitCode).toBe(0);
-    expect(output.stderrText()).toContain("Approval auto-approved");
+    expect(output.stderrText()).toBe("");
     await expect(
       readFile(join(workspace, "README.md"), "utf8"),
     ).resolves.toContain("## Sparkwright CLI Golden Path");
@@ -1843,7 +1790,6 @@ describe.sequential("runCli", () => {
         "workspace.anchored_edit.requested",
         "workspace.anchored_edit.verified",
         "artifact.created",
-        "approval.resolved",
         "workspace.write.completed",
         "tool.completed",
       ]),
@@ -1897,7 +1843,9 @@ describe.sequential("runCli", () => {
     await writeFile(
       join(workspace, "sparkwright", "config.json"),
       JSON.stringify({
-        providers: { openai: { baseURL: "https://api.openai.com/v1" } },
+        identity: {
+          providers: { openai: { baseURL: "https://api.openai.com/v1" } },
+        },
       }),
       "utf8",
     );
@@ -1997,7 +1945,7 @@ describe.sequential("runCli", () => {
     expect(loaded.config.providers?.openai?.apiKey).toBe(
       "REPLACE_WITH_YOUR_API_KEY",
     );
-    expect(loaded.config.permissionMode).toBe("default");
+    expect(loaded.config.accessMode).toBe("ask");
     expect(loaded.config.traceLevel).toBe("standard");
     expect(loaded.config.runBudget?.maxModelCalls).toBe(80);
     expect(loaded.config.runBudget?.maxCostUsd).toBe(2.0);
@@ -2035,7 +1983,7 @@ describe.sequential("runCli", () => {
     const loaded = await loadHostConfig(workspace, {
       XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
     });
-    expect(loaded.config.permissionMode).toBe("default");
+    expect(loaded.config.accessMode).toBe("ask");
     expect(loaded.config.write?.maxFiles).toBe(5);
     expect(loaded.config.tools?.use).toEqual([
       "workspace.read",
@@ -2366,7 +2314,7 @@ describe.sequential("runCli", () => {
       JSON.stringify({
         tools: {
           allowed: ["read", "read_anchored_text"],
-          disabled: ["shell"],
+          disabled: ["bash"],
           defer: ["read_anchored_text"],
         },
         shell: {
@@ -2415,7 +2363,7 @@ describe.sequential("runCli", () => {
     );
     expect(textOutput.stdoutText()).toContain("network=deny");
     expect(textOutput.stdoutText()).toContain("skills:");
-    expect(textOutput.stdoutText()).toContain("reviewer (legacy)");
+    expect(textOutput.stdoutText()).toContain("reviewer (configured)");
     expect(textOutput.stdoutText()).toContain("agents: 1 effective");
     expect(textOutput.stdoutText()).toContain("agent shadows: 1");
     expect(textOutput.stdoutText()).toContain("mcp: 1 servers");
@@ -2500,7 +2448,7 @@ describe.sequential("runCli", () => {
     );
     expect(report.skills.skills).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ name: "reviewer", layer: "legacy" }),
+        expect.objectContaining({ name: "reviewer", layer: "configured" }),
       ]),
     );
     expect(report.agents.profiles).toEqual([
@@ -2601,14 +2549,14 @@ describe.sequential("runCli", () => {
     );
     expect(output.stdoutText()).toContain("runtime tools:");
     expect(output.stdoutText()).toContain(
-      "runtime access: permissionMode=default; shouldWrite=false; backgroundTasks=enabled",
+      "runtime access: accessMode=read-only; backgroundTasks=enabled",
     );
     expect(output.stdoutText()).toContain("tool: list_dir");
     expect(output.stdoutText()).toContain("diagnostic tools:");
     expect(output.stdoutText()).toContain("tool: bash");
     expect(output.stdoutText()).toContain("tool: read");
     expect(output.stdoutText()).toContain("tool: list_skills");
-    // append_file was retired in favor of edit_anchored_text / apply_patch.
+    // append_file was retired in favor of edit_anchored_text / edit.
     expect(output.stdoutText()).not.toContain("tool: append_file");
   });
 
@@ -2634,7 +2582,7 @@ describe.sequential("runCli", () => {
 
     expect(result.exitCode).toBe(0);
     expect(output.stdoutText()).toContain(
-      "runtime access: accessMode=bypass; permissionMode=bypass_permissions; shouldWrite=true; backgroundTasks=enabled",
+      "runtime access: accessMode=bypass; backgroundTasks=enabled",
     );
   });
 
@@ -2650,7 +2598,7 @@ describe.sequential("runCli", () => {
               {
                 name: "guard-shell",
                 hook: "PreToolUse",
-                matcher: { toolName: "shell" },
+                matcher: { toolName: "bash" },
                 action: { type: "block", reason: "No shell." },
               },
             ],
@@ -2658,7 +2606,7 @@ describe.sequential("runCli", () => {
               {
                 name: "record-tool",
                 trigger: "tool.completed",
-                matcher: { toolName: "shell" },
+                matcher: { toolName: "bash" },
                 action: { type: "command", command: "node" },
               },
             ],
@@ -2685,7 +2633,7 @@ describe.sequential("runCli", () => {
     expect(result.exitCode).toBe(0);
     expect(output.stdoutText()).toContain("workflow rules: 3");
     expect(output.stdoutText()).toContain(
-      "rule: guard-shell [config] PreToolUse active; canBlock=true; matcher=toolName=shell; action=block: No shell.",
+      "rule: guard-shell [config] PreToolUse active; canBlock=true; matcher=toolName=bash; action=block: No shell.",
     );
     expect(output.stdoutText()).toContain(
       "rule: verification:fast:test [verification] Stop active; canBlock=false",
@@ -2695,7 +2643,7 @@ describe.sequential("runCli", () => {
     );
     expect(output.stdoutText()).toContain("event rules: 1");
     expect(output.stdoutText()).toContain(
-      "event rule: record-tool [config] tool.completed active; canBlock=false; matcher=toolName=shell; action=command: node; injectOutput=always",
+      "event rule: record-tool [config] tool.completed active; canBlock=false; matcher=toolName=bash; action=command: node; injectOutput=always",
     );
   });
 
@@ -2754,13 +2702,7 @@ describe.sequential("runCli", () => {
       "utf8",
     );
     const store = new FileWorkflowStore({
-      rootDir: join(
-        workspace,
-        ".sparkwright",
-        "sessions",
-        sessionId,
-        "workflow-runs",
-      ),
+      rootDir: join(workspace, ".sparkwright", "workflow-runs"),
     });
     const workflowRunId = "workflow_cli_list" as WorkflowRunId;
     const writer = await store.acquireWriter(workflowRunId, {
@@ -2769,9 +2711,13 @@ describe.sequential("runCli", () => {
     await writer!.create({
       id: workflowRunId,
       sessionId,
-      assetName: "bugfix",
-      version: "1.0.0",
-      contentHash: "hash",
+      ...workflowPinFixture(
+        workflowRunId,
+        "bugfix",
+        "Fixture workflow.",
+        "main",
+        "1.0.0",
+      ),
       currentNodeId: "main",
       attempts: { main: 1 },
     });
@@ -2851,19 +2797,18 @@ describe.sequential("runCli", () => {
     const staleRecord = await seededWriter!.create({
       id: staleWorkflowRunId,
       sessionId: "session_stale_same_asset",
-      assetName: "human-gate",
-      contentHash: "stale-human-gate",
+      ...workflowPinFixture(
+        staleWorkflowRunId,
+        "human-gate",
+        "Stale review.",
+        "review",
+      ),
       activeRunId: "run_stale_same_asset" as RunId,
       currentNodeId: "review",
-      definitionSnapshot: {
-        assetName: "human-gate",
-        contentHash: "stale-human-gate",
-        nodes: [{ id: "review", body: "Stale review." }],
-      },
       metadata: { goal: "stale workflow with the same asset name" },
     });
     await seededWriter!.mutate({
-      expectedRevision: staleRecord.recordRevision ?? 0,
+      expectedRevision: staleRecord.recordRevision,
       patch: {
         status: "waiting",
         wait: { kind: "input", reason: "Stale human review." },
@@ -3036,14 +2981,8 @@ describe.sequential("runCli", () => {
     await writer.create({
       id: workflowRunId,
       sessionId: "session_workflow_cli_channel",
-      assetName: "demo",
-      contentHash: "demo-hash",
+      ...workflowPinFixture(workflowRunId, "demo", "Finish."),
       currentNodeId: "main",
-      definitionSnapshot: {
-        assetName: "demo",
-        contentHash: "demo-hash",
-        nodes: [{ id: "main", body: "Finish." }],
-      },
     });
     await writer.release();
     const output = createOutputCapture();
@@ -3216,8 +3155,6 @@ describe.sequential("runCli", () => {
         "        command: bash",
         '        args: ["-lc", "npm test -- docs"]',
         "        authorized: true",
-        "      - id: todos",
-        "        kind: todo_clear",
         "---",
         "## implement",
         "Update and verify.",
@@ -3352,11 +3289,7 @@ describe.sequential("runCli", () => {
     };
     expect(report.ok).toBe(true);
     expect(report.summary.missing).toBe(0);
-    expect(report.checks).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ id: "todo_clear", status: "matched" }),
-      ]),
-    );
+    expect(report.checks).toEqual(expect.any(Array));
     await expect(access(join(sessionDir, "workflow-runs"))).rejects.toThrow();
   });
 
@@ -3365,13 +3298,7 @@ describe.sequential("runCli", () => {
     const sessionId = "sess_cli_workflow_resume";
     const workflowRunId = "workflow_cli_resume" as WorkflowRunId;
     const store = new FileWorkflowStore({
-      rootDir: join(
-        workspace,
-        ".sparkwright",
-        "sessions",
-        sessionId,
-        "workflow-runs",
-      ),
+      rootDir: join(workspace, ".sparkwright", "workflow-runs"),
     });
     const writer = await store.acquireWriter(workflowRunId, {
       owner: "test-fixture",
@@ -3379,8 +3306,6 @@ describe.sequential("runCli", () => {
     const packageSnapshotRef = join(
       workspace,
       ".sparkwright",
-      "sessions",
-      sessionId,
       "workflow-runs",
       "package-snapshots",
       workflowRunId,
@@ -3397,7 +3322,7 @@ describe.sequential("runCli", () => {
       id: workflowRunId,
       sessionId,
       assetName: "cli-resume",
-      contentHash: "hash-cli-resume",
+      layer: "project",
       packageHash,
       packageHashPolicyVersion: 2,
       packageSnapshotRef,
@@ -3405,7 +3330,7 @@ describe.sequential("runCli", () => {
       attempts: { main: 1 },
       definitionSnapshot: {
         assetName: "cli-resume",
-        contentHash: "hash-cli-resume",
+        layer: "project",
         packageHash,
         packageHashPolicyVersion: 2,
         packageSnapshotRef,
@@ -3442,13 +3367,7 @@ describe.sequential("runCli", () => {
     expect(resumed.sessionId).toBe(sessionId);
     expect(output.stdoutText()).toContain("run.completed");
     const completed = new FileWorkflowStore({
-      rootDir: join(
-        workspace,
-        ".sparkwright",
-        "sessions",
-        sessionId,
-        "workflow-runs",
-      ),
+      rootDir: join(workspace, ".sparkwright", "workflow-runs"),
       createRoot: false,
     }).get(workflowRunId);
     expect(completed).toMatchObject({
@@ -3466,10 +3385,12 @@ describe.sequential("runCli", () => {
     await writeFile(
       join(workspace, ".sparkwright", "config.json"),
       JSON.stringify({
-        model: "openai/gpt-5.4-mini",
-        providers: {
-          openai: {
-            apiKey: "sk-test",
+        identity: {
+          model: "openai/gpt-5.4-mini",
+          providers: {
+            openai: {
+              apiKey: "sk-test",
+            },
           },
         },
       }),
@@ -3496,10 +3417,12 @@ describe.sequential("runCli", () => {
     await writeFile(
       join(workspace, ".sparkwright", "config.json"),
       JSON.stringify({
-        model: "openai/gpt-5.4-nano",
-        providers: {
-          openai: {
-            apiKey: "sk-test",
+        identity: {
+          model: "openai/gpt-5.4-nano",
+          providers: {
+            openai: {
+              apiKey: "sk-test",
+            },
           },
         },
       }),
@@ -3535,7 +3458,7 @@ describe.sequential("runCli", () => {
     await writeFile(
       join(workspace, ".sparkwright", "config.json"),
       JSON.stringify({
-        shell: mcpFixtureShellConfig(),
+        policy: { sandbox: mcpFixtureSandboxConfig() },
         capabilities: {
           mcp: {
             namePrefix: "mcp",
@@ -3640,14 +3563,14 @@ describe.sequential("runCli", () => {
     await writeFile(
       configPath,
       JSON.stringify({
-        model: "deterministic/demo",
+        identity: { model: "deterministic/demo" },
         capabilities: {
           skills: { roots: ["./skills"] },
         },
         tools: {
           use: ["workspace.read"],
           allowed: ["read"],
-          disabled: ["shell"],
+          disabled: ["bash"],
         },
       }),
       "utf8",
@@ -3666,7 +3589,7 @@ describe.sequential("runCli", () => {
     }
 
     const parsed = JSON.parse(await readFile(configPath, "utf8")) as {
-      model?: string;
+      identity?: { model?: string };
       capabilities?: {
         skills?: { roots?: string[] };
       };
@@ -3677,12 +3600,12 @@ describe.sequential("runCli", () => {
         defer?: string[];
       };
     };
-    expect(parsed.model).toBe("deterministic/demo");
+    expect(parsed.identity?.model).toBe("deterministic/demo");
     expect(parsed.capabilities?.skills?.roots).toEqual(["./skills"]);
     expect(parsed.tools).toEqual({
       use: ["workspace.read"],
       allowed: ["read", "edit"],
-      disabled: ["shell", "read"],
+      disabled: ["bash", "read"],
       defer: ["todo_write"],
     });
     if (process.platform !== "win32") {
@@ -3736,7 +3659,7 @@ describe.sequential("runCli", () => {
         capabilities: {
           skills: { roots: ["skills"] },
         },
-        tools: { use: [], allowed: [], disabled: ["shell"], defer: [] },
+        tools: { use: [], allowed: [], disabled: ["bash"], defer: [] },
       }),
       "utf8",
     );
@@ -3769,7 +3692,7 @@ describe.sequential("runCli", () => {
     expect(parsed.tools).toEqual({
       use: [],
       allowed: ["read"],
-      disabled: ["shell"],
+      disabled: ["bash"],
       defer: [],
     });
   });
@@ -4006,8 +3929,6 @@ describe.sequential("runCli", () => {
     const runId = "run_skill_stats";
     const residentRunId = "run_resident_skill_stats";
     const agentRunId = "run_agent_skill_stats";
-    const legacyRunId = "run_legacy_skill_stats";
-    const unknownRunId = "run_unknown_skill_stats";
     const sessionDir = join(sessionRoot, sessionId);
     await mkdir(sessionDir, { recursive: true });
     await writeFile(
@@ -4017,7 +3938,7 @@ describe.sequential("runCli", () => {
           id: sessionId,
           createdAt: "2026-06-13T00:00:00.000Z",
           updatedAt: "2026-06-13T00:00:02.000Z",
-          runIds: [runId, residentRunId, agentRunId, legacyRunId, unknownRunId],
+          runIds: [runId, residentRunId, agentRunId],
           agents: ["main", "dynamic_reviewer"],
           eventCount: 0,
         },
@@ -4041,8 +3962,8 @@ describe.sequential("runCli", () => {
                 name: "code-reviewer",
                 layer: "project",
                 sourcePath: skillPath,
-                contentHash: "sha256:indexed",
                 packageHash: "sha256:package",
+                packageHashPolicyVersion: 2,
               },
             ],
           },
@@ -4075,9 +3996,19 @@ describe.sequential("runCli", () => {
         ),
         traceEvent(6, runId, "run.completed", {
           status: "completed",
-          toolOutcome: {
-            unresolved: { total: 2, byCode: { EACCES: 1, ENOENT: 1 } },
-            recovered: { total: 0, byCode: {} },
+          assessment: {
+            schemaVersion: "run-assessment.v1",
+            health: "failing",
+            issues: [
+              {
+                code: "UNRESOLVED_TOOL_FAILURE",
+                kind: "tool_failure",
+                disposition: "failing",
+                count: 2,
+                details: { codes: ["EACCES", "ENOENT"] },
+              },
+            ],
+            verification: [],
           },
         }),
         traceEvent(
@@ -4090,8 +4021,8 @@ describe.sequential("runCli", () => {
               {
                 name: "resident-reviewer",
                 layer: "project",
-                contentHash: "sha256:resident-indexed",
                 packageHash: "sha256:resident",
+                packageHashPolicyVersion: 2,
               },
             ],
           },
@@ -4101,63 +4032,19 @@ describe.sequential("runCli", () => {
           residentRunId,
           "skill.loaded",
           { name: "resident-reviewer", status: "loaded" },
-          { mode: "resident_context", packageHash: "sha256:resident" },
+          {
+            mode: "resident_context",
+            packageHash: "sha256:resident",
+            packageHashPolicyVersion: 2,
+          },
         ),
         traceEvent(9, residentRunId, "run.completed", {
           status: "completed",
-          toolOutcome: {
-            unresolved: { total: 0, byCode: {} },
-            recovered: { total: 0, byCode: {} },
-          },
-        }),
-        traceEvent(
-          13,
-          legacyRunId,
-          "skill.indexed",
-          { count: 1 },
-          {
-            skills: [
-              {
-                name: "legacy-reviewer",
-                layer: "project",
-                sourcePath: join(
-                  workspace,
-                  ".sparkwright",
-                  "skills",
-                  "legacy-reviewer",
-                  "SKILL.md",
-                ),
-                contentHash: "sha256:legacy",
-              },
-            ],
-          },
-        ),
-        traceEvent(
-          14,
-          legacyRunId,
-          "skill.loaded",
-          { name: "legacy-reviewer" },
-          { mode: "on_demand_tool" },
-        ),
-        traceEvent(15, legacyRunId, "run.completed", {
-          status: "completed",
-          toolOutcome: {
-            unresolved: { total: 0, byCode: {} },
-            recovered: { total: 0, byCode: {} },
-          },
-        }),
-        traceEvent(
-          16,
-          unknownRunId,
-          "skill.loaded",
-          { name: "unknown-reviewer" },
-          { mode: "on_demand_tool" },
-        ),
-        traceEvent(17, unknownRunId, "run.completed", {
-          status: "completed",
-          toolOutcome: {
-            unresolved: { total: 0, byCode: {} },
-            recovered: { total: 0, byCode: {} },
+          assessment: {
+            schemaVersion: "run-assessment.v1",
+            health: "clean",
+            issues: [],
+            verification: [],
           },
         }),
       ].join(""),
@@ -4179,8 +4066,8 @@ describe.sequential("runCli", () => {
               {
                 name: "agent-reviewer",
                 layer: "project",
-                contentHash: "sha256:agent-indexed",
                 packageHash: "sha256:agent",
+                packageHashPolicyVersion: 2,
               },
             ],
           },
@@ -4194,9 +4081,11 @@ describe.sequential("runCli", () => {
         ),
         traceEvent(12, agentRunId, "run.completed", {
           status: "completed",
-          toolOutcome: {
-            unresolved: { total: 0, byCode: {} },
-            recovered: { total: 0, byCode: {} },
+          assessment: {
+            schemaVersion: "run-assessment.v1",
+            health: "clean",
+            issues: [],
+            verification: [],
           },
         }),
       ].join(""),
@@ -4230,6 +4119,11 @@ describe.sequential("runCli", () => {
           closedAt: "2026-06-13T00:00:15.000Z",
           basePackageHash: "sha256:package",
           afterPackageHash: "sha256:package-after",
+          packageHashPolicyVersion: 2,
+          artifactId: "skill_stats",
+          effectHash: "effect_stats",
+          preparedState: "applied",
+          revision: 1,
           summary: "Improve review guidance.",
           sourceLayer: "project",
           sourcePath: skillPath,
@@ -4248,10 +4142,12 @@ describe.sequential("runCli", () => {
           id: historyId,
           skillName: "code-reviewer",
           proposalId,
+          artifactId: "skill_stats",
           kind: "update",
           createdAt: "2026-06-13T00:00:16.000Z",
           beforePackageHash: "sha256:package",
           afterPackageHash: "sha256:package-after",
+          packageHashPolicyVersion: 2,
           targetPath: skillDir,
         },
         null,
@@ -4342,8 +4238,7 @@ describe.sequential("runCli", () => {
         explicitLoadCount: number;
         residentLoadCount: number;
         packageHash?: string;
-        legacyContentHash?: string;
-        identityConfidence: string;
+        packageHashPolicyVersion: 2;
         loadFailures: {
           total: number;
           byMode: Record<string, number>;
@@ -4388,9 +4283,9 @@ describe.sequential("runCli", () => {
         firstSessionUpdatedAt: "2026-06-13T00:00:02.000Z",
         lastSessionUpdatedAt: "2026-06-13T00:00:02.000Z",
         firstEventAt: "2026-06-13T00:00:01.000Z",
-        lastEventAt: "2026-06-13T00:00:17.000Z",
-        runCount: 5,
-        terminalRunCount: 5,
+        lastEventAt: "2026-06-13T00:00:12.000Z",
+        runCount: 3,
+        terminalRunCount: 3,
         openRunCount: 0,
       }),
     );
@@ -4403,9 +4298,9 @@ describe.sequential("runCli", () => {
         lastClosedAt: "2026-06-13T00:00:15.000Z",
       }),
     );
-    expect(stats.freshness.latestTraceEventAt).toBe("2026-06-13T00:00:17.000Z");
+    expect(stats.freshness.latestTraceEventAt).toBe("2026-06-13T00:00:12.000Z");
     expect(stats.freshness.latestEvolutionAt).toBe("2026-06-13T00:00:16.000Z");
-    expect(stats.freshness.latestEvidenceAt).toBe("2026-06-13T00:00:17.000Z");
+    expect(stats.freshness.latestEvidenceAt).toBe("2026-06-13T00:00:16.000Z");
     expect(stats.projectionCache).toEqual(
       expect.objectContaining({
         enabled: true,
@@ -4434,9 +4329,11 @@ describe.sequential("runCli", () => {
       "sessions",
       `${sessionId}.json`,
     );
-    expect(await readFile(projectionCachePath, "utf8")).toContain(
-      '"schemaVersion": "skill-stats-session.v1"',
+    const projectionCacheContents = await readFile(projectionCachePath, "utf8");
+    expect(projectionCacheContents).toContain(
+      '"schemaVersion": "skill-stats-session.v3"',
     );
+    expect(projectionCacheContents).not.toContain("loadFailureCount");
     expect(stats.findings).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -4457,18 +4354,6 @@ describe.sequential("runCli", () => {
           relation: "observed",
           skillName: "code-reviewer",
         }),
-        expect.objectContaining({
-          code: "LEGACY_SKILL_IDENTITY",
-          severity: "info",
-          relation: "observed",
-          skillName: "legacy-reviewer",
-        }),
-        expect.objectContaining({
-          code: "UNKNOWN_SKILL_IDENTITY",
-          severity: "info",
-          relation: "observed",
-          skillName: "unknown-reviewer",
-        }),
       ]),
     );
     expect(stats.skills).toEqual(
@@ -4477,7 +4362,7 @@ describe.sequential("runCli", () => {
           name: "code-reviewer",
           layer: "project",
           packageHash: "sha256:package",
-          identityConfidence: "package_hash",
+          packageHashPolicyVersion: 2,
           indexedCount: 1,
           loadedCount: 1,
           residentLoadCount: 0,
@@ -4520,7 +4405,7 @@ describe.sequential("runCli", () => {
           name: "resident-reviewer",
           layer: "project",
           packageHash: "sha256:resident",
-          identityConfidence: "package_hash",
+          packageHashPolicyVersion: 2,
           indexedCount: 1,
           loadedCount: 1,
           residentLoadCount: 1,
@@ -4530,28 +4415,15 @@ describe.sequential("runCli", () => {
           name: "agent-reviewer",
           layer: "project",
           packageHash: "sha256:agent",
-          identityConfidence: "package_hash",
+          packageHashPolicyVersion: 2,
           indexedCount: 1,
-          loadedCount: 1,
-          explicitLoadCount: 1,
-        }),
-        expect.objectContaining({
-          name: "legacy-reviewer",
-          layer: "project",
-          legacyContentHash: "sha256:legacy",
-          identityConfidence: "legacy_content_hash",
-          indexedCount: 1,
-          loadedCount: 1,
-          explicitLoadCount: 1,
-        }),
-        expect.objectContaining({
-          name: "unknown-reviewer",
-          identityConfidence: "name_only_unknown",
-          indexedCount: 0,
           loadedCount: 1,
           explicitLoadCount: 1,
         }),
       ]),
+    );
+    expect(stats.skills.every((skill) => !("loadFailureCount" in skill))).toBe(
+      true,
     );
     expect(
       stats.skills.filter((skill) => skill.name === "resident-reviewer"),
@@ -4595,9 +4467,18 @@ describe.sequential("runCli", () => {
     );
     expect(cachedStats.skills).toEqual(stats.skills);
 
+    const retiredProjection = JSON.parse(projectionCacheContents) as {
+      schemaVersion: string;
+      skills: Array<Record<string, unknown>>;
+    };
+    retiredProjection.schemaVersion = "skill-stats-session.v2";
+    for (const skill of retiredProjection.skills) {
+      skill.loadFailureCount = 0;
+    }
     await writeFile(
       projectionCachePath,
-      '{"schemaVersion":"skill-stats-session.v1"}\n',
+      `${JSON.stringify(retiredProjection, null, 2)}\n`,
+      "utf8",
     );
     const repairedOutput = createOutputCapture();
     const repairedResult = await runCli(
@@ -4657,7 +4538,7 @@ describe.sequential("runCli", () => {
     );
     expect(text.exitCode).toBe(0);
     expect(textOutput.stdoutText()).toContain("- code-reviewer (project)");
-    expect(textOutput.stdoutText()).toContain("window: runs=5");
+    expect(textOutput.stdoutText()).toContain("window: runs=3");
     expect(textOutput.stdoutText()).toContain("freshness: computed=");
     expect(textOutput.stdoutText()).toContain("projection cache: enabled=true");
     expect(textOutput.stdoutText()).toContain("catalog: enabled=true");
@@ -4666,7 +4547,8 @@ describe.sequential("runCli", () => {
     );
     expect(textOutput.stdoutText()).toContain("findings: 3");
     expect(textOutput.stdoutText()).toContain("finding detail:");
-    expect(textOutput.stdoutText()).toContain("package: sha256:package");
+    expect(textOutput.stdoutText()).toContain("package: v2 sha256:package");
+    expect(textOutput.stdoutText()).toContain("load failures: 1");
     expect(textOutput.stdoutText()).toContain(
       "load failure detail: modes=on_demand_tool=1, statuses=resource_denied=1",
     );
@@ -4743,8 +4625,8 @@ describe.sequential("runCli", () => {
                 name: "code-reviewer",
                 layer: "project",
                 sourcePath: skillPath,
-                contentHash: "sha256:review-content",
                 packageHash: "sha256:review-package",
+                packageHashPolicyVersion: 2,
               },
             ],
           },
@@ -4773,9 +4655,19 @@ describe.sequential("runCli", () => {
         ),
         traceEvent(5, runId, "run.completed", {
           status: "completed",
-          toolOutcome: {
-            unresolved: { total: 1, byCode: { ENOENT: 1 } },
-            recovered: { total: 0, byCode: {} },
+          assessment: {
+            schemaVersion: "run-assessment.v1",
+            health: "failing",
+            issues: [
+              {
+                code: "UNRESOLVED_TOOL_FAILURE",
+                kind: "tool_failure",
+                disposition: "failing",
+                count: 1,
+                details: { codes: ["ENOENT"] },
+              },
+            ],
+            verification: [],
           },
         }),
       ].join(""),
@@ -4964,8 +4856,8 @@ describe.sequential("runCli", () => {
                 name: "code-reviewer",
                 layer: "project",
                 sourcePath: codeSkillPath,
-                contentHash: "sha256:code-content",
                 packageHash: "sha256:code-package",
+                packageHashPolicyVersion: 2,
               },
             ],
           },
@@ -4979,9 +4871,11 @@ describe.sequential("runCli", () => {
         ),
         traceEvent(23, codeRunId, "run.completed", {
           status: "completed",
-          toolOutcome: {
-            unresolved: { total: 0, byCode: {} },
-            recovered: { total: 0, byCode: {} },
+          assessment: {
+            schemaVersion: "run-assessment.v1",
+            health: "clean",
+            issues: [],
+            verification: [],
           },
         }),
       ].join(""),
@@ -5001,8 +4895,8 @@ describe.sequential("runCli", () => {
                 name: "other-reviewer",
                 layer: "project",
                 sourcePath: otherSkillPath,
-                contentHash: "sha256:other-content",
                 packageHash: "sha256:other-package",
+                packageHashPolicyVersion: 2,
               },
             ],
           },
@@ -5016,9 +4910,11 @@ describe.sequential("runCli", () => {
         ),
         traceEvent(33, otherRunId, "run.completed", {
           status: "completed",
-          toolOutcome: {
-            unresolved: { total: 0, byCode: {} },
-            recovered: { total: 0, byCode: {} },
+          assessment: {
+            schemaVersion: "run-assessment.v1",
+            health: "clean",
+            issues: [],
+            verification: [],
           },
         }),
       ].join(""),
@@ -5133,7 +5029,7 @@ describe.sequential("runCli", () => {
     expect(targetStats.skills).toEqual([
       expect.objectContaining({
         name: "code-reviewer",
-        skillKey: "code-reviewer|project|package:sha256:code-package",
+        skillKey: "skill|project|code-reviewer|v2|sha256:code-package",
         packageHash: "sha256:code-package",
         firstEventAt: "2026-06-13T00:00:21.000Z",
         lastEventAt: "2026-06-13T00:00:22.000Z",
@@ -5154,7 +5050,7 @@ describe.sequential("runCli", () => {
         "--last",
         "2",
         "--skill-key",
-        "code-reviewer|project|package:sha256:code-package",
+        "skill|project|code-reviewer|v2|sha256:code-package",
         "--format",
         "json",
       ],
@@ -5167,16 +5063,79 @@ describe.sequential("runCli", () => {
       skills: Array<{ skillKey: string }>;
     };
     expect(keyStats.query.skillKey).toBe(
-      "code-reviewer|project|package:sha256:code-package",
+      "skill|project|code-reviewer|v2|sha256:code-package",
     );
     expect(keyStats.catalog).toEqual(
       expect.objectContaining({ hits: 1, selectedSessions: 1 }),
     );
     expect(keyStats.skills).toEqual([
       expect.objectContaining({
-        skillKey: "code-reviewer|project|package:sha256:code-package",
+        skillKey: "skill|project|code-reviewer|v2|sha256:code-package",
       }),
     ]);
+
+    const cacheDir = join(workspace, ".sparkwright", "skill-stats");
+    const catalogPath = join(cacheDir, "catalog.json");
+    const catalogCache = JSON.parse(await readFile(catalogPath, "utf8")) as {
+      skillKeys: Record<string, { layer?: string }>;
+    };
+    catalogCache.skillKeys[
+      "skill|project|code-reviewer|v2|sha256:code-package"
+    ]!.layer = "legacy";
+    await writeFile(
+      catalogPath,
+      `${JSON.stringify(catalogCache, null, 2)}\n`,
+      "utf8",
+    );
+
+    const projectionPath = join(cacheDir, "sessions", `${codeSessionId}.json`);
+    const projectionCache = JSON.parse(
+      await readFile(projectionPath, "utf8"),
+    ) as { skills: Array<{ layer?: string }> };
+    projectionCache.skills[0]!.layer = "legacy";
+    await writeFile(
+      projectionPath,
+      `${JSON.stringify(projectionCache, null, 2)}\n`,
+      "utf8",
+    );
+
+    const rebuiltOutput = createOutputCapture();
+    const rebuiltResult = await runCli(
+      [
+        "skills",
+        "stats",
+        "--workspace",
+        workspace,
+        "--session-root",
+        sessionRoot,
+        "--last",
+        "2",
+        "--skill",
+        "code-reviewer",
+        "--format",
+        "json",
+      ],
+      { io: { stdout: rebuiltOutput.stdout, stderr: rebuiltOutput.stderr } },
+    );
+    expect(rebuiltResult.exitCode).toBe(0);
+    const rebuiltStats = JSON.parse(rebuiltOutput.stdoutText()) as {
+      sessionsScanned: number;
+      catalog: { used: boolean; misses: number; selectedSessions: number };
+      projectionCache: { hits: number; misses: number; writes: number };
+      skills: Array<{ name: string; layer?: string }>;
+    };
+    expect(rebuiltStats.sessionsScanned).toBe(2);
+    expect(rebuiltStats.catalog).toEqual(
+      expect.objectContaining({ used: true, misses: 1, selectedSessions: 2 }),
+    );
+    expect(rebuiltStats.projectionCache).toEqual(
+      expect.objectContaining({ hits: 1, misses: 1, writes: 1 }),
+    );
+    expect(rebuiltStats.skills).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "code-reviewer", layer: "project" }),
+      ]),
+    );
   });
 
   it("doctors skills with package hashes and deterministic blockers", async () => {
@@ -5232,7 +5191,7 @@ describe.sequential("runCli", () => {
       ),
       "utf8",
     );
-    await writeFile(join(badSkillDir, "references"), "not a directory\n");
+    await symlink("SKILL.md", join(badSkillDir, "alias.md"));
 
     const badOutput = createOutputCapture();
     const bad = await runCli(
@@ -5246,7 +5205,7 @@ describe.sequential("runCli", () => {
     expect(badOutput.stdoutText()).toContain("status: blocked");
     expect(badOutput.stdoutText()).toContain("SKILL_PACKAGE_INVALID");
     expect(badOutput.stdoutText()).toContain(
-      "Skill package entry must be a directory: references",
+      "Asset package cannot contain a symlink: alias.md",
     );
   });
 
@@ -6997,8 +6956,10 @@ describe.sequential("runCli", () => {
     await writeFile(
       join(xdg, "sparkwright", "config.json"),
       JSON.stringify({
-        model: "openai/cfg-model",
-        providers: { openai: { baseURL: "https://api.openai.com/v1" } },
+        identity: {
+          model: "openai/cfg-model",
+          providers: { openai: { baseURL: "https://api.openai.com/v1" } },
+        },
       }),
       "utf8",
     );
@@ -7030,8 +6991,10 @@ describe.sequential("runCli", () => {
     await writeFile(
       join(workspace, ".sparkwright", "config.json"),
       JSON.stringify({
-        model: "openai/project-model",
-        providers: { openai: { baseURL: "https://api.openai.com/v1" } },
+        identity: {
+          model: "openai/project-model",
+          providers: { openai: { baseURL: "https://api.openai.com/v1" } },
+        },
       }),
       "utf8",
     );
@@ -7207,12 +7170,14 @@ describe.sequential("runCli", () => {
       await writeFile(
         join(workspace, ".sparkwright", "config.json"),
         JSON.stringify({
-          model: "openai/mock-model",
-          providers: {
-            openai: {
-              baseURL: mock.baseURL,
-              apiKey: "CONFIG_KEY",
-              models: { "mock-model": {} },
+          identity: {
+            model: "openai/mock-model",
+            providers: {
+              openai: {
+                baseURL: mock.baseURL,
+                apiKey: "CONFIG_KEY",
+                models: { "mock-model": {} },
+              },
             },
           },
         }),
@@ -7276,11 +7241,13 @@ describe.sequential("runCli", () => {
       await writeFile(
         join(workspace, ".sparkwright", "config.json"),
         JSON.stringify({
-          model: "openai/mock-model",
-          providers: {
-            openai: {
-              baseURL: "http://127.0.0.1:9/v1",
-              models: { "mock-model": {} },
+          identity: {
+            model: "openai/mock-model",
+            providers: {
+              openai: {
+                baseURL: "http://127.0.0.1:9/v1",
+                models: { "mock-model": {} },
+              },
             },
           },
         }),
@@ -7334,7 +7301,15 @@ describe.sequential("runCli", () => {
     const workspace = await createWorkspace("# Demo\n");
     const runOutput = createOutputCapture();
     const run = await runCli(
-      ["run", "--direct-core", "inspect", "--workspace", workspace],
+      [
+        "run",
+        "--direct-core",
+        "inspect",
+        "--workspace",
+        workspace,
+        "--target",
+        "README.md",
+      ],
       {
         io: { stdout: runOutput.stdout, stderr: runOutput.stderr },
       },
@@ -7392,6 +7367,7 @@ describe.sequential("runCli", () => {
         timestamp: "2026-01-01T00:00:00.000Z",
         sequence: 1,
         payload: { goal: "alpha" },
+        metadata: {},
       },
       {
         id: "evt_alpha_2",
@@ -7400,6 +7376,7 @@ describe.sequential("runCli", () => {
         timestamp: "2026-01-01T00:00:01.000Z",
         sequence: 2,
         payload: { reason: "final_answer" },
+        metadata: {},
       },
       {
         id: "evt_beta_1",
@@ -7408,6 +7385,7 @@ describe.sequential("runCli", () => {
         timestamp: "2026-01-01T00:00:02.000Z",
         sequence: 1,
         payload: { goal: "beta" },
+        metadata: {},
       },
       {
         id: "evt_beta_2",
@@ -7420,6 +7398,7 @@ describe.sequential("runCli", () => {
           code: "MODEL_COMPLETION_FAILED",
           message: "auth failed",
         },
+        metadata: {},
       },
     ];
     await writeFile(
@@ -7494,6 +7473,7 @@ describe.sequential("runCli", () => {
         timestamp: "2026-01-01T00:00:00.000Z",
         sequence: 1,
         payload: { goal: "inspect" },
+        metadata: {},
       },
       ...Array.from({ length: 85 }, (_, index) => ({
         id: `evt_tool_${index}`,
@@ -7506,6 +7486,7 @@ describe.sequential("runCli", () => {
           toolName: index % 2 === 0 ? "read" : "grep",
           arguments: { path: "README.md" },
         },
+        metadata: {},
       })),
       ...Array.from({ length: 20 }, (_, index) => ({
         id: `evt_read_${index}`,
@@ -7514,6 +7495,7 @@ describe.sequential("runCli", () => {
         timestamp: "2026-01-01T00:00:02.000Z",
         sequence: index + 87,
         payload: { path: "README.md" },
+        metadata: {},
       })),
       {
         id: "evt_done",
@@ -7522,6 +7504,7 @@ describe.sequential("runCli", () => {
         timestamp: "2026-01-01T00:00:03.000Z",
         sequence: 107,
         payload: { state: "completed" },
+        metadata: {},
       },
     ];
     await writeFile(
@@ -7721,6 +7704,7 @@ describe.sequential("runCli", () => {
             usage: { totalTokens: 12 },
             trace: { adapterId: "openai:test-model" },
           },
+          metadata: {},
         },
         {
           id: "evt_2",
@@ -7733,6 +7717,7 @@ describe.sequential("runCli", () => {
             output: { path: "README.md" },
             artifacts: [],
           },
+          metadata: {},
         },
       ]
         .map((event) => `${JSON.stringify(event)}\n`)
@@ -8245,7 +8230,7 @@ describe.sequential("runCli", () => {
     ) as { metadata?: Record<string, unknown> };
     expect(runJson.metadata).toMatchObject({
       source: "cli",
-      shouldWrite: false,
+      accessMode: "read-only",
       traceLevel: "standard",
       resumedFromRunId: runId,
     });
@@ -8274,7 +8259,7 @@ describe.sequential("runCli", () => {
     await writeFile(
       join(workspace, ".sparkwright", "config.json"),
       JSON.stringify({
-        shell: mcpFixtureShellConfig(),
+        policy: { sandbox: mcpFixtureSandboxConfig() },
         capabilities: {
           mcp: {
             namePrefix: "mcp",
@@ -8340,7 +8325,7 @@ describe.sequential("runCli", () => {
     await writeFile(
       join(workspace, ".sparkwright", "config.json"),
       JSON.stringify({
-        shell: mcpFixtureShellConfig(),
+        policy: { sandbox: mcpFixtureSandboxConfig() },
         capabilities: {
           mcp: {
             namePrefix: "mcp",
@@ -8362,6 +8347,8 @@ describe.sequential("runCli", () => {
         workspace,
         "--model",
         "scripted",
+        "--access-mode",
+        "ask",
         "--trace-level",
         "debug",
       ],
@@ -8434,7 +8421,7 @@ describe.sequential("runCli", () => {
     await writeFile(
       join(workspace, ".sparkwright", "config.json"),
       JSON.stringify({
-        shell: mcpFixtureShellConfig(),
+        policy: { sandbox: mcpFixtureSandboxConfig() },
         capabilities: {
           mcp: {
             namePrefix: "mcp",
@@ -8462,6 +8449,8 @@ describe.sequential("runCli", () => {
         workspace,
         "--model",
         "scripted",
+        "--access-mode",
+        "ask",
         "--trace-level",
         "debug",
       ],
@@ -8524,7 +8513,7 @@ describe.sequential("runCli", () => {
     await writeFile(
       join(workspace, ".sparkwright", "config.json"),
       JSON.stringify({
-        shell: mcpFixtureShellConfig(),
+        policy: { sandbox: mcpFixtureSandboxConfig() },
         capabilities: {
           mcp: {
             namePrefix: "mcp",
@@ -8624,8 +8613,8 @@ describe.sequential("runCli", () => {
         workspace,
         "--model",
         "scripted",
-        "--write",
-        "--yes",
+        "--access-mode",
+        "bypass",
         "--trace-level",
         "debug",
       ],
@@ -8746,8 +8735,8 @@ describe.sequential("runCli", () => {
         workspace,
         "--model",
         "scripted",
-        "--write",
-        "--yes",
+        "--access-mode",
+        "bypass",
         "--trace-level",
         "debug",
       ],
@@ -9160,6 +9149,81 @@ describe.sequential("runCli", () => {
     ).toBe(false);
   });
 
+  it("runs configured verification profiles in direct-core diagnostics", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+    await writeFile(
+      join(workspace, ".sparkwright", "config.json"),
+      JSON.stringify({
+        capabilities: {
+          verification: {
+            mode: "require",
+            profiles: {
+              fast: [
+                {
+                  id: "unit",
+                  kind: "custom",
+                  command: process.execPath,
+                  args: ["-e", "process.exit(0)"],
+                },
+              ],
+            },
+          },
+        },
+      }),
+      "utf8",
+    );
+    const output = createOutputCapture();
+
+    const run = await runCli(
+      [
+        "run",
+        "write and verify README",
+        "--direct-core",
+        "--workspace",
+        workspace,
+        "--model",
+        "deterministic",
+        "--target",
+        "README.md",
+        "--access-mode",
+        "accept-edits",
+        "--trace-level",
+        "debug",
+      ],
+      {
+        env: {
+          ...process.env,
+          SPARKWRIGHT_ENABLE_DIRECT_CORE: "1",
+        },
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(run.exitCode, output.stderrText()).toBe(0);
+    expect(output.stdoutText()).toContain("Verification: 1 passed (unit).");
+    const traceEvents = await readTrace(run.tracePath);
+    expect(
+      traceEvents.some((event) => {
+        if (event.type !== "workflow_hook.completed") return false;
+        const payload = event.payload as
+          | {
+              hookName?: string;
+              result?: { metadata?: { verifierId?: string } };
+            }
+          | undefined;
+        return (
+          payload?.hookName === "workflow:verification_fast" &&
+          payload.result?.metadata?.verifierId === "unit"
+        );
+      }),
+    ).toBe(true);
+  });
+
   it("normalizes relative --workspace before host tools resolve absolute paths", async () => {
     const workspace = await createWorkspace("# Demo\n");
     const output = createOutputCapture();
@@ -9213,7 +9277,7 @@ describe.sequential("runCli", () => {
     ).toBeTruthy();
   });
 
-  it("denies scripted host writes when --write is not enabled", async () => {
+  it("denies scripted host writes in read-only mode", async () => {
     const workspace = await createWorkspace("# Demo\n");
     await enableWorkspaceTools(workspace, ["edit"]);
     const output = createOutputCapture();
@@ -9226,7 +9290,6 @@ describe.sequential("runCli", () => {
         workspace,
         "--model",
         "scripted",
-        "--yes",
         "--trace-level",
         "debug",
       ],
@@ -9288,7 +9351,6 @@ describe.sequential("runCli", () => {
         workspace,
         "--model",
         "scripted",
-        "--yes",
         "--trace-level",
         "debug",
       ],
@@ -9434,10 +9496,23 @@ describe.sequential("runCli", () => {
     const completed = traceEvents.find(
       (event) => event.type === "run.completed",
     );
-    expect(completed?.payload?.outcome).toMatchObject({
-      kind: "completed_with_recovered_tool_failures",
-      toolFailures: { count: 1, codes: ["TOOL_ARGUMENTS_INVALID"] },
+    expect(completed?.payload?.assessment).toMatchObject({
+      health: "degraded",
     });
+    expect(
+      (completed?.payload?.assessment as { issues?: unknown[] } | undefined)
+        ?.issues,
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "RECOVERED_TOOL_FAILURE",
+          count: 1,
+          details: expect.objectContaining({
+            codes: ["TOOL_ARGUMENTS_INVALID"],
+          }),
+        }),
+      ]),
+    );
   });
 
   it("treats skipped repeated calls after a successful result as recovered", async () => {
@@ -9503,10 +9578,23 @@ describe.sequential("runCli", () => {
     const completed = traceEvents.find(
       (event) => event.type === "run.completed",
     );
-    expect(completed?.payload?.outcome).toMatchObject({
-      kind: "completed_with_recovered_tool_failures",
-      toolFailures: { count: 1, codes: ["REPEATED_TOOL_CALL_SKIPPED"] },
+    expect(completed?.payload?.assessment).toMatchObject({
+      health: "degraded",
     });
+    expect(
+      (completed?.payload?.assessment as { issues?: unknown[] } | undefined)
+        ?.issues,
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "RECOVERED_TOOL_FAILURE",
+          count: 1,
+          details: expect.objectContaining({
+            codes: ["REPEATED_TOOL_CALL_SKIPPED"],
+          }),
+        }),
+      ]),
+    );
 
     const summaryOutput = createOutputCapture();
     const summary = await runCli(
@@ -9563,8 +9651,8 @@ describe.sequential("runCli", () => {
         workspace,
         "--model",
         "scripted",
-        "--write",
-        "--yes",
+        "--access-mode",
+        "bypass",
         "--trace-level",
         "debug",
       ],
@@ -9684,8 +9772,8 @@ describe.sequential("runCli", () => {
         "README.md",
         "--model",
         "scripted",
-        "--write",
-        "--yes",
+        "--access-mode",
+        "bypass",
         "--trace-level",
         "debug",
       ],
@@ -9754,8 +9842,8 @@ describe.sequential("runCli", () => {
         workspace,
         "--model",
         "scripted",
-        "--write",
-        "--yes",
+        "--access-mode",
+        "bypass",
         "--trace-level",
         "debug",
       ],
@@ -9821,8 +9909,8 @@ describe.sequential("runCli", () => {
         workspace,
         "--model",
         "scripted",
-        "--write",
-        "--yes",
+        "--access-mode",
+        "bypass",
         "--trace-level",
         "debug",
       ],
@@ -9899,8 +9987,8 @@ describe.sequential("runCli", () => {
         workspace,
         "--model",
         "scripted",
-        "--write",
-        "--yes",
+        "--access-mode",
+        "bypass",
         "--trace-level",
         "debug",
       ],
@@ -10188,7 +10276,8 @@ describe.sequential("runCli", () => {
         "inspect readme",
         "--workspace",
         workspace,
-        "--yes",
+        "--access-mode",
+        "bypass",
         "--session-id",
         "delegate-session-test",
         "--trace-level",
@@ -10280,6 +10369,88 @@ describe.sequential("runCli", () => {
       agentProfileId: "external_cli_fixture",
     });
     expect(traceSubagent?.metadata).toEqual(stdoutSubagent?.metadata);
+  });
+
+  it("uses canonical exposure for synthesized direct delegate runs", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const configPath = join(workspace, ".sparkwright", "config.json");
+    await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+    const config = {
+      capabilities: {
+        agents: {
+          exposure: "indexed" as "indexed" | "all",
+          profiles: [
+            {
+              id: "external_auto",
+              metadata: {
+                externalCommand: {
+                  command: process.execPath,
+                  args: ["-e", "process.stdout.write('canonical')"],
+                  input: "none",
+                },
+              },
+            },
+          ],
+        },
+      },
+    };
+    await writeFile(configPath, JSON.stringify(config), "utf8");
+
+    const hiddenOutput = createOutputCapture();
+    const hidden = await runCli(
+      [
+        "delegates",
+        "run",
+        "delegate_external_auto",
+        "--goal",
+        "inspect",
+        "--workspace",
+        workspace,
+        "--access-mode",
+        "bypass",
+      ],
+      {
+        io: {
+          stdout: hiddenOutput.stdout,
+          stderr: hiddenOutput.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+    expect(hidden.exitCode).toBe(1);
+    expect(hiddenOutput.stderrText()).toContain("delegate tool not found");
+
+    config.capabilities.agents.exposure = "all";
+    await writeFile(configPath, JSON.stringify(config), "utf8");
+    const exposedOutput = createOutputCapture();
+    const exposed = await runCli(
+      [
+        "delegates",
+        "run",
+        "delegate_external_auto",
+        "--goal",
+        "inspect",
+        "--workspace",
+        workspace,
+        "--access-mode",
+        "bypass",
+        "--format",
+        "json",
+      ],
+      {
+        io: {
+          stdout: exposedOutput.stdout,
+          stderr: exposedOutput.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+    expect(exposed.exitCode).toBe(0);
+    expect(JSON.parse(exposedOutput.stdoutText())).toMatchObject({
+      ok: true,
+      profileId: "external_auto",
+      output: { stdout: "canonical" },
+    });
   });
 
   it("fails direct delegate runs when the target tool name collided", async () => {
@@ -10407,7 +10578,8 @@ describe.sequential("runCli", () => {
         "inspect readme",
         "--workspace",
         workspace,
-        "--yes",
+        "--access-mode",
+        "bypass",
         "--format",
         "json",
       ],
@@ -10436,7 +10608,7 @@ describe.sequential("runCli", () => {
     expect(parsed.message).toContain("maxDepth (0)");
   });
 
-  it("requires --write before a direct delegate can receive read-write workspace access", async () => {
+  it("allows a direct delegate to receive read-write workspace access in bypass mode", async () => {
     const workspace = await createWorkspace("# Demo\n");
     const commandPath = join(workspace, "delegate-fixture.mjs");
     await writeFile(
@@ -10485,33 +10657,6 @@ describe.sequential("runCli", () => {
       "utf8",
     );
 
-    const deniedOutput = createOutputCapture();
-    const denied = await runCli(
-      [
-        "delegates",
-        "run",
-        "delegate_external_cli_fixture",
-        "--goal",
-        "inspect readme",
-        "--workspace",
-        workspace,
-        "--yes",
-        "--format",
-        "text",
-      ],
-      {
-        io: {
-          stdout: deniedOutput.stdout,
-          stderr: deniedOutput.stderr,
-          stdinIsTTY: false,
-        },
-      },
-    );
-    expect(denied.exitCode).toBe(1);
-    expect(deniedOutput.stderrText()).toContain(
-      "parent run has not enabled workspace writes",
-    );
-
     const approvedOutput = createOutputCapture();
     const approved = await runCli(
       [
@@ -10522,8 +10667,8 @@ describe.sequential("runCli", () => {
         "inspect readme",
         "--workspace",
         workspace,
-        "--write",
-        "--yes",
+        "--access-mode",
+        "bypass",
         "--session-id",
         "delegate-write-marker-test",
         "--trace-level",

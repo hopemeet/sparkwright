@@ -20,7 +20,7 @@ import type {
   CapabilitySnapshot,
   CompactionWarning,
   HostEvent,
-  PermissionMode,
+  RunAccessMode,
   RunInputPayload,
   RunInputPart,
   SessionCompactionMeasurement,
@@ -71,7 +71,7 @@ export interface RunControllerOptions {
 export interface WorkflowJobExecutionContext {
   readonly kind: "workflow";
   readonly sessionId: string;
-  readonly permissionMode: PermissionMode;
+  readonly accessMode: RunAccessMode;
   readonly runId: string;
   readonly workflowRunId: string;
 }
@@ -87,7 +87,7 @@ type ExecutionKind = "main" | "workflow";
 interface ExecutionOrigin {
   client: Client;
   sessionId: string;
-  permissionMode: PermissionMode;
+  accessMode: RunAccessMode;
   kind: ExecutionKind;
   workflowRunId?: string;
 }
@@ -101,13 +101,6 @@ interface PendingApprovalContext {
   execution: ExecutionContext;
   pending: PendingApproval;
 }
-
-/**
- * Preamble of the synthetic goal a todo-supervisor continuation run carries
- * (see buildTodoContinuationPrompt in @sparkwright/agent-runtime). Used on
- * replay to tell a continuation run apart from a real user turn.
- */
-const TODO_CONTINUATION_GOAL_PREFIX = "Continue from the todo ledger.";
 
 /**
  * Drives runs against a Sparkwright host. The host is launched lazily on
@@ -143,8 +136,8 @@ export class RunController {
   private resolvingApproval = false;
   private currentSessionEvents: unknown[] = [];
   // The most recent user goal submitted via start(), kept so /retry can re-run
-  // it. start() only ever receives real user goals (todo-continuation runs are
-  // driven by the host/replay path, not start()), so no filtering is needed.
+  // it. Workflow continuation episodes are driven by the host/replay path, not
+  // start(), so no filtering is needed.
   private lastGoal: string | null = null;
   private pendingInputParts: RunInputPart[] = [];
 
@@ -199,8 +192,10 @@ export class RunController {
   async switchSession(id: string): Promise<boolean> {
     if (!this.allowSessionMutation("switch sessions")) return false;
     const safe = validateSessionId(id);
+    const needsReset =
+      this.sessionId !== safe || this.store.getSnapshot().events.length > 0;
     this.sessionId = safe;
-    this.store.reset();
+    if (needsReset) this.store.reset();
     this.store.setSessionId(safe);
     const events = await loadSessionEvents(this.sessionRootDir(), safe);
     this.currentSessionEvents = events.slice();
@@ -234,17 +229,7 @@ export class RunController {
         payload.goal.trim() &&
         !injectedForRun.has(runKey)
       ) {
-        // A todo-supervisor continuation run carries a synthetic goal, not the
-        // user's input. run.continuation is a host event (not in the persisted
-        // trace), so on replay we detect the continuation by its goal preamble
-        // and render a divider instead of a fake user bubble.
-        if (payload.goal.startsWith(TODO_CONTINUATION_GOAL_PREFIX)) {
-          this.store.appendNotice(
-            "previous answer provisional · continuing — todos unfinished",
-          );
-        } else {
-          this.store.appendUserMessage(payload.goal);
-        }
+        this.store.appendUserMessage(payload.goal);
         injectedForRun.add(runKey);
       }
       if (STREAM_ONLY.has(ev.type)) continue;
@@ -366,11 +351,10 @@ export class RunController {
     try {
       const traceLevel = this.opts.traceLevel ?? "standard";
       const input = this.pendingRunInput();
-      const permissions = this.coreRunFields();
       this.executionOrigins.set(client, {
         client,
         sessionId: this.sessionId,
-        permissionMode: permissions.permissionMode,
+        accessMode: this.tuiPermissionMode(),
         kind: "main",
       });
       const { runId } = await client.startRun(
@@ -381,9 +365,7 @@ export class RunController {
           modelName: this.opts.modelName,
           modelNameSource: this.opts.modelNameSource,
           accessMode: this.tuiPermissionMode(),
-          permissionMode: permissions.permissionMode,
           traceLevel,
-          shouldWrite: permissions.shouldWrite,
           metadata: this.runRequestMetadata({ traceLevel }),
         }),
       );
@@ -581,12 +563,11 @@ export class RunController {
     workflowName: string;
     goal: string;
   }): Promise<WorkflowJobHandle | null> {
-    const permissions = this.coreRunFields();
     const client = await createClient({
       spawn: resolveHostStdioSpawn({
         workspaceRoot: this.opts.workspaceRoot,
         sessionRootDir: this.sessionRootDir(),
-        permissionMode: permissions.permissionMode,
+        accessMode: this.tuiPermissionMode(),
       }),
       client: { name: "sparkwright-tui-workflow", version: "0.1.0" },
     });
@@ -595,7 +576,7 @@ export class RunController {
     this.wireWorkflowClientApprovals(client, {
       client,
       sessionId: workflowSessionId,
-      permissionMode: permissions.permissionMode,
+      accessMode: this.tuiPermissionMode(),
       kind: "workflow",
     });
     try {
@@ -609,9 +590,7 @@ export class RunController {
           modelNameSource: this.opts.modelNameSource,
           workflowName: input.workflowName,
           accessMode: this.tuiPermissionMode(),
-          permissionMode: permissions.permissionMode,
           traceLevel,
-          shouldWrite: permissions.shouldWrite,
           metadata: {
             ...this.runRequestMetadata({ traceLevel }),
             workflowStartSource: "tui",
@@ -626,7 +605,7 @@ export class RunController {
       const execution = Object.freeze({
         kind: "workflow" as const,
         sessionId: workflowSessionId,
-        permissionMode: permissions.permissionMode,
+        accessMode: this.tuiPermissionMode(),
         runId: started.runId,
         workflowRunId: started.workflowRunId,
       });
@@ -665,7 +644,7 @@ export class RunController {
       spawn: resolveHostStdioSpawn({
         workspaceRoot: this.opts.workspaceRoot,
         sessionRootDir: this.sessionRootDir(),
-        permissionMode: this.coreRunFields().permissionMode,
+        accessMode: authorization.accessMode,
       }),
       client: { name: "sparkwright-tui-workflow", version: "0.1.0" },
     });
@@ -680,7 +659,7 @@ export class RunController {
     this.wireWorkflowClientApprovals(client, {
       client,
       sessionId: workflowSessionId,
-      permissionMode: permissionModeFromWorkflowAuthorization(authorization),
+      accessMode: authorization.accessMode,
       kind: "workflow",
       workflowRunId: input.workflow.id,
     });
@@ -699,7 +678,6 @@ export class RunController {
           // snapshot (see WorkflowRunSnapshot.authorizationSnapshot); the host
           // re-applies them from the persisted record on resume.
           confidentialDefaults: authorization.confidentialDefaults,
-          shouldWrite: authorization.shouldWrite,
           metadata: {
             ...this.runRequestMetadata({ traceLevel }),
             workflowResumeSource: "tui",
@@ -717,7 +695,7 @@ export class RunController {
       const execution = Object.freeze({
         kind: "workflow" as const,
         sessionId: workflowSessionId,
-        permissionMode: permissionModeFromWorkflowAuthorization(authorization),
+        accessMode: authorization.accessMode,
         runId: started.runId,
         workflowRunId: input.workflow.id,
       });
@@ -775,9 +753,9 @@ export class RunController {
         workspaceId: this.opts.workspaceRoot,
         sessionId: workflow.sessionId,
         source,
-        idempotencyKey: `tui-cancel-${workflow.id}-${workflow.generation ?? 0}`,
+        idempotencyKey: `tui-cancel-${workflow.id}-${workflow.generation}`,
         expected: {
-          generation: workflow.generation ?? 0,
+          generation: workflow.generation,
           status: workflow.status,
           ...(workflow.wait?.id ? { waitId: workflow.wait.id } : {}),
         },
@@ -889,7 +867,7 @@ export class RunController {
     const spawn = resolveHostStdioSpawn({
       workspaceRoot: this.opts.workspaceRoot,
       sessionRootDir: this.sessionRootDir(),
-      permissionMode: this.coreRunFields().permissionMode,
+      accessMode: this.tuiPermissionMode(),
     });
     this.clientPromise = createClient({
       spawn,
@@ -920,7 +898,7 @@ export class RunController {
       source: "tui",
       sessionId: this.sessionId,
       traceLevel: this.opts.traceLevel ?? "standard",
-      shouldWrite: this.shouldWrite(),
+      accessMode: this.tuiPermissionMode(),
       metadata: this.runRequestMetadata(),
     });
     if (!result.tracePath) return;
@@ -957,16 +935,13 @@ export class RunController {
     input: { traceLevel?: TraceLevel } = {},
   ): Record<string, unknown> {
     const traceLevel = input.traceLevel ?? this.opts.traceLevel ?? "standard";
-    const permissions = this.coreRunFields();
     return {
       ...createHostClientRunMetadata({
         source: "tui",
         sessionId: this.sessionId,
         workspaceRoot: this.opts.workspaceRoot,
         accessMode: this.tuiPermissionMode(),
-        permissionMode: permissions.permissionMode,
         traceLevel,
-        shouldWrite: permissions.shouldWrite,
         modelName: this.opts.modelName,
       }),
       ...runInputMetadataRecord(this.pendingRunInput()),
@@ -976,10 +951,6 @@ export class RunController {
   private pendingRunInput(): RunInputPayload | undefined {
     if (this.pendingInputParts.length === 0) return undefined;
     return createRunInputPayloadFromParts(this.pendingInputParts);
-  }
-
-  private shouldWrite(): boolean {
-    return this.coreRunFields().shouldWrite;
   }
 
   private tuiPermissionMode(): TuiPermissionMode {
@@ -1031,15 +1002,13 @@ export class RunController {
     );
 
     client.on("run.continuation", (msg) => {
-      // The todo supervisor superseded the prior run with a fresh one because
-      // todos were still open. The turn is NOT over: re-point at the new runId
-      // and keep "running" (the host suppresses the intermediate run.completed,
-      // so no terminal arrives until the chain truly ends). Show a calm divider.
+      // A durable Workflow started a fresh Core episode; the logical execution
+      // is still active and only the final episode emits the terminal event.
       this.activeRunId = msg.payload.runId;
       this.cancelRequested = false;
       this.store.setStatus("running");
       this.store.appendNotice(
-        `previous answer provisional · continuing (#${msg.payload.continuationCount}) — todos unfinished`,
+        `workflow continuing in episode #${msg.payload.continuationCount + 1}`,
       );
     });
 
@@ -1047,28 +1016,16 @@ export class RunController {
       this.activeRunId = null;
       this.cleanupExecution(client);
       this.store.setStopReason(msg.payload.stopReason ?? null);
-      const handoff = msg.payload.todoHandoff;
-      if (handoff) {
-        // The chain stopped with todos still open (limit/stalled/non-resumable).
-        // Surface it distinctly from a clean finish so the user knows work
-        // remains and why it was handed back.
-        this.store.appendNotice(`handed back: ${handoff.message}`);
+      const terminalState = msg.payload.state;
+      const userCancelled =
+        msg.payload.stopReason === "manual_cancelled" ||
+        msg.payload.stopReason === "user_cancelled";
+      if (userCancelled) {
         this.store.setStatus("done");
+      } else if (terminalState === "failed" || terminalState === "cancelled") {
+        this.store.setError(runFailureMessage(msg.payload));
       } else {
-        const terminalState = msg.payload.state;
-        const userCancelled =
-          msg.payload.stopReason === "manual_cancelled" ||
-          msg.payload.stopReason === "user_cancelled";
-        if (userCancelled) {
-          this.store.setStatus("done");
-        } else if (
-          terminalState === "failed" ||
-          terminalState === "cancelled"
-        ) {
-          this.store.setError(runFailureMessage(msg.payload));
-        } else {
-          this.store.setStatus("done");
-        }
+        this.store.setStatus("done");
       }
     });
 
@@ -1119,7 +1076,7 @@ export class RunController {
     const details = (msg.payload.details ?? {}) as Record<string, unknown>;
     const action = msg.payload.action;
     const policyDecision = resolveHostClientApprovalByPolicy(
-      { permissionMode: execution.permissionMode },
+      { accessMode: execution.accessMode },
       {
         approvalId: msg.payload.approvalId,
         runId: msg.payload.runId,
@@ -1275,14 +1232,6 @@ export class RunController {
     );
     if (removedActive) this.showNextApproval();
   }
-}
-
-function permissionModeFromWorkflowAuthorization(
-  authorization: NonNullable<WorkflowRunSnapshot["authorizationSnapshot"]>,
-): PermissionMode {
-  if (authorization.accessMode === "bypass") return "bypass_permissions";
-  if (authorization.accessMode === "accept-edits") return "accept_edits";
-  return "default";
 }
 
 function validateSessionId(id: string): string {

@@ -211,8 +211,10 @@ inspection never triggers an approval prompt:
 - `create_agent` — `create` / `update` / `replace` / `remove`. Manages one
   `.sparkwright/agents/<name>.md` file through the normal workspace-write
   approval path. Create/update/replace require a prompt; replace also requires a
-  reason. Remove deletes that exact Markdown Agent. Explicit config profiles
-  remain human/CLI-owned governance and are not mutated by this model tool.
+  reason. Omit `model` or pass `model: "inherit"` for inheritance; the marker
+  is not persisted. Remove deletes that exact Markdown Agent. Explicit config
+  profiles remain human/CLI-owned governance and are not mutated by this model
+  tool.
 
 Skills follow the same split: `list_skills` (`list` / `validate`, read-only)
 and `create_skill` (`create`, writes a SKILL.md, requires approval).
@@ -248,7 +250,7 @@ first implementation keeps every delegate visible and leaves policy unchanged.
 
 `capabilities.agents.enableParallelDelegates: true` exposes
 `delegate_parallel`, a foreground fan-out tool for configured in-process
-delegates. It targets agents by `agentId` (preferred) or legacy `toolName`,
+delegates. It targets agents by `agentId`,
 starts multiple read-only delegates concurrently, and waits for all children to
 finish. Version 1 rejects ACP delegates, external-command delegates,
 workspace-writing delegates, and delegates with shell access.

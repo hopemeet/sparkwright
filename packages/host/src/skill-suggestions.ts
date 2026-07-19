@@ -75,7 +75,7 @@ export function collectSkillEvidenceSuggestions(input: {
   for (const finding of input.findings) {
     if (!SUGGESTIBLE_CODES.has(finding.code)) continue;
     if (activeProposalSkills.has(finding.skillName)) continue;
-    const key = `${finding.skillName}|${finding.code}|${finding.packageHash ?? "legacy"}`;
+    const key = `${finding.skillName}|${finding.code}|${finding.packageHash}`;
     if (seen.has(key)) continue;
     seen.add(key);
     const suggestionId = `suggestion:${key}`;

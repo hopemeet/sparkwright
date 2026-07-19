@@ -8,7 +8,7 @@ be built (npm install && npm run build) before using this script.
 Usage:
     python run_agent.py "your goal here"
     python run_agent.py "inspect this repo" --workspace ../../examples/repo-pilot
-    python run_agent.py "inspect and update README" --workspace ../../examples/repo-pilot --write --yes
+    python run_agent.py "inspect and update README" --workspace ../../examples/repo-pilot --access-mode bypass
     python run_agent.py "inspect this repo" --trace-level debug
 
 Exit codes:
@@ -111,14 +111,23 @@ def _resolve_cli_cmd(project_root: Path) -> list[str]:
 
 
 def _find_latest_run_dir(workspace: Path) -> Optional[Path]:
-    """Return the most recently modified run directory under the workspace."""
-    runs_dir = workspace / ".sparkwright" / "runs"
-    if not runs_dir.is_dir():
+    """Return the most recently modified canonical session run directory."""
+    sessions_dir = workspace / ".sparkwright" / "sessions"
+    if not sessions_dir.is_dir():
         return None
-    candidates = [d for d in runs_dir.iterdir() if d.is_dir()]
+    candidates = [
+        path
+        for path in sessions_dir.glob("*/agents/*/runs/*")
+        if path.is_dir()
+    ]
     if not candidates:
         return None
     return max(candidates, key=lambda d: d.stat().st_mtime)
+
+
+def _trace_path_for_run_dir(run_dir: Path) -> Path:
+    """Return the aggregate session trace for a canonical run directory."""
+    return run_dir.parents[3] / "trace.jsonl"
 
 
 def _read_jsonl(path: Path) -> list[dict]:
@@ -209,7 +218,7 @@ def _print_result(result_data: dict, run_dir: Path) -> None:
     if message:
         print(f"  message:     {message}")
     print(f"  run dir:     {run_dir}")
-    print(f"  trace:       {run_dir / 'trace.jsonl'}")
+    print(f"  trace:       {_trace_path_for_run_dir(run_dir)}")
     print(f"  result.json: {run_dir / 'result.json'}")
 
 
@@ -225,7 +234,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         epilog=(
             "Examples:\n"
             '  python run_agent.py "inspect this repo"\n'
-            '  python run_agent.py "improve README" --workspace ../../examples/repo-pilot --write --yes\n'
+            '  python run_agent.py "improve README" --workspace ../../examples/repo-pilot --access-mode bypass\n'
             '  python run_agent.py "audit code quality" --trace-level debug'
         ),
     )
@@ -242,14 +251,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
-        "--write",
-        action="store_true",
-        help="Allow the agent to write files (passes --write to sparkwright).",
-    )
-    parser.add_argument(
-        "--yes",
-        action="store_true",
-        help="Auto-approve all approval gates (passes --yes to sparkwright).",
+        "--access-mode",
+        choices=["read-only", "ask", "accept-edits", "bypass"],
+        default="read-only",
+        help="Run autonomy preset passed to sparkwright (default: read-only).",
     )
     parser.add_argument(
         "--trace-level",
@@ -326,10 +331,7 @@ def main(argv: list[str]) -> int:
     cmd = cli_cmd + ["run", args.goal]
     cmd += ["--workspace", str(workspace)]
     cmd += ["--trace-level", args.trace_level]
-    if args.write:
-        cmd.append("--write")
-    if args.yes:
-        cmd.append("--yes")
+    cmd += ["--access-mode", args.access_mode]
 
     print(f"Running: {' '.join(cmd)}")
     print(f"Workspace: {workspace}")
@@ -370,7 +372,7 @@ def main(argv: list[str]) -> int:
     run_dir = _find_latest_run_dir(workspace)
     if run_dir is None:
         print(
-            f"\nERROR: No run output found under {workspace / '.sparkwright' / 'runs'}.\n"
+            f"\nERROR: No run output found under {workspace / '.sparkwright' / 'sessions'}.\n"
             "The CLI may have failed before creating the run directory.\n"
             "Check the output above for clues.",
             file=sys.stderr,
@@ -378,7 +380,7 @@ def main(argv: list[str]) -> int:
         return EXIT_SETUP_ERROR
 
     result_path = run_dir / "result.json"
-    trace_path = run_dir / "trace.jsonl"
+    trace_path = _trace_path_for_run_dir(run_dir)
 
     result_data: dict = {}
     if result_path.exists():

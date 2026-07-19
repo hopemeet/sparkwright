@@ -113,13 +113,15 @@ describe("loadHostConfig", () => {
     const cwd = await makeTempDir();
     try {
       await writeUserConfig(xdg, {
-        providers: {
-          openai: {
-            apiKey: "sk-test",
-            providerOptions: { openai: { reasoningSummary: "auto" } },
-            models: {
-              "gpt-5.4-nano": {
-                providerOptions: { openai: "auto" },
+        identity: {
+          providers: {
+            openai: {
+              apiKey: "sk-test",
+              providerOptions: { openai: { reasoningSummary: "auto" } },
+              models: {
+                "gpt-5.4-nano": {
+                  providerOptions: { openai: "auto" },
+                },
               },
             },
           },
@@ -148,16 +150,18 @@ describe("loadHostConfig", () => {
     const cwd = await makeTempDir();
     try {
       await writeUserConfig(xdg, {
-        providers: {
-          openai: {
-            apiKey: "sk-test",
-            extra: true,
-            models: {
-              "gpt-5.4-nano": {
-                extra: true,
-                cost: {
-                  input: 1,
-                  unexpected: 2,
+        identity: {
+          providers: {
+            openai: {
+              apiKey: "sk-test",
+              extra: true,
+              models: {
+                "gpt-5.4-nano": {
+                  extra: true,
+                  cost: {
+                    input: 1,
+                    unexpected: 2,
+                  },
                 },
               },
             },
@@ -189,17 +193,21 @@ describe("loadHostConfig", () => {
     }
   });
 
-  it("reads shared fields and applies them, ignoring UI-only keys", async () => {
+  it("reads identity and UI fields through the shared loader", async () => {
     const xdg = await makeTempDir();
     const cwd = await makeTempDir();
     try {
       await writeUserConfig(xdg, {
-        model: "openai/gpt-x",
-        providers: {
-          openai: { baseURL: "https://example.test/v1", apiKey: "sk-test" },
+        identity: {
+          model: "openai/gpt-x",
+          providers: {
+            openai: {
+              baseURL: "https://example.test/v1",
+              apiKey: "sk-test",
+            },
+          },
         },
-        // UI-only field the host loader must ignore without erroring:
-        theme: "light",
+        ui: { theme: "light", mouse: false, vim: true },
       });
       const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
       expect(loaded.errors).toEqual([]);
@@ -208,6 +216,9 @@ describe("loadHostConfig", () => {
         "https://example.test/v1",
       );
       expect(loaded.config.providers?.openai?.apiKey).toBe("sk-test");
+      expect(loaded.config.theme).toBe("light");
+      expect(loaded.config.mouse).toBe(false);
+      expect(loaded.config.vim).toBe(true);
     } finally {
       await rm(xdg, { recursive: true, force: true });
       await rm(cwd, { recursive: true, force: true });
@@ -331,13 +342,15 @@ describe("loadHostConfig", () => {
     const cwd = await makeTempDir();
     try {
       await writeUserConfig(xdg, {
-        model: "openai/user-model",
-        providers: { openai: { apiKey: "sk-user" } },
+        identity: {
+          model: "openai/user-model",
+          providers: { openai: { apiKey: "sk-user" } },
+        },
       });
       await mkdir(join(cwd, ".sparkwright"), { recursive: true });
       await writeFile(
         join(cwd, ".sparkwright", "config.json"),
-        JSON.stringify({ model: "openai/project-model" }),
+        JSON.stringify({ identity: { model: "openai/project-model" } }),
         "utf8",
       );
       const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
@@ -397,7 +410,7 @@ describe("loadHostConfig", () => {
       await writeUserConfig(xdg, {
         capabilities: {
           tools: {
-            disabled: ["shell"],
+            disabled: ["bash"],
           },
         },
       });
@@ -471,8 +484,8 @@ describe("loadHostConfig", () => {
       await writeUserConfig(xdg, {
         tools: {
           use: ["workspace.read", "mcp"],
-          allowed: ["read_file", "shell", "edit_anchored_text"],
-          disabled: ["shell"],
+          allowed: ["read", "bash", "edit_anchored_text"],
+          disabled: ["bash"],
           defer: ["todo_write", "read_anchored_text"],
         },
       });
@@ -482,7 +495,7 @@ describe("loadHostConfig", () => {
         JSON.stringify({
           tools: {
             use: ["workspace.read", "mcp:demo"],
-            allowed: ["read_file", "grep", "edit_anchored_text"],
+            allowed: ["read", "grep", "edit_anchored_text"],
             disabled: ["grep"],
             defer: ["edit_anchored_text"],
           },
@@ -528,7 +541,7 @@ describe("loadHostConfig", () => {
     const cwd = await makeTempDir();
     try {
       await writeUserConfig(xdg, {
-        shell: {
+        policy: {
           sandbox: {
             mode: "enforce",
             failIfUnavailable: true,
@@ -570,8 +583,8 @@ describe("loadHostConfig", () => {
       await writeUserConfig(xdg, {
         shell: {
           foregroundTimeoutMs: 300_000,
-          sandbox: { mode: "warn" },
         },
+        policy: { sandbox: { mode: "warn" } },
       });
       let loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
       expect(loaded.errors).toEqual([]);
@@ -605,7 +618,7 @@ describe("loadHostConfig", () => {
     const cwd = await makeTempDir();
     try {
       await writeUserConfig(xdg, {
-        shell: {
+        policy: {
           sandbox: {
             mode: "enforce",
             failIfUnavailable: true,
@@ -624,7 +637,7 @@ describe("loadHostConfig", () => {
       await writeFile(
         join(cwd, ".sparkwright", "config.json"),
         JSON.stringify({
-          shell: {
+          policy: {
             sandbox: {
               mode: "off",
               failIfUnavailable: false,
@@ -667,11 +680,11 @@ describe("loadHostConfig", () => {
     const xdg = await makeTempDir();
     const cwd = await makeTempDir();
     try {
-      await writeUserConfig(xdg, { accessMode: "ask" });
+      await writeUserConfig(xdg, { run: { accessMode: "ask" } });
       await mkdir(join(cwd, ".sparkwright"), { recursive: true });
       await writeFile(
         join(cwd, ".sparkwright", "config.json"),
-        JSON.stringify({ accessMode: "bypass" }),
+        JSON.stringify({ run: { accessMode: "bypass" } }),
         "utf8",
       );
 
@@ -682,8 +695,6 @@ describe("loadHostConfig", () => {
       expect(loaded.config.accessModeCeiling).toBe("bypass");
       expect(loaded.sources.accessMode).toContain("user");
       expect(loaded.sources.accessModeCeiling).toContain("project");
-      expect(loaded.config.permissionMode).toBe("default");
-      expect(loaded.sources.permissionMode).toContain("user");
       expect(loaded.warnings).toEqual([]);
     } finally {
       await rm(xdg, { recursive: true, force: true });
@@ -695,12 +706,12 @@ describe("loadHostConfig", () => {
     const xdg = await makeTempDir();
     const cwd = await makeTempDir();
     try {
-      await writeUserConfig(xdg, { accessMode: "bypass" });
+      await writeUserConfig(xdg, { run: { accessMode: "bypass" } });
       await mkdir(join(cwd, ".sparkwright"), { recursive: true });
       const projectConfig = join(cwd, ".sparkwright", "config.json");
       await writeFile(
         projectConfig,
-        JSON.stringify({ accessMode: "ask" }),
+        JSON.stringify({ run: { accessMode: "ask" } }),
         "utf8",
       );
 
@@ -710,8 +721,6 @@ describe("loadHostConfig", () => {
       expect(loaded.config.accessMode).toBe("ask");
       expect(loaded.config.accessModeCeiling).toBe("ask");
       expect(loaded.sources.accessMode).toContain("project");
-      expect(loaded.config.permissionMode).toBe("default");
-      expect(loaded.sources.permissionMode).toContain("project");
       expect(loaded.warnings).toEqual([
         expect.objectContaining({
           file: projectConfig,
@@ -763,12 +772,14 @@ describe("loadHostConfig", () => {
     const xdg = await makeTempDir();
     const cwd = await makeTempDir();
     try {
-      await writeUserConfig(xdg, { confidentialPaths: ["secrets/**", ".env"] });
+      await writeUserConfig(xdg, {
+        policy: { confidentialPaths: ["secrets/**", ".env"] },
+      });
       await mkdir(join(cwd, ".sparkwright"), { recursive: true });
       await writeFile(
         join(cwd, ".sparkwright", "config.json"),
         // A project config trying to blank out the user's read-confidentiality.
-        JSON.stringify({ confidentialPaths: ["internal/**"] }),
+        JSON.stringify({ policy: { confidentialPaths: ["internal/**"] } }),
         "utf8",
       );
 
@@ -790,13 +801,17 @@ describe("loadHostConfig", () => {
     const xdg = await makeTempDir();
     const cwd = await makeTempDir();
     try {
-      await writeUserConfig(xdg, { confidentialDefaults: true });
+      await writeUserConfig(xdg, {
+        policy: { confidentialDefaults: true },
+      });
       await mkdir(join(cwd, ".sparkwright"), { recursive: true });
       await writeFile(
         join(cwd, ".sparkwright", "config.json"),
         JSON.stringify({
-          policy: { confidentialDefaults: false },
-          confidentialPaths: ["internal/**"],
+          policy: {
+            confidentialDefaults: false,
+            confidentialPaths: ["internal/**"],
+          },
         }),
         "utf8",
       );
@@ -818,7 +833,9 @@ describe("loadHostConfig", () => {
     const cwd = await makeTempDir();
     try {
       await writeUserConfig(xdg, {
-        write: { maxFiles: 4, maxDiffLines: 200, allowDeletions: true },
+        policy: {
+          write: { maxFiles: 4, maxDiffLines: 200, allowDeletions: true },
+        },
       });
       await mkdir(join(cwd, ".sparkwright"), { recursive: true });
       await writeFile(
@@ -826,7 +843,9 @@ describe("loadHostConfig", () => {
         // Project tightens maxFiles down and forbids deletions; it tries to
         // loosen maxDiffLines up (ignored — the smaller value wins).
         JSON.stringify({
-          write: { maxFiles: 1, maxDiffLines: 500, allowDeletions: false },
+          policy: {
+            write: { maxFiles: 1, maxDiffLines: 500, allowDeletions: false },
+          },
         }),
         "utf8",
       );
@@ -845,7 +864,7 @@ describe("loadHostConfig", () => {
     }
   });
 
-  it("reads the grouped config form and normalizes it to the flat shape", async () => {
+  it("loads the canonical grouped config into the internal carrier", async () => {
     const xdg = await makeTempDir();
     const cwd = await makeTempDir();
     try {
@@ -864,9 +883,13 @@ describe("loadHostConfig", () => {
           budget: { maxModelCalls: 12 },
           maxSteps: 30,
           traceLevel: "debug",
-          approvals: { shellSafe: true, cronMode: "accept_edits" },
         },
-        ui: { theme: "dark" },
+        ui: {
+          theme: "dark",
+          mouse: false,
+          keybindings: { "help.open": "ctrl+h" },
+          vim: true,
+        },
       });
       const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
 
@@ -874,17 +897,16 @@ describe("loadHostConfig", () => {
       expect(loaded.config.model).toBe("openai/gpt-x");
       expect(loaded.config.providers?.openai?.apiKey).toBe("sk-test");
       expect(loaded.config.accessMode).toBe("ask");
-      expect(loaded.config.permissionMode).toBe("default");
       expect(loaded.config.confidentialPaths).toEqual(["secrets/**"]);
       expect(loaded.config.write).toEqual({ maxFiles: 2 });
       expect(loaded.config.shell?.sandbox?.mode).toBe("warn");
       expect(loaded.config.runBudget).toEqual({ maxModelCalls: 12 });
       expect(loaded.config.maxSteps).toBe(30);
       expect(loaded.config.traceLevel).toBe("debug");
-      expect(loaded.config.approvals).toEqual({
-        shellSafe: true,
-        cronMode: "accept_edits",
-      });
+      expect(loaded.config.theme).toBe("dark");
+      expect(loaded.config.mouse).toBe(false);
+      expect(loaded.config.keybindings).toEqual({ "help.open": "ctrl+h" });
+      expect(loaded.config.vim).toBe(true);
     } finally {
       await rm(xdg, { recursive: true, force: true });
       await rm(cwd, { recursive: true, force: true });
@@ -945,7 +967,7 @@ describe("loadHostConfig", () => {
       await mkdir(join(cwd, ".sparkwright"), { recursive: true });
       await writeFile(
         join(cwd, ".sparkwright", "config.json"),
-        JSON.stringify({ model: "openai/json-model" }),
+        JSON.stringify({ identity: { model: "openai/json-model" } }),
         "utf8",
       );
       await writeFile(
@@ -969,23 +991,27 @@ describe("loadHostConfig", () => {
     }
   });
 
-  it("reports a conflict when grouped and flat keys are both set, preferring grouped", async () => {
+  it("rejects removed root-level aliases instead of silently ignoring them", async () => {
     const xdg = await makeTempDir();
     const cwd = await makeTempDir();
     try {
       await writeUserConfig(xdg, {
         model: "openai/flat-model",
-        identity: { model: "openai/grouped-model" },
+        accessMode: "ask",
+        shell: { sandbox: { mode: "warn" } },
       });
       const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
 
-      expect(loaded.config.model).toBe("openai/grouped-model");
-      expect(loaded.errors).toEqual([
-        expect.objectContaining({
-          field: "identity.model",
-          message: expect.stringContaining('conflicts with top-level "model"'),
-        }),
-      ]);
+      expect(loaded.config.model).toBeUndefined();
+      expect(loaded.config.accessMode).toBeUndefined();
+      expect(loaded.config.shell?.sandbox).toBeUndefined();
+      expect(loaded.errors).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ field: "model" }),
+          expect.objectContaining({ field: "accessMode" }),
+          expect.objectContaining({ field: "shell.sandbox" }),
+        ]),
+      );
     } finally {
       await rm(xdg, { recursive: true, force: true });
       await rm(cwd, { recursive: true, force: true });
@@ -1004,28 +1030,6 @@ describe("loadHostConfig", () => {
         expect.objectContaining({
           field: "run.bogus",
           message: expect.stringContaining("unknown field"),
-        }),
-      ]);
-    } finally {
-      await rm(xdg, { recursive: true, force: true });
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
-
-  it("rejects invalid approval cronMode values", async () => {
-    const xdg = await makeTempDir();
-    const cwd = await makeTempDir();
-    try {
-      await writeUserConfig(xdg, {
-        run: { approvals: { cronMode: "always" } },
-      });
-      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
-
-      expect(loaded.config.approvals).toEqual({});
-      expect(loaded.errors).toEqual([
-        expect.objectContaining({
-          field: "approvals.cronMode",
-          message: expect.stringContaining("must be one of"),
         }),
       ]);
     } finally {
@@ -1095,7 +1099,7 @@ describe("loadHostConfig", () => {
     const cwd = await makeTempDir();
     try {
       await writeUserConfig(xdg, {
-        shell: {
+        policy: {
           sandbox: {
             mode: "warn",
             filesystem: {
@@ -1110,7 +1114,7 @@ describe("loadHostConfig", () => {
       await writeFile(
         join(cwd, ".sparkwright", "config.json"),
         JSON.stringify({
-          shell: {
+          policy: {
             sandbox: {
               mode: "enforce",
               filesystem: {
@@ -1151,8 +1155,8 @@ describe("loadHostConfig", () => {
     const cwd = await makeTempDir();
     try {
       await writeUserConfig(xdg, {
-        traceLevel: "verbose",
-        shell: {
+        run: { traceLevel: "verbose" },
+        policy: {
           sandbox: {
             mode: "audit",
             network: { mode: "maybe" },
@@ -1172,11 +1176,11 @@ describe("loadHostConfig", () => {
             message: "must be one of standard | debug",
           }),
           expect.objectContaining({
-            field: "shell.sandbox.mode",
+            field: "policy.sandbox.mode",
             message: "must be off, warn, or enforce",
           }),
           expect.objectContaining({
-            field: "shell.sandbox.network.mode",
+            field: "policy.sandbox.network.mode",
             message: "must be allow or deny",
           }),
         ]),
@@ -1202,7 +1206,7 @@ describe("loadHostConfig", () => {
                 hook: "PreToolUse",
                 frequency: "always",
                 matcher: {
-                  toolName: "write_file",
+                  toolName: "write",
                   pathGlob: "generated/**",
                   excludePathGlob: "generated/fixtures/**",
                 },
@@ -1214,7 +1218,7 @@ describe("loadHostConfig", () => {
               {
                 name: "test-after-write",
                 hook: "PostToolUse",
-                matcher: { toolName: ["write_file", "apply_patch"] },
+                matcher: { toolName: ["write", "edit"] },
                 action: {
                   type: "command",
                   command: "npm",
@@ -1267,7 +1271,7 @@ describe("loadHostConfig", () => {
           hook: "PreToolUse",
           frequency: "always",
           matcher: {
-            toolName: "write_file",
+            toolName: "write",
             pathGlob: "generated/**",
             excludePathGlob: "generated/fixtures/**",
           },
@@ -1279,7 +1283,7 @@ describe("loadHostConfig", () => {
         {
           name: "test-after-write",
           hook: "PostToolUse",
-          matcher: { toolName: ["write_file", "apply_patch"] },
+          matcher: { toolName: ["write", "edit"] },
           action: {
             type: "command",
             command: "npm",
@@ -1579,7 +1583,7 @@ describe("loadHostConfig", () => {
                 trigger: ["run.completed", "tool.failed"],
                 action: {
                   type: "agent",
-                  toolName: "delegate_parallel",
+                  agentId: "reviewer",
                   goal: "summarize failure",
                 },
               },
@@ -1602,7 +1606,7 @@ describe("loadHostConfig", () => {
           }),
           expect.objectContaining({
             field: "capabilities.hooks.events.2.action.agentId",
-            message: "agent actions require agentId or toolName",
+            message: "agent actions require agentId",
           }),
           expect.objectContaining({
             field: "capabilities.hooks.events.3.action.url",
@@ -1884,7 +1888,7 @@ describe("loadHostConfig", () => {
     try {
       await writeUserConfig(xdg, {
         tools: {
-          enabled: ["read_file"],
+          enabled: ["read"],
           allowed: [false],
           disabled: [false],
           defer: ["read_anchored_text"],
@@ -2037,18 +2041,18 @@ describe("loadHostConfig", () => {
               {
                 id: "main",
                 mode: "primary",
-                allowedTools: ["read_file", "delegate_reviewer"],
+                allowedTools: ["read", "delegate_reviewer"],
               },
               {
                 id: "reviewer",
                 name: "Reviewer",
                 mode: "child",
                 prompt: "Review the current run.",
-                allowedTools: ["read_file"],
+                allowedTools: ["read"],
                 hooks: {
                   PreToolUse: [
                     {
-                      matcher: "shell",
+                      matcher: "bash",
                       action: {
                         type: "block",
                         reason: "reviewer cannot use shell",
@@ -2099,7 +2103,7 @@ describe("loadHostConfig", () => {
             {
               name: "reviewer.PreToolUse.0",
               hook: "PreToolUse",
-              matcher: { toolName: "shell" },
+              matcher: { toolName: "bash" },
               action: {
                 type: "block",
                 reason: "reviewer cannot use shell",
@@ -2146,6 +2150,7 @@ describe("loadHostConfig", () => {
           },
           agents: {
             unexpected: true,
+            exposeChildrenAsDelegates: true,
             spawnModel: "",
             delegateModel: 123,
             exposure: "everything",
@@ -2180,6 +2185,9 @@ describe("loadHostConfig", () => {
             field: "capabilities.agents.unexpected",
           }),
           expect.objectContaining({
+            field: "capabilities.agents.exposeChildrenAsDelegates",
+          }),
+          expect.objectContaining({
             field: "capabilities.agents.spawnModel",
           }),
           expect.objectContaining({
@@ -2207,18 +2215,17 @@ describe("loadHostConfig", () => {
     const cwd = await makeTempDir();
     try {
       await writeUserConfig(xdg, {
-        model: 123,
-        providers: "nope",
-        accessMode: "always",
+        identity: { model: 123, providers: "nope" },
+        run: { accessMode: "always", maxSteps: 0 },
+        policy: {
+          confidentialDefaults: "false",
+          confidentialPaths: ["secrets/**", ""],
+        },
         workspace: "",
-        confidentialDefaults: "false",
-        confidentialPaths: ["secrets/**", ""],
-        maxSteps: 0,
       });
       const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
       expect(loaded.config.model).toBeUndefined();
       expect(loaded.config.accessMode).toBeUndefined();
-      expect(loaded.config.permissionMode).toBeUndefined();
       expect(loaded.config.workspace).toBeUndefined();
       expect(loaded.config.confidentialDefaults).toBeUndefined();
       expect(loaded.config.confidentialPaths).toBeUndefined();
@@ -2232,33 +2239,6 @@ describe("loadHostConfig", () => {
           expect.objectContaining({ field: "confidentialDefaults" }),
           expect.objectContaining({ field: "confidentialPaths" }),
           expect.objectContaining({ field: "maxSteps" }),
-        ]),
-      );
-    } finally {
-      await rm(xdg, { recursive: true, force: true });
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
-
-  it("reports removed permission mode config fields instead of ignoring them", async () => {
-    const xdg = await makeTempDir();
-    const cwd = await makeTempDir();
-    try {
-      await writeUserConfig(xdg, {
-        permissionMode: "bypass_permissions",
-        policy: { permissionMode: "plan" },
-        tuiPermissionMode: "bypass",
-        ui: { tuiPermissionMode: "accept-edits" },
-      });
-
-      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
-
-      expect(loaded.errors).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ field: "permissionMode" }),
-          expect.objectContaining({ field: "policy.permissionMode" }),
-          expect.objectContaining({ field: "tuiPermissionMode" }),
-          expect.objectContaining({ field: "ui.tuiPermissionMode" }),
         ]),
       );
     } finally {
@@ -2391,7 +2371,7 @@ describe("loadHostConfig", () => {
                       },
                     },
                     {
-                      matcher: "shell",
+                      matcher: "bash",
                       action: {
                         type: "agent",
                         goal: "nested delegate",
@@ -2399,7 +2379,7 @@ describe("loadHostConfig", () => {
                     },
                     "not-an-object",
                     {
-                      matcher: "shell",
+                      matcher: "bash",
                       action: {
                         type: "block",
                         reason: "valid block",
@@ -2420,7 +2400,7 @@ describe("loadHostConfig", () => {
           {
             name: "reviewer.PreToolUse.3",
             hook: "PreToolUse",
-            matcher: { toolName: "shell" },
+            matcher: { toolName: "bash" },
             action: {
               type: "block",
               reason: "valid block",
@@ -2551,7 +2531,7 @@ describe("loadHostConfig", () => {
                 name: "Reviewer",
                 mode: "child",
                 prompt: "Inspect files and summarize.",
-                allowedTools: ["read_file"],
+                allowedTools: ["read"],
                 maxSteps: 4,
               },
             ],

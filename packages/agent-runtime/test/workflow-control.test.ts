@@ -17,6 +17,27 @@ async function tempDir(): Promise<string> {
   return mkdtemp(join(tmpdir(), "sparkwright-workflow-control-"));
 }
 
+function workflowPin() {
+  const packageSnapshotRef = `/snapshots/${workflowRunId}`;
+  const packageHash = "sha256:workflow-control";
+  return {
+    assetName: "control",
+    layer: "project" as const,
+    packageHash,
+    packageHashPolicyVersion: 2 as const,
+    packageSnapshotRef,
+    definitionSnapshot: {
+      assetName: "control",
+      sourceDir: packageSnapshotRef,
+      layer: "project" as const,
+      packageHash,
+      packageHashPolicyVersion: 2 as const,
+      packageSnapshotRef,
+      nodes: [{ id: "main", body: "Control." }],
+    },
+  };
+}
+
 function envelope(
   overrides: Partial<WorkflowControlCommandEnvelope> = {},
 ): WorkflowControlCommandEnvelope {
@@ -178,8 +199,7 @@ describe("WorkflowControlCommandProcessor", () => {
     });
     const record = await creator!.create({
       id: workflowRunId,
-      assetName: "control",
-      contentHash: "hash",
+      ...workflowPin(),
     });
     await creator!.release();
     const inbox = new FileWorkflowControlInbox({ rootDir: root });
@@ -213,8 +233,7 @@ describe("WorkflowControlCommandProcessor", () => {
     });
     const created = await creator!.create({
       id: workflowRunId,
-      assetName: "control",
-      contentHash: "hash",
+      ...workflowPin(),
     });
     const waiting = await creator!.mutate({
       expectedRevision: created.recordRevision!,
@@ -280,8 +299,7 @@ describe("WorkflowControlCommandProcessor", () => {
     });
     await creator!.create({
       id: workflowRunId,
-      assetName: "control",
-      contentHash: "hash",
+      ...workflowPin(),
     });
     await creator!.release();
     const inbox = new FileWorkflowControlInbox({ rootDir: root });
@@ -307,8 +325,7 @@ describe("WorkflowControlCommandProcessor", () => {
     });
     const created = await writer!.create({
       id: workflowRunId,
-      assetName: "control",
-      contentHash: "hash",
+      ...workflowPin(),
     });
     const inbox = new FileWorkflowControlInbox({ rootDir: root });
     await inbox.accept(
@@ -352,12 +369,11 @@ describe("WorkflowControlCommandProcessor", () => {
     });
     const created = await creator!.create({
       id: workflowRunId,
-      assetName: "control",
-      contentHash: "hash",
+      ...workflowPin(),
       authorizationSnapshot: {
         confidentialPaths: [],
         confidentialDefaults: true,
-        shouldWrite: false,
+        accessMode: "read-only",
         backgroundTasks: "foreground-only",
       },
     });
@@ -426,8 +442,7 @@ describe("WorkflowControlCommandProcessor", () => {
     });
     const created = await creator!.create({
       id: workflowRunId,
-      assetName: "control",
-      contentHash: "hash",
+      ...workflowPin(),
     });
     const waiting = await creator!.mutate({
       expectedRevision: created.recordRevision!,
@@ -493,8 +508,7 @@ describe("WorkflowControlCommandProcessor", () => {
     });
     const record = await creator!.create({
       id: workflowRunId,
-      assetName: "control",
-      contentHash: "hash",
+      ...workflowPin(),
     });
     await creator!.release();
     const inboxA = new FileWorkflowControlInbox({ rootDir: root });

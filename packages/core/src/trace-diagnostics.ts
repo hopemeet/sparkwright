@@ -11,19 +11,22 @@ import {
   type RepeatedToolRequest,
 } from "./run-health.js";
 import {
+  analyzeCommandOutcomesFromFactLedger,
   analyzeToolOutcomes,
-  commandOutcomeSnapshot,
-  commandOutcomeSnapshotFromFactLedger,
   isPolicyOrApprovalFailure,
-  toolOutcomeSnapshot,
-  type CommandOutcomeSnapshot,
-  type ToolOutcomeSnapshot,
+  type CommandOutcomeSummary,
 } from "./run-outcome.js";
 import { isShellToolName, stableDiagnosticJson } from "./fact-classifier.js";
 import {
   factLedgerSnapshotFromUnknown,
+  projectFactLedgerSnapshot,
   type FactLedgerSnapshot,
 } from "./fact-ledger.js";
+import {
+  isResumableRunFailureReason,
+  runAssessmentFromUnknown,
+  type RunAssessment,
+} from "./run-assessment.js";
 import { serializeEventJsonl } from "./trace-codec.js";
 
 export interface TraceSummary {
@@ -37,6 +40,12 @@ export interface TraceSummary {
   agentIds: string[];
   /** @reserved Public trace-summary field consumed by multi-agent diagnostics UIs. */
   subagentIds: string[];
+  /** Whether terminal health came from persisted assessments or partial replay. */
+  assessmentObservation: {
+    completeness: "terminal" | "incomplete" | "mixed";
+    terminalRuns: number;
+    incompleteRuns: number;
+  };
   /** @reserved Public trace-summary field consumed by analytics UIs. */
   byType: Record<string, number>;
   /** @reserved Public trace-summary field consumed by analytics UIs. */
@@ -245,6 +254,7 @@ interface TraceReportFacts {
   reportableFailures: ReportableFailureLedger;
   terminalRunAnomalies: TerminalRunAnomaly[];
   incompleteSubagents: IncompleteSubagentTerminal[];
+  unhealthySubagents: UnhealthySubagentTerminal[];
   inFlightDuplicateStorms: Array<{ label: string; count: number }>;
   repeatedApprovalDenials: Array<{ label: string; count: number }>;
   untrackedWriteAccess: UntrackedWriteAccessMarker[];
@@ -362,6 +372,7 @@ function collectTraceReportFacts(
   const reportableFailures = collectReportableFailures(events);
   const terminalRunAnomalies = collectTerminalRunAnomalies(events);
   const incompleteSubagents = collectIncompleteSubagentTerminals(events);
+  const unhealthySubagents = collectUnhealthySubagentTerminals(events);
   const inFlightDuplicateStorms = collectInFlightDuplicateStorms(events);
   const repeatedApprovalDenials = collectRepeatedApprovalDenials(events);
   const untrackedWriteAccess = collectUntrackedWriteAccessMarkers(events);
@@ -389,6 +400,7 @@ function collectTraceReportFacts(
     reportableFailures,
     terminalRunAnomalies,
     incompleteSubagents,
+    unhealthySubagents,
     inFlightDuplicateStorms,
     repeatedApprovalDenials,
     untrackedWriteAccess,
@@ -537,11 +549,25 @@ function analyzeMultiAgentAuditability({
 }: TraceReportContext): TraceReportFinding[] {
   const {
     incompleteSubagents,
+    unhealthySubagents,
     inFlightDuplicateStorms,
     repeatedApprovalDenials,
     untrackedWriteAccess,
   } = facts;
   const findings: TraceReportFinding[] = [];
+
+  if (unhealthySubagents.length > 0) {
+    findings.push({
+      severity: unhealthySubagents.some((item) => item.health === "failing")
+        ? "high"
+        : "medium",
+      code: "SUBAGENT_UNHEALTHY",
+      title: "Completed sub-agent results include health caveats",
+      evidence: unhealthySubagents.slice(0, 5).map((item) => item.label),
+      recommendation:
+        "Inspect each child's persisted assessment and preserve its issue codes when using the child result; completion does not imply a clean outcome.",
+    });
+  }
 
   const unverifiedIncompleteSubagents = incompleteSubagents.filter(
     (item) => item.verifiedAfterChildWrite === undefined,
@@ -1016,13 +1042,7 @@ function taskTerminalEvidenceFromEvent(
 }
 
 function isTaskLifecycleTraceTool(toolName: string | undefined): boolean {
-  return (
-    toolName === "task_create" ||
-    toolName === "task" ||
-    toolName === "task_wait" ||
-    toolName === "task_get" ||
-    toolName === "task_list"
-  );
+  return toolName === "task_create" || toolName === "task";
 }
 
 function collectTerminalTaskRecords(
@@ -1696,6 +1716,11 @@ export function summarizeTraceJsonl(jsonl: string): TraceSummary {
     sessionIds: [],
     agentIds: [],
     subagentIds: [],
+    assessmentObservation: {
+      completeness: "incomplete",
+      terminalRuns: 0,
+      incompleteRuns: 0,
+    },
     byType,
     terminalStates,
     toolCalls,
@@ -1826,6 +1851,19 @@ export function summarizeTraceJsonl(jsonl: string): TraceSummary {
   summary.sessionIds = [...sessionIds].sort();
   summary.agentIds = [...agentIds].sort();
   summary.subagentIds = [...subagentIds].sort();
+  const assessmentRuns = eventsGroupedByRun(events).map((group) =>
+    persistedRunAssessment(group),
+  );
+  summary.assessmentObservation.terminalRuns =
+    assessmentRuns.filter(Boolean).length;
+  summary.assessmentObservation.incompleteRuns =
+    assessmentRuns.length - summary.assessmentObservation.terminalRuns;
+  summary.assessmentObservation.completeness =
+    summary.assessmentObservation.terminalRuns === assessmentRuns.length
+      ? "terminal"
+      : summary.assessmentObservation.terminalRuns === 0
+        ? "incomplete"
+        : "mixed";
   summary.workspaceReads.uniquePaths = Object.keys(workspaceReadPaths).length;
   summary.workspaceReads.duplicatePaths = Object.fromEntries(
     Object.entries(workspaceReadPaths)
@@ -1879,12 +1917,9 @@ export function parseTraceJsonl(
     .split(/\r?\n/)
     .filter((line) => line.trim() !== "")
     .map((line, index) => {
+      let raw: unknown;
       try {
-        const event = JSON.parse(line) as SparkwrightEvent;
-        return {
-          ...event,
-          metadata: isRecord(event.metadata) ? event.metadata : {},
-        };
+        raw = JSON.parse(line) as unknown;
       } catch (cause) {
         throw new Error(
           `Invalid trace event JSON in ${path} at line ${index + 1}`,
@@ -1893,7 +1928,68 @@ export function parseTraceJsonl(
           },
         );
       }
+      return canonicalTraceEvent(raw, path, index + 1);
     });
+}
+
+function canonicalTraceEvent(
+  value: unknown,
+  path: string,
+  line: number,
+): SparkwrightEvent {
+  if (!isRecord(value)) {
+    throw invalidTraceEventEnvelope(path, line, "event must be an object");
+  }
+  for (const field of ["id", "runId", "type", "timestamp"] as const) {
+    if (typeof value[field] !== "string") {
+      throw invalidTraceEventEnvelope(path, line, `${field} must be a string`);
+    }
+  }
+  if (
+    typeof value.sequence !== "number" ||
+    !Number.isInteger(value.sequence) ||
+    value.sequence < 1
+  ) {
+    throw invalidTraceEventEnvelope(
+      path,
+      line,
+      "sequence must be a positive integer",
+    );
+  }
+  if (!("payload" in value)) {
+    throw invalidTraceEventEnvelope(path, line, "payload is required");
+  }
+  if (!isRecord(value.metadata)) {
+    throw invalidTraceEventEnvelope(path, line, "metadata must be an object");
+  }
+  if (
+    value.monotonicUs !== undefined &&
+    (typeof value.monotonicUs !== "number" ||
+      !Number.isInteger(value.monotonicUs) ||
+      value.monotonicUs < 0)
+  ) {
+    throw invalidTraceEventEnvelope(
+      path,
+      line,
+      "monotonicUs must be a non-negative integer",
+    );
+  }
+  for (const field of ["traceId", "spanId", "parentSpanId"] as const) {
+    if (value[field] !== undefined && typeof value[field] !== "string") {
+      throw invalidTraceEventEnvelope(path, line, `${field} must be a string`);
+    }
+  }
+  return value as unknown as SparkwrightEvent;
+}
+
+function invalidTraceEventEnvelope(
+  path: string,
+  line: number,
+  detail: string,
+): Error {
+  return new Error(
+    `Invalid trace event envelope in ${path} at line ${line}: ${detail}`,
+  );
 }
 
 /**
@@ -2114,11 +2210,12 @@ function collectReportableFailures(
   const failures: ReportableFailure[] = [];
   const byCode: Record<string, number> = {};
 
-  for (const event of events) {
+  for (const [index, event] of events.entries()) {
     if (isExpectedDenialEvent(event)) continue;
     if (!isTraceErrorEvent(event)) continue;
     if (event.type === "tool.failed") continue;
     if (isToolFailureCompanionEvent(event, toolFailureCallIds)) continue;
+    if (isSupersededResumableRunFailure(events, index)) continue;
 
     const code = traceErrorCode(event) ?? event.type;
     failures.push({
@@ -2130,6 +2227,45 @@ function collectReportableFailures(
   }
 
   return { failures, byCode };
+}
+
+function isSupersededResumableRunFailure(
+  events: readonly SparkwrightEvent[],
+  index: number,
+): boolean {
+  const event = events[index];
+  if (event?.type !== "run.failed" || !isRecord(event.payload)) return false;
+  const assessment = runAssessmentFromUnknown(event.payload.assessment);
+  const resumable = assessment?.issues.some(
+    (issue) =>
+      issue.kind === "run_failure" &&
+      typeof issue.details?.reason === "string" &&
+      isResumableRunFailureReason(issue.details.reason),
+  );
+  if (!resumable) return false;
+  const workflowRunId = workflowRunIdForTraceRun(events, event.runId);
+  if (!workflowRunId) return false;
+  return events
+    .slice(index + 1)
+    .some(
+      (candidate) =>
+        candidate.runId !== event.runId &&
+        isRunTerminalEvent(candidate) &&
+        workflowRunIdForTraceRun(events, candidate.runId) === workflowRunId,
+    );
+}
+
+function workflowRunIdForTraceRun(
+  events: readonly SparkwrightEvent[],
+  runId: string,
+): string | undefined {
+  for (const event of events) {
+    if (event.runId !== runId || !event.type.startsWith("workflow.")) continue;
+    if (!isRecord(event.payload)) continue;
+    const workflowRunId = stringValue(event.payload.workflowRunId);
+    if (workflowRunId) return workflowRunId;
+  }
+  return undefined;
 }
 
 function reportableFailureLabel(event: SparkwrightEvent, code: string): string {
@@ -2162,31 +2298,59 @@ function collectClassifiedToolFailures(
   summary: TraceSummary,
   events: readonly SparkwrightEvent[],
 ): void {
-  // Recompute from the raw events only when every failed tool call still carries
-  // its request arguments — that is exactly the detail same-target recovery (and
-  // the destructive-mutation-then-not-found diagnostic) needs, so the recompute
-  // is reliable for *all* failures and reflects the current classification even
-  // for traces whose persisted snapshot predates a classifier change. Otherwise
-  // (older/compacted runs that stripped those arguments, including mixed traces
-  // where only some runs retain them) defer to the persisted snapshot so a
-  // recorded recovery is not flipped back to an unresolved failure.
-  const snapshot = everyFailedToolCallHasRequestArgs(events)
-    ? toolOutcomeSnapshot(events)
-    : (persistedToolOutcome(events) ?? toolOutcomeSnapshot(events));
-  if (!snapshot) return;
-  summary.toolFailures.unresolved.total = snapshot.unresolved.total;
-  summary.toolFailures.unresolved.byCode = { ...snapshot.unresolved.byCode };
-  summary.toolFailures.recovered.total = snapshot.recovered.total;
-  summary.toolFailures.recovered.byCode = { ...snapshot.recovered.byCode };
-  if (snapshot.mutationFollowups) {
-    summary.toolFailures.mutationFollowups.total =
-      snapshot.mutationFollowups.count;
-    summary.toolFailures.mutationFollowups.targets = [
-      ...snapshot.mutationFollowups.targets,
-    ];
+  const unresolvedByCode: Record<string, number> = {};
+  const recoveredByCode: Record<string, number> = {};
+  let unresolvedTotal = 0;
+  let recoveredTotal = 0;
+  const mutationTargets = new Set<string>();
+  let mutationCount = 0;
+
+  for (const group of eventsGroupedByRun(events)) {
+    const assessment = persistedRunAssessment(group);
+    if (assessment) {
+      const unresolved = assessment.issues.find(
+        (issue) => issue.code === "UNRESOLVED_TOOL_FAILURE",
+      );
+      const recovered = assessment.issues.find(
+        (issue) => issue.code === "RECOVERED_TOOL_FAILURE",
+      );
+      unresolvedTotal += unresolved?.count ?? 0;
+      recoveredTotal += recovered?.count ?? 0;
+      mergeCounts(unresolvedByCode, unresolved?.details?.codeCounts);
+      mergeCounts(recoveredByCode, recovered?.details?.codeCounts);
+    } else {
+      // An incomplete trace has no formal verdict. Replay only into a bounded
+      // diagnostic observation; callers can see `assessmentObservation` is not
+      // terminal and must not treat these counts as an official assessment.
+      const observed = analyzeToolOutcomes(group);
+      unresolvedTotal += observed.unresolvedFailures.length;
+      recoveredTotal += observed.recoveredFailures.length;
+      mergeCounts(
+        unresolvedByCode,
+        tallyFailureCodes(observed.unresolvedFailures),
+      );
+      mergeCounts(
+        recoveredByCode,
+        tallyFailureCodes(observed.recoveredFailures),
+      );
+    }
+    if (everyFailedToolCallHasRequestArgs(group)) {
+      const observed = analyzeToolOutcomes(group);
+      mutationCount += observed.mutationFollowupFailures.length;
+      for (const failure of observed.mutationFollowupFailures) {
+        if (failure.targetKey) mutationTargets.add(failure.targetKey);
+      }
+    }
   }
 
-  for (const [code, count] of Object.entries(snapshot.unresolved.byCode)) {
+  summary.toolFailures.unresolved.total = unresolvedTotal;
+  summary.toolFailures.unresolved.byCode = unresolvedByCode;
+  summary.toolFailures.recovered.total = recoveredTotal;
+  summary.toolFailures.recovered.byCode = recoveredByCode;
+  summary.toolFailures.mutationFollowups.total = mutationCount;
+  summary.toolFailures.mutationFollowups.targets = [...mutationTargets];
+
+  for (const [code, count] of Object.entries(unresolvedByCode)) {
     summary.errorCount += count;
     summary.errorCodes[code] = (summary.errorCodes[code] ?? 0) + count;
   }
@@ -2240,94 +2404,37 @@ function everyFailedToolCallHasRequestArgs(
   return sawFailure;
 }
 
-/** The tool-outcome snapshot persisted on `run.completed`, if present. */
-function persistedToolOutcome(
-  events: readonly SparkwrightEvent[],
-): ToolOutcomeSnapshot | undefined {
-  for (let index = events.length - 1; index >= 0; index--) {
-    const event = events[index];
-    if (event?.type !== "run.completed" || !isRecord(event.payload)) continue;
-    const raw = event.payload.toolOutcome;
-    if (!isRecord(raw)) return undefined;
-    return {
-      unresolved: tallyFromRaw(raw.unresolved),
-      recovered: tallyFromRaw(raw.recovered),
-      ...(isRecord(raw.mutationFollowups)
-        ? { mutationFollowups: mutationFollowupsFromRaw(raw.mutationFollowups) }
-        : {}),
-    };
-  }
-  return undefined;
-}
-
-function tallyFromRaw(raw: unknown): {
-  total: number;
-  byCode: Record<string, number>;
-} {
-  if (!isRecord(raw)) return { total: 0, byCode: {} };
-  const byCode: Record<string, number> = {};
-  if (isRecord(raw.byCode)) {
-    for (const [code, count] of Object.entries(raw.byCode)) {
-      if (typeof count === "number") byCode[code] = count;
-    }
-  }
-  return {
-    total: typeof raw.total === "number" ? raw.total : 0,
-    byCode,
-  };
-}
-
-function mutationFollowupsFromRaw(raw: Record<string, unknown>): {
-  count: number;
-  targets: string[];
-} {
-  const targets = Array.isArray(raw.targets)
-    ? raw.targets.filter((value): value is string => typeof value === "string")
-    : [];
-  return {
-    count: typeof raw.count === "number" ? raw.count : 0,
-    targets,
-  };
-}
-
 function collectCommandFailures(
   summary: TraceSummary,
   events: readonly SparkwrightEvent[],
 ): void {
-  const snapshot = commandOutcomeSnapshotForTrace(events);
-  if (!snapshot) return;
-  summary.commandFailures.total = snapshot.total;
-  summary.commandFailures.byExitCode = snapshot.byExitCode;
-  summary.commandFailures.verification = snapshot.verification;
+  const projection = commandFailureProjectionForTrace(events);
+  if (!projection) return;
+  summary.commandFailures = projection;
 }
 
-function commandOutcomeSnapshotForTrace(
+type CommandFailureProjection = TraceSummary["commandFailures"];
+
+function commandFailureProjectionForTrace(
   events: readonly SparkwrightEvent[],
-): CommandOutcomeSnapshot | undefined {
+): CommandFailureProjection | undefined {
   const runEvents = eventsGroupedByRun(events);
   if (runEvents.length <= 1) {
-    return commandOutcomeSnapshotForRun(events);
+    return commandFailureProjectionForRun(events);
   }
-  return mergeCommandOutcomeSnapshots(
-    runEvents.map((group) => commandOutcomeSnapshotForRun(group)),
+  return mergeCommandFailureProjections(
+    runEvents.map((group) => commandFailureProjectionForRun(group)),
   );
 }
 
-function commandOutcomeSnapshotForRun(
+function commandFailureProjectionForRun(
   events: readonly SparkwrightEvent[],
-): CommandOutcomeSnapshot | undefined {
+): CommandFailureProjection | undefined {
   const ledger = persistedFactLedger(events);
-  if (ledger) return commandOutcomeSnapshotFromFactLedger(ledger);
-  const recomputed = everyShellCompletionHasCommandEvidence(events)
-    ? commandOutcomeSnapshot(events)
-    : undefined;
-  // Prefer recomputing when raw debug events still carry shell command
-  // evidence. Otherwise, use the run-persisted snapshot for standard/legacy
-  // traces that may not retain command args in tool.completed output.
-  return (
-    recomputed ??
-    persistedCommandOutcome(events) ??
-    commandOutcomeSnapshot(events)
+  return commandFailureProjectionFromSummary(
+    analyzeCommandOutcomesFromFactLedger(
+      ledger ?? projectFactLedgerSnapshot(events),
+    ),
   );
 }
 
@@ -2344,15 +2451,57 @@ function eventsGroupedByRun(
   return [...groups.values()];
 }
 
-function mergeCommandOutcomeSnapshots(
-  snapshots: readonly (CommandOutcomeSnapshot | undefined)[],
-): CommandOutcomeSnapshot | undefined {
-  const present = snapshots.filter(
-    (snapshot): snapshot is CommandOutcomeSnapshot => Boolean(snapshot),
+function commandFailureProjectionFromSummary(
+  outcomes: CommandOutcomeSummary,
+): CommandFailureProjection | undefined {
+  if (outcomes.failures.length === 0) return undefined;
+  const lastFailure = outcomes.verificationFailures.at(-1);
+  const lastUnresolved = outcomes.unresolvedVerificationFailures.at(-1);
+  const lastVerificationSuccess = outcomes.successes
+    .filter((success) => success.verificationRelevant)
+    .at(-1);
+  return {
+    total: outcomes.failures.length,
+    byExitCode: outcomes.byExitCode,
+    verification: {
+      total: outcomes.verificationFailures.length,
+      unresolved: outcomes.unresolvedVerificationFailures.length,
+      ...(lastUnresolved?.command
+        ? { lastCommand: lastUnresolved.command }
+        : {}),
+      ...(lastUnresolved
+        ? {
+            lastExitCode: lastUnresolved.exitCode,
+            lastTimedOut: lastUnresolved.timedOut,
+          }
+        : {}),
+      ...(lastFailure?.command
+        ? { lastFailureCommand: lastFailure.command }
+        : {}),
+      ...(lastFailure
+        ? {
+            lastFailureExitCode: lastFailure.exitCode,
+            lastFailureTimedOut: lastFailure.timedOut,
+          }
+        : {}),
+      ...(lastVerificationSuccess?.command
+        ? {
+            lastSuccessfulVerificationCommand: lastVerificationSuccess.command,
+          }
+        : {}),
+    },
+  };
+}
+
+function mergeCommandFailureProjections(
+  projections: readonly (CommandFailureProjection | undefined)[],
+): CommandFailureProjection | undefined {
+  const present = projections.filter(
+    (projection): projection is CommandFailureProjection => Boolean(projection),
   );
   if (present.length === 0) return undefined;
   const byExitCode: Record<string, number> = {};
-  const verification: CommandOutcomeSnapshot["verification"] = {
+  const verification: CommandFailureProjection["verification"] = {
     total: 0,
     unresolved: 0,
   };
@@ -2398,99 +2547,55 @@ function persistedFactLedger(
 ): FactLedgerSnapshot | undefined {
   for (let index = events.length - 1; index >= 0; index--) {
     const event = events[index];
-    if (event?.type !== "run.completed" || !isRecord(event.payload)) continue;
-    return factLedgerSnapshotFromUnknown(event.payload.factLedger);
-  }
-  return undefined;
-}
-
-function everyShellCompletionHasCommandEvidence(
-  events: readonly SparkwrightEvent[],
-): boolean {
-  const commandByCallId = new Map<string, string>();
-  let shellCompletions = 0;
-
-  for (const event of events) {
-    if (!isRecord(event.payload)) continue;
-    if (event.type === "tool.requested") {
-      const toolName = stringValue(event.payload.toolName);
-      if (!isShellToolName(toolName)) continue;
-      const callId = stringValue(event.payload.id, event.payload.toolCallId);
-      const command = stringValue(
-        recordValue(event.payload.arguments)?.command,
-      );
-      if (callId && command) commandByCallId.set(callId, command);
+    if (
+      event?.type !== "run.completed" &&
+      event?.type !== "run.failed" &&
+      event?.type !== "run.cancelled"
+    )
       continue;
-    }
-
-    if (event.type !== "tool.completed") continue;
-    const toolName = stringValue(event.payload.toolName);
-    if (!isShellToolName(toolName)) continue;
-    shellCompletions += 1;
-    const output = recordValue(event.payload.output);
-    if (stringValue(output?.command)) continue;
-    const callId = stringValue(event.payload.toolCallId, event.payload.id);
-    if (!callId || !commandByCallId.has(callId)) return false;
-  }
-
-  return shellCompletions > 0;
-}
-
-/** The command-outcome snapshot persisted on `run.completed`, if present. */
-function persistedCommandOutcome(
-  events: readonly SparkwrightEvent[],
-): CommandOutcomeSnapshot | undefined {
-  for (let index = events.length - 1; index >= 0; index--) {
-    const event = events[index];
-    if (event?.type !== "run.completed" || !isRecord(event.payload)) continue;
-    const raw = event.payload.commandOutcome;
-    if (!isRecord(raw) || typeof raw.total !== "number") return undefined;
-    const verification = isRecord(raw.verification) ? raw.verification : {};
-    return {
-      total: raw.total,
-      byExitCode: isRecord(raw.byExitCode)
-        ? (raw.byExitCode as Record<string, number>)
-        : {},
-      verification: {
-        total: typeof verification.total === "number" ? verification.total : 0,
-        unresolved:
-          typeof verification.unresolved === "number"
-            ? verification.unresolved
-            : 0,
-        ...(typeof verification.lastCommand === "string"
-          ? { lastCommand: verification.lastCommand }
-          : {}),
-        ...("lastExitCode" in verification
-          ? {
-              lastExitCode: verification.lastExitCode as number | null,
-            }
-          : {}),
-        ...(typeof verification.lastTimedOut === "boolean"
-          ? { lastTimedOut: verification.lastTimedOut }
-          : {}),
-        ...(typeof verification.lastFailureCommand === "string"
-          ? { lastFailureCommand: verification.lastFailureCommand }
-          : {}),
-        ...("lastFailureExitCode" in verification
-          ? {
-              lastFailureExitCode: verification.lastFailureExitCode as
-                | number
-                | null,
-            }
-          : {}),
-        ...(typeof verification.lastFailureTimedOut === "boolean"
-          ? { lastFailureTimedOut: verification.lastFailureTimedOut }
-          : {}),
-        ...(typeof verification.lastSuccessfulVerificationCommand === "string"
-          ? {
-              lastSuccessfulVerificationCommand:
-                verification.lastSuccessfulVerificationCommand,
-            }
-          : {}),
-      },
-    };
+    if (!isRecord(event.payload)) continue;
+    const snapshot = factLedgerSnapshotFromUnknown(event.payload.factLedger);
+    if (snapshot) return snapshot;
   }
   return undefined;
+}
+
+function persistedRunAssessment(
+  events: readonly SparkwrightEvent[],
+): RunAssessment | undefined {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (
+      event?.type !== "run.completed" &&
+      event?.type !== "run.failed" &&
+      event?.type !== "run.cancelled"
+    )
+      continue;
+    if (!isRecord(event.payload)) continue;
+    const assessment = runAssessmentFromUnknown(event.payload.assessment);
+    if (assessment) return assessment;
+  }
+  return undefined;
+}
+
+function mergeCounts(
+  target: Record<string, number>,
+  source: Record<string, number> | undefined,
+): void {
+  for (const [code, count] of Object.entries(source ?? {})) {
+    target[code] = (target[code] ?? 0) + count;
+  }
+}
+
+function tallyFailureCodes(
+  failures: ReadonlyArray<{ code?: string }>,
+): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const failure of failures) {
+    const code = failure.code ?? "unknown";
+    counts[code] = (counts[code] ?? 0) + 1;
+  }
+  return counts;
 }
 
 function collectSafetySummary(
@@ -2505,7 +2610,7 @@ function collectSafetySummary(
   for (const event of events) {
     if (!isRecord(event.payload)) continue;
     if (event.type === "approval.requested") {
-      const id = stringValue(event.payload.id, event.payload.approvalId);
+      const id = stringValue(event.payload.id);
       const action = stringValue(event.payload.action);
       const details = isRecord(event.payload.details)
         ? event.payload.details
@@ -2530,32 +2635,12 @@ function collectSafetySummary(
     }
 
     if (event.type === "approval.resolved") {
-      const decision = stringValue(
-        event.payload.decision,
-        isRecord(event.payload.response)
-          ? event.payload.response.decision
-          : undefined,
-      );
-      const message = stringValue(
-        event.payload.message,
-        isRecord(event.payload.response)
-          ? event.payload.response.message
-          : undefined,
-      );
-      const autoApproved = booleanValue(
-        event.payload.autoApproved,
-        isRecord(event.payload.response)
-          ? event.payload.response.autoApproved
-          : undefined,
-      );
+      const decision = stringValue(event.payload.decision);
+      const autoApproved = booleanValue(event.payload.autoApproved);
       summary.safety.approvals.resolved += 1;
       if (decision === "approved") summary.safety.approvals.approved += 1;
       if (decision === "denied") summary.safety.approvals.denied += 1;
-      if (
-        autoApproved === true ||
-        (autoApproved === undefined &&
-          message?.toLowerCase().includes("auto-approved"))
-      ) {
+      if (autoApproved === true) {
         summary.safety.approvals.autoApproved += 1;
       }
       continue;
@@ -2596,8 +2681,6 @@ function collectSafetySummary(
       continue;
     }
     if (event.type === "tool.failed") {
-      // traceErrorCode reads legacy compact `errorCode` shapes too, so this
-      // safety counter stays trace-level invariant.
       if (traceErrorCode(event) === "UNTRACKED_WORKSPACE_MUTATION") {
         summary.safety.shell.untrackedWorkspaceMutations += 1;
       }
@@ -2734,7 +2817,6 @@ function readWindowDiagnosticKey(
 function isFileReadLikeTraceTool(toolName: string): boolean {
   return (
     toolName === "read" ||
-    toolName === "read_file" ||
     toolName === "read_text" ||
     toolName === "read_anchored_text"
   );
@@ -2930,6 +3012,50 @@ interface IncompleteSubagentTerminal {
   verifiedAfterChildWrite?: VerifiedAfterChildWriteEvidence;
 }
 
+interface UnhealthySubagentTerminal {
+  health: Exclude<RunAssessment["health"], "clean">;
+  label: string;
+}
+
+function collectUnhealthySubagentTerminals(
+  events: readonly SparkwrightEvent[],
+): UnhealthySubagentTerminal[] {
+  const out: UnhealthySubagentTerminal[] = [];
+  for (const event of events) {
+    if (event.type !== "subagent.completed" || !isRecord(event.payload)) {
+      continue;
+    }
+    const assessment = runAssessmentFromUnknown(event.payload.assessment);
+    if (!assessment || assessment.health === "clean") continue;
+    const name = stringValue(
+      event.metadata.agentName,
+      event.metadata.childAgentId,
+      event.metadata.agentProfileId,
+      event.metadata.agentId,
+      event.payload.childRunId,
+      "subagent",
+    )!;
+    const childRunId = stringValue(
+      event.metadata.childRunId,
+      event.payload.childRunId,
+    );
+    const codes = assessment.issues
+      .map((issue) => issue.code)
+      .filter((code, index, all) => all.indexOf(code) === index)
+      .slice(0, 5);
+    const pieces = [
+      `${name} completed with ${assessment.health} health`,
+      childRunId ? `child ${childRunId}` : undefined,
+      codes.length > 0 ? `issues ${codes.join(", ")}` : undefined,
+    ].filter((value): value is string => typeof value === "string");
+    out.push({
+      health: assessment.health,
+      label: truncateDiagnostic(pieces.join(" · "), 260),
+    });
+  }
+  return out;
+}
+
 interface VerifiedAfterChildWriteEvidence {
   childWriteIndex: number;
   subagentIndex: number;
@@ -3090,13 +3216,22 @@ function collectSuccessfulVerificationEvents(
 
     if (event.type !== "workflow_hook.completed") continue;
     const hookName = stringValue(event.payload.hookName);
-    if (!hookName?.startsWith("verification:")) continue;
     const result = recordValue(event.payload.result);
     const metadata = recordValue(result?.metadata);
+    const verificationSource = stringValue(metadata?.verificationSource);
+    if (
+      verificationSource !== "profile" &&
+      verificationSource !== "documented_command"
+    ) {
+      continue;
+    }
     const exitCode = optionalNumberValue(metadata?.exitCode);
     const timedOut = metadata?.timedOut === true;
     if (timedOut || exitCode !== 0) continue;
-    out.push({ index, command: hookName });
+    out.push({
+      index,
+      command: stringValue(metadata?.command) ?? hookName ?? verificationSource,
+    });
   }
 
   return out;
@@ -3135,7 +3270,7 @@ function collectRepeatedApprovalDenials(
     if (!isRecord(event.payload)) continue;
 
     if (event.type === "approval.requested") {
-      const id = stringValue(event.payload.id, event.payload.approvalId);
+      const id = stringValue(event.payload.id);
       if (!id) continue;
       const details = recordValue(event.payload.details);
       const toolName = stringValue(details?.toolName);
@@ -3150,12 +3285,9 @@ function collectRepeatedApprovalDenials(
     }
 
     if (event.type !== "approval.resolved") continue;
-    const decision = stringValue(
-      event.payload.decision,
-      recordValue(event.payload.response)?.decision,
-    );
+    const decision = stringValue(event.payload.decision);
     if (decision !== "denied") continue;
-    const id = stringValue(event.payload.approvalId, event.payload.id);
+    const id = stringValue(event.payload.approvalId);
     const label = (id ? requested.get(id) : undefined) ?? "approval denied";
     const existing = counts.get(label);
     if (existing) existing.count += 1;
@@ -3298,9 +3430,13 @@ function collectErrorCode(
 
 function traceErrorCode(event: SparkwrightEvent): string | undefined {
   if (!isRecord(event.payload)) return undefined;
+  const nestedErrorCode = isRecord(event.payload.error)
+    ? stringValue(event.payload.error.code)
+    : undefined;
+  if (event.type === "tool.failed") return nestedErrorCode;
   return stringValue(
     event.payload.errorCode,
-    isRecord(event.payload.error) ? event.payload.error.code : undefined,
+    nestedErrorCode,
     // run.failed carries its code at the payload root (e.g. a target-boundary
     // rejection's TARGET_OUTSIDE_WORKSPACE), not under `error`.
     event.type === "run.failed" ? event.payload.code : undefined,
@@ -3351,8 +3487,6 @@ function collectExpectedDenialCode(
 
 function isExpectedDenialEvent(event: SparkwrightEvent): boolean {
   if (event.type.endsWith(".denied")) return true;
-  // Use traceErrorCode so this reads legacy compact `errorCode` shapes too,
-  // keeping the expected-denial count trace-level invariant.
   return isPolicyOrApprovalFailure(traceErrorCode(event));
 }
 
@@ -3430,11 +3564,12 @@ function timelinePhaseKey(event: SparkwrightEvent): string | undefined {
     return toolCallId ? `${event.runId}:tool:${toolCallId}` : undefined;
   }
 
-  const approvalId = stringValue(payload.approvalId, payload.id);
-  if (
-    event.type === "approval.requested" ||
-    event.type === "approval.resolved"
-  ) {
+  if (event.type === "approval.requested") {
+    const approvalId = stringValue(payload.id);
+    return approvalId ? `${event.runId}:approval:${approvalId}` : undefined;
+  }
+  if (event.type === "approval.resolved") {
+    const approvalId = stringValue(payload.approvalId);
     return approvalId ? `${event.runId}:approval:${approvalId}` : undefined;
   }
 

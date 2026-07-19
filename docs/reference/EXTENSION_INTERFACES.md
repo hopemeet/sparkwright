@@ -137,7 +137,8 @@ const context: ContextItem[] = [
       stability: "session",
       skillName: "dingtalk-notifier",
       version: "1.0.0",
-      contentHash: "sha256:...",
+      packageHash: "sha256:...",
+      packageHashPolicyVersion: 2,
     },
   },
 ];
@@ -258,6 +259,14 @@ const sendMessage = defineTool({
 });
 ```
 
+Tools that own a conservative sequential-duplicate protocol may implement
+`managesRepeatedCalls(args)`. Return `true` only when the tool can safely
+decide whether to reuse a prior clean result or retry an unhealthy attempt.
+Core will then execute a verbatim repeat instead of intercepting it with the
+generic repeated-call nudge. A prior tool failure or explicit no-progress
+result still goes through the generic guard. This hook does not change replay
+risk; `governance.idempotency` remains the sole replay-safety declaration.
+
 Tool origin should be carried in metadata where useful:
 
 ```ts
@@ -341,7 +350,7 @@ Any extension that affects model input, tool availability, permission boundaries
 
 Examples:
 
-- selected Skill name and content hash
+- selected Skill name and policy-bound package hash
 - memory item ids selected for context
 - retrieval query and source references
 - MCP server that provided a tool
@@ -494,7 +503,7 @@ in-process observability around the run loop. Prefer `WorkflowHook` or
 `capabilities.hooks.workflow` for project-facing rules such as "do not edit
 generated files", "run tests after writes", or "do not stop until verification
 has happened". Keep `RunHook` for SDK, plugin, telemetry, and narrow
-compatibility cases where code needs direct access to model/tool boundaries.
+in-process integrations that need direct access to model/tool boundaries.
 
 Supported callbacks:
 
@@ -528,6 +537,33 @@ const tracingHook: RunHook = {
 };
 ```
 
+## User Hooks
+
+`UserHookRunner` is the non-blocking host adapter for external event
+subscribers. Bind it to a replay-capable run event stream with
+`bindUserHooks()`. Every binding must provide `resolveDescriptor`; the returned
+descriptor has one canonical identity (`hookId`, `hookName`) and a required
+configuration `source`. Core copies that provenance into the invocation and
+every `user_hook.*` lifecycle event, so trace and `allowManagedOnly` policy do
+not need an unsourced fallback.
+
+```ts
+const unsubscribe = bindUserHooks({
+  events: run.events,
+  runner,
+  signal: run.abortSignal,
+  resolveDescriptor: (trigger) => ({
+    hookId: `project-check:${trigger}`,
+    hookName: "project-check",
+    source: "project",
+  }),
+});
+```
+
+Replay is enabled by default so a late-bound runner sees earlier matching
+events in sequence order. Set `replayPastEvents: false` only when the subscriber
+intentionally wants future events.
+
 ## Workflow Hooks
 
 `WorkflowHook` is the higher-level deterministic hook layer for rules that
@@ -542,9 +578,6 @@ Use this decision rule:
   `capabilities.hooks.workflow`.
 - Code-level deterministic workflow policy:
   `createRun({ workflowHooks })`.
-- Proposal/content validation owned by an embedder:
-  low-level `ValidationHook`. New project-facing validation should compile into
-  workflow hooks or rule packs.
 - In-process telemetry or loop instrumentation:
   `RunHook`.
 - External event subscribers owned by a host:
@@ -674,32 +707,20 @@ event under the task span.
 
 ## Interaction Channel
 
-`InteractionChannel` is the unified _outbound_ channel from the runtime to a
-user (CLI prompt, desktop modal, Slack/Feishu DM, etc.). It generalizes
-`ApprovalResolver` to also cover free-form questions and notifications.
+`InteractionChannel` is the outbound approval channel from the runtime to a
+user-facing embedder (CLI prompt, desktop modal, Slack/Feishu DM, etc.).
 
 ```ts
 interface InteractionChannel {
-  approve?(request): Promise<ApprovalResponse>; // yes/no
-  ask?(
-    request: InteractionQuestionRequest,
-  ): Promise<InteractionQuestionResponse>;
-  notify?(notification: InteractionNotification): void | Promise<void>;
+  approve(request): Promise<ApprovalResponse>; // yes/no
 }
 ```
 
-Wire via `createRun({ interactionChannel })`. When supplied,
-`channel.approve` becomes the approval resolver (taking precedence over the
-legacy `approvalResolver` option), and `RunHandle.askUser` /
-`RunHandle.notifyUser` route through the channel.
-
-Embedders that only implement approval today can keep using
-`approvalResolver`; the channel is strictly additive. Use
-`channelFromApprovalResolver` / `approvalResolverFromChannel` to bridge.
+Wire via `createRun({ interactionChannel })`. `channel.approve` resolves risky
+actions; there is no parallel resolver option or precedence rule.
 
 Every channel exchange emits `interaction.requested` / `interaction.resolved`
-events so trace consumers see the full conversation, not just the binary
-approval decision.
+events so trace consumers see the approval decision.
 
 ## Usage Tracker
 
@@ -788,9 +809,10 @@ in the runtime package):
    Sub-agents MUST NOT silently widen permissions; any expansion must come
    from an explicit `childOverrides` layer.
 3. **Approval channel.** The child run reuses the parent's
-   `InteractionChannel`/`approvalResolver` unless the parent provides a
-   sub-agent-specific channel. Approvals from a child are visible in the
-   parent's trace via the `parentRunId` linkage.
+   `InteractionChannel` unless the parent provides a sub-agent-specific
+   channel. An approval-only child channel may expose only `approve` so the
+   child cannot ask arbitrary user questions. Approvals from a child are
+   visible in the parent's trace via the `parentRunId` linkage.
 4. **Usage rollup.** The parent SHOULD subscribe to the child's
    `UsageTracker` (`tracker.subscribe(...)`) and roll usage into its own
    tracker so the parent's `UsageSnapshot` reflects total cost.
@@ -860,12 +882,12 @@ const result = await spawned.run.start();
 
 // High-level: register a ToolDefinition the parent's LLM can call.
 mountAgentTool(parent, {
+  policy: { risk: "safe", requiresApproval: false },
   buildSpawnInput: (input) => ({
     goal: input.goal,
     model: childModel,
     tools: childTools,
   }),
-  // requiresApproval: true,  // force per-spawn approval at parent gate
   // forbidNesting: true,     // refuse to spawn grand-children
 });
 ```
@@ -916,7 +938,7 @@ those APIs.
 ```
 
 Async dispatch and completion notification reuse `TaskManager` +
-`TaskNotificationSink` from the [Sub-agents](#sub-agents) layer — no new
+`ActorNotificationSink` / `ActorInbox` from the [Sub-agents](#sub-agents) layer — no new
 notification channel.
 
 ### ConcurrencyCoordinator (declarative partitioning)
@@ -970,19 +992,16 @@ outcomes are preserved for the rare cases where declarations drift. Paths follow
 import {
   createTodoTools,
   createAgentProfilePolicy,
-  readTodoLedger,
-  renderTodoLedgerContext,
-  runTodoSupervised,
 } from "@sparkwright/agent-runtime";
 
-const { todoRead, todoWrite } = createTodoTools({
+const { todoWrite } = createTodoTools({
   getTodoPath: () => `${sessionDir}/todo.md`,
 });
 
 // Child agents are denied todo_write via CapabilityRule:
 const childPolicy = createAgentProfilePolicy({
   id: "worker",
-  allowedTools: ["todo_read"],
+  allowedTools: ["read"],
   policy: [
     {
       action: "tool.execute",
@@ -996,43 +1015,16 @@ const childPolicy = createAgentProfilePolicy({
 
 The on-disk format is GFM-compatible Markdown backed by the structured
 `TodoLedger` API. Its status alphabet is `[ ]` pending, `[ ] 🔄` in-progress,
-`[x]` completed, `[ ] ⛔` blocked, `[ ] ❌` failed, and `[~]` skipped.
-`todo_write` rewrites the file whole; the Leader keeps the ordering, depth,
-notes, optional `priority`, `doneWhen`, `owner`, and `evidence` fields the
-model produces.
+`[x]` completed, and `[ ] ⛔` blocked.
+`todo_write` rewrites the file whole. Its model-facing item DTO is strict:
+`title`, `status`, and optional `priority`. The Markdown/parser APIs retain the
+richer presentation-only `depth` field.
 
-`evidence` is the important guardrail: todo status changes are self-reporting,
-not proof of progress. Supervisors should treat external trace/workspace
-signals (`workspace.write.completed`, `tool.completed`, `artifact.created`) and
-item evidence (`file_changed`, `command`, `test`, `artifact`, `trace_event`) as
-the progress source of truth.
-
-For long-running or background agentic work, wrap ordinary runs with
-`runTodoSupervised` rather than putting todo behavior into core or
-`spawnSubAgent`:
-
-```ts
-await runTodoSupervised({
-  todoPath: `${sessionDir}/todo.md`,
-  maxContinuations: 3,
-  maxStalledContinuations: 1,
-  async runOnce(input) {
-    const ledger = await readTodoLedger(`${sessionDir}/todo.md`);
-    const context = [
-      renderTodoLedgerContext(ledger, { sessionId }),
-      ...(input.continuation ? [input.continuation.context] : []),
-    ];
-    // Create a normal run/session turn here. If input.continuation is present,
-    // pass its prompt as a synthetic continuation message, not as user text.
-    return { result, events };
-  },
-});
-```
-
-The supervisor audits terminal runs after they end. If the ledger is unfinished
-and continuation is safe, it emits a synthetic continuation request:
-`source="todo_supervisor"`, `reason="unfinished_todo"`. Hooks/plugins may veto
-that continuation, but should not directly recurse into the model loop.
+Todo status changes are self-reporting plan state, not execution proof and not a
+scheduler. Ordinary runs remain single-episode even when the ledger has open
+items. The host reads a non-empty ledger into the next real session turn and may
+attach a terminal `todoAdvisory`; only durable Workflow state may request a
+cross-episode continuation.
 
 ### Sub-agent result protocol
 

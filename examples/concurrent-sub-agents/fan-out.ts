@@ -23,7 +23,6 @@ import {
   createTodoTools,
   parseSubAgentResult,
   validateDeclaredWrites,
-  type TodoItem,
   type TodoStatus,
   type WorktreeHandle,
 } from "@sparkwright/agent-runtime";
@@ -74,10 +73,9 @@ async function runLeader(
   // Initial todo: everything pending.
   await writeTodo(
     todoWrite,
-    plans.map<TodoItem>((p) => ({
+    plans.map((p) => ({
       title: p.goal,
       status: "pending",
-      depth: 0,
     })),
   );
 
@@ -105,10 +103,9 @@ async function runLeader(
   // Mark all in_progress.
   await writeTodo(
     todoWrite,
-    plans.map<TodoItem>((p) => ({
+    plans.map((p) => ({
       title: p.goal,
       status: "in_progress",
-      depth: 0,
     })),
   );
 
@@ -137,7 +134,7 @@ async function runLeader(
       await wt.release({ keep: true });
       outcomes.push({
         plan,
-        finalStatus: "failed",
+        finalStatus: "blocked",
         note: `bad output: ${parsed.reason}`,
       });
       continue;
@@ -148,7 +145,7 @@ async function runLeader(
       await wt.release({ keep: true });
       outcomes.push({
         plan,
-        finalStatus: "failed",
+        finalStatus: "blocked",
         note: `wrote outside partition: ${audit.violations.join(", ")}`,
       });
       continue;
@@ -158,7 +155,7 @@ async function runLeader(
       await wt.release({ keep: parsed.value.retryable });
       outcomes.push({
         plan,
-        finalStatus: "failed",
+        finalStatus: "blocked",
         note: parsed.value.notes,
       });
       continue;
@@ -170,7 +167,7 @@ async function runLeader(
       await wt.release({ keep: true });
       outcomes.push({
         plan,
-        finalStatus: "failed",
+        finalStatus: "blocked",
         note: `merge conflict on ${merge.conflictedFiles.join(", ")}`,
       });
       continue;
@@ -187,11 +184,9 @@ async function runLeader(
   // Final todo write reflecting every outcome.
   await writeTodo(
     todoWrite,
-    outcomes.map<TodoItem>((o) => ({
+    outcomes.map((o) => ({
       title: o.plan.goal,
       status: o.finalStatus,
-      depth: 0,
-      ...(o.note ? { note: o.note } : {}),
     })),
   );
   return outcomes;
@@ -202,7 +197,11 @@ type ToolLike = { execute: (args: any, ctx: any) => any };
 
 async function writeTodo(
   todoWrite: ToolLike,
-  items: TodoItem[],
+  items: Array<{
+    title: string;
+    status: TodoStatus;
+    priority?: "high" | "medium" | "low";
+  }>,
 ): Promise<void> {
   await todoWrite.execute({ items }, {});
 }
@@ -286,7 +285,10 @@ async function main(): Promise<void> {
     const rogue = outcomes.find((o) => o.plan.taskId === "rogue")!;
     assert(auth.finalStatus === "completed", "auth must complete");
     assert(billing.finalStatus === "completed", "billing must complete");
-    assert(rogue.finalStatus === "failed", "rogue must fail the writes audit");
+    assert(
+      rogue.finalStatus === "blocked",
+      "rogue must be blocked by the writes audit",
+    );
     assert(
       (rogue.note ?? "").includes("outside partition"),
       "rogue note must explain the violation",
@@ -321,8 +323,8 @@ async function main(): Promise<void> {
       "todo: billing done",
     );
     assert(
-      finalTodo.includes("- [ ] ❌ rogue agent writes outside its partition"),
-      "todo: rogue marked failed",
+      finalTodo.includes("- [ ] ⛔ rogue agent writes outside its partition"),
+      "todo: rogue marked blocked",
     );
 
     console.log("\n✓ concurrent-sub-agents demo finished");

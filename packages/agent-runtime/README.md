@@ -23,7 +23,7 @@ const derived = deriveChildAgentProfile({
   parentAgent: {
     id: "planner",
     allowedTools: ["read", "search", "delegate"],
-    deniedTools: ["shell"],
+    deniedTools: ["bash"],
   },
   childAgent: {
     id: "reviewer",
@@ -89,7 +89,9 @@ restrictions remain constraining, so delegation cannot be used to bypass policy.
 
 `createAgentTool` and `mountAgentTool` expose a profile-backed child run through
 the normal tool path. The parent model receives the child result, not the
-child's entire intermediate context.
+child's entire intermediate context. Callers pass the complete spawn
+`ToolDefinition.policy`; agent-runtime does not synthesize a parallel approval
+option.
 
 ## Boundary
 

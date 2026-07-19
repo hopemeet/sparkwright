@@ -404,7 +404,6 @@ export function createLazyMcpToolsForRun(
           dataSensitivity: "internal",
           audit: { level: "metadata" },
         },
-        isReplaySafe: false,
         async execute() {
           const prepared = await ensureLazyMcpServerPrepared({
             server,
@@ -453,7 +452,6 @@ export function createLazyMcpToolsForRun(
           dataSensitivity: "internal",
           audit: { level: "metadata" },
         },
-        isReplaySafe: false,
         async execute(args, ctx) {
           const prepared = await ensureLazyMcpServerPrepared({
             server,

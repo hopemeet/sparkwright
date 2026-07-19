@@ -3,224 +3,17 @@
   "$id": "https://sparkwright.dev/schemas/v0/config.schema.json",
   "x-sparkwrightProtocolVersion": "0.2",
   "title": "Sparkwright Config",
-  "description": "User-editable settings shared by the CLI and the interactive TUI. Loaded (in order, later overriding earlier) from ~/.config/sparkwright/config.{json,yaml,yml}, <workspace>/.sparkwright/config.{json,yaml,yml}, and $SPARKWRIGHT_CONFIG. Within a user/project layer, config.json wins over config.yaml, which wins over config.yml; multiple files in one layer are reported as a conflict. CLI args and env vars override files. Fields may be written flat or under the preferred groups identity/policy/run/ui; tools and capabilities are top-level groups. A field set both ways conflicts and the grouped value wins. The providers map is merged by key, tools.use and tools.allowed intersect, tools.disabled unions, tools.defer is replaced by later layers, capabilities merges by sub-capability, and the security boundaries - shell.sandbox, run.accessMode, confidentialPaths, and write - merge conservatively so later layers cannot weaken an earlier layer's policy (project clamps user); confidentialDefaults is an explicit later-layer override for the built-in confidential path set; other shared fields are wholesale-overridden.",
+  "description": "User-editable settings shared by the CLI and the interactive TUI. Loaded (in order, later overriding earlier) from ~/.config/sparkwright/config.{json,yaml,yml}, <workspace>/.sparkwright/config.{json,yaml,yml}, and $SPARKWRIGHT_CONFIG. Within a user/project layer, config.json wins over config.yaml, which wins over config.yml; multiple files in one layer are reported as a conflict. CLI args and env vars override files. Model/provider settings live under identity, security boundaries under policy, run defaults under run, and TUI preferences under ui; workspace, shell foreground timing, tools, tasks, and capabilities remain top-level. The providers map is merged by key, tools.use and tools.allowed intersect, tools.disabled unions, tools.defer is replaced by later layers, capabilities merges by sub-capability, and policy.sandbox, run.accessMode, policy.confidentialPaths, and policy.write merge conservatively so later layers cannot weaken an earlier layer's policy (project clamps user); policy.confidentialDefaults is an explicit later-layer override for the built-in confidential path set; other shared fields are wholesale-overridden.",
   "type": "object",
   "properties": {
     "$schema": {
       "type": "string",
       "description": "Optional reference to this JSON Schema so editors can offer completion and validation. Ignored by the loader."
     },
-    "model": {
-      "type": "string",
-      "minLength": 1,
-      "pattern": "^(?:deterministic|[^/\\s]+\\/[^\\s]+)$",
-      "description": "Active model in the form \"provider/model\", or the built-in \"deterministic\" model."
-    },
-    "providers": {
-      "type": "object",
-      "propertyNames": {
-        "type": "string"
-      },
-      "additionalProperties": {
-        "type": "object",
-        "properties": {
-          "npm": {
-            "type": "string",
-            "minLength": 1,
-            "description": "AI SDK package used to construct the client. Defaults to \"@ai-sdk/openai\"."
-          },
-          "baseURL": {
-            "type": "string",
-            "format": "uri",
-            "description": "OpenAI-compatible base URL. Overridden by the OPENAI_BASE_URL env var when set."
-          },
-          "apiKey": {
-            "type": "string",
-            "minLength": 1,
-            "description": "API key for this provider. Overridden by provider-specific env vars when set."
-          },
-          "providerOptions": {
-            "type": "object",
-            "propertyNames": {
-              "type": "string"
-            },
-            "additionalProperties": {
-              "type": "object",
-              "properties": {},
-              "additionalProperties": {}
-            },
-            "description": "Request-level AI SDK providerOptions keyed by provider namespace."
-          },
-          "models": {
-            "type": "object",
-            "propertyNames": {
-              "type": "string"
-            },
-            "additionalProperties": {
-              "type": "object",
-              "properties": {
-                "cost": {
-                  "type": "object",
-                  "properties": {
-                    "input": {
-                      "type": "number"
-                    },
-                    "output": {
-                      "type": "number"
-                    },
-                    "cacheRead": {
-                      "type": "number"
-                    },
-                    "cacheWrite": {
-                      "type": "number"
-                    }
-                  },
-                  "additionalProperties": false,
-                  "description": "Per-million-token pricing used to attach costUsd to usage."
-                },
-                "providerOptions": {
-                  "type": "object",
-                  "propertyNames": {
-                    "type": "string"
-                  },
-                  "additionalProperties": {
-                    "type": "object",
-                    "properties": {},
-                    "additionalProperties": {}
-                  },
-                  "description": "Request-level AI SDK providerOptions keyed by provider namespace."
-                }
-              },
-              "additionalProperties": false
-            },
-            "description": "Optional per-model metadata. When any models are listed, model overrides must use one of those ids."
-          }
-        },
-        "additionalProperties": false
-      },
-      "description": "Named model providers. The reserved name \"deterministic\" is built in and must not be declared here."
-    },
-    "accessMode": {
-      "type": "string",
-      "enum": ["read-only", "ask", "accept-edits", "bypass"],
-      "description": "High-level run autonomy preset. The single user-facing access knob; compiles internally to permissionMode + write capability. read-only=plan/no-write, ask=approve writes, accept-edits=auto-accept edits, bypass=auto-approve."
-    },
-    "backgroundTasks": {
-      "type": "string",
-      "enum": ["disabled", "foreground-only", "enabled"],
-      "description": "Session-level foreground/background task policy. enabled allows task promotion and detached tasks; foreground-only forces task_create to wait inline; disabled rejects new task_create work."
-    },
     "workspace": {
       "type": "string",
       "minLength": 1,
       "description": "Workspace root for runs. Relative paths resolve from the directory of the config file that defined them."
-    },
-    "confidentialPaths": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "minLength": 1
-      },
-      "description": "Additional read-confidentiality paths or globs whose contents a run must not read."
-    },
-    "confidentialDefaults": {
-      "type": "boolean",
-      "description": "Whether runs include SparkWright's built-in conservative confidential path defaults. Defaults to true."
-    },
-    "write": {
-      "type": "object",
-      "properties": {
-        "maxFiles": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 9007199254740991,
-          "description": "Maximum distinct files a run may write."
-        },
-        "maxDiffLines": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 9007199254740991,
-          "description": "Maximum changed diff lines per write."
-        },
-        "allowDeletions": {
-          "type": "boolean",
-          "description": "Whether in-place edits may remove lines."
-        }
-      },
-      "additionalProperties": false,
-      "description": "Workspace write guardrails. Merges conservatively across layers."
-    },
-    "runBudget": {
-      "type": "object",
-      "properties": {
-        "maxDurationMs": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 9007199254740991
-        },
-        "maxModelCalls": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 9007199254740991
-        },
-        "maxToolCalls": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 9007199254740991
-        },
-        "maxTokens": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 9007199254740991
-        },
-        "maxCostUsd": {
-          "type": "number",
-          "exclusiveMinimum": 0
-        }
-      },
-      "additionalProperties": false,
-      "description": "Resource budget for the interactive main run. maxModelCalls is the tightest natural step bound."
-    },
-    "maxSteps": {
-      "type": "integer",
-      "minimum": 1,
-      "maximum": 9007199254740991,
-      "description": "Explicit main-run step ceiling."
-    },
-    "traceLevel": {
-      "type": "string",
-      "enum": ["standard", "debug"],
-      "description": "Default trace verbosity when an entrypoint does not pass one. CLI --trace-level overrides."
-    },
-    "approvals": {
-      "type": "object",
-      "properties": {
-        "shellSafe": {
-          "type": "boolean",
-          "description": "Auto-approve commands the safety classifier rates safe."
-        },
-        "edits": {
-          "type": "boolean",
-          "description": "Auto-approve workspace edits."
-        },
-        "all": {
-          "type": "boolean",
-          "description": "Auto-approve everything the policy allows."
-        },
-        "cronMode": {
-          "type": "string",
-          "enum": [
-            "plan",
-            "default",
-            "accept_edits",
-            "dont_ask",
-            "bypass_permissions"
-          ],
-          "description": "Default permission mode for unattended cron run/tick commands. CLI --access-mode still overrides."
-        }
-      },
-      "additionalProperties": false,
-      "description": "Default approval auto-grants. CLI flags still override these values."
     },
     "shell": {
       "type": "object",
@@ -230,69 +23,6 @@
           "minimum": 1,
           "maximum": 600000,
           "description": "Foreground shell budget in milliseconds before promotion to a background task. Defaults to 300000 and is capped at 600000."
-        },
-        "sandbox": {
-          "type": "object",
-          "properties": {
-            "mode": {
-              "type": "string",
-              "enum": ["off", "warn", "enforce"],
-              "description": "off disables OS sandboxing; warn uses it when available and otherwise falls back; enforce prevents unsandboxed fallback when the runtime is unavailable. Enforce does not imply the same filesystem boundary on every OS."
-            },
-            "failIfUnavailable": {
-              "type": "boolean",
-              "description": "Fail closed when the platform sandbox runtime is unavailable."
-            },
-            "filesystem": {
-              "type": "object",
-              "properties": {
-                "allowRead": {
-                  "type": "array",
-                  "items": {
-                    "type": "string",
-                    "minLength": 1
-                  }
-                },
-                "allowWrite": {
-                  "type": "array",
-                  "items": {
-                    "type": "string",
-                    "minLength": 1
-                  }
-                },
-                "denyRead": {
-                  "type": "array",
-                  "items": {
-                    "type": "string",
-                    "minLength": 1
-                  }
-                },
-                "denyWrite": {
-                  "type": "array",
-                  "items": {
-                    "type": "string",
-                    "minLength": 1
-                  }
-                },
-                "tmp": {
-                  "type": "boolean"
-                }
-              },
-              "additionalProperties": false
-            },
-            "network": {
-              "type": "object",
-              "properties": {
-                "mode": {
-                  "type": "string",
-                  "enum": ["allow", "deny"]
-                }
-              },
-              "additionalProperties": false
-            }
-          },
-          "additionalProperties": false,
-          "description": "Experimental OS-level process sandbox for supported local execution paths. Linux bubblewrap uses a bind allowlist; macOS sandbox-exec uses an allow-default deny-list guard. Forced deny-write paths are always appended by the host."
         }
       },
       "additionalProperties": false,
@@ -718,10 +448,6 @@
                             "type": "string",
                             "minLength": 1
                           },
-                          "toolName": {
-                            "type": "string",
-                            "minLength": 1
-                          },
                           "goal": {
                             "type": "string",
                             "minLength": 1
@@ -742,7 +468,7 @@
                             "enum": ["always", "onFailure", "never"]
                           }
                         },
-                        "required": ["type", "goal"],
+                        "required": ["type", "agentId", "goal"],
                         "additionalProperties": false
                       }
                     ]
@@ -1000,10 +726,6 @@
                             "type": "string",
                             "minLength": 1
                           },
-                          "toolName": {
-                            "type": "string",
-                            "minLength": 1
-                          },
                           "goal": {
                             "type": "string",
                             "minLength": 1
@@ -1024,7 +746,7 @@
                             "enum": ["always", "onFailure", "never"]
                           }
                         },
-                        "required": ["type", "goal"],
+                        "required": ["type", "agentId", "goal"],
                         "additionalProperties": false
                       }
                     ]
@@ -1296,10 +1018,6 @@
               },
               "description": "Profile ids or delegate tool names that should remain exposed as direct delegate_* tools when exposure is indexed."
             },
-            "exposeChildrenAsDelegates": {
-              "type": "boolean",
-              "description": "Opt-in: auto-expose every child/all profile without an explicit delegate as a delegate_<id> tool. Default false. Per-profile exposeAsDelegate overrides this."
-            },
             "enableParallelDelegates": {
               "type": "boolean",
               "description": "Opt-in: expose delegate_parallel for foreground fan-out across read-only configured delegates. Default false. The tool only accepts delegates with workspaceAccess \"none\"."
@@ -1317,38 +1035,6 @@
       },
       "additionalProperties": false,
       "description": "Host-owned capability runtime settings."
-    },
-    "theme": {
-      "type": "string",
-      "enum": ["dark", "light", "mono"],
-      "description": "Visual theme."
-    },
-    "mouse": {
-      "type": "boolean",
-      "description": "Enable mouse reporting."
-    },
-    "keybindings": {
-      "type": "object",
-      "propertyNames": {
-        "type": "string"
-      },
-      "additionalProperties": {
-        "anyOf": [
-          {
-            "type": "string"
-          },
-          {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          {
-            "type": "null"
-          }
-        ]
-      },
-      "description": "Override default key chords for named TUI actions."
     },
     "identity": {
       "type": "object",
@@ -1445,7 +1131,7 @@
         }
       },
       "additionalProperties": false,
-      "description": "Preferred grouping for who/what runs. Flattens to model/providers."
+      "description": "Canonical model and provider identity settings."
     },
     "policy": {
       "type": "object",
@@ -1550,7 +1236,7 @@
         }
       },
       "additionalProperties": false,
-      "description": "Preferred grouping for security boundaries. Flattens to confidentialDefaults/confidentialPaths/write and shell.sandbox. Run autonomy lives in run.accessMode."
+      "description": "Canonical security boundaries. Run autonomy lives in run.accessMode."
     },
     "run": {
       "type": "object",
@@ -1606,40 +1292,10 @@
           "type": "string",
           "enum": ["standard", "debug"],
           "description": "Default trace verbosity when an entrypoint does not pass one. CLI --trace-level overrides."
-        },
-        "approvals": {
-          "type": "object",
-          "properties": {
-            "shellSafe": {
-              "type": "boolean",
-              "description": "Auto-approve commands the safety classifier rates safe."
-            },
-            "edits": {
-              "type": "boolean",
-              "description": "Auto-approve workspace edits."
-            },
-            "all": {
-              "type": "boolean",
-              "description": "Auto-approve everything the policy allows."
-            },
-            "cronMode": {
-              "type": "string",
-              "enum": [
-                "plan",
-                "default",
-                "accept_edits",
-                "dont_ask",
-                "bypass_permissions"
-              ],
-              "description": "Default permission mode for unattended cron run/tick commands. CLI --access-mode still overrides."
-            }
-          },
-          "additionalProperties": false,
-          "description": "Default approval auto-grants. CLI flags still override these values."
         }
       },
       "additionalProperties": false,
-      "description": "Preferred grouping for run-shaping defaults. Flattens to accessMode/backgroundTasks/runBudget/maxSteps/traceLevel/approvals."
+      "description": "Canonical run-shaping defaults."
     },
     "ui": {
       "type": "object",
@@ -1675,10 +1331,14 @@
             ]
           },
           "description": "Override default key chords for named TUI actions."
+        },
+        "vim": {
+          "type": "boolean",
+          "description": "Enable Vim-style modal input editing."
         }
       },
       "additionalProperties": false,
-      "description": "Preferred grouping for TUI-only preferences. Flattens to theme/mouse/keybindings."
+      "description": "Canonical TUI-only preferences."
     }
   },
   "additionalProperties": false

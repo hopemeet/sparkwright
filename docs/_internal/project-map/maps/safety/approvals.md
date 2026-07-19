@@ -7,6 +7,64 @@ how it was resolved, and what happened afterward.
 
 See [workspace-writes.md](workspace-writes.md) and [shell.md](shell.md).
 
+## Last Verified
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: reviewed approval consumers after assessment and target-scope changes.
+  Explicit targets still narrow policy; absence of `--target` no longer
+  invents `README.md`. Approval evaluation remains the same canonical tool
+  decision stage and expected denials are recorded as degraded issues.
+- Read: CLI target contracts, Core assessment/policy, Host tool assembly, and
+  protocol/TUI approval surfaces.
+- Tests: Core policy/run, Host protocol/tools, and CLI target regressions passed.
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: Host approval channel construction, finite timeout, waiter
+  registration, `approval.requested` delivery, response metadata, disconnect
+  denial, and drain cleanup moved intact to
+  `ExecutionInteractionOperations`. Live waiters remain stored only in
+  HostExecution; policy ordering and audit payloads are unchanged.
+- Read: Core interaction/approval contracts, Host interaction owner and
+  HostExecution, protocol/IM resolution routes, and focused tests.
+- Tests: owner-level, Host protocol/service, SDK, CLI, and TUI approval routes
+  are recorded with the commit.
+
+- Status: Verified
+- Date: 2026-07-17T23:37:17+0800
+- Scope: CLI reference EventLog import moved to Core `/internal`; interaction,
+  approval policy, resolution, and audit contracts are unchanged.
+- Read: CLI consumer and Core public/internal boundary.
+- Tests: CLI outcome 23/23 and affected typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-17T11:02:45+0800
+- Scope: `InteractionChannel` is now the required-method, approval-only Core
+  outbound boundary. Question/notification DTOs and RunHandle helpers were
+  removed without changing approval policy ordering or audit events.
+- Read: Core interaction/run/workspace paths, Host/CLI/Streaming Runtime
+  adapters, interaction tests, and current reference docs.
+- Tests: Core interaction/approval 18/18; Host task/approval 12/12; CLI
+  approval 4/4; affected package typechecks; repository test typecheck; schema
+  check; project-map drift; full release gate.
+
+- Status: Verified
+- Date: 2026-07-16T13:36:30+0800
+- Scope: Removing `ValidationHook` does not weaken approval ordering: policy still runs before the canonical interaction-channel approval, and managed workspace writes remain approval-gated.
+- Read: Core run/workspace policy and approval paths plus focused safety tests.
+- Tests: focused approval/workspace tests; npm run build; npm run typecheck:test; npm run release:check.
+
+- Date: 2026-07-16T13:21:00+0800
+- Scope: `InteractionChannel` became the single Core outbound interaction boundary; the direct approval resolver option and adapter bridges were removed.
+- Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.
+- Tests: focused access/policy/protocol/CLI/TUI/ACP/Workflow tests; npm run typecheck:test; npm run schema:check.
+
+- Date: 2026-07-16T11:52:29+0800
+- Scope: reviewed protocol 2.0 terminal failure envelope changes; approval
+  request, resolution, and audit contracts are independent of the removed
+  `run.failed.error` projection.
+
 ## Main Files
 
 - `packages/core/src/run.ts`
@@ -15,6 +73,7 @@ See [workspace-writes.md](workspace-writes.md) and [shell.md](shell.md).
 - `packages/host/src/runtime.ts`
 - `packages/host/src/runtime/host-runtime.ts`
 - `packages/host/src/client-approval.ts`
+- `packages/host/src/runtime/execution-interaction-operations.ts`
 - `packages/cli/src/cli-approval.ts`
 - `packages/tui/src/app.tsx`
 - `packages/tui/src/state/run-controller.ts`
@@ -25,7 +84,7 @@ See [workspace-writes.md](workspace-writes.md) and [shell.md](shell.md).
 ```txt
 policy requires approval
   -> approval.requested / interaction.requested
-  -> CLI/TUI/host resolver
+  -> InteractionChannel.approve (CLI/TUI/Host/Cron)
   -> approval.resolved / interaction.resolved
   -> action continues or denial path
 ```
@@ -40,32 +99,25 @@ policy requires approval
 
 - `approval.requested` carries an id used by protocol `approval.resolve`.
 - `approval.resolved` preserves optional resolver `message` and structured
-  `autoApproved` state; trace summary/report diagnostics should not rely on
-  message prose for new traces.
+  `autoApproved` state. Trace summary/report diagnostics consume these root
+  fields only and do not parse nested responses or message prose.
 - Approval denial does not automatically mean run cancellation.
 - Repeating a denied same-target tool request does not convert the denial into
   an unexpected tool failure. The repeated-tool guard preserves
   policy/approval-denial semantics for diagnostics and run outcome, while the
   original approval/policy event remains the audit source.
 - Pending approval UI should key by approval/request identity.
-- `shouldWrite: false` keeps a hard-deny write gate before approval. Interactive
-  clients that need write approvals should start write-enabled runs
-  (`shouldWrite: true`) and rely on `permissionMode` plus normal approval
-  policy for auto/manual responses.
+- `accessMode: read-only` keeps a hard-deny write gate before approval.
+  `ask` enables writes with interactive approval, `accept-edits` auto-approves
+  managed edits, and `bypass` auto-approves permitted actions.
 - Host freezes resolved access fields into a run-local security plan before
   assembling policies and process capabilities. This does not share the Core
   mutation policy: approval state and `writtenPaths` remain newly constructed
   for each run.
 - Trace verification checks that resolutions do not exceed requests.
-- `approvals.cronMode` is a config default for cron command permission mode;
-  named approval behavior remains owned by the normal core/host approval path,
-  and explicit CLI flags still override the default.
-- TUI sends shared `accessMode` at the run boundary; the host projects it to
-  core `permissionMode`/`shouldWrite` and clamps it to any project access
-  ceiling. Deprecated standalone TUI approval scopes (`approveAll`,
-  `approveEdits`, `approveShellSafe`, and config `approvals.*`) do not
-  independently auto-resolve TUI prompts; `bypass` and `accept-edits` remain
-  auto-answering through their derived core permission modes.
+- CLI, TUI, ACP, Cron, and Host send the same `accessMode` at the run boundary;
+  Host clamps it to any project access ceiling and derives the run-local
+  approval policy. There is no second approval-default input.
 - Ask-mode TUI users may remember an exact recognized approval subject for the
   current session. Rules are client-memory only, installed after a successful
   `approval.resolve`, matched on canonical path or exact tool arguments plus
@@ -82,15 +134,15 @@ policy requires approval
   ceilings. This is governance, not an approval prompt: cap/policy denials for
   background task surfaces are recoverable tool failures rather than
   `approval.requested` events.
-- Configured in-process delegate child runs share the host approval resolver
-  with the parent run, so child workspace-write and shell gates still resolve
-  through the same CLI/TUI approval and trace path. They do not receive an
-  interaction channel for arbitrary user questions.
+- Configured in-process delegate child runs receive an approval-only
+  `InteractionChannel` from Host, so child workspace-write and shell gates
+  still resolve through the same CLI/TUI approval and trace path without
+  gaining `ask` or `notify` capabilities.
 - Dynamic `spawn_agent` and host `task_create(kind:"agent")` can request a
   spawn-time workspace-write grant through `grant.workspaceWrite: true` or an
   explicit managed write tool in `allowedTools`. The parent tool approval uses
   a grant-aware summary and write side-effect governance; once approved, the
-  child gets a scoped resolver that auto-approves only child
+  child gets a scoped approval-only channel that auto-approves only child
   `workspace.write` requests. The child does not prompt the user again for the
   same grant, and grant consumption cannot approve unrelated tool execution or
   shell access.
@@ -101,8 +153,8 @@ policy requires approval
 
 ## Consumers
 
-- Host pending approval map.
-- CLI flags such as `--yes`, `--yes-edits`, and `--yes-shell-safe`.
+- Host execution interaction owner over the HostExecution pending approval map.
+- CLI `--access-mode` and the TUI runtime access switch.
 - TUI approval layer via host-client approval helpers.
 - Trace safety summary and verification.
 
@@ -129,6 +181,23 @@ policy requires approval
 - Approval UX and diagnostic reporting are split across CLI, TUI, host, and core trace.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-16
+- Scope: tool approval metadata and UI/CLI matching use exact callable names;
+  `bash` is the only shell-tool identity. Shell risk classification and approval
+  resource semantics are unchanged.
+- Read: Core run gate/approval policy, Host shell catalog, CLI/TUI approval
+  consumers, and focused tests.
+
+- Status: Verified
+- Date: 2026-07-16T10:23:51+0800
+- Scope: reviewed for removal of the Core revival budget alias; approval
+  admission, resolver, and policy boundaries do not consume that run option and
+  require no contract change.
+- Read: Core run option consumers and approval map contracts.
+- Tests: focused Core revival/budget tests 19/19, runtime guardrails 28/28,
+  full Core 668/668, and Core typecheck passed.
 
 - Status: Verified
 - Date: 2026-07-15T07:35:27+0800
@@ -289,7 +358,7 @@ test/spawn-agent.test.ts`;
   denials and do not introduce approval requests or approval resolver changes.
 - Read: `packages/core/src/policy.ts`, `packages/core/src/run-outcome.ts`,
   `packages/host/src/runtime.ts`, `packages/cli/test/cli.test.ts`,
-  `docs/_internal/proposals/consolidation-agenda.md`.
+  `docs/_internal/reviews/consolidation-agenda.md`.
 - Tests: `npm --workspace @sparkwright/core test -- test/policy.test.ts
 test/workspace.test.ts`; `npm --workspace @sparkwright/cli test --
 test/cli.test.ts -t "confidential"`.
@@ -350,15 +419,6 @@ test/access-mode.test.ts`;
   `npm --workspace @sparkwright/host test -- test/run-access.test.ts
 test/config.test.ts -t "background task policy|backgroundTasks|accessMode"`.
 
-- Status: Verified
-- Date: 2026-06-29T09:28:39+0800
-- Scope: checked after `shell` -> `bash` canonicalization; approval semantics
-  did not change, and shell approval matching now accepts canonical and legacy
-  names.
-- Read: `packages/core/src/approval-policy.ts`,
-  `packages/host/src/shell.ts`, `packages/tui/src/components/approval-prompt.tsx`,
-  `packages/cli/test/cli.test.ts`,
-  `docs/_internal/project-map/maps/safety/approvals.md`.
 - Tests: `npm --workspace @sparkwright/core test -- test/run.test.ts`;
   `npm --workspace @sparkwright/cli test -- test/cli.test.ts test/config-schema.test.ts`;
   `npm --workspace @sparkwright/tui test -- test/tool-request-preview.test.ts`.

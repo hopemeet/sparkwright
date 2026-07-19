@@ -61,7 +61,7 @@ describe("ActivityPanel", () => {
     const events = [
       ev("task.started", 1, {
         taskId: "task_mqzd1c1b30yc24hj",
-        kind: "shell.promoted",
+        kind: "shell.background",
         command: "node bg-task.js",
         cwd: "/repo",
       }),
@@ -100,7 +100,7 @@ describe("ActivityPanel", () => {
       {
         id: "task_durable123456789",
         parentRunId: "run_1",
-        kind: "shell.promoted",
+        kind: "shell.background",
         status: "completed",
         awaited: false,
         createdAt: "2026-06-30T00:00:00.000Z",

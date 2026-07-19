@@ -11,13 +11,13 @@ export {
   isProtocolErrorCode,
   isRequest,
   isResponse,
-  protocolErrorToRunFailure,
   runFailureMessage,
 } from "@sparkwright/protocol";
 export type {
   ApprovalRequestedEventPayload,
   ApprovalResolveRequestPayload,
   EventKind,
+  ExecutionAssessmentPayload,
   HandshakeRequestPayload,
   HostEvent,
   HostLogEventPayload,

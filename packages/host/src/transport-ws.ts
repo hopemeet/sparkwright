@@ -43,7 +43,8 @@ const LOOPBACK_HOSTS = new Set([
 
 /**
  * WebSocket transport: one WS connection = one Connection. The host accepts
- * concurrent clients; each gets its own HostRuntime via serveConnection().
+ * concurrent clients; each gets a HostService-composed HostRuntime via
+ * serveConnection(), sharing the process execution coordinator.
  *
  * v1.0 has optional bearer-token auth. Bind to localhost unless the operator
  * explicitly passes an externally-reachable host and configures network/auth

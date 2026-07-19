@@ -4,7 +4,7 @@ import type { TaskError } from "../tasks/types.js";
 export type WorkflowRunId = Brand<string, "WorkflowRunId">;
 
 export const WORKFLOW_RUN_RECORD_SCHEMA_VERSION =
-  "sparkwright-workflow-run.v1" as const;
+  "sparkwright-workflow-run.v2" as const;
 
 export type WorkflowRunStatus =
   | "running"
@@ -17,15 +17,17 @@ export type WorkflowWaitKind = "input" | "task" | "approval";
 
 export interface WorkflowAssetPin {
   assetName: string;
-  /** Event-time authored asset layer; legacy records may omit it. */
-  layer?: "builtin" | "user" | "project" | "unknown";
+  layer: "builtin" | "user" | "project";
+  version?: string;
+  packageHash: string;
+  packageHashPolicyVersion: 2;
+  packageSnapshotRef: string;
+}
+
+export interface WorkflowSourceIdentity {
+  assetName: string;
   version?: string;
   contentHash: string;
-  /** Strong executable-package identity for new pinned runs. */
-  packageHash?: string;
-  packageHashPolicyVersion?: 2;
-  /** Durable reference to the executable package snapshot. */
-  packageSnapshotRef?: string;
 }
 
 export interface WorkflowWaitState {
@@ -75,18 +77,15 @@ export interface WorkflowRunAuthorizationSnapshot {
   targetPath?: string;
   confidentialPaths: string[];
   confidentialDefaults: boolean;
-  shouldWrite: boolean;
-  accessMode?: WorkflowRunAccessMode;
+  accessMode: WorkflowRunAccessMode;
   backgroundTasks: WorkflowBackgroundTaskPolicy;
 }
 
 export interface WorkflowRunRecord extends WorkflowAssetPin {
   schemaVersion: typeof WORKFLOW_RUN_RECORD_SCHEMA_VERSION;
   id: WorkflowRunId;
-  /** Canonical mutation revision. Legacy v1 snapshots are migrated from revision 0. */
-  recordRevision?: number;
-  /** Fencing generation of the writer that produced this projection. */
-  generation?: number;
+  recordRevision: number;
+  generation: number;
   parentRunId?: RunId;
   sessionId?: string;
   activeRunId?: RunId;
@@ -103,7 +102,7 @@ export interface WorkflowRunRecord extends WorkflowAssetPin {
   failure?: WorkflowRunFailure;
   resume: WorkflowResumePolicy;
   authorizationSnapshot?: WorkflowRunAuthorizationSnapshot;
-  definitionSnapshot?: WorkflowDefinition;
+  definitionSnapshot: PinnedWorkflowDefinition;
   createdAt: string;
   updatedAt?: string;
   completedAt?: string;
@@ -138,8 +137,7 @@ export interface WorkflowCommandNodeDefinition {
 }
 
 export interface WorkflowDelegateNodeDefinition {
-  agentId?: string;
-  toolName?: string;
+  agentId: string;
   goal: string;
   metadata?: Record<string, unknown>;
 }
@@ -218,16 +216,9 @@ export interface WorkflowDiffScopeVerifierDefinition {
   metadata?: Record<string, unknown>;
 }
 
-export interface WorkflowTodoClearVerifierDefinition {
-  id: string;
-  kind: "todo_clear";
-  metadata?: Record<string, unknown>;
-}
-
 export type WorkflowVerifierDefinition =
   | WorkflowCommandVerifierDefinition
-  | WorkflowDiffScopeVerifierDefinition
-  | WorkflowTodoClearVerifierDefinition;
+  | WorkflowDiffScopeVerifierDefinition;
 
 export type WorkflowTransitionDefinition =
   | string
@@ -263,13 +254,23 @@ export interface WorkflowNodeDefinition {
   metadata?: Record<string, unknown>;
 }
 
-export interface WorkflowDefinition extends WorkflowAssetPin {
+export interface WorkflowExecutableDefinition {
+  assetName: string;
+  version?: string;
   sourcePath?: string;
   sourceDir?: string;
   description?: string;
   nodes: WorkflowNodeDefinition[];
   config?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
+}
+
+export interface WorkflowDefinition
+  extends WorkflowExecutableDefinition, WorkflowSourceIdentity {}
+
+export interface PinnedWorkflowDefinition
+  extends WorkflowExecutableDefinition, WorkflowAssetPin {
+  sourceDir: string;
 }
 
 export type WorkflowRuntimeStatus = "running" | "completed" | "failed";

@@ -3,7 +3,7 @@
 ## Current Confidence
 
 - Status: `Partially Verified`
-- Last reviewed: 2026-07-07
+- Last reviewed: 2026-07-19
 - Evidence source: 2026-06-22 core trace tests and CLI trace fixture tests
   passed; a deterministic CLI debug trace was also checked with summary,
   timeline, report, verify, and session check. Live real-model subagent canaries
@@ -13,6 +13,47 @@
   `trace verify`, and a failing `trace report` for unresolved tool failures.
 
 ## Covered
+
+- 2026-07-19 real Terra fix verification passed ordinary-command
+  classification, Host/Direct required-verifier parity, and Workflow
+  supersession positive/negative controls. Its two adjacent P3 gaps are now
+  fixed: session check reconciles cancellation-owned `TOOL_ABORTED` per run,
+  and Workflow `runBudget.maxModelCalls` retains
+  `MAX_MODEL_CALLS_EXCEEDED`. Focused tests, two retained cancellation sessions,
+  and a fresh real Terra Workflow provide post-fix evidence. See
+  [../runs/2026-07-19-real-model-fix-verification.md](../runs/2026-07-19-real-model-fix-verification.md).
+
+- 2026-07-19 deterministic fix verification removed goal prose as verifier
+  authority, routed Direct Core through canonical Host hook assembly, and made
+  trace report omit only resumable run failures superseded by a later episode
+  terminal for the same durable Workflow. The retained three-episode trace now reports
+  `passed_with_issues` with one recovered `ENOENT` and no `TRACE_ERRORS`. Core
+  641/641 and CLI 191/191 passed.
+
+- 2026-07-19 Terra follow-up confirmed target-less resume and stale
+  verification recovery, then found three semantic splits now closed above:
+  goal prose promoted ordinary commands into formal verification, Direct Core
+  omitted required verification hooks, and offline trace report treated
+  resumable Workflow budget terminals as final `TRACE_ERRORS`. See
+  [../runs/2026-07-19-real-terra-refactor-qa-follow-up.md](../runs/2026-07-19-real-terra-refactor-qa-follow-up.md).
+
+- Post-refactor real Terra sessions verified persisted terminal assessment at
+  the behavior boundary. `session_cli_assessment_refactor_20260719` retained a
+  failing invalid-argument episode, then allowed a clean target-less resume to
+  become the active execution result; offline trace/session diagnostics still
+  retained the historical warning. A separate coding session retained both
+  three passed verification facts and an unrelated `ENOENT` failure before a
+  clean no-tool resume. This covers truth preservation, episode supersession,
+  and non-destructive full-history replay.
+
+- 2026-07-19 broad real `openai/gpt-5.6-terra` QA passed fresh read/write,
+  Agent/Skill/MCP canaries, TUI trace verification, and session checks, and
+  exposed three now-fixed architecture gaps: untargeted resume inherited an
+  implicit README scope, prose claim parsing rejected truthful compound-command
+  subclaims, and live CLI recovery disagreed with offline trace recovery. The
+  fix removes the target sentinel and prose verdict system, then makes terminal
+  consumers share persisted Core `RunAssessment`. See
+  [../runs/2026-07-19-real-terra-broad-refactor-qa.md](../runs/2026-07-19-real-terra-broad-refactor-qa.md).
 
 - 2026-07-15 independent follow-up reduced `run.started.payload.toolPlan` to a
   post-admission episode visibility snapshot. It records exposed/deferred/
@@ -249,3 +290,8 @@ npm run release:check
 - [../failures/repeated-expected-denial-outcome.md](../failures/repeated-expected-denial-outcome.md)
 - [../failures/workflow-observation-blocked-tool-requests.md](../failures/workflow-observation-blocked-tool-requests.md)
 - [../failures/workflow-distill-shadow-terminal-state.md](../failures/workflow-distill-shadow-terminal-state.md)
+- [../failures/session-resume-default-target-scope.md](../failures/session-resume-default-target-scope.md)
+- [../failures/compound-command-subclaim-unsupported.md](../failures/compound-command-subclaim-unsupported.md)
+- [../failures/cli-terminal-trace-command-recovery-divergence.md](../failures/cli-terminal-trace-command-recovery-divergence.md)
+- [../failures/cancelled-tool-abort-session-check-warning.md](../failures/cancelled-tool-abort-session-check-warning.md)
+- [../failures/workflow-max-model-budget-reported-as-step-limit.md](../failures/workflow-max-model-budget-reported-as-step-limit.md)

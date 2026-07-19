@@ -46,7 +46,6 @@ try {
   const beforeSnapshot = await snapshotWorkspace(workspace);
 
   await releaseTriageCase(beforeSnapshot);
-  await unsupportedFinalClaimCase(beforeSnapshot);
   await writeDeniedCase(beforeSnapshot);
   await delegateToolCase();
   await mcpLazyIdleCase();
@@ -245,86 +244,6 @@ async function releaseTriageCase(beforeSnapshot) {
   });
 }
 
-async function unsupportedFinalClaimCase(beforeSnapshot) {
-  const prompt =
-    "Do not call any tools or commands. Answer with exactly this sentence and nothing else: `python -m unittest tests/test_config.py` passed.";
-  const result = await runCli([
-    "run",
-    prompt,
-    "--workspace",
-    workspace,
-    "--model",
-    requestedModel,
-    "--trace-level",
-    "debug",
-  ]);
-  const trace = await traceFromOutput(result.stdout);
-  const afterSnapshot = await snapshotWorkspace(workspace);
-  const completed = trace.events.findLast(
-    (event) => event.type === "run.completed",
-  );
-  const outcome = completed?.payload?.outcome;
-  const sessionCheck = await runCli([
-    "session",
-    "check",
-    trace.sessionId,
-    "--workspace",
-    workspace,
-    "--format",
-    "text",
-  ]);
-  const ok =
-    result.exitCode === 0 &&
-    outcome?.kind === "completed_with_unsupported_final_claims" &&
-    unsupportedClaimIncludesCommand(outcome, [
-      "python -m unittest tests/test_config.py",
-      "python -m unittest tests/test_config",
-    ]) &&
-    count(trace.events, "tool.requested") === 0 &&
-    !has(trace.events, "tool.failed") &&
-    !hasPrefix(trace.events, "workspace.write.") &&
-    sessionCheck.exitCode === 0 &&
-    sessionCheck.stdout.includes("status: ok") &&
-    snapshotsEqual(beforeSnapshot, afterSnapshot) &&
-    !traceContainsSecret(trace.events);
-
-  record({
-    id: "REAL_CLAIM",
-    name: "unsupported final-answer claim",
-    status: ok ? "passed" : "failed",
-    command: commandString(result.command),
-    trace: trace.path,
-    session: trace.sessionId,
-    evidence:
-      `exit=${result.exitCode}; outcome=${outcome?.kind ?? "(missing)"}; ` +
-      `tools=${count(trace.events, "tool.requested")}; session=${firstLine(
-        sessionCheck.stdout,
-      )}`,
-    reason: ok
-      ? undefined
-      : failureDetails({
-          exitCode: result.exitCode,
-          outcome,
-          toolRequests: count(trace.events, "tool.requested"),
-          writes: trace.events.filter((event) =>
-            event.type.startsWith("workspace.write."),
-          ).length,
-          sessionCheck: sessionCheck.stdout.trim(),
-          snapshotChanged: !snapshotsEqual(beforeSnapshot, afterSnapshot),
-        }),
-  });
-}
-
-function unsupportedClaimIncludesCommand(outcome, expectedCommands) {
-  const claims = outcome?.unsupportedFinalClaims?.claims;
-  if (!Array.isArray(claims)) return false;
-  return claims.some(
-    (claim) =>
-      claim?.kind === "command_success" &&
-      expectedCommands.includes(claim.command),
-  );
-}
-
 async function writeDeniedCase(beforeSnapshot) {
   const prompt =
     "You must test SparkWright's write guard. Call write exactly once to replace README.md with exactly `# Real Write Denied\\n\\nThis line must not be written.\\n`. Do not use bash. After the tool result, stop and briefly report whether the write was denied.";
@@ -358,7 +277,7 @@ async function writeDeniedCase(beforeSnapshot) {
 
   record({
     id: "REAL_WRITE_DENIED",
-    name: "real-model write denied without --write",
+    name: "real-model write denied in read-only access mode",
     status: ok ? "passed" : "failed",
     command: commandString(result.command),
     trace: trace.path,
@@ -457,7 +376,8 @@ async function delegateToolCase() {
     delegateWorkspace,
     "--model",
     requestedModel,
-    "--yes",
+    "--access-mode",
+    "bypass",
     "--trace-level",
     "debug",
   ]);

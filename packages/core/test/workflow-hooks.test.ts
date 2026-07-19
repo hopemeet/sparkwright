@@ -3,11 +3,11 @@ import {
   createContextItemId,
   createRun,
   defineTool,
-  EventLog,
   runWorkflowHooks,
   type ModelAdapter,
   type WorkflowHook,
 } from "../src/index.js";
+import { EventLog } from "../src/internal.js";
 import { createRunId } from "../src/ids.js";
 
 describe("runWorkflowHooks", () => {
@@ -71,7 +71,7 @@ describe("runWorkflowHooks", () => {
       {
         name: "rewrite",
         hook: "PreToolUse",
-        matcher: { toolName: "shell" },
+        matcher: { toolName: "bash" },
         handle: () => ({
           status: "rewrite",
           patch: { arguments: { command: "npm test" } },
@@ -83,7 +83,7 @@ describe("runWorkflowHooks", () => {
       hooks,
       hook: "PreToolUse",
       run,
-      payload: { toolName: "shell", arguments: { command: "npm t" } },
+      payload: { toolName: "bash", arguments: { command: "npm t" } },
       events,
     });
 
@@ -134,7 +134,7 @@ describe("runWorkflowHooks", () => {
       hook: "PreToolUse",
       preToolUseStage: "rewrite",
       run,
-      payload: { toolName: "write_file", arguments: { path: "draft.ts" } },
+      payload: { toolName: "write", arguments: { path: "draft.ts" } },
       events,
     });
     const governance = await runWorkflowHooks({
@@ -143,7 +143,7 @@ describe("runWorkflowHooks", () => {
       preToolUseStage: "governance",
       run,
       payload: {
-        toolName: "write_file",
+        toolName: "write",
         arguments: { path: "src/rewritten.ts" },
       },
       events,
@@ -171,7 +171,7 @@ describe("runWorkflowHooks", () => {
         name: "src-only",
         hook: "PreToolUse",
         matcher: {
-          toolName: "write_file",
+          toolName: "write",
           pathGlob: "src/**",
           excludePathGlob: "src/generated/**",
         },
@@ -183,14 +183,14 @@ describe("runWorkflowHooks", () => {
       hooks,
       hook: "PreToolUse",
       run,
-      payload: { toolName: "write_file", path: "src/generated/a.ts" },
+      payload: { toolName: "write", path: "src/generated/a.ts" },
       events,
     });
     const sourceResult = await runWorkflowHooks({
       hooks,
       hook: "PreToolUse",
       run,
-      payload: { toolName: "write_file", path: "src/app.ts" },
+      payload: { toolName: "write", path: "src/app.ts" },
       events,
     });
 
@@ -283,7 +283,7 @@ describe("workflowHooks in createRun", () => {
   it("blocks a matching PreToolUse call before execution", async () => {
     let executed = false;
     const write = defineTool({
-      name: "write_file",
+      name: "write",
       description: "write",
       inputSchema: {
         type: "object",
@@ -302,7 +302,7 @@ describe("workflowHooks in createRun", () => {
         if (calls === 1) {
           return {
             toolCalls: [
-              { toolName: "write_file", arguments: { path: "generated/a.ts" } },
+              { toolName: "write", arguments: { path: "generated/a.ts" } },
             ],
           };
         }
@@ -321,7 +321,7 @@ describe("workflowHooks in createRun", () => {
         {
           name: "no-generated",
           hook: "PreToolUse",
-          matcher: { toolName: "write_file", pathGlob: "generated/**" },
+          matcher: { toolName: "write", pathGlob: "generated/**" },
           handle: () => ({
             status: "block",
             reason: "generated files are locked",
@@ -342,7 +342,7 @@ describe("workflowHooks in createRun", () => {
   it("applies PreToolUse rewrites before governance blocks", async () => {
     let executed = false;
     const write = defineTool({
-      name: "write_file",
+      name: "write",
       description: "write",
       inputSchema: {
         type: "object",
@@ -360,9 +360,7 @@ describe("workflowHooks in createRun", () => {
         calls += 1;
         if (calls === 1) {
           return {
-            toolCalls: [
-              { toolName: "write_file", arguments: { path: "draft.ts" } },
-            ],
+            toolCalls: [{ toolName: "write", arguments: { path: "draft.ts" } }],
           };
         }
         expect(input.context[0]?.content).toContain(
@@ -389,7 +387,7 @@ describe("workflowHooks in createRun", () => {
           name: "no-generated",
           hook: "PreToolUse",
           preToolUseStage: "governance",
-          matcher: { toolName: "write_file", pathGlob: "generated/**" },
+          matcher: { toolName: "write", pathGlob: "generated/**" },
           handle: () => ({
             status: "block",
             reason: "generated files are locked",

@@ -2,7 +2,8 @@ import { access, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { createRunId, EventLog } from "@sparkwright/core";
+import { createRunId } from "@sparkwright/core";
+import { EventLog } from "@sparkwright/core/internal";
 import {
   resolveShellSandboxConfig,
   type ShellSandboxRuntime,

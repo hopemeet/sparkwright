@@ -13,7 +13,6 @@
 // docs/EXTENSION_INTERFACES.md "Sub-agents".
 
 import type {
-  ApprovalResolver,
   ContextItem,
   CreateRunOptions,
   EventEmitter,
@@ -40,13 +39,15 @@ import type {
   WorkflowHookName,
 } from "@sparkwright/core";
 import {
-  createAppPromptSection,
   createDefaultPolicy,
   createSpanId,
   createRun as defaultCreateRun,
-  DefaultPromptBuilder,
   defineTool,
 } from "@sparkwright/core";
+import {
+  createAppPromptSection,
+  DefaultPromptBuilder,
+} from "@sparkwright/core/internal";
 import type {
   AgentToolInvocationInput,
   AgentToolResult,
@@ -59,6 +60,11 @@ import {
   rememberSuccessfulDelegation,
   withAlreadyCompletedNote,
 } from "./agents/delegation-ledger.js";
+import {
+  isAgentToolResult,
+  projectAgentInvocationResult,
+  runResultStepLimitReached,
+} from "./agents/result.js";
 import type {
   AgentAssetIdentity,
   PreparedAgentInvocation,
@@ -84,6 +90,16 @@ export {
   rememberSuccessfulDelegation,
   withAlreadyCompletedNote,
 } from "./agents/delegation-ledger.js";
+export {
+  assessmentNote,
+  childAssessment,
+  isCompleteAgentResult,
+  isAgentToolResult,
+  isReusableAgentResult,
+  projectAgentInvocationResult,
+  runResultStepLimitReached,
+  runResultTruncated,
+} from "./agents/result.js";
 export type {
   AgentAssetIdentity,
   AgentInvocationProtocol,
@@ -232,14 +248,11 @@ export interface AgentProfile {
   when?: AgentProfileRoutingCondition;
   delegateTool?: AgentProfileDelegateTool;
   /**
-   * Tri-state opt-in/opt-out for automatic delegate exposure. `undefined` means
-   * "not configured" (the host's `capabilities.agents.exposeChildrenAsDelegates`
-   * flag decides for direct aliases); `true` forces this child/all profile into
-   * automatic delegate exposure even when the global flag is off; `false`
-   * suppresses automatic `delegate_agent` targeting and direct alias exposure.
-   * An explicit `delegateTool` (inline) or a
-   * `capabilities.agents.delegateTools[]` entry still wins. See
-   * `resolveAgentDelegateTools` in @sparkwright/host.
+   * Tri-state opt-in/opt-out for automatic delegate exposure. `undefined`
+   * follows the host's indexed target policy; `true` also exposes this profile
+   * as a direct delegate alias, while `false` suppresses automatic
+   * `delegate_agent` targeting and synthesized aliases. An explicit
+   * `delegateTool` (inline) or host delegate config still defines a target.
    */
   exposeAsDelegate?: boolean;
   /**
@@ -741,7 +754,7 @@ export interface SpawnSubAgentInput {
   /**
    * Workspace for the child's {@link RuntimeContext}. Defaults to the parent's
    * workspace (`parent.getWorkspace()`) so workspace-backed child tools like
-   * `read_file` resolve against the same root the parent uses, instead of
+   * `read` resolve against the same root the parent uses, instead of
    * throwing "Workspace is not configured". Pass an explicit value to override,
    * or `null` to deliberately run the child without a workspace.
    */
@@ -784,11 +797,6 @@ export interface SpawnSubAgentInput {
    * explicitly disable any user interaction from the child.
    */
   interactionChannel?: InteractionChannel | null;
-  /**
-   * Approval resolver for child tool gates. Use this when a child should share
-   * the parent run's approval path without inheriting free-form interaction.
-   */
-  approvalResolver?: ApprovalResolver;
   /**
    * Parent's UsageTracker. When supplied, the child's tool/model usage is
    * forwarded into this tracker so the parent's `usage()` snapshot reflects
@@ -930,7 +938,6 @@ export function spawnSubAgent(input: SpawnSubAgentInput): SpawnedSubAgent {
     promptBuilder: childPromptBuilder,
     interactionChannel:
       input.interactionChannel === null ? undefined : input.interactionChannel,
-    approvalResolver: input.approvalResolver,
     hooks: input.hooks,
     workflowHooks: input.workflowHooks,
     maxSteps: input.maxSteps ?? parent.maxSteps,
@@ -982,7 +989,7 @@ export function spawnSubAgent(input: SpawnSubAgentInput): SpawnedSubAgent {
   if (!input.admission) supervisor.admit();
 
   // Roll up the child's own workspace writes onto the parent-visible terminal
-  // event. The child run records each `apply_patch`/`edit_anchored_text` as a
+  // event. The child run records each `edit`/`edit_anchored_text` as a
   // `workspace.write.completed` on its OWN trace; the parent run-end summary is
   // parent-scoped and never sees those. Counting the child's real write events
   // here (rather than re-detecting changes with a parent-side filesystem
@@ -1114,18 +1121,23 @@ function subagentTerminalProjection(
   finality: "complete" | "partial";
   stepLimitReached?: boolean;
   truncated?: boolean;
+  assessment?: import("@sparkwright/core").RunAssessment;
 } {
   const payload = isRecord(event.payload) ? event.payload : {};
   const metadata = isRecord(payload.metadata) ? payload.metadata : undefined;
   const stepLimitReached =
     payload.stepLimitReached === true || metadata?.stepLimitReached === true;
   const truncated = payload.truncated === true || metadata?.truncated === true;
+  const assessment = isRecord(payload.assessment)
+    ? (payload.assessment as unknown as import("@sparkwright/core").RunAssessment)
+    : undefined;
   if (truncated) {
     return {
       terminalState: "truncated",
       finality: "partial",
       stepLimitReached,
       truncated: true,
+      ...(assessment ? { assessment } : {}),
     };
   }
   if (stepLimitReached) {
@@ -1133,10 +1145,15 @@ function subagentTerminalProjection(
       terminalState: "step_limit",
       finality: "partial",
       stepLimitReached: true,
+      ...(assessment ? { assessment } : {}),
     };
   }
   if (eventType === "run.cancelled")
-    return { terminalState: "cancelled", finality: "partial" };
+    return {
+      terminalState: "cancelled",
+      finality: "partial",
+      ...(assessment ? { assessment } : {}),
+    };
   if (eventType === "run.failed") {
     if (runFailureWasAbort(payload)) {
       return { terminalState: "cancelled", finality: "partial" };
@@ -1150,9 +1167,14 @@ function subagentTerminalProjection(
     return {
       terminalState: stopReason === "blocking_limit" ? "blocked" : "failed",
       finality: "partial",
+      ...(assessment ? { assessment } : {}),
     };
   }
-  return { terminalState: "completed", finality: "complete" };
+  return {
+    terminalState: "completed",
+    finality: "complete",
+    ...(assessment ? { assessment } : {}),
+  };
 }
 
 function runFailureWasAbort(payload: Record<string, unknown>): boolean {
@@ -1281,19 +1303,9 @@ export interface CreateAgentToolOptions {
    */
   forbidNesting?: boolean;
   /**
-   * If true, the tool's policy advertises `requiresApproval`, forcing the
-   * parent's approval gate before each sub-agent spawn. Default: false
-   * (spawning itself is `risk: "safe"`; child actions enforce their own policy).
-   *
-   * @deprecated Prefer `policy` when the caller already derived the effective
-   * tool policy from a capability descriptor.
+   * Effective capability-derived policy for the spawn action.
    */
-  requiresApproval?: boolean;
-  /**
-   * Effective tool policy for the spawn action. When omitted, the spawn action
-   * remains safe and only `requiresApproval` can force approval on spawn.
-   */
-  policy?: ToolDefinition["policy"];
+  policy: ToolDefinition["policy"];
   /**
    * Optional host-derived admission classifier for the child capability set.
    * Return true only when concurrent child execution cannot mutate shared
@@ -1338,18 +1350,27 @@ export function createAgentTool(
       },
       required: ["goal"],
     },
-    // Default risk is "safe": sub-agent SPAWN itself is a routine
-    // decomposition action — the child run enforces its own policy on
-    // anything the sub-agent does. Set `requiresApproval: true` to force
-    // approval-on-spawn for embedders that need it.
-    policy: options.policy ?? {
-      risk: "safe",
-      requiresApproval: options.requiresApproval === true,
-    },
+    policy: options.policy,
     governance: {
       origin: { kind: "local", name: "@sparkwright/agent-runtime" },
       sideEffects: ["external"],
       idempotency: "conditional",
+    },
+    managesRepeatedCalls: (args) => {
+      const parent = getParent();
+      if (!parent) return false;
+      try {
+        const parsed = parseAgentToolArgs(args);
+        return Boolean(
+          findSimilarSuccessfulDelegation(
+            parent,
+            delegationLedgerKey,
+            parsed.goal,
+          ),
+        );
+      } catch {
+        return false;
+      }
     },
     ...(options.isConcurrencySafe
       ? { isConcurrencySafe: options.isConcurrencySafe }
@@ -1400,9 +1421,6 @@ export function createAgentTool(
         result,
         usage,
       });
-      if (result.signal !== "completed") {
-        throw new AgentToolRunError(name, output, result);
-      }
       const stepLimitReached = runResultStepLimitReached(result);
       const structured = isAgentToolResult(output)
         ? output
@@ -1412,12 +1430,15 @@ export function createAgentTool(
             result,
             usage,
           });
-      if (stepLimitReached) {
-        return withStepLimitReachedNote(output, structured);
-      }
       rememberSuccessfulDelegation(parent, delegationLedgerKey, parsed.goal, {
         ...structured,
       });
+      if (result.signal !== "completed") {
+        throw new AgentToolRunError(name, output, result);
+      }
+      if (stepLimitReached) {
+        return withStepLimitReachedNote(output, structured);
+      }
       return output;
     },
   });
@@ -1465,34 +1486,12 @@ function defaultSummarize(input: AgentToolSummarizeInput): AgentToolResult {
 export function summarizeDelegationResult(
   input: AgentToolSummarizeInput,
 ): DelegationLedgerResult {
-  const stepLimitReached = runResultStepLimitReached(input.result);
-  const truncated = runResultTruncated(input.result) || stepLimitReached;
-  return {
+  return projectAgentInvocationResult({
     childRunId: input.childRunId,
     spanId: input.spanId,
-    signal: input.result.signal,
-    stopReason: input.result.stopReason,
-    message: input.result.message,
-    tokens: input.usage.tokens.total,
-    costUsd: input.usage.costUsd,
-    toolCalls: input.usage.toolCalls,
-    modelCalls: input.usage.modelCalls,
-    ...(stepLimitReached ? { stepLimitReached: true } : {}),
-    ...(truncated ? { truncated: true } : {}),
-  };
-}
-
-function runResultStepLimitReached(result: RunResult): boolean {
-  return (
-    (result.metadata as { stepLimitReached?: unknown } | undefined)
-      ?.stepLimitReached === true
-  );
-}
-
-function runResultTruncated(result: RunResult): boolean {
-  return (
-    (result.metadata as { truncated?: unknown } | undefined)?.truncated === true
-  );
+    result: input.result,
+    usage: input.usage,
+  });
 }
 
 function withStepLimitReachedNote(
@@ -1531,14 +1530,4 @@ class AgentToolRunError extends Error {
       output,
     };
   }
-}
-
-function isAgentToolResult(value: unknown): value is AgentToolResult {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    typeof (value as { childRunId?: unknown }).childRunId === "string" &&
-    typeof (value as { spanId?: unknown }).spanId === "string" &&
-    typeof (value as { signal?: unknown }).signal === "string"
-  );
 }

@@ -44,8 +44,7 @@ describe("host client run request helpers", () => {
         source: "tui",
         sessionId: "session_1",
         workspaceRoot: "/repo",
-        permissionMode: "default",
-        shouldWrite: false,
+        accessMode: "read-only",
         traceLevel: "debug",
         modelName: "deterministic",
       }),
@@ -53,8 +52,7 @@ describe("host client run request helpers", () => {
       source: "tui",
       sessionId: "session_1",
       workspaceRoot: "/repo",
-      permissionMode: "default",
-      shouldWrite: false,
+      accessMode: "read-only",
       traceLevel: "debug",
       model: "deterministic",
     });
@@ -69,7 +67,11 @@ describe("host client run request helpers", () => {
   });
 
   it("builds start and resume payloads with shared field rules", () => {
-    const metadata = { source: "cli", shouldWrite: true, traceLevel: "debug" };
+    const metadata = {
+      source: "cli",
+      accessMode: "accept-edits",
+      traceLevel: "debug",
+    };
     const input = {
       parts: [
         {
@@ -88,12 +90,11 @@ describe("host client run request helpers", () => {
         controlSessionId: "session_control",
         modelName: "openai/configured",
         modelNameSource: "config",
-        permissionMode: "accept_edits",
+        accessMode: "accept-edits",
         traceLevel: "debug",
         targetPath: "README.md",
         confidentialPaths: ["secret*"],
         confidentialDefaults: false,
-        shouldWrite: true,
         metadata,
       }),
     ).toEqual({
@@ -102,12 +103,11 @@ describe("host client run request helpers", () => {
       sessionId: "session_1",
       controlSessionId: "session_control",
       model: undefined,
-      permissionMode: "accept_edits",
+      accessMode: "accept-edits",
       traceLevel: "debug",
       targetPath: "README.md",
       confidentialPaths: ["secret*"],
       confidentialDefaults: false,
-      shouldWrite: true,
       metadata,
     });
 
@@ -118,10 +118,10 @@ describe("host client run request helpers", () => {
         force: false,
         modelName: "openai/requested",
         modelNameSource: "request",
+        accessMode: "read-only",
         traceLevel: "standard",
         confidentialPaths: ["secret*"],
         confidentialDefaults: false,
-        shouldWrite: false,
         metadata,
       }),
     ).toEqual({
@@ -129,12 +129,11 @@ describe("host client run request helpers", () => {
       fromTrace: true,
       force: false,
       model: "openai/requested",
-      permissionMode: undefined,
+      accessMode: "read-only",
       traceLevel: "standard",
       targetPath: undefined,
       confidentialPaths: ["secret*"],
       confidentialDefaults: false,
-      shouldWrite: false,
       metadata,
     });
 
@@ -144,55 +143,22 @@ describe("host client run request helpers", () => {
         sessionId: "session_1",
         modelName: "openai/requested",
         modelNameSource: "request",
+        accessMode: "read-only",
         traceLevel: "standard",
         confidentialPaths: ["secret*"],
         confidentialDefaults: false,
-        shouldWrite: false,
         metadata,
       }),
     ).toEqual({
       workflowRunId: "workflow_1",
       sessionId: "session_1",
       model: "openai/requested",
-      permissionMode: undefined,
+      accessMode: "read-only",
       traceLevel: "standard",
       targetPath: undefined,
       confidentialPaths: ["secret*"],
       confidentialDefaults: false,
-      shouldWrite: false,
       metadata,
-    });
-  });
-
-  it("prefers accessMode over legacy permissionMode in new client payloads", () => {
-    const metadata = createHostClientRunMetadata({
-      source: "cli",
-      accessMode: "accept-edits",
-      permissionMode: "bypass_permissions",
-      shouldWrite: true,
-      traceLevel: "standard",
-    });
-
-    expect(metadata).toMatchObject({
-      source: "cli",
-      accessMode: "accept-edits",
-      shouldWrite: true,
-    });
-    expect(metadata).not.toHaveProperty("permissionMode");
-    expect(
-      createHostStartRunRequest({
-        goal: "inspect",
-        accessMode: "accept-edits",
-        permissionMode: "bypass_permissions",
-        traceLevel: "standard",
-        shouldWrite: true,
-        metadata,
-      }),
-    ).toMatchObject({
-      goal: "inspect",
-      accessMode: "accept-edits",
-      permissionMode: undefined,
-      shouldWrite: true,
     });
   });
 
@@ -202,8 +168,6 @@ describe("host client run request helpers", () => {
       accessModeCeiling: "ask",
       backgroundTasks: "enabled",
       backgroundTasksCeiling: "foreground-only",
-      permissionMode: "bypass_permissions",
-      shouldWrite: true,
     });
 
     expect(access).toEqual({
@@ -215,12 +179,10 @@ describe("host client run request helpers", () => {
       accessMode: "ask",
       requestedAccessMode: "bypass",
       accessModeCeiling: "ask",
-      overriddenLegacyFields: ["permissionMode"],
       metadata: {
         accessMode: "ask",
         requestedAccessMode: "bypass",
         accessModeCeiling: "ask",
-        accessModeOverrodeLegacyFields: ["permissionMode"],
         backgroundTasks: "foreground-only",
         requestedBackgroundTasks: "enabled",
         backgroundTasksCeiling: "foreground-only",
@@ -259,14 +221,12 @@ describe("host client run request helpers", () => {
         modelNameSource: "request",
         accessMode: "ask",
         backgroundTasks: "foreground-only",
-        shouldWrite: true,
       }),
     ).toEqual({
       sessionId: "session_1",
       model: "openai/requested",
       accessMode: "ask",
       backgroundTasks: "foreground-only",
-      shouldWrite: true,
     });
   });
 

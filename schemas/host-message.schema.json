@@ -3,7 +3,7 @@
   "$id": "https://sparkwright.dev/schemas/v0/host-message.schema.json",
   "x-sparkwrightProtocolVersion": "0.2",
   "title": "Sparkwright Host Message",
-  "description": "Wire envelope for all messages exchanged between a Sparkwright host (server-runtime + transport) and a client (TUI, web SDK, etc). Newline-delimited JSON over stdio or one message per WebSocket frame. Every message is one of: request (client→host, expects response), response (host→client, paired with a request by id), or event (host→client, fire-and-forget). The host protocol is versioned via the top-level `protocolVersion` field on the handshake; v1.x is backwards compatible (fields may be added but never removed or repurposed). See docs/HOST_PROTOCOL.md.",
+  "description": "Wire envelope for all messages exchanged between a Sparkwright host (server-runtime + transport) and a client (TUI, web SDK, etc). Newline-delimited JSON over stdio or one message per WebSocket frame. Every message is one of: request (client→host, expects response), response (host→client, paired with a request by id), or event (host→client, fire-and-forget). The host protocol is versioned via the top-level `protocolVersion` field on the handshake; compatible additions retain the major version and breaking changes increment it. See docs/HOST_PROTOCOL.md.",
   "oneOf": [
     { "$ref": "#/$defs/Request" },
     { "$ref": "#/$defs/Response" },
@@ -359,6 +359,7 @@
             "host.log",
             "run.event",
             "approval.requested",
+            "run.continuation",
             "run.completed",
             "run.failed"
           ]
@@ -395,6 +396,14 @@
           "then": {
             "properties": {
               "payload": { "$ref": "#/$defs/ApprovalRequestedEventPayload" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "run.continuation" } } },
+          "then": {
+            "properties": {
+              "payload": { "$ref": "#/$defs/RunContinuationEventPayload" }
             }
           }
         },
@@ -505,10 +514,6 @@
           "type": "boolean",
           "description": "Whether built-in conservative confidential path defaults are included. Defaults to true."
         },
-        "shouldWrite": {
-          "type": "boolean",
-          "description": "Whether this run is allowed to request workspace writes."
-        },
         "model": { "type": "string", "minLength": 1 },
         "workflow": {
           "type": "string",
@@ -518,22 +523,12 @@
         "accessMode": {
           "type": "string",
           "enum": ["read-only", "ask", "accept-edits", "bypass"],
-          "description": "High-level run autonomy preset. When present, the host compiles it to permissionMode + shouldWrite and ignores a conflicting legacy permissionMode."
+          "description": "Canonical run autonomy input. Defaults to read-only when omitted."
         },
         "backgroundTasks": {
           "type": "string",
           "enum": ["disabled", "foreground-only", "enabled"],
           "description": "Session-level foreground/background task policy."
-        },
-        "permissionMode": {
-          "type": "string",
-          "enum": [
-            "plan",
-            "default",
-            "accept_edits",
-            "dont_ask",
-            "bypass_permissions"
-          ]
         },
         "traceLevel": {
           "type": "string",
@@ -580,10 +575,6 @@
           "type": "boolean",
           "description": "Whether built-in conservative confidential path defaults are included. Defaults to true."
         },
-        "shouldWrite": {
-          "type": "boolean",
-          "description": "Whether the resumed run is allowed to request workspace writes."
-        },
         "fromTrace": {
           "type": "boolean",
           "description": "Reconstruct a best-effort checkpoint from trace.jsonl when checkpoint.json is absent."
@@ -596,22 +587,12 @@
         "accessMode": {
           "type": "string",
           "enum": ["read-only", "ask", "accept-edits", "bypass"],
-          "description": "High-level run autonomy preset. When present, the host compiles it to permissionMode + shouldWrite and ignores a conflicting legacy permissionMode."
+          "description": "Canonical run autonomy input. Defaults to read-only when omitted."
         },
         "backgroundTasks": {
           "type": "string",
           "enum": ["disabled", "foreground-only", "enabled"],
           "description": "Session-level foreground/background task policy."
-        },
-        "permissionMode": {
-          "type": "string",
-          "enum": [
-            "plan",
-            "default",
-            "accept_edits",
-            "dont_ask",
-            "bypass_permissions"
-          ]
         },
         "traceLevel": {
           "type": "string",
@@ -992,30 +973,16 @@
           "type": "boolean",
           "description": "Whether built-in conservative confidential path defaults are included. Defaults to true."
         },
-        "shouldWrite": {
-          "type": "boolean",
-          "description": "Whether the resumed run is allowed to request workspace writes."
-        },
         "model": { "type": "string", "minLength": 1 },
         "accessMode": {
           "type": "string",
           "enum": ["read-only", "ask", "accept-edits", "bypass"],
-          "description": "High-level run autonomy preset. When present, the host compiles it to permissionMode + shouldWrite and ignores a conflicting legacy permissionMode."
+          "description": "Canonical run autonomy input. Defaults to read-only when omitted."
         },
         "backgroundTasks": {
           "type": "string",
           "enum": ["disabled", "foreground-only", "enabled"],
           "description": "Session-level foreground/background task policy."
-        },
-        "permissionMode": {
-          "type": "string",
-          "enum": [
-            "plan",
-            "default",
-            "accept_edits",
-            "dont_ask",
-            "bypass_permissions"
-          ]
         },
         "traceLevel": {
           "type": "string",
@@ -1111,49 +1078,23 @@
           "minLength": 1,
           "description": "Model reference in provider/model form, or the reserved deterministic model."
         },
-        "shouldWrite": {
-          "type": "boolean",
-          "description": "Whether this inspection should describe workspace-write-capable runs."
-        },
         "accessMode": {
           "type": "string",
           "enum": ["read-only", "ask", "accept-edits", "bypass"],
-          "description": "High-level run autonomy preset used to scope diagnostics. Preferred over permissionMode and shouldWrite when present."
+          "description": "Canonical run autonomy input used to scope diagnostics. Defaults to read-only when omitted."
         },
         "backgroundTasks": {
           "type": "string",
           "enum": ["disabled", "foreground-only", "enabled"],
           "description": "Session-level foreground/background task policy used to scope diagnostics."
-        },
-        "permissionMode": {
-          "type": "string",
-          "enum": [
-            "plan",
-            "default",
-            "accept_edits",
-            "dont_ask",
-            "bypass_permissions"
-          ],
-          "description": "Legacy approval mode used when accessMode is absent."
         }
       },
       "additionalProperties": false
     },
     "CapabilityRunAccessSummary": {
       "type": "object",
-      "required": ["permissionMode", "shouldWrite", "backgroundTasks"],
+      "required": ["accessMode", "backgroundTasks"],
       "properties": {
-        "permissionMode": {
-          "type": "string",
-          "enum": [
-            "plan",
-            "default",
-            "accept_edits",
-            "dont_ask",
-            "bypass_permissions"
-          ]
-        },
-        "shouldWrite": { "type": "boolean" },
         "backgroundTasks": {
           "type": "string",
           "enum": ["disabled", "foreground-only", "enabled"]
@@ -1177,13 +1118,6 @@
         "backgroundTasksCeiling": {
           "type": "string",
           "enum": ["disabled", "foreground-only", "enabled"]
-        },
-        "overriddenLegacyFields": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "enum": ["permissionMode", "shouldWrite"]
-          }
         }
       },
       "additionalProperties": false
@@ -1453,13 +1387,9 @@
       "properties": {
         "name": { "type": "string", "minLength": 1 },
         "canonicalName": { "type": "string", "minLength": 1 },
-        "legacyNames": {
-          "type": "array",
-          "items": { "type": "string", "minLength": 1 }
-        },
         "defaultExposureTier": {
           "type": "string",
-          "enum": ["public", "advanced", "infrastructure", "internal", "legacy"]
+          "enum": ["public", "advanced", "infrastructure", "internal"]
         },
         "source": { "type": "string" },
         "origin": { "type": "string" },
@@ -1484,12 +1414,13 @@
     },
     "CapabilitySkillSummary": {
       "type": "object",
-      "required": ["name"],
+      "required": ["name", "packageHash", "packageHashPolicyVersion"],
       "properties": {
         "name": { "type": "string", "minLength": 1 },
         "description": { "type": "string" },
         "sourcePath": { "type": "string" },
-        "contentHash": { "type": "string" },
+        "packageHash": { "type": "string", "minLength": 1 },
+        "packageHashPolicyVersion": { "const": 2 },
         "version": { "type": "string" },
         "selectionReason": { "type": "string" }
       },
@@ -1541,7 +1472,7 @@
         "profileId",
         "protocol",
         "risk",
-        "requiresApproval",
+        "approvalRequiredUnderCurrentRun",
         "forbidNesting",
         "sideEffects",
         "workspaceAccess",
@@ -1561,7 +1492,6 @@
           "type": "string",
           "enum": ["safe", "risky", "denied"]
         },
-        "requiresApproval": { "type": "boolean" },
         "approvalRequiredUnderCurrentRun": { "type": "boolean" },
         "approvalReasons": { "type": "array", "items": { "type": "string" } },
         "approvalRunOptions": {
@@ -1772,21 +1702,116 @@
       },
       "additionalProperties": false
     },
+    "RunContinuationEventPayload": {
+      "type": "object",
+      "required": ["runId", "previousRunId", "continuationCount", "reason"],
+      "properties": {
+        "runId": { "type": "string", "minLength": 1 },
+        "previousRunId": { "type": "string", "minLength": 1 },
+        "continuationCount": { "type": "integer", "minimum": 1 },
+        "reason": { "const": "workflow_record_active" }
+      },
+      "additionalProperties": false
+    },
+    "AssessmentIssuePayload": {
+      "type": "object",
+      "required": ["code", "kind", "disposition", "count"],
+      "properties": {
+        "code": { "type": "string" },
+        "kind": { "type": "string" },
+        "disposition": { "enum": ["degraded", "failing"] },
+        "count": { "type": "integer", "minimum": 1 },
+        "details": { "type": "object" }
+      },
+      "additionalProperties": false
+    },
+    "VerificationResultPayload": {
+      "type": "object",
+      "required": ["id", "source", "status"],
+      "properties": {
+        "id": { "type": "string" },
+        "source": { "enum": ["command", "profile", "documented_command"] },
+        "status": { "enum": ["passed", "failed", "timed_out", "stale"] },
+        "sequence": { "type": "integer", "minimum": 0 },
+        "command": { "type": "string" },
+        "profile": { "type": "string" },
+        "verifierId": { "type": "string" },
+        "exitCode": { "type": ["integer", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "RunAssessmentPayload": {
+      "type": "object",
+      "required": ["schemaVersion", "health", "issues", "verification"],
+      "properties": {
+        "schemaVersion": { "const": "run-assessment.v1" },
+        "health": { "enum": ["clean", "degraded", "failing"] },
+        "issues": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/AssessmentIssuePayload" }
+        },
+        "verification": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/VerificationResultPayload" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "ExecutionAssessmentPayload": {
+      "type": "object",
+      "required": [
+        "schemaVersion",
+        "health",
+        "issues",
+        "verification",
+        "episodeCount",
+        "episodes"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "execution-assessment.v1" },
+        "health": { "enum": ["clean", "degraded", "failing"] },
+        "issues": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/AssessmentIssuePayload" }
+        },
+        "verification": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/VerificationResultPayload" }
+        },
+        "episodeCount": { "type": "integer", "minimum": 0 },
+        "rootRunId": { "type": "string" },
+        "finalRunId": { "type": "string" },
+        "episodes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["runId", "assessment"],
+            "properties": {
+              "runId": { "type": "string" },
+              "assessment": { "$ref": "#/$defs/RunAssessmentPayload" }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
     "RunCompletedEventPayload": {
       "type": "object",
-      "required": ["runId", "state"],
+      "required": ["runId", "state", "assessment"],
       "properties": {
         "runId": { "type": "string", "minLength": 1 },
         "state": { "type": "string" },
         "stopReason": { "type": "string" },
         "message": { "type": "string" },
-        "outcome": { "type": "object" },
+        "assessment": { "$ref": "#/$defs/ExecutionAssessmentPayload" },
         "failure": { "$ref": "#/$defs/RunFailureEnvelope" },
-        "todoHandoff": {
+        "todoAdvisory": {
           "type": "object",
-          "required": ["reason", "message"],
+          "required": ["unfinished", "blocked", "message"],
           "properties": {
-            "reason": { "type": "string", "minLength": 1 },
+            "unfinished": { "type": "integer", "minimum": 1 },
+            "blocked": { "type": "integer", "minimum": 0 },
             "message": { "type": "string" }
           },
           "additionalProperties": false
@@ -1796,11 +1821,11 @@
     },
     "RunFailedEventPayload": {
       "type": "object",
-      "required": ["runId", "failure", "error"],
+      "required": ["runId", "failure", "assessment"],
       "properties": {
         "runId": { "type": "string", "minLength": 1 },
         "failure": { "$ref": "#/$defs/RunFailureEnvelope" },
-        "error": { "$ref": "#/$defs/ProtocolError" }
+        "assessment": { "$ref": "#/$defs/ExecutionAssessmentPayload" }
       },
       "additionalProperties": false
     }

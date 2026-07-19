@@ -111,13 +111,12 @@ export function summarizeRunInspectorFacts(
     ) {
       facts.errorCount += 1;
       facts.lastError =
-        (event.type === "run.failed" || failedRunCompleted
+        event.type === "run.failed" || failedRunCompleted
           ? runFailureMessage(payload)
-          : "") ||
-        str(rec(payload.error).message) ||
-        str(payload.message) ||
-        str(payload.reason) ||
-        event.type;
+          : str(rec(payload.error).message) ||
+            str(payload.message) ||
+            str(payload.reason) ||
+            event.type;
     }
     if (
       event.type === "workspace.write.applied" ||
@@ -138,7 +137,7 @@ export function summarizeRunInspectorFacts(
 }
 
 function isShellToolName(name: string): boolean {
-  return name === "bash" || name === "shell";
+  return name === "bash";
 }
 
 export function eventMatchesSearch(

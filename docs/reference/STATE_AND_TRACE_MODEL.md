@@ -60,6 +60,8 @@ Core owns:
 - state transitions: `created`, `running`, `waiting_approval`, `completed`,
   `failed`, `cancelled`
 - stop reasons and terminal result signals
+- the bounded `RunAssessment` semantic projection (`health`, `issues`, and
+  structured verification) persisted on terminal results/events
 - tool/model/approval/workspace lifecycle events
 - budget and usage checks
 - cancellation and command injection
@@ -74,6 +76,10 @@ Persistence boundary:
   persisted.
 
 Default implementation: `FileRunStore`.
+
+Embedders may aggregate multiple episode assessments for an execution, but they
+must not replace Core's per-run assessment with prose parsing or an independent
+tool-outcome verdict. Agent finality is a separate axis from assessment health.
 
 ### 2. Session State
 
@@ -169,6 +175,9 @@ Default file layout for session-scoped run traces:
 
 Session-scoped run directories hold per-run state. `trace-pointer.json` points
 back to the session and agent trace files that contain the run's events.
+Transcript prompt rows reference leading system messages with `systemRef`; the
+referenced array lives only at `blobs/<systemRef>.json`. Rehydration therefore
+requires the owning session's `blobs/` directory.
 
 ### 4. Runtime Live State
 

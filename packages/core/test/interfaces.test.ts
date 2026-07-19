@@ -7,6 +7,8 @@ import { FileRunStore, MemoryTrace } from "../src/trace.js";
 import type { ContextItem, RunRecord, RunResult } from "../src/types.js";
 import type { RunId } from "../src/ids.js";
 import type { SparkwrightEvent } from "../src/events.js";
+import * as publicApi from "../src/index.js";
+import * as internalApi from "../src/internal.js";
 
 // Compile-time assertion helper.
 function assignable<T>(_value: T): void {
@@ -14,6 +16,20 @@ function assignable<T>(_value: T): void {
 }
 
 describe("extension interfaces (compile-time)", () => {
+  it("keeps reference implementations off the public root", () => {
+    for (const name of [
+      "EventLog",
+      "FileRunStore",
+      "MemoryTrace",
+      "LocalWorkspace",
+      "DefaultPromptBuilder",
+      "SparkwrightRun",
+    ]) {
+      expect(publicApi).not.toHaveProperty(name);
+      expect(internalApi).toHaveProperty(name);
+    }
+  });
+
   it("FileRunStore satisfies RunStore", () => {
     const run: RunRecord = {
       id: "run_iface_test" as unknown as RunId,
@@ -24,7 +40,8 @@ describe("extension interfaces (compile-time)", () => {
       metadata: {},
     };
     const store = new FileRunStore(run, {
-      rootDir: ".sparkwright/test-iface-runs",
+      sessionRootDir: ".sparkwright/test-iface-sessions",
+      sessionId: "session_iface_test",
     });
     assignable<RunStore>(store);
     expect(typeof store.append).toBe("function");
@@ -41,8 +58,8 @@ describe("extension interfaces (compile-time)", () => {
       metadata: {},
       timestamp: new Date().toISOString(),
     } as unknown as SparkwrightEvent;
-    sink.write(evt);
-    expect(true).toBe(true);
+    sink.append(evt);
+    expect(typeof sink.append).toBe("function");
   });
 
   it("Compactor / MemoryStore / SessionStore shapes are usable", async () => {
@@ -89,6 +106,12 @@ describe("extension interfaces (compile-time)", () => {
     const result: RunResult = {
       signal: "completed",
       state: "completed",
+      assessment: {
+        schemaVersion: "run-assessment.v1",
+        health: "clean",
+        issues: [],
+        verification: [],
+      },
       metadata: {},
     };
 

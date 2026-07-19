@@ -5,6 +5,8 @@
 export { serveConnection } from "./server.js";
 export type { ServeConnectionOptions } from "./server.js";
 export { HostRuntime } from "./runtime.js";
+export { assembleRuntimeWorkflowHooks } from "./runtime/run-preparation-operations.js";
+export type { RuntimeWorkflowHookAssemblyOptions } from "./runtime/run-preparation-operations.js";
 export type { RuntimeOptions } from "./runtime/contracts.js";
 export { HostService, createHostService } from "./host-service.js";
 export type { HostRuntimeFacadeOptions } from "./host-service.js";
@@ -62,7 +64,7 @@ export {
   resolveSelectorAllowlist,
   shouldAppendDiscoveryTool,
 } from "./tool-selectors.js";
-export { canonicalToolName, normalizeToolNameList } from "./tool-identities.js";
+export { normalizeToolNameList } from "./tool-identities.js";
 export type { ToolSelectorCatalogEntry } from "./tool-selectors.js";
 export {
   bindConfiguredEventHooks,
@@ -139,7 +141,6 @@ export type {
   SkillStatsFindingRelation,
   SkillStatsFindingSeverity,
   SkillStatsFreshness,
-  SkillStatsIdentityConfidence,
   SkillStatsOptions,
   SkillStatsProjectionCacheInfo,
   SkillStatsQuery,
@@ -308,7 +309,6 @@ export {
 } from "./workflows.js";
 export {
   loadHostConfig,
-  normalizeGroupedConfig,
   configResolutionOrder,
   projectConfigCandidatePaths,
   readConfigFileObject,
@@ -436,7 +436,6 @@ export type {
   SharedConfigSourceMap,
   SharedConfigError,
   LoadedSharedConfig,
-  ApprovalDefaults,
   CapabilityConfig,
   CapabilitySkillEvolutionConfig,
   CapabilitySkillEvolutionMode,

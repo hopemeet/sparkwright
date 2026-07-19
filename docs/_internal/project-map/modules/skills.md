@@ -52,11 +52,9 @@ Does not own:
 ## Contracts
 
 - `SkillCommandService` is the host-owned create command boundary. Model
-  `create_skill`, CLI `skills create`, TUI `/create skill`, and TUI
-  `/skill-create` call `prepareCreate`; proposal review apply calls
-  `approveAndApply`. Adapters parse/render only and may not directly write a
-  current Skill. `/skill-create` is a compatibility shortcut for the canonical
-  general `/create skill` entrypoint.
+  `create_skill`, CLI `skills create`, and TUI `/create skill` call
+  `prepareCreate`; proposal review apply calls `approveAndApply`. Adapters
+  parse/render only and may not directly write a current Skill.
 
 - Safe model-authored create proposals now use the first prepared-change fast
   path: the complete package and `effectHash` are persisted before approval;
@@ -68,32 +66,34 @@ Does not own:
   existing review/direct behavior until `SkillCommandService` convergence.
 
 - Skill events include `skill.indexed`, `skill.failed`, and `skill.loaded`.
+- Skill root layers are canonical and weak-to-strong:
+  `builtin -> user -> project -> configured`. Entries from
+  `capabilities.skills.roots` are current configured overrides, remain
+  strongest, and are read-only to managed evolution; there is no `legacy`
+  layer reader.
 - `skill.indexed.metadata.skills[]` carries emit-time identity provenance,
-  including `contentHash`, `packageHash` when available, and layer. Skill stats
-  use `name + layer + packageHash` as the strong version identity and keep old
-  traces in legacy/unknown buckets rather than merging them into package-hash
-  identities. Stats scan both session traces and `agents/<agent-id>/trace.jsonl`
-  files, dedupe repeated event ids, and roll up proposal/history activity only
-  when evolution metadata hashes match the package-hash identity.
-- Runtime Skill indexing uses a shared process-local package hasher cache to
-  avoid rereading unchanged package contents across runs/agents and applies
-  conservative file/byte limits on the run-time identity path. Direct
-  `computeSkillPackageHash()` remains the exact, uncached path for evolution
-  apply/restore guard checks.
-- Package identity v2 substrate lives in `package-v2.ts` without changing the
-  current Skill v1 runtime path. It recursively enumerates all canonical
+  including required `packageHash`, `packageHashPolicyVersion: 2`, and layer;
+  Markdown `contentHash` is not an attributable identity. Skill stats accept
+  only that policy-bound package identity and key observations as
+  `skill + layer + name + policy + hash`; old content/name-only trace rows do
+  not create version buckets. Stats scan both session traces and
+  `agents/<agent-id>/trace.jsonl` files, dedupe repeated event ids, and roll up
+  proposal/history activity only when evolution metadata hashes match.
+- Runtime indexing, doctor, trace, capability inspection, lockfiles, statistics,
+  and managed evolution all consume the v2 primitive in `package-v2.ts`. It
+  recursively enumerates all canonical
   ordinary files except the fixed exclusion table, rejects non-excluded
   symlinks/special files and limit violations, hashes normalized relative paths
   with NUL framing, snapshots the identical file set, and returns
-  `packageHashPolicyVersion: 2`. Managed evolution now uses this API for new
-  proposal/history/restore operations; runtime trace/stats identity remains
-  v1 until Phase 6.
+  `packageHashPolicyVersion: 2`. The separate v1 Skill package API is removed.
 - `skills stats` materializes rebuildable per-session projections under
   `.sparkwright/skill-stats/sessions/`, keyed by trace fingerprints plus a
-  projection algorithm version. Reports expose trace/evolution windows,
-  freshness timestamps, cache hit/miss/write/error counts, and analyzer
-  findings. Per-session Skill entries include event windows and bounded run
-  samples for later targeted evidence queries. A lightweight
+  projection schema and algorithm version. Reports expose trace/evolution
+  windows, freshness timestamps, cache hit/miss/write/error counts, and
+  analyzer findings. Load failure statistics have one structured carrier,
+  `loadFailures.total/byMode/byStatus`; there is no parallel summary field.
+  Per-session Skill entries include event windows and bounded run samples for
+  later targeted evidence queries. A lightweight
   `.sparkwright/skill-stats/catalog.json` routes `--skill`, `--skill-key`, and
   `--package-hash` queries to relevant session projections; it is still a
   rebuildable cache, not a full Skill rollup or source of truth.
@@ -106,20 +106,19 @@ Does not own:
 - Host defaults to on-demand loading via `skill_load` unless config opts into
   selected skill residency.
 - The on-demand loader deduplicates successful body loads by name and reference
-  loads by name + canonical resource path + package/content identity within the
+  loads by name + canonical resource path + package identity within the
   loader/run. Repeat references return a short `already_loaded` result without
   content; unsuccessful loads remain retryable.
 - Markdown-folder asset helpers own only generic folder discovery,
   frontmatter/body splitting, loose frontmatter parsing, and content hashing.
   Domain schemas and diagnostics remain with the owner, such as host skills,
   agent profiles, or workflow assets.
-- `SkillManifest` is the canonical parser-normalized metadata shape. The
-  canonical `parseSkillManifest` path requires non-empty `instructions`, while
-  legacy `parseSkill` delegates through a compatibility adapter that still
-  accepts an empty `SKILL.md` body and exposes it as `SkillDefinition.body: ""`.
-  The shared parser owns description length validation, list splitting,
-  `license`, `compatibility`, `allowedTools`, top-level `version`, and
-  `metadata.version` normalization.
+- `SkillManifest` is the sole parser-normalized metadata shape.
+  `parseSkillManifest` requires non-empty `instructions`; runtime loading maps
+  that validated manifest into its indexed `SkillDefinition` privately. There
+  is no public empty-body parser or parallel parse surface. The parser owns
+  description length validation, list splitting, `license`, `compatibility`,
+  `allowedTools`, top-level `version`, and `metadata.version` normalization.
 - Skill index and resident Skill context must keep host absolute source paths
   out of model-visible content/source labels; diagnostics retain provenance in
   metadata and trace events.
@@ -164,7 +163,7 @@ restore --to before` is the revert edge. See
   skill and session reuse the existing draft across supervised continuation
   runs; callers without session provenance retain run-scoped fallback.
 - Applying a proposal closes competing drafts for the same project target as
-  superseded. Explicit host reconciliation repairs legacy create drafts against
+  superseded. Explicit host reconciliation repairs durable create drafts against
   managed history or marks externally occupied/drifted targets stale; TUI
   inbox/review recovery and ordinary create preparation invoke it, while plain
   proposal listing stays read-only.
@@ -196,6 +195,83 @@ list --run/--session`); failed drafts self-clean. See
   [../maps/capabilities/skill-evolution.md](../maps/capabilities/skill-evolution.md#known-debts).
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: reviewed skill statistics after terminal outcome migration. Skill
+  success/failure accounting now reads persisted assessment where semantic run
+  health is needed; Skill discovery, authoring, mutation, and package contracts
+  are unchanged.
+- Read: Host skill statistics and unchanged Skill ownership surfaces.
+- Tests: affected Host and CLI Skill coverage passed before final real-model
+  canaries.
+
+- Status: Verified
+- Date: 2026-07-18T08:52:13+0800
+- Scope: Skill statistics expose one load-failure DTO,
+  `loadFailures.total/byMode/byStatus`. Host aggregation and caches no longer
+  persist the duplicate `loadFailureCount` summary; session projection schema
+  v3 invalidates the retired DTO and rebuilds from trace evidence.
+- Read: Host Skill stats aggregation/cache/analyzer, CLI JSON/text rendering,
+  focused tests, public Skill reference, and Skill project/test maps.
+- Tests: focused CLI Skill stats/review/catalog/doctor 5/5, full CLI 155/155,
+  Host and CLI typechecks, repository test typecheck, schema check, project-map
+  drift, and the full release gate passed.
+
+- Status: Verified
+- Date: 2026-07-18T08:08:47+0800
+- Scope: renamed current custom-root identity from `legacy` to `configured`
+  without changing its strongest precedence or project-shadow evolution
+  boundary. Runtime metadata, doctor findings, capability output, stats cache
+  readers, docs, and tests now share the canonical layer.
+- Read: Skills index/root types, Host roots/report/doctor/stats, CLI/TUI
+  consumers and tests, public reference, and Skill capability/evolution maps.
+- Tests: Skills 27/27, Host 21/21, CLI 4/4, TUI 13/13, plus affected package
+  typechecks.
+
+- Status: Verified
+- Date: 2026-07-17T23:37:17+0800
+- Scope: TUI Skill creation has one human entrypoint, `/create skill`; the
+  compatibility shortcut and its dedicated adapter path were removed without
+  changing `SkillCommandService` proposal/apply ownership.
+- Read: Host command service boundary, TUI generic creation and Skill
+  update/review adapters, public Skill reference, and capability map.
+- Tests: TUI create/evolution/command 22/22 and TUI typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-17T20:55:00+0800
+- Scope: made Skill package identity v2 canonical across runtime loading,
+  trace/capability projection, lockfiles, doctor, statistics, proposal/history
+  artifact continuity, and advisory suggestions. Removed the v1 package API,
+  content/name-only stats buckets, and proposal artifact fallbacks.
+- Read: Skills v1/v2 package paths, Host stats/evolution/registry/report/doctor,
+  protocol capability schema, CLI consumers, public references, and focused maps/tests.
+- Tests: Skills 73/73; Host Skill/protocol 81/81; focused CLI Skill stats/review/catalog/doctor 5/5; affected typechecks passed before the full release gate.
+
+- Status: Verified
+- Date: 2026-07-16T19:11:00+0800
+- Scope: removed the Skill evolution v1 record/hash reader and made policy 2
+  mandatory without changing the separate runtime Skill identity path.
+- Read: Host Skill evolution, Skills v1/v2 package primitives, Host/CLI tests,
+  and the Skill evolution capability map.
+- Tests: focused Host Skill evolution and CLI stats suites; Host and test
+  typechecks; full release gate; project-map drift check.
+
+- Status: Verified
+- Date: 2026-07-16T19:20:00+0800
+- Scope: Removed the public `parseSkill` and internal
+  `parseSkillManifestCompat` surfaces. All disk/runtime/evolution parsing now
+  enters through strict `parseSkillManifest`; empty instructions are invalid.
+- Read: Skills manifest/index/loader/tests, Host evolution consumers, Skills
+  capability map, and parser proposal notes.
+- Tests: Skills focused/full tests and typecheck; Host skill-evolution focused
+  tests and typecheck; test typecheck; project-map drift check.
+
+- Status: Verified
+- Date: 2026-07-16T11:49:00+0800
+- Scope: reviewed during cumulative branch drift checking; Skill loading and
+  usage code uses canonical built-in tool names but does not consume Host
+  protocol terminal failure payloads. No Skill contract changed in protocol 2.0.
 
 - Status: Verified
 - Date: 2026-07-13
@@ -235,7 +311,7 @@ list --run/--session`); failed drafts self-clean. See
 - Status: Verified
 - Date: 2026-07-12T14:03:23+0800
 - Scope: verified managed Skill v2 proposal/history/restore operations while
-  retaining v1 readers for legacy records and deferring runtime stats identity.
+  deferring runtime stats identity.
 - Read: `packages/host/src/skill-evolution.ts`,
   `packages/host/src/capability-package-mutation.ts`,
   `packages/skills/src/package-v2.ts`, and focused host tests.
@@ -414,8 +490,9 @@ proposals"`; `npm --workspace @sparkwright/cli run build`.
   `npm --workspace @sparkwright/skills test -- test/skills.test.ts
 test/index.test.ts test/bundles.test.ts` (historical).
 - Prior verification — Date: 2026-06-27T17:52:04+0800
-- Scope: recorded Phase 1 Skill parser/manifest unification decision and
-  compatibility adapter behavior.
+- Scope: recorded the initial Phase 1 Skill parser/manifest unification
+  decision; the temporary compatibility adapter was removed in the later
+  canonical-only parser cleanup.
 - Read: `packages/skills/src/index.ts`,
   `packages/skills/src/manifest.ts`, `packages/skills/src/loader.ts`,
   `packages/skills/src/types.ts`, `packages/skills/test/index.test.ts`,

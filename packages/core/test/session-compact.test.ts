@@ -374,6 +374,7 @@ describe("session compact artifacts", () => {
                 childRunId: "run_child_trace",
                 finality: "partial",
                 role: "reviewer",
+                health: "failing",
               },
             ],
           },
@@ -395,6 +396,7 @@ describe("session compact artifacts", () => {
     expect(result.content).toContain("subagent");
     expect(result.content).toContain("run_child_trace");
     expect(result.content).toContain("partial");
+    expect(result.content).toContain("failing");
   });
 
   it("skips the summarizer when source chars exceed the hard input floor", async () => {

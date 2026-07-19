@@ -2,9 +2,175 @@
 
 ## Purpose
 
-`@sparkwright/agent-runtime` contains reusable agent-side runtime helpers outside the core run loop: task management, todo ledger supervision, concurrency/worktree coordination, and result protocols.
+`@sparkwright/agent-runtime` contains reusable agent-side runtime helpers outside the core run loop: task management, advisory Todo plan state, concurrency/worktree coordination, durable Workflows, and Agent result protocols.
 
 See also [../maps/capabilities/agents.md](../maps/capabilities/agents.md), [../maps/capabilities/cron.md](../maps/capabilities/cron.md), and [../maps/runtime/tool-orchestration.md](../maps/runtime/tool-orchestration.md).
+
+## Last Verified
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: `isCompleteAgentResult()` and `isReusableAgentResult()` are the shared
+  finality/cache predicates. Agent tools bypass Core duplicate suppression only
+  when the exact complete+clean parent-scoped cache entry already exists;
+  partial and unhealthy outcomes remain uncached and guarded without a retry
+  counter or negative cache.
+- Read: Agent result projector, delegation ledger/tool, Host direct/indexed/
+  parallel/dynamic assembly, and Core repeated-call seam.
+- Tests: Agent Runtime 235/235 and Host 592/592.
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: AgentTool now explicitly owns sequential duplicate handling so exact
+  calls reach the parent-scoped complete+clean ledger. Core still guards
+  partial/unhealthy results and prior tool failures/no-progress.
+- Read: AgentTool, result projector, delegation ledger, Host indexed/dynamic
+  wrappers, Core repeat seam, focused tests, and real Terra reuse trace.
+- Tests: Agent Runtime result/ledger 10/10; Host Agent tools/spawn 117/117;
+  real fixed run emitted two calls and one child lifecycle.
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: Agent results now carry orthogonal finality and canonical Core
+  assessment through direct, delegated, parallel, lifecycle, ledger, and cache
+  paths. Complete-but-unhealthy children remain complete and are never cached
+  as clean successes. Todo is reduced to four-state advisory plan data; its
+  supervisor, continuation prompts, write counters, required-tool forcing, and
+  `todo_clear` ownership are removed.
+- Read: Agent result projector/types/lifecycle/delegation ledger, Todo
+  ledger/tools/types, Workflow contracts, Host assembly, and full Agent Runtime
+  coverage.
+- Tests: Agent Runtime 234/234 and Host 591/591 passed in final gates.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: Host `RunPreparationOperations` now invokes the existing
+  `AgentRuntimeAssembly` as one preparation port. Agent Runtime remains
+  model/config-free and retains portable Task/Agent/Workflow contracts; no
+  execution, store, or protocol ownership moved into this package.
+- Read: Host preparation/Agent owners and portable Agent Runtime contracts.
+- Tests: focused Host owner/Agent and Agent Runtime gates are recorded with the
+  commit.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: Host `AgentRuntimeAssembly` now composes Agent Runtime's portable
+  profile derivation, spawn/invocation lifecycle, task runner, delegation
+  ledger, and result contracts behind one Host owner. Agent Runtime does not
+  acquire Host model, tool catalog, approval, workspace lease, or execution
+  state ownership.
+- Read: Host Agent assembly, Agent Runtime Agent/task/ledger/result contracts,
+  capability and tool maps, and focused tests.
+- Tests: focused Agent Runtime 77/77 and Host Agent/Delegate 359/359 passed.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: Host WorkflowEpisodeRuntime now owns the adapter around existing Agent
+  Runtime `runTodoSupervised`/HostExecution chaining. Agent Runtime actor-chain
+  decisions, continuation/stall bounds contract, Workflow machine, and durable
+  worker ownership are unchanged.
+- Read: Host episode owner, HostExecution, Agent Runtime todo/workflow worker
+  contracts, and focused Host/Agent Runtime tests.
+- Tests: focused Host and Agent Runtime Workflow suites passed.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: Host Workflow ownership consolidation continues to consume Agent
+  Runtime's existing journal store, lease-bound writer, actor inbox, and
+  durable control processor as ports. Their formats, fencing, idempotency, and
+  state-transition semantics are unchanged.
+- Read: Workflow store/journal/control/notification sources, new Host owner,
+  and focused Agent Runtime/Host tests.
+- Tests: focused Agent Runtime and Host Workflow suites passed.
+
+- Status: Verified
+- Date: 2026-07-17T23:37:17+0800
+- Scope: Agent Runtime imports default prompt reference implementations from
+  Core `/internal`; Agent/Task/Todo/Workflow contracts are unchanged.
+- Read: Agent Runtime root composition, Core barrels, tests, and import gate.
+- Tests: Agent Runtime index/supervisor 49/49, typecheck, and build passed.
+
+- Status: Verified
+- Date: 2026-07-17T17:20:00+0800
+- Scope: durable Workflow identity is canonical v2 only. Run records require
+  source layer, generation/revision, package hash policy 2, package hash,
+  executable snapshot reference, and a matching snapshot-backed definition;
+  Markdown `contentHash`, optional pin fields, record defaults, and baseline
+  record migration are absent. Journal replay quarantines noncanonical pins.
+- Read: Workflow types/store/journal/control/channel consumers, Host fixtures,
+  durable-job test routes, and package-identity designs.
+- Tests: Agent Runtime Workflow/store/control/channel focused suites and
+  repository test typecheck passed before the full release gate.
+
+- Status: Verified
+- Date: 2026-07-17T11:02:45+0800
+- Scope: Model-facing Task and Todo inputs are canonical: `task_create` accepts
+  scheduling only through `mode`, while `todo_write` accepts only
+  `title`/`status`/optional `priority`. Durable Task `awaited` state and internal
+  rich Todo ledger fields remain separate runtime/storage contracts.
+- Read: Task/Todo factories, parsers, durable types, Host kind descriptors, TUI
+  projections, focused tests, runtime tool map, and current reference docs.
+- Tests: Task/Todo 99/99; Host task/approval 12/12; TUI Todo 11/11;
+  Agent Runtime/Host/TUI typechecks; repository test typecheck; schema check;
+  project-map drift; full release gate.
+
+- Status: Verified
+- Date: 2026-07-17T00:08:26+0800
+- Scope: portable `AgentProfile.exposeAsDelegate` now documents only the
+  canonical indexed/direct exposure policy; Agent Runtime carries the value
+  but does not own Host exposure configuration.
+- Read: Agent Runtime profile carrier, Host config/resolver ownership, Agent
+  capability map, and focused Host tests.
+- Tests: Host Agent/config/tools 184/184; focused Host protocol 4/4; CLI
+  Agent/delegate/capability 9/9; Agent Runtime, Host, and CLI typechecks;
+  repository test typecheck; schema check; project-map drift; full release gate.
+
+- Status: Verified
+- Date: 2026-07-16T23:38:00+0800
+- Scope: checked the Host Markdown identity consolidation. Agent Runtime still
+  carries the already-resolved `AgentProfile.id`; it does not parse files or
+  choose between filename/frontmatter identity.
+- Read: portable Agent profile/invocation contracts, Host parser/authoring
+  ownership, Agent capability map, and focused Host tests.
+- Tests: Host Agent profile/tools 125/125; focused Host protocol collision 1/1;
+  CLI Agent/capability routes 7/7; Host, Agent Runtime, and CLI typechecks;
+  repository test typecheck; project-map drift; full release gate.
+
+- Status: Verified
+- Date: 2026-07-16T23:05:00+0800
+- Scope: task terminal delivery is actor-native end to end. `TaskManager`
+  produces typed task actor inputs, in-memory/file implementations directly
+  satisfy sink/inbox, and task-specific buffers, adapters, conversion helpers,
+  and the old durable entry shape are gone.
+- Read: task notification types, manager, in-memory/file inboxes, Host revival
+  consumers, workflow notification consumers, examples, and focused tests.
+- Tests: Agent Runtime task/workflow 90/90; Host task/workflow/protocol/Agent 122/122;
+  server-runtime 3/3; IM gateway 6/6; repository test typecheck; full release
+  gate.
+
+- Status: Verified
+- Date: 2026-07-16T22:26:54+0800
+- Scope: `FileWorkflowStore` now reads records and events only by replaying
+  `<id>.journal/`; snapshot/JSONL mirrors and sidecar-to-journal lazy migration
+  were removed, and baseline payloads carry canonical `events`.
+- Read: workflow store, journal, all store consumers, focused tests, and current
+  persistence/test maps.
+- Tests: Agent Runtime workflow focused suite/typecheck; Host workflow/protocol
+  focused suites/typecheck; repository test typecheck; full release gate.
+
+- Status: Verified
+- Date: 2026-07-16T13:50:10+0800
+- Scope: Workflow persistence exports only `workspaceWorkflowRunsDir`; the session-local `workflowRunsDir` layout helper was removed.
+- Read: workflow store/index sources, host consumers, focused workflow tests, and current persistence maps.
+- Tests: npm run build; npm run typecheck:test; focused Agent Runtime and Host workflow tests.
+
+- Date: 2026-07-16T13:21:00+0800
+- Scope: `spawnSubAgent` carries only `InteractionChannel`; callers use an approval-only channel when a child must not gain free-form interaction.
+- Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.
+- Tests: focused access/policy/protocol/CLI/TUI/ACP/Workflow tests; npm run typecheck:test; npm run schema:check.
+
+- Date: 2026-07-16
+- Scope: workflow delegate identity now requires the canonical `agentId`; the portable workflow type no longer carries a delegate tool-name selector.
 
 ## Main Files
 
@@ -55,6 +221,11 @@ Does not own:
   get/output/wait/stop. Runtime and durable state report whether stop actually
   returned `cancelled:true`; the tool descriptions do not try to police model
   final-answer prose.
+- Agent-runtime exports only `createTaskCreate` and `createTaskControl` as
+  model-facing Task factories. List/get/output/wait/stop are private action
+  handlers and no parallel callable Task tools or bundle factory remain.
+- Workflow evidence `kind:"task_output"` identifies a stored evidence source;
+  it is not a tool name or compatibility route.
 - `TaskManager.registeredKinds()` exposes live runner keys for model-facing
   diagnostics; `createTaskCreate()` can accept optional
   `TaskCreateKindDescriptor` hints so embedders describe registered kinds and
@@ -112,14 +283,17 @@ Does not own:
   shared terminal state/finality fields.
 - Workflow types in agent-runtime are portable runtime/store declarations.
   `WorkflowRunRecord` is now a durable P2 state document with five-value
-  status, version pinning, attempts, evidence refs, verdict/transition logs,
+  status, required v2 executable package pin, attempts, evidence refs,
+  verdict/transition logs,
   resume policy, optional `wait.kind`, and optional resolved authorization
-  snapshots. Malformed present authorization snapshots are treated as absent
-  rather than defaulted. `FileWorkflowStore` composes the shared doc-store
-  primitives for per-session `workflow-runs/` records, JSONL events,
-  corrupt-entry diagnostics, waiting-state invariants, restore-after-adoption
-  rollback, and single-writer leases; host owns parsing, projection, and
-  run-loop execution.
+  snapshots. `FileWorkflowStore` persists one immutable journal per workflow
+  under workspace `.sparkwright/workflow-runs/`; journal replay is the sole
+  record/event read path for `get`, `list`, `eventLog`, restart recovery, and
+  writer acquisition. The journal keeps generation/revision fencing, checksum
+  validation, canonical package-pin validation, quarantined-entry diagnostics,
+  and compensating mutations while
+  the adjacent token lease controls live writer ownership. Host owns parsing,
+  projection, and run-loop execution.
 - Workflow control is a separate typed command plane. `FileWorkflowControlInbox`
   owns immutable accepted commands, immutable terminal outcomes, scoped
   idempotency, corrupt-entry diagnostics, and a reconstructible cursor;
@@ -191,14 +365,14 @@ Does not own:
   for actor-native workflow notifications. It persists workflow notification
   inputs under `workflow-notifications/*.json`, revalidates them through the
   actor inbox contract on peek/drain, and supports reliable `waiting`
-  notifications without changing the legacy task notification file format.
+  notifications through the same direct sink/inbox interface.
 - `subagent.*` terminal fields (`terminalState`, `stepLimitReached`,
   `truncated`, `stopReason`) are derived from the child run's real `run.*`
   outcome and payload flags; parent emit sites must not set a separate terminal
   state.
-- `spawnSubAgent` may receive an explicit approval resolver so configured child
-  runs can share the parent host/CLI/TUI approval path without gaining a
-  free-form interaction channel.
+- `spawnSubAgent` may receive an explicit approval-only interaction channel so
+  configured child runs can share the parent Host/CLI/TUI approval path without
+  gaining `ask` or `notify` capabilities.
 - `spawnSubAgent` accepts `workflowHooks?: WorkflowHook[]` as the child-run
   deterministic hook lane and forwards it into `CreateRunOptions.workflowHooks`.
   Agent-runtime carries caller-supplied hooks; host-owned Agent.md/config
@@ -214,38 +388,34 @@ Does not own:
   `FileTaskStore`, `TaskManager`, protocol snapshots, and UI projections should
   preserve it so terminal awaited tasks can wake a run once and then be detached
   after an explicit wait/join consumes them.
-- Task notification types now sit beside workflow notification input probes in
-  the `ActorNotificationSink` / `ActorInbox` split. Producers use the actor
-  sink; consumers use predicate `peek()`/`drain()` plus non-consuming
-  `waitUntilAvailable()`. The legacy `TaskNotificationSink` and task
-  notification API remain compatible for existing embedders.
+- Task and workflow notification types share the canonical
+  `ActorNotificationSink` / `ActorInbox` split. `TaskManager` produces terminal
+  task actor inputs directly; consumers use predicate `peek()`/`drain()` plus
+  non-consuming `waitUntilAvailable()`. There is no task-specific sink or
+  parallel task notification API.
 - `InternalActorKind` names only notification sources with implemented typed
   producer and consumer semantics: `task | workflow`. Agent work may still be a
   task payload `kind:"agent"`, but Agent lifecycle communication remains on
   `subagent.*` and bounded tool results; `run` and `agent` are not reserved
   actor-notification kinds. Add a new kind only with its concrete notification
   union, delivery adapter, and receiver policy in the same change.
-- `InMemoryTaskNotificationQueue.waitUntilAvailable({ signal, predicate })` is
-  non-consuming and abortable. The actor adapter has the same non-consuming wait
-  contract and does not expose `waitForNext()` as part of `ActorInbox`.
+- `InMemoryActorNotificationQueue.waitUntilAvailable({ signal, predicate })` is
+  non-consuming and abortable. The queue implements the actor producer and
+  consumer ports directly and has no consuming wait convenience.
   Reliable terminal notifications are not silently dropped under a bounded
   queue; drop-oldest/drop-self is limited to lossy actor notifications.
 - `FileTaskNotificationOutbox` is the durable counterpart for terminal task
   notifications. It supports non-consuming `peek()`/`waitUntilAvailable()` and
   predicate `drain()` so hosts can replay only notifications for the resumed
-  run. Its JSON entry writes compose the shared `doc-store`
-  `atomicWriteTextSync()` primitive, while preserving the existing
-  `task-notifications/*.json` format. Its actor adapter derives inbox-scoped
-  monotonic sequence from stable file ordering with an in-process high-water
-  mark, without changing the existing format. Because that format stores legacy
-  `TaskNotification` entries, the file-backed actor sink accepts only terminal
-  task actor notifications that can round-trip through that shape; it rejects
-  workflow/progress/output inputs and actor-only envelope fields with a typed
-  non-retryable `UNSUPPORTED_ACTOR_NOTIFICATION`. It stores
-  notifications, not task execution. The actor inbox view skips unreadable or
-  actor-invalid file entries and exposes them through `invalidActorEntries()`
-  so a single stale/bad file cannot wedge actor `peek()`/`drain()`/readiness
-  waits; the legacy task listing path remains strict for corrupt JSON.
+  run. Canonical `sparkwright-task-notification.v1` entries persist
+  `{schemaVersion,id,createdAt,input}` under `task-notifications/*.json`, so
+  source/session routing, correlation, output refs, and context hints round-trip
+  without a lossy task-shaped mirror. The outbox derives inbox-scoped monotonic
+  sequence from stable file ordering with an in-process high-water mark. It
+  accepts terminal task actors only; other kinds or non-terminal task inputs
+  reject with typed non-retryable `UNSUPPORTED_ACTOR_NOTIFICATION`. Unreadable
+  or actor-invalid entries are skipped and reported by `invalidEntries()` so
+  one bad file cannot wedge peek/drain/readiness.
 - Actor notification acceptance normalizes `source.runId` into
   `routeHint.parentRunId` and `source.sessionId` into `routeHint.sessionId`.
   Explicit source/route contradictions or empty route ids reject with
@@ -265,9 +435,15 @@ Does not own:
   execution from reopened durable `pending`/`running` records.
 - `task_create` supports `foreground`, `awaited`, and `background` modes. The
   default is foreground; foreground timeout may promote to an awaited background
-  task; explicit `mode`/`awaited` conflicts are rejected as recoverable argument
-  errors; global/per-kind concurrency caps fail as recoverable tool errors
-  rather than queueing internally.
+  task. `mode` is the only model-facing scheduling input; the durable/result
+  `awaited` boolean reports runtime state. Unknown create fields fail as
+  recoverable argument errors. Global/per-kind concurrency caps fail as
+  recoverable tool errors rather than queueing internally.
+- `todo_write` accepts a strict model-facing item DTO of non-empty `title`,
+  status, and optional priority. Common status synonyms remain normalized as a
+  deliberate model-tolerance mechanism. The Markdown ledger can retain richer
+  host-owned fields, but the tool does not accept an unadvertised rich DTO or a
+  `content` alias.
 - Detached or promoted `task_create` results include a model-visible
   `nextAction` object with the concrete task id, recommended `task` monitor
   action, output retrieval hint, and duplicate-avoidance guidance. Keep this
@@ -291,10 +467,9 @@ Does not own:
   Keep the matching `validateInput()` checks in agent-runtime, because core's
   local schema validator intentionally does not enforce all JSON Schema
   guidance keywords.
-- `task(action:"list")` and legacy `task_list` default to current-run scope for
-  backward compatibility, but accept `scope:"all"` so resumed runs can discover
-  durable tasks whose `parentRunId` belongs to an earlier run. Use `get`/`wait`
-  / `output` with concrete task ids after discovery.
+- `task(action:"list")` defaults to current-run scope and accepts `scope:"all"`
+  so resumed runs can discover durable tasks whose `parentRunId` belongs to an
+  earlier run. Use `get`/`wait`/`output` with concrete task ids after discovery.
 - `task_create` model-facing description must disclose active task concurrency
   caps, including the default `agent=1` per-kind cap. The cap still fails as a
   recoverable `TASK_CONCURRENCY_LIMIT` tool error rather than queueing work.
@@ -319,8 +494,10 @@ Does not own:
   ledger rather than a `createAgentTool` closure-local cache. Ledger keys include
   the delegation surface identity (`agent_tool`, configured delegate, or dynamic
   spawn) plus the stable child/profile/scope fields needed to avoid reusing a
-  different agent's answer. Only completed, non-`stepLimitReached`,
-  non-truncated results are reusable. Goal reuse requires equality of a narrow
+  different agent's answer. Only complete, clean, non-`stepLimitReached`,
+  non-truncated results with canonical assessment are reusable. AgentTool owns
+  the sequential duplicate protocol so exact repeats can reach this ledger;
+  unhealthy results are not cached. Goal reuse requires equality of a narrow
   normalized fingerprint (Unicode normalization, case folding, trim, and
   whitespace collapse); fuzzy intent or character-overlap scoring must not
   reuse results across different paths or targets.
@@ -355,6 +532,9 @@ Does not own:
   Host uses it to keep write-capable, shell-capable, or spawn-approval-bound
   configured children out of Core concurrent batches while preserving
   concurrency for unapproved read-only children.
+- `createAgentTool` requires the caller's complete spawn `ToolDefinition.policy`.
+  Agent-runtime does not accept a standalone approval option or synthesize a
+  fallback policy; Host passes the effective capability-derived delegate policy.
 - `createAgentTool` accepts synchronous or asynchronous `buildSpawnInput`.
   Embedders still own provider/model construction, but async spawn input lets
   host resolve child-scope model adapters on demand before calling
@@ -378,24 +558,33 @@ Does not own:
 
 ## Known Debts
 
-- Workflow canonical projection rewrites the full event JSONL after each
-  mutation and the immutable journal has no compaction policy. Long-lived,
-  high-mutation workflows may incur quadratic projection write amplification
-  and unbounded journal-file growth.
+- The immutable workflow journal has no compaction policy. Long-lived,
+  high-mutation workflows may incur unbounded journal-file growth.
 
 - Task/todo behavior spans host, CLI, TUI replay, and trace diagnostics; ownership can be easy to blur.
-- Workflow leases carry winner-validated fencing tokens for acquire/refresh/release,
-  but live `WorkflowStore` mutation paths do not validate that token; a stale
-  worker can therefore write after lease takeover until S1 write fencing lands.
-  The Package C audit additionally found constructor-time record caching and
-  split record/event writes. A refresh-only writer handle is insufficient
-  against a process frozen after refresh; the recommended reopen design uses a
-  monotonic fencing generation plus revisioned canonical mutation entries.
 - Durable workflow control remains outbound-notification oriented. The approved
   staged route adds a narrow typed control inbox after write fencing; it does
   not authorize a generic actor bus or nested background lifecycle.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-16T10:44:25+0800
+- Scope: removed the parallel Task control tools and bundle factory; the
+  canonical `task` tool now calls private action handlers directly.
+- Read: Task exports/factories/action handlers, all production and test
+  consumers, Workflow evidence kind, Host catalog, TUI preview, and trace reads.
+- Tests: agent-runtime Task 69/69/build, Core trace 131/131, TUI preview 4/4,
+  Host protocol/Agent-task 61/61, and repository test typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-16T10:27:51+0800
+- Scope: removed the parallel Agent-tool approval option and default policy
+  synthesis; callers now supply one complete canonical tool policy.
+- Read: Agent-tool options/definition, Host configured-delegate assembly,
+  extension docs, and all call sites.
+- Tests: agent-runtime index 45/45, Host tools 89/89, agent-runtime build, Host
+  typecheck, and repository test typecheck passed.
 
 - Status: Read-only
 - Date: 2026-07-16T09:23:49+0800
@@ -756,7 +945,7 @@ depth-bounded sub-agents|keeps nested background agent spawning bounded"`;
   `packages/agent-runtime/test/doc-store.test.ts`,
   `packages/core/src/file-atomic.ts`, `packages/core/src/session.ts`,
   `packages/core/src/internal.ts`, `scripts/check-internal-imports.mjs`,
-  `docs/_internal/proposals/consolidation-agenda.md`,
+  `docs/_internal/reviews/consolidation-agenda.md`,
   `docs/_internal/proposals/substrate-sequencing.md`.
 - Tests: `npm --workspace @sparkwright/agent-runtime test --
 test/doc-store.test.ts`; `npm --workspace @sparkwright/core test --
@@ -773,7 +962,7 @@ check:internal-imports`; `npm run check:package-boundaries`.
 - Read: `packages/cron/src/store.ts`, `packages/cron/package.json`,
   `packages/agent-runtime/src/index.ts`,
   `packages/agent-runtime/src/doc-store/index.ts`,
-  `docs/_internal/proposals/consolidation-agenda.md`,
+  `docs/_internal/reviews/consolidation-agenda.md`,
   `docs/_internal/proposals/substrate-sequencing.md`.
 - Tests: `npm --workspace @sparkwright/cron test -- test/schedule.test.ts`;
   `npm --workspace @sparkwright/cron run typecheck`; `npm run
@@ -789,7 +978,7 @@ check:package-boundaries`; `npm run check:workspace-lock`.
   `packages/agent-runtime/src/doc-store/index.ts`,
   `packages/agent-runtime/test/tasks.test.ts`,
   `packages/agent-runtime/test/doc-store.test.ts`,
-  `docs/_internal/proposals/consolidation-agenda.md`,
+  `docs/_internal/reviews/consolidation-agenda.md`,
   `docs/_internal/proposals/substrate-sequencing.md`.
 - Tests: `npm --workspace @sparkwright/agent-runtime test --
 test/doc-store.test.ts test/tasks.test.ts`; `npm --workspace

@@ -25,7 +25,7 @@ export function classifyToolResult(value: unknown): ToolResultKind | null {
 }
 
 /**
- * Recognise a `read_file` result envelope by its shape: a record carrying a
+ * Recognise a `read` result envelope by its shape: a record carrying a
  * string `path`, a string `content`, and numeric `totalLines`/`bytes`.
  */
 export function isFileReadResult(value: unknown): boolean {

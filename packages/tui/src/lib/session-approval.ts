@@ -159,7 +159,7 @@ function toolIdentity(toolName: string, governance: unknown): unknown {
 }
 
 function isShellToolName(toolName: string): boolean {
-  return toolName === "shell" || toolName === "bash";
+  return toolName === "bash";
 }
 
 function ruleKey(kind: string, value: unknown): string {

@@ -2,9 +2,12 @@
 
 ## Current Confidence
 
-- Status: `Partially Verified`
-- Last reviewed: 2026-07-11
-- Evidence source: 2026-06-23 focused host Skill evolution,
+- Status: `Verified`
+- Last reviewed: 2026-07-18
+- Evidence source: 2026-07-18 focused Skill stats/cache/CLI rendering and full
+  CLI coverage passed, along with Host/CLI and repository test typechecks plus
+  schema validation, project-map drift, and the full release gate. Earlier
+  2026-06-23 focused host Skill evolution,
   capability-package mutation, inline-shell, TUI skill review, and
   `@sparkwright/skills` package tests passed. Real `openai/gpt-5.4-nano`
   Skill capability regression partially passed: shell-managed package bypass was
@@ -13,6 +16,26 @@
   duplicate recovered `create_skill` call.
 
 ## Covered
+
+- 2026-07-18 Skill stats DTO coverage proves load failure aggregation, JSON,
+  text rendering, findings, and rebuildable session projections use only
+  `loadFailures.total/byMode/byStatus`. The duplicate `loadFailureCount`
+  summary is absent, and v2 session projections are rejected and rebuilt as
+  canonical v3 cache entries.
+
+- 2026-07-18 configured-root vocabulary coverage proves custom Skill roots
+  retain strongest precedence while carrying the sole canonical `configured`
+  layer through package loading, Host security planning and doctor, CLI text
+  and JSON capability inspection, TUI configured-root consumption, and stats
+  cache validation. The old `legacy` layer and doctor codes are rejected or no
+  longer emitted.
+
+- 2026-07-17 identity consolidation coverage proves runtime loading, indexed
+  and resident trace metadata, capability inspection, doctor, lockfiles, stats,
+  proposals, history, and restore share required policy-2 package identity.
+  Focused tests also prove v1 package helpers are gone, arbitrary included root
+  files affect runtime identity, old content/name-only trace rows no longer
+  become stats buckets, and proposal records without artifact identity fail.
 
 - 2026-07-12 hardening coverage rejects snapshot targets that are ancestors of
   their source, rejects duplicate registry path ownership, preserves concurrent
@@ -26,22 +49,25 @@
 - 2026-07-12 Phase 3B coverage proves new managed proposal/history/receipt
   records use v2 identity, ordinary root files survive proposal apply/history,
   and direct change to an included file marks the proposal stale without target
-  overwrite. Missing-policy legacy records remain v1 readers.
+  overwrite. The later 2026-07-17 consolidation removed missing-policy and
+  artifact fallback readers.
 
 - 2026-07-12 Phase 3A package identity v2 substrate coverage proves complete
   canonical ordinary-file enumeration, fixed exclusions, NUL-framed stable
   hashing, same-set snapshotting, policy version attribution, and fail-closed
-  file/path/size guardrails. It deliberately does not change the current Skill
-  v1 runtime/evolution path; Phase 3B owns that migration.
+  file/path/size guardrails. Runtime loading joined that same v2 path in the
+  2026-07-17 consolidation.
 
 - 2026-07-12 TUI completion-card coverage proves a draft proposal is restored
-  from persistent proposal storage after startup, card dismissal leaves the
-  draft recoverable through `/skill-review`, and both generic and dedicated
-  creation paths refresh the affordance.
+  from persistent proposal storage after startup and card dismissal leaves the
+  draft recoverable through `/skill-review`. The dedicated compatibility create
+  path was removed on 2026-07-17; `/create skill` is now the sole TUI creation
+  adapter and refreshes the affordance.
 
-- 2026-07-12 Phase 2 create convergence routes model `create_skill`, CLI
-  `skills create`, TUI `/create skill`, and `/skill-create` through host
-  `SkillCommandService`. Focused service, host tool, CLI and TUI tests verify
+- 2026-07-12 Phase 2 create convergence routed model `create_skill`, CLI
+  `skills create`, and the TUI creation adapters through host
+  `SkillCommandService`. The TUI compatibility adapter was removed on
+  2026-07-17; focused service, host tool, CLI and TUI tests continue to verify
   proposal-first behavior, shared review apply, session dedupe, and absence of
   direct current-Skill writes from ordinary create adapters.
 
@@ -165,6 +191,8 @@
 
 ```bash
 npm --workspace @sparkwright/host test -- test/skill-evolution.test.ts test/capability-package-mutation.test.ts test/skill-inline-shell.test.ts
+npm --workspace @sparkwright/host test -- test/protocol.test.ts test/skill-suggestions.test.ts
+npm --workspace @sparkwright/cli test -- test/cli.test.ts -t "skill stats|skill review digest|catalog|doctors skills"
 npm --workspace @sparkwright/tui test -- test/skill-review-dialog-render.test.tsx test/path-display.test.ts
 npm --workspace @sparkwright/skills test
 npm --workspace @sparkwright/skills run typecheck

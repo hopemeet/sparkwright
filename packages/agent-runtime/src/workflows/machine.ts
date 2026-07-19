@@ -1,5 +1,5 @@
 import type {
-  WorkflowDefinition,
+  WorkflowExecutableDefinition,
   WorkflowNodeDefinition,
   WorkflowNodeVerdict,
   WorkflowRuntimeState,
@@ -35,7 +35,7 @@ export class WorkflowRuntimeDefinitionError extends Error {
 }
 
 export interface AdvanceWorkflowStateInput {
-  definition: WorkflowDefinition;
+  definition: WorkflowExecutableDefinition;
   state: WorkflowRuntimeState;
   verdict: WorkflowNodeVerdict;
   now?: () => string;
@@ -47,7 +47,7 @@ export interface AdvanceWorkflowStateResult {
 }
 
 export function validateWorkflowRuntimeDefinition(
-  definition: WorkflowDefinition,
+  definition: WorkflowExecutableDefinition,
 ): WorkflowRuntimeValidationIssue[] {
   const issues: WorkflowRuntimeValidationIssue[] = [];
   const ids = new Set<string>();
@@ -90,7 +90,7 @@ export function validateWorkflowRuntimeDefinition(
 }
 
 export function assertWorkflowRuntimeDefinition(
-  definition: WorkflowDefinition,
+  definition: WorkflowExecutableDefinition,
 ): void {
   const issues = validateWorkflowRuntimeDefinition(definition);
   if (issues.length > 0) {
@@ -99,7 +99,7 @@ export function assertWorkflowRuntimeDefinition(
 }
 
 export function createInitialWorkflowRuntimeState(
-  definition: WorkflowDefinition,
+  definition: WorkflowExecutableDefinition,
 ): WorkflowRuntimeState {
   assertWorkflowRuntimeDefinition(definition);
   const first = definition.nodes[0]!;
@@ -153,7 +153,7 @@ export function advanceWorkflowState(
 }
 
 function resolveNodeTransition(
-  definition: WorkflowDefinition,
+  definition: WorkflowExecutableDefinition,
   state: WorkflowRuntimeState,
   node: WorkflowNodeDefinition,
   verdict: WorkflowNodeVerdict,
@@ -173,7 +173,7 @@ function resolveNodeTransition(
 }
 
 function resolveTransitionDefinition(
-  definition: WorkflowDefinition,
+  definition: WorkflowExecutableDefinition,
   node: WorkflowNodeDefinition,
   transition: WorkflowTransitionDefinition | undefined,
   options: {
@@ -384,14 +384,14 @@ function collectTargetIssue(
 }
 
 function findNode(
-  definition: WorkflowDefinition,
+  definition: WorkflowExecutableDefinition,
   nodeId: string,
 ): WorkflowNodeDefinition | undefined {
   return definition.nodes.find((node) => node.id === nodeId);
 }
 
 function nextNode(
-  definition: WorkflowDefinition,
+  definition: WorkflowExecutableDefinition,
   nodeId: string,
 ): WorkflowNodeDefinition | undefined {
   const index = definition.nodes.findIndex((node) => node.id === nodeId);

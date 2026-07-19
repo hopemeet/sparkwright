@@ -4,9 +4,8 @@ import type {
   RunAccessMode,
   RunBudget,
 } from "@sparkwright/core";
-import type { PermissionMode, TraceLevel } from "@sparkwright/protocol";
+import type { TraceLevel } from "@sparkwright/protocol";
 import type {
-  ApprovalDefaults,
   AgentExposureMode,
   CapabilityDelegateToolConfig,
   CapabilityHooksConfig,
@@ -63,7 +62,6 @@ export interface SharedConfig {
   accessModeCeiling?: RunAccessMode;
   backgroundTasks?: BackgroundTaskPolicy;
   backgroundTasksCeiling?: BackgroundTaskPolicy;
-  permissionMode?: PermissionMode;
   workspace?: string;
   confidentialDefaults?: boolean;
   confidentialPaths?: string[];
@@ -75,7 +73,10 @@ export interface SharedConfig {
   runBudget?: RunBudget;
   maxSteps?: number;
   traceLevel?: TraceLevel;
-  approvals?: ApprovalDefaults;
+  theme?: string;
+  mouse?: boolean;
+  keybindings?: Record<string, string | string[] | null>;
+  vim?: boolean;
 }
 
 export interface CapabilityConfig {
@@ -93,7 +94,6 @@ export interface CapabilityAgentsConfig {
   delegateModel?: string;
   exposure?: AgentExposureMode;
   pinnedDelegates?: string[];
-  exposeChildrenAsDelegates?: boolean;
   enableParallelDelegates?: boolean;
   maxDepth?: number;
 }
@@ -138,7 +138,6 @@ export interface SharedConfigSourceMap {
   accessModeCeiling?: string;
   backgroundTasks?: string;
   backgroundTasksCeiling?: string;
-  permissionMode?: string;
   workspace?: string;
   confidentialDefaults?: string;
   confidentialPaths?: string;
@@ -148,7 +147,7 @@ export interface SharedConfigSourceMap {
   runBudget?: string;
   maxSteps?: string;
   traceLevel?: string;
-  approvals?: string;
+  theme?: string;
   providers?: Record<string, string>;
   tasks?: string;
 }

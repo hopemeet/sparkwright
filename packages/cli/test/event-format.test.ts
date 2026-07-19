@@ -79,4 +79,17 @@ describe("event-format live output filtering", () => {
       "[1] agent.routing.evaluated mode=sort delegates=3 relevant=1 low=2",
     ]);
   });
+
+  it("formats tool failure codes from the canonical error envelope", () => {
+    expect(
+      createLiveEventFormatter().format(
+        event("tool.failed", {
+          toolCallId: "call_1",
+          toolName: "read",
+          status: "failed",
+          error: { code: "ENOENT", message: "missing" },
+        }),
+      ),
+    ).toEqual(["[1] tool.failed read status=failed error=ENOENT artifacts=0"]);
+  });
 });

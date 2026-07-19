@@ -158,6 +158,24 @@ describe("config schema drift guard", () => {
     }
   });
 
+  it("rejects removed root aliases and shell.sandbox", () => {
+    const validate = buildValidator();
+
+    expect(
+      validate({
+        model: "deterministic",
+        accessMode: "ask",
+        shell: { sandbox: { mode: "warn" } },
+      }),
+    ).toBe(false);
+    expect(validate.errors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ instancePath: "" }),
+        expect.objectContaining({ instancePath: "/shell" }),
+      ]),
+    );
+  });
+
   it("selector enums in the schemas stay in sync with TOOL_USE_SELECTORS", () => {
     // config.schema.json is generated from the zod source (which derives the
     // enum from TOOL_USE_SELECTORS), but agent-profile.schema.json is

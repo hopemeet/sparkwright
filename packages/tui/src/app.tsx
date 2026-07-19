@@ -983,7 +983,6 @@ function AppReady(
     onCommitRename: sessionActions.commitRename,
     onApprovalDecision: (choice) => void controller.resolveApproval(choice),
     onCreateCapability: capActions.handleCreateCapability,
-    onCreateSkillProposal: skillActions.handleCreateSkillProposal,
     onUpdateSkillProposal: skillActions.handleUpdateSkillProposal,
     onApplySkillReviewProposal: skillActions.applySkillReviewProposal,
     onRejectSkillReviewProposal: skillActions.rejectSkillReviewProposal,

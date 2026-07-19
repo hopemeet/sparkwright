@@ -5,7 +5,6 @@ import {
   type ToolDescriptor,
   type ToolOrigin,
 } from "@sparkwright/core";
-import { canonicalToolName } from "./tool-identities.js";
 import { DISCOVERY_TOOL_NAME } from "./tool-selectors.js";
 
 const PROFILE_SCOPED_TOOL_SEARCH_ORIGIN =
@@ -17,7 +16,6 @@ type AdmissionProfile = Pick<AgentProfile, "allowedTools" | "deniedTools">;
 
 export interface ResolvedToolSurface {
   tools: ToolDefinition[];
-  missingRequiredTools: string[];
 }
 
 /**
@@ -37,12 +35,12 @@ export function admitToolsForAgentProfile<T>(
   const directlyAdmitted = upstream.filter((item) => {
     const tool = definition(item);
     return (
-      canonicalToolName(tool.name) !== DISCOVERY_TOOL_NAME &&
+      tool.name !== DISCOVERY_TOOL_NAME &&
       agentProfileAdmitsTool(tool.name, profile)
     );
   });
   const discovery = upstream.find(
-    (item) => canonicalToolName(definition(item).name) === DISCOVERY_TOOL_NAME,
+    (item) => definition(item).name === DISCOVERY_TOOL_NAME,
   );
   if (
     !discovery ||
@@ -66,24 +64,22 @@ export function admitToolsForAgentProfile<T>(
 /**
  * Resolve the final tool surface for one model episode. Inputs have already
  * passed source/config/Profile admission; this step can only narrow Workflow
- * tools, rebuild admitted discovery, or eagerly expose an admitted required
- * schema. It never restores a missing tool.
+ * tools or rebuild admitted discovery. It never restores a missing tool.
  */
 export function resolveRunToolSurface(input: {
   tools: readonly ToolDefinition[];
   workflowAllowedTools?: readonly string[];
-  requiredTools?: readonly string[];
 }): ResolvedToolSurface {
   const workflowAllowed = input.workflowAllowedTools
-    ? new Set(input.workflowAllowedTools.map(canonicalToolName))
+    ? new Set(input.workflowAllowedTools)
     : undefined;
   const admittedDiscovery = input.tools.find(
-    (tool) => canonicalToolName(tool.name) === DISCOVERY_TOOL_NAME,
+    (tool) => tool.name === DISCOVERY_TOOL_NAME,
   );
   const tools = input.tools.filter((tool) => {
     if (!workflowAllowed) return true;
-    if (canonicalToolName(tool.name) === DISCOVERY_TOOL_NAME) return false;
-    return workflowAllowed.has(canonicalToolName(tool.name));
+    if (tool.name === DISCOVERY_TOOL_NAME) return false;
+    return workflowAllowed.has(tool.name);
   });
 
   if (workflowAllowed && admittedDiscovery) {
@@ -99,21 +95,7 @@ export function resolveRunToolSurface(input: {
     }
   }
 
-  const missingRequiredTools: string[] = [];
-  for (const requiredTool of new Set(
-    (input.requiredTools ?? []).map(canonicalToolName),
-  )) {
-    const index = tools.findIndex(
-      (tool) => canonicalToolName(tool.name) === requiredTool,
-    );
-    if (index < 0) {
-      missingRequiredTools.push(requiredTool);
-    } else if (isDeferredOnly(tools[index]!)) {
-      tools[index] = { ...tools[index]!, alwaysLoad: true };
-    }
-  }
-
-  return { tools, missingRequiredTools };
+  return { tools };
 }
 
 export function agentProfileAdmitsTool(
@@ -131,18 +113,15 @@ export function matchesAgentToolName(
   toolName: string,
   patterns: readonly string[],
 ): boolean {
-  const canonical = canonicalToolName(toolName);
   return patterns.some((rawPattern) => {
-    const pattern = rawPattern.includes("*")
-      ? rawPattern
-      : canonicalToolName(rawPattern);
+    const pattern = rawPattern;
     if (pattern === "*") return true;
-    if (!pattern.includes("*")) return canonical === pattern;
+    if (!pattern.includes("*")) return toolName === pattern;
     const escaped = pattern
       .split("*")
       .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
       .join(".*");
-    return new RegExp(`^${escaped}$`).test(canonical);
+    return new RegExp(`^${escaped}$`).test(toolName);
   });
 }
 
@@ -198,7 +177,6 @@ function toolDescriptor(tool: ToolDefinition): ToolDescriptor {
       ? { outputSchema: tool.outputSchema }
       : {}),
     ...(tool.canonicalName ? { canonicalName: tool.canonicalName } : {}),
-    ...(tool.legacyNames ? { legacyNames: [...tool.legacyNames] } : {}),
     ...(tool.defaultExposureTier
       ? { defaultExposureTier: tool.defaultExposureTier }
       : {}),

@@ -12,10 +12,10 @@ import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   createRunId,
-  LocalWorkspace,
   type RuntimeContext,
   type ToolDefinition,
 } from "@sparkwright/core";
+import { LocalWorkspace } from "@sparkwright/core/internal";
 import {
   applyUnifiedDiff,
   createCodingTools,
@@ -43,9 +43,9 @@ describe("coding tools", () => {
     expect(createCodingTools().map((tool) => tool.name)).toEqual([
       "read_text",
       "read_anchored_text",
-      "write_file",
+      "write",
       "edit_anchored_text",
-      "apply_patch",
+      "edit",
       "list_dir",
       "grep",
       "glob",
@@ -156,10 +156,7 @@ describe("coding tools", () => {
     });
     const tools = createCodingTools({ workspaceRoot: root });
     const readText = getTool<ReadTextInput, ReadTextResult>(tools, "read_text");
-    const writeFile = getTool<WriteFileInput, WriteFileResult>(
-      tools,
-      "write_file",
-    );
+    const writeFile = getTool<WriteFileInput, WriteFileResult>(tools, "write");
     const grep = getTool<GrepTextInput, GrepTextResult>(tools, "grep");
     const glob = getTool<GlobPathsInput, GlobPathsResult>(tools, "glob");
 
@@ -272,7 +269,7 @@ describe("coding tools", () => {
     });
     const tool = getTool<ApplyPatchInput, ApplyPatchResult>(
       createCodingTools({ workspaceRoot: root }),
-      "apply_patch",
+      "edit",
     );
 
     const result = await tool.execute(
@@ -304,7 +301,7 @@ describe("coding tools", () => {
     const { root, ctx } = await createWorkspace({});
     const tool = getTool<WriteFileInput, WriteFileResult>(
       createCodingTools({ workspaceRoot: root }),
-      "write_file",
+      "write",
     );
 
     const result = await tool.execute(
@@ -334,7 +331,7 @@ describe("coding tools", () => {
     });
     const tool = getTool<WriteFileInput, WriteFileResult>(
       createCodingTools({ workspaceRoot: root }),
-      "write_file",
+      "write",
     );
 
     const created = await tool.execute(
@@ -696,7 +693,8 @@ describe("coding tools", () => {
       "src/index.ts": "export const marker = 'source-only';\n",
       ".sparkwright/sessions/session_1/trace.jsonl":
         '{"type":"tool.completed","payload":"source-only"}\n',
-      ".sparkwright/runs/run_1/result.json": '{"summary":"source-only"}\n',
+      ".sparkwright/sessions/session_1/agents/main/runs/run_1/result.json":
+        '{"summary":"source-only"}\n',
     });
     const tools = createCodingTools({ workspaceRoot: root });
     const glob = getTool<GlobPathsInput, GlobPathsResult>(tools, "glob");
@@ -715,9 +713,8 @@ describe("coding tools", () => {
     expect(globResult.paths).not.toContain(
       ".sparkwright/sessions/session_1/trace.jsonl",
     );
-    expect(globResult.paths).not.toContain(".sparkwright/runs");
     expect(globResult.paths).not.toContain(
-      ".sparkwright/runs/run_1/result.json",
+      ".sparkwright/sessions/session_1/agents/main/runs/run_1/result.json",
     );
 
     const result = await grep.execute(

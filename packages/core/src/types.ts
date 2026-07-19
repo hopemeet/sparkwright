@@ -24,6 +24,7 @@ import type {
   PromptMessage,
 } from "./context.js";
 import type { ToolDescriptor, ToolProgressUpdate } from "./tools.js";
+import type { RunAssessment } from "./run-assessment.js";
 
 export type RunState =
   | "created"
@@ -89,6 +90,8 @@ export interface RunResult {
   stopReason?: RunStopReason;
   message?: string;
   failure?: RunFailure;
+  /** Core-owned terminal assessment. Present for every terminal result. */
+  assessment: RunAssessment;
   metadata: Record<string, unknown>;
 }
 
@@ -100,10 +103,10 @@ export interface RunResult {
  * - `run_started`         — first iteration after `start()`.
  * - `next_turn`           — model produced tool calls and we proceed normally.
  * - `command_injected`    — runtime command (user_message) merged into context.
- * - `validation_continuation` — final-output validation failed with
- *                              `finalOutputValidation: "continue"`.
- * - `stop_hook_blocked`   — a `pre_terminal` stop hook prevented termination
- *                           and the loop must do another turn.
+ * - `validation_continuation` — a `ModelOutput` workflow hook blocked the
+ *                               output and the loop must do another turn.
+ * - `stop_hook_blocked`   — a `Stop` workflow hook prevented termination and
+ *                           the loop must do another turn.
  * - `workflow_hook_advanced` — a workflow hook deliberately advanced the loop
  *                              to another model turn without reporting a
  *                              policy/verification violation.

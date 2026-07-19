@@ -1,9 +1,11 @@
 import {
   createRun,
+  compileRunAccessMode,
   createSessionRunStoreFactory,
   FileSessionStore,
   type ContextItem,
   type ModelAdapter,
+  type RunHandle,
   type SparkwrightEvent,
   type TraceLevel,
 } from "@sparkwright/core";
@@ -15,11 +17,10 @@ import {
 } from "@sparkwright/core/internal";
 import {
   buildConfiguredAdapter,
+  assembleRuntimeWorkflowHooks,
   catalogToolDefinitions,
   createCliDiagnosticToolCatalog,
-  createDocumentedCommandWorkflowHooks,
   bindConfiguredEventHooks,
-  createConfiguredWorkflowHooks,
   createHostRunPolicy,
   DETERMINISTIC_PROVIDER,
   loadHostConfig,
@@ -27,11 +28,11 @@ import {
   resolveModelSelection,
 } from "@sparkwright/host";
 import { buildAgentPromptBuilder } from "@sparkwright/project-context";
-import { createCliApprovalResolver } from "../cli-approval.js";
+import { createCliInteractionChannel } from "../cli-approval.js";
 import { createLiveEventFormatter } from "../event-format.js";
 import type { CliIO } from "../io.js";
 import { writeLine } from "../io.js";
-import type { CliApprovalOptions, CliRunAccess } from "../run-access.js";
+import type { CliRunAccess } from "../run-access.js";
 import {
   cliExitCodeForRun,
   completedRunHasCliIssues,
@@ -40,7 +41,6 @@ import {
   summarizeDocumentedCommandFailures,
   summarizeRunFailure,
   summarizeUnhandledToolFailures,
-  summarizeUnsupportedFinalClaims,
   summarizeVerificationCommandFailures,
   summarizeVerificationProfileResults,
   summarizeWorkspaceMutations,
@@ -52,16 +52,10 @@ export interface DirectCoreRunInput {
   traceLevel: TraceLevel;
   workspaceRoot: string;
   sessionRootDir: string;
-  targetPath: string;
-  /**
-   * @reserved Internal diagnostic policy scope consumed by CLI fresh/session
-   * resume routing. Absent uses the Host untargeted default.
-   */
-  policyTargetPath?: string;
+  targetPath?: string;
   confidentialPaths?: readonly string[];
   confidentialDefaults?: boolean;
   runAccess: CliRunAccess;
-  approvalOptions: CliApprovalOptions;
   modelName?: string;
   sessionId: string;
   contextItems?: ContextItem[];
@@ -87,16 +81,15 @@ export async function startDirectCoreRun(
     workspaceRoot,
     sessionRootDir,
     targetPath,
-    policyTargetPath,
     confidentialPaths,
     confidentialDefaults,
     runAccess,
-    approvalOptions,
     modelName,
     sessionId,
   } = parsed;
-  const { shouldWrite, permissionMode } = runAccess;
-  const { approveAll, approveEdits, approveShellSafe } = approvalOptions;
+  const { permissionMode, shouldWrite } = compileRunAccessMode(
+    runAccess.accessMode,
+  );
   const model = await createCliModel({
     modelRef: modelName,
     cwd: workspaceRoot,
@@ -112,11 +105,8 @@ export async function startDirectCoreRun(
   }
 
   const workspace = new LocalWorkspace(workspaceRoot);
-  const approvalResolver = createCliApprovalResolver({
-    approveAll,
-    approveEdits,
-    approveShellSafe,
-    permissionMode,
+  const interactionChannel = createCliInteractionChannel({
+    accessMode: runAccess.accessMode,
     io,
   });
   const loadedConfig = await loadHostConfig(workspaceRoot, env);
@@ -124,7 +114,7 @@ export async function startDirectCoreRun(
   const policy = createHostRunPolicy({
     permissionMode,
     shouldWrite,
-    targetPath: policyTargetPath,
+    targetPath,
     writeGuardrails,
     confidentialDefaults,
     confidentialPaths,
@@ -135,19 +125,19 @@ export async function startDirectCoreRun(
     loadedConfig.config.capabilities?.skills?.roots,
     env,
   );
-  const documentedCommandHooks = createDocumentedCommandWorkflowHooks({
-    workspaceRoot,
-    goal,
-    shouldWrite,
-  });
-  const workflowHooks = createConfiguredWorkflowHooks({
-    hooks: loadedConfig.config.capabilities?.hooks?.workflow,
+  const runRef: { current?: RunHandle } = {};
+  const workflowHooks = assembleRuntimeWorkflowHooks({
+    workflowHooks: loadedConfig.config.capabilities?.hooks?.workflow,
+    verification: loadedConfig.config.capabilities?.verification,
     workspaceRoot,
     env,
     sandbox: loadedConfig.config.shell?.sandbox,
+    http: loadedConfig.config.capabilities?.hooks?.http,
     skillRoots: skillRoots.map((root) => root.root),
     configPaths: loadedConfig.attempted.map((entry) => entry.path),
-  }).concat(documentedCommandHooks);
+    getRun: () => runRef.current,
+    documentedCommand: { goal, shouldWrite },
+  });
   const trace = new MemoryTrace();
   const sessionStore = new FileSessionStore({ rootDir: sessionRootDir });
 
@@ -159,7 +149,7 @@ export async function startDirectCoreRun(
   const run = createRun({
     goal,
     workspace,
-    approvalResolver,
+    interactionChannel,
     policy,
     promptBuilder: buildAgentPromptBuilder({
       cwd: workspaceRoot,
@@ -188,6 +178,7 @@ export async function startDirectCoreRun(
       },
     }),
   });
+  runRef.current = run;
 
   const eventSummary = createCliRunEventSummary();
   const liveEvents = createLiveEventFormatter({ verbose: parsed.verbose });
@@ -229,9 +220,6 @@ export async function startDirectCoreRun(
       summarizeDocumentedCommandFailures(eventSummary);
     if (documentedCommandSummary)
       writeLine(io.stderr, documentedCommandSummary);
-    const unsupportedClaimSummary =
-      summarizeUnsupportedFinalClaims(eventSummary);
-    if (unsupportedClaimSummary) writeLine(io.stderr, unsupportedClaimSummary);
     const deniedWriteSummary = summarizeDeniedWorkspaceWrites(eventSummary);
     if (deniedWriteSummary) writeLine(io.stderr, deniedWriteSummary);
     const failureSummary = summarizeUnhandledToolFailures(eventSummary);
@@ -297,7 +285,7 @@ export async function createCliModel(input: {
   modelRef?: string;
   cwd: string;
   env: Record<string, string | undefined>;
-  targetPath: string;
+  targetPath?: string;
   shouldWrite: boolean;
   goal: string;
 }): Promise<
@@ -362,7 +350,7 @@ async function createProxyFetch(
 }
 
 function createDeterministicModel(input: {
-  targetPath: string;
+  targetPath?: string;
   shouldWrite: boolean;
   goal: string;
 }): ModelAdapter {
@@ -373,6 +361,13 @@ function createDeterministicModel(input: {
   return {
     async complete(modelInput) {
       modelCalls += 1;
+
+      if (!input.targetPath) {
+        return {
+          message:
+            "No explicit target was provided; the deterministic runner made no workspace changes.",
+        };
+      }
 
       if (modelCalls === 1) {
         return {
@@ -458,7 +453,7 @@ function formatDeterministicReadSummary(
   if (failure) {
     return `Could not read ${targetPath}: ${formatToolFailure(failure)}.`;
   }
-  return `Read ${targetPath}. Re-run with --write to exercise approval-gated workspace mutation.`;
+  return `Read ${targetPath}. Re-run with --access-mode ask to exercise approval-gated workspace mutation.`;
 }
 
 function formatDeterministicWriteSummary(

@@ -1,5 +1,4 @@
-import { dirname } from "node:path";
-import { computeSkillPackageHash, type SkillRoot } from "@sparkwright/skills";
+import type { SkillRoot } from "@sparkwright/skills";
 import {
   loadLayeredSkillReport,
   type SkillReportEntry,
@@ -21,7 +20,8 @@ export interface SkillDoctorEntry {
   name: string;
   layer?: SkillRoot["layer"];
   sourcePath?: string;
-  packageHash?: string;
+  packageHash: string;
+  packageHashPolicyVersion: 2;
   shadowedBy?: string;
   shadows?: string[];
 }
@@ -49,13 +49,15 @@ export async function runSkillDoctor(
   const byName = new Map<string, SkillDoctorEntry>();
 
   for (const skill of report.skills) {
-    byName.set(skill.name, await doctorEntryForSkill(skill, findings));
+    byName.set(skill.name, doctorEntryForSkill(skill));
   }
 
   for (const error of report.errors) {
     findings.push({
       severity: "blocker",
-      code: "SKILL_LOAD_FAILED",
+      code: error.message.startsWith("Asset package ")
+        ? "SKILL_PACKAGE_INVALID"
+        : "SKILL_LOAD_FAILED",
       message: error.message,
       source: error.source,
     });
@@ -86,12 +88,12 @@ export async function runSkillDoctor(
   }
 
   for (const skill of report.skills) {
-    if (skill.layer !== "legacy") continue;
+    if (skill.layer !== "configured") continue;
     findings.push({
       severity: "warning",
-      code: "LEGACY_SKILL_EFFECTIVE",
+      code: "CONFIGURED_SKILL_EFFECTIVE",
       message:
-        "Effective Skill comes from a configured legacy root; evolution updates should create a project shadow/fork proposal instead of editing the legacy root.",
+        "Effective Skill comes from a configured root; evolution updates should create a project shadow/fork proposal instead of editing the configured root.",
       skillName: skill.name,
       source: skill.source,
       layer: skill.layer,
@@ -99,12 +101,12 @@ export async function runSkillDoctor(
   }
 
   for (const root of options.skillRoots) {
-    if (root.layer !== "legacy") continue;
+    if (root.layer !== "configured") continue;
     findings.push({
       severity: "info",
-      code: "LEGACY_ROOT_READ_ONLY",
+      code: "CONFIGURED_ROOT_READ_ONLY",
       message:
-        "Configured legacy skill root is treated as a read-only advanced override for Skill Evolution v1.",
+        "Configured skill root is treated as a read-only override for managed Skill evolution.",
       source: root.root,
       layer: root.layer,
     });
@@ -135,30 +137,15 @@ export async function runSkillDoctor(
   };
 }
 
-async function doctorEntryForSkill(
-  skill: SkillReportEntry,
-  findings: SkillDoctorFinding[],
-): Promise<SkillDoctorEntry> {
+function doctorEntryForSkill(skill: SkillReportEntry): SkillDoctorEntry {
   const entry: SkillDoctorEntry = {
     name: skill.name,
+    packageHash: skill.packageHash,
+    packageHashPolicyVersion: skill.packageHashPolicyVersion,
     ...(skill.layer ? { layer: skill.layer } : {}),
     ...(skill.source ? { sourcePath: skill.source } : {}),
   };
 
-  if (!skill.source) return entry;
-  try {
-    const hash = await computeSkillPackageHash(dirname(skill.source));
-    entry.packageHash = hash.packageHash;
-  } catch (error) {
-    findings.push({
-      severity: "blocker",
-      code: "SKILL_PACKAGE_INVALID",
-      message: error instanceof Error ? error.message : String(error),
-      skillName: skill.name,
-      source: skill.source,
-      layer: skill.layer,
-    });
-  }
   return entry;
 }
 

@@ -444,8 +444,6 @@ export async function createProviderFallbackChain<TAdapterOptions = unknown>(
   });
 }
 
-export const createFallbackChain = createProviderFallbackChain;
-
 function parseModelReference(
   reference: ModelReference | undefined,
 ): ParsedModelReference {

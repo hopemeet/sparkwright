@@ -16,8 +16,7 @@ export type WorkflowJournalPayload =
       kind: "baseline";
       generation: 0;
       recordRevision: 0;
-      record?: WorkflowRunRecord;
-      legacyEvents: WorkflowStoreEvent[];
+      events: WorkflowStoreEvent[];
     }
   | {
       kind: "claim";
@@ -54,7 +53,11 @@ export interface WorkflowJournalHead {
   token?: string;
   record?: WorkflowRunRecord;
   events: WorkflowStoreEvent[];
-  quarantined: Array<{ path: string; reason: string }>;
+  quarantined: Array<{
+    path: string;
+    code: "read_failed" | "invalid_json" | "invalid_document";
+    reason: string;
+  }>;
 }
 
 export class WorkflowStaleWriteError extends Error {
@@ -98,7 +101,11 @@ export async function readWorkflowJournal(
       entry = JSON.parse(await readFile(path, "utf8")) as JournalEntry;
       validateEntry(entry, id, Number(name.slice(0, 16)));
     } catch (cause) {
-      head.quarantined.push({ path, reason: errorMessage(cause) });
+      head.quarantined.push({
+        path,
+        code: quarantineCode(cause),
+        reason: errorMessage(cause),
+      });
       head.physicalSequence = Math.max(
         head.physicalSequence,
         Number(name.slice(0, 16)),
@@ -126,7 +133,11 @@ export function readWorkflowJournalSync(
       entry = JSON.parse(readFileSync(path, "utf8")) as JournalEntry;
       validateEntry(entry, id, Number(name.slice(0, 16)));
     } catch (cause) {
-      head.quarantined.push({ path, reason: errorMessage(cause) });
+      head.quarantined.push({
+        path,
+        code: quarantineCode(cause),
+        reason: errorMessage(cause),
+      });
       head.physicalSequence = Math.max(
         head.physicalSequence,
         Number(name.slice(0, 16)),
@@ -201,20 +212,12 @@ function applyCanonicalEntry(
     if (entry.physicalSequence !== 0 || head.record || head.events.length > 0) {
       head.quarantined.push({
         path,
+        code: "invalid_document",
         reason: "duplicate or misplaced baseline",
       });
       return;
     }
-    if (payload.record && payload.record.id !== entry.workflowRunId) {
-      head.quarantined.push({
-        path,
-        reason: "baseline record identity mismatch",
-      });
-      return;
-    }
-    head.record = payload.record;
-    if (payload.record) head.recordPhysicalSequence = entry.physicalSequence;
-    head.events = [...payload.legacyEvents];
+    head.events = [...payload.events];
     return;
   }
   if (payload.kind === "claim") {
@@ -223,7 +226,11 @@ function applyCanonicalEntry(
       payload.generation !== head.generation + 1 ||
       payload.expectedRecordRevision !== head.recordRevision
     ) {
-      head.quarantined.push({ path, reason: "invalid claim transition" });
+      head.quarantined.push({
+        path,
+        code: "invalid_document",
+        reason: "invalid claim transition",
+      });
       return;
     }
     head.generation = payload.generation;
@@ -238,9 +245,14 @@ function applyCanonicalEntry(
     payload.record.recordRevision !== payload.recordRevision ||
     payload.record.generation !== payload.generation ||
     payload.record.id !== entry.workflowRunId ||
-    payload.event.workflowRunId !== entry.workflowRunId
+    payload.event.workflowRunId !== entry.workflowRunId ||
+    !isCanonicalRecord(payload.record)
   ) {
-    head.quarantined.push({ path, reason: "stale or discontinuous mutation" });
+    head.quarantined.push({
+      path,
+      code: "invalid_document",
+      reason: "stale or discontinuous mutation",
+    });
     return;
   }
   head.recordRevision = payload.recordRevision;
@@ -249,10 +261,49 @@ function applyCanonicalEntry(
   head.events.push(payload.event);
 }
 
+function isCanonicalRecord(record: WorkflowRunRecord): boolean {
+  return (
+    record.schemaVersion === "sparkwright-workflow-run.v2" &&
+    Number.isInteger(record.generation) &&
+    record.generation >= 1 &&
+    Number.isInteger(record.recordRevision) &&
+    record.recordRevision >= 1 &&
+    (record.layer === "builtin" ||
+      record.layer === "user" ||
+      record.layer === "project") &&
+    typeof record.packageHash === "string" &&
+    record.packageHash.length > 0 &&
+    record.packageHashPolicyVersion === 2 &&
+    typeof record.packageSnapshotRef === "string" &&
+    record.packageSnapshotRef.length > 0 &&
+    !("contentHash" in record) &&
+    !!record.definitionSnapshot &&
+    !("contentHash" in record.definitionSnapshot) &&
+    record.definitionSnapshot.assetName === record.assetName &&
+    record.definitionSnapshot.version === record.version &&
+    record.definitionSnapshot.layer === record.layer &&
+    record.definitionSnapshot.packageHash === record.packageHash &&
+    record.definitionSnapshot.packageHashPolicyVersion === 2 &&
+    record.definitionSnapshot.packageSnapshotRef ===
+      record.packageSnapshotRef &&
+    record.definitionSnapshot.sourceDir === record.packageSnapshotRef
+  );
+}
+
 function checksum(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
 function errorMessage(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
+}
+
+function quarantineCode(
+  cause: unknown,
+): "read_failed" | "invalid_json" | "invalid_document" {
+  if (cause instanceof SyntaxError) return "invalid_json";
+  if (cause && typeof cause === "object" && "code" in cause) {
+    return "read_failed";
+  }
+  return "invalid_document";
 }

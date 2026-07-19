@@ -109,7 +109,7 @@ sparkwright skills create code-reviewer \
 
 `list` and `validate` discover Skills across the builtin, user, and project
 layers. If `capabilities.skills.roots` is configured, those roots are loaded as
-legacy workspace roots after builtin/user roots. `create` prepares a managed
+configured workspace roots after the standard layers. `create` prepares a managed
 project-layer proposal and prints its review/apply command; it does not write the
 current Skill package or accept `--force`. Apply the proposal only after
 reviewing its final patch. CLI, TUI, and model creation adapters share the host
@@ -126,7 +126,7 @@ letting generated changes silently mutate the current Skill package.
 
 The writable surface is intentionally narrow: proposal apply writes only to the
 project Skill root under `.sparkwright/skills/`. Builtin, user, and configured
-legacy roots are read-only sources for diagnostics, statistics, and project
+roots are read-only sources for diagnostics, statistics, and project
 fork/shadow proposals.
 
 Start by inspecting the current Skill surface:
@@ -142,15 +142,17 @@ sparkwright skills doctor --workspace . --format text
 associated run status, associated tool failures, and package-hash-aligned
 proposal/history rollups. The report includes the trace/evolution window,
 freshness timestamps, analyzer findings, and a rebuildable session projection
-cache summary. Session projections are stored under
+cache summary. Load failures have one structured JSON contract:
+`loadFailures.total`, `loadFailures.byMode`, and `loadFailures.byStatus`.
+Session projections are stored under
 `.sparkwright/skill-stats/sessions/` and are invalidated by trace file
-fingerprints plus the projection algorithm version. A lightweight
+fingerprints plus the projection schema and algorithm versions. A lightweight
 `.sparkwright/skill-stats/catalog.json` maps Skill names, keys, and package
 hashes to session projections so targeted `--skill`, `--skill-key`, and
 `--package-hash` queries can skip unrelated sessions after the catalog is warm.
 Raw trace and evolution files remain the source of truth. Tool failures are
 reported as associated with loaded Skills, not caused by them. `doctor`
-performs deterministic checks such as load errors, shadowing, legacy-root
+performs deterministic checks such as load errors, shadowing, configured-root
 warnings, and package hash validity.
 
 Create a new project Skill through a draft proposal:
@@ -171,7 +173,7 @@ sparkwright skills proposals update code-reviewer \
   --format text
 ```
 
-If the effective Skill comes from builtin, user, or legacy layers, update
+If the effective Skill comes from builtin, user, or configured layers, update
 creates a project-layer fork/shadow proposal instead of editing that source in
 place. If the effective Skill is already project-scoped, apply replaces that
 project Skill only after the proposal's `basePackageHash` still matches the
@@ -188,8 +190,7 @@ sparkwright skills proposals apply <proposal-id> --workspace . --format text
 The TUI exposes slash-command entry points for the same proposal flow:
 
 ```txt
-/skill-create
-/skill-create code-reviewer --description Reviews code changes for risk and missing tests.
+/create skill
 /skill-update
 /skill-update code-reviewer
 /skill-update code-reviewer --description Prefer concise findings with concrete verification steps.
@@ -199,17 +200,16 @@ The TUI exposes slash-command entry points for the same proposal flow:
 /skill-learn notice
 ```
 
-`/create skill` is the canonical general capability-creation entrypoint.
-`/skill-create` remains a compatibility/advanced shortcut; both call the same
-managed proposal service and neither directly writes the current Skill.
+`/create skill` is the sole Skill creation entrypoint in the TUI. It opens the
+general capability-creation dialog on Skill and prepares through the managed
+proposal service; it does not directly write the current Skill.
 
-`/skill-create` without arguments opens a guided prompt for a project Skill
-proposal. `/skill-update` without arguments opens a guided prompt for an
-effective Skill update proposal; with only a Skill name, it opens directly at
-the description step. `/skill-review` opens a proposal review panel with
-proposal, patch, and metadata views; it can apply or reject the selected
-proposal after an Enter confirmation. `/skill-create` and `/skill-update`
-create proposals but do not apply them.
+`/skill-update` without arguments opens a guided prompt for an effective Skill
+update proposal; with only a Skill name, it opens directly at the description
+step. `/skill-review` opens a proposal review panel with proposal, patch, and
+metadata views; it can apply or reject the selected proposal after an Enter
+confirmation. `/create skill` and `/skill-update` create proposals but do not
+apply them.
 
 `/skill-learn` shows the effective Skill Evolution mode. `/skill-learn
 off|notice|draft|apply` writes the project config field
@@ -220,7 +220,7 @@ setting the mode alone.
 In `notice` mode, the TUI may show a conservative notice after a successful run
 when the user's own prompt contains explicit reuse signals such as "remember
 this", "next time", or equivalent workflow corrections. The notice only
-suggests `/skill-create` or `/skill-update`; it does not create proposals
+suggests `/create skill` or `/skill-update`; it does not create proposals
 automatically.
 
 In `draft` mode, the same conservative signal creates a draft proposal for the
@@ -374,9 +374,10 @@ Skill bodies are not resident-loaded unless config sets
 The low-level `prepareSkillsForRun` helper still supports both modes. Its
 pipeline is:
 
-1. Index all discovered Skills by `name`, `description`, version, path, and content hash.
+1. Index all discovered Skills by `name`, `description`, version, path, and
+   required v2 package identity.
 2. Create one `skill_index` context item listing discovered Skills without host
-   source paths or content hashes in the model-visible body.
+   source paths or package hashes in the model-visible body.
 3. Optionally select matching Skills with a deterministic goal matcher and load
    them into resident context when `loadSelectedSkills` is true.
 4. Optionally expose a governed `skill_load` tool for on-demand body/resource
@@ -398,7 +399,8 @@ source projection.
     name: "dingtalk-notifier",
     version: "1.0.0",
     sourcePath: ".sparkwright/skills/dingtalk-notifier/SKILL.md",
-    contentHash: "...",
+    packageHash: "sha256:...",
+    packageHashPolicyVersion: 2,
     selectionReason: "Matched goal against skill name or description.",
   },
 ];
@@ -418,8 +420,9 @@ const lockfile = createSkillLockfile(skills);
 ```
 
 The lockfile records `schemaVersion`, optional `generatedAt`, and sorted Skill
-entries containing `name`, `sourcePath`, `contentHash`, `version`, and
-`metadata`. This is intentionally only a minimal manifest foundation for later
+entries containing `name`, `sourcePath`, `packageHash`,
+`packageHashPolicyVersion`, `version`, and `metadata`. This is intentionally
+only a minimal manifest foundation for later
 marketplace and hot reload work; it does not install, update, or execute Skills.
 
 ## Non-Goals In The First Slice

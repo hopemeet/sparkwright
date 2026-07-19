@@ -59,11 +59,12 @@ this order: `config.json`, `config.yaml`, then `config.yml`. If multiple files
 exist in the same layer, the first one still wins and validation reports a
 same-layer conflict so the duplicate can be removed deliberately.
 
-The `providers` map is merged by provider key. The security boundaries —
-`run.accessMode`, `confidentialPaths`, `write`, and `shell.sandbox` — merge
+The `identity.providers` map is merged by provider key. The security boundaries —
+`run.accessMode`, `policy.confidentialPaths`, `policy.write`, and
+`policy.sandbox` — merge
 conservatively. Project `run.accessMode` is the workspace access ceiling, and
 requests above it are clamped; the other boundaries cannot be weakened by a
-later layer. `confidentialDefaults` is the explicit override for whether the
+later layer. `policy.confidentialDefaults` is the explicit override for whether the
 built-in confidential path set is active. Most other fields are replaced
 wholesale by the later source. In particular, `capabilities` is not deep-merged
 across files; put related project capability settings in the same project config
@@ -128,14 +129,14 @@ Use the built-in deterministic provider when you want an offline smoke test:
 
 ```json
 {
-  "model": "deterministic",
-  "accessMode": "ask",
+  "identity": { "model": "deterministic" },
+  "run": { "accessMode": "ask" },
   "workspace": "."
 }
 ```
 
-The reserved `deterministic` provider is built in and does not need a
-`providers` entry.
+The reserved `deterministic` provider is built in and does not need an
+`identity.providers` entry.
 
 ### Personal OpenAI-Compatible Provider
 
@@ -144,14 +145,16 @@ Put this in your user config file, for example
 
 ```json
 {
-  "model": "openai/gpt-5.4-mini",
-  "providers": {
-    "openai": {
-      "baseURL": "https://api.openai.com/v1",
-      "apiKey": "replace-me",
-      "models": {
-        "gpt-5.4-mini": {},
-        "gpt-5.4": {}
+  "identity": {
+    "model": "openai/gpt-5.4-mini",
+    "providers": {
+      "openai": {
+        "baseURL": "https://api.openai.com/v1",
+        "apiKey": "replace-me",
+        "models": {
+          "gpt-5.4-mini": {},
+          "gpt-5.4": {}
+        }
       }
     }
   }
@@ -179,19 +182,21 @@ For OpenAI reasoning summaries:
 
 ```json
 {
-  "model": "openai/gpt-5.4-mini",
-  "providers": {
-    "openai": {
-      "baseURL": "https://api.openai.com/v1",
-      "apiKey": "replace-me",
-      "providerOptions": {
-        "openai": {
-          "reasoningEffort": "low",
-          "reasoningSummary": "auto"
+  "identity": {
+    "model": "openai/gpt-5.4-mini",
+    "providers": {
+      "openai": {
+        "baseURL": "https://api.openai.com/v1",
+        "apiKey": "replace-me",
+        "providerOptions": {
+          "openai": {
+            "reasoningEffort": "low",
+            "reasoningSummary": "auto"
+          }
+        },
+        "models": {
+          "gpt-5.4-mini": {}
         }
-      },
-      "models": {
-        "gpt-5.4-mini": {}
       }
     }
   }
@@ -252,7 +257,7 @@ project config cannot loosen a stricter personal setting.
 ### Shell Sandbox
 
 The built-in `bash` tool still goes through command classification, policy,
-approval, and workspace mutation audit. `shell.sandbox` adds an experimental
+approval, and workspace mutation audit. `policy.sandbox` adds an experimental
 OS-level process boundary underneath that flow. The same setting is also used
 for configured workflow-hook commands, external-command delegates, and local
 stdio MCP servers:
@@ -315,7 +320,7 @@ to fail-closed no-write profiles. This relies on the backend-specific model
 above: Linux removes writable binds, while macOS explicitly denies the
 workspace (including stable realpath/private-path variants). It still does not
 make the macOS backend a general filesystem allowlist.
-Across user, project, and explicit config files, `shell.sandbox` is merged
+Across user, project, and explicit config files, `policy.sandbox` is merged
 conservatively: stricter modes, `failIfUnavailable: true`, network deny,
 filesystem deny paths, and `tmp: false` win over later weaker settings.
 
@@ -327,8 +332,8 @@ remember a rule.
 
 Use workflow hooks for checked-in project rules: block forbidden paths, inject
 project context, run tests after writes, or prevent final answers until required
-verification has happened. Lower-level `RunHook`, `ValidationHook`, and
-`UserHookRunner` APIs remain available for SDK embedders and host integrations,
+verification has happened. Lower-level `RunHook` and `UserHookRunner` APIs
+remain available for SDK embedders and host integrations,
 but they are not the recommended project configuration surface.
 For guardrails that should apply only to one configured delegate profile, use
 `capabilities.agents.profiles[].hooks` instead of global workflow hooks.
@@ -453,7 +458,7 @@ output is added as workflow-hook context. Workflow command hooks can set
 event command hooks receive `run`, event `payload`, and event metadata. Omit it
 or set `none` for the default empty stdin. Set `frequency` to `oncePerTurn` when
 a workflow hook should run at most once for the same run step. Command hooks use
-the same `shell.sandbox` process boundary as the built-in shell tool.
+the same `policy.sandbox` process boundary as the built-in shell tool.
 
 Set `resultMode` to `stdoutJson` when a command should return a JSON
 `WorkflowHookResult` on stdout. This can dynamically return `block`, `rewrite`,
@@ -474,7 +479,7 @@ sets `capabilities.hooks.http.enabled: true` and an explicit `allow` rule. By
 default HTTP hook bodies contain only hook/run summary metadata, not the full
 run record or event payload. Private-network destinations require
 `allowPrivateNetwork: true`; link-local and cloud metadata addresses remain
-blocked. Agent actions call `delegate_agent` by `agentId` or `toolName`;
+blocked. Agent actions call `delegate_agent` by `agentId`;
 `resultMode: "workflowResult"` lets the delegate return a workflow result.
 Non-blocking `capabilities.hooks.events` rules support `command`, `http`, and
 `agent` actions, emit `user_hook.*` evidence, and never block or inject workflow
@@ -635,8 +640,8 @@ tests. Report findings with file references.
 
 Profiles describe role guidance and constraints. They do not grant authority by
 themselves. Non-`main` profiles that omit `mode` default to child/delegate
-agents and are indexed for `delegate_agent`; `id: main` or `mode: primary`
-marks the primary profile. Inline profile `delegateTool` blocks and entries
+agents and are indexed for `delegate_agent`; a Markdown file named `main.md` or
+`mode: primary` marks the primary profile. Inline profile `delegateTool` blocks and entries
 listed in `capabilities.agents.delegateTools` define optional direct aliases,
 and those tools still go through policy, approval, validation, and trace.
 Explicit `delegateTools` entries win over inline delegate hints for the same
@@ -654,11 +659,11 @@ profile's in-process child run:
           "id": "db-reader",
           "name": "DB Reader",
           "description": "Execute read-only database queries.",
-          "use": ["workspace.read", "shell"],
+          "use": ["workspace.read", "bash"],
           "hooks": {
             "PreToolUse": [
               {
-                "matcher": "shell",
+                "matcher": "bash",
                 "action": {
                   "type": "command",
                   "command": "./scripts/validate-readonly-query.sh",
@@ -720,28 +725,28 @@ allowed or explicitly approved commands execute. User arguments are not spliced
 inside shell spans; `` !`grep $1 src` `` runs literally with `$1` untouched.
 Put user arguments in prompt text instead.
 
-## Field Map
+## Canonical Field Map
 
-- `model`: active model in `provider/model` form. The reserved
+- `identity.model`: active model in `provider/model` form. The reserved
   `deterministic` provider is built in.
-- `providers`: named provider definitions. Keep provider keys in personal
+- `identity.providers`: named provider definitions. Keep provider keys in personal
   config, not project config.
-- `accessMode`: default run autonomy preset (`read-only`, `ask`, `accept-edits`,
+- `run.accessMode`: default run autonomy preset (`read-only`, `ask`, `accept-edits`,
   `bypass`). The single user-facing access knob; compiles internally to the
   run's permission/write fields. In project config, this is the workspace
   access ceiling: user, environment, CLI, and TUI runtime requests can ask for a
   stricter mode but cannot exceed the project ceiling.
 - `workspace`: default workspace root. Relative paths resolve from the config
   file that defines them.
-- `confidentialDefaults`: whether SparkWright includes its built-in conservative
+- `policy.confidentialDefaults`: whether SparkWright includes its built-in conservative
   confidential read defaults (`.env`, common credential/token/secret names, and
   cloud credential folders). Defaults to `true`; set `false` only when the
   config intentionally owns the full confidential read list.
-- `confidentialPaths`: additional read-confidentiality globs layered on top of
+- `policy.confidentialPaths`: additional read-confidentiality globs layered on top of
   SparkWright's built-in confidential defaults unless `confidentialDefaults` is
   `false`. Unions across layers (a later layer can only add entries, never drop
   them).
-- `write`: workspace write guardrails (`maxFiles`, `maxDiffLines`,
+- `policy.write`: workspace write guardrails (`maxFiles`, `maxDiffLines`,
   `allowDeletions`) that override the runtime defaults. Merges conservatively —
   the smaller `maxFiles`/`maxDiffLines` wins and `allowDeletions: false` wins.
   CLI `--target` is part of this write boundary: it narrows workspace writes and
@@ -749,9 +754,9 @@ Put user arguments in prompt text instead.
   the workspace boundary and confidential read policy, not by `--target`.
 - `shell.foregroundTimeoutMs`: foreground shell budget before background
   promotion or no-task-manager kill. Later layers override this scalar.
-- `shell.sandbox`: OS-level sandbox for the host shell executor. Merges
+- `policy.sandbox`: OS-level sandbox for the host shell executor. Merges
   conservatively so a later layer cannot weaken an earlier sandbox policy.
-- `runBudget`: resource budget for the interactive main run (`maxModelCalls`,
+- `run.budget`: resource budget for the interactive main run (`maxModelCalls`,
   `maxToolCalls`, `maxDurationMs`, `maxTokens`, `maxCostUsd`). `maxModelCalls`
   is the tightest natural step bound. An explicit main agent profile under
   `capabilities.agents` overrides this.
@@ -761,16 +766,13 @@ Put user arguments in prompt text instead.
   `maxCostUsd`, `unknownCostPolicy`). `maxSourceChars` is the always-enforced
   floor; `maxInputTokens` is currently an advisory tokenizer-aware refinement,
   and dollar caps are only enforceable when pricing is known.
-- `maxSteps`: explicit main-run step ceiling. Overrides the value derived from
-  `runBudget` and the safety backstop.
-- `traceLevel`: default trace verbosity (`standard`, `debug`) when an
+- `run.maxSteps`: explicit main-run step ceiling. Overrides the value derived from
+  `run.budget` and the safety backstop.
+- `run.traceLevel`: default trace verbosity (`standard`, `debug`) when an
   entrypoint does not pass one. CLI `--trace-level` overrides.
-- `approvals`: default approval auto-grants (`shellSafe`, `edits`, `all`) for
-  CLI/host clients that opt into those scopes, plus `cronMode` for unattended
-  cron run/tick defaults. Run autonomy comes from `accessMode`; CLI flags
-  (`--yes`, `--yes-edits`, `--yes-shell-safe`, `--access-mode`) and the TUI
-  runtime mode switch can request stricter temporary behavior, subject to the
-  project access ceiling.
+- `run.accessMode`: the single run-autonomy input. CLI `--access-mode` and the TUI
+  runtime mode switch can request a temporary mode, subject to the project
+  access ceiling.
 - `tools`: preferred tool selector, allow/disable, and defer settings.
 - `capabilities.skills`: Skill roots and loading behavior.
 - `capabilities.mcp`: MCP server definitions, default policy, and MCP tool
@@ -782,7 +784,7 @@ Put user arguments in prompt text instead.
   `delegate_*` tools are needed. Set `enableParallelDelegates: true` to expose
   the opt-in `delegate_parallel` fan-out tool for read-only configured
   delegates.
-- `theme`, `mouse`, `keybindings`: TUI-only preferences. TUI run autonomy uses
+- `ui.theme`, `ui.mouse`, `ui.keybindings`, `ui.vim`: TUI-only preferences. TUI run autonomy uses
   the shared `accessMode`; Shift+Tab changes the mode for the active TUI
   process without writing config.
 
@@ -792,10 +794,10 @@ and confidential read scope before their own agent-profile policy is layered on
 top. This means a reviewer or dynamically spawned child cannot read paths the
 parent run marks confidential or write outside the parent run's write boundary.
 
-### Grouped Form
+### Canonical Grouped Form
 
-Fields may be written flat (as above) or under the preferred groups, which make
-the layering intent obvious:
+Identity, policy, run, and UI fields are accepted only under their canonical
+groups:
 
 ```json
 {
@@ -809,26 +811,23 @@ the layering intent obvious:
   "run": {
     "accessMode": "ask",
     "budget": { "maxModelCalls": 50 },
-    "traceLevel": "standard",
-    "approvals": { "shellSafe": true }
+    "traceLevel": "standard"
   },
   "ui": { "theme": "dark" }
 }
 ```
 
-- `identity` → `model`, `providers` (belongs in the user config).
-- `policy` → `confidentialDefaults`, `confidentialPaths`, `write`, and
-  `sandbox` (maps to `shell.sandbox`) — the security boundaries. `confidentialPaths`
+- `identity` owns `model` and `providers` (belongs in the user config).
+- `policy` owns `confidentialDefaults`, `confidentialPaths`, `write`, and
+  `sandbox` — the security boundaries. `confidentialPaths`
   unions conservatively; `confidentialDefaults` is the explicit override for the
   built-in confidential path set.
-- `run` → `accessMode`, `runBudget` (as `budget`), `maxSteps`, `traceLevel`,
-  `approvals`.
-- `ui` → `theme`, `mouse`, `keybindings`.
+- `run` owns `accessMode`, `backgroundTasks`, `budget`, `maxSteps`, and `traceLevel`.
+- `ui` owns `theme`, `mouse`, `keybindings`, and `vim`.
 - `capabilities` is already its own group.
 
-The flat and grouped forms are equivalent; `sparkwright init` now emits the
-grouped form. Setting the same field both ways is an error — the grouped value
-wins and a warning is reported.
+Removed root-level aliases are rejected. `workspace`, `shell.foregroundTimeoutMs`,
+`tools`, `tasks`, and `capabilities` remain canonical root fields.
 
 ### Editor autocomplete and validation
 
@@ -1019,7 +1018,7 @@ Markdown profiles are folded under `capabilities.agents.profiles`; if the same
 id exists in a config file, the config entry wins. `use` accepts the same broad
 tool selectors as top-level `tools.use` and is the recommended capability axis.
 Non-`main` profiles that omit `mode` default to child/delegate agents, while
-`id: main` or `mode: primary` marks the primary profile. `allowedTools` remains
+profile id `main` or `mode: primary` marks the primary profile. `allowedTools` remains
 an advanced concrete-name allowlist and only narrows the tools selected by
 `use`. `capabilities.agents.maxDepth` can cap nested child/delegate spawning
 globally. Sub-agents cannot create background tasks; `task_create` remains a
@@ -1045,7 +1044,7 @@ do not use this parent-process model selection.
 
 `capabilities.agents.enableParallelDelegates: true` exposes `delegate_parallel`
 as an `agents` selector tool. It is off by default. Calls target configured
-agents by `agentId` (preferred) or legacy delegate `toolName`. Profiles with
+agents by `agentId`. Profiles with
 `exposeAsDelegate: false` are omitted from the automatic delegation index unless
 they are explicitly listed with `delegateTool` / `delegateTools`. The first
 version only runs configured in-process delegates that are read-only
@@ -1060,16 +1059,18 @@ Provider model entries can attach per-million-token pricing for usage reports:
 
 ```json
 {
-  "providers": {
-    "openai": {
-      "apiKey": "replace-me",
-      "models": {
-        "gpt-5.4-mini": {
-          "cost": {
-            "input": 1.25,
-            "output": 10,
-            "cacheRead": 0.1,
-            "cacheWrite": 1.25
+  "identity": {
+    "providers": {
+      "openai": {
+        "apiKey": "replace-me",
+        "models": {
+          "gpt-5.4-mini": {
+            "cost": {
+              "input": 1.25,
+              "output": 10,
+              "cacheRead": 0.1,
+              "cacheWrite": 1.25
+            }
           }
         }
       }
@@ -1085,13 +1086,16 @@ metadata.
 
 ```json
 {
-  "theme": "dark",
-  "mouse": true,
-  "keybindings": {
-    "activity.open": "ctrl+o",
-    "help.open": "?",
-    "cancel.run": "esc",
-    "quit.app": "ctrl+c"
+  "ui": {
+    "theme": "dark",
+    "mouse": true,
+    "vim": false,
+    "keybindings": {
+      "activity.open": "ctrl+o",
+      "help.open": "?",
+      "cancel.run": "esc",
+      "quit.app": "ctrl+c"
+    }
   }
 }
 ```
@@ -1154,17 +1158,18 @@ SparkWright treats config and project capabilities as user-owned assets:
 
 ## Common Troubleshooting Checks
 
-- If a provider model is unknown, confirm `model` uses `provider/model` form
-  and that the provider key exists under `providers`.
+- If a provider model is unknown, confirm `identity.model` uses `provider/model`
+  form and that the provider key exists under `identity.providers`.
 - If an API key is ignored, check whether the matching environment variable is
   overriding config.
 - If a tool disappeared, look for top-level `tools.use`, `tools.allowed`,
   `tools.disabled`, `tools.defer`, and MCP server `enabled` settings.
 - If a project setting does not combine with a user setting, remember that most
-  fields other than `providers` are replaced wholesale — except the security
-  boundaries (`accessMode`, `confidentialPaths`, `write`, `shell.sandbox`),
-  which merge conservatively. Project `accessMode` is a ceiling; requests above
-  it are clamped. `confidentialDefaults` is the explicit later-layer override
+  fields other than `identity.providers` are replaced wholesale — except the
+  security boundaries (`run.accessMode`, `policy.confidentialPaths`,
+  `policy.write`, `policy.sandbox`), which merge conservatively. Project
+  `run.accessMode` is a ceiling; requests above it are clamped.
+  `policy.confidentialDefaults` is the explicit later-layer override
   for the built-in confidential deny set.
 - If an MCP server cannot start, verify `cwd`, command path, timeout, and
   whether `enabled` is false.

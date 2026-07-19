@@ -1,10 +1,6 @@
 import {
-  DefaultContextAssembler,
-  DefaultObservationFormatter,
-  DefaultPromptBuilder,
+  assessRun,
   ToolRegistry,
-  approvalResolverFromChannel,
-  compilePromptCacheBlocks,
   createApprovalRequest,
   createContextItemId,
   createDefaultPolicy,
@@ -21,11 +17,9 @@ import {
   validateToolArguments,
   validateToolOutput,
   withSpan,
-  type ApprovalResolver,
   type ContextAssembler,
   type ContextBudget,
   type ContextItem,
-  type EventLog,
   type InteractionChannel,
   type ModelAdapter,
   type ModelInput,
@@ -52,14 +46,20 @@ import {
   type ToolDefinition,
   type ToolResult,
 } from "@sparkwright/core";
-import { EventLog as CoreEventLog } from "@sparkwright/core/internal";
+import {
+  compilePromptCacheBlocks,
+  DefaultContextAssembler,
+  DefaultObservationFormatter,
+  DefaultPromptBuilder,
+  EventLog as CoreEventLog,
+  type EventLog,
+} from "@sparkwright/core/internal";
 
 export interface CreateStreamingRunOptions {
   goal: string;
   model: ModelAdapter;
   tools?: ToolDefinition[];
   policy?: Policy;
-  approvalResolver?: ApprovalResolver;
   interactionChannel?: InteractionChannel;
   workspace?: RuntimeContext["workspace"];
   context?: ContextItem[];
@@ -94,7 +94,7 @@ export interface CreateStreamingRunOptions {
    * Out-of-band notification sources. Drained at the start of every step
    * before any pending commands are applied; results land as user-role
    * context items in the working layer. Use for background-task completion
-   * signals (`TaskNotificationSink`), inbound chat messages, etc.
+   * signals (`ActorNotificationSink`), inbound chat messages, etc.
    */
   notificationSources?: NotificationSource[];
 }
@@ -148,7 +148,6 @@ class AfterTurnStreamingRun implements StreamingRunHandle {
 
   private readonly model: ModelAdapter;
   private readonly policy: Policy;
-  private readonly approvalResolver?: ApprovalResolver;
   private readonly interactionChannel?: InteractionChannel;
   private readonly workspace?: RuntimeContext["workspace"];
   private readonly contextAssembler: ContextAssembler;
@@ -194,10 +193,6 @@ class AfterTurnStreamingRun implements StreamingRunHandle {
     this.model = options.model;
     this.policy = options.policy ?? createDefaultPolicy();
     this.interactionChannel = options.interactionChannel;
-    this.approvalResolver =
-      (this.interactionChannel &&
-        approvalResolverFromChannel(this.interactionChannel)) ??
-      options.approvalResolver;
     this.workspace = options.workspace;
     this.context = [...(options.context ?? [])];
     this.contextAssembler =
@@ -347,16 +342,21 @@ class AfterTurnStreamingRun implements StreamingRunHandle {
       metadata: input.metadata ?? {},
     });
     this.setState("cancelled", "manual_cancelled");
+    const assessment = assessRun(this.events.all(), {
+      terminal: { state: "cancelled", reason: "manual_cancelled" },
+    });
     this.events.emit("run.cancelled", {
       reason: "manual_cancelled",
       message: input.reason ?? "Run cancelled.",
       metadata: input.metadata ?? {},
+      assessment,
     });
     this.result = {
       signal: "cancelled",
       state: "cancelled",
       stopReason: "manual_cancelled",
       message: input.reason,
+      assessment,
       metadata: input.metadata ?? {},
     };
     return this.result;
@@ -1096,9 +1096,9 @@ class AfterTurnStreamingRun implements StreamingRunHandle {
     summary: string;
     details?: Record<string, unknown>;
   }): Promise<boolean> {
-    if (!this.approvalResolver) {
+    if (!this.interactionChannel?.approve) {
       throw new Error(
-        "Approval requested but no approval resolver was configured.",
+        "Approval requested but no interaction channel approval handler was configured.",
       );
     }
 
@@ -1111,7 +1111,7 @@ class AfterTurnStreamingRun implements StreamingRunHandle {
     this.setState("waiting_approval");
     this.events.emit("approval.requested", request);
     this.events.emit("interaction.requested", { kind: "approval", request });
-    const response = await this.approvalResolver(request);
+    const response = await this.interactionChannel.approve(request);
     this.events.emit("approval.resolved", response);
     this.events.emit("interaction.resolved", { kind: "approval", response });
     this.setState("running");
@@ -1234,15 +1234,20 @@ class AfterTurnStreamingRun implements StreamingRunHandle {
     payload: { message?: string },
   ): RunResult {
     this.setState("completed", reason);
+    const assessment = assessRun(this.events.all(), {
+      terminal: { state: "completed", reason },
+    });
     this.events.emit("run.completed", {
       reason,
       ...payload,
+      assessment,
     });
     this.result = {
       signal: "completed",
       state: "completed",
       stopReason: reason,
       message: payload.message,
+      assessment,
       metadata: omitUndefined(payload),
     };
     return this.result;
@@ -1263,18 +1268,23 @@ class AfterTurnStreamingRun implements StreamingRunHandle {
       message,
       metadata: omitUndefined(metadata),
     };
+    const assessment = assessRun(this.events.all(), {
+      terminal: { state: "failed", reason, failure: { code } },
+    });
     this.events.emit("run.failed", {
       reason,
       code,
       message,
       failure,
       metadata,
+      assessment,
     });
     this.result = {
       signal: "failed",
       state: "failed",
       stopReason: reason,
       failure,
+      assessment,
       metadata: omitUndefined(metadata),
     };
     return this.result;

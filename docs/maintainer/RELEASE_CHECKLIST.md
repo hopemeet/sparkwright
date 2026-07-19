@@ -26,8 +26,7 @@ Run the deterministic write path in a disposable or resettable workspace:
 npm exec sparkwright -- run "inspect this repo and suggest a README improvement" \
   --workspace examples/repo-pilot \
   --target README.md \
-  --write \
-  --yes \
+  --access-mode bypass \
   --trace-level standard
 ```
 

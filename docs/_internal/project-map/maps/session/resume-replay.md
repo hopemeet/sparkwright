@@ -7,6 +7,146 @@ state without pretending all live process state is durable.
 
 See [session-store.md](session-store.md) and [../runtime/context-compaction.md](../runtime/context-compaction.md).
 
+## Last Verified
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: fresh and continued durable Workflow episodes preserve exact budget
+  ownership. A model-call budget stop remains `max_model_calls_exceeded`, is
+  eligible for bounded durable continuation, and is not rewritten as a step
+  limit on resume.
+- Read: Workflow episode builder, durable continuation decider, Core budget
+  terminal projection, focused tests, and real multi-episode trace.
+- Tests: Host Workflow/protocol 103/103; real Terra Workflow completed after
+  four exact model-call budget terminals and a verified final episode.
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: CLI fresh and resumed runs carry no target unless the caller supplies
+  one. Runtime continuation after an episode is authorized only by the current
+  durable Workflow record and bounded by episode caps; ordinary sessions and
+  Todo plans never trigger an implicit run-chain.
+- Read: CLI contracts/runners, Host Workflow record decider/episode driver,
+  protocol continuation DTOs, and resume regressions.
+- Tests: CLI target regressions and Host Workflow decision coverage passed.
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: checkpoint and Workflow resume now receive the already-admitted
+  HostExecution explicitly from the single HostRuntime execution envelope.
+  Canonical run lookup, checkpoint/from-trace behavior, pinned Workflow
+  verification, writer claims, waiting compensation, job-session identity,
+  and replay context are unchanged.
+- Read: Host resume envelopes, session query owner, Workflow durable/episode
+  owners, HostExecution/HostService lanes, and focused resume tests.
+- Tests: focused Host Workflow/protocol and final repository gates are recorded
+  with the commit.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: fresh, checkpoint-resume, and Workflow-resume envelopes now obtain the
+  same prepared environment through `RunPreparationOperations`. Canonical run
+  lookup, pinned Workflow verification/wait compensation, and live episode
+  construction remain with their existing owners.
+- Read: Host resume envelopes, preparation/episode/durable owners, and session
+  contracts.
+- Tests: direct owner and focused resume/Workflow gates are recorded with the
+  commit.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: checkpoint episode construction and Workflow resume episode
+  construction now route through `WorkflowEpisodeRuntime`; waiting input is
+  consumed and compensated during its projection preparation. HostRuntime
+  still resolves canonical run/workflow identity, authorization, and the
+  caller-owned HostExecution before delegation.
+- Read: Host resume envelopes, Workflow episode/durable owners, checkpoint and
+  pinned-definition paths, job-session isolation, and focused resume tests.
+- Tests: focused Host Workflow/protocol suites passed.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: Host Workflow record lookup, durable resume-command processing,
+  claimed-writer validation, waiting-input compensation, and canonical store
+  ownership moved to `WorkflowRuntimeOperations`. HostRuntime retains the live
+  resume episode envelope and uses the same persisted job session and pinned
+  definition.
+- Read: Workflow owner/HostRuntime resume seam, Agent Runtime journal/control,
+  job-session contracts, and focused resume tests.
+- Tests: owner-level and focused Host/Agent Runtime Workflow suites passed.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: resume-time orphaned in-process Task detection/failure moved intact
+  from `HostRuntime` into the Host Task operations owner. Resume still fails
+  only pending/running records without a current-process live runner before
+  rebuilding the Core episode; checkpoint and durable-wait semantics are
+  unchanged.
+- Read: Host resume assembly, Task operations, Agent Runtime manager/store, and
+  focused protocol coverage.
+- Tests: Host protocol 59/59, Task revival/service 5/5, and Host typecheck
+  passed.
+
+- Status: Verified
+- Date: 2026-07-17T23:37:17+0800
+- Scope: checkpoint/file-run reference helpers moved to Core `/internal`;
+  resume identity, replay, compaction anchors, and Host/CLI behavior are
+  unchanged.
+- Read: Core barrels/trace store and Host/CLI resume consumers.
+- Tests: Host/CLI typechecks and builds passed; final release gate covers resume.
+
+- Status: Verified
+- Date: 2026-07-17T23:04:01+0800
+- Scope: run resume and session-context replay now call the single Host session
+  owner for canonical run lookup, completed turns, trace facts, and compact
+  anchoring. Checkpoint selection, force/from-trace behavior, identities, and
+  Core resume execution remain unchanged.
+- Read: Host resume/start paths, session query/compaction modules, Core
+  checkpoint/session contracts, and focused protocol coverage.
+- Tests: Host protocol 59/59 and full Host 577/577; Host typecheck; repository
+  test typecheck; full release gate.
+
+- Status: Verified
+- Date: 2026-07-17T17:20:00+0800
+- Scope: Workflow resume has one identity path: replay a canonical journal
+  record, verify its required v2 executable snapshot, and execute its
+  snapshot-backed definition. Live-folder or Markdown-hash fallback and missing
+  layer/revision/generation defaults are absent.
+- Read: Workflow journal/store, Host lookup/preparation/resume, CLI/TUI
+  consumers, and focused resume tests.
+- Tests: Agent Runtime/Host/CLI/TUI Workflow focused tests and affected
+  typechecks passed before the full release gate.
+
+- Status: Verified
+- Date: 2026-07-16T22:26:54+0800
+- Scope: Workflow resume, list, control, and restart recovery now resolve
+  record/event truth only by replaying the canonical workspace journal.
+- Read: Agent Runtime store/journal, Host resume/control paths, CLI/TUI
+  consumers, protocol docs, and focused restart/recovery tests.
+- Tests: Agent Runtime workflow focused suite/typecheck; Host workflow/protocol
+  focused suites/typecheck; repository test typecheck; full release gate.
+
+- Status: Verified
+- Date: 2026-07-16T14:10:00+0800
+- Scope: Checkpoint resume locates runs only under canonical session storage; best-effort trace reconstruction reads the session or agent aggregate trace, never a run-local trace.
+- Read: Core checkpoint reconstruction, Host/CLI run lookup, focused resume tests, and protocol references.
+- Tests: Core trace focused tests; Host/CLI run-resume focused tests; npm run build; npm run typecheck:test; npm run release:check.
+
+- Date: 2026-07-16T13:50:10+0800
+- Scope: Workflow resume is single-layout: only the workspace workflow store is searched and returned to the resumed projection.
+- Read: Host lookup/resume paths, Agent Runtime workflow store, focused tests, and protocol docs.
+- Tests: npm run build; npm run typecheck:test; Agent Runtime workflow tests (25); Host workflow/protocol tests (94).
+
+- Date: 2026-07-16T12:45:00+0800
+- Scope: Run and Workflow resume reapply canonical persisted/requested accessMode; compatibility reconstruction of permission/write inputs was removed.
+- Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.
+- Tests: focused access/policy/protocol/CLI/TUI/ACP/Workflow tests; npm run typecheck:test; npm run schema:check.
+
+- Date: 2026-07-16T11:52:29+0800
+- Scope: reviewed protocol 2.0 terminal failure envelope changes; persisted
+  run/session resume semantics consume Core state and are unaffected by removal
+  of the Host wire-level `run.failed.error` projection.
+
 ## Main Files
 
 - `packages/core/src/run.ts`
@@ -21,7 +161,7 @@ See [session-store.md](session-store.md) and [../runtime/context-compaction.md](
 
 ```txt
 Normal run
-  -> checkpoint.json + trace.jsonl + run/result files
+  -> session/agent trace.jsonl + per-run checkpoint/run/result files
   -> run resume uses checkpoint
 
 Missing checkpoint
@@ -35,9 +175,10 @@ Session resume
   -> new run in same session
 
 Workflow resume
-  -> locate workspace .sparkwright/workflow-runs/<workflowRunId>.json
-     or legacy session workflow-runs/<workflowRunId>.json
+  -> replay workspace .sparkwright/workflow-runs/<workflowRunId>.journal/
+     to locate the canonical record and event history
   -> acquire single-writer lease
+  -> verify packageHash/packageSnapshotRef and snapshot-backed sourceDir
   -> prepare host run environment
   -> consume input waits at the actor boundary when status is waiting
   -> start a transient worker run with the pinned workflow definition
@@ -64,6 +205,9 @@ Future run in compacted session
   mutable client defaults.
 
 - Checkpoint resume is the normal path.
+- Run lookup is session-only. Host and CLI search
+  `<sessionRoot>/<sessionId>/agents/<agentId>/runs/<runId>`; there is no
+  workspace-level per-run fallback.
 - Run checkpoints optionally persist `budget.childTreeUsage` alongside the
   existing local `budget.usage`. Old checkpoints without the field remain
   valid; resumed parents seed descendant consumable counters so later children
@@ -85,11 +229,9 @@ Future run in compacted session
   worker run can be prepared. If a pre-run failure happens after consuming the
   wait, host restores the previous waiting record before returning the error.
 - Fresh workflow runs now persist their durable `WorkflowRunRecord` under the
-  workspace-level `.sparkwright/workflow-runs/` root. Resume and list still
-  discover legacy session-local `workflow-runs/` records for compatibility;
-  workspace records are preferred over matching legacy copies for the same
-  workflow/session, and resume continues to pass the located store back into
-  the host projection.
+  workspace-level `.sparkwright/workflow-runs/` root. Resume, list, control,
+  notifications, and supervisor adoption resolve only this canonical store and
+  pass it into the host projection.
 - Session compact artifacts seed future context only when `throughRunId` can be
   matched to completed turns. A mismatch produces an explicit
   conversation-layer warning item and falls back to replaying completed turns.
@@ -130,6 +272,13 @@ Future run in compacted session
   run-loop integration.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-16T10:27:51+0800
+- Scope: reviewed Agent-tool policy input consolidation; no checkpoint, session,
+  resume, or replay contract consumes the removed construction option.
+- Read: Agent-tool and Host delegate assembly against resume/replay contracts.
+- Tests: repository test typecheck passed; no resume/replay contract changed.
 
 - Status: Read-only
 - Date: 2026-07-15T07:35:27+0800

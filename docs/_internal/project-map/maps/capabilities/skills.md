@@ -13,6 +13,7 @@ See [../../modules/skills.md](../../modules/skills.md). For mutating skills
 
 - `packages/skills/src/*`
 - `packages/host/src/runtime.ts`
+- `packages/host/src/runtime/capability-runtime-operations.ts`
 - `packages/host/src/skill-usage.ts`
 - `packages/host/src/skill-inline-shell.ts`
 - `packages/host/src/tools.ts`
@@ -35,16 +36,23 @@ skill roots
 
 - The first managed-change fast path applies only to a complete, clean,
   model-authored create. Its package hash participates in a stable final-effect
-  hash; runtime/model fingerprints remain outside that identity. The broader
-  `artifactId + packageHash` registry/stats migration is designed but not yet
-  implemented.
+  hash; runtime/model fingerprints remain outside that identity. Managed
+  proposals carry required artifact identity and policy-2 package identity.
 
 - Default host behavior exposes loader tool and does not auto-reside all selected skills.
+- Capability inspection indexes configured Skill roots without resident
+  selection through `CapabilityRuntimeOperations`; live-run loading remains in
+  HostRuntime run preparation. Fatal index diagnostics preserve the canonical
+  `run.created -> capability.index.failed -> run.failed` trace order.
 - Project skill root defaults to `.sparkwright/skills`.
-- Skill metadata parsing is manifest-centered. `parseSkillManifest` is the
-  strict canonical parser and rejects empty `instructions`; the legacy
-  `parseSkill` loader path is a compatibility adapter that still accepts empty
-  markdown bodies. The shared parser preserves first-class `license` and
+- Root precedence is `builtin -> user -> project -> configured`.
+  `capabilities.skills.roots` supplies the canonical configured layer, which
+  remains strongest for deterministic workspace overrides. Runtime reports,
+  traces, stats, doctor, CLI, and TUI use that same label; `legacy` is not an
+  accepted layer.
+- Skill metadata parsing has one entry: `parseSkillManifest`. It rejects empty
+  `instructions`; disk loaders, runtime preparation, and Skill evolution use
+  that same strict parser. The parser preserves first-class `license` and
   `compatibility`, splits list fields consistently, and promotes
   `metadata.version` to canonical `version`.
 - `capabilities.skills.inlineShell.enabled` is required before `` !`cmd` ``
@@ -65,36 +73,34 @@ skill roots
   path like `README.md` can recover by loading the body and choosing an exact
   `<skill_files>` entry.
 - A loader/run caches successful reference loads by Skill name, canonical
-  resource path, and package/content identity. Repeating the same resource for
+  resource path, and package identity. Repeating the same resource for
   the same Skill version returns a short `already_loaded` result without the
   content or another file read; failed/denied loads are never cached. The cache
   is loader-scoped and does not replace package-hash identity or trace stats.
 - Skill index and resident Skill context must not expose host absolute
-  `sourcePath`/`contentHash` values to provider prompts. Keep source provenance
+  source paths or package hashes to provider prompts. Keep source provenance
   in metadata and trace events.
-- `skill.indexed` trace metadata includes per-Skill emit-time package identity
-  (`packageHash` when available, `contentHash`, and layer). On-demand
+- `skill.indexed` trace metadata includes required per-Skill emit-time package
+  identity (`packageHash`, `packageHashPolicyVersion: 2`, and layer). On-demand
   `skill.loaded` remains path/hash-free and read-time stats join it back to the
   same run's indexed Skill by name. Resident `skill.loaded` may carry package
   identity because it is trace metadata, not model-visible content.
-- Runtime indexing computes package identity through a shared process-local
-  hasher cache, reducing repeated content reads for unchanged packages across
-  runs/agents. The run-time identity path has conservative file/byte guardrails;
-  direct exact hash computation remains available to evolution guard paths.
-- `packages/skills/src/package-v2.ts` provides the dormant v2 canonical package
-  substrate for later Skill/Workflow migration: complete ordinary-file
+- `packages/skills/src/package-v2.ts` is the canonical Skill package substrate:
+  complete ordinary-file
   enumeration, fixed exclusions, normalized NUL-framed hashing, identical-set
   snapshots, policy version 2, and fail-closed special-file/path/size checks.
-  It does not change current Skill index/load or proposal behavior until
-  Phase 3B.
-- `skills stats` is read-time only in v1. It aggregates by
-  `name + layer + packageHash`, classifies old traces as legacy/unknown,
-  separates explicit and resident loads, classifies load failures by mode/status,
+  Runtime loading and managed evolution share it; the v1 package surface is gone.
+- `skills stats` is read-time only. It aggregates by
+  `skill + layer + name + packageHashPolicyVersion + packageHash`,
+  ignores rows without canonical v2 identity,
+  separates explicit and resident loads, and exposes load failures only through
+  `loadFailures.total/byMode/byStatus`,
   splits associated tool failures before vs after first load, scans agent trace
   files with event-id dedupe, and rolls up proposal/history metadata only when
   package hashes align. It also reports trace/evolution windows, freshness
   timestamps, analyzer findings, and rebuildable session projection cache
-  hit/miss/write/error counts. Session projection Skill entries carry event
+  hit/miss/write/error counts. Projection schema and algorithm versions
+  invalidate stale cache DTOs. Session projection Skill entries carry event
   windows plus bounded sample/failure run ids. A lightweight catalog cache maps
   Skill names, Skill keys, and package hashes to session projections for
   targeted `--skill`, `--skill-key`, and `--package-hash` queries. These are
@@ -145,6 +151,51 @@ skill roots
 - Self-evolution design exists, but automatic learning should remain clearly opt-in/reviewed.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: reviewed Host skill-stat consumers after assessment consolidation.
+  Persisted Core health replaces the removed outcome sidecar where semantic
+  status is needed; Skill package/application contracts are unchanged.
+- Read: Host skill stats and current Skill capability ownership.
+- Tests: affected Host/CLI Skill coverage passed.
+
+- Status: Verified
+- Date: 2026-07-18T08:52:13+0800
+- Scope: Skill stats load failures now have one structured counter/classifier
+  contract. The parallel summary field and its merge/increment/serialization
+  path are gone, CLI renders the structured total, and v2 session projections
+  rebuild under schema v3.
+- Read: Host stats projection/cache, CLI stats formatter and integration tests,
+  public Skill reference, and Skill module/test maps.
+- Tests: focused CLI Skill stats/review/catalog/doctor 5/5, full CLI 155/155,
+  Host and CLI typechecks, repository test typecheck, schema check, project-map
+  drift, and the full release gate passed.
+
+- Status: Verified
+- Date: 2026-07-18T08:08:47+0800
+- Scope: configured Skill roots now carry the sole canonical `configured`
+  layer through loading, trace/capability projection, doctor, and statistics;
+  stale `legacy` catalog/session cache layers are rejected and rebuilt.
+- Read: Skills loader/root contracts, Host root/report/doctor/stats paths,
+  CLI/TUI projections, tests, and public Skill documentation.
+- Tests: Skills 27/27, Host 21/21, CLI 4/4, TUI 13/13, and affected package
+  typechecks.
+
+- Status: Verified
+- Date: 2026-07-17T20:55:00+0800
+- Scope: runtime Skill identity now uses the same policy-2 full-package primitive
+  as evolution. Trace, capability inspection, stats, doctor, and lockfiles no
+  longer expose or fall back to v1/content-only identity.
+- Read: Skills loader/package/tests; Host report/doctor/stats/evolution/runtime;
+  protocol schema and CLI stats consumers.
+- Tests: Skills 73/73; focused Host Skill/protocol 81/81; focused CLI Skill gates 5/5; affected typechecks.
+
+- Status: Verified
+- Date: 2026-07-16T11:49:00+0800
+- Scope: reviewed during cumulative branch drift checking; Skill capability
+  discovery is independent of Host `run.failed` serialization and requires no
+  protocol 2.0 change.
 
 - Status: Verified
 - Date: 2026-07-13

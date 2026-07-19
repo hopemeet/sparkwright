@@ -8,10 +8,10 @@ import {
   createRun,
   createRunId,
   defineTool,
-  EventLog,
   FactLedger,
   runWorkflowHooks,
 } from "@sparkwright/core";
+import { EventLog } from "@sparkwright/core/internal";
 import {
   createPlatformShellSandboxRuntime,
   type ShellSandboxRuntime,
@@ -1169,7 +1169,8 @@ describe("createWorkflowProjectionHooks", () => {
             return {
               mode: "parallel",
               completed: 2,
-              failed: 0,
+              incomplete: 0,
+              unhealthy: 0,
               results: [
                 {
                   index: 0,
@@ -1286,7 +1287,8 @@ describe("createWorkflowProjectionHooks", () => {
             return {
               mode: "parallel",
               completed: delegates.length,
-              failed: 0,
+              incomplete: 0,
+              unhealthy: 0,
               results: delegates.map((delegate, index) => ({
                 index,
                 signal: "completed",
@@ -1380,7 +1382,8 @@ describe("createWorkflowProjectionHooks", () => {
             return {
               mode: "parallel",
               completed: 1,
-              failed: 1,
+              incomplete: 1,
+              unhealthy: 0,
               results: [
                 {
                   index: 0,
@@ -2112,211 +2115,6 @@ describe("createWorkflowProjectionHooks", () => {
     });
   });
 
-  it("passes todo_clear when the host todo ledger has no unfinished items", async () => {
-    const run = runRecord();
-    const events = new EventLog(run.id);
-    const ledger = new FactLedger();
-    events.subscribe((event) => ledger.observeEvent(event));
-    const projection = createWorkflowProjectionHooks({
-      workspaceRoot: process.cwd(),
-      workflowRunId: "wf_todo_clear_pass",
-      readTodoLedger: () => ({
-        schemaVersion: "todo-ledger.v1",
-        metadata: {},
-        items: [
-          { title: "done", status: "completed", depth: 0 },
-          { title: "skipped", status: "skipped", depth: 0 },
-        ],
-      }),
-      definition: {
-        assetName: "todo-clear",
-        contentHash: "hash",
-        nodes: [
-          {
-            id: "finish",
-            execute: "model",
-            body: "Finish.",
-            verify: [{ id: "todos-done", kind: "todo_clear" }],
-          },
-        ],
-      },
-    });
-
-    await runWorkflowHooks({
-      hooks: projection.hooks,
-      hook: "TurnStart",
-      run,
-      payload: {},
-      events,
-      facts: ledger,
-    });
-    const stop = await runWorkflowHooks({
-      hooks: projection.hooks,
-      hook: "Stop",
-      run,
-      payload: { message: "done" },
-      events,
-      facts: ledger,
-    });
-
-    expect(stop.status).toBe("continued");
-    expect(projection.getState().status).toBe("completed");
-    expect(
-      events.all().find((event) => event.type === "workflow.node.completed")
-        ?.payload,
-    ).toMatchObject({
-      workflowRunId: "wf_todo_clear_pass",
-      nodeId: "finish",
-      verdict: {
-        status: "passed",
-        metadata: { verified: true, verifiers: ["todos-done"] },
-      },
-      evidenceRefs: [
-        {
-          kind: "run",
-          ref: run.id,
-          verifierId: "todos-done",
-          metadata: {
-            kind: "todo_clear",
-            summary: { unfinished: 0, hasUnfinished: false },
-          },
-        },
-      ],
-    });
-  });
-
-  it("fails todo_clear when the host todo ledger still has unfinished items", async () => {
-    const run = runRecord();
-    const events = new EventLog(run.id);
-    const ledger = new FactLedger();
-    events.subscribe((event) => ledger.observeEvent(event));
-    const projection = createWorkflowProjectionHooks({
-      workspaceRoot: process.cwd(),
-      workflowRunId: "wf_todo_clear_fail",
-      readTodoLedger: () => ({
-        schemaVersion: "todo-ledger.v1",
-        metadata: {},
-        items: [{ title: "finish docs", status: "pending", depth: 0 }],
-      }),
-      definition: {
-        assetName: "todo-clear",
-        contentHash: "hash",
-        nodes: [
-          {
-            id: "finish",
-            execute: "model",
-            body: "Finish.",
-            verify: [{ id: "todos-done", kind: "todo_clear" }],
-          },
-        ],
-      },
-    });
-
-    await runWorkflowHooks({
-      hooks: projection.hooks,
-      hook: "TurnStart",
-      run,
-      payload: {},
-      events,
-      facts: ledger,
-    });
-    const stop = await runWorkflowHooks({
-      hooks: projection.hooks,
-      hook: "Stop",
-      run,
-      payload: { message: "done" },
-      events,
-      facts: ledger,
-    });
-
-    expect(stop.status).toBe("continued");
-    expect(projection.getState()).toMatchObject({
-      status: "failed",
-      failure: { reason: "verification_failed" },
-    });
-    expect(
-      events.all().find((event) => event.type === "workflow.node.completed")
-        ?.payload,
-    ).toMatchObject({
-      workflowRunId: "wf_todo_clear_fail",
-      nodeId: "finish",
-      verdict: {
-        status: "failed",
-        metadata: {
-          failures: [
-            {
-              verifierId: "todos-done",
-              kind: "todo_clear",
-              summary: { unfinished: 1, hasUnfinished: true },
-              unfinished: [{ title: "finish docs", status: "pending" }],
-            },
-          ],
-        },
-      },
-    });
-  });
-
-  it("fails closed when todo_clear has no host todo ledger provider", async () => {
-    const run = runRecord();
-    const events = new EventLog(run.id);
-    const ledger = new FactLedger();
-    events.subscribe((event) => ledger.observeEvent(event));
-    const projection = createWorkflowProjectionHooks({
-      workspaceRoot: process.cwd(),
-      workflowRunId: "wf_todo_clear_missing",
-      definition: {
-        assetName: "todo-clear",
-        contentHash: "hash",
-        nodes: [
-          {
-            id: "finish",
-            execute: "model",
-            body: "Finish.",
-            verify: [{ id: "todos-done", kind: "todo_clear" }],
-          },
-        ],
-      },
-    });
-
-    await runWorkflowHooks({
-      hooks: projection.hooks,
-      hook: "TurnStart",
-      run,
-      payload: {},
-      events,
-      facts: ledger,
-    });
-    const stop = await runWorkflowHooks({
-      hooks: projection.hooks,
-      hook: "Stop",
-      run,
-      payload: { message: "done" },
-      events,
-      facts: ledger,
-    });
-
-    expect(stop.status).toBe("continued");
-    expect(projection.getState()).toMatchObject({
-      status: "failed",
-      failure: {
-        reason:
-          'Workflow todo_clear verifier "todos-done" requires a todo ledger provider.',
-      },
-    });
-    expect(
-      events.all().find((event) => event.type === "workflow.node.completed")
-        ?.payload,
-    ).toMatchObject({
-      workflowRunId: "wf_todo_clear_missing",
-      nodeId: "finish",
-      verdict: {
-        status: "runtime_error",
-        reason:
-          'Workflow todo_clear verifier "todos-done" requires a todo ledger provider.',
-      },
-    });
-  });
-
   it("re-verifies completed nodes on resume before trusting the saved position", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "sparkwright-workflow-"));
     try {
@@ -2584,8 +2382,8 @@ describe("createWorkflowProjectionHooks", () => {
           {
             id: "limited",
             execute: "model",
-            body: "Use only read_file.",
-            tools: ["read_file"],
+            body: "Use only read.",
+            tools: ["read"],
           },
         ],
       },
@@ -2598,7 +2396,7 @@ describe("createWorkflowProjectionHooks", () => {
       hook: "PreToolUse",
       preToolUseStage: "rewrite",
       run,
-      payload: { toolName: "shell", arguments: {} },
+      payload: { toolName: "bash", arguments: {} },
       events,
     });
     expect(rewrite.status).toBe("continued");
@@ -2608,7 +2406,7 @@ describe("createWorkflowProjectionHooks", () => {
       hook: "PreToolUse",
       preToolUseStage: "governance",
       run,
-      payload: { toolName: "shell", arguments: {} },
+      payload: { toolName: "bash", arguments: {} },
       events,
     });
 
@@ -2619,8 +2417,8 @@ describe("createWorkflowProjectionHooks", () => {
     expect(blocked.block.metadata).toMatchObject({
       workflowRunId: "wf_tools",
       nodeId: "limited",
-      toolName: "shell",
-      allowedTools: ["read_file"],
+      toolName: "bash",
+      allowedTools: ["read"],
     });
   });
 
@@ -2659,8 +2457,8 @@ describe("createWorkflowProjectionHooks", () => {
             {
               id: "limited",
               execute: "model",
-              body: "Use only read_file.",
-              tools: ["read_file"],
+              body: "Use only read.",
+              tools: ["read"],
             },
           ],
         },
@@ -2670,7 +2468,7 @@ describe("createWorkflowProjectionHooks", () => {
         workflowHooks: [...configured, ...projection.hooks],
         tools: [
           defineTool({
-            name: "shell",
+            name: "bash",
             description: "Shell.",
             inputSchema: {
               type: "object",
@@ -2693,7 +2491,7 @@ describe("createWorkflowProjectionHooks", () => {
               return {
                 toolCalls: [
                   {
-                    toolName: "shell",
+                    toolName: "bash",
                     arguments: { command: "echo hi", path: "draft.ts" },
                   },
                 ],
@@ -2722,12 +2520,12 @@ describe("createWorkflowProjectionHooks", () => {
                 "workflow-tool-clamp",
           )?.payload,
       ).toMatchObject({
-        reason: 'Workflow node "limited" does not allow tool "shell".',
+        reason: 'Workflow node "limited" does not allow tool "bash".',
         resultMetadata: {
           workflowRunId: "wf_rewrite_clamp",
           nodeId: "limited",
-          toolName: "shell",
-          allowedTools: ["read_file"],
+          toolName: "bash",
+          allowedTools: ["read"],
           path: "generated/a.ts",
         },
       });
@@ -2786,7 +2584,7 @@ describe("createWorkflowProjectionHooks", () => {
       workflowHooks: projection.hooks,
       tools: [
         defineTool({
-          name: "read_file",
+          name: "read",
           description: "Read.",
           inputSchema: { type: "object" },
           execute() {
@@ -2798,7 +2596,7 @@ describe("createWorkflowProjectionHooks", () => {
         async complete() {
           modelCalls += 1;
           return modelCalls === 1
-            ? { toolCalls: [{ toolName: "read_file", arguments: {} }] }
+            ? { toolCalls: [{ toolName: "read", arguments: {} }] }
             : { message: "done" };
         },
       },
@@ -2811,7 +2609,7 @@ describe("createWorkflowProjectionHooks", () => {
     expect(
       run.events.all().find((event) => event.type === "tool.failed")?.payload,
     ).toMatchObject({
-      toolName: "read_file",
+      toolName: "read",
       error: { code: "TOOL_BLOCKED_BY_WORKFLOW_HOOK" },
     });
   });
@@ -2869,13 +2667,13 @@ describe("createWorkflowProjectionHooks", () => {
       workflowRunId: "wf_stop_fault",
       failure: { kind: "runtime", code: "WORKFLOW_RUNTIME_FAILED" },
     });
-    expect(result.metadata).toMatchObject({
-      outcome: {
-        failing: true,
-        workflowFailure: {
-          lastCode: "WORKFLOW_RUNTIME_FAILED",
-        },
-      },
+    expect(result.assessment).toMatchObject({
+      health: "failing",
+      issues: [
+        expect.objectContaining({
+          code: "WORKFLOW_FAILED",
+        }),
+      ],
     });
   });
 
@@ -2946,13 +2744,13 @@ describe("createWorkflowProjectionHooks", () => {
 
     expect(result.state).toBe("completed");
     expect(modelCalls).toBe(2);
-    expect(result.metadata).toMatchObject({
-      outcome: {
-        failing: true,
-        workflowFailure: {
-          lastCode: "WORKFLOW_RUNTIME_FAILED",
-        },
-      },
+    expect(result.assessment).toMatchObject({
+      health: "failing",
+      issues: [
+        expect.objectContaining({
+          code: "WORKFLOW_FAILED",
+        }),
+      ],
     });
     expect(
       run.events.all().find((event) => event.type === "workflow.failed")
@@ -3005,7 +2803,7 @@ describe("createConfiguredWorkflowHooks", () => {
           {
             name: "record-write",
             trigger: "tool.completed",
-            matcher: { toolName: "apply_patch", status: "completed" },
+            matcher: { toolName: "edit", status: "completed" },
             action: {
               type: "command",
               command: process.execPath,
@@ -3016,7 +2814,7 @@ describe("createConfiguredWorkflowHooks", () => {
       });
 
       events.emit("tool.completed", {
-        toolName: "apply_patch",
+        toolName: "edit",
         toolCallId: "call_1",
       });
       await waitForEvent(events, "user_hook.completed");
@@ -3051,7 +2849,7 @@ describe("createConfiguredWorkflowHooks", () => {
         {
           name: "block-generated",
           hook: "PreToolUse",
-          matcher: { toolName: "write_file", pathGlob: "generated/**" },
+          matcher: { toolName: "write", pathGlob: "generated/**" },
           action: { type: "block", reason: "Generated files are locked." },
         },
       ],
@@ -3061,7 +2859,7 @@ describe("createConfiguredWorkflowHooks", () => {
       hooks,
       hook: "PreToolUse",
       run,
-      payload: { toolName: "write_file", path: "generated/a.ts" },
+      payload: { toolName: "write", path: "generated/a.ts" },
       events,
     });
 
@@ -3693,7 +3491,7 @@ describe("createConfiguredWorkflowHooks", () => {
         hooks,
         hook: "PreToolUse",
         run,
-        payload: { toolName: "shell", arguments: { command: "npm t" } },
+        payload: { toolName: "bash", arguments: { command: "npm t" } },
         events,
       });
 
@@ -3732,7 +3530,7 @@ describe("createConfiguredWorkflowHooks", () => {
           {
             name: "generated-block",
             hook: "PreToolUse",
-            matcher: { toolName: "write_file", pathGlob: "generated/**" },
+            matcher: { toolName: "write", pathGlob: "generated/**" },
             action: { type: "block", reason: "generated files are locked" },
           },
         ],
@@ -3742,7 +3540,7 @@ describe("createConfiguredWorkflowHooks", () => {
         workflowHooks: configured,
         tools: [
           defineTool({
-            name: "write_file",
+            name: "write",
             description: "Write.",
             inputSchema: {
               type: "object",
@@ -3761,7 +3559,7 @@ describe("createConfiguredWorkflowHooks", () => {
             if (modelCalls === 1) {
               return {
                 toolCalls: [
-                  { toolName: "write_file", arguments: { path: "draft.ts" } },
+                  { toolName: "write", arguments: { path: "draft.ts" } },
                 ],
               };
             }
@@ -4273,7 +4071,7 @@ describe("createConfiguredWorkflowHooks", () => {
     try {
       const run = {
         ...runRecord(),
-        metadata: { shouldWrite: false },
+        metadata: { accessMode: "read-only" },
       };
       const events = new EventLog(run.id);
       const hooks = createConfiguredWorkflowHooks({

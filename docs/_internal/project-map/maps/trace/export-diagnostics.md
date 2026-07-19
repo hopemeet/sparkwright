@@ -90,6 +90,38 @@ session trace.jsonl
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-07-19
+- Scope: reviewed TUI/export consumers for the assessment migration. Committed
+  run facts and Agent lifecycle rows render canonical health/issues; export
+  storage, navigation, and raw event ownership are unchanged.
+- Read: TUI event stream/store/controller and Core trace diagnostics.
+- Tests: focused Ink rendering and Core trace coverage passed.
+
+- Status: Verified
+- Date: 2026-07-17T23:37:17+0800
+- Scope: TUI removed the `/skill-create` layer wiring; event rendering,
+  transcript export, trace diagnostics, and `/export` storage remain unchanged.
+- Read: TUI App/layer changes and export/diagnostic ownership boundary.
+- Tests: TUI focused 22/22 and TUI typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-16T13:36:30+0800
+- Scope: TUI/export no longer projects a validation-hook active phase; durable `validation.failed` evidence remains available in raw trace and diagnostics.
+- Read: TUI event store/export paths, Core trace vocabulary, and current trace documentation.
+- Tests: focused TUI/trace tests; npm run build; npm run typecheck:test; npm run release:check.
+
+- Date: 2026-07-16T12:45:00+0800
+- Scope: TUI diagnostics display canonical access mode and no longer expose compiled permission/write fields.
+- Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.
+- Tests: focused access/policy/protocol/CLI/TUI/ACP/Workflow tests; npm run typecheck:test; npm run schema:check.
+
+- Status: Verified
+- Date: 2026-07-16T11:49:00+0800
+- Scope: TUI transcript export renders terminal failures through the canonical
+  protocol `failure` envelope; the root-error fallback was removed. Raw Core
+  trace remains a separate diagnostic contract.
+
 - Status: Read-only
 - Date: 2026-07-15T23:53:45+0800
 - Scope: route check for TUI input P0-P2 work. App/input/keybinding changes,

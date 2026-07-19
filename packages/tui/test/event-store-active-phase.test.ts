@@ -106,17 +106,17 @@ describe("EventStore active phase projection", () => {
     const store = new EventStore();
 
     store.appendEvent(
-      ev("tool.requested", 1, { id: "call_a", toolName: "read_file" }),
+      ev("tool.requested", 1, { id: "call_a", toolName: "read" }),
     );
     store.appendEvent(
-      ev("tool.requested", 2, { id: "call_b", toolName: "shell" }),
+      ev("tool.requested", 2, { id: "call_b", toolName: "bash" }),
     );
 
-    expect(store.getSnapshot().activePhase?.message).toBe("running shell");
+    expect(store.getSnapshot().activePhase?.message).toBe("running bash");
 
     store.appendEvent(ev("tool.completed", 3, { toolCallId: "call_b" }));
 
-    expect(store.getSnapshot().activePhase?.message).toBe("running read_file");
+    expect(store.getSnapshot().activePhase?.message).toBe("running read");
 
     store.appendEvent(ev("tool.completed", 4, { toolCallId: "call_a" }));
 
@@ -127,10 +127,10 @@ describe("EventStore active phase projection", () => {
     const store = new EventStore();
 
     store.appendEvent(
-      ev("tool.requested", 1, { id: "call_a", toolName: "read_file" }),
+      ev("tool.requested", 1, { id: "call_a", toolName: "read" }),
     );
     store.appendEvent(
-      ev("tool.requested", 2, { id: "call_b", toolName: "shell" }),
+      ev("tool.requested", 2, { id: "call_b", toolName: "bash" }),
     );
     store.appendEvent(ev("tool.batch.completed", 3));
 
@@ -168,28 +168,6 @@ describe("EventStore active phase projection", () => {
     store.appendEvent(ev("subagent.completed", 3, { childRunId: "run_child" }));
 
     expect(store.getSnapshot().activePhase).toBeNull();
-  });
-
-  it("shows validation above a quiet model phase", () => {
-    const store = new EventStore();
-
-    store.appendEvent(
-      ev("model.turn.started", 1, {}, { runId: "r1", spanId: "m1" }),
-    );
-    store.appendEvent(
-      ev("validation.started", 2, {}, { runId: "r1", spanId: "v1" }),
-    );
-
-    expect(store.getSnapshot().activePhase).toMatchObject({
-      kind: "validation",
-      message: "validating",
-    });
-
-    store.appendEvent(
-      ev("validation.completed", 3, {}, { runId: "r1", spanId: "v1" }),
-    );
-
-    expect(store.getSnapshot().activePhase?.message).toBe("thinking");
   });
 
   it("shows the running subagent over the delegate tool that launched it", () => {
@@ -296,19 +274,19 @@ describe("EventStore active phase projection", () => {
     const store = new EventStore();
 
     store.appendEvent(
-      ev("tool.requested", 1, { id: "call_a", toolName: "shell" }),
+      ev("tool.requested", 1, { id: "call_a", toolName: "bash" }),
     );
     store.appendEvent(ev("run.completed", 2, { state: "completed" }));
     expect(store.getSnapshot().activePhase).toBeNull();
 
     store.appendEvent(
-      ev("tool.requested", 3, { id: "call_b", toolName: "shell" }),
+      ev("tool.requested", 3, { id: "call_b", toolName: "bash" }),
     );
     store.clearEvents();
     expect(store.getSnapshot().activePhase).toBeNull();
 
     store.appendEvent(
-      ev("tool.requested", 4, { id: "call_c", toolName: "shell" }),
+      ev("tool.requested", 4, { id: "call_c", toolName: "bash" }),
     );
     store.reset();
     expect(store.getSnapshot().activePhase).toBeNull();

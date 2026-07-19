@@ -18,7 +18,7 @@ import {
   type UserHookOutcome,
   type UserHookRunner,
   type UserHookTrigger,
-  type ValidationFinding,
+  type WorkflowHookFinding,
   type WorkflowHook,
   type WorkflowHookInput,
   type WorkflowHookName,
@@ -666,7 +666,7 @@ function parseUnknownWorkflowHookResult(
       status: "block",
       reason: parsed.reason,
       ...(Array.isArray(parsed.findings)
-        ? { findings: parsed.findings as ValidationFinding[] }
+        ? { findings: parsed.findings as WorkflowHookFinding[] }
         : {}),
       metadata,
     };
@@ -763,7 +763,7 @@ async function runCommandAction(
       ? `${JSON.stringify(hookActionStdin(input))}\n`
       : undefined;
   const sandbox =
-    input.run.metadata?.shouldWrite === false
+    input.run.metadata?.accessMode === "read-only"
       ? await enforceNoWriteShellSandbox(options.sandboxConfig, {
           runtime: options.sandboxRuntime,
           denyWriteRoots: [options.workspaceRoot],
@@ -1041,7 +1041,6 @@ function agentActionIdentity(
     hookName,
     hook,
     agentId: action.agentId,
-    toolName: action.toolName,
     goal: action.goal,
   });
 }
@@ -1058,8 +1057,7 @@ async function runAgentAction(
     );
   }
   const args = {
-    ...(action.agentId ? { agentId: action.agentId } : {}),
-    ...(action.toolName ? { toolName: action.toolName } : {}),
+    agentId: action.agentId,
     goal: action.goal,
     metadata: {
       ...(action.metadata ?? {}),
@@ -1146,8 +1144,7 @@ function agentResultMetadata(
     hookName,
     ...(input.hook ? { hook: input.hook } : {}),
     ...input.metadata,
-    ...(action.agentId ? { agentId: action.agentId } : {}),
-    ...(action.toolName ? { toolName: action.toolName } : {}),
+    agentId: action.agentId,
     goal: action.goal,
     output,
   };

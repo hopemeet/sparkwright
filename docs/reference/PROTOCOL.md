@@ -233,8 +233,6 @@ Current event types:
 - `agent.profile.derived`
 - `agent.routing.evaluated`
 - `prompt.built`: provider-neutral prompt messages were rendered. Payloads include message/section counts, section metadata, and cache block summaries (`cacheBlocks`, `stablePrefixBlockCount`) so provider adapters and trace sinks can reason about prompt-cache reuse.
-- `validation.started`
-- `validation.completed`
 - `validation.failed`
 - `tool.requested`
 - `tool.batch.requested`
@@ -288,13 +286,16 @@ Current event types:
   `workflow.cancelled`: workflow-runtime lifecycle annotations. Projection
   runs created with the optional `workflow` field on the start-run request emit
   started/node/interrupted/completed/failed/cancelled events and persist a
-  durable workflow-run snapshot under the owning session. P3 human nodes emit
+  durable workflow-run snapshot from the workspace workflow journal. P3 human
+  nodes emit
   `workflow.waiting` with `wait.kind` and update the durable workflow-run
   record to `status:"waiting"` before the host releases the workflow lease.
   Built-in verification/documented-command run-level invariants reuse the
   terminal workflow event vocabulary with `projectionKind: "invariant"` and
   `verificationSource: "profile" | "documented_command"`, but do not emit
-  `workflow.node.*` events.
+  `workflow.node.*` events. Their workflow-hook results carry explicit
+  `profile`, `verifierId`, and `expect` metadata; consumers must not derive
+  verifier identity by splitting `hookName`.
 - `extension.process.started` / `extension.process.progress` /
   `extension.process.completed` / `extension.process.failed`: host-controlled
   external process invocation evidence. External processes cannot write
@@ -312,10 +313,8 @@ Current event types:
   samples into the terminal event; `debug` traces keep raw progress and bounded
   `progressDroppedSamples`.
 - `interaction.requested`: the runtime asked the InteractionChannel for an
-  approval / question / notification. Payload:
-  `{ kind: "approval"|"question"|"notification", request|notification }`.
-- `interaction.resolved`: the channel returned a response (or the
-  notification was delivered).
+  approval. Payload: `{ kind: "approval", request }`.
+- `interaction.resolved`: the channel returned an approval response.
 - `context.cache_break.detected`: a context item previously emitted as
   `stability: stable` was observed to have changed between turns. Payload:
   `{ runId, step, prefixIndex, priorHash, currentHash, role }`. Diagnostic
@@ -329,7 +328,9 @@ Current event types:
   `agentId`, `subagentDepth`, `delegateTool`, `entrypoint`, and `protocol`
   (`in_process`, `acp`, or `external_command`). Process-backed invocations also
   include `workspaceAccess` when known. Terminal
-  payloads add `terminalState` and `finality`; SparkWright child runs also add
+  payloads add `terminalState`, `finality`, and the child's `assessment`.
+  Finality and health are independent: a child can be complete but degraded or
+  failing, and callers must preserve both. SparkWright child runs also add
   `stepLimitReached` / `truncated` when the child outcome reports them. Agent
   admission failures may go directly from requested to failed and must not emit
   started. External-command delegate terminal
@@ -384,8 +385,8 @@ Common metadata:
         "name": "code-reviewer",
         "version": "1.0.0",
         "sourcePath": ".sparkwright/skills/code-reviewer/SKILL.md",
-        "contentHash": "...",
         "packageHash": "sha256:...",
+        "packageHashPolicyVersion": 2,
         "layer": "project"
       }
     ]
@@ -426,8 +427,8 @@ event back to the recovery-aware tool outcome.
     "sourcePackage": "@sparkwright/skills",
     "version": "1.0.0",
     "sourcePath": ".sparkwright/skills/code-reviewer/SKILL.md",
-    "contentHash": "...",
     "packageHash": "sha256:...",
+    "packageHashPolicyVersion": 2,
     "layer": "project",
     "selectionReason": "Matched goal against skill name or description.",
     "mode": "resident_context"
@@ -536,17 +537,26 @@ Field semantics:
 ```json
 {
   "reason": "final_answer",
-  "message": "Completed approval-gated write path for README.md."
+  "message": "Completed approval-gated write path for README.md.",
+  "assessment": {
+    "schemaVersion": "run-assessment.v1",
+    "health": "clean",
+    "issues": [],
+    "verification": []
+  }
 }
 ```
 
+Every terminal payload includes the Core-owned `assessment`. Its bounded
+`health`, `issues`, and structured `verification` are the only semantic run
+verdict; consumers must not infer another verdict from assistant prose.
 Completed final-answer payloads may also include `factLedger` with
 `schemaVersion:"fact-ledger.v1"`. The ledger records raw command facts
 (`exitCode`/`timedOut`), command initiator (`model-initiated` or
 `verifier-launched`), verifier `expect`/`satisfied` results, optional
 `verificationSource`, workspace write epochs, and stale markers. Consumers
-should prefer it over recomputing command facts from compact traces when
-present.
+should use it as audit evidence rather than recomputing command facts from
+compact traces. It does not replace or compete with `assessment`.
 
 `run.failed` payloads should include a reason, stable error code, human-readable message, structured failure, and optional metadata:
 
@@ -641,54 +651,28 @@ Before re-issuing a retryable call the loop waits `delayMs` (also recorded on th
 
 Provider adapters should avoid hidden internal retries when possible. The AI SDK adapter defaults provider-level retries to `0` so SparkWright can emit each `model.requested` and `model.retrying` event itself. Non-recoverable provider errors such as OpenAI-compatible `insufficient_quota`, `invalid_api_key`, and `model_not_found` are treated as non-retryable even when the HTTP status is `429`.
 
-### Validation Events
+### Validation Failure Events
 
-Validation hooks let applications turn code-owned checks into first-class
-harness evidence. v0 hooks can run at `tool_result`, `workspace_write`,
-`pre_terminal`, `post_sampling`, and `final_output`.
-
-For project-facing workflow rules, prefer `workflow_hook.*` through
-`capabilities.hooks.workflow` or `createRun({ workflowHooks })`: use
-`PreToolUse` for tool gates, `PostToolUse` for checks after actions, and
-`Stop` for "do not finish yet" gates. Keep validation hooks for embedder-owned
-proposal/content validation that needs code access to the subject.
-
-`validation.started` payload:
+`validation.failed` records fail-closed run-input checks and recoverable
+extension failures such as prefetch or observation-summary errors. Project
+workflow policy uses `workflow_hook.*` through
+`capabilities.hooks.workflow` or `createRun({ workflowHooks })`.
 
 ```json
 {
-  "hookName": "final-answer-policy",
-  "stage": "final_output",
-  "metadata": {
-    "step": 3
-  }
-}
-```
-
-`validation.completed` and `validation.failed` payloads include the hook result:
-
-```json
-{
-  "hookName": "write-policy",
-  "stage": "workspace_write",
+  "hookName": "run_input",
+  "stage": "input",
   "result": {
-    "status": "failed",
     "findings": [
       {
-        "code": "README_LOCKED",
-        "message": "README writes are locked.",
+        "code": "WORKSPACE_NOT_FOUND",
+        "message": "Workspace does not exist.",
         "severity": "error"
       }
     ]
-  },
-  "metadata": {
-    "path": "README.md",
-    "proposalId": "write_01h"
   }
 }
 ```
-
-Tool-result validation failures are returned to the model as failed tool observations so the model can recover. Workspace-write validation failures emit `workspace.write.denied` and prevent mutation. `pre_terminal` validation failures inject continuation context and keep the loop running for compatibility with older stop-hook integrations. Final-output validation failures fail the run with `stopReason: "validation_failed"` and failure category `validation`. For new project-facing policy, prefer `WorkflowHook` / `capabilities.hooks.workflow`; keep `ValidationHook` for embedder-owned validation and workspace-write internals.
 
 ### Context Compaction Request
 
@@ -856,7 +840,7 @@ Tool risk levels:
 - `risky`
 - `denied`
 
-Tool governance metadata is optional but should be used for production tools. The registry accepts caller scopes, rate limits, output contracts, side-effect metadata, idempotency, audit policy, data sensitivity, and cost estimates. `requiresApproval` forces the approval path even when `risk` is `safe`.
+Tool governance metadata is optional but should be used for production tools. The registry accepts caller scopes, rate limits, output contracts, side-effect metadata, idempotency, audit policy, data sensitivity, and cost estimates. `requiresApproval` forces the approval path even when `risk` is `safe`. After a network-class failure, `conditional` and `non_idempotent` tools emit `tool.replay_risk`; `idempotent` tools do not.
 
 Tool descriptors may also include optional runtime hints:
 
@@ -967,7 +951,7 @@ Older traces may only expose this fact through message text.
   "runId": "run_01h",
   "type": "diff",
   "name": "README.md diff",
-  "path": ".sparkwright/runs/run_01h/artifacts/readme.diff",
+  "path": ".sparkwright/sessions/session_01h/artifacts/readme.diff",
   "metadata": {
     "targetPath": "README.md"
   }
@@ -1026,21 +1010,30 @@ Current local run store layout:
 
 ```txt
 .sparkwright/
-  runs/
-    <run-id>/
-      run.json
+  sessions/
+    <session-id>/
       trace.jsonl
-      result.json
+      transcript.jsonl
       artifacts/
         <artifact-id>.json
         <artifact-id>.<ext>
+      agents/
+        <agent-id>/
+          trace.jsonl
+          transcript.jsonl
+          runs/
+            <run-id>/
+              run.json
+              result.json
+              checkpoint.json
+              trace-pointer.json
 ```
 
-`run.json` stores the latest persisted run record and is rewritten with terminal state when a run finishes. `result.json` stores the terminal `RunResult`. `trace.jsonl` is append-only and contains filtered events according to the selected trace level.
-
-Session-scoped stores aggregate trace events at
-`.sparkwright/sessions/<session-id>/trace.jsonl` and also write an agent trace
-under `agents/<agent-id>/trace.jsonl`. Each
+`run.json` stores the latest persisted run record and is rewritten with terminal
+state when a run finishes. `result.json` stores the terminal `RunResult`.
+Session `trace.jsonl` is append-only and contains filtered events according to
+the selected trace level; `agents/<agent-id>/trace.jsonl` is the corresponding
+agent projection. Each
 `agents/<agent-id>/runs/<run-id>/` directory stores per-run state plus
 `trace-pointer.json`, whose relative paths point back to those aggregate trace
 files.
@@ -1063,8 +1056,7 @@ npm run build --workspaces
 npm exec sparkwright -- run "inspect this repo and suggest a README improvement" \
   --workspace examples/repo-pilot \
   --target README.md \
-  --write \
-  --yes \
+  --access-mode bypass \
   --trace-level standard
 ```
 
@@ -1101,4 +1093,4 @@ model.completed
 run.completed
 ```
 
-If `--write` is used without `--yes` in a non-interactive environment, approval is denied and the sequence should include `workspace.write.denied` and `tool.failed` instead of `workspace.write.completed`.
+If `--access-mode ask` is used in a non-interactive environment, approval is denied and the sequence should include `workspace.write.denied` and `tool.failed` instead of `workspace.write.completed`.

@@ -140,6 +140,24 @@ describe("ACP event mapping", () => {
           runId: "run_1",
           state: "completed",
           stopReason: "completed",
+          assessment: {
+            schemaVersion: "execution-assessment.v1",
+            health: "clean",
+            issues: [],
+            verification: [],
+            episodeCount: 1,
+            episodes: [
+              {
+                runId: "run_1",
+                assessment: {
+                  schemaVersion: "run-assessment.v1",
+                  health: "clean",
+                  issues: [],
+                  verification: [],
+                },
+              },
+            ],
+          },
         },
       }),
     ).toEqual([]);
@@ -178,7 +196,7 @@ describe("ACP event mapping", () => {
           type: "tool.completed",
           payload: {
             toolCallId: "tool_1",
-            toolName: "read_file",
+            toolName: "read",
             output: "contents",
           },
         },
@@ -189,7 +207,7 @@ describe("ACP event mapping", () => {
       {
         sessionUpdate: "tool_call_update",
         toolCallId: "tool_1",
-        title: "read_file",
+        title: "read",
         status: "completed",
         kind: "read",
         rawOutput: "contents",

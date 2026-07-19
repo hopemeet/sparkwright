@@ -1,4 +1,6 @@
 import { join } from "node:path";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import {
   asSessionId,
   loadTraceEventsFile,
@@ -7,12 +9,13 @@ import {
 import type {
   WorkflowCommandNodeDefinition,
   WorkflowCommandVerifierDefinition,
-  WorkflowDefinition,
+  WorkflowExecutableDefinition,
   WorkflowNodeDefinition,
   WorkflowVerifierDefinition,
 } from "@sparkwright/agent-runtime";
 import {
   loadLayeredWorkflowAssets,
+  pinWorkflowAssetPackage,
   type WorkflowAssetDetail,
 } from "./workflows.js";
 import {
@@ -34,7 +37,7 @@ export type WorkflowShadowCheckStatus = "matched" | "missing" | "unobserved";
 
 export interface WorkflowShadowCheck {
   id: string;
-  kind: "tool" | "write_path" | "verification_command" | "todo_clear";
+  kind: "tool" | "write_path" | "verification_command";
   status: WorkflowShadowCheckStatus;
   message: string;
   nodeId?: string;
@@ -52,7 +55,8 @@ export interface WorkflowShadowReport {
   eventCount: number;
   asset: {
     sourcePath: string;
-    contentHash: string;
+    packageHash: string;
+    packageHashPolicyVersion: 2;
     version?: string;
     nodeCount: number;
   };
@@ -84,7 +88,6 @@ interface WorkflowShadowDeclarations {
     verifierId: string;
     include?: string[];
   }>;
-  todoClear: Array<{ nodeId: string; verifierId: string }>;
   commands: Array<{
     nodeId: string;
     verifierId?: string;
@@ -112,16 +115,28 @@ export async function shadowWorkflowFromSession(
   if (!asset) {
     throw new Error(`Workflow not found: ${options.workflowName}`);
   }
-  return shadowWorkflowFromEvents({
-    workflow: asset,
-    sessionId,
-    tracePath,
-    events,
-  });
+  const snapshotRoot = await mkdtemp(
+    join(tmpdir(), "sparkwright-workflow-shadow-"),
+  );
+  try {
+    const pinned = await pinWorkflowAssetPackage({ asset, snapshotRoot });
+    return shadowWorkflowFromEvents({
+      workflow: { ...pinned.asset, sourcePath: asset.sourcePath },
+      sessionId,
+      tracePath,
+      events,
+    });
+  } finally {
+    await rm(snapshotRoot, { recursive: true, force: true });
+  }
 }
 
 export function shadowWorkflowFromEvents(input: {
-  workflow: WorkflowAssetDetail;
+  workflow: Omit<WorkflowAssetDetail, "definition"> & {
+    definition: WorkflowExecutableDefinition;
+    packageHash: string;
+    packageHashPolicyVersion: 2;
+  };
   sessionId: string;
   tracePath: string;
   events: readonly SparkwrightEvent[];
@@ -153,7 +168,8 @@ export function shadowWorkflowFromEvents(input: {
     eventCount: observation.eventCount,
     asset: {
       sourcePath: input.workflow.sourcePath,
-      contentHash: input.workflow.contentHash,
+      packageHash: input.workflow.packageHash,
+      packageHashPolicyVersion: input.workflow.packageHashPolicyVersion,
       ...(input.workflow.version ? { version: input.workflow.version } : {}),
       nodeCount: input.workflow.nodeCount,
     },
@@ -269,43 +285,17 @@ function buildChecks(input: {
     }
   }
 
-  if (input.observation.sawTodoWrite) {
-    const declaration = input.declarations.todoClear[0];
-    checks.push({
-      id: "todo_clear",
-      kind: "todo_clear",
-      status: declaration ? "matched" : "missing",
-      message: declaration
-        ? "trace used todo_write and workflow declares todo_clear"
-        : "trace used todo_write but workflow does not declare todo_clear",
-      ...(declaration ? { nodeId: declaration.nodeId } : {}),
-      observed: "todo_write",
-    });
-  } else {
-    for (const declaration of input.declarations.todoClear) {
-      checks.push({
-        id: `todo_clear:${declaration.verifierId}:unobserved`,
-        kind: "todo_clear",
-        status: "unobserved",
-        message: `workflow declares todo_clear ${declaration.verifierId}, but the trace did not use todo_write`,
-        nodeId: declaration.nodeId,
-        expected: declaration.verifierId,
-      });
-    }
-  }
-
   return checks;
 }
 
 function collectDeclarations(
-  definition: WorkflowDefinition,
+  definition: WorkflowExecutableDefinition,
 ): WorkflowShadowDeclarations {
   const declarations: WorkflowShadowDeclarations = {
     openModelTools: false,
     modelTools: new Map(),
     nonModelTools: new Map(),
     diffScopes: [],
-    todoClear: [],
     commands: [],
   };
   for (const node of definition.nodes) {
@@ -351,10 +341,6 @@ function collectVerifierDeclaration(
       verifierId: verifier.id,
       ...(verifier.include ? { include: verifier.include } : {}),
     });
-    return;
-  }
-  if (verifier.kind === "todo_clear") {
-    declarations.todoClear.push({ nodeId, verifierId: verifier.id });
     return;
   }
   declarations.commands.push({

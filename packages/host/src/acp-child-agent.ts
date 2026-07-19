@@ -75,7 +75,6 @@ export interface AcpDelegateToolResult {
   spanId: string;
   /** @reserved Public delegate-tool output field consumed by UIs and orchestrators. */
   protocol: "acp";
-  agentId: string;
   /** @reserved Public delegate-tool output field consumed by UIs and orchestrators. */
   agentProfileId: string;
   stopReason: string;
@@ -303,7 +302,6 @@ export function createAcpDelegateTool(
           childRunId,
           spanId,
           protocol: "acp",
-          agentId: input.profile.id,
           agentProfileId: input.profile.id,
           stopReason: result.stopReason,
           message: result.text,

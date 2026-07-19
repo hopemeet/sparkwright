@@ -1,4 +1,5 @@
-import { EventLog, createRunId } from "@sparkwright/core";
+import { createRunId, type RunAssessment } from "@sparkwright/core";
+import { EventLog } from "@sparkwright/core/internal";
 import { describe, expect, it } from "vitest";
 import {
   cliExitCodeForRun,
@@ -6,7 +7,6 @@ import {
   createCliRunEventSummary,
   summarizeDocumentedCommandFailures,
   summarizeSkillLoadFailures,
-  summarizeUnsupportedFinalClaims,
   summarizeVerificationCommandFailures,
   summarizeVerificationProfileResults,
   summarizeWorkspaceMutations,
@@ -21,16 +21,38 @@ describe("CLI run outcome", () => {
       log.emit("run.created", { goal: "Fix the CLI and verify by running it" }),
       log.emit("tool.requested", {
         id: "call_1",
-        toolName: "shell",
+        toolName: "bash",
         arguments: { command: "python3 -m greettool.cli --name Ada" },
       }),
       log.emit("tool.completed", {
         toolCallId: "call_1",
-        toolName: "shell",
+        toolName: "bash",
         status: "completed",
         output: { exitCode: 1, timedOut: false },
       }),
-      log.emit("run.completed", { reason: "final_answer" }),
+      log.emit("run.completed", {
+        reason: "final_answer",
+        assessment: assessment({
+          health: "failing",
+          issues: [
+            {
+              code: "VERIFICATION_FAILED",
+              kind: "verification_failure",
+              disposition: "failing",
+              count: 1,
+            },
+          ],
+          verification: [
+            {
+              id: "command:call_1",
+              source: "command",
+              status: "failed",
+              command: "python3 -m greettool.cli --name Ada",
+              exitCode: 1,
+            },
+          ],
+        }),
+      }),
     ]) {
       updateCliRunEventSummary(summary, event);
     }
@@ -53,16 +75,19 @@ describe("CLI run outcome", () => {
       log.emit("run.created", { goal: "Inspect the workspace" }),
       log.emit("tool.requested", {
         id: "call_1",
-        toolName: "shell",
+        toolName: "bash",
         arguments: { command: "grep missing README.md" },
       }),
       log.emit("tool.completed", {
         toolCallId: "call_1",
-        toolName: "shell",
+        toolName: "bash",
         status: "completed",
         output: { exitCode: 1, timedOut: false },
       }),
-      log.emit("run.completed", { reason: "final_answer" }),
+      log.emit("run.completed", {
+        reason: "final_answer",
+        assessment: assessment(),
+      }),
     ]) {
       updateCliRunEventSummary(summary, event);
     }
@@ -140,8 +165,8 @@ describe("CLI run outcome", () => {
     updateCliRunEventSummary(
       summary,
       log.emit("workspace.write.untracked_access_granted", {
-        toolName: "shell",
-        protocol: "promoted_shell",
+        toolName: "bash",
+        protocol: "background_shell",
         marker: "untracked-write-capable",
         access: "granted",
       }),
@@ -217,20 +242,63 @@ describe("CLI run outcome", () => {
     const log = new EventLog(createRunId());
     for (const event of [
       log.emit("workflow_hook.completed", {
-        hookName: "verification:fast:lint",
+        hookName: "workflow:verification_fast",
         result: {
           status: "continue",
-          metadata: { exitCode: 0, timedOut: false },
+          metadata: {
+            verificationSource: "profile",
+            profile: "fast",
+            verifierId: "lint",
+            expect: "zero",
+            exitCode: 0,
+            timedOut: false,
+          },
         },
       }),
       log.emit("workflow_hook.completed", {
-        hookName: "verification:fast:typecheck",
+        hookName: "workflow:verification_fast",
         result: {
           status: "continue",
-          metadata: { exitCode: 2, timedOut: false },
+          metadata: {
+            verificationSource: "profile",
+            profile: "fast",
+            verifierId: "typecheck",
+            expect: "zero",
+            exitCode: 2,
+            timedOut: false,
+          },
         },
       }),
-      log.emit("run.completed", { reason: "final_answer" }),
+      log.emit("run.completed", {
+        reason: "final_answer",
+        assessment: assessment({
+          health: "failing",
+          issues: [
+            {
+              code: "VERIFICATION_FAILED",
+              kind: "verification_failure",
+              disposition: "failing",
+              count: 1,
+            },
+          ],
+          verification: [
+            {
+              id: "profile:lint",
+              source: "profile",
+              status: "passed",
+              verifierId: "lint",
+              exitCode: 0,
+            },
+            {
+              id: "profile:typecheck",
+              source: "profile",
+              status: "failed",
+              verifierId: "typecheck",
+              exitCode: 2,
+            },
+          ],
+        }),
+      }),
     ]) {
       updateCliRunEventSummary(summary, event);
     }
@@ -244,35 +312,33 @@ describe("CLI run outcome", () => {
     );
   });
 
-  it("summarizes verification profile results from terminal FactLedger snapshots", () => {
+  it("summarizes verification profile results from terminal assessments", () => {
     const summary = createCliRunEventSummary();
     const log = new EventLog(createRunId());
     for (const event of [
       log.emit("run.completed", {
         reason: "final_answer",
-        factLedger: {
-          schemaVersion: "fact-ledger.v1",
-          writeEpoch: 0,
-          commands: [],
-          verificationResults: [
+        assessment: assessment({
+          health: "failing",
+          issues: [
             {
-              id: "verify:1:typecheck",
-              commandFactId: "cmd:1",
-              sequence: 1,
-              writeEpoch: 0,
-              hookName: "workflow:verification_fast",
-              verificationSource: "profile",
-              profile: "fast",
-              verifierId: "typecheck",
-              expect: "zero",
-              satisfied: false,
-              exitCode: 2,
-              timedOut: false,
+              code: "VERIFICATION_FAILED",
+              kind: "verification_failure",
+              disposition: "failing",
+              count: 1,
             },
           ],
-          writes: [],
-          budgetExceeded: [],
-        },
+          verification: [
+            {
+              id: "verify:1:typecheck",
+              source: "profile",
+              status: "failed",
+              profile: "fast",
+              verifierId: "typecheck",
+              exitCode: 2,
+            },
+          ],
+        }),
       }),
     ]) {
       updateCliRunEventSummary(summary, event);
@@ -287,34 +353,32 @@ describe("CLI run outcome", () => {
     );
   });
 
-  it("summarizes documented-command failures from completed outcomes", () => {
+  it("summarizes documented-command failures from terminal assessments", () => {
     const summary = createCliRunEventSummary();
     const log = new EventLog(createRunId());
     for (const event of [
       log.emit("run.completed", {
         reason: "final_answer",
-        factLedger: {
-          schemaVersion: "fact-ledger.v1",
-          writeEpoch: 1,
-          commands: [],
-          verificationResults: [
+        assessment: assessment({
+          health: "failing",
+          issues: [
             {
-              id: "verify:1:documented-command-check",
-              commandFactId: "cmd:1",
-              sequence: 1,
-              writeEpoch: 1,
-              hookName: "workflow:documented_command",
-              verificationSource: "documented_command",
-              verifierId: "documented-command-check",
-              expect: "zero",
-              satisfied: false,
-              exitCode: 1,
-              timedOut: false,
+              code: "VERIFICATION_FAILED",
+              kind: "verification_failure",
+              disposition: "failing",
+              count: 1,
             },
           ],
-          writes: [{ id: "write:1", sequence: 1, writeEpoch: 1 }],
-          budgetExceeded: [],
-        },
+          verification: [
+            {
+              id: "verify:1:documented-command-check",
+              source: "documented_command",
+              status: "failed",
+              verifierId: "documented-command-check",
+              exitCode: 1,
+            },
+          ],
+        }),
       }),
     ]) {
       updateCliRunEventSummary(summary, event);
@@ -335,18 +399,46 @@ describe("CLI run outcome", () => {
     const log = new EventLog(createRunId());
     for (const event of [
       log.emit("workflow_hook.completed", {
-        hookName: "verification:fast:lint",
+        hookName: "workflow:verification_fast",
         result: {
           status: "continue",
-          metadata: { exitCode: 1, timedOut: false },
+          metadata: {
+            verificationSource: "profile",
+            profile: "fast",
+            verifierId: "lint",
+            expect: "zero",
+            exitCode: 1,
+            timedOut: false,
+          },
         },
       }),
       log.emit("workflow_hook.completed", {
-        hookName: "verification:fast:lint",
+        hookName: "workflow:verification_fast",
         result: {
           status: "continue",
-          metadata: { exitCode: 0, timedOut: false },
+          metadata: {
+            verificationSource: "profile",
+            profile: "fast",
+            verifierId: "lint",
+            expect: "zero",
+            exitCode: 0,
+            timedOut: false,
+          },
         },
+      }),
+      log.emit("run.completed", {
+        reason: "final_answer",
+        assessment: assessment({
+          verification: [
+            {
+              id: "profile:lint",
+              source: "profile",
+              status: "passed",
+              verifierId: "lint",
+              exitCode: 0,
+            },
+          ],
+        }),
       }),
     ]) {
       updateCliRunEventSummary(summary, event);
@@ -356,53 +448,6 @@ describe("CLI run outcome", () => {
       "Verification: 1 passed (lint).",
     );
     expect(completedRunHasCliIssues(summary)).toBe(false);
-  });
-
-  it("treats unsupported final-answer command success claims as advisory", () => {
-    const summary = createCliRunEventSummary();
-    const log = new EventLog(createRunId());
-    for (const event of [
-      log.emit("run.created", { goal: "Fix and verify" }),
-      log.emit("tool.requested", {
-        id: "call_1",
-        toolName: "shell",
-        arguments: { command: "npm run verify" },
-      }),
-      log.emit("tool.completed", {
-        toolCallId: "call_1",
-        toolName: "shell",
-        status: "completed",
-        output: { exitCode: 0, timedOut: false },
-      }),
-      log.emit("run.completed", {
-        reason: "final_answer",
-        outcome: {
-          kind: "completed_with_unsupported_final_claims",
-          failing: false,
-          unsupportedFinalClaims: {
-            count: 1,
-            claims: [
-              {
-                kind: "command_success",
-                command: "python -m unittest tests/test_config.py",
-              },
-            ],
-          },
-        },
-      }),
-    ]) {
-      updateCliRunEventSummary(summary, event);
-    }
-
-    // The prose-based detector is unreliable, so it is advisory: surfaced in the
-    // summary message but it does not fail the run.
-    expect(summarizeUnsupportedFinalClaims(summary)).toContain(
-      "python -m unittest tests/test_config.py",
-    );
-    expect(completedRunHasCliIssues(summary)).toBe(false);
-    expect(cliExitCodeForRun({ runState: "completed", events: summary })).toBe(
-      0,
-    );
   });
 
   it("surfaces skill load failures without failing the run", () => {
@@ -415,7 +460,10 @@ describe("CLI run outcome", () => {
         message:
           "Unsupported skill frontmatter line:   - release in /ws/.sparkwright/skills/release-readiness/SKILL.md",
       }),
-      log.emit("run.completed", { reason: "final_answer" }),
+      log.emit("run.completed", {
+        reason: "final_answer",
+        assessment: assessment(),
+      }),
     ]) {
       updateCliRunEventSummary(summary, event);
     }
@@ -466,3 +514,15 @@ describe("CLI run outcome", () => {
     expect(summarizeSkillLoadFailures(summary)).toBeUndefined();
   });
 });
+
+function assessment(
+  overrides: Partial<Omit<RunAssessment, "schemaVersion">> = {},
+): RunAssessment {
+  return {
+    schemaVersion: "run-assessment.v1",
+    health: "clean",
+    issues: [],
+    verification: [],
+    ...overrides,
+  };
+}

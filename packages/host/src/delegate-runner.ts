@@ -1,16 +1,17 @@
 import { join } from "node:path";
 import {
+  assessRun,
   createApprovalRequest,
   createRun,
   createSessionId,
-  createSessionFileRunStoreFactory,
   createSessionRunStoreFactory,
   FileSessionStore,
   resolveApproval,
-  type ApprovalResolver,
+  type InteractionChannel,
   type RunResult,
   type SparkwrightEvent,
 } from "@sparkwright/core";
+import { createSessionFileRunStoreFactory } from "@sparkwright/core/internal";
 import type { TraceLevel } from "@sparkwright/protocol";
 import { loadHostConfig } from "./config/config-implementation.js";
 import { resolveAgentProfiles } from "./agent-profiles.js";
@@ -28,6 +29,7 @@ import {
   delegateToolDescription,
   describeDelegateCapability,
   errorCode,
+  filterDirectDelegatesForExposure,
   resolveAgentDelegateTools,
   type DelegateFailureCode,
   type DelegateToolCollision,
@@ -39,7 +41,7 @@ export interface RunConfiguredDelegateInput {
   goal: string;
   env?: Record<string, string | undefined>;
   metadata?: Record<string, unknown>;
-  approvalResolver?: ApprovalResolver;
+  interactionChannel?: InteractionChannel;
   shouldWrite?: boolean;
   sessionId?: string;
   traceLevel?: TraceLevel;
@@ -93,14 +95,31 @@ export async function runConfiguredDelegate(
     loaded.config.capabilities?.agents?.profiles,
   );
   const delegateToolCollisions: DelegateToolCollision[] = [];
-  const delegates = resolveAgentDelegateTools(
+  const delegationTargets = resolveAgentDelegateTools(
     profiles,
     agentConfig?.delegateTools,
     {
-      exposeChildrenAsDelegates: agentConfig?.exposeChildrenAsDelegates,
+      includeAllChildProfiles: true,
       onCollision: (collision) => delegateToolCollisions.push(collision),
     },
   );
+  const directlyExposed = filterDirectDelegatesForExposure(
+    delegationTargets,
+    agentConfig,
+    profiles,
+  );
+  const explicitProfileIds = new Set([
+    ...(agentConfig?.delegateTools ?? []).map((delegate) => delegate.profileId),
+    ...profiles
+      .filter((profile) => profile.delegateTool !== undefined)
+      .map((profile) => profile.id),
+  ]);
+  const runnableToolNames = new Set([
+    ...directlyExposed.map((delegate) => delegateToolName(delegate)),
+    ...delegationTargets
+      .filter((delegate) => explicitProfileIds.has(delegate.profileId))
+      .map((delegate) => delegateToolName(delegate)),
+  ]);
   const targetCollision = delegateToolCollisions.find(
     (item) => item.toolName === input.toolName,
   );
@@ -114,8 +133,10 @@ export async function runConfiguredDelegate(
         `owned by profile ${targetCollision.conflictsWith} (fail-closed)`,
     };
   }
-  const delegate = delegates.find(
-    (item) => delegateToolName(item) === input.toolName,
+  const delegate = delegationTargets.find(
+    (item) =>
+      delegateToolName(item) === input.toolName &&
+      runnableToolNames.has(input.toolName),
   );
   if (!delegate) {
     return {
@@ -242,7 +263,7 @@ export async function runConfiguredDelegate(
 
   const requiresApproval = delegate.requiresApproval ?? true;
   if (requiresApproval) {
-    if (!input.approvalResolver) {
+    if (!input.interactionChannel?.approve) {
       await persistence?.finish({
         state: "failed",
         code: "DELEGATE_APPROVAL_DENIED",
@@ -268,17 +289,12 @@ export async function runConfiguredDelegate(
         capability: descriptor,
       },
     });
-    parent.events.emit("approval.requested", {
-      approvalId: request.id,
-      action: request.action,
-      summary: request.summary,
-      details: request.details,
-    });
-    const response = await resolveApproval(request, input.approvalResolver);
-    parent.events.emit("approval.resolved", {
-      approvalId: request.id,
-      decision: response.decision,
-    });
+    parent.events.emit("approval.requested", request);
+    const response = await resolveApproval(
+      request,
+      input.interactionChannel.approve.bind(input.interactionChannel),
+    );
+    parent.events.emit("approval.resolved", response);
     if (response.decision !== "approved") {
       await persistence?.finish({
         state: "failed",
@@ -377,6 +393,19 @@ function createDelegateRunPersistence(input: {
               signal: "completed",
               state: "completed",
               stopReason: "final_answer",
+              assessment: {
+                schemaVersion: "run-assessment.v1",
+                health: "degraded",
+                issues: [
+                  {
+                    code: "EXTERNAL_ASSESSMENT_UNAVAILABLE",
+                    kind: "assessment_unavailable",
+                    disposition: "degraded",
+                    count: 1,
+                  },
+                ],
+                verification: [],
+              },
               metadata: {
                 source: input.source,
               },
@@ -395,6 +424,15 @@ function createDelegateRunPersistence(input: {
                   source: input.source,
                 },
               },
+              assessment: assessRun([], {
+                terminal: {
+                  state: "failed",
+                  reason: "state_transition_invalid",
+                  failure: {
+                    code: finishInput.code ?? "DELEGATE_EXECUTION_FAILED",
+                  },
+                },
+              }),
               metadata: {
                 source: input.source,
               },
@@ -405,12 +443,13 @@ function createDelegateRunPersistence(input: {
       input.parent.events.emit(
         finishInput.state === "completed" ? "run.completed" : "run.failed",
         finishInput.state === "completed"
-          ? { reason: result.stopReason }
+          ? { reason: result.stopReason, assessment: result.assessment }
           : {
               reason: result.stopReason,
               code: finishInput.code ?? "DELEGATE_EXECUTION_FAILED",
               message: finishInput.message,
               failure: result.failure,
+              assessment: result.assessment,
               metadata: result.metadata,
             },
       );

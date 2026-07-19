@@ -5,8 +5,6 @@ import { join } from "node:path";
 import { PROTOCOL_VERSION, type HostMessage } from "@sparkwright/protocol";
 import {
   asSessionId,
-  createRun,
-  type ContextItem,
   FileSessionStore,
   SESSION_COMPACT_SCHEMA_VERSION,
   type SessionEvent,
@@ -24,9 +22,17 @@ import { CronStore, defaultCronRoot } from "@sparkwright/cron";
 import { FileSkillUsageRecorder } from "@sparkwright/skills";
 import { authenticatedConnection, type Connection } from "../src/connection.js";
 import { skillUsagePath } from "../src/index.js";
-import { serveConnection } from "../src/server.js";
-import { HostRuntime } from "../src/runtime.js";
+import {
+  serveConnection as serveCanonicalConnection,
+  type ServeConnectionOptions,
+} from "../src/server.js";
+import type { HostRuntime } from "../src/runtime.js";
 import { createHostService } from "../src/host-service.js";
+import { createTestHostRuntime } from "./helpers/host-runtime.js";
+import {
+  findHostRunDirectory,
+  loadHostSessionConversation,
+} from "../src/session-queries.js";
 
 /**
  * Tiny in-process Connection pair: two ends sharing two queues. Lets the
@@ -85,6 +91,18 @@ function createConnectionPair(): {
       }),
     close: () => onClose?.("test close"),
   };
+}
+
+function serveConnection(
+  connection: Connection,
+  options: Omit<ServeConnectionOptions, "hostService"> & {
+    hostService?: ServeConnectionOptions["hostService"];
+  },
+): void {
+  serveCanonicalConnection(connection, {
+    ...options,
+    hostService: options.hostService ?? createHostService(),
+  });
 }
 
 let testConnectionSequence = 0;
@@ -220,7 +238,6 @@ describe("host protocol", () => {
         serveConnection(pair.hostSide, {
           hostService: service,
           workspaceRoot: workspace,
-          imControlSelfBinding: true,
           authContext: authenticatedConnection(
             `gateway:credential:${index}`,
             "test-credential",
@@ -367,7 +384,7 @@ describe("host protocol", () => {
         payload: {
           goal: "request a write and time out",
           model: "scripted",
-          shouldWrite: true,
+          accessMode: "ask",
         },
       });
       await pair.waitFor(
@@ -408,6 +425,12 @@ describe("host protocol", () => {
     const workspace = await mkdtemp(
       join(tmpdir(), "sparkwright-host-im-bind-"),
     );
+    const deniedService = createHostService();
+    const enabledService = createHostService({
+      imControl: { allowSelfBinding: true },
+    });
+    const deniedPair = createConnectionPair();
+    const enabledPair = createConnectionPair();
     const handshake = (pair: ReturnType<typeof createConnectionPair>) => {
       pair.clientSend({
         envelope: "request",
@@ -432,8 +455,10 @@ describe("host protocol", () => {
       permissions: ["message", "inspect", "approve"] as const,
     };
     try {
-      const deniedPair = createConnectionPair();
-      serveConnection(deniedPair.hostSide, { workspaceRoot: workspace });
+      serveConnection(deniedPair.hostSide, {
+        hostService: deniedService,
+        workspaceRoot: workspace,
+      });
       await handshake(deniedPair);
       deniedPair.clientSend({
         envelope: "request",
@@ -449,10 +474,9 @@ describe("host protocol", () => {
         ),
       ).toMatchObject({ ok: false, error: { code: "unauthorized" } });
 
-      const enabledPair = createConnectionPair();
       serveConnection(enabledPair.hostSide, {
+        hostService: enabledService,
         workspaceRoot: workspace,
-        imControlSelfBinding: true,
         authContext: authenticatedConnection(
           "gateway:enabled",
           "test-credential",
@@ -495,6 +519,9 @@ describe("host protocol", () => {
         result: { sessionId: expect.stringMatching(/^session_/) },
       });
     } finally {
+      deniedPair.close();
+      enabledPair.close();
+      await Promise.all([deniedService.shutdown(), enabledService.shutdown()]);
       await rmWhenReady(workspace);
     }
   });
@@ -746,7 +773,7 @@ describe("host protocol", () => {
       taskStore.create({
         id: taskId,
         parentRunId: "run_task_parent" as RunId,
-        kind: "shell.promoted",
+        kind: "shell.background",
         title: "background shell",
         metadata: { command: "node bg.js" },
       });
@@ -796,13 +823,13 @@ describe("host protocol", () => {
 
       pair.clientSend({
         envelope: "request",
-        id: "task_list",
+        id: "list_tasks",
         kind: "task.list",
         timestamp: TIMESTAMP,
         payload: { status: "running", limit: 10 },
       });
       const listResp = await pair.waitFor(
-        (m) => m.envelope === "response" && m.id === "task_list",
+        (m) => m.envelope === "response" && m.id === "list_tasks",
       );
       expect(listResp).toMatchObject({
         envelope: "response",
@@ -811,7 +838,7 @@ describe("host protocol", () => {
           tasks: [
             expect.objectContaining({
               id: taskId,
-              kind: "shell.promoted",
+              kind: "shell.background",
               status: "running",
             }),
           ],
@@ -820,13 +847,13 @@ describe("host protocol", () => {
 
       pair.clientSend({
         envelope: "request",
-        id: "task_get",
+        id: "get_task",
         kind: "task.get",
         timestamp: TIMESTAMP,
         payload: { taskId },
       });
       const getResp = await pair.waitFor(
-        (m) => m.envelope === "response" && m.id === "task_get",
+        (m) => m.envelope === "response" && m.id === "get_task",
       );
       expect(getResp).toMatchObject({
         envelope: "response",
@@ -840,13 +867,13 @@ describe("host protocol", () => {
 
       pair.clientSend({
         envelope: "request",
-        id: "task_output",
+        id: "output_task",
         kind: "task.output",
         timestamp: TIMESTAMP,
         payload: { taskId, fromSequence: 0, maxChunks: 1 },
       });
       const outputResp = await pair.waitFor(
-        (m) => m.envelope === "response" && m.id === "task_output",
+        (m) => m.envelope === "response" && m.id === "output_task",
       );
       expect(outputResp).toMatchObject({
         envelope: "response",
@@ -953,35 +980,42 @@ describe("host protocol", () => {
     const pair = createConnectionPair();
     try {
       const store = new FileWorkflowStore({
-        rootDir: join(
-          workspace,
-          ".sparkwright",
-          "sessions",
-          sessionId,
-          "workflow-runs",
-        ),
+        rootDir: join(workspace, ".sparkwright", "workflow-runs"),
       });
       const writer = await store.acquireWriter(workflowRunId, {
         owner: "test-fixture",
       });
+      const packageSnapshotRef = `/snapshots/${workflowRunId}`;
+      const packageHash = "sha256:workflow-protocol";
       const created = await writer!.create({
         id: workflowRunId,
         sessionId,
         assetName: "bugfix",
-        contentHash: "hash-protocol",
+        layer: "project",
+        packageHash,
+        packageHashPolicyVersion: 2,
+        packageSnapshotRef,
+        definitionSnapshot: {
+          assetName: "bugfix",
+          sourceDir: packageSnapshotRef,
+          layer: "project",
+          packageHash,
+          packageHashPolicyVersion: 2,
+          packageSnapshotRef,
+          nodes: [{ id: "main", body: "Protocol fixture." }],
+        },
         currentNodeId: "main",
         attempts: { main: 1 },
         authorizationSnapshot: {
           targetPath: "README.md",
           confidentialPaths: [".env"],
           confidentialDefaults: false,
-          shouldWrite: true,
           accessMode: "ask",
           backgroundTasks: "enabled",
         },
       });
       await writer!.mutate({
-        expectedRevision: created.recordRevision ?? 0,
+        expectedRevision: created.recordRevision,
         patch: {
           verdictLog: [
             {
@@ -1048,7 +1082,6 @@ describe("host protocol", () => {
                 hasTargetPath: true,
                 hasConfidentialPaths: true,
                 confidentialDefaults: false,
-                shouldWrite: true,
                 accessMode: "ask",
                 backgroundTasks: "enabled",
               },
@@ -1091,13 +1124,7 @@ describe("host protocol", () => {
       });
       expect(
         new FileWorkflowStore({
-          rootDir: join(
-            workspace,
-            ".sparkwright",
-            "sessions",
-            sessionId,
-            "workflow-runs",
-          ),
+          rootDir: join(workspace, ".sparkwright", "workflow-runs"),
           createRoot: false,
         }).get(workflowRunId),
       ).toMatchObject({ status: "cancelled" });
@@ -1166,7 +1193,7 @@ describe("host protocol", () => {
     const previousScript = process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON;
     process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON = JSON.stringify([
       {
-        toolCalls: [{ toolName: "read_file", arguments: { path: ".env" } }],
+        toolCalls: [{ toolName: "read", arguments: { path: ".env" } }],
       },
       { message: "read completed" },
     ]);
@@ -1176,7 +1203,7 @@ describe("host protocol", () => {
       await mkdir(join(workspace, ".sparkwright"), { recursive: true });
       await writeFile(
         join(workspace, ".sparkwright", "config.json"),
-        JSON.stringify({ confidentialDefaults: false }),
+        JSON.stringify({ policy: { confidentialDefaults: false } }),
         "utf8",
       );
 
@@ -1253,9 +1280,9 @@ describe("host protocol", () => {
     process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON = JSON.stringify([
       {
         toolCalls: [
-          { toolName: "read_file", arguments: { path: ".env" } },
+          { toolName: "read", arguments: { path: ".env" } },
           {
-            toolName: "read_file",
+            toolName: "read",
             arguments: { path: "secrets/token.txt" },
           },
         ],
@@ -1275,8 +1302,10 @@ describe("host protocol", () => {
       await writeFile(
         join(workspace, ".sparkwright", "config.json"),
         JSON.stringify({
-          confidentialDefaults: false,
-          confidentialPaths: ["secrets/**"],
+          policy: {
+            confidentialDefaults: false,
+            confidentialPaths: ["secrets/**"],
+          },
         }),
         "utf8",
       );
@@ -1814,7 +1843,7 @@ describe("host protocol", () => {
       };
       await writeFile(configPath, JSON.stringify(baseConfig), "utf8");
 
-      const defaultRuntime = new HostRuntime({
+      const defaultRuntime = createTestHostRuntime({
         workspaceRoot: workspace,
         defaultModel: "deterministic",
         emit: () => {},
@@ -1840,7 +1869,7 @@ describe("host protocol", () => {
         }),
         "utf8",
       );
-      const enabledRuntime = new HostRuntime({
+      const enabledRuntime = createTestHostRuntime({
         workspaceRoot: workspace,
         defaultModel: "deterministic",
         emit: () => {},
@@ -1894,7 +1923,7 @@ describe("host protocol", () => {
         "utf8",
       );
 
-      const runtime = new HostRuntime({
+      const runtime = createTestHostRuntime({
         workspaceRoot: workspace,
         defaultModel: "deterministic",
         emit: () => {},
@@ -1936,7 +1965,7 @@ describe("host protocol", () => {
                   name: "guard-shell",
                   description: "Project shell guard.",
                   hook: "PreToolUse",
-                  matcher: { toolName: "shell" },
+                  matcher: { toolName: "bash" },
                   action: { type: "block", reason: "No shell." },
                 },
                 {
@@ -1971,7 +2000,7 @@ describe("host protocol", () => {
         }),
         "utf8",
       );
-      const runtime = new HostRuntime({
+      const runtime = createTestHostRuntime({
         workspaceRoot: workspace,
         defaultModel: "deterministic",
         emit: () => {},
@@ -1987,7 +2016,7 @@ describe("host protocol", () => {
             name: "guard-shell",
             source: "config",
             lifecycle: "PreToolUse",
-            matcher: "toolName=shell",
+            matcher: "toolName=bash",
             action: "block: No shell.",
             blockingPotential: true,
             enabled: true,
@@ -2052,7 +2081,7 @@ describe("host protocol", () => {
       resolveTerminal = resolve;
     });
     try {
-      const runtime = new HostRuntime({
+      const runtime = createTestHostRuntime({
         workspaceRoot: workspace,
         defaultModel: "deterministic",
         emit: (event) => {
@@ -2064,7 +2093,7 @@ describe("host protocol", () => {
 
       const started = await runtime.startRun({
         goal: "prepare handoff and verify documented commands",
-        shouldWrite: true,
+        accessMode: "ask",
       });
       expect(started).toMatchObject({ ok: true });
       if (!started.ok) throw new Error(started.error.message);
@@ -2224,9 +2253,10 @@ describe("host protocol", () => {
         kind: "run.start",
         timestamp: TIMESTAMP,
         payload: {
-          goal: "inspect missing default target",
+          goal: "inspect an explicit missing target",
           model: "deterministic",
-          permissionMode: "default",
+          accessMode: "ask",
+          targetPath: "missing.txt",
         },
       });
 
@@ -2246,17 +2276,21 @@ describe("host protocol", () => {
         payload: {
           state: "completed",
           stopReason: "final_answer",
-          outcome: {
-            kind: "completed_with_tool_failures",
-            toolFailures: { count: 1 },
+          assessment: {
+            health: "failing",
+            issues: [{ code: "UNRESOLVED_TOOL_FAILURE", count: 1 }],
           },
         },
       });
       const codes = (
         completed as {
-          payload?: { outcome?: { toolFailures?: { codes?: unknown[] } } };
+          payload?: {
+            assessment?: {
+              issues?: Array<{ details?: { codes?: unknown[] } }>;
+            };
+          };
         }
-      ).payload?.outcome?.toolFailures?.codes;
+      ).payload?.assessment?.issues?.[0]?.details?.codes;
       expect(codes).toHaveLength(1);
       expect(["TOOL_NOT_FOUND", "ENOENT"]).toContain(codes?.[0]);
     } finally {
@@ -2306,7 +2340,7 @@ describe("host protocol", () => {
         payload: {
           goal: "exercise invalid tool args",
           model: "scripted",
-          permissionMode: "default",
+          accessMode: "ask",
         },
       });
       await pair.waitFor(
@@ -2347,12 +2381,13 @@ describe("host protocol", () => {
     const workspace = await mkdtemp(
       join(tmpdir(), "sparkwright-host-runtime-failure-"),
     );
+    const service = createHostService();
     try {
       let resolveFailed!: (message: HostMessage) => void;
       const failed = new Promise<HostMessage>((resolve) => {
         resolveFailed = resolve;
       });
-      const runtime = new HostRuntime({
+      const runtime = service.createRuntime({
         workspaceRoot: workspace,
         defaultModel: "deterministic",
         emit: (message) => {
@@ -2384,13 +2419,10 @@ describe("host protocol", () => {
             code: "internal_error",
             message: "event sink failed",
           },
-          error: {
-            code: "internal_error",
-            message: "event sink failed",
-          },
         },
       });
     } finally {
+      await service.shutdown();
       await rm(workspace, {
         recursive: true,
         force: true,
@@ -2429,7 +2461,7 @@ describe("host protocol", () => {
         fromTrace: true,
         force: false,
         model: "deterministic",
-        permissionMode: "default",
+        accessMode: "ask",
         metadata: { source: "test" },
       },
     });
@@ -2444,6 +2476,49 @@ describe("host protocol", () => {
         message: expect.stringContaining("run_123"),
       },
     });
+  });
+
+  it("locates runs only in the canonical session agent tree", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-host-resume-"));
+    const sessionRootDir = join(workspace, ".sparkwright", "sessions");
+    const sessionId = "session_run_lookup";
+    const agentId = "reviewer";
+    const runId = "run_lookup";
+    const runDir = join(
+      sessionRootDir,
+      sessionId,
+      "agents",
+      agentId,
+      "runs",
+      runId,
+    );
+    try {
+      await mkdir(runDir, { recursive: true });
+      const context = { workspaceRoot: workspace, sessionRootDir };
+
+      await expect(
+        findHostRunDirectory(context, runId, sessionId),
+      ).resolves.toEqual({
+        ok: true,
+        runDir,
+        sessionId,
+        agentId,
+      });
+      await expect(findHostRunDirectory(context, runId)).resolves.toEqual({
+        ok: true,
+        runDir,
+        sessionId,
+        agentId,
+      });
+      await expect(
+        findHostRunDirectory(context, "../escape", sessionId),
+      ).resolves.toMatchObject({
+        ok: false,
+        error: { code: "invalid_payload" },
+      });
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
   });
 
   it("resumes a session-scoped checkpoint through the host runtime", async () => {
@@ -2534,7 +2609,7 @@ describe("host protocol", () => {
           runId,
           sessionId,
           model: "deterministic",
-          permissionMode: "default",
+          accessMode: "ask",
           traceLevel: "standard",
           metadata: { source: "test", traceLevel: "standard", ticket: "T-1" },
         },
@@ -2634,7 +2709,7 @@ describe("host protocol", () => {
       startedAt: "2026-06-30T00:00:00.000Z",
     });
 
-    const runtime = new HostRuntime({
+    const runtime = createTestHostRuntime({
       workspaceRoot: workspace,
       defaultModel: "deterministic",
       emit: () => {},
@@ -2676,92 +2751,7 @@ describe("host protocol", () => {
     }
   });
 
-  it("resumes a legacy run directory into a new host-owned session", async () => {
-    const workspace = await mkdtemp(
-      join(tmpdir(), "sparkwright-host-resume-legacy-"),
-    );
-    const runId = "run_resume_legacy_test";
-    const runDir = join(workspace, ".sparkwright", "runs", runId);
-    await mkdir(runDir, { recursive: true });
-    await writeFile(join(workspace, "README.md"), "# Demo\n", "utf8");
-    await writeFile(
-      join(runDir, "checkpoint.json"),
-      checkpointJson({ runId, goal: "resume legacy checkpoint" }),
-      "utf8",
-    );
-
-    const pair = createConnectionPair();
-    try {
-      serveConnection(pair.hostSide, {
-        workspaceRoot: workspace,
-        defaultModel: "deterministic",
-      });
-      pair.clientSend({
-        envelope: "request",
-        id: "h",
-        kind: "handshake",
-        timestamp: TIMESTAMP,
-        payload: {
-          protocolVersion: PROTOCOL_VERSION,
-          client: { name: "test", version: "0.0.0" },
-        },
-      });
-      await pair.waitFor((m) => m.envelope === "response" && m.id === "h");
-
-      pair.clientSend({
-        envelope: "request",
-        id: "resume_legacy",
-        kind: "run.resume",
-        timestamp: TIMESTAMP,
-        payload: {
-          runId,
-          model: "deterministic",
-          permissionMode: "default",
-        },
-      });
-
-      const resp = await pair.waitFor(
-        (m) => m.envelope === "response" && m.id === "resume_legacy",
-      );
-      expect(resp).toMatchObject({
-        envelope: "response",
-        ok: true,
-        result: { runId, resumedFromRunId: runId },
-      });
-      if (
-        resp.envelope !== "response" ||
-        !resp.ok ||
-        typeof resp.result.sessionId !== "string"
-      ) {
-        throw new Error("Expected run.resume to return a new sessionId.");
-      }
-      expect(resp.result.sessionId).toMatch(/^session_/);
-      expect(resp.result.sessionId).not.toBe(runId);
-
-      await pair.waitFor(
-        (m) => m.envelope === "event" && m.kind === "run.completed",
-      );
-      const sessionJson = await readFile(
-        join(
-          workspace,
-          ".sparkwright",
-          "sessions",
-          resp.result.sessionId,
-          "session.json",
-        ),
-        "utf8",
-      );
-      expect(JSON.parse(sessionJson)).toMatchObject({
-        id: resp.result.sessionId,
-        runIds: [runId],
-      });
-    } finally {
-      pair.close();
-      await rm(workspace, { recursive: true, force: true });
-    }
-  });
-
-  it("hands off unfinished todos after a final resumed answer", async () => {
+  it("reports unfinished todos as advisory after a final resumed answer", async () => {
     const workspace = await mkdtemp(
       join(tmpdir(), "sparkwright-host-resume-todo-"),
     );
@@ -2849,7 +2839,7 @@ describe("host protocol", () => {
           runId,
           sessionId,
           model: "deterministic",
-          permissionMode: "default",
+          accessMode: "ask",
         },
       });
 
@@ -2864,7 +2854,7 @@ describe("host protocol", () => {
         kind: "run.completed",
         payload: {
           state: "completed",
-          todoHandoff: { reason: "non_resumable_stop_reason" },
+          todoAdvisory: { unfinished: 1, blocked: 0 },
         },
       });
       expect(
@@ -3162,7 +3152,7 @@ describe("host protocol", () => {
         join(workspace, ".sparkwright", "config.json"),
         JSON.stringify({
           tools: {
-            disabled: ["shell"],
+            disabled: ["bash"],
             defer: ["delegate_reviewer"],
           },
           capabilities: {
@@ -3287,7 +3277,7 @@ describe("host protocol", () => {
                 profileName: "Reviewer",
                 protocol: "in_process",
                 risk: "safe",
-                requiresApproval: false,
+                approvalRequiredUnderCurrentRun: false,
                 forbidNesting: true,
                 sideEffects: ["model", "workspace"],
                 workspaceAccess: "read_write",
@@ -3304,11 +3294,22 @@ describe("host protocol", () => {
           name: string;
           origin?: string;
         }>;
-        expect(
-          (
-            resp.result as { skills: { indexed: Array<{ name: string }> } }
-          ).skills.indexed.some((skill) => skill.name === "reviewer"),
-        ).toBe(true);
+        const reviewer = (
+          resp.result as {
+            skills: {
+              indexed: Array<{
+                name: string;
+                packageHash: string;
+                packageHashPolicyVersion: number;
+              }>;
+            };
+          }
+        ).skills.indexed.find((skill) => skill.name === "reviewer");
+        expect(reviewer).toMatchObject({
+          packageHash: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
+          packageHashPolicyVersion: 2,
+        });
+        expect(reviewer).not.toHaveProperty("contentHash");
         expect(tools.find((tool) => tool.name === "read")).toMatchObject({
           origin: "local:@sparkwright/coding-tools",
         });
@@ -3347,8 +3348,6 @@ describe("host protocol", () => {
         result: {
           access: {
             accessMode: "bypass",
-            permissionMode: "bypass_permissions",
-            shouldWrite: true,
             backgroundTasks: "disabled",
           },
           shell: {
@@ -3380,14 +3379,16 @@ describe("host protocol", () => {
       await writeFile(
         join(workspace, ".sparkwright", "config.json"),
         JSON.stringify({
-          model: "openai/gpt-5.4-mini",
-          providers: {
-            openai: {},
+          identity: {
+            model: "openai/gpt-5.4-mini",
+            providers: {
+              openai: {},
+            },
           },
         }),
         "utf8",
       );
-      const runtime = new HostRuntime({
+      const runtime = createTestHostRuntime({
         workspaceRoot: workspace,
         emit: () => {},
       });
@@ -3429,14 +3430,16 @@ describe("host protocol", () => {
       await writeFile(
         join(workspace, ".sparkwright", "config.json"),
         JSON.stringify({
-          model: "openai/gpt-5.4-nano",
-          providers: {
-            openai: {},
+          identity: {
+            model: "openai/gpt-5.4-nano",
+            providers: {
+              openai: {},
+            },
           },
         }),
         "utf8",
       );
-      const runtime = new HostRuntime({
+      const runtime = createTestHostRuntime({
         workspaceRoot: workspace,
         emit: () => {},
       });
@@ -3470,9 +3473,11 @@ describe("host protocol", () => {
       await writeFile(
         join(workspace, ".sparkwright", "config.json"),
         JSON.stringify({
-          model: "openai/gpt-5.4-nano",
-          providers: {
-            openai: {},
+          identity: {
+            model: "openai/gpt-5.4-nano",
+            providers: {
+              openai: {},
+            },
           },
         }),
         "utf8",
@@ -3613,7 +3618,7 @@ describe("host protocol", () => {
         payload: {
           goal: "write with approval",
           model: "scripted",
-          shouldWrite: true,
+          accessMode: "ask",
         },
       });
       await pair.waitFor((m) => m.envelope === "response" && m.id === "start");
@@ -3769,7 +3774,7 @@ describe("host protocol", () => {
         payload: {
           goal: "delegate a README write",
           model: "scripted",
-          shouldWrite: true,
+          accessMode: "ask",
         },
       });
       await pair.waitFor((m) => m.envelope === "response" && m.id === "start");
@@ -3970,7 +3975,7 @@ describe("host protocol", () => {
       await writeFile(
         join(workspace, ".sparkwright", "config.json"),
         JSON.stringify({
-          shell: { sandbox: { mode: "off" } },
+          policy: { sandbox: { mode: "off" } },
           capabilities: {
             agents: {
               profiles: [
@@ -3980,7 +3985,7 @@ describe("host protocol", () => {
                   name: "Runner",
                   mode: "child",
                   prompt: "Run the requested shell command.",
-                  use: ["shell"],
+                  use: ["bash"],
                   allowedTools: ["bash"],
                   maxSteps: 4,
                 },
@@ -4022,20 +4027,58 @@ describe("host protocol", () => {
           goal: "delegate a shell command",
           model: "scripted",
           sessionId: "session_delegate_shell",
+          accessMode: "ask",
         },
       });
       await pair.waitFor((m) => m.envelope === "response" && m.id === "start");
 
-      const approval = await pair.waitFor(
+      const firstApproval = await pair.waitFor(
         (m) => m.envelope === "event" && m.kind === "approval.requested",
       );
       if (
-        approval.envelope !== "event" ||
-        approval.kind !== "approval.requested"
+        firstApproval.envelope !== "event" ||
+        firstApproval.kind !== "approval.requested"
       ) {
         throw new Error("approval request was not emitted");
       }
-      expect(approval.payload).toMatchObject({
+      let shellApproval = firstApproval;
+      if (firstApproval.payload.details?.toolName === "delegate_agent") {
+        pair.clientSend({
+          envelope: "request",
+          id: "approve_delegate",
+          kind: "approval.resolve",
+          timestamp: TIMESTAMP,
+          payload: {
+            approvalId: firstApproval.payload.approvalId,
+            decision: "approved",
+            message: "Approved delegation.",
+          },
+        });
+        await pair.waitFor(
+          (m) =>
+            m.envelope === "response" && m.id === "approve_delegate" && m.ok,
+        );
+        const nextShellApproval = await pair.waitFor(
+          (m) =>
+            m.envelope === "event" &&
+            m.kind === "approval.requested" &&
+            m.payload.details?.toolName === "bash",
+        );
+        if (
+          nextShellApproval.envelope !== "event" ||
+          nextShellApproval.kind !== "approval.requested"
+        ) {
+          throw new Error("shell approval request was not emitted");
+        }
+        shellApproval = nextShellApproval;
+      }
+      if (
+        shellApproval.envelope !== "event" ||
+        shellApproval.kind !== "approval.requested"
+      ) {
+        throw new Error("shell approval request was not emitted");
+      }
+      expect(shellApproval.payload).toMatchObject({
         details: {
           toolName: "bash",
           arguments: { command: "printf child-shell" },
@@ -4047,7 +4090,7 @@ describe("host protocol", () => {
         kind: "approval.resolve",
         timestamp: TIMESTAMP,
         payload: {
-          approvalId: approval.payload.approvalId,
+          approvalId: shellApproval.payload.approvalId,
           decision: "approved",
           message: "Approved delegate shell.",
           autoApproved: true,
@@ -4081,7 +4124,12 @@ describe("host protocol", () => {
       } else {
         process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON = previousScript;
       }
-      await rm(workspace, { recursive: true, force: true });
+      await rm(workspace, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 20,
+      });
     }
   });
 
@@ -4195,7 +4243,7 @@ describe("host protocol", () => {
     let runtime: HostRuntime | undefined;
     try {
       await writeFile(join(workspace, "README.md"), "# Demo\n", "utf8");
-      runtime = new HostRuntime({
+      runtime = createTestHostRuntime({
         workspaceRoot: workspace,
         defaultModel: "scripted",
         emit: (event) => {
@@ -4391,8 +4439,7 @@ describe("host protocol", () => {
         payload: {
           goal: "write README and verify",
           model: "scripted",
-          permissionMode: "accept_edits",
-          shouldWrite: true,
+          accessMode: "accept-edits",
         },
       });
       const startResp = await pair.waitFor(
@@ -4781,7 +4828,7 @@ describe("host protocol", () => {
         ]),
       );
 
-      const inspectRuntime = new HostRuntime({
+      const inspectRuntime = createTestHostRuntime({
         workspaceRoot: workspace,
         sessionRootDir,
         defaultModel: "deterministic",
@@ -4830,7 +4877,7 @@ describe("host protocol", () => {
       const store = new FileSessionStore({ rootDir: sessionRootDir });
       await store.create({ id: sessionId });
 
-      const runtime = new HostRuntime({
+      const runtime = createTestHostRuntime({
         workspaceRoot: workspace,
         sessionRootDir,
         defaultModel: "deterministic",
@@ -5164,20 +5211,10 @@ describe("host protocol", () => {
         "utf8",
       );
 
-      const runtime = new HostRuntime({
-        workspaceRoot: workspace,
-        sessionRootDir,
-        defaultModel: "deterministic",
-        emit: () => {},
-      });
-      const history = await (
-        runtime as unknown as {
-          loadConversationHistory(
-            rootDir: string,
-            id: string,
-          ): Promise<ContextItem[]>;
-        }
-      ).loadConversationHistory(sessionRootDir, sessionId);
+      const history = await loadHostSessionConversation(
+        { workspaceRoot: workspace, sessionRootDir },
+        sessionId,
+      );
 
       expect(history.map((item) => item.source?.kind)).toEqual([
         "session_compact_warning",
@@ -5260,19 +5297,14 @@ describe("host protocol", () => {
         resolveCompleted = resolve;
         rejectCompleted = reject;
       });
-      runtime = new HostRuntime({
+      runtime = createTestHostRuntime({
         workspaceRoot: workspace,
         defaultModel: "deterministic",
         emit: (message) => {
           if (message.envelope !== "event") return;
           if (message.kind === "run.completed") resolveCompleted();
           if (message.kind === "run.failed") {
-            rejectCompleted(
-              new Error(
-                (message.payload as { error?: { message?: string } }).error
-                  ?.message ?? "run failed",
-              ),
-            );
+            rejectCompleted(new Error(message.payload.failure.message));
           }
         },
       });
@@ -5301,13 +5333,15 @@ describe("host protocol", () => {
     }
   });
 
-  it("characterizes two connections starting the same session without shared coordination", async () => {
+  it("routes two connections for one session through the shared service", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "sparkwright-runtime-"));
+    const service = createHostService();
     const first = createConnectionPair();
     const second = createConnectionPair();
     try {
       for (const pair of [first, second]) {
         serveConnection(pair.hostSide, {
+          hostService: service,
           workspaceRoot: workspace,
           defaultModel: "deterministic",
         });
@@ -5354,50 +5388,43 @@ describe("host protocol", () => {
         ),
       ]);
 
-      // P0 fact: the reservation lives on each per-connection HostRuntime, so
-      // both starts are admitted. P4 replaces this assertion with same-lane
-      // serialization through the process coordinator.
+      // The HostService lane coordinator serializes the shared session; both
+      // requests still complete successfully once each owns the lane.
       expect(responses).toEqual([
         expect.objectContaining({ envelope: "response", ok: true }),
         expect.objectContaining({ envelope: "response", ok: true }),
       ]);
+      await Promise.all(
+        [first, second].map((pair) =>
+          pair.waitFor(
+            (message) =>
+              message.envelope === "event" && message.kind === "run.completed",
+          ),
+        ),
+      );
     } finally {
       first.close();
       second.close();
+      await service.shutdown();
       await rmWhenReady(workspace);
     }
   });
 
-  it("rejects Host injection when the current Core run is already terminal", async () => {
+  it("rejects injection for an unregistered run through the service", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "sparkwright-runtime-"));
-    const runtime = new HostRuntime({
+    const runtime = createTestHostRuntime({
       workspaceRoot: workspace,
       emit: () => {},
     });
     try {
-      const run = createRun({ goal: "already complete" });
-      await run.start();
-      (runtime as unknown as { active: unknown }).active = {
-        runId: run.record.id,
-        run,
-        trace: { append() {} },
-        sessionId: "terminal_inject",
-      };
-
       expect(
-        runtime.injectRunMessage(run.record.id, { content: "too late" }),
+        runtime.injectRunMessage("run_unregistered", { content: "too late" }),
       ).toMatchObject({
         ok: false,
         error: {
           code: "run_not_found",
-          message: expect.stringContaining("closed"),
         },
       });
-      expect(
-        run.events
-          .all()
-          .filter((event) => event.type === "run.command.enqueued"),
-      ).toHaveLength(0);
     } finally {
       runtime.cleanup();
       await rmWhenReady(workspace);
@@ -5407,7 +5434,7 @@ describe("host protocol", () => {
   it("disconnect aborts an execution that is still assembling", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "sparkwright-runtime-"));
     const events: HostMessage[] = [];
-    const runtime = new HostRuntime({
+    const runtime = createTestHostRuntime({
       workspaceRoot: workspace,
       defaultModel: "deterministic",
       emit: (event) => events.push(event),
@@ -5472,7 +5499,7 @@ describe("host protocol", () => {
         },
       });
 
-      const runtime = new HostRuntime({
+      const runtime = createTestHostRuntime({
         workspaceRoot: workspace,
         defaultModel: "deterministic",
         emit: () => {},

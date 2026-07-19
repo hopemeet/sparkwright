@@ -7,7 +7,7 @@
 // (node built-ins only) so `npm run build`/`typecheck`/`test` stay fast and
 // hermetic.
 //
-//   npm run golden-path     # full golden path (mentions --write)
+//   npm run golden-path     # full golden path (mentions --access-mode)
 //   npm run smoke           # read-only variant (passes --readonly)
 
 import { readFile } from "node:fs/promises";
@@ -15,7 +15,7 @@ import { join } from "node:path";
 
 /** Tokens every golden-path README must mention, by mode. */
 const COMMON_TOKENS = ["--workspace", "--target README.md", "trace.jsonl"];
-const WRITE_TOKENS = ["--write", "approval"];
+const WRITE_TOKENS = ["--access-mode bypass", "approval"];
 
 async function main(): Promise<void> {
   const readonly = process.argv.includes("--readonly");

@@ -8,9 +8,167 @@ session attribution.
 
 See [../../modules/agent-runtime.md](../../modules/agent-runtime.md) and [../../modules/host.md](../../modules/host.md).
 
+## Last Verified
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: Agent completion and reuse share canonical predicates. Parallel
+  aggregation treats completed-signal partial children as incomplete, while
+  duplicate-management bypass opens only for exact complete+clean cache hits.
+  Partial/unhealthy repeats remain under Core's existing guard.
+- Read: Agent Runtime result/ledger/tool, Host parallel/dynamic assembly, Core
+  repeated-call handling, and focused/full tests.
+- Tests: Agent Runtime 235/235 and Host 592/592.
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: complete+clean delegation reuse is now reachable from real sequential
+  model calls. Direct/indexed/parallel/dynamic Agent tools own duplicate
+  handling only for an existing cache hit; Core retains exact-repeat ownership
+  for uncached partial/unhealthy outcomes.
+- Read: Agent Runtime result/ledger/tool, Host Agent assembly/indexed router,
+  Core repeat guard, focused tests, and real Terra traces.
+- Tests: Agent Runtime result/ledger 10/10; Host Agent tools/spawn 117/117;
+  fixed Terra session used two indexed calls and one child run.
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: Agent results have two independent axes: finality
+  (`complete`/`incomplete`) and Core assessment health. Direct, delegated,
+  parallel, lifecycle, ledger, compacted-session, and cached-result paths retain
+  the child assessment; only complete+clean results are reusable.
+- Read: Agent Runtime result projector/types/ledger, Host Agent assembly/tool
+  responses, Core diagnostics/compaction, and TUI rendering.
+- Tests: Agent Runtime 234/234 and Host 591/591 passed, including an unhealthy
+  complete child case.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: per-run Agent assembly is now orchestrated by
+  `RunPreparationOperations` through the existing `AgentRuntimeAssembly` owner,
+  then admitted into the main catalog and capability snapshot. Agent identities,
+  routing, grants, models, hooks, promotion, and result semantics are unchanged.
+- Read: preparation/Agent owners, main catalog/snapshot seams, and focused tests.
+- Tests: direct owner plus focused Agent/Delegate gates are recorded with the
+  commit.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: configured Agent/Delegate capability inventory is now assembled for
+  inspection by `CapabilityRuntimeOperations`, reusing stateless
+  `AgentRuntimeAssembly` helpers. Live Agent execution assembly remains with
+  `AgentRuntimeAssembly`; identities, descriptors, and exposure are unchanged.
+- Read: capability owner, Agent assembly/tool catalogs, and protocol tests.
+- Tests: owner-level and focused Host capability suites passed.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: Host configured Agent/Delegate assembly has one owner in
+  `runtime/agent-runtime-assembly.ts`, covering profile/target resolution,
+  direct/indexed/parallel delegates, dynamic spawn, child models/hooks/tools,
+  workspace grants, promotion, result normalization, and background Agent task
+  execution. Capability inspection still projects the same effective facts
+  from HostRuntime and remains a later ownership boundary.
+- Read: Host Agent owner/runtime/adapters, Agent Runtime invocation/task/ledger
+  contracts, and focused tests.
+- Tests: owner-level 1/1, focused Host 359/359, and Agent Runtime 77/77 passed.
+
+- Status: Verified
+- Date: 2026-07-17T23:37:17+0800
+- Scope: Agent Runtime/Host delegate implementation imports moved to Core
+  `/internal`; Agent identity, admission, lifecycle, workspace authority, and
+  capability exposure contracts are unchanged.
+- Read: affected Agent Runtime/Host imports and Core barrels.
+- Tests: Agent Runtime focused 49/49, Host typecheck/build, and import gate.
+
+- Status: Verified
+- Date: 2026-07-17T13:00:00+0800
+- Scope: delegate capability descriptors no longer echo configured
+  `requiresApproval`; Host emits the required current-run approval fact plus
+  reasons/options, and CLI/TUI consume it directly.
+- Read: delegate policy/descriptor assembly, runtime capability projection,
+  protocol schema/fixture, CLI/TUI consumers, and Agent coverage routes.
+- Tests: Host capability/delegate protocol 14/14 and tools 88/88; CLI
+  capability 3/3; TUI capability 8/8; affected typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-17T08:25:00+0800
+- Scope: ACP and external-command tool results expose only canonical
+  `agentProfileId` for configured-profile identity. The parallel result/error
+  `agentId` alias is gone; lifecycle actor and child-run identity are unchanged.
+- Read: Host process delegate adapters/direct runner, CLI/TUI consumers, Core
+  trace projections, Agent Runtime lifecycle boundary, and focused tests.
+- Tests: Host ACP/external-command 30/30 and delegate protocol 8/8; CLI direct
+  delegate 1/1; Core trace 4/4; Host and repository test typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-17T01:07:28+0800
+- Scope: external-command delegate tool and `subagent.completed` results report
+  truncation only through canonical `stdoutTruncated` and `stderrTruncated`
+  fields; the aggregate compatibility alias is gone.
+- Read: Host external-command adapter/direct runner, Core process/trace
+  contracts, CLI serializer, Agent coverage routes, and public references.
+- Tests: Host external-command 20/20 and delegate protocol 8/8; CLI direct
+  delegate 1/1; Core trace 4/4; Host build/typecheck and repository test
+  typecheck; project-map drift; full release gate passed.
+
+- Status: Verified
+- Date: 2026-07-17T00:08:26+0800
+- Scope: removed the parallel `exposeChildrenAsDelegates` policy. Direct Agent
+  aliases now use only `exposure`, `pinnedDelegates`, and per-profile
+  `exposeAsDelegate`; generic delegation continues to use the canonical
+  resolved target index.
+- Read: Agent profile carrier, Host config/schema/resolver/runtime/direct
+  runner, CLI serializer/consumer, public docs, and focused tests.
+- Tests: Host Agent/config/tools 184/184; focused Host protocol 4/4; CLI
+  Agent/delegate/capability 9/9; Agent Runtime, Host, and CLI typechecks;
+  repository test typecheck; schema check; project-map drift; full release gate.
+
+- Status: Verified
+- Date: 2026-07-16T23:55:17+0800
+- Scope: Markdown Agent authoring has one explicit inheritance marker,
+  `model: "inherit"`; `model: "default"` is no longer admitted or normalized.
+  Persisted inheritance remains omission.
+- Read: Host tool schema/parser/serializer, discovery validation, public
+  Agent/manual guidance, capability/tool maps, and focused tests.
+- Tests: Host Agent profile/tools 125/125; capability protocol 5/5; CLI
+  Agent/capability routes 7/7; Host and CLI typechecks; repository test
+  typecheck; project-map drift; full release gate.
+
+- Status: Verified
+- Date: 2026-07-16T23:38:00+0800
+- Scope: Markdown Agent identity now has one source: the `.md` filename stem.
+  The frontmatter override and hidden `create_agent.id` reader were removed;
+  basename collision diagnostics and config-profile ids remain unchanged.
+- Read: Host scanner/parser/authoring/report paths, portable Agent profile
+  consumers, public docs/manual, and focused tests.
+- Tests: Host Agent profile/tools 125/125; focused Host protocol collision 1/1;
+  CLI Agent/capability routes 7/7; Host, Agent Runtime, and CLI typechecks;
+  repository test typecheck; project-map drift; full release gate.
+
+- Status: Verified
+- Date: 2026-07-16T23:05:00+0800
+- Scope: background Agent tasks deliver terminal results through the canonical
+  task actor sink/inbox; Agent lifecycle remains on `subagent.*` and no Agent
+  actor kind was added.
+- Read: TaskManager notification production, Host Agent-task runner/revival,
+  typed actor unions, and focused tests.
+- Tests: Agent Runtime task/workflow 90/90; Host task/workflow/protocol/Agent 122/122;
+  repository test typecheck; full release gate.
+
+- Status: Verified
+- Date: 2026-07-16T13:21:00+0800
+- Scope: Agent/delegate child runs receive only `InteractionChannel`; configured children use approval-only channels and dynamic write grants use scoped approval-only channels.
+- Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.
+- Tests: focused access/policy/protocol/CLI/TUI/ACP/Workflow tests; npm run typecheck:test; npm run schema:check.
+
+- Date: 2026-07-16
+- Scope: `delegate_agent`, `delegate_parallel`, workflow delegate nodes, and hook agent actions select targets only by `agentId`; configured tool names remain diagnostics and direct-tool identities.
+
 ## Main Files
 
 - `packages/host/src/runtime.ts`
+- `packages/host/src/runtime/agent-runtime-assembly.ts`
 - `packages/host/src/agent-spawn-grants.ts`
 - `packages/host/src/agent-profiles.ts`
 - `packages/host/src/delegate-runner.ts`
@@ -29,8 +187,8 @@ See [../../modules/agent-runtime.md](../../modules/agent-runtime.md) and [../../
 
 ```txt
 configured profiles/delegates
-  -> host derives agent profiles
-  -> delegate/spawn tools prepare one Agent invocation identity
+  -> AgentRuntimeAssembly resolves profiles, targets, and child catalogs
+  -> direct/indexed/parallel delegate and dynamic-spawn tools prepare one Agent invocation identity
   -> child run store factory
   -> session/agent trace attribution
 ```
@@ -46,6 +204,9 @@ configured profiles/delegates
   runs also carry `sessionId` on both parent-visible lifecycle metadata and the
   spawned child run metadata before persistence so stdout/event-stream views,
   child EventLog output, and `trace.jsonl` agree.
+- Process delegate tool results identify a configured profile only through
+  `agentProfileId`. They do not expose `agentId`, because that name belongs to
+  run/lifecycle actor attribution rather than a transport profile alias.
 - Delegate tools are capability surface, not a hidden second runtime.
 - Markdown-authored profiles are recursively discovered from layered
   `.sparkwright/agents` roots, parsed as YAML frontmatter plus prompt body, and
@@ -56,12 +217,13 @@ configured profiles/delegates
   `create_agent` surface does not expose or write a second `id`. It omits the
   default child mode and other inherited fields unless explicitly requested.
   An explicit persisted model must be `provider/model` or `deterministic`.
-  Model-facing authoring also accepts `inherit` / `default` as inheritance
-  aliases and normalizes them to omission before serialization. Semantic
+  Model-facing authoring accepts only `inherit` as an explicit inheritance
+  marker and normalizes it to omission before serialization. Semantic
   validation resolves explicit refs against the current layered config before
   any write, while file discovery fails closed and reports manually authored
   invalid syntax.
-  Legacy Markdown `id` overrides remain readable during migration.
+  Frontmatter does not carry a second logical id; nested paths are likewise not
+  folded into identity.
   Runtime discovery and CLI/capability reports share the same source-aware
   scanner so recursive walk, parse, and same-layer collision behavior stay in
   one place.
@@ -112,7 +274,8 @@ configured profiles/delegates
   default), conditional approval facts (`approvalRequiredUnderCurrentRun`,
   `approvalReasons`, `approvalRunOptions`), profile-selected potential
   capability, and `gatedByRunWrite` when workspace-write or shell access is
-  still behind the parent `--write` gate.
+  still behind a write-capable parent access mode. The same effective policy is the sole
+  policy input when Host constructs the in-process Agent tool.
 - Agent profile `triggers` and `when.keywords` are deterministic routing hints
   only. During run preparation the host evaluates those keywords against the
   current goal with the skill matcher, sorts matching delegates ahead of
@@ -127,6 +290,10 @@ configured profiles/delegates
   `capabilities.agents.exposure` / `pinnedDelegates` / `exposeAsDelegate`
   request them. Default exposure is indexed, so new child profiles no longer
   create one model-facing tool each.
+- Direct `delegates run` is a user-selected diagnostic entrypoint: explicit
+  inline/config delegate aliases remain runnable even when not model-facing,
+  while synthesized aliases must be selected by `exposure: "all"`, a pin, or
+  `exposeAsDelegate: true`.
 - Capability inspection keeps profile inventory broader than delegation:
   `CapabilitySnapshot.agents.profiles` reports all resolved Agent.md and
   inline-config profiles, including primary/non-delegate profiles, while
@@ -134,7 +301,7 @@ configured profiles/delegates
   delegation surfaces.
 - `capabilities.agents.enableParallelDelegates` exposes the opt-in
   `delegate_parallel` main-run tool. It fans out across configured in-process
-  delegates only, targets them by `agentId` (preferred) or legacy `toolName`,
+  delegates only, targets them by `agentId`,
   rejects ACP/external-command delegates, rejects any delegate whose effective
   child tool set implies workspace write or shell access, and runs as a
   foreground blocking tool with a bounded delegate list. Each child uses the
@@ -155,8 +322,8 @@ configured profiles/delegates
   request `grant.workspaceWrite: true`, or request one of the managed write
   tools (`write`, `edit`, `edit_anchored_text`) as sugar for that grant. The
   parent run approves this at spawn time through the normal tool approval path;
-  the child then receives a scoped approval resolver that auto-approves only
-  child `workspace.write` requests covered by the grant. The grant never exposes
+  the child then receives a scoped approval-only interaction channel that
+  auto-approves only child `workspace.write` requests covered by the grant. The grant never exposes
   `bash`, never bypasses `shouldWrite:false` or target/write budgets in the
   parent run policy, and cannot resurrect tools removed by `tools.allowed` /
   `tools.disabled` / `tools.use`.
@@ -167,8 +334,8 @@ configured profiles/delegates
   terminal/finality projection, cancellation path, and delegation ledger.
 - Background `agent` tasks call the same dynamic-spawn path through
   `runHostAgentTask()`, with the task controller signal bound to the child run
-  so `task_stop` cancels the background child instead of only stopping the
-  foreground parent turn. Parent-visible `subagent.*` events for this
+  so `task(action:"stop")` cancels the background child instead of only
+  stopping the foreground parent turn. Parent-visible `subagent.*` events for this
   `entrypoint:"agent_task"` path carry the owning `taskId` in payload and
   metadata so trace diagnostics can join child terminal evidence back to
   `task_create`. `task_create(kind:"agent")` uses the same workspace-write
@@ -222,14 +389,13 @@ configured profiles/delegates
   partial/truncated.
 - Configured in-process delegates are stable profile-backed children. Host
   expands their `AgentProfile.use` selectors against the configured delegate
-  child catalog (workspace read/write coding tools plus `shell` when selected
+  child catalog (workspace read/write coding tools plus `bash` when selected
   in the current runtime surface), intersects inherited selectors and concrete
   `allowedTools`, and passes only the resulting effective tools to the child run
   so prompt descriptors and runtime callability use one tool set.
-- Configured in-process delegate child runs share the host approval resolver
-  with the parent run for workspace write and shell gates, but keep
-  `interactionChannel` unset so delegates do not gain free-form user
-  interaction.
+- Configured in-process delegate child runs receive an approval-only Host
+  interaction channel for workspace write and shell gates, so delegates do not
+  gain free-form user interaction.
 - Configured in-process delegates inherit the parent run's effective `maxSteps`
   when neither the delegate nor the child profile sets one. Delegate/profile
   overrides remain explicit product choices, while run depth remains governed by
@@ -263,7 +429,10 @@ configured profiles/delegates
   dynamic `spawn_agent` all read and write this ledger so a later equivalent
   delegation can return the previous child result with `alreadyCompleted: true`
   instead of spawning a duplicate child. The ledger does not reuse failed,
-  step-limited, or truncated children. Equivalence is exact after conservative
+  unhealthy, step-limited, or truncated children. Agent tools declare their
+  tool-owned duplicate protocol so a sequential exact repeat reaches this
+  ledger instead of being intercepted by Core's generic repeat nudge.
+  Equivalence is exact after conservative
   Unicode/case/whitespace normalization; fuzzy directory-listing or text
   similarity must not cross target paths.
 - The indexed `delegate_agent` router is a Host-owned adapter in
@@ -353,7 +522,9 @@ configured profiles/delegates
   stderr `SPARKWRIGHT_EVENT:` token progress is summarized back onto the
   delegate tool result and `subagent.completed.payload.result` as
   `progressCount`, `progressDropped`, `progressHead`, and `progressTail`; it
-  does not create `extension.process.*` lifecycle rows. When a read/write
+  does not create `extension.process.*` lifecycle rows. Output truncation is
+  reported per stream through `stdoutTruncated` and `stderrTruncated`, without
+  an aggregate compatibility alias. When a read/write
   ACP or external command delegate is granted direct workspace access it emits
   an untracked write-capable marker, not managed write events.
 
@@ -386,6 +557,23 @@ configured profiles/delegates
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T10:44:25+0800
+- Scope: background Agent task management now documents and tests only the
+  canonical `task` action surface; child cancellation behavior is unchanged.
+- Read: Agent task runner, Task control handlers, Host catalog, and focused tests.
+- Tests: agent-runtime Task 69/69, Host protocol/Agent-task 61/61, and repository
+  test typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-16T10:27:51+0800
+- Scope: in-process delegate tool construction now consumes only the effective
+  capability-derived policy; target capability and approval behavior are unchanged.
+- Read: Agent-tool contract, Host delegate capability facts/runtime assembly,
+  descriptors, and focused policy tests.
+- Tests: agent-runtime index 45/45, Host tools 89/89, affected builds/typechecks,
+  and repository test typecheck passed.
+
+- Status: Verified
 - Date: 2026-07-16T08:56:29+0800
 - Scope: retired the workspace Agent-arbiter compatibility vocabulary; all
   Agent paths consume the canonical lease coordinator directly.
@@ -405,10 +593,10 @@ configured profiles/delegates
 - Status: Verified
 - Date: 2026-07-15T23:51:43+0800
 - Scope: Agent/Profile tools now physically narrow admitted Host/child catalogs;
-  deny wins over allow, exact built-in aliases normalize, and MCP wildcard
-  patterns remain supported without exposing denied matches.
+  deny wins over allow, built-in names match exactly, and MCP wildcard patterns
+  remain supported without exposing denied matches.
 - Read: Markdown/config Profile normalization, derived child Profiles, main and
-  child catalog clamps, Core alias policy ordering, capability inspection.
+  child catalog clamps, Core exact-name policy ordering, capability inspection.
 - Tests: focused Profile admission 4/4 and Agent Profile 39/39; real restricted
   main Profile exposed only `read` and `grep` in
   `session_mrlmpwmud4y4ghev` with no approval or write.

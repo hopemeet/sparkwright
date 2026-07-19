@@ -1,10 +1,9 @@
 import type {
   BackgroundTaskPolicy,
-  PermissionMode,
   RunAccessMode,
   TraceLevel,
 } from "@sparkwright/protocol";
-import type { CliApprovalOptions, CliRunAccess } from "../run-access.js";
+import type { CliRunAccess } from "../run-access.js";
 
 export interface CliRunResult {
   exitCode: number;
@@ -24,22 +23,16 @@ export interface ParsedArgs {
   workspaceRootSource: "default" | "config" | "cli";
   sessionRootDir: string;
   sessionRootDirSource: "default" | "cli";
-  targetPath: string;
-  targetPathSource: "default" | "cli";
+  /** Explicit workspace-relative target. Omitted means the run is untargeted. */
+  targetPath?: string;
   /** Workspace-relative paths/globs whose contents the run must not read. */
   confidentialPaths: string[];
   /** Whether the built-in conservative confidential path defaults are active. */
   confidentialDefaults: boolean;
   imagePaths: string[];
-  accessMode?: RunAccessMode;
+  accessMode: RunAccessMode;
   backgroundTasks?: BackgroundTaskPolicy;
-  shouldWrite: boolean;
-  approveAll: boolean;
-  approveEdits: boolean;
-  approveShellSafe: boolean;
-  permissionMode: PermissionMode;
   runAccess: CliRunAccess;
-  approvalOptions: CliApprovalOptions;
   /** Model reference in "provider/model" form, or the reserved "deterministic". */
   modelName?: string;
   modelNameSource?: "config" | "cli";

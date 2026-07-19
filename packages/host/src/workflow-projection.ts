@@ -15,18 +15,16 @@ import {
   advanceWorkflowState,
   assertWorkflowRuntimeDefinition,
   createInitialWorkflowRuntimeState,
-  hasUnfinishedTodo,
-  summarizeTodoLedger,
-  type TodoLedger,
   type WorkflowCommandVerifierDefinition,
   type WorkflowDiffScopeVerifierDefinition,
   type WorkflowDefinition,
+  type WorkflowExecutableDefinition,
   type WorkflowEvidenceRef,
   type WorkflowNodeDefinition,
   type WorkflowNodeVerdict,
   type WorkflowParallelBranchState,
+  type PinnedWorkflowDefinition,
   type WorkflowRuntimeState,
-  type WorkflowTodoClearVerifierDefinition,
   type WorkflowTransitionDecision,
   type WorkflowTransitionDefinition,
   type WorkflowVerifierDefinition,
@@ -37,7 +35,6 @@ import {
   createConfiguredWorkflowHooks,
   type CreateConfiguredWorkflowHooksOptions,
 } from "./workflow-hooks.js";
-import { canonicalToolName } from "./tool-identities.js";
 import { runWorkflowScriptNode } from "./workflow-node-api.js";
 
 const DEFAULT_STOP_RUNTIME_ERROR_THRESHOLD = 3;
@@ -48,7 +45,7 @@ export interface CreateWorkflowProjectionHooksOptions extends Omit<
   CreateConfiguredWorkflowHooksOptions,
   "hooks" | "workflowActive"
 > {
-  definition: WorkflowDefinition;
+  definition: WorkflowDefinition | PinnedWorkflowDefinition;
   taskTool?: ToolDefinition;
   delegateParallelTool?: ToolDefinition;
   workflowRunId?: string;
@@ -60,7 +57,6 @@ export interface CreateWorkflowProjectionHooksOptions extends Omit<
     snapshot: WorkflowProjectionStateSnapshot,
   ) => void | Promise<void>;
   getEvidenceRefs?: (nodeId: string) => readonly WorkflowEvidenceRef[];
-  readTodoLedger?: () => TodoLedger | Promise<TodoLedger>;
   allowScriptWrite?: boolean;
   isToolAvailable?: (toolName: string) => boolean;
   isScopedToolSearchAvailable?: () => boolean;
@@ -78,7 +74,7 @@ export interface WorkflowProjectionHookSet {
 
 export interface WorkflowProjectionStateSnapshot {
   workflowRunId: string;
-  definition: WorkflowDefinition;
+  definition: WorkflowDefinition | PinnedWorkflowDefinition;
   state: WorkflowRuntimeState;
   phase:
     | "started"
@@ -152,7 +148,13 @@ export function createWorkflowProjectionHooks(
     input.events?.emit(type, {
       workflowRunId,
       assetName: options.definition.assetName,
-      contentHash: options.definition.contentHash,
+      ...(isPinnedWorkflowDefinition(options.definition)
+        ? {
+            packageHash: options.definition.packageHash,
+            packageHashPolicyVersion:
+              options.definition.packageHashPolicyVersion,
+          }
+        : {}),
       ...(options.definition.version
         ? { version: options.definition.version }
         : {}),
@@ -555,8 +557,7 @@ export function createWorkflowProjectionHooks(
     }
     const result = await runConfiguredNodeAction(input, node.id, {
       type: "agent",
-      ...(delegate.agentId ? { agentId: delegate.agentId } : {}),
-      ...(delegate.toolName ? { toolName: delegate.toolName } : {}),
+      agentId: delegate.agentId,
       goal: delegate.goal,
       ...(delegate.metadata ? { metadata: delegate.metadata } : {}),
       injectOutput: "never",
@@ -579,7 +580,6 @@ export function createWorkflowProjectionHooks(
             attempt,
             execute: "delegate",
             agentId: delegate.agentId,
-            toolName: delegate.toolName,
           },
         },
       ],
@@ -949,12 +949,7 @@ export function createWorkflowProjectionHooks(
       output = await options.delegateParallelTool.execute(
         {
           delegates: branches.map((branch) => ({
-            ...(branch.delegate?.agentId
-              ? { agentId: branch.delegate.agentId }
-              : {}),
-            ...(branch.delegate?.toolName
-              ? { toolName: branch.delegate.toolName }
-              : {}),
+            agentId: branch.delegate?.agentId,
             goal: branch.delegate?.goal ?? branch.body,
             metadata: {
               ...(branch.delegate?.metadata ?? {}),
@@ -1168,18 +1163,11 @@ export function createWorkflowProjectionHooks(
           return { status: "continue", metadata: { workflowRunId } };
         }
         const toolName = toolNameFromPayload(input.payload);
-        const toolCanonical = toolName
-          ? canonicalToolName(toolName)
-          : undefined;
-        const allowedCanonical = new Set(allowed.map(canonicalToolName));
-        if (
-          !toolName ||
-          (toolCanonical !== undefined && allowedCanonical.has(toolCanonical))
-        ) {
+        if (!toolName || allowed.includes(toolName)) {
           return { status: "continue", metadata: { workflowRunId } };
         }
         if (
-          toolCanonical === "tool_search" &&
+          toolName === "tool_search" &&
           options.isScopedToolSearchAvailable?.() === true
         ) {
           return { status: "continue", metadata: { workflowRunId } };
@@ -1224,8 +1212,6 @@ export function createWorkflowProjectionHooks(
                   hookName: familyName,
                   node,
                   nodeEntryWriteEpoch: undefined,
-                  readTodoLedger: options.readTodoLedger,
-                  runId: input.run.id,
                 });
                 return {
                   node,
@@ -1294,8 +1280,6 @@ export function createWorkflowProjectionHooks(
             nodeEntryWriteEpoch: nodeEntryEpochs.get(
               `${node.id}:${state.attempts[node.id] ?? 1}`,
             ),
-            readTodoLedger: options.readTodoLedger,
-            runId: input.run.id,
           });
           const completedAttempt = state.attempts[node.id] ?? 1;
           const advanced = advanceWorkflowState({
@@ -1589,6 +1573,19 @@ export function createWorkflowProjectionHooks(
   };
 }
 
+function isPinnedWorkflowDefinition(
+  definition: WorkflowExecutableDefinition,
+): definition is PinnedWorkflowDefinition {
+  return (
+    "packageHash" in definition &&
+    typeof definition.packageHash === "string" &&
+    "packageHashPolicyVersion" in definition &&
+    definition.packageHashPolicyVersion === 2 &&
+    "packageSnapshotRef" in definition &&
+    typeof definition.packageSnapshotRef === "string"
+  );
+}
+
 function verifierStopHooks(
   input: CreateWorkflowProjectionHooksOptions & {
     familyName: string;
@@ -1746,8 +1743,6 @@ async function nodeVerdictFromLedger(input: {
   hookName: string;
   node: WorkflowNodeDefinition;
   nodeEntryWriteEpoch: number | undefined;
-  readTodoLedger?: () => TodoLedger | Promise<TodoLedger>;
-  runId: string;
 }): Promise<WorkflowNodeVerdictEvaluation> {
   const verifiers = input.node.verify ?? [];
   if (verifiers.length === 0) {
@@ -1760,10 +1755,7 @@ async function nodeVerdictFromLedger(input: {
       evidenceRefs: [],
     };
   }
-  const factVerifiers = verifiers.filter(
-    (verifier) => verifier.kind !== "todo_clear",
-  );
-  if (!input.snapshot && factVerifiers.length > 0) {
+  if (!input.snapshot) {
     return {
       verdict: {
         status: "runtime_error",
@@ -1774,14 +1766,6 @@ async function nodeVerdictFromLedger(input: {
   }
   const results = await Promise.all(
     verifiers.map((verifier) => {
-      if (verifier.kind === "todo_clear") {
-        return evaluateTodoClearVerifier({
-          node: input.node,
-          verifier,
-          readTodoLedger: input.readTodoLedger,
-          runId: input.runId,
-        });
-      }
       if (verifier.kind === "diff_scope") {
         return evaluateDiffScopeVerifier({
           snapshot: input.snapshot!,
@@ -1960,82 +1944,8 @@ function evaluateDiffScopeVerifier(input: {
   };
 }
 
-async function evaluateTodoClearVerifier(input: {
-  node: WorkflowNodeDefinition;
-  verifier: WorkflowTodoClearVerifierDefinition;
-  readTodoLedger?: () => TodoLedger | Promise<TodoLedger>;
-  runId: string;
-}): Promise<WorkflowVerifierCheckResult> {
-  if (!input.readTodoLedger) {
-    const message = `Workflow todo_clear verifier "${input.verifier.id}" requires a todo ledger provider.`;
-    return {
-      verifier: input.verifier,
-      satisfied: false,
-      evidenceRefs: [],
-      runtimeError: message,
-      failure: {
-        verifierId: input.verifier.id,
-        kind: input.verifier.kind,
-        missingProvider: true,
-      },
-    };
-  }
-
-  let ledger: TodoLedger;
-  try {
-    ledger = await input.readTodoLedger();
-  } catch (cause) {
-    const message = `Workflow todo_clear verifier "${input.verifier.id}" failed to read the todo ledger: ${
-      cause instanceof Error ? cause.message : String(cause)
-    }`;
-    return {
-      verifier: input.verifier,
-      satisfied: false,
-      evidenceRefs: [],
-      runtimeError: message,
-      failure: {
-        verifierId: input.verifier.id,
-        kind: input.verifier.kind,
-        readFailed: true,
-        message,
-      },
-    };
-  }
-
-  const summary = summarizeTodoLedger(ledger);
-  const unfinished = ledger.items
-    .filter((item) => item.status !== "completed" && item.status !== "skipped")
-    .map((item) => ({
-      title: item.title,
-      status: item.status,
-      ...(item.id ? { id: item.id } : {}),
-    }));
-  return {
-    verifier: input.verifier,
-    satisfied: !hasUnfinishedTodo(ledger),
-    evidenceRefs: [
-      {
-        kind: "run",
-        ref: input.runId,
-        nodeId: input.node.id,
-        verifierId: input.verifier.id,
-        metadata: {
-          kind: "todo_clear",
-          summary,
-        },
-      },
-    ],
-    failure: {
-      verifierId: input.verifier.id,
-      kind: input.verifier.kind,
-      summary,
-      unfinished,
-    },
-  };
-}
-
 function validateWorkflowProjectionDefinition(
-  definition: WorkflowDefinition,
+  definition: WorkflowExecutableDefinition,
 ): void {
   assertWorkflowRuntimeDefinition(definition);
   for (const node of definition.nodes) {
@@ -2087,10 +1997,8 @@ function assertDelegateNodeRunnable(node: WorkflowNodeDefinition): void {
       `Workflow delegate node "${node.id}" requires a delegate definition.`,
     );
   }
-  if (!node.delegate.agentId && !node.delegate.toolName) {
-    throw new Error(
-      `Workflow delegate node "${node.id}" requires agentId or toolName.`,
-    );
+  if (!node.delegate.agentId) {
+    throw new Error(`Workflow delegate node "${node.id}" requires agentId.`);
   }
 }
 
@@ -2117,7 +2025,7 @@ function assertHumanNodeRunnable(node: WorkflowNodeDefinition): void {
 }
 
 function assertParallelNodeRunnable(
-  definition: WorkflowDefinition,
+  definition: WorkflowExecutableDefinition,
   node: WorkflowNodeDefinition,
 ): void {
   const parallel = node.parallel;
@@ -2179,7 +2087,7 @@ function assertParallelNodeRunnable(
 }
 
 function assertJoinNodeRunnable(
-  definition: WorkflowDefinition,
+  definition: WorkflowExecutableDefinition,
   node: WorkflowNodeDefinition,
 ): void {
   const join = node.join;
@@ -2233,7 +2141,7 @@ function workflowTransitionTargets(
 }
 
 function currentNode(
-  definition: WorkflowDefinition,
+  definition: WorkflowExecutableDefinition,
   state: WorkflowRuntimeState,
 ): WorkflowNodeDefinition | undefined {
   return state.currentNodeId
@@ -2242,14 +2150,14 @@ function currentNode(
 }
 
 function findWorkflowNode(
-  definition: WorkflowDefinition,
+  definition: WorkflowExecutableDefinition,
   nodeId: string,
 ): WorkflowNodeDefinition | undefined {
   return definition.nodes.find((node) => node.id === nodeId);
 }
 
 function parallelProducerNodeIds(
-  definition: WorkflowDefinition,
+  definition: WorkflowExecutableDefinition,
   branchId: string,
 ): string[] {
   return definition.nodes
@@ -2259,7 +2167,7 @@ function parallelProducerNodeIds(
 }
 
 function uniqueParallelProducerNodeId(
-  definition: WorkflowDefinition,
+  definition: WorkflowExecutableDefinition,
   branchId: string,
 ): string {
   const producers = parallelProducerNodeIds(definition, branchId);
@@ -2267,7 +2175,7 @@ function uniqueParallelProducerNodeId(
 }
 
 function nextNodeIsNonModel(
-  definition: WorkflowDefinition,
+  definition: WorkflowExecutableDefinition,
   state: WorkflowRuntimeState,
 ): boolean {
   if (state.status !== "running" || !state.currentNodeId) return false;
@@ -2282,7 +2190,7 @@ function nodeExecuteKind(
 }
 
 function resumeVerificationNodes(
-  definition: WorkflowDefinition,
+  definition: WorkflowExecutableDefinition,
   pendingNodeIds: ReadonlySet<string>,
 ): WorkflowNodeDefinition[] {
   return definition.nodes.filter(

@@ -7,8 +7,6 @@ export interface ConfigPanelResolved {
   workspaceRoot: string;
   modelName?: string;
   tuiPermissionMode: string;
-  permissionMode: string;
-  shouldWrite?: boolean;
   providers?: Record<string, unknown>;
   sources: {
     workspace?: string;
@@ -52,11 +50,6 @@ export function ConfigPanel(props: {
         <Text dimColor>accessMode: </Text>
         {resolved.tuiPermissionMode}
         <Text dimColor> ({resolved.sources.tuiPermissionMode ?? "?"})</Text>
-      </Text>
-      <Text>
-        <Text dimColor>core permission: </Text>
-        {resolved.permissionMode}
-        <Text dimColor> / shouldWrite={String(resolved.shouldWrite)}</Text>
       </Text>
       {resolved.providers && Object.keys(resolved.providers).length > 0 ? (
         <Text>

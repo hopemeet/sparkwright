@@ -5,29 +5,32 @@ import {
   type RunId,
   type TaskRevivalSource,
 } from "@sparkwright/core";
-import { type TaskManager } from "@sparkwright/agent-runtime";
-import { HostRuntime } from "../src/runtime.js";
-
-interface RuntimeTaskRevivalInternals {
-  taskManager: TaskManager;
-  createTaskRevivalBridge(getRunId: () => RunId | undefined): {
-    notificationSource: NotificationSource;
-    taskRevivalSource: TaskRevivalSource;
-  };
-}
+import {
+  InMemoryActorNotificationQueue,
+  InMemoryTaskStore,
+  TaskManager,
+} from "@sparkwright/agent-runtime";
+import { TaskRuntimeOperations } from "../src/runtime/task-runtime-operations.js";
 
 describe("host task revival bridge", () => {
   it("surfaces detached terminal notifications without keeping the run alive", async () => {
-    const runtime = new HostRuntime({
-      workspaceRoot: process.cwd(),
-      defaultModel: "deterministic",
-      emit: () => {},
+    const notifications = new InMemoryActorNotificationQueue();
+    const taskManager = new TaskManager({
+      store: new InMemoryTaskStore(),
+      notificationSink: notifications,
     });
-    const internals = runtime as unknown as RuntimeTaskRevivalInternals;
+    const operations = new TaskRuntimeOperations({
+      workspaceRoot: process.cwd(),
+      manager: taskManager,
+      notifications,
+    });
     const parentRunId = "run_detached_notification" as RunId;
-    const bridge = internals.createTaskRevivalBridge(() => parentRunId);
+    const bridge: {
+      notificationSource: NotificationSource;
+      taskRevivalSource: TaskRevivalSource;
+    } = operations.createRevivalBridge(() => parentRunId);
 
-    const handle = internals.taskManager.spawn({
+    const handle = taskManager.spawn({
       parentRunId,
       kind: "detached-test",
       title: "detached notification",
@@ -39,12 +42,14 @@ describe("host task revival bridge", () => {
     await expect(
       Promise.resolve(bridge.taskRevivalSource.hasAwaitedPending()),
     ).resolves.toBe(false);
-    const notifications =
+    const deliveredNotifications =
       (await bridge.notificationSource.drain()) as PendingNotification[];
 
-    expect(notifications).toHaveLength(1);
-    expect(notifications[0]?.content).toContain('Result summary: {"ok":true}');
-    expect(notifications[0]).toMatchObject({
+    expect(deliveredNotifications).toHaveLength(1);
+    expect(deliveredNotifications[0]?.content).toContain(
+      'Result summary: {"ok":true}',
+    );
+    expect(deliveredNotifications[0]).toMatchObject({
       source: { kind: "task", uri: `task:${handle.record.id}` },
       metadata: {
         taskId: handle.record.id,

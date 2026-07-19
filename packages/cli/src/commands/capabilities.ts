@@ -1,4 +1,4 @@
-import { createSessionId } from "@sparkwright/core";
+import { compileRunAccessMode, createSessionId } from "@sparkwright/core";
 import { defaultCronRoot } from "@sparkwright/cron";
 import type {
   CapabilityDelegateToolSummary,
@@ -28,7 +28,7 @@ import {
 import { prepareMcpToolsForRun } from "@sparkwright/mcp-adapter";
 import { resolveShellSandboxConfig } from "@sparkwright/shell-sandbox";
 import { RECOMMENDED_FOREGROUND_TIMEOUT_MS } from "@sparkwright/shell-tool";
-import { createCliApprovalResolver } from "../cli-approval.js";
+import { createCliInteractionChannel } from "../cli-approval.js";
 import type { CliIO } from "../io.js";
 import { writeLine } from "../io.js";
 import type { CliRunAccess } from "../run-access.js";
@@ -55,7 +55,7 @@ export function capabilitiesUsage(): string {
 
 export function delegatesUsage(): string {
   return [
-    'Usage: sparkwright delegates run <external-delegate-tool> "goal" [--workspace path] [--goal text] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--session-id id] [--trace-level standard|debug] [--format json|text]',
+    'Usage: sparkwright delegates run <external-delegate-tool> "goal" [--workspace path] [--goal text] [--access-mode read-only|ask|accept-edits|bypass] [--session-id id] [--trace-level standard|debug] [--format json|text]',
     "       Supports ACP and external-command delegate tools; internal profiles run through normal run-loop delegation.",
   ].join("\n");
 }
@@ -160,7 +160,6 @@ interface CapabilityToolInspectEntry {
   risk?: "safe" | "risky" | "denied";
   origin?: string;
   canonicalName?: string;
-  legacyNames?: string[];
   defaultExposureTier?: string;
   effectiveLoading?: "eager" | "deferred";
   deferred?: boolean;
@@ -240,14 +239,11 @@ export async function handleDelegatesCommand(
     env,
     sessionId: parsed.sessionId ?? createSessionId(),
     traceLevel: parsed.traceLevel,
-    approvalResolver: createCliApprovalResolver({
-      approveAll: parsed.approvalOptions.approveAll,
-      approveEdits: parsed.approvalOptions.approveEdits,
-      approveShellSafe: parsed.approvalOptions.approveShellSafe,
-      permissionMode: parsed.runAccess.permissionMode,
+    interactionChannel: createCliInteractionChannel({
+      accessMode: parsed.runAccess.accessMode,
       io,
     }),
-    shouldWrite: parsed.runAccess.shouldWrite,
+    shouldWrite: compileRunAccessMode(parsed.runAccess.accessMode).shouldWrite,
   });
 
   if (!result.ok) {
@@ -490,8 +486,6 @@ async function inspectRuntimeCapabilities(
     model: options.modelName,
     accessMode: options.runAccess?.accessMode,
     backgroundTasks: options.runAccess?.backgroundTasks,
-    permissionMode: options.runAccess?.permissionMode,
-    shouldWrite: options.runAccess?.shouldWrite,
   });
   if (!inspected.ok) {
     throw new Error(
@@ -571,9 +565,6 @@ function runtimeToolToInspectEntry(input: {
       ...(input.tool.canonicalName
         ? { canonicalName: input.tool.canonicalName }
         : {}),
-      ...(input.tool.legacyNames
-        ? { legacyNames: input.tool.legacyNames }
-        : {}),
       ...(input.tool.defaultExposureTier
         ? { defaultExposureTier: input.tool.defaultExposureTier }
         : {}),
@@ -606,7 +597,6 @@ function runtimeToolToInspectEntry(input: {
     ...(input.tool.canonicalName
       ? { canonicalName: input.tool.canonicalName }
       : {}),
-    ...(input.tool.legacyNames ? { legacyNames: input.tool.legacyNames } : {}),
     ...(input.tool.defaultExposureTier
       ? { defaultExposureTier: input.tool.defaultExposureTier }
       : {}),
@@ -688,12 +678,8 @@ function formatCapabilityInspectReport(
     const tier = tool.defaultExposureTier
       ? `; tier=${tool.defaultExposureTier}`
       : "";
-    const legacy =
-      tool.legacyNames && tool.legacyNames.length > 0
-        ? `; legacy=${tool.legacyNames.join(",")}`
-        : "";
     lines.push(
-      `  tool: ${tool.name}${tool.risk ? ` (${tool.risk}; loading=${loading}${tier}${legacy})` : ` (loading=${loading}${tier}${legacy})`}${tool.origin ? ` ${tool.origin}` : ""}`,
+      `  tool: ${tool.name}${tool.risk ? ` (${tool.risk}; loading=${loading}${tier})` : ` (loading=${loading}${tier})`}${tool.origin ? ` ${tool.origin}` : ""}`,
     );
   }
   for (const tool of report.tools.available) {
@@ -702,12 +688,8 @@ function formatCapabilityInspectReport(
     const tier = tool.defaultExposureTier
       ? `; tier=${tool.defaultExposureTier}`
       : "";
-    const legacy =
-      tool.legacyNames && tool.legacyNames.length > 0
-        ? `; legacy=${tool.legacyNames.join(",")}`
-        : "";
     lines.push(
-      `  diagnostic tool: ${tool.name}${tool.risk ? ` (${tool.risk}; loading=${loading}${tier}${legacy})` : ` (loading=${loading}${tier}${legacy})`}${tool.origin ? ` ${tool.origin}` : ""}`,
+      `  diagnostic tool: ${tool.name}${tool.risk ? ` (${tool.risk}; loading=${loading}${tier})` : ` (loading=${loading}${tier})`}${tool.origin ? ` ${tool.origin}` : ""}`,
     );
   }
   for (const root of report.skills.roots) lines.push(`  root: ${root}`);
@@ -732,13 +714,11 @@ function formatCapabilityInspectReport(
     );
   }
   for (const tool of report.agents.delegateTools) {
-    const writeGate = tool.gatedByRunWrite ? "; gated=--write" : "";
-    const approvalRequired =
-      tool.approvalRequiredUnderCurrentRun ?? tool.requiresApproval;
+    const writeGate = tool.gatedByRunWrite ? "; gated=write-access" : "";
     const model = tool.model ? `; model=${tool.model}` : "";
     const routing = formatDelegateRouting(tool.routing);
     lines.push(
-      `  delegate: ${tool.toolName} -> ${tool.profileId} (${tool.protocol}${model}${routing}; approval=current-run:${approvalRequired ? "required" : "not-required"}; workspace=${tool.workspaceAccess}${writeGate})`,
+      `  delegate: ${tool.toolName} -> ${tool.profileId} (${tool.protocol}${model}${routing}; approval=current-run:${tool.approvalRequiredUnderCurrentRun ? "required" : "not-required"}; workspace=${tool.workspaceAccess}${writeGate})`,
     );
   }
   if (report.agents.shadows.length > 0) {
@@ -806,9 +786,7 @@ function formatCapabilityAccessLine(
 ): string {
   if (!access) return "unavailable";
   const parts = [
-    access.accessMode ? `accessMode=${access.accessMode}` : undefined,
-    `permissionMode=${access.permissionMode}`,
-    `shouldWrite=${String(access.shouldWrite)}`,
+    `accessMode=${access.accessMode}`,
     `backgroundTasks=${access.backgroundTasks}`,
     access.requestedAccessMode
       ? `requestedAccessMode=${access.requestedAccessMode}`

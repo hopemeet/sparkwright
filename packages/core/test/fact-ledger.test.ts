@@ -1,12 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
-  EventLog,
   FactLedger,
-  commandOutcomeSnapshotFromFactLedger,
   createRunId,
   factLedgerSnapshotFromUnknown,
   verificationProfileResultsFromFactLedger,
 } from "../src/index.js";
+import { EventLog } from "../src/internal.js";
 
 describe("FactLedger", () => {
   it("records shell command facts and marks old epochs stale after writes", () => {
@@ -18,12 +17,12 @@ describe("FactLedger", () => {
     log.emit("run.created", { goal: "Run verification" });
     log.emit("tool.requested", {
       id: "call_fail",
-      toolName: "shell",
+      toolName: "bash",
       arguments: { command: "npm test" },
     });
     log.emit("tool.completed", {
       toolCallId: "call_fail",
-      toolName: "shell",
+      toolName: "bash",
       output: { exitCode: 1, timedOut: false },
     });
 
@@ -43,12 +42,12 @@ describe("FactLedger", () => {
 
     log.emit("tool.requested", {
       id: "call_pass",
-      toolName: "shell",
+      toolName: "bash",
       arguments: { command: "npm test" },
     });
     log.emit("tool.completed", {
       toolCallId: "call_pass",
-      toolName: "shell",
+      toolName: "bash",
       output: { exitCode: 0, timedOut: false },
     });
 
@@ -58,7 +57,44 @@ describe("FactLedger", () => {
       stale: false,
       writeEpoch: 1,
     });
-    expect(commandOutcomeSnapshotFromFactLedger(snapshot)).toBeUndefined();
+  });
+
+  it("does not promote ordinary commands from verification-like goal prose", () => {
+    const log = new EventLog(createRunId());
+    const ledger = new FactLedger();
+    log.subscribe((event) => ledger.observeEvent(event));
+
+    log.emit("run.created", {
+      goal: "Verify the README title, then run the ordinary diagnostic.",
+    });
+    for (const [id, command, exitCode] of [
+      ["call_ok", "node diagnostic-ok.js", 0],
+      ["call_fail", "node diagnostic.js", 7],
+    ] as const) {
+      log.emit("tool.requested", {
+        id,
+        toolName: "bash",
+        arguments: { command },
+      });
+      log.emit("tool.completed", {
+        toolCallId: id,
+        toolName: "bash",
+        output: { exitCode, timedOut: false },
+      });
+    }
+
+    expect(ledger.snapshot().commands).toEqual([
+      expect.objectContaining({
+        command: "node diagnostic-ok.js",
+        exitCode: 0,
+        verificationRelevant: false,
+      }),
+      expect.objectContaining({
+        command: "node diagnostic.js",
+        exitCode: 7,
+        verificationRelevant: false,
+      }),
+    ]);
   });
 
   it("treats untracked write-capable boundaries as epoch bumps", () => {
@@ -68,16 +104,16 @@ describe("FactLedger", () => {
 
     log.emit("tool.requested", {
       id: "call_verify",
-      toolName: "shell",
+      toolName: "bash",
       arguments: { command: "npm test" },
     });
     log.emit("tool.completed", {
       toolCallId: "call_verify",
-      toolName: "shell",
+      toolName: "bash",
       output: { exitCode: 0, timedOut: false },
     });
     log.emit("workspace.write.untracked_access_granted", {
-      protocol: "promoted_shell",
+      protocol: "background_shell",
       marker: "untracked-write-capable",
       access: "granted",
     });
@@ -100,11 +136,14 @@ describe("FactLedger", () => {
     log.subscribe((event) => ledger.observeEvent(event));
 
     log.emit("workflow_hook.completed", {
-      hookName: "verification:fast:repro",
+      hookName: "workflow:verification_fast",
       hook: "PostToolUse",
       result: {
         status: "continue",
         metadata: {
+          verificationSource: "profile",
+          profile: "fast",
+          verifierId: "repro",
           command: "npm",
           args: ["test"],
           exitCode: 1,
@@ -119,7 +158,7 @@ describe("FactLedger", () => {
     expect(snapshot.commands[0]).toMatchObject({
       initiator: "verifier-launched",
       source: "workflow_hook",
-      hookName: "verification:fast:repro",
+      hookName: "workflow:verification_fast",
       nodeId: "reproduce",
       command: "npm",
       args: ["test"],
@@ -127,7 +166,8 @@ describe("FactLedger", () => {
       timedOut: false,
     });
     expect(snapshot.verificationResults[0]).toMatchObject({
-      hookName: "verification:fast:repro",
+      hookName: "workflow:verification_fast",
+      verificationSource: "profile",
       profile: "fast",
       nodeId: "reproduce",
       verifierId: "repro",
@@ -137,7 +177,7 @@ describe("FactLedger", () => {
     });
     expect(verificationProfileResultsFromFactLedger(snapshot)).toEqual([
       {
-        hookName: "verification:fast:repro",
+        hookName: "workflow:verification_fast",
         profile: "fast",
         id: "repro",
         status: "passed",
@@ -154,11 +194,15 @@ describe("FactLedger", () => {
 
     log.emit("workspace.write.completed", { path: "src/app.ts" });
     log.emit("workflow_hook.completed", {
-      hookName: "verification:fast:lint",
+      hookName: "workflow:verification_fast",
       hook: "PostToolUse",
       result: {
         status: "continue",
         metadata: {
+          verificationSource: "profile",
+          profile: "fast",
+          verifierId: "lint",
+          expect: "zero",
           command: "npm",
           args: ["run", "lint"],
           exitCode: 1,

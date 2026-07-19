@@ -7,6 +7,10 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 const ALLOWED_CORE_INTERNAL_IMPORTS = new Map([
   [
+    "packages/agent-runtime/src/index.ts",
+    "Agent runtime composes the unstable reference prompt builder around public run contracts.",
+  ],
+  [
     "packages/cli/src/cli.ts",
     "CLI owns the current local reference harness and file-backed trace store.",
   ],
@@ -23,12 +27,52 @@ const ALLOWED_CORE_INTERNAL_IMPORTS = new Map([
     "Host owns the current local reference harness and file-backed trace store.",
   ],
   [
+    "packages/host/src/runtime/capability-runtime-operations.ts",
+    "Host capability operations own Skill index-failure EventLog and session-scoped reference trace persistence.",
+  ],
+  [
+    "packages/host/src/runtime/agent-runtime-assembly.ts",
+    "Host Agent runtime assembly owns session-scoped child reference Core run stores.",
+  ],
+  [
+    "packages/host/src/runtime/workflow-episode-runtime.ts",
+    "Host Workflow episode execution owns session-scoped reference Core run stores.",
+  ],
+  [
+    "packages/host/src/delegate-runner.ts",
+    "Host delegate execution owns session-scoped reference trace persistence.",
+  ],
+  [
+    "packages/host/src/execution-resources.ts",
+    "Host execution assembly owns local workspace and in-memory trace reference implementations.",
+  ],
+  [
+    "packages/host/src/failure-trace.ts",
+    "Host start-failure recording owns EventLog and session-scoped reference trace persistence.",
+  ],
+  [
+    "packages/host/src/host-execution.ts",
+    "Host execution carries the internal in-memory trace implementation between episodes.",
+  ],
+  [
+    "packages/host/src/workspace-snapshot.ts",
+    "Host workspace snapshots use the local workspace reference implementation for guarded restoration.",
+  ],
+  [
     "packages/agent-runtime/src/doc-store/index.ts",
     "Agent-runtime doc-store is the public wrapper around core file-atomic helpers while core stays below runtime packages.",
   ],
   [
     "packages/streaming-runtime/src/index.ts",
     "Streaming runtime owns a sibling reference loop that currently constructs EventLog.",
+  ],
+  [
+    "packages/cron/src/runner.ts",
+    "Cron runner owns its local workspace and session-scoped reference trace persistence.",
+  ],
+  [
+    "packages/project-context/src/index.ts",
+    "Project context composes the unstable reference prompt-section implementation behind its public builder.",
   ],
   [
     "examples/custom-tool/register-tool.ts",
@@ -64,7 +108,10 @@ for (const file of walk(root)) {
     tuiCoreViolations.push(relative);
   }
   if (!CORE_INTERNAL_IMPORT_PATTERN.test(source)) continue;
-  if (!ALLOWED_CORE_INTERNAL_IMPORTS.has(relative)) {
+  if (
+    !ALLOWED_CORE_INTERNAL_IMPORTS.has(relative) &&
+    !/^packages\/[^/]+\/test\//.test(relative)
+  ) {
     violations.push(relative);
   }
 }

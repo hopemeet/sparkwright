@@ -8,6 +8,98 @@ human-readable transcript.
 
 See also [../maps/trace/export-diagnostics.md](../maps/trace/export-diagnostics.md) and [../maps/session/resume-replay.md](../maps/session/resume-replay.md).
 
+## Last Verified
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: EventStream renders a sole canonical `run.cancelled` terminal and its
+  run facts. RunController no longer creates an unpersisted Todo advisory row;
+  live and replay use the Todo band. Initial same-session restore skips the
+  empty-store reset, so EventStream's static header is not remounted.
+- Read: EventStream, RunController, EventStore reset/session flow, Todo band,
+  protocol terminal shape, and Ink/SDK regressions.
+- Tests: TUI 417/417; sole-cancel and initial-session regressions passed.
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: TUI terminal facts read canonical assessments, Agent lifecycle rows
+  expose child health/issues independently of terminal finality, and Todo no
+  longer manufactures client-side continuation episodes.
+- Read: event store/stream, run controller, Todo band, protocol DTOs, and Ink
+  rendering regressions.
+- Tests: focused assessment/Agent rendering passed; full TUI rerun is part of
+  final repository verification.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: Host capability inspection ownership moved internally. TUI continues
+  to consume the same protocol snapshot and owns no capability reconstruction;
+  panel fields and rendering are unchanged.
+- Read: Host capability owner, protocol snapshot, and TUI capability consumer.
+- Tests: focused Host capability passed; TUI gates are recorded with the commit.
+
+- Status: Verified
+- Date: 2026-07-17T23:37:17+0800
+- Scope: `/create skill` is the only TUI Skill creation route. Removed the
+  `/skill-create` command, dedicated create layer/dialog branch, action/parser
+  adapter, and compatibility guidance; `/skill-update` and review remain.
+- Read: command registry, capability/Skill actions, layer renderer/stack,
+  proposal helpers/dialog, tests, and Skill reference docs.
+- Tests: TUI create/evolution/command focused suites 22/22 and TUI typecheck.
+
+- Status: Verified
+- Date: 2026-07-17T17:20:00+0800
+- Scope: TUI Workflow state consumes required canonical run generation,
+  revision, layer, and v2 package identity. Durable cancel uses the required
+  generation directly and no Workflow snapshot fixture carries `contentHash`.
+- Read: Workflow controller/actions/display/panel, SDK cutover fixture, and
+  protocol Workflow snapshot contract.
+- Tests: TUI Workflow display/action/panel/SDK focused tests and TUI typecheck
+  passed before the full release gate.
+
+- Status: Verified
+- Date: 2026-07-17T13:00:00+0800
+- Scope: the capability panel renders delegate approval from the required
+  `approvalRequiredUnderCurrentRun` snapshot fact; it no longer reads a
+  delegate-config echo.
+- Read: TUI capability panel/test, protocol capability type/schema, Host
+  descriptor producer, and TUI rendering coverage.
+- Tests: TUI capability panel 8/8 and typecheck; Host protocol and CLI
+  capability tests passed.
+
+- Status: Verified
+- Date: 2026-07-17T09:43:00+0800
+- Scope: TUI config now projects the single Host loader result. The independent
+  file re-read, flat-key allowlist, grouped normalizer call, and UI validator
+  were removed; canonical ui.theme/mouse/keybindings/vim remain active.
+- Read: TUI config loader/app consumers, Host config contracts and loader,
+  config/capability/status tests, and generated schema.
+- Tests: TUI config/capability/status consumers 17/17; TUI and Host typechecks;
+  Host config/protocol 115/115; repository test typecheck; schema check;
+  project-map drift; full release gate including TUI 415/415, regression matrix,
+  and install smokes.
+
+- Status: Verified
+- Date: 2026-07-16T21:02:00+0800
+- Scope: Background task fixtures and untracked-write rendering use only
+  `shell.background` / `background_shell`; the promotion-named trace marker
+  reader was removed.
+- Read: TUI event stream, task activity/status renderers, focused tests, Host
+  Shell producer, and trace maps.
+- Tests: focused TUI event/activity/status rendering suites; TUI typecheck;
+  project-map drift check.
+
+- Status: Verified
+- Date: 2026-07-16T18:50:00+0800
+- Scope: Verification hook rendering reads explicit result metadata for
+  enforced invariant verifiers. The current `verification:<profile>` suggest
+  hook remains a display label, but packed
+  `verification:<profile>:<verifierId>` identities are not decoded.
+- Read: TUI event formatter/tests, Core FactLedger classifier/outcome, Host
+  invariant projection, and trace/protocol maps.
+- Tests: TUI event-format focused tests; Core/CLI outcome and FactLedger focused
+  tests; Core/CLI/TUI typechecks; test typecheck; project-map drift check.
+
 ## Main Files
 
 - `packages/tui/src/app.tsx`
@@ -51,9 +143,8 @@ Does not own:
 
 ## Contracts
 
-- `/create skill` is the canonical general creation entrypoint and
-  `/skill-create` is a hidden compatibility/advanced shortcut. Both prepare a
-  proposal through host `SkillCommandService`; neither writes the current Skill
+- `/create skill` is the sole Skill creation entrypoint. It prepares a proposal
+  through host `SkillCommandService` and never writes the current Skill
   directly. Review apply also calls the service so later-session approval uses
   the same effect-bound receipt as the in-run fast path.
 
@@ -90,14 +181,10 @@ Does not own:
   `bypass`) but no longer owns a persisted `ui.tuiPermissionMode` config field.
   File config uses shared `run.accessMode`; project `run.accessMode` becomes an
   access ceiling that clamps CLI/TUI runtime requests. Default `ask` runs send
-  `accessMode: ask` at the host request boundary, and the host compiles it to
-  `permissionMode: default`, `shouldWrite: true` so writes use the normal
-  approval path and write guardrails.
-- TUI no longer uses standalone `approveAll`/`approveEdits`/`approveShellSafe`
-  or config `approvals.*` as independent approval scopes. Approval auto-response
-  is still derived from the projected core `permissionMode` so `bypass` and
-  `accept-edits` preserve their mode semantics. `RunController` snapshots this
-  projected permission mode at run start, so runtime mode switches affect the
+  `accessMode: ask` at the host request boundary so writes use the normal
+  approval path and write guardrails. `bypass` and `accept-edits` derive their
+  auto-response policy from that same mode. `RunController` snapshots the
+  access mode at run start, so runtime mode switches affect the
   next run without changing auto-approval behavior for the active run.
 - In `ask` mode, the approval prompt can remember an exact workspace-write,
   shell command + cwd, or tool + arguments for the current TUI session. Rules
@@ -105,8 +192,8 @@ Does not own:
   first resolution, inspectable/clearable with `/approvals [clear]`, and never
   offered for an unrecognized approval shape. Simultaneous requests queue
   instead of replacing the visible prompt.
-- TUI config compatibility accepts the shared `confidentialDefaults` config key
-  but does not own a separate UI surface for read-confidentiality defaults; host
+- TUI consumes the shared grouped `policy.confidentialDefaults` config field but
+  does not own a separate UI surface for read-confidentiality defaults; Host
   config/runtime own validation and enforcement.
 - `shift+tab` (`cycle-permission-mode`) cycles the runtime permission mode in
   read-only -> ask -> accept-edits -> bypass order, skipping modes above the
@@ -153,6 +240,9 @@ Does not own:
 - Run facts do not label an explicit/promoted background shell handoff as a
   completed command; task lifecycle rows remain the visible source for its
   later terminal state.
+- Run facts use live shell events when available and the canonical
+  `run.completed.outcome.commandFailures` projection as the terminal fallback;
+  they do not parse a second command-outcome envelope.
 - Ctrl+O uses the `activity.open` binding and opens the Activity Drawer on the
   Tasks tab by default. `events.open` remains a configurable action with no
   default binding; `/events` and `events.open` both open the Activity Drawer on
@@ -191,6 +281,9 @@ Does not own:
   join/promote actions for host-backed callers; these callbacks call
   host-facing `task.join` / `task.promote` controls, while task state remains
   host/protocol-owned.
+- Todo event projection reads only canonical model/result item titles. It does
+  not retain a `content` fallback; malformed title-less trace rows use the
+  generic `(untitled)` diagnostic placeholder.
 - The Activity Drawer task details view is a bounded output browser: task
   selection uses arrow keys / `j` / `k`, output mode uses `f` / `H` / `T`, and
   long head/tail output can be paged with PgUp/PgDn or nudged with `[` / `]`.
@@ -201,7 +294,7 @@ Does not own:
   instead of dumping raw JSON.
 - `StatusBar` surfaces currently running background tasks with a Ctrl+O hint
   and an "untracked writes possible" disclosure when the `background_shell`
-  boundary marker is present; historical `promoted_shell` markers still render.
+  boundary marker is present.
 - Unread terminal task state crosses `useTaskActions` -> `LiveFrame` ->
   `StatusBar` as one `UnreadTaskActivitySummary`; consumers do not reconstruct
   completed counts from parallel total/failed/cancelled props.
@@ -265,9 +358,11 @@ Does not own:
   until the user submits again.
 - Long `/sessions` lists keep the selected row visible while navigating; row
   windows are presentation state and do not affect session storage order.
-- TUI UI preferences are read from the same config files the host loaded
-  (`config.json`, `config.yaml`, or `config.yml`), so same-layer conflict and
-  format precedence stays host-owned.
+- TUI config is a projection of the single Host loader result. Host validates
+  and merges `ui.theme`, `ui.mouse`, `ui.keybindings`, and `ui.vim` from
+  `config.json`, `config.yaml`, or `config.yml`; TUI does not re-read files or
+  keep a second parser. Same-layer conflict, format precedence, unknown-key
+  diagnostics, and keybinding layer merge therefore stay Host-owned.
 - TUI capability creation flows use host config read/write helpers and preserve
   an existing project YAML file when adding MCP servers or agent profiles.
 - TUI cron capability creation routes through `@sparkwright/cron`
@@ -346,6 +441,32 @@ Does not own:
   durable control inbox before adding daemon and multi-channel adapters.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-16T13:36:30+0800
+- Scope: Removed the dead validation-hook active phase and its start/completed compatibility events; TUI still renders current `validation.failed` diagnostics.
+- Read: TUI event store, active-phase tests, Core event vocabulary, and event schema.
+- Tests: focused TUI tests; npm run build; npm run typecheck:test; npm run release:check.
+
+- Date: 2026-07-16T12:45:00+0800
+- Scope: TUI startup, runtime switching, Host requests, metadata, and capability views use canonical access modes without deprecated flag aliases.
+- Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.
+- Tests: focused access/policy/protocol/CLI/TUI/ACP/Workflow tests; npm run typecheck:test; npm run schema:check.
+
+- Status: Verified
+- Date: 2026-07-16
+- Scope: live failure rows, transcript export, run controller, inspector, and
+  workflow actions consume protocol `failure` only; the legacy root-error render
+  test and fallback were removed.
+- Read: protocol helper, TUI failure consumers, SDK integration, and focused
+  renderer/controller tests.
+
+- Status: Verified
+- Date: 2026-07-16T10:44:25+0800
+- Scope: Task request previews now format only canonical `task_create` and
+  `task(action=...)` calls; parallel Task tool-name branches were removed.
+- Read: TUI request preview formatter/tests and Host Task catalog.
+- Tests: TUI request preview 4/4 and repository test typecheck passed.
 
 - Status: Verified
 - Date: 2026-07-15T23:53:45+0800

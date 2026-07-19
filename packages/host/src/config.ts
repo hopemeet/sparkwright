@@ -2,7 +2,6 @@ export {
   costToPricing,
   isValidModelRefSyntax,
   loadHostConfig,
-  normalizeGroupedConfig,
   parseModelRef,
   resolveModelSelection,
 } from "./config/config-implementation.js";
@@ -42,7 +41,6 @@ export type {
   SharedConfigWarning,
 } from "./config/contracts.js";
 export type {
-  ApprovalDefaults,
   AgentExposureMode,
   CapabilityDelegateToolConfig,
   CapabilityEventHookConfig,

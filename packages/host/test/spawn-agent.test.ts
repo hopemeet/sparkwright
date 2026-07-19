@@ -7,19 +7,21 @@ import {
   createLayeredPolicy,
   createPermissionModePolicy,
   createRun,
-  createSessionFileRunStoreFactory,
   createSessionRunStoreFactory,
   createWorkspaceMutationPolicy,
   createWorkspaceReadScopePolicy,
   defineTool,
   FileSessionStore,
   isToolConcurrencySafe,
-  LocalWorkspace,
   type ModelAdapter,
   type ToolDefinition,
 } from "@sparkwright/core";
 import {
-  InMemoryTaskNotificationQueue,
+  createSessionFileRunStoreFactory,
+  LocalWorkspace,
+} from "@sparkwright/core/internal";
+import {
+  InMemoryActorNotificationQueue,
   InMemoryTaskStore,
   TaskManager,
   type TaskId,
@@ -210,7 +212,7 @@ describe("host spawn_agent wiring", () => {
 
       expect(output.signal).toBe("completed");
       // Child finished on step 2 of 3 — it had budget to spare.
-      expect(output.stepLimitReached).toBe(false);
+      expect(output.stepLimitReached).not.toBe(true);
 
       // (1) The child's own trace is persisted under its agent directory.
       const childTrace = await readFileWhenReady(
@@ -328,17 +330,19 @@ describe("host spawn_agent wiring", () => {
         tools: [spawnTool],
         policy,
         maxSteps: 5,
-        approvalResolver(request) {
-          approvalCalls += 1;
-          approvedBeforeChildStarted = childCalls === 0;
-          expect(request.summary).toContain(
-            'Grant workspace write to child "writer"',
-          );
-          return {
-            approvalId: request.id,
-            decision: "approved",
-            message: "approved",
-          };
+        interactionChannel: {
+          approve(request) {
+            approvalCalls += 1;
+            approvedBeforeChildStarted = childCalls === 0;
+            expect(request.summary).toContain(
+              'Grant workspace write to child "writer"',
+            );
+            return {
+              approvalId: request.id,
+              decision: "approved",
+              message: "approved",
+            };
+          },
         },
         model: {
           async complete() {
@@ -433,16 +437,18 @@ describe("host spawn_agent wiring", () => {
         tools: [spawnTool],
         policy,
         maxSteps: 5,
-        approvalResolver(request) {
-          expect(request.summary).toContain(
-            'Grant workspace write to child "writer"',
-          );
-          return {
-            approvalId: request.id,
-            decision: "approved",
-            message: "Auto-approved by bypass_permissions.",
-            autoApproved: true,
-          };
+        interactionChannel: {
+          approve(request) {
+            expect(request.summary).toContain(
+              'Grant workspace write to child "writer"',
+            );
+            return {
+              approvalId: request.id,
+              decision: "approved",
+              message: "Auto-approved by bypass_permissions.",
+              autoApproved: true,
+            };
+          },
         },
         model: {
           async complete() {
@@ -517,12 +523,14 @@ describe("host spawn_agent wiring", () => {
         tools: [spawnTool],
         policy,
         maxSteps: 3,
-        approvalResolver(request) {
-          return {
-            approvalId: request.id,
-            decision: "denied",
-            message: "denied",
-          };
+        interactionChannel: {
+          approve(request) {
+            return {
+              approvalId: request.id,
+              decision: "denied",
+              message: "denied",
+            };
+          },
         },
         model: {
           async complete() {
@@ -597,8 +605,12 @@ describe("host spawn_agent wiring", () => {
         tools: [spawnTool],
         policy,
         maxSteps: 3,
-        approvalResolver() {
-          throw new Error("read-only grant denial must happen before approval");
+        interactionChannel: {
+          approve() {
+            throw new Error(
+              "read-only grant denial must happen before approval",
+            );
+          },
         },
         model: {
           async complete() {
@@ -679,8 +691,12 @@ describe("host spawn_agent wiring", () => {
         tools: [spawnTool],
         policy,
         maxSteps: 3,
-        approvalResolver() {
-          throw new Error("default read-only spawn must not request approval");
+        interactionChannel: {
+          approve() {
+            throw new Error(
+              "default read-only spawn must not request approval",
+            );
+          },
         },
         model: {
           async complete() {
@@ -1008,13 +1024,15 @@ describe("host spawn_agent wiring", () => {
         tools: [spawnTool],
         policy,
         maxSteps: 5,
-        approvalResolver(request) {
-          approvalCalls += 1;
-          return {
-            approvalId: request.id,
-            decision: "approved",
-            message: "approved",
-          };
+        interactionChannel: {
+          approve(request) {
+            approvalCalls += 1;
+            return {
+              approvalId: request.id,
+              decision: "approved",
+              message: "approved",
+            };
+          },
         },
         model: {
           async complete() {
@@ -1058,7 +1076,7 @@ describe("host spawn_agent wiring", () => {
   });
 
   it("promotes slow dynamic spawn_agent work while preserving projection and ledger", async () => {
-    const sink = new InMemoryTaskNotificationQueue();
+    const sink = new InMemoryActorNotificationQueue();
     const taskManager = new TaskManager({
       store: new InMemoryTaskStore(),
       notificationSink: sink,
@@ -1138,10 +1156,14 @@ describe("host spawn_agent wiring", () => {
     });
     expect(sink.drain()).toMatchObject([
       {
-        taskId: ticket.taskId,
-        status: "completed",
-        kind: "agent",
-        title: "spawn_agent: slow reader",
+        source: { kind: "task", id: ticket.taskId },
+        type: "completed",
+        payload: {
+          taskId: ticket.taskId,
+          status: "completed",
+          kind: "agent",
+          title: "spawn_agent: slow reader",
+        },
       },
     ]);
     const parentEventTypes = parent.events.all().map((event) => event.type);
@@ -1391,7 +1413,7 @@ describe("host spawn_agent wiring", () => {
           goal: "read",
           role: "reader",
           prompt: "Read.",
-          allowedTools: ["read_file"],
+          allowedTools: ["read"],
         },
         { run: parent.record } as never,
       ),
@@ -1417,7 +1439,7 @@ describe("host spawn_agent wiring", () => {
           if (childCalls === 1) {
             return {
               toolCalls: [
-                { toolName: "read_file", arguments: { path: "secret.txt" } },
+                { toolName: "read", arguments: { path: "secret.txt" } },
               ],
             };
           }
@@ -1451,7 +1473,7 @@ describe("host spawn_agent wiring", () => {
           goal: "read secret.txt",
           role: "reader",
           prompt: "Read secret.txt and report what happens.",
-          allowedTools: ["read_file"],
+          allowedTools: ["read"],
           maxSteps: 3,
         },
         { run: parent.record } as never,
@@ -1528,16 +1550,16 @@ describe("host spawn_agent wiring", () => {
         childRunStoreFactory,
       });
 
-      const output = (await spawnTool.execute(
-        {
-          goal: "list files",
-          role: "inspector",
-          prompt: "List the files.",
-          allowedTools: ["glob"],
-          maxSteps: 1,
-        },
-        { run: parent.record } as never,
-      )) as {
+      const args = {
+        goal: "list files",
+        role: "inspector",
+        prompt: "List the files.",
+        allowedTools: ["glob"],
+        maxSteps: 1,
+      };
+      const output = (await spawnTool.execute(args, {
+        run: parent.record,
+      } as never)) as {
         signal: string;
         stopReason: string;
         stepLimitReached?: boolean;
@@ -1551,8 +1573,10 @@ describe("host spawn_agent wiring", () => {
       expect(output.stepLimitReached).toBe(true);
       expect(output.truncated).toBe(true);
       expect(output.finality).toBe("partial");
-      expect(output.message).toContain("hit its step budget");
-      expect(output.message).toContain("partial list");
+      expect(output.message).toBe(
+        "partial list: README.md, ... (more omitted)",
+      );
+      expect(spawnTool.managesRepeatedCalls?.(args)).toBe(false);
     } finally {
       // Child session-store writes can still be flushing as the run resolves;
       // retry the cleanup rather than racing them into an ENOTEMPTY.

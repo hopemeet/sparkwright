@@ -34,7 +34,7 @@ describe("capability registry", () => {
     const registry = new CapabilityRegistry({
       capabilities: capabilitiesFromTools([
         {
-          name: "read_file",
+          name: "read",
           description: "Read a file.",
           inputSchema: { type: "object" },
         },

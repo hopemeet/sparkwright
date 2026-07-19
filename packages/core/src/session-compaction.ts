@@ -38,6 +38,7 @@ export interface SessionTraceFacts {
     childRunId: string;
     finality?: "complete" | "partial" | string;
     role?: string;
+    health?: "clean" | "degraded" | "failing" | string;
   }>;
 }
 
@@ -1707,7 +1708,7 @@ function signalsFromTraceFacts(
     entries.push(
       createSessionSignal(
         "subagent",
-        `subagent ${subagent.childRunId} finality=${subagent.finality ?? "unknown"}`,
+        `subagent ${subagent.childRunId} finality=${subagent.finality ?? "unknown"} health=${subagent.health ?? "unknown"}`,
         { metadata: subagent },
       ),
     );

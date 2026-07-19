@@ -47,13 +47,14 @@ contracts, and focused checklists that no longer fit here.
   runtime/storage/diagnostic adapters around core contracts. Treat core events,
   run/session stores, and trace maps as the active contracts.
 - `server-runtime`'s `InFlightCommandDispatcher` only coalesces concurrent local
-  dispatch of the same command id. `DurableCommandDispatcher` remains a
-  deprecated naming alias and is not durable. Agent-runtime storage and the
-  workflow journal remain command/outcome/apply truth; Host remains the adapter
-  that assembles a fenced writer and execution behavior.
-- `ConnectionHub`, `RunManager`, `SessionManager`, `ApprovalBroker`, and
-  `createServerRuntime` remain deprecated compatibility utilities isolated from
-  the canonical HostService -> ExecutionLaneCoordinator path.
+  dispatch of the same command id. Agent-runtime storage and the workflow
+  journal remain command/outcome/apply truth; Host remains the adapter that
+  assembles a fenced writer and execution behavior. The misleading
+  `DurableCommandDispatcher` alias and the parallel `ConnectionHub` /
+  `RunManager` / `SessionManager` / `ApprovalBroker` /
+  `ServerCapabilityRegistry` / `createServerRuntime` convenience stack have
+  been removed; new runtime composition belongs on the canonical HostService
+  -> ExecutionLaneCoordinator path.
 - `WorkflowSupervisor` coordinates bounded inventory scans, Package C claim
   competition, claimed-adapter invocation, heartbeat, and drain reporting. It
   has no process launcher and is not a daemon; F remains responsible for the
@@ -116,6 +117,9 @@ contracts, and focused checklists that no longer fit here.
   runtime facades through one process-scoped HostService. The adapters retain
   protocol/transport ownership; workspace Task/Workflow durable owners live in
   Host WorkspaceContext rather than each connection/session facade.
+- `serveConnection()` requires that existing HostService. Transport adapters
+  cannot silently create a per-connection execution coordinator; SDK/embedded
+  fixtures must compose and pass the service explicitly.
 - Ordinary IM Gateway traffic now uses typed `im.*` Host control requests.
   Gateway retains platform verification, formatting, inbound message dedupe,
   outbound delivery attempts, and the existing durable Workflow channel
@@ -130,6 +134,93 @@ contracts, and focused checklists that no longer fit here.
   source exports. It should not be used as the sole authority for behavior.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: reviewed downstream SDK/package boundaries for the assessment
+  refactor. SDK Core now exposes Host `ExecutionAssessment` on collected runs;
+  no transport, ACP, server-runtime, or package-boundary ownership moved.
+- Read: SDK Core client/root exports, protocol DTOs, Host response assembly,
+  and edge-package consumers.
+- Tests: SDK Core 10/10 and affected protocol/Host suites passed before final
+  release verification.
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: Host execution driver handles and message acceptance moved behind the
+  Host interaction owner. Server Runtime's ExecutionLaneCoordinator still owns
+  only process-local lane admission, queued delivery, cancel dispatch, and
+  completion handoff; SDK/protocol behavior is unchanged.
+- Read: Host interaction/runtime/service contracts, Server Runtime execution
+  lanes, and SDK round-trip coverage.
+- Tests: focused Host service, Server Runtime lane, and SDK routes are recorded
+  with the commit.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: internal-import governance now follows Host Workflow Core episode
+  construction into `workflow-episode-runtime.ts`. No Core public export,
+  edge-package import, or package boundary changed.
+- Read: Core internal import allowlist, Host episode owner, and edge consumers.
+- Tests: internal-import and package-boundary gates pass in the final release
+  check.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: Host Workflow operations now own orchestration around the existing
+  Server Runtime `InFlightCommandDispatcher`; the dispatcher remains
+  process-local coalescing only, and Workflow service/channel ownership and
+  durable truth are unchanged.
+- Read: Host Workflow owner, Server Runtime dispatcher/service/channel paths,
+  Agent Runtime control truth, and focused tests.
+- Tests: focused Host, Agent Runtime, and Server Runtime Workflow suites passed.
+
+- Status: Verified
+- Date: 2026-07-17T23:37:17+0800
+- Scope: edge packages use the explicit Core internal entry for reference
+  prompt/runtime implementations, while Provider Registry exposes one fallback
+  constructor name: `createProviderFallbackChain`.
+- Read: Provider Registry export/tests, Agent/Project Context/Streaming/Cron/
+  Perfetto consumers, Core package exports, and internal-import governance.
+- Tests: Provider 7/7; Agent Runtime 49/49; Project Context 19/19; Streaming
+  Runtime 12/12; Cron 20/20; Perfetto 18/18; affected typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-17T22:15:00+0800
+- Scope: Host edge adapters receive one explicit process HostService;
+  serveConnection no longer creates a per-connection service, and SDK
+  round-trip fixtures compose the Host through the same canonical entry.
+- Read: Host server/main/WS transport, Host package exports, SDK Node
+  round-trip fixture, and runtime/service contracts.
+- Tests: Host protocol 58/58; SDK Node round-trip 2/2; SDK Node and Host
+  typechecks; import graph, package boundary, and internal import gates; full
+  `npm run release:check`.
+
+- Status: Verified
+- Date: 2026-07-16T13:21:00+0800
+- Scope: Streaming Runtime accepts only `InteractionChannel` and no longer resolves a parallel approval option.
+- Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.
+- Tests: focused access/policy/protocol/CLI/TUI/ACP/Workflow tests; npm run typecheck:test; npm run schema:check.
+
+- Status: Verified
+- Date: 2026-07-16
+- Scope: SDK Core collection, SDK Node, ACP, and IM Gateway consume Host protocol
+  2.0 terminal failures through the single `failure` envelope; no edge adapter
+  reads a root error projection.
+- Read: protocol exports, SDK collection/round-trip, ACP event/turn mapping, IM
+  rendering, and focused integration tests.
+
+- Status: Verified
+- Date: 2026-07-16T10:13:52+0800
+- Scope: removed the deprecated server-runtime convenience stack and durable
+  dispatcher alias after confirming that only package-local compatibility tests
+  and README examples consumed them; retained the production lane, Workflow,
+  and in-flight dispatch exports.
+- Read: server-runtime source exports, package tests/README, all workspace
+  source imports, Host lane/workspace-context consumers, and routed run/session
+  maps.
+- Tests: server-runtime 23/23 focused tests, all downstream typechecks, and the
+  full `npm run release:check` gate passed.
 
 - Status: Read-only
 - Date: 2026-07-16T08:56:29+0800

@@ -11,11 +11,11 @@ import type {
   WorkflowNodeDefinition,
   WorkflowNodeExecuteKind,
   WorkflowParallelNodeDefinition,
+  PinnedWorkflowDefinition,
   WorkflowScriptNodeCapability,
   WorkflowScriptNodeDefinition,
   WorkflowTaskNodeDefinition,
   WorkflowTaskNodeMode,
-  WorkflowTodoClearVerifierDefinition,
   WorkflowTransitionDefinition,
   WorkflowVerifierDefinition,
   WorkflowVerifierExpectation,
@@ -64,8 +64,6 @@ export interface WorkflowAssetSummary {
   sourcePath: string;
   layer: CapabilityLayer;
   contentHash: string;
-  packageHash?: string;
-  packageHashPolicyVersion?: 2;
   version?: string;
   description?: string;
   nodeCount: number;
@@ -77,7 +75,11 @@ export interface WorkflowAssetDetail extends WorkflowAssetSummary {
 }
 
 export interface PinnedWorkflowAsset {
-  asset: WorkflowAssetDetail;
+  asset: Omit<WorkflowAssetDetail, "definition"> & {
+    packageHash: string;
+    packageHashPolicyVersion: 2;
+    definition: PinnedWorkflowDefinition;
+  };
   packageHash: string;
   packageHashPolicyVersion: 2;
   packageSnapshotRef: string;
@@ -219,13 +221,17 @@ export async function pinWorkflowAssetPackage(input: {
       assetName: input.asset.assetName,
     },
   };
+  const { contentHash: _contentHash, ...executableDefinition } =
+    asset.definition;
   return {
     asset: {
       ...asset,
       packageHash: before.packageHash,
       packageHashPolicyVersion: 2,
       definition: {
-        ...asset.definition,
+        ...executableDefinition,
+        sourceDir: packageSnapshotRef,
+        layer: asset.layer,
         packageHash: before.packageHash,
         packageHashPolicyVersion: 2,
         packageSnapshotRef,
@@ -552,25 +558,19 @@ function parseWorkflowDelegateNode(
 ): WorkflowDelegateNodeDefinition | undefined {
   const execute = optionalString(raw.execute) ?? optionalString(raw.type);
   const source = isRecord(raw.delegate) ? raw.delegate : raw;
-  const agentId =
-    optionalString(source.agentId) ?? optionalString(source.agent_id);
-  const toolName =
-    optionalString(source.toolName) ?? optionalString(source.tool_name);
+  const agentId = optionalString(source.agentId);
   const goal = optionalString(source.goal);
-  if (execute !== "delegate" && !agentId && !toolName && !goal) {
+  if (execute !== "delegate" && !agentId && !goal) {
     return undefined;
   }
-  if (!agentId && !toolName) {
-    throw new Error(
-      `Workflow delegate node ${nodeId} requires agentId or toolName.`,
-    );
+  if (!agentId) {
+    throw new Error(`Workflow delegate node ${nodeId} requires agentId.`);
   }
   if (!goal) {
     throw new Error(`Workflow delegate node ${nodeId} requires goal.`);
   }
   return {
-    ...(agentId ? { agentId } : {}),
-    ...(toolName ? { toolName } : {}),
+    agentId,
     goal,
     ...(optionalRecord(source.metadata)
       ? { metadata: optionalRecord(source.metadata) }
@@ -834,12 +834,9 @@ function parseWorkflowVerifier(
   if (kind === "diff_scope") {
     return parseWorkflowDiffScopeVerifier(raw, nodeId, index);
   }
-  if (kind === "todo_clear") {
-    return parseWorkflowTodoClearVerifier(raw, nodeId, index);
-  }
   if (kind !== "command") {
     throw new Error(
-      `Workflow node ${nodeId} verifier ${index + 1} kind must be command, diff_scope, or todo_clear for P6b.`,
+      `Workflow node ${nodeId} verifier ${index + 1} kind must be command or diff_scope.`,
     );
   }
   const command = optionalString(raw.command);
@@ -892,23 +889,6 @@ function parseWorkflowDiffScopeVerifier(
     ...(optionalStringArray(raw.exclude)
       ? { exclude: optionalStringArray(raw.exclude) }
       : {}),
-    ...(optionalRecord(raw.metadata)
-      ? { metadata: optionalRecord(raw.metadata) }
-      : {}),
-  };
-}
-
-function parseWorkflowTodoClearVerifier(
-  raw: Record<string, unknown>,
-  nodeId: string,
-  index: number,
-): WorkflowTodoClearVerifierDefinition {
-  return {
-    id:
-      optionalString(raw.id) ??
-      optionalString(raw.name) ??
-      `${nodeId}:todo_clear:${index + 1}`,
-    kind: "todo_clear",
     ...(optionalRecord(raw.metadata)
       ? { metadata: optionalRecord(raw.metadata) }
       : {}),

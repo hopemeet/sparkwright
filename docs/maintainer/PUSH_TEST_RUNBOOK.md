@@ -81,8 +81,7 @@ printf '# Repo Pilot\n\nA tiny workspace for SparkWright smoke tests.\n' \
 npm exec sparkwright -- run "inspect this repo and suggest a README improvement" \
   --workspace /tmp/sparkwright-write-smoke \
   --target README.md \
-  --write \
-  --yes \
+  --access-mode bypass \
   --trace-level standard
 ```
 
@@ -107,7 +106,7 @@ printf '# Repo Pilot\n\nA tiny workspace.\n' \
 npm exec sparkwright -- run "inspect this repo and suggest a README improvement" \
   --workspace /tmp/sparkwright-deny-smoke \
   --target README.md \
-  --write \
+  --access-mode ask \
   --trace-level standard
 ```
 
@@ -154,16 +153,14 @@ printf '# Repo Pilot\n\nA tiny workspace.\n' \
 npm exec sparkwright -- run "inspect this repo and suggest a README improvement" \
   --workspace /tmp/sparkwright-skip-smoke \
   --target README.md \
-  --write \
-  --yes \
+  --access-mode bypass \
   --trace-level standard
 
 # Second run: heading already present → skipped (no-op).
 npm exec sparkwright -- run "inspect this repo and suggest a README improvement" \
   --workspace /tmp/sparkwright-skip-smoke \
   --target README.md \
-  --write \
-  --yes \
+  --access-mode bypass \
   --trace-level standard
 ```
 
@@ -233,7 +230,7 @@ client.on('run.event', () => eventCount++);
 const terminal = new Promise((resolve, reject) => {
   client.on('run.completed', (m) => resolve(m.payload));
   client.on('run.failed', (m) =>
-    reject(new Error(m.payload.error?.message ?? 'run failed')),
+    reject(new Error(m.payload.failure.message)),
   );
 });
 const started = await client.startRun({ goal: 'inspect this repo' });
@@ -285,7 +282,7 @@ client.on('run.event', () => runEventCount++);
 const terminal = new Promise((resolve, reject) => {
   client.on('run.completed', (m) => resolve(m.payload));
   client.on('run.failed', (m) =>
-    reject(new Error(m.payload.error?.message ?? 'run failed')),
+    reject(new Error(m.payload.failure.message)),
   );
 });
 const started = await client.startRun({ goal: 'inspect this repo' });
@@ -343,7 +340,7 @@ client.on('run.event', (m) => {
 const terminal = new Promise((resolve, reject) => {
   client.on('run.completed', (m) => resolve(m.payload));
   client.on('run.failed', (m) =>
-    reject(new Error(m.payload.error?.message ?? 'run failed')),
+    reject(new Error(m.payload.failure.message)),
   );
 });
 
@@ -461,11 +458,16 @@ plumbing.
 node --input-type=module <<'NODE'
 import {
   bindUserHooks,
-  EventLog,
   createRunId,
 } from './packages/core/dist/index.js';
+import { EventLog } from './packages/core/dist/internal.js';
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
+const resolveProjectDescriptor = (trigger) => ({
+  hookId: `${trigger}:demo`,
+  hookName: trigger,
+  source: 'project',
+});
 const result = {
   replayedRunStarted: false,
   blockedNonManaged: true,
@@ -480,6 +482,7 @@ const result = {
   events.emit('run.started', { goal: 'replay-demo' });
   bindUserHooks({
     events,
+    resolveDescriptor: resolveProjectDescriptor,
     runner: {
       triggers: () => ['run.started'],
       invoke: () => {
@@ -524,6 +527,7 @@ const result = {
   const events = new EventLog(createRunId());
   bindUserHooks({
     events,
+    resolveDescriptor: resolveProjectDescriptor,
     runner: {
       triggers: () => ['tool.completed'],
       invoke: async (inv) => {
@@ -547,6 +551,7 @@ const result = {
   let calls = 0;
   const unbind = bindUserHooks({
     events,
+    resolveDescriptor: resolveProjectDescriptor,
     runner: {
       triggers: () => ['tool.completed'],
       invoke: () => {
@@ -847,8 +852,8 @@ const parentResult = await parent.start();
 const parentUsage = parentTracker.snapshot();
 
 const derived = deriveChildAgentProfile({
-  parentAgent: { id: 'p', capabilities: { tools: ['read_file'] } },
-  childAgent: { id: 'c', capabilities: { tools: ['read_file', 'write_file'] } },
+  parentAgent: { id: 'p', capabilities: { tools: ['read'] } },
+  childAgent: { id: 'c', capabilities: { tools: ['read', 'write'] } },
 });
 
 console.log(JSON.stringify({
@@ -1096,7 +1101,7 @@ key and a non-zero `costUsd`.
 
 ```bash
 tmpcfg=$(mktemp)
-printf '%s\n' '{"model":"openai/smoke-model","providers":{"openai":{"baseURL":"https://api.openai.com/v1"}}}' >"$tmpcfg"
+printf '%s\n' '{"identity":{"model":"openai/smoke-model","providers":{"openai":{"baseURL":"https://api.openai.com/v1"}}}}' >"$tmpcfg"
 env -u OPENAI_API_KEY SPARKWRIGHT_CONFIG="$tmpcfg" npm exec sparkwright -- run "inspect this repo" \
   --workspace examples/repo-pilot \
   --target README.md \

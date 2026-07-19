@@ -41,8 +41,7 @@ the host and is intentionally hidden behind an explicit internal switch:
 SPARKWRIGHT_ENABLE_DIRECT_CORE=1 npm exec sparkwright -- run --direct-core "inspect this repo and suggest a README improvement" \
   --workspace examples/repo-pilot \
   --target README.md \
-  --write \
-  --yes \
+  --access-mode bypass \
   --trace-level standard
 ```
 
@@ -78,10 +77,8 @@ SPARKWRIGHT_SCRIPTED_MODEL_JSON='[{"toolCalls":[{"toolName":"read","arguments":{
 - `--workspace path`: workspace root for reads, writes, traces, sessions, and
   project config.
 - `--target path`: workspace-relative target file for the repo-pilot path.
-- `--write`: allow the deterministic path to propose a write.
-- `--yes`: approve CLI approval prompts non-interactively.
 - `--access-mode mode`: one of `read-only`, `ask`, `accept-edits`, `bypass`.
-  The run autonomy preset; compiles to the internal permission/write fields.
+  The single run-autonomy input.
 - `--trace-level level`: one of `standard`, `debug`.
 - `--session-id id`: attach a run to a known session id.
 - `--model provider/model`: select a configured provider/model.

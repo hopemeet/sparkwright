@@ -43,7 +43,7 @@ export interface SkillUsageRecord {
 export interface SkillUsageRecorder {
   /** Bump useCount + lastUsedAt for the named skill. */
   recordUse(name: string, at?: Date, mode?: SkillUsageLoadMode): void;
-  /** Bump patchCount + lastPatchedAt (called on edit / patch / write_file). */
+  /** Bump patchCount + lastPatchedAt (called on edit / patch / write). */
   recordPatch(name: string, at?: Date): void;
   /** Drop the record entirely (e.g. on archive). */
   forget(name: string): void;

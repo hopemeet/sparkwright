@@ -25,6 +25,11 @@ __pycache__/
 # Structured internal maintenance knowledge is versioned; ad-hoc reviews and
 # real-model run logs remain local-only.
 docs/_internal/*
+!docs/_internal/reviews/
+docs/_internal/reviews/*
+!docs/_internal/reviews/README.md
+!docs/_internal/reviews/consolidation-agenda.md
+!docs/_internal/reviews/qa-convergence-plan.md
 !docs/_internal/project-map/
 !docs/_internal/project-map/**
 !docs/_internal/proposals/

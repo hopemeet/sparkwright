@@ -27,6 +27,7 @@ import {
   resolveSkillRootsForRuntime,
   reviseSkillProposalDraft,
   restoreSkillFromHistory,
+  runSkillDoctor,
   skillUsagePath,
 } from "../src/index.js";
 
@@ -47,10 +48,17 @@ function skillMarkdown(name: string): string {
 }
 
 describe("skill roots", () => {
-  it("keeps the project skill root when legacy roots are configured", async () => {
+  it("keeps configured roots strongest and read-only for evolution", async () => {
     const workspace = await makeWorkspace();
     try {
-      const roots = resolveSkillRootsForRuntime(workspace, ["legacy-skills"], {
+      const configuredRoot = join(workspace, "configured-skills");
+      await mkdir(join(configuredRoot, "reviewer"), { recursive: true });
+      await writeFile(
+        join(configuredRoot, "reviewer", "SKILL.md"),
+        skillMarkdown("reviewer"),
+        "utf8",
+      );
+      const roots = resolveSkillRootsForRuntime(workspace, [configuredRoot], {
         XDG_CONFIG_HOME: join(workspace, "xdg"),
       });
 
@@ -58,10 +66,32 @@ describe("skill roots", () => {
         "builtin",
         "user",
         "project",
-        "legacy",
+        "configured",
       ]);
       expect(roots.find((root) => root.layer === "project")?.root).toBe(
         join(workspace, ".sparkwright", "skills"),
+      );
+
+      const doctor = await runSkillDoctor({ skillRoots: roots });
+      expect(doctor.status).toBe("ok_with_warnings");
+      expect(doctor.skills).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ name: "reviewer", layer: "configured" }),
+        ]),
+      );
+      expect(doctor.findings).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            code: "CONFIGURED_SKILL_EFFECTIVE",
+            severity: "warning",
+            layer: "configured",
+          }),
+          expect.objectContaining({
+            code: "CONFIGURED_ROOT_READ_ONLY",
+            severity: "info",
+            layer: "configured",
+          }),
+        ]),
       );
     } finally {
       await rm(workspace, { recursive: true, force: true });
@@ -70,6 +100,54 @@ describe("skill roots", () => {
 });
 
 describe("skill proposal application", () => {
+  it("requires the canonical package hash policy on proposal records", async () => {
+    const workspace = await makeWorkspace();
+    try {
+      const proposal = await createSkillCreateProposal({
+        workspaceRoot: workspace,
+        name: "canonical-policy",
+        description: "Canonical package identity",
+        content: skillMarkdown("canonical-policy"),
+      });
+      const metadataPath = join(proposal.path, "metadata.json");
+      const metadata = JSON.parse(await readFile(metadataPath, "utf8")) as {
+        packageHashPolicyVersion?: number;
+      };
+      delete metadata.packageHashPolicyVersion;
+      await writeFile(metadataPath, JSON.stringify(metadata));
+
+      await expect(readSkillProposal(workspace, proposal.id)).rejects.toThrow(
+        "Skill proposal requires package hash policy 2.",
+      );
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects proposal records without canonical artifact identity", async () => {
+    const workspace = await makeWorkspace();
+    try {
+      const proposal = await createSkillCreateProposal({
+        workspaceRoot: workspace,
+        name: "canonical-artifact",
+        description: "Canonical artifact identity",
+        content: skillMarkdown("canonical-artifact"),
+      });
+      const metadataPath = join(proposal.path, "metadata.json");
+      const metadata = JSON.parse(await readFile(metadataPath, "utf8")) as {
+        artifactId?: string;
+      };
+      delete metadata.artifactId;
+      await writeFile(metadataPath, JSON.stringify(metadata));
+
+      await expect(readSkillProposal(workspace, proposal.id)).rejects.toThrow(
+        "Skill proposal requires canonical prepared identity.",
+      );
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
   it("supersedes every competing draft after one proposal is applied", async () => {
     const workspace = await makeWorkspace();
     try {
@@ -261,6 +339,7 @@ describe("skill proposal application", () => {
       expect(applied.history.id).toBe(
         `skillver_${prepared.effectHash.slice(0, 24)}`,
       );
+      expect(applied.history.artifactId).toBe(proposal.artifactId);
       await expect(
         readFile(join(proposal.path, "mutation-receipt.json"), "utf8"),
       ).resolves.toContain(applied.history.id);

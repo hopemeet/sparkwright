@@ -179,7 +179,7 @@ describe("@sparkwright/sdk-core Client", () => {
       timestamp: "2026-05-24T00:00:00.000Z",
       ok: true,
       result: {
-        tools: [{ name: "read_file", risk: "safe" }],
+        tools: [{ name: "read", risk: "safe" }],
         skills: { indexed: [], loaded: [] },
         mcp: { statuses: [] },
         agents: { profiles: [{ id: "main", mode: "primary" }] },
@@ -187,7 +187,7 @@ describe("@sparkwright/sdk-core Client", () => {
     });
 
     await expect(inspected).resolves.toMatchObject({
-      tools: [{ name: "read_file" }],
+      tools: [{ name: "read" }],
       agents: { profiles: [{ id: "main" }] },
     });
   });
@@ -271,7 +271,7 @@ describe("@sparkwright/sdk-core Client", () => {
       result: {
         id: "task_1",
         parentRunId: "run_1",
-        kind: "shell.promoted",
+        kind: "shell.background",
         status: "running",
         createdAt: "2026-05-24T00:00:00.000Z",
         metadata: {},
@@ -558,7 +558,7 @@ describe("@sparkwright/sdk-core Client", () => {
         runId: "run_2",
         previousRunId: "run_1",
         continuationCount: 1,
-        reason: "unfinished_todo",
+        reason: "workflow_record_active",
       },
     });
     transport.receive({
@@ -571,10 +571,15 @@ describe("@sparkwright/sdk-core Client", () => {
         state: "completed",
         stopReason: "final_answer",
         message: "done",
-        outcome: {
-          kind: "completed_with_tool_failures",
-          toolFailures: { count: 1, codes: ["TOOL_ARGUMENTS_INVALID"] },
-        },
+        assessment: executionAssessment("failing", [
+          {
+            code: "UNRESOLVED_TOOL_FAILURE",
+            kind: "tool_failure",
+            disposition: "failing",
+            count: 1,
+            details: { codes: ["TOOL_ARGUMENTS_INVALID"] },
+          },
+        ]),
       },
     });
 
@@ -583,9 +588,10 @@ describe("@sparkwright/sdk-core Client", () => {
       runIds: ["run_1", "run_2"],
       terminal: { payload: { runId: "run_2" } },
       finalAnswer: "done",
-      outcome: {
-        kind: "completed_with_tool_failures",
-        toolFailures: { count: 1, codes: ["TOOL_ARGUMENTS_INVALID"] },
+      assessment: {
+        schemaVersion: "execution-assessment.v1",
+        health: "failing",
+        issues: [expect.objectContaining({ code: "UNRESOLVED_TOOL_FAILURE" })],
       },
       toolFailures: [{ type: "tool.failed" }],
       artifacts: [{ type: "artifact.created" }],
@@ -632,10 +638,14 @@ describe("@sparkwright/sdk-core Client", () => {
           code: "internal_error",
           message: "host failed",
         },
-        error: {
-          code: "internal_error",
-          message: "host failed",
-        },
+        assessment: executionAssessment("failing", [
+          {
+            code: "internal_error",
+            kind: "run_failure",
+            disposition: "failing",
+            count: 1,
+          },
+        ]),
       },
     });
 
@@ -648,3 +658,23 @@ describe("@sparkwright/sdk-core Client", () => {
     });
   });
 });
+
+function executionAssessment(
+  health: "clean" | "degraded" | "failing",
+  issues: Array<{
+    code: string;
+    kind: string;
+    disposition: "degraded" | "failing";
+    count: number;
+    details?: Record<string, unknown>;
+  }> = [],
+) {
+  return {
+    schemaVersion: "execution-assessment.v1" as const,
+    health,
+    issues,
+    verification: [],
+    episodeCount: 0,
+    episodes: [],
+  };
+}

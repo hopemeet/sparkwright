@@ -1,11 +1,18 @@
-import { createId, type ContentPart, type RunHandle } from "@sparkwright/core";
-import type { MemoryTrace } from "@sparkwright/core";
+import {
+  createId,
+  type ContentPart,
+  type RunHandle,
+  type RunIssue,
+  type RunResult,
+} from "@sparkwright/core";
+import type { MemoryTrace } from "@sparkwright/core/internal";
 import type { WorkflowRunId } from "@sparkwright/agent-runtime";
 import {
-  runTodoSupervised,
-  type RunTodoSupervisedOptions,
-  type TodoSupervisedRunResult,
-} from "@sparkwright/agent-runtime";
+  aggregateExecutionAssessment,
+  assessmentForRunResult,
+  type ExecutionAssessment,
+  type ExecutionEpisodeAssessment,
+} from "./execution-assessment.js";
 
 export interface HostExecutionActiveRun {
   runId: string;
@@ -24,6 +31,7 @@ export interface HostExecutionTerminal {
   /** @reserved Public execution terminal alias consumed by future control surfaces. */
   finalRunId?: string;
   state: "completed" | "failed" | "cancelled";
+  assessment: ExecutionAssessment;
 }
 
 interface PendingExecutionApproval {
@@ -51,6 +59,8 @@ export class HostExecution {
   private finalRunIdValue?: string;
   private activeRunValue: HostExecutionActiveRun | null = null;
   private readonly runIds = new Set<string>();
+  private readonly episodeAssessments: ExecutionEpisodeAssessment[] = [];
+  private readonly hostIssues: RunIssue[] = [];
   private readonly pendingApprovals = new Map<
     string,
     PendingExecutionApproval
@@ -104,28 +114,32 @@ export class HostExecution {
     this.runIds.add(active.runId);
   }
 
-  runEpisodeChain(
-    options: RunTodoSupervisedOptions,
-  ): Promise<TodoSupervisedRunResult> {
-    return runTodoSupervised({
-      ...options,
-      runOnce: async (input) => {
-        if (this.abortController.signal.aborted) {
-          throw Object.assign(new Error("Interactive execution cancelled."), {
-            name: "AbortError",
-          });
-        }
-        return options.runOnce(input);
-      },
-    });
-  }
-
   ownsRun(runId: string): boolean {
     return this.runIds.has(runId);
   }
 
   runIdAliases(): readonly string[] {
     return [...this.runIds];
+  }
+
+  recordEpisode(runId: string, result: RunResult): void {
+    const episode = { runId, assessment: assessmentForRunResult(result) };
+    const index = this.episodeAssessments.findIndex(
+      (candidate) => candidate.runId === runId,
+    );
+    if (index >= 0) this.episodeAssessments[index] = episode;
+    else this.episodeAssessments.push(episode);
+  }
+
+  recordHostIssue(issue: RunIssue): void {
+    this.hostIssues.push(issue);
+  }
+
+  assessment(): ExecutionAssessment {
+    return aggregateExecutionAssessment({
+      episodes: this.episodeAssessments,
+      hostIssues: this.hostIssues,
+    });
   }
 
   tryInject(
@@ -220,6 +234,7 @@ export class HostExecution {
       ...(this.rootRunIdValue ? { rootRunId: this.rootRunIdValue } : {}),
       ...(this.finalRunIdValue ? { finalRunId: this.finalRunIdValue } : {}),
       state,
+      assessment: this.assessment(),
     };
     this.terminal = terminal;
     this.denyPendingApprovals();

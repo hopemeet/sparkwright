@@ -48,7 +48,7 @@ Read the linked entry file first, then the linked docs, then make the change. Do
 - **Interface to implement**: `ToolDefinition` (input schema, `policy.risk`, `policy.requiresApproval`, `execute`)
 - **Must read**: `docs/reference/EXTENSION_INTERFACES.md` (Tool Extensions), `docs/guides/CUSTOM_TOOL_EXAMPLE.md`, `docs/reference/PROTOCOL.md` (tool section)
 - **Must update on change**: `schemas/tool.schema.json` if the tool envelope grows new top-level fields; otherwise no schema change
-- **Wire in via**: `createRun({ tools: [...] })`. Approval is automatic when `policy.requiresApproval` is true and an `approvalResolver` is configured.
+- **Wire in via**: `createRun({ tools: [...], interactionChannel })`. Approval is automatic when `policy.requiresApproval` is true and `interactionChannel.approve` is configured.
 - **Notes**: Risky side effects belong in `governance.sideEffects`. Long outputs should become artifacts, not prompt context.
 
 ### Task: Use the official coding workspace tools
@@ -105,14 +105,14 @@ Read the linked entry file first, then the linked docs, then make the change. Do
 - **Wire in via**: subscribe at the run boundary (`run.events.subscribe(…)`) or wrap with a helper like `attachPerfettoSink({ source: run.events, outPath })`
 - **Notes**: Treat absence of `spanId` as "no span info" — degrade to an instant marker rather than dropping the event. Never block emission; sinks must be safe to throw inside without breaking the loop.
 
-### Task: Add a new approval channel (Slack, web UI, CI gate)
+### Task: Add a new interaction channel (Slack, web UI, CI gate)
 
-- **Entry point**: `packages/core/src/approval.ts`
-- **Interface to implement**: `ApprovalResolver`
+- **Entry point**: `packages/core/src/interaction.ts`
+- **Interface to implement**: `InteractionChannel` (`approve` is the approval handler)
 - **Must read**: `docs/reference/EXTENSION_INTERFACES.md` (Approval Extensions), ADR `0004-approval-gated-workspace-writes.md`, `docs/reference/PROTOCOL.md` (approval events)
 - **Must update on change**: no schema change; the `approval.requested` / `approval.resolved` payloads are already stable
-- **Wire in via**: `createRun({ approvalResolver: yourResolver })`
-- **Notes**: Requests and responses must remain JSON-serializable so trace can replay them. Do not mutate the run record from inside the resolver.
+- **Wire in via**: `createRun({ interactionChannel: yourChannel })`
+- **Notes**: Requests and responses must remain JSON-serializable so trace can replay them. Do not mutate the run record from inside the channel.
 
 ### Task: Add a custom policy (capability rule)
 
@@ -128,7 +128,7 @@ Read the linked entry file first, then the linked docs, then make the change. Do
 - **Entry point**: `packages/skills/` (extension package, not core)
 - **Interface to implement**: skill manifest matching `schemas/skill-manifest.schema.json`; adapter normalizes manifest into `ContextItem[]` + `ToolDefinition[]`
 - **Must read**: `docs/reference/SKILLS.md`, `docs/guides/CAPABILITY_DESIGN_GUIDE.md`, `docs/reference/EXTENSION_INTERFACES.md` (Skill Extensions)
-- **Must update on change**: `schemas/skill-manifest.schema.json` if the manifest shape grows; trace should carry skill `name` + `contentHash`
+- **Must update on change**: `schemas/skill-manifest.schema.json` if the manifest shape grows; trace should carry Skill `name` + `packageHashPolicyVersion: 2` + `packageHash`
 - **Wire in via**: `prepareSkillsForRun({ skillRoots })` then `createRun({ context: prepared.context, tools: prepared.tools })`
 - **Notes**: Skill scripts must enter as governed tools; reading a `SKILL.md` must not have side effects.
 
@@ -168,14 +168,14 @@ Read the linked entry file first, then the linked docs, then make the change. Do
 - **Wire in via**: a custom `ContextAssembler` that runs the compactor before returning items
 - **Notes**: Compaction is not memory; long-term recall belongs in `MemoryStore`.
 
-### Task: Add a hook (pre-model-call, after-tool-result)
+### Task: Add a workflow hook
 
-- **Entry point**: `packages/core/src/run.ts` (validation hooks are the closest existing primitive)
-- **Interface to implement**: `ValidationHook` for tool/workspace stages; for model-call hooks, wrap the `ModelAdapter`
-- **Must read**: `docs/reference/EXTENSION_INTERFACES.md` (Hook Extensions), `docs/reference/RUN_EVENTS.md`
-- **Must update on change**: emit `validation.started` / `validation.completed` / `validation.failed` (already in `EventType`); no schema change
-- **Wire in via**: `createRun({ validationHooks: [...] })`
-- **Notes**: Hooks must be deterministic and serializable in failure mode so trace can explain rejections.
+- **Entry point**: `packages/core/src/workflow-hooks.ts` for execution and `packages/host/src/workflow-hooks.ts` for configured actions
+- **Interface to implement**: `WorkflowHook` with a canonical lifecycle name, matcher, and deterministic result
+- **Must read**: `docs/reference/EXTENSION_INTERFACES.md` (Workflow Hooks), `docs/reference/RUN_EVENTS.md`
+- **Must update on change**: emit the appropriate `workflow_hook.*` events and update the config schema for new configured shapes
+- **Wire in via**: `createRun({ workflowHooks: [...] })` or `capabilities.hooks.workflow`
+- **Notes**: Blocking and rewrite results must remain serializable so traces explain every policy decision.
 
 ### Task: Add an artifact type
 
@@ -207,10 +207,10 @@ Read the linked entry file first, then the linked docs, then make the change. Do
 ### Task: Wire trace to an external sink (Datadog, Sentry, file)
 
 - **Entry point**: `packages/core/src/storage.ts` (`TraceSink`)
-- **Interface to implement**: `TraceSink` (`write` + optional `flush`)
+- **Interface to implement**: `TraceSink` (`append` + optional `flush`)
 - **Must read**: `docs/reference/PROTOCOL.md` (file trace section), ADR `0006-jsonl-traces-with-tiered-detail.md`
 - **Must update on change**: nothing; `TraceSink` consumes the already-serialized event stream
-- **Wire in via**: `run.events.subscribe(event => sink.write(event))`; flush at terminal state
+- **Wire in via**: `run.events.subscribe(event => sink.append(event))`; flush at terminal state
 - **Notes**: Apply trace-level filtering and redaction before forwarding; do not rely on the downstream system to redact. For local derived analytics, prefer `summarizeTraceJsonl` / `summarizeTraceFile` over maintaining a second mutable counter path. Use `validateSessionTraceConsistency` for session directory integrity checks.
 
 ### Task: Add lazy / deferred tool discovery (`tool_search`)
@@ -243,12 +243,12 @@ Read the linked entry file first, then the linked docs, then make the change. Do
 
 - **Entry point**: `packages/core/src/user-hooks.ts`
 - **Interface to implement**: `UserHookRunner`
-- **Wire in via**: `bindUserHooks({ events: run.events, runner })`
-- **Notes**: Core defines the trigger vocabulary (`UserHookTrigger`) and forwards matching events; the host owns execution (shell, webhook, file write). Failures are recorded as `user_hook.failed` events and never abort the run.
+- **Wire in via**: `bindUserHooks({ events: run.events, runner, resolveDescriptor })`; the resolver must return stable `hookId`, `hookName`, and `source` provenance.
+- **Notes**: Core defines the trigger vocabulary (`UserHookTrigger`) and forwards matching events from the replay-capable run event log; the host owns execution (shell, webhook, file write). Failures are recorded as `user_hook.failed` events and never abort the run.
 
 ### Task: Spawn a background task from a run (Task\*)
 
-- **Entry point**: `packages/agent-runtime/src/tasks/` (`TaskManager`, `InMemoryTaskStore`, `createTaskTools`)
+- **Entry point**: `packages/agent-runtime/src/tasks/` (`TaskManager`, `InMemoryTaskStore`, `createTaskCreate`, `createTaskControl`)
 - **Interface to implement**: `TaskStore` (durable backends), `TaskRunner` (kind-specific runners)
 - **Wire in via**: register the five `task_*` `ToolDefinition`s with your `ToolRegistry`; call `TaskManager.registerKind(kind, runner)` for each runner the model can spawn
 - **Notes**: Tasks are NOT new runs — they are work spawned BY a run that the model can poll / cancel / stream output from. Emits `task.*` lifecycle events.

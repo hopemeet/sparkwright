@@ -85,7 +85,6 @@ export function distillWorkflowFromEvents(input: {
     readPaths,
     writePaths,
     verificationCommands,
-    sawTodoWrite: observation.sawTodoWrite,
     warnings,
   });
   return {
@@ -115,7 +114,6 @@ function renderWorkflowDraft(input: {
   readPaths: string[];
   writePaths: string[];
   verificationCommands: readonly WorkflowDistillObservedCommand[];
-  sawTodoWrite: boolean;
   warnings: readonly string[];
 }): string {
   const hasWrites = input.writePaths.length > 0;
@@ -151,14 +149,6 @@ function renderWorkflowDraft(input: {
         sourceSequence: command.sequence,
       },
     })),
-    ...(input.sawTodoWrite
-      ? [
-          {
-            id: "distilled-todo-clear",
-            kind: "todo_clear",
-          },
-        ]
-      : []),
   ];
   const nodes = hasWrites
     ? [

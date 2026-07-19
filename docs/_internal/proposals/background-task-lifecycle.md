@@ -112,12 +112,12 @@ Resolved decisions:
    output is arriving, awaited-task suspension must not attempt a terminal
    `cancelled -> waiting_tasks` transition.
 
-8. **Background handoff names the shared primitive.** New embedders use
-   `onBackground`; `onPromote` remains a deprecated source-compatible alias.
-   New host tasks use `kind:"shell.background"` and untracked-write markers use
-   `protocol:"background_shell"` with `backgroundOrigin`. Active legacy
-   `shell.promoted` tasks still participate in deduplication, and TUI trace
-   rendering accepts both marker protocols. `promoted:true` and
+8. **Background handoff names the shared primitive.** Embedders use
+   `onBackground` as its sole callback.
+   Host tasks use `kind:"shell.background"` and untracked-write markers use
+   `protocol:"background_shell"` with `backgroundOrigin`. Promotion-named
+   persisted task kinds and marker protocols are not alternate readers.
+   `promoted:true` and
    `promotionGuidance` remain output facts only for timeout-origin handoffs.
 9. **The handoff carries the resolved two-dimensional policy.** Shell-tool
    supplies `policy:{ awaited, lifetime }`; hosts execute it without deriving
@@ -149,7 +149,7 @@ project maps for current behavior:
   — `FileTaskNotificationOutbox` (durable sink, L48), also un-wired.
 - [`packages/shell-tool/src/tool.ts`](../../../packages/shell-tool/src/tool.ts)
   — explicit background or timeout → `onBackground` → detach → returns a
-  background task ticket; `onPromote` is a deprecated compatibility alias.
+  background task ticket through `onBackground`.
 - [`packages/host/src/runtime.ts`](../../../packages/host/src/runtime.ts)
   — `new TaskManager({ store: FileTaskStore })` with no sink (L779);
   `runHostAgentTask` drives a read-only child, `controller.signal` → child (L701/L731).
@@ -374,7 +374,8 @@ result/err summary` so the model can tell _which_ of many finished (and which
 Three separable questions, distinct answers:
 
 1. **Launch a sub-agent as a background task** — _already works_
-   (`task_create(kind:"agent")`, `task_stop` cancels via `controller.signal`).
+   (`task_create(kind:"agent")`, `task(action:"stop")` cancels via
+   `controller.signal`).
 2. **Promote a running inline sub-agent to background** — _not wired; feasible
    but not as simple as "wrap the child promise as a task."_ The child run is
    abortable with its own run store, but an inline sub-agent also carries a
@@ -422,12 +423,13 @@ CLI `--detach` is deferred until the durable waiting-state design exists.
 3. **Nesting** — **forbidden in v1.** The read-only child catalog stays without
    `task_create`; lifecycle stays flat. Revisit post-v1 (depth-bounded, opt-in).
 4. **Revival budget** — revival turns count against a **separate
-   `maxRevivalTurns`** (default 5), **not** `maxSteps`. Prevents a
+   `forcedContinuationBudgets.revival`** budget (default 5), **not**
+   `maxSteps`. Prevents a
    long-running task's completion from being step-budget-killed, and bounds
    wake→spawn→wake recursion. The loop step still increments monotonically for
    checkpoint/event/doom-loop accounting, but a budgeted `waiting_tasks` revival
    turn is allowed to enter the loop even when `step > maxSteps`; total work is
-   bounded by `maxSteps + maxRevivalTurns`.
+   bounded by `maxSteps` plus the configured revival budget.
 5. **Barrier surface** — extend **`task(action:"wait", ids, mode:"any"|"all")`**;
    **no** new `task_join` tool. Reuses the existing host/protocol/TUI task
    inspection surface.
@@ -505,9 +507,10 @@ crash.
 
 ### Implementation Notes
 
-The live revival spine now has an independent `maxRevivalTurns` budget (default
-5), so awaited task completions can be injected after `maxSteps` is otherwise
-spent without falling into step-budget wrap-up. The `waiting_tasks` race uses one
+The live revival spine now has an independent
+`forcedContinuationBudgets.revival` budget (default 5), so awaited task
+completions can be injected after `maxSteps` is otherwise spent without falling
+into step-budget wrap-up. The `waiting_tasks` race uses one
 per-wait abort signal for task readiness, command readiness, and abort cleanup;
 run aborts cascade into that signal. Host notification delivery drains all
 terminal task notifications for the run, including detached tasks; only awaited

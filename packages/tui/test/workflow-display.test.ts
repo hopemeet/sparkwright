@@ -34,10 +34,14 @@ describe("workflow display helpers", () => {
 function waitingWorkflow(): WorkflowRunSnapshot {
   return {
     id: "workflow_run_abcdefghijklmnopqrstuvwxyz",
+    generation: 1,
+    recordRevision: 1,
     sessionId: "sess",
     status: "waiting",
     assetName: "release-check",
-    contentHash: "hash",
+    layer: "project",
+    packageHash: "sha256:release-check",
+    packageHashPolicyVersion: 2,
     activeRunId: "run_123",
     runIds: ["run_123"],
     currentNodeId: "review",

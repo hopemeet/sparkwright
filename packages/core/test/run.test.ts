@@ -35,7 +35,7 @@ describe("SparkwrightRun", () => {
 
   function createRunHealthReadFileTool() {
     return defineTool({
-      name: "read_file",
+      name: "read",
       description: "Read a file.",
       inputSchema: {
         type: "object",
@@ -170,10 +170,12 @@ describe("SparkwrightRun", () => {
     const run = createRun({
       goal: "semantic validation",
       tools: [checked],
-      approvalResolver(request) {
-        throw new Error(
-          `Approval should not be requested for ${request.action}`,
-        );
+      interactionChannel: {
+        approve(request) {
+          throw new Error(
+            `Approval should not be requested for ${request.action}`,
+          );
+        },
       },
       model: {
         async complete() {
@@ -288,7 +290,6 @@ describe("SparkwrightRun", () => {
       policyForArgsMs: expect.any(Number),
       policyDecisionMs: expect.any(Number),
       executionMs: expect.any(Number),
-      resultValidationMs: expect.any(Number),
     });
     expect(events.map((event) => event.type)).toContain("context.assembled");
     expect(events.map((event) => event.type)).toContain("prompt.built");
@@ -849,7 +850,7 @@ describe("SparkwrightRun", () => {
     const events: SparkwrightEvent[] = [];
 
     const shell = defineTool({
-      name: "shell",
+      name: "bash",
       description: "Run a shell command.",
       inputSchema: {
         type: "object",
@@ -873,7 +874,7 @@ describe("SparkwrightRun", () => {
       async complete() {
         modelCalls += 1;
         if (modelCalls === 1) {
-          return { toolCalls: [{ toolName: "shell", arguments: { command } }] };
+          return { toolCalls: [{ toolName: "bash", arguments: { command } }] };
         }
         return { message: "verification done" };
       },
@@ -904,15 +905,11 @@ describe("SparkwrightRun", () => {
           },
         ],
       },
-      commandOutcome: {
-        total: 1,
-        byExitCode: { "127": 1 },
-        verification: { total: 1, unresolved: 1, lastExitCode: 127 },
-      },
     });
+    expect(completed?.payload).not.toHaveProperty("commandOutcome");
   });
 
-  it("does not persist stale command failures as commandOutcome", async () => {
+  it("marks command failures stale after a workspace write", async () => {
     const root = await mkdtemp(join(tmpdir(), "sparkwright-run-ledger-"));
     tempDirs.push(root);
     await writeFile(join(root, "README.md"), "before\n", "utf8");
@@ -920,7 +917,7 @@ describe("SparkwrightRun", () => {
     const events: SparkwrightEvent[] = [];
 
     const shell = defineTool({
-      name: "shell",
+      name: "bash",
       description: "Run a shell command.",
       inputSchema: {
         type: "object",
@@ -953,7 +950,7 @@ describe("SparkwrightRun", () => {
       async complete() {
         modelCalls += 1;
         if (modelCalls === 1) {
-          return { toolCalls: [{ toolName: "shell", arguments: { command } }] };
+          return { toolCalls: [{ toolName: "bash", arguments: { command } }] };
         }
         if (modelCalls === 2) {
           return { toolCalls: [{ toolName: "write_readme", arguments: {} }] };
@@ -967,12 +964,14 @@ describe("SparkwrightRun", () => {
       model,
       tools: [shell, writeReadme],
       workspace: new LocalWorkspace(root),
-      approvalResolver(request) {
-        expect(request.action).toBe("workspace.write");
-        return {
-          approvalId: request.id,
-          decision: "approved",
-        };
+      interactionChannel: {
+        approve(request) {
+          expect(request.action).toBe("workspace.write");
+          return {
+            approvalId: request.id,
+            decision: "approved",
+          };
+        },
       },
       maxSteps: 4,
     });
@@ -1255,7 +1254,7 @@ describe("SparkwrightRun", () => {
 
   it("clears stale tool results with explicit placeholders before model calls", async () => {
     let seenContext: ContextItem[] = [];
-    const oldOne = toolResultContext("read_file", "old-one".repeat(500));
+    const oldOne = toolResultContext("read", "old-one".repeat(500));
     const oldTwo = toolResultContext("grep", "old-two".repeat(500));
     const recent = toolResultContext("shell", "recent result");
     const run = createRun({
@@ -1278,7 +1277,7 @@ describe("SparkwrightRun", () => {
     expect(seenContext[0]?.content).toContain(
       "tool result cleared by clear_tool_uses",
     );
-    expect(seenContext[0]?.content).toContain("tool=read_file");
+    expect(seenContext[0]?.content).toContain("tool=read");
     expect(seenContext[0]?.metadata.clearToolUsesCleared).toBe(true);
     expect(seenContext[1]?.content).toContain(
       "tool result cleared by clear_tool_uses",
@@ -1299,7 +1298,7 @@ describe("SparkwrightRun", () => {
 
   it("skips stale tool-result clearing below clearAtLeastChars", async () => {
     let seenContext: ContextItem[] = [];
-    const old = toolResultContext("read_file", "old".repeat(100));
+    const old = toolResultContext("read", "old".repeat(100));
     const recent = toolResultContext("shell", "recent");
     const run = createRun({
       goal: "clear threshold",
@@ -1572,6 +1571,59 @@ describe("SparkwrightRun", () => {
     });
   });
 
+  it("lets a tool with its own duplicate ledger execute a sequential repeat", async () => {
+    let executed = 0;
+    const delegated = defineTool({
+      name: "delegated",
+      description: "Reuse or retry an exact delegated request.",
+      inputSchema: { type: "object" },
+      policy: { risk: "safe" },
+      governance: { idempotency: "conditional" },
+      managesRepeatedCalls: () => true,
+      execute() {
+        executed += 1;
+        return { alreadyCompleted: executed > 1 };
+      },
+    });
+    let modelCalls = 0;
+    const run = createRun({
+      goal: "delegate once and reuse the result",
+      tools: [delegated],
+      maxSteps: 6,
+      model: {
+        async complete() {
+          modelCalls += 1;
+          if (modelCalls <= 2) {
+            return {
+              toolCalls: [
+                { toolName: "delegated", arguments: { goal: "same" } },
+              ],
+            };
+          }
+          return { message: "done" };
+        },
+      },
+    });
+
+    const result = await run.start();
+
+    expect(executed).toBe(2);
+    expect(result).toMatchObject({
+      signal: "completed",
+      stopReason: "final_answer",
+    });
+    expect(
+      run.events
+        .all()
+        .some(
+          (event) =>
+            event.type === "tool.failed" &&
+            (event.payload as { error?: { code?: string } }).error?.code ===
+              "REPEATED_TOOL_CALL_SKIPPED",
+        ),
+    ).toBe(false);
+  });
+
   it("renders tool-owned repeated state observation guidance as a completed skip", async () => {
     let executed = 0;
     const observe = defineTool({
@@ -1796,7 +1848,7 @@ describe("SparkwrightRun", () => {
     ).toBe(true);
   });
 
-  it("feeds back unchanged read_file repeats after an intervening tool", async () => {
+  it("feeds back unchanged read repeats after an intervening tool", async () => {
     const root = await mkdtemp(join(tmpdir(), "sparkwright-run-workspace-"));
     tempDirs.push(root);
     await writeFile(join(root, "README.md"), "# Demo\nsame text\n", "utf8");
@@ -1825,7 +1877,7 @@ describe("SparkwrightRun", () => {
           if (modelCalls === 1) {
             return {
               toolCalls: [
-                { toolName: "read_file", arguments: { path: "README.md" } },
+                { toolName: "read", arguments: { path: "README.md" } },
               ],
             };
           }
@@ -1835,7 +1887,7 @@ describe("SparkwrightRun", () => {
           if (modelCalls === 3) {
             return {
               toolCalls: [
-                { toolName: "read_file", arguments: { path: "README.md" } },
+                { toolName: "read", arguments: { path: "README.md" } },
               ],
             };
           }
@@ -1875,7 +1927,7 @@ describe("SparkwrightRun", () => {
     let healthContext: string | undefined;
 
     const readFileTool = defineTool({
-      name: "read_file",
+      name: "read",
       description: "Read a paginated file.",
       inputSchema: {
         type: "object",
@@ -1919,7 +1971,7 @@ describe("SparkwrightRun", () => {
             return {
               toolCalls: [
                 {
-                  toolName: "read_file",
+                  toolName: "read",
                   arguments: { path: "PROJECT_NOTES.md", offset: 1, limit: 2 },
                 },
               ],
@@ -1929,7 +1981,7 @@ describe("SparkwrightRun", () => {
             return {
               toolCalls: [
                 {
-                  toolName: "read_file",
+                  toolName: "read",
                   arguments: { path: "PROJECT_NOTES.md", offset: 3, limit: 2 },
                 },
               ],
@@ -1939,7 +1991,7 @@ describe("SparkwrightRun", () => {
             return {
               toolCalls: [
                 {
-                  toolName: "read_file",
+                  toolName: "read",
                   arguments: { path: "PROJECT_NOTES.md", offset: 1, limit: 2 },
                 },
               ],
@@ -2001,7 +2053,7 @@ describe("SparkwrightRun", () => {
           if (modelCalls === 1) {
             return {
               toolCalls: [
-                { toolName: "read_file", arguments: { path: "README.md" } },
+                { toolName: "read", arguments: { path: "README.md" } },
               ],
             };
           }
@@ -2013,7 +2065,7 @@ describe("SparkwrightRun", () => {
           if (modelCalls === 3) {
             return {
               toolCalls: [
-                { toolName: "read_file", arguments: { path: "README.md" } },
+                { toolName: "read", arguments: { path: "README.md" } },
               ],
             };
           }
@@ -2150,7 +2202,7 @@ describe("SparkwrightRun", () => {
     let step = 0;
 
     const shell = defineTool({
-      name: "shell",
+      name: "bash",
       description: "Run a shell command.",
       inputSchema: { type: "object" },
       execute() {
@@ -2169,7 +2221,7 @@ describe("SparkwrightRun", () => {
           return {
             toolCalls: [
               {
-                toolName: "shell",
+                toolName: "bash",
                 arguments: { command: "printf same", timeoutMs: step * 1000 },
               },
             ],
@@ -2403,17 +2455,21 @@ describe("SparkwrightRun", () => {
 
     expect(result).toMatchObject({
       signal: "completed",
-      metadata: {
-        outcome: {
-          kind: "completed_with_tool_failures",
-          toolFailures: { count: 1, codes: ["TOOL_NOT_FOUND"] },
-        },
+      assessment: {
+        health: "failing",
+        issues: [
+          {
+            code: "UNRESOLVED_TOOL_FAILURE",
+            count: 1,
+            details: { codes: ["TOOL_NOT_FOUND"] },
+          },
+        ],
       },
     });
     expect(completed?.payload).toMatchObject({
-      outcome: {
-        kind: "completed_with_tool_failures",
-        toolFailures: { count: 1, codes: ["TOOL_NOT_FOUND"] },
+      assessment: {
+        health: "failing",
+        issues: [{ code: "UNRESOLVED_TOOL_FAILURE", count: 1 }],
       },
     });
   });
@@ -2467,17 +2523,21 @@ describe("SparkwrightRun", () => {
 
     expect(result).toMatchObject({
       signal: "completed",
-      metadata: {
-        outcome: {
-          kind: "completed_with_recovered_tool_failures",
-          toolFailures: { count: 1, codes: ["TOOL_ARGUMENTS_INVALID"] },
-        },
+      assessment: {
+        health: "degraded",
+        issues: [
+          {
+            code: "RECOVERED_TOOL_FAILURE",
+            count: 1,
+            details: { codes: ["TOOL_ARGUMENTS_INVALID"] },
+          },
+        ],
       },
     });
     expect(completed?.payload).toMatchObject({
-      outcome: {
-        kind: "completed_with_recovered_tool_failures",
-        toolFailures: { count: 1, codes: ["TOOL_ARGUMENTS_INVALID"] },
+      assessment: {
+        health: "degraded",
+        issues: [{ code: "RECOVERED_TOOL_FAILURE", count: 1 }],
       },
     });
   });
@@ -2528,11 +2588,14 @@ describe("SparkwrightRun", () => {
 
     expect(result).toMatchObject({
       signal: "completed",
-      metadata: {
-        outcome: {
-          kind: "completed_with_tool_failures",
-          toolFailures: { count: 1, codes: ["TOOL_ARGUMENTS_INVALID"] },
-        },
+      assessment: {
+        health: "failing",
+        issues: [
+          {
+            code: "UNRESOLVED_TOOL_FAILURE",
+            details: { codes: ["TOOL_ARGUMENTS_INVALID"] },
+          },
+        ],
       },
     });
   });
@@ -2585,11 +2648,14 @@ describe("SparkwrightRun", () => {
 
     expect(result).toMatchObject({
       signal: "completed",
-      metadata: {
-        outcome: {
-          kind: "completed_with_tool_failures",
-          toolFailures: { count: 1, codes: ["TOOL_ARGUMENTS_INVALID"] },
-        },
+      assessment: {
+        health: "failing",
+        issues: [
+          {
+            code: "UNRESOLVED_TOOL_FAILURE",
+            details: { codes: ["TOOL_ARGUMENTS_INVALID"] },
+          },
+        ],
       },
     });
   });
@@ -2652,14 +2718,14 @@ describe("SparkwrightRun", () => {
     expect(events.at(-1)?.type).toBe("run.completed");
   });
 
-  it("emits tool.replay_risk and annotates result when a non-replay-safe tool times out", async () => {
+  it("emits tool.replay_risk when a conditionally idempotent tool times out", async () => {
     let modelCalls = 0;
 
     const sendPayment = defineTool({
       name: "send_payment",
       description: "Imagine an external POST.",
       inputSchema: { type: "object" },
-      isReplaySafe: false,
+      governance: { idempotency: "conditional" },
       async execute() {
         await sleep(30);
         return { ok: true };
@@ -2702,14 +2768,14 @@ describe("SparkwrightRun", () => {
     });
   });
 
-  it("does not emit tool.replay_risk for replay-safe tool failures", async () => {
+  it("does not emit tool.replay_risk for idempotent tool failures", async () => {
     let modelCalls = 0;
 
     const readSomething = defineTool({
       name: "read_something",
       description: "Idempotent read.",
       inputSchema: { type: "object" },
-      isReplaySafe: true,
+      governance: { idempotency: "idempotent" },
       async execute() {
         await sleep(30);
         return { ok: true };
@@ -2740,139 +2806,6 @@ describe("SparkwrightRun", () => {
     expect(types).toContain("tool.failed");
   });
 
-  it("turns tool validation failures into observations the model can correct from", async () => {
-    let modelCalls = 0;
-
-    const unchecked = defineTool({
-      name: "unchecked",
-      description: "Return unchecked output.",
-      inputSchema: { type: "object" },
-      execute() {
-        return { text: "bad output" };
-      },
-    });
-
-    const run = createRun({
-      goal: "validate tool result",
-      tools: [unchecked],
-      validationHooks: [
-        {
-          name: "tool-output-policy",
-          stages: ["tool_result"],
-          validate(input) {
-            const result = input.subject as { output?: { text?: string } };
-            if (result.output?.text === "bad output") {
-              return {
-                status: "failed",
-                findings: [
-                  {
-                    code: "BAD_TOOL_OUTPUT",
-                    message: "Tool output cannot be bad.",
-                    severity: "error",
-                  },
-                ],
-              };
-            }
-          },
-        },
-      ],
-      model: {
-        async complete(input) {
-          modelCalls += 1;
-
-          if (modelCalls === 1) {
-            return { toolCalls: [{ toolName: "unchecked", arguments: {} }] };
-          }
-
-          expect(input.context[0]?.content).toContain("VALIDATION_FAILED");
-          expect(input.context[0]?.content).toContain("BAD_TOOL_OUTPUT");
-          return { message: "corrected" };
-        },
-      },
-    });
-
-    const result = await run.start();
-    const eventTypes = run.events.all().map((event) => event.type);
-
-    expect(result).toMatchObject({
-      signal: "completed",
-      stopReason: "final_answer",
-      message: "corrected",
-    });
-    expect(eventTypes).toEqual(
-      expect.arrayContaining(["validation.started", "validation.failed"]),
-    );
-    expect(eventTypes).not.toContain("tool.completed");
-    expect(
-      run.events.all().find((event) => event.type === "tool.failed")?.payload,
-    ).toMatchObject({
-      error: {
-        code: "VALIDATION_FAILED",
-        metadata: {
-          validation: {
-            hookName: "tool-output-policy",
-          },
-        },
-      },
-    });
-  });
-
-  it("fails the run when final output validation fails", async () => {
-    const run = createRun({
-      goal: "validate final answer",
-      validationHooks: [
-        {
-          name: "final-answer-policy",
-          stages: ["final_output"],
-          validate(input) {
-            if (input.subject === "ship it") {
-              return {
-                status: "failed",
-                findings: [
-                  {
-                    code: "FINAL_TOO_LOOSE",
-                    message: "Final answer is not specific enough.",
-                    severity: "error",
-                  },
-                ],
-              };
-            }
-          },
-        },
-      ],
-      model: {
-        async complete() {
-          return { message: "ship it" };
-        },
-      },
-    });
-
-    const result = await run.start();
-    const failed = run.events
-      .all()
-      .find((event) => event.type === "run.failed");
-
-    expect(result).toMatchObject({
-      signal: "failed",
-      state: "failed",
-      stopReason: "validation_failed",
-      failure: {
-        category: "validation",
-        code: "VALIDATION_FAILED",
-      },
-    });
-    expect(failed?.payload).toMatchObject({
-      reason: "validation_failed",
-      code: "VALIDATION_FAILED",
-      metadata: {
-        stage: "final_output",
-        validation: {
-          hookName: "final-answer-policy",
-        },
-      },
-    });
-  });
-
   it("requires approval for risky tools", async () => {
     let executed = false;
     let modelCalls = 0;
@@ -2891,11 +2824,13 @@ describe("SparkwrightRun", () => {
     const run = createRun({
       goal: "approve risky",
       tools: [risky],
-      approvalResolver(request) {
-        return {
-          approvalId: request.id,
-          decision: "approved",
-        };
+      interactionChannel: {
+        approve(request) {
+          return {
+            approvalId: request.id,
+            decision: "approved",
+          };
+        },
       },
       model: {
         async complete() {
@@ -2940,11 +2875,13 @@ describe("SparkwrightRun", () => {
     const run = createRun({
       goal: "approve explicit gate",
       tools: [tool],
-      approvalResolver(request) {
-        return {
-          approvalId: request.id,
-          decision: "approved",
-        };
+      interactionChannel: {
+        approve(request) {
+          return {
+            approvalId: request.id,
+            decision: "approved",
+          };
+        },
       },
       model: {
         async complete(input) {
@@ -2988,12 +2925,14 @@ describe("SparkwrightRun", () => {
     const run = createRun({
       goal: "approve custom summary",
       tools: [tool],
-      approvalResolver(request) {
-        expect(request.summary).toBe("Grant access to workspace");
-        return {
-          approvalId: request.id,
-          decision: "approved",
-        };
+      interactionChannel: {
+        approve(request) {
+          expect(request.summary).toBe("Grant access to workspace");
+          return {
+            approvalId: request.id,
+            decision: "approved",
+          };
+        },
       },
       model: {
         async complete(input) {
@@ -3060,24 +2999,26 @@ describe("SparkwrightRun", () => {
           };
         },
       },
-      approvalResolver(request) {
-        expect(request.details).toMatchObject({
-          toolName: "mcp_demo_echo",
-          risk: "risky",
-          toolOrigin: {
-            kind: "mcp",
-            name: "demo",
-            metadata: {
-              serverName: "demo",
-              mcpToolName: "echo",
+      interactionChannel: {
+        approve(request) {
+          expect(request.details).toMatchObject({
+            toolName: "mcp_demo_echo",
+            risk: "risky",
+            toolOrigin: {
+              kind: "mcp",
+              name: "demo",
+              metadata: {
+                serverName: "demo",
+                mcpToolName: "echo",
+              },
             },
-          },
-        });
+          });
 
-        return {
-          approvalId: request.id,
-          decision: "approved",
-        };
+          return {
+            approvalId: request.id,
+            decision: "approved",
+          };
+        },
       },
       model: {
         async complete(input) {
@@ -3270,8 +3211,10 @@ describe("SparkwrightRun", () => {
       policy: createWorkspaceMutationPolicy({
         allowWorkspaceWrites: false,
       }),
-      approvalResolver() {
-        throw new Error("read-only write-side-effect tools must not ask");
+      interactionChannel: {
+        approve() {
+          throw new Error("read-only write-side-effect tools must not ask");
+        },
       },
       model: {
         async complete() {
@@ -3327,9 +3270,11 @@ describe("SparkwrightRun", () => {
       goal: "do not let approval widen read-only",
       tools: [tool],
       policy: createWorkspaceMutationPolicy({ allowWorkspaceWrites: false }),
-      approvalResolver(request) {
-        approvalRequested = true;
-        return { approvalId: request.id, decision: "approved" };
+      interactionChannel: {
+        approve(request) {
+          approvalRequested = true;
+          return { approvalId: request.id, decision: "approved" };
+        },
       },
       model: {
         async complete() {
@@ -3571,10 +3516,12 @@ describe("SparkwrightRun", () => {
     const run = createRun({
       goal: "invalid risky",
       tools: [risky],
-      approvalResolver(request) {
-        throw new Error(
-          `Approval should not be requested for ${request.action}`,
-        );
+      interactionChannel: {
+        approve(request) {
+          throw new Error(
+            `Approval should not be requested for ${request.action}`,
+          );
+        },
       },
       model: {
         async complete() {
@@ -3628,12 +3575,14 @@ describe("SparkwrightRun", () => {
     const run = createRun({
       goal: "deny risky",
       tools: [risky],
-      approvalResolver(request) {
-        expect(run.record.state).toBe("waiting_approval");
-        return {
-          approvalId: request.id,
-          decision: "denied",
-        };
+      interactionChannel: {
+        approve(request) {
+          expect(run.record.state).toBe("waiting_approval");
+          return {
+            approvalId: request.id,
+            decision: "denied",
+          };
+        },
       },
       model: {
         async complete() {
@@ -3745,56 +3694,6 @@ describe("SparkwrightRun", () => {
     });
   });
 
-  it("canonicalizes a legacy tool name before policy evaluation", async () => {
-    let executed = false;
-    let modelCalls = 0;
-    const seenResources: Array<string | undefined> = [];
-    const read = defineTool({
-      name: "read",
-      legacyNames: ["read_file"],
-      description: "Read a file.",
-      inputSchema: { type: "object" },
-      execute() {
-        executed = true;
-      },
-    });
-    const run = createRun({
-      goal: "deny canonical read",
-      tools: [read],
-      policy: {
-        decide({ action, resource, metadata = {} }) {
-          seenResources.push(resource?.name);
-          return {
-            action,
-            decision: resource?.name === "read" ? "deny" : "allow",
-            reason: "canonical deny",
-            metadata,
-          };
-        },
-      },
-      model: {
-        async complete() {
-          modelCalls += 1;
-          return modelCalls === 1
-            ? { toolCalls: [{ toolName: "read_file", arguments: {} }] }
-            : { message: "denied" };
-        },
-      },
-    });
-
-    await run.start();
-
-    expect(executed).toBe(false);
-    expect(seenResources).toContain("read");
-    expect(
-      run.events.all().find((event) => event.type === "tool.failed")?.payload,
-    ).toMatchObject({
-      toolName: "read_file",
-      canonicalToolName: "read",
-      error: { code: "TOOL_DENIED" },
-    });
-  });
-
   it("rejects a guessed unavailable tool before policy or execution", async () => {
     let executed = false;
     let policyCalls = 0;
@@ -3876,7 +3775,7 @@ describe("SparkwrightRun", () => {
             statusCode: 400,
             requestBodyValues: {
               input: [{ role: "user", content: "secret prompt" }],
-              tools: [{ name: "read_file", inputSchema: { type: "object" } }],
+              tools: [{ name: "read", inputSchema: { type: "object" } }],
             },
             responseHeaders: {
               "x-request-id": "req_sanitized",
@@ -4595,12 +4494,14 @@ describe("SparkwrightRun", () => {
       goal: "write file",
       workspace: new LocalWorkspace(root),
       tools: [writeReadme],
-      approvalResolver(request) {
-        expect(request.action).toBe("workspace.write");
-        return {
-          approvalId: request.id,
-          decision: "approved",
-        };
+      interactionChannel: {
+        approve(request) {
+          expect(request.action).toBe("workspace.write");
+          return {
+            approvalId: request.id,
+            decision: "approved",
+          };
+        },
       },
       model: {
         async complete() {
@@ -4671,11 +4572,13 @@ describe("SparkwrightRun", () => {
       goal: "write denied",
       workspace: new LocalWorkspace(root),
       tools: [writeReadme],
-      approvalResolver(request) {
-        return {
-          approvalId: request.id,
-          decision: "denied",
-        };
+      interactionChannel: {
+        approve(request) {
+          return {
+            approvalId: request.id,
+            decision: "denied",
+          };
+        },
       },
       model: {
         async complete() {
@@ -5254,50 +5157,6 @@ describe("SparkwrightRun", () => {
     expect(run.events.all().map((event) => event.type)).toEqual(
       expect.arrayContaining(["run.cancel_requested", "run.cancelled"]),
     );
-  });
-
-  it("can continue after final output validation failure", async () => {
-    let modelCalls = 0;
-    const run = createRun({
-      goal: "continue validation",
-      finalOutputValidation: "continue",
-      maxSteps: 3,
-      validationHooks: [
-        {
-          name: "final-answer-policy",
-          stages: ["final_output"],
-          validate(input) {
-            if (input.subject === "bad final") {
-              return {
-                status: "failed",
-                findings: [
-                  {
-                    code: "BAD_FINAL",
-                    message: "Try again with a better final answer.",
-                  },
-                ],
-              };
-            }
-          },
-        },
-      ],
-      model: {
-        async complete(input) {
-          modelCalls += 1;
-          if (modelCalls === 1) return { message: "bad final" };
-          expect(input.context[0]?.content).toContain("BAD_FINAL");
-          return { message: "better final" };
-        },
-      },
-    });
-
-    const result = await run.start();
-
-    expect(result).toMatchObject({
-      signal: "completed",
-      message: "better final",
-    });
-    expect(modelCalls).toBe(2);
   });
 
   it("batches concurrency-safe tools before serial side-effecting tools", async () => {
@@ -6045,46 +5904,6 @@ describe("SparkwrightRun", () => {
     });
   });
 
-  it("prefers per-source revival budget over legacy maxRevivalTurns", async () => {
-    const source = new ManualTaskRevivalSource();
-    source.pending = true;
-    let modelCalls = 0;
-    const run = createRun({
-      goal: "per-source budget wins",
-      notificationSources: [source],
-      taskRevivalSource: source,
-      model: {
-        async complete() {
-          modelCalls += 1;
-          return { message: modelCalls === 1 ? "waiting" : "done" };
-        },
-      },
-      maxSteps: 1,
-      maxRevivalTurns: 0,
-      forcedContinuationBudgets: { revival: 1 },
-    });
-
-    const resultPromise = run.start();
-    await waitForCondition(() => run.record.state === "waiting_tasks");
-
-    source.deliver({
-      content: "Task task_precedence completed.",
-      metadata: { taskId: "task_precedence" },
-    });
-
-    const result = await resultPromise;
-
-    expect(result.state).toBe("completed");
-    expect(modelCalls).toBe(2);
-    expect(result.metadata).toMatchObject({
-      revivalTurnsUsed: 1,
-      forcedContinuationTurnsUsed: { revival: 1 },
-    });
-    expect(run.events.all().map((event) => event.type)).not.toContain(
-      "run.budget.exceeded",
-    );
-  });
-
   it("uses workflow source budget for workflow projection continuations", async () => {
     let modelCalls = 0;
     let stopCalls = 0;
@@ -6190,7 +6009,7 @@ describe("SparkwrightRun", () => {
     );
   });
 
-  it("bounds awaited task revival with maxRevivalTurns", async () => {
+  it("bounds awaited task revival with its forced-continuation budget", async () => {
     const source = new ManualTaskRevivalSource();
     source.pending = true;
     let modelCalls = 0;
@@ -6208,7 +6027,7 @@ describe("SparkwrightRun", () => {
         },
       },
       maxSteps: 1,
-      maxRevivalTurns: 1,
+      forcedContinuationBudgets: { revival: 1 },
     });
 
     const resultPromise = run.start();
@@ -6240,7 +6059,7 @@ describe("SparkwrightRun", () => {
           return { message: "done without revival" };
         },
       },
-      maxRevivalTurns: 0,
+      forcedContinuationBudgets: { revival: 0 },
     });
 
     const result = await run.start();

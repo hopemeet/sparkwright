@@ -12,8 +12,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { EventLog } from "../src/events.js";
 import { createRunId } from "../src/ids.js";
 import { createWorkspaceReadScopePolicy } from "../src/policy.js";
-import type { RunRecord } from "../src/types.js";
+import type { RunRecord, RunState } from "../src/types.js";
 import { ControlledWorkspace, LocalWorkspace } from "../src/workspace.js";
+import type { ControlledWorkspaceOptions } from "../src/workspace.js";
 import { WorkspaceCheckpointStore } from "../src/workspace-checkpoint.js";
 
 describe("LocalWorkspace", () => {
@@ -177,19 +178,21 @@ describe("LocalWorkspace", () => {
     await writeFile(join(root, "README.md"), "before\n", "utf8");
     const run = createRunRecord();
     const events = new EventLog(run.id);
-    const workspace = new ControlledWorkspace({
+    const workspace = createTestControlledWorkspace({
       run,
       events,
       workspace: new LocalWorkspace(root),
-      approvalResolver(request) {
-        expect(run.state).toBe("waiting_approval");
-        expect(request.action).toBe("workspace.write");
-        expect(request.details.path).toBe("README.md");
-        expect(String(request.details.diff)).toContain("-before");
-        return {
-          approvalId: request.id,
-          decision: "approved",
-        };
+      interactionChannel: {
+        approve(request) {
+          expect(run.state).toBe("waiting_approval");
+          expect(request.action).toBe("workspace.write");
+          expect(request.details.path).toBe("README.md");
+          expect(String(request.details.diff)).toContain("-before");
+          return {
+            approvalId: request.id,
+            decision: "approved",
+          };
+        },
       },
     });
 
@@ -223,19 +226,21 @@ describe("LocalWorkspace", () => {
     await writeFile(join(root, "obsolete.md"), "remove me\n", "utf8");
     const run = createRunRecord();
     const events = new EventLog(run.id);
-    const workspace = new ControlledWorkspace({
+    const workspace = createTestControlledWorkspace({
       run,
       events,
       workspace: new LocalWorkspace(root),
-      approvalResolver(request) {
-        expect(request.action).toBe("workspace.write");
-        expect(request.summary).toBe("Remove obsolete.md");
-        expect(request.details).toMatchObject({
-          path: "obsolete.md",
-          operation: "remove",
-        });
-        expect(String(request.details.diff)).toContain("-remove me");
-        return { approvalId: request.id, decision: "approved" };
+      interactionChannel: {
+        approve(request) {
+          expect(request.action).toBe("workspace.write");
+          expect(request.summary).toBe("Remove obsolete.md");
+          expect(request.details).toMatchObject({
+            path: "obsolete.md",
+            operation: "remove",
+          });
+          expect(String(request.details.diff)).toContain("-remove me");
+          return { approvalId: request.id, decision: "approved" };
+        },
       },
     });
 
@@ -266,12 +271,14 @@ describe("LocalWorkspace", () => {
     await writeFile(join(root, "keep.md"), "keep me\n", "utf8");
     const run = createRunRecord();
     const events = new EventLog(run.id);
-    const workspace = new ControlledWorkspace({
+    const workspace = createTestControlledWorkspace({
       run,
       events,
       workspace: new LocalWorkspace(root),
-      approvalResolver(request) {
-        return { approvalId: request.id, decision: "denied" };
+      interactionChannel: {
+        approve(request) {
+          return { approvalId: request.id, decision: "denied" };
+        },
       },
     });
 
@@ -287,7 +294,7 @@ describe("LocalWorkspace", () => {
     await writeFile(join(root, "README.md"), "public\n", "utf8");
     const run = createRunRecord();
     const events = new EventLog(run.id);
-    const workspace = new ControlledWorkspace({
+    const workspace = createTestControlledWorkspace({
       run,
       events,
       workspace: new LocalWorkspace(root),
@@ -309,7 +316,7 @@ describe("LocalWorkspace", () => {
     await writeFile(join(root, "secret.txt"), "SECRET_TOKEN=abc\n", "utf8");
     const run = createRunRecord();
     const events = new EventLog(run.id);
-    const workspace = new ControlledWorkspace({
+    const workspace = createTestControlledWorkspace({
       run,
       events,
       workspace: new LocalWorkspace(root),
@@ -335,15 +342,17 @@ describe("LocalWorkspace", () => {
     await writeFile(join(root, "README.md"), "before\n", "utf8");
     const run = createRunRecord();
     const events = new EventLog(run.id);
-    const workspace = new ControlledWorkspace({
+    const workspace = createTestControlledWorkspace({
       run,
       events,
       workspace: new LocalWorkspace(root),
-      approvalResolver(request) {
-        return {
-          approvalId: request.id,
-          decision: "denied",
-        };
+      interactionChannel: {
+        approve(request) {
+          return {
+            approvalId: request.id,
+            decision: "denied",
+          };
+        },
       },
     });
 
@@ -363,16 +372,18 @@ describe("LocalWorkspace", () => {
     await writeFile(join(root, "README.md"), "before\n", "utf8");
     const run = createRunRecord();
     const events = new EventLog(run.id);
-    const workspace = new ControlledWorkspace({
+    const workspace = createTestControlledWorkspace({
       run,
       events,
       workspace: new LocalWorkspace(root),
-      async approvalResolver(request) {
-        await writeFile(join(root, "README.md"), "external change\n", "utf8");
-        return {
-          approvalId: request.id,
-          decision: "approved",
-        };
+      interactionChannel: {
+        async approve(request) {
+          await writeFile(join(root, "README.md"), "external change\n", "utf8");
+          return {
+            approvalId: request.id,
+            decision: "approved",
+          };
+        },
       },
     });
 
@@ -396,16 +407,18 @@ describe("LocalWorkspace", () => {
     await writeFile(join(root, "README.md"), "alpha\nbeta\n", "utf8");
     const run = createRunRecord();
     const events = new EventLog(run.id);
-    const workspace = new ControlledWorkspace({
+    const workspace = createTestControlledWorkspace({
       run,
       events,
       workspace: new LocalWorkspace(root),
-      approvalResolver(request) {
-        expect(request.action).toBe("workspace.write");
-        return {
-          approvalId: request.id,
-          decision: "approved",
-        };
+      interactionChannel: {
+        approve(request) {
+          expect(request.action).toBe("workspace.write");
+          return {
+            approvalId: request.id,
+            decision: "approved",
+          };
+        },
       },
     });
     const anchored = await workspace.readAnchoredText("README.md");
@@ -442,12 +455,14 @@ describe("LocalWorkspace", () => {
     await writeFile(join(root, "README.md"), "alpha\nbeta\n", "utf8");
     const run = createRunRecord();
     const events = new EventLog(run.id);
-    const workspace = new ControlledWorkspace({
+    const workspace = createTestControlledWorkspace({
       run,
       events,
       workspace: new LocalWorkspace(root),
-      approvalResolver() {
-        throw new Error("approval should not be requested");
+      interactionChannel: {
+        approve() {
+          throw new Error("approval should not be requested");
+        },
       },
     });
     const anchored = await workspace.readAnchoredText("README.md");
@@ -487,7 +502,7 @@ describe("LocalWorkspace", () => {
     await writeFile(join(root, "README.md"), "before\n", "utf8");
     const run = createRunRecord();
     const events = new EventLog(run.id);
-    const workspace = new ControlledWorkspace({
+    const workspace = createTestControlledWorkspace({
       run,
       events,
       workspace: new LocalWorkspace(root),
@@ -505,64 +520,6 @@ describe("LocalWorkspace", () => {
     );
   });
 
-  it("does not write when workspace write validation fails", async () => {
-    await writeFile(join(root, "README.md"), "before\n", "utf8");
-    const run = createRunRecord();
-    const events = new EventLog(run.id);
-    const workspace = new ControlledWorkspace({
-      run,
-      events,
-      workspace: new LocalWorkspace(root),
-      approvalResolver() {
-        throw new Error("approval should not be requested");
-      },
-      validationHooks: [
-        {
-          name: "write-policy",
-          stages: ["workspace_write"],
-          validate(input) {
-            const proposal = input.subject as { path: string };
-            if (proposal.path === "README.md") {
-              return {
-                status: "failed",
-                findings: [
-                  {
-                    code: "README_LOCKED",
-                    message: "README writes are locked.",
-                    severity: "error",
-                  },
-                ],
-              };
-            }
-          },
-        },
-      ],
-    });
-
-    await expect(workspace.writeText("README.md", "after\n")).rejects.toThrow(
-      "Workspace write validation failed",
-    );
-
-    await expect(readFile(join(root, "README.md"), "utf8")).resolves.toBe(
-      "before\n",
-    );
-    expect(events.all().map((event) => event.type)).toEqual([
-      "workspace.write.requested",
-      "validation.started",
-      "validation.failed",
-      "workspace.write.denied",
-    ]);
-    expect(
-      events.all().find((event) => event.type === "workspace.write.denied")
-        ?.payload,
-    ).toMatchObject({
-      path: "README.md",
-      validation: {
-        hookName: "write-policy",
-      },
-    });
-  });
-
   it("routes approval-driven state transitions through the setState callback", async () => {
     await writeFile(join(root, "README.md"), "before\n", "utf8");
     const run = createRunRecord();
@@ -578,12 +535,14 @@ describe("LocalWorkspace", () => {
         run.state = state;
         run.updatedAt = new Date().toISOString();
       },
-      approvalResolver(request) {
-        expect(run.state).toBe("waiting_approval");
-        return {
-          approvalId: request.id,
-          decision: "approved",
-        };
+      interactionChannel: {
+        approve(request) {
+          expect(run.state).toBe("waiting_approval");
+          return {
+            approvalId: request.id,
+            decision: "approved",
+          };
+        },
       },
     });
 
@@ -597,7 +556,7 @@ describe("LocalWorkspace", () => {
     await writeFile(join(root, "README.md"), "before\n", "utf8");
     const run = createRunRecord();
     const events = new EventLog(run.id);
-    const workspace = new ControlledWorkspace({
+    const workspace = createTestControlledWorkspace({
       run,
       events,
       workspace: new LocalWorkspace(root),
@@ -611,8 +570,10 @@ describe("LocalWorkspace", () => {
           };
         },
       },
-      approvalResolver() {
-        throw new Error("approval should not be requested");
+      interactionChannel: {
+        approve() {
+          throw new Error("approval should not be requested");
+        },
       },
     });
 
@@ -636,7 +597,7 @@ describe("LocalWorkspace", () => {
     const run = createRunRecord();
     const events = new EventLog(run.id);
     const policyPaths: unknown[] = [];
-    const workspace = new ControlledWorkspace({
+    const workspace = createTestControlledWorkspace({
       run,
       events,
       workspace: new LocalWorkspace(root),
@@ -669,15 +630,17 @@ describe("LocalWorkspace", () => {
     const events = new EventLog(run.id);
     const local = new LocalWorkspace(root);
     const checkpointStore = new WorkspaceCheckpointStore();
-    const workspace = new ControlledWorkspace({
+    const workspace = createTestControlledWorkspace({
       run,
       events,
       workspace: local,
       checkpointStore,
-      approvalResolver: (request) => ({
-        approvalId: request.id,
-        decision: "approved",
-      }),
+      interactionChannel: {
+        approve: (request) => ({
+          approvalId: request.id,
+          decision: "approved",
+        }),
+      },
     });
 
     const checkpointId = checkpointStore.openCheckpoint("turn-1");
@@ -708,5 +671,21 @@ function createRunRecord(): RunRecord {
     createdAt: now,
     updatedAt: now,
     metadata: {},
+  };
+}
+
+function createTestControlledWorkspace(
+  options: Omit<ControlledWorkspaceOptions, "setState">,
+): ControlledWorkspace {
+  return new ControlledWorkspace({
+    ...options,
+    setState: createTestRunStateSetter(options.run),
+  });
+}
+
+function createTestRunStateSetter(run: RunRecord): (state: RunState) => void {
+  return (state) => {
+    run.state = state;
+    run.updatedAt = new Date().toISOString();
   };
 }

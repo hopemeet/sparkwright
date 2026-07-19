@@ -1,5 +1,4 @@
 import type { ToolDefinition } from "@sparkwright/core";
-import { canonicalToolName } from "./tool-identities.js";
 
 type SelectorCatalogSource =
   | "coding"
@@ -55,16 +54,11 @@ export const WORKSPACE_WRITE_TOOL_NAMES = [
 ] as const;
 
 const BUILTIN_SELECTOR_SET = new Set<string>(TOOL_USE_SELECTORS);
-const LEGACY_SELECTOR_ALIASES = new Map<string, string>([["shell", "bash"]]);
 const WORKSPACE_READ_TOOL_SET = new Set<string>(WORKSPACE_READ_TOOL_NAMES);
 const WORKSPACE_WRITE_TOOL_SET = new Set<string>(WORKSPACE_WRITE_TOOL_NAMES);
 
 export function isToolUseSelector(selector: string): boolean {
-  return (
-    BUILTIN_SELECTOR_SET.has(selector) ||
-    LEGACY_SELECTOR_ALIASES.has(selector) ||
-    isMcpServerSelector(selector)
-  );
+  return BUILTIN_SELECTOR_SET.has(selector) || isMcpServerSelector(selector);
 }
 
 export function formatToolUseSelectorList(): string {
@@ -88,10 +82,7 @@ export function intersectToolUseSelectors(
   const out: string[] = [];
   for (const left of previous) {
     for (const right of next) {
-      for (const selector of intersectOneSelector(
-        normalizeToolUseSelector(left),
-        normalizeToolUseSelector(right),
-      )) {
+      for (const selector of intersectOneSelector(left, right)) {
         if (!out.includes(selector)) out.push(selector);
       }
     }
@@ -107,9 +98,8 @@ export function resolveSelectorAllowlist(
 
   const selected = new Set<string>();
   for (const selector of selectors) {
-    const normalizedSelector = normalizeToolUseSelector(selector);
     for (const entry of entries) {
-      if (entryMatchesSelector(entry, normalizedSelector)) {
+      if (entryMatchesSelector(entry, selector)) {
         selected.add(entry.definition.name);
       }
     }
@@ -155,15 +145,11 @@ function intersectOneSelector(left: string, right: string): string[] {
   return [];
 }
 
-export function normalizeToolUseSelector(selector: string): string {
-  return LEGACY_SELECTOR_ALIASES.get(selector) ?? selector;
-}
-
 function entryMatchesSelector(
   entry: ToolSelectorCatalogEntry,
   selector: string,
 ): boolean {
-  const toolName = canonicalToolName(entry.definition.name);
+  const toolName = entry.definition.name;
   switch (selector) {
     case "workspace.read":
       return entry.source === "coding" && WORKSPACE_READ_TOOL_SET.has(toolName);
@@ -201,9 +187,8 @@ function matchesMcpServerSelector(
 }
 
 function codingToolSelector(toolName: string): "read" | "write" | undefined {
-  const canonical = canonicalToolName(toolName);
-  if (WORKSPACE_READ_TOOL_SET.has(canonical)) return "read";
-  if (WORKSPACE_WRITE_TOOL_SET.has(canonical)) return "write";
+  if (WORKSPACE_READ_TOOL_SET.has(toolName)) return "read";
+  if (WORKSPACE_WRITE_TOOL_SET.has(toolName)) return "write";
   return undefined;
 }
 

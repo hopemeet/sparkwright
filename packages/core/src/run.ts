@@ -6,7 +6,7 @@
 //
 //   * Tools          → tools.ts                 (defineTool, ToolRegistry)
 //   * Policy         → policy.ts                (createLayeredPolicy)
-//   * Approval       → approval.ts              (ApprovalResolver)
+//   * Approval       → approval.ts              (request validation)
 //   * Interaction    → interaction.ts           (InteractionChannel)
 //   * Hooks          → hooks.ts                 (RunHook)
 //   * Usage / cost   → usage.ts                 (UsageTracker)
@@ -26,21 +26,8 @@ import {
   withSpan,
   type SpanFrame,
 } from "./spans.js";
-import {
-  createApprovalRequest,
-  type ApprovalResolver,
-  resolveApproval,
-} from "./approval.js";
-import {
-  approvalResolverFromChannel,
-  createInteractionNotification,
-  createInteractionQuestionRequest,
-  type InteractionChannel,
-  type InteractionNotification,
-  type InteractionNotificationLevel,
-  type InteractionQuestionRequest,
-  type InteractionQuestionResponse,
-} from "./interaction.js";
+import { createApprovalRequest, resolveApproval } from "./approval.js";
+import type { InteractionChannel } from "./interaction.js";
 import {
   createDynamicHookSet,
   type RunHook,
@@ -92,11 +79,7 @@ import {
   runToolBatch,
   type RequestedToolCall,
 } from "./tool-orchestration.js";
-import {
-  commandOutcomeSnapshotFromFactLedger,
-  completedRunOutcomeFromEvents,
-  toolOutcomeSnapshot,
-} from "./run-outcome.js";
+import { assessRun } from "./run-assessment.js";
 import { FactLedger } from "./fact-ledger.js";
 import { ControlledWorkspace } from "./workspace.js";
 import type { WorkspaceCheckpointStore } from "./workspace-checkpoint.js";
@@ -111,13 +94,6 @@ import {
   type ToolDefinition,
   type ToolDescriptor,
 } from "./tools.js";
-import {
-  kickPostSamplingHooks,
-  runValidationHooks,
-  validationFailureMessage,
-  type ValidationFailure,
-  type ValidationHook,
-} from "./validation.js";
 import type {
   ContextItem,
   ModelAdapter,
@@ -180,6 +156,7 @@ import {
   isRepeatedToolCall,
   repeatedToolCallNudgeMessage,
   repeatedToolCallNudgeMetadata,
+  safelyManagesRepeatedCalls,
   safelyRepeatedCallGuidance,
   semanticToolTarget,
   shouldRequestContextCompaction,
@@ -266,18 +243,9 @@ class ForcedContinuationBudgetLedger {
 }
 
 function resolveForcedContinuationBudgetConfig(
-  options: Pick<
-    CreateRunOptions,
-    "maxRevivalTurns" | "forcedContinuationBudgets"
-  >,
+  options: Pick<CreateRunOptions, "forcedContinuationBudgets">,
 ): Record<ForcedContinuationSource, number> {
   const configured = options.forcedContinuationBudgets ?? {};
-  if (
-    options.maxRevivalTurns !== undefined &&
-    !isNonNegativeInteger(options.maxRevivalTurns)
-  ) {
-    throw new Error("maxRevivalTurns must be a non-negative integer.");
-  }
   for (const source of FORCED_CONTINUATION_SOURCES) {
     const value = configured[source];
     if (value !== undefined && !isNonNegativeInteger(value)) {
@@ -287,10 +255,7 @@ function resolveForcedContinuationBudgetConfig(
     }
   }
   return {
-    revival:
-      configured.revival ??
-      options.maxRevivalTurns ??
-      DEFAULT_MAX_REVIVAL_TURNS,
+    revival: configured.revival ?? DEFAULT_MAX_REVIVAL_TURNS,
     workflow: configured.workflow ?? DEFAULT_MAX_REVIVAL_TURNS,
   };
 }
@@ -324,7 +289,6 @@ interface ToolStageTimings {
   policyDecisionMs?: number;
   approvalWaitMs?: number;
   executionMs?: number;
-  resultValidationMs?: number;
 }
 
 interface DeferredToolObservation {
@@ -366,13 +330,8 @@ export interface CreateRunOptions {
   loopServices?: RunLoopServices;
   tools?: ToolDefinition[];
   policy?: Policy;
-  approvalResolver?: ApprovalResolver;
   /**
-   * Unified outbound channel for approve / ask / notify. When provided, the
-   * loop uses `interactionChannel.approve` as the approval resolver (taking
-   * precedence over `approvalResolver` for that one capability) and exposes
-   * `RunHandle.askUser()` / `RunHandle.notifyUser()` for tools and hooks.
-   * See {@link InteractionChannel}.
+   * Outbound approval channel used by governed runtime actions.
    */
   interactionChannel?: InteractionChannel;
   /**
@@ -389,8 +348,7 @@ export interface CreateRunOptions {
    * higher-level than RunHook and are intended for rules that must happen at
    * known lifecycle points (tool gates, post-tool checks, stop gates, runtime
    * signals). This is the preferred surface for project-facing workflow
-   * policy. Legacy `hooks` and `validationHooks` remain supported for
-   * embedders and compatibility.
+   * policy. Low-level `hooks` remain available for instrumentation.
    */
   workflowHooks?: WorkflowHook[];
   /**
@@ -433,7 +391,6 @@ export interface CreateRunOptions {
   observationSummarizer?: ObservationSummarizer;
   observationFormatter?: ObservationFormatter;
   promptBuilder?: PromptBuilder<PromptMessage[]>;
-  validationHooks?: ValidationHook[];
   runBudget?: RunBudget;
   /**
    * Ancestor-owned work-budget accounts consumed by this run. Orchestrators
@@ -447,19 +404,11 @@ export interface CreateRunOptions {
   toolTimeoutMs?: number;
   maxToolConcurrency?: number;
   doomLoopRepeatLimit?: number;
-  finalOutputValidation?: "fail" | "continue";
   /**
    * Maximum number of `extend_output` recoveries the loop will attempt per
    * run. Default 3.
    */
   maxOutputRecoveries?: number;
-  /**
-   * Maximum number of awaited-task revival turns. These turns are budgeted
-   * separately from maxSteps so a legitimate slow task completion can still be
-   * injected after the normal step budget is otherwise spent. Legacy alias for
-   * `forcedContinuationBudgets.revival`. Default 5.
-   */
-  maxRevivalTurns?: number;
   /**
    * Per-source in-run forced-continuation budgets. Sources are counted
    * independently from `maxSteps` / `runBudget`; exhaustion refuses that forced
@@ -621,27 +570,6 @@ export interface RunHandle {
     summary: string;
     details?: Record<string, unknown>;
   }): Promise<boolean>;
-  /**
-   * Ask the user a free-form or multiple-choice question via the configured
-   * InteractionChannel. Resolves with `undefined` when no channel is wired
-   * or the channel cannot ask.
-   */
-  askUser(input: {
-    prompt: string;
-    choices?: InteractionQuestionRequest["choices"];
-    defaultChoiceId?: string;
-    metadata?: Record<string, unknown>;
-  }): Promise<InteractionQuestionResponse | undefined>;
-  /**
-   * Fire-and-forget notification to the user via the configured
-   * InteractionChannel. No-ops when no channel is wired.
-   */
-  notifyUser(input: {
-    level: InteractionNotificationLevel;
-    message: string;
-    title?: string;
-    metadata?: Record<string, unknown>;
-  }): Promise<void>;
   /** Current usage snapshot (tokens / cost / wall time / per-tool / per-model). */
   usage(): ReturnType<UsageTracker["snapshot"]>;
   /**
@@ -657,7 +585,7 @@ export interface RunHandle {
    * The run's {@link RuntimeContext} workspace, if one was configured. Exposed
    * so an orchestrator spawning a sub-agent can inherit it as the child's
    * workspace — otherwise the child's `ctx.workspace` is undefined and any
-   * workspace-backed tool (e.g. `read_file`) throws "Workspace is not
+   * workspace-backed tool (e.g. `read`) throws "Workspace is not
    * configured", even when factory-bound tools like `glob` still work.
    *
    * @reserved Public sub-agent-protocol accessor consumed by spawn helpers.
@@ -723,7 +651,6 @@ export class SparkwrightRun implements RunHandle {
   readonly events: EventLog;
   readonly tools = new ToolRegistry();
   private readonly policy: Policy;
-  private readonly approvalResolver?: ApprovalResolver;
   private readonly interactionChannel?: InteractionChannel;
   private readonly hook: RunHook;
   /**
@@ -745,7 +672,6 @@ export class SparkwrightRun implements RunHandle {
   private readonly contextBudget?: ContextBudget;
   private readonly observationFormatter: ObservationFormatter;
   private readonly promptBuilder: PromptBuilder<PromptMessage[]>;
-  private readonly validationHooks: ValidationHook[];
   private readonly workflowHooks: WorkflowHook[];
   private readonly factLedger = new FactLedger();
   private readonly runHealth = new RunHealthAnalyzer();
@@ -762,7 +688,6 @@ export class SparkwrightRun implements RunHandle {
   private readonly toolTimeoutMs?: number;
   private readonly maxToolConcurrency: number;
   private readonly doomLoopRepeatLimit: number;
-  private readonly finalOutputValidation: "fail" | "continue";
   private readonly maxOutputRecoveries: number;
   private outputRecoveriesUsed = 0;
   private readonly forcedContinuationBudget: ForcedContinuationBudgetLedger;
@@ -830,13 +755,6 @@ export class SparkwrightRun implements RunHandle {
     this.events.subscribe((event) => this.runHealth.observeEvent(event));
     this.policy = options.policy ?? createDefaultPolicy();
     this.interactionChannel = options.interactionChannel;
-    // InteractionChannel.approve, when supplied, takes precedence as the
-    // approval resolver. The legacy `approvalResolver` is honored when the
-    // channel does not implement approve, or when no channel is supplied.
-    this.approvalResolver =
-      (this.interactionChannel &&
-        approvalResolverFromChannel(this.interactionChannel)) ??
-      options.approvalResolver;
     for (const seed of options.hooks ?? []) {
       this.dynamicHooks.push({
         ...seed,
@@ -875,8 +793,7 @@ export class SparkwrightRun implements RunHandle {
           workspace: options.workspace,
           events: this.events,
           policy: this.policy,
-          approvalResolver: this.approvalResolver,
-          validationHooks: options.validationHooks,
+          interactionChannel: this.interactionChannel,
           setState: (state) => this.setState(state),
           checkpointStore: options.workspaceCheckpointStore,
         })
@@ -888,7 +805,6 @@ export class SparkwrightRun implements RunHandle {
     this.observationFormatter =
       options.observationFormatter ?? new DefaultObservationFormatter();
     this.promptBuilder = options.promptBuilder ?? new DefaultPromptBuilder();
-    this.validationHooks = [...(options.validationHooks ?? [])];
     this.workflowHooks = [...(options.workflowHooks ?? [])];
     // Default to deterministic, self-gating stages when the embedder does not
     // configure their own. An explicit empty array disables compaction.
@@ -919,7 +835,6 @@ export class SparkwrightRun implements RunHandle {
     this.maxToolConcurrency = options.maxToolConcurrency ?? 10;
     this.doomLoopRepeatLimit =
       options.doomLoopRepeatLimit ?? DEFAULT_DOOM_LOOP_TOOL_CALL_REPEAT_LIMIT;
-    this.finalOutputValidation = options.finalOutputValidation ?? "fail";
     this.maxOutputRecoveries = options.maxOutputRecoveries ?? 3;
     this.forcedContinuationBudget = new ForcedContinuationBudgetLedger(
       resolveForcedContinuationBudgetConfig(options),
@@ -1105,6 +1020,14 @@ export class SparkwrightRun implements RunHandle {
         state: "failed",
         stopReason: this.record.stopReason ?? "model_completion_failed",
         message: err instanceof Error ? err.message : String(err),
+        assessment: assessRun(this.events.all(), {
+          factLedger: this.factLedger.snapshot(),
+          terminal: {
+            state: "failed",
+            reason: this.record.stopReason ?? "model_completion_failed",
+            failure: { code: "UNEXPECTED_RUN_FAILURE" },
+          },
+        }),
         metadata: {},
       };
       await this.safeStoreFinish(fallback);
@@ -1572,16 +1495,6 @@ export class SparkwrightRun implements RunHandle {
         };
         this.lastLoopState = cloneLoopState(state);
       }
-      // Fire post_sampling hooks fire-and-forget so they observe model output
-      // without blocking the loop. Failures are logged via validation events.
-      kickPostSamplingHooks({
-        hooks: this.validationHooks,
-        stage: "post_sampling",
-        run: this.record,
-        subject: output,
-        metadata: { step: state.step },
-        events: this.events,
-      });
       const outputBudgetFailure = this.checkRunBudget("model_completed", {
         step: state.step,
       });
@@ -1591,76 +1504,6 @@ export class SparkwrightRun implements RunHandle {
 
       // --- Phase 6: terminal branch ---------------------------------------
       if (toolCalls.length === 0) {
-        // pre_terminal stop hook: a failed hook here BLOCKS termination and
-        // converts itself into a continuation context item.
-        const stopHookFailure = await this.runValidation(
-          "pre_terminal",
-          output.message,
-          { step: state.step },
-        );
-        if (stopHookFailure) {
-          const continuation = this.formatStopHookContinuation(
-            stopHookFailure,
-            state.step,
-          );
-          this.events.emit("validation.failed", {
-            hookName: stopHookFailure.hookName,
-            stage: "pre_terminal",
-            result: stopHookFailure.result,
-            metadata: { step: state.step, blockedTermination: true },
-          });
-          state = {
-            ...state,
-            context: [...state.context, continuation],
-            step: state.step + 1,
-            turnCount: state.turnCount + 1,
-            transition: {
-              reason: "stop_hook_blocked",
-              metadata: { hookName: stopHookFailure.hookName },
-            },
-          };
-          this.lastLoopState = cloneLoopState(state);
-          continue;
-        }
-
-        const validationFailure = await this.runValidation(
-          "final_output",
-          output.message,
-          { step: state.step },
-        );
-        if (validationFailure) {
-          if (this.finalOutputValidation === "continue") {
-            state = {
-              ...state,
-              context: [
-                ...state.context,
-                this.formatValidationFailureContext(
-                  validationFailure,
-                  state.step,
-                ),
-              ],
-              step: state.step + 1,
-              turnCount: state.turnCount + 1,
-              transition: {
-                reason: "validation_continuation",
-                metadata: { hookName: validationFailure.hookName },
-              },
-            };
-            this.lastLoopState = cloneLoopState(state);
-            continue;
-          }
-
-          return this.fail(
-            "validation_failed",
-            "VALIDATION_FAILED",
-            validationFailureMessage(validationFailure),
-            {
-              stage: "final_output",
-              validation: validationFailure,
-            },
-          );
-        }
-
         const stopHooks = await this.runWorkflowHookPhase(
           "Stop",
           {
@@ -2420,33 +2263,6 @@ export class SparkwrightRun implements RunHandle {
     });
   }
 
-  private formatStopHookContinuation(
-    failure: ValidationFailure,
-    step: number,
-  ): ContextItem {
-    return {
-      id: (this.loopServices.createContextItemId ?? createContextItemId)(),
-      type: "summary",
-      source: { kind: "validation", uri: failure.hookName },
-      content: JSON.stringify({
-        stage: "pre_terminal",
-        status: "blocked_termination",
-        hookName: failure.hookName,
-        message: validationFailureMessage(failure),
-        result: failure.result,
-        guidance:
-          "A stop hook prevented this run from terminating. Address the finding and continue.",
-      }),
-      metadata: {
-        layer: "working",
-        stability: "turn",
-        step,
-        stopHookContinuation: true,
-        hookName: failure.hookName,
-      },
-    };
-  }
-
   private formatWorkflowHookBlockContinuation(
     hook: WorkflowHookName,
     block: WorkflowHookBlock,
@@ -2514,9 +2330,9 @@ export class SparkwrightRun implements RunHandle {
     summary: string;
     details?: Record<string, unknown>;
   }): Promise<boolean> {
-    if (!this.approvalResolver) {
+    if (!this.interactionChannel?.approve) {
       throw new Error(
-        "Approval requested but no approval resolver was configured.",
+        "Approval requested but no interaction channel approval handler was configured.",
       );
     }
 
@@ -2530,65 +2346,14 @@ export class SparkwrightRun implements RunHandle {
     this.setState("waiting_approval");
     this.events.emit("approval.requested", request);
     this.events.emit("interaction.requested", { kind: "approval", request });
-    const response = await resolveApproval(request, this.approvalResolver);
+    const response = await resolveApproval(
+      request,
+      this.interactionChannel.approve.bind(this.interactionChannel),
+    );
     this.events.emit("approval.resolved", response);
     this.events.emit("interaction.resolved", { kind: "approval", response });
     this.setState("running");
     return response.decision === "approved";
-  }
-
-  async askUser(input: {
-    prompt: string;
-    choices?: InteractionQuestionRequest["choices"];
-    defaultChoiceId?: string;
-    metadata?: Record<string, unknown>;
-  }): Promise<InteractionQuestionResponse | undefined> {
-    if (!this.interactionChannel?.ask) return undefined;
-    const request = createInteractionQuestionRequest({
-      runId: this.record.id,
-      prompt: input.prompt,
-      choices: input.choices,
-      defaultChoiceId: input.defaultChoiceId,
-      metadata: input.metadata,
-    });
-    this.events.emit("interaction.requested", { kind: "question", request });
-    const response = await this.interactionChannel.ask(request);
-    this.events.emit("interaction.resolved", { kind: "question", response });
-    return response;
-  }
-
-  async notifyUser(input: {
-    level: InteractionNotificationLevel;
-    message: string;
-    title?: string;
-    metadata?: Record<string, unknown>;
-  }): Promise<void> {
-    if (!this.interactionChannel?.notify) return;
-    const notification: InteractionNotification = createInteractionNotification(
-      {
-        runId: this.record.id,
-        level: input.level,
-        message: input.message,
-        title: input.title,
-        metadata: input.metadata,
-      },
-    );
-    this.events.emit("interaction.requested", {
-      kind: "notification",
-      notification,
-    });
-    try {
-      await this.interactionChannel.notify(notification);
-    } catch (err) {
-      // Notification failures must not interrupt the run.
-      console.warn(
-        `[sparkwright] notifyUser failed: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
-    this.events.emit("interaction.resolved", {
-      kind: "notification",
-      notification,
-    });
   }
 
   usage() {
@@ -2742,13 +2507,19 @@ export class SparkwrightRun implements RunHandle {
       reason: "manual_cancelled",
       message: input.reason ?? "Run cancelled.",
       metadata: input.metadata ?? {},
+      factLedger: this.factLedger.snapshot(),
     };
-    this.events.emit("run.cancelled", payload);
+    const assessment = assessRun(this.events.all(), {
+      factLedger: payload.factLedger,
+      terminal: { state: "cancelled", reason: "manual_cancelled" },
+    });
+    this.events.emit("run.cancelled", { ...payload, assessment });
     this.result = {
       signal: "cancelled",
       state: "cancelled",
       stopReason: "manual_cancelled",
       message: payload.message,
+      assessment,
       metadata: payload.metadata,
     };
     this.kickWorkflowHookPhase("RunEnd", {
@@ -2942,20 +2713,10 @@ export class SparkwrightRun implements RunHandle {
     executionDiagnostic?: ToolExecutionDiagnostic,
     recordingOptions: ToolResultRecordingOptions = {},
   ): Promise<RunResult | undefined> {
-    const requestedToolName = requestedCall.toolName;
-    const canonicalToolName = this.tools.canonicalName(requestedToolName);
-    if (canonicalToolName !== requestedToolName) {
-      requestedCall = {
-        ...requestedCall,
-        toolName: canonicalToolName,
-        requestedToolName,
-      };
-    }
     const preToolPayload = (call: RequestedToolCall) => ({
       toolName: call.toolName,
       arguments: call.arguments,
       path: extractWorkflowPath(call.arguments),
-      ...(requestedToolName !== call.toolName ? { requestedToolName } : {}),
     });
     const preToolMetadata = (
       call: RequestedToolCall,
@@ -2965,7 +2726,6 @@ export class SparkwrightRun implements RunHandle {
       toolName: call.toolName,
       path: extractWorkflowPath(call.arguments),
       preToolUseStage,
-      ...(requestedToolName !== call.toolName ? { requestedToolName } : {}),
     });
     const recordPreToolBlock = async (block: WorkflowHookBlock) => {
       const call = createToolCall(
@@ -2989,7 +2749,7 @@ export class SparkwrightRun implements RunHandle {
       };
       span.close("tool.failed", {
         ...blocked,
-        ...this.publicToolEventIdentity(requestedCall),
+        toolName: requestedCall.toolName,
       });
       this.usageTracker.recordToolUsage({
         toolName: requestedCall.toolName,
@@ -3062,24 +2822,28 @@ export class SparkwrightRun implements RunHandle {
       state.previousToolCall,
       requestedCall,
     );
-    // An idempotent tool repeating verbatim is a harmless no-op — it returns the
-    // same result with no side effect (e.g. rewriting an unchanged todo ledger)
-    // — not the start of a doom loop. Such tools carry their own no-op handling
-    // that course-corrects the model, so the generic repeat guard must defer to
-    // them rather than burning a turn on REPEATED_TOOL_CALL_SKIPPED. A repeated
-    // *failure* or explicit no-progress result on the same target still counts
-    // even for idempotent tools, so the exemption requires no remembered
-    // failure/no-op target.
-    const benignIdempotentRepeat =
+    // An idempotent tool repeating verbatim is a harmless no-op, while a tool
+    // with `managesRepeatedCalls` owns a conservative cache/retry protocol.
+    // Neither is the start of a generic doom loop, so the repeat guard defers
+    // and lets the tool handle the call. A repeated *failure* or explicit
+    // no-progress result on the same target still counts, so both exemptions
+    // require no remembered failure/no-op target.
+    const toolManagedRepeat =
       verbatimRepeat &&
       !priorFailure &&
       !priorNoop &&
-      this.tools.get(requestedCall.toolName)?.governance?.idempotency ===
-        "idempotent";
-    if (
-      (verbatimRepeat || priorFailure || priorNoop) &&
-      !benignIdempotentRepeat
-    ) {
+      safelyManagesRepeatedCalls(
+        this.tools.get(requestedCall.toolName),
+        requestedCall.arguments,
+      );
+    const benignRepeat =
+      verbatimRepeat &&
+      !priorFailure &&
+      !priorNoop &&
+      (toolManagedRepeat ||
+        this.tools.get(requestedCall.toolName)?.governance?.idempotency ===
+          "idempotent");
+    if ((verbatimRepeat || priorFailure || priorNoop) && !benignRepeat) {
       state.repeatedToolCallCount += 1;
     } else {
       state.previousToolCall = requestedCall;
@@ -3213,7 +2977,6 @@ export class SparkwrightRun implements RunHandle {
     requestedCall: RequestedToolCall,
   ): ReturnType<typeof createToolCall> & {
     preview?: string;
-    canonicalToolName?: string;
   } {
     const requestPreview = formatToolRequestPreview(
       this.tools.get(requestedCall.toolName),
@@ -3221,27 +2984,7 @@ export class SparkwrightRun implements RunHandle {
     );
     return {
       ...call,
-      ...this.publicToolEventIdentity(requestedCall),
       ...(requestPreview ? { preview: requestPreview } : {}),
-    };
-  }
-
-  /**
-   * Public events retain the model-supplied alias for protocol compatibility.
-   * Internal hooks, policy, repeat detection, and execution use toolName after
-   * canonicalization; canonicalToolName keeps the trace unambiguous.
-   */
-  private publicToolEventIdentity(requestedCall: RequestedToolCall): {
-    toolName: string;
-    canonicalToolName?: string;
-  } {
-    const publicToolName =
-      requestedCall.requestedToolName ?? requestedCall.toolName;
-    return {
-      toolName: publicToolName,
-      ...(publicToolName !== requestedCall.toolName
-        ? { canonicalToolName: requestedCall.toolName }
-        : {}),
     };
   }
 
@@ -3277,7 +3020,7 @@ export class SparkwrightRun implements RunHandle {
     };
     span.close("tool.failed", {
       ...skipped,
-      ...this.publicToolEventIdentity(requestedCall),
+      toolName: requestedCall.toolName,
     });
     this.usageTracker.recordToolUsage({
       toolName: requestedCall.toolName,
@@ -3339,7 +3082,7 @@ export class SparkwrightRun implements RunHandle {
       };
       span.close("tool.completed", {
         ...nudged,
-        ...this.publicToolEventIdentity(requestedCall),
+        toolName: requestedCall.toolName,
       });
       this.usageTracker.recordToolUsage({
         toolName: requestedCall.toolName,
@@ -3374,7 +3117,7 @@ export class SparkwrightRun implements RunHandle {
     // so UIs can name the skipped call instead of rendering a generic "tool".
     span.close("tool.failed", {
       ...nudged,
-      ...this.publicToolEventIdentity(requestedCall),
+      toolName: requestedCall.toolName,
     });
     this.usageTracker.recordToolUsage({
       toolName: requestedCall.toolName,
@@ -3436,7 +3179,7 @@ export class SparkwrightRun implements RunHandle {
         "tool.failed",
         {
           ...skipped,
-          ...this.publicToolEventIdentity(requestedCall),
+          toolName: requestedCall.toolName,
         },
         this.toolTimingMetadata(timings),
       );
@@ -3466,7 +3209,7 @@ export class SparkwrightRun implements RunHandle {
         "tool.failed",
         {
           ...validationResult,
-          ...this.publicToolEventIdentity(requestedCall),
+          toolName: requestedCall.toolName,
         },
         this.toolTimingMetadata(timings),
       );
@@ -3495,7 +3238,7 @@ export class SparkwrightRun implements RunHandle {
         "tool.failed",
         {
           ...inputValidationResult,
-          ...this.publicToolEventIdentity(requestedCall),
+          toolName: requestedCall.toolName,
         },
         this.toolTimingMetadata(timings),
       );
@@ -3526,7 +3269,7 @@ export class SparkwrightRun implements RunHandle {
         "tool.failed",
         {
           ...availabilityResult,
-          ...this.publicToolEventIdentity(requestedCall),
+          toolName: requestedCall.toolName,
         },
         this.toolTimingMetadata(timings),
       );
@@ -3549,14 +3292,13 @@ export class SparkwrightRun implements RunHandle {
       requestedCall.toolName,
       requestedCall.arguments,
       timings,
-      requestedCall.requestedToolName,
     );
     if (gatedResult) {
       span.close(
         "tool.failed",
         {
           ...gatedResult,
-          ...this.publicToolEventIdentity(requestedCall),
+          toolName: requestedCall.toolName,
         },
         this.toolTimingMetadata(timings),
       );
@@ -3588,7 +3330,7 @@ export class SparkwrightRun implements RunHandle {
         "tool.failed",
         {
           ...aborted,
-          ...this.publicToolEventIdentity(requestedCall),
+          toolName: requestedCall.toolName,
         },
         this.toolTimingMetadata(timings),
       );
@@ -3608,7 +3350,7 @@ export class SparkwrightRun implements RunHandle {
 
     emitInSpan(this.events, "tool.started", {
       toolCallId: call.id,
-      ...this.publicToolEventIdentity(requestedCall),
+      toolName: requestedCall.toolName,
     });
     const executionStartedAt = Date.now();
     const result = await executeTool(
@@ -3624,18 +3366,10 @@ export class SparkwrightRun implements RunHandle {
       },
     );
     timings.executionMs = elapsedMs(executionStartedAt);
-    const checkedResult = await this.applyToolResultValidation(
-      requestedCall.toolName,
-      result,
-      {
-        step: state.step,
-      },
-      timings,
-    );
     const normalizedResult =
       requestedCall.toolName === "skill_load"
-        ? this.normalizeSkillLoadResult(checkedResult)
-        : checkedResult;
+        ? this.normalizeSkillLoadResult(result)
+        : result;
     const annotatedResult =
       normalizedResult.status === "failed"
         ? this.annotateReplayRiskOnFailure(call.toolName, normalizedResult)
@@ -3644,7 +3378,7 @@ export class SparkwrightRun implements RunHandle {
       annotatedResult.status === "completed" ? "tool.completed" : "tool.failed",
       {
         ...annotatedResult,
-        ...this.publicToolEventIdentity(requestedCall),
+        toolName: requestedCall.toolName,
       },
       this.toolTimingMetadata(timings),
     );
@@ -3737,8 +3471,8 @@ export class SparkwrightRun implements RunHandle {
     const name = getStringProperty(result.output, "name");
     if (!name) return;
 
-    // sourcePath/contentHash are intentionally not echoed here: the on-demand
-    // skill_load result no longer carries them (they are absolute host paths
+    // Source path and package identity are intentionally not echoed here: the
+    // skill_load result does not carry them (the path is an absolute host path
     // the model cannot use). The same provenance is available on the
     // skill.indexed event, joined by skill name.
     this.events.emit(
@@ -3788,16 +3522,19 @@ export class SparkwrightRun implements RunHandle {
    * (e.g. ask the user) rather than letting the model silently re-issue a
    * call that may already have produced an external side effect.
    *
-   * Read-only / idempotent tools (`isReplaySafe: true`) and tools that
-   * declare nothing (legacy) skip this annotation to preserve existing
-   * behavior.
+   * Tools with `governance.idempotency: "conditional"` or
+   * `"non_idempotent"` receive the annotation. Idempotent tools and tools
+   * without an idempotency declaration skip it.
    */
   private annotateReplayRiskOnFailure(
     toolName: string,
     result: ToolResult,
   ): ToolResult {
     const tool = this.tools.get(toolName);
-    if (!tool || tool.isReplaySafe !== false) return result;
+    const idempotency = tool?.governance?.idempotency;
+    if (idempotency !== "conditional" && idempotency !== "non_idempotent") {
+      return result;
+    }
     if (!isLikelySideEffectFailure(result.error)) return result;
 
     const replayRisk = "side_effect_may_have_landed";
@@ -4122,7 +3859,6 @@ export class SparkwrightRun implements RunHandle {
     toolName: string,
     args: unknown,
     timings?: ToolStageTimings,
-    requestedToolName?: string,
   ): Promise<ToolResult | undefined> {
     const tool = this.tools.get(toolName);
 
@@ -4164,21 +3900,14 @@ export class SparkwrightRun implements RunHandle {
       governance: effectiveGovernance,
       toolOrigin: effectiveGovernance?.origin,
     };
-    const publicToolName = requestedToolName ?? toolName;
-    const publicMetadata = {
-      ...metadata,
-      toolName: publicToolName,
-      ...(publicToolName !== toolName ? { canonicalToolName: toolName } : {}),
-    };
-
     if (risk === "denied") {
       return {
         toolCallId,
         status: "failed",
         error: {
           code: "TOOL_DENIED",
-          message: `Tool is denied by policy metadata: ${publicToolName}`,
-          metadata: publicMetadata,
+          message: `Tool is denied by policy metadata: ${toolName}`,
+          metadata,
         },
         artifacts: [],
       };
@@ -4225,10 +3954,9 @@ export class SparkwrightRun implements RunHandle {
         approved = await this.requestApproval({
           action: "tool.execute",
           summary:
-            formatToolApprovalSummary(tool, args) ??
-            `Run tool ${publicToolName}`,
+            formatToolApprovalSummary(tool, args) ?? `Run tool ${toolName}`,
           details: {
-            ...publicMetadata,
+            ...metadata,
             arguments: args,
             policy: decision,
           },
@@ -4244,7 +3972,7 @@ export class SparkwrightRun implements RunHandle {
             message:
               cause instanceof Error ? cause.message : "Approval failed.",
             cause,
-            metadata: publicMetadata,
+            metadata,
           },
           artifacts: [],
         };
@@ -4256,8 +3984,8 @@ export class SparkwrightRun implements RunHandle {
           status: "failed",
           error: {
             code: "TOOL_APPROVAL_DENIED",
-            message: `Approval denied for tool: ${publicToolName}`,
-            metadata: publicMetadata,
+            message: `Approval denied for tool: ${toolName}`,
+            metadata,
           },
           artifacts: [],
         };
@@ -4332,36 +4060,8 @@ export class SparkwrightRun implements RunHandle {
       policyDecisionMs: timings.policyDecisionMs,
       approvalWaitMs: timings.approvalWaitMs,
       executionMs: timings.executionMs,
-      resultValidationMs: timings.resultValidationMs,
     });
     return Object.keys(metadata).length > 0 ? metadata : undefined;
-  }
-
-  private formatValidationFailureContext(
-    validationFailure: ValidationFailure,
-    step: number,
-  ): ContextItem {
-    return {
-      id: (this.loopServices.createContextItemId ?? createContextItemId)(),
-      type: "summary",
-      source: {
-        kind: "validation",
-        uri: validationFailure.hookName,
-      },
-      content: JSON.stringify({
-        stage: "final_output",
-        status: "failed",
-        message: validationFailureMessage(validationFailure),
-        result: validationFailure.result,
-      }),
-      metadata: {
-        layer: "working",
-        stability: "turn",
-        step,
-        validationContinuation: true,
-        hookName: validationFailure.hookName,
-      },
-    };
   }
 
   private formatRunHealthFeedbackContext(
@@ -4396,52 +4096,6 @@ export class SparkwrightRun implements RunHandle {
           : {}),
       },
     };
-  }
-
-  private async applyToolResultValidation(
-    toolName: string,
-    result: ToolResult,
-    metadata: Record<string, unknown>,
-    timings?: ToolStageTimings,
-  ): Promise<ToolResult> {
-    const startedAt = Date.now();
-    const validationFailure = await this.runValidation("tool_result", result, {
-      ...metadata,
-      toolName,
-      toolCallId: result.toolCallId,
-      status: result.status,
-    });
-    if (timings) timings.resultValidationMs = elapsedMs(startedAt);
-    if (!validationFailure) return result;
-
-    return {
-      toolCallId: result.toolCallId,
-      status: "failed",
-      error: {
-        code: "VALIDATION_FAILED",
-        message: validationFailureMessage(validationFailure),
-        metadata: {
-          stage: "tool_result",
-          validation: validationFailure,
-        },
-      },
-      artifacts: result.artifacts,
-    };
-  }
-
-  private runValidation(
-    stage: Parameters<typeof runValidationHooks>[0]["stage"],
-    subject: unknown,
-    metadata: Record<string, unknown>,
-  ): Promise<ValidationFailure | undefined> {
-    return runValidationHooks({
-      hooks: this.validationHooks,
-      stage,
-      run: this.record,
-      subject,
-      metadata,
-      events: this.events,
-    });
   }
 
   private runWorkflowHookPhase<TPayload>(
@@ -5025,27 +4679,15 @@ export class SparkwrightRun implements RunHandle {
       return this.result;
     }
     const factLedger = this.factLedger.snapshot();
-    const outcome =
-      reason === "final_answer"
-        ? completedRunOutcomeFromEvents(
-            this.events.all(),
-            typeof payload.message === "string" ? payload.message : undefined,
-            { factLedger },
-          )
-        : undefined;
-    // Persist the command- and tool-outcome verdicts (computed over the full
-    // event stream) so trace summaries stay correct for legacy traces that
-    // may not retain the tool.completed output / tool.requested arguments they
-    // would otherwise be recomputed from.
-    const commandOutcome = commandOutcomeSnapshotFromFactLedger(factLedger);
-    const toolOutcome = toolOutcomeSnapshot(this.events.all());
+    const assessment = assessRun(this.events.all(), {
+      factLedger,
+      terminal: { state: "completed", reason },
+    });
     const completedPayload = {
       reason,
       ...payload,
       factLedger,
-      ...(outcome ? { outcome } : {}),
-      ...(commandOutcome ? { commandOutcome } : {}),
-      ...(toolOutcome ? { toolOutcome } : {}),
+      assessment,
     };
     this.setState("completed", reason);
     this.events.emit("run.completed", completedPayload);
@@ -5060,10 +4702,8 @@ export class SparkwrightRun implements RunHandle {
       state: "completed",
       stopReason: reason,
       message: typeof payloadMessage === "string" ? payloadMessage : undefined,
-      metadata: omitUndefined({
-        ...rest,
-        ...(outcome ? { outcome } : {}),
-      }),
+      assessment,
+      metadata: omitUndefined({ ...rest }),
     };
     return this.result;
   }
@@ -5091,12 +4731,19 @@ export class SparkwrightRun implements RunHandle {
           : undefined,
       metadata: failureMetadata,
     };
+    const factLedger = this.factLedger.snapshot();
+    const assessment = assessRun(this.events.all(), {
+      factLedger,
+      terminal: { state: "failed", reason, failure: { code } },
+    });
     this.setState("failed", reason);
     this.events.emit("run.failed", {
       reason,
       code,
       message,
       failure,
+      factLedger,
+      assessment,
       metadata: { ...safeMetadata },
     });
     this.kickWorkflowHookPhase("RunEnd", {
@@ -5109,6 +4756,7 @@ export class SparkwrightRun implements RunHandle {
       state: "failed",
       stopReason: reason,
       failure,
+      assessment,
       metadata: { ...safeMetadata },
     };
     return this.result;
@@ -5594,7 +5242,8 @@ export interface ResumeRunOptions extends Omit<
  *     later checkpoint reconstruction design)
  *   - in-flight model stream (always re-issued)
  *   - tool calls that were mid-execution when the process died (caller must
- *     reconcile; tools should declare `isReplaySafe` so the model can decide)
+ *     reconcile; tools should declare `governance.idempotency` so the model
+ *     can decide)
  *
  * The factory rejects checkpoints whose runs are already terminal
  * (`completed` / `failed` / `cancelled`) and, by default, ones whose

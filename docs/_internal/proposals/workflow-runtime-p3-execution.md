@@ -208,9 +208,9 @@ P3 review follow-up: if that filtered worker catalog includes deferred tools,
 host appends a scoped `tool_search` whose descriptor source is the filtered
 catalog, not the parent catalog, and PreToolUse allows that available
 infrastructure tool. This keeps deferred schema loading usable while preserving
-hard catalog narrowing. The same follow-up keeps the clamp's allowlist
-comparison canonicalized, so legacy workflow declarations such as
-`tools: [read_file]` continue to allow the canonical worker tool `read`. Treat
+hard catalog narrowing. Workflow tool declarations and the clamp compare the
+same exact callable names; `tools: [read]` allows `read` with no normalization
+layer. Treat
 "landed" in the Phase Status log as implementation status, not a PR-ready
 correctness claim; this follow-up is part of P3 acceptance hardening before
 merge.

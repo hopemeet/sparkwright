@@ -268,7 +268,7 @@ function ToolArgs(props: {
 }
 
 function isShellToolName(name: string | undefined): boolean {
-  return name === "bash" || name === "shell";
+  return name === "bash";
 }
 
 function ShellToolArgs(props: {

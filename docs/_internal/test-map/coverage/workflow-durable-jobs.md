@@ -16,6 +16,76 @@
 
 ## Current Evidence
 
+- 2026-07-19 real Terra positive/negative controls verified that a later
+  completed episode suppresses only resumable failure history from the same
+  durable `workflowRunId`; an independent later success in the same session
+  does not hide `TRACE_ERRORS`. The positive trace completed with a node
+  verifier and an `ok` report. The adjacent budget-dimension P3 is fixed:
+  Host no longer projects `maxModelCalls` into `maxSteps`, and a fresh real
+  Terra Workflow preserved `MAX_MODEL_CALLS_EXCEEDED` across four bounded
+  continuations before a verified completion. See
+  [../runs/2026-07-19-real-model-fix-verification.md](../runs/2026-07-19-real-model-fix-verification.md).
+
+- 2026-07-19 fix verification shares Core's existing resumable-failure reason
+  predicate with Host aggregation and trace diagnostics. The retained
+  three-episode trace now preserves both budget-stop events while deriving a
+  `passed_with_issues` report from the superseding terminal for the same
+  `workflowRunId`. Core 641/641 and Host 592/592 passed.
+
+- 2026-07-19 Terra follow-up ran a three-episode Workflow whose first exact
+  read failed, next episode recovered the same target, and final episode passed
+  `npm test`. The durable record completed and canonical execution assessment
+  stayed degraded only for recovered history, but the pre-fix offline report
+  returned failed because it treated two authorized resumable budget terminals
+  as `TRACE_ERRORS`. This cross-consumer parity check now passes. See
+  [../runs/2026-07-19-real-terra-refactor-qa-follow-up.md](../runs/2026-07-19-real-terra-refactor-qa-follow-up.md).
+
+- 2026-07-19 real Terra budget continuation used a temporary two-node Workflow
+  whose nodes each allowed one model call. In
+  `session_workflow_76631a32a93b47c9a2f1d3f28c61ed84`, the first Core run
+  persisted `first -> second`, then terminated with
+  `MAX_MODEL_CALLS_EXCEEDED`; the durable record authorized a second Core run
+  at `second`, which completed the Workflow. Trace verification and session
+  check were both clean across the two terminal runs.
+
+- 2026-07-19 continuation ownership narrowing: the durable Workflow record is
+  the sole episode-continuation authority. `WorkflowRuntimeOperations` returns
+  an explicit decision after each episode; no record means one ordinary
+  episode, nonterminal fresh records may continue under the cap, unrecoverable
+  failures and waiting/terminal records stop. Todo is advisory and its former
+  supervisor/handoff path is deleted. Direct decision tests cover no-record,
+  resumable, unrecoverable, cap, waiting, and terminal cases; full Host coverage
+  passes.
+
+- 2026-07-18 Host live episode ownership consolidation:
+  `WorkflowEpisodeRuntime` owns pinned projection preparation, waiting-input
+  consumption/compensation, fresh/checkpoint/workflow-resume Core run
+  construction, node model/tool/budget planning, actor episode chaining, live
+  control polling, usage persistence, and terminal completion. Direct owner
+  coverage exercises fresh projection and node planning; existing Host
+  Workflow tests remain the lifecycle/storage/event-order backstop. No Core,
+  journal, notification, command, protocol, or session format changed.
+
+- 2026-07-18 Host ownership consolidation: `WorkflowRuntimeOperations` now
+  owns Host-side canonical lookup/list projection, notification delivery,
+  durable control processing, resume claims, terminal finalization, and
+  journal-bound mutation/projection helpers. Direct owner tests cover shared
+  roots/inbox/list projection and durable accept/dispatch/idempotency; existing
+  Host, Agent Runtime, and Server Runtime Workflow suites remain the behavior
+  backstop. No journal, notification, command, outcome, or protocol shape
+  changed.
+
+- 2026-07-17 canonical package identity convergence: Workflow mutation records
+  require generation/revision, source layer, v2 package hash/policy, executable
+  snapshot ref, and a matching snapshot-backed definition. Journal replay
+  quarantines missing pins; focused store/control/channel, Host start/resume/
+  shadow/stats/protocol, CLI/TUI, and server-runtime fixtures no longer seed
+  durable `contentHash` or revision/generation defaults.
+- 2026-07-16 journal-only convergence: `FileWorkflowStore.get/list/eventLog`,
+  restart recovery, writer acquire/create/mutate/compensate, and all Host/CLI/TUI
+  consumers now use the immutable journal as their only record/event truth.
+  Record JSON/event JSONL readers, mirrors, and lazy import were removed; the
+  token lease remains the adjacent live-ownership primitive.
 - A: TUI full suite 399-test baseline includes immutable permission identity,
   exact run/workflow attribution, client-specific approval cleanup, and active
   main-run session mutation guards.
@@ -35,8 +105,8 @@ Use a controllable clock and barriers, not sleep:
    changing B's canonical record/history.
 4. A release must not affect B. B must continue through waiting, resume, and
    completion.
-5. Competing claims produce one generation winner; crash at every journal /
-   snapshot projection boundary must recover one canonical revision.
+5. Competing claims produce one generation winner; torn/corrupt journal slots
+   recover one canonical revision without advancing record/event truth.
 
 Do not mark C partially verified from current lease acquire/release tests; they
 do not exercise workflow mutation fencing.
@@ -44,10 +114,11 @@ do not exercise workflow mutation fencing.
 ## Package C Evidence (2026-07-11)
 
 - Canonical immutable journal separates physical sequence, record revision,
-  and fencing generation. Snapshot JSON and event JSONL are projections.
+  and fencing generation and is the sole record/event read layout.
 - Deterministic tests cover TTL takeover, stale mutation and compensation,
   revision races, stale-generation physical entries, torn publication slots,
-  corrupt projections, lazy-migration retry, and concurrent migration claim.
+  checksum/quarantine diagnostics, restart recovery, canonical event replay,
+  and concurrent journal claim.
 - Host fresh start, resume input, episode projection/usage, finalization,
   supervisor failure, and rollback use `WorkflowLeaseBoundWriter`; fixture and
   production searches show no external `update/restore/appendEvent` bypass.

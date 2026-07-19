@@ -2,7 +2,8 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { compilePromptCacheBlocks, createRunId } from "@sparkwright/core";
+import { createRunId } from "@sparkwright/core";
+import { compilePromptCacheBlocks } from "@sparkwright/core/internal";
 import {
   buildAgentPromptBuilder,
   createProjectInstructionsExtension,
@@ -310,7 +311,7 @@ describe("buildAgentPromptBuilder", () => {
     };
 
     expect(await guidanceOf([])).toBeUndefined();
-    expect(await guidanceOf([{ name: "read_file" }])).toBeUndefined();
+    expect(await guidanceOf([{ name: "read" }])).toBeUndefined();
     expect(await guidanceOf([{ name: "spawn_agent" }])).toContain(
       "stepLimitReached",
     );
@@ -333,7 +334,7 @@ describe("buildAgentPromptBuilder", () => {
     // Absent for runs without the write tool (e.g. child agents denied
     // todo_write by policy, or read-only tool inventories).
     expect(await guidanceOf([])).toBeUndefined();
-    expect(await guidanceOf([{ name: "read_file" }])).toBeUndefined();
+    expect(await guidanceOf([{ name: "read" }])).toBeUndefined();
     const guidance = await guidanceOf([{ name: "todo_write" }]);
     expect(guidance).toContain("todo list");
     // The anti-churn cadence must be stated: list already in context + the

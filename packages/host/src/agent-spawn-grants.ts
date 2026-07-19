@@ -3,7 +3,6 @@ import type {
   ToolRequestPreviewOptions,
   ToolSideEffect,
 } from "@sparkwright/core";
-import { canonicalToolName } from "./tool-identities.js";
 
 export const AGENT_DEFAULT_READ_CHILD_TOOLS = ["read", "glob", "grep"] as const;
 
@@ -42,7 +41,7 @@ export function parseAgentAllowedToolsFromRecord(
     if (typeof value !== "string" || !value.trim()) {
       throw new Error(`${toolName} allowedTools must contain strings.`);
     }
-    return canonicalToolName(value.trim());
+    return value.trim();
   });
   if (new Set(allowedTools).size !== allowedTools.length) {
     throw new Error(`${toolName} allowedTools must not contain duplicates.`);
@@ -134,7 +133,7 @@ export function resolveAgentSpawnToolRequest(input: {
 
 export function isAgentWorkspaceWriteChildTool(name: string): boolean {
   return (AGENT_WORKSPACE_WRITE_CHILD_TOOLS as readonly string[]).includes(
-    canonicalToolName(name),
+    name,
   );
 }
 

@@ -1,9 +1,5 @@
-import {
-  createBufferedEmitter,
-  FileSessionStore,
-  LocalWorkspace,
-  MemoryTrace,
-} from "@sparkwright/core";
+import { createBufferedEmitter, FileSessionStore } from "@sparkwright/core";
+import { LocalWorkspace, MemoryTrace } from "@sparkwright/core/internal";
 import type { HostExecutionPlan } from "./execution-plan.js";
 
 export interface HostExecutionResources {

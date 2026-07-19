@@ -10,7 +10,7 @@
  * the full specification, lifecycle, and error semantics.
  */
 
-export const PROTOCOL_VERSION = "1.4" as const;
+export const PROTOCOL_VERSION = "2.0" as const;
 
 export const PERMISSION_MODES = [
   "plan",
@@ -406,21 +406,14 @@ export interface RunStartRequestPayload {
   confidentialPaths?: string[];
   /** Whether built-in conservative confidential path defaults are included. */
   confidentialDefaults?: boolean;
-  /** Whether this run is allowed to request workspace writes. */
-  shouldWrite?: boolean;
   /** Model reference in "provider/model" form, or the reserved "deterministic". */
   model?: string;
   /** Workflow asset name to instantiate for this run. */
   workflow?: string;
-  /**
-   * High-level run autonomy preset. When present, the host compiles it to
-   * `permissionMode` + `shouldWrite` and a conflicting legacy `permissionMode`
-   * is ignored (with a diagnostic). Preferred over `permissionMode`.
-   */
+  /** High-level run autonomy preset. Defaults to `read-only`. */
   accessMode?: RunAccessMode;
   /** Session-level foreground/background task policy. Defaults to enabled. */
   backgroundTasks?: BackgroundTaskPolicy;
-  permissionMode?: PermissionMode;
   traceLevel?: TraceLevel;
   metadata?: Record<string, unknown>;
 }
@@ -436,23 +429,16 @@ export interface RunResumeRequestPayload {
   confidentialPaths?: string[];
   /** Whether built-in conservative confidential path defaults are included. */
   confidentialDefaults?: boolean;
-  /** Whether the resumed run is allowed to request workspace writes. */
-  shouldWrite?: boolean;
   /** Reconstruct a best-effort checkpoint from trace.jsonl when checkpoint.json is absent. */
   fromTrace?: boolean;
   /** Allow resuming checkpoints that are terminal or otherwise normally refused. */
   force?: boolean;
   /** Model reference in "provider/model" form, or the reserved "deterministic". */
   model?: string;
-  /**
-   * High-level run autonomy preset. When present, the host compiles it to
-   * `permissionMode` + `shouldWrite` and a conflicting legacy `permissionMode`
-   * is ignored (with a diagnostic). Preferred over `permissionMode`.
-   */
+  /** High-level run autonomy preset. Defaults to `read-only`. */
   accessMode?: RunAccessMode;
   /** Session-level foreground/background task policy. Defaults to enabled. */
   backgroundTasks?: BackgroundTaskPolicy;
-  permissionMode?: PermissionMode;
   traceLevel?: TraceLevel;
   metadata?: Record<string, unknown>;
 }
@@ -469,11 +455,9 @@ export interface WorkflowResumeRequestPayload {
   targetPath?: string;
   confidentialPaths?: string[];
   confidentialDefaults?: boolean;
-  shouldWrite?: boolean;
   model?: string;
   accessMode?: RunAccessMode;
   backgroundTasks?: BackgroundTaskPolicy;
-  permissionMode?: PermissionMode;
   traceLevel?: TraceLevel;
   metadata?: Record<string, unknown>;
 }
@@ -706,17 +690,10 @@ export interface CapabilityInspectRequestPayload {
   sessionId?: string;
   /** Model reference in "provider/model" form, or the reserved "deterministic". */
   model?: string;
-  /** Whether this inspection should describe workspace-write-capable runs. */
-  shouldWrite?: boolean;
-  /**
-   * High-level run autonomy preset used to scope diagnostics. Preferred over
-   * `permissionMode` and `shouldWrite` when present.
-   */
+  /** High-level run autonomy preset used to scope diagnostics. */
   accessMode?: RunAccessMode;
   /** Session-level foreground/background task policy used to scope diagnostics. */
   backgroundTasks?: BackgroundTaskPolicy;
-  /** Legacy approval mode used when `accessMode` is absent. */
-  permissionMode?: PermissionMode;
 }
 
 export type HostRequest =
@@ -894,13 +871,15 @@ export interface ResponseResults {
 
 export interface WorkflowRunSnapshot {
   id: string;
-  generation?: number;
-  recordRevision?: number;
+  generation: number;
+  recordRevision: number;
   sessionId?: string;
   status: "running" | "waiting" | "completed" | "failed" | "cancelled";
   assetName: string;
+  layer: "builtin" | "user" | "project";
   version?: string;
-  contentHash: string;
+  packageHash: string;
+  packageHashPolicyVersion: 2;
   activeRunId?: string;
   runIds: string[];
   currentNodeId?: string;
@@ -940,8 +919,7 @@ export interface WorkflowRunSnapshot {
     hasTargetPath: boolean;
     hasConfidentialPaths: boolean;
     confidentialDefaults: boolean;
-    shouldWrite: boolean;
-    accessMode?: RunAccessMode;
+    accessMode: RunAccessMode;
     backgroundTasks: BackgroundTaskPolicy;
   };
   createdAt: string;
@@ -953,13 +931,7 @@ export interface WorkflowRunSnapshot {
 export interface CapabilityToolSummary {
   name: string;
   canonicalName?: string;
-  legacyNames?: string[];
-  defaultExposureTier?:
-    | "public"
-    | "advanced"
-    | "infrastructure"
-    | "internal"
-    | "legacy";
+  defaultExposureTier?: "public" | "advanced" | "infrastructure" | "internal";
   source?: string;
   origin?: string;
   risk?: string;
@@ -991,7 +963,8 @@ export interface CapabilitySkillSummary {
   name: string;
   description?: string;
   sourcePath?: string;
-  contentHash?: string;
+  packageHash: string;
+  packageHashPolicyVersion: 2;
   version?: string;
   selectionReason?: string;
 }
@@ -1027,10 +1000,8 @@ export interface CapabilityDelegateToolSummary {
    */
   model?: string;
   risk: "safe" | "risky" | "denied";
-  /** Legacy config echo. Prefer approvalRequiredUnderCurrentRun for diagnostics. */
-  requiresApproval: boolean;
   /** @reserved Public capability-inspection field consumed by permission UIs. */
-  approvalRequiredUnderCurrentRun?: boolean;
+  approvalRequiredUnderCurrentRun: boolean;
   /** @reserved Public capability-inspection field consumed by permission UIs. */
   approvalReasons?: string[];
   /** @reserved Public capability-inspection field consumed by permission UIs. */
@@ -1203,15 +1174,12 @@ export interface CapabilitySnapshot {
 }
 
 export interface CapabilityRunAccessSummary {
-  permissionMode: PermissionMode;
-  shouldWrite: boolean;
+  accessMode: RunAccessMode;
   backgroundTasks: BackgroundTaskPolicy;
-  accessMode?: RunAccessMode;
   requestedAccessMode?: RunAccessMode;
   accessModeCeiling?: RunAccessMode;
   requestedBackgroundTasks?: BackgroundTaskPolicy;
   backgroundTasksCeiling?: BackgroundTaskPolicy;
-  overriddenLegacyFields?: string[];
 }
 
 export interface CapabilitySkillInlineShellSummary {
@@ -1285,14 +1253,7 @@ export interface ApprovalRequestedEventPayload {
   details?: Record<string, unknown>;
 }
 
-/**
- * Emitted when a todo-aware supervisor auto-continues an unfinished run: the
- * previous run reached a resumable terminal state with todos still open, so a
- * fresh run is started to carry on. The logical turn is still in progress — a
- * client should keep showing "running" (re-pointing at `runId`) rather than
- * treating the previous run's terminal as the end of the turn. No `run.completed`
- * is emitted for the superseded run; only the final run of the chain completes.
- */
+/** Emitted when a durable Workflow starts another Core episode. */
 export interface RunContinuationEventPayload {
   /** The new run carrying the continuation. */
   runId: string;
@@ -1307,8 +1268,46 @@ export interface RunContinuationEventPayload {
   previousRunId: string;
   /** 1 for the first continuation, incrementing thereafter. */
   continuationCount: number;
-  /** Audit reason, currently always "unfinished_todo". */
-  reason: string;
+  reason: "workflow_record_active";
+}
+
+export interface AssessmentIssuePayload {
+  code: string;
+  kind: string;
+  disposition: "degraded" | "failing";
+  count: number;
+  details?: Record<string, unknown>;
+}
+
+export interface VerificationResultPayload {
+  id: string;
+  source: "command" | "profile" | "documented_command";
+  status: "passed" | "failed" | "timed_out" | "stale";
+  sequence?: number;
+  command?: string;
+  profile?: string;
+  verifierId?: string;
+  exitCode?: number | null;
+}
+
+export interface RunAssessmentPayload {
+  schemaVersion: "run-assessment.v1";
+  health: "clean" | "degraded" | "failing";
+  issues: AssessmentIssuePayload[];
+  verification: VerificationResultPayload[];
+}
+
+export interface ExecutionAssessmentPayload {
+  schemaVersion: "execution-assessment.v1";
+  health: "clean" | "degraded" | "failing";
+  issues: AssessmentIssuePayload[];
+  verification: VerificationResultPayload[];
+  /** @reserved Public execution summary count consumed by protocol/SDK clients. */
+  episodeCount: number;
+  rootRunId?: string;
+  /** @reserved Public execution terminal identity consumed by protocol/SDK clients. */
+  finalRunId?: string;
+  episodes: Array<{ runId: string; assessment: RunAssessmentPayload }>;
 }
 
 export interface RunCompletedEventPayload {
@@ -1317,25 +1316,19 @@ export interface RunCompletedEventPayload {
   stopReason?: string;
   /** Final answer text when the run ended by producing one. */
   message?: string;
-  /** Present when the run completed with a non-clean outcome summary. */
-  outcome?: object;
+  /** Host-owned assessment of the complete execution, including all episodes. */
+  assessment: ExecutionAssessmentPayload;
   /** Present when `state` is `failed` or `cancelled` and a structured cause is available. */
   failure?: RunFailureEnvelope;
-  /**
-   * Present when the run chain ended by handing back to the human while todos
-   * were still unfinished (continuation limit reached, stalled without
-   * external progress, or a non-resumable stop). Clients should surface this
-   * distinctly from a clean completion.
-   */
-  todoHandoff?: { reason: string; message: string };
+  /** Advisory plan state; it never changes terminal ownership or scheduling. */
+  todoAdvisory?: { unfinished: number; blocked: number; message: string };
 }
 
 export interface RunFailedEventPayload {
   runId: string;
-  /** Canonical terminal failure. Prefer this over the legacy `error` projection. */
+  /** Canonical terminal failure. */
   failure: RunFailureEnvelope;
-  /** @deprecated Use `failure`; kept for older protocol clients. */
-  error: ProtocolError;
+  assessment: ExecutionAssessmentPayload;
 }
 
 export type HostEvent =
@@ -1361,72 +1354,19 @@ export function isEvent(msg: HostMessage): msg is HostEvent {
   return msg.envelope === "event";
 }
 
-export function protocolErrorToRunFailure(
-  error: ProtocolError,
-): RunFailureEnvelope {
-  return {
-    code: error.code,
-    message: error.message,
-    ...(error.details ? { metadata: error.details } : {}),
-  };
-}
-
 export function getRunFailure(
   payload: unknown,
 ): RunFailureEnvelope | undefined {
   const record = isRecord(payload) ? payload : undefined;
   if (!record) return undefined;
-
-  const failure = runFailureEnvelope(record.failure);
-  if (failure) return failure;
-
-  const error = protocolError(record.error);
-  if (error) return protocolErrorToRunFailure(error);
-
-  const state = stringValue(record.state);
-  if (state !== "failed" && state !== "cancelled") return undefined;
-
-  const message =
-    stringValue(record.message) ??
-    stringValue(record.reason) ??
-    stringValue(record.stopReason);
-  if (!message) return undefined;
-
-  return {
-    code:
-      stringValue(record.code) ??
-      stringValue(record.reason) ??
-      stringValue(record.stopReason) ??
-      state,
-    message,
-  };
+  return runFailureEnvelope(record.failure);
 }
 
 export function runFailureMessage(
   payload: unknown,
   fallback = "run failed",
 ): string {
-  const failure = getRunFailure(payload);
-  if (failure?.message) return failure.message;
-  const record = isRecord(payload) ? payload : undefined;
-  return (
-    stringValue(record?.message) ??
-    stringValue(record?.reason) ??
-    stringValue(record?.stopReason) ??
-    fallback
-  );
-}
-
-function protocolError(value: unknown): ProtocolError | undefined {
-  const record = isRecord(value) ? value : undefined;
-  const code = stringValue(record?.code);
-  const message = stringValue(record?.message);
-  if (!code || !message || !isProtocolErrorCode(code)) return undefined;
-  return {
-    code,
-    message,
-    ...(isRecord(record?.details) ? { details: record.details } : {}),
-  };
+  return getRunFailure(payload)?.message ?? fallback;
 }
 
 function runFailureEnvelope(value: unknown): RunFailureEnvelope | undefined {

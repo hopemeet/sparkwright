@@ -25,7 +25,7 @@ The trace format is **JSONL: one serialized `SparkwrightEvent` per line, in sequ
 - `standard`: normalized summaries with truncated large values. The default for demos and most production runs.
 - `debug`: full normalized payloads. Suitable for development and incident forensics.
 
-The same event envelope is used at both levels — only payload detail varies. Redaction is a separate filter (regex-based, key + value patterns) that composes on top of any level. The default `FileRunStore` writes the filtered, redacted JSONL stream to `.sparkwright/runs/<run-id>/trace.jsonl`.
+The same event envelope is used at both levels — only payload detail varies. Redaction is a separate filter (regex-based, key + value patterns) that composes on top of any level. The default `FileRunStore` writes the filtered, redacted JSONL stream to `.sparkwright/sessions/<session-id>/trace.jsonl`, with an agent projection under `agents/<agent-id>/trace.jsonl`.
 
 In-process, `EventLog` always emits the full event to subscribers; level filtering and redaction happen at the persistence boundary (`RunStore`, `TraceSink`). This means embedders see full payloads if they want them, while disk and external sinks see filtered output.
 

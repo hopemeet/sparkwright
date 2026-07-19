@@ -22,8 +22,6 @@ const TODO_GLYPH: Record<string, string> = {
   in_progress: "◐",
   completed: "☑",
   blocked: "⊘",
-  failed: "✗",
-  skipped: "⊝",
 };
 
 const MAX_ACTIVE_ROWS = 8;
@@ -53,8 +51,7 @@ export function TodoBand(props: {
   const colorFor = (status: string): string | undefined => {
     if (status === "completed") return theme.success;
     if (status === "in_progress") return theme.accent;
-    if (status === "blocked" || status === "failed") return theme.error;
-    if (status === "skipped") return theme.muted;
+    if (status === "blocked") return theme.error;
     return undefined;
   };
 

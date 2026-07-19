@@ -38,10 +38,6 @@ const DEFAULT_EXCLUDE_GLOBS = [
   ".sparkwright/sessions/**",
   "**/.sparkwright/sessions",
   "**/.sparkwright/sessions/**",
-  ".sparkwright/runs",
-  ".sparkwright/runs/**",
-  "**/.sparkwright/runs",
-  "**/.sparkwright/runs/**",
 ];
 
 // Build output and tooling caches that almost always pollute file discovery
@@ -86,9 +82,9 @@ export interface CodingToolsOptions {
 export type CodingToolName =
   | "read_text"
   | "read_anchored_text"
-  | "write_file"
+  | "write"
   | "edit_anchored_text"
-  | "apply_patch"
+  | "edit"
   | "list_dir"
   | "grep"
   | "glob";
@@ -414,7 +410,7 @@ export function createWriteFileTool(): ToolDefinition<
   WriteFileResult
 > {
   return defineTool<WriteFileInput, WriteFileResult>({
-    name: "write_file",
+    name: "write",
     description:
       "Create or replace a UTF-8 text file through the workspace write path. " +
       "Use this for new files or full-file replacement; parent directories are created automatically.",
@@ -452,7 +448,7 @@ export function createWriteFileTool(): ToolDefinition<
     },
     validateInput(args) {
       const input = normalizeWriteFileInput(args);
-      return validateWritablePathInput("write_file", input.path);
+      return validateWritablePathInput("write", input.path);
     },
     isConcurrencySafe: () => false,
     async execute(args, ctx) {
@@ -464,7 +460,7 @@ export function createWriteFileTool(): ToolDefinition<
       });
       if (before !== undefined && input.overwrite === false) {
         throw toolArgumentsInvalid(
-          `write_file target already exists: ${input.path}`,
+          `write target already exists: ${input.path}`,
         );
       }
       const changed = before !== input.content;
@@ -492,7 +488,7 @@ export function createEditAnchoredTextTool(): ToolDefinition<
   return defineTool<EditAnchoredTextInput, EditAnchoredTextResult>({
     name: "edit_anchored_text",
     description:
-      "Apply verified per-line anchored text edits through the workspace write path. `replace` replaces only the anchored line; to replace a block, include delete edits for the old interior lines or use apply_patch.",
+      "Apply verified per-line anchored text edits through the workspace write path. `replace` replaces only the anchored line; to replace a block, include delete edits for the old interior lines or use edit.",
     inputSchema: {
       type: "object",
       properties: {
@@ -579,7 +575,7 @@ export function createApplyPatchTool(): ToolDefinition<
   ApplyPatchResult
 > {
   return defineTool<ApplyPatchInput, ApplyPatchResult>({
-    name: "apply_patch",
+    name: "edit",
     description:
       "Apply a unified-diff patch to a file through the workspace write path. " +
       "Hunk context is matched with whitespace tolerance; ambiguous or " +
@@ -610,7 +606,7 @@ export function createApplyPatchTool(): ToolDefinition<
     },
     async validateInput(args, ctx) {
       const input = normalizeApplyPatchInput(args);
-      return validateExistingFileInput("apply_patch", input.path, ctx, {});
+      return validateExistingFileInput("edit", input.path, ctx, {});
     },
     isConcurrencySafe: () => false,
     async execute(args, ctx) {
@@ -634,7 +630,7 @@ export function createApplyPatchTool(): ToolDefinition<
 }
 
 function normalizeApplyPatchInput(args: ApplyPatchInput): ApplyPatchInput {
-  assertRecord(args, "apply_patch input");
+  assertRecord(args, "edit input");
   const path = normalizeFileUrlPath(readString(args, "path"));
   const patch = readString(args, "patch");
   if (patch.trim() === "") {
@@ -645,7 +641,7 @@ function normalizeApplyPatchInput(args: ApplyPatchInput): ApplyPatchInput {
 }
 
 function normalizeWriteFileInput(args: WriteFileInput): WriteFileInput {
-  assertRecord(args, "write_file input");
+  assertRecord(args, "write input");
   const path = normalizeFileUrlPath(readString(args, "path"));
   const content = readStringAllowEmpty(args, "content");
   return {

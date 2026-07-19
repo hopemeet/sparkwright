@@ -1,16 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createRunId, defineTool, type ModelAdapter } from "@sparkwright/core";
-import {
-  ApprovalBroker,
-  ServerCapabilityRegistry,
-  ConnectionHub,
-  RunManager,
-  SessionManager,
-  createServerRuntime,
-  DurableCommandDispatcher,
-  InFlightCommandDispatcher,
-  WorkflowSupervisor,
-} from "../src/index.js";
+import { InFlightCommandDispatcher, WorkflowSupervisor } from "../src/index.js";
 import {
   FileWorkflowStore,
   FileWorkflowWorkerRegistry,
@@ -19,6 +8,27 @@ import {
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+function workflowPin(id: WorkflowRunId) {
+  const packageSnapshotRef = `/snapshots/${id}`;
+  const packageHash = `sha256:${id}`;
+  return {
+    assetName: "test",
+    layer: "project" as const,
+    packageHash,
+    packageHashPolicyVersion: 2 as const,
+    packageSnapshotRef,
+    definitionSnapshot: {
+      assetName: "test",
+      sourceDir: packageSnapshotRef,
+      layer: "project" as const,
+      packageHash,
+      packageHashPolicyVersion: 2 as const,
+      packageSnapshotRef,
+      nodes: [{ id: "main", body: "Test." }],
+    },
+  };
+}
 
 describe("server-runtime", () => {
   it("coalesces concurrent in-flight consumption without claiming durability", async () => {
@@ -46,154 +56,6 @@ describe("server-runtime", () => {
     expect(dispatcher.isInFlight("workflow_command_one")).toBe(false);
   });
 
-  it("keeps the former durable name as the same compatibility constructor", () => {
-    expect(DurableCommandDispatcher).toBe(InFlightCommandDispatcher);
-  });
-
-  it("fans out run events through filtered subscriptions", async () => {
-    const hub = new ConnectionHub();
-    const seen: string[] = [];
-    hub.subscribe({ eventTypes: ["run.completed"] }, (message) => {
-      seen.push(message.type);
-    });
-
-    const runs = new RunManager({ hub });
-    const run = runs.createRun({
-      goal: "finish",
-      model: finalModel("done"),
-    });
-
-    await runs.startRun(run.record.id);
-
-    expect(seen).toEqual(["run.event"]);
-    expect(
-      hub.replay({ runIds: [run.record.id] }).map((message) => message.type),
-    ).toContain("run.result");
-  });
-
-  it("bridges InteractionChannel approvals through the approval broker", async () => {
-    const hub = new ConnectionHub();
-    const broker = new ApprovalBroker({ hub });
-    const requested: string[] = [];
-    hub.subscribe({ types: ["interaction.requested"] }, (message) => {
-      const metadata = message.metadata;
-      if (metadata.interactionKind === "approval") {
-        requested.push(String(metadata.interactionId));
-      }
-    });
-
-    const channel = broker.createInteractionChannel();
-    const approval = channel.approve?.({
-      id: "approval_test" as never,
-      runId: createRunId(),
-      action: "workspace.write",
-      summary: "Write README",
-      details: {},
-      createdAt: new Date().toISOString(),
-      status: "pending",
-    });
-
-    expect(requested).toEqual(["approval_test"]);
-    expect(
-      broker.resolveApproval({
-        approvalId: "approval_test",
-        decision: "approved",
-      }),
-    ).toBe(true);
-    await expect(approval).resolves.toMatchObject({
-      approvalId: "approval_test",
-      decision: "approved",
-    });
-  });
-
-  it("creates sessions and associates managed runs", async () => {
-    const hub = new ConnectionHub();
-    const sessions = new SessionManager({ hub });
-    const runs = new RunManager({ hub, sessionManager: sessions });
-    const session = await sessions.createSession({
-      metadata: { user: "test" },
-    });
-
-    const run = runs.createRun({
-      sessionId: session.id,
-      goal: "finish",
-      model: finalModel("done"),
-    });
-
-    const updated = await sessions.getSession(session.id);
-    expect(updated?.runIds).toEqual([run.record.id]);
-  });
-
-  it("mounts registered tool capabilities onto managed runs", async () => {
-    const hub = new ConnectionHub();
-    const capabilities = new ServerCapabilityRegistry(hub);
-    capabilities.registerTool(
-      defineTool({
-        name: "echo",
-        description: "Echo input.",
-        inputSchema: { type: "object" },
-        execute(args: unknown) {
-          return args;
-        },
-      }),
-    );
-
-    const runs = new RunManager({ hub, capabilities });
-    const run = runs.createRun({
-      goal: "use tool",
-      maxSteps: 2,
-      model: {
-        async complete(input) {
-          if (input.step === 1) {
-            expect(input.tools.map((tool) => tool.name)).toContain("echo");
-            return {
-              toolCalls: [{ toolName: "echo", arguments: { text: "hi" } }],
-            };
-          }
-          return { message: "done" };
-        },
-      },
-    });
-
-    await expect(runs.startRun(run.record.id)).resolves.toMatchObject({
-      signal: "completed",
-    });
-  });
-
-  it("does not override an explicit core approval resolver", async () => {
-    const hub = new ConnectionHub();
-    const broker = new ApprovalBroker({ hub });
-    const runs = new RunManager({ hub, approvalBroker: broker });
-    const run = runs.createRun({
-      goal: "approval",
-      model: finalModel("done"),
-      approvalResolver(request) {
-        return {
-          approvalId: request.id,
-          decision: "approved",
-        };
-      },
-    });
-
-    await expect(
-      run.requestApproval({
-        action: "workspace.write",
-        summary: "Write file",
-      }),
-    ).resolves.toBe(true);
-    expect(broker.pending()).toEqual([]);
-  });
-
-  it("creates a complete runtime bundle", () => {
-    const runtime = createServerRuntime();
-
-    expect(runtime.hub).toBeInstanceOf(ConnectionHub);
-    expect(runtime.approvals).toBeInstanceOf(ApprovalBroker);
-    expect(runtime.sessions).toBeInstanceOf(SessionManager);
-    expect(runtime.capabilities).toBeInstanceOf(ServerCapabilityRegistry);
-    expect(runtime.runs).toBeInstanceOf(RunManager);
-  });
-
   it("lets only one supervisor invoke the adapter for a workflow claim", async () => {
     const root = await mkdtemp(join(tmpdir(), "sparkwright-supervisor-"));
     const store = new FileWorkflowStore({ rootDir: root });
@@ -203,8 +65,7 @@ describe("server-runtime", () => {
     });
     await creator!.create({
       id: workflowRunId,
-      assetName: "test",
-      contentHash: "hash",
+      ...workflowPin(workflowRunId),
     });
     await creator!.release();
     const registry = new FileWorkflowWorkerRegistry({
@@ -260,8 +121,7 @@ describe("server-runtime", () => {
     });
     await creator!.create({
       id: workflowRunId,
-      assetName: "test",
-      contentHash: "hash",
+      ...workflowPin(workflowRunId),
     });
     await creator!.release();
     const registry = new FileWorkflowWorkerRegistry({
@@ -311,8 +171,7 @@ describe("server-runtime", () => {
       const writer = await store.acquireWriter(id, { owner: "creator" });
       const created = await writer!.create({
         id,
-        assetName: "test",
-        contentHash: id,
+        ...workflowPin(id),
       });
       if (status !== "running") {
         await writer!.mutate({
@@ -368,8 +227,7 @@ describe("server-runtime", () => {
     });
     await creator!.create({
       id: workflowRunId,
-      assetName: "test",
-      contentHash: "hash",
+      ...workflowPin(workflowRunId),
     });
     await creator!.release();
     const registry = new FileWorkflowWorkerRegistry({
@@ -410,8 +268,7 @@ describe("server-runtime", () => {
     });
     await creator!.create({
       id: workflowRunId,
-      assetName: "test",
-      contentHash: "hash",
+      ...workflowPin(workflowRunId),
     });
     await creator!.release();
     const frozenA = await storeA.acquireWriter(workflowRunId, {
@@ -480,11 +337,3 @@ describe("server-runtime", () => {
     });
   });
 });
-
-function finalModel(message: string): ModelAdapter {
-  return {
-    async complete() {
-      return { message };
-    },
-  };
-}

@@ -53,7 +53,7 @@ A durable host should wire:
 
 - `TaskManager` for task lifecycle
 - `TaskStore` for task state
-- `TaskNotificationSink` for terminal events
+- `ActorNotificationSink` / `ActorInbox` for terminal events
 - a watchdog for idle and wall-clock timeouts
 - recovery on startup before accepting new work
 
@@ -83,8 +83,8 @@ npm exec sparkwright -- cron update <job-id-or-name> [--schedule text] [--prompt
 npm exec sparkwright -- cron pause <job-id-or-name>
 npm exec sparkwright -- cron resume <job-id-or-name>
 npm exec sparkwright -- cron remove <job-id-or-name>
-npm exec sparkwright -- cron run <job-id-or-name> [--model provider/model] [--yes]
-npm exec sparkwright -- cron tick [--model provider/model] [--yes]
+npm exec sparkwright -- cron run <job-id-or-name> [--model provider/model] [--access-mode read-only|ask|accept-edits|bypass]
+npm exec sparkwright -- cron tick [--model provider/model] [--access-mode read-only|ask|accept-edits|bypass]
 ```
 
 The core run loop still does not own scheduler wakeups. Scheduling remains

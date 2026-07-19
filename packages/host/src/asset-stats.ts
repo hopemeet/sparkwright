@@ -246,12 +246,11 @@ export function agentObservationFromMetadata(input: {
 export function workflowObservationFromRunRecord(
   record: WorkflowRunRecord,
   event: Extract<AssetObservation["event"], `workflow.${string}`>,
-): AssetObservation | undefined {
-  if (!record.packageHash || !record.packageHashPolicyVersion) return undefined;
+): AssetObservation {
   return {
     identity: {
       artifactKind: "workflow",
-      layer: record.layer ?? "unknown",
+      layer: record.layer,
       logicalName: record.assetName,
       packageHashPolicyVersion: record.packageHashPolicyVersion,
       packageHash: record.packageHash,

@@ -50,7 +50,7 @@ surface. Supported template values are `{{goal}}`, `{{metadataJson}}`, and
 from an isolated writable temporary cwd and fails closed unless the platform
 sandbox can protect the project workspace from writes. This does not turn the
 macOS deny-list backend into a general filesystem allowlist. External-command
-delegates use the same `shell.sandbox` launch substrate as the built-in shell
+delegates use the same `policy.sandbox` launch substrate as the built-in shell
 tool and workflow-hook commands.
 
 Use `envMode: "explicit"` when the child process should receive only the
@@ -83,7 +83,7 @@ sparkwright delegates run delegate_external_cli_reviewer \
   --goal "Inspect README.md and return one concise suggestion." \
   --session-id delegate-debug \
   --trace-level debug \
-  --yes \
+  --access-mode bypass \
   --format text
 ```
 
@@ -91,9 +91,8 @@ The command still goes through the delegate approval gate. It writes a trace to
 `.sparkwright/sessions/<session-id>/trace.jsonl`.
 
 Delegates with `workspaceAccess: "read_write"` also require the parent run (or
-direct debug command) to enable workspace writes. For direct debugging, pass
-`--write --yes`; without `--write`, SparkWright refuses to hand the project
-workspace to the delegate even if the delegate tool itself is approved.
+direct debug command) to use a write-capable access mode. For trusted direct
+debugging, pass `--access-mode bypass`.
 
 ## ACP Stdio
 

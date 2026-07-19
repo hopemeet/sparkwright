@@ -161,27 +161,35 @@ describe("workflow durable channels", () => {
     const workflowStore = new FileWorkflowStore({ rootDir });
     const writer = await workflowStore.acquireWriter(id, { owner: "fixture" });
     if (!writer) throw new Error("missing workflow writer");
+    const packageSnapshotRef = `/snapshots/${id}`;
+    const packageHash = "sha256:approval-race";
     const created = await writer.create({
       id,
       sessionId: "session_workflow_approval_race",
       assetName: "approval-race",
-      contentHash: "approval-race-hash",
+      layer: "project",
+      packageHash,
+      packageHashPolicyVersion: 2,
+      packageSnapshotRef,
       currentNodeId: "approval",
       authorizationSnapshot: {
         confidentialPaths: [],
         confidentialDefaults: true,
-        shouldWrite: true,
         accessMode: "ask",
         backgroundTasks: "enabled",
       },
       definitionSnapshot: {
         assetName: "approval-race",
-        contentHash: "approval-race-hash",
+        sourceDir: packageSnapshotRef,
+        layer: "project",
+        packageHash,
+        packageHashPolicyVersion: 2,
+        packageSnapshotRef,
         nodes: [{ id: "approval", body: "Approve." }],
       },
     });
     await writer.mutate({
-      expectedRevision: created.recordRevision ?? 0,
+      expectedRevision: created.recordRevision,
       patch: {
         status: "waiting",
         wait: {

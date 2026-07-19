@@ -1,10 +1,10 @@
 import { join } from "node:path";
 import {
   asSessionId,
+  compileRunAccessMode,
   buildTraceReportFile,
   buildTraceTimelineFile,
   FileSessionStore,
-  loadCheckpointFromRunDir,
   loadTraceEventsFile,
   projectSessionReplayToContextItems,
   repairSessionTraceConsistency,
@@ -12,7 +12,6 @@ import {
   summarizeTraceFile,
   validateSessionTraceConsistency,
   verifyTraceFile,
-  type RunRecord,
   type SessionTraceConsistencyReport,
   type SessionTraceRepairReport,
   type TraceReport,
@@ -23,6 +22,7 @@ import {
 import {
   createSessionFileRunStoreFactory,
   FileRunStore,
+  loadCheckpointFromRunDir,
   LocalWorkspace,
 } from "@sparkwright/core/internal";
 import type { SessionCompactionInspectReport } from "@sparkwright/protocol";
@@ -32,7 +32,7 @@ import {
   type HostRuntime,
   type HostService,
 } from "@sparkwright/host";
-import { createCliApprovalResolver } from "../cli-approval.js";
+import { createCliInteractionChannel } from "../cli-approval.js";
 import { createLiveEventFormatter, formatEvent } from "../event-format.js";
 import type { CliIO } from "../io.js";
 import { writeLine } from "../io.js";
@@ -295,8 +295,6 @@ export async function handleSessionResumeCommand(
     ...parsed,
     sessionId: session.id,
     contextItems,
-    policyTargetPath:
-      parsed.targetPathSource === "cli" ? parsed.targetPath : undefined,
   };
   return parsed.directCore
     ? startDirectCoreRun(runInput, io, env)
@@ -331,12 +329,10 @@ export async function handleRunResumeCommand(
         workspaceRoot: parsed.workspaceRoot,
         sessionRootDir: parsed.sessionRootDir,
         runAccess: parsed.runAccess,
-        approvalOptions: parsed.approvalOptions,
         modelName:
           parsed.modelNameSource === "cli" ? parsed.modelName : undefined,
         sessionId: parsed.sessionId,
-        targetPath:
-          parsed.targetPathSource === "cli" ? parsed.targetPath : undefined,
+        targetPath: parsed.targetPath,
         confidentialPaths: parsed.confidentialPaths,
         confidentialDefaults: parsed.confidentialDefaults,
         traceLevel: parsed.traceLevel,
@@ -349,66 +345,48 @@ export async function handleRunResumeCommand(
     );
   }
 
-  // Locate the run directory. Two layouts are supported:
-  //   - session-scoped: <workspace>/.sparkwright/sessions/<sid>/agents/main/runs/<rid>/
-  //   - legacy:        <workspace>/.sparkwright/runs/<rid>/
+  // Locate the canonical session-scoped run directory.
   const sessionsRoot = parsed.sessionRootDir;
-  const legacyRunDir = join(
-    parsed.workspaceRoot,
-    ".sparkwright",
-    "runs",
-    parsed.runId,
-  );
   let runDir: string | undefined;
   let resolvedSessionId: string | undefined;
+  let resolvedAgentId: string | undefined;
 
-  if (parsed.sessionId) {
-    runDir = join(
-      sessionsRoot,
-      parsed.sessionId,
-      "agents",
-      "main",
-      "runs",
-      parsed.runId,
-    );
-    resolvedSessionId = parsed.sessionId;
-  } else {
-    // Scan sessions/*/agents/*/runs/<runId>/ for a match.
-    const { readdir } = await import("node:fs/promises");
-    const { existsSync } = await import("node:fs");
-    if (existsSync(sessionsRoot)) {
-      const sessions = await readdir(sessionsRoot, { withFileTypes: true });
-      for (const sessionEntry of sessions) {
-        if (!sessionEntry.isDirectory()) continue;
-        const agentsDir = join(sessionsRoot, sessionEntry.name, "agents");
-        if (!existsSync(agentsDir)) continue;
-        const agents = await readdir(agentsDir, { withFileTypes: true });
-        for (const agentEntry of agents) {
-          if (!agentEntry.isDirectory()) continue;
-          const candidate = join(
-            agentsDir,
-            agentEntry.name,
-            "runs",
-            parsed.runId,
-          );
-          if (existsSync(candidate)) {
-            runDir = candidate;
-            resolvedSessionId = sessionEntry.name;
-            break;
-          }
+  // Scan the selected session, or all sessions, across every persisted agent.
+  const { readdir } = await import("node:fs/promises");
+  const { existsSync } = await import("node:fs");
+  if (existsSync(sessionsRoot)) {
+    const sessionIds = parsed.sessionId
+      ? [parsed.sessionId]
+      : (await readdir(sessionsRoot, { withFileTypes: true }))
+          .filter((entry) => entry.isDirectory())
+          .map((entry) => entry.name);
+    for (const sessionId of sessionIds) {
+      const agentsDir = join(sessionsRoot, sessionId, "agents");
+      if (!existsSync(agentsDir)) continue;
+      const agents = await readdir(agentsDir, { withFileTypes: true });
+      for (const agentEntry of agents) {
+        if (!agentEntry.isDirectory()) continue;
+        const candidate = join(
+          agentsDir,
+          agentEntry.name,
+          "runs",
+          parsed.runId,
+        );
+        if (existsSync(candidate)) {
+          runDir = candidate;
+          resolvedSessionId = sessionId;
+          resolvedAgentId = agentEntry.name;
+          break;
         }
-        if (runDir) break;
       }
-    }
-    if (!runDir && existsSync(legacyRunDir)) {
-      runDir = legacyRunDir;
+      if (runDir) break;
     }
   }
 
-  if (!runDir) {
+  if (!runDir || !resolvedSessionId || !resolvedAgentId) {
     writeLine(
       io.stderr,
-      `Could not find run directory for ${parsed.runId} under ${parsed.sessionRootDir} or ${parsed.workspaceRoot}/.sparkwright/runs. ` +
+      `Could not find run directory for ${parsed.runId} under ${parsed.sessionRootDir}. ` +
         `Pass --session <session-id> to disambiguate.`,
     );
     return { exitCode: 1 };
@@ -434,12 +412,15 @@ export async function handleRunResumeCommand(
     return { exitCode: 1, sessionId: resolvedSessionId };
   }
 
+  const { permissionMode, shouldWrite } = compileRunAccessMode(
+    parsed.runAccess.accessMode,
+  );
   const model = await createCliModel({
     modelRef: parsed.modelName,
     cwd: parsed.workspaceRoot,
     env,
     targetPath: parsed.targetPath,
-    shouldWrite: parsed.runAccess.shouldWrite,
+    shouldWrite,
     goal: checkpoint.run.goal,
   });
   if (!model.ok) {
@@ -448,19 +429,15 @@ export async function handleRunResumeCommand(
   }
 
   const workspace = new LocalWorkspace(parsed.workspaceRoot);
-  const approvalResolver = createCliApprovalResolver({
-    approveAll: parsed.approvalOptions.approveAll,
-    approveEdits: parsed.approvalOptions.approveEdits,
-    approveShellSafe: parsed.approvalOptions.approveShellSafe,
-    permissionMode: parsed.runAccess.permissionMode,
+  const interactionChannel = createCliInteractionChannel({
+    accessMode: parsed.runAccess.accessMode,
     io,
   });
   const loadedConfig = await loadHostConfig(parsed.workspaceRoot, env);
   const policy = createHostRunPolicy({
-    permissionMode: parsed.runAccess.permissionMode,
-    shouldWrite: parsed.runAccess.shouldWrite,
-    targetPath:
-      parsed.targetPathSource === "cli" ? parsed.targetPath : undefined,
+    permissionMode,
+    shouldWrite,
+    targetPath: parsed.targetPath,
     writeGuardrails: loadedConfig.config.write,
     confidentialDefaults: parsed.confidentialDefaults,
     confidentialPaths: parsed.confidentialPaths,
@@ -470,26 +447,19 @@ export async function handleRunResumeCommand(
   // Wire a FileRunStore pointing at the same run dir so the resumed run's
   // new events append to the existing trace (keeps replay/inspection coherent).
   let store: FileRunStore | undefined;
-  const runStoreFactory =
-    resolvedSessionId !== undefined
-      ? createSessionFileRunStoreFactory({
-          sessionRootDir: sessionsRoot,
-          sessionId: resolvedSessionId,
-          agentId: "main",
-          traceLevel: parsed.traceLevel,
-        })
-      : (record: RunRecord) =>
-          new FileRunStore(record, {
-            rootDir: join(parsed.workspaceRoot, ".sparkwright", "runs"),
-            traceLevel: parsed.traceLevel,
-          });
+  const runStoreFactory = createSessionFileRunStoreFactory({
+    sessionRootDir: sessionsRoot,
+    sessionId: resolvedSessionId,
+    agentId: resolvedAgentId,
+    traceLevel: parsed.traceLevel,
+  });
 
   let run;
   try {
     run = resumeRunFromCheckpoint(checkpoint, {
       force: parsed.force,
       workspace,
-      approvalResolver,
+      interactionChannel,
       policy,
       tools,
       model: model.adapter,

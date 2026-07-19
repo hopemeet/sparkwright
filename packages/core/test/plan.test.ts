@@ -12,7 +12,7 @@ describe("plan protocol", () => {
           id: stepId,
           intent: "research",
           suggestedAgent: "researcher",
-          toolHints: ["read_file"],
+          toolHints: ["read"],
           input: { question: "What is here?" },
         },
       ],
@@ -29,7 +29,7 @@ describe("plan protocol", () => {
           intent: "research",
           status: "pending",
           suggestedAgent: "researcher",
-          toolHints: ["read_file"],
+          toolHints: ["read"],
         },
       ],
       metadata: {
@@ -47,7 +47,7 @@ describe("plan protocol", () => {
           id: createPlanStepId(),
           intent: "research",
           suggestedAgent: "researcher",
-          toolHints: ["read_file"],
+          toolHints: ["read"],
           input: {},
           risk: "safe",
         },
@@ -57,7 +57,7 @@ describe("plan protocol", () => {
     expect(
       reviewPlan(plan, {
         allowedAgents: ["researcher"],
-        allowedTools: ["read_file"],
+        allowedTools: ["read"],
         maxSteps: 2,
       }),
     ).toEqual([
@@ -91,7 +91,7 @@ describe("plan protocol", () => {
     expect(
       reviewPlan(plan, {
         allowedAgents: ["researcher"],
-        allowedTools: ["read_file"],
+        allowedTools: ["read"],
       }).map((decision) => decision.status),
     ).toEqual(["rejected", "rejected", "needs_approval"]);
   });

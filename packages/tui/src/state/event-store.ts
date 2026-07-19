@@ -90,12 +90,7 @@ export interface UsageSummary {
   toolCalls?: number;
 }
 
-export type ActivePhaseKind =
-  | "model"
-  | "tool"
-  | "agent"
-  | "validation"
-  | "compaction";
+export type ActivePhaseKind = "model" | "tool" | "agent" | "compaction";
 
 export interface ActivePhase {
   kind: ActivePhaseKind;
@@ -117,15 +112,13 @@ export interface ActivePhase {
  * `execute()` stays open for the child's entire run (streaming-runtime brackets
  * `tool.requested` → `tool.completed` around the awaited execute). Without this,
  * the delegate tool name would mask the agent the whole time it runs.
- * `validation` (a parent output gate) sits just above a plain tool; a queued —
- * not yet started — agent and quiet model-thinking sit low because something
- * more concrete is usually in flight.
+ * A queued — not yet started — agent and quiet model-thinking sit low because
+ * something more concrete is usually in flight.
  */
 const PHASE_PRIORITY = {
   compaction: 55,
   agentActive: 45,
   tool: 40,
-  validation: 35,
   agentQueued: 20,
   model: 10,
 } as const;
@@ -466,8 +459,8 @@ export class EventStore {
 
   /**
    * Append a calm, TUI-local divider line (not a host event). Used for the
-   * todo-supervisor continuation banner ("↻ continuing …") so the user sees a
-   * superseded-and-resumed boundary without it looking like their own input.
+   * workflow continuation banner ("↻ continuing …") so the user sees an
+   * episode boundary without it looking like their own input.
    */
   appendNotice(text: string): void {
     const event = {
@@ -668,22 +661,6 @@ export class EventStore {
       case "subagent.completed":
       case "subagent.failed": {
         this.closePhase("agent", subagentPhaseKey(event));
-        return;
-      }
-      case "validation.started": {
-        this.openPhase({
-          kind: "validation",
-          key: requiredPhaseKey("validation", validationPhaseKey(event), event),
-          message: "validating",
-          priority: PHASE_PRIORITY.validation,
-          depth: 0,
-          startedSeq: eventSequence(event),
-        });
-        return;
-      }
-      case "validation.completed":
-      case "validation.failed": {
-        this.closePhase("validation", validationPhaseKey(event));
         return;
       }
       case "run.completed":
@@ -905,14 +882,6 @@ function subagentPhaseKey(event: RunEvent): string | null {
   return spanId ? `agent:${spanId}` : null;
 }
 
-function validationPhaseKey(event: RunEvent): string | null {
-  const spanId = eventString(event, "spanId");
-  if (spanId) return `validation:${spanId}`;
-  const runId =
-    eventString(event, "runId") ?? firstString(rec(event.payload).runId);
-  return runId ? `validation:${runId}` : null;
-}
-
 function todoToolCallId(payload: Record<string, unknown>): string | null {
   const id = payload.id ?? payload.toolCallId ?? payload.callId;
   return typeof id === "string" && id.length > 0 ? id : null;
@@ -930,9 +899,7 @@ function parseTodoPanelItems(rawItems: unknown): TodoPanelItem[] | null {
   return items.map((raw): TodoPanelItem => {
     const it = rec(raw);
     const title =
-      (typeof it.title === "string" && it.title.trim()) ||
-      (typeof it.content === "string" && it.content.trim()) ||
-      "(untitled)";
+      (typeof it.title === "string" && it.title.trim()) || "(untitled)";
     return {
       title,
       status: typeof it.status === "string" ? it.status : "pending",

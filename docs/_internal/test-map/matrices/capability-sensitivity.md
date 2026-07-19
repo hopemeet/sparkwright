@@ -5,19 +5,17 @@ exist. Scenario specs must record capability posture.
 
 ## Capability Dimensions
 
-| Dimension                 | Why It Matters                                                  |
-| ------------------------- | --------------------------------------------------------------- |
-| `tools.use`               | selects high-level tool families before model descriptors exist |
-| `tools.allowed`           | narrows to concrete names                                       |
-| `tools.disabled`          | removes concrete names even if selected                         |
-| `tools.defer`             | changes schema loading, not permission                          |
-| `--write` / `shouldWrite` | gates workspace-write tools and delegates                       |
-| `permissionMode`          | affects approval and policy behavior                            |
-| shell approvals           | changes whether safe shell can run non-interactively            |
-| skills                    | add context, tools, preprocessing, and failure modes            |
-| MCP                       | adds external tools and startup/schema-loading state            |
-| agents/delegates          | add child runs, depth, finality, and write rollups              |
-| hooks/verification        | add deterministic checks and stop gates                         |
+| Dimension          | Why It Matters                                                  |
+| ------------------ | --------------------------------------------------------------- |
+| `tools.use`        | selects high-level tool families before model descriptors exist |
+| `tools.allowed`    | narrows to concrete names                                       |
+| `tools.disabled`   | removes concrete names even if selected                         |
+| `tools.defer`      | changes schema loading, not permission                          |
+| `accessMode`       | controls write access and approval behavior                     |
+| skills             | add context, tools, preprocessing, and failure modes            |
+| MCP                | adds external tools and startup/schema-loading state            |
+| agents/delegates   | add child runs, depth, finality, and write rollups              |
+| hooks/verification | add deterministic checks and stop gates                         |
 
 ## Assertion Guidance
 

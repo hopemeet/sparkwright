@@ -7,6 +7,70 @@ classification, policy, approval, sandboxing, trace, and task promotion.
 
 See [workspace-writes.md](workspace-writes.md) and [../../modules/coding-tools.md](../../modules/coding-tools.md).
 
+## Last Verified
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: reviewed shell and Workflow verifier paths after removing
+  `todo_clear`. Structured command/profile verification remains fact-ledger
+  evidence in Core assessment; shell sandboxing, cwd, approval, and rollback
+  contracts are unchanged.
+- Read: Host Workflow projection/distill/shadow changes, runtime assembly, and
+  Core verification projection.
+- Tests: affected Core/Host/CLI shell and Workflow suites passed.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: resolved Shell configuration/sandbox inputs now flow through
+  `RunPreparationOperations` into MCP, Skill, Agent, Workflow, Hook, catalog,
+  and snapshot preparation. Shell execution, approval, sandbox launch,
+  promotion, and mutation audit behavior are unchanged.
+- Read: preparation/security/catalog seams and Shell/process owners.
+- Tests: owner-level and focused tool/process gates are recorded with the
+  commit.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: configured in-process delegate shell catalog and child approval/lease
+  wiring moved to `AgentRuntimeAssembly`; shell parsing, sandbox launch,
+  mutation audit, policy, and process lifecycle remain with their existing
+  owners.
+- Read: Host Agent assembly, shell/delegate adapters, and focused tests.
+- Tests: focused Host Agent/Delegate/tool suites passed.
+
+- Status: Verified
+- Date: 2026-07-17T23:37:17+0800
+- Scope: Host delegate/workspace reference imports moved to Core `/internal`;
+  shell parsing, sandbox launch, process lifecycle, and write authority are
+  unchanged.
+- Read: affected Host imports, Core barrels, and shell ownership boundary.
+- Tests: Host typecheck/build; Cron and downstream focused suites passed.
+
+- Status: Verified
+- Date: 2026-07-16T21:02:00+0800
+- Scope: Shell background persistence is canonical-only:
+  `shell.background` task records and `background_shell` boundary markers.
+- Read: Host Shell handoff/deduplication, TUI marker rendering, task fixtures,
+  and Shell/tool orchestration maps.
+- Tests: focused Host Shell/protocol and downstream Core/CLI/SDK/TUI suites;
+  affected typechecks; project-map drift check.
+
+- Status: Verified
+- Date: 2026-07-16T13:36:30+0800
+- Scope: Shell workflow rules continue through canonical `WorkflowHook` matching and effects; removing `ValidationHook` did not change shell classification, policy, approval, or sandbox boundaries.
+- Read: host workflow hooks, shell policy/sandbox paths, and focused tests.
+- Tests: focused Host/shell workflow tests; npm run build; npm run typecheck:test; npm run release:check.
+
+- Date: 2026-07-16T12:45:00+0800
+- Scope: Shell and Workflow process sandbox write grants derive from canonical access mode; shell policy and containment remain unchanged.
+- Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.
+- Tests: focused access/policy/protocol/CLI/TUI/ACP/Workflow tests; npm run typecheck:test; npm run schema:check.
+
+- Date: 2026-07-16
+- Scope: the model-facing shell tool and tool selector are exactly `bash`; the
+  internal catalog source/runtime/resource category remains `shell`. Admission,
+  sandboxing, approval, rollback, and background safety boundaries are unchanged.
+
 ## Main Files
 
 - `packages/host/src/shell.ts`
@@ -17,11 +81,12 @@ See [workspace-writes.md](workspace-writes.md) and [../../modules/coding-tools.m
 - `packages/shell-sandbox/src/*`
 - `packages/core/src/run.ts`
 - `packages/agent-runtime/src/tasks/*`
+- `packages/host/src/runtime/agent-runtime-assembly.ts`
 
 ## Data Flow
 
 ```txt
-model calls shell tool
+model calls bash tool
   -> shell-tool classification
   -> core policy/approval
   -> sandbox/runtime execution
@@ -72,7 +137,7 @@ args` without rewriting requests, while the latter parses Host command text
   `.sparkwright/sessions/` and `.sparkwright/workflow-runs/` so host-owned
   session traces and durable workflow state are not reported as model shell
   mutations.
-- Configured in-process delegates can select `shell`, but shell remains gated
+- Configured in-process delegates can select `bash`, but shell remains gated
   by the parent run's write-enabled policy; capability descriptors should mark
   this with `gatedByRunWrite` rather than attempting command-specific read-only
   downgrades.
@@ -96,9 +161,8 @@ args` without rewriting requests, while the latter parses Host command text
   `backgroundOrigin:"explicit"`, creates an `awaited:false` task, and never
   reports `promoted:true`. Timeout handoff reports origin `promoted` and remains
   awaited.
-- The shared handoff callback is `onBackground`; deprecated `onPromote` remains
-  source-compatible for embedders. New task records use `shell.background`;
-  active historical `shell.promoted` records remain eligible for deduplication.
+- The shared handoff callback is only `onBackground`. Task creation and active
+  task deduplication use only the persisted kind `shell.background`.
 - Shell-tool resolves `policy:{ awaited, lifetime }` at the handoff boundary.
   Hosts execute it directly; `origin` remains diagnostic provenance rather than
   an independent keep-alive decision point.
@@ -135,8 +199,7 @@ args` without rewriting requests, while the latter parses Host command text
 - Workflow Script process writes require two independent grants: write-enabled
   run access and an explicit script `write` capability. Otherwise Host compiles
   a fail-closed no-write sandbox that denies the workspace. Command hooks do the
-  same when the run explicitly records `shouldWrite:false`; legacy hook
-  embedders with no access metadata keep their prior behavior.
+  same when the run records `accessMode: read-only`.
 - Host run security planning distinguishes the configured main-Shell sandbox
   status used by capability inspection from the effective extension-process
   sandbox. Read-only runs may strengthen the latter for MCP and Skill process
@@ -184,6 +247,21 @@ args` without rewriting requests, while the latter parses Host command text
 - Shell is powerful and cross-cuts workspace, tasks, trace, and capability state.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-16T10:44:25+0800
+- Scope: reviewed Task model-surface consolidation; shell handoff points to the
+  canonical Task action controller and all shell safety boundaries are unchanged.
+- Read: shell handoff docs and canonical Task tool surface.
+- Tests: repository test typecheck passed; no shell safety contract changed.
+
+- Status: Verified
+- Date: 2026-07-16T10:32:50+0800
+- Scope: shell handoff construction now has one callback and one type family;
+  foreground budgets, kill fallback, policy, and approval behavior are unchanged.
+- Read: shell-tool options/validation/execution/tests and Host handoff assembly.
+- Tests: shell-tool 42/42, build/typecheck, Host tools 89/89, and repository test
+  typecheck passed; full release gate passed.
 
 - Status: Read-only
 - Date: 2026-07-16T09:23:49+0800

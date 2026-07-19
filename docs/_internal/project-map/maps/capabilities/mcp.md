@@ -7,11 +7,65 @@ prompts, and diagnostic status.
 
 See [../../modules/mcp-adapter.md](../../modules/mcp-adapter.md).
 
+## Last Verified
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: reviewed because Host runtime episode/tool assembly changed. MCP
+  discovery, lazy startup, cwd disclosure, governance, and tool execution
+  contracts are unchanged; MCP tool facts participate in Core assessment like
+  other tool calls.
+- Read: Host runtime/tool assembly and MCP capability boundaries.
+- Tests: affected Host/CLI suites passed before final real-model canaries.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: canonical config/extra-server merge, startup/schema mode selection,
+  live MCP preparation, workspace-cwd disclosure, and inspection MCP port now
+  live in `run-preparation-operations.ts`. MCP tools/status, sandbox inputs,
+  close lifecycle, and adapter behavior are unchanged.
+- Read: run preparation owner, capability inspection owner, MCP adapter, and
+  focused run/capability tests.
+- Tests: owner-level and final focused/repository gates are recorded with the
+  commit.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: capability inspection moved behind `CapabilityRuntimeOperations` and
+  receives one HostRuntime MCP preparation port. Config/extra-server merge,
+  startup mode, status/tool-name projection, close ordering, and live-run MCP
+  ownership are unchanged.
+- Read: capability owner, Host MCP preparation helpers, adapter contracts, and
+  focused protocol/CLI coverage.
+- Tests: focused Host capability 222/222 passed; downstream gates are recorded
+  with the commit.
+
+- Status: Verified
+- Date: 2026-07-17T23:37:17+0800
+- Scope: Host runtime implementation imports moved to Core `/internal`; MCP
+  discovery, transport, sandbox, tool governance, and inspection contracts are
+  unchanged.
+- Read: Host runtime import boundary and Core public/internal barrels.
+- Tests: Host typecheck/build and import governance passed.
+
+- Status: Verified
+- Date: 2026-07-16T12:45:00+0800
+- Scope: MCP preparation consumes the frozen internal security plan derived from canonical accessMode; no MCP contract changed.
+- Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.
+- Tests: focused access/policy/protocol/CLI/TUI/ACP/Workflow tests; npm run typecheck:test; npm run schema:check.
+
+- Date: 2026-07-16T11:52:29+0800
+- Scope: reviewed protocol 2.0 terminal failure envelope changes; MCP
+  tool/resource/prompt capability contracts and tool failure events are
+  independent and unchanged.
+
 ## Main Files
 
 - `packages/mcp-adapter/src/index.ts`
 - `packages/host/src/runtime.ts`
 - `packages/host/src/runtime/host-runtime.ts`
+- `packages/host/src/runtime/run-preparation-operations.ts`
+- `packages/host/src/runtime/capability-runtime-operations.ts`
 - `packages/host/src/runtime/capability-assembly.ts`
 - `packages/cli/src/cli.ts`
 - `packages/tui/src/lib/create-capability.ts`
@@ -88,6 +142,13 @@ host config MCP servers
   trusted opt-ins and are not counted as managed workspace writes.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-16T10:27:51+0800
+- Scope: reviewed Agent-tool policy input consolidation; MCP policy defaults and
+  adapter tool definitions are separate canonical consumers and are unchanged.
+- Read: Agent-tool call sites and MCP capability boundaries.
+- Tests: repository test typecheck passed; no MCP contract changed.
 
 - Status: Verified
 - Date: 2026-07-15T07:35:27+0800
@@ -227,7 +288,7 @@ host config MCP servers
   cwd handling, workspace-cwd disclosure, and diagnostic payloads are unchanged.
 - Read: `packages/host/src/runtime.ts`, `packages/host/src/config.ts`,
   `packages/host/src/config-zod-schema.ts`,
-  `docs/_internal/proposals/consolidation-agenda.md`.
+  `docs/_internal/reviews/consolidation-agenda.md`.
 - Tests: not run for MCP-specific behavior; C13 focused validation ran in
   core/host/CLI/protocol.
 
@@ -237,7 +298,7 @@ host config MCP servers
   inventory. MCP server preparation, tool execution wrapping, cwd handling,
   workspace-cwd disclosure, and diagnostic payloads are unchanged.
 - Read: `packages/host/src/runtime.ts`, `packages/host/test/protocol.test.ts`,
-  `docs/_internal/proposals/consolidation-agenda.md`.
+  `docs/_internal/reviews/consolidation-agenda.md`.
 - Tests: `npm --workspace @sparkwright/host test --
 test/protocol.test.ts -t "inspect reports inline agent profiles"`;
   `npm --workspace @sparkwright/host run typecheck`; `npm --workspace

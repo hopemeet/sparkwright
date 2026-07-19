@@ -87,7 +87,6 @@ export interface ExternalCommandDelegateToolResult {
   spanId: string;
   /** @reserved Public delegate-tool output field consumed by UIs and orchestrators. */
   protocol: "external_command";
-  agentId: string;
   /** @reserved Public delegate-tool output field consumed by UIs and orchestrators. */
   agentProfileId: string;
   exitCode: number | null;
@@ -98,8 +97,6 @@ export interface ExternalCommandDelegateToolResult {
   stdoutTruncated: boolean;
   /** @reserved Public delegate-tool output field consumed by UIs and orchestrators. */
   stderrTruncated: boolean;
-  /** @reserved Backward-compatible aggregate truncation flag. */
-  outputTruncated: boolean;
   /** @reserved Public delegate process output summary consumed by trace and diagnostics UIs. */
   output: ProcessOutputSummary;
   /** @reserved Public delegate sandbox status consumed by trace and diagnostics UIs. */
@@ -339,7 +336,6 @@ export function createExternalCommandDelegateTool(
             )}.`,
             {
               childRunId,
-              agentId: input.profile.id,
               agentProfileId: input.profile.id,
               ...result,
             },
@@ -356,7 +352,6 @@ export function createExternalCommandDelegateTool(
             stderrChars: result.stderr.length,
             stdoutTruncated: result.stdoutTruncated,
             stderrTruncated: result.stderrTruncated,
-            outputTruncated: result.outputTruncated,
             output: result.output,
             sandbox: result.sandbox,
             progressCount: result.progressCount,
@@ -369,7 +364,6 @@ export function createExternalCommandDelegateTool(
           childRunId,
           spanId,
           protocol: "external_command",
-          agentId: input.profile.id,
           agentProfileId: input.profile.id,
           ...result,
         };
@@ -411,7 +405,6 @@ async function runExternalCommand(input: {
     | "stderr"
     | "stdoutTruncated"
     | "stderrTruncated"
-    | "outputTruncated"
     | "output"
     | "sandbox"
     | "progressCount"
@@ -555,8 +548,6 @@ async function runExternalCommand(input: {
       stderrTruncated:
         result.output.stderrTruncated ||
         result.output.stderrBytes > stderrLimit,
-      outputTruncated:
-        result.output.stdoutTruncated || result.output.stderrTruncated,
       output: result.output,
       sandbox,
       ...progress.summary({
@@ -617,7 +608,7 @@ function buildCommandEnv(
     return { ...(config.env ?? {}) };
   }
   // Inherit mode. A delegate that was granted read_write workspace access has
-  // already been explicitly trusted by the parent run (`--write`), so its
+  // already been explicitly trusted by the parent run's access mode, so its
   // inherited environment is left intact. But a locked-down delegate
   // (workspaceAccess "none", the default) runs in a throwaway cwd and must not
   // be able to exfiltrate the parent's credentials: we still hand it a working

@@ -1,12 +1,10 @@
 // Coverage for the v0.1 loop extensions:
 //   - AbortSignal vertical (cancel mid-tool)
 //   - Compaction pipeline applied before assembly
-//   - Stop hook (pre_terminal) blocks termination + injects continuation
-//   - Post-sampling hook runs fire-and-forget
 //   - Fallback model chain switches on recoveryHint
 //   - Recoverable model errors (reduce_input / extend_output)
 //   - Observation summarizer + prefetch results land in NEXT turn's context
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   createCompactionPipeline,
   createRun,
@@ -19,7 +17,6 @@ import {
   type ObservationSummarizer,
   type RunCheckpointV1,
   type RunLoopServices,
-  type ValidationHook,
 } from "../src/index.js";
 
 function staticModel(
@@ -366,73 +363,6 @@ describe("run loop extensions", () => {
     expect(result.skippedStages).toHaveLength(1);
     expect(result.skippedReason).toBe("no_savings");
     expect(result.freedChars).toBe(0);
-  });
-
-  it("pre_terminal stop hook blocks termination and injects continuation", async () => {
-    let turn = 0;
-    const model: ModelAdapter = {
-      async complete() {
-        turn += 1;
-        if (turn === 1) return { message: "first attempt" };
-        return { message: "second attempt, with extra check passed" };
-      },
-    };
-    const stopHook: ValidationHook = {
-      name: "must_mention_check",
-      stages: ["pre_terminal"],
-      validate(input) {
-        const text = (input.subject as string) ?? "";
-        if (text.includes("check passed")) return { status: "passed" };
-        return {
-          status: "failed",
-          findings: [
-            {
-              code: "MISSING_CHECK",
-              message: "Response must include 'check passed'.",
-            },
-          ],
-        };
-      },
-    };
-
-    const run = createRun({
-      goal: "stop hook",
-      model,
-      validationHooks: [stopHook],
-      maxSteps: 4,
-    });
-    const result = await run.start();
-    expect(result.state).toBe("completed");
-    expect(turn).toBeGreaterThan(1);
-  });
-
-  it("post_sampling hook runs fire-and-forget without blocking the loop", async () => {
-    const observed = vi.fn();
-    const model: ModelAdapter = {
-      async complete() {
-        return { message: "ok" };
-      },
-    };
-    const probe: ValidationHook = {
-      name: "probe",
-      stages: ["post_sampling"],
-      async validate(input) {
-        // simulate slow telemetry — must not delay run completion
-        await new Promise((r) => setTimeout(r, 20));
-        observed(input.subject);
-      },
-    };
-    const run = createRun({
-      goal: "post sampling",
-      model,
-      validationHooks: [probe],
-    });
-    const start = Date.now();
-    const result = await run.start();
-    const elapsed = Date.now() - start;
-    expect(result.state).toBe("completed");
-    // Run finishing didn't wait for the 20ms hook
-    expect(elapsed).toBeLessThan(200);
   });
 
   it("switches to fallback model when primary throws recoveryHint=fallback_model", async () => {

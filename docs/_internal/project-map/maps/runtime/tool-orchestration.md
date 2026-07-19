@@ -7,6 +7,170 @@ policy-checked, approved, executed, traced, and summarized.
 
 See [../safety/workspace-writes.md](../safety/workspace-writes.md), [../safety/shell.md](../safety/shell.md), and [../../modules/coding-tools.md](../../modules/coding-tools.md).
 
+## Last Verified
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: `managesRepeatedCalls(args)` is a narrow complete+clean cache-hit
+  bypass for Agent tools, not a blanket retry exemption. Parallel delegation
+  uses the same canonical finality predicate, and shell verification facts come
+  from explicit command shapes rather than goal-text heuristics.
+- Read: Core tool repeat/fact paths, Agent Runtime result/ledger, Host Agent
+  assembly, and affected full tests.
+- Tests: Core 641/641, Agent Runtime 235/235, Host 592/592.
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: tool orchestration distinguishes generic repeat suppression from a
+  tool-owned conservative duplicate ledger. Agent direct/indexed/parallel/
+  dynamic tools opt in through `managesRepeatedCalls(args)` only for an exact
+  reusable cache hit; replay risk still reads only governance idempotency.
+- Read: Core ToolDefinition/repeat path, Agent Runtime cache, Host wrappers,
+  focused tests, and pre/post-fix Terra traces.
+- Tests: Core run 128/128; Host Agent tool/spawn 117/117; real indexed reuse
+  returned `alreadyCompleted:true` in 2ms without a second child.
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: tool facts feed Core's canonical assessment; downstream CLI, Cron,
+  Host, Agent, and TUI consumers no longer re-judge prose or reconstruct a
+  parallel outcome. Todo exposes only advisory plan writes and cannot force
+  tools, clear verification, or schedule another episode.
+- Read: fact/outcome/assessment projectors, Host tool catalog/surface, Todo
+  tools, CLI/TUI projections, and regression coverage.
+- Tests: affected Core, Agent Runtime, Host, CLI, and TUI suites passed/focused
+  before final release verification.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: live main-catalog construction, Agent-prepared tools, main-profile
+  admission, Skill/MCP tools, and capability snapshot catalog projection moved
+  from HostRuntime to `RunPreparationOperations`. Tool identities, filtering,
+  policy, approval, lease wrapping, and Core execution order are unchanged.
+- Read: run preparation owner, Agent assembly, catalog/surface, capability and
+  workspace lease contracts, plus focused tool/run tests.
+- Tests: direct owner coverage and final focused/repository gates are recorded
+  with the commit.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: inert effective-tool catalog construction for capability inspection
+  moved to `CapabilityRuntimeOperations`. It reuses Agent assembly helpers and
+  the shared TaskManager; generic live-run catalog construction, admission,
+  policy, approval, and execution remain in HostRuntime.
+- Read: capability owner, Agent assembly, Host catalogs/surface, security plan,
+  and focused capability/tool tests.
+- Tests: owner-level 2/2 and focused Host capability 222/222 passed.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: Agent/Profile admission inputs, configured delegate child catalogs,
+  direct/indexed/parallel delegate tools, dynamic spawn, child-scoped discovery,
+  model/hook resolution, and background Agent task runner construction now live
+  in `AgentRuntimeAssembly`. HostRuntime still owns the generic main catalog and
+  final main-profile admission; tool schemas, policy, approval, and execution
+  order are unchanged.
+- Read: Agent assembly, Host catalog/surface, Agent Runtime invocation/ledger,
+  and focused tests.
+- Tests: owner-level 1/1, Host Agent/tool/protocol 359/359, and Agent Runtime
+  77/77 passed.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: Workflow per-node model selection, budget narrowing, tool allowlist,
+  scoped discovery, and continuation required-tool checks now live with
+  `WorkflowEpisodeRuntime`. Base catalog admission and generic Host run
+  preparation remain unchanged.
+- Read: Workflow episode planner, Host tool surface/catalog preparation,
+  projection tool availability, and focused Workflow tests.
+- Tests: owner-level planner and focused Host Workflow/tool-hook suites passed.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: checked Workflow durable ownership extraction. Per-episode model/tool
+  selection, Workflow catalog narrowing, deferred discovery, policy, and tool
+  execution remain in HostRuntime/run preparation and were not moved.
+- Read: Host Workflow owner seam, run preparation, projection tool clamps, and
+  focused Workflow hook tests.
+- Tests: focused Host Workflow/tool-orchestration coverage passed.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: Host-facing Task list/get/output/stop/join/promote operations and
+  bounded output polling now have one Task operations owner. Model-facing
+  `task_create`/`task`, TaskManager scheduling, tool policy, and result shapes
+  are unchanged.
+- Read: Host Task operations/projections and protocol routing, Agent Runtime
+  Task tools/manager, and focused Host tests.
+- Tests: Host Task revival/service/protocol 64/64 and Host typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-17T23:37:17+0800
+- Scope: runtime consumers now import default prompt/event/workspace reference
+  implementations through Core `/internal`; tool registry, batching, policy,
+  approval, and result contracts are unchanged.
+- Read: Core barrels, Agent/Host/CLI/Project Context/Streaming consumers, and
+  import gate.
+- Tests: Agent Runtime 49/49, Project Context 19/19, Streaming 12/12, CLI 23/23.
+
+- Status: Verified
+- Date: 2026-07-17T13:00:00+0800
+- Scope: tool exposure and replay decisions use one vocabulary: four canonical
+  exposure tiers, with `list_dir` advanced, and governance idempotency as the
+  sole replay-risk declaration.
+- Read: Core tools/run replay path, Host tool identity/catalog/surface,
+  protocol capability schema, MCP/Cron/Agent definitions, and focused tests.
+- Tests: Core replay 2/2; Host tools 88/88; MCP 34/34; Cron 20/20; affected
+  package typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-17T09:43:00+0800
+- Scope: checked tool admission and capability inspection after grouped-only
+  external config consolidation. Tool selector roots, catalog filtering,
+  approval, execution, and capability snapshot semantics are unchanged.
+- Read: Host config loader/schema and tool catalog consumers, CLI capability
+  inspection, generated config schema, and focused tests.
+- Tests: Host config/protocol 115/115; CLI config schema 6/6 and full 155/155;
+  schema check and affected package typechecks; project-map drift; full release
+  gate.
+
+- Status: Verified
+- Date: 2026-07-16T23:55:17+0800
+- Scope: the model-facing `create_agent` schema and parser admit only
+  `model: "inherit"` as an inheritance marker; the removed `default` alias
+  cannot reach execution or persistence.
+- Read: Host tool definition/parser/serializer, schema-focused tests, Agent
+  capability contracts, and current guidance.
+- Tests: Host Agent profile/tools 125/125; capability protocol 5/5; CLI
+  Agent/capability routes 7/7; Host and CLI typechecks; repository test
+  typecheck; project-map drift; full release gate.
+
+- Status: Verified
+- Date: 2026-07-16T21:02:00+0800
+- Scope: Shell background handoff, persistence, and deduplication use the
+  canonical `shell.background` kind only; promotion remains runtime origin
+  metadata, not an alternate task identity.
+- Read: Host Shell wrapper, shell-tool handoff/result contract, task fixtures,
+  and Shell/TUI trace maps.
+- Tests: focused Host Shell/protocol and downstream Core/CLI/SDK/TUI suites;
+  affected typechecks; project-map drift check.
+
+- Status: Verified
+- Date: 2026-07-16T13:36:30+0800
+- Scope: Removed the parallel post-execution `ValidationHook` result gate and its `resultValidationMs` timing; canonical `PostToolUse` workflow hooks remain the post-action policy path.
+- Read: tool execution/recording paths, workflow hooks, trace timing docs, and focused tests.
+- Tests: focused Core tool/workflow tests; npm run build; npm run typecheck:test; npm run release:check.
+
+- Date: 2026-07-16T12:45:00+0800
+- Scope: Tool orchestration consumes one frozen access plan compiled from accessMode; catalog membership and tool-specific safety gates remain unchanged.
+- Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.
+- Tests: focused access/policy/protocol/CLI/TUI/ACP/Workflow tests; npm run typecheck:test; npm run schema:check.
+
+- Date: 2026-07-16T11:52:29+0800
+- Scope: reviewed protocol 2.0 terminal failure envelope changes; tool
+  validation, execution, and tool failure events are independent of the removed
+  Host run-terminal `error` projection.
+
 ## Main Files
 
 - `packages/core/src/run.ts`
@@ -17,11 +181,14 @@ See [../safety/workspace-writes.md](../safety/workspace-writes.md), [../safety/s
 - `packages/host/src/tool-catalog.ts`
 - `packages/host/src/tool-surface.ts`
 - `packages/host/src/run-security-plan.ts`
+- `packages/host/src/runtime/capability-runtime-operations.ts`
 - `packages/host/src/tools.ts`
 - `packages/host/src/shell.ts`
 - `packages/coding-tools/src/index.ts`
 - `packages/coding-tools/src/unified-diff.ts`
 - `packages/host/src/runtime/host-runtime.ts`
+- `packages/host/src/runtime/run-preparation-operations.ts`
+- `packages/host/src/runtime/agent-runtime-assembly.ts`
 
 ## Data Flow
 
@@ -31,7 +198,7 @@ model tool calls
   -> canonical Agent/Profile admission
   -> Workflow narrowing + deferred/eager model surface
   -> CLI diagnostic catalog profile for direct-core/cron when not using a live host
-  -> alias canonicalization + validation + call-time availability
+  -> exact-name validation + call-time availability
   -> tool.batch/tool.requested events
   -> policy, then approval where needed
   -> tool execution
@@ -49,6 +216,9 @@ model tool calls
   decides each concrete execution. Deferred/eager is exposure only, approval
   confirms an authorized call, and neither mechanism can recover a removed
   tool.
+- Model-facing Markdown Agent authoring admits `model: "inherit"` as its sole
+  explicit inheritance marker and normalizes it to omission before execution.
+  Explicit persisted model values remain `provider/model` or `deterministic`.
 - Fresh runs, session/run resume, Workflow resume, and Todo continuations all
   derive their episode tools through `workflowActorEpisodePlan()` and
   `resolveRunToolSurface()`. Todo continuation requests eager `todo_write`
@@ -60,16 +230,17 @@ model tool calls
   Retaining the original discovery implementation after definitions are
   removed would leak denied descriptors even if direct execution remained
   blocked, so filtered catalogs must rebuild rather than retain it.
-- Core canonicalizes a legacy callable name through `ToolRegistry` before
-  Workflow hooks, repeat detection, policy, approval, and execution. A tool
-  whose dynamic `available()` probe is false is also rejected with
-  `TOOL_UNAVAILABLE` before policy or handler execution, even when a model
-  guesses its registered name. Public lifecycle events and approval details
-  retain the model-requested name for protocol compatibility and add
-  `canonicalToolName` when it differs.
+- Core resolves only exact registered callable names before Workflow hooks,
+  repeat detection, policy, approval, and execution. A tool whose dynamic
+  `available()` probe is false is rejected with `TOOL_UNAVAILABLE` before policy
+  or handler execution, even when a model guesses its registered name. Public
+  lifecycle events and approval details use that same exact name.
 - Episode visibility is not persisted as a second decision model. Policy,
   `approval.*`, and `tool.*` events remain the final evidence for availability,
   authorization, and execution.
+- Replay-risk classification reads only `governance.idempotency`: conditional
+  and non-idempotent tools are annotated after network-class failures, while
+  idempotent and undeclared tools are not.
 - Read-only policy treats absent side-effect governance conservatively. Known
   wrappers must classify the strongest underlying capability they can invoke;
   ACP and external-command delegates include `write` when granted read-write
@@ -99,6 +270,9 @@ model tool calls
   tool-name switches in the run loop.
 - Workspace writes must produce request, approval/policy evidence, artifact/write terminal events.
 - Repeated idempotent/no-op calls should not invent false failures.
+- Exact sequential calls to tools with `managesRepeatedCalls(args)` reach the
+  tool-owned cache/retry protocol when no prior failure/no-progress result is
+  present. This is not an idempotency or replay-safety declaration.
 - State-observation tools may provide bounded repeated-call guidance. The
   generic repeat guard then records a completed skipped observation and lets
   the model choose a blocking or incremental control surface without core
@@ -130,8 +304,8 @@ true` records a mutation index for its target (`mutatedByTarget`). A
 - Tool progress is advisory; terminal tool state comes from `tool.completed` or `tool.failed`.
 - Host runtime tool surfaces should be catalogued before being flattened to
   `ToolDefinition[]`; capability snapshots use catalog source metadata and
-  identity metadata (`canonicalName`, `legacyNames`, `defaultExposureTier`,
-  `relatedTools`, `requiresTool`, and per-run `effectiveLoading`).
+  identity metadata (`canonicalName`, `defaultExposureTier`, `relatedTools`,
+  `requiresTool`, and per-run `effectiveLoading`).
 - Live Host catalogs wrap tools whose effective argument-level governance
   declares workspace `write` with a process-local mutation lease. The wrapper
   is applied after tool filtering and before flattening, so parent and child
@@ -160,9 +334,10 @@ true` records a mutation index for its target (`mutatedByTarget`). A
   source of live unknown-kind diagnostics.
 - `task_create` is a task lifecycle tool, not an internal queue. It supports
   `foreground`, `awaited`, and `background` modes; default foreground may
-  promote on budget timeout when policy allows it. Explicit `mode`/`awaited`
-  conflicts reject as recoverable argument errors. Global/per-kind concurrency
-  caps fail as recoverable tool errors. `task(action:"wait", ids,
+  promote on budget timeout when policy allows it. `mode` is its only
+  model-facing scheduling input; unknown fields reject as recoverable argument
+  errors, while output/durable `awaited` reports current runtime state.
+  Global/per-kind concurrency caps fail as recoverable tool errors. `task(action:"wait", ids,
 mode:"any"|"all")` is the join surface. Detached/promoted create results
   include concrete `nextAction` guidance so the model has a task id and monitor
   action to reuse instead of issuing an equivalent `task_create`.
@@ -174,7 +349,7 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
   `task_create` lifecycle events when a later same-run create has the same
   `kind` + stable payload fingerprint after an earlier same-payload task
   completed. This diagnostic intentionally ignores scheduling-only differences
-  such as `mode`/`awaited` and skips failed, cancelled, partial, or truncated
+  such as `mode` and skips failed, cancelled, partial, or truncated
   prior tasks.
 - Deferred `task` action monitoring is guarded in both model guidance and
   runtime validation: the schema advertises action-specific non-empty
@@ -223,8 +398,8 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
   approval, and ledger behavior stay shared.
 - `delegate_parallel` is catalogued only when
   `capabilities.agents.enableParallelDelegates` is true. It uses the same
-  catalog filtering as other `agents` tools, accepts `agentId` (preferred) or
-  legacy `toolName` targets, reports read-only side effects, and runs as one
+  catalog filtering as other `agents` tools, accepts only `agentId` targets,
+  reports read-only side effects, and runs as one
   foreground tool call that launches multiple eligible in-process/read-only
   delegate children before awaiting all results.
 - Dynamic `spawn_agent` separates tool transport completion from child-answer
@@ -248,7 +423,7 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
   excludes it. When the narrowed catalog contains deferred tools, host appends a
   scoped `tool_search` over the narrowed catalog only, and the clamp permits only
   that marked scoped discovery tool. The clamp canonicalizes tool-name
-  comparisons, so legacy declarations such as `tools: [read_file]` permit the
+  comparisons, so legacy declarations such as `tools: [read]` permit the
   canonical worker tool `read`. In the P10a two-stage `PreToolUse` path, the
   clamp runs in the governance pass after configured argument rewrites, so
   rewritten paths/tool arguments are checked before budget, repeat, policy,
@@ -276,10 +451,8 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
   promoted `taskId` at the handoff point; the adopted task then owns ongoing
   stdout/stderr observation and emits `task.created` / `task.started` /
   `task.output` / terminal `task.*` trace facts.
-- Shell uses `onBackground` as the shared explicit/timeout handoff primitive and
-  writes `shell.background` task records. `onPromote` remains a deprecated API
-  alias, while active historical `shell.promoted` records remain readable for
-  deduplication.
+- Shell uses `onBackground` as the shared explicit/timeout handoff primitive;
+  task creation and active-task deduplication use only `shell.background`.
 - The shell handoff resolves `{ awaited, lifetime }` once. TaskManager consumes
   `awaited` as its generic keep-alive contract; shell lifetime remains at this
   boundary and is not added to unrelated task kinds.
@@ -336,9 +509,9 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
   soft-recovery phase.
 - Terminal `tool.completed` / `tool.failed` events carry stage timing metadata
   when those phases ran: `schemaValidationMs`, `inputValidationMs`,
-  `policyForArgsMs`, `policyDecisionMs`, `approvalWaitMs`, `executionMs`, and
-  `resultValidationMs`. `approvalWaitMs` covers only the approval resolver wait,
-  not policy decision time.
+  `policyForArgsMs`, `policyDecisionMs`, `approvalWaitMs`, and `executionMs`.
+  `approvalWaitMs` covers only the interaction-channel approval wait, not
+  policy decision time.
 - Core duplicate diagnostics distinguish same-concurrent-batch
   `in_flight_duplicate` calls from completed-result repeats. In-flight
   duplicates receive an accurate skipped tool result and do not mark the target
@@ -403,6 +576,39 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
 - TUI live rendering and transcript export now share presentation summaries, but trace/model-context result compaction is still a separate backend concern.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-16T10:44:25+0800
+- Scope: Task orchestration now exposes only create plus one action controller;
+  shell-to-task handoff and durable task behavior are unchanged.
+- Read: Agent-runtime Task handlers/exports, Host catalog, shell handoff docs,
+  TUI preview, and Core trace projection.
+- Tests: focused Agent/Core/Host/TUI suites and repository test typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-16T10:32:50+0800
+- Scope: explicit and timeout shell handoff now expose only `onBackground`;
+  runtime handoff behavior, output facts, and task adoption are unchanged.
+- Read: shell-tool handoff types/factory/tests, Host shell assembly, and active
+  persisted task-record compatibility boundary.
+- Tests: shell-tool 42/42, build/typecheck, Host tools 89/89, and repository test
+  typecheck passed; full release gate passed.
+
+- Status: Verified
+- Date: 2026-07-16T10:27:51+0800
+- Scope: Agent-tool construction now has one caller-supplied policy input;
+  registration, concurrency classification, and execution contracts are unchanged.
+- Read: Agent-tool definition, Host delegate assembly, and tool orchestration map.
+- Tests: agent-runtime index 45/45, Host tools 89/89, and affected typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-16T10:23:51+0800
+- Scope: reviewed for removal of the Core revival budget alias; tool
+  registration, execution, policy, and result contracts do not consume that
+  run option and require no contract change.
+- Read: Core run option consumers and tool-orchestration contracts.
+- Tests: focused Core revival/budget tests 19/19, runtime guardrails 28/28,
+  full Core 668/668, and Core typecheck passed.
 
 - Status: Verified
 - Date: 2026-07-16T08:47:59+0800
@@ -1091,7 +1297,7 @@ test/trace.test.ts`; `npm --workspace @sparkwright/host run typecheck`;
 - Status: Verified
 - Date: 2026-06-28T20:30:50+0800
 - Scope: foreground tool execution now reaches core approval policy with
-  explicit `read_file` read-only governance metadata; plan/read-only mode
+  explicit `read` read-only governance metadata; plan/read-only mode
   allows only safe tools whose side effects are declared read-only/no-op while
   repeated-read loop handling stays unchanged.
 - Read: `packages/core/src/run.ts`,

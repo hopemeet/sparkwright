@@ -13,6 +13,7 @@ import {
   delegateToolDescription,
   describeInProcessDelegateCapability,
   evaluateDelegateRouting,
+  filterDirectDelegatesForExposure,
 } from "../src/delegate-capability.js";
 import { loadLayeredAgentReport } from "../src/agent-report.js";
 
@@ -51,7 +52,7 @@ describe("parseAgentProfileFile", () => {
         "mode: child",
         "model: openai/m",
         "use: [workspace.read]",
-        "allowedTools: [read_file, glob]",
+        "allowedTools: [read, glob]",
         "maxSteps: 5",
         "---",
         "You triage issues.",
@@ -67,18 +68,10 @@ describe("parseAgentProfileFile", () => {
     expect(profile.prompt).toBe("You triage issues.");
   });
 
-  it("honors an explicit namespaced frontmatter id over the filename", () => {
+  it("uses the filename when frontmatter declares another id", () => {
     const profile = parseAgentProfileFile(
       "foo",
       ["---", "id: review:foo", "mode: child", "---", "body"].join("\n"),
-    );
-    expect(profile.id).toBe("review:foo");
-  });
-
-  it("falls back to the filename when the frontmatter id is invalid", () => {
-    const profile = parseAgentProfileFile(
-      "foo",
-      ["---", "id: not a valid id!", "---", "body"].join("\n"),
     );
     expect(profile.id).toBe("foo");
   });
@@ -109,10 +102,10 @@ describe("parseAgentProfileFile", () => {
         "name: Reviewer",
         "description: Review changes proactively.",
         "tools:",
-        "  - read_file",
+        "  - read",
         "  - grep",
         "disallowedTools:",
-        "  - shell",
+        "  - bash",
         "delegateTool:",
         "  toolName: delegate_reviewer",
         "  requiresApproval: false",
@@ -160,7 +153,7 @@ describe("parseAgentProfileFile", () => {
         "---",
         "hooks:",
         "  PreToolUse:",
-        "    - matcher: shell",
+        "    - matcher: bash",
         "      action:",
         "        type: command",
         "        command: ./scripts/validate-readonly-query.sh",
@@ -180,7 +173,7 @@ describe("parseAgentProfileFile", () => {
       {
         name: "db-reader.PreToolUse.0",
         hook: "PreToolUse",
-        matcher: { toolName: "shell" },
+        matcher: { toolName: "bash" },
         action: {
           type: "command",
           command: "./scripts/validate-readonly-query.sh",
@@ -207,7 +200,7 @@ describe("parseAgentProfileFile", () => {
         "---",
         "hooks:",
         "  PreToolUse:",
-        "    - matcher: shell",
+        "    - matcher: bash",
         "      action:",
         "        type: agent",
         "        goal: nested delegate",
@@ -217,7 +210,7 @@ describe("parseAgentProfileFile", () => {
         "        type: block",
         "        reason: no matcher",
         "    - matcher:",
-        "        toolName: read_file",
+        "        toolName: read",
         "      action:",
         "        type: block",
         "        reason: stop reads",
@@ -230,7 +223,7 @@ describe("parseAgentProfileFile", () => {
       {
         name: "reviewer.PreToolUse.2",
         hook: "PreToolUse",
-        matcher: { toolName: "read_file" },
+        matcher: { toolName: "read" },
         action: { type: "block", reason: "stop reads" },
       },
     ]);
@@ -489,24 +482,6 @@ describe("discoverProjectAgentProfiles collisions", () => {
   });
 });
 
-describe("resolveAgentProfiles namespacing", () => {
-  it("lets a flat config id and a namespaced markdown id coexist", async () => {
-    const root = await tempWorkspace();
-    await writeAgent(
-      root,
-      "scoped",
-      "---\nid: review:foo\nmode: child\n---\nscoped",
-    );
-
-    const profiles = await resolveAgentProfiles(root, [
-      { id: "reviewer", mode: "child" },
-    ]);
-
-    const ids = profiles.map((p) => p.id).sort();
-    expect(ids).toEqual(["review:foo", "reviewer"]);
-  });
-});
-
 describe("resolveAgentDelegateTools", () => {
   it("folds inline profile delegate hints under explicit delegate config", () => {
     const delegates = resolveAgentDelegateTools(
@@ -537,7 +512,7 @@ describe("resolveAgentDelegateTools", () => {
     expect(delegates).toEqual([]);
   });
 
-  it("auto-exposes child/all and mode-less profiles when the flag is on", () => {
+  it("indexes child/all and mode-less profiles for generic delegation", () => {
     const delegates = resolveAgentDelegateTools(
       [
         { id: "reviewer", mode: "child" },
@@ -546,7 +521,7 @@ describe("resolveAgentDelegateTools", () => {
         { id: "loose" },
       ],
       [],
-      { exposeChildrenAsDelegates: true },
+      { includeAllChildProfiles: true },
     );
     expect(delegates).toEqual([
       { profileId: "reviewer" },
@@ -565,14 +540,14 @@ describe("resolveAgentDelegateTools", () => {
     expect(delegates).toEqual([{ profileId: "reviewer" }]);
   });
 
-  it("honors exposeAsDelegate:false as opt-out even when the flag is on", () => {
+  it("honors exposeAsDelegate:false as an indexed-target opt-out", () => {
     const delegates = resolveAgentDelegateTools(
       [
         { id: "reviewer", mode: "child" },
         { id: "secret", mode: "child", exposeAsDelegate: false },
       ],
       [],
-      { exposeChildrenAsDelegates: true },
+      { includeAllChildProfiles: true },
     );
     expect(delegates).toEqual([{ profileId: "reviewer" }]);
   });
@@ -600,7 +575,7 @@ describe("resolveAgentDelegateTools", () => {
     ]);
   });
 
-  it("honors exposeAsDelegate:true as per-profile opt-in when the flag is off", () => {
+  it("honors exposeAsDelegate:true as per-profile opt-in", () => {
     const delegates = resolveAgentDelegateTools([
       { id: "reviewer", mode: "child", exposeAsDelegate: true },
       { id: "other", mode: "child" },
@@ -615,7 +590,7 @@ describe("resolveAgentDelegateTools", () => {
         { id: "writer", mode: "child" },
       ],
       [{ profileId: "writer", toolName: "explicit_writer" }],
-      { exposeChildrenAsDelegates: true },
+      { includeAllChildProfiles: true },
     );
     expect(delegates).toEqual([
       { profileId: "writer", toolName: "explicit_writer" },
@@ -632,7 +607,7 @@ describe("resolveAgentDelegateTools", () => {
       ],
       [],
       {
-        exposeChildrenAsDelegates: true,
+        includeAllChildProfiles: true,
         onCollision: (collision) => collisions.push(collision),
       },
     );
@@ -649,12 +624,45 @@ describe("resolveAgentDelegateTools", () => {
   });
 });
 
+describe("filterDirectDelegatesForExposure", () => {
+  const delegates = [
+    { profileId: "reviewer" },
+    { profileId: "writer", toolName: "write_now" },
+    { profileId: "auditor" },
+  ];
+  const profiles = [
+    { id: "reviewer" },
+    { id: "writer", exposeAsDelegate: true },
+    { id: "auditor" },
+  ];
+
+  it("keeps indexed direct aliases to pins and profile opt-ins", () => {
+    expect(
+      filterDirectDelegatesForExposure(
+        delegates,
+        { pinnedDelegates: ["reviewer"] },
+        profiles,
+      ),
+    ).toEqual([delegates[0], delegates[1]]);
+  });
+
+  it("exposes every resolved alias in all mode", () => {
+    expect(
+      filterDirectDelegatesForExposure(
+        delegates,
+        { exposure: "all" },
+        profiles,
+      ),
+    ).toEqual(delegates);
+  });
+});
+
 describe("delegateToolDescription enrichment (3a)", () => {
   it("returns an explicit delegate description verbatim", () => {
     expect(
       delegateToolDescription(
         { profileId: "r", description: "Custom text." },
-        { id: "r", model: "openai/x", use: ["shell"] },
+        { id: "r", model: "openai/x", use: ["bash"] },
       ),
     ).toBe("Custom text.");
   });
@@ -668,11 +676,11 @@ describe("delegateToolDescription enrichment (3a)", () => {
           name: "Reviewer",
           description: "reviews code",
           model: "openai/x",
-          use: ["workspace.read", "shell"],
+          use: ["workspace.read", "bash"],
         },
       ),
     ).toBe(
-      "Delegate to Reviewer: reviews code (model openai/x; capabilities workspace.read, shell)",
+      "Delegate to Reviewer: reviews code (model openai/x; capabilities workspace.read, bash)",
     );
   });
 

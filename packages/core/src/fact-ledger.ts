@@ -4,11 +4,9 @@ import {
   commandExpectationValue,
   forcedContinuationBudgetExceededFromEvent,
   hookCommandFactFromWorkflowHookCompleted,
-  parseVerificationHookName,
   shellCommandFactFromToolCompleted,
   shellCommandRequestFromEvent,
   workspaceWriteFactFromEvent,
-  isVerificationGoal,
   type ClassifiedCommandFactInput,
   type CommandExpectation,
   type ForcedContinuationBudgetExceededFactInput,
@@ -104,7 +102,6 @@ export interface FactLedgerReader {
 
 export class FactLedger implements FactLedgerReader {
   private writeEpoch = 0;
-  private verificationGoal = false;
   private readonly shellRequests = new Map<string, ShellCommandRequestFact>();
   private readonly commands: Omit<FactLedgerCommandFact, "stale">[] = [];
   private readonly verificationResults: Omit<
@@ -115,8 +112,6 @@ export class FactLedger implements FactLedgerReader {
   private readonly budgetExceeded: FactLedgerBudgetExceededFact[] = [];
 
   observeEvent(event: SparkwrightEvent): void {
-    this.observeGoal(event);
-
     const write = workspaceWriteFactFromEvent(event);
     if (write) {
       this.writeEpoch += 1;
@@ -144,7 +139,6 @@ export class FactLedger implements FactLedgerReader {
     const shellFact = shellCommandFactFromToolCompleted(
       event,
       this.requestForToolCompletion(event),
-      { verificationGoal: this.verificationGoal },
     );
     if (shellFact) {
       this.recordCommand(shellFact);
@@ -251,15 +245,18 @@ export class FactLedger implements FactLedgerReader {
           : undefined;
     return id ? this.shellRequests.get(id) : undefined;
   }
+}
 
-  private observeGoal(event: SparkwrightEvent): void {
-    if (this.verificationGoal || !isRecord(event.payload)) return;
-    if (event.type !== "run.created" && event.type !== "prompt.built") return;
-    const goal =
-      typeof event.payload.goal === "string" ? event.payload.goal : undefined;
-    if (!goal) return;
-    this.verificationGoal = isVerificationGoal(goal);
-  }
+/**
+ * Replays an observation through the same projector used by a live run.
+ * Diagnostics use this only when no persisted terminal ledger is available.
+ */
+export function projectFactLedgerSnapshot(
+  events: readonly SparkwrightEvent[],
+): FactLedgerSnapshot {
+  const ledger = new FactLedger();
+  for (const event of events) ledger.observeEvent(event);
+  return ledger.snapshot();
 }
 
 export function factLedgerSnapshotFromUnknown(
@@ -302,9 +299,8 @@ function verificationResultForHookCommand(
   command: Omit<FactLedgerCommandFact, "stale">,
   commandExpect: CommandExpectation | undefined,
 ): Omit<FactLedgerVerificationResult, "stale"> | undefined {
-  const parsed = parseVerificationHookName(command.hookName);
-  const verifierId = command.verifierId ?? parsed?.id;
-  const expect = commandExpect ?? (parsed || verifierId ? "zero" : undefined);
+  const verifierId = command.verifierId;
+  const expect = commandExpect;
   if (!verifierId || !expect) return undefined;
   return {
     id: `verify:${command.sequence}:${verifierId}`,
@@ -312,9 +308,7 @@ function verificationResultForHookCommand(
     sequence: command.sequence,
     writeEpoch: command.writeEpoch,
     ...(command.hookName ? { hookName: command.hookName } : {}),
-    ...((command.profile ?? parsed?.profile)
-      ? { profile: command.profile ?? parsed?.profile }
-      : {}),
+    ...(command.profile ? { profile: command.profile } : {}),
     ...(command.nodeId ? { nodeId: command.nodeId } : {}),
     verifierId,
     ...(command.verificationSource

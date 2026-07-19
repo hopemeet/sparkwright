@@ -108,29 +108,6 @@ describe("tool_search", () => {
     expect(result.matches.length).toBeLessThanOrEqual(1);
   });
 
-  it("resolves select: lookups by legacy name", async () => {
-    const registry = new ToolRegistry();
-    registry.register(
-      defineTool({
-        name: "read_text",
-        description: "Read a file.",
-        inputSchema: { type: "object" },
-        deferLoading: true,
-        legacyNames: ["read_file"],
-        execute: () => ({ ok: true }),
-      }),
-    );
-    const tool = createToolSearchTool({
-      source: toolSearchSourceFromRegistry(registry),
-    });
-    const result = await tool.execute(
-      { query: "select:read_file" },
-      stubContext,
-    );
-    expect(result.mode).toBe("select");
-    expect(result.matches.map((m) => m.name)).toEqual(["read_text"]);
-  });
-
   it("auto-expands matches via requiresTool and relatedTools", async () => {
     const registry = new ToolRegistry();
     registry.register(

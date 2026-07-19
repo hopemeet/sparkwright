@@ -6,12 +6,8 @@ import { access, readdir, readFile, stat } from "node:fs/promises";
 import { constants } from "node:fs";
 import { dirname, join, parse, resolve } from "node:path";
 import {
-  createAppPromptSection,
   createContextItemId,
   createDefaultContentPolicy,
-  createEnvironmentSection,
-  createToolGuidanceSection,
-  DefaultPromptBuilder,
   type ContentPolicy,
   type ContextExtension,
   type ContextExtensionDescriptor,
@@ -22,6 +18,12 @@ import {
   type PromptSection,
   type PromptSectionCachePolicy,
 } from "@sparkwright/core";
+import {
+  createAppPromptSection,
+  createEnvironmentSection,
+  createToolGuidanceSection,
+  DefaultPromptBuilder,
+} from "@sparkwright/core/internal";
 
 export type ProjectInstructionFormat =
   | "sparkwright"

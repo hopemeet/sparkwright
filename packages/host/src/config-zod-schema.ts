@@ -1,7 +1,6 @@
 import {
   ACCESS_MODES,
   BACKGROUND_TASK_POLICIES,
-  PERMISSION_MODES,
   TRACE_LEVELS,
 } from "@sparkwright/protocol";
 import type { WorkflowHookMatcher, WorkflowHookName } from "@sparkwright/core";
@@ -15,7 +14,7 @@ export const CONFIG_SCHEMA_ID =
 export const CONFIG_SCHEMA_PROTOCOL_VERSION = "0.2";
 export const CONFIG_SCHEMA_TITLE = "Sparkwright Config";
 export const CONFIG_SCHEMA_DESCRIPTION =
-  "User-editable settings shared by the CLI and the interactive TUI. Loaded (in order, later overriding earlier) from ~/.config/sparkwright/config.{json,yaml,yml}, <workspace>/.sparkwright/config.{json,yaml,yml}, and $SPARKWRIGHT_CONFIG. Within a user/project layer, config.json wins over config.yaml, which wins over config.yml; multiple files in one layer are reported as a conflict. CLI args and env vars override files. Fields may be written flat or under the preferred groups identity/policy/run/ui; tools and capabilities are top-level groups. A field set both ways conflicts and the grouped value wins. The providers map is merged by key, tools.use and tools.allowed intersect, tools.disabled unions, tools.defer is replaced by later layers, capabilities merges by sub-capability, and the security boundaries - shell.sandbox, run.accessMode, confidentialPaths, and write - merge conservatively so later layers cannot weaken an earlier layer's policy (project clamps user); confidentialDefaults is an explicit later-layer override for the built-in confidential path set; other shared fields are wholesale-overridden.";
+  "User-editable settings shared by the CLI and the interactive TUI. Loaded (in order, later overriding earlier) from ~/.config/sparkwright/config.{json,yaml,yml}, <workspace>/.sparkwright/config.{json,yaml,yml}, and $SPARKWRIGHT_CONFIG. Within a user/project layer, config.json wins over config.yaml, which wins over config.yml; multiple files in one layer are reported as a conflict. CLI args and env vars override files. Model/provider settings live under identity, security boundaries under policy, run defaults under run, and TUI preferences under ui; workspace, shell foreground timing, tools, tasks, and capabilities remain top-level. The providers map is merged by key, tools.use and tools.allowed intersect, tools.disabled unions, tools.defer is replaced by later layers, capabilities merges by sub-capability, and policy.sandbox, run.accessMode, policy.confidentialPaths, and policy.write merge conservatively so later layers cannot weaken an earlier layer's policy (project clamps user); policy.confidentialDefaults is an explicit later-layer override for the built-in confidential path set; other shared fields are wholesale-overridden.";
 
 export const stringSchema = z.string();
 export const nonEmptyString = stringSchema.min(1);
@@ -35,10 +34,6 @@ export const providerOptionsSchema = z
     "Request-level AI SDK providerOptions keyed by provider namespace.",
   );
 
-const permissionModeSchema = z
-  .enum(PERMISSION_MODES)
-  .describe("Permission policy mode for runs started from the TUI.");
-export const PERMISSION_MODE_CONFIG_VALUES = permissionModeSchema.options;
 const accessModeSchema = z
   .enum(ACCESS_MODES)
   .describe(
@@ -177,36 +172,6 @@ export const TASK_BUDGET_POSITIVE_INTEGER_CONFIG_KEYS = taskBudgetSchema
   })
   .keyof().options;
 
-export const approvalsSchema = z
-  .object({
-    shellSafe: z
-      .boolean()
-      .describe("Auto-approve commands the safety classifier rates safe.")
-      .optional(),
-    edits: z.boolean().describe("Auto-approve workspace edits.").optional(),
-    all: z
-      .boolean()
-      .describe("Auto-approve everything the policy allows.")
-      .optional(),
-    cronMode: permissionModeSchema
-      .describe(
-        "Default permission mode for unattended cron run/tick commands. CLI --access-mode still overrides.",
-      )
-      .optional(),
-  })
-  .strict()
-  .describe(
-    "Default approval auto-grants. CLI flags still override these values.",
-  );
-export const APPROVALS_CONFIG_KEYS = approvalsSchema.keyof().options;
-export const APPROVAL_BOOLEAN_CONFIG_KEYS = approvalsSchema
-  .pick({
-    shellSafe: true,
-    edits: true,
-    all: true,
-  })
-  .keyof().options;
-
 export const shellSandboxFilesystemSchema = z
   .object({
     allowRead: nonEmptyStringArray.optional(),
@@ -270,7 +235,6 @@ export const shellSchema = z
         "Foreground shell budget in milliseconds before promotion to a background task. Defaults to 300000 and is capped at 600000.",
       )
       .optional(),
-    sandbox: shellSandboxSchema.optional(),
   })
   .strict()
   .describe("Host shell execution boundary.");
@@ -477,8 +441,7 @@ export const WORKFLOW_HOOK_HTTP_ACTION_CONFIG_KEYS =
 export const workflowHookAgentActionSchema = z
   .object({
     type: z.literal("agent"),
-    agentId: nonEmptyString.optional(),
-    toolName: nonEmptyString.optional(),
+    agentId: nonEmptyString,
     goal: nonEmptyString,
     metadata: z.record(z.string(), z.unknown()).optional(),
     resultMode: workflowHookAgentResultModeSchema.optional(),
@@ -837,7 +800,7 @@ export const agentProfileConfigSchema = z
     exposeAsDelegate: z
       .boolean()
       .describe(
-        "Tri-state automatic delegation opt-in/opt-out. true forces automatic delegate exposure even when capabilities.agents.exposeChildrenAsDelegates is off; false suppresses automatic delegate_agent/list_agents/delegate_parallel targeting and direct aliases. An explicit delegateTool or delegateTools entry still wins.",
+        "Tri-state automatic delegation opt-in/opt-out. true adds the profile to indexed delegation and direct delegate exposure; false suppresses automatic delegate_agent/list_agents/delegate_parallel targeting and synthesized direct aliases. An explicit delegateTool or delegateTools entry still defines a target.",
       )
       .optional(),
     hooks: agentProfileHooksSchema.optional(),
@@ -902,12 +865,6 @@ export const agentsConfigSchema = z
     pinnedDelegates: stringArray
       .describe(
         "Profile ids or delegate tool names that should remain exposed as direct delegate_* tools when exposure is indexed.",
-      )
-      .optional(),
-    exposeChildrenAsDelegates: z
-      .boolean()
-      .describe(
-        "Opt-in: auto-expose every child/all profile without an explicit delegate as a delegate_<id> tool. Default false. Per-profile exposeAsDelegate overrides this.",
       )
       .optional(),
     enableParallelDelegates: z
@@ -975,9 +932,7 @@ export const identityGroupSchema = z
     providers: providersSchema.optional(),
   })
   .strict()
-  .describe(
-    "Preferred grouping for who/what runs. Flattens to model/providers.",
-  );
+  .describe("Canonical model and provider identity settings.");
 export const IDENTITY_GROUP_CONFIG_KEYS = identityGroupSchema.keyof().options;
 
 export const policyGroupSchema = z
@@ -989,7 +944,7 @@ export const policyGroupSchema = z
   })
   .strict()
   .describe(
-    "Preferred grouping for security boundaries. Flattens to confidentialDefaults/confidentialPaths/write and shell.sandbox. Run autonomy lives in run.accessMode.",
+    "Canonical security boundaries. Run autonomy lives in run.accessMode.",
   );
 export const POLICY_GROUP_CONFIG_KEYS = policyGroupSchema.keyof().options;
 
@@ -1000,12 +955,9 @@ export const runGroupSchema = z
     budget: runBudgetSchema.optional(),
     maxSteps: maxStepsSchema.optional(),
     traceLevel: traceLevelSchema.optional(),
-    approvals: approvalsSchema.optional(),
   })
   .strict()
-  .describe(
-    "Preferred grouping for run-shaping defaults. Flattens to accessMode/backgroundTasks/runBudget/maxSteps/traceLevel/approvals.",
-  );
+  .describe("Canonical run-shaping defaults.");
 export const RUN_GROUP_CONFIG_KEYS = runGroupSchema.keyof().options;
 
 export const uiGroupSchema = z
@@ -1013,11 +965,13 @@ export const uiGroupSchema = z
     theme: themeSchema.optional(),
     mouse: mouseSchema.optional(),
     keybindings: keybindingsSchema.optional(),
+    vim: z
+      .boolean()
+      .describe("Enable Vim-style modal input editing.")
+      .optional(),
   })
   .strict()
-  .describe(
-    "Preferred grouping for TUI-only preferences. Flattens to theme/mouse/keybindings.",
-  );
+  .describe("Canonical TUI-only preferences.");
 export const UI_GROUP_CONFIG_KEYS = uiGroupSchema.keyof().options;
 
 export const CONFIG_GROUP_CONFIG_KEYS = {
@@ -1025,29 +979,6 @@ export const CONFIG_GROUP_CONFIG_KEYS = {
   policy: POLICY_GROUP_CONFIG_KEYS,
   run: RUN_GROUP_CONFIG_KEYS,
   ui: UI_GROUP_CONFIG_KEYS,
-} as const;
-
-export const CONFIG_GROUP_FIELD_MAP = {
-  identity: { model: "model", providers: "providers" },
-  policy: {
-    confidentialPaths: "confidentialPaths",
-    confidentialDefaults: "confidentialDefaults",
-    write: "write",
-    sandbox: "shell",
-  },
-  run: {
-    accessMode: "accessMode",
-    backgroundTasks: "backgroundTasks",
-    budget: "runBudget",
-    maxSteps: "maxSteps",
-    traceLevel: "traceLevel",
-    approvals: "approvals",
-  },
-  ui: {
-    theme: "theme",
-    mouse: "mouse",
-    keybindings: "keybindings",
-  },
 } as const;
 
 export const sparkwrightConfigZodSchema = z
@@ -1058,25 +989,11 @@ export const sparkwrightConfigZodSchema = z
         "Optional reference to this JSON Schema so editors can offer completion and validation. Ignored by the loader.",
       )
       .optional(),
-    model: modelSchema.optional(),
-    providers: providersSchema.optional(),
-    accessMode: accessModeSchema.optional(),
-    backgroundTasks: backgroundTasksSchema.optional(),
     workspace: workspaceSchema.optional(),
-    confidentialPaths: confidentialPathsSchema.optional(),
-    confidentialDefaults: confidentialDefaultsSchema.optional(),
-    write: writeGuardrailsSchema.optional(),
-    runBudget: runBudgetSchema.optional(),
-    maxSteps: maxStepsSchema.optional(),
-    traceLevel: traceLevelSchema.optional(),
-    approvals: approvalsSchema.optional(),
     shell: shellSchema.optional(),
     tools: toolsSchema.optional(),
     tasks: tasksSchema.optional(),
     capabilities: capabilitiesSchema.optional(),
-    theme: themeSchema.optional(),
-    mouse: mouseSchema.optional(),
-    keybindings: keybindingsSchema.optional(),
     identity: identityGroupSchema.optional(),
     policy: policyGroupSchema.optional(),
     run: runGroupSchema.optional(),
@@ -1092,7 +1009,6 @@ export type ModelCost = z.output<typeof modelCostSchema>;
 export type ProviderModelConfig = z.output<typeof providerModelConfigSchema>;
 export type ProviderConfig = z.output<typeof providerConfigSchema>;
 export type WriteGuardrailsConfig = z.output<typeof writeGuardrailsSchema>;
-export type ApprovalDefaults = z.output<typeof approvalsSchema>;
 export type TaskBudgetConfig = z.output<typeof taskBudgetSchema>;
 export type TaskConfig = z.output<typeof taskConfigSchema>;
 export type ShellConfig = Omit<z.output<typeof shellSchema>, "sandbox"> & {

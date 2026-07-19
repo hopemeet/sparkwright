@@ -137,8 +137,9 @@ arguments.
 `tool.completed` and `tool.failed` are the terminal tool events. Their metadata
 may include diagnostic stage timings such as `schemaValidationMs`,
 `inputValidationMs`, `policyForArgsMs`, `policyDecisionMs`, `approvalWaitMs`,
-`executionMs`, and `resultValidationMs`. Treat these as optional observability
-fields; do not infer success/failure from their presence.
+and `executionMs`. Treat these as optional observability fields; do not infer
+success/failure from their presence. A `tool.failed` payload uses the canonical
+`error` envelope; consumers read the failure code from `payload.error.code`.
 
 When a deferred tool call fails argument schema validation before its schema has
 been loaded into the model request, the `tool.failed` error metadata may include
@@ -165,14 +166,14 @@ Recommended UI behavior:
 - Throttle progress rendering on the frontend; store every event on the backend
   if the trace level allows it.
 
-## Approval And Questions
+## Approvals
 
 There are two related surfaces:
 
 - `approval.requested` / `approval.resolved` are the stable approval-specific
   events used around governed actions.
-- `interaction.requested` / `interaction.resolved` are the generalized channel
-  events for `approval`, `question`, and `notification` exchanges.
+- `interaction.requested` / `interaction.resolved` are the channel-level view
+  of the same approval exchange.
 
 Frontend guidance:
 
@@ -181,15 +182,13 @@ Frontend guidance:
 - When `approval.resolved` appears, close or mark the approval UI with the
   final decision.
 - `approval.resolved.autoApproved` is the structured signal for approvals made
-  by policy or flags; legacy traces may only carry this in the message text.
-- When `interaction.requested` has `kind: "question"`, render the request using
-  the structured question shape rather than parsing text.
+  by policy or flags; consumers must not infer it from message text.
 - When both approval and interaction events exist for the same exchange, merge
   them in the UI instead of showing duplicate prompts.
 
 Backend guidance:
 
-- Persist pending approval/question state separately from the event stream only
+- Persist pending approval state separately from the event stream only
   as a cache. The event stream remains the audit record.
 - Approval denial is not the same as run cancellation. Follow subsequent
   `workspace.write.denied`, `tool.failed`, or terminal run events for outcome.
@@ -197,8 +196,8 @@ Backend guidance:
 ## Terminal Events
 
 A run reaches a terminal state through `run.completed`, `run.failed`, or
-`run.cancelled`. The returned `RunResult` is the strongest programmatic outcome;
-events are the replayable audit trail.
+`run.cancelled`. The returned `RunResult` and terminal event carry the same
+Core-owned `RunAssessment`; events remain the replayable audit trail.
 
 Stable consumption rules:
 
@@ -207,16 +206,22 @@ Stable consumption rules:
   returned result before marking the run cancelled.
 - Use `run.failed.payload.failure` and `stopReason` when available for error
   categorization.
+- Use `payload.assessment.health`, `issues`, and `verification` for semantic
+  terminal status. Do not reclassify a completed run from assistant prose or a
+  downstream reconstruction. A missing assessment from a current emitter is a
+  protocol error and should fail closed.
 - Treat failure `metadata.cause` as a bounded diagnostic summary when present.
   Raw provider request bodies, prompt input, and tool schemas must not be
   persisted on terminal failure events; structured provider classification lives
   in `metadata.modelError` when available.
 - Once a terminal event is seen, ignore later state-transition attempts except
   to surface `run.state_transition.rejected` as diagnostics.
-- Completed final-answer events may carry `factLedger` as the persisted
-  command/verification fact snapshot, including optional `verificationSource`
-  on verifier-launched command/result facts. It is an audit snapshot on the
-  terminal event, not a new event family.
+- Terminal events carry `assessment` as the bounded semantic projection and
+  may also carry `factLedger` as the persisted
+  command/verification fact snapshot. Profile/documented-command facts identify
+  verification with explicit `verificationSource`, `profile`, `verifierId`,
+  and `expect` fields; `hookName` is only a correlation label. The ledger is an
+  audit snapshot on the terminal event, not a second terminal verdict.
 
 For durable stores, update the run record and write `result.json` at terminal
 completion, but keep `trace.jsonl` append-only.
@@ -302,8 +307,8 @@ Skill events explain capability/context changes at the edge of the run.
 Stable consumption guidance:
 
 - Render these as environment/context evidence, not as model-authored actions.
-- Keep names, versions, source paths, content hashes, counts, and selection
-  reasons when available.
+- Keep names, versions, source paths, policy-bound package hashes, counts, and
+  selection reasons when available.
 - Do not require full Skill body text in the event payload.
 - Expect some edge lifecycle events to be flushed into the run after
   `createRun()` through a buffered emitter; final `sequence` order is the

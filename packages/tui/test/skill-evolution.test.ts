@@ -9,9 +9,9 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { SkillCommandService } from "@sparkwright/host";
 import {
   applyTuiSkillReviewProposal,
-  createTuiSkillProposal,
   loadTuiSkillInboxAction,
   formatTuiSkillProposalResult,
   formatTuiSkillReviewSummary,
@@ -31,6 +31,18 @@ import {
   SKILL_LEARN_DRAFT_SKILL_NAME,
   setProjectSkillLearnMode,
 } from "../src/lib/skill-learn.js";
+
+async function prepareSkillProposal(
+  workspace: string,
+  name: string,
+  description: string,
+) {
+  const { proposal } = await new SkillCommandService(workspace).prepareCreate({
+    name,
+    description,
+  });
+  return proposal;
+}
 
 describe("tui skill evolution commands", () => {
   const tempDirs: string[] = [];
@@ -79,9 +91,10 @@ describe("tui skill evolution commands", () => {
     const workspace = await mkdtemp(join(tmpdir(), "sparkwright-tui-skill-"));
     tempDirs.push(workspace);
 
-    const proposal = await createTuiSkillProposal(
+    const proposal = await prepareSkillProposal(
       workspace,
-      "code-reviewer --description Review code changes",
+      "code-reviewer",
+      "Review code changes",
     );
     expect(proposal).toMatchObject({
       kind: "create",
@@ -117,13 +130,11 @@ describe("tui skill evolution commands", () => {
   it("restores the newest open proposal as a persistent inbox action", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "sparkwright-tui-inbox-"));
     tempDirs.push(workspace);
-    const first = await createTuiSkillProposal(
+    const first = await prepareSkillProposal(workspace, "first", "First Skill");
+    const second = await prepareSkillProposal(
       workspace,
-      "first --description First Skill",
-    );
-    const second = await createTuiSkillProposal(
-      workspace,
-      "second --description Second Skill",
+      "second",
+      "Second Skill",
     );
 
     const inbox = await loadTuiSkillInboxAction(workspace);
@@ -379,7 +390,7 @@ describe("tui skill evolution commands", () => {
     expect((content.match(/- Run the linter first\./gu) ?? []).length).toBe(1);
   });
 
-  it("accumulates learnings when legacy skill roots are configured", async () => {
+  it("accumulates learnings when custom skill roots are configured", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "sparkwright-tui-roots-"));
     tempDirs.push(workspace);
     await mkdir(join(workspace, ".sparkwright"), { recursive: true });
@@ -388,7 +399,7 @@ describe("tui skill evolution commands", () => {
       JSON.stringify({
         capabilities: {
           skills: {
-            roots: ["legacy-skills"],
+            roots: ["configured-skills"],
           },
         },
       }),
@@ -425,9 +436,10 @@ describe("tui skill evolution commands", () => {
     const workspace = await mkdtemp(join(tmpdir(), "sparkwright-tui-review-"));
     tempDirs.push(workspace);
 
-    const applyProposal = await createTuiSkillProposal(
+    const applyProposal = await prepareSkillProposal(
       workspace,
-      "review-apply --description Review apply path",
+      "review-apply",
+      "Review apply path",
     );
     const applied = await applyTuiSkillReviewProposal(
       workspace,
@@ -440,9 +452,10 @@ describe("tui skill evolution commands", () => {
     });
     expect(applied.historyId).toMatch(/^skillver_/);
 
-    const rejectProposal = await createTuiSkillProposal(
+    const rejectProposal = await prepareSkillProposal(
       workspace,
-      "review-reject --description Review reject path",
+      "review-reject",
+      "Review reject path",
     );
     const rejected = await rejectTuiSkillReviewProposal(
       workspace,

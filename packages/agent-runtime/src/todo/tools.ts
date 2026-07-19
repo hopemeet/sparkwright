@@ -12,26 +12,14 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { defineTool, type ToolDefinition } from "@sparkwright/core";
-import {
-  itemsOnly,
-  parseTodoMarkdown,
-  serializeTodoMarkdown,
-  type TodoEntry,
-} from "./markdown.js";
-import type {
-  TodoEvidence,
-  TodoItem,
-  TodoPriority,
-  TodoStatus,
-} from "./types.js";
+import { serializeTodoMarkdown, type TodoEntry } from "./markdown.js";
+import type { TodoItem, TodoPriority, TodoStatus } from "./types.js";
 
 const VALID_STATUSES: ReadonlySet<TodoStatus> = new Set([
   "pending",
   "in_progress",
   "completed",
   "blocked",
-  "failed",
-  "skipped",
 ]);
 
 // Models routinely reach for status words from other todo systems (the very
@@ -55,10 +43,8 @@ const STATUS_ALIASES: ReadonlyMap<string, TodoStatus> = new Map([
   ["complete", "completed"],
   ["completed", "completed"],
   ["finished", "completed"],
-  ["cancelled", "skipped"],
-  ["canceled", "skipped"],
-  ["skip", "skipped"],
-  ["error", "failed"],
+  ["cancelled", "blocked"],
+  ["canceled", "blocked"],
   ["blocked_on", "blocked"],
 ]);
 
@@ -91,12 +77,6 @@ export interface CreateTodoToolsOptions {
    * so a single tool bundle can serve many runs.
    */
   getTodoPath(): string;
-  /**
-   * Optional run-scoped call budget. The todo ledger is bookkeeping, not the
-   * work itself; a run that keeps calling todo_write after this limit should
-   * stop updating the list and answer or use a concrete non-todo tool.
-   */
-  maxWritesPerRun?: number;
 }
 
 /**
@@ -104,7 +84,7 @@ export interface CreateTodoToolsOptions {
  * tool is exposed to the model: every write returns the updated list and how
  * many items remain, so there is no need for a separate read tool (which a weak
  * model otherwise burns calls re-fetching state already in its context). The
- * supervisor reads the ledger from disk through its own helper, not this tool.
+ * runtime consumers read the ledger from disk through their own helper.
  *
  * @public
  * @stability experimental v0.1
@@ -132,13 +112,12 @@ export function createTodoWriteTool(
   // Per-tool-instance (per run-chain) counter of consecutive no-op writes,
   // reset on any write that actually changes the ledger.
   let consecutiveNoops = 0;
-  const writesByRun = new Map<string, number>();
   return defineTool({
     name: "todo_write",
     description: [
       "Create and maintain the run's todo list — a short checklist that tracks multi-step work and shows progress. Each call replaces the whole list, so pass every task, in order, every time.",
       "Use this for work with at least three substantive dependent steps, multiple phases, or recovery that benefits from a durable checklist. Do not create a todo list for a simple one-file change, a single command, or merely because a background process runs for a long time.",
-      "Each item has a `title` and a `status` (one of: pending, in_progress, completed, blocked, failed, skipped; synonyms like 'todo'/'done' are accepted). Keep at most one item in_progress at a time.",
+      "Each item has a `title` and a `status` (one of: pending, in_progress, completed, blocked; synonyms like 'todo'/'done' are accepted). Keep at most one item in_progress at a time.",
       "Use in_progress for the current active item, and completed only when its work is actually finished — based on real results, never on intent, and never by loosening what counts as done. Never mark an item completed before its result is in.",
       "Child agents may not call this tool.",
     ].join("\n"),
@@ -152,13 +131,15 @@ export function createTodoWriteTool(
             properties: {
               title: { type: "string" },
               status: { type: "string" },
-              priority: { type: "string" },
+              priority: { type: "string", enum: ["high", "medium", "low"] },
             },
-            required: ["status"],
+            required: ["title", "status"],
+            additionalProperties: false,
           },
         },
       },
       required: ["items"],
+      additionalProperties: false,
     },
     deferLoading: false,
     // The ledger is internal session bookkeeping (.sparkwright/sessions/<id>/
@@ -175,8 +156,7 @@ export function createTodoWriteTool(
     // doom loop. Without this, a benign duplicate ledger write (e.g. the model
     // restating the plan) tripped REPEATED_TOOL_CALL_SKIPPED and burned a turn.
     governance: { sideEffects: ["none"], idempotency: "idempotent" },
-    async execute(args: unknown, ctx): Promise<TodoWriteResult> {
-      const runId = ctx.run?.id ?? "__standalone__";
+    async execute(args: unknown): Promise<TodoWriteResult> {
       const items = parseWriteArgs(args);
       const path = options.getTodoPath();
       const entries: TodoEntry[] = items.map((item) => ({
@@ -201,21 +181,6 @@ export function createTodoWriteTool(
         }
         return result;
       }
-      if (options.maxWritesPerRun !== undefined) {
-        const nextCount = (writesByRun.get(runId) ?? 0) + 1;
-        if (nextCount > options.maxWritesPerRun) {
-          const currentItems = itemsOnly(parseTodoMarkdown(current));
-          return {
-            ...renderWriteEcho(currentItems),
-            saved: false,
-            rejectedTodos: echo.todos,
-            hint:
-              `todo_write changed too many times in this run (limit: ${options.maxWritesPerRun}). ` +
-              "The proposed update was not saved; todos reflects the current ledger. Do not update the ledger again. Take a concrete non-todo action on the current task, or give your final answer with the current status.",
-          };
-        }
-        writesByRun.set(runId, nextCount);
-      }
       consecutiveNoops = 0;
       await mkdir(dirname(path), { recursive: true });
       await writeFile(path, text, "utf8");
@@ -235,8 +200,7 @@ export function createTodoWriteTool(
  */
 export interface TodoWriteResult {
   /**
-   * Whether this write changed the list on disk (false = byte-identical no-op
-   * or rejected proposed update).
+   * Whether this write changed the list on disk (false = byte-identical no-op).
    *
    * @reserved Public tool-result field consumed by the model reading the
    * serialized todo_write result, not by an in-process TS reader.
@@ -247,7 +211,7 @@ export interface TodoWriteResult {
   total: number;
   completed: number;
   /**
-   * Count of items still open (not completed/skipped/failed).
+   * Count of items still open (not completed).
    *
    * @reserved Public tool-result field consumed by the model reading the
    * serialized todo_write result, not by an in-process TS reader.
@@ -255,29 +219,17 @@ export interface TodoWriteResult {
   remaining: number;
   /**
    * The current resulting list, lean (title + status) so the model re-emits lean
-   * items. When saved is false because a proposed update was rejected, this
-   * remains the committed ledger rather than the rejected proposal.
+   * items.
    *
    * @reserved Public tool-result field consumed by the model reading the
    * serialized todo_write result, not by an in-process TS reader.
    */
   todos: { title: string; status: TodoStatus }[];
-  /**
-   * Rejected proposed list, present only when saved:false rejected a change.
-   *
-   * @reserved Public tool-result field consumed by the model reading the
-   * serialized todo_write result, not by an in-process TS reader.
-   */
-  rejectedTodos?: { title: string; status: TodoStatus }[];
   /** Anti-churn nudge, present only after repeated no-op writes. */
   hint?: string;
 }
 
-const DONE_STATUSES: ReadonlySet<TodoStatus> = new Set([
-  "completed",
-  "skipped",
-  "failed",
-]);
+const DONE_STATUSES: ReadonlySet<TodoStatus> = new Set(["completed"]);
 
 function renderWriteEcho(
   items: TodoItem[],
@@ -317,6 +269,7 @@ function parseWriteArgs(args: unknown): TodoItem[] {
     throw new Error("todo_write: arguments must be an object.");
   }
   const record = args as Record<string, unknown>;
+  assertOnlyKeys(record, ["items"], "todo_write");
   if (!Array.isArray(record.items)) {
     throw new Error("todo_write: items must be an array.");
   }
@@ -328,15 +281,18 @@ function normalizeItem(raw: unknown, index: number): TodoItem {
     throw new Error(`todo_write: items[${index}] must be an object.`);
   }
   const r = raw as Record<string, unknown>;
+  assertOnlyKeys(
+    r,
+    ["title", "status", "priority"],
+    `todo_write: items[${index}]`,
+  );
   const title =
     typeof r.title === "string" && r.title.trim().length > 0
       ? r.title.trim()
-      : typeof r.content === "string" && r.content.trim().length > 0
-        ? r.content.trim()
-        : undefined;
+      : undefined;
   if (!title) {
     throw new Error(
-      `todo_write: items[${index}] must include non-empty title or content.`,
+      `todo_write: items[${index}].title must be a non-empty string.`,
     );
   }
   const status = normalizeStatus(r.status);
@@ -345,69 +301,28 @@ function normalizeItem(raw: unknown, index: number): TodoItem {
       `todo_write: items[${index}].status must be one of: ${[...VALID_STATUSES].join(", ")}`,
     );
   }
-  const depth =
-    typeof r.depth === "number" && Number.isInteger(r.depth) && r.depth >= 0
-      ? r.depth
-      : 0;
-  const id =
-    typeof r.id === "string" && r.id.trim().length > 0
-      ? r.id.trim()
-      : undefined;
   const priority =
     typeof r.priority === "string" &&
     VALID_PRIORITIES.has(r.priority as TodoPriority)
       ? (r.priority as TodoPriority)
       : undefined;
-  const doneWhen =
-    typeof r.doneWhen === "string" && r.doneWhen.trim().length > 0
-      ? r.doneWhen.trim()
-      : undefined;
-  const evidence = Array.isArray(r.evidence)
-    ? r.evidence.map(normalizeEvidence).filter((e): e is TodoEvidence => !!e)
-    : undefined;
-  const owner =
-    typeof r.owner === "string" && r.owner.trim().length > 0
-      ? r.owner.trim()
-      : undefined;
-  const note = typeof r.note === "string" ? r.note : undefined;
   return {
-    ...(id ? { id } : {}),
     title,
-    ...(typeof r.content === "string" ? { content: r.content } : {}),
     status,
-    depth,
+    depth: 0,
     ...(priority ? { priority } : {}),
-    ...(doneWhen ? { doneWhen } : {}),
-    ...(evidence && evidence.length > 0 ? { evidence } : {}),
-    ...(owner ? { owner } : {}),
-    ...(note ? { note } : {}),
   };
 }
 
-function normalizeEvidence(raw: unknown): TodoEvidence | undefined {
-  if (typeof raw !== "object" || raw === null) return undefined;
-  const r = raw as Record<string, unknown>;
-  switch (r.kind) {
-    case "file_changed":
-      return typeof r.path === "string" && r.path.length > 0
-        ? { kind: "file_changed", path: r.path }
-        : undefined;
-    case "command":
-      return typeof r.command === "string" && typeof r.exitCode === "number"
-        ? { kind: "command", command: r.command, exitCode: r.exitCode }
-        : undefined;
-    case "test":
-      return typeof r.command === "string" && typeof r.passed === "boolean"
-        ? { kind: "test", command: r.command, passed: r.passed }
-        : undefined;
-    case "artifact":
-      return typeof r.artifactId === "string" && r.artifactId.length > 0
-        ? { kind: "artifact", artifactId: r.artifactId }
-        : undefined;
-    case "trace_event":
-      return typeof r.eventId === "string" && r.eventId.length > 0
-        ? { kind: "trace_event", eventId: r.eventId }
-        : undefined;
-  }
-  return undefined;
+function assertOnlyKeys(
+  record: Record<string, unknown>,
+  allowed: readonly string[],
+  location: string,
+): void {
+  const allowedSet = new Set(allowed);
+  const unsupported = Object.keys(record).filter((key) => !allowedSet.has(key));
+  if (unsupported.length === 0) return;
+  throw new Error(
+    `${location}: unsupported field(s): ${unsupported.join(", ")}.`,
+  );
 }

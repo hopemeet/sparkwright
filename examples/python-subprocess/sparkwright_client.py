@@ -100,8 +100,7 @@ class SparkwrightClient:
         goal: str,
         *,
         workspace: Optional[str] = None,
-        write: bool = False,
-        approve_all: bool = False,
+        access_mode: str = "read-only",
         trace_level: str = "standard",
         timeout: int = 300,
     ) -> RunResult:
@@ -111,8 +110,8 @@ class SparkwrightClient:
             goal:        Natural-language goal string passed to the agent.
             workspace:   Workspace path for this run (overrides the default
                          set in the constructor).
-            write:       Pass ``--write`` to allow the agent to mutate files.
-            approve_all: Pass ``--yes`` to auto-approve all approval gates.
+            access_mode: Run autonomy preset: ``read-only``, ``ask``,
+                         ``accept-edits``, or ``bypass``.
             trace_level: One of ``"minimal"``, ``"standard"``, or ``"debug"``.
             timeout:     Maximum seconds to wait for the subprocess.
 
@@ -128,7 +127,7 @@ class SparkwrightClient:
                 non-zero code and no result.json was written.
         """
         ws_path = self._resolve_workspace(workspace)
-        cmd = self._build_command(goal, ws_path, write, approve_all, trace_level)
+        cmd = self._build_command(goal, ws_path, access_mode, trace_level)
 
         try:
             proc = subprocess.run(
@@ -151,7 +150,7 @@ class SparkwrightClient:
             # Nothing was written — surface the subprocess output as an error.
             raise RuntimeError(
                 f"sparkwright did not write any run output under "
-                f"{ws_path / '.sparkwright' / 'runs'}.\n"
+                f"{ws_path / '.sparkwright' / 'sessions'}.\n"
                 f"CLI stdout: {proc.stdout.strip()}\n"
                 f"CLI stderr: {proc.stderr.strip()}"
             )
@@ -162,8 +161,7 @@ class SparkwrightClient:
         """Read the full trace event list for a specific run ID.
 
         Args:
-            run_id:    The run identifier (directory name under
-                       ``.sparkwright/runs/``).
+            run_id:    The run identifier stored in the canonical session tree.
             workspace: Workspace path containing the ``.sparkwright`` tree.
                        Falls back to the constructor default.
 
@@ -171,12 +169,16 @@ class SparkwrightClient:
             List of parsed event dicts, in sequence order.
         """
         ws_path = self._resolve_workspace(workspace)
-        run_dir = ws_path / ".sparkwright" / "runs" / run_id
-        if not run_dir.is_dir():
+        run_dir = _find_run_dir(ws_path, run_id)
+        if run_dir is None:
             raise FileNotFoundError(
-                f"Run directory not found: {run_dir}"
+                f"Run directory not found in session storage: {run_id}"
             )
-        return _read_trace_jsonl(run_dir / "trace.jsonl")
+        return [
+            event
+            for event in _read_trace_jsonl(_trace_path_for_run_dir(run_dir))
+            if event.get("runId") == run_id
+        ]
 
     def get_latest_run(self, workspace: Optional[str] = None) -> Optional[RunResult]:
         """Load the most recently created run in the workspace.
@@ -241,29 +243,31 @@ class SparkwrightClient:
         self,
         goal: str,
         workspace: Path,
-        write: bool,
-        approve_all: bool,
+        access_mode: str,
         trace_level: str,
     ) -> list[str]:
         cmd = self._resolve_cli_cmd() + ["run", goal]
         cmd += ["--workspace", str(workspace)]
         cmd += ["--trace-level", trace_level]
-        if write:
-            cmd.append("--write")
-        if approve_all:
-            cmd.append("--yes")
+        if access_mode not in {"read-only", "ask", "accept-edits", "bypass"}:
+            raise ValueError(f"Unsupported access mode: {access_mode}")
+        cmd += ["--access-mode", access_mode]
         return cmd
 
     def _load_run_result(self, run_dir: Path) -> RunResult:
         result_path = run_dir / "result.json"
-        trace_path = run_dir / "trace.jsonl"
+        trace_path = _trace_path_for_run_dir(run_dir)
 
         result_data: dict = {}
         if result_path.exists():
             with result_path.open("r", encoding="utf-8") as fh:
                 result_data = json.load(fh)
 
-        events = _read_trace_jsonl(trace_path) if trace_path.exists() else []
+        events = [
+            event
+            for event in _read_trace_jsonl(trace_path)
+            if event.get("runId") == run_dir.name
+        ] if trace_path.exists() else []
 
         return RunResult(
             run_id=run_dir.name,
@@ -280,17 +284,37 @@ class SparkwrightClient:
 # ---------------------------------------------------------------------------
 
 def _find_latest_run_dir(workspace: Path) -> Optional[Path]:
-    """Return the most recently modified run directory under *workspace*."""
-    runs_dir = workspace / ".sparkwright" / "runs"
-    if not runs_dir.is_dir():
+    """Return the most recently modified canonical session run directory."""
+    sessions_dir = workspace / ".sparkwright" / "sessions"
+    if not sessions_dir.is_dir():
         return None
 
-    candidates = [d for d in runs_dir.iterdir() if d.is_dir()]
+    candidates = [
+        path
+        for path in sessions_dir.glob("*/agents/*/runs/*")
+        if path.is_dir()
+    ]
     if not candidates:
         return None
 
     # Sort by mtime descending; pick the newest.
     return max(candidates, key=lambda d: d.stat().st_mtime)
+
+
+def _find_run_dir(workspace: Path, run_id: str) -> Optional[Path]:
+    """Find the newest canonical session run directory for *run_id*."""
+    sessions_dir = workspace / ".sparkwright" / "sessions"
+    candidates = [
+        path
+        for path in sessions_dir.glob(f"*/agents/*/runs/{run_id}")
+        if path.is_dir()
+    ]
+    return max(candidates, key=lambda d: d.stat().st_mtime) if candidates else None
+
+
+def _trace_path_for_run_dir(run_dir: Path) -> Path:
+    """Return the aggregate session trace for a canonical run directory."""
+    return run_dir.parents[3] / "trace.jsonl"
 
 
 def _read_trace_jsonl(trace_path: Path) -> list[dict]:

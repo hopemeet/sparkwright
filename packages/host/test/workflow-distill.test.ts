@@ -49,7 +49,7 @@ describe("workflow distill", () => {
         event(1, "run.created", { goal: "fix docs and verify" }),
         event(2, "tool.requested", {
           id: "read_1",
-          toolName: "read_file",
+          toolName: "read",
           arguments: { path: "README.md" },
         }),
         event(3, "workspace.read", { path: "README.md" }),
@@ -86,7 +86,7 @@ describe("workflow distill", () => {
     expect(report.markdown).toContain("## inspect");
     expect(report.markdown).toContain("## implement");
     expect(report.markdown).toContain("kind: diff_scope");
-    expect(report.markdown).toContain("kind: todo_clear");
+    expect(report.markdown).not.toContain("kind: todo_clear");
     expect(report.markdown).toContain("npm test -- docs");
     expect(
       parseWorkflowMarkdownAsset({

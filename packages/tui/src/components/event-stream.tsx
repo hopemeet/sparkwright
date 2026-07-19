@@ -66,7 +66,7 @@ interface RunFactsSnapshot {
   approvalsApproved: number;
   approvalsDenied: number;
   lastShell?: ShellFact;
-  commandOutcome?: CommandOutcomeFact;
+  commandFailure?: CommandFailureFact;
   terminalTaskUpdates: RuntimeTaskUpdate[];
 }
 
@@ -85,11 +85,9 @@ interface ShellFact {
   background: boolean;
 }
 
-interface CommandOutcomeFact {
+interface CommandFailureFact {
   lastCommand?: string;
   lastExitCode?: number;
-  lastTimedOut?: boolean;
-  unresolvedVerificationFailures?: number;
 }
 
 /**
@@ -157,7 +155,7 @@ export function EventStream(props: {
         const count = proposalMutationCounts.get(spanId);
         if (count) row.internalMutationCount = count;
       }
-      if (event.type === "run.completed") {
+      if (event.type === "run.completed" || event.type === "run.cancelled") {
         row.facts = snapshotRunFacts(facts, event);
         facts = createRunFacts();
       } else {
@@ -362,7 +360,7 @@ function recordRunFact(facts: RunFacts, event: RunEvent): void {
 }
 
 function isShellToolName(name: string): boolean {
-  return name === "bash" || name === "shell";
+  return name === "bash";
 }
 
 function snapshotRunFacts(
@@ -377,26 +375,24 @@ function snapshotRunFacts(
     approvalsApproved: facts.approvalsApproved,
     approvalsDenied: facts.approvalsDenied,
     lastShell: facts.shellResults[facts.shellResults.length - 1],
-    commandOutcome: commandOutcomeFact(p.commandOutcome),
+    commandFailure: commandFailureFact(p.assessment),
     terminalTaskUpdates: [...facts.terminalTaskUpdates],
   };
 }
 
-function commandOutcomeFact(value: unknown): CommandOutcomeFact | undefined {
-  const r = rec(value);
-  if (Object.keys(r).length === 0) return undefined;
-  const verification = rec(r.verification);
-  const fact: CommandOutcomeFact = {};
-  const lastCommand = str(verification.lastCommand);
+function commandFailureFact(value: unknown): CommandFailureFact | undefined {
+  const rawIssues = rec(value).issues;
+  const issues: unknown[] = Array.isArray(rawIssues) ? rawIssues : [];
+  const verificationFailure = issues
+    .map(rec)
+    .find((issue) => str(issue.code) === "VERIFICATION_FAILED");
+  if (!verificationFailure) return undefined;
+  const details = rec(verificationFailure.details);
+  const fact: CommandFailureFact = {};
+  const lastCommand = str(details.lastCommand);
   if (lastCommand) fact.lastCommand = lastCommand;
-  if (typeof verification.lastExitCode === "number") {
-    fact.lastExitCode = verification.lastExitCode;
-  }
-  if (typeof verification.lastTimedOut === "boolean") {
-    fact.lastTimedOut = verification.lastTimedOut;
-  }
-  if (typeof verification.unresolved === "number") {
-    fact.unresolvedVerificationFailures = verification.unresolved;
+  if (typeof details.lastExitCode === "number") {
+    fact.lastExitCode = details.lastExitCode;
   }
   return Object.keys(fact).length > 0 ? fact : undefined;
 }
@@ -427,13 +423,13 @@ function commandFact(facts: RunFactsSnapshot): string | undefined {
   const shell = facts.lastShell;
   if (shell?.background) return undefined;
   if (shell?.command) return `last command: ${commandStatus(shell)}`;
-  const outcome = facts.commandOutcome;
+  const outcome = facts.commandFailure;
   if (!outcome?.lastCommand) return undefined;
   return `last command: ${commandStatus({
     command: outcome.lastCommand,
     exitCode:
       typeof outcome.lastExitCode === "number" ? outcome.lastExitCode : null,
-    timedOut: outcome.lastTimedOut === true,
+    timedOut: false,
     background: false,
   })}`;
 }
@@ -531,9 +527,8 @@ function EventCard(props: {
       );
     }
 
-    // A TUI-local divider (todo-supervisor continuation banner). Calm muted
-    // cue so a superseded-and-resumed boundary reads as system bookkeeping, not
-    // user input or an error.
+    // A TUI-local workflow episode divider. Calm muted cue so an episode
+    // boundary reads as system bookkeeping, not user input or an error.
     case "tui.notice": {
       const text = str(p.text).trim();
       if (!text) return null;
@@ -771,11 +766,7 @@ function EventCard(props: {
       const taskId = str(p.taskId);
       const protocol = str(p.protocol);
       const command = str(p.command);
-      if (
-        protocol !== "background_shell" &&
-        protocol !== "promoted_shell" &&
-        !taskId
-      ) {
+      if (protocol !== "background_shell") {
         return null;
       }
       return (
@@ -925,11 +916,24 @@ function EventCard(props: {
       const delegateTool = str(meta.delegateTool);
       const terminalState = str(p.terminalState);
       const lifecycle = terminalState || str(p.reason) || str(p.stopReason);
+      const assessment = rec(p.assessment);
+      const health = str(assessment.health);
+      const issueCodes = Array.isArray(assessment.issues)
+        ? assessment.issues
+            .map((issue) => str(rec(issue).code))
+            .filter((code): code is string => code.length > 0)
+            .slice(0, 4)
+        : [];
       // The goal doesn't change across phases, so showing it on started AND
       // completed just reprints the same sentence twice more. Introduce it once
       // on `requested`; later phases carry only their own news (the stop reason).
       const goal = phase === "requested" ? str(p.goal) : "";
-      const color = phase === "failed" ? theme.error : theme.accent2;
+      const color =
+        phase === "failed" || health === "failing"
+          ? theme.error
+          : health === "degraded"
+            ? theme.warning
+            : theme.accent2;
       const branch = depth > 0 ? "└─ " : "agent ";
       const details = [
         `depth ${depth}`,
@@ -937,6 +941,8 @@ function EventCard(props: {
         delegateTool ? `via ${delegateTool}` : undefined,
         childRunId ? `child ${shortRunId(childRunId)}` : undefined,
         parentRunId ? `parent ${shortRunId(parentRunId)}` : undefined,
+        health && health !== "clean" ? `health ${health}` : undefined,
+        issueCodes.length > 0 ? `issues ${issueCodes.join(", ")}` : undefined,
       ].filter((value): value is string => typeof value === "string");
       return (
         <Box
@@ -952,6 +958,16 @@ function EventCard(props: {
             <Text color={theme.muted}> · {details.join(" · ")}</Text>
           ) : null}
           {goal ? <Text color={theme.muted}> · {goal}</Text> : null}
+        </Box>
+      );
+    }
+
+    case "run.cancelled": {
+      const reason = str(p.reason) || str(p.stopReason) || "cancelled";
+      return (
+        <Box flexDirection="column" paddingX={1} marginTop={1}>
+          <Text color={theme.error}>── run cancelled: {reason}</Text>
+          <RunFactsLine facts={props.facts} />
         </Box>
       );
     }

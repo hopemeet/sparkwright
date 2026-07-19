@@ -107,6 +107,11 @@ describe("ProviderRegistry", () => {
 });
 
 describe("createProviderFallbackChain", () => {
+  it("does not expose the retired fallback-chain alias", async () => {
+    const exports = await import("../src/index.js");
+    expect(exports).not.toHaveProperty("createFallbackChain");
+  });
+
   it("builds a core fallback adapter from resolved providers", async () => {
     const registry = new ProviderRegistry([
       {

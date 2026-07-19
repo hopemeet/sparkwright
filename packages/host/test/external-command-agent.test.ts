@@ -14,6 +14,7 @@ import {
   isSecretEnvKey,
   redactSecretEnv,
 } from "../src/external-command-agent.js";
+import { DelegateExecutionError } from "../src/delegate-capability.js";
 import {
   lifecycleTypes,
   projectAgentLifecycle,
@@ -152,6 +153,7 @@ describe("external command delegate tool", () => {
       agentProfileId: "external_reviewer",
       exitCode: 0,
     });
+    expect(result).not.toHaveProperty("agentId");
     expect(JSON.parse(result.stdout)).toMatchObject({
       argv: ["--goal", "review the patch"],
       stdin: "",
@@ -634,9 +636,24 @@ describe("external command delegate tool", () => {
       workspaceRoot: fixture.cwd,
     });
 
-    await expect(
-      tool.execute({ goal: "inspect docs" }, { run: parent.record } as never),
-    ).rejects.toThrow("exited with exit code 7");
+    let rejection: unknown;
+    try {
+      await tool.execute({ goal: "inspect docs" }, {
+        run: parent.record,
+      } as never);
+    } catch (error) {
+      rejection = error;
+    }
+    expect(rejection).toBeInstanceOf(DelegateExecutionError);
+    expect(rejection).toMatchObject({
+      message: expect.stringContaining("exited with exit code 7"),
+      metadata: expect.objectContaining({
+        agentProfileId: "external_failing",
+      }),
+    });
+    expect((rejection as DelegateExecutionError).metadata).not.toHaveProperty(
+      "agentId",
+    );
     expect(parent.events.all().map((event) => event.type)).toEqual(
       expect.arrayContaining(["subagent.failed"]),
     );
@@ -853,7 +870,6 @@ describe("external command delegate tool", () => {
       stderr: string;
       stdoutTruncated: boolean;
       stderrTruncated: boolean;
-      outputTruncated: boolean;
       output: { artifactIds?: string[] };
     };
 
@@ -862,8 +878,15 @@ describe("external command delegate tool", () => {
       stderr: "wxy",
       stdoutTruncated: true,
       stderrTruncated: true,
-      outputTruncated: true,
     });
+    expect(result).not.toHaveProperty("outputTruncated");
+    const completed = parent.events
+      .all()
+      .find((event) => event.type === "subagent.completed");
+    const completedPayload = completed?.payload as
+      | { result?: unknown }
+      | undefined;
+    expect(completedPayload?.result).not.toHaveProperty("outputTruncated");
     expect(result.output.artifactIds).toEqual(
       expect.arrayContaining([expect.stringMatching(/^artifact_/)]),
     );

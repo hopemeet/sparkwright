@@ -339,12 +339,6 @@ function addToolGroupRows(
         {isDeferredTool(tool) ? (
           <Text color={theme.muted}> · load on demand</Text>
         ) : null}
-        {tool.legacyNames && tool.legacyNames.length > 0 ? (
-          <Text color={theme.muted}>
-            {" "}
-            · legacy {tool.legacyNames.join(",")}
-          </Text>
-        ) : null}
         {tool.origin ? <Text color={theme.muted}> · {tool.origin}</Text> : null}
       </Text>,
     );
@@ -548,9 +542,9 @@ function addAgentsRows(
           → {tool.profileId} · {tool.protocol}
           {tool.model ? ` · ${tool.model}` : ""}
           {formatDelegateRouting(tool.routing)} ·{" "}
-          {tool.requiresApproval ? "approval" : "no approval"} · workspace{" "}
-          {tool.workspaceAccess}
-          {tool.gatedByRunWrite ? " · requires --write" : ""}
+          {tool.approvalRequiredUnderCurrentRun ? "approval" : "no approval"} ·
+          workspace {tool.workspaceAccess}
+          {tool.gatedByRunWrite ? " · requires write access" : ""}
         </Text>
       </Text>,
     );

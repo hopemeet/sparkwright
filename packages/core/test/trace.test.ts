@@ -11,6 +11,7 @@ import {
   type ArtifactId,
 } from "../src/ids.js";
 import type { RunRecord } from "../src/types.js";
+import type { RunAssessment } from "../src/run-assessment.js";
 import {
   createSessionRunStoreFactory,
   FileSessionStore,
@@ -21,6 +22,7 @@ import {
   buildTraceTimelineJsonl,
   createTraceRedactor,
   FileRunStore,
+  type FileRunStoreOptions,
   filterTraceEvent,
   loadTraceEventsJsonl,
   MemoryTrace,
@@ -31,6 +33,57 @@ import {
   validateSessionTraceConsistency,
   verifyTraceJsonl,
 } from "../src/trace.js";
+
+const TEST_SESSION_ID = "session_trace_test";
+const CLEAN_ASSESSMENT: RunAssessment = {
+  schemaVersion: "run-assessment.v1",
+  health: "clean",
+  issues: [],
+  verification: [],
+};
+
+function sessionStoreOptions(
+  sessionRootDir: string,
+  options: Omit<FileRunStoreOptions, "sessionRootDir" | "sessionId"> = {},
+): FileRunStoreOptions {
+  return {
+    sessionRootDir,
+    sessionId: TEST_SESSION_ID,
+    ...options,
+  };
+}
+
+function sessionRunDir(sessionRootDir: string, runId: string): string {
+  return join(sessionRootDir, TEST_SESSION_ID, "agents", "main", "runs", runId);
+}
+
+function commandFactLedger(
+  commands: Array<{
+    toolCallId: string;
+    command: string;
+    exitCode: number;
+    verificationRelevant: boolean;
+    sequence: number;
+  }>,
+): Record<string, unknown> {
+  return {
+    schemaVersion: "fact-ledger.v1",
+    writeEpoch: 0,
+    commands: commands.map((command) => ({
+      id: `cmd:test:${command.sequence}:${command.toolCallId}`,
+      source: "shell_tool",
+      initiator: "model-initiated",
+      writeEpoch: 0,
+      stale: false,
+      toolName: "bash",
+      commandKey: command.command,
+      timedOut: false,
+      ...command,
+    })),
+    verificationResults: [],
+    writes: [],
+  };
+}
 
 describe("trace", () => {
   let tempDirs: string[] = [];
@@ -61,37 +114,19 @@ describe("trace", () => {
     });
   });
 
-  it("normalizes legacy trace events that omit metadata", () => {
-    const jsonl =
-      [
-        {
-          id: "evt_legacy_1",
-          runId: "run_legacy",
-          type: "run.created",
-          timestamp: "2026-01-01T00:00:00.000Z",
-          sequence: 1,
-          payload: { goal: "legacy" },
-        },
-        {
-          id: "evt_legacy_2",
-          runId: "run_legacy",
-          type: "run.completed",
-          timestamp: "2026-01-01T00:00:01.000Z",
-          sequence: 2,
-          payload: { state: "completed" },
-        },
-      ]
-        .map((event) => JSON.stringify(event))
-        .join("\n") + "\n";
+  it("rejects trace rows outside the canonical event envelope", () => {
+    const jsonl = `${JSON.stringify({
+      id: "evt_invalid_1",
+      runId: "run_invalid",
+      type: "run.created",
+      timestamp: "2026-01-01T00:00:00.000Z",
+      sequence: 1,
+      payload: { goal: "inspect" },
+    })}\n`;
 
-    const events = loadTraceEventsJsonl(jsonl);
-    const report = buildTraceReportJsonl(jsonl);
-
-    expect(events.map((event) => event.metadata)).toEqual([{}, {}]);
-    expect(report).toMatchObject({
-      verdict: "ok",
-      summary: { eventCount: 2 },
-    });
+    expect(() => loadTraceEventsJsonl(jsonl)).toThrow(
+      "Invalid trace event envelope in trace.jsonl at line 1: metadata must be an object",
+    );
   });
 
   it("preserves append order in memory", () => {
@@ -118,7 +153,7 @@ describe("trace", () => {
     tempDirs.push(root);
     const run = createRunRecord();
     const log = new EventLog(run.id);
-    const store = new FileRunStore(run, { rootDir: root });
+    const store = new FileRunStore(run, sessionStoreOptions(root));
 
     store.append(log.emit("run.created", { goal: run.goal }));
     store.append(log.emit("run.started", {}));
@@ -141,7 +176,7 @@ describe("trace", () => {
     tempDirs.push(root);
     const run = createRunRecord();
     const log = new EventLog(run.id);
-    const store = new FileRunStore(run, { rootDir: root });
+    const store = new FileRunStore(run, sessionStoreOptions(root));
 
     store.append(log.emit("model.stream.started", { step: 1 }));
     store.append(
@@ -241,7 +276,10 @@ describe("trace", () => {
     tempDirs.push(root);
     const run = createRunRecord();
     const log = new EventLog(run.id);
-    const store = new FileRunStore(run, { rootDir: root, traceLevel: "debug" });
+    const store = new FileRunStore(
+      run,
+      sessionStoreOptions(root, { traceLevel: "debug" }),
+    );
 
     store.append(log.emit("model.stream.started", { step: 1 }));
     store.append(
@@ -270,7 +308,7 @@ describe("trace", () => {
     tempDirs.push(root);
     const run = createRunRecord();
     const log = new EventLog(run.id);
-    const store = new FileRunStore(run, { rootDir: root });
+    const store = new FileRunStore(run, sessionStoreOptions(root));
 
     store.append(
       log.emit("extension.process.started", {
@@ -334,7 +372,10 @@ describe("trace", () => {
     tempDirs.push(root);
     const run = createRunRecord();
     const log = new EventLog(run.id);
-    const store = new FileRunStore(run, { rootDir: root, traceLevel: "debug" });
+    const store = new FileRunStore(
+      run,
+      sessionStoreOptions(root, { traceLevel: "debug" }),
+    );
 
     store.append(
       log.emit("extension.process.started", {
@@ -376,7 +417,7 @@ describe("trace", () => {
     tempDirs.push(root);
     const run = createRunRecord();
     const log = new EventLog(run.id);
-    const store = new FileRunStore(run, { rootDir: root });
+    const store = new FileRunStore(run, sessionStoreOptions(root));
 
     store.append(log.emit("run.started", {}));
     store.append(
@@ -489,7 +530,10 @@ describe("trace", () => {
     tempDirs.push(root);
     const run = createRunRecord();
     const log = new EventLog(run.id);
-    const store = new FileRunStore(run, { rootDir: root, traceLevel: "debug" });
+    const store = new FileRunStore(
+      run,
+      sessionStoreOptions(root, { traceLevel: "debug" }),
+    );
 
     store.append(
       log.emit("extension.process.started", {
@@ -567,7 +611,7 @@ describe("trace", () => {
 
     const errors: unknown[] = [];
     const store = new FileRunStore(run, {
-      rootDir: root,
+      ...sessionStoreOptions(root),
       degradationBufferLimit: 10,
       onAppendError: (info) => errors.push(info),
     });
@@ -631,7 +675,7 @@ describe("trace", () => {
 
     const system = [
       { role: "system", content: "Contract A", stability: "stable" },
-      { role: "system", content: "Tools: read_file", stability: "session" },
+      { role: "system", content: "Tools: read", stability: "session" },
     ];
     const promptEvent = (step: number, goal: string) =>
       log.emit("prompt.built", {
@@ -697,7 +741,7 @@ describe("trace", () => {
 
     const system = [
       { role: "system", content: "Contract A", stability: "stable" },
-      { role: "system", content: "Tools: read_file", stability: "session" },
+      { role: "system", content: "Tools: read", stability: "session" },
     ];
     const promptEvent = (log: EventLog, step: number, goal: string) =>
       log.emit("prompt.built", {
@@ -769,7 +813,7 @@ describe("trace", () => {
     const { bindStorageDegradationEvents } = await import("../src/trace.js");
     const hooks = bindStorageDegradationEvents({ events: log });
     const store = new FileRunStore(run, {
-      rootDir: root,
+      ...sessionStoreOptions(root),
       degradationBufferLimit: 10,
       ...hooks,
     });
@@ -824,7 +868,7 @@ describe("trace", () => {
     const root = await mkdtemp(join(tmpdir(), "sparkwright-checkpoint-"));
     tempDirs.push(root);
     const run = createRunRecord();
-    const store = new FileRunStore(run, { rootDir: root });
+    const store = new FileRunStore(run, sessionStoreOptions(root));
     const { loadCheckpointFromRunDir } = await import("../src/trace.js");
 
     // Loading from a pristine run dir returns undefined.
@@ -872,8 +916,8 @@ describe("trace", () => {
   it("autoCheckpointEveryNSteps persists a fresh checkpoint on the configured cadence", async () => {
     const root = await mkdtemp(join(tmpdir(), "sparkwright-auto-cp-"));
     tempDirs.push(root);
-    const { createRun, defineTool, loadCheckpointFromRunDir } =
-      await import("../src/index.js");
+    const { createRun, defineTool } = await import("../src/index.js");
+    const { loadCheckpointFromRunDir } = await import("../src/internal.js");
 
     const noop = defineTool({
       name: "noop",
@@ -899,12 +943,14 @@ describe("trace", () => {
           return { toolCalls: [{ toolName: "noop", arguments: {} }] };
         },
       },
-      runStore: (record) => new FileRunStore(record, { rootDir: root }),
+      runStore: (record) => new FileRunStore(record, sessionStoreOptions(root)),
     });
 
     await run.start();
 
-    const reloaded = loadCheckpointFromRunDir(join(root, run.record.id));
+    const reloaded = loadCheckpointFromRunDir(
+      sessionRunDir(root, run.record.id),
+    );
     expect(reloaded).toBeDefined();
     expect(reloaded?.metadata).toMatchObject({ auto: true });
     // At least one auto-checkpoint cycle should have fired by step 2.
@@ -917,12 +963,9 @@ describe("trace", () => {
   it("reconstructs a best-effort checkpoint from trace when checkpoint.json is missing", async () => {
     const root = await mkdtemp(join(tmpdir(), "sparkwright-trace-recover-"));
     tempDirs.push(root);
-    const {
-      createRun,
-      defineTool,
-      loadCheckpointFromRunDir,
-      resumeRunFromCheckpoint,
-    } = await import("../src/index.js");
+    const { createRun, defineTool, resumeRunFromCheckpoint } =
+      await import("../src/index.js");
+    const { loadCheckpointFromRunDir } = await import("../src/internal.js");
 
     const noop = defineTool({
       name: "noop",
@@ -945,11 +988,11 @@ describe("trace", () => {
           return { toolCalls: [{ toolName: "noop", arguments: {} }] };
         },
       },
-      runStore: (record) => new FileRunStore(record, { rootDir: root }),
+      runStore: (record) => new FileRunStore(record, sessionStoreOptions(root)),
     });
     await run.start();
 
-    const runDir = join(root, run.record.id);
+    const runDir = sessionRunDir(root, run.record.id);
     // No explicit checkpoint persisted.
     expect(loadCheckpointFromRunDir(runDir)).toBeUndefined();
 
@@ -982,12 +1025,19 @@ describe("trace", () => {
   it("resumeRunFromCheckpoint(force) accepts a reconstructed checkpoint of a non-terminal run", async () => {
     const root = await mkdtemp(join(tmpdir(), "sparkwright-trace-resume-"));
     tempDirs.push(root);
-    const { loadCheckpointFromRunDir, resumeRunFromCheckpoint } =
-      await import("../src/index.js");
+    const { resumeRunFromCheckpoint } = await import("../src/index.js");
+    const { loadCheckpointFromRunDir } = await import("../src/internal.js");
 
-    // Build a run dir from scratch with a non-terminal run.json and trace.
+    // Build a canonical session run with a non-terminal run.json and agent trace.
     const runId = createRunId();
-    const runDir = join(root, runId);
+    const runDir = sessionRunDir(root, runId);
+    const agentTracePath = join(
+      root,
+      TEST_SESSION_ID,
+      "agents",
+      "main",
+      "trace.jsonl",
+    );
     const { mkdir, writeFile } = await import("node:fs/promises");
     await mkdir(runDir, { recursive: true });
     const runRecord = {
@@ -1004,7 +1054,7 @@ describe("trace", () => {
       "utf8",
     );
     await writeFile(
-      join(runDir, "trace.jsonl"),
+      agentTracePath,
       [
         JSON.stringify({
           id: "evt_1",
@@ -1013,6 +1063,7 @@ describe("trace", () => {
           type: "model.completed",
           timestamp: "2026-02-02T00:00:02.000Z",
           payload: { step: 1 },
+          metadata: {},
         }),
         JSON.stringify({
           id: "evt_2",
@@ -1021,6 +1072,7 @@ describe("trace", () => {
           type: "tool.completed",
           timestamp: "2026-02-02T00:00:05.000Z",
           payload: { step: 1 },
+          metadata: {},
         }),
       ].join("\n") + "\n",
       "utf8",
@@ -1038,7 +1090,7 @@ describe("trace", () => {
     let observedStep = 0;
     const run = resumeRunFromCheckpoint(reconstructed!, {
       force: true,
-      runStore: (record) => new FileRunStore(record, { rootDir: root }),
+      runStore: (record) => new FileRunStore(record, sessionStoreOptions(root)),
       model: {
         async complete(input) {
           observedStep = input.step;
@@ -1050,17 +1102,16 @@ describe("trace", () => {
     expect(result.signal).toBe("completed");
     expect(observedStep).toBe(2);
     expect(run.record.id).toBe(runId);
-    const report = verifyTraceJsonl(
-      await readFile(join(runDir, "trace.jsonl"), "utf8"),
-    );
+    const report = verifyTraceJsonl(await readFile(agentTracePath, "utf8"));
     expect(report.findings).toEqual([]);
   });
 
   it("RunHandle.persistCheckpoint writes via the wired runStore", async () => {
     const root = await mkdtemp(join(tmpdir(), "sparkwright-persist-"));
     tempDirs.push(root);
-    const { createRun, resumeRunFromCheckpoint, loadCheckpointFromRunDir } =
+    const { createRun, resumeRunFromCheckpoint } =
       await import("../src/index.js");
+    const { loadCheckpointFromRunDir } = await import("../src/internal.js");
 
     let stepSeen = 0;
     const run = createRun({
@@ -1071,7 +1122,7 @@ describe("trace", () => {
           return { message: "done" };
         },
       },
-      runStore: (record) => new FileRunStore(record, { rootDir: root }),
+      runStore: (record) => new FileRunStore(record, sessionStoreOptions(root)),
     });
 
     // Persist a checkpoint mid-flight (here: pre-start; loop.step=0). Just
@@ -1081,7 +1132,7 @@ describe("trace", () => {
 
     await run.start();
 
-    const runDir = join(root, run.record.id);
+    const runDir = sessionRunDir(root, run.record.id);
     const reloaded = loadCheckpointFromRunDir(runDir);
     expect(reloaded?.run.id).toBe(run.record.id);
     expect(reloaded?.metadata).toEqual({ marker: "pre-start" });
@@ -1112,7 +1163,7 @@ describe("trace", () => {
 
     const errors: { droppedCount: number }[] = [];
     const store = new FileRunStore(run, {
-      rootDir: root,
+      ...sessionStoreOptions(root),
       degradationBufferLimit: 2,
       onAppendError: (info) => errors.push(info),
     });
@@ -1303,7 +1354,7 @@ describe("trace", () => {
     const run = createRunRecord();
     const log = new EventLog(run.id);
     const store = new FileRunStore(run, {
-      rootDir: root,
+      ...sessionStoreOptions(root),
       traceLevel: "debug",
       redact: false,
     });
@@ -1330,7 +1381,7 @@ describe("trace", () => {
     const log = new EventLog(run.id);
     const jsonl = [
       log.emit("run.created", { goal: run.goal }, { sessionId: "s1" }),
-      log.emit("tool.requested", { toolName: "read_file" }),
+      log.emit("tool.requested", { toolName: "read" }),
       log.emit("model.completed", {
         usage: {
           inputTokens: 3,
@@ -1364,7 +1415,7 @@ describe("trace", () => {
         "run.completed": 1,
       },
       terminalStates: { completed: 1 },
-      toolCalls: { read_file: 1 },
+      toolCalls: { read: 1 },
       artifactCount: 1,
       errorCount: 0,
       errorCodes: {},
@@ -1400,7 +1451,7 @@ describe("trace", () => {
       events.push(
         log.emit("tool.requested", {
           id: `call_${i}`,
-          toolName: i % 2 === 0 ? "read_file" : "grep",
+          toolName: i % 2 === 0 ? "read" : "grep",
           arguments: { path: i % 2 === 0 ? "README.md" : "packages" },
         }),
       );
@@ -1524,7 +1575,7 @@ describe("trace", () => {
       log.emit("run.created", { goal: "missing terminal" }),
       log.emit("tool.requested", {
         id: "call_1",
-        toolName: "shell",
+        toolName: "bash",
         arguments: { command: "pwd", timeoutMs: 0 },
       }),
     ];
@@ -1559,7 +1610,7 @@ describe("trace", () => {
       events.push(
         log.emit("tool.requested", {
           id: `read_${i}`,
-          toolName: "read_file",
+          toolName: "read",
           arguments: { path: "README.md" },
         }),
       );
@@ -1704,12 +1755,12 @@ describe("trace", () => {
       ),
       parentLog.emit("tool.requested", {
         id: "verify",
-        toolName: "shell",
+        toolName: "bash",
         arguments: { command: "npm test" },
       }),
       parentLog.emit("tool.completed", {
         toolCallId: "verify",
-        toolName: "shell",
+        toolName: "bash",
         status: "completed",
         output: { exitCode: 0, timedOut: false },
       }),
@@ -1747,6 +1798,56 @@ describe("trace", () => {
     ).toBe(false);
   });
 
+  it("reports completed but unhealthy sub-agents independently from finality", () => {
+    const log = new EventLog(createRunId());
+    const childRunId = createRunId();
+    const events: SparkwrightEvent[] = [
+      log.emit("run.created", { goal: "use an unhealthy review" }),
+      log.emit(
+        "subagent.completed",
+        {
+          childRunId,
+          terminalState: "completed",
+          finality: "complete",
+          assessment: {
+            schemaVersion: "run-assessment.v1",
+            health: "failing",
+            issues: [
+              {
+                code: "UNRESOLVED_TOOL_FAILURE",
+                kind: "tool_failure",
+                disposition: "failing",
+                count: 1,
+              },
+            ],
+            verification: [],
+          },
+        },
+        { agentName: "reviewer", childRunId, subagentDepth: 1 },
+      ),
+      log.emit("run.completed", { state: "completed" }),
+    ];
+
+    const report = buildTraceReportJsonl(
+      events.map(serializeEventJsonl).join(""),
+    );
+
+    expect(report.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: "high",
+          code: "SUBAGENT_UNHEALTHY",
+          evidence: expect.arrayContaining([
+            expect.stringContaining("UNRESOLVED_TOOL_FAILURE"),
+          ]),
+        }),
+      ]),
+    );
+    expect(
+      report.findings.some((finding) => finding.code === "SUBAGENT_INCOMPLETE"),
+    ).toBe(false);
+  });
+
   it("keeps incomplete sub-agent severity high when verification predates the child write", () => {
     const parentRunId = createRunId();
     const parentLog = new EventLog(parentRunId);
@@ -1756,12 +1857,12 @@ describe("trace", () => {
       parentLog.emit("run.created", { goal: "delegate and verify" }),
       parentLog.emit("tool.requested", {
         id: "verify",
-        toolName: "shell",
+        toolName: "bash",
         arguments: { command: "npm test" },
       }),
       parentLog.emit("tool.completed", {
         toolCallId: "verify",
-        toolName: "shell",
+        toolName: "bash",
         status: "completed",
         output: { exitCode: 0, timedOut: false },
       }),
@@ -1809,8 +1910,8 @@ describe("trace", () => {
       log.emit("workspace.write.untracked_access_granted", {
         taskId: "task_writer",
         parentRunId: "run_parent",
-        toolName: "shell",
-        protocol: "promoted_shell",
+        toolName: "bash",
+        protocol: "background_shell",
         marker: "untracked-write-capable",
         access: "granted",
         sandboxMode: "enforce",
@@ -1830,7 +1931,7 @@ describe("trace", () => {
           severity: "medium",
           code: "UNTRACKED_WRITE_CAPABLE_BOUNDARY",
           evidence: expect.arrayContaining([
-            expect.stringContaining("protocol promoted_shell"),
+            expect.stringContaining("protocol background_shell"),
             expect.stringContaining("fs bind-allowlist"),
           ]),
         }),
@@ -1844,7 +1945,7 @@ describe("trace", () => {
       log.emit("run.created", { goal: "one duplicate" }),
       log.emit("tool.failed", {
         toolCallId: "dup_1",
-        toolName: "read_file",
+        toolName: "read",
         status: "failed",
         error: {
           code: "DUPLICATE_TOOL_CALL_SKIPPED",
@@ -1918,13 +2019,11 @@ describe("trace", () => {
     );
   });
 
-  it("recomputes over raw events so a stale persisted snapshot does not mask the new classification", () => {
+  it("keeps terminal assessment authoritative while still deriving structural diagnostics", () => {
     const log = new EventLog(createRunId());
-    // The run was recorded BEFORE the destructive-mutation classifier existed,
-    // so its persisted run.completed.toolOutcome lacks `mutationFollowups` and
-    // still counts the post-deletion not-found as unresolved. Because the raw
-    // events retain tool.requested arguments, the report must recompute and
-    // surface the correct classification instead of trusting the stale snapshot.
+    // A persisted semantic assessment can remain failing while structural
+    // diagnostics independently recognize a mutation-followup pattern from the
+    // raw arguments. The report keeps both facts instead of replacing either.
     const jsonl = [
       log.emit("run.created", { goal: "Delete the testcron job" }),
       log.emit("tool.requested", {
@@ -1954,10 +2053,18 @@ describe("trace", () => {
       }),
       log.emit("run.completed", {
         reason: "final_answer",
-        // Stale snapshot shape from before the classifier change.
-        toolOutcome: {
-          unresolved: { total: 1, byCode: { TOOL_EXECUTION_FAILED: 1 } },
-          recovered: { total: 0, byCode: {} },
+        assessment: {
+          schemaVersion: "run-assessment.v1",
+          health: "failing",
+          issues: [
+            {
+              code: "UNRESOLVED_TOOL_FAILURE",
+              kind: "tool_failure",
+              disposition: "failing",
+              count: 1,
+            },
+          ],
+          verification: [],
         },
       }),
     ]
@@ -1966,7 +2073,7 @@ describe("trace", () => {
 
     const report = buildTraceReportJsonl(jsonl);
 
-    expect(report.findings.map((finding) => finding.code)).not.toContain(
+    expect(report.findings.map((finding) => finding.code)).toContain(
       "UNRESOLVED_TOOL_FAILURES",
     );
     expect(report.findings).toEqual(
@@ -1978,25 +2085,34 @@ describe("trace", () => {
     );
   });
 
-  it("falls back to the persisted snapshot when raw events stripped tool.requested arguments", () => {
+  it("reads persisted assessment when request arguments were stripped", () => {
     const log = new EventLog(createRunId());
     // A compacted trace whose tool.requested events no longer carry arguments
     // cannot be reclassified, so the persisted snapshot (here: already recovered)
     // remains authoritative and the report must not invent an unresolved failure.
     const jsonl = [
       log.emit("run.created", { goal: "Read a busy file" }),
-      log.emit("tool.requested", { id: "call_read", toolName: "read_file" }),
+      log.emit("tool.requested", { id: "call_read", toolName: "read" }),
       log.emit("tool.failed", {
         toolCallId: "call_read",
-        toolName: "read_file",
+        toolName: "read",
         status: "failed",
         error: { code: "EBUSY", message: "resource busy" },
       }),
       log.emit("run.completed", {
         reason: "final_answer",
-        toolOutcome: {
-          unresolved: { total: 0, byCode: {} },
-          recovered: { total: 1, byCode: { EBUSY: 1 } },
+        assessment: {
+          schemaVersion: "run-assessment.v1",
+          health: "degraded",
+          issues: [
+            {
+              code: "RECOVERED_TOOL_FAILURE",
+              kind: "tool_recovery",
+              disposition: "degraded",
+              count: 1,
+            },
+          ],
+          verification: [],
         },
       }),
     ]
@@ -2010,7 +2126,7 @@ describe("trace", () => {
     );
   });
 
-  it("does not let an args-bearing run force a recompute that misclassifies a stripped run in a mixed trace", () => {
+  it("keeps assessment ownership per run in a mixed trace", () => {
     const log = new EventLog(createRunId());
     // Mixed multi-run trace: a newer run still carries request arguments, but an
     // older/compacted run stripped them and recorded its EBUSY failure as
@@ -2022,30 +2138,47 @@ describe("trace", () => {
       log.emit("run.created", { goal: "newer run with args" }),
       log.emit("tool.requested", {
         id: "call_ok",
-        toolName: "read_file",
+        toolName: "read",
         arguments: { path: "x.txt" },
       }),
       log.emit("tool.completed", {
         toolCallId: "call_ok",
-        toolName: "read_file",
+        toolName: "read",
         status: "completed",
         output: { path: "x.txt" },
       }),
-      log.emit("run.completed", { reason: "final_answer" }),
+      log.emit("run.completed", {
+        reason: "final_answer",
+        assessment: {
+          schemaVersion: "run-assessment.v1",
+          health: "clean",
+          issues: [],
+          verification: [],
+        },
+      }),
       // Older/compacted run: request args stripped, persisted snapshot recovered.
       log.emit("run.created", { goal: "older compacted run" }),
-      log.emit("tool.requested", { id: "call_busy", toolName: "read_file" }),
+      log.emit("tool.requested", { id: "call_busy", toolName: "read" }),
       log.emit("tool.failed", {
         toolCallId: "call_busy",
-        toolName: "read_file",
+        toolName: "read",
         status: "failed",
         error: { code: "EBUSY", message: "resource busy" },
       }),
       log.emit("run.completed", {
         reason: "final_answer",
-        toolOutcome: {
-          unresolved: { total: 0, byCode: {} },
-          recovered: { total: 1, byCode: { EBUSY: 1 } },
+        assessment: {
+          schemaVersion: "run-assessment.v1",
+          health: "degraded",
+          issues: [
+            {
+              code: "RECOVERED_TOOL_FAILURE",
+              kind: "tool_recovery",
+              disposition: "degraded",
+              count: 1,
+            },
+          ],
+          verification: [],
         },
       }),
     ]
@@ -2070,18 +2203,38 @@ describe("trace", () => {
       events.push(
         log.emit("tool.requested", {
           id: `call_${i}`,
-          toolName: "shell",
+          toolName: "bash",
           arguments: { command: "npm test -- --runInBand" },
         }),
         log.emit("tool.completed", {
           toolCallId: `call_${i}`,
-          toolName: "shell",
+          toolName: "bash",
           status: "completed",
           output: { exitCode: 1, timedOut: false },
         }),
       );
     }
-    events.push(log.emit("run.completed", { state: "completed" }));
+    events.push(
+      log.emit("run.completed", {
+        state: "completed",
+        factLedger: commandFactLedger([
+          {
+            toolCallId: "call_0",
+            command: "npm test -- --runInBand",
+            exitCode: 1,
+            verificationRelevant: true,
+            sequence: 2,
+          },
+          {
+            toolCallId: "call_1",
+            command: "npm test -- --runInBand",
+            exitCode: 1,
+            verificationRelevant: true,
+            sequence: 4,
+          },
+        ]),
+      }),
+    );
 
     const report = buildTraceReportJsonl(
       events.map(serializeEventJsonl).join(""),
@@ -2114,12 +2267,12 @@ describe("trace", () => {
         log.emit("model.completed", { step: i, message: `step ${i}` }),
         log.emit("tool.requested", {
           id: `read_${i}`,
-          toolName: "read_file",
+          toolName: "read",
           arguments: { path: "src/foo.ts" },
         }),
         log.emit("tool.completed", {
           toolCallId: `read_${i}`,
-          toolName: "read_file",
+          toolName: "read",
           status: "completed",
           output: { path: "src/foo.ts" },
         }),
@@ -2202,7 +2355,7 @@ describe("trace", () => {
           "tool.requested",
           {
             id: `parent_read_${i}`,
-            toolName: "read_file",
+            toolName: "read",
             arguments: { path: `docs/${i}.md` },
           },
           {
@@ -2214,7 +2367,7 @@ describe("trace", () => {
           "tool.completed",
           {
             toolCallId: `parent_read_${i}`,
-            toolName: "read_file",
+            toolName: "read",
             status: "completed",
             output: { path: `docs/${i}.md` },
           },
@@ -2248,7 +2401,7 @@ describe("trace", () => {
           "tool.requested",
           {
             id: `child_read_${i}`,
-            toolName: "read_file",
+            toolName: "read",
             arguments: { path: `docs/${i}.md` },
           },
           {
@@ -2260,7 +2413,7 @@ describe("trace", () => {
           "tool.completed",
           {
             toolCallId: `child_read_${i}`,
-            toolName: "read_file",
+            toolName: "read",
             status: "completed",
             output: { path: `docs/${i}.md` },
           },
@@ -2854,7 +3007,7 @@ describe("trace", () => {
           "tool.requested",
           {
             id: `child_read_${i}`,
-            toolName: "read_file",
+            toolName: "read",
             arguments: { path: `src/file-${i}.ts` },
           },
           {
@@ -2866,7 +3019,7 @@ describe("trace", () => {
           "tool.completed",
           {
             toolCallId: `child_read_${i}`,
-            toolName: "read_file",
+            toolName: "read",
             status: "completed",
             output: { path: `src/file-${i}.ts` },
           },
@@ -2952,12 +3105,12 @@ describe("trace", () => {
       events.push(
         log.emit("tool.requested", {
           id: `read_${i}`,
-          toolName: "read_file",
+          toolName: "read",
           arguments: { path: "PROJECT_NOTES.md", offset: startLine },
         }),
         log.emit("tool.completed", {
           toolCallId: `read_${i}`,
-          toolName: "read_file",
+          toolName: "read",
           status: "completed",
           output: {
             path: "PROJECT_NOTES.md",
@@ -3005,7 +3158,7 @@ describe("trace", () => {
         log.emit("model.completed", { step: i, message: `read ${i}` }),
         log.emit("tool.completed", {
           toolCallId: `read_${i}`,
-          toolName: "read_file",
+          toolName: "read",
           status: "completed",
           output: { path: `src/bar${i}.ts` },
         }),
@@ -3016,12 +3169,12 @@ describe("trace", () => {
       log.emit("model.completed", { step: 3, message: "verify" }),
       log.emit("tool.requested", {
         id: "verify",
-        toolName: "shell",
+        toolName: "bash",
         arguments: { command: "make test" },
       }),
       log.emit("tool.completed", {
         toolCallId: "verify",
-        toolName: "shell",
+        toolName: "bash",
         status: "completed",
         output: { exitCode: 0, timedOut: false },
       }),
@@ -3058,7 +3211,7 @@ describe("trace", () => {
         log.emit("model.completed", { step: i, message: `read ${i}` }),
         log.emit("tool.completed", {
           toolCallId: `read_${i}`,
-          toolName: "read_file",
+          toolName: "read",
           status: "completed",
           output: { path: `src/bar${i}.ts` },
         }),
@@ -3069,12 +3222,12 @@ describe("trace", () => {
       log.emit("model.completed", { step: 5, message: "verify" }),
       log.emit("tool.requested", {
         id: "verify",
-        toolName: "shell",
+        toolName: "bash",
         arguments: { command: "make test" },
       }),
       log.emit("tool.completed", {
         toolCallId: "verify",
-        toolName: "shell",
+        toolName: "bash",
         status: "completed",
         output: { exitCode: 0, timedOut: false },
       }),
@@ -3102,26 +3255,29 @@ describe("trace", () => {
     const log = new EventLog(run.id);
     const jsonl = [
       log.emit("run.created", { goal: "fix and verify" }, { sessionId: "s1" }),
+      log.emit("tool.requested", {
+        id: "call_shell",
+        toolName: "bash",
+        arguments: { command: "npm test" },
+      }),
       log.emit("tool.completed", {
         toolCallId: "call_shell",
-        toolName: "shell",
+        toolName: "bash",
         status: "completed",
         output: { exitCode: 1, timedOut: false },
       }),
       log.emit("run.completed", {
         state: "completed",
         reason: "final_answer",
-        commandOutcome: {
-          total: 1,
-          byExitCode: { "1": 1 },
-          verification: {
-            total: 1,
-            unresolved: 1,
-            lastCommand: "npm test",
-            lastExitCode: 1,
-            lastTimedOut: false,
+        factLedger: commandFactLedger([
+          {
+            toolCallId: "call_shell",
+            command: "npm test",
+            exitCode: 1,
+            verificationRelevant: true,
+            sequence: 2,
           },
-        },
+        ]),
       }),
     ]
       .map(serializeEventJsonl)
@@ -3150,33 +3306,47 @@ describe("trace", () => {
     const log = new EventLog(run.id);
     const jsonl = [
       log.emit("run.created", { goal: "fix and verify" }, { sessionId: "s1" }),
+      log.emit("tool.requested", {
+        id: "call_fail",
+        toolName: "bash",
+        arguments: { command: "npm test" },
+      }),
       log.emit("tool.completed", {
         toolCallId: "call_fail",
-        toolName: "shell",
+        toolName: "bash",
         status: "completed",
         output: { exitCode: 1, timedOut: false },
       }),
+      log.emit("tool.requested", {
+        id: "call_pass",
+        toolName: "bash",
+        arguments: { command: "npm test" },
+      }),
       log.emit("tool.completed", {
         toolCallId: "call_pass",
-        toolName: "shell",
+        toolName: "bash",
         status: "completed",
         output: { exitCode: 0, timedOut: false },
       }),
       log.emit("run.completed", {
         state: "completed",
         reason: "final_answer",
-        commandOutcome: {
-          total: 1,
-          byExitCode: { "1": 1 },
-          verification: {
-            total: 1,
-            unresolved: 0,
-            lastFailureCommand: "npm test",
-            lastFailureExitCode: 1,
-            lastFailureTimedOut: false,
-            lastSuccessfulVerificationCommand: "npm test",
+        factLedger: commandFactLedger([
+          {
+            toolCallId: "call_fail",
+            command: "npm test",
+            exitCode: 1,
+            verificationRelevant: true,
+            sequence: 2,
           },
-        },
+          {
+            toolCallId: "call_pass",
+            command: "npm test",
+            exitCode: 0,
+            verificationRelevant: true,
+            sequence: 4,
+          },
+        ]),
       }),
     ]
       .map(serializeEventJsonl)
@@ -3200,7 +3370,7 @@ describe("trace", () => {
       ),
       log.emit("tool.requested", {
         id: "probe",
-        toolName: "shell",
+        toolName: "bash",
         arguments: {
           command:
             'node -e "console.error(\\"probe failed\\"); process.exit(7)"',
@@ -3208,7 +3378,7 @@ describe("trace", () => {
       }),
       log.emit("tool.completed", {
         toolCallId: "probe",
-        toolName: "shell",
+        toolName: "bash",
         status: "completed",
         output: {
           exitCode: 7,
@@ -3219,44 +3389,52 @@ describe("trace", () => {
       }),
       log.emit("tool.requested", {
         id: "fail",
-        toolName: "shell",
+        toolName: "bash",
         arguments: { command: "npm test" },
       }),
       log.emit("tool.completed", {
         toolCallId: "fail",
-        toolName: "shell",
+        toolName: "bash",
         status: "completed",
         output: { exitCode: 1, timedOut: false, stdout: "", stderr: "fail" },
       }),
       log.emit("tool.requested", {
         id: "pass",
-        toolName: "shell",
+        toolName: "bash",
         arguments: { command: "npm test" },
       }),
       log.emit("tool.completed", {
         toolCallId: "pass",
-        toolName: "shell",
+        toolName: "bash",
         status: "completed",
         output: { exitCode: 0, timedOut: false, stdout: "ok", stderr: "" },
       }),
       log.emit("run.completed", {
         state: "completed",
-        commandOutcome: {
-          total: 2,
-          byExitCode: { "7": 1, "1": 1 },
-          verification: {
-            total: 2,
-            unresolved: 1,
-            lastCommand:
+        factLedger: commandFactLedger([
+          {
+            toolCallId: "probe",
+            command:
               'node -e "console.error(\\"probe failed\\"); process.exit(7)"',
-            lastExitCode: 7,
-            lastTimedOut: false,
-            lastFailureCommand: "npm test",
-            lastFailureExitCode: 1,
-            lastFailureTimedOut: false,
-            lastSuccessfulVerificationCommand: "npm test",
+            exitCode: 7,
+            verificationRelevant: false,
+            sequence: 2,
           },
-        },
+          {
+            toolCallId: "fail",
+            command: "npm test",
+            exitCode: 1,
+            verificationRelevant: true,
+            sequence: 4,
+          },
+          {
+            toolCallId: "pass",
+            command: "npm test",
+            exitCode: 0,
+            verificationRelevant: true,
+            sequence: 6,
+          },
+        ]),
       }),
     ]
       .map(serializeEventJsonl)
@@ -3345,12 +3523,12 @@ describe("trace", () => {
       log.emit("run.created", { goal: "recover from a bad read" }),
       log.emit("tool.requested", {
         id: "call_bad_read",
-        toolName: "read_file",
+        toolName: "read",
         arguments: { path: "missing.md" },
       }),
       log.emit("tool.failed", {
         toolCallId: "call_bad_read",
-        toolName: "read_file",
+        toolName: "read",
         status: "failed",
         error: { code: "ENOENT", message: "missing" },
       }),
@@ -3361,12 +3539,12 @@ describe("trace", () => {
       }),
       log.emit("tool.requested", {
         id: "call_good_read",
-        toolName: "read_file",
+        toolName: "read",
         arguments: { path: "README.md" },
       }),
       log.emit("tool.completed", {
         toolCallId: "call_good_read",
-        toolName: "read_file",
+        toolName: "read",
         status: "completed",
         output: { path: "README.md" },
       }),
@@ -3418,6 +3596,107 @@ describe("trace", () => {
     );
   });
 
+  it("does not report a superseded resumable episode failure as terminal", () => {
+    const failedLog = new EventLog(createRunId());
+    const completedLog = new EventLog(createRunId());
+    const sessionMetadata = { sessionId: "session_workflow" };
+    const failedAssessment: RunAssessment = {
+      schemaVersion: "run-assessment.v1",
+      health: "failing",
+      issues: [
+        {
+          code: "MAX_STEPS_EXCEEDED",
+          kind: "run_failure",
+          disposition: "failing",
+          count: 1,
+          details: { reason: "max_steps_exceeded" },
+        },
+      ],
+      verification: [],
+    };
+    const jsonl = [
+      failedLog.emit("run.created", { goal: "workflow" }, sessionMetadata),
+      failedLog.emit(
+        "workflow.node.started",
+        { workflowRunId: "workflow_1", nodeId: "implement" },
+        sessionMetadata,
+      ),
+      failedLog.emit(
+        "run.failed",
+        {
+          reason: "max_steps_exceeded",
+          code: "MAX_STEPS_EXCEEDED",
+          assessment: failedAssessment,
+        },
+        sessionMetadata,
+      ),
+      completedLog.emit("run.created", { goal: "continue" }, sessionMetadata),
+      completedLog.emit(
+        "workflow.node.completed",
+        { workflowRunId: "workflow_1", nodeId: "implement" },
+        sessionMetadata,
+      ),
+      completedLog.emit(
+        "run.completed",
+        { state: "completed", assessment: CLEAN_ASSESSMENT },
+        sessionMetadata,
+      ),
+    ]
+      .map(serializeEventJsonl)
+      .join("");
+
+    const report = buildTraceReportJsonl(jsonl);
+
+    expect(report.findings.map((finding) => finding.code)).not.toContain(
+      "TRACE_ERRORS",
+    );
+  });
+
+  it("keeps a resumable failure from an independent earlier run reportable", () => {
+    const failedLog = new EventLog(createRunId());
+    const completedLog = new EventLog(createRunId());
+    const sessionMetadata = { sessionId: "session_shared" };
+    const jsonl = [
+      failedLog.emit("run.created", { goal: "first" }, sessionMetadata),
+      failedLog.emit(
+        "run.failed",
+        {
+          reason: "max_steps_exceeded",
+          code: "MAX_STEPS_EXCEEDED",
+          assessment: {
+            schemaVersion: "run-assessment.v1",
+            health: "failing",
+            issues: [
+              {
+                code: "MAX_STEPS_EXCEEDED",
+                kind: "run_failure",
+                disposition: "failing",
+                count: 1,
+                details: { reason: "max_steps_exceeded" },
+              },
+            ],
+            verification: [],
+          },
+        },
+        sessionMetadata,
+      ),
+      completedLog.emit("run.created", { goal: "later" }, sessionMetadata),
+      completedLog.emit(
+        "run.completed",
+        { state: "completed", assessment: CLEAN_ASSESSMENT },
+        sessionMetadata,
+      ),
+    ]
+      .map(serializeEventJsonl)
+      .join("");
+
+    const report = buildTraceReportJsonl(jsonl);
+
+    expect(report.findings.map((finding) => finding.code)).toContain(
+      "TRACE_ERRORS",
+    );
+  });
+
   it("keeps foreground untracked workspace mutation guards as expected denials", () => {
     const run = createRunRecord();
     const log = new EventLog(run.id);
@@ -3425,12 +3704,12 @@ describe("trace", () => {
       log.emit("run.created", { goal: "foreground shell guard" }),
       log.emit("tool.requested", {
         id: "call_shell",
-        toolName: "shell",
+        toolName: "bash",
         arguments: { command: "echo x > leak.txt" },
       }),
       log.emit("tool.failed", {
         toolCallId: "call_shell",
-        toolName: "shell",
+        toolName: "bash",
         status: "failed",
         error: {
           code: "UNTRACKED_WORKSPACE_MUTATION",
@@ -3479,14 +3758,24 @@ describe("trace", () => {
     expect(summary.safety.capabilityMutations.completed).toBe(1);
   });
 
-  it("classifies tool outcomes from standard payloads", () => {
+  it("classifies standard traces with and without a terminal assessment", () => {
     const run = createRunRecord();
     // The verdict computed over full events: the failure on a.txt is NOT
     // recovered, because the later success is on a *different* file (b.txt) and
     // EBUSY is not a not-found code.
-    const toolOutcome = {
-      unresolved: { total: 1, byCode: { EBUSY: 1 } },
-      recovered: { total: 0, byCode: {} },
+    const assessment = {
+      schemaVersion: "run-assessment.v1",
+      health: "failing",
+      issues: [
+        {
+          code: "UNRESOLVED_TOOL_FAILURE",
+          kind: "tool_failure",
+          disposition: "failing",
+          count: 1,
+          details: { codes: ["EBUSY"] },
+        },
+      ],
+      verification: [],
     };
     const buildEvents = (withVerdict: boolean) => {
       const log = new EventLog(run.id);
@@ -3494,29 +3783,29 @@ describe("trace", () => {
         log.emit("run.created", { goal: run.goal }, { sessionId: "s1" }),
         log.emit("tool.requested", {
           id: "call_fail",
-          toolName: "read_file",
+          toolName: "read",
           arguments: { path: "a.txt" },
         }),
         log.emit("tool.failed", {
           toolCallId: "call_fail",
-          toolName: "read_file",
+          toolName: "read",
           status: "failed",
           error: { code: "EBUSY", message: "resource busy" },
         }),
         log.emit("tool.requested", {
           id: "call_ok",
-          toolName: "read_file",
+          toolName: "read",
           arguments: { path: "b.txt" },
         }),
         log.emit("tool.completed", {
           toolCallId: "call_ok",
-          toolName: "read_file",
+          toolName: "read",
           status: "completed",
           output: { path: "b.txt", content: "ok" },
         }),
         log.emit(
           "run.completed",
-          withVerdict ? { reason: "final_answer", toolOutcome } : {},
+          withVerdict ? { reason: "final_answer", assessment } : {},
         ),
       ];
       return summarizeTraceJsonl(
@@ -3536,63 +3825,13 @@ describe("trace", () => {
     expect(withoutVerdict.toolFailures.unresolved.total).toBe(1);
   });
 
-  it("reads the persisted command outcome on a standard trace", () => {
-    const run = createRunRecord();
-    const commandOutcome = {
-      total: 1,
-      byExitCode: { "254": 1 },
-      verification: {
-        total: 1,
-        unresolved: 1,
-        lastCommand: "npm test",
-        lastExitCode: 254,
-        lastTimedOut: false,
-        lastFailureCommand: "npm test",
-        lastFailureExitCode: 254,
-        lastFailureTimedOut: false,
-      },
-    };
-    const log = new EventLog(run.id);
-    const standardJsonl = [
-      log.emit("run.created", { goal: run.goal }, { sessionId: "s1" }),
-      log.emit("tool.completed", {
-        toolCallId: "call_1",
-        toolName: "shell",
-        status: "completed",
-        output: { exitCode: 254, stdout: "EXIT:254\n", timedOut: false },
-      }),
-      log.emit("run.completed", { reason: "final_answer", commandOutcome }),
-    ]
-      .map((event) => filterTraceEvent(event, "standard"))
-      .map(serializeEventJsonl)
-      .join("");
-
-    const summary = summarizeTraceJsonl(standardJsonl);
-
-    expect(summary.commandFailures.total).toBe(1);
-    expect(summary.commandFailures.byExitCode).toEqual({ "254": 1 });
-    expect(summary.commandFailures.verification).toMatchObject({
-      total: 1,
-      unresolved: 1,
-      lastCommand: "npm test",
-      lastExitCode: 254,
-      lastFailureCommand: "npm test",
-      lastFailureExitCode: 254,
-    });
-  });
-
-  it("prefers the persisted fact ledger over command outcome snapshots", () => {
+  it("ignores stale command failures in the persisted fact ledger", () => {
     const run = createRunRecord();
     const log = new EventLog(run.id);
     const standardJsonl = [
       log.emit("run.created", { goal: "verify" }, { sessionId: "s1" }),
       log.emit("run.completed", {
         reason: "final_answer",
-        commandOutcome: {
-          total: 1,
-          byExitCode: { "1": 1 },
-          verification: { total: 1, unresolved: 1 },
-        },
         factLedger: {
           schemaVersion: "fact-ledger.v1",
           writeEpoch: 1,
@@ -3605,7 +3844,7 @@ describe("trace", () => {
               writeEpoch: 0,
               stale: true,
               toolCallId: "call_1",
-              toolName: "shell",
+              toolName: "bash",
               command: "npm test",
               commandKey: "npm test",
               exitCode: 1,
@@ -3644,7 +3883,7 @@ describe("trace", () => {
               writeEpoch: 0,
               stale: false,
               toolCallId: "call_1",
-              toolName: "shell",
+              toolName: "bash",
               command: "npm test",
               commandKey: "npm test",
               exitCode: 1,
@@ -3758,46 +3997,17 @@ describe("trace", () => {
     });
   });
 
-  it("treats a parseable fact ledger as authoritative over command outcome", () => {
-    const run = createRunRecord();
-    const log = new EventLog(run.id);
-    const standardJsonl = [
-      log.emit("run.created", { goal: run.goal }, { sessionId: "s1" }),
-      log.emit("run.completed", {
-        reason: "final_answer",
-        commandOutcome: {
-          total: 1,
-          byExitCode: { "1": 1 },
-          verification: { total: 1, unresolved: 1 },
-        },
-        factLedger: {
-          schemaVersion: "fact-ledger.v1",
-          writeEpoch: 0,
-          commands: [],
-          verificationResults: [],
-          writes: [],
-        },
-      }),
-    ]
-      .map((event) => filterTraceEvent(event, "standard"))
-      .map(serializeEventJsonl)
-      .join("");
-
-    expect(summarizeTraceJsonl(standardJsonl).commandFailures.total).toBe(0);
-  });
-
-  it("keeps command failures on standard traces without a persisted outcome", () => {
+  it("recomputes command failures for an incomplete standard trace", () => {
     const run = createRunRecord();
     const log = new EventLog(run.id);
     const standardJsonl = [
       log.emit("run.created", { goal: "verify" }, { sessionId: "s1" }),
       log.emit("tool.completed", {
         toolCallId: "call_1",
-        toolName: "shell",
+        toolName: "bash",
         status: "completed",
         output: { exitCode: 254, stdout: "EXIT:254\n", timedOut: false },
       }),
-      log.emit("run.completed", { reason: "final_answer" }),
     ]
       .map((event) => filterTraceEvent(event, "standard"))
       .map(serializeEventJsonl)
@@ -3880,9 +4090,9 @@ describe("trace", () => {
     const log = new EventLog(run.id);
     const jsonl = [
       log.emit("run.created", { goal: run.goal }, { sessionId: "s1" }),
-      log.emit("tool.requested", { toolName: "read_file" }),
-      log.emit("tool.started", { toolName: "read_file" }),
-      log.emit("tool.completed", { toolName: "read_file" }),
+      log.emit("tool.requested", { toolName: "read" }),
+      log.emit("tool.started", { toolName: "read" }),
+      log.emit("tool.completed", { toolName: "read" }),
       log.emit("run.completed", { state: "completed" }),
     ]
       .map(serializeEventJsonl)
@@ -3890,7 +4100,7 @@ describe("trace", () => {
 
     const summary = summarizeTraceJsonl(jsonl);
 
-    expect(summary.toolCalls).toEqual({ read_file: 1 });
+    expect(summary.toolCalls).toEqual({ read: 1 });
   });
 
   it("summarizes shell command failures and verification failures", () => {
@@ -3902,27 +4112,45 @@ describe("trace", () => {
       }),
       log.emit("tool.requested", {
         id: "call_probe",
-        toolName: "shell",
+        toolName: "bash",
         arguments: { command: "python3 --version" },
       }),
       log.emit("tool.completed", {
         toolCallId: "call_probe",
-        toolName: "shell",
+        toolName: "bash",
         status: "completed",
         output: { exitCode: 0, timedOut: false },
       }),
       log.emit("tool.requested", {
         id: "call_verify",
-        toolName: "shell",
+        toolName: "bash",
         arguments: { command: "python3 -m greettool.cli --name Ada" },
       }),
       log.emit("tool.completed", {
         toolCallId: "call_verify",
-        toolName: "shell",
+        toolName: "bash",
         status: "completed",
         output: { exitCode: 1, timedOut: false },
       }),
-      log.emit("run.completed", { state: "completed" }),
+      log.emit("run.completed", {
+        state: "completed",
+        factLedger: commandFactLedger([
+          {
+            toolCallId: "call_probe",
+            command: "python3 --version",
+            exitCode: 0,
+            verificationRelevant: false,
+            sequence: 2,
+          },
+          {
+            toolCallId: "call_verify",
+            command: "python3 -m greettool.cli --name Ada",
+            exitCode: 1,
+            verificationRelevant: true,
+            sequence: 4,
+          },
+        ]),
+      }),
     ]
       .map(serializeEventJsonl)
       .join("");
@@ -3961,8 +4189,8 @@ describe("trace", () => {
       log.emit("approval.requested", {
         id: "approval_shell",
         action: "tool.execute",
-        summary: "Run tool shell",
-        details: { toolName: "shell" },
+        summary: "Run tool bash",
+        details: { toolName: "bash" },
       }),
       log.emit("approval.resolved", {
         approvalId: "approval_shell",
@@ -3983,12 +4211,12 @@ describe("trace", () => {
       }),
       log.emit("tool.requested", {
         id: "call_shell",
-        toolName: "shell",
+        toolName: "bash",
         arguments: { command: "python -m venv .venv" },
       }),
       log.emit("tool.failed", {
         toolCallId: "call_shell",
-        toolName: "shell",
+        toolName: "bash",
         status: "failed",
         error: {
           code: "UNTRACKED_WORKSPACE_MUTATION",
@@ -4128,7 +4356,7 @@ describe("trace", () => {
     const jsonl = [
       log.emit("tool.requested", {
         id: "call_1",
-        toolName: "read_file",
+        toolName: "read",
         arguments: { path: "README.md" },
       }),
       log.emit("tool.completed", {
@@ -4138,7 +4366,7 @@ describe("trace", () => {
       }),
       log.emit("tool.requested", {
         id: "call_2",
-        toolName: "read_file",
+        toolName: "read",
         arguments: { path: "README.md" },
       }),
       log.emit("tool.failed", {
@@ -4243,7 +4471,7 @@ describe("trace", () => {
       }),
       log.emit("tool.requested", {
         id: "call_patch",
-        toolName: "apply_patch",
+        toolName: "edit",
         arguments: { path: "NOTES.md", patch: "@@\n+fixed\n" },
       }),
       log.emit("workspace.write.requested", {
@@ -4360,7 +4588,7 @@ describe("trace", () => {
     const log = new EventLog(run.id);
     const jsonl = [
       log.emit("run.created", { goal: run.goal }),
-      log.emit("tool.failed", { toolName: "read_file", error: "boom" }),
+      log.emit("tool.failed", { toolName: "read", error: "boom" }),
     ]
       .map(serializeEventJsonl)
       .join("");
@@ -4394,7 +4622,7 @@ describe("trace", () => {
       ),
       log.emit(
         "tool.started",
-        { toolCallId: "tool_1", toolName: "read_file" },
+        { toolCallId: "tool_1", toolName: "read" },
         { sessionId: "s1", agentId: "main" },
       ),
       log.emit(
@@ -4430,7 +4658,7 @@ describe("trace", () => {
         expect.objectContaining({
           category: "tool",
           status: "completed",
-          label: "tool read_file",
+          label: "tool read",
         }),
       ]),
     );
@@ -4672,7 +4900,7 @@ describe("trace", () => {
           id: "approval_1",
           runId: run.id,
           action: "tool.execute",
-          summary: "Run tool shell",
+          summary: "Run tool bash",
           details: {},
           createdAt: "2026-06-11T00:00:00.000Z",
           status: "pending",
@@ -4733,6 +4961,7 @@ describe("trace", () => {
       signal: "completed",
       state: "completed",
       stopReason: "final_answer",
+      assessment: CLEAN_ASSESSMENT,
       metadata: {},
     });
 
@@ -4769,7 +4998,7 @@ describe("trace", () => {
     await store.append(
       log.emit("tool.requested", {
         id: "call_escape",
-        toolName: "read_file",
+        toolName: "read",
         arguments: { path: "link.txt" },
       }),
     );
@@ -4777,7 +5006,7 @@ describe("trace", () => {
     await store.append(
       log.emit("tool.failed", {
         toolCallId: "call_escape",
-        toolName: "read_file",
+        toolName: "read",
         status: "failed",
         error: {
           code: "WORKSPACE_PATH_ESCAPED",
@@ -4792,6 +5021,7 @@ describe("trace", () => {
       signal: "completed",
       state: "completed",
       stopReason: "final_answer",
+      assessment: CLEAN_ASSESSMENT,
       metadata: {},
     });
 
@@ -4839,7 +5069,7 @@ describe("trace", () => {
     await store.append(
       log.emit("tool.requested", {
         id: "call_enoent",
-        toolName: "read_file",
+        toolName: "read",
         arguments: { path: "missing.txt" },
       }),
     );
@@ -4847,7 +5077,7 @@ describe("trace", () => {
     await store.append(
       log.emit("tool.failed", {
         toolCallId: "call_enoent",
-        toolName: "read_file",
+        toolName: "read",
         status: "failed",
         error: { code: "ENOENT", message: "ENOENT: no such file" },
       }),
@@ -4859,6 +5089,7 @@ describe("trace", () => {
       signal: "completed",
       state: "completed",
       stopReason: "final_answer",
+      assessment: CLEAN_ASSESSMENT,
       metadata: {},
     });
 
@@ -4913,6 +5144,7 @@ describe("trace", () => {
       signal: "completed",
       state: "completed",
       stopReason: "final_answer",
+      assessment: CLEAN_ASSESSMENT,
       metadata: {},
     });
 
@@ -4977,6 +5209,7 @@ describe("trace", () => {
       signal: "completed",
       state: "completed",
       stopReason: "final_answer",
+      assessment: CLEAN_ASSESSMENT,
       metadata: {},
     });
 
@@ -5025,6 +5258,7 @@ describe("trace", () => {
       signal: "completed",
       state: "completed",
       stopReason: "final_answer",
+      assessment: CLEAN_ASSESSMENT,
       metadata: {},
     });
 
@@ -5069,6 +5303,7 @@ describe("trace", () => {
       signal: "completed",
       state: "completed",
       stopReason: "final_answer",
+      assessment: CLEAN_ASSESSMENT,
       metadata: {},
     });
     const sessionPath = join(root, "session_repair", "session.json");
@@ -5115,7 +5350,7 @@ describe("trace", () => {
     const root = await mkdtemp(join(tmpdir(), "sparkwright-store-"));
     tempDirs.push(root);
     const run = createRunRecord();
-    const store = new FileRunStore(run, { rootDir: root });
+    const store = new FileRunStore(run, sessionStoreOptions(root));
 
     run.state = "completed";
     run.stopReason = "final_answer";
@@ -5125,6 +5360,7 @@ describe("trace", () => {
       state: "completed",
       stopReason: "final_answer",
       message: "done",
+      assessment: CLEAN_ASSESSMENT,
       metadata: {
         message: "done",
       },
@@ -5155,7 +5391,7 @@ describe("trace", () => {
     tempDirs.push(root);
     const run = createRunRecord();
     const log = new EventLog(run.id);
-    const store = new FileRunStore(run, { rootDir: root });
+    const store = new FileRunStore(run, sessionStoreOptions(root));
     const artifactId = createArtifactId();
 
     store.append(
@@ -5189,7 +5425,7 @@ describe("trace", () => {
     tempDirs.push(root);
     const run = createRunRecord();
     const log = new EventLog(run.id);
-    const store = new FileRunStore(run, { rootDir: root });
+    const store = new FileRunStore(run, sessionStoreOptions(root));
 
     expect(() =>
       store.append(
@@ -5210,7 +5446,7 @@ describe("trace", () => {
     tempDirs.push(root);
     const run = createRunRecord();
     const log = new EventLog(run.id);
-    const store = new FileRunStore(run, { rootDir: root });
+    const store = new FileRunStore(run, sessionStoreOptions(root));
     const artifactId = createArtifactId();
 
     store.append(
@@ -5332,7 +5568,7 @@ describe("trace", () => {
     const run = createRunRecord();
     const log = new EventLog(run.id);
     const store = new FileRunStore(run, {
-      rootDir: root,
+      ...sessionStoreOptions(root),
       traceLevel: "standard",
       redact: false,
     });
@@ -5508,7 +5744,7 @@ describe("trace", () => {
     const run = createRunRecord();
     const log = new EventLog(run.id);
     const store = new FileRunStore(run, {
-      rootDir: root,
+      ...sessionStoreOptions(root),
       traceLevel: "debug",
       redactor(event) {
         return {
@@ -5537,7 +5773,7 @@ describe("trace", () => {
     const run = createRunRecord();
     const log = new EventLog(run.id);
     const store = new FileRunStore(run, {
-      rootDir: root,
+      ...sessionStoreOptions(root),
       traceLevel: "debug",
     });
 
@@ -5576,7 +5812,7 @@ describe("trace", () => {
     tempDirs.push(root);
     const run = createRunRecord();
     const log = new EventLog(run.id);
-    const store = new FileRunStore(run, { rootDir: root });
+    const store = new FileRunStore(run, sessionStoreOptions(root));
 
     store.append(
       log.emit("usage.updated", {
@@ -5612,7 +5848,7 @@ describe("trace", () => {
     const run = createRunRecord();
     const log = new EventLog(run.id);
     const store = new FileRunStore(run, {
-      rootDir: root,
+      ...sessionStoreOptions(root),
       traceLevel: "debug",
     });
 
@@ -5699,6 +5935,7 @@ describe("trace", () => {
       state: "completed",
       stopReason: "final_answer",
       message: "done",
+      assessment: CLEAN_ASSESSMENT,
       metadata: {},
     });
 
@@ -5750,6 +5987,7 @@ describe("trace", () => {
       state: "completed",
       stopReason: "final_answer",
       message: "ok",
+      assessment: CLEAN_ASSESSMENT,
       metadata: {},
     });
 
@@ -5822,7 +6060,7 @@ describe("trace", () => {
     tempDirs.push(root);
     const run = createRunRecord();
     const log = new EventLog(run.id);
-    const store = new FileRunStore(run, { rootDir: root });
+    const store = new FileRunStore(run, sessionStoreOptions(root));
 
     store.append(log.emit("run.created", { goal: run.goal }));
     store.append(log.emit("run.started", {}));

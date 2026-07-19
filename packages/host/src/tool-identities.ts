@@ -3,7 +3,6 @@ import type { HostToolCatalogSource } from "./tool-catalog.js";
 
 export interface BuiltinToolIdentity {
   canonicalName: string;
-  legacyNames?: readonly string[];
   defaultExposureTier: ToolExposureTier;
   relatedTools?: readonly string[];
   requiresTool?: readonly string[];
@@ -11,30 +10,26 @@ export interface BuiltinToolIdentity {
 }
 
 const PUBLIC_IDENTITIES: Record<string, BuiltinToolIdentity> = {
-  read_file: {
+  read: {
     canonicalName: "read",
-    legacyNames: ["read_file"],
     defaultExposureTier: "public",
     description:
       "Read a UTF-8 text file from the workspace. Returns a paginated line window; pass `offset` to continue. Use `glob` first when you need to discover files from a pattern.",
   },
-  write_file: {
+  write: {
     canonicalName: "write",
-    legacyNames: ["write_file"],
     defaultExposureTier: "public",
     description:
       "Create or replace a UTF-8 text file in the workspace. Creates missing parent directories and reports whether content changed.",
   },
-  apply_patch: {
+  edit: {
     canonicalName: "edit",
-    legacyNames: ["apply_patch"],
     defaultExposureTier: "public",
     description:
       "Edit one workspace file by applying a unified diff patch. File headers are optional; include hunks for the exact changes.",
   },
-  shell: {
+  bash: {
     canonicalName: "bash",
-    legacyNames: ["shell"],
     defaultExposureTier: "public",
     description:
       "Run a Bash command after safety classification and policy approval. Use workspace file tools for reads and edits; reserve commands for verification, builds, tests, git, and scripts.",
@@ -52,7 +47,7 @@ const PUBLIC_IDENTITIES: Record<string, BuiltinToolIdentity> = {
 const ADVANCED_BY_NAME: Record<string, BuiltinToolIdentity> = {
   list_dir: {
     canonicalName: "list_dir",
-    defaultExposureTier: "legacy",
+    defaultExposureTier: "advanced",
     relatedTools: ["glob"],
   },
   read_anchored_text: {
@@ -125,25 +120,13 @@ const INFRASTRUCTURE_BY_NAME: Record<string, BuiltinToolIdentity> = {
   },
 };
 
-const CANONICAL_BY_LEGACY = new Map<string, string>();
-for (const identity of Object.values(PUBLIC_IDENTITIES)) {
-  for (const legacy of identity.legacyNames ?? []) {
-    CANONICAL_BY_LEGACY.set(legacy, identity.canonicalName);
-  }
-}
-
-export function canonicalToolName(name: string): string {
-  return CANONICAL_BY_LEGACY.get(name) ?? name;
-}
-
 export function normalizeToolNameList(
   names: readonly string[] | undefined,
 ): string[] | undefined {
   if (names === undefined) return undefined;
   const out: string[] = [];
   for (const name of names) {
-    const canonical = canonicalToolName(name);
-    if (!out.includes(canonical)) out.push(canonical);
+    if (!out.includes(name)) out.push(name);
   }
   return out;
 }
@@ -158,9 +141,6 @@ export function applyBuiltinToolIdentity<T extends ToolDefinition>(
     ...tool,
     name: identity.canonicalName,
     canonicalName: identity.canonicalName,
-    legacyNames: identity.legacyNames
-      ? [...identity.legacyNames]
-      : tool.legacyNames,
     defaultExposureTier: identity.defaultExposureTier,
     relatedTools: identity.relatedTools
       ? [...identity.relatedTools]
@@ -173,10 +153,7 @@ export function applyBuiltinToolIdentity<T extends ToolDefinition>(
 }
 
 export function shouldDeferToolByDefault(tool: ToolDefinition): boolean {
-  return (
-    tool.defaultExposureTier === "advanced" ||
-    tool.defaultExposureTier === "legacy"
-  );
+  return tool.defaultExposureTier === "advanced";
 }
 
 export function identityForTool(
@@ -204,5 +181,5 @@ export function identityForTool(
 }
 
 export const DEFAULT_ADVANCED_TOOL_NAMES = Object.freeze([
-  ...Object.keys(ADVANCED_BY_NAME).map(canonicalToolName),
+  ...Object.keys(ADVANCED_BY_NAME),
 ]);

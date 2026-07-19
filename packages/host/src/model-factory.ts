@@ -74,7 +74,7 @@ export async function createModel(
   const modelSource = input.modelRef
     ? ({ layer: "request" } as const)
     : (sourceRef(loaded.sources.model) ?? ({ layer: "default" } as const));
-  const targetPath = input.targetPath ?? "README.md";
+  const targetPath = input.targetPath;
 
   if (ref === DETERMINISTIC_PROVIDER) {
     return {
@@ -249,7 +249,7 @@ export async function inspectResolvedModelConfig(input: {
 }
 
 /** Two-turn deterministic model used for protocol smoke tests and TUI demos. */
-function createDemoModel(goal: string, targetPath: string): ModelAdapter {
+function createDemoModel(goal: string, targetPath?: string): ModelAdapter {
   const turnsByRun = new Map<string, number>();
   return {
     id: DETERMINISTIC_PROVIDER,
@@ -259,6 +259,12 @@ function createDemoModel(goal: string, targetPath: string): ModelAdapter {
       turnsByRun.set(runKey, turn);
       const runGoal = input.run.goal || goal;
       if (turn === 1) {
+        if (!targetPath) {
+          return {
+            message: `Inspecting the workspace for goal: "${runGoal}"`,
+            toolCalls: [{ toolName: "list_dir", arguments: { path: "." } }],
+          };
+        }
         return {
           message: `Inspecting ${targetPath} for goal: "${runGoal}"`,
           toolCalls: [{ toolName: "read", arguments: { path: targetPath } }],

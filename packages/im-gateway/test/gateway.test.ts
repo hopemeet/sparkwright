@@ -188,6 +188,24 @@ describe("ImGateway", () => {
           runId: "run_delivery_retry",
           state: "completed",
           message: "hello",
+          assessment: {
+            schemaVersion: "execution-assessment.v1",
+            health: "clean",
+            issues: [],
+            verification: [],
+            episodeCount: 1,
+            episodes: [
+              {
+                runId: "run_delivery_retry",
+                assessment: {
+                  schemaVersion: "run-assessment.v1",
+                  health: "clean",
+                  issues: [],
+                  verification: [],
+                },
+              },
+            ],
+          },
         },
       };
       adapter.failNextMessage = true;
@@ -284,7 +302,7 @@ describe("ImGateway", () => {
         expiresAt: "2026-07-11T01:00:00.000Z",
       });
       const outbox = new FileWorkflowNotificationOutbox({ rootDir: tmp });
-      outbox.asActorSink().deliver({
+      outbox.deliver({
         source: { kind: "workflow", id: workflowRunId },
         type: "waiting",
         correlationId: "wait-1",
@@ -296,7 +314,7 @@ describe("ImGateway", () => {
           metadata: { generation: 3, status: "waiting" },
         },
       });
-      const notification = (await outbox.asActorInbox().peek())[0]!;
+      const notification = (await outbox.peek())[0]!;
       await gateway.deliverWorkflowNotification({
         binding: bound,
         notification,

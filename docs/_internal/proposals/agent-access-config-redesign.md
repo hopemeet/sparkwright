@@ -32,12 +32,12 @@ selector/toolset compilation vocabulary: the names users write in toolsets, the
 no-alias selector grammar, and how those selectors expand into concrete tool
 visibility.
 
-Built-in tool identity is a separate layer. Canonical tool names, legacy tool
-aliases, and default exposure tiers are sourced from
+Built-in tool identity is a separate layer. Canonical tool names and default
+exposure tiers are sourced from
 `packages/host/src/tool-identities.ts` and recorded in
 [`builtin-tool-surface-consolidation.md`](builtin-tool-surface-consolidation.md).
 This proposal may reference that layer when explaining examples, but it must not
-redefine the alias or tier table.
+redefine the identity or tier table.
 
 The product default public/advanced/infrastructure surface is also owned by
 [`builtin-tool-surface-consolidation.md`](builtin-tool-surface-consolidation.md).
@@ -91,15 +91,13 @@ own which built-in tools are public by default.
 
 ## Capability Selectors
 
-Selectors are the single toolset compilation vocabulary. There are no broad
-aliases at this layer. Legacy built-in tool aliases such as `read_file` ->
-`read` are tool-identity facts, not selector syntax; see the consolidation
-ownership boundary above.
+Selectors are the single toolset compilation vocabulary. There are no aliases
+at this layer; unknown values fail validation.
 
 ```txt
 workspace.read
 workspace.write
-shell
+bash
 planning
 skills.load
 skills.manage
@@ -116,7 +114,7 @@ Semantics:
 - `workspace.read` / `workspace.write`: read and write tools over the project
   workspace. Visibility only; `policy.write` and access mode still govern
   whether writes are actually allowed.
-- `shell`: run shell/command tools.
+- `bash`: run shell/command tools.
 - `planning`: the todo/plan tools (plan drafting and todo-ledger updates). It
   does not by itself change `permissionMode`; the `read-only` access mode
   controls plan-mode behavior.
@@ -190,7 +188,7 @@ A toolset is always an explicit selector allowlist. There is no `inherit`, no
 toolset:
   - workspace.read
   - workspace.write
-  - shell
+  - bash
   - skills.load
 ```
 
@@ -218,7 +216,7 @@ omits `toolset`. It is **not** a hard ceiling intersected against the definition
 Even a reviewed definition file cannot cross the child-safe hard cap. This is an
 internal compiler cap, not user config:
 
-- `spawned`: hard-capped to `workspace.read`, `workspace.write`, `shell`,
+- `spawned`: hard-capped to `workspace.read`, `workspace.write`, `bash`,
   `skills.load`. The model cannot expand a spawned agent beyond this at runtime;
   `spawn_agent` arguments may only narrow.
 - `configured`: may self-grant any selector **except** `agents.manage` and
@@ -275,7 +273,7 @@ capabilities:
       toolset:
         - workspace.read
         - workspace.write
-        - shell
+        - bash
         - skills.load
 
     configured:
@@ -284,7 +282,7 @@ capabilities:
       toolset:
         - workspace.read
         - workspace.write
-        - shell
+        - bash
         - skills.load
         - planning
 ```
@@ -304,7 +302,7 @@ default main-agent surface; set it only to narrow the surface. Do not include
 #   use:
 #     - workspace.read
 #     - workspace.write
-#     - shell
+#     - bash
 #     - planning
 #     - skills.load
 #     - agents.delegate
@@ -332,7 +330,7 @@ capabilities:
       toolset:
         - workspace.read
         - workspace.write
-        - shell
+        - bash
         - skills.load
 
     configured:
@@ -342,7 +340,7 @@ capabilities:
       toolset:
         - workspace.read
         - workspace.write
-        - shell
+        - bash
         - skills.load
         - planning
 ```
@@ -428,7 +426,7 @@ advanced bindings in commented form.
 - `workspace.write` access does not imply unlimited writes. `policy.write` still
   controls target scope, file count, diff budget, and deletion behavior.
 - Spawned agents are hard-capped to `workspace.read`, `workspace.write`,
-  `shell`, `skills.load`. `spawn_agent` arguments may only narrow this; they
+  `bash`, `skills.load`. `spawn_agent` arguments may only narrow this; they
   cannot add a selector.
 - Configured agent definition files may self-declare authority up to the
   child-safe hard cap. A requested selector above that cap is a config error with
@@ -514,7 +512,7 @@ schema contract; it keeps the redesign grounded while the proposal is refined.
 ### Accepted Product Constraints
 
 - `spawned` agents are useful development agents by default (`workspace.read`,
-  `workspace.write`, `shell`, `skills.load`) but hard-capped to that set.
+  `workspace.write`, `bash`, `skills.load`) but hard-capped to that set.
 - `configured` agents default to a useful set and may self-declare more in their
   definition file, up to the child-safe cap. They are not capped by an
   intersected class ceiling.
@@ -595,7 +593,7 @@ user selector.
 Hard caps:
 
 - `main`: full configured runtime surface after global tool config.
-- `spawned`: capped to `workspace.read`, `workspace.write`, `shell`,
+- `spawned`: capped to `workspace.read`, `workspace.write`, `bash`,
   `skills.load`. `spawn_agent` arguments may only narrow.
 - `configured`: any selector except `agents.manage` and `mcp` / `mcp:<server>`,
   which are config errors until their infrastructure exists.

@@ -116,6 +116,18 @@ export function safelyRepeatedCallGuidance(
   }
 }
 
+export function safelyManagesRepeatedCalls(
+  tool: ToolDefinition | undefined,
+  args: unknown,
+): boolean {
+  if (!tool?.managesRepeatedCalls) return false;
+  try {
+    return tool.managesRepeatedCalls(args) === true;
+  } catch {
+    return false;
+  }
+}
+
 export function toolFailureContext(result: ToolResult): {
   category: ToolFailureCategory;
   expectedDenial?: boolean;
@@ -214,7 +226,7 @@ function isPathLikeSemanticTarget(key: string): boolean {
 }
 
 function isShellToolName(toolName: string): boolean {
-  return toolName === "bash" || toolName === "shell";
+  return toolName === "bash";
 }
 
 export function isIdempotentNoopToolResult(result: ToolResult): boolean {

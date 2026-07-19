@@ -99,7 +99,8 @@ export interface ShellBackgroundHandoffRequest {
 /**
  * Outcome of {@link ShellToolOptions.onBackground}. `taskId` is opaque to the
  * shell tool — the host is responsible for routing follow-up monitoring
- * (e.g. wiring it to a TaskManager so the agent can call `task_output`).
+ * (e.g. wiring it to a TaskManager so the agent can call
+ * `task(action="output")`).
  *
  * @public
  * @stability experimental v0.1
@@ -130,13 +131,6 @@ export type ActiveShellBackgroundTaskLookup = (input: {
 export type ShellBackgroundHandoffHandler = (
   request: ShellBackgroundHandoffRequest,
 ) => ShellBackgroundHandoffResult | Promise<ShellBackgroundHandoffResult>;
-
-/** @deprecated Use {@link ShellBackgroundHandoffRequest}. */
-export type ShellPromotionRequest = ShellBackgroundHandoffRequest;
-/** @deprecated Use {@link ShellBackgroundHandoffResult}. */
-export type ShellPromotionResult = ShellBackgroundHandoffResult;
-/** @deprecated Use {@link ShellBackgroundHandoffHandler}. */
-export type ShellPromotionHandler = ShellBackgroundHandoffHandler;
 
 /**
  * Options accepted by {@link createShellTool}.
@@ -169,9 +163,7 @@ export interface ShellToolOptions {
    * live process (typically by registering it with
    * `@sparkwright/agent-runtime`'s `TaskManager`) and returns a `taskId`.
    */
-  onBackground?: ShellBackgroundHandoffHandler;
-  /** @deprecated Use `onBackground`. */
-  onPromote?: ShellPromotionHandler;
+  onBackground: ShellBackgroundHandoffHandler;
   /**
    * Optional host lookup used after policy/approval but before process spawn to
    * collapse an explicit background request onto equivalent active work.
@@ -190,7 +182,7 @@ export interface ShellToolOptions {
   /** Additional trusted filesystem roots for cwd and absolute path arguments. */
   allowedRoots?: readonly string[];
   /**
-   * Override the registered tool name (defaults to `"shell"`).
+   * Override the registered tool name (defaults to `"bash"`).
    */
   name?: string;
   /**
@@ -321,7 +313,7 @@ export interface ShellToolSandboxOutput {
   enforced?: boolean;
 }
 
-const DEFAULT_NAME = "shell";
+const DEFAULT_NAME = "bash";
 const DEFAULT_DESCRIPTION =
   "Execute a shell command after safety classification and policy approval. " +
   "Pass background:true to launch it directly as a non-blocking background task " +
@@ -363,7 +355,7 @@ export function createShellTool(
   options: ShellToolOptions,
 ): ToolDefinition<ShellToolInput, ShellToolOutput> {
   validateShellToolOptions(options);
-  const onBackground = options.onBackground ?? options.onPromote!;
+  const onBackground = options.onBackground;
   return defineTool<ShellToolInput, ShellToolOutput>({
     name: options.name ?? DEFAULT_NAME,
     description: options.description ?? DEFAULT_DESCRIPTION,
@@ -709,12 +701,9 @@ function validateShellToolOptions(options: ShellToolOptions): void {
       `@sparkwright/shell-tool: \`foregroundTimeoutMs\` must be <= ${MAX_FOREGROUND_TIMEOUT_MS}.`,
     );
   }
-  if (
-    typeof options.onBackground !== "function" &&
-    typeof options.onPromote !== "function"
-  ) {
+  if (typeof options.onBackground !== "function") {
     throw new Error(
-      "@sparkwright/shell-tool: `onBackground` is required. Wire it to your TaskManager so background and timed-out shells can continue as tasks (`onPromote` remains a deprecated alias).",
+      "@sparkwright/shell-tool: `onBackground` is required. Wire it to your TaskManager so background and timed-out shells can continue as tasks.",
     );
   }
 }

@@ -60,8 +60,8 @@ read them for the shape and rationale of a planned or completed change, then
 follow the active maps below for the current contract.
 
 - [designs/multi-agent-supervision.md](designs/multi-agent-supervision.md) —
-  Active staged refactor for converging Agent invocation identity, lifecycle,
-  resource admission, and adapter ownership without adding a generic actor bus.
+  Implemented design history for converged Agent invocation identity,
+  lifecycle, resource admission, and adapter ownership without a generic actor bus.
   Active contracts: [modules/agent-runtime.md](modules/agent-runtime.md),
   [modules/host.md](modules/host.md), and
   [maps/capabilities/agents.md](maps/capabilities/agents.md).
@@ -75,7 +75,7 @@ follow the active maps below for the current contract.
   contract.
 
 - [designs/skill-managed-change-redesign.md](designs/skill-managed-change-redesign.md) —
-  Implementation-ready master design: preserves completed Skill Phase 1/2,
+  Implemented master design history: preserves completed Skill Phase 1/2,
   freezes package identity v2 and external-change safety, requires Workflow
   executable package pinning, limits Agent authoring to validated Markdown,
   defines trace-derived policy-aware stats, and defers Skill identity
@@ -121,11 +121,20 @@ follow the active maps below for the current contract.
   allowlists/budgets, and per-logical model usage keying are deferred out of the
   MVP. Active model construction contract: [modules/host.md](modules/host.md).
 
+## Archived Reviews
+
+Selected closed planning records live in [../reviews/](../reviews/README.md).
+They preserve implementation or closure rationale but are not active routing
+targets. The current archive contains the completed
+[consolidation agenda](../reviews/consolidation-agenda.md) and the closed,
+unsourced [QA convergence stub](../reviews/qa-convergence-plan.md).
+
 ## Touch File -> Read Docs
 
+- `packages/core/src/index.ts`, `packages/core/src/internal.ts`, or `scripts/check-internal-imports.mjs`: [modules/core.md](modules/core.md), [modules/edge-packages.md](modules/edge-packages.md), [modules/host.md](modules/host.md), [modules/agent-runtime.md](modules/agent-runtime.md), [modules/cli.md](modules/cli.md)
 - `packages/core/src/trace.ts`, `packages/core/src/trace-codec.ts`, `packages/core/src/trace-diagnostics.ts`, `packages/core/src/run-health.ts`, `packages/core/src/trace-session-consistency.ts`, or `packages/core/src/trace-store.ts`: [modules/core.md](modules/core.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md), [maps/trace/summary-timeline-verify.md](maps/trace/summary-timeline-verify.md), [maps/session/session-store.md](maps/session/session-store.md)
 - `packages/core/src/context.ts` or `packages/core/src/path-display.ts`: [modules/core.md](modules/core.md), [maps/runtime/context-compaction.md](maps/runtime/context-compaction.md), [maps/trace/summary-timeline-verify.md](maps/trace/summary-timeline-verify.md)
-- `packages/core/src/events.ts` or `packages/core/src/workflow-hooks.ts`: [modules/core.md](modules/core.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md), [maps/trace/summary-timeline-verify.md](maps/trace/summary-timeline-verify.md)
+- `packages/core/src/events.ts`, `packages/core/src/user-hooks.ts`, or `packages/core/src/workflow-hooks.ts`: [modules/core.md](modules/core.md), [modules/host.md](modules/host.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md), [maps/trace/summary-timeline-verify.md](maps/trace/summary-timeline-verify.md)
 - `packages/core/src/environment.ts`: [modules/core.md](modules/core.md), [maps/safety/shell.md](maps/safety/shell.md)
 - `packages/core/src/fact-ledger.ts`, `packages/core/src/fact-classifier.ts`, or `packages/core/src/run-outcome.ts`: [modules/core.md](modules/core.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md), [maps/trace/summary-timeline-verify.md](maps/trace/summary-timeline-verify.md)
 - `packages/core/src/file-atomic.ts`: [modules/core.md](modules/core.md), [modules/agent-runtime.md](modules/agent-runtime.md), [maps/session/session-store.md](maps/session/session-store.md)
@@ -140,7 +149,8 @@ follow the active maps below for the current contract.
 - `packages/host/src/tool-identities.ts`, `packages/host/src/tool-catalog.ts`, `packages/host/src/tool-selectors.ts`, or `packages/host/src/tool-surface.ts`: [modules/host.md](modules/host.md), [modules/coding-tools.md](modules/coding-tools.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md), [maps/capabilities/README.md](maps/capabilities/README.md)
 - `packages/host/src/model-builder.ts` or `packages/host/src/model-factory.ts`: [modules/host.md](modules/host.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/trace/summary-timeline-verify.md](maps/trace/summary-timeline-verify.md), [maps/runtime/context-compaction.md](maps/runtime/context-compaction.md)
 - `packages/host/src/runtime.ts`, `packages/host/src/run-access.ts`, `packages/host/src/run-security-plan.ts`, or `packages/host/src/run-policy.ts`: [modules/host.md](modules/host.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md), [maps/session/resume-replay.md](maps/session/resume-replay.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/capabilities/mcp.md](maps/capabilities/mcp.md), [maps/safety/workspace-writes.md](maps/safety/workspace-writes.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md)
-- `packages/host/src/runtime/*`: [modules/host.md](modules/host.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md), [maps/session/resume-replay.md](maps/session/resume-replay.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/capabilities/mcp.md](maps/capabilities/mcp.md), [maps/safety/workspace-writes.md](maps/safety/workspace-writes.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md)
+- `packages/host/src/runtime/*`, including interaction/control routing in `execution-interaction-operations.ts`, run preparation in `run-preparation-operations.ts`, Agent/Delegate assembly in `agent-runtime-assembly.ts`, Workflow durable ownership in `workflow-runtime-operations.ts`, and live episode ownership in `workflow-episode-runtime.ts`: [modules/host.md](modules/host.md), [modules/agent-runtime.md](modules/agent-runtime.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md), [maps/session/resume-replay.md](maps/session/resume-replay.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/capabilities/agents.md](maps/capabilities/agents.md), [maps/capabilities/mcp.md](maps/capabilities/mcp.md), [maps/safety/approvals.md](maps/safety/approvals.md), [maps/safety/workspace-writes.md](maps/safety/workspace-writes.md), [maps/safety/shell.md](maps/safety/shell.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md)
+- `packages/host/src/session-queries.ts` or `packages/host/src/session-compaction.ts`: [modules/host.md](modules/host.md), [maps/session/session-store.md](maps/session/session-store.md), [maps/session/resume-replay.md](maps/session/resume-replay.md), [maps/runtime/context-compaction.md](maps/runtime/context-compaction.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md)
 - `packages/host/src/host-execution.ts`, `packages/host/src/execution-plan.ts`, or `packages/host/src/execution-resources.ts`: [modules/host.md](modules/host.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/session/session-store.md](maps/session/session-store.md), [maps/safety/workspace-writes.md](maps/safety/workspace-writes.md)
 - `packages/host/src/host-service.ts` or `packages/host/src/workspace-context.ts`: [modules/host.md](modules/host.md), [modules/edge-packages.md](modules/edge-packages.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/session/session-store.md](maps/session/session-store.md), [maps/safety/workspace-writes.md](maps/safety/workspace-writes.md)
 - `packages/host/src/client-input.ts`: [modules/host.md](modules/host.md), [modules/cli.md](modules/cli.md), [modules/tui.md](modules/tui.md), [modules/protocol.md](modules/protocol.md)
@@ -175,11 +185,7 @@ follow the active maps below for the current contract.
 - `packages/project-context/src/index.ts`: [modules/coding-tools.md](modules/coding-tools.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md)
 - `packages/project-commands/src/*`: [modules/edge-packages.md](modules/edge-packages.md), [modules/tui.md](modules/tui.md), [maps/safety/shell.md](maps/safety/shell.md)
 - `packages/skills/src/*` or `packages/host/src/skill-*`: [modules/skills.md](modules/skills.md), [maps/capabilities/skills.md](maps/capabilities/skills.md)
-- `packages/host/src/skill-command-service.ts`, `sparkwright skills create`,
-  TUI `/create skill`, or TUI `/skill-create`:
-  [modules/skills.md](modules/skills.md), [modules/host.md](modules/host.md),
-  [modules/cli.md](modules/cli.md), [modules/tui.md](modules/tui.md),
-  [maps/capabilities/skill-evolution.md](maps/capabilities/skill-evolution.md).
+- `packages/host/src/skill-command-service.ts`, `sparkwright skills create`, or TUI `/create skill`: [modules/skills.md](modules/skills.md), [modules/host.md](modules/host.md), [modules/cli.md](modules/cli.md), [modules/tui.md](modules/tui.md), [maps/capabilities/skill-evolution.md](maps/capabilities/skill-evolution.md)
 - `packages/skills/src/markdown-folder-asset.ts`: [modules/skills.md](modules/skills.md), [modules/host.md](modules/host.md), [maps/capabilities/README.md](maps/capabilities/README.md)
 - `packages/host/src/skill-evolution.ts` or `sparkwright skills proposals|history|restore`: [modules/skills.md](modules/skills.md), [maps/capabilities/skill-evolution.md](maps/capabilities/skill-evolution.md)
 - `packages/mcp-adapter/src/index.ts`: [modules/mcp-adapter.md](modules/mcp-adapter.md), [maps/capabilities/mcp.md](maps/capabilities/mcp.md), [maps/safety/shell.md](maps/safety/shell.md)
@@ -188,6 +194,7 @@ follow the active maps below for the current contract.
 - `packages/core/src/runtime/*`: [modules/core.md](modules/core.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md), [maps/safety/approvals.md](maps/safety/approvals.md)
 - `packages/cron/src/*`: [maps/capabilities/cron.md](maps/capabilities/cron.md), [modules/cli.md](modules/cli.md), [modules/tui.md](modules/tui.md), [modules/host.md](modules/host.md)
 - `packages/agent-runtime/src/*`: [modules/agent-runtime.md](modules/agent-runtime.md), [maps/capabilities/agents.md](maps/capabilities/agents.md), [maps/capabilities/cron.md](maps/capabilities/cron.md)
+- `packages/agent-runtime/src/tasks/notifications.ts`, `packages/agent-runtime/src/tasks/file-notifications.ts`, or `packages/agent-runtime/src/tasks/manager.ts` notification delivery: [modules/agent-runtime.md](modules/agent-runtime.md), [modules/host.md](modules/host.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/capabilities/agents.md](maps/capabilities/agents.md)
 - `packages/agent-runtime/src/workflows/*`: [modules/agent-runtime.md](modules/agent-runtime.md), [modules/protocol.md](modules/protocol.md), [maps/capabilities/README.md](maps/capabilities/README.md)
 - `packages/agent-runtime/src/workflows/store.ts`, `packages/agent-runtime/src/workflows/journal.ts`, or `packages/agent-runtime/src/doc-store/index.ts` workflow persistence changes: [modules/agent-runtime.md](modules/agent-runtime.md), [modules/host.md](modules/host.md), [maps/session/session-store.md](maps/session/session-store.md), [maps/session/resume-replay.md](maps/session/resume-replay.md)
 - `packages/agent-runtime/src/workflows/control.ts`, `packages/agent-runtime/src/workflows/control-processor.ts`, or `workflow.control`: [modules/agent-runtime.md](modules/agent-runtime.md), [modules/host.md](modules/host.md), [modules/protocol.md](modules/protocol.md), [modules/edge-packages.md](modules/edge-packages.md), [maps/session/session-store.md](maps/session/session-store.md), [maps/session/resume-replay.md](maps/session/resume-replay.md)
@@ -210,6 +217,302 @@ TUI events; it is not a trace diagnostic report and must not replace
 trace/session inspection.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: the final HostRuntime composition audit leaves one process facade,
+  one explicit execution envelope, and collaborator wiring. All fresh,
+  checkpoint-resume, and Workflow-resume entrypoints now share the same
+  HostRuntime-owned begin/release path and pass that exact HostExecution into
+  episode execution; the former implicit inner fallback cannot create a second
+  execution entrance.
+- Read: HostRuntime, HostExecution, HostService/lane admission, all extracted
+  Host runtime owners, session owners, protocol routing, and focused tests.
+- Tests: focused composition/Workflow/protocol and final repository gates are
+  recorded with the commit.
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: Host execution interaction/control routing now lives in
+  `ExecutionInteractionOperations`: execution identity and driver handles,
+  atomic message acceptance, approval channel/timeout/resolution, cancellation,
+  disconnect cleanup, and drain. HostRuntime retains the sole current
+  HostExecution slot and lifecycle construction; HostService retains lane
+  admission for start/resume/inject/cancel.
+- Read: HostRuntime, HostExecution, HostService and execution lanes, Core
+  interaction/command acceptance, protocol/approval/run-loop routes, and
+  focused downstream tests.
+- Tests: owner-level and focused/downstream gates are recorded with the commit.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: Host model/config/security, Skill/MCP, Agent/main-catalog, Workflow
+  preparation, Hook/rule, capability snapshot, and run/store metadata assembly
+  now route through `RunPreparationOperations`. HostRuntime retains one narrow
+  interaction-channel factory plus HostExecution/current-execution ownership.
+- Read: run preparation owner, HostRuntime/HostExecution, existing Agent,
+  Workflow, capability and Task owners, routed runtime/capability/session/
+  safety/trace maps, and focused tests.
+- Tests: owner-level and focused/downstream gates are recorded with the commit.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: Host Agent/Delegate runtime assembly now lives in
+  `AgentRuntimeAssembly`: configured profile resolution, delegate routing and
+  direct/indexed/parallel surfaces, dynamic spawn, child model/hook/tool/policy
+  preparation, promotion, workspace grants, result normalization, and the
+  execution-scoped background Agent task runner. `HostRuntime` retains generic
+  run preparation, capability inspection, main catalog admission, and the
+  single parent-run/HostExecution envelope.
+- Read: Host runtime and Agent assembly owner, portable Agent Runtime contracts,
+  tool/delegate/workspace/trace maps, active multi-agent design history, and
+  focused tests.
+- Tests: owner-level 1/1, focused Host Agent/Delegate 359/359, and focused Agent
+  Runtime 77/77 passed; final repository gates are recorded with the commit.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: Host Workflow live episode ownership now lives in
+  `WorkflowEpisodeRuntime`: pinned projection preparation, waiting-input
+  consumption, node model/tool/budget planning, fresh/checkpoint/workflow
+  resume Core run construction, actor episode chaining, live control pumping,
+  usage persistence, and terminal completion. HostRuntime retains generic run
+  environment preparation and passes the single HostExecution instance.
+- Read: HostRuntime, Workflow episode/durable owners, HostExecution, Workflow
+  projection/assets, Core run construction, Agent Runtime actor supervision,
+  routed maps and focused tests.
+- Tests: owner-level and focused Host Workflow suites passed; final repository
+  gates are recorded with the commit.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: Host Workflow durable control-plane ownership now lives in
+  `WorkflowRuntimeOperations`: canonical roots/store lookup and list
+  projection, actor notifications, durable command processing, resume claims,
+  terminal finalization, and record mutation/projection helpers. HostRuntime
+  retains the live execution envelope and episode construction only.
+- Read: Host/WorkspaceContext/HostExecution, Agent Runtime workflow journal,
+  control and notification ports, Server Runtime dispatcher/service routes,
+  protocol contracts, current Workflow design history, routed maps and tests.
+- Tests: owner-level and focused Host Workflow suites passed; cross-package and
+  repository gates are recorded with the commit.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: Host Task runtime ownership now lives in one collaborator for protocol
+  queries/control, bounded output reads, actor revival, resume-time orphan
+  failure, and the canonical workspace Task root. `HostRuntime` keeps only thin
+  protocol/run-assembly delegation; WorkspaceContext still owns the durable
+  manager, store, and outbox.
+- Read: Host concrete runtime, Task operations/projections, WorkspaceContext,
+  Agent Runtime Task/actor contracts, routed runtime/capability/session/trace
+  maps, and test routes. MCP, workspace-write, capability payload, and raw
+  event contracts require no change.
+- Tests: Host Task revival/service/protocol focused suites and Host typecheck
+  passed; final repository gates are recorded with the commit.
+
+- Status: Verified
+- Date: 2026-07-18T08:08:47+0800
+- Scope: made configured Skill roots canonical across loading, Host security
+  planning, doctor/reporting, statistics caches, CLI/TUI projections, and
+  evolution documentation. Custom roots remain the strongest read-only
+  override layer; the `legacy` layer reader and diagnostics are gone.
+- Read: Skills root types/loaders, Host root/report/doctor/stats consumers,
+  CLI/TUI tests and current Skill references, plus routed module/capability and
+  test-map pages.
+- Tests: focused Skills 27/27, Host 21/21, CLI 4/4, and TUI 13/13 passed;
+  affected package typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: classified completed designs and closed planning records, routed the
+  versioned review archive, and removed stale active/Draft labels and obsolete
+  compatibility claims from the internal maintenance corpus.
+- Read: project-map root and maintenance policy, proposal/review corpus,
+  affected design entries, current Host/Agent/config ownership, and git history.
+- Tests: Markdown links, formatting, project-map drift, and the full release
+  gate passed.
+
+- Status: Verified
+- Date: 2026-07-17T23:37:17+0800
+- Scope: public compatibility surfaces are canonical-only: Core reference
+  implementations are exported exclusively from `@sparkwright/core/internal`,
+  TraceSink uses `append`, Provider Registry exposes only
+  `createProviderFallbackChain`, and TUI Skill creation enters through
+  `/create skill` without `/skill-create`.
+- Read: Core public/internal barrels and consumers, internal-import governance,
+  Provider Registry, TUI command/layer/action flow, Skill references, and
+  routed module/test-map pages.
+- Tests: focused Core/Provider/Agent Runtime/Project Context/Streaming Runtime/
+  Cron/Perfetto/CLI/TUI suites and affected package typechecks passed; final
+  repository gates recorded in the commit verification.
+
+- Status: Verified
+- Date: 2026-07-17T13:00:00+0800
+- Scope: tool/capability semantics are single-source: exposure tiers are
+  public/advanced/infrastructure/internal with `list_dir` canonical advanced;
+  delegate snapshots expose only the required current-run approval fact; replay
+  risk is derived only from governance idempotency.
+- Read: Core tool/run contracts, Host catalog/delegate/capability assembly,
+  protocol/schema/fixtures, CLI/TUI capability consumers, MCP/Cron/Agent tool
+  definitions, public references, and routed project/test-map pages.
+- Tests: Core replay 2/2; Host tools 88/88 and capability/delegate protocol
+  14/14; CLI capability 3/3; TUI capability 8/8; MCP adapter 34/34; Cron 20/20;
+  affected package typechecks.
+
+- Status: Verified
+- Date: 2026-07-17T11:02:45+0800
+- Scope: model-facing runtime DTOs are single-shape: Task scheduling accepts
+  only `mode`, Todo writes accept only `title`/`status`/optional `priority`, and
+  Core interaction is approval-only. Durable Task state and rich internal Todo
+  ledger fields remain intact.
+- Read: Agent Runtime Task/Todo maps and sources, Core interaction/run surface,
+  Host/CLI/Streaming Runtime approval adapters, TUI Todo projection, public
+  references, and relevant test-map coverage/routes.
+- Tests: Agent Runtime Task/Todo 99/99; Core interaction/approval 18/18;
+  Host task/approval 12/12; CLI approval 4/4; TUI Todo 11/11; affected package
+  typechecks; schema/test typechecks; project-map drift; full release gate.
+
+- Status: Verified
+- Date: 2026-07-17T09:43:00+0800
+- Scope: external configuration now has one canonical input shape: identity,
+  policy, run, and UI-owned fields are grouped-only; active root fields remain
+  workspace, shell foreground timing, tools, tasks, and capabilities. Removed
+  root aliases, shell.sandbox, grouped-vs-flat conflicts, and the TUI second
+  parser are gone.
+- Read: Host schema/contracts/loader, CLI init/writers/doctor/real-regression
+  helpers, TUI config projection, generated schema and fixtures, public config
+  references, and routed project/test-map pages.
+- Tests: Host config/protocol 115/115; CLI config schema 6/6 and full 155/155;
+  TUI config/capability/status consumers 17/17; Agent Runtime, Host, CLI, and
+  TUI typechecks; repository test typecheck; schema check; project-map drift;
+  full release gate including regression matrix and install smokes.
+
+- Status: Verified
+- Date: 2026-07-17T08:25:00+0800
+- Scope: ACP and external-command delegate tool results identify their
+  configured profile only through canonical `agentProfileId`. Removed the
+  duplicate top-level `agentId` result field and the same alias from external
+  nonzero-exit error metadata.
+- Read: Host ACP/external-command adapters and result types, direct delegate
+  runner, Host/CLI/TUI result and lifecycle consumers, Core trace projections,
+  public process-delegate references, and focused tests.
+- Checked with no contract update needed: parent-visible lifecycle metadata
+  retains parent/trace actor `agentId`, `childAgentId`, and `agentProfileId`;
+  child run/session identity, Agent Runtime lifecycle, protocol wire shapes,
+  raw trace envelopes, workspace access, and Shell sandboxing are unchanged.
+- Tests: Host ACP/external-command 30/30 and delegate protocol 8/8; CLI direct
+  delegate 1/1; Core trace 4/4; Host and repository test typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-17T01:07:28+0800
+- Scope: external-command delegate results expose only canonical per-stream
+  `stdoutTruncated` and `stderrTruncated` facts. Removed the aggregate
+  `outputTruncated` compatibility field from the tool result, terminal
+  `subagent.completed` payload, result type, and tests.
+- Read: Host external-command adapter and direct delegate runner, Core process
+  output and trace consumers, CLI direct-run serializer, Agent capability and
+  test maps, public process-output references, and focused tests.
+- Checked with no contract update needed: Agent Runtime lifecycle, workspace
+  access and Shell sandboxing, and ShellTool's independent artifact-aware
+  `outputTruncated` field.
+- Tests: Host external-command 20/20 and delegate protocol 8/8; CLI direct
+  delegate 1/1; Core subagent/delegate trace 4/4; Host build/typecheck and
+  repository test typecheck; project-map drift; full release gate passed.
+
+- Status: Verified
+- Date: 2026-07-17T00:08:26+0800
+- Scope: Agent direct delegate exposure now has one configuration path:
+  `exposure`, `pinnedDelegates`, and per-profile `exposeAsDelegate`. Removed the
+  old global boolean reader, resolver/filter branches, CLI preservation, and
+  generated schema property.
+- Read: Host, CLI, Agent Runtime, Agent/capability maps, public Agent guidance,
+  config schema, and focused tests.
+- Checked with no contract update needed: provider/model resolution,
+  workspace-write approval, Shell protection, trace/session envelopes, and TUI
+  capability rendering.
+- Tests: Host Agent/config/tools 184/184; focused Host protocol 4/4; CLI
+  Agent/delegate/capability 9/9; Agent Runtime, Host, and CLI typechecks;
+  repository test typecheck; schema check; project-map drift; full release gate.
+
+- Status: Verified
+- Date: 2026-07-16T23:55:17+0800
+- Scope: model-facing Markdown Agent authoring has one explicit inheritance
+  marker, `model: "inherit"`; the `model: "default"` compatibility reader and
+  schema branch were removed. Config/runtime model defaults are unchanged.
+- Read: Host `create_agent` schema/parser, Agent discovery validation, current
+  Agent/capability/tool maps, public guidance/manual, and focused tests.
+- Checked with no contract update needed: provider construction, configured
+  Agent `spawnModel`/`delegateModel`, policy/approval, trace, and session paths.
+- Tests: Host Agent profile/tools 125/125; Host capability protocol 5/5; CLI
+  Agent/capability routes 7/7; Host and CLI typechecks; repository test
+  typecheck; project-map drift; full release gate.
+
+- Status: Verified
+- Date: 2026-07-16T23:38:00+0800
+- Scope: Markdown Agent identity is filename-only. Host no longer reads a
+  frontmatter `id` override or the hidden model-tool `id` argument; config
+  profile ids remain the canonical configured-profile route.
+- Read: Host Agent profile discovery/authoring, Agent Runtime profile carrier,
+  Agent capability docs, collision/report consumers, and focused tests.
+- Checked with no contract update needed: workspace-write approval, Shell
+  capability protection, raw trace collision events, protocol payloads, and
+  config profile identity are unchanged.
+- Tests: Host Agent profile/tools 125/125; focused Host protocol collision 1/1;
+  CLI Agent/capability routes 7/7; Host, Agent Runtime, and CLI typechecks;
+  repository test typecheck; project-map drift; full release gate.
+
+- Status: Verified
+- Date: 2026-07-16T23:05:00+0800
+- Scope: Task and Workflow notification producers/consumers now use the
+  canonical `ActorNotificationSink` / `ActorInbox` interfaces directly; the
+  task-specific sink, duplicate queue view, adapter accessors, and legacy task
+  notification durable shape were removed.
+- Read: Agent Runtime notification implementations/manager/tests, Host revival
+  and projection, workflow channel consumers, examples/reference docs, and
+  routed runtime/Agent/Cron maps.
+- Checked with no contract update needed: Core `NotificationSource`, protocol,
+  trace, Cron scheduling, workflow record/control persistence, and external
+  transport semantics are unchanged.
+- Tests: Agent Runtime task/workflow 90/90; Host task/workflow/protocol/Agent 122/122;
+  server-runtime 3/3; IM gateway 6/6; repository test typecheck; full release
+  gate.
+
+- Status: Verified
+- Date: 2026-07-16T22:26:54+0800
+- Scope: Workflow durable persistence is journal-only; record/event sidecar
+  readers, mirror writers, and lazy import were removed while Host/CLI/TUI
+  list, get, resume, and event consumers continue through `FileWorkflowStore`.
+- Read: Agent Runtime workflow store/journal/tests; Host, CLI, TUI,
+  server-runtime, protocol, current persistence docs, and workflow test maps.
+- Tests: Agent Runtime workflow focused suite/typecheck; Host workflow/protocol
+  focused suites/typecheck; repository test typecheck; project-map drift; full
+  release gate.
+
+- Status: Verified
+- Date: 2026-07-16
+- Scope: Host protocol 2.0 removed `run.failed.error` across producer, schema,
+  protocol helpers, SDK, CLI, TUI, ACP, IM Gateway, fixtures, and reference docs;
+  `failure` is the only terminal failure envelope.
+
+- Status: Verified
+- Date: 2026-07-16
+- Scope: built-in model-facing tools now have one exact callable/configuration
+  identity (`read`, `write`, `edit`, `bash`); the Core alias registry, Host
+  normalization, protocol alias metadata, and old documentation paths were
+  removed together.
+- Read: tool orchestration, Host catalogs/selectors/inspection, coding and shell
+  factories, CLI/TUI consumers, schemas, fixtures, and routed tests.
+
+- Status: Verified
+- Date: 2026-07-16T10:13:52+0800
+- Scope: retired the unused server-runtime compatibility composition stack and
+  misleading durable dispatcher alias, leaving only production execution-lane,
+  in-flight dispatch, and Workflow coordination exports.
+- Read: server-runtime exports/tests/README, all workspace source consumers,
+  edge-package ownership, run-loop/session routing, and package test routes.
+- Tests: server-runtime 23/23 focused tests, all downstream typechecks, and the
+  full `npm run release:check` gate passed.
 
 - Status: Verified
 - Date: 2026-07-16T09:29:05+0800
@@ -464,7 +767,7 @@ test/traced-process-runner.test.ts test/external-command-agent.test.ts`;
 - Scope: P3 review follow-up routing update: workflow Step 4b.1 catalog
   narrowing now preserves deferred-tool discovery via scoped `tool_search` over
   the filtered worker catalog, and the workflow PreToolUse fallback compares
-  allowed tools canonically (`read_file` permits worker tool `read`). Routed
+  allowed tools canonically (`read` permits worker tool `read`). Routed
   through host, tool-orchestration, and capability maps; no public
   protocol/schema change.
 - Read: `docs/_internal/proposals/workflow-runtime-v1.md`,
@@ -643,8 +946,8 @@ release:check`.
 - Scope: routed workflow-runtime-v1 P1.5 deletion work: workflow release gate
   removal, implicit verification/documented-command projection compilation,
   delegate child `workflowHooksForProfile` projection assembly, and
-  FactLedger-first verification profile verdicts with old-trace hookName
-  fallback.
+  FactLedger-first verification profile verdicts keyed by explicit
+  `verificationSource`, `profile`, and `verifierId` metadata.
 - Read: `docs/_internal/proposals/workflow-runtime-v1.md`,
   `docs/_internal/proposals/substrate-sequencing.md`,
   `packages/agent-runtime/src/workflows/types.ts`,
@@ -769,9 +1072,9 @@ typecheck`.
 - Status: Verified
 - Date: 2026-07-02T09:30:00+0800
 - Scope: routed the background task lifecycle follow-up across core/host/
-  agent-runtime: independent `maxRevivalTurns`, cleaned `waiting_tasks` race
-  cancellation, detached notification surfacing, and explicit
-  `task_create` mode/awaited conflict rejection. Durable detach/resume remains
+  agent-runtime: independent revival forced-continuation budget, cleaned
+  `waiting_tasks` race cancellation, detached notification surfacing, and
+  `task_create` scheduling validation. Durable detach/resume remains
   proposal-only.
 - Read: `docs/_internal/proposals/background-task-lifecycle.md`,
   `docs/_internal/project-map/modules/core.md`,
@@ -879,7 +1182,7 @@ test/capabilities-panel-render.test.tsx`; typecheck/build for core, host,
 - Status: Verified
 - Date: 2026-06-28T20:30:50+0800
 - Scope: added routing for core approval/policy hot path after fixing
-  read-only access-mode safe read approvals, explicit `read_file` read-only
+  read-only access-mode safe read approvals, explicit `read` read-only
   governance metadata, and real regression canary drift.
 - Read: `docs/_internal/project-map/README.md`,
   `docs/_internal/project-map/modules/core.md`,

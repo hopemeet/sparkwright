@@ -10,7 +10,7 @@ expected denials: 0
 top expected denials: (none)
 tokens: 120
 cost: unavailable (missing_pricing:1)
-tool calls: 1 total (read_file:1)
+tool calls: 1 total (read:1)
 tool failures: 0 total
 unresolved tool failures: 0 total
 recovered tool failures: 0 total

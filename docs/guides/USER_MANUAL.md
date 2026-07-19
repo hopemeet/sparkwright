@@ -27,8 +27,7 @@ npm run build --workspaces
 npm exec sparkwright -- run "inspect this repo and suggest a README improvement" \
   --workspace examples/repo-pilot \
   --target README.md \
-  --write \
-  --yes \
+  --access-mode bypass \
   --trace-level standard \
   --model deterministic
 ```
@@ -36,8 +35,8 @@ npm exec sparkwright -- run "inspect this repo and suggest a README improvement"
 This path selects the deterministic model explicitly, so it works as a repeatable
 smoke test without an external provider.
 
-The run reads from `examples/repo-pilot`, enables workspace writes, resolves
-approval through `--yes` if the model asks to edit, and stores trace data under:
+The run reads from `examples/repo-pilot`, enables trusted non-interactive
+writes through `--access-mode bypass`, and stores trace data under:
 
 ```txt
 examples/repo-pilot/.sparkwright/sessions/<session-id>/
@@ -47,8 +46,8 @@ examples/repo-pilot/.sparkwright/sessions/<session-id>/
 workspace reads to that file; use confidential read policy/configuration when a
 path must not be read.
 
-Omit `--yes` to review the approval prompt yourself. Omit `--write` for a
-read-only smoke test.
+Use `--access-mode ask` to review approval prompts yourself. Omit
+`--access-mode` for a read-only smoke test.
 
 ## CLI Modes
 
@@ -68,7 +67,7 @@ Approval-enabled run:
 npm exec sparkwright -- run "inspect this repo and suggest a README improvement" \
   --workspace examples/repo-pilot \
   --target README.md \
-  --write \
+  --access-mode ask \
   --trace-level debug \
   --model deterministic
 ```
@@ -79,13 +78,12 @@ Non-interactive approval for demos and CI smoke checks:
 npm exec sparkwright -- run "inspect this repo and suggest a README improvement" \
   --workspace examples/repo-pilot \
   --target README.md \
-  --write \
-  --yes \
+  --access-mode bypass \
   --model deterministic
 ```
 
-If `--write` is used without `--yes` in a non-interactive shell, any approval
-request is denied and recorded as `workspace.write.denied` in the trace.
+If `--access-mode ask` is used in a non-interactive shell, any approval request
+is denied and recorded as `workspace.write.denied` in the trace.
 
 ## Provider-Backed Run
 
@@ -236,7 +234,7 @@ only the configured `env` map. Under `inherit`, a sandboxed delegate
 parent env vars (names matching `*_API_KEY`/`*_TOKEN`/`*_SECRET`/`*_PASSWORD`,
 known provider prefixes, etc.) — it still gets `PATH`/`HOME` so the command can
 run, and you can re-supply a specific value through the `env` map. A delegate
-granted `workspaceAccess: "read_write"` (which already requires parent `--write`)
+granted `workspaceAccess: "read_write"` (which already requires a write-capable parent access mode)
 inherits the full environment. `maxStdoutBytes` and `maxStderrBytes` set
 independent capture limits, while `maxOutputBytes` remains a shared fallback.
 `{{workspaceRoot}}` and `cwd` require `"workspaceAccess": "read_write"`;
@@ -255,7 +253,7 @@ sparkwright delegates run delegate_external_cli_reviewer \
   --goal "Inspect README.md and return one concise suggestion." \
   --session-id delegate-debug \
   --trace-level debug \
-  --yes \
+  --access-mode bypass \
   --format text
 ```
 
@@ -264,15 +262,14 @@ internal SparkWright child-agent profiles; use the normal run loop for those.
 Direct delegate runs write a session trace under
 `.sparkwright/sessions/<session-id>/trace.jsonl`.
 
-## Permission Modes
+## Access Modes
 
-Permission modes shape how runs handle risky actions:
+`--access-mode` is the single run-autonomy input:
 
-- `plan`: prefer planning and read-only behavior.
-- `default`: require approval for risky actions.
-- `accept_edits`: accept workspace edits while keeping other gates.
-- `dont_ask`: avoid interactive approval prompts where the host allows it.
-- `bypass_permissions`: host-controlled escape hatch for trusted contexts.
+- `read-only`: no workspace writes; risky actions still require approval.
+- `ask`: enable writes and require approval for risky actions.
+- `accept-edits`: auto-approve managed workspace edits while keeping other gates.
+- `bypass`: auto-approve permitted actions in trusted contexts.
 
 Hosts should choose conservative defaults. Skills, MCP servers, and agent
 profiles never grant authority by themselves; they only make capabilities

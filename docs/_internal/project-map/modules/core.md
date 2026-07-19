@@ -10,9 +10,158 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md),
 [../maps/trace/raw-trace.md](../maps/trace/raw-trace.md), and
 [../maps/session/session-store.md](../maps/session/session-store.md).
 
+## Last Verified
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: session consistency now classifies unresolved tool outcomes per
+  `runId` and excludes only `TOOL_ABORTED` owned by one unambiguous cancelled
+  terminal. Sole `run.cancelled`, legacy cancelled `run.completed`, and their
+  compatible pair are accepted; conflicting terminals and workspace escapes
+  remain diagnostic findings.
+- Read: session-consistency projection, run-outcome classifier, terminal event
+  compatibility, trace tests, and two retained real cancellation sessions.
+- Tests: Core trace/session consistency 140/140; both retained real sessions
+  now return no findings.
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: formal shell verification now comes only from explicit command shape
+  or structured verifier provenance; goal prose is not runtime authority. Core
+  also exports the existing resumable-run-failure predicate so Host execution
+  aggregation and offline trace report share it. Trace report suppresses only
+  a resumable failure superseded by a later episode terminal for the same
+  durable Workflow.
+- Read: FactLedger/classifier, run assessment, trace diagnostics, Host execution
+  aggregation, CLI consumers, and retained real Workflow trace.
+- Tests: Core 641/641; retained three-episode trace reports
+  `passed_with_issues` without `TRACE_ERRORS`.
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: the repeated-call guard now has one argument-aware tool-owned escape
+  hatch for conservative duplicate ledgers. `managesRepeatedCalls(args)` lets
+  Agent delegation reach an existing complete+clean cache; partial, unhealthy,
+  prior-failure, and no-progress repeats remain under Core's guard.
+- Read: ToolDefinition, run-loop repeat classifiers, Agent Runtime ledger,
+  Host indexed/direct/dynamic delegation wrappers, focused and real tests.
+- Tests: Core run 128/128; Host Agent tools/spawn 117/117; real Terra indexed
+  delegation reused one child with `alreadyCompleted:true`.
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: Core now owns the single-run `RunAssessment` projection. Terminal
+  results/events persist bounded health, issue, and verification facts derived
+  from the raw event stream plus the fact ledger; prose claim parsing and the
+  parallel completed-run outcome shape are removed.
+- Read: run/fact-ledger/outcome/assessment sources, trace diagnostics, terminal
+  event assembly, public exports, and focused/full Core tests.
+- Tests: Core 638/638 passed in final repository verification.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: Host Core run/resume construction for Workflow-aware episodes moved
+  into `WorkflowEpisodeRuntime` without changing Core run, checkpoint,
+  interaction, policy, event, usage, or run-store contracts.
+- Read: Core run/checkpoint/session store surfaces and the new Host episode
+  owner plus focused Host tests.
+- Tests: focused Host Workflow/protocol suites passed; Core behavior is covered
+  again by the final repository gate.
+
+- Status: Verified
+- Date: 2026-07-18T09:58:00+0800
+- Scope: `ControlledWorkspace` requires a run-owned `setState` port and no
+  longer mutates `RunRecord` directly; production assembly routes approval
+  transitions through `SparkwrightRun`'s legal state-transition guard.
+- Read: Core workspace/run state ownership, workspace safety map, focused
+  workspace and run tests, and package test routes.
+- Tests: workspace/policy/checkpoint 62/62; run/guardrails 155/155; Core
+  typecheck/build; repository test typecheck; project-map drift; full release
+  verification.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: `bindUserHooks()` has one provenance-aware binding contract. Hosts
+  provide a descriptor resolver, every descriptor/invocation carries a required
+  configuration source, and event streams support canonical replay and live
+  subscription without a minimal-emitter fallback.
+- Read: Core user-hook/event contracts and focused tests, Host configured event
+  hook binding, extension reference, run-loop map, and test routes.
+- Tests: Core user-hook focused tests and Core/Host typechecks passed; repository
+  release verification covers the full downstream surface.
+
+- Status: Verified
+- Date: 2026-07-17T23:37:17+0800
+- Scope: the Core root is limited to stable types, factories, and extension
+  interfaces. Reference classes/helpers live only under `/internal`, and
+  TraceSink/MemoryTrace use the single `append` method.
+- Read: public/internal barrels, trace storage/sink contracts, all workspace
+  imports of implementation symbols, architecture guidance, and import gates.
+- Tests: Core interface/export 4/4; downstream focused suites and affected
+  typechecks passed before repository release verification.
+
+- Status: Verified
+- Date: 2026-07-17T13:00:00+0800
+- Scope: `ToolDefinition.governance.idempotency` is the sole replay-safety
+  declaration. Conditional and non-idempotent tools receive network-failure
+  replay-risk annotations; the parallel `isReplaySafe` hint is removed.
+- Read: Core tool/run definitions and replay tests, Host/MCP/Cron/Agent tool
+  declarations, protocol references, and tool-orchestration map.
+- Tests: Core replay 2/2 and typecheck; affected Host/MCP/Cron typechecks and
+  focused suites passed.
+
+- Status: Verified
+- Date: 2026-07-17T11:02:45+0800
+- Scope: `InteractionChannel` is approval-only; speculative question and
+  notification DTOs/factories plus `RunHandle.askUser()`/`notifyUser()` were
+  removed. Existing approval and interaction audit events remain canonical.
+- Read: Core interaction/run exports and tests, Host/CLI/Streaming Runtime
+  approval adapters, approval map, and current reference docs.
+- Tests: Core interaction/approval 18/18; CLI approval 4/4; Core, CLI,
+  Streaming Runtime, and Cron typechecks; repository test typecheck; schema
+  check; project-map drift; full release gate.
+
+- Status: Verified
+- Date: 2026-07-16T19:05:00+0800
+- Scope: Transcript prompt rehydration uses only canonical session
+  `blobs/<systemRef>.json` storage; the inline `systemHash` reader and optional
+  no-blob restore path were removed.
+- Read: Core trace store/tests, session-store map, raw-trace map, and state/trace
+  reference.
+- Tests: Core trace focused tests and typecheck; test typecheck; npm run
+  release:check; project-map drift check.
+
+- Status: Verified
+- Date: 2026-07-16T18:30:00+0800
+- Scope: Core trace readers require the canonical event envelope and no longer synthesize missing top-level metadata.
+- Read: Core event schema, trace parser/consumers, trace tests, and raw-trace map.
+- Tests: Core trace focused tests; Core typecheck; project-map drift check.
+
+- Status: Verified
+- Date: 2026-07-16T14:10:00+0800
+- Scope: `FileRunStore` is session-only; standalone per-run roots and per-run trace reconstruction were removed, while checkpoint reconstruction reads canonical agent/session aggregate traces.
+- Read: Core trace store/facade, trace and interface tests, session layout reference, and downstream Host/CLI lookup consumers.
+- Tests: Core trace/interfaces focused tests; npm run build; npm run typecheck:test; npm run release:check.
+
+- Date: 2026-07-16T13:36:30+0800
+- Scope: Removed the public `ValidationHook` stage executor and `CreateRunOptions.validationHooks`; `WorkflowHook` is the sole deterministic run-policy surface, while workspace policy/approval enforcement remains intact.
+- Read: core run/workspace/workflow/event sources, focused tests, protocol schema, and current reference documentation.
+- Tests: focused Core/Host/TUI tests; npm run build; npm run typecheck:test; npm run release:check.
+
+- Date: 2026-07-16T13:21:00+0800
+- Scope: Core consolidated outbound interaction behind `InteractionChannel`; resolver compatibility adapters and precedence fallback were removed.
+- Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.
+- Tests: focused access/policy/protocol/CLI/TUI/ACP/Workflow tests; npm run typecheck:test; npm run schema:check.
+
+- Date: 2026-07-16
+- Scope: ToolRegistry now resolves exact names only; hooks, policy, approval,
+  repeat detection, execution, and public events all consume the same callable
+  identity. Delegate hook compilation remains `agentId`-only.
+
 ## Main Files
 
 - `packages/core/src/run.ts`
+- `packages/core/src/interaction.ts`
 - `packages/core/src/runtime/tool-result-analysis.ts` — pure duplicate/repeat/failure/no-op/compaction classifiers
 - `packages/core/src/run-budget.ts`
 - `packages/core/src/context.ts`
@@ -27,15 +176,18 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md),
 - `packages/core/src/path-display.ts`
 - `packages/core/src/session.ts`
 - `packages/core/src/events.ts`
+- `packages/core/src/user-hooks.ts`
 - `packages/core/src/workflow-hooks.ts`
 - `packages/core/src/fact-classifier.ts`
 - `packages/core/src/fact-ledger.ts`
+- `packages/core/src/run-assessment.ts`
 - `packages/core/src/run-outcome.ts`
 - `packages/core/src/policy.ts`
 - `packages/core/src/environment.ts`
 - `packages/core/src/workspace.ts`
 - `packages/core/test/run.test.ts`
 - `packages/core/test/run-budget.test.ts`
+- `packages/core/test/user-hooks.test.ts`
 - `packages/core/test/trace.test.ts`
 - `packages/core/test/session.test.ts`
 
@@ -62,8 +214,19 @@ Does not own:
 
 ## Contracts
 
+- The package root exports stable types, factories, and extension interfaces.
+  `EventLog`, file/in-memory trace stores, concrete workspace/checkpoint
+  classes, default prompt/context implementations, and `SparkwrightRun` are
+  reference implementations exported exclusively from
+  `@sparkwright/core/internal`; repository production imports are explicit and
+  governed.
+- `TraceSink.append(event)` is its sole event-ingest method. `MemoryTrace`
+  implements that method directly and has no `write` alias.
 - Facts enter append-only event streams before derived stores or views.
 - `runId` routes kernel work; `sessionId` groups runs at the edge.
+- `FileRunStore` requires `sessionId` and writes only beneath the session root:
+  aggregate session/agent traces plus per-run state under
+  `agents/<agent-id>/runs/<run-id>/`. There is no standalone per-run root.
 - Run command admission is a single lifecycle-aware operation:
   `tryEnqueueCommand()` either enqueues and emits `run.command.enqueued`, or
   rejects with `terminal`/`closing`. Embedders must not split acceptance into a
@@ -78,12 +241,20 @@ Does not own:
   approval, the run loop uses this bounded summary before falling back to
   `Run tool <name>`. The hook must be pure and must tolerate invalid model
   arguments by throwing or returning undefined.
+- `ToolDefinition.governance.idempotency` is the only replay-safety semantic.
+  Network-class failures on `conditional` / `non_idempotent` tools emit
+  `tool.replay_risk`; `idempotent` or undeclared tools do not.
+- `ToolDefinition.managesRepeatedCalls(args)` is separate from replay safety.
+  It permits a sequential verbatim call to reach a tool-owned conservative
+  cache/retry protocol only when no prior tool failure or explicit no-progress
+  result exists. Throws and false fail closed to the generic repeat guard.
 - `ToolDefinition.validateInput()` is the small runtime-level semantic input
   validation seam. Core calls it after JSON schema validation and before
   `policyForArgs()` / policy / approval. It must validate only, not mutate
   args, write the workspace, create artifacts, or call external networks.
   Failures produce model-visible `tool.failed` observations with
-  `metadata.phase: "validateInput"`.
+  `metadata.phase: "validateInput"`; all tool failure codes live at the
+  canonical `payload.error.code` location.
 - In a read-only run, `createWorkspaceMutationPolicy(false)` denies a
   `tool.execute` resource whose governance omits side-effect classification.
   Missing metadata is not evidence of safety. Approval is reached only after
@@ -99,8 +270,7 @@ Does not own:
   derivative, not an unresolved model argument error.
 - Terminal tool events can include stage timing metadata
   (`schemaValidationMs`, `inputValidationMs`, `policyForArgsMs`,
-  `policyDecisionMs`, `approvalWaitMs`, `executionMs`,
-  `resultValidationMs`). These are diagnostic metadata on existing
+  `policyDecisionMs`, `approvalWaitMs`, `executionMs`). These are diagnostic metadata on existing
   `tool.completed` / `tool.failed` events, not a new event family.
 - `workflow.*` event names in `events.ts` are trace vocabulary used by
   host-owned workflow projections and host-owned built-in invariant
@@ -110,12 +280,12 @@ Does not own:
   `workflow.failed` events with `projectionKind:"invariant"` as generic
   workflow failures because verification/documented-command buckets carry those
   facts.
-- FactLedger verifier snapshots may carry `verificationSource` metadata. Core
+- FactLedger profile/documented-command verifier snapshots carry explicit
+  `verificationSource`, `profile`, `verifierId`, and `expect` metadata. Core
   run-outcome reads terminal FactLedger snapshots first for verification profile
   and documented-command verdicts, treats stale satisfied verifier facts as
-  failed, keys invariant results by `hookName + verifierId`, and keeps
-  `verification:<profile>:<id>` hookName parsing only for old-trace
-  compatibility.
+  failed, and keys invariant results by `hookName + verifierId`; hook names are
+  diagnostic labels and are not parsed for verifier identity.
 - Command outcome projections from FactLedger include non-stale
   `model-initiated` commands and verification-relevant `verifier-launched`
   commands. Generic hook-launched command facts stay out unless marked
@@ -156,6 +326,10 @@ Does not own:
   emits the normal write lifecycle, and only then calls the contained workspace
   remover. `operation:"remove"` distinguishes deletion in approval/event
   metadata without creating a second authorization action.
+- `ControlledWorkspace` never mutates `RunRecord.state` directly. Its required
+  `setState` port delegates approval-driven transitions to the run owner;
+  `SparkwrightRun` wires that port to the same legal-transition guard used by
+  every other run lifecycle transition.
 - Core `createWorkspaceShellPolicy` is a structured `command + args` embedder
   policy, not the Host shell-tool command parser. Relative `cwd` is evaluated
   against its configured workspace root, while the original request remains
@@ -176,6 +350,10 @@ Does not own:
   as an informational classification advisory, not a correctness failure;
   finite commands should normally be classified as jobs.
 - `traceId`, `spanId`, and `parentSpanId` are correlation fields only.
+- Session tool-failure consistency is run-local. It may suppress
+  `TOOL_ABORTED` only when the same run has one non-conflicting logical
+  cancelled terminal; a cancellation in another run, a failed/completed
+  conflict, or a workspace path escape cannot inherit that suppression.
 - `trace.ts` is the stable named facade used by `index.ts` and `internal.ts`;
   storage lives in `trace-store.ts`, diagnostics live in
   `trace-diagnostics.ts`, session consistency/repair lives in
@@ -254,17 +432,18 @@ Does not own:
   read-like tool calls without changing raw `workspace.read` payloads.
 - Trace reports also include a task-lifecycle advisory for repeated equivalent
   `task_create` calls inside one run. Equivalence is `kind` plus stable
-  `payload` fingerprint, while scheduling fields such as `mode`/`awaited` are
+  `payload` fingerprint, while the scheduling field `mode` is
   ignored. The finding requires evidence that a prior task id reached a
   reusable completed terminal state before the later create request, and skips
   failed, cancelled, partial, or truncated prior tasks.
 - The run loop subscribes `RunHealthAnalyzer` to its event log and appends
-  model-visible `run.health` context when `read_file`/read-like tools return the
+  model-visible `run.health` context when `read`/read-like tools return the
   same unchanged file window again; workspace writes clear prior read snapshots
   for that path.
 - Awaited task revival is budgeted by the core per-source
   forced-continuation budget (`revival` source), separate from `maxSteps`.
-  `CreateRunOptions.maxRevivalTurns` remains the legacy alias with default 5.
+  `CreateRunOptions.forcedContinuationBudgets.revival` is the sole
+  configuration input and defaults to 5.
   A `waiting_tasks` wake can enter a revival turn after `maxSteps` is otherwise
   spent; task readiness, command readiness, and abort share one per-wait abort
   signal so losing race legs clean up promptly. Workflow projection
@@ -323,10 +502,10 @@ Does not own:
   see the rewritten payload before budget, repeat, policy, approval, and
   execution. Host-owned
   `capabilities.hooks.events` uses the user-hook event lane outside the awaited
-  workflow hook executor. `RunHook.beforeToolCall.skip` and `ValidationHook`
-  remain supported lower-level seams for embedders, telemetry, workspace-write
-  internals, and compatibility, not the recommended surface for new project
-  policy.
+  workflow hook executor. `RunHook.beforeToolCall.skip` remains a lower-level
+  embedder/instrumentation seam, not the recommended surface for project
+  policy. The parallel `ValidationHook` stage executor has been removed;
+  deterministic policy belongs to `WorkflowHook`.
 - Trace safety summaries count `workspace.write.untracked_access_granted` as
   `untrackedWriteCapableProcesses` for compatibility, separate from managed
   `workspace.write.completed` counts.
@@ -391,6 +570,23 @@ Does not own:
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-16T10:44:25+0800
+- Scope: task terminal-evidence trace projection now recognizes only the
+  canonical `task_create` and `task` model-facing tools.
+- Read: trace Task lifecycle collection and canonical Task result shapes.
+- Tests: Core trace 131/131 and repository test typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-16T10:23:51+0800
+- Scope: removed the deprecated standalone revival-budget input;
+  `forcedContinuationBudgets.revival` is now the sole revival budget
+  configuration while existing runtime usage metadata remains unchanged.
+- Read: Core run option type, forced-continuation budget resolver, revival
+  loop, focused run tests, and all repository references to the removed field.
+- Tests: focused Core revival/budget tests 19/19, runtime guardrails 28/28,
+  full Core 668/668, and Core typecheck passed.
+
+- Status: Verified
 - Date: 2026-07-16T08:47:59+0800
 - Scope: added managed file removal by sharing the existing controlled
   workspace-write authorization, diff, checkpoint, and event path.
@@ -409,18 +605,6 @@ Does not own:
   failure-first plus full tests.
 - Tests: Core 670/670, test/workspace typechecks, lint, and real CLI/TUI
   read-only denials with zero approvals/writes.
-
-- Status: Verified
-- Date: 2026-07-15
-- Scope: runtime tool aliases now canonicalize before hooks/policy and dynamic
-  availability is an execution gate as well as a model-descriptor filter.
-  Public tool events/approvals retain the requested alias and expose the
-  canonical identity separately. Episode visibility is not duplicated on
-  `run.started`; call-time events remain authoritative.
-- Read: `packages/core/src/tools.ts`, `packages/core/src/run.ts`, policy and
-  approval ordering, deferred loading, and focused run tests.
-- Tests: Core focused run/outcome 160/160 plus typecheck; alias-deny and
-  guessed-unavailable regressions passed.
 
 - Status: Verified
 - Date: 2026-07-15
@@ -573,7 +757,7 @@ test/trace.test.ts`; `npm --workspace @sparkwright/core run typecheck`.
   gates or approval semantics.
 - Read: `packages/core/src/policy.ts`, `packages/core/src/workspace.ts`,
   `packages/core/test/policy.test.ts`, `packages/core/test/workspace.test.ts`,
-  `docs/_internal/proposals/consolidation-agenda.md`.
+  `docs/_internal/reviews/consolidation-agenda.md`.
 - Tests: `npm --workspace @sparkwright/core test -- test/policy.test.ts
 test/workspace.test.ts`.
 
@@ -588,7 +772,7 @@ test/workspace.test.ts`.
   `packages/core/src/internal.ts`,
   `packages/agent-runtime/src/doc-store/index.ts`,
   `scripts/check-internal-imports.mjs`,
-  `docs/_internal/proposals/consolidation-agenda.md`,
+  `docs/_internal/reviews/consolidation-agenda.md`,
   `docs/_internal/proposals/substrate-sequencing.md`.
 - Tests: `npm --workspace @sparkwright/core test -- test/session.test.ts`;
   `npm --workspace @sparkwright/agent-runtime test -- test/doc-store.test.ts`;
@@ -646,8 +830,8 @@ test/fact-ledger.test.ts test/run-outcome.test.ts`; `npm --workspace
 - Date: 2026-07-04T16:47:47+0800
 - Scope: workflow-runtime-v1 P1.5 core boundary: FactLedger command and
   verifier snapshots preserve `verificationSource`, completed-run outcome and
-  profile-result analysis prefer terminal ledger snapshots, and legacy
-  `verification:` hookName parsing remains only for old traces.
+  profile-result analysis prefer terminal ledger snapshots, and verification
+  identity comes only from explicit metadata.
 - Read: `packages/core/src/fact-classifier.ts`,
   `packages/core/src/fact-ledger.ts`,
   `packages/core/src/run-outcome.ts`,
@@ -661,8 +845,8 @@ test/run-outcome.test.ts test/fact-ledger.test.ts`; `npm --workspace
 - Status: Verified
 - Date: 2026-07-04T12:43:33+0800
 - Scope: workflow-runtime-v1 S3 core budget substrate: generalized
-  `maxRevivalTurns` / `revivalTurnsUsed` into a per-source forced-continuation
-  budget, migrated `revival`, registered `workflow` with no consumer, added
+  revival turns into a per-source forced-continuation budget, retained
+  `revivalTurnsUsed` terminal metadata, registered `workflow` with no consumer, added
   `run.budget.exceeded` / FactLedger `budgetExceeded` facts, and preserved
   revival terminal metadata compatibility.
 - Read: `packages/core/src/run.ts`,
@@ -784,7 +968,7 @@ test/run-outcome.test.ts test/trace.test.ts`; `npm --workspace
 - Status: Verified
 - Date: 2026-07-02T09:30:00+0800
 - Scope: reviewed and patched core awaited-task revival follow-ups:
-  `maxRevivalTurns` is independent of `maxSteps`, final-step awaited
+  the revival forced-continuation budget is independent of `maxSteps`, final-step awaited
   notifications are injected instead of falling into budget wrap-up, race
   cleanup uses one per-wait abort signal, and revival pending-check failures
   emit `run.notification.source_failed` rather than escaping the loop.

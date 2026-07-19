@@ -1,12 +1,14 @@
 {
-  "model": "openai/gpt-4o-mini",
-  "workspace": "./examples/repo-pilot",
-  "providers": {
-    "openai": {
-      "baseURL": "https://api.openai.com/v1",
-      "apiKey": "replace-me"
+  "identity": {
+    "model": "openai/gpt-4o-mini",
+    "providers": {
+      "openai": {
+        "baseURL": "https://api.openai.com/v1",
+        "apiKey": "replace-me"
+      }
     }
   },
+  "workspace": "./examples/repo-pilot",
   "tools": {
     "defer": ["todo_write", "read_anchored_text", "edit_anchored_text"]
   },

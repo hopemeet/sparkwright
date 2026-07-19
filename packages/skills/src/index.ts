@@ -30,20 +30,16 @@ import {
   preprocessSkillContentAsync,
   type PreprocessSkillOptions,
 } from "./preprocess.js";
-import { parseSkillManifestCompat } from "./manifest.js";
-import { createSkillPackageHasher } from "./package.js";
+import { parseSkillManifest } from "./manifest.js";
+import {
+  computeAssetPackageHash,
+  PACKAGE_HASH_POLICY_VERSION,
+} from "./package-v2.js";
 import { markdownAssetContentHash } from "./markdown-folder-asset.js";
 
 const SKILL_FILE_NAME = "SKILL.md";
 const DEFAULT_MAX_SELECTED_SKILLS = 1;
 const DEFAULT_RESOURCE_FILE_LIMIT = 10;
-const DEFAULT_PACKAGE_HASH_MAX_FILES = 512;
-const DEFAULT_PACKAGE_HASH_MAX_BYTES = 16 * 1024 * 1024;
-const skillPackageHasher = createSkillPackageHasher({
-  maxFiles: DEFAULT_PACKAGE_HASH_MAX_FILES,
-  maxBytes: DEFAULT_PACKAGE_HASH_MAX_BYTES,
-});
-
 export interface SkillFrontmatter {
   name: string;
   description: string;
@@ -65,7 +61,8 @@ export interface SkillDefinition {
   body: string;
   sourcePath: string;
   contentHash: string;
-  packageHash?: string;
+  packageHash: string;
+  packageHashPolicyVersion: typeof PACKAGE_HASH_POLICY_VERSION;
   metadata: Record<string, unknown>;
 }
 
@@ -74,7 +71,8 @@ export interface SkillIndexEntry {
   description: string;
   sourcePath: string;
   contentHash: string;
-  packageHash?: string;
+  packageHash: string;
+  packageHashPolicyVersion: typeof PACKAGE_HASH_POLICY_VERSION;
   version?: string;
   /** Optional keyword hints that boost relevance scoring. */
   triggers?: string[];
@@ -84,7 +82,8 @@ export interface SkillIndexEntry {
 export interface SkillLockEntry {
   name: string;
   sourcePath: string;
-  contentHash: string;
+  packageHash: string;
+  packageHashPolicyVersion: typeof PACKAGE_HASH_POLICY_VERSION;
   version?: string;
   metadata: Record<string, unknown>;
 }
@@ -100,7 +99,12 @@ export interface SkillLockfile {
 
 export type SkillLockSource = Pick<
   SkillIndexEntry,
-  "name" | "description" | "sourcePath" | "contentHash" | "metadata"
+  | "name"
+  | "description"
+  | "sourcePath"
+  | "packageHash"
+  | "packageHashPolicyVersion"
+  | "metadata"
 > & {
   version?: string;
 };
@@ -156,7 +160,7 @@ export interface PrepareSkillsForRunOptions {
 
 export type SkillPreprocessOptions = Omit<PreprocessSkillOptions, "skillDir">;
 
-export type SkillRootLayer = "builtin" | "user" | "project" | "legacy";
+export type SkillRootLayer = "builtin" | "user" | "project" | "configured";
 
 export interface SkillRoot {
   root: string;
@@ -225,8 +229,8 @@ export async function prepareSkillsForRun(
           name: entry.name,
           version: entry.version,
           sourcePath: entry.sourcePath,
-          contentHash: entry.contentHash,
           packageHash: entry.packageHash,
+          packageHashPolicyVersion: entry.packageHashPolicyVersion,
           layer: skillLayer(entry.metadata),
         })),
         skillRoots: options.skillRoots,
@@ -242,8 +246,8 @@ export async function prepareSkillsForRun(
             ...baseMeta,
             version: skillVersion(skill),
             sourcePath: skill.sourcePath,
-            contentHash: skill.contentHash,
             packageHash: skill.packageHash,
+            packageHashPolicyVersion: skill.packageHashPolicyVersion,
             layer: skillLayer(skill.metadata),
             selectionReason: reason,
             mode: "resident_context",
@@ -358,20 +362,30 @@ export async function loadSkill(
         sourcePath,
       })
     : rawContent;
-  const skill = parseSkill(content, sourcePath);
-  skill.packageHash = await skillPackageHashForSource(sourcePath);
-  if (!options.layer) return skill;
-  skill.metadata = {
-    ...skill.metadata,
-    sparkwrightLayer: options.layer,
-    ...(options.layer === "builtin" ? { trust: "builtin" } : {}),
+  const parsed = parseSkillDefinition(content, sourcePath);
+  const identity = await computeAssetPackageHash({
+    rootPath: dirname(sourcePath),
+    entryPath: SKILL_FILE_NAME,
+  });
+  const skill: SkillDefinition = {
+    ...parsed,
+    packageHash: identity.packageHash,
+    packageHashPolicyVersion: identity.packageHashPolicyVersion,
   };
-  return skill;
+  if (!options.layer) return skill;
+  return {
+    ...skill,
+    metadata: {
+      ...skill.metadata,
+      sparkwrightLayer: options.layer,
+      ...(options.layer === "builtin" ? { trust: "builtin" } : {}),
+    },
+  };
 }
 
 function inferSkillName(content: string): string | undefined {
   try {
-    return parseSkillManifestCompat(content).name;
+    return parseSkillManifest(content).name;
   } catch {
     return undefined;
   }
@@ -381,11 +395,11 @@ function normalizeSkillRoot(input: SkillRootInput): SkillRoot {
   return typeof input === "string" ? { root: input } : input;
 }
 
-export function parseSkill(
+function parseSkillDefinition(
   content: string,
   sourcePath = SKILL_FILE_NAME,
-): SkillDefinition {
-  const manifest = parseSkillManifestCompat(content, sourcePath);
+): Omit<SkillDefinition, "packageHash" | "packageHashPolicyVersion"> {
+  const manifest = parseSkillManifest(content, sourcePath);
   const metadata = { ...(manifest.metadata ?? {}) };
   if (manifest.version && metadata.version === undefined) {
     metadata.version = manifest.version;
@@ -566,7 +580,8 @@ export function createSkillLockfile(
         return {
           name: skill.name,
           sourcePath: skill.sourcePath,
-          contentHash: skill.contentHash,
+          packageHash: skill.packageHash,
+          packageHashPolicyVersion: skill.packageHashPolicyVersion,
           ...(version ? { version } : {}),
           metadata: { ...skill.metadata },
         };
@@ -593,7 +608,7 @@ export function createSkillLoaderTool(
   // doom-loop nudge after a wasted round-trip.
   const loadedNames = new Set<string>();
   // Successfully loaded reference files for this loader/run. Include the
-  // package/content identity so a future loader that can observe a refreshed
+  // package identity so a future loader that can observe a refreshed
   // Skill version cannot reuse an older resource result by name/path alone.
   const loadedResources = new Set<string>();
   const resourceFileLimit =
@@ -656,14 +671,13 @@ export function createSkillLoaderTool(
         typeof args.resource === "string" ? args.resource.trim() : undefined;
       if (resource) {
         const canonicalResource = normalizePath(normalizeFsPath(resource));
-        const versionIdentity = skill.packageHash ?? skill.contentHash;
-        const resourceKey = `${skill.name}\0${versionIdentity}\0${canonicalResource}`;
+        const resourceKey = `${skill.name}\0${skill.packageHash}\0${canonicalResource}`;
         if (loadedResources.has(resourceKey)) {
           return {
             status: "already_loaded",
             name: skill.name,
             resource: canonicalResource,
-            samePackageHash: Boolean(skill.packageHash),
+            samePackageHash: true,
             message:
               `Skill resource \`${skill.name}:${canonicalResource}\` is ` +
               "already loaded in this run; its content is in context. Use it " +
@@ -691,7 +705,7 @@ export function createSkillLoaderTool(
 
       // Resource files are reported skill-relative (never as absolute host
       // paths): they live outside the workspace, so an absolute path both leaks
-      // the host layout and lures the model into a workspace-escaping read_file
+      // the host layout and lures the model into a workspace-escaping read
       // call. The model reads them back through this tool's `resource` argument.
       const resourceFiles = await listSkillResourceFiles(
         skill,
@@ -699,7 +713,7 @@ export function createSkillLoaderTool(
       );
       loadedNames.add(skill.name);
 
-      // sourcePath/contentHash are deliberately omitted from this model-facing
+      // Source and package identity are deliberately omitted from this model-facing
       // result: they are absolute host paths/hashes the model cannot use, and
       // the same provenance is already on the skill.indexed event (joined by
       // name) for the trace.
@@ -770,7 +784,8 @@ export function createLoadedSkillContext(
       skillName: skill.name,
       skillVersion: skillVersion(skill),
       skillSourcePath: skill.sourcePath,
-      skillContentHash: skill.contentHash,
+      skillPackageHash: skill.packageHash,
+      skillPackageHashPolicyVersion: skill.packageHashPolicyVersion,
       selectionReason,
     },
   };
@@ -883,24 +898,14 @@ function toSkillIndexEntry(skill: SkillDefinition): SkillIndexEntry {
     description: skill.description,
     sourcePath: skill.sourcePath,
     contentHash: skill.contentHash,
-    ...(skill.packageHash ? { packageHash: skill.packageHash } : {}),
+    packageHash: skill.packageHash,
+    packageHashPolicyVersion: skill.packageHashPolicyVersion,
     version: skillVersion(skill),
     ...(skill.triggers && skill.triggers.length > 0
       ? { triggers: skill.triggers }
       : {}),
     metadata: skill.metadata,
   };
-}
-
-async function skillPackageHashForSource(
-  sourcePath: string,
-): Promise<string | undefined> {
-  if (basename(sourcePath) !== SKILL_FILE_NAME) return undefined;
-  try {
-    return (await skillPackageHasher.compute(dirname(sourcePath))).packageHash;
-  } catch {
-    return undefined;
-  }
 }
 
 function skillLayer(
@@ -910,7 +915,7 @@ function skillLayer(
   return value === "builtin" ||
     value === "user" ||
     value === "project" ||
-    value === "legacy"
+    value === "configured"
     ? value
     : undefined;
 }
@@ -1003,7 +1008,7 @@ function createSkillToolOutput(
             "again with this skill's name and the file's skill-relative path " +
             "as `resource` (for example: skill_load with name " +
             `"${skill.name}" and resource "${resourceFiles[0]}"). These files ` +
-            "live outside the workspace — do NOT pass them to read_file or " +
+            "live outside the workspace — do NOT pass them to read or " +
             "prepend a working directory.",
           "",
           "<skill_files>",
@@ -1127,17 +1132,6 @@ export {
   type InlineShellRunner,
   type PreprocessSkillOptions,
 } from "./preprocess.js";
-export {
-  createSkillPackageHasher,
-  computeSkillPackageHash,
-  listSkillPackageFiles,
-  snapshotSkillPackage,
-  type SkillPackageFile,
-  type SkillPackageHash,
-  type SkillPackageHasher,
-  type SkillPackageHashOptions,
-  type SnapshotSkillPackageResult,
-} from "./package.js";
 export {
   DEFAULT_ASSET_PACKAGE_MAX_FILES,
   DEFAULT_ASSET_PACKAGE_MAX_FILE_BYTES,

@@ -6,11 +6,9 @@ import {
 import {
   PACKAGE_HASH_POLICY_VERSION,
   computeAssetPackageHash,
-  computeSkillPackageHash,
   inspectSkill,
-  parseSkill,
+  parseSkillManifest,
   type SkillGuardFinding,
-  type SkillManifest,
   type SkillRoot,
 } from "@sparkwright/skills";
 import { readdir, readFile, stat } from "node:fs/promises";
@@ -29,6 +27,7 @@ import {
   type SkillReportEntry,
 } from "./skill-report.js";
 import { recordSkillPatch } from "./skill-usage.js";
+import { readSkillRegistry } from "./skill-registry.js";
 
 export type SkillProposalState =
   | "draft"
@@ -59,30 +58,28 @@ const PRUNABLE_PROPOSAL_STATES: readonly SkillProposalState[] = [
   "failed",
 ];
 
-function packageHashPolicyVersion(value: {
-  packageHashPolicyVersion?: 1 | 2;
-}): 1 | 2 {
-  return value.packageHashPolicyVersion ?? 1;
-}
-
-async function computeSkillPackageHashForPolicy(
-  skillDir: string,
-  policyVersion: 1 | 2,
-) {
-  if (policyVersion === PACKAGE_HASH_POLICY_VERSION) {
-    return computeAssetPackageHash({
-      rootPath: skillDir,
-      entryPath: "SKILL.md",
-    });
-  }
-  return computeSkillPackageHash(skillDir);
-}
-
 async function computeCurrentSkillPackageHash(skillDir: string) {
-  return computeSkillPackageHashForPolicy(
-    skillDir,
-    PACKAGE_HASH_POLICY_VERSION,
-  );
+  return computeAssetPackageHash({
+    rootPath: skillDir,
+    entryPath: "SKILL.md",
+  });
+}
+
+async function resolveSkillArtifactIdForUpdate(
+  workspaceRoot: string,
+  skillName: string,
+  layer: SkillRoot["layer"] | undefined,
+): Promise<string> {
+  if (layer === "project") {
+    const registered = (await readSkillRegistry(workspaceRoot)).artifacts.find(
+      (artifact) =>
+        artifact.status === "active" && artifact.activePath === skillName,
+    );
+    if (registered) return registered.artifactId;
+    const prior = (await listSkillHistory(workspaceRoot, skillName))[0];
+    if (prior) return prior.artifactId;
+  }
+  return createId("skill") as string;
 }
 
 /**
@@ -108,16 +105,15 @@ export interface SkillProposalMetadata {
   updatedAt: string;
   basePackageHash: string | null;
   afterPackageHash: string;
-  /** Missing means immutable legacy package-hash policy v1. */
-  packageHashPolicyVersion?: 1 | 2;
-  /** Stable project identity allocated for managed creates. */
-  artifactId?: string;
+  packageHashPolicyVersion: typeof PACKAGE_HASH_POLICY_VERSION;
+  /** Stable project identity carried across managed versions. */
+  artifactId: string;
   /** Hash of the inspectable final effect; excludes guard policy versions. */
-  effectHash?: string;
-  /** Prepared-change transaction state. Legacy draft proposals omit it. */
-  preparedState?: PreparedChangeState;
+  effectHash: string;
+  /** Prepared-change transaction state. */
+  preparedState: PreparedChangeState;
   /** Monotonic revision of a mutable draft. Applied/closed proposals freeze it. */
-  revision?: number;
+  revision: number;
   /** Hash replaced by the latest draft revision, for reviewer-visible audit. */
   previousAfterPackageHash?: string;
   summary: string;
@@ -156,7 +152,7 @@ export interface SkillMutationReceipt {
   artifactId: string;
   beforePackageHash: string | null;
   afterPackageHash: string;
-  packageHashPolicyVersion?: 1 | 2;
+  packageHashPolicyVersion: typeof PACKAGE_HASH_POLICY_VERSION;
   targetPath: string;
   historyId: string;
   appliedAt: string;
@@ -191,12 +187,12 @@ export interface SkillHistoryMetadata {
   id: string;
   skillName: string;
   proposalId: string;
+  artifactId: string;
   kind: SkillHistoryKind;
   createdAt: string;
   beforePackageHash: string | null;
   afterPackageHash: string;
-  /** Missing means immutable legacy package-hash policy v1. */
-  packageHashPolicyVersion?: 1 | 2;
+  packageHashPolicyVersion: typeof PACKAGE_HASH_POLICY_VERSION;
   targetPath: string;
   /** @reserved Restore provenance linking back to the source history version, persisted for readers/diagnostics, not by an in-process TS reader. */
   sourceHistoryId?: string;
@@ -472,7 +468,11 @@ export async function createSkillUpdateProposal(
     const guardFindings = inspectProposedSkillContent(input.name, afterContent);
 
     const afterHash = await computeCurrentSkillPackageHash(afterSkillDir);
-    const artifactId = `legacy:project:${input.name}`;
+    const artifactId = await resolveSkillArtifactIdForUpdate(
+      input.workspaceRoot,
+      input.name,
+      skill.layer,
+    );
     const metadata: SkillProposalMetadata = {
       id: proposalId,
       kind: "update",
@@ -603,10 +603,8 @@ export async function reviseSkillProposalDraft(input: {
     await mutations.writeText(afterSkillPath, nextContent, {
       reason: `Revise proposed Skill ${proposal.skillName}`,
     });
-    const policyVersion = packageHashPolicyVersion(proposal);
-    const afterHash = await computeSkillPackageHashForPolicy(
+    const afterHash = await computeCurrentSkillPackageHash(
       join(proposal.path, "after", proposal.skillName),
-      policyVersion,
     );
     const guardFindings = inspectProposedSkillContent(
       proposal.skillName,
@@ -617,19 +615,18 @@ export async function reviseSkillProposalDraft(input: {
       ...proposalMetadataFromDetail(proposal),
       updatedAt,
       afterPackageHash: afterHash.packageHash,
-      packageHashPolicyVersion: policyVersion,
+      packageHashPolicyVersion: PACKAGE_HASH_POLICY_VERSION,
       effectHash: skillProposalEffectHash({
-        artifactId:
-          proposal.artifactId ?? `legacy:project:${proposal.skillName}`,
+        artifactId: proposal.artifactId,
         operation: proposal.kind,
         skillName: proposal.skillName,
         basePackageHash: proposal.basePackageHash,
         afterPackageHash: afterHash.packageHash,
-        packageHashPolicyVersion: policyVersion,
+        packageHashPolicyVersion: PACKAGE_HASH_POLICY_VERSION,
         provenance: input.provenance ?? proposal.provenance,
       }),
       preparedState: "ready",
-      revision: (proposal.revision ?? 1) + 1,
+      revision: proposal.revision + 1,
       previousAfterPackageHash: proposal.afterPackageHash,
       contentMode: input.content ? "authored" : proposal.contentMode,
       guardFindings: guardFindings.length > 0 ? guardFindings : undefined,
@@ -822,9 +819,10 @@ export async function readSkillProposal(
 async function readSkillProposalFromPath(
   path: string,
 ): Promise<SkillProposalDetail> {
-  const metadata = JSON.parse(
+  const metadata: unknown = JSON.parse(
     await readFile(join(path, "metadata.json"), "utf8"),
-  ) as SkillProposalMetadata;
+  );
+  assertCanonicalSkillProposal(metadata);
   return {
     ...metadata,
     path,
@@ -860,10 +858,7 @@ export async function applySkillProposal(
 
   const afterSkillDir = join(proposal.path, "after", proposal.skillName);
   await verifyProposalAfterSkillName(proposal, afterSkillDir, mutations);
-  const currentAfterHash = await computeSkillPackageHashForPolicy(
-    afterSkillDir,
-    packageHashPolicyVersion(proposal),
-  );
+  const currentAfterHash = await computeCurrentSkillPackageHash(afterSkillDir);
   if (currentAfterHash.packageHash !== proposal.afterPackageHash) {
     await updateProposalState(proposal, "stale", mutations);
     throw new Error(
@@ -904,9 +899,8 @@ export async function applySkillProposal(
       proposal.preparedState === "applying") &&
     existsSync(join(proposal.targetPath, "SKILL.md"))
   ) {
-    const currentTarget = await computeSkillPackageHashForPolicy(
+    const currentTarget = await computeCurrentSkillPackageHash(
       proposal.targetPath,
-      packageHashPolicyVersion(proposal),
     );
     if (currentTarget.packageHash === proposal.afterPackageHash) {
       const roots = [
@@ -1102,7 +1096,7 @@ export async function recordSkillProposalApproval(input: {
     schemaVersion: 1,
     receiptId: createId("skillapproval") as string,
     proposalId: proposal.id,
-    proposalRevision: proposal.revision ?? 1,
+    proposalRevision: proposal.revision,
     effectHash: currentEffectHash,
     decision: "approved",
     approvedRiskFingerprints: dangerousRiskFingerprints(
@@ -1271,16 +1265,11 @@ export async function restoreSkillFromHistory(
     projectSkillRoot(input.workspaceRoot),
     input.skillName,
   );
-  const historyPolicyVersion = packageHashPolicyVersion(sourceHistory);
-  const currentPackageHash = await computeSkillPackageHashForPolicy(
-    targetPath,
-    historyPolicyVersion,
-  )
+  const currentPackageHash = await computeCurrentSkillPackageHash(targetPath)
     .then((hash) => hash.packageHash)
     .catch(() => null);
-  const restorePackageHash = await computeSkillPackageHashForPolicy(
+  const restorePackageHash = await computeCurrentSkillPackageHash(
     restoreSourceDir,
-    historyPolicyVersion,
   ).then((hash) => hash.packageHash);
 
   if (!input.apply) {
@@ -1405,14 +1394,7 @@ export function inspectProposedSkillContent(
   skillName: string,
   content: string,
 ): SkillGuardFinding[] {
-  const parsed = parseSkill(content, `${skillName}/SKILL.md`);
-  const manifest: SkillManifest = {
-    name: parsed.name,
-    description: parsed.description,
-    instructions: parsed.body,
-    allowedTools: parsed.allowedTools,
-    metadata: parsed.metadata,
-  };
+  const manifest = parseSkillManifest(content, `${skillName}/SKILL.md`);
   return inspectSkill(manifest, { trust: "agent-created" }).findings;
 }
 
@@ -1482,7 +1464,7 @@ function skillProposalEffectHash(input: {
   skillName: string;
   basePackageHash: string | null;
   afterPackageHash: string;
-  packageHashPolicyVersion?: 1 | 2;
+  packageHashPolicyVersion: typeof PACKAGE_HASH_POLICY_VERSION;
   provenance?: SkillProposalProvenance;
 }): string {
   const origin = normalizeProvenance(input.provenance);
@@ -1509,20 +1491,16 @@ function skillProposalEffectHash(input: {
     capabilityRequirements: ["project_skill_write"],
   };
   return sha256(
-    JSON.stringify(
-      input.packageHashPolicyVersion === undefined
-        ? effect
-        : {
-            ...effect,
-            packageHashPolicyVersion: input.packageHashPolicyVersion,
-          },
-    ),
+    JSON.stringify({
+      ...effect,
+      packageHashPolicyVersion: input.packageHashPolicyVersion,
+    }),
   );
 }
 
 function currentSkillProposalEffectHash(proposal: SkillProposalDetail): string {
   return skillProposalEffectHash({
-    artifactId: proposal.artifactId ?? `legacy:project:${proposal.skillName}`,
+    artifactId: proposal.artifactId,
     operation: proposal.kind,
     skillName: proposal.skillName,
     basePackageHash: proposal.basePackageHash,
@@ -1559,7 +1537,7 @@ function validateSkillApprovalReceipt(
     receipt.schemaVersion !== 1 ||
     receipt.decision !== "approved" ||
     receipt.proposalId !== proposal.id ||
-    receipt.proposalRevision !== (proposal.revision ?? 1) ||
+    receipt.proposalRevision !== proposal.revision ||
     receipt.effectHash !== effectHash
   ) {
     throw new Error(
@@ -1655,7 +1633,7 @@ async function writeSkillMutationReceipt(
     receiptId: createId("skillmutation") as string,
     proposalId: proposal.id,
     effectHash,
-    artifactId: proposal.artifactId ?? `legacy:project:${proposal.skillName}`,
+    artifactId: proposal.artifactId,
     beforePackageHash: proposal.basePackageHash,
     afterPackageHash: proposal.afterPackageHash,
     packageHashPolicyVersion: proposal.packageHashPolicyVersion,
@@ -1722,16 +1700,13 @@ async function writeHistoryEntry(
   createdAt: string,
   mutations: CapabilityPackageMutationWriter,
 ): Promise<SkillHistoryEntry> {
-  const id = proposal.effectHash
-    ? `skillver_${proposal.effectHash.slice(0, 24)}`
-    : (createId("skillver") as string);
+  const id = `skillver_${proposal.effectHash.slice(0, 24)}`;
   const path = join(historySkillRoot(workspaceRoot, proposal.skillName), id);
   if (existsSync(join(path, "metadata.json"))) {
     const existing = await readHistoryEntry(path);
     if (
       existing.proposalId !== proposal.id ||
-      existing.afterPackageHash !== proposal.afterPackageHash ||
-      packageHashPolicyVersion(existing) !== packageHashPolicyVersion(proposal)
+      existing.afterPackageHash !== proposal.afterPackageHash
     ) {
       throw new Error(`Skill history identity collision: ${id}`);
     }
@@ -1766,6 +1741,7 @@ async function writeHistoryEntry(
     id,
     skillName: proposal.skillName,
     proposalId: proposal.id,
+    artifactId: proposal.artifactId,
     kind: proposal.kind,
     createdAt,
     beforePackageHash: proposal.basePackageHash,
@@ -1820,6 +1796,7 @@ async function writeRestoreHistoryEntry(input: {
     id,
     skillName: input.skillName,
     proposalId: input.sourceHistory.proposalId,
+    artifactId: input.sourceHistory.artifactId,
     kind: "restore",
     createdAt: input.createdAt,
     beforePackageHash: input.beforePackageHash,
@@ -1835,10 +1812,75 @@ async function writeRestoreHistoryEntry(input: {
 }
 
 async function readHistoryEntry(path: string): Promise<SkillHistoryEntry> {
-  const metadata = JSON.parse(
+  const metadata: unknown = JSON.parse(
     await readFile(join(path, "metadata.json"), "utf8"),
-  ) as SkillHistoryMetadata;
+  );
+  assertCanonicalSkillHistory(metadata);
   return { ...metadata, path };
+}
+
+function assertCanonicalSkillProposal(
+  value: unknown,
+): asserts value is SkillProposalMetadata {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    typeof (value as { artifactId?: unknown }).artifactId !== "string" ||
+    typeof (value as { effectHash?: unknown }).effectHash !== "string" ||
+    !Number.isInteger((value as { revision?: unknown }).revision) ||
+    !isPreparedChangeState((value as { preparedState?: unknown }).preparedState)
+  ) {
+    throw new Error("Skill proposal requires canonical prepared identity.");
+  }
+  assertCanonicalPackageHashPolicy(
+    value as { packageHashPolicyVersion?: unknown },
+    "Skill proposal",
+  );
+}
+
+function assertCanonicalSkillHistory(
+  value: unknown,
+): asserts value is SkillHistoryMetadata {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    typeof (value as { artifactId?: unknown }).artifactId !== "string"
+  ) {
+    throw new Error(
+      "Skill history entry requires canonical artifact identity.",
+    );
+  }
+  assertCanonicalPackageHashPolicy(
+    value as { packageHashPolicyVersion?: unknown },
+    "Skill history entry",
+  );
+}
+
+function isPreparedChangeState(value: unknown): value is PreparedChangeState {
+  return (
+    value === "ready" ||
+    value === "waiting" ||
+    value === "approved" ||
+    value === "applying" ||
+    value === "applied" ||
+    value === "rejected" ||
+    value === "superseded" ||
+    value === "stale" ||
+    value === "failed"
+  );
+}
+
+function assertCanonicalPackageHashPolicy(
+  value: { packageHashPolicyVersion?: unknown },
+  label: string,
+): asserts value is {
+  packageHashPolicyVersion: typeof PACKAGE_HASH_POLICY_VERSION;
+} {
+  if (value.packageHashPolicyVersion !== PACKAGE_HASH_POLICY_VERSION) {
+    throw new Error(
+      `${label} requires package hash policy ${PACKAGE_HASH_POLICY_VERSION}.`,
+    );
+  }
 }
 
 async function verifyProposalBase(
@@ -1862,9 +1904,8 @@ async function verifyProposalBase(
   }
 
   if (proposalCreatesFromProject(proposal)) {
-    const current = await computeSkillPackageHashForPolicy(
+    const current = await computeCurrentSkillPackageHash(
       proposal.targetPath,
-      packageHashPolicyVersion(proposal),
     ).catch(async (error) => {
       await updateProposalState(proposal, "stale", mutations);
       throw new Error(
@@ -1888,9 +1929,8 @@ async function verifyProposalBase(
     await updateProposalState(proposal, "stale", mutations);
     throw new Error(`Skill proposal missing source path: ${proposal.id}`);
   }
-  const sourceHash = await computeSkillPackageHashForPolicy(
+  const sourceHash = await computeCurrentSkillPackageHash(
     dirname(proposal.sourcePath),
-    packageHashPolicyVersion(proposal),
   ).catch(async (error) => {
     await updateProposalState(proposal, "stale", mutations);
     throw new Error(
@@ -1912,17 +1952,14 @@ async function reconcileDraftAgainstCurrentTarget(
 ): Promise<SkillProposalDetail | undefined> {
   if (proposal.kind === "create") {
     if (!existsSync(join(proposal.targetPath, "SKILL.md"))) return undefined;
-    const current = await computeSkillPackageHashForPolicy(
+    const current = await computeCurrentSkillPackageHash(
       proposal.targetPath,
-      packageHashPolicyVersion(proposal),
     ).catch(() => undefined);
     const replacement = current
       ? (await listSkillHistory(workspaceRoot, proposal.skillName)).find(
           (entry) =>
             entry.proposalId !== proposal.id &&
-            entry.afterPackageHash === current.packageHash &&
-            packageHashPolicyVersion(entry) ===
-              packageHashPolicyVersion(proposal),
+            entry.afterPackageHash === current.packageHash,
         )
       : undefined;
     const closedAt = new Date().toISOString();
@@ -1957,10 +1994,7 @@ async function reconcileDraftAgainstCurrentTarget(
       ? dirname(proposal.sourcePath)
       : undefined;
   const current = basePath
-    ? await computeSkillPackageHashForPolicy(
-        basePath,
-        packageHashPolicyVersion(proposal),
-      ).catch(() => undefined)
+    ? await computeCurrentSkillPackageHash(basePath).catch(() => undefined)
     : undefined;
   if (current?.packageHash === proposal.basePackageHash) return undefined;
 
@@ -2053,7 +2087,7 @@ function assertSkillMarkdownName(
   expectedName: string,
   sourcePath: string,
 ): void {
-  const parsed = parseSkill(content, sourcePath);
+  const parsed = parseSkillManifest(content, sourcePath);
   if (parsed.name !== expectedName) {
     throw new Error(
       `Skill proposal content name mismatch: expected ${expectedName}, found ${parsed.name}`,

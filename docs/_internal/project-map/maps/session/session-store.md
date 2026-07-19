@@ -7,6 +7,134 @@ CLI, TUI, host, and diagnostics a stable place to find a conversation/work unit.
 
 See [../trace/raw-trace.md](../trace/raw-trace.md) for raw event evidence.
 
+## Last Verified
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: session consistency now evaluates cancellation-owned tool aborts in
+  their run-local terminal context. This changes findings only; session layout,
+  trace storage, repair actions, and result files are unchanged.
+- Read: session trace consistency, canonical/legacy cancellation terminals,
+  run stores, and retained real session directories.
+- Tests: Core trace/session consistency 140/140; two real cancellation session
+  directories validate with no findings.
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: session terminal records now retain Core assessment/fact-ledger facts,
+  Host responses expose aggregated execution assessment, and compacted Agent
+  signals preserve health. Canonical session directory and run-store layout are
+  unchanged.
+- Read: Core terminal/session storage, Host session queries/execution, CLI/TUI
+  consumers, protocol and SDK projections.
+- Tests: Core, Host, Protocol, SDK Core, and focused CLI/TUI suites passed.
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: the final HostRuntime composition audit changes only live execution
+  admission wiring. The explicit HostExecution passed to fresh/resume episode
+  owners still uses the same session query, run-store, Workflow journal, and
+  job/control-session identities; no storage path or format changed.
+- Read: Host execution envelopes, run preparation/episode owners, session
+  query/store paths, and focused start/resume tests.
+- Tests: focused Host composition/Workflow/protocol and final repository gates
+  are recorded with the commit.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: per-run `FileSessionStore`, workspace/trace resources, and run/store
+  metadata are now assembled by `RunPreparationOperations`; canonical session
+  layout, Workflow journal layout, job/control-session isolation, and formats
+  are unchanged.
+- Read: preparation resources/metadata, episode store use, and session maps.
+- Tests: direct owner and focused start/resume gates are recorded with the
+  commit.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: WorkflowEpisodeRuntime now constructs fresh and resumed Core episode
+  run stores using the existing canonical session-store factories. Job/control
+  session separation, paths, metadata, checkpoint layout, and Workflow journal
+  formats are unchanged.
+- Read: episode run-store construction, Host session resolution, Workflow
+  durable owner, and focused start/resume tests.
+- Tests: focused Host Workflow/protocol suites passed.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: canonical workspace Workflow store construction and lookup now route
+  through `WorkflowRuntimeOperations`; storage remains journal-only at
+  `.sparkwright/workflow-runs`, with job sessions and control attribution
+  unchanged.
+- Read: WorkspaceContext, Workflow owner/store, Host resume/list paths, and
+  focused persistence tests.
+- Tests: focused Host and Agent Runtime Workflow suites passed.
+
+- Status: Verified
+- Date: 2026-07-17T23:37:17+0800
+- Scope: file-run reference implementations now enter through Core
+  `/internal`; session layout, membership, replay, and Host ownership are
+  unchanged.
+- Read: Core public/internal barrels, trace store, Host/CLI/Streaming consumers.
+- Tests: Core interface 4/4, Streaming Runtime 12/12, affected typechecks/builds.
+
+- Status: Verified
+- Date: 2026-07-17T23:04:01+0800
+- Scope: Host session filesystem reads are consolidated in
+  `session-queries.ts`: canonical run lookup, completed-turn replay, trace facts,
+  compact anchoring, list/inspect/fork. Manual compaction now loads turns inside
+  `session-compaction.ts`; HostRuntime retains no duplicate reader.
+- Read: Host session query/compaction/runtime sources, Core FileSessionStore and
+  canonical run/trace layout, focused resume/compaction tests.
+- Tests: Host protocol 59/59 and full Host 577/577; Host typecheck; full release
+  gate.
+
+- Status: Verified
+- Date: 2026-07-17T17:20:00+0800
+- Scope: canonical Workflow journal records now require generation/revision,
+  source layer, package hash policy 2, package hash, executable snapshot
+  reference, and a matching snapshot-backed definition. No baseline record or
+  Markdown-hash durable identity is imported during replay.
+- Read: Workflow store/journal/types, Host list/resume, durable-job coverage,
+  and package-identity designs.
+- Tests: Agent Runtime Workflow focused tests, Host Workflow/protocol tests,
+  and repository test typecheck passed before the full release gate.
+
+- Status: Verified
+- Date: 2026-07-16T22:26:54+0800
+- Scope: Workflow durable state now has one workspace journal layout; record
+  JSON/event JSONL sidecars, mirrors, readers, and lazy import are gone.
+- Read: workflow store/journal, Host/CLI/TUI consumers, restart/list/event tests,
+  and current protocol/design docs.
+- Tests: Agent Runtime workflow focused suite/typecheck; Host workflow/protocol
+  focused suites/typecheck; repository test typecheck; full release gate.
+
+- Status: Verified
+- Date: 2026-07-16T14:10:00+0800
+- Scope: Run persistence is single-layout: `FileRunStore`, Host lookup, CLI lookup, examples, and tests now use only the canonical session/agent/run tree.
+- Read: Core trace store/tests, Host and CLI resume lookup, coding-tools state exclusion, protocol references, and subprocess examples.
+- Tests: Core trace/interfaces focused tests; Host/CLI/coding-tools focused tests; npm run build; npm run typecheck:test; npm run release:check.
+
+- Date: 2026-07-16T13:50:10+0800
+- Scope: Workflow state is no longer a session-directory child; canonical records live only under workspace `.sparkwright/workflow-runs/` and retain `sessionId` as record attribution.
+- Read: workflow store helpers, Host list/resume consumers, focused tests, and current layout docs.
+- Tests: npm run build; npm run typecheck:test; Agent Runtime workflow tests (25); Host workflow/protocol tests (94).
+
+- Date: 2026-07-16T13:36:30+0800
+- Scope: Session traces no longer contain validation-hook lifecycle spans; current `validation.failed` diagnostics remain persisted without layout changes.
+- Read: Core event/trace codecs, session storage, schemas, and trace tests.
+- Tests: focused trace/session tests; npm run build; npm run typecheck:test; npm run release:check.
+
+- Date: 2026-07-16T12:45:00+0800
+- Scope: Run metadata and Workflow authorization snapshots persist canonical accessMode rather than duplicate permission/write fields.
+- Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.
+- Tests: focused access/policy/protocol/CLI/TUI/ACP/Workflow tests; npm run typecheck:test; npm run schema:check.
+
+- Date: 2026-07-16T11:52:29+0800
+- Scope: reviewed protocol 2.0 terminal failure envelope changes; session
+  persistence remains owned by Core event and trace contracts and does not read
+  the removed Host wire-level `run.failed.error` projection.
+
 ## Main Files
 
 - `packages/core/src/session.ts`
@@ -28,17 +156,16 @@ Host chooses/validates sessionId
   -> FileRunStore (trace-store.ts) writes session trace/transcript and agent run files
 
 Fresh workflow run state
-  -> FileWorkflowStore writes <workspace>/.sparkwright/workflow-runs/<workflowRunId>.json
-  -> <workspace>/.sparkwright/workflow-runs/<workflowRunId>.events.jsonl
+  -> FileWorkflowStore publishes checksummed entries under
+     <workspace>/.sparkwright/workflow-runs/<workflowRunId>.journal/
+  -> journal replay derives the current record, canonical events, generation,
+     revision, and quarantine diagnostics
   -> <workspace>/.sparkwright/workflow-runs/<workflowRunId>.lease/
 
 Fresh workflow job execution
   -> unique <sessionRoot>/session_workflow_*/ session + run/trace/checkpoint files
   -> WorkflowRunRecord.sessionId is the job storage identity
   -> WorkflowRunRecord.metadata.controlSessionId is attribution only
-
-Legacy workflow run state
-  -> <sessionRoot>/<sessionId>/workflow-runs/ remains list/resume compatible
 
 Manual compact
   -> compactSessionTurns()
@@ -64,20 +191,27 @@ Manual compact
 - TUI keeps the selected session immutable while its main run is starting or
   active. New-session, switch, and fork-and-switch entrypoints fail at the
   controller boundary; read-only list/inspect/export flows remain available.
-- Session-scoped `FileRunStore` writes session `trace.jsonl` /
+- `FileRunStore` always writes session `trace.jsonl` /
   `transcript.jsonl`, `agents/<agent-id>/trace.jsonl`, per-run `run.json` /
   `result.json`, and `trace-pointer.json` files that point from each run
-  directory back to the aggregate session and agent traces.
+  directory back to the aggregate session and agent traces. It requires a
+  session identity and has no standalone `.sparkwright/runs/` layout.
+- Transcript prompt entries store leading system messages only in the canonical
+  session `blobs/<systemRef>.json` store. `restoreTranscriptPrompts()` requires
+  that blobs directory and does not read inline system-prefix/hash variants.
+- Session list previews extract the goal from canonical prompt `messages` only;
+  top-level transcript `content` is not an alternate preview format.
 - `FileSessionStore` writes `session.json` through core `file-atomic`, the same
   lower-level atomic text writer wrapped by `agent-runtime` doc-store, because
   core cannot depend upward on runtime packages.
-- Fresh workflow records live under workspace-level
+- Workflow records live under workspace-level
   `.sparkwright/workflow-runs/`; each record retains `sessionId` so session
-  filters and resume context remain available. Legacy
-  `<sessionRoot>/<sessionId>/workflow-runs/` records remain list/resume
-  compatible. Each workflow run has a JSON record, a JSONL event log, and a
-  token lease path; corrupt record/log entries are skipped with diagnostics by
-  `FileWorkflowStore` rather than wedging workflow list/resume.
+  filters and resume context remain available. Each workflow run has one
+  immutable checksummed journal plus a token lease path. `FileWorkflowStore`
+  derives records, events, generation/revision, and invalid-entry diagnostics
+  from journal replay; quarantined entries do not wedge list/resume or advance
+  canonical state. Mutation records without the required v2 executable package
+  pin are quarantined rather than defaulted or migrated.
 - TUI and CLI fresh workflow-job entrypoints allocate a unique safe job session
   instead of writing into a selected/control session. The job session does not
   inherit control-session scrollback. Resume requires and reuses the persisted
@@ -121,6 +255,13 @@ Manual compact
   session ids rather than selecting arbitrary existing session-store records.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-16T10:44:25+0800
+- Scope: reviewed Task model-surface consolidation; durable Task storage and
+  Host task protocol reads are unchanged.
+- Read: Task action handlers, Task stores, Host protocol, and session boundaries.
+- Tests: agent-runtime Task 69/69 and Host protocol/Agent-task 61/61 passed.
 
 - Status: Verified
 - Date: 2026-07-15T07:35:27+0800
@@ -311,7 +452,7 @@ list|inspect|resume|distill|shadow --help`.
 - Read: `packages/core/src/session.ts`, `packages/core/src/file-atomic.ts`,
   `packages/core/src/internal.ts`,
   `packages/agent-runtime/src/doc-store/index.ts`,
-  `docs/_internal/proposals/consolidation-agenda.md`,
+  `docs/_internal/reviews/consolidation-agenda.md`,
   `docs/_internal/proposals/substrate-sequencing.md`.
 - Tests: `npm --workspace @sparkwright/core test -- test/session.test.ts`;
   `npm --workspace @sparkwright/agent-runtime test -- test/doc-store.test.ts`;

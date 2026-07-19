@@ -1,4 +1,8 @@
-import type { RunResult, UsageSnapshot } from "@sparkwright/core";
+import type {
+  RunAssessment,
+  RunResult,
+  UsageSnapshot,
+} from "@sparkwright/core";
 
 export interface AgentToolInvocationInput {
   /** The goal forwarded to the child run. */
@@ -25,6 +29,10 @@ export interface AgentToolResult {
   costUsd: number;
   toolCalls: number;
   modelCalls: number;
+  /** Whether the child reached a complete terminal answer, independent of health. */
+  finality: "complete" | "partial";
+  /** Core-owned semantic assessment projected without reinterpretation. */
+  assessment: RunAssessment;
   /**
    * True when the child answered on its last allowed step (`stepLimitReached`
    * in the run result metadata). A `final_answer` produced under an exhausted

@@ -27,6 +27,16 @@ export {
 export type { AgentSupervisor, AgentSupervisorState } from "./supervisor.js";
 export { createAgentSupervisor } from "./supervisor.js";
 export {
+  assessmentNote,
+  childAssessment,
+  isCompleteAgentResult,
+  isAgentToolResult,
+  isReusableAgentResult,
+  projectAgentInvocationResult,
+  runResultStepLimitReached,
+  runResultTruncated,
+} from "./result.js";
+export {
   findSimilarSuccessfulDelegation,
   rememberSuccessfulDelegation,
   withAlreadyCompletedNote,

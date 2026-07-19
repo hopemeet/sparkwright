@@ -1,16 +1,7 @@
-// AI maintenance note: ApprovalResolver is the *legacy* yes/no outbound
-// channel. New work should reach for InteractionChannel (interaction.ts),
-// which also covers free-form questions and notifications. Both are wired
-// in run.ts; channel.approve takes precedence when both are set.
-
 import { createApprovalId } from "./ids.js";
 import type { RunId } from "./ids.js";
 import type { ApprovalRequest, ApprovalResponse } from "./types.js";
 import { isRecord } from "./record-utils.js";
-
-export type ApprovalResolver = (
-  request: ApprovalRequest,
-) => Promise<ApprovalResponse> | ApprovalResponse;
 
 export interface ResolveApprovalOptions {
   timeoutMs?: number;
@@ -35,7 +26,9 @@ export function createApprovalRequest(input: {
 
 export async function resolveApproval(
   request: ApprovalRequest,
-  resolver: ApprovalResolver,
+  resolver: (
+    request: ApprovalRequest,
+  ) => Promise<ApprovalResponse> | ApprovalResponse,
   options: ResolveApprovalOptions = {},
 ): Promise<ApprovalResponse> {
   const timeoutError = validateApprovalTimeout(options.timeoutMs);
@@ -87,7 +80,9 @@ function invalidApprovalResponseReason(
 
 async function resolveWithTimeout(
   request: ApprovalRequest,
-  resolver: ApprovalResolver,
+  resolver: (
+    request: ApprovalRequest,
+  ) => Promise<ApprovalResponse> | ApprovalResponse,
   timeoutMs: number,
 ): Promise<ApprovalResponse> {
   let timeout: ReturnType<typeof setTimeout> | undefined;

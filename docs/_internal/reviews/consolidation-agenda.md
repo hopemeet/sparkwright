@@ -1,5 +1,11 @@
 # 定调议程(Consolidation Agenda)
 
+> Archive status: **closed decision review, archived 2026-07-18**. C1-C13
+> were adjudicated and their implementation or reopen conditions were
+> transferred to owner proposals, current project maps, and explicit known
+> debts. This page is retained only as the historical decision/burn-down
+> record; it is not an active queue or source of current runtime facts.
+>
 > Status: **13 项全部裁决完毕(2026-07-06,用户投票单)**,进入认领/
 > 执行;裁决见各行行尾。总口径:C1–C4 必批,C5–C8 批边界,C9–C12
 > 批认领或缓,C13 单独拍(drafted 2026-07-05)。
@@ -58,13 +64,10 @@
   已同步 Skill/MCP/Agent/Delegate 基座排期。**
 - **C2|能力面词汇拆三层,各设唯一 owner。**
   `agent-access-config-redesign.md` 子提案 #2/#3 与
-  `builtin-tool-surface-consolidation.md` 的 selector 面 + 别名层交叠,
-  且有一处**表述冲突**:access-config 写 selector 词汇 "no aliases",
-  而源码 `host/src/tool-identities.ts` 已是 canonical + legacy alias
-  (`read_file→read`、`apply_patch→edit` 等)——两者说的不是同一层,
-  但不拆开就会互相误伤。三层裁决:
+  `builtin-tool-surface-consolidation.md` 的 selector 面曾与身份层交叠。
+  当前三层裁决为:
   ① selector/toolset 编译词汇(无别名)→ access-config #2/#3;
-  ② tool identity(canonical 名 + legacy 别名 + exposure tier,已落地)
+  ② tool identity(单一 callable 名 + exposure tier,已落地)
   → `tool-identities.ts` 为事实源,builtin-tool-surface 记录其规则;
   ③ 产品默认公开面清单 → builtin-tool-surface。引用不复述。
   **→ 裁决 2026-07-06:批(三层各设唯一 owner 如上)。首个交付物:
@@ -229,7 +232,8 @@
   **→ 裁决 2026-07-06:批"给家"(补写落盘至 proposals/);缓实现
   (#1/#3/#5/#6 后续排期)。完成 2026-07-06:
   `qa-convergence-plan.md` 已作为 stub home 落盘,仅记录已知线索与待补
-  五阶段骨架。**
+  五阶段骨架。归档结果 2026-07-18:未找到原始五阶段或 numbered
+  findings 来源,因此关闭为 unsourced stub,不据此实现。**
 
 ## 2. 互相假设对齐表
 

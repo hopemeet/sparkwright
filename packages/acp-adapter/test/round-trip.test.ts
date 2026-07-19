@@ -131,8 +131,7 @@ describe("ACP round trip", () => {
     expect(runJson.metadata).toMatchObject({
       source: "acp",
       traceLevel: "debug",
-      permissionMode: "default",
-      shouldWrite: false,
+      accessMode: "read-only",
       workspaceRoot: cwd,
     });
     expect(runJson.metadata?.capabilitySnapshot).toMatchObject({
@@ -274,7 +273,7 @@ describe("ACP round trip", () => {
     await writeFile(
       join(cwd, ".sparkwright", "config.json"),
       JSON.stringify({
-        shell: {
+        policy: {
           sandbox: {
             filesystem: {
               allowRead: [join(findRepoRoot(process.cwd()), "node_modules")],
@@ -324,7 +323,7 @@ describe("ACP round trip", () => {
         // This fixture writes a workspace marker when the MCP process starts;
         // opt into a write run so the test exercises ACP MCP injection rather
         // than the read-only extension-process guard.
-        defaultShouldWrite: true,
+        defaultAccessMode: "ask",
       }),
       ndJsonStream(agentToClient.writable, clientToAgent.readable),
     );

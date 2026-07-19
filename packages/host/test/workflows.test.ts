@@ -1,11 +1,4 @@
-import {
-  access,
-  mkdir,
-  mkdtemp,
-  readFile,
-  readdir,
-  writeFile,
-} from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -14,6 +7,7 @@ import {
   FileWorkflowChannelStore,
   FileWorkflowControlInbox,
   type WorkflowDefinition,
+  type WorkflowExecutableDefinition,
   type WorkflowRunId,
   type WorkflowRunRecord,
   type CreateWorkflowRunRecordInput,
@@ -27,8 +21,8 @@ import {
   pinWorkflowAssetPackage,
   verifyWorkflowPackageSnapshot,
 } from "../src/workflows.js";
-import { HostRuntime } from "../src/runtime.js";
 import type { HostEvent } from "@sparkwright/protocol";
+import { createTestHostRuntime } from "./helpers/host-runtime.js";
 
 const TEST_WORKFLOW_SOURCE = {
   kind: "api" as const,
@@ -95,16 +89,6 @@ function workflowStoreRoot(workspace: string, _sessionId?: string): string {
   return join(workspace, ".sparkwright", "workflow-runs");
 }
 
-function legacyWorkflowStoreRoot(workspace: string, sessionId: string): string {
-  return join(
-    workspace,
-    ".sparkwright",
-    "sessions",
-    sessionId,
-    "workflow-runs",
-  );
-}
-
 async function waitForWorkflowRecord(
   rootDir: string,
 ): Promise<WorkflowRunRecord> {
@@ -122,42 +106,49 @@ async function waitForWorkflowRecord(
 
 async function seedWorkflowRecord(
   store: FileWorkflowStore,
-  input: CreateWorkflowRunRecordInput,
+  input: Omit<
+    CreateWorkflowRunRecordInput,
+    | "layer"
+    | "packageHash"
+    | "packageHashPolicyVersion"
+    | "packageSnapshotRef"
+    | "definitionSnapshot"
+  > & {
+    layer?: CreateWorkflowRunRecordInput["layer"];
+    definitionSnapshot: WorkflowExecutableDefinition;
+  },
   patch?: WorkflowRunRecordPatch,
 ): Promise<WorkflowRunRecord> {
-  const definitionSnapshot = input.definitionSnapshot;
-  const pinnedInput: CreateWorkflowRunRecordInput =
-    definitionSnapshot && !input.packageHash
-      ? await (async () => {
-          const rootDir = (store as unknown as { rootDir: string }).rootDir;
-          const packageSnapshotRef = join(
-            rootDir,
-            "package-snapshots",
-            input.id,
-          );
-          await mkdir(packageSnapshotRef, { recursive: true });
-          await writeFile(
-            join(packageSnapshotRef, "workflow.md"),
-            "# snapshot\n",
-          );
-          const packageHash = (
-            await computeAssetPackageHash({
-              rootPath: packageSnapshotRef,
-              entryPath: "workflow.md",
-            })
-          ).packageHash;
-          return {
-            ...input,
-            packageHash,
-            packageHashPolicyVersion: 2 as const,
-            packageSnapshotRef,
-            definitionSnapshot: {
-              ...definitionSnapshot,
-              sourceDir: packageSnapshotRef,
-            },
-          };
-        })()
-      : input;
+  const { contentHash: _contentHash, ...executableDefinition } =
+    input.definitionSnapshot as WorkflowExecutableDefinition & {
+      contentHash?: string;
+    };
+  const rootDir = store.rootDir;
+  const packageSnapshotRef = join(rootDir, "package-snapshots", input.id);
+  await mkdir(packageSnapshotRef, { recursive: true });
+  await writeFile(join(packageSnapshotRef, "workflow.md"), "# snapshot\n");
+  const packageHash = (
+    await computeAssetPackageHash({
+      rootPath: packageSnapshotRef,
+      entryPath: "workflow.md",
+    })
+  ).packageHash;
+  const layer = input.layer ?? "project";
+  const pinnedInput: CreateWorkflowRunRecordInput = {
+    ...input,
+    layer,
+    packageHash,
+    packageHashPolicyVersion: 2,
+    packageSnapshotRef,
+    definitionSnapshot: {
+      ...executableDefinition,
+      sourceDir: packageSnapshotRef,
+      layer,
+      packageHash,
+      packageHashPolicyVersion: 2,
+      packageSnapshotRef,
+    },
+  };
   const writer = await store.acquireWriter(pinnedInput.id, {
     owner: "test-fixture",
   });
@@ -166,7 +157,7 @@ async function seedWorkflowRecord(
   if (patch) {
     const status = patch.status ?? record.status;
     record = await writer.mutate({
-      expectedRevision: record.recordRevision ?? 0,
+      expectedRevision: record.recordRevision,
       patch,
       event: {
         at: new Date().toISOString(),
@@ -331,7 +322,7 @@ describe("workflow assets", () => {
       ].join("\n"),
     );
     const events: HostEvent[] = [];
-    const runtime = new HostRuntime({
+    const runtime = createTestHostRuntime({
       workspaceRoot: workspace,
       defaultModel: "deterministic",
       emit: (event) => events.push(event),
@@ -363,7 +354,7 @@ describe("workflow assets", () => {
     });
     await waitForHostEvent(events, (event) => event.kind === "run.completed");
 
-    const invalid = await new HostRuntime({
+    const invalid = await createTestHostRuntime({
       workspaceRoot: workspace,
       defaultModel: "deterministic",
       emit: () => {},
@@ -399,7 +390,7 @@ describe("workflow assets", () => {
     const workflowRunId =
       "workflow_service_0123456789abcdef0123456789abcdef" as WorkflowRunId;
     const events: HostEvent[] = [];
-    const first = await new HostRuntime({
+    const first = await createTestHostRuntime({
       workspaceRoot: workspace,
       defaultModel: "deterministic",
       emit: (event) => events.push(event),
@@ -415,7 +406,7 @@ describe("workflow assets", () => {
     expect(first).toMatchObject({ ok: true, workflowRunId });
     await waitForHostEvent(events, (event) => event.kind === "run.completed");
 
-    const duplicate = await new HostRuntime({
+    const duplicate = await createTestHostRuntime({
       workspaceRoot: workspace,
       defaultModel: "deterministic",
       emit: () => {},
@@ -560,7 +551,7 @@ describe("workflow assets", () => {
         "nodes:",
         "  - id: reproduce",
         "    execute: model",
-        "    tools: [read_file, shell]",
+        "    tools: [read, bash]",
         "    verify:",
         "      - id: failing-test",
         "        kind: command",
@@ -583,7 +574,7 @@ describe("workflow assets", () => {
 
     expect(detail.definition.nodes[0]).toMatchObject({
       id: "reproduce",
-      tools: ["read_file", "shell"],
+      tools: ["read", "bash"],
       verify: [
         {
           id: "failing-test",
@@ -690,34 +681,26 @@ describe("workflow assets", () => {
     ]);
   });
 
-  it("parses todo_clear verifiers", () => {
-    const detail = parseWorkflowMarkdownAsset({
-      assetName: "todo-clear",
-      dir: "/tmp/todo-clear",
-      sourcePath: "/tmp/todo-clear/workflow.md",
-      raw: [
-        "---",
-        "nodes:",
-        "  - id: finish",
-        "    execute: model",
-        "    verify:",
-        "      - kind: todo_clear",
-        "        name: todos-done",
-        "        metadata:",
-        "          owner: self-hosting",
-        "---",
-        "## finish",
-        "Finish the todo-backed work.",
-      ].join("\n"),
-    });
-
-    expect(detail.definition.nodes[0]?.verify).toEqual([
-      {
-        id: "todos-done",
-        kind: "todo_clear",
-        metadata: { owner: "self-hosting" },
-      },
-    ]);
+  it("rejects removed todo_clear verifiers", () => {
+    expect(() =>
+      parseWorkflowMarkdownAsset({
+        assetName: "todo-clear",
+        dir: "/tmp/todo-clear",
+        sourcePath: "/tmp/todo-clear/workflow.md",
+        raw: [
+          "---",
+          "nodes:",
+          "  - id: finish",
+          "    execute: model",
+          "    verify:",
+          "      - kind: todo_clear",
+          "        name: todos-done",
+          "---",
+          "## finish",
+          "Finish the work.",
+        ].join("\n"),
+      }),
+    ).toThrow(/kind must be command or diff_scope/);
   });
 
   it("parses P4 script nodes with asset-local paths and capability declarations", () => {
@@ -930,7 +913,7 @@ describe("workflow assets", () => {
       "inspectable",
       ["---", "version: 0.1", "nodes: [main]", "---", "Main"].join("\n"),
     );
-    const runtime = new HostRuntime({
+    const runtime = createTestHostRuntime({
       workspaceRoot: workspace,
       defaultModel: "deterministic",
       emit: () => {},
@@ -966,7 +949,7 @@ describe("workflow assets", () => {
         "Run only when enabled.",
       ].join("\n"),
     );
-    const runtime = new HostRuntime({
+    const runtime = createTestHostRuntime({
       workspaceRoot: workspace,
       defaultModel: "deterministic",
       emit: () => {},
@@ -982,7 +965,7 @@ describe("workflow assets", () => {
     runtime.cancelRun(started.runId, "test cleanup");
   });
 
-  it("persists workflow run records under the session root", async () => {
+  it("persists workflow run records under the workspace root", async () => {
     const workspace = await tempWorkspace();
     const sessionId = "sess_workflow_p2";
     await writeWorkflow(
@@ -991,7 +974,7 @@ describe("workflow assets", () => {
       ["---", "nodes: [main]", "---", "Main durable workflow."].join("\n"),
     );
     const events: HostEvent[] = [];
-    const runtime = new HostRuntime({
+    const runtime = createTestHostRuntime({
       workspaceRoot: workspace,
       defaultModel: "deterministic",
       emit: (event) => events.push(event),
@@ -1016,6 +999,11 @@ describe("workflow assets", () => {
       throw new Error("Expected workflow.started event.");
     }
     const workflowPayload = runEventPayload(workflowStarted)?.payload;
+    expect(workflowPayload).toMatchObject({
+      packageHash: expect.stringMatching(/^sha256:/),
+      packageHashPolicyVersion: 2,
+    });
+    expect(workflowPayload).not.toHaveProperty("contentHash");
     const workflowRunId =
       workflowPayload &&
       typeof workflowPayload === "object" &&
@@ -1034,6 +1022,9 @@ describe("workflow assets", () => {
       id: workflowRunId,
       status: "completed",
       assetName: "durable",
+      layer: "project",
+      packageHash: expect.stringMatching(/^sha256:/),
+      packageHashPolicyVersion: 2,
       sessionId,
       metadata: {
         episodeDriver: "workflow_actor",
@@ -1044,14 +1035,12 @@ describe("workflow assets", () => {
         nodes: [expect.objectContaining({ id: "main" })],
       },
     });
+    expect(record).not.toHaveProperty("contentHash");
     expect(record?.runIds).toContain(started.ok ? started.runId : "");
     expect(record?.evidenceRefs).toContainEqual({
       kind: "run",
       ref: started.ok ? started.runId : "",
     });
-    await expect(
-      access(legacyWorkflowStoreRoot(workspace, sessionId)),
-    ).rejects.toThrow();
     const notifications = await runtime
       .workflowActorInbox()
       .drain((notification) => notification.source.kind === "workflow");
@@ -1078,7 +1067,7 @@ describe("workflow assets", () => {
         "nodes:",
         "  - id: main",
         "    execute: model",
-        "    tools: [read_file]",
+        "    tools: [read]",
         "---",
         "## main",
         "Only read tools are available.",
@@ -1105,7 +1094,7 @@ describe("workflow assets", () => {
       { message: "done" },
     ]);
     const events: HostEvent[] = [];
-    const runtime = new HostRuntime({
+    const runtime = createTestHostRuntime({
       workspaceRoot: workspace,
       defaultModel: "scripted",
       emit: (event) => events.push(event),
@@ -1190,7 +1179,7 @@ describe("workflow assets", () => {
       { message: "done" },
     ]);
     const events: HostEvent[] = [];
-    const runtime = new HostRuntime({
+    const runtime = createTestHostRuntime({
       workspaceRoot: workspace,
       defaultModel: "scripted",
       emit: (event) => events.push(event),
@@ -1252,19 +1241,19 @@ describe("workflow assets", () => {
 
   it("continues a bounded workflow episode without letting RunEnd claim terminal ownership", async () => {
     const workspace = await tempWorkspace();
-    const sessionId = "sess_workflow_todo_continuation";
+    const sessionId = "sess_workflow_budget_continuation";
     await writeFile(join(workspace, "README.md"), "# Demo\n", "utf8");
     await writeWorkflow(
       workspace,
-      "todo-continuation",
+      "budget-continuation",
       [
         "---",
         "nodes:",
         "  - id: main",
         "    execute: model",
-        "    tools: [read, todo_write]",
+        "    tools: [read]",
         "    runBudget:",
-        "      maxToolCalls: 2",
+        "      maxToolCalls: 1",
         "---",
         "## main",
         "Finish the tracked review.",
@@ -1275,38 +1264,18 @@ describe("workflow assets", () => {
       {
         toolCalls: [
           {
-            toolName: "tool_search",
-            arguments: { query: "select:todo_write" },
-          },
-        ],
-      },
-      {
-        toolCalls: [
-          {
-            toolName: "todo_write",
-            arguments: {
-              items: [{ title: "review", status: "pending" }],
-            },
+            toolName: "read",
+            arguments: { path: "README.md" },
           },
         ],
       },
       {
         toolCalls: [{ toolName: "read", arguments: { path: "README.md" } }],
       },
-      {
-        toolCalls: [
-          {
-            toolName: "todo_write",
-            arguments: {
-              items: [{ title: "review", status: "completed" }],
-            },
-          },
-        ],
-      },
       { message: "done" },
     ]);
     const events: HostEvent[] = [];
-    const runtime = new HostRuntime({
+    const runtime = createTestHostRuntime({
       workspaceRoot: workspace,
       defaultModel: "scripted",
       emit: (event) => events.push(event),
@@ -1314,9 +1283,9 @@ describe("workflow assets", () => {
 
     try {
       const started = await runtime.startRun({
-        goal: "run bounded todo continuation workflow",
+        goal: "run bounded workflow continuation",
         sessionId,
-        workflow: "todo-continuation",
+        workflow: "budget-continuation",
       });
 
       expect(started).toMatchObject({ ok: true });
@@ -1444,7 +1413,7 @@ describe("workflow assets", () => {
       { message: "done" },
     ]);
     const events: HostEvent[] = [];
-    const runtime = new HostRuntime({
+    const runtime = createTestHostRuntime({
       workspaceRoot: workspace,
       defaultModel: "scripted",
       emit: (event) => events.push(event),
@@ -1522,7 +1491,7 @@ describe("workflow assets", () => {
     ]);
     const sessionId = "sess_workflow_d6";
     const events: HostEvent[] = [];
-    const runtime = new HostRuntime({
+    const runtime = createTestHostRuntime({
       workspaceRoot: workspace,
       defaultModel: "deterministic",
       emit: (event) => events.push(event),
@@ -1601,7 +1570,7 @@ describe("workflow assets", () => {
       ].join("\n"),
     );
     const events: HostEvent[] = [];
-    const runtime = new HostRuntime({
+    const runtime = createTestHostRuntime({
       workspaceRoot: workspace,
       defaultModel: "deterministic",
       emit: (event) => events.push(event),
@@ -1741,7 +1710,6 @@ describe("workflow assets", () => {
         id: workflowRunId,
         sessionId,
         assetName: definition.assetName,
-        contentHash: definition.contentHash,
         currentNodeId: "review",
         attempts: { review: 1 },
         definitionSnapshot: definition,
@@ -1752,7 +1720,7 @@ describe("workflow assets", () => {
         wait: { kind: "input", reason: "Need human review." },
       },
     );
-    const runtime = new HostRuntime({
+    const runtime = createTestHostRuntime({
       workspaceRoot: workspace,
       defaultModel: "deterministic",
       emit: () => {},
@@ -1803,7 +1771,7 @@ describe("workflow assets", () => {
       ].join("\n"),
     );
     const events: HostEvent[] = [];
-    const runtime = new HostRuntime({
+    const runtime = createTestHostRuntime({
       workspaceRoot: workspace,
       defaultModel: "deterministic",
       emit: (event) => events.push(event),
@@ -1829,7 +1797,7 @@ describe("workflow assets", () => {
     });
     expect(competingLease).toBeNull();
 
-    const competingRuntime = new HostRuntime({
+    const competingRuntime = createTestHostRuntime({
       workspaceRoot: workspace,
       defaultModel: "deterministic",
       emit: () => {},
@@ -1861,7 +1829,7 @@ describe("workflow assets", () => {
     );
     const events: HostEvent[] = [];
     let brokeStream = false;
-    const runtime = new HostRuntime({
+    const runtime = createTestHostRuntime({
       workspaceRoot: workspace,
       defaultModel: "deterministic",
       emit: (event) => {
@@ -1919,7 +1887,7 @@ describe("workflow assets", () => {
     expect(releasedLease).not.toBeNull();
     await releasedLease?.release();
 
-    const resumed = await new HostRuntime({
+    const resumed = await createTestHostRuntime({
       workspaceRoot: workspace,
       defaultModel: "deterministic",
       emit: () => {},
@@ -1948,14 +1916,13 @@ describe("workflow assets", () => {
       nodes: [{ id: "main", body: "Pinned body." }],
     };
     const store = new FileWorkflowStore({
-      rootDir: legacyWorkflowStoreRoot(workspace, sessionId),
+      rootDir: workflowStoreRoot(workspace, sessionId),
     });
     const workflowRunId = "workflow_resume_pinned" as WorkflowRunId;
     await seedWorkflowRecord(store, {
       id: workflowRunId,
       sessionId,
       assetName: definition.assetName,
-      contentHash: definition.contentHash,
       currentNodeId: "main",
       attempts: { main: 1 },
       definitionSnapshot: definition,
@@ -1969,7 +1936,7 @@ describe("workflow assets", () => {
       ),
     );
     const events: HostEvent[] = [];
-    const runtime = new HostRuntime({
+    const runtime = createTestHostRuntime({
       workspaceRoot: workspace,
       defaultModel: "deterministic",
       emit: (event) => events.push(event),
@@ -1992,7 +1959,7 @@ describe("workflow assets", () => {
     expect(resumed).toMatchObject({ ok: true, workflowRunId, sessionId });
     await waitForHostEvent(events, (event) => event.kind === "run.completed");
     const record = new FileWorkflowStore({
-      rootDir: legacyWorkflowStoreRoot(workspace, sessionId),
+      rootDir: workflowStoreRoot(workspace, sessionId),
       createRoot: false,
     }).get(workflowRunId);
 
@@ -2019,13 +1986,12 @@ describe("workflow assets", () => {
       nodes: [{ id: "main", body: "Claimed body." }],
     };
     const store = new FileWorkflowStore({
-      rootDir: legacyWorkflowStoreRoot(workspace, sessionId),
+      rootDir: workflowStoreRoot(workspace, sessionId),
     });
     await seedWorkflowRecord(store, {
       id: workflowRunId,
       sessionId,
       assetName: definition.assetName,
-      contentHash: definition.contentHash,
       currentNodeId: "main",
       attempts: { main: 1 },
       definitionSnapshot: definition,
@@ -2036,7 +2002,7 @@ describe("workflow assets", () => {
     });
     expect(writer).not.toBeNull();
     const events: HostEvent[] = [];
-    const runtime = new HostRuntime({
+    const runtime = createTestHostRuntime({
       workspaceRoot: workspace,
       defaultModel: "deterministic",
       emit: (event) => events.push(event),
@@ -2051,7 +2017,7 @@ describe("workflow assets", () => {
     await waitForHostEvent(events, (event) => event.kind === "run.completed");
     expect(
       new FileWorkflowStore({
-        rootDir: legacyWorkflowStoreRoot(workspace, sessionId),
+        rootDir: workflowStoreRoot(workspace, sessionId),
         createRoot: false,
       }).get(workflowRunId),
     ).toMatchObject({ status: "completed", generation: writer!.generation });
@@ -2093,7 +2059,6 @@ describe("workflow assets", () => {
       id: workflowRunId,
       sessionId,
       assetName: definition.assetName,
-      contentHash: definition.contentHash,
       currentNodeId: "second",
       attempts: { first: 1, second: 1 },
       definitionSnapshot: definition,
@@ -2120,7 +2085,7 @@ describe("workflow assets", () => {
       metadata: { goal: "resume failed-history workflow" },
     });
     const events: HostEvent[] = [];
-    const runtime = new HostRuntime({
+    const runtime = createTestHostRuntime({
       workspaceRoot: workspace,
       defaultModel: "deterministic",
       emit: (event) => events.push(event),
@@ -2141,70 +2106,6 @@ describe("workflow assets", () => {
     });
   });
 
-  it("prefers workspace workflow records over matching legacy session copies on resume", async () => {
-    const workspace = await tempWorkspace();
-    const sessionId = "sess_workflow_workspace_legacy_duplicate";
-    const definition: WorkflowDefinition = {
-      assetName: "pinned",
-      contentHash: "hash-pinned",
-      nodes: [{ id: "main", body: "Resume from workspace record." }],
-    };
-    const workflowRunId = "workflow_workspace_duplicate" as WorkflowRunId;
-    const workspaceStore = new FileWorkflowStore({
-      rootDir: workflowStoreRoot(workspace, sessionId),
-    });
-    await seedWorkflowRecord(workspaceStore, {
-      id: workflowRunId,
-      sessionId,
-      assetName: definition.assetName,
-      contentHash: definition.contentHash,
-      currentNodeId: "main",
-      definitionSnapshot: definition,
-      metadata: { goal: "resume duplicate workflow" },
-    });
-    const legacyStore = new FileWorkflowStore({
-      rootDir: legacyWorkflowStoreRoot(workspace, sessionId),
-    });
-    await seedWorkflowRecord(legacyStore, {
-      id: workflowRunId,
-      sessionId,
-      assetName: definition.assetName,
-      contentHash: definition.contentHash,
-      currentNodeId: "main",
-      definitionSnapshot: definition,
-      metadata: { goal: "resume duplicate workflow" },
-    });
-    const events: HostEvent[] = [];
-    const runtime = new HostRuntime({
-      workspaceRoot: workspace,
-      defaultModel: "deterministic",
-      emit: (event) => events.push(event),
-    });
-
-    const resumed = await runtime.resumeWorkflowRun(
-      {
-        workflowRunId,
-        sessionId,
-      },
-      TEST_WORKFLOW_SOURCE,
-    );
-
-    expect(resumed).toMatchObject({ ok: true });
-    await waitForHostEvent(events, (event) => event.kind === "run.completed");
-    expect(
-      new FileWorkflowStore({
-        rootDir: workflowStoreRoot(workspace, sessionId),
-        createRoot: false,
-      }).get(workflowRunId)?.runIds,
-    ).toHaveLength(1);
-    expect(
-      new FileWorkflowStore({
-        rootDir: legacyWorkflowStoreRoot(workspace, sessionId),
-        createRoot: false,
-      }).get(workflowRunId)?.runIds,
-    ).toHaveLength(0);
-  });
-
   it("rejects terminal workflow records instead of force-resuming them", async () => {
     const workspace = await tempWorkspace();
     const sessionId = "sess_workflow_terminal";
@@ -2223,13 +2124,12 @@ describe("workflow assets", () => {
         id: workflowRunId,
         sessionId,
         assetName: definition.assetName,
-        contentHash: definition.contentHash,
         currentNodeId: "main",
         definitionSnapshot: definition,
       },
       { status: "completed" },
     );
-    const runtime = new HostRuntime({
+    const runtime = createTestHostRuntime({
       workspaceRoot: workspace,
       defaultModel: "deterministic",
       emit: () => {},
@@ -2263,15 +2163,13 @@ describe("workflow assets", () => {
       id: workflowRunId,
       sessionId,
       assetName: "controlled",
-      contentHash: "hash-controlled",
       currentNodeId: "main",
       definitionSnapshot: {
         assetName: "controlled",
-        contentHash: "hash-controlled",
         nodes: [{ id: "main", body: "Controlled body." }],
       },
     });
-    const runtime = new HostRuntime({
+    const runtime = createTestHostRuntime({
       workspaceRoot: workspace,
       defaultModel: "deterministic",
       emit: () => {},
@@ -2313,11 +2211,9 @@ describe("workflow assets", () => {
       id: workflowRunId,
       sessionId,
       assetName: "channel-controlled",
-      contentHash: "hash-channel-controlled",
       currentNodeId: "main",
       definitionSnapshot: {
         assetName: "channel-controlled",
-        contentHash: "hash-channel-controlled",
         nodes: [{ id: "main", body: "Controlled body." }],
       },
     });
@@ -2353,7 +2249,7 @@ describe("workflow assets", () => {
       expiresAt: new Date(now.getTime() + 60_000).toISOString(),
     });
     if (accepted.status === "conflict") throw new Error("unexpected conflict");
-    const processed = await new HostRuntime({
+    const processed = await createTestHostRuntime({
       workspaceRoot: workspace,
       defaultModel: "deterministic",
       emit: () => {},
@@ -2372,7 +2268,7 @@ describe("workflow assets", () => {
 
   it("rejects unsafe workflow resume ids before building paths", async () => {
     const workspace = await tempWorkspace();
-    const runtime = new HostRuntime({
+    const runtime = createTestHostRuntime({
       workspaceRoot: workspace,
       defaultModel: "deterministic",
       emit: () => {},

@@ -16,7 +16,7 @@ describe("host client start failure trace", () => {
         sessionId: "session_failure_test",
         traceLevel: "standard",
         targetPath: "README.md",
-        shouldWrite: false,
+        accessMode: "read-only",
         metadata: { client: "test" },
       });
 
@@ -42,7 +42,7 @@ describe("host client start failure trace", () => {
             source: "cli",
             failurePhase: "host_start",
             targetPath: "README.md",
-            shouldWrite: false,
+            accessMode: "read-only",
             traceLevel: "standard",
             client: "test",
           },

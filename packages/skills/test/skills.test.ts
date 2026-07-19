@@ -6,7 +6,6 @@ import {
   defaultTokenize,
   loadSkillsFromDirectory,
   matchSkills,
-  parseSkill,
   parseSkillManifest,
   skillsToCapabilities,
   SkillRegistry,
@@ -53,20 +52,19 @@ Step 2: summarize risk.
     expect(manifest.version).toBe("0.2.1");
   });
 
-  it("normalizes compatibility fields consistently with legacy parseSkill", () => {
+  it("normalizes manifest compatibility fields", () => {
     const md = `---
 name: compat-skill
 description: Exercises compatibility fields.
 license: MIT
 compatibility: generic, cli
-allowed-tools: read_file shell,skill_load
+allowed-tools: read bash,skill_load
 triggers: review, diff
 ---
 Follow the compatibility contract.
 `;
 
     const manifest = parseSkillManifest(md, "/skills/compat/SKILL.md");
-    const legacy = parseSkill(md, "/skills/compat/SKILL.md");
 
     expect(manifest).toMatchObject({
       name: "compat-skill",
@@ -74,26 +72,16 @@ Follow the compatibility contract.
       instructions: "Follow the compatibility contract.",
       license: "MIT",
       compatibility: ["generic", "cli"],
-      allowedTools: ["read_file", "shell", "skill_load"],
+      allowedTools: ["read", "bash", "skill_load"],
       triggers: ["review", "diff"],
       source: "/skills/compat/SKILL.md",
-    });
-    expect(legacy).toMatchObject({
-      name: manifest.name,
-      description: manifest.description,
-      license: manifest.license,
-      compatibility: manifest.compatibility,
-      allowedTools: manifest.allowedTools,
-      triggers: manifest.triggers,
-      body: manifest.instructions,
-      sourcePath: manifest.source,
     });
   });
 
   it("derives canonical version from metadata.version for package-style skills", () => {
     const md = `---
 name: metadata-version
-description: Carries version in legacy metadata.
+description: Carries version in metadata.
 metadata:
   version: 1.2.3
 ---
@@ -101,15 +89,12 @@ Use the metadata version.
 `;
 
     const manifest = parseSkillManifest(md, "/skills/meta/SKILL.md");
-    const legacy = parseSkill(md, "/skills/meta/SKILL.md");
 
     expect(manifest.version).toBe("1.2.3");
     expect(manifest.metadata).toMatchObject({ version: "1.2.3" });
-    expect(legacy.version).toBe("1.2.3");
-    expect(legacy.metadata.version).toBe("1.2.3");
   });
 
-  it("bridges top-level version into legacy metadata when needed", () => {
+  it("keeps top-level version canonical", () => {
     const md = `---
 name: top-version
 description: Carries version as a canonical field.
@@ -119,26 +104,21 @@ Use the top-level version.
 `;
 
     const manifest = parseSkillManifest(md, "/skills/top/SKILL.md");
-    const legacy = parseSkill(md, "/skills/top/SKILL.md");
 
     expect(manifest.version).toBe("2.0.0");
     expect(manifest.metadata).toBeUndefined();
-    expect(legacy.version).toBe("2.0.0");
-    expect(legacy.metadata.version).toBe("2.0.0");
   });
 
-  it("keeps canonical instructions strict while legacy parseSkill accepts an empty body", () => {
+  it("rejects an empty markdown body", () => {
     const md = `---
 name: empty-body
-description: Preserves legacy empty body compatibility.
+description: Requires non-empty instructions.
 ---
 `;
 
     expect(() => parseSkillManifest(md, "/skills/empty/SKILL.md")).toThrow(
       /instructions/,
     );
-    const legacy = parseSkill(md, "/skills/empty/SKILL.md");
-    expect(legacy.body).toBe("");
   });
 
   it("rejects manifests missing required fields", () => {
@@ -149,7 +129,7 @@ description: Preserves legacy empty body compatibility.
       parseSkillManifest(JSON.stringify({ name: "x", instructions: "y" })),
     ).toThrow(/description/);
     expect(() =>
-      parseSkill(`---
+      parseSkillManifest(`---
 name: x
 ---
 y
@@ -157,7 +137,7 @@ y
     ).toThrow(/description/);
   });
 
-  it("rejects descriptions above the manifest limit on both parser surfaces", () => {
+  it("rejects descriptions above the manifest limit", () => {
     const description = "x".repeat(1025);
 
     expect(() =>
@@ -166,14 +146,6 @@ y
         description,
         instructions: "Body.",
       }),
-    ).toThrow(/at most 1024/);
-    expect(() =>
-      parseSkill(`---
-name: long-description
-description: ${description}
----
-Body.
-`),
     ).toThrow(/at most 1024/);
   });
 

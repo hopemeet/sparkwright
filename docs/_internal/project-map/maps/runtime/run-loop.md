@@ -7,6 +7,222 @@ events, policy checks, approvals, artifacts, and terminal results.
 
 See [tool-orchestration.md](tool-orchestration.md) and [../trace/raw-trace.md](../trace/raw-trace.md).
 
+## Last Verified
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: Host Workflow episodes no longer translate `maxModelCalls` into a
+  competing step ceiling. Explicit profile `maxSteps`, Core work-budget
+  accounts, and Workflow chain caps remain separate owners with their own
+  terminal codes.
+- Read: Host Workflow episode construction/continuation, Core budget checks,
+  durable Workflow decider, focused tests, and a real Terra Workflow trace.
+- Tests: Host Workflow/protocol 103/103; real one-call episodes emitted
+  `MAX_MODEL_CALLS_EXCEEDED`, then the durable Workflow completed and verified.
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: Agent repeated-call ownership is argument- and cache-aware. Exact
+  complete+clean repeats reach the parent ledger; uncached partial/unhealthy
+  repeats remain under the generic Core guard. Formal verification no longer
+  depends on goal prose, and superseded resumable episode failures share one
+  Core predicate across Host aggregation and trace report.
+- Read: Core run/fact/assessment/trace paths, Agent result/ledger/tool, Host
+  execution/Agent assembly, and full affected-package tests.
+- Tests: Core 641/641, Agent Runtime 235/235, Host 592/592.
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: exact sequential Agent delegation repeats can reach the shared
+  complete+clean result ledger through `ToolDefinition.managesRepeatedCalls`.
+  Generic tools, same-turn duplicates, prior failures/no-progress results, and
+  replay-risk classification are unchanged.
+- Read: Core repeat path, Agent Runtime delegate cache, Host indexed/direct/
+  parallel/dynamic wrappers, focused tests, and real Terra traces.
+- Tests: Core run 128/128; Host Agent tool/spawn 117/117; real fixed session
+  produced two delegate tool calls, one child run, and no repeat failure.
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: every Core episode terminates with a persisted `RunAssessment`; Host
+  folds those into one `ExecutionAssessment`. Ordinary executions stop after
+  one episode. Only a fresh, nonterminal durable Workflow record may authorize
+  another bounded episode; Todo state has no continuation authority.
+- Read: Core run assessment/terminal assembly, Host execution driver, Workflow
+  episode/record decider, and related tests.
+- Tests: Core 638/638 and Host 591/591 passed in final gates.
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: Host fresh/start and checkpoint/Workflow resume paths now enter one
+  HostRuntime execution envelope and receive its exact HostExecution as an
+  explicit argument. Busy rejection, abort scope, release-on-preparation
+  failure, Core episode construction, lane admission, and terminal event order
+  are unchanged; inner assembly has no fallback execution entrance.
+- Read: HostRuntime/HostExecution, HostService lanes, preparation/episode/
+  interaction owners, and focused start/resume/Workflow tests.
+- Tests: focused Host composition and downstream/final repository gates are
+  recorded with the commit.
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: Host execution identity/driver projection, atomic user-message
+  acceptance, cancellation, approval interaction, disconnect cleanup, and
+  drain moved intact to `ExecutionInteractionOperations`. The owner reads the
+  sole HostRuntime-owned HostExecution; Core command queue/state semantics,
+  episode construction, event order, and lane admission are unchanged.
+- Read: Host interaction owner/runtime/execution/service, Server Runtime lane
+  coordinator, Core command acceptance and approval path, and focused tests.
+- Tests: owner-level and focused/downstream gates are recorded with the commit.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: Host pre-Core environment assembly moved intact to
+  `RunPreparationOperations`: execution plan/resources, model/config/security,
+  Skill/MCP, Agent/catalog, Workflow preparation, Hook/rules, snapshot, and
+  metadata. Core run construction remains in `WorkflowEpisodeRuntime`, while
+  HostExecution/current state and interaction routing remain in HostRuntime.
+- Read: preparation/episode/execution owners, Core construction boundary, and
+  focused start/resume/Workflow tests.
+- Tests: direct owner coverage and final focused/repository gates are recorded
+  with the commit.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: Host run preparation now records its completed capability snapshot
+  through `CapabilityRuntimeOperations`, which owns the last-run cache and
+  metadata summary projection. Model/tool/MCP/Skill/Agent/Hook preparation and
+  HostExecution remain in HostRuntime for the next ownership phase.
+- Read: Host run preparation, capability owner/assembly, execution ownership,
+  and focused tests.
+- Tests: focused Host capability 222/222 passed.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: Agent child-run construction and captured background Agent task
+  execution moved from HostRuntime to `AgentRuntimeAssembly`. The owner receives
+  a caller-owned parent-run reference and existing process collaborators; it
+  does not create a second HostExecution, current-run owner, or lane entry.
+- Read: HostRuntime/HostExecution, Agent assembly, Core run construction, Agent
+  Runtime spawn/task contracts, and focused tests.
+- Tests: owner-level, focused Host Agent/Delegate, and Agent Runtime suites passed.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: Workflow-aware Core run construction, continuation context, actor
+  episode chaining, live control polling, usage recording, and terminal event
+  completion moved to `WorkflowEpisodeRuntime`. The collaborator drives one
+  caller-owned HostExecution; Core state-machine semantics and event order are
+  unchanged.
+- Read: Workflow episode/durable owners, HostRuntime/HostExecution, Core run
+  and Agent Runtime todo-supervision paths, plus focused tests.
+- Tests: owner-level and focused Host Workflow/protocol suites passed.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: Workflow durable finalization, notification, control pumping, and
+  record persistence moved behind `WorkflowRuntimeOperations`. HostRuntime
+  still exclusively constructs Core episodes, owns HostExecution/current run,
+  and supplies the narrow resume/control execution port; Core behavior and
+  event order are unchanged.
+- Read: HostRuntime/HostExecution/Workflow owner and projection, Core run-loop
+  contracts, and focused Workflow tests.
+- Tests: owner-level and focused Host Workflow suites passed.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: Host Task notification/revival construction and resume-time orphan
+  failure moved intact from `HostRuntime` into the canonical Task operations
+  collaborator. Core still consumes the same `NotificationSource` and
+  non-consuming `TaskRevivalSource`; run state, waits, and event order are
+  unchanged.
+- Read: Host Task operations/runtime assembly, Agent Runtime actor ports, Core
+  revival contracts, and focused Task/service/protocol tests.
+- Tests: Host Task revival/service/protocol 64/64 and Host typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: non-blocking user hooks bind through one provenance-aware event lane:
+  the Host resolves a required descriptor/source and Core uses the run event
+  log's replay/live subscription methods directly. Awaited workflow hooks and
+  run-loop steering semantics are unchanged.
+- Read: Core user-hook/event sources and tests, Host event-hook binding, and
+  extension reference.
+- Tests: Core user-hook and Host workflow-hook focused suites plus Core/Host
+  typechecks; full release verification passed.
+
+- Status: Verified
+- Date: 2026-07-17T23:37:17+0800
+- Scope: concrete Core run/context/event implementations moved behind
+  `/internal`; `createRun`, extension interfaces, lifecycle, budgets, and Host
+  episode coordination remain unchanged.
+- Read: Core barrels and Agent/Host/Streaming runtime consumers.
+- Tests: Core interface 4/4, Agent Runtime 49/49, Streaming 12/12, typechecks.
+
+- Status: Verified
+- Date: 2026-07-17T23:04:01+0800
+- Scope: session/run lookup and prior-conversation reconstruction moved from
+  HostRuntime into the existing session owner. Host still prepares fresh and
+  resumed Core episodes with the same context, checkpoint, lane, and
+  HostExecution lifecycle; no second run-loop path was introduced.
+- Read: HostRuntime start/resume paths, session query/compaction modules, Core
+  run/session contracts, and focused protocol coverage.
+- Tests: Host protocol 59/59 and full Host 577/577; Host typecheck; full release
+  gate.
+
+- Status: Verified
+- Date: 2026-07-17T22:15:00+0800
+- Scope: ordinary Host start/resume/inject/cancel can enter only through the
+  process HostService lane coordinator. HostRuntime no longer self-composes or
+  exposes direct execution fallbacks; service-owned Workflow detached starts
+  remain a distinct durable handoff path.
+- Read: Host runtime contracts/concrete implementation, HostService driver,
+  connection server, HostExecution, and focused service/protocol/Workflow tests.
+- Tests: Host service/task-revival 5/5; protocol 58/58; Workflow 35/35; Host
+  typecheck; full `npm run release:check`.
+
+- Status: Verified
+- Date: 2026-07-17T17:20:00+0800
+- Scope: fresh and resumed Workflow episodes enter the run loop only with a
+  pinned v2 executable package. Host lifecycle events carry package identity;
+  Core remains Workflow-unaware and receives the snapshot-backed definition.
+- Read: Host Workflow preparation/projection, Agent Runtime durable pin,
+  Workflow tests, and trace/resume maps.
+- Tests: Host Workflow/hook focused tests and affected typechecks passed before
+  the full release gate.
+
+- Status: Verified
+- Date: 2026-07-16T23:05:00+0800
+- Scope: Host task revival now filters and projects canonical task actor
+  notifications directly; Core still drains the unchanged
+  `NotificationSource` and waits through the unchanged non-consuming revival
+  contract.
+- Read: Agent Runtime actor inboxes, Host revival/projection, Core notification
+  contracts, and focused Task/Host tests.
+- Tests: Agent Runtime task/workflow 90/90; Host task/workflow/protocol/Agent 122/122;
+  repository test typecheck; full release gate.
+
+- Status: Verified
+- Date: 2026-07-16T13:50:10+0800
+- Scope: Resumed workflow episodes receive the single canonical workspace store; removing session-local lookup does not change Core run-loop execution.
+- Read: Host workflow lookup/episode paths, Core workflow entry, and focused tests.
+- Tests: npm run build; npm run typecheck:test; Host workflow/protocol tests (94).
+
+- Date: 2026-07-16T13:36:30+0800
+- Scope: Run-loop policy is single-track through `WorkflowHook`; legacy tool-result, post-sampling, pre-terminal, and final-output validation stages were removed.
+- Read: Core run/workflow hook sources, focused run-loop tests, and current extension/protocol docs.
+- Tests: focused Core workflow tests; npm run build; npm run typecheck:test; npm run release:check.
+
+- Date: 2026-07-16T12:45:00+0800
+- Scope: Run start/resume compile canonical accessMode once before policy/tool assembly; Core still executes the derived immutable fields.
+- Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.
+- Tests: focused access/policy/protocol/CLI/TUI/ACP/Workflow tests; npm run typecheck:test; npm run schema:check.
+
+- Date: 2026-07-16T11:52:29+0800
+- Scope: reviewed protocol 2.0 terminal failure envelope changes; Core run-loop
+  lifecycle and raw terminal event ownership are unchanged, while the Host wire
+  projection now emits only the canonical `failure` envelope.
+
 ## Main Files
 
 - `packages/core/src/run.ts`
@@ -17,6 +233,9 @@ See [tool-orchestration.md](tool-orchestration.md) and [../trace/raw-trace.md](.
 - `packages/core/src/run-outcome.ts`
 - `packages/host/src/runtime.ts`
 - `packages/host/src/runtime/host-runtime.ts`
+- `packages/host/src/runtime/execution-interaction-operations.ts`
+- `packages/host/src/runtime/run-preparation-operations.ts`
+- `packages/host/src/runtime/agent-runtime-assembly.ts`
 
 ## Data Flow
 
@@ -55,12 +274,19 @@ createRun/resumeRunFromCheckpoint
   message injection, cancellation, and whole-execution completion only. It does
   not interpret run trees, Workflow actors, Tasks, Agents, Core events, MCP, or
   workspace leases.
+- The process HostService is the only HostRuntime factory and the only ordinary
+  execution admission path. Runtime construction requires the service-owned
+  WorkspaceContext, workspace lease coordinator, and lane coordinator;
+  connection adapters receive that existing service explicitly.
 - `cancel()` emits `run.cancelled` synchronously and kicks the `RunEnd`
   workflow-hook phase with `state:"cancelled"` / `reason:"manual_cancelled"`.
   `RunEnd` remains fire-and-forget.
 - Do not infer terminal run outcome from `model.completed` or `tool.completed`.
 - State transitions emit diagnostics when rejected.
 - Budget and max-step behavior are part of runtime semantics.
+- Host must not derive `maxSteps` from `runBudget.maxModelCalls`; the former is
+  an explicit foreground step limit (or Host backstop), while the latter is a
+  Core resource-budget dimension with its own stop reason and failure code.
 - Ordinary work budgets use a synchronous Core account protocol. A run reserves
   model/tool calls against its local account and every inherited ancestor-tree
   account before work starts, then records provider token/cost usage into the
@@ -83,6 +309,11 @@ createRun/resumeRunFromCheckpoint
   repeated calls keep the normal argument/runtime failure classification.
   Tool-owned repeated-observation guidance applies only when there is no prior
   failure, so a friendly completed nudge cannot mask failed state observation.
+- A tool may instead declare `managesRepeatedCalls(args)` when it owns an exact
+  duplicate ledger. Core then executes only a clean sequential verbatim repeat
+  so the tool can return cached evidence or retry an unhealthy result. The
+  exemption never applies after a tool failure/no-progress result and does not
+  affect same-turn duplicate suppression.
 - Completed-run outcome treats read-confidentiality denials as expected policy
   denials. A run can still complete successfully after a denied confidential
   read if the model produces a final answer; the denial remains visible through
@@ -138,15 +369,18 @@ createRun/resumeRunFromCheckpoint
   provider request bodies, prompt input, and tool schemas must not be carried as
   failure metadata.
 - `complete("final_answer")` snapshots the live FactLedger onto
-  `run.completed.factLedger` and derives the terminal command outcome from that
-  ledger. A clean ledger does not fall back to legacy event recompute; the
-  existing `commandOutcome` and `outcome` shapes remain the public terminal
-  projection when failures are present.
+  `run.completed.factLedger`. `outcome` remains the bounded public terminal
+  status projection when failures are present; command diagnostics derive from
+  the ledger instead of persisting a second compact command model.
 - Sinks should not break event emission.
 - Host pre-run preparation can buffer capability diagnostics before `createRun`
   exists. When flushed into the real run event log, warning-severity
   `capability.index.failed` events are diagnostics only and must not be treated
   as terminal failures.
+- `RunPreparationOperations` owns that complete pre-run environment and passes
+  it to `WorkflowEpisodeRuntime`. The episode owner remains the Core run
+  constructor/driver; preparation never begins/releases HostExecution or stores
+  current/active run state.
 - Host pre-run preparation can also emit `agent.routing.evaluated` after
   sorting configured delegate tools by profile routing hints for the current
   goal. This event is observability for tool ordering/labels only; it does not
@@ -187,7 +421,8 @@ createRun/resumeRunFromCheckpoint
   from `run.command.enqueued`; abort uses the run abort signal. Checkpoints mark
   this live state as not durable rather than pretending it can resume awaited
   task revival. Revival turns use the `revival` source of the per-source
-  forced-continuation budget (`maxRevivalTurns` remains the default-5 alias),
+  forced-continuation budget
+  (`forcedContinuationBudgets.revival`, default 5),
   not `maxSteps`; the revival step still increments monotonically, but the loop
   guard lets a budgeted `waiting_tasks` wake enter after `step > maxSteps`.
   Exhaustion emits `run.budget.exceeded` / FactLedger `budgetExceeded` and
@@ -214,7 +449,8 @@ createRun/resumeRunFromCheckpoint
   run loop with immutable hook arrays; host projection snapshots persist
   workflow position/attempt/verdict/transition state into `WorkflowRunRecord`.
   Cross-run `workflow resume` starts a new core run with the pinned workflow
-  definition and optional resume re-verification before the stored node
+  definition from the verified executable package snapshot and optional resume
+  re-verification before the stored node
   position is trusted.
 - P3 Step 3 human waiting remains host projection/store behavior rather than a
   new core run state. A `human` node emits `workflow.waiting`, persists
@@ -257,9 +493,8 @@ createRun/resumeRunFromCheckpoint
   concurrent model episode loop inside core.
 - P9a D5 workspace-root workflow storage also stays host-side. Fresh
   `WorkflowRunRecord` files move to workspace `.sparkwright/workflow-runs/`,
-  list/resume still read legacy session-local stores, and the resumed worker
-  episode still enters core as an ordinary run with the pinned workflow
-  definition.
+  list/resume use the same store, and the resumed worker episode still enters
+  core as an ordinary run with the pinned workflow definition.
 
 ## Consumers
 
@@ -281,6 +516,23 @@ createRun/resumeRunFromCheckpoint
   handling can still be noisy.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-16T10:27:51+0800
+- Scope: reviewed configured Agent-tool policy input consolidation; Core still
+  receives one ordinary `ToolDefinition.policy` and run-loop behavior is unchanged.
+- Read: Agent-tool definition, Host assembly, and Core policy admission boundary.
+- Tests: Host tools 89/89, Host typecheck, and repository test typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-16T10:23:51+0800
+- Scope: revival forced continuations now accept only the canonical per-source
+  budget input; waiting, wake, exhaustion, event, and terminal metadata
+  behavior is unchanged.
+- Read: Core budget resolver, awaited-task revival loop, focused run tests, and
+  proposal/map references to the removed alias.
+- Tests: focused Core revival/budget tests 19/19, runtime guardrails 28/28,
+  full Core 668/668, and Core typecheck passed.
 
 - Status: Verified
 - Date: 2026-07-15T23:51:43+0800
@@ -870,8 +1122,8 @@ test/run.test.ts test/run-outcome.test.ts test/trace.test.ts`;
 
 - Status: Verified
 - Date: 2026-07-02T09:30:00+0800
-- Scope: refreshed run-loop revival contract after adding independent
-  `maxRevivalTurns`, allowing final-step awaited notification injection beyond
+- Scope: refreshed run-loop revival contract after adding an independent
+  revival forced-continuation budget, allowing final-step awaited notification injection beyond
   `maxSteps`, cleaning up losing wait race legs through one abort signal, and
   reporting revival readiness failures as notification source failures.
 - Read: `packages/core/src/run.ts`, `packages/core/test/run.test.ts`,

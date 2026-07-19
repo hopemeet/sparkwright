@@ -41,7 +41,7 @@ interface SkillInlineShellConfig {
   };
 }
 
-export function buildCapabilitySnapshot(input: {
+export interface CapabilitySnapshotBuildInput {
   model?: CapabilityModelSummary;
   access?: ResolvedRunAccess;
   toolCatalog: HostToolCatalogEntry[];
@@ -62,17 +62,17 @@ export function buildCapabilitySnapshot(input: {
     errors?: CapabilityWorkflowAssetErrorSummary[];
   };
   automation?: CapabilityAutomationSummary;
-}): CapabilitySnapshot {
+}
+
+export function buildCapabilitySnapshot(
+  input: CapabilitySnapshotBuildInput,
+): CapabilitySnapshot {
   return {
     ...(input.access ? { access: capabilityAccessSummary(input.access) } : {}),
     ...(input.model ? { model: input.model } : {}),
     tools: input.toolCatalog.map((entry) => ({
       name: entry.definition.name,
       canonicalName: entry.definition.canonicalName ?? entry.definition.name,
-      ...(entry.definition.legacyNames &&
-      entry.definition.legacyNames.length > 0
-        ? { legacyNames: entry.definition.legacyNames }
-        : {}),
       ...(entry.definition.defaultExposureTier
         ? { defaultExposureTier: entry.definition.defaultExposureTier }
         : {}),
@@ -101,14 +101,16 @@ export function buildCapabilitySnapshot(input: {
         name: skill.name,
         description: skill.description,
         sourcePath: skill.sourcePath,
-        contentHash: skill.contentHash,
+        packageHash: skill.packageHash,
+        packageHashPolicyVersion: skill.packageHashPolicyVersion,
         version: skill.version,
       })),
       loaded: input.loadedSkills.map((skill) => ({
         name: skill.name,
         description: skill.description,
         sourcePath: skill.sourcePath,
-        contentHash: skill.contentHash,
+        packageHash: skill.packageHash,
+        packageHashPolicyVersion: skill.packageHashPolicyVersion,
         version: skill.version,
         selectionReason: skill.selectionReason,
       })),
@@ -180,10 +182,8 @@ function capabilityAccessSummary(
   access: ResolvedRunAccess,
 ): NonNullable<CapabilitySnapshot["access"]> {
   return {
-    permissionMode: access.permissionMode,
-    shouldWrite: access.shouldWrite,
+    accessMode: access.accessMode,
     backgroundTasks: access.backgroundTasks,
-    ...(access.accessMode ? { accessMode: access.accessMode } : {}),
     ...(access.requestedAccessMode
       ? { requestedAccessMode: access.requestedAccessMode }
       : {}),
@@ -195,9 +195,6 @@ function capabilityAccessSummary(
       : {}),
     ...(access.backgroundTasksCeiling
       ? { backgroundTasksCeiling: access.backgroundTasksCeiling }
-      : {}),
-    ...(access.overriddenLegacyFields.length > 0
-      ? { overriddenLegacyFields: access.overriddenLegacyFields }
       : {}),
   };
 }
@@ -390,6 +387,82 @@ export function mergeCapabilitySnapshots(
     },
     workflows: configured.workflows ?? last.workflows,
     automation: configured.automation ?? last.automation,
+  };
+}
+
+export function capabilitySnapshotAgentProfiles(
+  mainAgent: AgentProfile,
+  profiles: readonly AgentProfile[],
+): AgentProfile[] {
+  const byId = new Map<string, AgentProfile>();
+  byId.set(mainAgent.id, mainAgent);
+  for (const profile of profiles) byId.set(profile.id, profile);
+  return [...byId.values()];
+}
+
+export function summarizeCapabilitySnapshot(
+  snapshot: CapabilitySnapshot | null,
+): Record<string, unknown> {
+  if (!snapshot) {
+    return {
+      tools: 0,
+      skills: { indexed: 0, loaded: 0 },
+      mcp: { servers: 0, tools: 0 },
+      agents: { profiles: 0, delegateTools: 0 },
+      rules: { workflow: 0, events: 0 },
+    };
+  }
+  return {
+    ...(snapshot.model
+      ? {
+          model: {
+            modelRef: snapshot.model.modelRef,
+            providerKey: snapshot.model.providerKey,
+            modelId: snapshot.model.modelId,
+            pricing: snapshot.model.pricing,
+          },
+        }
+      : {}),
+    tools: snapshot.tools.length,
+    toolNames: snapshot.tools.map((tool) => tool.name),
+    skills: {
+      indexed: snapshot.skills.indexed.length,
+      loaded: snapshot.skills.loaded.length,
+      indexedNames: snapshot.skills.indexed.map((skill) => skill.name),
+      loadedNames: snapshot.skills.loaded.map((skill) => skill.name),
+    },
+    mcp: {
+      servers: snapshot.mcp.statuses.length,
+      tools: snapshot.mcp.statuses.reduce(
+        (sum, status) => sum + status.toolNames.length,
+        0,
+      ),
+      statuses: snapshot.mcp.statuses.map((status) => ({
+        serverName: status.serverName,
+        status: status.status,
+        toolNames: status.toolNames,
+      })),
+    },
+    agents: {
+      profiles: snapshot.agents.profiles.length,
+      profileIds: snapshot.agents.profiles.map((profile) => profile.id),
+      delegateTools: snapshot.agents.delegateTools.length,
+      delegateToolNames: snapshot.agents.delegateTools.map(
+        (delegate) => delegate.toolName,
+      ),
+    },
+    rules: {
+      workflow: snapshot.rules?.workflow.length ?? 0,
+      workflowNames: snapshot.rules?.workflow.map((rule) => rule.name) ?? [],
+      events: snapshot.rules?.events?.length ?? 0,
+      eventNames: snapshot.rules?.events?.map((rule) => rule.name) ?? [],
+    },
+    workflows: {
+      assets: snapshot.workflows?.assets.length ?? 0,
+      names: snapshot.workflows?.assets.map((asset) => asset.assetName) ?? [],
+      errors: snapshot.workflows?.errors?.length ?? 0,
+    },
+    shell: snapshot.shell,
   };
 }
 

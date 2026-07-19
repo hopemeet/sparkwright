@@ -3,7 +3,7 @@
 This is a reference contract. If you are new to SparkWright, start with
 [the documentation map](../README.md) or the [User Manual](../guides/USER_MANUAL.md).
 
-**Version:** 1.4
+**Version:** 2.0
 **Schema:** [`schemas/host-message.schema.json`](../../schemas/host-message.schema.json)
 **Changelog:** [`HOST_PROTOCOL_CHANGELOG.md`](./HOST_PROTOCOL_CHANGELOG.md)
 
@@ -188,22 +188,20 @@ Begin a new agent run.
 
 **Payload**
 
-| Field                  | Type                      | Required | Notes                                                                                                                                                                                                                         |
-| ---------------------- | ------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `goal`                 | string                    | yes      | User goal text.                                                                                                                                                                                                               |
-| `input.parts`          | array                     | no       | Extensible content parts for the same user turn. Supported part types are `text`, `image`, `file`, and `audio`; image/file/audio parts carry `data` (base64) or `uri`, plus optional `mediaType`, `name`, and `metadata`.     |
-| `sessionId`            | string                    | no       | Existing session to write into; host creates a new one if omitted.                                                                                                                                                            |
-| `controlSessionId`     | string                    | no       | Workflow-job attribution only. Must accompany `workflow` and differ from the job `sessionId`; it is not used as workflow transcript storage.                                                                                  |
-| `targetPath`           | string                    | no       | Workspace-relative target path the run should focus on when applicable.                                                                                                                                                       |
-| `confidentialPaths`    | string[]                  | no       | Additional workspace-relative paths/globs whose contents this run must not read.                                                                                                                                              |
-| `confidentialDefaults` | boolean                   | no       | Whether built-in conservative confidential path defaults are included; defaults to `true`.                                                                                                                                    |
-| `shouldWrite`          | boolean                   | no       | Whether this run is allowed to request workspace writes.                                                                                                                                                                      |
-| `model`                | string                    | no       | Model reference in `provider/model` form, or the reserved `deterministic`.                                                                                                                                                    |
-| `workflow`             | string                    | no       | Workflow asset name to instantiate for this run. Omit it to keep ordinary host-run behavior.                                                                                                                                  |
-| `accessMode`           | string                    | no       | Preferred high-level run autonomy: `read-only`, `ask`, `accept-edits`, or `bypass`. When present, the host compiles it to `permissionMode` and `shouldWrite`; conflicting legacy fields are ignored and recorded in metadata. |
-| `permissionMode`       | string                    | no       | `plan`, `default`, `accept_edits`, `dont_ask`, or `bypass_permissions`.                                                                                                                                                       |
-| `traceLevel`           | `"standard"` \| `"debug"` | no       | Trace persistence detail level; defaults to `standard`.                                                                                                                                                                       |
-| `metadata`             | object                    | no       | Free-form, propagated to runRecord.                                                                                                                                                                                           |
+| Field                  | Type                      | Required | Notes                                                                                                                                                                                                                     |
+| ---------------------- | ------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `goal`                 | string                    | yes      | User goal text.                                                                                                                                                                                                           |
+| `input.parts`          | array                     | no       | Extensible content parts for the same user turn. Supported part types are `text`, `image`, `file`, and `audio`; image/file/audio parts carry `data` (base64) or `uri`, plus optional `mediaType`, `name`, and `metadata`. |
+| `sessionId`            | string                    | no       | Existing session to write into; host creates a new one if omitted.                                                                                                                                                        |
+| `controlSessionId`     | string                    | no       | Workflow-job attribution only. Must accompany `workflow` and differ from the job `sessionId`; it is not used as workflow transcript storage.                                                                              |
+| `targetPath`           | string                    | no       | Workspace-relative target path the run should focus on when applicable.                                                                                                                                                   |
+| `confidentialPaths`    | string[]                  | no       | Additional workspace-relative paths/globs whose contents this run must not read.                                                                                                                                          |
+| `confidentialDefaults` | boolean                   | no       | Whether built-in conservative confidential path defaults are included; defaults to `true`.                                                                                                                                |
+| `model`                | string                    | no       | Model reference in `provider/model` form, or the reserved `deterministic`.                                                                                                                                                |
+| `workflow`             | string                    | no       | Workflow asset name to instantiate for this run. Omit it to keep ordinary host-run behavior.                                                                                                                              |
+| `accessMode`           | string                    | no       | Canonical run autonomy input: `read-only`, `ask`, `accept-edits`, or `bypass`. Defaults to `read-only` when omitted.                                                                                                      |
+| `traceLevel`           | `"standard"` \| `"debug"` | no       | Trace persistence detail level; defaults to `standard`.                                                                                                                                                                   |
+| `metadata`             | object                    | no       | Free-form, propagated to runRecord.                                                                                                                                                                                       |
 
 **Response result**
 
@@ -250,21 +248,19 @@ prefer checking the host capability list before using it.
 
 **Payload**
 
-| Field                  | Type     | Required | Notes                                                                                                                                                                                                                         |
-| ---------------------- | -------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `runId`                | string   | yes      | Prior run id to resume.                                                                                                                                                                                                       |
-| `sessionId`            | string   | no       | Session scope used to disambiguate where the prior run lives.                                                                                                                                                                 |
-| `targetPath`           | string   | no       | Workspace-relative target path the resumed run should focus on if needed.                                                                                                                                                     |
-| `confidentialPaths`    | string[] | no       | Additional workspace-relative paths/globs whose contents this resumed run must not read.                                                                                                                                      |
-| `confidentialDefaults` | boolean  | no       | Whether built-in conservative confidential path defaults are included; defaults to `true`.                                                                                                                                    |
-| `shouldWrite`          | boolean  | no       | Whether this resumed run is allowed to request workspace writes.                                                                                                                                                              |
-| `fromTrace`            | boolean  | no       | Reconstruct a best-effort checkpoint from `trace.jsonl` if needed.                                                                                                                                                            |
-| `force`                | boolean  | no       | Allow resuming checkpoints that are terminal or normally refused.                                                                                                                                                             |
-| `model`                | string   | no       | Model reference in `provider/model` form, or the reserved `deterministic`.                                                                                                                                                    |
-| `accessMode`           | string   | no       | Preferred high-level run autonomy: `read-only`, `ask`, `accept-edits`, or `bypass`. When present, the host compiles it to `permissionMode` and `shouldWrite`; conflicting legacy fields are ignored and recorded in metadata. |
-| `permissionMode`       | string   | no       | `plan`, `default`, `accept_edits`, `dont_ask`, or `bypass_permissions`.                                                                                                                                                       |
-| `traceLevel`           | string   | no       | `standard` or `debug`; defaults to `standard`.                                                                                                                                                                                |
-| `metadata`             | object   | no       | Free-form metadata propagated to the resumed run record and trace context.                                                                                                                                                    |
+| Field                  | Type     | Required | Notes                                                                                                                |
+| ---------------------- | -------- | -------- | -------------------------------------------------------------------------------------------------------------------- |
+| `runId`                | string   | yes      | Prior run id to resume.                                                                                              |
+| `sessionId`            | string   | no       | Session scope used to disambiguate where the prior run lives.                                                        |
+| `targetPath`           | string   | no       | Workspace-relative target path the resumed run should focus on if needed.                                            |
+| `confidentialPaths`    | string[] | no       | Additional workspace-relative paths/globs whose contents this resumed run must not read.                             |
+| `confidentialDefaults` | boolean  | no       | Whether built-in conservative confidential path defaults are included; defaults to `true`.                           |
+| `fromTrace`            | boolean  | no       | Reconstruct a best-effort checkpoint from `trace.jsonl` if needed.                                                   |
+| `force`                | boolean  | no       | Allow resuming checkpoints that are terminal or normally refused.                                                    |
+| `model`                | string   | no       | Model reference in `provider/model` form, or the reserved `deterministic`.                                           |
+| `accessMode`           | string   | no       | Canonical run autonomy input: `read-only`, `ask`, `accept-edits`, or `bypass`. Defaults to `read-only` when omitted. |
+| `traceLevel`           | string   | no       | `standard` or `debug`; defaults to `standard`.                                                                       |
+| `metadata`             | object   | no       | Free-form metadata propagated to the resumed run record and trace context.                                           |
 
 **Response result**
 
@@ -280,30 +276,28 @@ If the prior run cannot be found, the host responds with `run_not_found`; if a
 specified session cannot be found or does not contain the run, it responds with
 `run_not_found`.
 
-Session-scoped runs resume into their existing session. Legacy
-`.sparkwright/runs/<runId>` directories do not carry session identity, so a
-host-owned resume attaches them to a newly-created session and returns that
-`sessionId`.
+Runs resume inside their persisted session. When `sessionId` is omitted, the
+host searches the canonical session tree for the requested run id; callers can
+provide `sessionId` to make that lookup explicit.
 
 ### `workflow.list`
 
-List durable workflow-run snapshots. Fresh workflow records are stored under the
-workspace state root at `.sparkwright/workflow-runs/<workflowRunId>.json` and
-retain their `sessionId` in the record. Hosts also read legacy session-root
-records from `<sessionRoot>/<sessionId>/workflow-runs/` for compatibility;
-malformed records are skipped and reported in `invalidEntries` instead of
-failing the list.
+List durable workflow-run snapshots. Workflow record and event truth is replayed
+from checksummed entries under the workspace state root at
+`.sparkwright/workflow-runs/<workflowRunId>.journal/`; records retain their
+`sessionId`. Quarantined journal entries are reported in `invalidEntries`
+instead of failing the list.
 
 Hosts advertise `workflow.list` in `host.ready.capabilities` once durable
 workflow storage is available.
 
 **Payload**
 
-| Field       | Type                                                                       | Required | Notes                                                                              |
-| ----------- | -------------------------------------------------------------------------- | -------- | ---------------------------------------------------------------------------------- |
-| `sessionId` | string                                                                     | no       | Filter workspace records by `record.sessionId` and legacy records by session path. |
-| `status`    | `"running"` \| `"waiting"` \| `"completed"` \| `"failed"` \| `"cancelled"` | no       | Filter by workflow-run status.                                                     |
-| `limit`     | integer 1..200                                                             | no       | Maximum snapshots to return after newest-first sort.                               |
+| Field       | Type                                                                       | Required | Notes                                                |
+| ----------- | -------------------------------------------------------------------------- | -------- | ---------------------------------------------------- |
+| `sessionId` | string                                                                     | no       | Filter workspace records by `record.sessionId`.      |
+| `status`    | `"running"` \| `"waiting"` \| `"completed"` \| `"failed"` \| `"cancelled"` | no       | Filter by workflow-run status.                       |
+| `limit`     | integer 1..200                                                             | no       | Maximum snapshots to return after newest-first sort. |
 
 **Response result**
 
@@ -312,11 +306,15 @@ workflow storage is available.
   "workflows": [
     {
       "id": "workflow_abc",
+      "generation": 2,
+      "recordRevision": 7,
       "sessionId": "session_123",
       "status": "running",
       "assetName": "bugfix",
+      "layer": "project",
       "version": "1.0.0",
-      "contentHash": "sha256:...",
+      "packageHash": "sha256:...",
+      "packageHashPolicyVersion": 2,
       "activeRunId": "run_456",
       "runIds": ["run_456"],
       "currentNodeId": "reproduce",
@@ -331,7 +329,6 @@ workflow storage is available.
         "hasTargetPath": true,
         "hasConfidentialPaths": false,
         "confidentialDefaults": true,
-        "shouldWrite": true,
         "accessMode": "ask",
         "backgroundTasks": "enabled"
       },
@@ -342,9 +339,9 @@ workflow storage is available.
   ],
   "invalidEntries": [
     {
-      "path": "/workspace/.sparkwright/sessions/session_123/workflow-runs/bad.json",
+      "path": "/workspace/.sparkwright/workflow-runs/workflow_bad.journal/0000000000000002.json",
       "code": "parse_error",
-      "reason": "unsupported workflow run schemaVersion"
+      "reason": "journal checksum mismatch"
     }
   ]
 }
@@ -412,30 +409,28 @@ acceptance. Hosts advertise it in `host.ready.capabilities`.
 ### `workflow.resume`
 
 Adopt a non-terminal durable workflow run and start a new host run from its
-pinned workflow definition snapshot. The host does not reload the live asset
-for execution; it resumes from the record's pinned `{assetName, version,
-contentHash}` and `definitionSnapshot`, then appends the new `runId` to the
-record. This compatibility request first enqueues a durable `resume_request`
-and dispatches through the same workflow control consumer.
+pinned executable package snapshot. The host does not reload the live asset
+for execution; it verifies the record's required source layer, v2
+`packageHash`, `packageSnapshotRef`, and snapshot-backed `definitionSnapshot`,
+then appends the new `runId` to the record. The request first enqueues a durable
+`resume_request` and dispatches through the same workflow control consumer.
 
 Hosts advertise `workflow.resume` in `host.ready.capabilities` once durable
 workflow resume is available.
 
 **Payload**
 
-| Field                  | Type     | Required | Notes                                                                                                                                                                                                                         |
-| ---------------------- | -------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `workflowRunId`        | string   | yes      | Durable workflow instance id, e.g. `workflow_abc`.                                                                                                                                                                            |
-| `sessionId`            | string   | no       | Session scope used to disambiguate where the workflow record lives.                                                                                                                                                           |
-| `targetPath`           | string   | no       | Workspace-relative target path the resumed run should focus on if needed.                                                                                                                                                     |
-| `confidentialPaths`    | string[] | no       | Additional workspace-relative paths/globs whose contents this resumed workflow run must not read.                                                                                                                             |
-| `confidentialDefaults` | boolean  | no       | Whether built-in conservative confidential path defaults are included; defaults to `true`.                                                                                                                                    |
-| `shouldWrite`          | boolean  | no       | Whether this resumed run is allowed to request workspace writes.                                                                                                                                                              |
-| `model`                | string   | no       | Model reference in `provider/model` form, or the reserved `deterministic`.                                                                                                                                                    |
-| `accessMode`           | string   | no       | Preferred high-level run autonomy: `read-only`, `ask`, `accept-edits`, or `bypass`. When present, the host compiles it to `permissionMode` and `shouldWrite`; conflicting legacy fields are ignored and recorded in metadata. |
-| `permissionMode`       | string   | no       | `plan`, `default`, `accept_edits`, `dont_ask`, or `bypass_permissions`.                                                                                                                                                       |
-| `traceLevel`           | string   | no       | `standard` or `debug`; defaults to `standard`.                                                                                                                                                                                |
-| `metadata`             | object   | no       | Free-form metadata propagated to the resumed run record and trace context.                                                                                                                                                    |
+| Field                  | Type     | Required | Notes                                                                                                                |
+| ---------------------- | -------- | -------- | -------------------------------------------------------------------------------------------------------------------- |
+| `workflowRunId`        | string   | yes      | Durable workflow instance id, e.g. `workflow_abc`.                                                                   |
+| `sessionId`            | string   | no       | Expected persisted workflow job session; mismatches are rejected.                                                    |
+| `targetPath`           | string   | no       | Workspace-relative target path the resumed run should focus on if needed.                                            |
+| `confidentialPaths`    | string[] | no       | Additional workspace-relative paths/globs whose contents this resumed workflow run must not read.                    |
+| `confidentialDefaults` | boolean  | no       | Whether built-in conservative confidential path defaults are included; defaults to `true`.                           |
+| `model`                | string   | no       | Model reference in `provider/model` form, or the reserved `deterministic`.                                           |
+| `accessMode`           | string   | no       | Canonical run autonomy input: `read-only`, `ask`, `accept-edits`, or `bypass`. Defaults to `read-only` when omitted. |
+| `traceLevel`           | string   | no       | `standard` or `debug`; defaults to `standard`.                                                                       |
+| `metadata`             | object   | no       | Free-form metadata propagated to the resumed run record and trace context.                                           |
 
 **Response result**
 
@@ -758,14 +753,12 @@ scanning files or interpreting local config.
 
 **Payload**
 
-| Field             | Type    | Required | Notes                                                                                            |
-| ----------------- | ------- | -------- | ------------------------------------------------------------------------------------------------ |
-| `sessionId`       | string  | no       | Optional session scope for clients that tie diagnostics to an active interaction.                |
-| `model`           | string  | no       | Runtime model to inspect, using `provider/model` or `deterministic`; omitted means host default. |
-| `accessMode`      | string  | no       | High-level run autonomy preset used to scope diagnostics. Preferred over legacy fields.          |
-| `backgroundTasks` | string  | no       | Foreground/background task policy used to scope diagnostics.                                     |
-| `permissionMode`  | string  | no       | Legacy approval mode used when `accessMode` is absent.                                           |
-| `shouldWrite`     | boolean | no       | Legacy workspace-write flag used when `accessMode` is absent.                                    |
+| Field             | Type   | Required | Notes                                                                                            |
+| ----------------- | ------ | -------- | ------------------------------------------------------------------------------------------------ |
+| `sessionId`       | string | no       | Optional session scope for clients that tie diagnostics to an active interaction.                |
+| `model`           | string | no       | Runtime model to inspect, using `provider/model` or `deterministic`; omitted means host default. |
+| `accessMode`      | string | no       | Canonical run autonomy input used to scope diagnostics. Defaults to `read-only` when omitted.    |
+| `backgroundTasks` | string | no       | Foreground/background task policy used to scope diagnostics.                                     |
 
 **Response result**
 
@@ -773,8 +766,6 @@ scanning files or interpreting local config.
 {
   "access": {
     "accessMode": "ask",
-    "permissionMode": "default",
-    "shouldWrite": true,
     "backgroundTasks": "enabled"
   },
   "model": {
@@ -816,7 +807,6 @@ scanning files or interpreting local config.
         "profileId": "external_reviewer",
         "protocol": "external_command",
         "risk": "risky",
-        "requiresApproval": true,
         "approvalRequiredUnderCurrentRun": true,
         "approvalReasons": [
           "tool.risk:risky",
@@ -838,7 +828,6 @@ scanning files or interpreting local config.
         "protocol": "in_process",
         "model": "anthropic/claude",
         "risk": "safe",
-        "requiresApproval": false,
         "approvalRequiredUnderCurrentRun": false,
         "approvalReasons": [],
         "approvalRunOptions": { "shouldWrite": false },
@@ -912,14 +901,14 @@ capability snapshot. Delegate summaries stay per-profile; parallel eligibility
 is enforced by the tool at call time.
 For `in_process` delegates, `workspaceAccess` reports the profile-selected
 potential capability; `gatedByRunWrite: true` means the current run still needs
-workspace writes enabled (for example CLI `--write`) before the delegate can use
+a write-capable `accessMode` before the delegate can use
 workspace write or shell tools. In-process delegate spawn is `risk: "safe"` by
 default because the child run enforces its own tool policies; set
 `requiresApproval: true` on the delegate only when spawn itself needs approval.
-`requiresApproval` is a legacy delegate-config echo. For audit/diagnostics, use
-`approvalRequiredUnderCurrentRun`, `approvalReasons`, and `approvalRunOptions`;
-those fields describe the runtime gate under the inspected run options rather
-than promising an unconditional approval boolean.
+Capability snapshots expose only `approvalRequiredUnderCurrentRun`,
+`approvalReasons`, and `approvalRunOptions`; those fields describe the runtime
+gate under the inspected run options rather than echoing delegate config as an
+unconditional approval prediction.
 Capability snapshots may include `rules.workflow` and `rules.events`,
 host-authored inspection summaries for configured workflow hooks, verification
 invariants, documented-command verifier rules, and non-blocking event
@@ -991,15 +980,20 @@ Terminal event for a core run that reached a final state. `state` may be
 `completed`, `failed`, or `cancelled`; host/runtime protocol errors are reported
 with `run.failed` instead.
 
-| Field         | Type   | Notes                                                         |
-| ------------- | ------ | ------------------------------------------------------------- |
-| `runId`       | string |                                                               |
-| `state`       | string | Final RunState.                                               |
-| `stopReason`  | string | Optional. `manual_cancelled` for user-cancelled.              |
-| `message`     | string | Optional final answer text for successful final-answer runs.  |
-| `outcome`     | object | Optional structured non-clean completion summary.             |
-| `failure`     | object | Optional structured cause for `failed` or `cancelled` states. |
-| `todoHandoff` | object | Optional unfinished-todo handoff reason and message.          |
+| Field          | Type   | Notes                                                                      |
+| -------------- | ------ | -------------------------------------------------------------------------- |
+| `runId`        | string |                                                                            |
+| `state`        | string | Final RunState.                                                            |
+| `stopReason`   | string | Optional. `manual_cancelled` for user-cancelled.                           |
+| `message`      | string | Optional final answer text for successful final-answer runs.               |
+| `assessment`   | object | Required Host execution assessment aggregated across every Core episode.   |
+| `failure`      | object | Optional structured cause for `failed` or `cancelled` states.              |
+| `todoAdvisory` | object | Optional unfinished/blocked counts and message; never schedules execution. |
+
+`assessment` has schema version `execution-assessment.v1`, a `health` value of
+`clean`, `degraded`, or `failing`, bounded issue and verification arrays, and
+per-episode `run-assessment.v1` records. Clients should use this persisted
+projection instead of reinterpreting raw terminal events.
 
 `failure` uses `{ category, code, message, retryable, metadata }`. Providers may
 include model-specific details such as HTTP status, timeout kind, or retryability
@@ -1011,15 +1005,13 @@ unknown metadata as diagnostic context.
 Terminal event for a host/runtime protocol error before a core run can finish
 normally.
 
-| Field     | Type          | Notes                                                                 |
-| --------- | ------------- | --------------------------------------------------------------------- |
-| `runId`   | string        |                                                                       |
-| `failure` | object        | Canonical `{ category, code, message, retryable, metadata }` failure. |
-| `error`   | ProtocolError | Deprecated compatibility projection of `failure`.                     |
+| Field     | Type   | Notes                                                                 |
+| --------- | ------ | --------------------------------------------------------------------- |
+| `runId`   | string |                                                                       |
+| `failure` | object | Canonical `{ category, code, message, retryable, metadata }` failure. |
 
-Clients should prefer `failure` for both `run.completed{state:"failed"}` and
-`run.failed`. The compatibility `error` field remains present on `run.failed`
-for older protocol clients.
+Clients use `failure` for both `run.completed{state:"failed"}` and
+`run.failed`.
 
 ---
 
@@ -1080,7 +1072,7 @@ the wire protocol. The minimal path:
 
 1. Start a host: `sparkwright host --port 7320`.
 2. Open a WebSocket to `ws://localhost:7320`.
-3. Send a `handshake` request with `protocolVersion: "1.0"`.
+3. Send a `handshake` request with `protocolVersion: "2.0"`.
 4. Listen for the `response` (matching `id`) and the subsequent
    `host.ready` event.
 5. Send `run.start` and stream `run.event` events; resolve any

@@ -143,8 +143,7 @@ export type ToolExposureTier =
   | "public"
   | "advanced"
   | "infrastructure"
-  | "internal"
-  | "legacy";
+  | "internal";
 
 export interface ToolGovernance {
   allowedAgents?: string[];
@@ -180,7 +179,6 @@ export interface ToolDescriptor {
   inputSchema: unknown;
   outputSchema?: unknown;
   canonicalName?: string;
-  legacyNames?: string[];
   defaultExposureTier?: ToolExposureTier;
   relatedTools?: string[];
   requiresTool?: string[];
@@ -224,12 +222,9 @@ export interface ToolDefinition<TArgs = unknown, TResult = unknown> {
   inputSchema: unknown;
   outputSchema?: unknown;
   /**
-   * Stable product-facing identity. `name` is the callable name currently
-   * offered to the model; `canonicalName` lets display/config/history code
-   * share one identity record while old names remain parseable.
+   * Stable product-facing identity used by display and inventory code.
    */
   canonicalName?: string;
-  legacyNames?: string[];
   defaultExposureTier?: ToolExposureTier;
   relatedTools?: string[];
   requiresTool?: string[];
@@ -266,6 +261,14 @@ export interface ToolDefinition<TArgs = unknown, TResult = unknown> {
    * no-op rather than a synthetic tool failure; the tool is still not executed.
    */
   repeatedCallGuidanceForArgs?(args: TArgs): string | undefined;
+  /**
+   * Return true when this tool owns sequential duplicate handling for these
+   * arguments. The generic doom-loop guard will execute a verbatim repeat so
+   * the tool can return a conservative cached result or retry an unhealthy
+   * prior attempt. This does not exempt a repeat after the tool itself failed
+   * or explicitly reported no progress.
+   */
+  managesRepeatedCalls?(args: TArgs): boolean;
   /**
    * When true, a tool loader may hide this tool from the initial provider
    * request and expose it through a discovery/search surface.
@@ -310,20 +313,6 @@ export interface ToolDefinition<TArgs = unknown, TResult = unknown> {
    */
   available?: ToolAvailableProbe;
   isConcurrencySafe?(args: TArgs): boolean;
-  /**
-   * Whether re-invoking this tool with the same args after a transient
-   * failure is safe (no double-spend, no duplicated mutation).
-   *
-   * - `undefined` (default): unknown — runtime treats as safe to preserve
-   *   backward compatibility with existing tools.
-   * - `true`: idempotent or read-only — runtime / model may freely retry.
-   * - `false`: caller-visible side effect (HTTP POST, payment, IM send,
-   *   external API mutation). On a network-class failure the runtime
-   *   emits a `tool.replay_risk` event and annotates the ToolResult so
-   *   the model and host can choose to pause for confirmation instead of
-   *   silently re-running.
-   */
-  isReplaySafe?: boolean;
   /** @reserved Public tool-governance hint consumed by policy adapters. */
   isReadOnly?(args: TArgs): boolean;
   /** @reserved Public tool-governance hint consumed by policy adapters. */
@@ -349,7 +338,6 @@ export interface ToolRegistryOptions {
 
 export class ToolRegistry {
   private readonly tools = new Map<string, ToolDefinition>();
-  private readonly aliases = new Map<string, string>();
   private generation = 0;
   private readonly availabilityTtlMs: number;
   // Keyed by the probe function reference so identical probes shared across
@@ -371,27 +359,18 @@ export class ToolRegistry {
   }
 
   register(tool: ToolDefinition): void {
-    if (this.tools.has(tool.name) || this.aliases.has(tool.name)) {
+    if (this.tools.has(tool.name)) {
       throw new Error(`Tool already registered: ${tool.name}`);
-    }
-    for (const alias of tool.legacyNames ?? []) {
-      if (alias === tool.name) continue;
-      if (this.tools.has(alias) || this.aliases.has(alias)) {
-        throw new Error(`Tool alias already registered: ${alias}`);
-      }
     }
 
     this.tools.set(tool.name, tool);
-    this.registerAliases(tool);
     this.generation += 1;
   }
 
   unregister(name: string): boolean {
-    const canonicalName = this.aliases.get(name) ?? name;
-    const existing = this.tools.get(canonicalName);
-    const removed = this.tools.delete(canonicalName);
+    const existing = this.tools.get(name);
+    const removed = this.tools.delete(name);
     if (removed) {
-      this.unregisterAliases(canonicalName, existing);
       this.generation += 1;
       this.dropAvailabilityEntry(existing);
     }
@@ -403,9 +382,7 @@ export class ToolRegistry {
     if (existing && existing.available !== tool.available) {
       this.dropAvailabilityEntry(existing);
     }
-    this.unregisterAliases(tool.name, existing);
     this.tools.set(tool.name, tool);
-    this.registerAliases(tool);
     this.generation += 1;
   }
 
@@ -421,17 +398,7 @@ export class ToolRegistry {
   }
 
   get(name: string): ToolDefinition | undefined {
-    return this.tools.get(name) ?? this.tools.get(this.aliases.get(name) ?? "");
-  }
-
-  /**
-   * Resolve a callable legacy name to the registered tool name. Unknown names
-   * are returned unchanged so callers can report the original lookup failure.
-   * Policy and workflow layers should consume this value instead of each
-   * implementing their own alias table.
-   */
-  canonicalName(name: string): string {
-    return this.aliases.get(name) ?? name;
+    return this.tools.get(name);
   }
 
   list(): ToolDefinition[] {
@@ -516,23 +483,6 @@ export class ToolRegistry {
   private dropAvailabilityEntry(tool: ToolDefinition | undefined): void {
     if (tool?.available) this.availabilityCache.delete(tool.available);
   }
-
-  private registerAliases(tool: ToolDefinition): void {
-    for (const alias of tool.legacyNames ?? []) {
-      if (alias !== tool.name) this.aliases.set(alias, tool.name);
-    }
-  }
-
-  private unregisterAliases(
-    canonicalName: string,
-    tool: ToolDefinition | undefined,
-  ): void {
-    for (const alias of tool?.legacyNames ?? []) {
-      if (this.aliases.get(alias) === canonicalName) {
-        this.aliases.delete(alias);
-      }
-    }
-  }
 }
 
 function toToolDescriptor(tool: ToolDefinition): ToolDescriptor {
@@ -542,7 +492,6 @@ function toToolDescriptor(tool: ToolDefinition): ToolDescriptor {
     inputSchema: tool.inputSchema,
     outputSchema: tool.outputSchema,
     canonicalName: tool.canonicalName,
-    legacyNames: tool.legacyNames,
     defaultExposureTier: tool.defaultExposureTier,
     relatedTools: tool.relatedTools,
     requiresTool: tool.requiresTool,

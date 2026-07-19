@@ -10,14 +10,13 @@ import {
   isRequest,
   isResponse,
   isTraceLevel,
-  protocolErrorToRunFailure,
   runFailureMessage,
   type HostMessage,
 } from "../src/index.js";
 
 describe("@sparkwright/protocol", () => {
   it("exports the current host protocol version", () => {
-    expect(PROTOCOL_VERSION).toBe("1.4");
+    expect(PROTOCOL_VERSION).toBe("2.0");
   });
 
   it("exports stable permission mode and trace level guards", () => {
@@ -88,65 +87,9 @@ describe("@sparkwright/protocol", () => {
         retryable: false,
         metadata: { status: 401 },
       },
-      error: {
-        code: "internal_error",
-        message: "legacy projection",
-      },
     };
 
     expect(getRunFailure(payload)).toEqual(payload.failure);
     expect(runFailureMessage(payload)).toBe("provider rejected request");
-  });
-
-  it("projects legacy protocol errors into run failures", () => {
-    const error = {
-      code: "internal_error" as const,
-      message: "host crashed",
-      details: { phase: "startup" },
-    };
-
-    expect(protocolErrorToRunFailure(error)).toEqual({
-      code: "internal_error",
-      message: "host crashed",
-      metadata: { phase: "startup" },
-    });
-    expect(getRunFailure({ runId: "run_1", error })).toEqual({
-      code: "internal_error",
-      message: "host crashed",
-      metadata: { phase: "startup" },
-    });
-  });
-
-  it("falls back to root run failure messages for legacy failed payloads", () => {
-    expect(
-      runFailureMessage({
-        runId: "run_1",
-        code: "MODEL_COMPLETION_FAILED",
-        message: "invalid API key",
-      }),
-    ).toBe("invalid API key");
-  });
-
-  it("synthesizes failed completed payloads without treating answers as failures", () => {
-    expect(
-      getRunFailure({
-        runId: "run_1",
-        state: "failed",
-        stopReason: "model_auth_failed",
-        message: "invalid API key",
-      }),
-    ).toEqual({
-      code: "model_auth_failed",
-      message: "invalid API key",
-    });
-
-    expect(
-      getRunFailure({
-        runId: "run_2",
-        state: "completed",
-        stopReason: "final_answer",
-        message: "done",
-      }),
-    ).toBeUndefined();
   });
 });

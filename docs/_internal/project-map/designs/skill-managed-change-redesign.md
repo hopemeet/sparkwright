@@ -3,9 +3,9 @@
 ## Status
 
 - Status: Verified
-- Date: 2026-07-12
-- Scope: implementation-ready master design after the asset-governance review.
-  Skill Phase 1-8 delivery slices are implemented; remaining open questions
+- Date: 2026-07-18
+- Scope: implemented master design retained as lifecycle and decision history.
+  Skill Phase 1-8 delivery slices are complete; remaining open questions
   concern policy tuning and retention, not a missing managed lifecycle.
 - Source check: current Skill package enumeration, prepared-change lifecycle,
   command service, Agent Markdown discovery, Workflow parsing/execution/resume,
@@ -57,17 +57,16 @@ These current-source facts remain valid and are not redesigned:
 - Applying-state recovery is idempotent: an already-written target matching the
   approved after hash is reconciled through doctor, history, and receipt rather
   than rewritten.
-- Model, CLI, canonical TUI `/create skill`, and compatibility
-  `/skill-create` creation paths converge on `SkillCommandService`; persistent
-  proposal storage remains the durable review/recovery surface.
+- Model, CLI, and canonical TUI `/create skill` creation paths converge on
+  `SkillCommandService`; persistent proposal storage remains the durable
+  review/recovery surface.
 - Existing proposal inspection/rejection, history, receipt, restore, revision,
   provenance, and session-scoped deduplication remain supported.
 
-The current package-hash policy is v1. It enumerates `SKILL.md` and recursive
-ordinary files only under `references/`, `templates/`, and `scripts/`. It
-rejects a symlink or special file when encountered in that enumerated set, but
-ignores other root entries. Phase 3A therefore changes observable identity and
-fail-closed coverage; it is not a behavior-neutral refactor.
+Skill runtime and managed evolution now share package-hash policy v2. It covers
+the canonical full ordinary-file set below and fails closed for non-excluded
+unsafe entries. The earlier v1 runtime enumerator and API were removed after
+the repository established that no persisted compatibility data had to remain.
 
 ## Managed Skill Change
 
@@ -169,10 +168,9 @@ interface AssetPackageIdentity {
 }
 ```
 
-Records without a policy version are legacy v1. Existing v1 history is
-immutable and is not rewritten. Equality and statistics grouping require both
-policy version and hash; the same hash text under different policies does not
-erase the boundary.
+Managed Skill evolution records require policy version 2. Equality and
+statistics grouping require both policy version and hash; the same hash text
+under different policies does not erase the boundary.
 
 ## Direct Filesystem Reconciliation
 
@@ -200,8 +198,8 @@ filesystem change.
 
 A Workflow is a folder package. Its v2 `packageHash` covers `workflow.md`,
 configuration, scripts, and every other included canonical ordinary file.
-Legacy `contentHash` remains temporarily as the Markdown/compatibility identity;
-it is not sufficient for execution pinning.
+The live parser may expose `contentHash` as a Markdown-only inspection
+fingerprint; durable execution identity is exclusively the v2 package pin.
 
 Instantiation must:
 
@@ -249,12 +247,12 @@ Phase 5 generates only the single Markdown file. Folder Agent packages are
 deferred until references/scripts/templates have explicit runtime contracts.
 Before introducing an `AGENT.md` sentinel, doctor must warn that current
 recursive discovery parses files such as `reviewer/AGENT.md` as an ordinary
-Markdown profile whose fallback id is `AGENT`; migration must never silently
-change that meaning.
+Markdown profile whose filename-derived id is `AGENT`; migration must never
+silently change that meaning.
 
-In a future folder form, the folder name supplies only the default id. A valid
-frontmatter `id` may supply a namespaced logical id, and collisions are judged
-by logical id rather than basename or folder path.
+In a future folder form, the folder name remains the sole id. Frontmatter does
+not redirect identity; collisions are judged by that canonical folder or
+single-file name.
 
 Agent spawn/delegate events must capture the resolved Agent identity and package
 identity at the event boundary. Stats must not infer an older invocation's
@@ -279,15 +277,9 @@ Capture it when the event occurs: Skill index/load/use, Agent spawn/delegate,
 and Workflow instantiate/run/node/usage. Later registry reconciliation may add
 an unambiguous `artifactId`, but must not guess across ambiguity.
 
-The v1-to-v2 transition is an identity-policy boundary. Projections do not
-automatically merge buckets across it and reports distinguish:
-
-- content changed;
-- policy changed;
-- both content and policy changed.
-
-A policy-only boundary is not reported as a real performance regression.
-Agent and Workflow initially support only `observe -> aggregate -> diagnose`;
+Skill projections accept only policy-2 event-time identity; rows without it do
+not create attributable version buckets. Agent and Workflow initially support
+only `observe -> aggregate -> diagnose`;
 their statistics cannot trigger mutation or evolution.
 
 ## Delivery Plan
@@ -303,16 +295,17 @@ history, receipt, recovery, and four-entry command-service convergence.
   exclusions, special-file/path/size rejection, NUL-framed hashing, same-set
   snapshots, and `packageHashPolicyVersion: 2` without migrating current
   consumers.
-- Existing v1 APIs and records remain readable and are not rewritten. Phase 3B
-  performs the explicit Skill migration.
+- The later identity-consolidation pass moved runtime Skill indexing, doctor,
+  capability inspection, lockfiles, and statistics onto this same substrate and
+  deleted the v1 Skill package API.
 
 ### Completed: Phase 3B Skill full-package and external-change safety
 
 - New managed proposals, revisions, staged snapshots, apply/recovery, history,
   restore, and mutation receipts use the v2 canonical set and carry policy 2.
-- Missing policy version remains legacy v1. Included external ordinary-file
-  drift marks a proposal stale without overwriting the target; registry-based
-  continuity and runtime stats attribution remain later phases.
+- Proposal/history readers require policy version 2. Included external
+  ordinary-file drift marks a proposal stale without overwriting the target;
+  registry-based continuity and runtime stats attribution remain later phases.
 
 ### Completed: Phase 4 Workflow executable package pinning correctness
 
@@ -322,6 +315,9 @@ history, receipt, recovery, and four-entry command-service convergence.
   and atomic rename; concurrent pins safely reuse an already-published hash.
 - Durable records persist strong identity and `packageSnapshotRef`; normal and
   resumed execution require the snapshot hash and snapshot-backed `sourceDir`.
+- The later canonicalization pass made layer, revision/generation, v2 package
+  identity, snapshot reference, and snapshot-backed definition required, and
+  removed Markdown `contentHash` plus legacy default readers from durable runs.
 
 ### Completed: Phase 5 Markdown Agent authoring and version attribution
 
@@ -374,23 +370,21 @@ history, receipt, recovery, and four-entry command-service convergence.
   source or retry/fail closed.
 - Agent spawn/delegate and Workflow run/node/usage events record package
   identity at event time.
-- v1 and v2 statistics boundaries stay visible, do not auto-merge, and do not
-  mislabel policy-only change as performance regression.
+- Skill statistics accept only canonical policy-2 package identity.
 - No Agent/Workflow observation triggers mutation or evolution.
 
-## Migration and Compatibility
+## Canonical Boundaries
 
-- Existing Skill v1 history and receipts remain readable and immutable.
 - Existing Phase 1/2 proposal commands, durable waiting, history, restore, and
-  command entrypoints remain compatible.
-- A missing `packageHashPolicyVersion` means legacy v1; readers do not rewrite
-  it during scans.
-- Workflow `contentHash` remains for compatibility while new execution records
-  add v2 package identity and snapshot reference.
+  command entrypoints continue to use the same governed lifecycle.
+- Skill evolution proposals, history, and receipts require
+  `packageHashPolicyVersion: 2`; missing/non-v2 records are rejected.
+- Workflow run records accept only v2 package identity and a snapshot-backed
+  definition. Live Workflow inspection may still show the Markdown fingerprint,
+  but it is not durable execution identity.
 - Existing Markdown Agent discovery remains unchanged until Phase 5; the future
   `AGENT.md` sentinel requires an explicit doctor-led migration.
-- Registry introduction may reconcile only unambiguous observations; ambiguous
-  legacy identity remains legacy.
+- Registry reconciliation may attach only unambiguous artifact identity.
 
 ## Open Questions
 
@@ -408,6 +402,24 @@ history, receipt, recovery, and four-entry command-service convergence.
   projection caches?
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-17T20:55:00+0800
+- Scope: completed the runtime/stats side of Skill identity v2, deleted the v1
+  package surface and legacy/unknown stats buckets, and made proposal/history
+  artifact identity canonical.
+- Read: Skills package/runtime, Host stats/evolution/registry, protocol/CLI consumers, and focused maps/tests.
+- Tests: Skills 73/73; Host Skill/protocol 81/81; focused CLI Skill gates 5/5; affected typechecks.
+
+- Status: Verified
+- Date: 2026-07-16T23:38:00+0800
+- Scope: aligned Phase 5 and the future folder form with filename-only Markdown
+  Agent identity; frontmatter no longer redirects logical identity.
+- Read: Host Markdown parser/authoring, Agent capability/module maps, public
+  Agent docs, and focused tests.
+- Tests: Host Agent profile/tools 125/125; focused Host protocol collision 1/1;
+  CLI Agent/capability routes 7/7; Host, Agent Runtime, and CLI typechecks;
+  repository test typecheck; project-map drift; full release gate.
 
 - Status: Verified
 - Date: 2026-07-12T20:00:00+0800
@@ -455,8 +467,8 @@ history, receipt, recovery, and four-entry command-service convergence.
 
 - Status: Verified
 - Date: 2026-07-12T14:03:23+0800
-- Scope: completed Phase 3B managed Skill migration to v2 package identity,
-  including legacy v1 compatibility and external-file stale protection.
+- Scope: completed Phase 3B managed Skill migration to v2 package identity and
+  external-file stale protection.
 - Read: `packages/host/src/skill-evolution.ts`,
   `packages/host/src/capability-package-mutation.ts`,
   `packages/skills/src/package-v2.ts`, and focused host tests.
@@ -496,10 +508,12 @@ history, receipt, recovery, and four-entry command-service convergence.
 
 - Status: Verified
 - Date: 2026-07-12T08:34:00+0800
-- Scope: Phase 2 command-service extraction and convergence of model, CLI,
-  `/create skill`, and compatibility `/skill-create` proposal preparation.
-- Read: shared service, four entry adapters, approval/apply path, focused tests,
-  and the linked project/test maps.
+- Scope: Phase 2 command-service extraction and convergence of the then-current
+  model, CLI, `/create skill`, and `/skill-create` proposal paths. The
+  compatibility shortcut was retired on 2026-07-17; this entry records the
+  original implementation checkpoint rather than the current command surface.
+- Read: shared service, the then-current entry adapters, approval/apply path,
+  focused tests, and the linked project/test maps.
 - Tests: focused host/CLI/TUI suites, affected typechecks, and full
   `npm run release:check` on the same source tree.
 

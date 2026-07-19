@@ -3,7 +3,6 @@ import { join } from "node:path";
 import type {
   BackgroundTaskPolicy,
   CapabilityInspectRequestPayload,
-  PermissionMode,
   RunInputPayload,
   RunResumeRequestPayload,
   RunStartRequestPayload,
@@ -30,8 +29,6 @@ export function createWorkflowJobSessionId(): string {
 export interface HostClientRunAccessInput extends RunAccessResolutionOptions {
   accessMode?: RunAccessMode;
   backgroundTasks?: BackgroundTaskPolicy;
-  permissionMode?: PermissionMode;
-  shouldWrite?: boolean;
 }
 
 export interface HostClientResolvedRunAccess extends ResolvedRunAccess {
@@ -41,12 +38,10 @@ export interface HostClientResolvedRunAccess extends ResolvedRunAccess {
 export interface HostClientRunMetadataInput {
   source: HostClientSource;
   targetPath?: string;
-  shouldWrite: boolean;
+  accessMode: RunAccessMode;
   traceLevel: TraceLevel;
   sessionId?: string;
   workspaceRoot?: string;
-  permissionMode?: PermissionMode;
-  accessMode?: RunAccessMode;
   backgroundTasks?: BackgroundTaskPolicy;
   modelName?: string;
   workflowName?: string;
@@ -66,16 +61,12 @@ export function resolveHostClientRunAccess(
     {
       accessMode: input.accessMode,
       backgroundTasks: input.backgroundTasks,
-      permissionMode: input.permissionMode,
-      shouldWrite: input.shouldWrite,
     },
     {
       defaultAccessMode: input.defaultAccessMode,
       accessModeCeiling: input.accessModeCeiling,
       defaultBackgroundTasks: input.defaultBackgroundTasks,
       backgroundTasksCeiling: input.backgroundTasksCeiling,
-      defaultPermissionMode: input.defaultPermissionMode,
-      defaultShouldWrite: input.defaultShouldWrite,
     },
   );
   return {
@@ -119,15 +110,11 @@ export function createHostClientRunMetadata(
     source: input.source,
     ...(input.sessionId ? { sessionId: input.sessionId } : {}),
     ...(input.workspaceRoot ? { workspaceRoot: input.workspaceRoot } : {}),
-    ...(input.accessMode ? { accessMode: input.accessMode } : {}),
+    accessMode: input.accessMode,
     ...(input.backgroundTasks
       ? { backgroundTasks: input.backgroundTasks }
       : {}),
-    ...(!input.accessMode && input.permissionMode
-      ? { permissionMode: input.permissionMode }
-      : {}),
     ...(input.targetPath ? { targetPath: input.targetPath } : {}),
-    shouldWrite: input.shouldWrite,
     traceLevel: input.traceLevel,
     ...(input.modelName ? { model: input.modelName } : {}),
     ...(input.workflowName ? { workflow: input.workflowName } : {}),
@@ -141,14 +128,12 @@ export function createHostStartRunRequest(input: {
   modelName?: string;
   modelNameSource?: HostClientModelSource;
   workflowName?: string;
-  accessMode?: RunAccessMode;
+  accessMode: RunAccessMode;
   backgroundTasks?: BackgroundTaskPolicy;
-  permissionMode?: PermissionMode;
   traceLevel: TraceLevel;
   targetPath?: string;
   confidentialPaths?: readonly string[];
   confidentialDefaults?: boolean;
-  shouldWrite: boolean;
   metadata: Record<string, unknown>;
   input?: RunInputPayload;
 }): RunStartRequestPayload {
@@ -163,7 +148,6 @@ export function createHostStartRunRequest(input: {
     workflow: input.workflowName,
     accessMode: input.accessMode,
     backgroundTasks: input.backgroundTasks,
-    permissionMode: input.accessMode ? undefined : input.permissionMode,
     traceLevel: input.traceLevel,
     targetPath: input.targetPath,
     ...(input.confidentialPaths && input.confidentialPaths.length > 0
@@ -172,7 +156,6 @@ export function createHostStartRunRequest(input: {
     ...(input.confidentialDefaults === false
       ? { confidentialDefaults: false }
       : {}),
-    shouldWrite: input.shouldWrite,
     metadata: input.metadata,
   };
 }
@@ -184,14 +167,12 @@ export function createHostResumeRunRequest(input: {
   force: boolean;
   modelName?: string;
   modelNameSource?: HostClientModelSource;
-  accessMode?: RunAccessMode;
+  accessMode: RunAccessMode;
   backgroundTasks?: BackgroundTaskPolicy;
-  permissionMode?: PermissionMode;
   traceLevel: TraceLevel;
   targetPath?: string;
   confidentialPaths?: readonly string[];
   confidentialDefaults?: boolean;
-  shouldWrite: boolean;
   metadata: Record<string, unknown>;
 }): RunResumeRequestPayload {
   return {
@@ -202,7 +183,6 @@ export function createHostResumeRunRequest(input: {
     model: resolveHostRequestModel(input),
     accessMode: input.accessMode,
     backgroundTasks: input.backgroundTasks,
-    permissionMode: input.accessMode ? undefined : input.permissionMode,
     traceLevel: input.traceLevel,
     targetPath: input.targetPath,
     ...(input.confidentialPaths && input.confidentialPaths.length > 0
@@ -211,7 +191,6 @@ export function createHostResumeRunRequest(input: {
     ...(input.confidentialDefaults === false
       ? { confidentialDefaults: false }
       : {}),
-    shouldWrite: input.shouldWrite,
     metadata: input.metadata,
   };
 }
@@ -233,14 +212,12 @@ export function createHostWorkflowResumeRequest(input: {
   sessionId?: string;
   modelName?: string;
   modelNameSource?: HostClientModelSource;
-  accessMode?: RunAccessMode;
+  accessMode: RunAccessMode;
   backgroundTasks?: BackgroundTaskPolicy;
-  permissionMode?: PermissionMode;
   traceLevel: TraceLevel;
   targetPath?: string;
   confidentialPaths?: readonly string[];
   confidentialDefaults?: boolean;
-  shouldWrite: boolean;
   metadata: Record<string, unknown>;
 }): WorkflowResumeRequestPayload {
   return {
@@ -249,7 +226,6 @@ export function createHostWorkflowResumeRequest(input: {
     model: resolveHostRequestModel(input),
     accessMode: input.accessMode,
     backgroundTasks: input.backgroundTasks,
-    permissionMode: input.accessMode ? undefined : input.permissionMode,
     traceLevel: input.traceLevel,
     targetPath: input.targetPath,
     ...(input.confidentialPaths && input.confidentialPaths.length > 0
@@ -258,7 +234,6 @@ export function createHostWorkflowResumeRequest(input: {
     ...(input.confidentialDefaults === false
       ? { confidentialDefaults: false }
       : {}),
-    shouldWrite: input.shouldWrite,
     metadata: input.metadata,
   };
 }
@@ -269,8 +244,6 @@ export function createHostCapabilityInspectRequest(input: {
   modelNameSource?: HostClientModelSource;
   accessMode?: RunAccessMode;
   backgroundTasks?: BackgroundTaskPolicy;
-  permissionMode?: PermissionMode;
-  shouldWrite?: boolean;
 }): CapabilityInspectRequestPayload {
   return {
     ...(input.sessionId ? { sessionId: input.sessionId } : {}),
@@ -278,12 +251,6 @@ export function createHostCapabilityInspectRequest(input: {
     ...(input.accessMode ? { accessMode: input.accessMode } : {}),
     ...(input.backgroundTasks
       ? { backgroundTasks: input.backgroundTasks }
-      : {}),
-    ...(!input.accessMode && input.permissionMode
-      ? { permissionMode: input.permissionMode }
-      : {}),
-    ...(input.shouldWrite !== undefined
-      ? { shouldWrite: input.shouldWrite }
       : {}),
   };
 }

@@ -1,15 +1,18 @@
 import { join } from "node:path";
 import {
+  assessRun,
   createRunId,
-  createSessionFileRunStoreFactory,
   createSessionId,
   createSessionRunStoreFactory,
-  EventLog,
   FileSessionStore,
   type RunRecord,
   type RunResult,
 } from "@sparkwright/core";
-import type { TraceLevel } from "@sparkwright/protocol";
+import {
+  createSessionFileRunStoreFactory,
+  EventLog,
+} from "@sparkwright/core/internal";
+import type { RunAccessMode, TraceLevel } from "@sparkwright/protocol";
 
 export interface HostStartFailureTraceInput {
   goal: string;
@@ -20,7 +23,7 @@ export interface HostStartFailureTraceInput {
   runId?: string;
   traceLevel?: TraceLevel;
   targetPath?: string;
-  shouldWrite?: boolean;
+  accessMode?: RunAccessMode;
   metadata?: Record<string, unknown>;
 }
 
@@ -60,9 +63,7 @@ export async function writeHostStartFailureTrace(
     source: input.source,
     failurePhase: "host_start",
     ...(input.targetPath ? { targetPath: input.targetPath } : {}),
-    ...(input.shouldWrite !== undefined
-      ? { shouldWrite: input.shouldWrite }
-      : {}),
+    ...(input.accessMode !== undefined ? { accessMode: input.accessMode } : {}),
     traceLevel,
     ...input.metadata,
   };
@@ -86,6 +87,13 @@ export async function writeHostStartFailureTrace(
       message: input.message,
       retryable: false,
     },
+    assessment: assessRun([], {
+      terminal: {
+        state: "failed",
+        reason: "model_completion_failed",
+        failure: { code: "HOST_START_FAILED" },
+      },
+    }),
     metadata,
   };
 
@@ -143,6 +151,7 @@ export async function writeHostStartFailureTrace(
             message: input.message,
             retryable: false,
           },
+          assessment: result.assessment,
           metadata,
         },
         { source: input.source },

@@ -6,6 +6,146 @@
 
 See also [../maps/trace/summary-timeline-verify.md](../maps/trace/summary-timeline-verify.md) and [../maps/session/resume-replay.md](../maps/session/resume-replay.md).
 
+## Last Verified
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: the internal Direct Core diagnostic entry uses Host's canonical
+  runtime workflow-hook assembly. Required verification profiles, configured
+  hooks, documented-command checks, and terminal summaries therefore use the
+  same semantics as Host runs instead of a reduced CLI-local list.
+- Read: Direct Core runner, Host run-preparation hook assembly, verification
+  projection, CLI outcome formatting, and parity regression.
+- Tests: CLI 191/191; direct-Core required-profile regression passed.
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: CLI run/resume commands no longer synthesize `README.md` as an implicit
+  target. Online semantic status and exit code consume Core's persisted
+  terminal assessment only and fail closed when that assessment is absent;
+  prose unsupported-claim warnings are removed.
+- Read: parser contracts, host/direct runners, run outcome projection, trace
+  session command, real-model scripts, and CLI regression tests.
+- Tests: CLI 190/190 except one fixed fixture omission, with the focused fix
+  passing before final full/release verification.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: Host capability inspection ownership moved internally; CLI still
+  treats the Host snapshot as the sole effective tool/delegate/sandbox source
+  and retains only additive diagnostics. Output contracts are unchanged.
+- Read: capability owner, Host protocol facade, and CLI capability consumer.
+- Tests: focused Host capability passed; CLI gates are recorded with the commit.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: checked internal-import governance after Host Workflow episode
+  extraction. CLI internal reference harness allowances and Host/protocol
+  client boundaries are unchanged.
+- Read: internal-import allowlist, CLI direct-core entries, and Host episode
+  owner.
+- Tests: internal-import and CLI gates pass in the final release check.
+
+- Status: Verified
+- Date: 2026-07-18T08:52:13+0800
+- Scope: `skills stats` JSON and text consume the sole structured
+  `loadFailures` DTO; text totals no longer read the removed compatibility
+  summary. Host session projection schema v3 rebuilds retired cached DTOs.
+- Read: CLI Skill stats command/formatter/tests, Host stats projection/cache,
+  public Skill reference, and Skill project/test maps.
+- Tests: focused CLI Skill stats/review/catalog/doctor 5/5, full CLI 155/155,
+  CLI and Host typechecks, repository test typecheck, schema check, project-map
+  drift, and the full release gate passed.
+
+- Status: Verified
+- Date: 2026-07-17T23:37:17+0800
+- Scope: CLI diagnostics/reference harness imports EventLog and file-run
+  implementations through Core `/internal`; command and output contracts are
+  unchanged.
+- Read: CLI root, trace/session command, direct-core runner, tests, Core
+  barrels, and import governance.
+- Tests: CLI outcome 23/23 and CLI typecheck passed; full CLI coverage is part
+  of the final release gate.
+
+- Status: Verified
+- Date: 2026-07-17T17:20:00+0800
+- Scope: CLI Workflow list/control consumes required generation and canonical
+  package identity from Host snapshots; cancellation no longer defaults a
+  missing generation. Shadow text reports the pinned v2 package hash and policy.
+- Read: CLI Workflow list/inspect/shadow/control paths, Host runner contracts,
+  protocol Workflow snapshot, and focused fixtures.
+- Tests: CLI Workflow focused tests and CLI typecheck passed before the full
+  release gate.
+
+- Status: Verified
+- Date: 2026-07-17T13:00:00+0800
+- Scope: `capabilities inspect` renders required current-run delegate approval
+  facts directly. The fallback to the removed config echo is gone.
+- Read: CLI capability formatter/tests, protocol delegate summary, Host
+  descriptor producer, and capability routes.
+- Tests: CLI capability inspect 3/3 and typecheck; Host protocol and TUI
+  capability consumers passed.
+
+- Status: Verified
+- Date: 2026-07-17T09:43:00+0800
+- Scope: grouped-only config is emitted by init/examples and consumed by
+  config doctor, inspect, capability inspection, and real-regression helpers.
+  Root identity/policy/run/UI aliases are no longer preserved by config writers.
+- Read: CLI init templates, config doctor/writers, config tests, schema tests,
+  real-model helper, generated schema, and public config references.
+- Tests: CLI config schema 6/6 and full 155/155; CLI typecheck; Host
+  config/protocol 115/115; repository test typecheck; schema check;
+  project-map drift; full release gate including regression matrix and install
+  smokes.
+
+- Status: Verified
+- Date: 2026-07-17T00:08:26+0800
+- Scope: CLI Agent config mutation no longer reads or rewrites the retired
+  `exposeChildrenAsDelegates` field. Direct delegate execution uses canonical
+  exposure controls for synthesized aliases while explicit aliases remain
+  runnable by name.
+- Read: CLI Agent config serializer, delegates command, Host delegate runner,
+  generated config schema, and focused CLI/config tests.
+- Tests: Host Agent/config/tools 184/184; focused Host protocol 4/4; CLI
+  Agent/delegate/capability 9/9; Agent Runtime, Host, and CLI typechecks;
+  repository test typecheck; schema check; project-map drift; full release gate.
+
+- Status: Verified
+- Date: 2026-07-16T18:55:00+0800
+- Scope: Inline trace-command test fixtures use the required canonical event
+  envelope, including object `metadata`; trace diagnostics no longer exercise
+  the removed missing-metadata normalization path.
+- Read: CLI trace command tests, Core trace parser, raw trace map, and run-event
+  reference.
+- Tests: focused CLI timeline/report/events tests; CLI full workspace tests;
+  npm run release:check; project-map drift check.
+
+- Status: Verified
+- Date: 2026-07-16T15:30:00+0800
+- Scope: Live tool-failure formatting consumes only the canonical nested
+  `payload.error.code` envelope; the root `errorCode` compatibility alias is
+  not accepted for `tool.failed`.
+- Read: CLI event formatter/tests, Core outcome and trace diagnostics, raw trace
+  map, and run-event reference.
+- Tests: CLI event-format focused tests; Core outcome/trace focused tests; Core
+  and CLI typechecks; test typecheck; project-map drift check.
+
+- Status: Verified
+- Date: 2026-07-16T14:10:00+0800
+- Scope: Direct-core run resume searches only `sessions/*/agents/*/runs/<run-id>` and reconstructs from canonical aggregate traces; the legacy workspace run root is no longer accepted.
+- Read: CLI trace/session command module, Core trace store, CLI resume tests, and protocol references.
+- Tests: CLI run-resume focused tests; npm run build; npm run typecheck:test; npm run release:check.
+
+- Date: 2026-07-16T13:21:00+0800
+- Scope: CLI constructs one `InteractionChannel` from access mode and IO; direct-core, delegate, Cron, and Host-client approval paths no longer expose a resolver API.
+- Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.
+- Tests: focused access/policy/protocol/CLI/TUI/ACP/Workflow tests; npm run typecheck:test; npm run schema:check.
+
+- Date: 2026-07-16T11:52:29+0800
+- Scope: Host-mode terminal failure handling consumes only the canonical
+  `failure` envelope from protocol 2.0; no `run.failed.error` code/message
+  fallback remains. Capability/tool identity remains canonical-only.
+
 ## Main Files
 
 - `packages/cli/src/cli.ts`
@@ -163,6 +303,9 @@ Does not own:
   copies root `schemas/*.schema.json` into `dist/schemas` so installed CLIs can
   validate without a checkout of the source tree. The root config schema is
   generated from the host Zod schema before schema checks.
+- Config inspect/explain labels canonical paths (`identity.*`, `policy.*`,
+  `run.*`, and `ui.*`) while consuming the flat post-validation carrier.
+  Initializers and examples emit only the grouped canonical form.
 - `tools allow`, `tools disable`, and `tools defer` write local tool config;
   they preserve an existing JSON/YAML file in the selected user/project layer.
   There is no `tools list` command. `allow` appends to `tools.allowed`;
@@ -176,12 +319,9 @@ Does not own:
   inspects layered markdown-authored agents for same-layer id collisions. Same
   layer collisions are validation errors and make the command exit non-zero;
   cross-layer shadows remain diagnostics in text/JSON output.
-- `approvals.cronMode` supplies the default `permissionMode` for cron commands;
-  CLI flags still override it.
-- `--access-mode` is the CLI-facing run autonomy flag for interactive runs and
+- `--access-mode` is the only CLI-facing run autonomy flag and
   is clamped to any project `run.accessMode` ceiling before host/direct-core
-  execution. New host-client payloads send `accessMode` rather than relying on
-  low-level `permissionMode`.
+  execution. Host-client payloads send only `accessMode`.
 - CLI run/config plumbing carries config-derived `backgroundTasks` to host
   `run.start` / `run.resume` requests and surfaces `backgroundTasks` /
   `backgroundTasksCeiling` in config inspection. There is not currently a
@@ -200,7 +340,7 @@ Does not own:
   product-surface contract. `cron create` keeps the created job JSON on stdout
   and writes a stderr notice when unique-name storage creates a suffixed name
   such as `name 2`.
-- direct-core and cron run paths call `createConfiguredCliTools`, which now flattens the host `createCliDiagnosticToolCatalog` profile; do not add ad hoc CLI-only tools there. The deterministic direct-core write fallback uses `write_file` when the target file does not exist.
+- direct-core and cron run paths call `createConfiguredCliTools`, which now flattens the host `createCliDiagnosticToolCatalog` profile; do not add ad hoc CLI-only tools there. The deterministic direct-core write fallback uses `write` when the target file does not exist.
 - Direct-core remains an opt-in internal diagnostic path, but its fresh run and
   run-resume mutation/read/permission policy comes from Host
   `createHostRunPolicy`. Untargeted writes therefore use the Host default
@@ -219,11 +359,12 @@ Does not own:
 - Real-model regression scripts share `scripts/lib/real-model-config.mjs` for
   model availability and isolated config copying. The helper asks
   `sparkwright config inspect --format json` for effective config facts and
-  supports grouped `identity.providers`, YAML sources, and source-file copying.
+  reads only canonical `identity.providers`, supports YAML sources, and copies
+  source files without retaining a root-level provider fallback.
   Setup-time config inspection must run outside the script's isolated XDG
   fixture; actual regression cases run against the copied isolated config.
   Real-model prompt canaries should target current catalog tools such as
-  `write_file`, not retired harness-only tool names.
+  `write`, not retired harness-only tool names.
 - Run completion summaries separate controlled workspace writes, capability
   mutations, tool-reported capability changes, and sub-agent write rollups.
   They also separate untracked write-capable process boundaries from
@@ -232,8 +373,8 @@ Does not own:
   or configuration posture signals, not filesystem side-effect detection.
 - `capabilities inspect` prints delegate risk and conditional approval facts from
   host snapshots (`risk`, `approvalRequiredUnderCurrentRun`, `approvalReasons`,
-  `approvalRunOptions`) instead of treating delegates or the legacy
-  `requiresApproval` echo as unconditional runtime approval predictions.
+  `approvalRunOptions`) directly; delegate authoring config is not part of the
+  capability output.
 - `capabilities inspect` treats `agents.delegateTools` as the delegation index,
   not proof that every entry is a direct model-facing `delegate_*` tool. Runtime
   snapshots list actual tools (`delegate_agent` by default plus pinned/all direct
@@ -281,8 +422,8 @@ Does not own:
   continuation exhaustion remains visible in live output.
 - Host-mode terminal failure summaries use protocol `getRunFailure()` /
   `runFailureMessage()` so `run.completed{state:"failed"}` and `run.failed`
-  share the same failure-message extraction instead of maintaining separate CLI
-  payload cascades.
+  share the same canonical envelope extraction instead of maintaining separate
+  CLI payload cascades.
 - `session resume` is a new run in the existing session context. It does not
   implicitly inherit an earlier CLI/TUI model override; users can pass
   `--model provider/model` explicitly.
@@ -330,7 +471,7 @@ Does not own:
 
 - `packages/cli/src/cli.ts` is broad; feature changes often share one large file.
 - Some diagnostics are formatted in CLI even though the source contracts live in core.
-- The direct-core deterministic model is a diagnostics harness; it should keep exercising real catalog tools (`read_file`, `read_anchored_text`, `write_file`, `edit_anchored_text`/`apply_patch`) rather than reintroducing test-only write tools.
+- The direct-core deterministic model is a diagnostics harness; it should keep exercising real catalog tools (`read`, `read_anchored_text`, `write`, `edit_anchored_text`/`edit`) rather than reintroducing test-only write tools.
 
 ## Last Verified
 
@@ -903,11 +1044,11 @@ rules in capability inspect"`; `npm --workspace @sparkwright/host run build`;
   `npm run build`; `npm run check:dist-fresh`; `git diff --check`.
 
 - Status: Verified
-- Date: 2026-07-08T20:41:34+0800
-- Scope: CLI run access plumbing now groups effective access fields as
-  `runAccess` and approval shortcuts as `approvalOptions` before handing off
-  to host/direct-core runners. `capabilities inspect` passes the same access
-  object into the host runtime and prints the resulting `runtime access` line.
+- Date: 2026-07-16T13:12:00+0800
+- Scope: CLI run access accepts only `accessMode`; host/direct-core runners
+  compile it to their internal execution fields. `capabilities inspect`
+  passes the same access mode into the host runtime and prints the resulting
+  `runtime access` line.
 - Read: `packages/cli/src/cli.ts`, `packages/cli/src/run-access.ts`,
   `packages/cli/src/runners/host-runner.ts`,
   `packages/cli/src/runners/direct-core-runner.ts`,
@@ -915,5 +1056,5 @@ rules in capability inspect"`; `npm --workspace @sparkwright/host run build`;
   `docs/_internal/project-map/modules/cli.md`.
 - Tests: `npm --workspace @sparkwright/cli run typecheck`;
   `npm --workspace @sparkwright/cli test -- test/cli-approval.test.ts test/entry-parity.test.ts`;
-  `npm --workspace @sparkwright/cli test -- test/cli.test.ts -t "clamps CLI access-mode overrides|allows safe read tools without approval in read-only access mode|clarifies that --yes without --write|auto-approves writes with --yes|run resume through the host preserves trace level and metadata|resumes workflow runs through the host actor episode driver"`;
+  `npm --workspace @sparkwright/cli test -- test/cli.test.ts -t "clamps CLI access-mode overrides|allows safe read tools without approval in read-only access mode|allows workspace writes without approval in accept_edits mode|run resume through the host preserves trace level and metadata|resumes workflow runs through the host actor episode driver"`;
   `npm --workspace @sparkwright/cli test -- test/cli.test.ts -t "capability inspect"`.

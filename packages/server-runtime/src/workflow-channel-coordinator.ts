@@ -40,9 +40,9 @@ export class WorkflowChannelCoordinator {
       failed: [],
       skipped: [],
     };
-    const notifications = await this.options.outbox
-      .asActorInbox()
-      .peek((notification) => notification.source.kind === "workflow");
+    const notifications = await this.options.outbox.peek(
+      (notification) => notification.source.kind === "workflow",
+    );
     report.notifications = notifications.length;
     for (const notification of notifications) {
       if (notification.source.kind !== "workflow") continue;

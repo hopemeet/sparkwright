@@ -5,10 +5,169 @@
 Capability maps explain how optional power enters a run: skills, MCP, agents,
 cron, shell/task tools, and capability inspection.
 
+## Last Verified
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: reviewed capability assembly after Todo scheduler removal and Workflow
+  continuation narrowing. The Todo surface is advisory plan state; durable
+  Workflow records own continuation. Agent health is carried as assessment,
+  while MCP/Skill discovery and capability ownership remain unchanged.
+- Read: Host tool/capability assembly, Agent/Todo/Workflow contracts, and
+  downstream protocol surfaces.
+- Tests: affected Host, Agent Runtime, CLI, and protocol suites passed.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: live model/Skill/MCP/Agent/tool/Hook capability preparation and final
+  run snapshot capture now route through `RunPreparationOperations`, while
+  `CapabilityRuntimeOperations` remains the sole configured-inspection and
+  last-run snapshot owner. Snapshot shape and protocol behavior are unchanged.
+- Read: preparation/capability owners, assembly helpers, security/tool maps,
+  and focused capability/run tests.
+- Tests: direct owner coverage and final focused/repository gates are recorded
+  with the commit.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: Host effective capability inspection now has one runtime owner in
+  `CapabilityRuntimeOperations`, including configured inventory, automation,
+  last-run snapshot merge, and Skill index-failure diagnostics. Snapshot shape,
+  tool/delegate identity, MCP lifecycle, storage, and protocol behavior are
+  unchanged.
+- Read: capability owner/assembly, Host run preparation and MCP seam, Agent
+  assembly, protocol/CLI/TUI consumers, and focused tests.
+- Tests: owner-level 2/2 and focused Host capability 222/222 passed.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: effective Agent execution surfaces are now constructed by
+  `AgentRuntimeAssembly`; capability inspection remains a separate HostRuntime
+  path for the next ownership phase. Agent profile inventory, delegate
+  descriptors, tool names, protocol snapshots, and config semantics are
+  unchanged.
+- Read: Host Agent assembly/capability inspection, Agent capability map, and
+  focused protocol/tool tests.
+- Tests: owner-level and focused Host Agent/Delegate suites passed.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: checked Host Workflow durable owner extraction. Workflow assets and
+  capability inspection remain live inventory, while durable records remain
+  workspace runtime state; no `workflow_start`, capability field, or tool
+  surface changed.
+- Read: Workflow capability discovery, Host owner/runtime seam, and focused
+  capability/protocol tests.
+- Tests: focused Host Workflow/protocol suites passed.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: Host Task protocol/control and automation-root ownership moved into
+  `TaskRuntimeOperations`; capability snapshots still read the same canonical
+  `.sparkwright/tasks` store and expose the same Task inventory.
+- Read: Host Task operations, WorkspaceContext, capability assembly/runtime,
+  and protocol tests.
+- Tests: Host Task revival/service/protocol 64/64 and Host typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-17T23:37:17+0800
+- Scope: Core implementation import routing changed only; Host capability
+  assembly, inspection, schemas, and active tool/capability semantics are
+  unchanged.
+- Read: Core barrels and affected Host/CLI runtime consumers.
+- Tests: affected typechecks/builds and import governance passed.
+
+- Status: Verified
+- Date: 2026-07-17T17:20:00+0800
+- Scope: live Workflow discovery remains the capability inventory and may show
+  a Markdown fingerprint, while every durable/executable Workflow instance has
+  one required v2 package identity and immutable snapshot. Capability inventory
+  is not a fallback identity for run resume or statistics.
+- Read: Host Workflow discovery/pinning/capability assembly, Agent Runtime
+  durable pin types, protocol asset/run projections, and focused tests.
+- Tests: Host Workflow/capability/protocol tests and affected typechecks passed
+  before the full release gate.
+
+- Status: Verified
+- Date: 2026-07-17T13:00:00+0800
+- Scope: capability inspection publishes one exposure vocabulary and one
+  delegate approval fact. `list_dir` is advanced; the legacy tier and delegate
+  config echo are absent from Host/protocol/CLI/TUI snapshots.
+- Read: Host capability assembly/tool identity/delegate descriptor, protocol
+  schema/fixture, CLI/TUI consumers, Agent map, and focused tests.
+- Tests: Host tools 88/88 and capability/delegate protocol 14/14; CLI 3/3;
+  TUI 8/8; affected typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-17T09:43:00+0800
+- Scope: capability preparation and inspection consume grouped-only external
+  config through Host. Tool/capability roots and effective runtime semantics are
+  unchanged; real-regression config copying no longer reads root providers.
+- Read: Host config/capability paths, CLI capability inspection and regression
+  helpers, TUI capability consumer, generated schema, and focused tests.
+- Tests: Host config/protocol 115/115; CLI config schema 6/6 and full 155/155;
+  TUI capability/config consumers 17/17; affected typechecks and schema check;
+  project-map drift; full release gate.
+
+- Status: Verified
+- Date: 2026-07-17T00:08:26+0800
+- Scope: Agent direct aliases have one canonical exposure policy; the retired
+  global child-exposure boolean no longer participates in config, inspection,
+  runtime assembly, or direct execution.
+- Read: Agent capability map, Host config/delegate paths, CLI consumer, and
+  public guidance.
+- Tests: Host Agent/config/tools 184/184; focused Host protocol 4/4; CLI
+  Agent/delegate/capability 9/9; Agent Runtime, Host, and CLI typechecks;
+  repository test typecheck; schema check; project-map drift; full release gate.
+
+- Status: Verified
+- Date: 2026-07-16T23:55:17+0800
+- Scope: `create_agent` capability authoring now accepts only canonical
+  `model: "inherit"` for inheritance. Configured Agent model defaults and the
+  capability inventory are unchanged.
+- Read: Host Agent tool schema/parser, Agent capability map, capability
+  inspection consumers, and focused Host/CLI tests.
+- Tests: Host Agent profile/tools 125/125; capability protocol 5/5; CLI
+  Agent/capability routes 7/7; Host and CLI typechecks; repository test
+  typecheck; project-map drift; full release gate.
+
+- Status: Verified
+- Date: 2026-07-16T22:26:54+0800
+- Scope: checked capability ownership after workflow durable storage became
+  journal-only; workflow assets remain capabilities and workflow journals
+  remain workspace runtime state, with no inventory or wire-shape change.
+- Read: capability workflow contracts, Host list/resume consumers, and Agent
+  Runtime store/journal.
+- Tests: Host workflow/protocol focused suites; Host typecheck; repository test
+  typecheck; full release gate.
+
+- Status: Verified
+- Date: 2026-07-16T13:50:10+0800
+- Scope: Workflow assets remain capabilities, while durable workflow records have one workspace store and no session-local compatibility lookup.
+- Read: Host workflow list/resume, capability docs, Agent Runtime store helpers, and focused tests.
+- Tests: npm run build; npm run typecheck:test; Host workflow/protocol tests (94).
+
+- Date: 2026-07-16T13:36:30+0800
+- Scope: Configured deterministic rules compile only to `WorkflowHook`; the removed Core validation-hook lane had no capability/config producer.
+- Read: host capability assembly and workflow hook compiler plus Core run contracts.
+- Tests: focused Host capability/workflow tests; npm run build; npm run typecheck:test; npm run release:check.
+
+- Date: 2026-07-16T12:45:00+0800
+- Scope: Capability inspection accepts and reports only accessMode plus backgroundTasks; compiled permission/write diagnostics were removed.
+- Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.
+- Tests: focused access/policy/protocol/CLI/TUI/ACP/Workflow tests; npm run typecheck:test; npm run schema:check.
+
+- Date: 2026-07-16T11:52:29+0800
+- Scope: reviewed protocol 2.0 terminal failure envelope changes; capability
+  discovery, assembly, and inspection do not consume the removed Host
+  run-terminal `error` projection.
+
 ## Main Files
 
 - `packages/host/src/runtime.ts`
 - `packages/host/src/runtime/host-runtime.ts`
+- `packages/host/src/runtime/run-preparation-operations.ts`
+- `packages/host/src/runtime/capability-runtime-operations.ts`
 - `packages/host/src/runtime/capability-assembly.ts`
 - `packages/host/src/active-rules.ts`
 - `packages/host/src/tool-catalog.ts`
@@ -24,7 +183,8 @@ cron, shell/task tools, and capability inspection.
 
 ```txt
 config + workspace capability roots
-  -> host capability preparation
+  -> CapabilityRuntimeOperations configured inspection
+  -> RunPreparationOperations generic live-run preparation
   -> host tool catalog
   -> CLI diagnostic catalog profile for direct-core/cron runs
   -> tools/context/events/snapshot
@@ -35,6 +195,10 @@ config + workspace capability roots
 
 - Capabilities affect model input, tool availability, policy, or side effects and must be trace-visible.
 - Capability inspection is diagnostic; it does not replace run trace.
+- `CapabilityRuntimeOperations` is the sole Host owner of the last-run
+  capability snapshot and configured/live merge. `capability-assembly.ts`
+  remains stateless projection code; `RunPreparationOperations` captures each
+  prepared run through the owner and owns the generic preparation lifecycle.
 - Live Host capability catalogs may wrap actual workspace mutation execution in
   a process-local lease after filtering. This is runtime coordination, not a
   new capability or inspection field; inert `capability.inspect` catalogs do
@@ -66,9 +230,12 @@ config + workspace capability roots
   `sparkwright workflow *` remain inspection surfaces; P1/P1.5 also lets
   `sparkwright run --workflow <name>` / `run.start.workflow` instantiate a
   selected asset without the former experimental workflow runtime gate.
-  Durable workflow run records are workspace state for fresh P9a+ runs, with
-  legacy session-local lookup kept for compatibility; they are not
-  capabilities. `sparkwright workflow list` may show both workflow assets and
+  Durable workflow run records are workspace state under the canonical
+  `.sparkwright/workflow-runs/<workflowRunId>.journal/` layout; they are not
+  capabilities. Their identity is the required source layer plus v2 package
+  hash/policy and executable snapshot; the live inventory's Markdown
+  `contentHash` cannot substitute for that pin.
+  `sparkwright workflow list` may show both workflow assets and
   workflow run records, but `capability.inspect.workflows` remains the asset
   inventory.
   P3 Step 4b.1 per-episode workflow catalog narrowing filters worker
@@ -104,6 +271,8 @@ config + workspace capability roots
 - Config-declared capabilities can live in JSON or YAML config files. Host owns
   parsing, same-layer conflict diagnostics, and serialization helpers; CLI/TUI
   and managed capability tools should reuse those helpers when mutating config.
+  External identity, policy, run, and UI fields are grouped-only; capability,
+  tool, task, workspace, and Shell foreground-timeout roots remain canonical.
 - `capability.inspect` should report runtime tools from the host catalog so sources/deferred flags match the actual run surface.
 - `CapabilitySnapshot.agents.profiles` is the resolved profile inventory
   (Agent.md plus inline config) and is broader than configured-delegate
@@ -174,7 +343,7 @@ config + workspace capability roots
 - Regression and smoke scripts must not recreate removed tool allowlists; use
   the default tool surface or top-level negative filters.
 - Real-model skill capability regression preserves JSON/YAML config layers,
-  recognizes top-level `providers` and grouped `identity.providers`, and should
+  reads canonical `identity.providers`, and should
   use `capabilities inspect` evidence rather than a local hard-coded tool list.
   Prompt canaries should ask for current tool catalog names and treat recovered
   model/tool retries as passable only when the final run outcome is not failing
@@ -208,6 +377,13 @@ config + workspace capability roots
 - Do not add one-off direct-core/cron tools for capability smokes; exercise the same coding tools used by host runs.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-16T10:27:51+0800
+- Scope: configured Agent tools now consume the existing capability-derived
+  policy directly, with no parallel Agent-tool approval input.
+- Read: Host capability projection, runtime assembly, and Agent-tool definition.
+- Tests: Host tools 89/89, Host typecheck, and repository test typecheck passed.
 
 - Status: Verified
 - Date: 2026-07-16T08:47:59+0800
@@ -688,7 +864,7 @@ test/run-access.test.ts test/spawn-agent.test.ts -t
 - Status: Verified
 - Date: 2026-06-28T20:30:50+0800
 - Scope: capability/tool inventory origin semantics remain stable after adding
-  explicit read-only governance to host `read_file`; the descriptor still
+  explicit read-only governance to host `read`; the descriptor still
   reports `local:@sparkwright/coding-tools`, and read-only approval behavior is
   driven by governance side effects.
 - Read: `packages/host/src/tools.ts`,
@@ -855,8 +1031,9 @@ test/cli.test.ts -t "filters proposals|agents|capabilities inspect"`.
 - Date: 2026-07-08T20:41:34+0800
 - Scope: capability inspection is now access-scoped. Host protocol,
   in-process CLI inspection, and TUI inspection can pass active access fields;
-  snapshots include `access`, delegate diagnostics use the effective
-  `shouldWrite`, and shell promotion visibility follows effective
+  snapshots include canonical `accessMode`/`backgroundTasks`; delegate
+  diagnostics use the internally compiled write gate, and shell background
+  handoff visibility follows effective
   `backgroundTasks`.
 - Read: `packages/host/src/runtime.ts`,
   `packages/host/src/server.ts`, `packages/host/src/client-run.ts`,

@@ -1,18 +1,23 @@
 # Substrate Sequencing (Cross-Proposal Consolidation Map)
 
-> Status: working agreement, drafted 2026-07-04 out of the fourth review
-> pass of `workflow-runtime-v1.md`. This page is deliberately thin: it
+> Status: historical cross-proposal sequencing record. Its shared-substrate
+> ownership decisions were implemented or transferred to current project-map
+> owners; it is no longer an active proposal queue. The deferred capability
+> and distributed-coordination items remain gated by their owner documents,
+> not by this page. Drafted 2026-07-04 out of the fourth review pass of
+> `workflow-runtime-v1.md`. This page is deliberately thin: it
 > assigns each shared substrate exactly one owner, fixes the build order,
 > and states the project-wide deletion bar. It does not re-design anything —
-> designs live in the owner proposals; this page exists so the four active
-> proposals stop re-stating (and re-inventing) the same substrates.
+> designs live in the owner proposals; this page existed so the four
+> then-active proposals stopped re-stating (and re-inventing) the same
+> substrates.
 >
-> Active proposals covered: `workflow-runtime-v1.md`,
+> Historical proposals covered: `workflow-runtime-v1.md`,
 > `background-task-lifecycle.md`, `skill-runtime-v1-redesign.md`,
-> `session-agent-host-coordinator.md`, and `qa-convergence-plan.md` (stub home
-> created 2026-07-06 from C12). Evidence lines below were verified against the
-> `feat/background-agent-jobs` working tree on 2026-07-04 unless a later line
-> states otherwise.
+> `session-agent-host-coordinator.md`, and the closed QA convergence stub now
+> archived at `../reviews/qa-convergence-plan.md`. Evidence lines below were
+> verified against the `feat/background-agent-jobs` working tree on 2026-07-04
+> unless a later line states otherwise.
 
 ## The problem this page solves
 
@@ -22,12 +27,12 @@ owned by a different feature, plus proposals that each declare their own
 version of the shared substrate they need. Verified dispersion as of
 2026-07-04:
 
-- **4 "did the command pass" extractors** (verification event scan,
-  `commandOutcomeSnapshot`, trace-diagnostics recompute, run-health).
+- **4 "did the command pass" extractors** (verification event scan, the former
+  compact terminal snapshot, trace-diagnostics recompute, run-health).
 - **≥5 continuation/budget knobs across 3 owners** (`maxSteps`,
   `runBudget`, `MAIN_TODO_MAX_CONTINUATIONS` +
   `resolveTodoContinuationMaxSteps` in `host/runtime.ts`;
-  `maxRevivalTurns` and the doom-loop limit in core) — with three
+  per-source forced-continuation budgets and the doom-loop limit in core) — with three
   proposals separately claiming to unify them.
 - **≥3 hand-rolled atomic-write implementations**
   (`agent-runtime/src/tasks/file-store.ts:263`,
@@ -68,9 +73,8 @@ violations, not one exception.
 retired mechanism (file/function) in the PR description and deleting or
 migrating it in the same PR — "will be deleted later" does not count.
 
-**Teeth:** `docs/_internal/` is not version-controlled, so this page
-enforces nothing by itself — it is rationale, not mechanism. Enforcement
-lives in tracked artifacts, to land at P0/P1-prereq time:
+**Teeth:** documentation is rationale, not an enforcement mechanism.
+Enforcement lives in tracked source, tests, and repository gates:
 
 1. the hook assembly-order regression test (workflow P0);
 2. compile-time guards rejecting configured `advance` / `PreToolUse
@@ -167,8 +171,8 @@ listed below.
   and ratified in the S3 annex below).
 - **Status:** implemented 2026-07-04 on `feat/forced-turn-budget`: core
   now owns one per-source forced-continuation budget mechanism,
-  `revival` is migrated as the first consumer while preserving
-  `maxRevivalTurns` / `revivalTurnsUsed` compatibility, and forced-turn
+  `revival` is the first consumer while preserving `revivalTurnsUsed` terminal
+  metadata, and forced-turn
   exhaustion emits `run.budget.exceeded` / FactLedger `budgetExceeded`
   facts without failing the run directly. Workflow P1 now consumes the
   pre-registered `workflow` source for projection advance / verifier block /
@@ -214,7 +218,7 @@ listed below.
   the built-in conservative deny set (`.env`, secret/token/credential patterns,
   `.ssh`, `.aws`, `.gcp`, `.azure`) with caller-supplied
   `confidentialPaths`. Host start/resume/workflow resume and CLI direct-core
-  runs use it; protocol 1.4 carries optional `confidentialDefaults:false` so
+  runs use it; the protocol carries optional `confidentialDefaults:false` so
   embedders can intentionally own the full list. Post-acceptance fix
   2026-07-06: host-loaded workspace config is merged into the prepared run
   policy before start/resume/workflow-resume episodes are built, so protocol
@@ -241,8 +245,8 @@ The merge is tractable only with a three-way altitude split; every prior
    `foregroundTimeoutMs`, not to this family or any S3 family, so it is
    orthogonal and non-conflicting.
 2. **In-run forced-turn budget — the S3 mechanism.** One core mechanism
-   with per-source accounting, generalizing `maxRevivalTurns` /
-   `revivalTurnsUsed` (the shipped seed: revival turns already ride it).
+   with per-source accounting (the shipped seed: revival turns already ride it,
+   with `revivalTurnsUsed` retained as terminal usage metadata).
    Sources v1: `revival` (waiting_tasks wake), `workflow` (advance /
    verifier-retry turns). Candidate second wave: `validation`
    (stop-block / validation-continuation turns, which today consume

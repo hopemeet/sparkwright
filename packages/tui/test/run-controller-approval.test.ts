@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Client } from "@sparkwright/sdk-node";
-import type { HostEvent, PermissionMode } from "@sparkwright/protocol";
+import type { HostEvent, RunAccessMode } from "@sparkwright/protocol";
 import { EventStore } from "../src/state/event-store.js";
 import { RunController } from "../src/state/run-controller.js";
 
@@ -14,7 +14,7 @@ function approvalEvent(id: string): HostEvent & { kind: "approval.requested" } {
       action: "tool.execute",
       summary: "Run shell command",
       details: {
-        toolName: "shell",
+        toolName: "bash",
         arguments: { command: "npm test", cwd: "/workspace/project" },
       },
     },
@@ -26,7 +26,7 @@ function deliver(
   client: Client,
   sessionId: string,
   event: HostEvent & { kind: "approval.requested" },
-  permissionMode: PermissionMode = "default",
+  accessMode: RunAccessMode = "ask",
   workflowRunId?: string,
 ): void {
   const internal = controller as unknown as {
@@ -34,7 +34,7 @@ function deliver(
       execution: {
         client: Client;
         sessionId: string;
-        permissionMode: PermissionMode;
+        accessMode: RunAccessMode;
         kind: "workflow";
         workflowRunId?: string;
         runId: string;
@@ -46,7 +46,7 @@ function deliver(
     {
       client,
       sessionId,
-      permissionMode,
+      accessMode,
       kind: "workflow",
       ...(workflowRunId ? { workflowRunId } : {}),
       runId: event.payload.runId,
@@ -88,7 +88,7 @@ describe("RunController session approvals", () => {
     controller.wireWorkflowClientApprovals(client, {
       client,
       sessionId: "session_workflow",
-      permissionMode: "default",
+      accessMode: "ask",
       kind: "workflow",
       workflowRunId: "workflow_1",
     });
@@ -209,7 +209,7 @@ describe("RunController session approvals", () => {
       askClient,
       "session_workflow_ask",
       approvalEvent("approval_ask"),
-      "default",
+      "ask",
       "workflow_ask",
     );
     deliver(
@@ -217,7 +217,7 @@ describe("RunController session approvals", () => {
       bypassClient,
       "session_workflow_bypass",
       approvalEvent("approval_bypass"),
-      "bypass_permissions",
+      "bypass",
       "workflow_bypass",
     );
 
@@ -273,7 +273,7 @@ describe("RunController session approvals", () => {
       client,
       "session_job",
       event,
-      "accept_edits",
+      "accept-edits",
       "workflow_job",
     );
 
@@ -287,7 +287,7 @@ describe("RunController session approvals", () => {
     expect(active.execution).toMatchObject({
       client,
       sessionId: "session_job",
-      permissionMode: "accept_edits",
+      accessMode: "accept-edits",
       kind: "workflow",
       workflowRunId: "workflow_job",
       runId: "run_episode_2",

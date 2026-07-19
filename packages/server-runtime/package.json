@@ -1,7 +1,7 @@
 {
   "name": "@sparkwright/server-runtime",
   "version": "0.1.0",
-  "description": "Transport-neutral backend control plane helpers for Sparkwright runs.",
+  "description": "Transport-neutral execution and workflow coordination for Sparkwright.",
   "license": "Apache-2.0",
   "author": "hopemeet <https://x.com/hopemeet_ai>",
   "homepage": "https://github.com/hopemeet/sparkwright#readme",
@@ -44,7 +44,7 @@
     "agents",
     "runtime",
     "server",
-    "sessions",
-    "approval"
+    "workflow",
+    "scheduling"
   ]
 }

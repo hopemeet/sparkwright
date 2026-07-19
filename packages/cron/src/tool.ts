@@ -47,7 +47,6 @@ export function createCronTool(options: CreateCronToolOptions) {
     policyForArgs(args) {
       return cronToolPolicyForArgs(args);
     },
-    isReplaySafe: false,
     isReadOnly(args) {
       const action = actionFromUnknown(args);
       return action !== undefined && isReadAction(action);

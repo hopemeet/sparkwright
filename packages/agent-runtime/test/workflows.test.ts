@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { RunId } from "@sparkwright/core";
@@ -12,7 +12,6 @@ import {
   runWorkflowRunChain,
   workspaceWorkflowRunsDir,
   WORKFLOW_RUN_RECORD_SCHEMA_VERSION,
-  workflowRunsDir,
   validateWorkflowRuntimeDefinition,
   type WorkflowRunId,
   type WorkflowDefinition,
@@ -20,7 +19,6 @@ import {
 import {
   publishWorkflowJournalEntry,
   readWorkflowJournal,
-  readWorkflowJournalSync,
 } from "../src/workflows/journal.js";
 
 async function tempDir(): Promise<string> {
@@ -32,6 +30,32 @@ function workflow(nodes: WorkflowDefinition["nodes"]): WorkflowDefinition {
     assetName: "test-workflow",
     contentHash: "hash",
     nodes,
+  };
+}
+
+function workflowPin(
+  id: WorkflowRunId,
+  assetName: string,
+  definition: WorkflowDefinition = workflow([{ id: "main", body: "Run." }]),
+) {
+  const { contentHash: _contentHash, ...executableDefinition } = definition;
+  const packageSnapshotRef = `/snapshots/${id}`;
+  const packageHash = `sha256:${id}`;
+  return {
+    assetName,
+    layer: "project" as const,
+    packageHash,
+    packageHashPolicyVersion: 2 as const,
+    packageSnapshotRef,
+    definitionSnapshot: {
+      ...executableDefinition,
+      assetName,
+      sourceDir: packageSnapshotRef,
+      layer: "project" as const,
+      packageHash,
+      packageHashPolicyVersion: 2 as const,
+      packageSnapshotRef,
+    },
   };
 }
 
@@ -256,8 +280,7 @@ describe("FileWorkflowStore", () => {
     expect(writerA?.generation).toBe(1);
     const created = await writerA?.create({
       id,
-      assetName: "fenced",
-      contentHash: "hash",
+      ...workflowPin(id, "fenced"),
       now: () => now.toISOString(),
     });
     expect(created).toMatchObject({ generation: 1, recordRevision: 1 });
@@ -319,8 +342,6 @@ describe("FileWorkflowStore", () => {
       "created",
       "completed",
     ]);
-    await writeFile(join(root, `${id}.json`), "{torn", "utf8");
-    await writeFile(join(root, `${id}.events.jsonl`), "{torn\n", "utf8");
     const recovered = new FileWorkflowStore({
       rootDir: root,
       createRoot: false,
@@ -334,6 +355,9 @@ describe("FileWorkflowStore", () => {
       "created",
       "completed",
     ]);
+    expect(recovered.list().records).toEqual([
+      expect.objectContaining({ id, status: "completed" }),
+    ]);
     await writerB?.release();
   });
 
@@ -344,8 +368,7 @@ describe("FileWorkflowStore", () => {
     const writer = await store.acquireWriter(id, { owner: "worker" });
     const created = await writer!.create({
       id,
-      assetName: "race",
-      contentHash: "hash",
+      ...workflowPin(id, "race"),
     });
     const event = (status: "waiting" | "completed") => ({
       at: new Date().toISOString(),
@@ -384,8 +407,7 @@ describe("FileWorkflowStore", () => {
     await expect(
       writer!.create({
         id: "workflow_other" as WorkflowRunId,
-        assetName: "identity",
-        contentHash: "hash",
+        ...workflowPin("workflow_other" as WorkflowRunId, "identity"),
       }),
     ).rejects.toThrow(/cannot create record/);
     expect(await writer!.readFresh()).toBeUndefined();
@@ -404,8 +426,7 @@ describe("FileWorkflowStore", () => {
     });
     const created = await writerA!.create({
       id,
-      assetName: "stale",
-      contentHash: "hash",
+      ...workflowPin(id, "stale"),
     });
     now = new Date("2026-07-11T00:00:02.000Z");
     const writerB = await store.acquireWriter(id, {
@@ -467,8 +488,7 @@ describe("FileWorkflowStore", () => {
     const writerA = await store.acquireWriter(id, { owner: "a" });
     const created = await writerA!.create({
       id,
-      assetName: "torn",
-      contentHash: "hash",
+      ...workflowPin(id, "torn"),
     });
     expect(created.recordRevision).toBe(1);
     const head = await readWorkflowJournal(root, id);
@@ -511,10 +531,7 @@ describe("FileWorkflowStore", () => {
     await writerB!.release();
   });
 
-  it("exposes session legacy and workspace workflow-run roots", () => {
-    expect(
-      workflowRunsDir({ sessionRootDir: "/state/sessions", sessionId: "sess" }),
-    ).toBe(join("/state/sessions", "sess", "workflow-runs"));
+  it("exposes the canonical workspace workflow-run root", () => {
     expect(workspaceWorkflowRunsDir({ workspaceRoot: "/workspace" })).toBe(
       join("/workspace", ".sparkwright", "workflow-runs"),
     );
@@ -535,19 +552,16 @@ describe("FileWorkflowStore", () => {
       parentRunId: "run_parent" as RunId,
       sessionId: "sess_one",
       activeRunId: "run_first" as RunId,
-      assetName: definition.assetName,
-      contentHash: definition.contentHash,
+      ...workflowPin(id, definition.assetName, definition),
       currentNodeId: "plan",
       attempts: { plan: 1 },
       authorizationSnapshot: {
         targetPath: "README.md",
         confidentialPaths: [".env"],
         confidentialDefaults: false,
-        shouldWrite: true,
         accessMode: "ask",
         backgroundTasks: "foreground-only",
       },
-      definitionSnapshot: definition,
       now: () => "2026-07-04T00:00:00.000Z",
     });
 
@@ -562,7 +576,6 @@ describe("FileWorkflowStore", () => {
         targetPath: "README.md",
         confidentialPaths: [".env"],
         confidentialDefaults: false,
-        shouldWrite: true,
         accessMode: "ask",
         backgroundTasks: "foreground-only",
       },
@@ -632,11 +645,10 @@ describe("FileWorkflowStore", () => {
         targetPath: "README.md",
         confidentialPaths: [".env"],
         confidentialDefaults: false,
-        shouldWrite: true,
         accessMode: "ask",
         backgroundTasks: "foreground-only",
       },
-      definitionSnapshot: { contentHash: "hash" },
+      definitionSnapshot: { packageHash: `sha256:${id}` },
       parallelBranches: {
         "unit-a": {
           sourceNodeId: "fanout",
@@ -651,201 +663,99 @@ describe("FileWorkflowStore", () => {
         },
       },
     });
-    expect(
-      JSON.parse(await readFile(join(root, `${id}.json`), "utf8")),
-    ).toMatchObject({
-      schemaVersion: WORKFLOW_RUN_RECORD_SCHEMA_VERSION,
-      id,
-    });
+    expect((await readdir(root)).sort()).toEqual([
+      `${id}.journal`,
+      `${id}.lease`,
+    ]);
   });
 
-  it("reads legacy workflow records without authorization snapshots", async () => {
+  it("quarantines workflow mutations without a canonical package pin", async () => {
     const root = await tempDir();
-    await writeFile(
-      join(root, "workflow_legacy.json"),
-      JSON.stringify(
-        {
-          schemaVersion: WORKFLOW_RUN_RECORD_SCHEMA_VERSION,
-          id: "workflow_legacy",
-          assetName: "legacy",
-          contentHash: "hash",
-          runIds: [],
-          status: "running",
-          attempts: {},
-          evidenceRefs: [],
-          verdictLog: [],
-          transitionLog: [],
-          resume: { verifyOnResume: true },
-          createdAt: "2026-07-04T00:00:00.000Z",
-          metadata: {},
-        },
-        null,
-        2,
-      ),
-      "utf8",
-    );
-
-    const reopened = new FileWorkflowStore({
+    const store = new FileWorkflowStore({ rootDir: root });
+    const id = "workflow_missing_package_pin" as WorkflowRunId;
+    const writer = await store.acquireWriter(id, { owner: "test" });
+    const created = await writer!.create({
+      id,
+      ...workflowPin(id, "canonical"),
+    });
+    const head = await readWorkflowJournal(root, id);
+    await publishWorkflowJournalEntry({
       rootDir: root,
-      createRoot: false,
-    });
-
-    expect(reopened.get("workflow_legacy" as WorkflowRunId)).toMatchObject({
-      id: "workflow_legacy",
-      status: "running",
-    });
-    expect(
-      reopened.get("workflow_legacy" as WorkflowRunId)?.authorizationSnapshot,
-    ).toBeUndefined();
-  });
-
-  it("resumes an idempotent lazy migration after baseline publication", async () => {
-    const root = await tempDir();
-    const id = "workflow_migration_retry" as WorkflowRunId;
-    const legacy = {
-      schemaVersion: WORKFLOW_RUN_RECORD_SCHEMA_VERSION,
-      id,
-      assetName: "legacy",
-      contentHash: "hash",
-      runIds: [],
-      status: "running" as const,
-      attempts: {},
-      evidenceRefs: [],
-      verdictLog: [],
-      transitionLog: [],
-      resume: { verifyOnResume: true },
-      createdAt: "2026-07-04T00:00:00.000Z",
-      metadata: {},
-    };
-    await writeFile(join(root, `${id}.json`), JSON.stringify(legacy), "utf8");
-    const legacyEvent = {
-      at: legacy.createdAt,
-      type: "created" as const,
       workflowRunId: id,
-      status: "running" as const,
-    };
-    await writeFile(
-      join(root, `${id}.events.jsonl`),
-      `${JSON.stringify(legacyEvent)}\n`,
-      "utf8",
-    );
-    const store = new FileWorkflowStore({ rootDir: root, createRoot: false });
-    const record = store.get(id)!;
-    expect(
-      await publishWorkflowJournalEntry({
-        rootDir: root,
-        workflowRunId: id,
-        physicalSequence: 0,
-        payload: {
-          kind: "baseline",
-          generation: 0,
-          recordRevision: 0,
-          record: { ...record, generation: 0, recordRevision: 0 },
-          legacyEvents: [legacyEvent],
+      physicalSequence: head!.physicalSequence + 1,
+      payload: {
+        kind: "mutation",
+        token: writer!.token,
+        generation: writer!.generation,
+        expectedRecordRevision: created.recordRevision,
+        recordRevision: created.recordRevision + 1,
+        record: {
+          ...created,
+          recordRevision: created.recordRevision + 1,
+          packageHash: undefined,
+        } as never,
+        event: {
+          at: new Date().toISOString(),
+          type: "updated",
+          workflowRunId: id,
+          status: "running",
         },
-      }),
-    ).toBe(true);
-
-    const writer = await store.acquireWriter(id, { owner: "migration-retry" });
-    expect(writer).toMatchObject({ generation: 1 });
-    expect(await writer!.readFresh()).toMatchObject({
-      id,
-      generation: 0,
-      recordRevision: 0,
-    });
-    const migrated = await writer!.mutate({
-      expectedRevision: 0,
-      patch: { metadata: { migrated: true } },
-      event: {
-        at: "2026-07-04T00:01:00.000Z",
-        type: "updated",
-        workflowRunId: id,
-        status: "running",
-        metadata: { migration: true },
       },
     });
-    expect(migrated).toMatchObject({
-      generation: 1,
-      recordRevision: 1,
-      metadata: { migrated: true },
-    });
-    expect(store.eventLog(id).events).toEqual([
-      legacyEvent,
-      expect.objectContaining({ metadata: { migration: true } }),
+
+    const replayed = await readWorkflowJournal(root, id);
+    expect(replayed).toMatchObject({ recordRevision: created.recordRevision });
+    expect(replayed?.quarantined).toEqual([
+      expect.objectContaining({ reason: "stale or discontinuous mutation" }),
     ]);
     await writer!.release();
   });
 
-  it("keeps async and sync replay aligned for a mismatched baseline record", async () => {
+  it("quarantines workflow mutations carrying the removed source hash identity", async () => {
     const root = await tempDir();
-    const id = "workflow_baseline_identity" as WorkflowRunId;
-    const wrongId = "workflow_other_identity" as WorkflowRunId;
-    expect(
-      await publishWorkflowJournalEntry({
-        rootDir: root,
-        workflowRunId: id,
-        physicalSequence: 0,
-        payload: {
-          kind: "baseline",
-          generation: 0,
-          recordRevision: 0,
-          record: {
-            schemaVersion: WORKFLOW_RUN_RECORD_SCHEMA_VERSION,
-            id: wrongId,
-            assetName: "legacy",
-            contentHash: "hash",
-            runIds: [],
-            status: "running",
-            attempts: {},
-            evidenceRefs: [],
-            verdictLog: [],
-            transitionLog: [],
-            resume: { verifyOnResume: true },
-            createdAt: "2026-07-04T00:00:00.000Z",
-            metadata: {},
-            generation: 0,
-            recordRevision: 0,
-          },
-          legacyEvents: [],
-        },
-      }),
-    ).toBe(true);
-
-    const asynchronous = await readWorkflowJournal(root, id);
-    const synchronous = readWorkflowJournalSync(root, id);
-    expect(asynchronous).toEqual(synchronous);
-    expect(asynchronous?.record).toBeUndefined();
-    expect(asynchronous).toMatchObject({
-      quarantined: [
-        expect.objectContaining({
-          reason: "baseline record identity mismatch",
-        }),
-      ],
+    const store = new FileWorkflowStore({ rootDir: root });
+    const id = "workflow_legacy_source_hash" as WorkflowRunId;
+    const writer = await store.acquireWriter(id, { owner: "test" });
+    const created = await writer!.create({
+      id,
+      ...workflowPin(id, "canonical"),
     });
+    const head = await readWorkflowJournal(root, id);
+    await publishWorkflowJournalEntry({
+      rootDir: root,
+      workflowRunId: id,
+      physicalSequence: head!.physicalSequence + 1,
+      payload: {
+        kind: "mutation",
+        token: writer!.token,
+        generation: writer!.generation,
+        expectedRecordRevision: created.recordRevision,
+        recordRevision: created.recordRevision + 1,
+        record: {
+          ...created,
+          recordRevision: created.recordRevision + 1,
+          contentHash: "markdown:removed",
+        } as never,
+        event: {
+          at: new Date().toISOString(),
+          type: "updated",
+          workflowRunId: id,
+          status: "running",
+        },
+      },
+    });
+
+    const replayed = await readWorkflowJournal(root, id);
+    expect(replayed).toMatchObject({ recordRevision: created.recordRevision });
+    expect(replayed?.quarantined).toEqual([
+      expect.objectContaining({ reason: "stale or discontinuous mutation" }),
+    ]);
+    await writer!.release();
   });
 
-  it("allows only one concurrent lazy-migration claimant", async () => {
+  it("allows only one concurrent journal claimant", async () => {
     const root = await tempDir();
-    const id = "workflow_migration_race" as WorkflowRunId;
-    await writeFile(
-      join(root, `${id}.json`),
-      JSON.stringify({
-        schemaVersion: WORKFLOW_RUN_RECORD_SCHEMA_VERSION,
-        id,
-        assetName: "legacy",
-        contentHash: "hash",
-        runIds: [],
-        status: "running",
-        attempts: {},
-        evidenceRefs: [],
-        verdictLog: [],
-        transitionLog: [],
-        resume: { verifyOnResume: true },
-        createdAt: "2026-07-04T00:00:00.000Z",
-        metadata: {},
-      }),
-      "utf8",
-    );
+    const id = "workflow_claim_race" as WorkflowRunId;
     const storeA = new FileWorkflowStore({ rootDir: root });
     const storeB = new FileWorkflowStore({ rootDir: root });
     const claims = await Promise.all([
@@ -857,44 +767,6 @@ describe("FileWorkflowStore", () => {
     await claims.find(Boolean)!.release();
   });
 
-  it("treats partial authorization snapshots as absent instead of defaulting privileges", async () => {
-    const root = await tempDir();
-    await writeFile(
-      join(root, "workflow_partial_auth.json"),
-      JSON.stringify(
-        {
-          schemaVersion: WORKFLOW_RUN_RECORD_SCHEMA_VERSION,
-          id: "workflow_partial_auth",
-          assetName: "legacy",
-          contentHash: "hash",
-          runIds: [],
-          status: "running",
-          attempts: {},
-          evidenceRefs: [],
-          verdictLog: [],
-          transitionLog: [],
-          resume: { verifyOnResume: true },
-          authorizationSnapshot: {},
-          createdAt: "2026-07-04T00:00:00.000Z",
-          metadata: {},
-        },
-        null,
-        2,
-      ),
-      "utf8",
-    );
-
-    const reopened = new FileWorkflowStore({
-      rootDir: root,
-      createRoot: false,
-    });
-
-    expect(
-      reopened.get("workflow_partial_auth" as WorkflowRunId)
-        ?.authorizationSnapshot,
-    ).toBeUndefined();
-  });
-
   it("can restore a workflow record snapshot after a failed adoption attempt", async () => {
     const root = await tempDir();
     const store = new FileWorkflowStore({ rootDir: root });
@@ -902,13 +774,13 @@ describe("FileWorkflowStore", () => {
     const writer = await store.acquireWriter(id, { owner: "test" });
     const original = await writer!.create({
       id,
-      assetName: "restore",
-      contentHash: "hash",
+      ...workflowPin(
+        id,
+        "restore",
+        workflow([{ id: "review", execute: "human", body: "Review." }]),
+      ),
       currentNodeId: "review",
       attempts: { review: 1 },
-      definitionSnapshot: workflow([
-        { id: "review", execute: "human", body: "Review." },
-      ]),
     });
     const waiting = await writer!.mutate({
       expectedRevision: original.recordRevision!,
@@ -984,23 +856,24 @@ describe("FileWorkflowStore", () => {
     });
   });
 
-  it("lists valid records while reporting corrupt entries", async () => {
+  it("lists canonical records while reporting quarantined journal entries", async () => {
     const root = await tempDir();
     const store = new FileWorkflowStore({ rootDir: root });
     const id = "workflow_good" as WorkflowRunId;
     const writer = await store.acquireWriter(id, { owner: "test" });
     await writer!.create({
       id,
-      assetName: "ok",
-      contentHash: "hash",
+      ...workflowPin(id, "ok"),
     });
     await writer!.release();
-    await writeFile(join(root, "bad-json.json"), "{", "utf8");
+    const badJsonId = "workflow_bad_json" as WorkflowRunId;
+    await mkdir(join(root, `${badJsonId}.journal`), { recursive: true });
     await writeFile(
-      join(root, "bad-shape.json"),
-      JSON.stringify({ schemaVersion: WORKFLOW_RUN_RECORD_SCHEMA_VERSION }),
+      join(root, `${badJsonId}.journal`, "0000000000000000.json"),
+      "{",
       "utf8",
     );
+    await mkdir(join(root, "workflow_bad.shape.journal"), { recursive: true });
 
     const reopened = new FileWorkflowStore({
       rootDir: root,
@@ -1019,15 +892,14 @@ describe("FileWorkflowStore", () => {
     );
   });
 
-  it("rebuilds event projection from the canonical journal", async () => {
+  it("reads event history only from the canonical journal", async () => {
     const root = await tempDir();
     const store = new FileWorkflowStore({ rootDir: root });
     const id = "workflow_events" as WorkflowRunId;
     const writer = await store.acquireWriter(id, { owner: "test" });
     const created = await writer!.create({
       id,
-      assetName: "events",
-      contentHash: "hash",
+      ...workflowPin(id, "events"),
       now: () => "2026-07-04T00:00:00.000Z",
     });
     await writer!.mutate({
@@ -1049,10 +921,6 @@ describe("FileWorkflowStore", () => {
       },
     });
     await writer!.release();
-    await writeFile(join(root, `${id}.events.jsonl`), "{bad\n", {
-      flag: "a",
-    });
-
     const log = store.eventLog(id);
 
     expect(log.events.map((event) => event.type)).toEqual([
@@ -1060,6 +928,9 @@ describe("FileWorkflowStore", () => {
       "failed",
     ]);
     expect(log.invalidEntries).toEqual([]);
+    expect((await readdir(root)).some((name) => name.endsWith(".jsonl"))).toBe(
+      false,
+    );
   });
 
   it("leases workflow records for single-writer adoption", async () => {
@@ -1067,7 +938,7 @@ describe("FileWorkflowStore", () => {
     const store = new FileWorkflowStore({ rootDir: root });
     const id = "workflow_lease" as WorkflowRunId;
     const creator = await store.acquireWriter(id, { owner: "creator" });
-    await creator!.create({ id, assetName: "lease", contentHash: "hash" });
+    await creator!.create({ id, ...workflowPin(id, "lease") });
     await creator!.release();
     const first = await store.acquireWriter(id, {
       owner: "worker-a",
@@ -1109,8 +980,7 @@ describe("FileWorkflowStore", () => {
 
     await lease!.create({
       id,
-      assetName: "fresh",
-      contentHash: "hash",
+      ...workflowPin(id, "fresh"),
       now: () => "2026-07-04T00:01:00.000Z",
     });
     now = new Date("2026-07-04T00:02:00.000Z");
@@ -1128,8 +998,7 @@ describe("FileWorkflowStore", () => {
     const writer = await store.acquireWriter(id, { owner: "test" });
     const created = await writer!.create({
       id,
-      assetName: "wait",
-      contentHash: "hash",
+      ...workflowPin(id, "wait"),
     });
     await expect(
       writer!.mutate({
@@ -1197,7 +1066,7 @@ describe("FileWorkflowStore", () => {
     const root = await tempDir();
     const outbox = new FileWorkflowNotificationOutbox({ rootDir: root });
 
-    outbox.asActorSink().deliver({
+    outbox.deliver({
       source: {
         kind: "workflow",
         id: "workflow_wait_notice",
@@ -1218,7 +1087,7 @@ describe("FileWorkflowStore", () => {
     });
 
     const reopened = new FileWorkflowNotificationOutbox({ rootDir: root });
-    const inbox = reopened.asActorInbox();
+    const inbox = reopened;
     await inbox.waitUntilAvailable({
       predicate: (notification) => notification.type === "waiting",
     });

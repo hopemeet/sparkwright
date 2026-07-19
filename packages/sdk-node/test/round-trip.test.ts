@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Connection } from "@sparkwright/host";
-import { serveConnection } from "@sparkwright/host";
+import { createHostService, serveConnection } from "@sparkwright/host";
 import type { HostMessage } from "@sparkwright/protocol";
 import {
   Client,
@@ -61,6 +61,7 @@ describe("sdk-node round-trip against host", () => {
   it("handshake + deterministic run + terminal event", async () => {
     const { hostSide, clientTransport } = inProcessPair();
     serveConnection(hostSide, {
+      hostService: createHostService(),
       workspaceRoot: process.cwd(),
       defaultModel: "deterministic",
     });
@@ -95,6 +96,7 @@ describe("sdk-node round-trip against host", () => {
   it("rejects approval with unknown id", async () => {
     const { hostSide, clientTransport } = inProcessPair();
     serveConnection(hostSide, {
+      hostService: createHostService(),
       workspaceRoot: process.cwd(),
       defaultModel: "deterministic",
     });

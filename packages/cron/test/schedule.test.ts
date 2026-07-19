@@ -386,7 +386,7 @@ describe("CronStore", () => {
     let modelAdapters = 0;
     let readFileCalls = 0;
     const readFileTool = defineTool({
-      name: "read_file",
+      name: "read",
       description: "Read a file.",
       inputSchema: { type: "object" },
       async execute() {
@@ -416,7 +416,7 @@ describe("CronStore", () => {
               return {
                 toolCalls: [
                   {
-                    toolName: "read_file",
+                    toolName: "read",
                     arguments: { path: "README.md" },
                   },
                 ],
@@ -693,11 +693,11 @@ describe("CronStore", () => {
     });
 
     expect(result.result.ok).toBe(false);
-    expect(result.result.message).toContain("failing outcome");
+    expect(result.result.message).toContain("assessment=failing");
     const after = await store.getJob(job.id);
     expect(after.state).toBe("error");
     expect(after.lastStatus).toBe("error");
-    expect(after.lastError).toContain("failing outcome");
+    expect(after.lastError).toContain("assessment=failing");
     expect(after.lastRunId).toMatch(/^run_/);
     expect(after.lastTracePath).toContain(`cron-${job.id}`);
     expect(after.lastOutputPath).toBeNull();

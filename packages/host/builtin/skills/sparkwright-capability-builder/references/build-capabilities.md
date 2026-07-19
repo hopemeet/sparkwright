@@ -158,7 +158,7 @@ npm exec sparkwright -- cron list
 For manual verification:
 
 ```bash
-npm exec sparkwright -- cron run <job-id-or-name> --model deterministic --yes
+npm exec sparkwright -- cron run <job-id-or-name> --model deterministic --access-mode bypass
 ```
 
 Use `--skill <name>` when the scheduled task should load a specific Skill.

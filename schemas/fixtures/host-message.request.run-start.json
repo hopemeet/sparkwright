@@ -21,7 +21,7 @@
     "sessionId": "session_abc123",
     "confidentialPaths": ["secrets/**"],
     "confidentialDefaults": false,
-    "shouldWrite": true,
+    "accessMode": "ask",
     "model": "openai/gpt-4o-mini",
     "traceLevel": "standard"
   }

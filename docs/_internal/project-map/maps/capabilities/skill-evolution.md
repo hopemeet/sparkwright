@@ -38,10 +38,13 @@ See [../../modules/skills.md](../../modules/skills.md).
 Both `before/` and `after/` are full immutable skill-package snapshots with
 `sha256` package hashes in metadata.
 
-New managed proposals, revisions, apply/recovery, history, restore, and
-mutation receipts use package identity v2 and persist
-`packageHashPolicyVersion: 2`. Missing policy version means immutable legacy v1
-and continues to use the v1 enumerator; readers never rewrite it during scans.
+Managed proposals, revisions, apply/recovery, history, restore, and mutation
+receipts use package identity v2 and require
+`packageHashPolicyVersion: 2`. Proposal and history readers reject missing or
+non-v2 policies. Proposal `artifactId`, `effectHash`, `preparedState`, and
+`revision` are required; history records carry the same artifact id. Project
+updates reuse an active registry id or prior canonical history id, otherwise
+allocate one new id. Evolution hashing has no v1 or artifact fallback path.
 
 ## Lifecycle
 
@@ -50,7 +53,7 @@ ORIGIN                          GATE (human only)            EFFECT
  model: create_skill            CLI/TUI:                     mutate .sparkwright/skills
  model: update_skill          ─► apply [--force] / reject /   + history snapshot (before+after)
    (draft, optional body)      │  supersede / prune /         + guard re-inspect (force on danger)
- human: TUI /skill-create     └► restore (--to before|after) + runSkillDoctor re-validate
+ human: TUI /create skill     └► restore (--to before|after) + runSkillDoctor re-validate
  human: TUI /skill-learn
 
 draft inspected by guard.inspectSkill (agent-created) -> metadata.guardFindings
@@ -62,11 +65,17 @@ history kinds:   create | update | restore
 ## Contracts
 
 - **Create entrypoint convergence:** model `create_skill`, CLI `skills create`,
-  TUI `/create skill`, and TUI `/skill-create` all call
-  `SkillCommandService.prepareCreate`. CLI/TUI review apply calls
+  and TUI `/create skill` all call `SkillCommandService.prepareCreate`.
+  CLI/TUI review apply calls
   `approveAndApply`; the in-run model fast path uses `prepareApproval` plus
   `approvePrepared` after the run approval resolves. Advanced proposal-create
   commands remain low-level authoring surfaces, not a fifth ordinary UX.
+
+- **Configured roots are override sources, not mutation targets:** a Skill
+  selected from `capabilities.skills.roots` has layer `configured`, is strongest
+  during loading, and produces a project fork/shadow proposal during evolution.
+  Doctor reports that current boundary with configured-root findings; no
+  `legacy` layer or diagnostic code remains.
 
 - **TUI persistent inbox:** proposal files remain the source of truth. TUI
   reads the newest draft after startup and after either creation surface, then
@@ -75,7 +84,7 @@ history kinds:   create | update | restore
 - **Draft reconciliation and competing proposals:** successful apply closes all
   other draft proposals for the same project target as `superseded`, linked by
   `supersededBy`. Before TUI inbox/review recovery and ordinary create
-  preparation, host reconciliation repairs legacy drafts: a create whose
+  preparation, host reconciliation repairs durable drafts: a create whose
   current target matches managed applied history becomes `superseded`; an
   externally occupied create target or an update whose base disappeared or
   drifted becomes `stale`. Listing proposals remains read-only. Apply-time hash
@@ -195,7 +204,7 @@ history kinds:   create | update | restore
 ## Consumers
 
 - CLI `skills review`, `skills proposals`, `skills history`, `skills restore`.
-- TUI `/skill-create`, `/skill-update`, `/skill-review`, `/skill-learn`.
+- TUI `/create skill`, `/skill-update`, `/skill-review`, `/skill-learn`.
 - Capability inspection (skill roots/errors), not the proposal store.
 
 ## Change Checklist
@@ -221,6 +230,53 @@ history kinds:   create | update | restore
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-18T08:08:47+0800
+- Scope: evolution now describes current custom roots as `configured` and
+  reports `CONFIGURED_*` findings while preserving project fork/shadow updates
+  instead of mutating those strongest override sources.
+- Read: Skill root resolution, doctor/reporting, evolution tests, public Skill
+  reference, and loading/evolution maps.
+- Tests: focused Host root/evolution 21/21, CLI capability/doctor/stats 4/4,
+  TUI evolution 13/13, and affected package typechecks.
+
+- Status: Verified
+- Date: 2026-07-17T23:37:17+0800
+- Scope: removed the TUI `/skill-create` compatibility entry while preserving
+  the canonical generic creation adapter and the same governed proposal,
+  review, effect authorization, doctor, and history pipeline.
+- Read: TUI command/capability/Skill actions, Host command service, public Skill
+  reference, and focused TUI tests.
+- Tests: TUI create/evolution/command 22/22 and TUI typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-17T20:55:00+0800
+- Scope: made prepared and historical Skill artifact identity required, removed
+  `legacy:project:<name>` and random-history fallbacks, and preserved identity
+  through registry/history resolution for later project updates.
+- Read: Skill evolution, registry, stats rollup, Host/CLI tests, and managed-change design.
+- Tests: Host Skill evolution 19/19 plus focused CLI Skill stats/review/doctor gates and affected typechecks.
+
+- Status: Verified
+- Date: 2026-07-16T19:11:00+0800
+- Scope: Skill evolution proposal/history/receipt records require package hash
+  policy v2; removed the missing-version fallback and v1 hash reader while
+  leaving the distinct current runtime Skill identity path unchanged.
+- Read: `packages/host/src/skill-evolution.ts`, Host/CLI tests,
+  `packages/skills/src/package.ts`, and package-governance design notes.
+- Tests: focused Host Skill evolution and CLI stats suites; Host and test
+  typechecks; full release gate; project-map drift check.
+
+- Status: Verified
+- Date: 2026-07-16T19:34:00+0800
+- Scope: Skill proposal/evolution parsing enters the strict canonical manifest
+  parser; removing the legacy public parser did not change proposal lifecycle,
+  package hashing, or apply gates.
+- Read: `packages/skills/src/index.ts`, `packages/host/src/skill-evolution.ts`,
+  and focused Skill evolution/command-service tests.
+- Tests: Skills full suite and typecheck; focused Host Skill evolution and
+  command-service suites; Host and test typechecks.
+
+- Status: Verified
 - Date: 2026-07-12
 - Scope: competing-draft supersession, legacy inbox reconciliation, stale
   create/update classification, and TUI actionable-draft recovery.
@@ -241,9 +297,8 @@ history kinds:   create | update | restore
 
 - Status: Verified
 - Date: 2026-07-12T14:03:23+0800
-- Scope: migrated new managed Skill package operations to the v2 canonical file
-  set with legacy v1 proposal/history compatibility and external-file drift
-  stale protection.
+- Scope: migrated managed Skill package operations to the v2 canonical file
+  set with external-file drift stale protection.
 - Read: `packages/host/src/skill-evolution.ts`,
   `packages/host/src/capability-package-mutation.ts`,
   `packages/skills/src/package-v2.ts`, and focused host tests.

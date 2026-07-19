@@ -37,20 +37,14 @@ export class MemoryTrace implements TraceSink {
     this.lines.push(serializeEventJsonl(event));
   }
 
-  /** TraceSink alias for `append`. */
-  write(event: SparkwrightEvent): void {
-    this.append(event);
-  }
-
   toString(): string {
     return this.lines.join("");
   }
 }
 
 export interface FileRunStoreOptions {
-  rootDir?: string;
   sessionRootDir?: string;
-  sessionId?: string;
+  sessionId: string;
   agentId?: string;
   traceLevel?: TraceLevel;
   redactor?: TraceRedactor;
@@ -61,7 +55,7 @@ export interface FileRunStoreOptions {
    * tolerance (see "tolerates runStore errors without breaking the run") will
    * still log; this buffer additionally lets a future successful append flush
    * the missed events so the on-disk trace is eventually consistent. Set to
-   * `0` to disable buffering (legacy behavior: errors propagate).
+   * `0` to disable buffering and propagate append errors.
    *
    * Default: 1000 events.
    */
@@ -92,7 +86,7 @@ export interface FileRunStoreOptions {
 
 export interface SessionFileRunStoreFactoryOptions extends Omit<
   FileRunStoreOptions,
-  "rootDir" | "sessionId"
+  "sessionId"
 > {
   /**
    * Session identity supplied by the embedder, gateway, or host protocol.
@@ -152,10 +146,9 @@ const PROCESS_PROGRESS_HEAD_LIMIT = 5;
 const PROCESS_PROGRESS_TAIL_LIMIT = 5;
 
 /**
- * @internal Reference `RunStore` persisting JSONL traces + artifacts. Legacy
- * mode writes `.sparkwright/runs/<run-id>/`; session mode writes aggregate
- * traces plus per-agent traces under `.sparkwright/sessions/<session-id>/`.
- * Prefer the `RunStore` interface when extending.
+ * @internal Reference `RunStore` persisting session-scoped JSONL traces,
+ * per-agent traces, per-run state, and artifacts. Prefer the `RunStore`
+ * interface when extending.
  */
 export class FileRunStore implements RunStore {
   readonly runDir: string;
@@ -163,18 +156,17 @@ export class FileRunStore implements RunStore {
   readonly tracePath: string;
   readonly resultPath: string;
   readonly traceLevel: TraceLevel;
-  readonly sessionDir?: string;
-  readonly sessionTracePath?: string;
-  readonly transcriptPath?: string;
-  readonly blobsDir?: string;
-  readonly agentId?: string;
-  readonly agentDir?: string;
-  readonly agentTracePath?: string;
-  readonly agentTranscriptPath?: string;
-  private readonly rootDir: string;
+  readonly sessionDir: string;
+  readonly sessionTracePath: string;
+  readonly transcriptPath: string;
+  readonly blobsDir: string;
+  readonly agentId: string;
+  readonly agentDir: string;
+  readonly agentTracePath: string;
+  readonly agentTranscriptPath: string;
   private readonly redactor?: TraceRedactor;
   private readonly redactArtifacts: boolean;
-  private readonly sessionId?: string;
+  private readonly sessionId: string;
   private readonly degradationBufferLimit: number;
   private readonly onAppendError?: FileRunStoreOptions["onAppendError"];
   private readonly onDrainSuccess?: FileRunStoreOptions["onDrainSuccess"];
@@ -201,15 +193,9 @@ export class FileRunStore implements RunStore {
     ProcessProgressAccumulator
   >();
 
-  constructor(run: RunRecord, options: FileRunStoreOptions = {}) {
-    if (options.sessionId !== undefined) {
-      assertSafePathSegment(options.sessionId, "session id");
-    }
-    const rootDir =
-      options.sessionId !== undefined
-        ? (options.sessionRootDir ?? ".sparkwright/sessions")
-        : (options.rootDir ?? ".sparkwright/runs");
-    this.rootDir = rootDir;
+  constructor(run: RunRecord, options: FileRunStoreOptions) {
+    assertSafePathSegment(options.sessionId, "session id");
+    const rootDir = options.sessionRootDir ?? ".sparkwright/sessions";
     this.traceLevel = options.traceLevel ?? "standard";
     this.redactor =
       options.redactor ??
@@ -220,42 +206,32 @@ export class FileRunStore implements RunStore {
     this.onAppendError = options.onAppendError;
     this.onDrainSuccess = options.onDrainSuccess;
 
-    if (options.sessionId !== undefined) {
-      const agentId =
-        options.agentId ?? stringMetadata(run.metadata, "agentId") ?? "main";
-      assertSafePathSegment(agentId, "agent id");
-      this.agentId = agentId;
-      this.sessionDir = join(rootDir, options.sessionId);
-      this.sessionTracePath = join(this.sessionDir, "trace.jsonl");
-      this.transcriptPath = join(this.sessionDir, "transcript.jsonl");
-      this.blobsDir = join(this.sessionDir, "blobs");
-      this.agentDir = join(this.sessionDir, "agents", agentId);
-      this.agentTracePath = join(this.agentDir, "trace.jsonl");
-      this.agentTranscriptPath = join(this.agentDir, "transcript.jsonl");
-      this.runDir = join(this.agentDir, "runs", run.id);
-      this.artifactsDir = join(this.sessionDir, "artifacts");
-      this.tracePath = this.sessionTracePath;
-    } else {
-      this.runDir = join(rootDir, run.id);
-      this.artifactsDir = join(this.runDir, "artifacts");
-      this.tracePath = join(this.runDir, "trace.jsonl");
-    }
+    const agentId =
+      options.agentId ?? stringMetadata(run.metadata, "agentId") ?? "main";
+    assertSafePathSegment(agentId, "agent id");
+    this.agentId = agentId;
+    this.sessionDir = join(rootDir, options.sessionId);
+    this.sessionTracePath = join(this.sessionDir, "trace.jsonl");
+    this.transcriptPath = join(this.sessionDir, "transcript.jsonl");
+    this.blobsDir = join(this.sessionDir, "blobs");
+    this.agentDir = join(this.sessionDir, "agents", agentId);
+    this.agentTracePath = join(this.agentDir, "trace.jsonl");
+    this.agentTranscriptPath = join(this.agentDir, "transcript.jsonl");
+    this.runDir = join(this.agentDir, "runs", run.id);
+    this.artifactsDir = join(this.sessionDir, "artifacts");
+    this.tracePath = this.sessionTracePath;
 
     this.resultPath = join(this.runDir, "result.json");
 
     mkdirSync(this.artifactsDir, { recursive: true });
-    if (this.sessionDir) {
-      mkdirSync(this.blobsDir!, { recursive: true });
-      mkdirSync(this.agentDir!, { recursive: true });
-      writeIfMissing(this.sessionTracePath!, "");
-      writeIfMissing(this.transcriptPath!, "");
-      writeIfMissing(this.agentTracePath!, "");
-      writeIfMissing(this.agentTranscriptPath!, "");
-      this.writeSessionRecord(run);
-      this.writeAgentRecord(run);
-    } else {
-      writeIfMissing(this.tracePath, "");
-    }
+    mkdirSync(this.blobsDir, { recursive: true });
+    mkdirSync(this.agentDir, { recursive: true });
+    writeIfMissing(this.sessionTracePath, "");
+    writeIfMissing(this.transcriptPath, "");
+    writeIfMissing(this.agentTracePath, "");
+    writeIfMissing(this.agentTranscriptPath, "");
+    this.writeSessionRecord(run);
+    this.writeAgentRecord(run);
     mkdirSync(this.runDir, { recursive: true });
     this.writeTracePointer(run);
     // Never overwrite an existing run.json: re-opening a `FileRunStore`
@@ -298,9 +274,7 @@ export class FileRunStore implements RunStore {
     );
     const serialized = traceEvents.map(serializeEventJsonl).join("");
     appendFileSync(this.tracePath, serialized, "utf8");
-    if (this.agentTracePath) {
-      appendFileSync(this.agentTracePath, serialized, "utf8");
-    }
+    appendFileSync(this.agentTracePath, serialized, "utf8");
     this.acknowledgePersistedStreamSegments(eventsToWrite);
     for (const item of eventsToWrite) {
       this.appendTranscriptEvent(this.prepareTranscriptEvent(item));
@@ -583,19 +557,14 @@ export class FileRunStore implements RunStore {
   }
 
   async *loadEvents(runId: RunRecord["id"]): AsyncIterable<SparkwrightEvent> {
-    const trace = await readFile(
-      this.sessionId
-        ? join(this.rootDir, this.sessionId, "trace.jsonl")
-        : join(this.rootDir, runId, "trace.jsonl"),
-      "utf8",
-    );
+    const trace = await readFile(this.sessionTracePath, "utf8");
 
     for (const [index, line] of trace.split(/\r?\n/).entries()) {
       if (line.trim() === "") continue;
 
       try {
         const event = JSON.parse(line) as SparkwrightEvent;
-        if (!this.sessionId || event.runId === runId) yield event;
+        if (event.runId === runId) yield event;
       } catch (cause) {
         throw new Error(
           `Invalid trace event JSON in ${runId} at line ${index + 1}`,
@@ -617,23 +586,17 @@ export class FileRunStore implements RunStore {
   }
 
   private addStoreIdentity(event: SparkwrightEvent): SparkwrightEvent {
-    const eventWithIdentity = this.sessionId
-      ? {
-          ...event,
-          metadata: {
-            ...event.metadata,
-            sessionId: this.sessionId,
-            agentId: this.agentId ?? "main",
-          },
-        }
-      : event;
-    return eventWithIdentity;
+    return {
+      ...event,
+      metadata: {
+        ...event.metadata,
+        sessionId: this.sessionId,
+        agentId: this.agentId,
+      },
+    };
   }
 
   private writeTracePointer(run: RunRecord): void {
-    if (!this.sessionId || !this.sessionTracePath || !this.agentTracePath) {
-      return;
-    }
     writeIfMissing(
       join(this.runDir, "trace-pointer.json"),
       `${JSON.stringify(
@@ -641,7 +604,7 @@ export class FileRunStore implements RunStore {
           schemaVersion: "trace-pointer.v1",
           runId: run.id,
           sessionId: this.sessionId,
-          agentId: this.agentId ?? "main",
+          agentId: this.agentId,
           tracePath: relativeJsonPath(this.runDir, this.sessionTracePath),
           agentTracePath: relativeJsonPath(this.runDir, this.agentTracePath),
           note: "This run directory stores per-run state; trace events are aggregated in the listed trace files.",
@@ -667,7 +630,6 @@ export class FileRunStore implements RunStore {
   }
 
   private writeSessionRecord(run: RunRecord): void {
-    if (!this.sessionDir || !this.sessionId) return;
     const sessionPath = join(this.sessionDir, "session.json");
     const now = new Date().toISOString();
     const existing = readJsonIfExists<Record<string, unknown>>(sessionPath);
@@ -680,7 +642,7 @@ export class FileRunStore implements RunStore {
     const runIds = new Set(existingRunIds);
     runIds.add(run.id);
     const agents = new Set(existingAgents);
-    agents.add(this.agentId ?? "main");
+    agents.add(this.agentId);
 
     // Spread `existing` first so unknown fields owned by another writer
     // (e.g. `FileSessionStore` maintaining `eventCount` + custom
@@ -704,7 +666,6 @@ export class FileRunStore implements RunStore {
   }
 
   private writeAgentRecord(run: RunRecord): void {
-    if (!this.agentDir) return;
     const agentPath = join(this.agentDir, "agent.json");
     const existing = readJsonIfExists<{
       id: string;
@@ -720,7 +681,7 @@ export class FileRunStore implements RunStore {
       agentPath,
       `${JSON.stringify(
         {
-          id: this.agentId ?? "main",
+          id: this.agentId,
           sessionId: this.sessionId,
           createdAt: existing?.createdAt ?? run.createdAt,
           updatedAt: new Date().toISOString(),
@@ -734,7 +695,6 @@ export class FileRunStore implements RunStore {
   }
 
   private appendTranscriptEvent(event: SparkwrightEvent): void {
-    if (!this.transcriptPath) return;
     let line = transcriptEntryForEvent(event, {
       sessionId: this.sessionId,
       agentId: this.agentId,
@@ -744,13 +704,11 @@ export class FileRunStore implements RunStore {
       line = this.dedupPromptSystemPrefix(line);
     }
     appendFileSync(this.transcriptPath, `${JSON.stringify(line)}\n`, "utf8");
-    if (this.agentTranscriptPath) {
-      appendFileSync(
-        this.agentTranscriptPath,
-        `${JSON.stringify(line)}\n`,
-        "utf8",
-      );
-    }
+    appendFileSync(
+      this.agentTranscriptPath,
+      `${JSON.stringify(line)}\n`,
+      "utf8",
+    );
   }
 
   /**
@@ -837,38 +795,24 @@ function readSystemPrefixBlob(
 /**
  * Rehydrate transcript entries produced by {@link FileRunStore}: any `prompt`
  * entry carrying a `systemRef` gets its system prefix prepended back onto
- * `messages`. The prefix is resolved (in order of preference) from an earlier
- * inline `systemHash` entry in the same list — the legacy self-contained form —
- * or from `blobs/<hash>.json` under `options.blobsDir`, which is where current
- * transcripts store every prefix. Entries are returned in input order; non
- * `prompt` entries pass through untouched.
+ * `messages`. The prefix is resolved from `blobs/<hash>.json` under
+ * `options.blobsDir`, the canonical session transcript blob store. Entries are
+ * returned in input order; non-`prompt` entries pass through untouched.
  */
 export function restoreTranscriptPrompts(
   entries: Record<string, unknown>[],
-  options: { blobsDir?: string } = {},
+  options: { blobsDir: string },
 ): Record<string, unknown>[] {
   const prefixes = new Map<string, PromptMessage[]>();
   const resolvePrefix = (ref: string): PromptMessage[] => {
     const cached = prefixes.get(ref);
     if (cached) return cached;
-    const prefix =
-      (options.blobsDir
-        ? readSystemPrefixBlob(options.blobsDir, ref)
-        : undefined) ?? [];
+    const prefix = readSystemPrefixBlob(options.blobsDir, ref) ?? [];
     prefixes.set(ref, prefix);
     return prefix;
   };
   return entries.map((entry) => {
     if (entry.type !== "prompt") return entry;
-    // Legacy self-contained form: the first occurrence stored the prefix inline
-    // alongside its `systemHash`. Newer transcripts never do this.
-    if (typeof entry.systemHash === "string" && Array.isArray(entry.messages)) {
-      prefixes.set(
-        entry.systemHash,
-        leadingSystemPrefix(entry.messages as PromptMessage[]),
-      );
-      return entry;
-    }
     if (typeof entry.systemRef === "string") {
       const prefix = resolvePrefix(entry.systemRef);
       const rest = Array.isArray(entry.messages)
@@ -983,9 +927,8 @@ export interface LoadCheckpointFromRunDirOptions {
  * checkpoint is marked non-fully-resumable; the caller must pass
  * `{ force: true }` to {@link resumeRunFromCheckpoint}.
  *
- * `runDir` accepts either an absolute or workspace-relative path; it matches
- * the layout used by both legacy `.sparkwright/runs/<id>/` and session-scoped
- * `.sparkwright/sessions/<sid>/agents/<aid>/runs/<id>/` directories.
+ * `runDir` accepts either an absolute or workspace-relative canonical
+ * `.sparkwright/sessions/<sid>/agents/<aid>/runs/<id>/` directory.
  */
 export function loadCheckpointFromRunDir(
   runDir: string,
@@ -1013,12 +956,9 @@ function reconstructCheckpointFromTrace(
   if (!existsSync(runJsonPath)) return undefined;
   const run = JSON.parse(readFileSync(runJsonPath, "utf8")) as RunRecord;
 
-  // Session-scoped traces aggregate multiple runs; filter by runId.
-  // For legacy per-run dirs the trace is at runDir/trace.jsonl. For session
-  // layouts trace.jsonl lives at the agent or session level — we accept
-  // either by trying the per-run path first, then walking up.
+  // Session-scoped traces aggregate multiple runs; filter by runId. The trace
+  // lives at the agent or session level.
   const candidateTracePaths = [
-    join(runDir, "trace.jsonl"),
     join(runDir, "..", "..", "trace.jsonl"), // agent-level
     join(runDir, "..", "..", "..", "..", "trace.jsonl"), // session-level
   ];
@@ -1132,7 +1072,10 @@ function reconstructCheckpointFromTrace(
  *
  * Caller wires it like:
  *   const hooks = bindStorageDegradationEvents({ events: run.events });
- *   const store = new FileRunStore(run, { ...hooks });
+ *   const store = new FileRunStore(run, {
+ *     sessionId: "session_...",
+ *     ...hooks,
+ *   });
  */
 export function bindStorageDegradationEvents(input: {
   events: {

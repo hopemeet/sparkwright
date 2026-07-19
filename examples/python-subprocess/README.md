@@ -30,15 +30,15 @@ Allow the agent to write files (requires approval):
 ```bash
 python run_agent.py "update the README with a getting-started section" \
     --workspace ../../examples/repo-pilot \
-    --write \
-    --yes \
+    --access-mode bypass \
     --trace-level standard
 ```
 
 Full option reference:
 
 ```
-usage: run_agent.py [-h] [--workspace PATH] [--write] [--yes]
+usage: run_agent.py [-h] [--workspace PATH]
+                    [--access-mode {read-only,ask,accept-edits,bypass}]
                     [--trace-level {minimal,standard,debug}]
                     [--timeout SECONDS] [--project-root PATH]
                     [--no-trace-summary]
@@ -50,8 +50,7 @@ positional arguments:
 options:
   --workspace PATH    Workspace directory the agent will read/write.
                       Defaults to the current working directory.
-  --write             Allow the agent to write files.
-  --yes               Auto-approve all approval gates.
+  --access-mode       Run autonomy preset (default: read-only).
   --trace-level       minimal | standard | debug  (default: standard)
   --timeout SECONDS   Max seconds to wait for the run (default: 300).
   --project-root PATH Path to the Sparkwright monorepo root.
@@ -110,17 +109,17 @@ Workspace: /path/to/repo-pilot
 
 [1] run.created
 [2] run.started
-[3] tool.requested read_file
-[4] tool.completed read_file
+[3] tool.requested read
+[4] tool.completed read
 [5] run.completed final_answer
 
 --- Run result ---
   state:       completed
   stopReason:  final_answer
-  message:     Read README.md. Re-run with --write to exercise approval-gated workspace mutation.
-  run dir:     /path/to/repo-pilot/.sparkwright/runs/run_abc123
-  trace:       /path/to/repo-pilot/.sparkwright/runs/run_abc123/trace.jsonl
-  result.json: /path/to/repo-pilot/.sparkwright/runs/run_abc123/result.json
+  message:     Read README.md. Re-run with --access-mode ask to exercise approval-gated workspace mutation.
+  run dir:     /path/to/repo-pilot/.sparkwright/sessions/session_abc/agents/main/runs/run_abc123
+  trace:       /path/to/repo-pilot/.sparkwright/sessions/session_abc/trace.jsonl
+  result.json: /path/to/repo-pilot/.sparkwright/sessions/session_abc/agents/main/runs/run_abc123/result.json
 
 --- Key trace events ---
   [1] run.created  run_id=run_abc123
@@ -131,7 +130,10 @@ Workspace: /path/to/repo-pilot
 
 ## Trace and result file format
 
-Each run writes two key files under `.sparkwright/runs/<run-id>/`:
+Each run writes state under
+`.sparkwright/sessions/<session-id>/agents/<agent-id>/runs/<run-id>/`, while
+events are appended to the aggregate session trace at
+`.sparkwright/sessions/<session-id>/trace.jsonl`.
 
 ### `trace.jsonl`
 
@@ -184,7 +186,9 @@ Structured summary of the terminal run state:
 
 ### Artifacts
 
-Any diff or file artifact produced during the run is written to `.sparkwright/runs/<run-id>/artifacts/`. The `artifact.created` trace events reference the artifact ID and type.
+Any diff or file artifact produced during the run is written to
+`.sparkwright/sessions/<session-id>/artifacts/`. The `artifact.created` trace
+events reference the artifact ID and type.
 
 ## Limitations
 

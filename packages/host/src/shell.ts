@@ -42,7 +42,6 @@ import {
 } from "./workspace-snapshot.js";
 
 const SHELL_BACKGROUND_KIND = "shell.background";
-const LEGACY_PROMOTED_SHELL_KIND = "shell.promoted";
 
 class LiveOutputBuffer {
   private readonly chunks: string[] = [];
@@ -435,10 +434,7 @@ function findActiveShellBackgroundTask(
   const existing = manager.store
     .list({ parentRunId: input.parentRunId })
     .find((task) => {
-      if (
-        task.kind !== SHELL_BACKGROUND_KIND &&
-        task.kind !== LEGACY_PROMOTED_SHELL_KIND
-      ) {
+      if (task.kind !== SHELL_BACKGROUND_KIND) {
         return false;
       }
       if (

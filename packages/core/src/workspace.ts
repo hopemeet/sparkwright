@@ -15,8 +15,8 @@ import { createHash } from "node:crypto";
 import { dirname, basename, relative, resolve, sep } from "node:path";
 import { createArtifactId, createWorkspaceWriteId } from "./ids.js";
 import type { EventLog } from "./events.js";
-import type { ApprovalResolver } from "./approval.js";
 import { createApprovalRequest, resolveApproval } from "./approval.js";
+import type { InteractionChannel } from "./interaction.js";
 import {
   AnchoredEditError,
   applyAnchoredEdits,
@@ -35,11 +35,6 @@ import type {
   WorkspaceWriteProposal,
   WorkspaceWriteResult,
 } from "./types.js";
-import {
-  runValidationHooks,
-  validationFailureMessage,
-  type ValidationHook,
-} from "./validation.js";
 
 /** @internal Reference local filesystem workspace with realpath containment. */
 export class LocalWorkspace {
@@ -226,14 +221,9 @@ export interface ControlledWorkspaceOptions {
   workspace: WorkspaceRuntime;
   events: EventLog;
   policy?: Policy;
-  approvalResolver?: ApprovalResolver;
-  validationHooks?: ValidationHook[];
-  /**
-   * Optional setState callback used to mutate run state through the run's
-   * legal-transition guard. When omitted, falls back to a minimal in-place
-   * mutation (kept for backward compatibility in standalone usage).
-   */
-  setState?: (state: RunState) => void;
+  interactionChannel?: InteractionChannel;
+  /** Run-owned state transition port. Callers must apply legal-transition guards. */
+  setState: (state: RunState) => void;
   /**
    * Optional transparent checkpoint store. When provided, the prior content of
    * each file is captured before it is written (after approval/policy pass),
@@ -242,7 +232,7 @@ export interface ControlledWorkspaceOptions {
   checkpointStore?: WorkspaceCheckpointStore;
 }
 
-/** @internal Reference `WorkspaceRuntime` with policy + approval + validation. */
+/** @internal Reference `WorkspaceRuntime` with policy and approval enforcement. */
 export class ControlledWorkspace implements WorkspaceRuntime {
   private readonly policy: Policy;
 
@@ -392,38 +382,6 @@ export class ControlledWorkspace implements WorkspaceRuntime {
     );
     this.options.events.emit("workspace.write.requested", proposal);
 
-    const validationFailure = await runValidationHooks({
-      hooks: this.options.validationHooks ?? [],
-      stage: "workspace_write",
-      run: this.options.run,
-      subject: proposal,
-      metadata: {
-        path: workspacePath,
-        reason: options.reason,
-        proposalId: proposal.id,
-        operation,
-      },
-      events: this.options.events,
-    });
-
-    if (validationFailure) {
-      this.options.events.emit("workspace.write.denied", {
-        proposalId: proposal.id,
-        path: workspacePath,
-        reason: validationFailureMessage(validationFailure),
-        validation: validationFailure,
-      });
-      throw new WorkspaceRuntimeError(
-        "VALIDATION_FAILED",
-        `Workspace write validation failed: ${workspacePath}`,
-        {
-          path: workspacePath,
-          proposalId: proposal.id,
-          validation: validationFailure,
-        },
-      );
-    }
-
     const decision = await this.policy.decide({
       action: "workspace.write",
       metadata: {
@@ -455,16 +413,17 @@ export class ControlledWorkspace implements WorkspaceRuntime {
     }
 
     if (decision.decision === "requires_approval") {
-      if (!this.options.approvalResolver) {
+      if (!this.options.interactionChannel?.approve) {
         this.options.events.emit("workspace.write.denied", {
           proposalId: proposal.id,
           path: workspacePath,
-          reason: "Approval required but no approval resolver was configured.",
+          reason:
+            "Approval required but no interaction channel approval handler was configured.",
           policy: decision,
         });
         throw new WorkspaceRuntimeError(
           "APPROVAL_UNAVAILABLE",
-          "Workspace write requires approval but no approval resolver was configured.",
+          "Workspace write requires approval but no interaction channel approval handler was configured.",
           {
             path: workspacePath,
             proposalId: proposal.id,
@@ -486,14 +445,16 @@ export class ControlledWorkspace implements WorkspaceRuntime {
         },
       });
 
-      this.transitionState("waiting_approval");
+      this.options.setState("waiting_approval");
       this.options.events.emit("approval.requested", request);
       const response = await resolveApproval(
         request,
-        this.options.approvalResolver,
+        this.options.interactionChannel.approve.bind(
+          this.options.interactionChannel,
+        ),
       );
       this.options.events.emit("approval.resolved", response);
-      this.transitionState("running");
+      this.options.setState("running");
 
       if (response.decision !== "approved") {
         this.options.events.emit("workspace.write.denied", {
@@ -602,18 +563,6 @@ export class ControlledWorkspace implements WorkspaceRuntime {
         currentHash,
       },
     );
-  }
-
-  private transitionState(state: RunState): void {
-    if (this.options.setState) {
-      this.options.setState(state);
-      return;
-    }
-    // Fallback: direct mutation kept for ad-hoc usage where the workspace is
-    // constructed without a host run. Callers wiring the workspace into a
-    // SparkwrightRun MUST provide setState so legal-transition checks apply.
-    this.options.run.state = state;
-    this.options.run.updatedAt = new Date().toISOString();
   }
 
   private createDiffArtifact(proposal: WorkspaceWriteProposal): Artifact {

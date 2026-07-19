@@ -3,10 +3,105 @@
 ## Purpose
 
 `@sparkwright/protocol` defines host/client wire contracts: requests,
-responses, errors, host events, permission modes, trace levels, and capability
+responses, errors, host events, access modes, trace levels, and capability
 inspection shapes.
 
 See also [../maps/safety/approvals.md](../maps/safety/approvals.md) and [../maps/session/session-store.md](../maps/session/session-store.md).
+
+## Last Verified
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: terminal run DTOs require Core `RunAssessment`; Host run completion
+  carries `ExecutionAssessment`; Agent tool results carry finality plus
+  assessment; Workflow continuation exposes only durable-record activity, and
+  Todo is advisory rather than a scheduler handoff.
+- Read: TypeScript protocol DTOs, JSON schema, Host protocol fixtures, SDK
+  collection, and reference protocol documents.
+- Tests: Protocol 5/5, SDK Core 10/10, and Host protocol coverage passed.
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: Host ownership behind `run.inject_message`, `run.cancel`, and
+  `approval.resolve` moved to the execution interaction collaborator. Request,
+  response, error, approval event, content-part, and correlation-id shapes are
+  unchanged.
+- Read: protocol request/event unions, Host server/runtime/interaction owner,
+  HostService lane routing, and focused protocol/SDK/client tests.
+- Tests: focused downstream gates are recorded with the commit.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: Host capability inspection ownership moved behind the existing
+  runtime facade. `capability.inspect` request/error and `CapabilitySnapshot`
+  response shapes are unchanged.
+- Read: protocol snapshot/request types, capability owner/facade, and focused
+  protocol tests.
+- Tests: focused Host capability 222/222 passed.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: Host Workflow durable ownership moved behind the existing runtime
+  facade. `workflow.list`, `workflow.resume`, and `workflow.control` request,
+  response, snapshot, attribution, and error shapes are unchanged.
+- Read: protocol Workflow unions, Host facade/delegate methods, owner tests,
+  and focused protocol coverage.
+- Tests: focused Host protocol/Workflow suites passed.
+
+- Status: Verified
+- Date: 2026-07-17T20:55:00+0800
+- Scope: `CapabilitySkillSummary` requires policy-2 package identity and no
+  longer exposes optional Markdown `contentHash`; Host schema and producer use
+  the same canonical shape.
+- Read: protocol types, host-message schema, Host capability assembly/protocol tests, and CLI/TUI consumers.
+- Tests: Protocol typecheck; Host protocol 58/58; repository test typecheck.
+
+- Status: Verified
+- Date: 2026-07-17T17:20:00+0800
+- Scope: public Workflow run snapshots expose required generation, record
+  revision, source layer, v2 package hash, and package-hash policy. The durable
+  Markdown `contentHash` projection and optional generation/revision shape are
+  removed; capability Workflow assets remain a separate live inventory.
+- Read: protocol Workflow types, Host snapshot producer, CLI/TUI consumers,
+  protocol fixtures, and Workflow persistence contracts.
+- Tests: Protocol build/typecheck, Host protocol tests, CLI/TUI Workflow tests,
+  and repository test typecheck passed before the full release gate.
+
+- Status: Verified
+- Date: 2026-07-17T13:00:00+0800
+- Scope: capability wire shapes expose four canonical tool tiers and one
+  required delegate approval fact. Removed the `legacy` tier and delegate
+  `requiresApproval` config echo from types, schema, fixtures, and references.
+- Read: protocol capability types, host-message schema/fixture, Host producer,
+  CLI/TUI consumers, and Host protocol reference/changelog.
+- Tests: Protocol build/typecheck; Host capability/delegate protocol 14/14;
+  schema validation and downstream capability tests passed.
+
+- Status: Verified
+- Date: 2026-07-16T22:26:54+0800
+- Scope: Workflow list/resume wire shapes are unchanged while their current
+  durable-path documentation now names the journal-only workspace layout and
+  journal quarantine diagnostics.
+- Read: protocol workflow types/schema, Host projections, Agent Runtime store,
+  fixtures, and current protocol reference.
+- Tests: Host workflow/protocol focused suites; Host typecheck; repository test
+  typecheck; full release gate.
+
+- Status: Verified
+- Date: 2026-07-16T13:36:30+0800
+- Scope: Event vocabulary no longer publishes dead `validation.started`/`validation.completed` values; `validation.failed` remains canonical for run-input and recoverable extension diagnostics.
+- Read: Core event/trace codecs, JSON schema, CLI producer, TUI consumer, and protocol docs.
+- Tests: focused protocol tests; npm run build; npm run typecheck:test; npm run schema:check; npm run release:check.
+
+- Date: 2026-07-16T12:45:00+0800
+- Scope: Protocol 2.0 run autonomy is single-track: accessMode is the only wire input and capability access summary; Workflow authorization snapshots use it directly.
+- Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.
+- Tests: focused access/policy/protocol/CLI/TUI/ACP/Workflow tests; npm run typecheck:test; npm run schema:check.
+
+- Date: 2026-07-16T11:52:29+0800
+- Scope: Host protocol 2.0 makes `run.failed.failure` the only terminal failure
+  envelope; the root `error` projection and helper fallbacks are removed. Tool
+  summaries also carry one callable name without alias metadata.
 
 ## Main Files
 
@@ -67,10 +162,11 @@ Does not own:
 - `CapabilitySnapshot.workflows` is an optional diagnostic inventory of
   host-discovered workflow assets and parse errors. It is not a workflow run
   state channel and does not imply execution support.
-- `workflow.list` returns durable `WorkflowRunSnapshot` entries from the
-  session root, optionally scoped by `sessionId`, `status`, and `limit`; corrupt
-  workflow record entries are reported as invalid entries instead of aborting
-  the whole list. `workflow.resume` adopts a non-terminal workflow run by
+- `workflow.list` returns durable `WorkflowRunSnapshot` entries replayed from
+  workspace `.sparkwright/workflow-runs/<id>.journal/`, optionally scoped by
+  `sessionId`, `status`, and `limit`; quarantined journal entries are reported
+  as invalid entries instead of aborting the whole list. `workflow.resume`
+  adopts a non-terminal workflow run by
   `workflowRunId` plus optional `sessionId`; it has no `force` field because
   terminal workflow records are not resurrected in P2. In P3 Step 3,
   `WorkflowRunSnapshot.status:"waiting"` is active for human nodes and includes
@@ -112,14 +208,10 @@ Does not own:
   `standard` and `debug`.
 - `RunAccessMode` is the shared high-level run access preset
   (`read-only`, `ask`, `accept-edits`, `bypass`). `compileRunAccessMode()`
-  maps it to the legacy execution fields `permissionMode` and `shouldWrite`;
-  `dont_ask` remains only a legacy `PermissionMode` and is not a run access
-  mode because it denies approval-required actions instead of auto-approving
-  them.
-- `shouldWrite` is the run start/resume write-capability gate. When it is
-  `false`, write-capable requests are denied by policy rather than represented
-  as a separate read-only approval-escalation protocol field.
-- Protocol 1.4 run start/resume/workflow-resume payloads may include
+  maps it to Core's internal execution policy fields. `accessMode` is the only
+  public run-autonomy field on start, resume, workflow resume, and capability
+  inspection; omission defaults to `read-only`.
+- Protocol 2.0 run start/resume/workflow-resume payloads may include
   `confidentialPaths` plus optional `confidentialDefaults:false`. Omitted
   `confidentialDefaults` means host defaults apply; false is the only wire
   value that disables SparkWright's built-in conservative read-confidentiality
@@ -134,12 +226,9 @@ Does not own:
   expose those events. The list currently includes `model.stream.chunk` and
   `run.budget.checked`.
 - `RunFailureEnvelope` is the shared terminal failure shape. `run.completed` may
-  carry optional `failure` for `failed`/`cancelled` states; `run.failed` carries
-  canonical `failure` plus deprecated compatibility `error`. Consumers should use
-  `getRunFailure()` / `runFailureMessage()` instead of hand-reading event payload
-  variants. `runFailureMessage()` also falls back to legacy root
-  `message`/`reason`/`stopReason` fields for display, without broadening
-  `getRunFailure()` enough to treat clean completed answers as failures.
+  carry optional `failure` for `failed`/`cancelled` states; `run.failed` requires
+  `failure`. `getRunFailure()` and `runFailureMessage()` read only that envelope;
+  they do not synthesize failures from root fields.
 - `approvalId` from `approval.requested` is resolved by `approval.resolve`.
 - `CapabilityDelegateToolSummary.protocol` covers `acp`,
   `external_command`, and configured in-process delegates as `in_process`.
@@ -156,10 +245,9 @@ Does not own:
   `mode: "sort"`, `relevance`, `score`, `matchedKeywords`, `reason`). This is
   diagnostic/capability metadata only; clients must not infer hidden tools or
   permission changes from it.
-- `CapabilityDelegateToolSummary.requiresApproval` is a legacy config echo.
-  Diagnostics should prefer conditional approval facts:
-  `approvalRequiredUnderCurrentRun`, `approvalReasons`, and
-  `approvalRunOptions`.
+- `CapabilityDelegateToolSummary.approvalRequiredUnderCurrentRun` is the
+  required effective fact for the inspected run. `approvalReasons` and
+  `approvalRunOptions` explain that fact; delegate config is not echoed.
 - `CapabilitySnapshot.model` is optional startup/capability diagnostic data.
   Its `pricing` object reports `configured`/`builtin`/`unavailable`/
   `not_applicable`; `missing_pricing` is warning-only and means cost estimates
@@ -182,6 +270,9 @@ Does not own:
   `workflow.started` / terminal `workflow.*` names with
   `projectionKind:"invariant"` and `verificationSource:"profile" |
 "documented_command"`; they do not emit `workflow.node.*`.
+- Verification workflow-hook results identify their source and verifier with
+  explicit `verificationSource`, `profile`, `verifierId`, and `expect`
+  metadata. `hookName` is a display/correlation label, not a packed identity.
 - Config schema accepts canonical workflow lifecycle names only and separates
   non-blocking subscribers into `capabilities.hooks.events`. Workflow actions
   can be `block`, `context`, `command`, `http`, or `agent`; event actions can be
@@ -374,7 +465,7 @@ workflow list"`.
 
 - Status: Verified
 - Date: 2026-07-06T20:47:10+0800
-- Scope: C13-② protocol 1.4 reserves the optional
+- Scope: C13-② introduced the optional
   `confidentialDefaults:false` run-boundary override and aligns
   host-message schema/fixture/reference docs.
 - Read: `packages/protocol/src/index.ts`,

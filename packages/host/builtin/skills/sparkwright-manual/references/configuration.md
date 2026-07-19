@@ -8,7 +8,7 @@ selection, tool loading, Skills, MCP, or project agent defaults.
 
 ```txt
 Personal config: ~/.config/sparkwright/config.yaml
-  Use for private provider settings: model, providers, API keys, and personal
+  Use for private provider settings: identity.model, identity.providers, API keys, and personal
   TUI preferences. Existing config.json/config.yaml/config.yml files are loaded.
 
 Project config: <workspace>/.sparkwright/config.yaml
@@ -37,7 +37,7 @@ Config is loaded in this order, with later sources overriding earlier sources:
 Within the user or project layer, `config.json` wins over `config.yaml`, which
 wins over `config.yml`; multiple files in one layer are reported as a conflict.
 
-`providers` is merged by provider key. Project `run.accessMode` is the workspace
+`identity.providers` is merged by provider key. Project `run.accessMode` is the workspace
 access ceiling; CLI/TUI/runtime requests above it are clamped. Most other fields
 are replaced by the later source. `capabilities` is not deep-merged across files;
 keep related project capability settings together when possible.
@@ -74,27 +74,29 @@ npm exec sparkwright -- capabilities inspect --workspace . --format text
 
 ```json
 {
-  "model": "deterministic",
-  "accessMode": "ask",
+  "identity": { "model": "deterministic" },
+  "run": { "accessMode": "ask" },
   "workspace": "."
 }
 ```
 
-The reserved `deterministic` provider is built in and does not need a
-`providers` entry.
+The reserved `deterministic` provider is built in and does not need an
+`identity.providers` entry.
 
 ### Personal Provider
 
 ```json
 {
-  "model": "openai/gpt-5.4-mini",
-  "providers": {
-    "openai": {
-      "baseURL": "https://api.openai.com/v1",
-      "apiKey": "replace-me",
-      "models": {
-        "gpt-5.4-mini": {},
-        "gpt-5.4": {}
+  "identity": {
+    "model": "openai/gpt-5.4-mini",
+    "providers": {
+      "openai": {
+        "baseURL": "https://api.openai.com/v1",
+        "apiKey": "replace-me",
+        "models": {
+          "gpt-5.4-mini": {},
+          "gpt-5.4": {}
+        }
       }
     }
   }
@@ -122,12 +124,14 @@ OpenAI reasoning summaries:
 
 ```json
 {
-  "providers": {
-    "openai": {
-      "providerOptions": {
-        "openai": {
-          "reasoningEffort": "low",
-          "reasoningSummary": "auto"
+  "identity": {
+    "providers": {
+      "openai": {
+        "providerOptions": {
+          "openai": {
+            "reasoningEffort": "low",
+            "reasoningSummary": "auto"
+          }
         }
       }
     }
@@ -232,8 +236,8 @@ transport exists.
 
 Use `capabilities.hooks.workflow` for checked-in project rules: block
 forbidden paths, inject project context, run tests after writes, or prevent
-final answers until verification has happened. Lower-level `RunHook`,
-`ValidationHook`, and `UserHookRunner` APIs are for SDK embedders and host
+final answers until verification has happened. Lower-level `RunHook` and
+`UserHookRunner` APIs are for SDK embedders and host
 integrations, not the usual project config surface.
 For guardrails that should apply only to one configured delegate profile, use
 `capabilities.agents.profiles[].hooks` instead of global workflow hooks.
@@ -332,17 +336,14 @@ addresses remain blocked.
 
 ## Common Fields
 
-- `model`: active model in `provider/model` form. The reserved
+- `identity.model`: active model in `provider/model` form. The reserved
   `deterministic` provider is built in.
-- `providers`: named provider definitions. Keep API keys private.
-- `accessMode`: default run autonomy preset (`read-only`, `ask`,
+- `identity.providers`: named provider definitions. Keep API keys private.
+- `run.accessMode`: default run autonomy preset (`read-only`, `ask`,
   `accept-edits`, or `bypass`). In project config, this is the workspace access
   ceiling; CLI/TUI runtime requests above it are clamped.
 - `workspace`: default workspace root. Relative paths resolve from the config
   file that defines them.
-- `approvals`: default approval auto-grants for CLI/host clients that opt into
-  those scopes, plus `cronMode` for unattended cron defaults. Run autonomy
-  comes from `accessMode`.
 - `tools`: preferred tool selector, allow/disable, and defer settings.
 - `tasks`: routing and budget defaults for model-backed auxiliary tasks such as
   session compaction. `tasks.<name>.budget.maxSourceChars` is the
@@ -356,8 +357,8 @@ addresses remain blocked.
   schema loading.
 - `capabilities.agents`: agent profiles, profile-scoped child workflow hooks,
   and delegate tools.
-- `theme`, `mouse`, `keybindings`: TUI-only preferences. TUI run autonomy uses
-  shared `accessMode`; Shift+Tab changes the runtime mode for the current TUI
+- `ui.theme`, `ui.mouse`, `ui.keybindings`, `ui.vim`: TUI-only preferences.
+  TUI run autonomy uses shared `run.accessMode`; Shift+Tab changes the runtime mode for the current TUI
   process without writing config.
 
 ## Access Modes
@@ -427,8 +428,9 @@ spawning. Sub-agents cannot create background tasks; `task_create` remains a
 top-level run capability.
 Non-`main` profiles that omit `mode` default to child/delegate agents and are
 callable through `delegate_agent` by `agentId` unless they set
-`exposeAsDelegate: false`; `id: main` or `mode: primary` marks the primary
-profile and is excluded from delegate targets. Profile `model` wins, then
+`exposeAsDelegate: false`; a Markdown file named `main.md`, a config profile
+whose id is `main`, or `mode: primary` marks the primary profile and is
+excluded from delegate targets. Profile `model` wins, then
 `capabilities.agents.delegateModel`, then the parent run model for in-process
 delegates. Inline profile `delegateTool` blocks and explicit `delegateTools`
 entries define optional direct aliases; `exposure`, `pinnedDelegates`, and
@@ -454,7 +456,7 @@ current goal (`relevant` / `low`) and are recorded in trace as
 
 Set `capabilities.agents.enableParallelDelegates: true` to expose the opt-in
 `delegate_parallel` tool. It runs multiple configured in-process delegates in
-foreground parallel by `agentId` (preferred) or legacy `toolName`, but only
+foreground parallel by `agentId`, but only
 when those delegates are read-only
 (`workspaceAccess: "none"`) and have no shell access. ACP, external-command,
 workspace-writing, and shell-capable delegates fail closed with a diagnostic.
@@ -553,7 +555,7 @@ sparkwright delegates run delegate_external_cli_reviewer \
   --goal "Inspect README.md and return one concise suggestion." \
   --session-id delegate-debug \
   --trace-level debug \
-  --yes
+  --access-mode bypass
 ```
 
 This command supports external ACP and external command delegates. Internal
@@ -561,8 +563,8 @@ SparkWright child-agent profiles still run through the normal model/tool loop.
 It writes a normal session trace under
 `.sparkwright/sessions/<session-id>/trace.jsonl`.
 If the delegate profile uses `workspaceAccess: "read_write"`, direct debug runs
-must also pass `--write`; otherwise SparkWright refuses to expose the project
-workspace even when the delegate execution itself is approved.
+must use a write-capable access mode; `--access-mode bypass` is the trusted
+non-interactive choice.
 
 ## Cost Metadata
 
@@ -570,16 +572,18 @@ Per-model cost metadata is optional and used for usage/cost reporting:
 
 ```json
 {
-  "providers": {
-    "openai": {
-      "apiKey": "replace-me",
-      "models": {
-        "gpt-5.4-mini": {
-          "cost": {
-            "input": 1.25,
-            "output": 10,
-            "cacheRead": 0.1,
-            "cacheWrite": 1.25
+  "identity": {
+    "providers": {
+      "openai": {
+        "apiKey": "replace-me",
+        "models": {
+          "gpt-5.4-mini": {
+            "cost": {
+              "input": 1.25,
+              "output": 10,
+              "cacheRead": 0.1,
+              "cacheWrite": 1.25
+            }
           }
         }
       }
@@ -628,15 +632,15 @@ SparkWright treats config and project capabilities as user-owned assets:
 
 Checks to make before proposing edits:
 
-- Unknown provider: confirm `model` uses `provider/model` form and the provider
-  key exists under `providers`.
+- Unknown provider: confirm `identity.model` uses `provider/model` form and the
+  provider key exists under `identity.providers`.
 - API key ignored: check environment variable overrides.
 - Tool missing: inspect `tools.use`, `tools.allowed`, `tools.disabled`,
   `tools.defer`, and MCP server `enabled` settings.
 - MCP tool missing: use `capabilities inspect --resolve-mcp` to distinguish a
   configured server from a prepared server with resolved tools.
 - User and project capability settings did not combine: remember that most
-  fields other than `providers` are wholesale-overridden.
+  fields other than `identity.providers` are wholesale-overridden.
 - MCP server does not start: verify `cwd`, command path, timeout, and
   `enabled`; run inspection with `--resolve-mcp` to reproduce the same concrete
   tool discovery path outside a model run.

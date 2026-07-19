@@ -26,7 +26,7 @@ under `docs/` and summarize each") exposed the failure modes:
    files — burned all 8 steps, produced **zero output**, and ended in
    `run.failed / max_steps_exceeded`. ~16 successful reads were discarded.
 3. **Visibility alone is insufficient.** After surfacing `Step: N / M` to the
-   model, a third run still looped (hammering `read_file` on the `docs/adr`
+   model, a third run still looped (hammering `read` on the `docs/adr`
    _directory_ four times — `EISDIR` each time, slipped past the repeated-call
    guard because offset/limit varied) and still hard-failed at 8/8.
 
@@ -119,7 +119,7 @@ directions above then landed together:
    target_ as a repeat, via `semanticToolTarget()` (keys on `path`/`patterns`,
    ignoring cosmetic `offset`/`limit`) and a `lastFailedToolTarget` on
    `RunLoopState` that is cleared on any success — so legitimate pagination never
-   accumulates, but hammering a directory with `read_file` trips fast with an
+   accumulates, but hammering a directory with `read` trips fast with an
    actionable nudge.
 2. **Graceful wrap-up (landed).** Exhausting the step budget now runs one
    tool-less `finishWithBudgetWrapUp` turn that returns a labeled best-effort

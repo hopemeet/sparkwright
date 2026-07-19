@@ -45,13 +45,12 @@ export type {
   AnyActorNotificationInput,
   DeliveryResult,
   InternalActorKind,
-  TaskNotification,
-  TaskNotificationReadyWaitOptions,
-  TaskNotificationSink,
   TaskTerminalStatus,
-  InMemoryTaskNotificationQueueOptions,
+  InMemoryActorNotificationQueueOptions,
   TaskActorNotification,
   TaskActorNotificationInput,
+  TaskTerminalActorNotification,
+  TaskTerminalActorNotificationInput,
   TaskCancelledActorNotification,
   TaskCancelledNotificationInput,
   TaskCancelledNotificationPayload,
@@ -87,31 +86,21 @@ export {
   ActorNotificationInvalidError,
   ActorNotificationUnsupportedError,
   ActorNotificationValidationError,
-  InMemoryTaskNotificationQueue,
+  InMemoryActorNotificationQueue,
   acceptActorNotificationInput,
-  actorNotificationInputFromTaskNotification,
   isNonRetryableActorNotificationError,
-  notificationFromRecord,
   qosForActorNotificationType,
-  taskNotificationFromActorNotification,
+  taskNotificationInputFromRecord,
 } from "./notifications.js";
 
 export type {
-  CreateTaskToolsOptions,
+  TaskToolOptions,
   TaskCreateKindDescriptor,
   TaskCreateMode,
   TaskCreateResult,
   TaskConcurrencyLimits,
 } from "./tools.js";
-export {
-  createTaskTools,
-  createTaskCreate,
-  createTaskControl,
-  createTaskList,
-  createTaskGet,
-  createTaskStop,
-  createTaskOutput,
-} from "./tools.js";
+export { createTaskCreate, createTaskControl } from "./tools.js";
 
 export type {
   TaskHealthProbe,
@@ -132,7 +121,7 @@ export { FileTaskStore } from "./file-store.js";
 
 export type {
   FileTaskNotificationEntry,
-  FileTaskNotificationInvalidActorEntry,
+  FileTaskNotificationInvalidEntry,
   FileTaskNotificationOutboxOptions,
 } from "./file-notifications.js";
 export { FileTaskNotificationOutbox } from "./file-notifications.js";

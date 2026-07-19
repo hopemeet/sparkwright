@@ -10,6 +10,11 @@
     "main"
   ],
   "subagentIds": [],
+  "assessmentObservation": {
+    "completeness": "terminal",
+    "terminalRuns": 1,
+    "incompleteRuns": 0
+  },
   "byType": {
     "run.created": 1,
     "run.started": 1,
@@ -33,7 +38,7 @@
     "completed": 1
   },
   "toolCalls": {
-    "read_file": 1
+    "read": 1
   },
   "toolFailures": {
     "total": 0,

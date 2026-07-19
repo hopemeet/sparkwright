@@ -377,16 +377,6 @@ export function buildCommandRegistry(
     runRaw: (rest) => capActions.openCreateCapability(rest),
   });
   reg.register({
-    name: "skill-create",
-    title: "Create Skill (shortcut)",
-    description:
-      "Compatibility shortcut for /create skill; uses the same managed proposal flow.",
-    category: "capability",
-    hiddenByDefault: true,
-    run: () => skillActions.openSkillCreateProposal(),
-    runRaw: skillActions.openSkillCreateProposal,
-  });
-  reg.register({
     name: "skill-update",
     title: "Draft Skill update",
     description:

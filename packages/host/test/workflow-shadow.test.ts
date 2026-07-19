@@ -41,12 +41,16 @@ function event(
 }
 
 function workflow(raw: string) {
-  return parseWorkflowMarkdownAsset({
-    assetName: "shadowed-flow",
-    dir: "/tmp/shadowed-flow",
-    sourcePath: "/tmp/shadowed-flow/workflow.md",
-    raw,
-  });
+  return {
+    ...parseWorkflowMarkdownAsset({
+      assetName: "shadowed-flow",
+      dir: "/tmp/shadowed-flow",
+      sourcePath: "/tmp/shadowed-flow/workflow.md",
+      raw,
+    }),
+    packageHash: "sha256:shadowed-flow",
+    packageHashPolicyVersion: 2 as const,
+  };
 }
 
 function observedEditTrace() {
@@ -54,7 +58,7 @@ function observedEditTrace() {
     event(1, "run.created", { goal: "update README and verify" }),
     event(2, "tool.requested", {
       id: "read_1",
-      toolName: "read_file",
+      toolName: "read",
       arguments: { path: "README.md" },
     }),
     event(3, "workspace.read", { path: "README.md" }),
@@ -101,8 +105,6 @@ describe("workflow shadow", () => {
           "        command: bash",
           '        args: ["-lc", "npm test -- docs"]',
           "        authorized: true",
-          "      - id: todos",
-          "        kind: todo_clear",
           "---",
           "## implement",
           "Update and verify.",
@@ -131,10 +133,6 @@ describe("workflow shadow", () => {
         expect.objectContaining({
           id: "command:8",
           kind: "verification_command",
-          status: "matched",
-        }),
-        expect.objectContaining({
-          id: "todo_clear",
           status: "matched",
         }),
       ]),
@@ -175,7 +173,6 @@ describe("workflow shadow", () => {
           id: "command:8",
           status: "missing",
         }),
-        expect.objectContaining({ id: "todo_clear", status: "missing" }),
       ]),
     );
   });
@@ -198,8 +195,6 @@ describe("workflow shadow", () => {
           "        command: bash",
           '        args: ["-lc", "npm run lint"]',
           "        authorized: true",
-          "      - id: todos",
-          "        kind: todo_clear",
           "---",
           "## check",
           "Check without writes.",
@@ -211,7 +206,7 @@ describe("workflow shadow", () => {
         event(1, "run.created", { goal: "inspect README" }),
         event(2, "tool.requested", {
           id: "read_1",
-          toolName: "read_file",
+          toolName: "read",
         }),
         event(3, "workspace.read", { path: "README.md" }),
         event(4, "run.completed", { state: "completed" }),
@@ -225,7 +220,6 @@ describe("workflow shadow", () => {
       expect.arrayContaining([
         expect.objectContaining({ id: "tool:grep:unobserved" }),
         expect.objectContaining({ id: "command:lint:unobserved" }),
-        expect.objectContaining({ id: "todo_clear:todos:unobserved" }),
       ]),
     );
   });
@@ -305,7 +299,7 @@ describe("workflow shadow", () => {
     );
   });
 
-  it("loads a workflow asset and session trace without creating workflow state", async () => {
+  it("pins a workflow package for shadowing without creating a run record", async () => {
     const root = await tempRoot("sparkwright-workflow-shadow-");
     await mkdir(join(root, ".sparkwright", "workflows", "shadowed-flow"), {
       recursive: true,
@@ -327,8 +321,6 @@ describe("workflow shadow", () => {
         "        command: bash",
         '        args: ["-lc", "npm test -- docs"]',
         "        authorized: true",
-        "      - id: todos",
-        "        kind: todo_clear",
         "---",
         "## implement",
         "Implement.",
@@ -353,7 +345,14 @@ describe("workflow shadow", () => {
     });
 
     expect(report.ok).toBe(true);
+    expect(report.asset).toMatchObject({
+      packageHash: expect.stringMatching(/^sha256:/),
+      packageHashPolicyVersion: 2,
+    });
     await expect(access(join(sessionDir, "workflow-runs"))).rejects.toThrow();
+    await expect(
+      access(join(root, ".sparkwright", "workflow-runs")),
+    ).rejects.toThrow();
     await expect(
       shadowWorkflowFromSession({
         workspaceRoot: root,

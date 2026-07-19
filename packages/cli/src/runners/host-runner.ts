@@ -1,5 +1,9 @@
 import { existsSync } from "node:fs";
-import type { ApprovalResolver, SparkwrightEvent } from "@sparkwright/core";
+import {
+  compileRunAccessMode,
+  type ApprovalRequest,
+  type SparkwrightEvent,
+} from "@sparkwright/core";
 import type {
   RunInputPayload,
   TraceLevel,
@@ -16,22 +20,23 @@ import {
   resolveHostStdioSpawn,
   tracePathForSession,
 } from "@sparkwright/host";
-import { createCliApprovalResolver } from "../cli-approval.js";
+import { createCliInteractionChannel } from "../cli-approval.js";
 import { createLiveEventFormatter } from "../event-format.js";
 import type { CliIO } from "../io.js";
 import { writeLine } from "../io.js";
-import type { CliApprovalOptions, CliRunAccess } from "../run-access.js";
+import type { CliRunAccess } from "../run-access.js";
 import {
   cliExitCodeForRun,
   completedRunHasCliIssues,
   createCliRunEventSummary,
+  hasCliRunAssessment,
+  setCliRunAssessment,
   summarizeDeniedWorkspaceWrites,
   summarizeDocumentedCommandFailures,
   summarizeRunFailure,
   summarizeSkillLoadFailures,
   summarizeTerminalRunFailure,
   summarizeUnhandledToolFailures,
-  summarizeUnsupportedFinalClaims,
   summarizeVerificationCommandFailures,
   summarizeVerificationProfileResults,
   summarizeWorkspaceMutations,
@@ -43,7 +48,6 @@ export interface HostRunInput {
   workspaceRoot: string;
   sessionRootDir: string;
   runAccess: CliRunAccess;
-  approvalOptions: CliApprovalOptions;
   modelName?: string;
   workflowName?: string;
   sessionId: string;
@@ -61,7 +65,6 @@ export interface HostResumeInput {
   workspaceRoot: string;
   sessionRootDir: string;
   runAccess: CliRunAccess;
-  approvalOptions: CliApprovalOptions;
   modelName?: string;
   workflowName?: string;
   sessionId?: string;
@@ -79,7 +82,6 @@ export interface HostWorkflowResumeInput {
   workspaceRoot: string;
   sessionRootDir: string;
   runAccess: CliRunAccess;
-  approvalOptions: CliApprovalOptions;
   modelName?: string;
   sessionId?: string;
   targetPath?: string;
@@ -132,16 +134,14 @@ async function runHostLifecycle(
     workspaceRoot,
     sessionRootDir,
     runAccess,
-    approvalOptions,
     modelName,
     targetPath,
     confidentialPaths,
     confidentialDefaults,
     traceLevel,
   } = input;
-  const { shouldWrite, accessMode, backgroundTasks, permissionMode } =
-    runAccess;
-  const { approveAll, approveEdits, approveShellSafe } = approvalOptions;
+  const { accessMode, backgroundTasks } = runAccess;
+  const { shouldWrite } = compileRunAccessMode(accessMode);
   const workflowName = "workflowName" in input ? input.workflowName : undefined;
 
   let client: Client | undefined;
@@ -173,7 +173,7 @@ async function runHostLifecycle(
           ...resolveHostStdioSpawn({
             workspaceRoot,
             sessionRootDir,
-            permissionMode,
+            accessMode,
             modelName,
             env,
           }),
@@ -194,23 +194,20 @@ async function runHostLifecycle(
       });
 
       client.on("approval.requested", (msg) => {
-        const resolver = createCliApprovalResolver({
-          approveAll,
-          approveEdits,
-          approveShellSafe,
-          permissionMode,
+        const channel = createCliInteractionChannel({
+          accessMode,
           io,
         });
-        const request: Parameters<ApprovalResolver>[0] = {
-          id: msg.payload.approvalId as Parameters<ApprovalResolver>[0]["id"],
-          runId: msg.payload.runId as Parameters<ApprovalResolver>[0]["runId"],
+        const request: ApprovalRequest = {
+          id: msg.payload.approvalId as ApprovalRequest["id"],
+          runId: msg.payload.runId as ApprovalRequest["runId"],
           action: msg.payload.action,
           summary: msg.payload.summary,
           details: msg.payload.details ?? {},
           createdAt: msg.timestamp,
           status: "pending",
         };
-        void Promise.resolve(resolver(request)).then((decision) =>
+        void Promise.resolve(channel.approve!(request)).then((decision) =>
           client
             ?.resolveApproval({
               approvalId: msg.payload.approvalId,
@@ -232,6 +229,10 @@ async function runHostLifecycle(
         runId = msg.payload.runId;
         runState = msg.payload.state;
         stopReason = msg.payload.stopReason;
+        setCliRunAssessment(eventSummary, msg.payload.assessment);
+        if (msg.payload.todoAdvisory) {
+          writeLine(io.stderr, `Todo: ${msg.payload.todoAdvisory.message}`);
+        }
         if (runState !== "completed") {
           const failure = getRunFailure(msg.payload);
           failedMessage =
@@ -258,15 +259,15 @@ async function runHostLifecycle(
       client.on("run.failed", (msg) => {
         for (const line of liveEvents.flush()) writeLine(io.stdout, line);
         runId = msg.payload.runId || runId;
-        const failure = getRunFailure(msg.payload);
+        const failure = msg.payload.failure;
         failedMessage =
           summarizeTerminalRunFailure({
             state: "failed",
-            stopReason: failure?.code ?? msg.payload.error.code,
+            stopReason: failure.code,
             failure,
           }) ?? runFailureMessage(msg.payload);
         runState = "failed";
-        stopReason = failure?.code ?? msg.payload.error.code;
+        stopReason = failure.code;
         writeLine(io.stderr, failedMessage);
         terminalFailurePrinted = true;
         resolveOnce();
@@ -291,7 +292,6 @@ async function runHostLifecycle(
           ...createHostClientRunMetadata({
             source: "cli",
             targetPath,
-            shouldWrite,
             accessMode,
             backgroundTasks,
             traceLevel,
@@ -306,7 +306,6 @@ async function runHostLifecycle(
             controlSessionId: input.controlSessionId,
             accessMode,
             backgroundTasks,
-            permissionMode,
             targetPath,
             traceLevel,
             modelName,
@@ -314,7 +313,6 @@ async function runHostLifecycle(
             workflowName,
             confidentialPaths,
             confidentialDefaults,
-            shouldWrite,
             metadata,
             input: input.input,
           }),
@@ -325,7 +323,6 @@ async function runHostLifecycle(
         const metadata = createHostClientRunMetadata({
           source: "cli",
           targetPath,
-          shouldWrite,
           accessMode,
           backgroundTasks,
           traceLevel,
@@ -338,14 +335,12 @@ async function runHostLifecycle(
             force: input.force,
             accessMode,
             backgroundTasks,
-            permissionMode,
             targetPath,
             traceLevel,
             modelName,
             modelNameSource: "request",
             confidentialPaths,
             confidentialDefaults,
-            shouldWrite,
             metadata,
           }),
         );
@@ -358,7 +353,6 @@ async function runHostLifecycle(
         const metadata = createHostClientRunMetadata({
           source: "cli",
           targetPath,
-          shouldWrite,
           accessMode,
           backgroundTasks,
           traceLevel,
@@ -369,14 +363,12 @@ async function runHostLifecycle(
             sessionId,
             accessMode,
             backgroundTasks,
-            permissionMode,
             targetPath,
             traceLevel,
             modelName,
             modelNameSource: "request",
             confidentialPaths,
             confidentialDefaults,
-            shouldWrite,
             metadata,
           }),
         );
@@ -406,7 +398,7 @@ async function runHostLifecycle(
         runId,
         traceLevel: input.traceLevel,
         targetPath: input.targetPath,
-        shouldWrite,
+        accessMode,
       });
       sessionId = failureTrace.sessionId;
       runId = failureTrace.runId;
@@ -444,19 +436,21 @@ async function runHostLifecycle(
     }
     const skillLoadFailureSummary = summarizeSkillLoadFailures(eventSummary);
     if (skillLoadFailureSummary) writeLine(io.stderr, skillLoadFailureSummary);
-    const verificationSummary =
-      summarizeVerificationCommandFailures(eventSummary);
+    const hasAssessment = hasCliRunAssessment(eventSummary);
+    const verificationSummary = hasAssessment
+      ? summarizeVerificationCommandFailures(eventSummary)
+      : undefined;
     if (verificationSummary) writeLine(io.stderr, verificationSummary);
-    const documentedCommandSummary =
-      summarizeDocumentedCommandFailures(eventSummary);
+    const documentedCommandSummary = hasAssessment
+      ? summarizeDocumentedCommandFailures(eventSummary)
+      : undefined;
     if (documentedCommandSummary)
       writeLine(io.stderr, documentedCommandSummary);
-    const unsupportedClaimSummary =
-      summarizeUnsupportedFinalClaims(eventSummary);
-    if (unsupportedClaimSummary) writeLine(io.stderr, unsupportedClaimSummary);
     const deniedWriteSummary = summarizeDeniedWorkspaceWrites(eventSummary);
     if (deniedWriteSummary) writeLine(io.stderr, deniedWriteSummary);
-    const failureSummary = summarizeUnhandledToolFailures(eventSummary);
+    const failureSummary = hasAssessment
+      ? summarizeUnhandledToolFailures(eventSummary)
+      : undefined;
     if (failureSummary) writeLine(io.stderr, failureSummary);
     const exitCode = cliExitCodeForRun({
       failedMessage,
@@ -471,8 +465,11 @@ async function runHostLifecycle(
       stopReason,
     };
   } finally {
+    const hasAssessment = hasCliRunAssessment(eventSummary);
     const displayState =
-      runState === "completed" && completedRunHasCliIssues(eventSummary)
+      runState === "completed" &&
+      hasAssessment &&
+      completedRunHasCliIssues(eventSummary)
         ? "completed_with_issues"
         : (runState ?? "unknown");
     writeLine(
@@ -494,8 +491,9 @@ async function runHostLifecycle(
           eventSummary.untrackedWriteCapableProcesses,
       }),
     );
-    const verificationProfileSummary =
-      summarizeVerificationProfileResults(eventSummary);
+    const verificationProfileSummary = hasAssessment
+      ? summarizeVerificationProfileResults(eventSummary)
+      : undefined;
     if (verificationProfileSummary)
       writeLine(io.stdout, verificationProfileSummary);
     if (tracePath && existsSync(tracePath))

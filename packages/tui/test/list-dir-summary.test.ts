@@ -8,7 +8,7 @@ import {
 
 /**
  * Regression: a `list_dir` tool result was dumped as truncated raw JSON in the
- * transcript instead of a compact directory summary (read_file/skill_load got
+ * transcript instead of a compact directory summary (read/skill_load got
  * clean summaries; list_dir fell through to oneLine).
  */
 const sample = {
@@ -32,7 +32,7 @@ describe("isListDirResult", () => {
     expect(classifyToolResult(sample)).toBe("list_dir");
   });
 
-  it("does not mistake a read_file envelope for list_dir", () => {
+  it("does not mistake a read envelope for list_dir", () => {
     const read = {
       path: "README.md",
       content: "a\nb",

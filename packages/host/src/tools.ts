@@ -45,7 +45,6 @@ import {
 } from "./tool-selectors.js";
 import {
   DEFAULT_ADVANCED_TOOL_NAMES,
-  canonicalToolName,
   normalizeToolNameList,
   shouldDeferToolByDefault,
 } from "./tool-identities.js";
@@ -67,7 +66,7 @@ import {
 } from "./agent-profiles.js";
 
 /** Built-in tool: read a UTF-8 file from the workspace. Safe (no approval). */
-// read_file paging defaults. The old tool returned a fixed 400-char preview,
+// read paging defaults. The old tool returned a fixed 400-char preview,
 // which made the model loop (it never saw past the stub, so it re-read the same
 // file). We now return real content, but the returned window must still fit the
 // model-visible observation budget in core. So the tool pages by line — default
@@ -78,7 +77,7 @@ const READ_MAX_CHARS = 6_000;
 
 export function createReadFileTool() {
   return defineTool({
-    name: "read_file",
+    name: "read",
     description:
       "Read a UTF-8 text file from the workspace. Returns up to `limit` lines " +
       "(default 2000), bounded by an internal character budget, starting at " +
@@ -341,7 +340,7 @@ export function createGlobPathsTool(workspaceRoot: string) {
  * workspace path. `glob` matches paths by pattern, but a model that just
  * wants to see "what is in this directory" had to glob `*` and over-fetch;
  * list_dir answers that directly and belongs in the same read-only discovery
- * set as read_file + glob + grep.
+ * set as read + glob + grep.
  */
 export function createListDirTool(workspaceRoot: string) {
   return createListDirToolBase({ workspaceRoot });
@@ -352,7 +351,7 @@ export function createListDirTool(workspaceRoot: string) {
  * `glob` only matches paths, so finding a symbol by name (e.g. "a
  * function named frobnicate") is impossible by globbing alone — it degenerates
  * into reading every file. grep answers that in one call, and belongs in
- * the same read-only discovery set as read_file + glob.
+ * the same read-only discovery set as read + glob.
  */
 export function createGrepTextTool(workspaceRoot: string) {
   return createGrepTextToolBase({ workspaceRoot });
@@ -361,7 +360,7 @@ export function createGrepTextTool(workspaceRoot: string) {
 /**
  * Built-in read-only tool: read a file with stable line anchors used by
  * edit_anchored_text. Expose both tools together so models do not invent
- * anchors from plain read_file output.
+ * anchors from plain read output.
  */
 export function createReadAnchoredTextTool() {
   return createReadAnchoredTextToolBase();
@@ -382,7 +381,7 @@ export function createWriteFileTool() {
  * Supports in-place line replacement — needed for "make one minimal fix" tasks
  * where appending a new section would leave the incorrect text behind. The
  * write itself is still scope- and approval-gated inside Workspace.writeText,
- * so this preserves the --target / --yes contract.
+ * so this preserves the target-path and access-policy contract.
  */
 export function createEditAnchoredTextTool() {
   return createEditAnchoredTextToolBase();
@@ -424,7 +423,6 @@ export function createSkillInspectorTool(
       sideEffects: ["read"],
       idempotency: "idempotent",
     },
-    isReplaySafe: true,
     async execute(args: unknown) {
       const action = parseInspectAction(args, "list_skills");
       const roots = resolveSkillRoots(workspaceRoot, configuredRoots);
@@ -494,7 +492,6 @@ export function createSkillManagerTool(
       const preview = [action, name].filter(Boolean).join(" ");
       return preview || undefined;
     },
-    isReplaySafe: false,
     async execute(args: unknown, ctx) {
       const input = parseSkillManagerArgs(args);
       if (!input.name || !isSkillName(input.name)) {
@@ -590,7 +587,6 @@ export function createSkillUpdateTool(
       const preview = [action, name].filter(Boolean).join(" ");
       return preview || undefined;
     },
-    isReplaySafe: false,
     async execute(args: unknown, ctx) {
       const input = parseSkillUpdateArgs(args);
       const roots = resolveSkillRoots(workspaceRoot, configuredRoots);
@@ -666,7 +662,6 @@ export function createAgentInspectorTool(workspaceRoot: string) {
       sideEffects: ["read"],
       idempotency: "idempotent",
     },
-    isReplaySafe: true,
     async execute(args: unknown) {
       const action = parseInspectAction(args, "list_agents");
       return loadAgentReport(workspaceRoot, action);
@@ -699,14 +694,14 @@ export function createMarkdownAgentManagerTool(workspaceRoot: string) {
         prompt: { type: "string" },
         model: {
           oneOf: [
-            { type: "string", enum: ["inherit", "default"] },
+            { type: "string", enum: ["inherit"] },
             {
               type: "string",
               pattern: "^(deterministic|[^/\\s]+/[^\\s]+)$",
             },
           ],
           description:
-            'Use "inherit" (or legacy authoring alias "default") to inherit the effective parent/default model; these aliases are normalized away and never persisted. Otherwise pass an explicit "provider/model" ref or "deterministic".',
+            'Use "inherit" to inherit the effective parent/default model; it is normalized away and never persisted. Otherwise pass an explicit "provider/model" ref or "deterministic".',
         },
         use: { type: "array", items: { type: "string" } },
         allowedTools: { type: "array", items: { type: "string" } },
@@ -723,7 +718,6 @@ export function createMarkdownAgentManagerTool(workspaceRoot: string) {
       sideEffects: ["read", "write"],
       idempotency: "conditional",
     },
-    isReplaySafe: false,
     async execute(args: unknown, ctx) {
       if (!ctx.workspace) throw new Error("Workspace is not configured.");
       if (isPlainObject(args) && args.action === "remove")
@@ -796,8 +790,7 @@ function isToolNameListed(
   names: readonly string[] | undefined,
 ): boolean {
   if (!names) return false;
-  const canonical = canonicalToolName(toolName);
-  return names.some((name) => canonicalToolName(name) === canonical);
+  return names.includes(toolName);
 }
 
 function isToolNameAllowed(
@@ -1055,8 +1048,8 @@ function skillDraftToolOutput(
     targetPath: proposal.targetPath,
     basePackageHash: proposal.basePackageHash,
     afterPackageHash: proposal.afterPackageHash,
-    contentHash: proposal.afterPackageHash,
-    revision: proposal.revision ?? 1,
+    packageHashPolicyVersion: proposal.packageHashPolicyVersion,
+    revision: proposal.revision,
     previousAfterPackageHash: proposal.previousAfterPackageHash,
     contentMode: proposal.contentMode,
     ...(proposal.guardFindings
@@ -1469,12 +1462,7 @@ function parseMarkdownAgentArgs(args: unknown): MarkdownAgentInput {
       "create_agent action must be create, update, or replace.",
     );
   }
-  const id =
-    typeof args.id === "string" && args.id.trim()
-      ? args.id.trim()
-      : typeof args.name === "string"
-        ? args.name.trim()
-        : "";
+  const id = typeof args.name === "string" ? args.name.trim() : "";
   const prompt = typeof args.prompt === "string" ? args.prompt.trim() : "";
   if (!isAgentId(id) || !prompt) {
     throw toolArgumentsInvalid(
@@ -1510,9 +1498,7 @@ function parseMarkdownAgentArgs(args: unknown): MarkdownAgentInput {
     typeof args.model === "string" && args.model.trim()
       ? args.model.trim()
       : undefined;
-  const model = isMarkdownAgentModelInheritanceAlias(requestedModel)
-    ? undefined
-    : requestedModel;
+  const model = requestedModel === "inherit" ? undefined : requestedModel;
   assertMarkdownAgentModelRef(model);
   return {
     action,
@@ -1679,12 +1665,6 @@ function assertMarkdownAgentModelRef(model: string | undefined): void {
     `create_agent model "${model}" must be in "provider/model" form. ` +
       'Pass model="inherit" (or omit model) to inherit the parent/default model.',
   );
-}
-
-function isMarkdownAgentModelInheritanceAlias(
-  model: string | undefined,
-): boolean {
-  return model === "inherit" || model === "default";
 }
 
 async function assertMarkdownAgentModelResolvable(

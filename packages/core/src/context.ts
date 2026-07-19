@@ -448,11 +448,7 @@ function firstString(
 }
 
 function isFileReadLikeTool(toolName: string): boolean {
-  return (
-    toolName === "read" ||
-    toolName === "read_file" ||
-    toolName === "read_anchored_text"
-  );
+  return toolName === "read" || toolName === "read_anchored_text";
 }
 
 export interface DefaultContextAssemblerOptions {

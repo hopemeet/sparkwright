@@ -7,6 +7,72 @@ policy-checked, approval-gated when needed, trace-visible, and artifact-backed.
 
 See [approvals.md](approvals.md) and [../runtime/tool-orchestration.md](../runtime/tool-orchestration.md).
 
+## Last Verified
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: reviewed write safety around the Host execution/Workflow refactor.
+  Removing implicit `README.md` scope broadens only to the existing configured
+  workspace ceiling; explicit targets still narrow writes. Assessment and
+  Workflow continuation changes do not bypass workspace policy or rollback.
+- Read: HostExecution, Agent/Workflow runtime assembly, CLI target handling,
+  and workspace-write regressions.
+- Tests: Core workspace and full Host/CLI write-policy coverage passed.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: immutable access/security resolution, fresh mutable run policy,
+  process workspace-lease injection, and main catalog mutation wrapping now
+  route through `RunPreparationOperations`. Approval, write authority, lease,
+  and event semantics are unchanged.
+- Read: preparation/security/policy/catalog owners and workspace lease map.
+- Tests: owner-level and focused access/tool gates are recorded with the commit.
+
+- Status: Verified
+- Date: 2026-07-18
+- Scope: Agent workspace-write grant compilation, configured child admission,
+  promotion handoff, and delegate lease wiring moved into
+  `AgentRuntimeAssembly`. The owner reuses the process workspace lease
+  coordinator and parent policy/interaction channel; write authority, event
+  evidence, and lease semantics are unchanged.
+- Read: Host Agent assembly/grants/delegate adapters, workspace lease and Core
+  policy contracts, plus focused tests.
+- Tests: focused Host Agent/Delegate/tool/protocol 359/359 passed.
+
+- Status: Verified
+- Date: 2026-07-18T09:58:00+0800
+- Scope: approval-driven workspace state changes use the required run-owned
+  state port; the standalone direct `RunRecord` mutation fallback was removed.
+- Read: `ControlledWorkspace`, `SparkwrightRun` assembly and transition guard,
+  focused tests, Core module map, and test routes.
+- Tests: workspace/policy/checkpoint 62/62; run/guardrails 155/155; Core
+  typecheck/build; repository test typecheck; project-map drift; full release
+  verification.
+
+- Status: Verified
+- Date: 2026-07-17T23:37:17+0800
+- Scope: Host and test consumers import LocalWorkspace through Core
+  `/internal`; containment, policy, approval, checkpoint, and lease behavior
+  are unchanged.
+- Read: Core barrels, Host execution/snapshot/delegate imports, and import gate.
+- Tests: Host typecheck/build and affected focused suites passed.
+
+- Status: Verified
+- Date: 2026-07-16T13:36:30+0800
+- Scope: Removed the unused public workspace-write validation-hook seam; containment, write policy, interaction-channel approval, checkpoints, mutation budgets, and artifact evidence remain canonical and unchanged.
+- Read: ControlledWorkspace, run assembly, focused workspace tests, and current safety docs.
+- Tests: focused workspace tests; npm run build; npm run typecheck:test; npm run release:check.
+
+- Date: 2026-07-16T12:45:00+0800
+- Scope: Write capability is derived from canonical accessMode; managed write policy, containment, budgets, and event evidence remain unchanged.
+- Read: routed production sources, focused tests, protocol/config schemas, and current user/reference documentation.
+- Tests: focused access/policy/protocol/CLI/TUI/ACP/Workflow tests; npm run typecheck:test; npm run schema:check.
+
+- Date: 2026-07-16T11:52:29+0800
+- Scope: reviewed protocol 2.0 terminal failure envelope changes; workspace
+  admission, mutation policy, and approval evidence do not consume the removed
+  Host run-terminal `error` projection.
+
 ## Main Files
 
 - `packages/core/src/run.ts`
@@ -20,6 +86,7 @@ See [approvals.md](approvals.md) and [../runtime/tool-orchestration.md](../runti
 - `packages/coding-tools/src/index.ts`
 - `packages/coding-tools/src/unified-diff.ts`
 - `packages/host/src/runtime/host-runtime.ts`
+- `packages/host/src/runtime/agent-runtime-assembly.ts`
 
 ## Data Flow
 
@@ -36,10 +103,9 @@ tool proposes write
 - Accepted anchored edits still flow through normal workspace write events.
 - Large diffs should be artifacts, not only inline payloads.
 - `workspace.write.denied` is a valid terminal write outcome.
-- Runs with `shouldWrite: false` hard-deny workspace writes before approval.
-  Interactive clients that need write approvals should send `shouldWrite: true`;
-  managed coding tools then defer to the normal `workspace.write` diff approval
-  path and guardrails.
+- Runs with `accessMode: read-only` hard-deny workspace writes before approval.
+  `ask`, `accept-edits`, and `bypass` are write-capable; managed coding tools
+  still defer to the normal `workspace.write` diff policy and guardrails.
 - Host and internal direct-core start/resume construct this mutation layer from
   one Host factory. Every invocation is fresh: its `writtenPaths` file-budget
   state must never be cached or shared through the immutable security plan.
@@ -51,7 +117,7 @@ tool proposes write
   managed workspace write tools only through a spawn-time workspace-write grant.
   That grant is approved at the parent tool boundary, then consumed by a
   child-local resolver that approves only `workspace.write` requests. The
-  parent run policy is still layered into the child, so `shouldWrite:false`,
+  parent run policy is still layered into the child, so read-only access,
   target-path restrictions, file budgets, and diff budgets deny before the
   grant resolver can approve.
 - Same-turn Agent tool batching treats a requested dynamic workspace-write grant
@@ -104,7 +170,7 @@ tool proposes write
 - Workflow Script processes require both write-enabled run access and a
   declared `write` capability before their sandbox receives write grants.
   Read-only command hooks are also forced into a fail-closed no-write sandbox
-  when Host run metadata explicitly records `shouldWrite:false`.
+  when Host run metadata records `accessMode: read-only`.
 - Managed `LocalWorkspace` writes use realpath containment and reject stable
   symlink segments in the caller's original workspace-relative path, even when
   the symlink target stays inside the workspace. Missing parent chains are
@@ -118,6 +184,10 @@ tool proposes write
   boundary as content replacement. The proposal carries the deletion diff and
   `operation:"remove"`; checkpoint capture happens before unlink so rollback
   can restore the prior file. No separate delete authorization rule exists.
+- Approval-driven run state changes use the required `ControlledWorkspace`
+  `setState` port. The workspace layer does not directly mutate `RunRecord`;
+  production run assembly binds the port to `SparkwrightRun`'s legal state
+  transition guard.
 
 ## Consumers
 
@@ -144,6 +214,13 @@ tool proposes write
   from managed workspace writes.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-16T10:27:51+0800
+- Scope: reviewed configured Agent-tool policy consolidation; capability-derived
+  workspace gates and child write constraints remain unchanged.
+- Read: Host delegate capability facts, Agent-tool assembly, and workspace policy map.
+- Tests: Host tools 89/89, Host typecheck, and repository test typecheck passed.
 
 - Status: Read-only
 - Date: 2026-07-15T07:35:27+0800
@@ -391,7 +468,7 @@ test/protocol.test.ts -t "confidential"`.
 - Read: `packages/core/src/policy.ts`, `packages/core/src/workspace.ts`,
   `packages/host/src/runtime.ts`, `packages/cli/src/cli.ts`,
   `packages/cli/test/cli.test.ts`,
-  `docs/_internal/proposals/consolidation-agenda.md`.
+  `docs/_internal/reviews/consolidation-agenda.md`.
 - Tests: `npm --workspace @sparkwright/core test -- test/policy.test.ts
 test/workspace.test.ts`; `npm --workspace @sparkwright/cli test --
 test/cli.test.ts -t "confidential"`.

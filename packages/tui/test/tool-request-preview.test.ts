@@ -14,7 +14,7 @@ describe("formatToolRequestPreview", () => {
       }),
     ).toBe(". recursive");
     expect(
-      formatToolRequestPreview("read_file", {
+      formatToolRequestPreview("read", {
         path: "README.md",
         offset: 1,
         limit: 20,
@@ -33,9 +33,9 @@ describe("formatToolRequestPreview", () => {
     ).toBe("TODO in src");
   });
 
-  it("keeps shell and skill mutations concise", () => {
+  it("keeps bash and skill mutations concise", () => {
     expect(
-      formatToolRequestPreview("shell", {
+      formatToolRequestPreview("bash", {
         command: "npm test",
         timeoutMs: 120000,
       }),
@@ -57,11 +57,6 @@ describe("formatToolRequestPreview", () => {
         maxChunks: 10,
       }),
     ).toBe("output task_mqzd...yc24hj from 0 10 chunks");
-    expect(
-      formatToolRequestPreview("task_get", {
-        taskId: "task_mqzd1c1b30yc24hj",
-      }),
-    ).toBe("get task_mqzd...yc24hj");
     expect(
       formatToolRequestPreview("task", {
         action: "get",

@@ -49,14 +49,6 @@ function parseArgs(
     } else if (a === "--model") {
       if (!argv[i + 1]) errors.push("Usage: --model requires a model name");
       else out.modelName = argv[++i];
-    } else if (a === "--write") {
-      out.tuiPermissionMode = "ask";
-    } else if (a === "--yes" || a === "--yes-all") {
-      out.tuiPermissionMode = "bypass";
-    } else if (a === "--yes-edits") {
-      out.tuiPermissionMode = "accept-edits";
-    } else if (a === "--yes-shell-safe") {
-      out.tuiPermissionMode = "ask";
     } else if (a === "--access-mode") {
       const v = argv[i + 1];
       if (!v) errors.push("Usage: --access-mode requires a value");
@@ -168,7 +160,6 @@ async function maybePrintFirstRunConfigHint(initialCwd: string): Promise<void> {
 function tuiUsage(): string {
   return [
     "Usage: sparkwright tui [--workspace path] [--session-root path] [--model provider/model] [--access-mode read-only|ask|accept-edits|bypass] [--trace-level standard|debug] [--session-id id]",
-    "       sparkwright tui [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all]  # deprecated aliases",
     "       node packages/tui/dist/index.js [same options]",
   ].join("\n");
 }

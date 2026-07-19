@@ -19,9 +19,13 @@ function workflow(
 ): WorkflowRunSnapshot {
   return {
     id,
+    generation: 1,
+    recordRevision: 1,
     assetName,
+    layer: "project",
     status,
-    contentHash: `${assetName}-hash`,
+    packageHash: `sha256:${assetName}`,
+    packageHashPolicyVersion: 2,
     runIds: [],
     attempts: {},
     resume: { verifyOnResume: true },

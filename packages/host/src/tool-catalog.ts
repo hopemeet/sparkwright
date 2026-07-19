@@ -60,7 +60,6 @@ import {
 } from "./workspace-lease-coordinator.js";
 import { createScopedToolSearch } from "./tool-surface.js";
 
-const MAIN_TODO_MAX_WRITES_PER_RUN = 4;
 export const AGENT_TASK_CREATE_PAYLOAD_DESCRIPTION =
   "required object with goal, role, and prompt; optional allowedTools, grant, metadata, and maxSteps. Omit maxSteps unless you need an explicit child turn cap; low values can make read-and-answer tasks partial.";
 export const AGENT_TASK_MAX_STEPS_DESCRIPTION =
@@ -409,7 +408,6 @@ function createMainHostToolCatalogList(input: {
     ),
     ...createTodoTools({
       getTodoPath: () => input.todoPath,
-      maxWritesPerRun: MAIN_TODO_MAX_WRITES_PER_RUN,
     })
       .all()
       .map((tool) => catalogEntry(tool, "todo")),

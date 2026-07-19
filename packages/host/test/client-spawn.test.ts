@@ -10,7 +10,7 @@ describe("host client spawn resolution", () => {
     const resolved = resolveHostStdioSpawn({
       workspaceRoot: "/repo",
       sessionRootDir: "/repo/.sparkwright/sessions",
-      permissionMode: "default",
+      accessMode: "read-only",
       modelName: "deterministic",
       env: {},
     });
@@ -23,8 +23,8 @@ describe("host client spawn resolution", () => {
       "/repo",
       "--session-root",
       "/repo/.sparkwright/sessions",
-      "--permission-mode",
-      "default",
+      "--access-mode",
+      "read-only",
       "--model",
       "deterministic",
     ]);

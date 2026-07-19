@@ -12,6 +12,43 @@ Conventions:
 
 ## Unreleased
 
+- Terminal assessment consolidation: breaking — every current terminal run
+  event/result carries Core `RunAssessment`; Host completion carries aggregated
+  `ExecutionAssessment`; Agent terminal results carry independent `finality`
+  and `assessment`. The parallel completed-run outcome projection and prose
+  claim inference are removed. Missing assessment is invalid and consumers
+  should fail closed.
+
+- Workflow/Todo continuation: breaking — Todo is four-state advisory plan data
+  and no longer owns episode continuation, tool forcing, write counters,
+  required-tool checks, or `todo_clear`. Only a fresh nonterminal durable
+  Workflow record can authorize another bounded episode; ordinary runs execute
+  one episode.
+
+- CLI target handling: breaking correction — `run` and session resume no
+  longer synthesize `README.md` when `--target` is absent. An explicit target
+  still narrows scope; omission uses the configured workspace policy ceiling.
+
+- Skill capability and trace identity: breaking consolidation — indexed and
+  resident-loaded Skills publish required `packageHash` plus
+  `packageHashPolicyVersion: 2`; the Markdown-only `contentHash` projection is
+  removed. Skill statistics accept only that event-time v2 identity and no
+  longer create legacy-content or name-only buckets.
+
+- Workflow run snapshots: breaking identity consolidation — `generation`,
+  `recordRevision`, source `layer`, `packageHash`, and
+  `packageHashPolicyVersion: 2` are required; durable `contentHash` is removed.
+  Workflow resume accepts only records backed by the matching executable
+  package snapshot. Migration: consume package identity directly and do not
+  synthesize missing fencing fields or infer identity from the live asset.
+
+- `host-message.schema.json`: breaking consolidation — capability tool exposure
+  tiers no longer admit `legacy`; `list_dir` is canonical `advanced`.
+  `CapabilityDelegateToolSummary` no longer echoes delegate
+  `requiresApproval`, and `approvalRequiredUnderCurrentRun` is now required.
+  Migration: render the current-run approval fact directly and treat delegate
+  config as authoring input, not capability output.
+
 - `subagent.*` lifecycle: additive/ordering correction — all built-in Agent
   transports now include terminal `terminalState`/`finality`; admission failures
   emit requested -> failed without a false started phase, and indexed calls use
@@ -24,12 +61,10 @@ Conventions:
   may use these optional fields for transport/governance diagnostics and must
   continue grouping lifecycle by `childRunId`.
 
-- `host-message.schema.json`: additive — `capability.inspect` accepts optional
-  `accessMode`, `backgroundTasks`, `permissionMode`, and `shouldWrite` fields,
-  and `CapabilitySnapshot` may include an `access` summary. Migration: clients
-  that already inspect capabilities can omit these fields to keep the
-  conservative no-write diagnostic view; clients with an active run mode should
-  send the same access fields used for `run.start`.
+- `host-message.schema.json`: `capability.inspect` accepts `accessMode` and
+  `backgroundTasks`, and `CapabilitySnapshot` may include the same canonical
+  access summary. Omitted access keeps the conservative read-only diagnostic
+  view.
 
 - `host-message.schema.json`: additive — `run.start`, `run.resume`, and
   `workflow.resume` accept optional `confidentialPaths` plus
@@ -47,8 +82,8 @@ Conventions:
   `factLedger` (`schemaVersion: "fact-ledger.v1"`) with raw command facts,
   verifier result satisfaction, optional `verificationSource`, workspace write
   epochs, and stale markers.
-  Migration: prefer `factLedger` for command/verification diagnostics when
-  present; keep `commandOutcome` as the legacy compact snapshot.
+  Command/verification diagnostics derive from this canonical ledger. This
+  historical additive step is superseded by required `RunAssessment` above.
 
 - `event.schema.json`: additive — reserves `workflow.started`,
   `workflow.node.started`, `workflow.node.completed`, `workflow.waiting`,
@@ -66,10 +101,10 @@ Conventions:
 
 - `host-message.schema.json`: additive — host requests now include
   `workflow.list` and `workflow.resume`. Workflow run records are stored under
-  the owning session's `workflow-runs/` directory, carry pinned asset
-  `{assetName, version, contentHash}` plus a definition snapshot, and resume
-  only non-terminal records through a single-writer lease. Migration: clients
-  can inspect/resume workflow instances without scraping trace events.
+  the workspace workflow-run journal, carry a pinned executable package plus a
+  snapshot-backed definition, and resume only non-terminal records through a
+  single-writer lease. Migration: clients can inspect/resume workflow instances
+  without scraping trace events.
 
 - `host-message.schema.json`: additive — `CapabilitySnapshot.workflows` may
   include parsed workflow asset summaries and parse errors. Migration: none;

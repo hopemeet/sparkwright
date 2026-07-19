@@ -320,7 +320,7 @@ describe("WorkspaceLeaseCoordinator", () => {
     const run = testRun("background");
     const tool = withWorkspaceMutationLease(
       defineTool({
-        name: "shell",
+        name: "bash",
         description: "shell",
         inputSchema: { type: "object" },
         governance: { sideEffects: ["write", "external"] },

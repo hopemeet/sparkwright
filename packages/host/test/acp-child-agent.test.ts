@@ -142,6 +142,7 @@ describe("ACP child agent delegate tool", () => {
       agentProfileId: "external_reviewer",
       stopReason: "end_turn",
     });
+    expect(result).not.toHaveProperty("agentId");
     expect(result.message).toContain("fixture reviewed: review the patch");
     expect(
       projectAgentLifecycle(parent.events.all(), result.childRunId),

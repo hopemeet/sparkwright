@@ -2,12 +2,8 @@
 // surface to LLMs. They are intentionally thin — argument parsing and
 // translation to TaskManager calls. Risk classification:
 //   task_create -> external (host runs arbitrary registered kinds)
-//   task(action="stop") -> write
-//   task_stop   -> write    (mutates lifecycle state)
-//   task(action="list"|"get"|"output") / task_list / task_get / task_output -> read
-//
-// The host defaults to the compressed task(action=...) surface and keeps the
-// legacy task_* tools opt-in for compatibility.
+//   task(action="stop") -> write (mutates lifecycle state)
+//   task(action="list"|"get"|"output"|"wait") -> read
 
 import {
   defineTool,
@@ -52,16 +48,15 @@ export interface TaskCreateKindDescriptor {
 export interface TaskCreateKindCall {
   title?: string;
   mode: TaskCreateMode;
-  awaited: boolean;
 }
 
 /**
- * Options for {@link createTaskTools}.
+ * Options for the canonical task tool factories.
  *
  * @public
  * @stability experimental v0.1
  */
-export interface CreateTaskToolsOptions {
+export interface TaskToolOptions {
   manager: TaskManager;
   /**
    * Execution-scoped runners captured by this tool bundle. These take
@@ -75,7 +70,7 @@ export interface CreateTaskToolsOptions {
    */
   getParentRunId(ctx?: RuntimeContext): RunId;
   /**
-   * Default cap on chunks returned by `task_output`. Default 200.
+   * Default cap on chunks returned by `task(action="output")`. Default 200.
    */
   defaultMaxOutputChunks?: number;
   /**
@@ -103,42 +98,8 @@ const DEFAULT_CONCURRENCY_LIMITS: TaskConcurrencyLimits = {
 const DEFAULT_MAX_OUTPUT_CHUNKS = 200;
 const DEFAULT_FOREGROUND_TIMEOUT_MS = 300_000;
 
-/**
- * Build the five long-running-task tools backed by a {@link TaskManager}.
- *
- * @public
- * @stability experimental v0.1
- */
-export function createTaskTools(options: CreateTaskToolsOptions): {
-  taskCreate: ToolDefinition;
-  task: ToolDefinition;
-  taskList: ToolDefinition;
-  taskGet: ToolDefinition;
-  taskStop: ToolDefinition;
-  taskOutput: ToolDefinition;
-  all(): ToolDefinition[];
-} {
-  const taskCreate = createTaskCreate(options);
-  const task = createTaskControl(options);
-  const taskList = createTaskList(options);
-  const taskGet = createTaskGet(options);
-  const taskStop = createTaskStop(options);
-  const taskOutput = createTaskOutput(options);
-  return {
-    taskCreate,
-    task,
-    taskList,
-    taskGet,
-    taskStop,
-    taskOutput,
-    all: () => [taskCreate, task, taskList, taskGet, taskStop, taskOutput],
-  };
-}
-
 /** @public @stability experimental v0.1 */
-export function createTaskCreate(
-  options: CreateTaskToolsOptions,
-): ToolDefinition {
+export function createTaskCreate(options: TaskToolOptions): ToolDefinition {
   const kinds = taskCreateKindDescriptors(options);
   const kindsByName = new Map(kinds.map((kind) => [kind.kind, kind]));
   const limits = mergeConcurrencyLimits(
@@ -344,12 +305,11 @@ function taskCreateKindCall(parsed: CreateArgs): TaskCreateKindCall {
   return {
     ...(parsed.title ? { title: parsed.title } : {}),
     mode: parsed.mode,
-    awaited: parsed.awaited,
   };
 }
 
 function taskCreateKindDescriptors(
-  options: CreateTaskToolsOptions,
+  options: TaskToolOptions,
 ): TaskCreateKindDescriptor[] {
   const descriptors =
     options.taskCreateKinds ??
@@ -427,11 +387,6 @@ function taskCreateInputSchema(
         description:
           "foreground waits inline and auto-promotes on budget overrun; awaited starts detached but keeps this run alive; background starts detached fire-and-forget.",
       },
-      awaited: {
-        type: "boolean",
-        description:
-          "Compatibility flag for detached tasks. mode is preferred. Without mode, awaited=false selects background; otherwise foreground is the default.",
-      },
       payload:
         singlePayloadKind?.payloadSchema ??
         ({
@@ -442,18 +397,12 @@ function taskCreateInputSchema(
         } satisfies JsonSchemaObject),
     },
     required,
+    additionalProperties: false,
   };
 }
 
 /** @public @stability experimental v0.1 */
-export function createTaskControl(
-  options: CreateTaskToolsOptions,
-): ToolDefinition {
-  const taskList = createTaskList(options);
-  const taskGet = createTaskGet(options);
-  const taskStop = createTaskStop(options);
-  const taskOutput = createTaskOutput(options);
-  const taskWait = createTaskWait(options);
+export function createTaskControl(options: TaskToolOptions): ToolDefinition {
   return defineTool({
     name: "task",
     description:
@@ -499,15 +448,15 @@ export function createTaskControl(
       const record = requireRecord(normalizedArgs, "task");
       switch (record.action) {
         case "list":
-          return taskList.execute(normalizedArgs, ctx);
+          return executeTaskList(options, normalizedArgs, ctx);
         case "get":
-          return taskGet.execute(normalizedArgs, ctx);
+          return executeTaskGet(options, normalizedArgs);
         case "output":
-          return taskOutput.execute(normalizedArgs, ctx);
+          return executeTaskOutput(options, normalizedArgs);
         case "wait":
-          return taskWait.execute(normalizedArgs, ctx);
+          return executeTaskWait(options, normalizedArgs);
         case "stop":
-          return taskStop.execute(normalizedArgs, ctx);
+          return executeTaskStop(options, normalizedArgs);
         default:
           throw makeToolError(
             "TASK_ARGUMENTS_INVALID",
@@ -580,7 +529,7 @@ function taskControlInputSchema(): JsonSchemaObject {
 /**
  * Canonicalize the provider-friendly flat task schema before action-specific
  * validation and execution. Models sometimes populate every optional field;
- * harmless empty or unrelated values must not leak into the legacy handlers.
+ * harmless empty or unrelated values must not leak into action handlers.
  */
 function normalizeTaskControlArgs(args: unknown): Record<string, unknown> {
   if (typeof args !== "object" || args === null || Array.isArray(args)) {
@@ -756,246 +705,153 @@ function validateTaskControlWaitIds(
       };
 }
 
-/** @public @stability experimental v0.1 */
-export function createTaskList(
-  options: CreateTaskToolsOptions,
-): ToolDefinition {
-  return defineTool({
-    name: "task_list",
-    description:
-      "List background tasks, optionally filtered by status, kind, or scope. Defaults to the current run; use scope=all after resume to find durable tasks from earlier runs.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        status: { type: "string" },
-        kind: { type: "string" },
-        scope: {
-          type: "string",
-          enum: ["run", "all"],
-          description:
-            "run lists tasks owned by the current run; all lists every durable task in this task store.",
-        },
-      },
-    },
-    deferLoading: false,
-    policy: { risk: "safe", requiresApproval: false },
-    governance: { sideEffects: ["read"] },
-    async execute(args: unknown, ctx): Promise<{ tasks: TaskRecord[] }> {
-      const parsed = parseListArgs(args);
-      const tasks = options.manager.store.list({
-        status: parsed.status,
-        kind: parsed.kind,
-        ...(parsed.scope === "run"
-          ? { parentRunId: options.getParentRunId(ctx) }
-          : {}),
-      });
-      return { tasks };
-    },
+function executeTaskList(
+  options: TaskToolOptions,
+  args: unknown,
+  ctx: RuntimeContext,
+): { tasks: TaskRecord[] } {
+  const parsed = parseListArgs(args);
+  const tasks = options.manager.store.list({
+    status: parsed.status,
+    kind: parsed.kind,
+    ...(parsed.scope === "run"
+      ? { parentRunId: options.getParentRunId(ctx) }
+      : {}),
   });
+  return { tasks };
 }
 
-/** @public @stability experimental v0.1 */
-export function createTaskGet(options: CreateTaskToolsOptions): ToolDefinition {
-  return defineTool({
-    name: "task_get",
-    description: "Fetch the latest record for a single background task.",
-    inputSchema: {
-      type: "object",
-      properties: { taskId: { type: "string" } },
-      required: ["taskId"],
-    },
-    deferLoading: false,
-    policy: { risk: "safe", requiresApproval: false },
-    governance: { sideEffects: ["read"] },
-    async execute(args: unknown): Promise<TaskRecord> {
-      const id = parseTaskId(args);
-      const record = options.manager.store.get(id);
-      if (!record) {
-        throw makeToolError("TASK_NOT_FOUND", `Task not found: ${id}`);
-      }
-      return record;
-    },
-  });
+function executeTaskGet(options: TaskToolOptions, args: unknown): TaskRecord {
+  const id = parseTaskId(args);
+  const record = options.manager.store.get(id);
+  if (!record) {
+    throw makeToolError("TASK_NOT_FOUND", `Task not found: ${id}`);
+  }
+  return record;
 }
 
-/** @public @stability experimental v0.1 */
-export function createTaskStop(
-  options: CreateTaskToolsOptions,
-): ToolDefinition {
-  return defineTool({
-    name: "task_stop",
-    description:
-      "Request cancellation of a background task. Returns whether the call resulted in a cancellation.",
-    inputSchema: {
-      type: "object",
-      properties: { taskId: { type: "string" } },
-      required: ["taskId"],
-    },
-    deferLoading: false,
-    policy: { risk: "risky", requiresApproval: false },
-    governance: { sideEffects: ["write"] },
-    async execute(args: unknown): Promise<{ cancelled: boolean }> {
-      const id = parseTaskId(args);
-      const before = options.manager.store.get(id);
-      if (!before) {
-        throw makeToolError("TASK_NOT_FOUND", `Task not found: ${id}`);
-      }
-      if (isTerminal(before.status)) {
-        return { cancelled: false };
-      }
-      const handle = options.manager.handle(id);
-      if (!handle) {
-        return { cancelled: false };
-      }
-      await handle.cancel();
-      const after = options.manager.store.get(id);
-      return { cancelled: after?.status === "cancelled" };
-    },
-  });
+async function executeTaskStop(
+  options: TaskToolOptions,
+  args: unknown,
+): Promise<{ cancelled: boolean }> {
+  const id = parseTaskId(args);
+  const before = options.manager.store.get(id);
+  if (!before) {
+    throw makeToolError("TASK_NOT_FOUND", `Task not found: ${id}`);
+  }
+  if (isTerminal(before.status)) {
+    return { cancelled: false };
+  }
+  const handle = options.manager.handle(id);
+  if (!handle) {
+    return { cancelled: false };
+  }
+  await handle.cancel();
+  const after = options.manager.store.get(id);
+  return { cancelled: after?.status === "cancelled" };
 }
 
-/** @public @stability experimental v0.1 */
-export function createTaskOutput(
-  options: CreateTaskToolsOptions,
-): ToolDefinition {
+async function executeTaskOutput(
+  options: TaskToolOptions,
+  args: unknown,
+): Promise<{
+  chunks: TaskOutputChunk[];
+  nextSequence: number;
+  complete: boolean;
+  status: TaskStatus;
+  error?: TaskRecord["error"];
+  lastOutputAt?: string;
+  stalled: boolean;
+}> {
   const defaultMax =
     options.defaultMaxOutputChunks ?? DEFAULT_MAX_OUTPUT_CHUNKS;
-  return defineTool({
-    name: "task_output",
-    description:
-      "Fetch buffered output chunks for a task. Polls a snapshot — does not block on live output.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        taskId: { type: "string" },
-        fromSequence: { type: "integer" },
-        maxChunks: { type: "integer" },
-      },
-      required: ["taskId"],
-    },
-    deferLoading: false,
-    policy: { risk: "safe", requiresApproval: false },
-    governance: { sideEffects: ["read"] },
-    async execute(args: unknown): Promise<{
-      chunks: TaskOutputChunk[];
-      nextSequence: number;
-      complete: boolean;
-      status: TaskStatus;
-      error?: TaskRecord["error"];
-      lastOutputAt?: string;
-      stalled: boolean;
-    }> {
-      const parsed = parseOutputArgs(args);
-      const record = options.manager.store.get(parsed.taskId);
-      if (!record) {
-        throw makeToolError(
-          "TASK_NOT_FOUND",
-          `Task not found: ${parsed.taskId}`,
-        );
-      }
-      const max = parsed.maxChunks ?? defaultMax;
-      const fromSequence = parsed.fromSequence ?? 0;
-      const chunks: TaskOutputChunk[] = [];
-      const iterable = options.manager.store.loadOutput(
-        parsed.taskId,
-        fromSequence,
-      );
-      const iterator = iterable[Symbol.asyncIterator]();
-      // We only drain currently-buffered chunks (and any live chunk already
-      // queued). For a streaming surface, callers should consume the
-      // TaskHandle.output() iterator directly.
-      while (chunks.length < max) {
-        const next = await raceWithImmediate(iterator);
-        if (next === IMMEDIATE_NONE) break;
-        if (next.done) break;
-        chunks.push(next.value);
-      }
-      // Best-effort close of the iterator so subscribers detach.
-      if (iterator.return) await iterator.return(undefined);
-      const lastSeq =
-        chunks.length > 0
-          ? chunks[chunks.length - 1]!.sequence
-          : fromSequence - 1;
-      return {
-        chunks,
-        nextSequence: lastSeq + 1,
-        complete: isTerminal(record.status),
-        status: record.status,
-        error: record.error,
-        lastOutputAt: record.lastOutputAt,
-        stalled: record.status === "running" && chunks.length === 0,
-      };
-    },
-  });
+  const parsed = parseOutputArgs(args);
+  const record = options.manager.store.get(parsed.taskId);
+  if (!record) {
+    throw makeToolError("TASK_NOT_FOUND", `Task not found: ${parsed.taskId}`);
+  }
+  const max = parsed.maxChunks ?? defaultMax;
+  const fromSequence = parsed.fromSequence ?? 0;
+  const chunks: TaskOutputChunk[] = [];
+  const iterable = options.manager.store.loadOutput(
+    parsed.taskId,
+    fromSequence,
+  );
+  const iterator = iterable[Symbol.asyncIterator]();
+  // We only drain currently-buffered chunks (and any live chunk already
+  // queued). For a streaming surface, callers should consume the
+  // TaskHandle.output() iterator directly.
+  while (chunks.length < max) {
+    const next = await raceWithImmediate(iterator);
+    if (next === IMMEDIATE_NONE) break;
+    if (next.done) break;
+    chunks.push(next.value);
+  }
+  // Best-effort close of the iterator so subscribers detach.
+  if (iterator.return) await iterator.return(undefined);
+  const lastSeq =
+    chunks.length > 0 ? chunks[chunks.length - 1]!.sequence : fromSequence - 1;
+  return {
+    chunks,
+    nextSequence: lastSeq + 1,
+    complete: isTerminal(record.status),
+    status: record.status,
+    error: record.error,
+    lastOutputAt: record.lastOutputAt,
+    stalled: record.status === "running" && chunks.length === 0,
+  };
 }
 
-function createTaskWait(options: CreateTaskToolsOptions): ToolDefinition {
-  return defineTool({
-    name: "task_wait",
-    description:
-      "Wait for one or more background tasks. Prefer task(action=wait); this definition is internal to the task action wrapper.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        taskId: { type: "string" },
-        ids: { type: "array", items: { type: "string" } },
-        mode: { type: "string", enum: ["any", "all"] },
-      },
-    },
-    deferLoading: false,
-    policy: { risk: "safe", requiresApproval: false },
-    governance: { sideEffects: ["read"] },
-    async execute(args: unknown): Promise<TaskWaitResult> {
-      const parsed = parseWaitArgs(args);
-      const records = parsed.ids.map((id) => {
-        const record = options.manager.store.get(id);
-        if (!record) {
-          throw makeToolError("TASK_NOT_FOUND", `Task not found: ${id}`);
-        }
-        return record;
-      });
-      if (records.length === 0) {
-        throw makeToolError(
-          "TASK_ARGUMENTS_INVALID",
-          "task wait requires at least one task id.",
-        );
-      }
-
-      const waitRecord =
-        parsed.mode === "all"
-          ? await waitForAllTasks(options.manager, records)
-          : await waitForAnyTask(options.manager, records);
-
-      const terminalRecords = waitRecord.filter((record) =>
-        isTerminal(record.status),
-      );
-      const terminalIds = new Set(terminalRecords.map((record) => record.id));
-      for (const record of terminalRecords) {
-        options.manager.store.update(record.id, { awaited: false });
-      }
-
-      return {
-        mode: parsed.mode,
-        complete:
-          parsed.mode === "all"
-            ? terminalRecords.length === parsed.ids.length
-            : terminalRecords.length > 0,
-        taskIds: parsed.ids,
-        terminalTaskIds: [...terminalIds],
-        tasks: waitRecord.map(
-          (record) => options.manager.store.get(record.id) ?? record,
-        ),
-        completed: terminalRecords.filter(
-          (record) => record.status === "completed",
-        ).length,
-        failed: terminalRecords.filter((record) => record.status === "failed")
-          .length,
-        cancelled: terminalRecords.filter(
-          (record) => record.status === "cancelled",
-        ).length,
-      };
-    },
+async function executeTaskWait(
+  options: TaskToolOptions,
+  args: unknown,
+): Promise<TaskWaitResult> {
+  const parsed = parseWaitArgs(args);
+  const records = parsed.ids.map((id) => {
+    const record = options.manager.store.get(id);
+    if (!record) {
+      throw makeToolError("TASK_NOT_FOUND", `Task not found: ${id}`);
+    }
+    return record;
   });
+  if (records.length === 0) {
+    throw makeToolError(
+      "TASK_ARGUMENTS_INVALID",
+      "task wait requires at least one task id.",
+    );
+  }
+
+  const waitRecord =
+    parsed.mode === "all"
+      ? await waitForAllTasks(options.manager, records)
+      : await waitForAnyTask(options.manager, records);
+
+  const terminalRecords = waitRecord.filter((record) =>
+    isTerminal(record.status),
+  );
+  const terminalIds = new Set(terminalRecords.map((record) => record.id));
+  for (const record of terminalRecords) {
+    options.manager.store.update(record.id, { awaited: false });
+  }
+
+  return {
+    mode: parsed.mode,
+    complete:
+      parsed.mode === "all"
+        ? terminalRecords.length === parsed.ids.length
+        : terminalRecords.length > 0,
+    taskIds: parsed.ids,
+    terminalTaskIds: [...terminalIds],
+    tasks: waitRecord.map(
+      (record) => options.manager.store.get(record.id) ?? record,
+    ),
+    completed: terminalRecords.filter((record) => record.status === "completed")
+      .length,
+    failed: terminalRecords.filter((record) => record.status === "failed")
+      .length,
+    cancelled: terminalRecords.filter((record) => record.status === "cancelled")
+      .length,
+  };
 }
 
 interface TaskWaitResult {
@@ -1023,6 +879,7 @@ interface CreateArgs {
 
 function parseCreateArgs(args: unknown): CreateArgs {
   const record = requireRecord(args, "task_create");
+  assertOnlyKeys(record, ["kind", "title", "mode", "payload"], "task_create");
   const kind = record.kind;
   if (typeof kind !== "string" || kind.length === 0) {
     throw makeToolError(
@@ -1031,8 +888,8 @@ function parseCreateArgs(args: unknown): CreateArgs {
     );
   }
   const title = typeof record.title === "string" ? record.title : undefined;
-  const mode = parseTaskCreateMode(record.mode, record.awaited);
-  const awaited = parseTaskCreateAwaited(mode, record.awaited);
+  const mode = parseTaskCreateMode(record.mode);
+  const awaited = mode !== "background";
   const payload =
     record.payload && typeof record.payload === "object"
       ? (record.payload as Record<string, unknown>)
@@ -1048,10 +905,7 @@ function tryParseCreateArgs(args: unknown): CreateArgs | undefined {
   }
 }
 
-function parseTaskCreateMode(
-  rawMode: unknown,
-  rawAwaited: unknown,
-): TaskCreateMode {
+function parseTaskCreateMode(rawMode: unknown): TaskCreateMode {
   if (
     rawMode === "foreground" ||
     rawMode === "awaited" ||
@@ -1065,32 +919,25 @@ function parseTaskCreateMode(
       "task_create: mode must be foreground, awaited, or background.",
     );
   }
-  return rawAwaited === false ? "background" : "foreground";
+  return "foreground";
 }
 
-function parseTaskCreateAwaited(
-  mode: TaskCreateMode,
-  rawAwaited: unknown,
-): boolean {
-  const expected = mode === "background" ? false : true;
-  if (rawAwaited === undefined) return expected;
-  if (typeof rawAwaited !== "boolean") {
-    throw makeToolError(
-      "TASK_ARGUMENTS_INVALID",
-      "task_create: awaited must be a boolean when provided.",
-    );
-  }
-  if (rawAwaited !== expected) {
-    throw makeToolError(
-      "TASK_ARGUMENTS_INVALID",
-      `task_create: mode=${mode} conflicts with awaited=${rawAwaited}. Omit awaited or choose a matching mode.`,
-    );
-  }
-  return rawAwaited;
+function assertOnlyKeys(
+  record: Record<string, unknown>,
+  allowed: readonly string[],
+  toolName: string,
+): void {
+  const allowedSet = new Set(allowed);
+  const unsupported = Object.keys(record).filter((key) => !allowedSet.has(key));
+  if (unsupported.length === 0) return;
+  throw makeToolError(
+    "TASK_ARGUMENTS_INVALID",
+    `${toolName}: unsupported argument field(s): ${unsupported.join(", ")}.`,
+  );
 }
 
 function enforceConcurrencyLimit(
-  options: CreateTaskToolsOptions,
+  options: TaskToolOptions,
   parentRunId: RunId,
   kind: string,
 ): void {
@@ -1179,7 +1026,7 @@ interface ListArgs {
 
 function parseListArgs(args: unknown): ListArgs {
   if (args === undefined || args === null) return { scope: "run" };
-  const record = requireRecord(args, "task_list");
+  const record = requireRecord(args, "task");
   const status =
     typeof record.status === "string" && isValidStatus(record.status)
       ? (record.status as TaskStatus)
@@ -1223,7 +1070,7 @@ interface WaitArgs {
 }
 
 function parseOutputArgs(args: unknown): OutputArgs {
-  const record = requireRecord(args, "task_output");
+  const record = requireRecord(args, "task");
   const taskId = parseTaskId(args);
   const fromSequence =
     typeof record.fromSequence === "number" &&
@@ -1241,7 +1088,7 @@ function parseOutputArgs(args: unknown): OutputArgs {
 }
 
 function parseWaitArgs(args: unknown): WaitArgs {
-  const record = requireRecord(args, "task_wait");
+  const record = requireRecord(args, "task");
   const ids: TaskId[] = [];
   if (record.taskId !== undefined) {
     if (typeof record.taskId !== "string" || record.taskId.length === 0) {

@@ -1,18 +1,8 @@
 // =============================================================================
 // @sparkwright/core — public API surface
 //
-// Two layers live behind this entry point:
-//
-// 1. PUBLIC API — types, factories, and extension interfaces. Semver-tracked
-//    from v0.1 onward. Build on these freely.
-//
-// 2. IMPLEMENTATION — reference classes (SparkwrightRun, EventLog, FileRunStore,
-//    LocalWorkspace, default context/prompt/observer impls…). Re-exported here
-//    for current consumers and backward compatibility, but their shape is
-//    NOT semver-stable in 0.x. Prefer the public API (`createRun`, `defineTool`,
-//    extension interfaces). If you must depend on a class directly, import via
-//    `@sparkwright/core/internal` and pin a minor version. See docs/AI_TASK_INDEX.md
-//    and the README "API Stability" section.
+// This entry point contains the stable type, factory, and extension surface.
+// Reference implementations live exclusively at `@sparkwright/core/internal`.
 // =============================================================================
 
 // -----------------------------------------------------------------------------
@@ -133,25 +123,17 @@ export type {
   ClassifiedCommandFailure,
   ClassifiedCommandSuccess,
   ClassifiedToolFailure,
-  CommandOutcomeSnapshot,
   CommandOutcomeSummary,
-  CompletedRunOutcome,
   ToolFailureCategory,
-  ToolOutcomeSnapshot,
   ToolOutcomeSummary,
   VerificationProfileResult,
 } from "./run-outcome.js";
 export {
   analyzeCommandOutcomesFromFactLedger,
-  analyzeCommandOutcomes,
   analyzeToolOutcomes,
   analyzeVerificationProfileResults,
   classifyToolFailure,
-  commandOutcomeSnapshot,
-  commandOutcomeSnapshotFromFactLedger,
-  completedRunOutcomeFromEvents,
   isPolicyOrApprovalFailure,
-  toolOutcomeSnapshot,
   toolTargetFingerprint,
   verificationProfileResultsFromFactLedger,
 } from "./run-outcome.js";
@@ -169,9 +151,7 @@ export {
   effectiveShellExitCode,
   hookCommandFactFromWorkflowHookCompleted,
   isShellToolName,
-  isVerificationGoal,
   isVerificationRelevantCommand,
-  parseVerificationHookName,
   shellCommandFactFromToolCompleted,
   shellCommandRequestFromEvent,
   stableDiagnosticJson,
@@ -190,6 +170,23 @@ export type {
   FactLedgerWriteFact,
 } from "./fact-ledger.js";
 export { FactLedger, factLedgerSnapshotFromUnknown } from "./fact-ledger.js";
+export { projectFactLedgerSnapshot } from "./fact-ledger.js";
+
+export type {
+  AssessRunOptions,
+  RunAssessment,
+  RunAssessmentHealth,
+  RunIssue,
+  RunIssueDisposition,
+  RunIssueKind,
+  VerificationResult,
+  VerificationStatus,
+} from "./run-assessment.js";
+export {
+  assessRun,
+  isResumableRunFailureReason,
+  runAssessmentFromUnknown,
+} from "./run-assessment.js";
 
 // Display-safe path projection helpers shared by diagnostics/UI layers.
 export type { WorkspaceDisplayPathOptions } from "./path-display.js";
@@ -278,12 +275,10 @@ export {
 } from "./environment.js";
 
 // Approval
-export type { ApprovalResolver } from "./approval.js";
 export { createApprovalRequest, resolveApproval } from "./approval.js";
 export type {
   ApprovalEnforcementMode,
   ApprovalPolicy,
-  ApprovalPolicyOptions,
   ApprovalScope,
 } from "./approval-policy.js";
 export {
@@ -335,13 +330,6 @@ export {
   createAnchoredText,
   applyAnchoredEdits,
 } from "./anchored-edit.js";
-
-// Validation
-export type * from "./validation.js";
-export {
-  validationFailureMessage,
-  kickPostSamplingHooks,
-} from "./validation.js";
 
 // Loop pipeline extensions (compaction, prefetch, summarizer)
 export type {
@@ -459,8 +447,8 @@ export {
   createAbortableModelAdapter,
 } from "./model.js";
 
-// Workspace primitive types (factory `createSimpleTextDiff`). Concrete
-// LocalWorkspace / ControlledWorkspace classes are below in IMPLEMENTATION.
+// Workspace primitive factory. Concrete LocalWorkspace / ControlledWorkspace
+// reference classes live at `@sparkwright/core/internal`.
 export { createSimpleTextDiff } from "./workspace.js";
 
 // Extension protocols — Wave 1 + Wave 2 stubs
@@ -674,6 +662,7 @@ export { combineRunHooks, createDynamicHookSet } from "./hooks.js";
 // Deterministic workflow hooks over the standard agent lifecycle.
 export type {
   WorkflowHookName,
+  WorkflowHookFinding,
   WorkflowPreToolUseStage,
   WorkflowRuntimeSignal,
   WorkflowHookMatchValue,
@@ -702,21 +691,8 @@ export type {
 } from "./user-hooks.js";
 export { bindUserHooks } from "./user-hooks.js";
 
-// Interaction channel (approve / ask / notify — unified outbound).
-export type {
-  InteractionChannel,
-  InteractionQuestionChoice,
-  InteractionQuestionRequest,
-  InteractionQuestionResponse,
-  InteractionNotification,
-  InteractionNotificationLevel,
-} from "./interaction.js";
-export {
-  approvalResolverFromChannel,
-  channelFromApprovalResolver,
-  createInteractionNotification,
-  createInteractionQuestionRequest,
-} from "./interaction.js";
+// Interaction channel (approval-only outbound boundary).
+export type { InteractionChannel } from "./interaction.js";
 
 // Slash-command registry (user intent surface; distinct from ToolDefinition).
 export type {
@@ -754,58 +730,3 @@ export type {
 } from "./run.js";
 export { createRun, resumeRunFromCheckpoint } from "./run.js";
 export type { ResumeRunOptions } from "./run.js";
-
-// -----------------------------------------------------------------------------
-// IMPLEMENTATION — re-exported for current consumers. Prefer factories above.
-// Marked @internal at the class declaration. Subject to change in 0.x.
-// Importable also via `@sparkwright/core/internal`.
-// -----------------------------------------------------------------------------
-
-export { EventLog } from "./events.js";
-export {
-  FileRunStore,
-  MemoryTrace,
-  bindStorageDegradationEvents,
-  createSessionFileRunStoreFactory,
-  loadCheckpointFromRunDir,
-} from "./trace.js";
-export { LocalWorkspace, ControlledWorkspace } from "./workspace.js";
-export type { ControlledWorkspaceOptions } from "./workspace.js";
-export { WorkspaceCheckpointStore } from "./workspace-checkpoint.js";
-export type {
-  WorkspaceCheckpointFile,
-  WorkspaceCheckpointMeta,
-  WorkspaceCheckpointRestoreTarget,
-  WorkspaceCheckpointStoreOptions,
-  WorkspaceRollbackResult,
-} from "./workspace-checkpoint.js";
-export {
-  DefaultObservationFormatter,
-  DefaultContextAssembler,
-  CompactingContextAssembler,
-  SectionedPromptBuilder,
-  DefaultPromptBuilder,
-  createDefaultPromptSections,
-  createAppPromptSection,
-  createEnvironmentSection,
-  createToolGuidanceSection,
-  createModelAdaptiveSection,
-  compilePromptCacheBlocks,
-} from "./context.js";
-export type {
-  DefaultObservationFormatterOptions,
-  DefaultContextAssemblerOptions,
-  DefaultPromptBuilderOptions,
-  AppPromptSectionOptions,
-  EnvironmentSectionInput,
-  EnvironmentSectionOptions,
-  ToolGuidanceSectionOptions,
-  ModelAdaptiveSectionOptions,
-  ModelAdaptiveRule,
-} from "./context.js";
-export type {
-  FileRunStoreOptions,
-  LoadCheckpointFromRunDirOptions,
-  SessionFileRunStoreFactoryOptions,
-} from "./trace.js";
-export { SparkwrightRun } from "./run.js";

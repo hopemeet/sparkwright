@@ -91,8 +91,8 @@ npm exec sparkwright -- cron update <job-id-or-name> --schedule "every 2h"
 npm exec sparkwright -- cron pause <job-id-or-name>
 npm exec sparkwright -- cron resume <job-id-or-name>
 npm exec sparkwright -- cron remove <job-id-or-name>
-npm exec sparkwright -- cron run <job-id-or-name> --model provider/model --yes
-npm exec sparkwright -- cron tick --model provider/model --yes
+npm exec sparkwright -- cron run <job-id-or-name> --model provider/model --access-mode bypass
+npm exec sparkwright -- cron tick --model provider/model --access-mode bypass
 ```
 
 Supported schedule inputs include delays, intervals, five-field cron
@@ -116,7 +116,7 @@ Durable hosts should wire:
 
 - `TaskManager`
 - `TaskStore`
-- `TaskNotificationSink`
+- `ActorNotificationSink` / `ActorInbox`
 - watchdog health checks
 - startup recovery before accepting new work
 
@@ -137,8 +137,8 @@ npm run build
 
 Approval denied in non-interactive shell:
 
-- Use `--yes` for deterministic smoke tests.
-- Without `--yes`, `--write` approval can be denied and traced as
+- Use `--access-mode bypass` for trusted non-interactive smoke tests.
+- With `--access-mode ask`, approval can be denied in a non-interactive shell and traced as
   `workspace.write.denied`.
 
 Provider run fails before starting:

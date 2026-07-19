@@ -74,11 +74,11 @@ describe("createClearToolUsesStage", () => {
   it("replaces older tool results with stable placeholders", async () => {
     const old = {
       ...item("tool_result", "old output".repeat(100)),
-      source: { kind: "tool", uri: "read_file" },
+      source: { kind: "tool", uri: "read" },
       metadata: {
         layer: "working",
         stability: "turn",
-        toolName: "read_file",
+        toolName: "read",
         status: "completed",
         toolCallId: "call_old",
       },
@@ -89,7 +89,7 @@ describe("createClearToolUsesStage", () => {
       metadata: {
         layer: "working",
         stability: "turn",
-        toolName: "shell",
+        toolName: "bash",
         status: "completed",
         toolCallId: "call_recent",
       },
@@ -109,7 +109,7 @@ describe("createClearToolUsesStage", () => {
     expect(result.items[0]?.content).toContain(
       "tool result cleared by clear_tool_uses",
     );
-    expect(result.items[0]?.content).toContain("tool=read_file");
+    expect(result.items[0]?.content).toContain("tool=read");
     expect(result.items[0]?.metadata.clearToolUsesCleared).toBe(true);
     expect(result.items[1]?.content).toBe(recent.content);
     expect(result.freedChars).toBeGreaterThan(0);

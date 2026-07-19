@@ -10,6 +10,8 @@ import {
 export interface SkillReportEntry {
   name: string;
   description: string;
+  packageHash: string;
+  packageHashPolicyVersion: 2;
   version?: string;
   source?: string;
   layer?: SkillRoot["layer"];
@@ -102,7 +104,7 @@ function shouldReportMissingRoot(
 ): boolean {
   if (includeMissingRoots === true) return true;
   if (includeMissingRoots === false) return false;
-  return root.layer === "legacy";
+  return root.layer === "configured";
 }
 
 function toReportEntry(
@@ -112,6 +114,8 @@ function toReportEntry(
   return {
     name: skill.name,
     description: skill.description,
+    packageHash: skill.packageHash,
+    packageHashPolicyVersion: skill.packageHashPolicyVersion,
     version: skill.version,
     source: skill.sourcePath,
     layer: root.layer,
