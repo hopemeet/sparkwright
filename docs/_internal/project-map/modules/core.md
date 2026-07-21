@@ -14,6 +14,18 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md),
 
 - Status: Verified
 - Date: 2026-07-21
+- Scope: approval requests now carry a producer-authored `ApprovalSubject`;
+  tool definitions may provide an argument-specific subject and unknown tools
+  fail closed to one-shot approval. `model.completed` remains raw turn evidence,
+  while only nonterminal commentary uses `model.assistant_text` and the
+  Stop-accepted `run.completed.message` is the canonical final answer.
+- Read: Core approval/types/tool/run/workspace/outcome paths and downstream
+  Protocol, Host, Streaming Runtime, Shell, TUI, CLI, and ACP consumers.
+- Tests: focused Core approval/workspace/run suites and affected downstream
+  approval/finality suites and typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-21
 - Scope: trace diagnostics now classify semantic partial/blocked Agent outcomes
   as incomplete evidence and include summary/blocker codes; session compaction
   facts retain structured blocker recovery data. Core's generic repeated-call
@@ -252,6 +264,11 @@ Does not own:
   approval, the run loop uses this bounded summary before falling back to
   `Run tool <name>`. The hook must be pure and must tolerate invalid model
   arguments by throwing or returning undefined.
+- `ToolDefinition.approvalSubjectForArgs()` is the tool-owned semantic identity
+  of the effect being authorized. Stable subjects carry a producer-defined key;
+  a missing hook falls back to `one_shot` and cannot create reusable client
+  authority. Core passes the subject through the same approval audit lifecycle
+  but does not interpret client session rules.
 - `ToolDefinition.governance.idempotency` is the only replay-safety semantic.
   Network-class failures on `conditional` / `non_idempotent` tools emit
   `tool.replay_risk`; `idempotent` or undeclared tools do not.

@@ -203,6 +203,7 @@ async function runHostLifecycle(
           runId: msg.payload.runId as ApprovalRequest["runId"],
           action: msg.payload.action,
           summary: msg.payload.summary,
+          subject: msg.payload.subject,
           details: msg.payload.details ?? {},
           createdAt: msg.timestamp,
           status: "pending",

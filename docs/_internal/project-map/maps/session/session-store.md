@@ -11,6 +11,16 @@ See [../trace/raw-trace.md](../trace/raw-trace.md) for raw event evidence.
 
 - Status: Verified
 - Date: 2026-07-21
+- Scope: reviewed final-answer and approval-subject propagation. Raw
+  `model.completed`, typed approval requests, and terminal
+  `run.completed.message` remain ordinary append-only events; no session path,
+  result layout, compaction identity, or replay storage contract changed.
+- Read: Core run store/event persistence, Protocol/TUI replay consumers, and
+  affected finality/approval tests.
+- Tests: focused Core, Protocol, Host, and TUI replay/export suites passed.
+
+- Status: Verified
+- Date: 2026-07-21
 - Scope: session trace facts now retain sub-agent semantic status, summary, and
   bounded structured blockers (including typed requirements) for session
   compaction and rehydration. Raw session files and event families are

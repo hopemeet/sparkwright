@@ -12,6 +12,16 @@ See [raw-trace.md](raw-trace.md) for source data and [export-diagnostics.md](exp
 
 - Status: Verified
 - Date: 2026-07-21
+- Scope: semantic input failures carrying `metadata.phase:"validateInput"`
+  classify as model argument errors regardless of domain-specific error code.
+  Raw `model.completed` remains timeline evidence and does not become a second
+  terminal assistant answer.
+- Read: Core run-outcome classifier, terminal assessment/trace projection, and
+  focused tests.
+- Tests: focused Core outcome/run/trace tests passed.
+
+- Status: Verified
+- Date: 2026-07-21
 - Scope: `SUBAGENT_INCOMPLETE` detection now includes semantic
   `status:"partial"` / `status:"blocked"` and failed lifecycle terminals, with
   child summary and blocker codes in evidence. Transport completion no longer

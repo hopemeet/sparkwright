@@ -147,6 +147,7 @@ export class ExecutionInteractionOperations {
               approvalId,
               action: request.action,
               summary: request.summary,
+              subject: request.subject,
               details: {
                 ...(typeof details?.path === "string"
                   ? { path: details.path }

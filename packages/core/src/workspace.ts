@@ -435,6 +435,13 @@ export class ControlledWorkspace implements WorkspaceRuntime {
         runId: this.options.run.id,
         action: "workspace.write",
         summary: `${operation === "remove" ? "Remove" : "Write"} ${workspacePath}`,
+        subject: {
+          kind: "workspace_file",
+          operation,
+          path: workspacePath,
+          key: `workspace_file:${operation}:${workspacePath}`,
+          label: `Allow ${operation === "remove" ? "removing" : "writing"} ${workspacePath} for this session`,
+        },
         details: {
           path: workspacePath,
           reason: options.reason,

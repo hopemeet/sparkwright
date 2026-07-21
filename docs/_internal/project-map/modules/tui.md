@@ -12,6 +12,25 @@ See also [../maps/trace/export-diagnostics.md](../maps/trace/export-diagnostics.
 
 - Status: Verified
 - Date: 2026-07-21
+- Scope: live conversation and Markdown export share a quiet-success
+  projection: batch wrappers, successful approval rows, successful Skill
+  body/resource loads, tool discovery/Todo plumbing, and successful MCP prep
+  stay in Activity/Trace but not chat. Internal failures, denied approvals, and
+  real `subagent.*` rows remain visible. Shell summaries retain head and tail
+  with an omission marker; terminal summaries expose unhealthy assessment
+  codes and unambiguous approval counts without a duplicate tool-call count.
+  Typed producer subjects own remembered rules; duplicate approval delivery is
+  idempotent, failed automatic resolution falls back to the manual queue, and
+  `s` explicitly selects a safe session rule. Only `run.completed.message`
+  renders the accepted final answer.
+- Read: EventStream/export projection, tool summaries, approval coordinator/
+  prompt/session rules, Protocol events, Core finality, and Activity retention.
+- Tests: focused and full TUI suites, affected typechecks, and a real 120x32
+  Terra PTY/trace/session rerun passed; the raw Skill body/resource events
+  remained in Trace while no JSON leaked into conversation scrollback.
+
+- Status: Verified
+- Date: 2026-07-21
 - Scope: terminal Agent lifecycle rows now render semantic blocked/partial
   status and summary directly from structured payloads; blocked rows are red
   and partial rows yellow. Profile-derivation diagnostics remain Activity/Trace
@@ -213,7 +232,7 @@ Does not own:
 
 - The prepared-change fast path uses the normal queued approval controller with
   action `skill.apply`. `ApprovalPrompt` renders the persisted final patch and
-  target before the one-shot decision; it deliberately has an unknown session
+  target before the one-shot decision; it deliberately has a typed `one_shot`
   approval subject, so no remembered rule can authorize later effects. The
   post-run human-action band remains transitional for review-only/legacy drafts
   and is not canonical waiting state.

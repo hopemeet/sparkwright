@@ -96,7 +96,7 @@ function coreEventToSessionUpdates(
       return [agentText(text, messageId)];
     }
     case "model.assistant_text":
-    case "model.completed": {
+    case "run.completed": {
       const text = textFromAny(payload, ["message", "text", "content"]);
       if (hasStreamedText(state, { messageId, runId })) return [];
       return text ? [agentText(text, messageId)] : [];

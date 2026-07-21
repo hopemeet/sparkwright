@@ -255,6 +255,7 @@ describe("ImGateway", () => {
           approvalId: "approval_1",
           action: "write",
           summary: "Write README",
+          subject: { kind: "one_shot", label: "Write README once" },
         },
       });
 

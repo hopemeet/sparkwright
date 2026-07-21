@@ -447,6 +447,24 @@ export function createShellTool(
     policyForArgs(args) {
       return shellPolicyForArgs(args, options.safety);
     },
+    approvalSubjectForArgs(args) {
+      const input = normalizeShellInput(args, options.foregroundTimeoutMs);
+      const cwd = resolve(options.workspaceRoot ?? ".", input.cwd ?? ".");
+      const key = `shell_command:${JSON.stringify({
+        command: input.command,
+        cwd,
+        background: input.background,
+        lifetime: input.lifetime,
+        foregroundTimeoutMs: input.foregroundTimeoutMs,
+      })}`;
+      return {
+        kind: "shell_command",
+        command: input.command,
+        cwd,
+        key,
+        label: "Allow this exact command here for this session",
+      };
+    },
     resultSize: { maxChars: SHELL_INLINE_CHARS },
     resultPresentation: {
       kind: "shell_output",

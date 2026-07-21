@@ -4,6 +4,7 @@
 import { createToolCallId } from "./ids.js";
 import type { RunId } from "./ids.js";
 import type {
+  ApprovalSubject,
   RuntimeContext,
   SparkwrightError,
   ToolCall,
@@ -243,6 +244,14 @@ export interface ToolDefinition<TArgs = unknown, TResult = unknown> {
     args: TArgs,
     options: ToolRequestPreviewOptions,
   ): string | undefined;
+  /**
+   * Producer-authored identity for argument-dependent approval effects.
+   * Omit this hook when the call must remain one-shot and cannot safely form a
+   * reusable session rule.
+   */
+  approvalSubjectForArgs?(
+    args: TArgs,
+  ): ApprovalSubject | Promise<ApprovalSubject>;
   /**
    * Optional corrective guidance when the generic repeat guard skips a
    * verbatim state-observation call. Returning text makes the skip a completed

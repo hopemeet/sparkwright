@@ -62,6 +62,13 @@ describe("ExecutionInteractionOperations", () => {
       runId: run.record.id,
       action: "workspace.write",
       summary: "Write README.md",
+      subject: {
+        kind: "workspace_file",
+        operation: "write",
+        path: "README.md",
+        key: "workspace_file:write:README.md",
+        label: "Allow writing README.md for this session",
+      },
       details: { path: "README.md", secret: "bounded-detail" },
     });
     const firstResponse = Promise.resolve(channel.approve(firstRequest));
@@ -74,6 +81,7 @@ describe("ExecutionInteractionOperations", () => {
         approvalId: firstRequest.id,
         action: "workspace.write",
         summary: "Write README.md",
+        subject: firstRequest.subject,
         details: { path: "README.md", secret: "bounded-detail" },
       },
     });
@@ -96,6 +104,7 @@ describe("ExecutionInteractionOperations", () => {
       runId: run.record.id,
       action: "shell.execute",
       summary: "Run tests",
+      subject: { kind: "one_shot", label: "Run tests once" },
     });
     const secondResponse = Promise.resolve(channel.approve(secondRequest));
     operations.cleanup();
@@ -149,6 +158,7 @@ describe("ExecutionInteractionOperations", () => {
         runId: run.record.id,
         action: "workspace.write",
         summary: "Wait for approval",
+        subject: { kind: "one_shot", label: "Wait for approval once" },
       });
       const response = Promise.resolve(channel.approve(request));
 

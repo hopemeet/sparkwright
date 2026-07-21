@@ -337,6 +337,7 @@ function approvalEvent(approvalId: string): HostEvent {
       approvalId,
       action: "write",
       summary: "Write file",
+      subject: { kind: "one_shot", label: "Write file once" },
     },
   };
 }

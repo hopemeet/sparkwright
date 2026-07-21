@@ -10,6 +10,16 @@ See [approvals.md](approvals.md) and [../runtime/tool-orchestration.md](../runti
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-21
+- Scope: managed write approval now carries a typed canonical file subject;
+  `write` and `remove` use distinct session-rule keys, so approval for one
+  operation cannot authorize the other. Proposal/diff/policy/artifact/rollback
+  ordering is unchanged.
+- Read: Core workspace mutation/approval path, TUI subject validation, and
+  workspace/approval tests.
+- Tests: focused Core workspace/approval and TUI session-rule tests passed.
+
+- Status: Verified
 - Date: 2026-07-19
 - Scope: reviewed write safety around the Host execution/Workflow refactor.
   Removing implicit `README.md` scope broadens only to the existing configured

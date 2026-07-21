@@ -125,7 +125,10 @@ export function createPartialSubagentFinalityDisclosureHook(): WorkflowHook {
       const events = Array.isArray(payload.events)
         ? (payload.events as SparkwrightEvent[])
         : [];
-      const partialSubagents = collectPartialSubagentFinality(events);
+      const partialSubagents = collectPartialSubagentFinality(
+        events,
+        input.run.id,
+      );
       if (partialSubagents.length === 0) return;
 
       advancedRuns.add(input.run.id);
@@ -1285,7 +1288,7 @@ function escapeRegExp(value: string): string {
 interface PartialSubagentFinality {
   label: string;
   reason: string;
-  childRunId?: string;
+  childRunId: string;
   summary?: string;
   blockers: Array<{
     code: string;
@@ -1299,40 +1302,30 @@ interface PartialSubagentFinality {
 
 function collectPartialSubagentFinality(
   events: readonly SparkwrightEvent[],
+  parentRunId: string,
 ): PartialSubagentFinality[] {
   const byKey = new Map<string, PartialSubagentFinality>();
   for (const event of events) {
-    const item = partialSubagentFinalityFromEvent(event);
+    const item = partialSubagentFinalityFromEvent(event, parentRunId);
     if (!item) continue;
-    byKey.set(item.childRunId ?? item.label, item);
+    byKey.set(item.childRunId, item);
   }
   return [...byKey.values()];
 }
 
 function partialSubagentFinalityFromEvent(
   event: SparkwrightEvent,
+  parentRunId: string,
 ): PartialSubagentFinality | undefined {
   if (!isRecord(event.payload)) return;
-
-  if (event.type === "subagent.completed" || event.type === "subagent.failed") {
-    return partialSubagentFinalityFromRecord(
-      event.payload,
-      event.metadata,
-      event.type === "subagent.failed",
-    );
-  }
-
-  if (event.type !== "tool.completed" && event.type !== "tool.failed") {
+  if (event.type !== "subagent.completed" && event.type !== "subagent.failed") {
     return;
   }
-  const toolName =
-    stringValue(event.payload.toolName) ?? stringValue(event.payload.name);
-  if (toolName !== "spawn_agent") return;
-  const output = isRecord(event.payload.output) ? event.payload.output : {};
+  if (stringValue(event.payload.parentRunId) !== parentRunId) return;
   return partialSubagentFinalityFromRecord(
-    output,
+    event.payload,
     event.metadata,
-    event.type === "tool.failed",
+    event.type === "subagent.failed",
   );
 }
 
@@ -1367,10 +1360,8 @@ function partialSubagentFinalityFromRecord(
     terminalState === "truncated";
   if (!partial) return;
 
-  const childRunId =
-    stringValue(record.childRunId) ??
-    findNestedString(record, "childRunId") ??
-    stringValue(metadata?.childRunId);
+  const childRunId = stringValue(record.childRunId);
+  if (!childRunId) return;
   const label =
     stringValue(record.agentName) ??
     stringValue(record.agentProfileId) ??
@@ -1378,10 +1369,10 @@ function partialSubagentFinalityFromRecord(
     stringValue(metadata?.agentName) ??
     stringValue(metadata?.childAgentId) ??
     stringValue(metadata?.agentProfileId) ??
-    childRunId ??
-    "sub-agent";
+    childRunId;
   return {
     label,
+    childRunId,
     reason: partialSubagentReason({
       finality,
       status,
@@ -1396,7 +1387,6 @@ function partialSubagentFinalityFromRecord(
         }
       : {}),
     blockers: findNestedAgentBlockers(record),
-    ...(childRunId ? { childRunId } : {}),
   };
 }
 

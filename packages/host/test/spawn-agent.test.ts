@@ -2254,8 +2254,8 @@ describe("dynamic child capability contract", () => {
         ?.payload,
     ).toMatchObject({
       error: {
-        code: "AGENT_SPAWN_CAPABILITY_INVALID",
-        metadata: { phase: "validateInput" },
+        code: "TOOL_ARGUMENTS_INVALID",
+        metadata: { toolName: "spawn_agent" },
       },
     });
   });

@@ -12,6 +12,16 @@ and [../session/session-store.md](../session/session-store.md) for session layou
 
 - Status: Verified
 - Date: 2026-07-21
+- Scope: conversation noise reduction does not filter durable evidence. Raw
+  model turns, batch envelopes, successful approvals, Skill/MCP preparation,
+  and typed approval subjects remain in Trace; only live/export presentation
+  changes. Parent recovery now keys only real terminal `subagent.*` events.
+- Read: Core/Host event emission, Protocol visibility, TUI Activity/export,
+  workflow hooks, and real PTY trace evidence.
+- Tests: focused Core/Host/TUI suites plus real trace verify/session check passed.
+
+- Status: Verified
+- Date: 2026-07-21
 - Scope: in-process Agent terminal lifecycle payloads add semantic `status`,
   `statusSource`, summary, accomplishments, and structured blockers while
   retaining the existing terminal-state/finality/assessment axes and event

@@ -166,9 +166,8 @@ export class RunController {
    * on-disk event log. `setSession` alone only swaps the id and wipes the
    * store, which left the screen blank — switching felt like a no-op because
    * the past session's history was never loaded. We read the persisted
-   * `trace.jsonl`, drop the live-only streaming events (the committed
-   * `model.completed` card already carries the final text), and replay the
-   * rest so the conversation reappears.
+   * `trace.jsonl`, drop live-only streaming events, and replay committed
+   * assistant text from `model.assistant_text` / `run.completed.message`.
    */
   async switchSession(id: string): Promise<boolean> {
     if (!this.allowSessionMutation("switch sessions")) return false;

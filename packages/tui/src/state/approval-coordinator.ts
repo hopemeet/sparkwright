@@ -47,6 +47,7 @@ export class ApprovalCoordinator {
   private readonly options: ApprovalCoordinatorOptions;
   private readonly origins = new Map<Client, ApprovalExecutionOrigin>();
   private readonly rules = new Map<string, Map<string, SessionApprovalRule>>();
+  private readonly seenApprovalIds = new Set<string>();
   private active: ApprovalContext | null = null;
   private queue: ApprovalContext[] = [];
 
@@ -74,12 +75,19 @@ export class ApprovalCoordinator {
     execution: ApprovalExecutionContext,
     event: HostEvent & { kind: "approval.requested" },
   ): void {
+    if (this.seenApprovalIds.has(event.payload.approvalId)) return;
+    this.seenApprovalIds.add(event.payload.approvalId);
     const registrationAtRequest = this.origins.get(execution.client);
     const exactExecution = Object.freeze({
       ...execution,
       runId: event.payload.runId,
     });
     const details = recordValue(event.payload.details);
+    const subject = approvalSubject(event.payload.subject);
+    const context: ApprovalContext = {
+      execution: exactExecution,
+      view: projectApprovalView(event, exactExecution, subject),
+    };
     const policyDecision = resolveHostClientApprovalByPolicy(
       { accessMode: exactExecution.accessMode },
       {
@@ -87,6 +95,7 @@ export class ApprovalCoordinator {
         runId: event.payload.runId,
         action: event.payload.action,
         summary: event.payload.summary,
+        subject,
         details,
         createdAt: event.timestamp,
       },
@@ -94,25 +103,27 @@ export class ApprovalCoordinator {
     if (policyDecision) {
       void exactExecution.client
         .resolveApproval(policyDecision)
-        .catch((error) =>
+        .catch((error) => {
           this.reportFailure(
             "automatic approval failed",
             formatError(error),
             `approval:${event.payload.approvalId}:auto-policy`,
-          ),
-        );
+          );
+          if (
+            registrationAtRequest &&
+            this.origins.get(exactExecution.client) !== registrationAtRequest
+          ) {
+            return;
+          }
+          context.view = {
+            ...context.view,
+            error: "Automatic approval failed; review this request manually.",
+          };
+          this.enqueue(context);
+        });
       return;
     }
-
-    const subject = approvalSubject(
-      { action: event.payload.action, details },
-      this.options.workspaceRoot,
-    );
-    const context: ApprovalContext = {
-      execution: exactExecution,
-      view: projectApprovalView(event, exactExecution, subject),
-    };
-    if (subject.kind !== "unknown") {
+    if (subject.kind !== "one_shot") {
       const rule = this.rules.get(exactExecution.sessionId)?.get(subject.key);
       if (rule) {
         void this.autoApproveByRule(
@@ -242,7 +253,7 @@ export class ApprovalCoordinator {
     }
     const subject = next.view.subject;
     const rule =
-      subject.kind === "unknown"
+      subject.kind === "one_shot"
         ? undefined
         : this.rules.get(next.execution.sessionId)?.get(subject.key);
     if (!rule) {
@@ -336,7 +347,7 @@ function projectApprovalView(
     approvalId: event.payload.approvalId,
     action: event.payload.action,
     kind,
-    risk: approvalRisk(kind, riskValue, details),
+    risk: approvalRisk(kind, riskValue, details, subject),
     summary: event.payload.summary,
     reason: stringValue(details.reason),
     policyReason: stringValue(policy.reason),
@@ -349,13 +360,16 @@ function projectApprovalView(
     queuePosition: 1,
     queueDepth: 1,
     resolving: false,
-    path: stringValue(details.path),
+    path:
+      subject.kind === "workspace_file"
+        ? subject.path
+        : stringValue(details.path),
     diff,
     diffSummary: summarizeApprovalDiff(diff),
     toolName,
     toolArgs: args,
-    command,
-    cwd,
+    command: subject.kind === "shell_command" ? subject.command : command,
+    cwd: subject.kind === "shell_command" ? subject.cwd : cwd,
     details,
     createdAt: event.timestamp,
   };
@@ -376,6 +390,7 @@ function approvalRisk(
   kind: ApprovalKind,
   raw: string | undefined,
   details: Record<string, unknown>,
+  subject?: ReturnType<typeof approvalSubject>,
 ): ApprovalRisk {
   const normalized = raw?.toLowerCase();
   if (
@@ -385,7 +400,10 @@ function approvalRisk(
     normalized === "denied" ||
     kind === "shell.execute" ||
     kind === "skill.apply" ||
-    (kind === "workspace.write" && details.operation === "remove")
+    (kind === "workspace.write" &&
+      (subject?.kind === "workspace_file"
+        ? subject.operation === "remove"
+        : details.operation === "remove"))
   ) {
     return "high";
   }
@@ -395,11 +413,14 @@ function approvalRisk(
 }
 
 function exactScopeLabel(subject: ReturnType<typeof approvalSubject>): string {
-  if (subject.kind === "workspace-write")
-    return `workspace path ${subject.path}`;
-  if (subject.kind === "shell") return `exact command + cwd ${subject.cwd}`;
-  if (subject.kind === "tool") return `exact ${subject.toolName} arguments`;
-  return "unrecognized scope (allow once only)";
+  if (subject.kind === "workspace_file")
+    return `${subject.operation} workspace path ${subject.path}`;
+  if (subject.kind === "shell_command")
+    return `exact command + cwd ${subject.cwd}`;
+  if (subject.kind === "agent_workspace_write")
+    return `exact child grant (${subject.tools.join(", ")})`;
+  if (subject.kind === "tool_call") return `exact ${subject.toolName} call`;
+  return "one-shot request";
 }
 
 function recordValue(value: unknown): Record<string, unknown> {

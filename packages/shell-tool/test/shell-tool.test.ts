@@ -248,6 +248,25 @@ describe("createShellTool", () => {
     });
   });
 
+  it("authors an exact reusable approval subject", async () => {
+    const tool = createShellTool({
+      ...minimalOptions(),
+      workspaceRoot: "/workspace/project",
+    });
+
+    expect(
+      await tool.approvalSubjectForArgs?.({
+        command: "npm test",
+        cwd: "packages/core",
+      }),
+    ).toMatchObject({
+      kind: "shell_command",
+      command: "npm test",
+      cwd: "/workspace/project/packages/core",
+      label: "Allow this exact command here for this session",
+    });
+  });
+
   it("throws ShellSafetyError when the command is denied", async () => {
     const tool = createShellTool(minimalOptions());
     await expect(

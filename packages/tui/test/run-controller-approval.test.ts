@@ -13,6 +13,13 @@ function approvalEvent(id: string): HostEvent & { kind: "approval.requested" } {
       runId: "run_1",
       action: "tool.execute",
       summary: "Run shell command",
+      subject: {
+        kind: "shell_command",
+        command: "npm test",
+        cwd: "/workspace/project",
+        key: "shell_command:npm-test:/workspace/project",
+        label: "Allow this exact command here for this session",
+      },
       details: {
         toolName: "bash",
         arguments: { command: "npm test", cwd: "/workspace/project" },
@@ -296,6 +303,52 @@ describe("RunController session approvals", () => {
       ),
     );
     expect(askClient.resolveApproval).not.toHaveBeenCalled();
+  });
+
+  it("falls back to a visible manual prompt when automatic approval delivery fails", async () => {
+    const store = new EventStore();
+    const controller = new RunController({
+      workspaceRoot: "/workspace/project",
+      initialSessionId: "session_bypass",
+      store,
+    });
+    const client = {
+      resolveApproval: vi.fn().mockRejectedValue(new Error("connection lost")),
+    } as unknown as Client;
+
+    deliver(
+      controller,
+      client,
+      "session_bypass",
+      approvalEvent("approval_auto_failed"),
+      "bypass",
+    );
+
+    await vi.waitFor(() =>
+      expect(store.getSnapshot().pendingApproval).toMatchObject({
+        approvalId: "approval_auto_failed",
+        error: "Automatic approval failed; review this request manually.",
+      }),
+    );
+  });
+
+  it("deduplicates repeated delivery of the same approval id", () => {
+    const store = new EventStore();
+    const controller = new RunController({
+      workspaceRoot: "/workspace/project",
+      initialSessionId: "session_duplicate",
+      store,
+    });
+    const client = { resolveApproval: vi.fn() } as unknown as Client;
+    const event = approvalEvent("approval_duplicate");
+
+    deliver(controller, client, "session_duplicate", event);
+    deliver(controller, client, "session_duplicate", event);
+
+    expect(store.getSnapshot().pendingApproval).toMatchObject({
+      approvalId: "approval_duplicate",
+      queueDepth: 1,
+    });
   });
 
   it("removes only approvals owned by a disconnected client and is idempotent", () => {

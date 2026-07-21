@@ -1,4 +1,5 @@
 import type {
+  ApprovalSubject,
   ToolDefinition,
   ToolRequestPreviewOptions,
   ToolSideEffect,
@@ -192,6 +193,37 @@ export function agentWorkspaceWriteGrantApprovalSummaryForPayload(
   return summary.length <= options.maxChars
     ? summary
     : `${summary.slice(0, Math.max(0, options.maxChars - 3))}...`;
+}
+
+export function agentWorkspaceWriteApprovalSubjectForPayload(
+  payload: unknown,
+  source: string,
+): ApprovalSubject {
+  const request = agentWorkspaceWriteGrantRequestFromPayload(payload, source);
+  if (!request.workspaceWriteGrant) {
+    return {
+      kind: "one_shot",
+      label: `Allow ${source} once`,
+    };
+  }
+  const record = payloadRecord(payload);
+  const role = previewString(record.role) || undefined;
+  const goal = previewString(record.goal) || undefined;
+  const tools = [...request.requestedTools].sort();
+  const key = `agent_workspace_write:${JSON.stringify({
+    role: role ?? null,
+    goal: goal ?? null,
+    tools,
+  })}`;
+  return {
+    kind: "agent_workspace_write",
+    ...(role ? { role } : {}),
+    tools,
+    key,
+    label: role
+      ? `Allow workspace write for child ${role} with these tools for this session`
+      : "Allow this child workspace-write grant for this session",
+  };
 }
 
 export function agentWorkspaceWriteGrantGovernance(

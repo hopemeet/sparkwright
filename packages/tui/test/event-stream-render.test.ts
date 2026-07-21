@@ -246,6 +246,32 @@ describe("EventStream committed rendering", () => {
     expect(text).not.toContain("batch  1 tool");
   });
 
+  it("hides batch plumbing while keeping its child tools readable", async () => {
+    const text = await renderToText(
+      stream([
+        ev("tool.batch.requested", 1, {
+          toolCallCount: 2,
+          mode: "concurrent",
+        }),
+        ev("tool.requested", 2, {
+          id: "call_a",
+          toolName: "read",
+          arguments: { path: "a.ts" },
+        }),
+        ev("tool.requested", 3, {
+          id: "call_b",
+          toolName: "read",
+          arguments: { path: "b.ts" },
+        }),
+        ev("tool.batch.completed", 4, {}),
+      ]),
+    );
+
+    expect(text).not.toContain("batch");
+    expect(text).toContain("⚙ read  a.ts");
+    expect(text).toContain("⚙ read  b.ts");
+  });
+
   it("renders bash tool requests as commands instead of raw JSON", async () => {
     const events = [
       ev("tool.requested", 1, {
@@ -403,6 +429,115 @@ describe("EventStream committed rendering", () => {
     expect(text).not.toContain('"exitCode"');
   });
 
+  it("keeps both ends of truncated shell output and marks the omission", async () => {
+    const text = await renderToText(
+      stream([
+        ev("tool.completed", 1, {
+          toolName: "bash",
+          output: {
+            stdout: Array.from(
+              { length: 10 },
+              (_, index) => `output-line-${index + 1}`,
+            ).join("\n"),
+            stderr: "",
+            exitCode: 1,
+            timedOut: false,
+          },
+        }),
+      ]),
+    );
+
+    expect(text).toContain("output-line-1");
+    expect(text).toContain("output-line-2");
+    expect(text).toContain("6 lines omitted");
+    expect(text).toContain("output-line-9");
+    expect(text).toContain("output-line-10");
+    expect(text).not.toContain("output-line-3");
+    expect(text).not.toContain("output-line-8");
+  });
+
+  it("hides successful internal orchestration but keeps failures and agents", async () => {
+    const text = await renderToText(
+      stream([
+        ev("tool.requested", 1, {
+          id: "skill_1",
+          toolName: "skill_load",
+          arguments: { name: "repo-reviewer" },
+        }),
+        ev("tool.completed", 2, {
+          toolCallId: "skill_1",
+          output: {
+            status: "loaded",
+            name: "repo-reviewer",
+            content: "instructions",
+          },
+        }),
+        ev("skill.loaded", 3, { name: "repo-reviewer" }),
+        ev("tool.requested", 4, {
+          id: "skill_resource_1",
+          toolName: "skill_load",
+          arguments: {
+            name: "repo-reviewer",
+            resource: "references/checks.md",
+          },
+        }),
+        ev("tool.completed", 5, {
+          toolCallId: "skill_resource_1",
+          output: {
+            status: "resource",
+            name: "repo-reviewer",
+            resource: "references/checks.md",
+            content: "checks",
+          },
+        }),
+        ev("tool.requested", 6, {
+          id: "search_1",
+          toolName: "tool_search",
+          arguments: { query: "review" },
+        }),
+        ev("tool.failed", 7, {
+          toolCallId: "search_1",
+          toolName: "tool_search",
+          error: { message: "catalog unavailable" },
+        }),
+        ev("mcp.server.prepared", 8, {
+          name: "local",
+          status: "prepared",
+          toolCount: 4,
+        }),
+        ev("subagent.requested", 9, {
+          childRunId: "run_child",
+          goal: "review the patch",
+        }),
+      ]),
+    );
+
+    expect(text).not.toContain("skill_load");
+    expect(text).not.toContain("repo-reviewer");
+    expect(text).not.toContain("references/checks.md");
+    expect(text).not.toContain("mcp local prepared");
+    expect(text).toContain("tool_search failed");
+    expect(text).toContain("agent run_child requested");
+  });
+
+  it("keeps an unsuccessful skill lookup visible", async () => {
+    const text = await renderToText(
+      stream([
+        ev("tool.requested", 1, {
+          id: "skill_missing",
+          toolName: "skill_load",
+          arguments: { name: "missing-skill" },
+        }),
+        ev("tool.completed", 2, {
+          toolCallId: "skill_missing",
+          output: { status: "not_found", requestedName: "missing-skill" },
+        }),
+      ]),
+    );
+
+    expect(text).toContain("skill_load missing-skill -> not found");
+  });
+
   it("renders promoted shell results as background task handoff summaries", async () => {
     const events = [
       ev("tool.completed", 1, {
@@ -537,11 +672,32 @@ describe("EventStream committed rendering", () => {
       }),
     ];
     const text = await renderToText(stream(events));
-    expect(text).toContain("run facts");
+    expect(text).toContain("summary");
     expect(text).toContain("changed 1 file");
-    expect(text).toContain("approvals 1/1");
-    expect(text).toContain("tools 1");
+    expect(text).toContain("approvals 1 approved");
     expect(text).toContain("last command: npm test passed");
+    expect(text).not.toContain("approval approved");
+  });
+
+  it("renders only the Stop-accepted final message", async () => {
+    const text = await renderToText(
+      stream([
+        ev("model.completed", 1, { message: "provisional answer" }),
+        ev("workflow_hook.completed", 2, {
+          hook: "Stop",
+          status: "advanced",
+        }),
+        ev("model.completed", 3, { message: "accepted answer" }),
+        ev("run.completed", 4, {
+          reason: "final_answer",
+          message: "accepted answer",
+        }),
+      ]),
+    );
+
+    expect(text).not.toContain("provisional answer");
+    expect(text.match(/accepted answer/g)).toHaveLength(1);
+    expect(text.match(/assistant/g)).toHaveLength(1);
   });
 
   it("does not call a background handoff a completed command in run facts", async () => {
@@ -567,7 +723,7 @@ describe("EventStream committed rendering", () => {
       ]),
     );
 
-    expect(text).toContain("run facts tools 1");
+    expect(text).not.toContain("summary");
     expect(text).not.toContain("last command:");
     expect(text).not.toContain("print_numbers.py completed");
   });
@@ -612,6 +768,7 @@ describe("EventStream committed rendering", () => {
     );
 
     expect(text).toContain("last command: npm test failed");
+    expect(text).toContain("health failing (VERIFICATION_FAILED)");
   });
 
   it("renders terminal task updates that arrive during final model generation", async () => {

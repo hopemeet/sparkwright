@@ -1020,7 +1020,7 @@ describe("host tools", () => {
     ]);
   });
 
-  it("classifies agent task_create workspace write grants", () => {
+  it("classifies agent task_create workspace write grants", async () => {
     const manager = new TaskManager({ store: new InMemoryTaskStore() });
     const taskCreate = createMainHostToolCatalog({
       workspaceRoot: "/tmp/ws",
@@ -1061,6 +1061,21 @@ describe("host tools", () => {
         { maxChars: 200 },
       ),
     ).toContain('Grant workspace write to child "writer"');
+    expect(
+      await taskCreate?.approvalSubjectForArgs?.({
+        kind: "agent",
+        payload: {
+          goal: "write a file",
+          role: "writer",
+          prompt: "Write a file.",
+          allowedTools: ["write"],
+        },
+      }),
+    ).toMatchObject({
+      kind: "agent_workspace_write",
+      role: "writer",
+      tools: ["write"],
+    });
     expect(() =>
       taskCreate?.policyForArgs?.({
         kind: "agent",
@@ -1073,6 +1088,64 @@ describe("host tools", () => {
         },
       }),
     ).toThrow(/allowedTools does not include workspace write tools/);
+  });
+
+  it("shares the effective spawn schema and semantic validator with agent task_create", async () => {
+    const manager = new TaskManager({ store: new InMemoryTaskStore() });
+    const readTool = defineTool({
+      name: "read",
+      description: "Read only.",
+      inputSchema: { type: "object" },
+      execute: () => ({ content: "unused" }),
+    });
+    const dynamicSpawnTool = createDynamicSpawnAgentTool({
+      getParent: () => undefined,
+      model: { complete: async () => ({ message: "unused" }) },
+      childTools: [readTool],
+      parentRunPolicy: createDefaultPolicy(),
+      childRunStoreFactory: () => undefined as never,
+    });
+    const taskCreate = createMainHostToolCatalog({
+      workspaceRoot: "/tmp/ws",
+      skillRoots: [],
+      taskManager: manager,
+      taskRunners: { agent: async () => ({ message: "unused" }) },
+      getParentRunId: () => createRunId(),
+      todoPath: "/tmp/ws/.sparkwright/sessions/test/todo.md",
+      dynamicSpawnTool,
+      shell: { sandbox: { mode: "off" } },
+    }).find((entry) => entry.definition.name === "task_create")?.definition;
+    expect(taskCreate).toBeDefined();
+
+    const schema = taskCreate!.inputSchema as {
+      properties: {
+        payload: {
+          properties: { allowedTools: { items: { enum: string[] } } };
+        };
+      };
+    };
+    expect(
+      schema.properties.payload.properties.allowedTools.items.enum,
+    ).toEqual(["read"]);
+    await expect(
+      taskCreate!.validateInput?.(
+        {
+          kind: "agent",
+          payload: {
+            goal: "edit a file",
+            role: "writer",
+            prompt: "Edit only.",
+            allowedTools: ["edit"],
+            grant: { workspaceWrite: true },
+          },
+        },
+        {} as RuntimeContext,
+      ),
+    ).resolves.toMatchObject({
+      ok: false,
+      code: "AGENT_SPAWN_CAPABILITY_INVALID",
+    });
+    expect(manager.store.list()).toEqual([]);
   });
 
   it("gates agent task_create workspace write grants before creating a task", async () => {

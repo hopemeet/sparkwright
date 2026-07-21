@@ -55,6 +55,7 @@ describe("streaming-runtime", () => {
         async *stream(input: ModelInput) {
           if (input.step === 1) {
             order.push("stream-start");
+            yield { type: "text_delta", text: "working" };
             yield {
               type: "tool_call_start",
               toolName: "echo",
@@ -84,6 +85,19 @@ describe("streaming-runtime", () => {
     expect(run.events.all().map((event) => event.type)).toEqual(
       expect.arrayContaining(["tool.started", "tool.completed"]),
     );
+    const assistantText = run.events
+      .all()
+      .filter((event) => event.type === "model.assistant_text");
+    expect(assistantText).toHaveLength(1);
+    expect(assistantText[0]?.payload).toMatchObject({
+      step: 1,
+      message: "working",
+    });
+    const completedMessages = run.events
+      .all()
+      .filter((event) => event.type === "run.completed")
+      .map((event) => (event.payload as { message?: string }).message);
+    expect(completedMessages).toEqual(["done"]);
   });
 
   it("nests tool-call spans under the batch span under the run span", async () => {

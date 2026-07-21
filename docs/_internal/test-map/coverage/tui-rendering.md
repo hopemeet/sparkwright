@@ -18,7 +18,7 @@
 ## Current Confidence
 
 - Status: `Verified`
-- Last reviewed: 2026-07-20
+- Last reviewed: 2026-07-21
 - Evidence source: 2026-07-20 full-diff review passed 447/447 TUI and 594/594
   Host tests, including stale auto-approval cleanup and replayed terminal-task
   notification regressions. A test-only Host stdio adapter proved two approval
@@ -51,6 +51,16 @@
   indicator without repeating the static brand.
 
 ## Covered
+
+- 2026-07-21 conversation-projection coverage keeps successful batch,
+  approval, Skill body/resource, tool-search/Todo, and MCP preparation plumbing
+  out of live chat and export while preserving it in Activity/Trace. Failures,
+  denials, and real subagent lifecycle remain visible. Terminal rendering owns
+  one accepted final answer, unhealthy assessment codes, clear approval counts,
+  and head/tail shell truncation. Typed session approvals have explicit `s`
+  input, duplicate-delivery suppression, and manual fallback after automatic
+  resolve failure. Focused/full TUI tests and a real 120x32 Terra rerun passed;
+  trace verify and session check reported zero findings.
 
 - 2026-07-20 focused committed-transcript coverage suppresses
   `agent.profile.derived` preparation noise while preserving requested,

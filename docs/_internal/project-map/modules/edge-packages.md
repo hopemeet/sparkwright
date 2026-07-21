@@ -136,6 +136,17 @@ contracts, and focused checklists that no longer fit here.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-21
+- Scope: ACP now forwards committed nonterminal `model.assistant_text` and the
+  canonical `run.completed.message`, not raw `model.completed`. Streaming
+  Runtime commits tool-turn commentary consistently and propagates
+  producer-authored approval subjects with one-shot fallback; SDK/IM fixtures
+  consume the required Protocol subject without owning policy.
+- Read: ACP event adapter, Streaming Runtime tool gate, SDK/IM fixtures,
+  Protocol approval/finality contracts, and focused tests.
+- Tests: affected ACP, Streaming Runtime, SDK, IM, and typecheck suites passed.
+
+- Status: Verified
 - Date: 2026-07-19
 - Scope: reviewed downstream SDK/package boundaries for the assessment
   refactor. SDK Core now exposes Host `ExecutionAssessment` on collected runs;

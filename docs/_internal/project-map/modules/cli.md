@@ -10,6 +10,16 @@ See also [../maps/trace/summary-timeline-verify.md](../maps/trace/summary-timeli
 
 - Status: Verified
 - Date: 2026-07-21
+- Scope: the Host runner reconstructs Core approval requests with the required
+  typed subject. CLI final output continues to use terminal results rather than
+  raw `model.completed`; no new CLI-owned approval scope inference exists.
+- Read: CLI Host runner/approval/outcome paths, Protocol/Core request contracts,
+  and focused downstream tests.
+- Tests: affected CLI approval/outcome typechecks and cross-package approval
+  fixtures passed.
+
+- Status: Verified
+- Date: 2026-07-21
 - Scope: live CLI event output now formats `subagent.*` identity, semantic
   status, summary, and bounded blocker codes instead of hiding recovery facts
   inside raw JSON.

@@ -10,6 +10,17 @@ See [tool-orchestration.md](tool-orchestration.md) and [../trace/raw-trace.md](.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-21
+- Scope: raw `model.completed` remains per-turn trace/replay evidence but is not
+  a committed assistant answer. Nonterminal model text preceding tools may emit
+  `model.assistant_text`; a tool-less answer is provisional until Stop accepts
+  it, after which `run.completed.message` is the sole canonical final response.
+- Read: Core and Streaming Runtime model/tool/terminal branches, Protocol
+  transcript classification, and TUI/ACP/export consumers.
+- Tests: focused Core Stop-advance, Streaming Runtime tool-turn, Protocol, TUI
+  live/export, and ACP event suites plus affected typechecks passed.
+
+- Status: Verified
 - Date: 2026-07-19
 - Scope: Host Workflow episodes no longer translate `maxModelCalls` into a
   competing step ceiling. Explicit profile `maxSteps`, Core work-budget

@@ -19,6 +19,10 @@ import {
 } from "../lib/tool-display.js";
 import { middleEllipsisPath } from "../lib/path-display.js";
 import { shortTaskId } from "../lib/task-activity.js";
+import {
+  createConversationProjection,
+  shouldShowInConversation,
+} from "../lib/conversation-projection.js";
 
 export { oneLine } from "../lib/tool-display.js";
 
@@ -42,13 +46,13 @@ type Row =
       kind: "event";
       key: string;
       event: RunEvent;
+      visible: boolean;
       inBatch: boolean;
       facts?: RunFactsSnapshot;
       internalMutationCount?: number;
     };
 
 interface RunFacts {
-  toolCalls: number;
   writePaths: Set<string>;
   approvalsRequested: number;
   approvalsApproved: number;
@@ -60,13 +64,14 @@ interface RunFacts {
 }
 
 interface RunFactsSnapshot {
-  toolCalls: number;
   changedFiles: number;
   approvalsRequested: number;
   approvalsApproved: number;
   approvalsDenied: number;
   lastShell?: ShellFact;
   commandFailure?: CommandFailureFact;
+  assessmentHealth?: string;
+  assessmentIssueCodes: string[];
   terminalTaskUpdates: RuntimeTaskUpdate[];
 }
 
@@ -107,39 +112,22 @@ export function EventStream(props: {
   events: RunEvent[];
   header: TranscriptHeaderInfo;
 }): React.ReactElement {
-  // Batch membership is derived purely from event order: a `tool.batch.requested`
-  // opens a batch and the matching `tool.batch.completed` closes it. Anything in
-  // between (the concurrent child tool.* events) renders indented under the batch
-  // header so a batch reads as one group rather than a flat wall of tool lines.
-  // This is <Static>-safe: by the time a child row is committed its opening
-  // batch.requested has already been seen, so each row's `inBatch` is stable and
-  // never changes on a later commit.
-  const visibleBatchStack: boolean[] = [];
+  const conversationProjection = createConversationProjection();
   const proposalMutationCounts = new Map<string, number>();
   let facts = createRunFacts();
   const rows: Row[] = [
     { kind: "header", key: "__header", header: props.header },
     ...props.events.map((event): Row => {
       if (event.type === "run.started") facts = createRunFacts();
-      // The batch.requested header itself is NOT a member (depth flips after
-      // it); the batch.completed closer drops back out before this row.
-      if (event.type === "tool.batch.completed") visibleBatchStack.pop();
-      const inBatch = visibleBatchStack.some(Boolean);
-      if (event.type === "tool.batch.requested") {
-        const payload = rec(event.payload);
-        const count =
-          typeof payload.toolCallCount === "number"
-            ? payload.toolCallCount
-            : Array.isArray(payload.toolNames)
-              ? payload.toolNames.length
-              : 0;
-        visibleBatchStack.push(count > 1);
-      }
+      const visible = shouldShowInConversation(event, conversationProjection);
       const row: Row = {
         kind: "event",
         key: event.id ?? `${event.sequence}`,
         event,
-        inBatch,
+        visible,
+        // Batch envelopes are quiet conversation plumbing, so their children
+        // render as ordinary tool rows instead of as an orphaned indented group.
+        inBatch: false,
       };
       const spanId = str(rec(event).spanId);
       if (
@@ -169,7 +157,7 @@ export function EventStream(props: {
       {(row) =>
         row.kind === "header" ? (
           <HeaderRow key={row.key} header={row.header} />
-        ) : (
+        ) : row.visible ? (
           <EventCardBoundary
             key={row.key}
             event={row.event}
@@ -177,7 +165,7 @@ export function EventStream(props: {
             facts={row.facts}
             internalMutationCount={row.internalMutationCount}
           />
-        )
+        ) : null
       }
     </Static>
   );
@@ -277,7 +265,6 @@ function optionalNumber(value: unknown): number | undefined {
 
 function createRunFacts(): RunFacts {
   return {
-    toolCalls: 0,
     writePaths: new Set<string>(),
     approvalsRequested: 0,
     approvalsApproved: 0,
@@ -297,7 +284,6 @@ function recordRunFact(facts: RunFacts, event: RunEvent): void {
       facts.terminalTaskUpdates = [];
       return;
     case "tool.requested": {
-      facts.toolCalls += 1;
       if (isShellToolName(str(p.toolName))) {
         const args = rec(p.arguments ?? p.input ?? p.args);
         const command = str(args.command);
@@ -368,14 +354,22 @@ function snapshotRunFacts(
   completed: RunEvent,
 ): RunFactsSnapshot {
   const p = rec(completed.payload);
+  const assessment = rec(p.assessment);
+  const assessmentIssueCodes = Array.isArray(assessment.issues)
+    ? assessment.issues
+        .map((issue) => str(rec(issue).code))
+        .filter((code): code is string => code.length > 0)
+        .slice(0, 4)
+    : [];
   return {
-    toolCalls: facts.toolCalls,
     changedFiles: facts.writePaths.size,
     approvalsRequested: facts.approvalsRequested,
     approvalsApproved: facts.approvalsApproved,
     approvalsDenied: facts.approvalsDenied,
     lastShell: facts.shellResults[facts.shellResults.length - 1],
     commandFailure: commandFailureFact(p.assessment),
+    assessmentHealth: str(assessment.health) || undefined,
+    assessmentIssueCodes,
     terminalTaskUpdates: [...facts.terminalTaskUpdates],
   };
 }
@@ -400,19 +394,31 @@ function commandFailureFact(value: unknown): CommandFailureFact | undefined {
 function runFactsParts(facts: RunFactsSnapshot | undefined): string[] {
   if (!facts) return [];
   const parts: string[] = [];
+  if (facts.assessmentHealth && facts.assessmentHealth !== "clean") {
+    const issues =
+      facts.assessmentIssueCodes.length > 0
+        ? ` (${facts.assessmentIssueCodes.join(", ")})`
+        : "";
+    parts.push(`health ${facts.assessmentHealth}${issues}`);
+  }
   if (facts.changedFiles > 0) {
     parts.push(
       `changed ${facts.changedFiles} file${facts.changedFiles === 1 ? "" : "s"}`,
     );
   }
   if (facts.approvalsRequested > 0) {
-    const resolved = facts.approvalsApproved + facts.approvalsDenied;
-    const suffix =
-      facts.approvalsDenied > 0 ? `, ${facts.approvalsDenied} denied` : "";
-    parts.push(`approvals ${resolved}/${facts.approvalsRequested}${suffix}`);
-  }
-  if (facts.toolCalls > 0) {
-    parts.push(`tools ${facts.toolCalls}`);
+    const pending = Math.max(
+      0,
+      facts.approvalsRequested -
+        facts.approvalsApproved -
+        facts.approvalsDenied,
+    );
+    const decisions = [
+      facts.approvalsApproved > 0 ? `${facts.approvalsApproved} approved` : "",
+      facts.approvalsDenied > 0 ? `${facts.approvalsDenied} denied` : "",
+      pending > 0 ? `${pending} pending` : "",
+    ].filter(Boolean);
+    parts.push(`approvals ${decisions.join(", ")}`);
   }
   const command = commandFact(facts);
   if (command) parts.push(command);
@@ -449,9 +455,21 @@ function shortRunId(value: string): string {
 function RunFactsLine(props: {
   facts: RunFactsSnapshot | undefined;
 }): React.ReactElement | null {
+  const theme = useTheme();
   const parts = runFactsParts(props.facts);
   if (parts.length === 0) return null;
-  return <Text dimColor>run facts {parts.join(" · ")}</Text>;
+  const health = props.facts?.assessmentHealth;
+  const color =
+    health === "failing"
+      ? theme.error
+      : health === "degraded"
+        ? theme.warning
+        : undefined;
+  return (
+    <Text color={color} dimColor={!color}>
+      summary {parts.join(" · ")}
+    </Text>
+  );
 }
 
 function RuntimeTaskUpdatesLine(props: {
@@ -552,13 +570,8 @@ function EventCard(props: {
       );
     }
 
-    // The assistant's answer (and any mid-run commentary). `model.completed`
-    // is emitted by every provider (deterministic and streaming) and its
-    // payload spreads the model output, so the text is at `payload.message`.
-    // We render the committed card from `model.completed` only — the streaming
-    // path also fires `model.stream.completed`, which we hide below so the
-    // finished reply isn't printed twice.
-    case "model.completed":
+    // Committed non-terminal commentary. Final text is owned exclusively by
+    // `run.completed.message` after Stop hooks have accepted the answer.
     case "model.assistant_text": {
       const message = str(p.message).trim();
       if (!message) return null;
@@ -566,29 +579,6 @@ function EventCard(props: {
         <Box flexDirection="column" paddingX={1} marginTop={1}>
           <Text color={theme.success}>assistant</Text>
           <Markdown text={message} />
-        </Box>
-      );
-    }
-
-    // A concurrent/sequential tool batch (deterministic provider). Render a
-    // single header line that introduces the group; the child tool cards below
-    // are indented under it (see `inBatch`). `tool.batch.completed` stays hidden
-    // — the closer needs no card.
-    case "tool.batch.requested": {
-      const count =
-        typeof p.toolCallCount === "number"
-          ? p.toolCallCount
-          : Array.isArray(p.toolNames)
-            ? p.toolNames.length
-            : 0;
-      const mode = str(p.mode) || "concurrent";
-      if (count <= 1) return null;
-      return (
-        <Box paddingX={1} marginTop={1}>
-          <Text color={theme.muted}>{"⚙ batch"}</Text>
-          <Text
-            dimColor
-          >{`  ${count} tool${count === 1 ? "" : "s"} · ${mode}`}</Text>
         </Box>
       );
     }
@@ -971,11 +961,24 @@ function EventCard(props: {
       }
       const displayReason = reason || "completed";
       const isFinal = displayReason === "final_answer";
+      const message = str(p.message).trim();
       return (
         <Box flexDirection="column" paddingX={1} marginTop={1}>
-          <RuntimeTaskUpdatesLine updates={props.facts?.terminalTaskUpdates} />
-          <Text dimColor>{isFinal ? "─────" : `── run ${displayReason}`}</Text>
-          <RunFactsLine facts={props.facts} />
+          {message ? (
+            <>
+              <Text color={theme.success}>assistant</Text>
+              <Markdown text={message} />
+            </>
+          ) : null}
+          <Box flexDirection="column" marginTop={message ? 1 : 0}>
+            <RuntimeTaskUpdatesLine
+              updates={props.facts?.terminalTaskUpdates}
+            />
+            <Text dimColor>
+              {isFinal ? "─────" : `── run ${displayReason}`}
+            </Text>
+            <RunFactsLine facts={props.facts} />
+          </Box>
         </Box>
       );
     }

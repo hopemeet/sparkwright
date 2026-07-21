@@ -10,6 +10,16 @@ See [../../modules/agent-runtime.md](../../modules/agent-runtime.md) for related
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-21
+- Scope: reviewed the Agent Runtime task-descriptor validation extension.
+  Cron capability does not register through Host `task_create(kind:"agent")`;
+  Cron scheduling, approval, persistence, and terminal assessment are unchanged.
+- Read: Agent Runtime task kind construction, Host catalog, and Cron tool/runner
+  boundaries.
+- Tests: Agent Runtime and Host focused task tests passed; no Cron behavior
+  changed.
+
+- Status: Verified
 - Date: 2026-07-19
 - Scope: Cron semantic scheduling outcome consumes the terminal Core
   assessment rather than a Cron-owned reconstruction. Expected policy denial

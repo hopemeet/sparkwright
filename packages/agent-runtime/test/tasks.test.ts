@@ -1069,6 +1069,51 @@ describe("task tools", () => {
     expect(schema.additionalProperties).toBe(false);
   });
 
+  it("task_create runs kind payload validation before spawning", async () => {
+    const manager = makeManager();
+    let runnerCalls = 0;
+    manager.registerKind("agent", async () => {
+      runnerCalls += 1;
+      return "unexpected";
+    });
+    const tools = makeTaskToolsFromOptions({
+      manager,
+      getParentRunId: () => PARENT_RUN_ID,
+      taskCreateKinds: [
+        {
+          kind: "agent",
+          requiresPayload: true,
+          validatePayload(payload) {
+            return payload?.allowedTools === "read"
+              ? { ok: true }
+              : {
+                  ok: false,
+                  code: "AGENT_CAPABILITY_INVALID",
+                  message: "allowedTools is not available",
+                };
+          },
+        },
+      ],
+    });
+    const args = {
+      kind: "agent",
+      payload: { allowedTools: ["write"] },
+    };
+
+    await expect(
+      tools.taskCreate.validateInput?.(args, fakeCtx),
+    ).resolves.toEqual({
+      ok: false,
+      code: "AGENT_CAPABILITY_INVALID",
+      message: "allowedTools is not available",
+    });
+    await expect(exec(tools.taskCreate, args)).rejects.toMatchObject({
+      code: "AGENT_CAPABILITY_INVALID",
+    });
+    expect(runnerCalls).toBe(0);
+    expect(manager.store.list()).toEqual([]);
+  });
+
   it("task_create defaults to foreground and returns inline results", async () => {
     const manager = makeManager();
     manager.registerKind("hello", async () => "hi");

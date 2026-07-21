@@ -10,6 +10,17 @@ See [workspace-writes.md](workspace-writes.md) and [../../modules/coding-tools.m
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-21
+- Scope: Shell supplies the approval subject from normalized input: exact
+  command, resolved cwd, background/lifetime, and foreground timeout. TUI may
+  remember only that stable subject; classification, sandbox, execution,
+  promotion, and rollback remain unchanged.
+- Read: Shell normalization/policy/tool definition, Core/Streaming gates,
+  Protocol/TUI approval consumers, and focused tests.
+- Tests: Shell suite plus affected Core, Streaming Runtime, Host, and TUI
+  approval tests/typechecks passed.
+
+- Status: Verified
 - Date: 2026-07-19
 - Scope: reviewed shell and Workflow verifier paths after removing
   `todo_clear`. Structured command/profile verification remains fact-ledger

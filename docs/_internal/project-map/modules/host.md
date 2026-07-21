@@ -13,6 +13,18 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 
 - Status: Verified
 - Date: 2026-07-21
+- Scope: `task_create(kind:"agent")` now reuses the live dynamic-spawn payload
+  schema and semantic validator, so unavailable tools/grants fail before task
+  creation or approval. Host forwards typed approval subjects and the partial-
+  child Stop hook consumes only parent-correlated `subagent.completed/failed`
+  lifecycle events, never a spawn tool failure without a child.
+- Read: Host tool catalog, Agent assembly/grants, interaction projection,
+  workflow hooks, Agent Runtime task descriptors, and focused tests.
+- Tests: focused Host tools/spawn/workflow-hook/interaction suites and affected
+  package typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-21
 - Scope: Host dynamic Agent spawn no longer parses goal/prompt prose as an
   admission gate. `validateInput` checks the structured enabled-tool/grant
   contract before policy/approval. Strict `agent-outcome.v1` status,

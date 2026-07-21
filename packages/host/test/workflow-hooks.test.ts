@@ -223,28 +223,25 @@ describe("runtime workflow hook assembly", () => {
     expect(second.status).toBe("continued");
   });
 
-  it("advances Stop once without interpreting final-answer prose", async () => {
+  it("advances Stop once from a canonical structured sub-agent outcome", async () => {
     const run = runRecord();
     const events = new EventLog(run.id);
-    const partialEvent = events.emit("tool.completed", {
-      toolCallId: "spawn_1",
-      toolName: "spawn_agent",
-      output: {
-        childRunId: "run_child_truncated",
-        status: "blocked",
-        summary: "Execution requires approval",
-        finality: "partial",
-        blockers: [
-          {
-            code: "APPROVAL_REQUIRED",
-            kind: "permission",
-            owner: "user",
-            message: "Workspace write approval is required.",
-            requirements: [{ kind: "approval", name: "workspace.write" }],
-            retry: "after_approval",
-          },
-        ],
-      },
+    const partialEvent = events.emit("subagent.completed", {
+      childRunId: "run_child_truncated",
+      parentRunId: run.id,
+      status: "blocked",
+      summary: "Execution requires approval",
+      finality: "partial",
+      blockers: [
+        {
+          code: "APPROVAL_REQUIRED",
+          kind: "permission",
+          owner: "user",
+          message: "Workspace write approval is required.",
+          requirements: [{ kind: "approval", name: "workspace.write" }],
+          retry: "after_approval",
+        },
+      ],
     });
 
     const result = await runWorkflowHooks({
@@ -264,6 +261,33 @@ describe("runtime workflow hook assembly", () => {
     expect(result.context[0]?.content).toContain(
       "requires=approval:workspace.write",
     );
+  });
+
+  it("ignores spawn tool failures that never produced a child lifecycle", async () => {
+    const run = runRecord();
+    const events = new EventLog(run.id);
+    const failedSpawn = events.emit("tool.failed", {
+      toolCallId: "spawn_invalid",
+      toolName: "spawn_agent",
+      error: {
+        code: "AGENT_SPAWN_CAPABILITY_INVALID",
+        message: "edit is not enabled",
+        metadata: { phase: "validateInput" },
+      },
+    });
+
+    const result = await runWorkflowHooks({
+      hooks: [createPartialSubagentFinalityDisclosureHook()],
+      hook: "Stop",
+      run,
+      payload: {
+        message: "The spawn request was invalid.",
+        events: [failedSpawn],
+      },
+      events,
+    });
+
+    expect(result.status).toBe("continued");
   });
 
   it("ignores ordinary truncated tool output in the Stop disclosure guard", async () => {

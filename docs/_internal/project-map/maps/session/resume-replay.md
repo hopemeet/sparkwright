@@ -10,6 +10,15 @@ See [session-store.md](session-store.md) and [../runtime/context-compaction.md](
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-21
+- Scope: replayed conversation uses the same quiet-success projection and
+  single-final-answer ownership as live rendering. Activity/Trace retain every
+  raw event, while process-local approval rules still are not persisted.
+- Read: TUI EventStream/export/EventStore replay, Protocol visibility, Core
+  terminal message, and session tests.
+- Tests: focused TUI live/export/replay and real trace/session checks passed.
+
+- Status: Verified
 - Date: 2026-07-19
 - Scope: TUI replay still rebuilds rendering from persisted session events;
   notification unread/resolved state, approval queues/rules, and action-card

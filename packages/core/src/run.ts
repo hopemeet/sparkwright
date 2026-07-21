@@ -95,6 +95,7 @@ import {
   type ToolDescriptor,
 } from "./tools.js";
 import type {
+  ApprovalSubject,
   ContextItem,
   ModelAdapter,
   ModelInput,
@@ -567,6 +568,7 @@ export interface RunHandle {
   requestApproval(input: {
     action: string;
     summary: string;
+    subject: ApprovalSubject;
     details?: Record<string, unknown>;
   }): Promise<boolean>;
   /** Current usage snapshot (tokens / cost / wall time / per-tool / per-model). */
@@ -1501,6 +1503,22 @@ export class SparkwrightRun implements RunHandle {
 
       const toolCalls = output.toolCalls ?? [];
 
+      // `model.completed` is the raw per-turn model record used by tracing and
+      // replay. Only commit model text to the user transcript when the turn is
+      // non-terminal and will proceed to tools. A tool-less answer remains
+      // provisional until Stop hooks accept it, then `run.completed.message`
+      // becomes the single canonical final response.
+      if (
+        toolCalls.length > 0 &&
+        typeof output.message === "string" &&
+        output.message.trim().length > 0
+      ) {
+        this.events.emit("model.assistant_text", {
+          step: state.step,
+          message: output.message,
+        });
+      }
+
       // --- Phase 6: terminal branch ---------------------------------------
       if (toolCalls.length === 0) {
         const stopHooks = await this.runWorkflowHookPhase(
@@ -2327,6 +2345,7 @@ export class SparkwrightRun implements RunHandle {
   async requestApproval(input: {
     action: string;
     summary: string;
+    subject: ApprovalSubject;
     details?: Record<string, unknown>;
   }): Promise<boolean> {
     if (!this.interactionChannel?.approve) {
@@ -2339,6 +2358,7 @@ export class SparkwrightRun implements RunHandle {
       runId: this.record.id,
       action: input.action,
       summary: input.summary,
+      subject: input.subject,
       details: input.details,
     });
 
@@ -3949,10 +3969,18 @@ export class SparkwrightRun implements RunHandle {
 
       const approvalStartedAt = Date.now();
       try {
+        const approvalSummary =
+          formatToolApprovalSummary(tool, args) ?? `Run tool ${toolName}`;
+        const subject = tool.approvalSubjectForArgs
+          ? await tool.approvalSubjectForArgs(args as never)
+          : {
+              kind: "one_shot" as const,
+              label: `Allow ${approvalSummary} once`,
+            };
         approved = await this.requestApproval({
           action: "tool.execute",
-          summary:
-            formatToolApprovalSummary(tool, args) ?? `Run tool ${toolName}`,
+          summary: approvalSummary,
+          subject,
           details: {
             ...metadata,
             arguments: args,

@@ -10,6 +10,18 @@ canonical trace or a session consistency report.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-21
+- Scope: live conversation and `/export` share conditional quiet-success
+  projection for batch wrappers, successful approvals, Skill body/resources,
+  tool-search/Todo plumbing, and successful MCP preparation. Failures, denials,
+  and real subagent lifecycle remain visible. Raw `model.completed` stays in
+  Trace; only `run.completed.message` owns the accepted final answer.
+- Read: TUI projection/EventStream/export, Protocol visibility, Activity/raw
+  Trace consumers, and real PTY trace evidence.
+- Tests: focused live/export/Activity tests and real 120x32 Terra trace/session
+  verification passed.
+
+- Status: Verified
 - Date: 2026-07-20
 - Scope: the shared product-transcript filter now omits
   `agent.profile.derived` preparation diagnostics from both live committed

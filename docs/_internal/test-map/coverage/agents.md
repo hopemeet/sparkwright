@@ -60,6 +60,12 @@
 
 ## Covered
 
+- 2026-07-21 follow-up deterministic coverage makes dynamic foreground Agent
+  spawn and `task_create(kind:"agent")` share the effective payload schema and
+  semantic validator before approval. The partial-child Stop hook now requires
+  a parent-correlated terminal `subagent.*` event, so ordinary spawn validation,
+  policy, or approval failures cannot be mistaken for an incomplete child.
+
 - 2026-07-21 deterministic coverage reproduces the original multilingual
   negation shape (`Do not run shell commands or execute the script`) on a
   workspace-write dynamic spawn and proves approval is followed by a real

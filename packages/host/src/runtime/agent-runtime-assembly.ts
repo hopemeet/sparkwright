@@ -50,6 +50,7 @@ import {
 import {
   AGENT_READ_ONLY_CHILD_TOOLS,
   AGENT_WORKSPACE_WRITE_CHILD_TOOLS,
+  agentWorkspaceWriteApprovalSubjectForPayload,
   agentWorkspaceWriteGrantApprovalSummaryForPayload,
   agentWorkspaceWriteGrantPolicyForPayload,
   isAgentSpawnRequestConcurrencySafe,
@@ -1499,6 +1500,13 @@ export function createDynamicSpawnAgentTool(input: {
     childAgentId: string,
   ) => ReturnType<typeof createSessionRunStoreFactory>;
 }): ToolDefinition {
+  const availableChildToolNames = new Set(
+    input.childTools.map((tool) => tool.name),
+  );
+  const enabledSpawnToolNames = [
+    ...AGENT_READ_ONLY_CHILD_TOOLS,
+    ...AGENT_WORKSPACE_WRITE_CHILD_TOOLS,
+  ].filter((name) => availableChildToolNames.has(name));
   return defineTool({
     name: "spawn_agent",
     description:
@@ -1521,14 +1529,10 @@ export function createDynamicSpawnAgentTool(input: {
         },
         allowedTools: {
           type: "array",
-          description:
-            "Optional subset of child tools to expose. Supported: read, glob, grep, list_dir, write, edit, edit_anchored_text. Defaults to read, glob, and grep; with grant.workspaceWrite=true and no allowedTools, also exposes write, edit, and edit_anchored_text. Use grep to find a symbol by name (glob only matches paths, not contents).",
+          description: `Optional subset of enabled child tools to expose. Available in this run: ${enabledSpawnToolNames.join(", ") || "none"}. Defaults to read, glob, and grep when enabled; with grant.workspaceWrite=true and no allowedTools, also exposes enabled managed write tools. Use grep to find a symbol by name (glob only matches paths, not contents).`,
           items: {
             type: "string",
-            enum: [
-              ...AGENT_READ_ONLY_CHILD_TOOLS,
-              ...AGENT_WORKSPACE_WRITE_CHILD_TOOLS,
-            ],
+            enum: enabledSpawnToolNames,
           },
         },
         grant: {
@@ -1556,6 +1560,7 @@ export function createDynamicSpawnAgentTool(input: {
         },
       },
       required: ["goal", "role", "prompt"],
+      additionalProperties: false,
     },
     policy: { risk: "safe" },
     governance: {
@@ -1625,6 +1630,12 @@ export function createDynamicSpawnAgentTool(input: {
         args,
         input.entrypoint ?? "spawn_agent",
         options,
+      );
+    },
+    approvalSubjectForArgs(args: unknown) {
+      return agentWorkspaceWriteApprovalSubjectForPayload(
+        args,
+        input.entrypoint ?? "spawn_agent",
       );
     },
     previewArgs(args) {

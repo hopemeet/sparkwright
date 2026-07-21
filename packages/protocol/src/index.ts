@@ -108,6 +108,7 @@ export const INTERNAL_TRANSCRIPT_EVENT_TYPES = [
   "model.turn.started",
   "model.turn.completed",
   "model.requested",
+  "model.completed",
   "model.retrying",
   "model.stream.failed",
   "model.stream.started",
@@ -1237,11 +1238,45 @@ export interface RunEventPayload {
   event: unknown;
 }
 
+export type ApprovalSubjectPayload =
+  | {
+      kind: "workspace_file";
+      operation: "write" | "remove";
+      path: string;
+      key: string;
+      label: string;
+    }
+  | {
+      kind: "shell_command";
+      command: string;
+      cwd: string;
+      key: string;
+      label: string;
+    }
+  | {
+      kind: "agent_workspace_write";
+      role?: string;
+      tools: string[];
+      key: string;
+      label: string;
+    }
+  | {
+      kind: "tool_call";
+      toolName: string;
+      key: string;
+      label: string;
+    }
+  | {
+      kind: "one_shot";
+      label: string;
+    };
+
 export interface ApprovalRequestedEventPayload {
   runId: string;
   approvalId: string;
   action: string;
   summary: string;
+  subject: ApprovalSubjectPayload;
   details?: Record<string, unknown>;
 }
 

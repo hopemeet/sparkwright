@@ -12,6 +12,18 @@ See [../../modules/agent-runtime.md](../../modules/agent-runtime.md) and [../../
 
 - Status: Verified
 - Date: 2026-07-21
+- Scope: foreground dynamic spawn and `task_create(kind:"agent")` share the
+  effective payload schema, enabled-tool enum, and semantic capability
+  validator before approval. Partial-child recovery triggers only from a real,
+  parent-correlated terminal `subagent.*` lifecycle event; a validation/policy/
+  approval failure with no child cannot manufacture child finality.
+- Read: Host dynamic/task Agent assembly, Agent Runtime task descriptor,
+  workflow Stop hook, Core outcome classification, and focused tests.
+- Tests: Agent Runtime task plus Host tools/spawn/workflow-hook suites and
+  affected typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-21
 - Scope: dynamic spawn admission is capability-contract driven rather than
   prompt-text driven. Enabled-tool/grant mismatches fail in semantic input
   validation before policy/approval; child results use strict

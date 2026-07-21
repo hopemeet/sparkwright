@@ -51,6 +51,7 @@ import {
 import {
   AGENT_READ_ONLY_CHILD_TOOLS,
   AGENT_WORKSPACE_WRITE_CHILD_TOOLS,
+  agentWorkspaceWriteApprovalSubjectForPayload,
   agentWorkspaceWriteGrantApprovalSummaryForPayload,
   agentWorkspaceWriteGrantPolicyForPayload,
 } from "./agent-spawn-grants.js";
@@ -338,6 +339,10 @@ function createMainHostToolCatalogList(input: {
   backgroundTasks?: BackgroundTaskPolicy;
   configPaths?: readonly string[];
 }): HostToolCatalogEntry[] {
+  const agentSpawnValidator = input.dynamicSpawnTool?.validateInput;
+  const agentTaskPayloadSchema = agentSpawnValidator
+    ? (input.dynamicSpawnTool!.inputSchema as Record<string, unknown>)
+    : AGENT_TASK_CREATE_PAYLOAD_SCHEMA;
   return [
     ...createCoreCodingToolCatalog(input.workspaceRoot),
     catalogEntry(createCronTool(), "cron"),
@@ -380,8 +385,17 @@ function createMainHostToolCatalogList(input: {
             description:
               "start a background child agent owned by the task lifecycle",
             payloadDescription: AGENT_TASK_CREATE_PAYLOAD_DESCRIPTION,
-            payloadSchema: AGENT_TASK_CREATE_PAYLOAD_SCHEMA,
+            payloadSchema: agentTaskPayloadSchema,
             requiresPayload: true,
+            ...(agentSpawnValidator
+              ? {
+                  validatePayload: (
+                    payload: Record<string, unknown> | undefined,
+                    _call: unknown,
+                    ctx: RuntimeContext,
+                  ) => agentSpawnValidator(payload, ctx),
+                }
+              : {}),
             policyForPayload: (payload) =>
               agentWorkspaceWriteGrantPolicyForPayload(
                 payload,
@@ -393,6 +407,11 @@ function createMainHostToolCatalogList(input: {
                 payload,
                 "task_create(agent)",
                 options,
+              ),
+            approvalSubjectForPayload: (payload) =>
+              agentWorkspaceWriteApprovalSubjectForPayload(
+                payload,
+                "task_create(agent)",
               ),
           },
         ],

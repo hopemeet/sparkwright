@@ -7,9 +7,11 @@
 
 import {
   defineTool,
+  type ApprovalSubject,
   type BackgroundTaskPolicy,
   type RuntimeContext,
   type ToolDefinition,
+  type ToolInputValidationResult,
   type ToolRequestPreviewOptions,
 } from "@sparkwright/core";
 import type { RunId } from "@sparkwright/core";
@@ -29,6 +31,16 @@ export interface TaskCreateKindDescriptor {
   payloadDescription?: string;
   payloadSchema?: JsonSchemaObject;
   requiresPayload?: boolean;
+  /**
+   * Kind-specific semantic validation performed before policy and approval.
+   * This must remain side-effect free for the same reason as a tool's
+   * `validateInput` hook.
+   */
+  validatePayload?(
+    payload: Record<string, unknown> | undefined,
+    call: TaskCreateKindCall,
+    ctx: RuntimeContext,
+  ): ToolInputValidationResult | Promise<ToolInputValidationResult>;
   policyForPayload?(
     payload: Record<string, unknown> | undefined,
     call: TaskCreateKindCall,
@@ -43,6 +55,10 @@ export interface TaskCreateKindDescriptor {
     call: TaskCreateKindCall,
     options: ToolRequestPreviewOptions,
   ): string | undefined;
+  approvalSubjectForPayload?(
+    payload: Record<string, unknown> | undefined,
+    call: TaskCreateKindCall,
+  ): ApprovalSubject | Promise<ApprovalSubject>;
 }
 
 export interface TaskCreateKindCall {
@@ -113,6 +129,9 @@ export function createTaskCreate(options: TaskToolOptions): ToolDefinition {
     deferLoading: false,
     policy: { risk: "risky", requiresApproval: false },
     governance: { sideEffects: ["external"] },
+    validateInput(args: unknown, ctx) {
+      return validateTaskCreateInput(args, ctx, options, kindsByName);
+    },
     policyForArgs(args: unknown) {
       const parsed = tryParseCreateArgs(args);
       if (!parsed) return {};
@@ -136,7 +155,33 @@ export function createTaskCreate(options: TaskToolOptions): ToolDefinition {
           previewOptions,
         );
     },
+    approvalSubjectForArgs(args: unknown) {
+      const parsed = parseCreateArgs(args);
+      return (
+        kindsByName
+          .get(parsed.kind)
+          ?.approvalSubjectForPayload?.(
+            parsed.payload,
+            taskCreateKindCall(parsed),
+          ) ?? {
+          kind: "one_shot",
+          label: `Allow task_create(${parsed.kind}) once`,
+        }
+      );
+    },
     async execute(args: unknown, ctx): Promise<TaskCreateResult> {
+      const validation = await validateTaskCreateInput(
+        args,
+        ctx,
+        options,
+        kindsByName,
+      );
+      if (!validation.ok) {
+        throw makeToolError(
+          validation.code ?? "TASK_ARGUMENTS_INVALID",
+          validation.message,
+        );
+      }
       const parsed = parseCreateArgs(args);
       const backgroundTasks = options.backgroundTasks ?? "enabled";
       if (backgroundTasks === "disabled") {
@@ -237,6 +282,80 @@ export function createTaskCreate(options: TaskToolOptions): ToolDefinition {
       return taskCreateInlineResult(foreground.record);
     },
   });
+}
+
+async function validateTaskCreateInput(
+  args: unknown,
+  ctx: RuntimeContext,
+  options: TaskToolOptions,
+  kindsByName: ReadonlyMap<string, TaskCreateKindDescriptor>,
+): Promise<ToolInputValidationResult> {
+  let parsed: CreateArgs;
+  try {
+    parsed = parseCreateArgs(args);
+  } catch (cause) {
+    return validationFailureFromCause(cause, "TASK_ARGUMENTS_INVALID");
+  }
+
+  if ((options.backgroundTasks ?? "enabled") === "disabled") {
+    return {
+      ok: false,
+      code: "BACKGROUND_TASKS_DISABLED",
+      message:
+        "Background task creation is disabled by this session's access policy.",
+    };
+  }
+
+  const descriptor = kindsByName.get(parsed.kind);
+  const runner =
+    options.taskRunners?.[parsed.kind] ??
+    options.manager.getRunner(parsed.kind);
+  if (!descriptor || !runner) {
+    const available = [...kindsByName.keys()];
+    const availableText =
+      available.length > 0 ? ` Available kinds: ${available.join(", ")}.` : "";
+    return {
+      ok: false,
+      code: "TASK_KIND_UNREGISTERED",
+      message: `No runner registered for task kind: ${parsed.kind}.${availableText}`,
+    };
+  }
+  if (descriptor.requiresPayload === true && parsed.payload === undefined) {
+    return {
+      ok: false,
+      code: "TASK_ARGUMENTS_INVALID",
+      message: `task_create: kind ${parsed.kind} requires an object payload.`,
+    };
+  }
+  if (!descriptor.validatePayload) return { ok: true };
+
+  try {
+    return await descriptor.validatePayload(
+      parsed.payload,
+      taskCreateKindCall(parsed),
+      ctx,
+    );
+  } catch (cause) {
+    return validationFailureFromCause(cause, "TASK_PAYLOAD_INVALID");
+  }
+}
+
+function validationFailureFromCause(
+  cause: unknown,
+  fallbackCode: string,
+): ToolInputValidationResult {
+  const record =
+    typeof cause === "object" && cause !== null
+      ? (cause as { code?: unknown; message?: unknown })
+      : undefined;
+  return {
+    ok: false,
+    code: typeof record?.code === "string" ? record.code : fallbackCode,
+    message:
+      typeof record?.message === "string"
+        ? record.message
+        : "Invalid task_create input.",
+  };
 }
 
 export type TaskCreateMode = "foreground" | "awaited" | "background";
@@ -887,13 +1006,27 @@ function parseCreateArgs(args: unknown): CreateArgs {
       "task_create: kind must be a non-empty string.",
     );
   }
+  if (record.title !== undefined && typeof record.title !== "string") {
+    throw makeToolError(
+      "TASK_ARGUMENTS_INVALID",
+      "task_create: title must be a string when provided.",
+    );
+  }
   const title = typeof record.title === "string" ? record.title : undefined;
   const mode = parseTaskCreateMode(record.mode);
   const awaited = mode !== "background";
-  const payload =
-    record.payload && typeof record.payload === "object"
-      ? (record.payload as Record<string, unknown>)
-      : undefined;
+  if (
+    record.payload !== undefined &&
+    (typeof record.payload !== "object" ||
+      record.payload === null ||
+      Array.isArray(record.payload))
+  ) {
+    throw makeToolError(
+      "TASK_ARGUMENTS_INVALID",
+      "task_create: payload must be an object when provided.",
+    );
+  }
+  const payload = record.payload as Record<string, unknown> | undefined;
   return { kind, title, mode, awaited, payload };
 }
 

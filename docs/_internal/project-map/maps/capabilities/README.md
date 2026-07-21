@@ -8,6 +8,16 @@ cron, shell/task tools, and capability inspection.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-21
+- Scope: dynamic foreground Agent spawn and Agent task creation share one
+  effective structured capability contract and pre-approval validator. Typed
+  approval subjects are producer-owned; successful Skill/MCP preparation is
+  quiet only in conversation projection, not capability inventory or Trace.
+- Read: Host catalog/Agent assembly, Agent Runtime task descriptor, Protocol
+  approval subject, and TUI projection.
+- Tests: affected Agent Runtime, Host, Protocol, and TUI focused suites passed.
+
+- Status: Verified
 - Date: 2026-07-19
 - Scope: reviewed capability assembly after Todo scheduler removal and Workflow
   continuation narrowing. The Todo surface is advisory plan state; durable

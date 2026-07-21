@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  analyzeToolOutcomes,
   createContextItemId,
   createClearToolUsesStage,
   createWorkspaceMutationPolicy,
@@ -220,6 +221,12 @@ describe("SparkwrightRun", () => {
       schemaValidationMs: expect.any(Number),
       inputValidationMs: expect.any(Number),
     });
+    expect(analyzeToolOutcomes(events).failures).toMatchObject([
+      {
+        code: "PATH_NOT_FILE",
+        category: "model_arg_error",
+      },
+    ]);
   });
 
   it("loops model-tool-observation until a final answer", async () => {
@@ -249,6 +256,7 @@ describe("SparkwrightRun", () => {
         if (modelCalls === 1) {
           expect(input.context).toHaveLength(0);
           return {
+            message: "using echo",
             toolCalls: [
               {
                 toolName: "echo",
@@ -283,6 +291,18 @@ describe("SparkwrightRun", () => {
     });
     expect(modelCalls).toBe(2);
     expect(events.map((event) => event.type)).toContain("tool.completed");
+    expect(
+      events
+        .filter((event) => event.type === "model.assistant_text")
+        .map((event) => (event.payload as { message?: string }).message),
+    ).toEqual(["using echo"]);
+    expect(
+      (
+        events.find((event) => event.type === "run.completed")?.payload as {
+          message?: string;
+        }
+      ).message,
+    ).toBe("done");
     expect(
       events.find((event) => event.type === "tool.completed")?.metadata,
     ).toMatchObject({
@@ -5954,6 +5974,17 @@ describe("SparkwrightRun", () => {
         forcedContinuationSource: "workflow",
       },
     });
+    const events = run.events.all();
+    expect(
+      events.filter((event) => event.type === "model.assistant_text"),
+    ).toEqual([]);
+    expect(
+      (
+        events.find((event) => event.type === "run.completed")?.payload as {
+          message?: string;
+        }
+      ).message,
+    ).toBe("done");
   });
 
   it("refuses workflow projection continuations when the source budget is exhausted", async () => {

@@ -2,6 +2,7 @@ import {
   createApprovalPolicy,
   resolveApprovalByPolicy,
   type ApprovalId,
+  type ApprovalSubject,
   type RunId,
   type RunAccessMode,
 } from "@sparkwright/core";
@@ -16,6 +17,7 @@ export interface HostClientApprovalRequestInput {
   runId: string;
   action: string;
   summary: string;
+  subject: ApprovalSubject;
   details?: Record<string, unknown>;
   createdAt: string;
 }
@@ -31,6 +33,7 @@ export function resolveHostClientApprovalByPolicy(
       runId: requestInput.runId as RunId,
       action: requestInput.action,
       summary: requestInput.summary,
+      subject: requestInput.subject,
       details: requestInput.details ?? {},
       createdAt: requestInput.createdAt,
       status: "pending",

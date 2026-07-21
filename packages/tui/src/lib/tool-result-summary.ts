@@ -125,11 +125,24 @@ export function summarizeShellResult(
   const combined = [stdout, stderr ? `stderr: ${stderr}` : ""]
     .filter(Boolean)
     .join("\n");
-  const lines = combined
+  const allLines = combined
     .split(/\r?\n/)
     .map((line) => line.trim())
-    .filter(Boolean)
-    .slice(0, maxLines);
+    .filter(Boolean);
+  const limit = Math.max(1, Math.floor(maxLines));
+  const lines =
+    allLines.length <= limit
+      ? allLines
+      : (() => {
+          const headCount = Math.ceil(limit / 2);
+          const tailCount = Math.floor(limit / 2);
+          const omitted = allLines.length - headCount - tailCount;
+          return [
+            ...allLines.slice(0, headCount),
+            `… ${omitted} line${omitted === 1 ? "" : "s"} omitted …`,
+            ...(tailCount > 0 ? allLines.slice(-tailCount) : []),
+          ];
+        })();
   return { head, lines, timedOut };
 }
 

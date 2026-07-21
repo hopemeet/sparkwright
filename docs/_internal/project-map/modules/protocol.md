@@ -11,6 +11,17 @@ See also [../maps/safety/approvals.md](../maps/safety/approvals.md) and [../maps
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-21
+- Scope: `approval.requested` requires the producer-authored typed effect
+  subject used by clients for safe session rules. `model.completed` is now
+  classified as internal raw-turn transcript evidence; accepted final text is
+  carried by `run.completed.message`.
+- Read: approval subject/event DTOs, transcript visibility constants, Host
+  projection, SDK/CLI/IM/ACP fixtures, and TUI live/export consumers.
+- Tests: Protocol plus affected Host, SDK, CLI, IM, ACP, and TUI focused tests
+  and typechecks passed.
+
+- Status: Verified
 - Date: 2026-07-20
 - Scope: the shared product-transcript visibility filter classifies
   `agent.profile.derived` as run-preparation noise. TUI live scrollback and
@@ -240,8 +251,9 @@ Does not own:
 - `INTERNAL_TRANSCRIPT_EVENT_TYPES` / `isInternalTranscriptEventType()` are the
   shared low-signal event filter used by TUI live transcript rendering and
   `/export`; this is product transcript visibility, not raw trace semantics.
-  `run.budget.exceeded` and `agent.profile.derived` are filtered here as runtime
-  machinery even though the latter remains visible in Activity and raw trace.
+  `run.budget.exceeded`, raw-turn `model.completed`, and
+  `agent.profile.derived` are filtered here as runtime machinery even though
+  they remain visible in Activity and raw trace.
 - `LIVE_DEBUG_NOISE_EVENT_TYPES` / `isLiveDebugNoiseEventType()` are the shared
   high-volume event filter for CLI live run output; raw trace diagnostics still
   expose those events. The list currently includes `model.stream.chunk` and
@@ -251,6 +263,9 @@ Does not own:
   `failure`. `getRunFailure()` and `runFailureMessage()` read only that envelope;
   they do not synthesize failures from root fields.
 - `approvalId` from `approval.requested` is resolved by `approval.resolve`.
+  The request also requires a typed producer-authored `subject`; keyed subjects
+  may support an exact client-local rule, while `one_shot` is deliberately not
+  reusable.
 - `CapabilityDelegateToolSummary.protocol` covers `acp`,
   `external_command`, and configured in-process delegates as `in_process`.
   `command`/`args` are optional because in-process delegates do not spawn a

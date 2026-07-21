@@ -1,6 +1,10 @@
 import { createApprovalId } from "./ids.js";
 import type { RunId } from "./ids.js";
-import type { ApprovalRequest, ApprovalResponse } from "./types.js";
+import type {
+  ApprovalRequest,
+  ApprovalResponse,
+  ApprovalSubject,
+} from "./types.js";
 import { isRecord } from "./record-utils.js";
 
 export interface ResolveApprovalOptions {
@@ -11,6 +15,7 @@ export function createApprovalRequest(input: {
   runId: RunId;
   action: string;
   summary: string;
+  subject: ApprovalSubject;
   details?: Record<string, unknown>;
 }): ApprovalRequest {
   return {
@@ -18,6 +23,7 @@ export function createApprovalRequest(input: {
     runId: input.runId,
     action: input.action,
     summary: input.summary,
+    subject: input.subject,
     details: input.details ?? {},
     createdAt: new Date().toISOString(),
     status: "pending",

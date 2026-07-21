@@ -206,7 +206,8 @@ Current event types:
   `model.requested` / `model.retrying` / `model.stream.*` events and the
   turn's `model.completed` event are nested beneath it.
 - `model.turn.completed`: the model turn span closed.
-- `model.completed`
+- `model.completed`: raw normalized output for one model turn; diagnostic and
+  replay evidence, not the accepted final answer
 - `model.retrying`
 - `model.stream.started`: a streaming model response began
 - `model.stream.chunk`: a streaming chunk was received (payload kept small)
@@ -216,7 +217,9 @@ Current event types:
 - `model.stream.completed`: a streaming model response finished normally
 - `model.stream.failed`: a streaming model response ended in failure
 - `model.stream.timeout`: a streaming model response timed out
-- `model.assistant_text`: normalized assistant-facing text was emitted for trace and replay consumers
+- `model.assistant_text`: committed nonterminal assistant commentary was
+  emitted before further tool work. A Stop-accepted final answer is carried by
+  terminal run message field.
 - `context.assembled`
 - `context.compaction_requested`
 - `context.compaction.started`
@@ -244,7 +247,9 @@ Current event types:
 - `tool.replay_risk`
 - `storage.degraded`
 - `storage.recovered`
-- `approval.requested`
+- `approval.requested`: carries a required producer-authored typed `subject`;
+  clients may remember only subjects with a stable key and must treat
+  `kind:"one_shot"` as non-reusable
 - `approval.resolved`
 - `artifact.created`
 - `workspace.read`

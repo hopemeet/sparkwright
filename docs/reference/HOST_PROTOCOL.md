@@ -966,13 +966,19 @@ allowed.
 
 A run is paused waiting for human decision.
 
-| Field        | Type   | Notes                                            |
-| ------------ | ------ | ------------------------------------------------ |
-| `runId`      | string |                                                  |
-| `approvalId` | string | Used in `approval.resolve`.                      |
-| `action`     | string | Stable identifier (e.g. `workspace.write`).      |
-| `summary`    | string | Human-readable one-liner.                        |
-| `details`    | object | Action-specific (e.g. `{ path, reason, diff }`). |
+| Field        | Type   | Notes                                                                         |
+| ------------ | ------ | ----------------------------------------------------------------------------- |
+| `runId`      | string |                                                                               |
+| `approvalId` | string | Used in `approval.resolve`.                                                   |
+| `action`     | string | Stable identifier (e.g. `workspace.write`).                                   |
+| `summary`    | string | Human-readable one-liner.                                                     |
+| `subject`    | object | Required producer-authored effect identity; only keyed subjects are reusable. |
+| `details`    | object | Action-specific display/audit facts (e.g. `{ path, reason, diff }`).          |
+
+`subject.kind` is one of `workspace_file`, `shell_command`,
+`agent_workspace_write`, `tool_call`, or `one_shot`. Clients must not derive a
+remembered authorization key from `summary` or `details`; malformed subjects
+fail closed to one-shot handling.
 
 ### `run.completed`
 

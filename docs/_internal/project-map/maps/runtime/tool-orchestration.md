@@ -11,6 +11,19 @@ See [../safety/workspace-writes.md](../safety/workspace-writes.md), [../safety/s
 
 - Status: Verified
 - Date: 2026-07-21
+- Scope: `task_create` performs kind/payload/runner/background semantic
+  validation before argument policy and approval; the Agent kind delegates to
+  the same effective dynamic-spawn schema and validator. Tool-owned approval
+  subjects flow through Core and Streaming Runtime gates, with one-shot as the
+  only fallback. Validation-stage failures classify as model argument errors.
+- Read: Core/Streaming Runtime tool gates and outcome classifier, Agent Runtime
+  task tool, Host catalog/dynamic spawn, Shell/Agent approval producers, and
+  focused tests.
+- Tests: focused Core, Streaming Runtime, Agent Runtime, Host, and Shell suites
+  plus affected typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-21
 - Scope: dynamic Agent spawn now uses Core's semantic `validateInput` stage for
   deterministic tool/grant feasibility before policy and approval; natural
   language intent heuristics are removed. Strict child semantic status and
@@ -519,6 +532,10 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
   but prevents workspace writes, artifacts, progress, and external side
   effects. Validation failures become structured `tool.failed` results with
   `metadata.phase: "validateInput"` and execute/approval are skipped.
+- An approval gate asks the tool for `approvalSubjectForArgs(args)` after
+  successful validation. Producers define any stable effect key; missing hooks
+  yield `one_shot`, so a presentation client cannot infer a reusable rule from
+  raw arguments or summary text.
 - Tool result presentation is a tool-definition hint, not a second observation
   protocol. `ToolDefinition.resultPresentation` names the semantic kind and
   preserve/pagination fields; concrete read/discovery/search tools still return

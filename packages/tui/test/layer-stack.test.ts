@@ -10,7 +10,7 @@ function approval(approvalId: string): ApprovalViewModel {
     risk: "medium",
     summary: "Run tool",
     exactScope: "exact arguments",
-    subject: { kind: "unknown" },
+    subject: { kind: "one_shot", label: "Allow once" },
     executionKind: "main",
     runId: "run_1",
     sessionId: "session_1",

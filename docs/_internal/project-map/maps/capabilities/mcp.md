@@ -10,6 +10,17 @@ See [../../modules/mcp-adapter.md](../../modules/mcp-adapter.md).
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-21
+- Scope: reviewed approval-subject and conversation-projection changes. MCP
+  tools without a producer-specific stable subject remain one-shot; successful
+  server preparation is hidden only from default chat, while degraded/failed
+  preparation, capability inspection, Activity, and Trace remain visible.
+- Read: MCP preparation/tool assembly, Core approval fallback, and TUI live/
+  Activity projection.
+- Tests: affected Host, Protocol, and TUI focused tests passed; MCP execution
+  semantics did not change.
+
+- Status: Verified
 - Date: 2026-07-19
 - Scope: reviewed because Host runtime episode/tool assembly changed. MCP
   discovery, lazy startup, cwd disclosure, governance, and tool execution

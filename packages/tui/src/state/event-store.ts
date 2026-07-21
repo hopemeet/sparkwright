@@ -332,9 +332,9 @@ export class EventStore {
       event.type === "model.stream.completed" ||
       event.type === "model.completed"
     ) {
-      // The assistant turn has finished. Drop the live previews — the committed
-      // `model.completed` card now carries the text in scrollback, so keeping
-      // streamingText would duplicate it. Reasoning is ephemeral by design.
+      // The live provider preview ends with the raw model turn. Committed
+      // commentary/final text arrives separately through model.assistant_text
+      // or run.completed; reasoning remains ephemeral by design.
       this.state = { ...this.state, streamingText: "", reasoningText: "" };
     }
 

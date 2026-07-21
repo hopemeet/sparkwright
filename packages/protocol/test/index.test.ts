@@ -43,6 +43,7 @@ describe("@sparkwright/protocol", () => {
 
   it("classifies agent profile derivation as product transcript noise", () => {
     expect(isInternalTranscriptEventType("agent.profile.derived")).toBe(true);
+    expect(isInternalTranscriptEventType("model.completed")).toBe(true);
     expect(isInternalTranscriptEventType("subagent.requested")).toBe(false);
     expect(isInternalTranscriptEventType("subagent.started")).toBe(false);
     expect(isInternalTranscriptEventType("subagent.completed")).toBe(false);

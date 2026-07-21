@@ -71,6 +71,50 @@ async function renderToText(
 }
 
 describe("ApprovalPrompt rendering", () => {
+  it("offers an explicit session shortcut only for stable subjects", async () => {
+    const sessionDecision = vi.fn();
+    const stable = pending({
+      approvalId: "approval_stable",
+      action: "tool.execute",
+      kind: "shell.execute",
+      risk: "high",
+      summary: "Run tests",
+      subject: {
+        kind: "shell_command",
+        command: "npm test",
+        cwd: "/workspace",
+        key: "shell:test",
+        label: "Allow this command for this session",
+      },
+    });
+    const stableText = await renderToText(
+      <ApprovalPrompt pending={stable} onDecision={sessionDecision} />,
+      80,
+      ["s"],
+    );
+
+    expect(stableText).toContain("s session");
+    expect(sessionDecision).toHaveBeenCalledWith("allow-session");
+
+    const oneShotDecision = vi.fn();
+    const oneShotText = await renderToText(
+      <ApprovalPrompt
+        pending={pending({
+          approvalId: "approval_once",
+          action: "tool.execute",
+          kind: "tool.execute",
+          summary: "Run an opaque tool",
+          subject: { kind: "one_shot", label: "Allow once" },
+        })}
+        onDecision={oneShotDecision}
+      />,
+      80,
+      ["s"],
+    );
+    expect(oneShotText).not.toContain("s session");
+    expect(oneShotDecision).not.toHaveBeenCalled();
+  });
+
   it("renders the final prepared Skill diff before effect-bound approval", async () => {
     const view = pending({
       approvalId: "approval_skill",
@@ -84,8 +128,8 @@ describe("ApprovalPrompt rendering", () => {
         "+++ b/.sparkwright/skills/repo-review/SKILL.md",
         "+Inspect the diff.",
       ].join("\n"),
-      subject: { kind: "unknown" },
-      exactScope: "unrecognized scope (allow once only)",
+      subject: { kind: "one_shot", label: "Allow this Skill effect once" },
+      exactScope: "one-shot request",
     });
 
     const text = await renderToText(
@@ -122,12 +166,13 @@ describe("ApprovalPrompt rendering", () => {
         deletions: 1,
       },
       subject: {
-        kind: "workspace-write",
+        kind: "workspace_file",
+        operation: "write",
         path: "packages/tui",
         key: "write:tui",
-        rememberLabel: "Allow writes to packages/tui for this session",
+        label: "Allow writes to packages/tui for this session",
       },
-      exactScope: "workspace path packages/tui",
+      exactScope: "write workspace path packages/tui",
     });
 
     const text = await renderToText(
@@ -154,11 +199,11 @@ describe("ApprovalPrompt rendering", () => {
         cwd: "/tmp/sparkwright-tui-coding.fixture",
       },
       subject: {
-        kind: "shell",
+        kind: "shell_command",
         command: "npm test",
         cwd: "/tmp/sparkwright-tui-coding.fixture",
         key: "shell:test",
-        rememberLabel: "Allow this exact command here for this session",
+        label: "Allow this exact command here for this session",
       },
       policyReason:
         "Tools with write side effects require approval for this run.",
@@ -196,11 +241,11 @@ describe("ApprovalPrompt rendering", () => {
       queuePosition: 1,
       queueDepth: 3,
       subject: {
-        kind: "shell",
+        kind: "shell_command",
         command,
         cwd: "/workspace/sparkwright/packages/tui",
         key: "shell:release",
-        rememberLabel: "Allow this exact command here for this session",
+        label: "Allow this exact command here for this session",
       },
     });
 
@@ -231,10 +276,10 @@ describe("ApprovalPrompt rendering", () => {
         request: { project: "SparkWright", labels: ["tui", "safety"] },
       },
       subject: {
-        kind: "tool",
+        kind: "tool_call",
         toolName: "mcp.request",
         key: "tool:structured",
-        rememberLabel: "Allow these exact arguments for this session",
+        label: "Allow these exact arguments for this session",
       },
     });
 
@@ -260,11 +305,11 @@ describe("ApprovalPrompt rendering", () => {
       toolName: "bash",
       toolArgs: { command: "npm test" },
       subject: {
-        kind: "shell",
+        kind: "shell_command",
         command: "npm test",
         cwd: "/tmp/project",
         key: "shell:keys",
-        rememberLabel: "Allow this exact command here for this session",
+        label: "Allow this exact command here for this session",
       },
     });
 
@@ -285,8 +330,8 @@ describe("ApprovalPrompt rendering", () => {
       kind: "unknown",
       risk: "unknown",
       summary: "Unknown effect",
-      subject: { kind: "unknown" },
-      exactScope: "unrecognized scope (allow once only)",
+      subject: { kind: "one_shot", label: "Allow unknown effect once" },
+      exactScope: "one-shot request",
     });
     await renderToText(
       <ApprovalPrompt pending={unknown} onDecision={onDecision} />,

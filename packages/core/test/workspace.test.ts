@@ -186,6 +186,13 @@ describe("LocalWorkspace", () => {
         approve(request) {
           expect(run.state).toBe("waiting_approval");
           expect(request.action).toBe("workspace.write");
+          expect(request.subject).toEqual({
+            kind: "workspace_file",
+            operation: "write",
+            path: "README.md",
+            key: "workspace_file:write:README.md",
+            label: "Allow writing README.md for this session",
+          });
           expect(request.details.path).toBe("README.md");
           expect(String(request.details.diff)).toContain("-before");
           return {
@@ -234,6 +241,13 @@ describe("LocalWorkspace", () => {
         approve(request) {
           expect(request.action).toBe("workspace.write");
           expect(request.summary).toBe("Remove obsolete.md");
+          expect(request.subject).toEqual({
+            kind: "workspace_file",
+            operation: "remove",
+            path: "obsolete.md",
+            key: "workspace_file:remove:obsolete.md",
+            label: "Allow removing obsolete.md for this session",
+          });
           expect(request.details).toMatchObject({
             path: "obsolete.md",
             operation: "remove",

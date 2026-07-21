@@ -14,22 +14,31 @@ describe("renderTranscript", () => {
       {
         type: "model.stream.chunk",
         sequence: 3,
-        payload: { runId: "r1", type: "text_delta", text: "Hello" },
-      },
-      {
-        type: "model.stream.chunk",
-        sequence: 4,
-        payload: { runId: "r1", type: "text_delta", text: ", world." },
+        payload: { runId: "r1", type: "text_delta", text: "provisional" },
       },
       {
         type: "model.stream.completed",
-        sequence: 5,
+        sequence: 4,
         payload: { runId: "r1" },
       },
       {
-        type: "run.completed",
+        type: "model.completed",
+        sequence: 5,
+        payload: { runId: "r1", message: "provisional" },
+      },
+      {
+        type: "model.assistant_text",
         sequence: 6,
-        payload: { runId: "r1", stopReason: "natural" },
+        payload: { runId: "r1", message: "Working on it." },
+      },
+      {
+        type: "run.completed",
+        sequence: 7,
+        payload: {
+          runId: "r1",
+          stopReason: "natural",
+          message: "Hello, world.",
+        },
       },
     ];
     const md = renderTranscript(
@@ -45,7 +54,10 @@ describe("renderTranscript", () => {
     expect(md).toContain("## User");
     expect(md).toContain("do the thing");
     expect(md).toContain("## Assistant");
+    expect(md).toContain("Working on it.");
     expect(md).toContain("Hello, world.");
+    expect(md).not.toContain("provisional");
+    expect(md.match(/## Assistant/g)).toHaveLength(2);
     expect(md).toContain("_Run completed: **natural**_");
   });
 
@@ -234,7 +246,7 @@ describe("renderTranscript", () => {
     expect(md).toContain("+new");
   });
 
-  it("wraps batched tool calls in a Batch heading and delimiter", () => {
+  it("omits batch plumbing while retaining child tool sections", () => {
     const events: RunEvent[] = [
       {
         type: "tool.batch.requested",
@@ -257,11 +269,50 @@ describe("renderTranscript", () => {
       { sessionId: "s", workspaceRoot: "/x" },
       events,
     );
-    expect(md).toContain("### Batch · 2 tools (concurrent)");
-    expect(md).toContain("_End of batch._");
-    // Children render as normal tool sections, not dumped into the raw tail.
+    expect(md).not.toContain("### Batch");
+    expect(md).not.toContain("_End of batch._");
     expect(md).toContain("### Tool: `read`");
     expect(md).not.toContain("Raw events");
+  });
+
+  it("shares the quiet-success projection with the live conversation", () => {
+    const events: RunEvent[] = [
+      {
+        type: "tool.requested",
+        sequence: 1,
+        payload: {
+          id: "todo_1",
+          toolName: "todo_write",
+          input: { todos: [] },
+        },
+      },
+      {
+        type: "tool.completed",
+        sequence: 2,
+        payload: {
+          toolCallId: "todo_1",
+          output: { changed: true },
+        },
+      },
+      {
+        type: "approval.resolved",
+        sequence: 3,
+        payload: { approvalId: "approval_1", decision: "approved" },
+      },
+      {
+        type: "approval.resolved",
+        sequence: 4,
+        payload: { approvalId: "approval_2", decision: "denied" },
+      },
+    ];
+
+    const md = renderTranscript(
+      { sessionId: "s", workspaceRoot: "/x" },
+      events,
+    );
+    expect(md).not.toContain("todo_write");
+    expect(md).not.toContain("Approval approved");
+    expect(md).toContain("Approval denied");
   });
 
   it("collects unknown events into a raw list", () => {

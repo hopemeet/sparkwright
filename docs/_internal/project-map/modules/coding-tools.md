@@ -12,6 +12,16 @@ See also [../maps/runtime/tool-orchestration.md](../maps/runtime/tool-orchestrat
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-21
+- Scope: tool definitions may author typed reusable approval subjects. Shell
+  provides exact normalized command/cwd semantics; dynamic Agent grants provide
+  exact structured child write semantics; ordinary unknown effects are
+  one-shot. Tool schemas/execution outputs are otherwise unchanged.
+- Read: Core ToolDefinition, Shell tool, Host Agent grant/catalog, Agent Runtime
+  task wrapper, and focused tests.
+- Tests: focused Core, Shell, Agent Runtime, and Host tool suites passed.
+
+- Status: Verified
 - Date: 2026-07-19
 - Scope: reviewed because Host tool catalog/surface changed while removing Todo
   scheduler-only tools and forcing. Coding-tool execution, governance,

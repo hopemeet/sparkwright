@@ -17,6 +17,7 @@ import {
   validateToolArguments,
   validateToolOutput,
   withSpan,
+  type ApprovalSubject,
   type ContextAssembler,
   type ContextBudget,
   type ContextItem,
@@ -461,6 +462,16 @@ class AfterTurnStreamingRun implements StreamingRunHandle {
         return this.complete("final_answer", { message: output.message });
       }
 
+      if (
+        typeof output.message === "string" &&
+        output.message.trim().length > 0
+      ) {
+        this.events.emit("model.assistant_text", {
+          step,
+          message: output.message,
+        });
+      }
+
       const toolResult = await this.runToolsAfterTurn(step, toolCalls);
       if (toolResult) return toolResult;
     }
@@ -840,6 +851,7 @@ class AfterTurnStreamingRun implements StreamingRunHandle {
     const gatedResult = await this.checkToolGate(
       call.id,
       requestedCall.toolName,
+      requestedCall.arguments,
     );
     if (gatedResult) {
       this.finishToolResult(requestedCall.toolName, gatedResult, span);
@@ -907,6 +919,7 @@ class AfterTurnStreamingRun implements StreamingRunHandle {
   private async checkToolGate(
     toolCallId: ToolResult["toolCallId"],
     toolName: string,
+    args: unknown,
   ): Promise<ToolResult | undefined> {
     const tool = this.tools.get(toolName);
     if (!tool) return undefined;
@@ -966,10 +979,18 @@ class AfterTurnStreamingRun implements StreamingRunHandle {
     ) {
       let approved = false;
       try {
+        const summary = `Run tool ${toolName}`;
+        const subject = tool.approvalSubjectForArgs
+          ? await tool.approvalSubjectForArgs(args as never)
+          : {
+              kind: "one_shot" as const,
+              label: `Allow ${summary} once`,
+            };
         approved = await this.requestApproval({
           action: "tool.execute",
-          summary: `Run tool ${toolName}`,
-          details: { ...metadata, policy: decision },
+          summary,
+          subject,
+          details: { ...metadata, arguments: args, policy: decision },
         });
       } catch (cause) {
         return {
@@ -1094,6 +1115,7 @@ class AfterTurnStreamingRun implements StreamingRunHandle {
   private async requestApproval(input: {
     action: string;
     summary: string;
+    subject: ApprovalSubject;
     details?: Record<string, unknown>;
   }): Promise<boolean> {
     if (!this.interactionChannel?.approve) {
@@ -1106,6 +1128,7 @@ class AfterTurnStreamingRun implements StreamingRunHandle {
       runId: this.record.id,
       action: input.action,
       summary: input.summary,
+      subject: input.subject,
       details: input.details,
     });
     this.setState("waiting_approval");

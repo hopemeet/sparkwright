@@ -11,6 +11,19 @@ See [workspace-writes.md](workspace-writes.md) and [shell.md](shell.md).
 
 - Status: Verified
 - Date: 2026-07-21
+- Scope: every approval request carries a producer-authored typed subject.
+  Workspace writes distinguish write/remove by canonical path, Shell keys the
+  exact command/cwd/execution settings, Agent grants key the exact structured
+  grant, and unrecognized effects are one-shot only. TUI no longer infers
+  reusable authority from display details; duplicate delivery is idempotent
+  and automatic resolution failure returns to a visible manual decision.
+- Read: Core approval/tool/workspace contracts, Shell and Agent producers,
+  Protocol/Host projection, TUI coordinator/session rules/prompt, and fixtures.
+- Tests: focused Core, Streaming Runtime, Shell, Agent Runtime, Host, Protocol,
+  SDK, CLI, IM, ACP, and TUI approval tests and typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-21
 - Scope: dynamic spawn validates its structured enabled-tool/grant contract in
   Core's semantic input stage before approval. Goal/prompt text is not an
   authorization input, so negated execution wording cannot create a doomed
@@ -125,7 +138,9 @@ policy requires approval
   effect hash and final diff, and persists a receipt before mutation. TUI treats
   it as one-shot (no remembered session rule).
 
-- `approval.requested` carries an id used by protocol `approval.resolve`.
+- `approval.requested` carries an id used by protocol `approval.resolve` plus a
+  required typed producer-authored subject. Human-readable summary/details are
+  audit and presentation facts, not reusable authorization identity.
 - `approval.resolved` preserves optional resolver `message` and structured
   `autoApproved` state. Trace summary/report diagnostics consume these root
   fields only and do not parse nested responses or message prose.
@@ -147,12 +162,13 @@ policy requires approval
   Host clamps it to any project access ceiling and derives the run-local
   approval policy. There is no second approval-default input.
 - Ask-mode TUI users may remember an exact recognized approval subject for the
-  current session. Rules are client-memory only, installed after a successful
-  `approval.resolve`, matched on canonical path or exact tool arguments plus
-  shell cwd, and surfaced as structured `autoApproved:true` resolutions.
-  Unknown approval shapes remain allow-once/deny only, and concurrent requests
-  are queued rather than overwritten. Workflow job connections route their
-  approvals through the same controller.
+  current session. The effect producer, not the TUI, supplies the stable key
+  and typed canonical path, Shell command/cwd, Agent grant, or tool-call
+  identity. Rules are client-memory only, installed after a successful
+  `approval.resolve`, and surfaced as structured `autoApproved:true`
+  resolutions. Missing/malformed/one-shot subjects remain allow-once/deny only,
+  and concurrent requests are queued rather than overwritten. Workflow job
+  connections route their approvals through the same controller.
 - TUI approval auto-policy is execution-scoped rather than controller-global.
   Each request captures the birth client/session/permission mode and exact
   emitting run id; workflow requests also retain their workflow id when known.

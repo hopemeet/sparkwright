@@ -657,6 +657,7 @@ export interface RuntimeContext {
   requestApproval?(input: {
     action: string;
     summary: string;
+    subject: ApprovalSubject;
     details?: Record<string, unknown>;
   }): Promise<boolean>;
   /**
@@ -764,11 +765,50 @@ export interface WorkspaceWriteProposal {
   metadata: Record<string, unknown>;
 }
 
+/**
+ * Producer-authored identity of the effect an approval would authorize.
+ * Presentation clients may remember only subjects carrying a stable `key`;
+ * one-shot subjects deliberately cannot create session-wide rules.
+ */
+export type ApprovalSubject =
+  | {
+      kind: "workspace_file";
+      operation: "write" | "remove";
+      path: string;
+      key: string;
+      label: string;
+    }
+  | {
+      kind: "shell_command";
+      command: string;
+      cwd: string;
+      key: string;
+      label: string;
+    }
+  | {
+      kind: "agent_workspace_write";
+      role?: string;
+      tools: string[];
+      key: string;
+      label: string;
+    }
+  | {
+      kind: "tool_call";
+      toolName: string;
+      key: string;
+      label: string;
+    }
+  | {
+      kind: "one_shot";
+      label: string;
+    };
+
 export interface ApprovalRequest {
   id: ApprovalId;
   runId: RunId;
   action: string;
   summary: string;
+  subject: ApprovalSubject;
   details: Record<string, unknown>;
   createdAt: string;
   status: "pending" | "approved" | "denied" | "expired";

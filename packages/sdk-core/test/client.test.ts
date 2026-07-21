@@ -547,6 +547,7 @@ describe("@sparkwright/sdk-core Client", () => {
         approvalId: "approval_1",
         action: "workspace.write",
         summary: "write README.md",
+        subject: { kind: "one_shot", label: "Write README.md once" },
       },
     });
     transport.receive({

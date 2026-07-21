@@ -10,6 +10,17 @@ See also [../maps/capabilities/agents.md](../maps/capabilities/agents.md), [../m
 
 - Status: Verified
 - Date: 2026-07-21
+- Scope: task kind descriptors may provide side-effect-free payload validation
+  and typed approval subjects. `task_create` validates its full kind/payload,
+  background policy, live descriptor, and runner before policy/approval and
+  defensively repeats the check before spawning.
+- Read: task tool schema/parsing/validation/execution, Host Agent task
+  descriptor wiring, and task/Host regressions.
+- Tests: Agent Runtime task suite, focused Host Agent task/tool suites, and
+  package typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-21
 - Scope: delegated children now use only the strict `agent-outcome.v1`
   declaration. Projection separates semantic `status` and `statusSource` from
   transport/finality/health, carries bounded `accomplishments` and structured

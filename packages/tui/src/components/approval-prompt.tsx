@@ -46,6 +46,10 @@ export function ApprovalPrompt(props: {
       props.onDecision("allow-once");
       return;
     }
+    if ((input === "s" || input === "S") && choices.includes("allow-session")) {
+      props.onDecision("allow-session");
+      return;
+    }
     if (
       input === "n" ||
       input === "N" ||
@@ -367,6 +371,9 @@ export function DecisionActions(props: {
           { keys: "↑/↓", label: "choose" },
           { keys: "enter", label: "confirm" },
           { keys: "y", label: "once" },
+          ...(props.choices.includes("allow-session")
+            ? [{ keys: "s", label: "session" }]
+            : []),
           { keys: "n/esc", label: "deny" },
           { keys: "pgup/pgdn", label: "details" },
         ]}
