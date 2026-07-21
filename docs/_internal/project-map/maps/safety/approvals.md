@@ -11,6 +11,15 @@ See [workspace-writes.md](workspace-writes.md) and [shell.md](shell.md).
 
 - Status: Verified
 - Date: 2026-07-21
+- Scope: dynamic Agent handoff now uses explicit goal/context fields, but
+  authorization remains derived only from structured tools and grants. Approval
+  subjects, timing, reuse, denial, and cleanup are unchanged.
+- Read: Host shared Agent schema/validator, Agent grant producer, and Core
+  approval ordering.
+- Tests: focused Host spawn/task/tool and affected approval tests passed.
+
+- Status: Verified
+- Date: 2026-07-21
 - Scope: every approval request carries a producer-authored typed subject.
   Workspace writes distinguish write/remove by canonical path, Shell keys the
   exact command/cwd/execution settings, Agent grants key the exact structured
@@ -25,7 +34,7 @@ See [workspace-writes.md](workspace-writes.md) and [shell.md](shell.md).
 - Status: Verified
 - Date: 2026-07-21
 - Scope: dynamic spawn validates its structured enabled-tool/grant contract in
-  Core's semantic input stage before approval. Goal/prompt text is not an
+  Core's semantic input stage before approval. Goal/context text is not an
   authorization input, so negated execution wording cannot create a doomed
   workspace-write approval.
 - Read: Core tool validation/policy order, Host dynamic spawn/grant assembly,

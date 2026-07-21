@@ -167,7 +167,7 @@ describe("renderTranscript", () => {
           arguments: {
             role: "reviewer",
             goal: "inspect auth flow",
-            prompt: "Read the implementation and report risks.",
+            context: "Read the implementation and report risks.",
           },
         },
       },

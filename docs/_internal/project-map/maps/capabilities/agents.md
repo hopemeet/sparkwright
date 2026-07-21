@@ -12,6 +12,18 @@ See [../../modules/agent-runtime.md](../../modules/agent-runtime.md) and [../../
 
 - Status: Verified
 - Date: 2026-07-21
+- Scope: dynamic Agent handoff is explicit and transport-independent. Foreground
+  and background entrypoints share one schema with required `goal`/`role` and
+  optional bounded `context`; the goal remains task input, context remains
+  required working context, and only a fixed delegated-agent contract occupies
+  the system layer. Explicit context changes invalidate completed-result reuse.
+- Read: Host dynamic/task Agent assembly and tool catalog, Agent Runtime context
+  composition and delegation ledger, protocol/TUI fixtures, and focused tests.
+- Tests: Agent Runtime ledger, Host spawn/task/tool/protocol, TUI transcript/
+  event-stream suites, and affected typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-21
 - Scope: foreground dynamic spawn and `task_create(kind:"agent")` share the
   effective payload schema, enabled-tool enum, and semantic capability
   validator before approval. Partial-child recovery triggers only from a real,
@@ -355,8 +367,14 @@ configured profiles/delegates
 - Dynamic spawn feasibility is determined only from the structured tool/grant
   request. Host validates requested tools against the enabled child catalog
   before policy and approval; it does not infer required capabilities from
-  multilingual `goal`/`prompt` prose. Runtime tool exposure remains the hard
+  multilingual `goal`/`context` prose. Runtime tool exposure remains the hard
   enforcement boundary.
+- Dynamic spawn handoff does not inherit the parent conversation or parent tool
+  results. `goal` must be a self-contained task and remains child task/user
+  input; optional `context` is a bounded handoff of established facts,
+  constraints, decisions, and observations at the working-context layer. Only
+  the fixed delegated-agent protocol is installed as the dynamic profile's
+  system prompt.
 - Dynamic `spawn_agent` runs foreground by default and may promote to an
   awaited background task after the foreground budget when
   `backgroundTasks=enabled`. Promotion preserves the same spawned child run,
@@ -377,7 +395,7 @@ configured profiles/delegates
   lane requires a concrete producer and receiver rather than widening a shared
   enum in advance.
 - Main-run `task_create` advertises the host-registered `agent` kind and its
-  required child-agent payload fields so real models can create background
+  required `goal`/`role` fields plus optional `context` so real models can create background
   agent tasks without guessing runner kind names from roles. Detached/promoted
   create results carry concrete `nextAction` guidance, and host terminal task
   notifications surface bounded child result summaries in body text so the
@@ -468,7 +486,8 @@ configured profiles/delegates
   unhealthy, step-limited, or truncated children. Agent tools declare their
   tool-owned duplicate protocol so a sequential exact repeat reaches this
   ledger instead of being intercepted by Core's generic repeat nudge.
-  Equivalence is exact after conservative
+  Dynamic-spawn identity includes explicit handoff context, so changed facts or
+  constraints cannot reuse a stale result. Goal equivalence is exact after conservative
   Unicode/case/whitespace normalization; fuzzy directory-listing or text
   similarity must not cross target paths.
 - The indexed `delegate_agent` router is a Host-owned adapter in

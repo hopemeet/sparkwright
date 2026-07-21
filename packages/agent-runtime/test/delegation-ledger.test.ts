@@ -62,6 +62,39 @@ describe("delegation ledger", () => {
     ).toBeUndefined();
   });
 
+  it("keeps dynamic handoff context in the reuse identity", () => {
+    const parent = {} as RunHandle;
+    const dynamicKey: DelegationLedgerKey = {
+      kind: "dynamic_spawn",
+      role: "reviewer",
+      context: "Inspect packages/a.ts.",
+      allowedTools: ["read"],
+    };
+    expect(
+      rememberReusableDelegation(
+        parent,
+        dynamicKey,
+        "Inspect the selected implementation",
+        completed,
+      ),
+    ).toBe(true);
+
+    expect(
+      findReusableDelegation(
+        parent,
+        dynamicKey,
+        "Inspect the selected implementation",
+      ),
+    ).toBeDefined();
+    expect(
+      findReusableDelegation(
+        parent,
+        { ...dynamicKey, context: "Inspect packages/b.ts." },
+        "Inspect the selected implementation",
+      ),
+    ).toBeUndefined();
+  });
+
   it.each([
     { signal: "failed" as const },
     { stepLimitReached: true },

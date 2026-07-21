@@ -10,6 +10,17 @@ See also [../maps/capabilities/agents.md](../maps/capabilities/agents.md), [../m
 
 - Status: Verified
 - Date: 2026-07-21
+- Scope: dynamic handoff context is now part of portable delegation identity.
+  `spawnSubAgent()` continues to accept explicit `ContextItem[]`; Host supplies
+  bounded handoff context at the working layer, and ledger keys invalidate reuse
+  when that context changes.
+- Read: Agent Runtime spawn/context composition, delegation ledger types/
+  serialization/tests, and Host dynamic/background Agent consumers.
+- Tests: delegation-ledger 11/11, affected package typechecks, and focused Host
+  Agent suites passed.
+
+- Status: Verified
+- Date: 2026-07-21
 - Scope: task kind descriptors may provide side-effect-free payload validation
   and typed approval subjects. `task_create` validates its full kind/payload,
   background policy, live descriptor, and runner before policy/approval and
@@ -533,7 +544,8 @@ Does not own:
   ledger rather than a `createAgentTool` closure-local cache. Ledger keys include
   the delegation surface identity (`agent_tool`, configured delegate, or dynamic
   spawn) plus the stable child/profile/scope fields needed to avoid reusing a
-  different agent's answer. Only complete, clean, non-`stepLimitReached`,
+  different agent's answer; dynamic-spawn keys include explicit handoff context.
+  Only complete, clean, non-`stepLimitReached`,
   non-truncated results with canonical assessment are reusable. AgentTool owns
   the sequential duplicate protocol so exact repeats can reach this ledger;
   unhealthy results are not cached. Goal reuse requires equality of a narrow

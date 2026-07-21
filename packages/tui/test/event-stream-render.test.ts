@@ -325,13 +325,13 @@ describe("EventStream committed rendering", () => {
         arguments: {
           role: "reviewer",
           goal: "inspect auth flow",
-          prompt: "Read the implementation and report risks.",
+          context: "Read the implementation and report risks.",
         },
       }),
     ];
     const text = await renderToText(stream(events), 90);
     expect(text).toContain("⚙ spawn_agent  reviewer: inspect auth flow");
-    expect(text).not.toContain('"prompt"');
+    expect(text).not.toContain('"context"');
   });
 
   it("renders capability mutations with action and compact path", async () => {

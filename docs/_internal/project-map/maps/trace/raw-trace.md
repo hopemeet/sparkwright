@@ -12,6 +12,15 @@ and [../session/session-store.md](../session/session-store.md) for session layou
 
 - Status: Verified
 - Date: 2026-07-21
+- Scope: dynamic Agent prompt authority changed without changing trace
+  vocabulary. Tool requests still retain explicit goal/context arguments and
+  child lifecycle/result evidence remains parent-correlated.
+- Read: Host dynamic/background Agent assembly, Agent lifecycle projection, and
+  raw trace fixtures.
+- Tests: focused Host spawn/protocol and TUI event-stream suites passed.
+
+- Status: Verified
+- Date: 2026-07-21
 - Scope: conversation noise reduction does not filter durable evidence. Raw
   model turns, batch envelopes, successful approvals, Skill/MCP preparation,
   and typed approval subjects remain in Trace; only live/export presentation

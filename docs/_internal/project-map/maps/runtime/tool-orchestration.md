@@ -11,6 +11,17 @@ See [../safety/workspace-writes.md](../safety/workspace-writes.md), [../safety/s
 
 - Status: Verified
 - Date: 2026-07-21
+- Scope: dynamic child orchestration now separates authority from content.
+  Foreground/background Agent entrypoints share one input schema; model-authored
+  `goal` and optional bounded `context` remain task/working inputs while only the
+  fixed delegated-agent contract enters the child system prompt. No implicit
+  parent transcript or tool-result inheritance is introduced.
+- Read: Host Agent runtime assembly and tool catalog, Agent Runtime child context
+  composition, delegation ledger, and focused host/runtime tests.
+- Tests: affected typechecks and focused Agent Runtime/Host/TUI suites passed.
+
+- Status: Verified
+- Date: 2026-07-21
 - Scope: `task_create` performs kind/payload/runner/background semantic
   validation before argument policy and approval; the Agent kind delegates to
   the same effective dynamic-spawn schema and validator. Tool-owned approval
@@ -439,7 +450,9 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
   delegate children before awaiting all results.
 - Dynamic `spawn_agent` separates tool transport completion from child-answer
   semantic status/finality. Structured tool/grant feasibility is validated
-  before policy/approval without reading goal/prompt prose. A child may return
+  before policy/approval without reading goal/context prose. The child receives
+  a self-contained goal plus optional bounded working context, not an implicit
+  copy of parent conversation state. A child may return
   completed, partial, or blocked plus generalized structured blockers; only a
   complete+clean completed result is reusable. Repeating an identical blocked
   spawn without changed recovery input is stopped by Core's ordinary exact-call

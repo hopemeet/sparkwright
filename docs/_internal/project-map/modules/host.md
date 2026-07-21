@@ -13,6 +13,21 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 
 - Status: Verified
 - Date: 2026-07-21
+- Scope: foreground `spawn_agent` and background `task_create(kind:"agent")`
+  now share one model-facing handoff schema. Dynamic children receive a
+  self-contained `goal` as task input and optional bounded `context` as required
+  working context; model-authored task text is never elevated into the child
+  system prompt, and parent conversation/tool results are not inherited
+  implicitly. Dynamic cache identity includes explicit context.
+- Read: Host Agent runtime assembly, shared tool catalog/schema, background
+  Agent task runner, Agent Runtime spawn/context and delegation ledger, protocol
+  fixtures, and focused tests.
+- Tests: focused Agent Runtime ledger, Host spawn/task/tool/protocol, and TUI
+  event/transcript suites passed; full repository verification is recorded by
+  the release gate.
+
+- Status: Verified
+- Date: 2026-07-21
 - Scope: `task_create(kind:"agent")` now reuses the live dynamic-spawn payload
   schema and semantic validator, so unavailable tools/grants fail before task
   creation or approval. Host forwards typed approval subjects and the partial-
@@ -800,7 +815,7 @@ Does not own:
   `task` control when the background task surface is enabled. Existing-task
   control is discoverable through the normal scoped `tool_search` path rather
   than charging every model turn for its schema. Host owns the `agent` kind descriptor and
-  its model-facing payload schema (`goal`, `role`, `prompt`, optional
+  its model-facing payload schema (`goal`, `role`, optional `context`,
   `allowedTools`, `grant`, `maxSteps`, `metadata`); execution still dispatches
   through the `TaskManager` runner registered by `HostRuntime`. For
   `grant.workspaceWrite: true` or explicit write tools, the descriptor supplies
@@ -1052,8 +1067,10 @@ Does not own:
   prefixes the message with a warning.
 - Dynamic spawn uses `ToolDefinition.validateInput()` to validate requested
   tools and workspace-write grant consistency against the enabled child
-  catalog before Core evaluates policy or requests approval. Prompt text is
-  forwarded to the child but never interpreted as a Host capability gate.
+  catalog before Core evaluates policy or requests approval. The self-contained
+  `goal` remains task/user input, optional bounded `context` is injected as
+  required working context, and only the fixed delegated-agent contract enters
+  the system prompt. Neither field is interpreted as a Host capability gate.
 - Dynamic `spawn_agent` starts foreground by default and may promote after the
   foreground budget when `backgroundTasks=enabled`. Promotion adopts the already
   running child through `TaskManager.adoptRunning()` and preserves
@@ -1269,7 +1286,8 @@ Does not own:
   ledger: direct `delegate_*` tools and generic `delegate_agent` share the same
   hidden configured delegate tools, `delegate_parallel` reuses those results
   before spawning, and dynamic `spawn_agent` stores/reuses completed dynamic
-  scope results under a prompt/role/tools key. Failed, step-limited, or
+  scope results under a role/context/tools key plus the normalized goal. Failed,
+  step-limited, or
   truncated children remain non-reusable.
 - Host in-process, ACP, and external-command Agent adapters now construct the
   same agent-runtime `PreparedAgentInvocation` data before projecting parent
@@ -1406,7 +1424,9 @@ Does not own:
 - The registered `agent` task kind snapshots per-run dynamic-spawn
   dependencies from `HostRuntime.prepareRun` and runs the same read-only
   dynamic child-agent path as `spawn_agent`, but passes the task controller's
-  abort signal into `spawnSubAgent`. The task lifecycle owns cancellation and
+  abort signal into `spawnSubAgent`. It therefore uses the same goal/context
+  authority boundary and does not inherit parent conversation state. The task
+  lifecycle owns cancellation and
   emits a compact `agent.completed` event chunk while the full child result
   remains the task result.
 - Skill inline shell preprocessing is host-owned when enabled by

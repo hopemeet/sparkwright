@@ -9,6 +9,14 @@ cron, shell/task tools, and capability inspection.
 
 - Status: Verified
 - Date: 2026-07-21
+- Scope: foreground/background dynamic Agent entrypoints share one explicit
+  goal/context/capability schema. Other capability inventories and selectors are
+  unchanged.
+- Read: Host tool catalog and Agent assembly plus Skill/MCP/Cron boundaries.
+- Tests: focused Host Agent/catalog and affected typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-21
 - Scope: dynamic foreground Agent spawn and Agent task creation share one
   effective structured capability contract and pre-approval validator. Typed
   approval subjects are producer-owned; successful Skill/MCP preparation is

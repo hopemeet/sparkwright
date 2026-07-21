@@ -819,7 +819,7 @@ async function spawnFinalityCase() {
                 arguments: {
                   goal: "Read README.md.",
                   role: "reader",
-                  prompt: "Read README.md and summarize it.",
+                  context: "README.md is the selected target; summarize it.",
                   allowedTools: ["read"],
                 },
               },
@@ -838,7 +838,12 @@ async function spawnFinalityCase() {
     },
   );
   const trace = await traceFromOutput(result.stdout);
-  const traceText = JSON.stringify(trace.events);
+  const childTrace = await readAgentTrace(
+    workspace,
+    trace.sessionId,
+    "dynamic_reader",
+  );
+  const traceText = JSON.stringify([...trace.events, ...childTrace]);
   record({
     id: "SPAWN_FINAL",
     name: "dynamic spawn read-only finality",
@@ -847,7 +852,7 @@ async function spawnFinalityCase() {
     workspace,
     write: "no",
     expectedTrace:
-      "tool_search -> spawn_agent output finality=complete with clean assessment, inherited maxSteps visible in promotionHint, child uses read only",
+      "tool_search -> spawn_agent output finality=complete with clean assessment, child run inherits maxSteps=20, child uses read only",
     failureRule:
       "Fails if dynamic spawn exposes bash/write tools, marks a complete child partial, or falls back to the old maxSteps default.",
     harness: true,
@@ -859,9 +864,12 @@ async function spawnFinalityCase() {
         (event) =>
           event.payload?.toolName === "spawn_agent" &&
           event.payload?.output?.finality === "complete" &&
-          event.payload?.output?.assessment?.health === "clean" &&
-          event.payload?.output?.promotionHint?.suggestedProfile?.maxSteps ===
-            20,
+          event.payload?.output?.assessment?.health === "clean",
+      ) &&
+      eventWith(
+        childTrace,
+        "run.completed",
+        (event) => event.payload?.maxSteps === 20,
       ) &&
       traceText.includes('"toolName":"read"') &&
       !traceText.includes('"toolName":"bash"') &&

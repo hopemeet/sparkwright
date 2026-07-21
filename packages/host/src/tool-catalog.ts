@@ -62,65 +62,74 @@ import {
 import { createScopedToolSearch } from "./tool-surface.js";
 
 export const AGENT_TASK_CREATE_PAYLOAD_DESCRIPTION =
-  "required object with goal, role, and prompt; optional allowedTools, grant, metadata, and maxSteps. Omit maxSteps unless you need an explicit child turn cap; low values can make read-and-answer tasks partial.";
+  "required object with a self-contained goal and role; optional context, allowedTools, grant, metadata, and maxSteps. The child does not inherit parent conversation or tool results, so put relevant established facts and constraints in context. Omit maxSteps unless you need an explicit child turn cap; low values can make read-and-answer tasks partial.";
 export const AGENT_TASK_MAX_STEPS_DESCRIPTION =
   "Optional child step (model turn) limit; allocate by sub-task complexity. Defaults to the parent run's effective maxSteps when omitted. A read-and-answer task usually needs 4+; a multi-step search (glob, read, refine, conclude) typically needs 6+.";
-export const AGENT_TASK_CREATE_PAYLOAD_SCHEMA = {
-  type: "object",
-  description:
-    "Payload for kind 'agent'. It matches spawn_agent input: provide a concrete goal, role, and focused prompt for the background child agent. Omit maxSteps unless you need an explicit child turn cap; low values can make read-and-answer tasks partial.",
-  properties: {
-    goal: {
-      type: "string",
-      description: "Concrete background child-agent goal.",
-    },
-    role: {
-      type: "string",
-      description: "Short role name for the background child agent.",
-    },
-    prompt: {
-      type: "string",
-      description:
-        "Focused child-agent instructions that define scope and output.",
-    },
-    allowedTools: {
-      type: "array",
-      description:
-        "Optional subset of child tools. Supported: read, glob, grep, list_dir, write, edit, edit_anchored_text. Requesting a write tool implies grant.workspaceWrite=true.",
-      items: {
+export const AGENT_HANDOFF_CONTEXT_MAX_CHARS = 8_000;
+
+export function createAgentSpawnPayloadSchema(
+  enabledToolNames: readonly string[],
+): Record<string, unknown> {
+  return {
+    type: "object",
+    description:
+      "Provide a self-contained goal and role for the child. The child receives only that goal plus optional context; it does not inherit parent conversation or tool results. Complete dependent discovery first and include relevant facts, constraints, decisions, and expected output in goal/context. Omit maxSteps unless you need an explicit child turn cap; low values can make read-and-answer tasks partial.",
+    properties: {
+      goal: {
         type: "string",
-        enum: [
-          ...AGENT_READ_ONLY_CHILD_TOOLS,
-          ...AGENT_WORKSPACE_WRITE_CHILD_TOOLS,
-        ],
+        description:
+          "Self-contained child-agent assignment, including the concrete outcome and expected deliverable.",
       },
-    },
-    grant: {
-      type: "object",
-      description:
-        "Optional capability grant requested at spawn time. Set workspaceWrite=true to let the child use managed workspace write tools after parent approval.",
-      properties: {
-        workspaceWrite: {
-          type: "boolean",
-          description:
-            "Allow the child to perform managed workspace writes through write/edit tools.",
+      role: {
+        type: "string",
+        description: "Short role name for the child agent.",
+      },
+      context: {
+        type: "string",
+        description:
+          "Optional concise handoff of parent-established facts, constraints, decisions, and prior observations. This becomes working task context, not a system prompt.",
+        maxLength: AGENT_HANDOFF_CONTEXT_MAX_CHARS,
+      },
+      allowedTools: {
+        type: "array",
+        description: `Optional subset of enabled child tools to expose. Available in this run: ${enabledToolNames.join(", ") || "none"}. Defaults to read, glob, and grep when enabled; with grant.workspaceWrite=true and no allowedTools, also exposes enabled managed write tools. Use grep to find a symbol by name (glob only matches paths, not contents).`,
+        items: {
+          type: "string",
+          enum: [...enabledToolNames],
         },
       },
-      additionalProperties: false,
+      grant: {
+        type: "object",
+        description:
+          "Optional capability grant requested at spawn time. Set workspaceWrite=true to let the child use managed workspace write tools after parent approval.",
+        properties: {
+          workspaceWrite: {
+            type: "boolean",
+            description:
+              "Allow the child to perform managed workspace writes through write/edit tools.",
+          },
+        },
+        additionalProperties: false,
+      },
+      maxSteps: {
+        type: "integer",
+        minimum: 1,
+        description: AGENT_TASK_MAX_STEPS_DESCRIPTION,
+      },
+      metadata: {
+        type: "object",
+        description: "Optional structured metadata for the child run.",
+      },
     },
-    maxSteps: {
-      type: "integer",
-      minimum: 1,
-      description: AGENT_TASK_MAX_STEPS_DESCRIPTION,
-    },
-    metadata: {
-      type: "object",
-      description: "Optional structured metadata for the child run.",
-    },
-  },
-  required: ["goal", "role", "prompt"],
-  additionalProperties: false,
-};
+    required: ["goal", "role"],
+    additionalProperties: false,
+  };
+}
+
+export const AGENT_TASK_CREATE_PAYLOAD_SCHEMA = createAgentSpawnPayloadSchema([
+  ...AGENT_READ_ONLY_CHILD_TOOLS,
+  ...AGENT_WORKSPACE_WRITE_CHILD_TOOLS,
+]);
 
 export type HostToolCatalogSource =
   | "coding"

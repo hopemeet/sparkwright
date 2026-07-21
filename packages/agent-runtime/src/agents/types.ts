@@ -118,7 +118,8 @@ export interface DelegationLedgerKey {
   agentProfileId?: string;
   delegateTool?: string;
   role?: string;
-  prompt?: string;
+  /** Explicit task context whose changes must invalidate dynamic-spawn reuse. */
+  context?: string;
   allowedTools?: readonly string[];
 }
 

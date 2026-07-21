@@ -14,6 +14,7 @@ import {
   FileSessionStore,
   isToolConcurrencySafe,
   type ModelAdapter,
+  type SparkwrightEvent,
   type ToolDefinition,
 } from "@sparkwright/core";
 import {
@@ -106,7 +107,7 @@ describe("host spawn_agent wiring", () => {
     const base = {
       goal: "Inspect the project.",
       role: "reader",
-      prompt: "Read and report.",
+      context: "Read and report.",
     };
 
     expect(isToolConcurrencySafe(spawnTool, base)).toBe(true);
@@ -125,6 +126,72 @@ describe("host spawn_agent wiring", () => {
     expect(isToolConcurrencySafe(spawnTool, { ...base, grant: "write" })).toBe(
       false,
     );
+  });
+
+  it("invalidates dynamic delegation reuse when handoff context changes", async () => {
+    let childCalls = 0;
+    const parent = createRun({
+      goal: "delegate with changing evidence",
+      model: {
+        async complete() {
+          return { message: "parent done" };
+        },
+      },
+      maxSteps: 3,
+    });
+    const spawnTool = createDynamicSpawnAgentTool({
+      getParent: () => parent,
+      model: {
+        async complete() {
+          childCalls += 1;
+          return {
+            message: completedAgentMessage(`child answer ${childCalls}`),
+          };
+        },
+      },
+      childTools: [
+        defineTool({
+          name: "read",
+          description: "Unused read tool.",
+          inputSchema: { type: "object" },
+          execute: () => ({ content: "unused" }),
+        }),
+      ],
+      parentRunPolicy: createDefaultPolicy(),
+      childRunStoreFactory: () => undefined as never,
+    });
+    const base = {
+      goal: "inspect the selected implementation",
+      role: "reviewer",
+      context: "The selected implementation is packages/a.ts.",
+      allowedTools: ["read"],
+      maxSteps: 2,
+    };
+
+    const first = (await spawnTool.execute(base, {
+      run: parent.record,
+    } as never)) as { childRunId: string; alreadyCompleted?: boolean };
+    expect(spawnTool.managesRepeatedCalls?.(base)).toBe(true);
+    const cached = (await spawnTool.execute(base, {
+      run: parent.record,
+    } as never)) as { childRunId: string; alreadyCompleted?: boolean };
+    expect(cached).toMatchObject({
+      childRunId: first.childRunId,
+      alreadyCompleted: true,
+    });
+    expect(childCalls).toBe(1);
+
+    const changed = {
+      ...base,
+      context: "The selected implementation is packages/b.ts.",
+    };
+    expect(spawnTool.managesRepeatedCalls?.(changed)).toBe(false);
+    const second = (await spawnTool.execute(changed, {
+      run: parent.record,
+    } as never)) as { childRunId: string; alreadyCompleted?: boolean };
+    expect(second.childRunId).not.toBe(first.childRunId);
+    expect(second.alreadyCompleted).not.toBe(true);
+    expect(childCalls).toBe(2);
   });
 
   it("persists the child trace into the session and rolls usage into the parent", async () => {
@@ -146,11 +213,15 @@ describe("host spawn_agent wiring", () => {
           metadata: { source: "host" },
         });
 
-      // Child model: one glob call, then a final answer.
+      // Child model: one glob call, then a final answer. Capture the first
+      // prompt so this also guards the dynamic handoff authority boundary.
+      let firstChildPrompt: unknown;
       const childModel: ModelAdapter = {
         async complete(input) {
-          const used = input.context.some((item) =>
-            item.content.includes("glob"),
+          firstChildPrompt ??= input.prompt;
+          const used = input.context.some(
+            (item) =>
+              item.type === "tool_result" && item.metadata.toolName === "glob",
           );
           if (!used) {
             return {
@@ -206,7 +277,7 @@ describe("host spawn_agent wiring", () => {
         {
           goal: "list top-level files",
           role: "inspector",
-          prompt: "List the files. Use glob only.",
+          context: "List the files. Use glob only.",
           allowedTools: ["glob"],
           maxSteps: 3,
         },
@@ -257,6 +328,23 @@ describe("host spawn_agent wiring", () => {
       expect(childSystemPrefix).toContain(
         'Status must be exactly \\"completed\\"',
       );
+      expect(childSystemPrefix).not.toContain("List the files. Use glob only.");
+      const promptMessages = firstChildPrompt as Array<{
+        role?: unknown;
+        content?: unknown;
+      }>;
+      const systemText = promptMessages
+        .filter((message) => message.role === "system")
+        .map((message) => String(message.content ?? ""))
+        .join("\n");
+      const userText = promptMessages
+        .filter((message) => message.role === "user")
+        .map((message) => String(message.content ?? ""))
+        .join("\n");
+      expect(systemText).not.toContain("List the files. Use glob only.");
+      expect(userText).toContain("list top-level files");
+      expect(userText).toContain("Parent handoff context:");
+      expect(userText).toContain("List the files. Use glob only.");
 
       // (2) The child agent is registered in session.json (not just "main").
       const sessionJson = JSON.parse(
@@ -365,7 +453,7 @@ describe("host spawn_agent wiring", () => {
                       arguments: {
                         goal: "write child.txt",
                         role: "writer",
-                        prompt:
+                        context:
                           "Write child.txt. Do not run shell commands or execute the script.",
                         grant: { workspaceWrite: true },
                         maxSteps: 3,
@@ -472,7 +560,7 @@ describe("host spawn_agent wiring", () => {
                       arguments: {
                         goal: "write child.txt",
                         role: "writer",
-                        prompt: "Write child.txt.",
+                        context: "Write child.txt.",
                         grant: { workspaceWrite: true },
                         maxSteps: 3,
                       },
@@ -554,7 +642,7 @@ describe("host spawn_agent wiring", () => {
                       arguments: {
                         goal: "write blocked.txt",
                         role: "writer",
-                        prompt: "Write blocked.txt.",
+                        context: "Write blocked.txt.",
                         grant: { workspaceWrite: true },
                         maxSteps: 3,
                       },
@@ -634,7 +722,7 @@ describe("host spawn_agent wiring", () => {
                       arguments: {
                         goal: "write blocked.txt",
                         role: "writer",
-                        prompt: "Write blocked.txt.",
+                        context: "Write blocked.txt.",
                         grant: { workspaceWrite: true },
                         maxSteps: 3,
                       },
@@ -720,7 +808,7 @@ describe("host spawn_agent wiring", () => {
                       arguments: {
                         goal: "inspect README",
                         role: "reader",
-                        prompt: "Inspect README and report.",
+                        context: "Inspect README and report.",
                         maxSteps: 1,
                       },
                     },
@@ -798,7 +886,7 @@ describe("host spawn_agent wiring", () => {
         spawnTool.policyForArgs?.({
           goal: "write child.txt",
           role: "writer",
-          prompt: "Write child.txt.",
+          context: "Write child.txt.",
           grant: { workspaceWrite: true },
         }),
       ).toMatchObject({
@@ -810,7 +898,7 @@ describe("host spawn_agent wiring", () => {
           {
             goal: "write child.txt",
             role: "writer",
-            prompt: "Write child.txt.",
+            context: "Write child.txt.",
             grant: { workspaceWrite: true },
           },
           { maxChars: 200 },
@@ -820,7 +908,7 @@ describe("host spawn_agent wiring", () => {
         spawnTool.policyForArgs?.({
           goal: "write child.txt",
           role: "writer",
-          prompt: "Write child.txt.",
+          context: "Write child.txt.",
           allowedTools: ["read"],
           grant: { workspaceWrite: true },
         }),
@@ -830,7 +918,7 @@ describe("host spawn_agent wiring", () => {
         {
           goal: "write child.txt",
           role: "writer",
-          prompt: "Write child.txt.",
+          context: "Write child.txt.",
           grant: { workspaceWrite: true },
           maxSteps: 3,
         },
@@ -930,7 +1018,7 @@ describe("host spawn_agent wiring", () => {
         {
           goal: "write blocked.txt",
           role: "writer",
-          prompt: "Write blocked.txt.",
+          context: "Write blocked.txt.",
           grant: { workspaceWrite: true },
           maxSteps: 3,
         },
@@ -1056,7 +1144,7 @@ describe("host spawn_agent wiring", () => {
                       arguments: {
                         goal: "write within the target scope",
                         role: "writer",
-                        prompt: "Write files.",
+                        context: "Write files.",
                         grant: { workspaceWrite: true },
                         maxSteps: 4,
                       },
@@ -1132,7 +1220,7 @@ describe("host spawn_agent wiring", () => {
     const args = {
       goal: "answer slowly",
       role: "slow reader",
-      prompt: "Answer after thinking.",
+      context: "Answer after thinking.",
       allowedTools: ["glob"],
       maxSteps: 2,
     };
@@ -1264,7 +1352,7 @@ describe("host spawn_agent wiring", () => {
       {
         goal: "wait until cancelled",
         role: "cancellable",
-        prompt: "Wait.",
+        context: "Wait.",
         allowedTools: ["glob"],
         maxSteps: 2,
       },
@@ -1333,7 +1421,7 @@ describe("host spawn_agent wiring", () => {
       {
         goal: "answer slowly inline",
         role: "inline",
-        prompt: "Wait then answer.",
+        context: "Wait then answer.",
         allowedTools: ["glob"],
         maxSteps: 2,
       },
@@ -1374,7 +1462,7 @@ describe("host spawn_agent wiring", () => {
         {
           goal: "attempt nested spawn",
           role: "nested",
-          prompt: "Return.",
+          context: "Return.",
           allowedTools: ["read"],
         },
         { run: parent.record } as never,
@@ -1423,7 +1511,7 @@ describe("host spawn_agent wiring", () => {
         {
           goal: "read",
           role: "reader",
-          prompt: "Read.",
+          context: "Read.",
           allowedTools: ["read"],
         },
         { run: parent.record } as never,
@@ -1483,7 +1571,7 @@ describe("host spawn_agent wiring", () => {
         {
           goal: "read secret.txt",
           role: "reader",
-          prompt: "Read secret.txt and report what happens.",
+          context: "Read secret.txt and report what happens.",
           allowedTools: ["read"],
           maxSteps: 3,
         },
@@ -1564,7 +1652,7 @@ describe("host spawn_agent wiring", () => {
       const args = {
         goal: "list files",
         role: "inspector",
-        prompt: "List the files.",
+        context: "List the files.",
         allowedTools: ["glob"],
         maxSteps: 1,
       };
@@ -1602,91 +1690,83 @@ describe("host spawn_agent wiring", () => {
 
   // The parent allocates the child's step budget via `maxSteps`. Omitted child
   // budgets inherit the parent run's effective ceiling; explicit child budgets
-  // are honored without a host-side cap. The effective value is observable
-  // through the promotion hint's suggested profile.
+  // are honored without a host-side cap. The child terminal trace is the
+  // authoritative observation of the effective value.
   it("inherits parent maxSteps by default and honors explicit high budgets", async () => {
-    const root = await mkdtemp(
-      join(tmpdir(), "sparkwright-host-spawn-budget-"),
-    );
-    try {
-      const sessionId = "session_spawn_budget";
-      const sessionStore = new FileSessionStore({ rootDir: root });
-      const childRunStoreFactory = (childAgentId: string) =>
-        createSessionRunStoreFactory({
-          sessionStore,
-          sessionId,
-          runStoreFactory: createSessionFileRunStoreFactory({
-            sessionRootDir: root,
-            sessionId,
-            agentId: childAgentId,
-            traceLevel: "standard",
-          }),
-          metadata: { source: "host" },
-        });
-
-      const makeParent = () =>
-        createRun({
-          goal: "allocate a child budget",
-          model: {
-            async complete() {
-              return { message: "parent done" };
-            },
-          },
-          maxSteps: 27,
-          runStore: childRunStoreFactory("main"),
-        });
-
-      const childModel: ModelAdapter = {
-        async complete() {
-          return { message: "done" };
+    const observedChildEvents = new Map<string, SparkwrightEvent[]>();
+    const childRunStoreFactory = (childAgentId: string) => () => {
+      const events: SparkwrightEvent[] = [];
+      observedChildEvents.set(childAgentId, events);
+      return {
+        append(event: SparkwrightEvent) {
+          events.push(event);
         },
+        finish() {},
       };
-      const childTools = [
-        defineTool({
-          name: "glob",
-          description: "Fake glob.",
-          inputSchema: { type: "object", properties: {} },
-          async execute() {
-            return { paths: [] };
-          },
-        }),
-      ];
+    };
 
-      type Output = {
-        promotionHint: { suggestedProfile: { maxSteps: number } };
-      };
-      const allocate = async (maxSteps?: number): Promise<number> => {
-        const parent = makeParent();
-        const spawnTool = createDynamicSpawnAgentTool({
-          getParent: () => parent,
-          model: childModel,
-          childTools,
-          parentRunPolicy: createDefaultPolicy(),
-          childRunStoreFactory,
-        });
-        const output = (await spawnTool.execute(
-          {
-            goal: "list files",
-            role: "inspector",
-            prompt: "List the files.",
-            allowedTools: ["glob"],
-            ...(maxSteps === undefined ? {} : { maxSteps }),
+    const makeParent = () =>
+      createRun({
+        goal: "allocate a child budget",
+        model: {
+          async complete() {
+            return { message: "parent done" };
           },
-          { run: parent.record } as never,
-        )) as Output;
-        return output.promotionHint.suggestedProfile.maxSteps;
-      };
-
-      expect(await allocate(100)).toBe(100);
-      expect(await allocate()).toBe(27);
-    } finally {
-      await rm(root, {
-        recursive: true,
-        force: true,
-        maxRetries: 5,
-        retryDelay: 50,
+        },
+        maxSteps: 27,
       });
-    }
+
+    const childModel: ModelAdapter = {
+      async complete() {
+        return { message: "done" };
+      },
+    };
+    const childTools = [
+      defineTool({
+        name: "glob",
+        description: "Fake glob.",
+        inputSchema: { type: "object", properties: {} },
+        async execute() {
+          return { paths: [] };
+        },
+      }),
+    ];
+
+    const allocate = async (maxSteps?: number): Promise<number> => {
+      const parent = makeParent();
+      const role =
+        maxSteps === undefined ? "inherited inspector" : "explicit inspector";
+      const spawnTool = createDynamicSpawnAgentTool({
+        getParent: () => parent,
+        model: childModel,
+        childTools,
+        parentRunPolicy: createDefaultPolicy(),
+        childRunStoreFactory,
+      });
+      const output = (await spawnTool.execute(
+        {
+          goal: "list files",
+          role,
+          context: "List the files.",
+          allowedTools: ["glob"],
+          ...(maxSteps === undefined ? {} : { maxSteps }),
+        },
+        { run: parent.record } as never,
+      )) as { childRunId: string };
+      const agentId = `dynamic_${role.replaceAll(" ", "_")}`;
+      const completed = observedChildEvents
+        .get(agentId)
+        ?.find(
+          (event) =>
+            event.type === "run.completed" && event.runId === output.childRunId,
+        );
+      const payload = completed?.payload as Record<string, unknown> | undefined;
+      expect(payload?.maxSteps).toBeTypeOf("number");
+      return payload?.maxSteps as number;
+    };
+
+    expect(await allocate(100)).toBe(100);
+    expect(await allocate()).toBe(27);
   });
 
   // A real trace showed a search child burn its whole step budget on filename
@@ -1767,7 +1847,7 @@ describe("host spawn_agent wiring", () => {
         {
           goal: "find frobnicate",
           role: "scout",
-          prompt: "Find a function named frobnicate.",
+          context: "Find a function named frobnicate.",
           allowedTools: ["grep"],
         },
         { run: parent.record } as never,
@@ -1846,7 +1926,7 @@ describe("host spawn_agent wiring", () => {
         {
           goal: "noop",
           role: "dynamic_inspector",
-          prompt: "Answer immediately.",
+          context: "Answer immediately.",
           allowedTools: ["glob"],
         },
         { run: parent.record } as never,
@@ -1934,7 +2014,7 @@ describe("host spawn_agent wiring", () => {
           {
             goal: "count test files",
             role: "counter",
-            prompt: "Count test files with glob.",
+            context: "Count test files with glob.",
             allowedTools: ["glob"],
             maxSteps: 5,
           },
@@ -1985,7 +2065,7 @@ describe("host spawn_agent wiring", () => {
 });
 
 describe("dynamic child capability contract", () => {
-  it("does not infer required capabilities from affirmative or negated prompt text", async () => {
+  it("does not infer required capabilities from affirmative or negated handoff context", async () => {
     const readTool = defineTool({
       name: "read",
       description: "Fake read tool.",
@@ -2021,7 +2101,7 @@ describe("dynamic child capability contract", () => {
       {
         goal: "在后台运行 Python 脚本",
         role: "writer",
-        prompt:
+        context:
           "Do not run shell commands or execute the script; only explain the limitation.",
         allowedTools: ["read"],
       },
@@ -2073,7 +2153,7 @@ describe("dynamic child capability contract", () => {
                   arguments: {
                     goal: "run the script",
                     role: "runner",
-                    prompt: "Run it if possible.",
+                    context: "Run it if possible.",
                     allowedTools: ["read"],
                   },
                 },
@@ -2127,7 +2207,7 @@ describe("dynamic child capability contract", () => {
     const args = {
       goal: "run the script",
       role: "runner",
-      prompt: "Run it if possible.",
+      context: "Run it if possible.",
       allowedTools: ["read"],
     };
     const parent = createRun({
@@ -2211,7 +2291,7 @@ describe("dynamic child capability contract", () => {
                     arguments: {
                       goal: "edit the file",
                       role: "writer",
-                      prompt: "Edit only.",
+                      context: "Edit only.",
                       allowedTools: ["edit"],
                       grant: { workspaceWrite: true },
                     },

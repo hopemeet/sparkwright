@@ -146,7 +146,7 @@ describe("background agent task runner", () => {
         payload: {
           goal: "watch the repo",
           role: "watcher",
-          prompt: "Keep grepping.",
+          context: "Keep grepping.",
           allowedTools: ["grep"],
           maxSteps: 20,
         },
@@ -197,10 +197,13 @@ describe("background agent task runner", () => {
           return { paths: ["README.md"] };
         },
       });
+      let firstChildPrompt: unknown;
       const childModel: ModelAdapter = {
         async complete(input) {
-          const used = input.context.some((item) =>
-            item.content.includes("glob"),
+          firstChildPrompt ??= input.prompt;
+          const used = input.context.some(
+            (item) =>
+              item.type === "tool_result" && item.metadata.toolName === "glob",
           );
           return used
             ? { message: "top-level: README.md" }
@@ -217,7 +220,7 @@ describe("background agent task runner", () => {
         payload: {
           goal: "list top-level files",
           role: "inspector",
-          prompt: "List files with glob.",
+          context: "List files with glob.",
           allowedTools: ["glob"],
           maxSteps: 4,
         },
@@ -232,6 +235,22 @@ describe("background agent task runner", () => {
       expect(result.signal).toBe("completed");
       expect(result.childRunId).toMatch(/^run_/);
       expect(globCalls).toBe(1);
+      const promptMessages = firstChildPrompt as Array<{
+        role?: unknown;
+        content?: unknown;
+      }>;
+      const systemText = promptMessages
+        .filter((message) => message.role === "system")
+        .map((message) => String(message.content ?? ""))
+        .join("\n");
+      const userText = promptMessages
+        .filter((message) => message.role === "user")
+        .map((message) => String(message.content ?? ""))
+        .join("\n");
+      expect(systemText).not.toContain("List files with glob.");
+      expect(userText).toContain("list top-level files");
+      expect(userText).toContain("Parent handoff context:");
+      expect(userText).toContain("List files with glob.");
       expect(
         lifecycleTypes(harness.parent.events.all(), result.childRunId),
       ).toEqual([

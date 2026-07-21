@@ -11,6 +11,15 @@ See [approvals.md](approvals.md) and [../runtime/tool-orchestration.md](../runti
 
 - Status: Verified
 - Date: 2026-07-21
+- Scope: dynamic Agent goal/context handoff is now explicit and shared by
+  foreground/background entrypoints. Workspace-write authority still comes
+  only from structured tools/grants; containment, lease, approval, mutation,
+  rollback, and evidence contracts are unchanged.
+- Read: Host Agent schema/grant/admission paths and Core workspace policy.
+- Tests: focused Host spawn/task/tool write-grant regressions passed.
+
+- Status: Verified
+- Date: 2026-07-21
 - Scope: managed write approval now carries a typed canonical file subject;
   `write` and `remove` use distinct session-rule keys, so approval for one
   operation cannot authorize the other. Proposal/diff/policy/artifact/rollback

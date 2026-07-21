@@ -56,9 +56,21 @@
   with summaries, accomplishments, and generalized blockers. It also removed
   the old result/ledger compatibility surface, propagated blocker facts through
   trace/session/CLI/TUI, and made parent disclosure a deterministic one-shot
-  event-driven continuation.
+  event-driven continuation. A later 2026-07-21 handoff-contract pass removed
+  model-authored dynamic system prompts: foreground/background Agent entrypoints
+  now share required `goal`/`role` plus optional bounded `context`, do not inherit
+  parent conversation/tool results, and invalidate reuse when context changes.
 
 ## Covered
+
+- 2026-07-21 deterministic handoff coverage captures the first child prompt for
+  both foreground `spawn_agent` and background `task_create(kind:"agent")`.
+  It proves dynamic instructions are absent from system messages while goal and
+  bounded handoff context reach child user/working input. The two entrypoints
+  expose the same schema, context over 8,000 characters fails semantic
+  validation, exact context repeats reuse one clean child, and changed context
+  starts a new child. Agent Runtime separately verifies context in ledger key
+  identity.
 
 - 2026-07-21 follow-up deterministic coverage makes dynamic foreground Agent
   spawn and `task_create(kind:"agent")` share the effective payload schema and
@@ -297,10 +309,11 @@
   deterministic demo-adapter diagnostic defect was fixed separately: shared
   deterministic child-scope adapters now report the active child `run.goal` and
   keep turn state per run id.
-- 2026-07-01 focused background-agent task fix verification asserts that the
+- 2026-07-01 focused background-agent task fix verification asserted the
   host main catalog exposes eager `task_create` with `kind` enum `["agent"]`,
-  requires top-level `payload`, and requires `payload.goal`, `payload.role`, and
-  `payload.prompt`. Deterministic host protocol coverage starts a background
+  requires top-level `payload`, and at that time required `payload.goal`,
+  `payload.role`, and `payload.prompt`. The current contract requires only goal/
+  role and uses optional bounded `payload.context`. Deterministic host protocol coverage starts a background
   child agent through the real `task_create` tool, and a post-fix real
   `openai/gpt-5.4-mini` rerun produced a completed durable task
   (`task_mr1lz3bphpeg925k`) and `subagent.completed` for

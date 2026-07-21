@@ -705,9 +705,13 @@ describe("host tools", () => {
       properties: {
         kind: { enum: ["agent"] },
         payload: {
-          required: ["goal", "role", "prompt"],
+          required: ["goal", "role"],
           description: expect.stringContaining("Omit maxSteps"),
           properties: {
+            context: {
+              description: expect.stringContaining("working task context"),
+              maxLength: 8000,
+            },
             maxSteps: {
               description: expect.stringContaining(
                 "Defaults to the parent run's effective maxSteps",
@@ -1037,7 +1041,7 @@ describe("host tools", () => {
         payload: {
           goal: "write a file",
           role: "writer",
-          prompt: "Write a file.",
+          context: "Write a file.",
           allowedTools: ["write"],
         },
       }),
@@ -1054,7 +1058,7 @@ describe("host tools", () => {
           payload: {
             goal: "write a file",
             role: "writer",
-            prompt: "Write a file.",
+            context: "Write a file.",
             allowedTools: ["write"],
           },
         },
@@ -1067,7 +1071,7 @@ describe("host tools", () => {
         payload: {
           goal: "write a file",
           role: "writer",
-          prompt: "Write a file.",
+          context: "Write a file.",
           allowedTools: ["write"],
         },
       }),
@@ -1082,7 +1086,7 @@ describe("host tools", () => {
         payload: {
           goal: "write a file",
           role: "writer",
-          prompt: "Write a file.",
+          context: "Write a file.",
           allowedTools: ["read"],
           grant: { workspaceWrite: true },
         },
@@ -1127,6 +1131,25 @@ describe("host tools", () => {
     expect(
       schema.properties.payload.properties.allowedTools.items.enum,
     ).toEqual(["read"]);
+    expect(schema.properties.payload).toEqual(dynamicSpawnTool.inputSchema);
+    expect(schema.properties.payload.properties).not.toHaveProperty("prompt");
+    await expect(
+      taskCreate!.validateInput?.(
+        {
+          kind: "agent",
+          payload: {
+            goal: "inspect a file",
+            role: "reader",
+            context: "x".repeat(8_001),
+            allowedTools: ["read"],
+          },
+        },
+        {} as RuntimeContext,
+      ),
+    ).resolves.toMatchObject({
+      ok: false,
+      code: "AGENT_SPAWN_CAPABILITY_INVALID",
+    });
     await expect(
       taskCreate!.validateInput?.(
         {
@@ -1134,7 +1157,7 @@ describe("host tools", () => {
           payload: {
             goal: "edit a file",
             role: "writer",
-            prompt: "Edit only.",
+            context: "Edit only.",
             allowedTools: ["edit"],
             grant: { workspaceWrite: true },
           },
@@ -1210,7 +1233,7 @@ describe("host tools", () => {
                         payload: {
                           goal: "write a file",
                           role: "writer",
-                          prompt: "Write a file.",
+                          context: "Write a file.",
                           allowedTools: ["write"],
                           maxSteps: 3,
                         },
@@ -2338,7 +2361,7 @@ describe("host tools", () => {
     });
     const args = {
       role: "Risk Reader",
-      prompt: "Read project files and report one risk.",
+      context: "Read project files and report one risk.",
       goal: "Inspect README.md for one risk.",
       allowedTools: ["read"],
       maxSteps: 2,
@@ -2406,7 +2429,7 @@ describe("host tools", () => {
       spawnAgent.execute(
         {
           role: "Risk Reader",
-          prompt: "Read project files and report one risk.",
+          context: "Read project files and report one risk.",
           goal: "Inspect README.md for one risk.",
           allowedTools: ["read"],
           maxSteps: 2,
@@ -2460,7 +2483,7 @@ describe("host tools", () => {
       spawnAgent.execute(
         {
           role: "Risk Reader",
-          prompt: "Read project files and report one risk.",
+          context: "Read project files and report one risk.",
           goal: "Inspect README.md for one risk.",
           allowedTools: ["read"],
           maxSteps: 2,

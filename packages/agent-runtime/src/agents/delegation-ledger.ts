@@ -78,7 +78,7 @@ function delegationLedgerKeyString(key: DelegationLedgerKey): string {
     ...(key.agentProfileId ? { agentProfileId: key.agentProfileId } : {}),
     ...(key.delegateTool ? { delegateTool: key.delegateTool } : {}),
     ...(key.role ? { role: key.role } : {}),
-    ...(key.prompt ? { prompt: key.prompt } : {}),
+    ...(key.context ? { context: key.context } : {}),
     ...(allowedTools ? { allowedTools } : {}),
   });
 }

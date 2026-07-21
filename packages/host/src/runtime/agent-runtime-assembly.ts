@@ -1,9 +1,11 @@
 import {
+  createContextItemId,
   createRun,
   createLayeredPolicy,
   createSessionRunStoreFactory,
   defineTool,
   type BackgroundTaskPolicy,
+  type ContextItem,
   type EventEmitter,
   type InteractionChannel,
   type ModelAdapter,
@@ -97,7 +99,9 @@ import { createDelegateAgentTool } from "../indexed-delegate-tool.js";
 import { MAIN_AGENT_ID } from "../agent-constants.js";
 import { createModel } from "../model-factory.js";
 import {
+  AGENT_HANDOFF_CONTEXT_MAX_CHARS,
   catalogToolDefinitions,
+  createAgentSpawnPayloadSchema,
   createConfiguredDelegateChildToolCatalog,
   createDynamicChildToolCatalog,
   type HostToolCatalogEntry,
@@ -1510,58 +1514,8 @@ export function createDynamicSpawnAgentTool(input: {
   return defineTool({
     name: "spawn_agent",
     description:
-      "Spawn a bounded child agent for one focused sub-task. By default the child may inspect files but cannot write, run shell commands, or spawn further agents. With grant.workspaceWrite=true, or by requesting a managed write tool, the child may use managed workspace write tools after parent approval; it still cannot run shell commands. Use this for temporary roles; if the same role becomes useful repeatedly, create a stable profile with create_agent and delegate to it through a delegate_* tool.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        goal: {
-          type: "string",
-          description: "The concrete sub-task the child agent should complete.",
-        },
-        role: {
-          type: "string",
-          description: "Short role name for the child agent.",
-        },
-        prompt: {
-          type: "string",
-          description:
-            "Focused instructions that define the child agent's scope and output.",
-        },
-        allowedTools: {
-          type: "array",
-          description: `Optional subset of enabled child tools to expose. Available in this run: ${enabledSpawnToolNames.join(", ") || "none"}. Defaults to read, glob, and grep when enabled; with grant.workspaceWrite=true and no allowedTools, also exposes enabled managed write tools. Use grep to find a symbol by name (glob only matches paths, not contents).`,
-          items: {
-            type: "string",
-            enum: enabledSpawnToolNames,
-          },
-        },
-        grant: {
-          type: "object",
-          description:
-            "Optional capability grant requested at spawn time. Set workspaceWrite=true to let the child use managed workspace write tools after parent approval.",
-          properties: {
-            workspaceWrite: {
-              type: "boolean",
-              description:
-                "Allow the child to perform managed workspace writes through write/edit tools.",
-            },
-          },
-          additionalProperties: false,
-        },
-        maxSteps: {
-          type: "integer",
-          minimum: 1,
-          description:
-            "Optional child step (model turn) limit; allocate by sub-task complexity. Defaults to the parent run's effective maxSteps when omitted. A multi-step search (glob, read, refine, conclude) typically needs 6+.",
-        },
-        metadata: {
-          type: "object",
-          description: "Optional structured metadata for the child run.",
-        },
-      },
-      required: ["goal", "role", "prompt"],
-      additionalProperties: false,
-    },
+      "Spawn a bounded child agent for one focused sub-task. The child receives only the self-contained goal and optional context from this call; it does not inherit the parent conversation or tool results. Complete dependent discovery before spawning, do not batch this call with discovery whose output it needs, and include relevant established facts and constraints in context. By default the child may inspect files but cannot write, run shell commands, or spawn further agents. With grant.workspaceWrite=true, or by requesting a managed write tool, the child may use managed workspace write tools after parent approval; it still cannot run shell commands. Use this for temporary roles; if the same role becomes useful repeatedly, create a stable profile with create_agent and delegate to it through a delegate_* tool.",
+    inputSchema: createAgentSpawnPayloadSchema(enabledSpawnToolNames),
     policy: { risk: "safe" },
     governance: {
       origin: { kind: "local", name: "sparkwright" },
@@ -1582,7 +1536,9 @@ export function createDynamicSpawnAgentTool(input: {
             parent,
             dynamicSpawnLedgerKey({
               role: prepared.parsed.role,
-              prompt: prepared.parsed.prompt,
+              ...(prepared.parsed.context
+                ? { context: prepared.parsed.context }
+                : {}),
               allowedTools: prepared.childTools.map((tool) => tool.name),
             }),
             prepared.parsed.goal,
@@ -1685,14 +1641,17 @@ export function createDynamicSpawnAgentTool(input: {
         mode: "child",
         allowedTools: childTools.map((tool) => tool.name),
         maxSteps: childMaxSteps,
-        prompt: withDelegatedAgentPrompt(parsed.prompt),
+        // Dynamic task text is model-authored tool input, so it must not be
+        // elevated into the child application's system prompt. Only the fixed
+        // delegated-agent contract belongs at that authority layer.
+        prompt: DELEGATED_AGENT_CONTRACT,
         metadata: {
           dynamic: true,
         },
       };
       const ledgerKey = dynamicSpawnLedgerKey({
         role: parsed.role,
-        prompt: parsed.prompt,
+        ...(parsed.context ? { context: parsed.context } : {}),
         allowedTools: childTools.map((tool) => tool.name),
       });
       const cached = findReusableDelegation(parent, ledgerKey, parsed.goal);
@@ -1708,9 +1667,11 @@ export function createDynamicSpawnAgentTool(input: {
         : input.model;
 
       const childAbort = createLinkedAbortController(input.abortSignal);
+      const handoffContext = dynamicAgentHandoffContext(parsed.context);
       const spawned = spawnSubAgent({
         parent,
         goal: parsed.goal,
+        ...(handoffContext ? { context: handoffContext } : {}),
         model: childModel,
         tools: childTools,
         childAgentProfile: profile,
@@ -1770,10 +1731,7 @@ export function createDynamicSpawnAgentTool(input: {
         ledgerKey,
         goal: parsed.goal,
         role: parsed.role,
-        prompt: parsed.prompt,
         agentId,
-        childTools,
-        childMaxSteps,
       }).finally(() => {
         childAbort.dispose();
       });
@@ -1814,26 +1772,13 @@ interface CompleteDynamicSpawnAgentInput {
   ledgerKey: DelegationLedgerKey;
   goal: string;
   role: string;
-  prompt: string;
   agentId: string;
-  childTools: ToolDefinition[];
-  childMaxSteps: number;
 }
 
 async function completeDynamicSpawnAgent(
   input: CompleteDynamicSpawnAgentInput,
 ): Promise<Record<string, unknown>> {
-  const {
-    spawned,
-    parent,
-    ledgerKey,
-    goal,
-    role,
-    prompt,
-    agentId,
-    childTools,
-    childMaxSteps,
-  } = input;
+  const { spawned, parent, ledgerKey, goal, role, agentId } = input;
   const result = await spawned.start();
   const usage = spawned.run.usage();
   // A child that answered on its last allowed step may have wrapped up early
@@ -1867,20 +1812,6 @@ async function completeDynamicSpawnAgent(
       ? { partialObservations }
       : {}),
     usage,
-    promotionHint: {
-      action: "create_agent.create",
-      reason:
-        "If this temporary role is useful repeatedly, create a stable agent profile and delegate tool instead of continuing to spawn it ad hoc.",
-      suggestedProfile: {
-        id: sanitizeToolSegment(role.toLowerCase()),
-        name: role,
-        mode: "child",
-        prompt,
-        allowedTools: childTools.map((tool) => tool.name),
-        maxSteps: childMaxSteps,
-        delegateToolName: `delegate_${sanitizeToolSegment(role.toLowerCase())}`,
-      },
-    },
   };
   rememberReusableDelegation(parent, ledgerKey, goal, {
     ...projected,
@@ -2220,13 +2151,13 @@ function sumNumberFields(
 
 function dynamicSpawnLedgerKey(input: {
   role: string;
-  prompt: string;
+  context?: string;
   allowedTools: readonly string[];
 }): DelegationLedgerKey {
   return {
     kind: "dynamic_spawn",
     role: sanitizeToolSegment(input.role.toLowerCase()),
-    prompt: input.prompt,
+    ...(input.context ? { context: input.context } : {}),
     allowedTools: input.allowedTools,
   };
 }
@@ -2287,7 +2218,7 @@ function summarizeAgentTaskOutput(output: unknown): Record<string, unknown> {
 function parseDynamicSpawnAgentArgs(args: unknown): {
   goal: string;
   role: string;
-  prompt: string;
+  context?: string;
   allowedTools?: string[];
   grant: AgentWorkspaceWriteGrant;
   maxSteps?: number;
@@ -2299,7 +2230,11 @@ function parseDynamicSpawnAgentArgs(args: unknown): {
   const record = args as Record<string, unknown>;
   const goal = stringField(record, "goal");
   const role = stringField(record, "role");
-  const prompt = stringField(record, "prompt");
+  const context = optionalBoundedStringField(
+    record,
+    "context",
+    AGENT_HANDOFF_CONTEXT_MAX_CHARS,
+  );
   const allowedTools = parseAgentAllowedToolsFromRecord(record, "spawn_agent");
   const grant = parseAgentWorkspaceWriteGrantFromRecord(record, "spawn_agent");
   let maxSteps: number | undefined;
@@ -2314,7 +2249,7 @@ function parseDynamicSpawnAgentArgs(args: unknown): {
   return {
     goal,
     role,
-    prompt,
+    ...(context ? { context } : {}),
     allowedTools,
     grant,
     maxSteps,
@@ -2397,6 +2332,42 @@ function stringField(
     throw new Error(`${toolName} ${field} must be a non-empty string.`);
   }
   return value.trim();
+}
+
+function optionalBoundedStringField(
+  record: Record<string, unknown>,
+  field: string,
+  maxChars: number,
+  toolName = "spawn_agent",
+): string | undefined {
+  if (record[field] === undefined) return undefined;
+  const value = stringField(record, field, toolName);
+  if (value.length > maxChars) {
+    throw new Error(
+      `${toolName} ${field} must be at most ${maxChars} characters.`,
+    );
+  }
+  return value;
+}
+
+function dynamicAgentHandoffContext(
+  context: string | undefined,
+): ContextItem[] | undefined {
+  if (!context) return undefined;
+  return [
+    {
+      id: createContextItemId(),
+      type: "summary",
+      source: { kind: "agent_handoff" },
+      content: ["Parent handoff context:", context].join("\n"),
+      metadata: {
+        layer: "working",
+        stability: "turn",
+        required: true,
+        kind: "agent_handoff",
+      },
+    },
+  ];
 }
 
 function integerField(

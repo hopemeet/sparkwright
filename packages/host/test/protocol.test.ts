@@ -3866,7 +3866,7 @@ describe("host protocol", () => {
             arguments: {
               goal: "Read README.md.",
               role: "reader",
-              prompt: "Read only.",
+              context: "Read only.",
               allowedTools: ["read"],
               maxSteps: 2,
             },
@@ -4218,7 +4218,7 @@ describe("host protocol", () => {
               payload: {
                 goal: "Inspect the repository in the background.",
                 role: "background-inspector",
-                prompt: "Return one concise sentence.",
+                context: "Return one concise sentence.",
                 allowedTools: ["glob"],
                 maxSteps: 1,
               },

@@ -11,6 +11,16 @@ See [tool-orchestration.md](tool-orchestration.md) and [../trace/raw-trace.md](.
 
 - Status: Verified
 - Date: 2026-07-21
+- Scope: dynamic Agent task text now stays below the system authority layer:
+  goal is child task input and optional context is required working context.
+  Core run-loop ordering, prompt assembly, and tool gates are unchanged.
+- Read: Host dynamic Agent assembly, Core child context/prompt composition, and
+  focused tests.
+- Tests: foreground/background prompt-capture regressions and affected
+  typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-21
 - Scope: raw `model.completed` remains per-turn trace/replay evidence but is not
   a committed assistant answer. Nonterminal model text preceding tools may emit
   `model.assistant_text`; a tool-less answer is provisional until Stop accepts
