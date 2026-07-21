@@ -155,4 +155,23 @@ describe("ActivityPanel", () => {
     expect(text).toContain("[  6]");
     expect(text).not.toContain("[  1]");
   });
+
+  it("keeps agent profile derivation available in the Activity events view", async () => {
+    const text = await renderToText(
+      <ActivityPanel
+        events={[
+          ev("agent.profile.derived", 1, {
+            parentAgentId: "main",
+            childAgentId: "code-reviewer",
+            effectiveToolCount: 4,
+          }),
+        ]}
+        initialTab="events"
+        onClose={() => {}}
+      />,
+    );
+
+    expect(text).toContain("agent.profile.derived");
+    expect(text).toContain("main → code-reviewer");
+  });
 });

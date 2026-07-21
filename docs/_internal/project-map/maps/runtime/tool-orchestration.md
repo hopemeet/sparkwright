@@ -10,6 +10,28 @@ See [../safety/workspace-writes.md](../safety/workspace-writes.md), [../safety/s
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-21
+- Scope: dynamic Agent spawn now uses Core's semantic `validateInput` stage for
+  deterministic tool/grant feasibility before policy and approval; natural
+  language intent heuristics are removed. Strict child semantic status and
+  blockers are retained separately from tool transport completion, and exact
+  incomplete repeats remain under Core's generic repeated-call guard.
+- Read: Core validation/policy ordering, Host dynamic spawn assembly, Agent
+  Runtime result/ledger/lifecycle consumers, and focused/full tests.
+- Tests: Agent Runtime 240/240, Host 589/589, and repository test typecheck.
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: approval risk/default focus and effect rendering are client
+  presentation only. Host/Core still own tool policy ordering, approval
+  requests, execution, and audit facts; exact TUI session rules can only
+  auto-resolve the same canonical path, command+cwd, or tool+args subject.
+- Read: Core/Host tool approval order, protocol approval payloads, TUI
+  coordinator/session-rule matching, and explicit decision renderers.
+- Tests: TUI 445/445, including exact-scope, unknown fail-closed, queue, and
+  main/Workflow origin regressions.
+
+- Status: Verified
 - Date: 2026-07-19
 - Scope: `managesRepeatedCalls(args)` is a narrow complete+clean cache-hit
   bypass for Agent tools, not a blanket retry exemption. Parallel delegation
@@ -403,7 +425,12 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
   foreground tool call that launches multiple eligible in-process/read-only
   delegate children before awaiting all results.
 - Dynamic `spawn_agent` separates tool transport completion from child-answer
-  finality. A child answer that lands on the last allowed step can be
+  semantic status/finality. Structured tool/grant feasibility is validated
+  before policy/approval without reading goal/prompt prose. A child may return
+  completed, partial, or blocked plus generalized structured blockers; only a
+  complete+clean completed result is reusable. Repeating an identical blocked
+  spawn without changed recovery input is stopped by Core's ordinary exact-call
+  guard rather than by an Agent-specific negative cache. A child answer that lands on the last allowed step can be
   `tool.completed`, while the output metadata/message marks the child answer as
   partial through `stepLimitReached`, `truncated`, and `finality` for trace
   consumers and context compaction.

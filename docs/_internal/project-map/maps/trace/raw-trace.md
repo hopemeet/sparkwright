@@ -11,6 +11,19 @@ and [../session/session-store.md](../session/session-store.md) for session layou
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-21
+- Scope: in-process Agent terminal lifecycle payloads add semantic `status`,
+  `statusSource`, summary, accomplishments, and structured blockers while
+  retaining the existing terminal-state/finality/assessment axes and event
+  families. Trace diagnostics consume semantic partial/blocked state and retain
+  blocker codes as evidence.
+- Read: Agent Runtime result parser/projector/supervisor, Host dynamic and
+  configured Agent assembly, Core diagnostics/session facts, public references,
+  and tests.
+- Tests: Agent Runtime, Host, and Core trace/session coverage passed; full
+  repository verification is recorded by the release gate.
+
+- Status: Verified
 - Date: 2026-07-19
 - Scope: raw terminal events persist `RunAssessment` and fact-ledger evidence.
   Trace diagnostics consume that canonical assessment for complete runs, while
@@ -289,9 +302,10 @@ EventLog emits full event
   fields (`subagentDepth`, `agentId`, `delegateTool`, `entrypoint`, consistent
   parent/child run ids, and `taskId` when the child is owned by an
   `agent_task`). SparkWright child-run terminal payloads carry
-  `terminalState` and `stepLimitReached`/`truncated` when derived from the child
-  `run.*` outcome. Process adapters project `completed`/`failed` only from their
-  native worker/process result.
+  `terminalState`, semantic `status`, `statusSource`, summary,
+  accomplishments, blockers, and `stepLimitReached`/`truncated` when derived
+  from the child `run.*` outcome. Process adapters project their native result
+  through supervisor-owned `statusSource:"adapter"` outcome normalization.
 - Parent-visible Agent lifecycle identity is projected from the portable
   `PreparedAgentInvocation` data contract. Its `admission_pending` state is not
   a raw event phase; `AgentSupervisor` requires admission before `started` and

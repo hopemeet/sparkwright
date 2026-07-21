@@ -15,8 +15,7 @@ export function renderHostEvent(event: HostEvent): string | null {
   if (event.kind !== "run.event") return null;
 
   const inner = event.payload.event as
-    | { type?: string; payload?: unknown; metadata?: unknown }
-    | undefined;
+    { type?: string; payload?: unknown; metadata?: unknown } | undefined;
   if (!inner?.type) return null;
   if (inner.type === "model.stream.chunk") {
     const chunk = extractText(inner.payload);

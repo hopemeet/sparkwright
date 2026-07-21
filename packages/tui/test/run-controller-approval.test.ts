@@ -70,8 +70,7 @@ describe("RunController session approvals", () => {
       store,
     });
     let listener:
-      | ((event: ReturnType<typeof approvalEvent>) => void)
-      | undefined;
+      ((event: ReturnType<typeof approvalEvent>) => void) | undefined;
     const resolveApproval = vi.fn().mockResolvedValue({});
     const client = {
       on: vi.fn(
@@ -94,7 +93,9 @@ describe("RunController session approvals", () => {
     });
     expect(listener).toBeDefined();
     listener!(approvalEvent("approval_workflow"));
-    expect(store.getSnapshot().pendingApproval?.id).toBe("approval_workflow");
+    expect(store.getSnapshot().pendingApproval?.approvalId).toBe(
+      "approval_workflow",
+    );
 
     await controller.resolveApproval("allow-once");
     expect(resolveApproval).toHaveBeenCalledWith({
@@ -114,7 +115,7 @@ describe("RunController session approvals", () => {
     const client = { resolveApproval } as unknown as Client;
 
     deliver(controller, client, "session_a", approvalEvent("approval_1"));
-    expect(store.getSnapshot().pendingApproval?.id).toBe("approval_1");
+    expect(store.getSnapshot().pendingApproval?.approvalId).toBe("approval_1");
     await controller.resolveApproval("allow-session");
     expect(controller.listSessionApprovalRules()).toHaveLength(1);
 
@@ -128,7 +129,7 @@ describe("RunController session approvals", () => {
     expect(store.getSnapshot().pendingApproval).toBeNull();
 
     deliver(controller, client, "session_b", approvalEvent("approval_3"));
-    expect(store.getSnapshot().pendingApproval?.id).toBe("approval_3");
+    expect(store.getSnapshot().pendingApproval?.approvalId).toBe("approval_3");
   });
 
   it("queues simultaneous approvals instead of replacing the visible prompt", async () => {
@@ -144,10 +145,18 @@ describe("RunController session approvals", () => {
 
     deliver(controller, client, "session_a", approvalEvent("approval_1"));
     deliver(controller, client, "session_a", approvalEvent("approval_2"));
-    expect(store.getSnapshot().pendingApproval?.id).toBe("approval_1");
+    expect(store.getSnapshot().pendingApproval).toMatchObject({
+      approvalId: "approval_1",
+      queuePosition: 1,
+      queueDepth: 2,
+    });
 
     await controller.resolveApproval("allow-once");
-    expect(store.getSnapshot().pendingApproval?.id).toBe("approval_2");
+    expect(store.getSnapshot().pendingApproval).toMatchObject({
+      approvalId: "approval_2",
+      queuePosition: 1,
+      queueDepth: 1,
+    });
   });
 
   it("auto-resolves an already queued request when the first decision creates its rule", async () => {
@@ -172,6 +181,54 @@ describe("RunController session approvals", () => {
     expect(store.getSnapshot().pendingApproval).toBeNull();
   });
 
+  it("does not requeue a failed session auto-approval after execution cleanup", async () => {
+    const store = new EventStore();
+    const controller = new RunController({
+      workspaceRoot: "/workspace/project",
+      initialSessionId: "session_cleanup",
+      store,
+    });
+    let listener:
+      ((event: ReturnType<typeof approvalEvent>) => void) | undefined;
+    let rejectAutoApproval!: (error: Error) => void;
+    const autoApproval = new Promise<never>((_resolve, reject) => {
+      rejectAutoApproval = reject;
+    });
+    const resolveApproval = vi
+      .fn()
+      .mockResolvedValueOnce({})
+      .mockReturnValueOnce(autoApproval);
+    const client = {
+      on: vi.fn(
+        (
+          kind: string,
+          handler: (event: ReturnType<typeof approvalEvent>) => void,
+        ) => {
+          if (kind === "approval.requested") listener = handler;
+        },
+      ),
+      resolveApproval,
+    } as unknown as Client;
+
+    controller.wireWorkflowClientApprovals(client, {
+      client,
+      sessionId: "session_cleanup",
+      accessMode: "ask",
+      kind: "workflow",
+      workflowRunId: "workflow_cleanup",
+    });
+    listener!(approvalEvent("approval_rule"));
+    await controller.resolveApproval("allow-session");
+    listener!(approvalEvent("approval_auto"));
+    await vi.waitFor(() => expect(resolveApproval).toHaveBeenCalledTimes(2));
+
+    cleanup(controller, client);
+    rejectAutoApproval(new Error("client closed"));
+    await vi.waitFor(() =>
+      expect(store.getSnapshot().pendingApproval).toBeNull(),
+    );
+  });
+
   it("does not retain a rule when resolving fails", async () => {
     const store = new EventStore();
     const controller = new RunController({
@@ -187,7 +244,12 @@ describe("RunController session approvals", () => {
     await controller.resolveApproval("allow-session");
 
     expect(controller.listSessionApprovalRules()).toHaveLength(0);
-    expect(store.getSnapshot().pendingApproval?.id).toBe("approval_1");
+    expect(store.getSnapshot().pendingApproval).toMatchObject({
+      approvalId: "approval_1",
+      resolving: false,
+      error: "disconnected",
+    });
+    expect(store.getSnapshot().lastError).toBeNull();
   });
 
   it("keeps concurrent workflow permission modes isolated", async () => {
@@ -221,7 +283,9 @@ describe("RunController session approvals", () => {
       "workflow_bypass",
     );
 
-    expect(store.getSnapshot().pendingApproval?.id).toBe("approval_ask");
+    expect(store.getSnapshot().pendingApproval?.approvalId).toBe(
+      "approval_ask",
+    );
     await vi.waitFor(() =>
       expect(bypassClient.resolveApproval).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -250,11 +314,11 @@ describe("RunController session approvals", () => {
     deliver(controller, third, "session_3", approvalEvent("approval_3"));
 
     cleanup(controller, third);
-    expect(store.getSnapshot().pendingApproval?.id).toBe("approval_1");
+    expect(store.getSnapshot().pendingApproval?.approvalId).toBe("approval_1");
     cleanup(controller, first);
-    expect(store.getSnapshot().pendingApproval?.id).toBe("approval_2");
+    expect(store.getSnapshot().pendingApproval?.approvalId).toBe("approval_2");
     cleanup(controller, first);
-    expect(store.getSnapshot().pendingApproval?.id).toBe("approval_2");
+    expect(store.getSnapshot().pendingApproval?.approvalId).toBe("approval_2");
   });
 
   it("binds a pending approval to its immutable execution identity", () => {
@@ -277,21 +341,13 @@ describe("RunController session approvals", () => {
       "workflow_job",
     );
 
-    const active = (
-      controller as unknown as {
-        activeApproval: {
-          execution: Record<string, unknown>;
-        };
-      }
-    ).activeApproval;
-    expect(active.execution).toMatchObject({
-      client,
+    const view = store.getSnapshot().pendingApproval;
+    expect(view).toMatchObject({
       sessionId: "session_job",
-      accessMode: "accept-edits",
-      kind: "workflow",
-      workflowRunId: "workflow_job",
+      executionKind: "workflow",
+      workflowId: "workflow_job",
       runId: "run_episode_2",
     });
-    expect(Object.isFrozen(active.execution)).toBe(true);
+    expect(view).not.toHaveProperty("client");
   });
 });

@@ -19,9 +19,7 @@ import {
 import { projectSkillRoot } from "./skill-roots.js";
 
 export type SkillCreateEligibility =
-  | "quick_apply"
-  | "review_required"
-  | "force_required";
+  "quick_apply" | "review_required" | "force_required";
 
 export interface PrepareSkillCreateCommandInput {
   name: string;

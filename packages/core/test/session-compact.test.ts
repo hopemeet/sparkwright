@@ -373,6 +373,18 @@ describe("session compact artifacts", () => {
               {
                 childRunId: "run_child_trace",
                 finality: "partial",
+                status: "blocked",
+                summary: "Execution requires bash",
+                blockers: [
+                  {
+                    code: "SHELL_REQUIRED",
+                    kind: "capability",
+                    owner: "parent",
+                    message: "A shell-capable path is required.",
+                    retry: "after_capability_change",
+                    requirements: [{ kind: "tool", name: "bash" }],
+                  },
+                ],
                 role: "reviewer",
                 health: "failing",
               },
@@ -396,6 +408,9 @@ describe("session compact artifacts", () => {
     expect(result.content).toContain("subagent");
     expect(result.content).toContain("run_child_trace");
     expect(result.content).toContain("partial");
+    expect(result.content).toContain("blocked");
+    expect(result.content).toContain("Execution requires bash");
+    expect(result.content).toContain("SHELL_REQUIRED");
     expect(result.content).toContain("failing");
   });
 

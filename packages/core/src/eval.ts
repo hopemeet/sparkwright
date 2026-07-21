@@ -57,8 +57,7 @@ export function evaluateTrajectory(
   let retryCount = 0;
   let budgetCheckCount = 0;
   let previousToolCall:
-    | { toolName: string; arguments: unknown; sequence: number }
-    | undefined;
+    { toolName: string; arguments: unknown; sequence: number } | undefined;
   let repeatedToolCallCount = 0;
 
   for (const event of events) {

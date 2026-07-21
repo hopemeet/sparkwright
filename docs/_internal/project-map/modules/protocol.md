@@ -11,6 +11,27 @@ See also [../maps/safety/approvals.md](../maps/safety/approvals.md) and [../maps
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-20
+- Scope: the shared product-transcript visibility filter classifies
+  `agent.profile.derived` as run-preparation noise. TUI live scrollback and
+  `/export` suppress it, while Activity and raw trace retain it; `subagent.*`
+  lifecycle visibility is unchanged.
+- Read: Protocol visibility constants, TUI live/export consumers, Activity
+  formatter, and Agent lifecycle rendering.
+- Tests: Protocol 6/6; focused TUI live/export/Activity suites 44/44; full TUI
+  449/449; Protocol/TUI typechecks; real Terra PTY and trace/session checks.
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: TUI approval, notification, and input coordination changed only
+  client-local presentation. Approval request/resolve DTOs, execution/session/
+  Workflow attribution, event shapes, access modes, and error contracts are
+  unchanged; no presentation state was added to Protocol.
+- Read: protocol approval/run/Workflow/session contracts and the TUI client
+  consumers changed by this refactor.
+- Tests: TUI 445/445, TUI typecheck, and repository test typecheck passed.
+
+- Status: Verified
 - Date: 2026-07-19
 - Scope: terminal run DTOs require Core `RunAssessment`; Host run completion
   carries `ExecutionAssessment`; Agent tool results carry finality plus
@@ -219,8 +240,8 @@ Does not own:
 - `INTERNAL_TRANSCRIPT_EVENT_TYPES` / `isInternalTranscriptEventType()` are the
   shared low-signal event filter used by TUI live transcript rendering and
   `/export`; this is product transcript visibility, not raw trace semantics.
-  `run.budget.exceeded` is filtered here as runtime machinery even though it is
-  kept visible in live CLI output.
+  `run.budget.exceeded` and `agent.profile.derived` are filtered here as runtime
+  machinery even though the latter remains visible in Activity and raw trace.
 - `LIVE_DEBUG_NOISE_EVENT_TYPES` / `isLiveDebugNoiseEventType()` are the shared
   high-volume event filter for CLI live run output; raw trace diagnostics still
   expose those events. The list currently includes `model.stream.chunk` and

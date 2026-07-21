@@ -49,11 +49,7 @@ interface SkillOriginInput {
 }
 
 export type SkillReconciliationKind =
-  | "adopt"
-  | "move"
-  | "copy"
-  | "reidentify"
-  | "orphan";
+  "adopt" | "move" | "copy" | "reidentify" | "orphan";
 
 /** Observation record, deliberately not a managed-change mutation receipt. */
 export interface SkillReconciliationReceipt {

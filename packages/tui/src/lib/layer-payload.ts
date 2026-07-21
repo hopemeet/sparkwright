@@ -1,12 +1,7 @@
 import type { CreateCapabilityKind } from "./create-capability.js";
 
 export type CapabilityView =
-  | "all"
-  | "tools"
-  | "skills"
-  | "agents"
-  | "mcp"
-  | "cron";
+  "all" | "tools" | "skills" | "agents" | "mcp" | "cron";
 
 export function skillNameFromPayload(payload: unknown): string | undefined {
   if (

@@ -828,7 +828,10 @@ async function spawnFinalityCase() {
           {
             toolCalls: [{ toolName: "read", arguments: { path: "README.md" } }],
           },
-          { message: "child read README.md" },
+          {
+            message:
+              'child read README.md\nSPARKWRIGHT_AGENT_RESULT: {"schemaVersion":"agent-outcome.v1","status":"completed","summary":"README.md was read and summarized.","accomplishments":["Read README.md"],"blockers":[]}',
+          },
           { message: "parent observed complete child" },
         ]),
       },

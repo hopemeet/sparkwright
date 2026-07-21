@@ -11,6 +11,17 @@ See [raw-trace.md](raw-trace.md) for source data and [export-diagnostics.md](exp
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-21
+- Scope: `SUBAGENT_INCOMPLETE` detection now includes semantic
+  `status:"partial"` / `status:"blocked"` and failed lifecycle terminals, with
+  child summary and blocker codes in evidence. Transport completion no longer
+  hides a semantically blocked child.
+- Read: Core trace diagnostics, Agent lifecycle projections, session facts, and
+  focused trace tests.
+- Tests: Core 650/650; full repository verification is recorded by the release
+  gate.
+
+- Status: Verified
 - Date: 2026-07-19
 - Scope: session check reconciles tool failures per run and treats
   cancellation-owned `TOOL_ABORTED` as resolved for canonical and legacy
@@ -184,7 +195,9 @@ trace.jsonl
   `unresolved`. When any failed call lacks request args, defer to the persisted
   snapshot.
 - Trace report scores multi-agent auditability facts:
-  `SUBAGENT_INCOMPLETE` for child `terminalState`/step-limit/truncation,
+  `SUBAGENT_INCOMPLETE` for child semantic partial/blocked status,
+  `terminalState`, failed lifecycle, step-limit, or truncation (with summary and
+  blocker-code evidence),
   `IN_FLIGHT_DUPLICATE_STORM` for repeated same-batch duplicate skips,
   `REPEATED_APPROVAL_DENIALS`, and
   `UNTRACKED_WRITE_CAPABLE_BOUNDARY`. These are report findings derived from

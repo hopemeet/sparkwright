@@ -78,17 +78,14 @@ export async function loadTuiConfig(cwd: string): Promise<LoadedTuiConfig> {
   const shared = await loadHostConfig(cwd, process.env);
   const merged: TuiConfigFile = {
     tuiPermissionMode: shared.config.accessMode as
-      | TuiPermissionMode
-      | undefined,
+      TuiPermissionMode | undefined,
     accessModeCeiling: shared.config.accessModeCeiling as
-      | TuiPermissionMode
-      | undefined,
+      TuiPermissionMode | undefined,
     model: shared.config.model,
     providers: shared.config.providers,
     workspace: shared.config.workspace,
     capabilities: shared.config.capabilities as
-      | Record<string, unknown>
-      | undefined,
+      Record<string, unknown> | undefined,
     keybindings: shared.config.keybindings,
     theme: shared.config.theme,
     mouse: shared.config.mouse,

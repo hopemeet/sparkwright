@@ -11,11 +11,7 @@ import {
 } from "@sparkwright/host";
 
 export type CreateCapabilityKind =
-  | "skill"
-  | "agent"
-  | "cron"
-  | "command"
-  | "mcp";
+  "skill" | "agent" | "cron" | "command" | "mcp";
 
 export type CreateCapabilityDraft =
   | {

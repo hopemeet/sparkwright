@@ -30,12 +30,7 @@ import { recordSkillPatch } from "./skill-usage.js";
 import { readSkillRegistry } from "./skill-registry.js";
 
 export type SkillProposalState =
-  | "draft"
-  | "applied"
-  | "rejected"
-  | "stale"
-  | "superseded"
-  | "failed";
+  "draft" | "applied" | "rejected" | "stale" | "superseded" | "failed";
 
 export type SkillProposalKind = "create" | "update";
 export type SkillProposalContentMode = "authored" | "intent_stub" | "template";

@@ -85,8 +85,7 @@ Recommended shape:
 interface ContextExtension {
   name: string;
   describe():
-    | Promise<ContextExtensionDescriptor[]>
-    | ContextExtensionDescriptor[];
+    Promise<ContextExtensionDescriptor[]> | ContextExtensionDescriptor[];
   load(
     input: ContextExtensionLoadInput,
   ): Promise<ContextItem[]> | ContextItem[];
@@ -894,15 +893,16 @@ mountAgentTool(parent, {
 
 What the helpers do for you, end-to-end:
 
-| Contract item      | Implementation                                                                |
-| ------------------ | ----------------------------------------------------------------------------- |
-| Parent linkage     | `metadata.parentRunId` + `metadata.spanId` on the child run record            |
-| Policy inheritance | `createAgentProfilePolicy(childAgentProfile)` (compose with overrides)        |
-| Approval channel   | `interactionChannel` passed through; pass `null` to suppress                  |
-| Usage rollup       | `attachUsageRollup` subscribes to child tool/model events                     |
-| Trace nesting      | Child events stay in child's `EventLog`; parent sees a summarized tool result |
-| Cancellation       | `createRun({ abortSignal: parent.abortSignal })`                              |
-| Recursion guard    | `createAgentTool({ forbidNesting: true })`                                    |
+| Contract item      | Implementation                                                                                                         |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| Parent linkage     | `metadata.parentRunId` + `metadata.spanId` on the child run record                                                     |
+| Policy inheritance | `createAgentProfilePolicy(childAgentProfile)` (compose with overrides)                                                 |
+| Approval channel   | `interactionChannel` passed through; pass `null` to suppress                                                           |
+| Usage rollup       | `attachUsageRollup` subscribes to child tool/model events                                                              |
+| Trace nesting      | Child events stay in child's `EventLog`; parent sees a summarized tool result                                          |
+| Cancellation       | `createRun({ abortSignal: parent.abortSignal })`                                                                       |
+| Recursion guard    | `createAgentTool({ forbidNesting: true })`                                                                             |
+| Semantic result    | Strict `agent-outcome.v1` `status`, `summary`, `accomplishments`, and `blockers` stay separate from transport/finality |
 
 External command delegates keep this same parent-facing shape: the parent sees
 `subagent.requested`, `subagent.started`, and a terminal `subagent.completed` /
@@ -910,6 +910,19 @@ External command delegates keep this same parent-facing shape: the parent sees
 for sandbox fallback, timeout, bounded stdout/stderr, and log artifacts, but it
 does not emit a second `extension.process.*` lifecycle by default; the terminal
 subagent result carries the shared `ProcessOutputSummary`.
+
+Host-composed in-process delegates receive an additional final-message
+contract. They end with a `SPARKWRIGHT_AGENT_RESULT:` JSON declaration whose
+schema version is `agent-outcome.v1` and whose status is `completed`, `partial`,
+or `blocked`. Blockers are structured by kind, owner, retry condition, and
+requirements; they are advisory and cannot authorize tools or approvals.
+Agent Runtime removes the marker from the human-readable message and projects
+the declaration onto the tool result and parent-visible lifecycle event. A
+normally completed child run may therefore report `partial` or `blocked`; only
+completed, complete, clean results are eligible for delegation-ledger reuse.
+The declaration is required: missing, malformed, aliased, or legacy shapes
+project as `partial` with a runtime-owned protocol blocker. Process adapters
+produce the same parent-facing fields with `statusSource:"adapter"`.
 
 Distilled to the minimum portable shape, with all provider-specific message
 plumbing left out (callers compose their own model + tools).

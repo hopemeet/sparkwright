@@ -229,9 +229,7 @@ export interface GrepTextResult {
 }
 
 export type GrepTextTruncationReason =
-  | "file_limit"
-  | "match_limit"
-  | "file_and_match_limit";
+  "file_limit" | "match_limit" | "file_and_match_limit";
 
 export interface GrepTextScope {
   path: string;

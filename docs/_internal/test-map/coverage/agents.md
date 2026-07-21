@@ -3,7 +3,7 @@
 ## Current Confidence
 
 - Status: `Partially Verified`
-- Last reviewed: 2026-07-19
+- Last reviewed: 2026-07-21
 - Evidence source: 2026-06-22 focused host/agent tests passed and real
   `openai/gpt-5.4-mini` read-only dynamic `spawn_agent` canaries produced valid
   trace/session structure. A configured read/write delegate canary wrote through
@@ -50,9 +50,28 @@
   The 2026-07-18 ownership pass added a direct `AgentRuntimeAssembly` test and
   reran 359 Host Agent/Delegate/tool/protocol tests plus 77 Agent Runtime
   invocation/supervisor/ledger/result tests without changing capability or
-  lifecycle behavior.
+  lifecycle behavior. The 2026-07-21 capability-contract fix removed
+  prompt-text admission heuristics, proved unavailable structured capabilities
+  fail before approval, and added completed/partial/blocked child declarations
+  with summaries, accomplishments, and generalized blockers. It also removed
+  the old result/ledger compatibility surface, propagated blocker facts through
+  trace/session/CLI/TUI, and made parent disclosure a deterministic one-shot
+  event-driven continuation.
 
 ## Covered
+
+- 2026-07-21 deterministic coverage reproduces the original multilingual
+  negation shape (`Do not run shell commands or execute the script`) on a
+  workspace-write dynamic spawn and proves approval is followed by a real
+  child write rather than an immediate intent-heuristic failure. A separate
+  test proves an unavailable `allowedTools` request fails in `validateInput`
+  before any approval. Structured blocked child output remains a completed tool
+  transport while projecting `status:"blocked"`, `finality:"partial"`, summary,
+  accomplishments, and a `SHELL_REQUIRED` capability blocker with owner/tool/
+  retry facts to tool/lifecycle results while staying out of the delegation
+  cache. A parent end-to-end test receives those facts and tells the user the
+  required path; a repeated identical blocked spawn runs the child once and is
+  then stopped by Core's generic `REPEATED_TOOL_CALL_SKIPPED` guard.
 
 - 2026-07-19 real `openai/gpt-5.6-terra` fix verification proved the complete
   cache boundary end to end: complete+clean exact reuse returned the same child
@@ -351,12 +370,11 @@
   `task_create(mode:"awaited", kind:"agent")` returned the completed task
   record/result to the child. Trace report and trace verify passed with no
   findings.
-- 2026-07-07 fix verification added a host built-in Stop hook that advances
-  once when a final answer omits disclosure of partial/truncated/step-limited or
-  failed child finality. Focused host coverage asserts the hook triggers on
-  `subagent.completed` step-limit evidence, passes when the answer already
-  caveats partial child results, and ignores ordinary truncated non-agent tool
-  output.
+- 2026-07-21 strict-outcome verification changed the built-in Stop hook to
+  advance exactly once for structured partial/blocked/truncated/step-limited or
+  failed child evidence without scanning final prose. Focused Host coverage
+  verifies blocker details reach the parent context and ordinary truncated
+  non-agent tool output is ignored.
 - 2026-07-07 real `openai/gpt-5.4-mini` Agent + Skill multidirection QA
   covered current-source Skill-loaded dynamic `spawn_agent`, Skill-loaded
   configured indexed `delegate_agent(agentId:"static_reader")`, Skill-loaded
@@ -400,8 +418,10 @@
   inheritance, parent write denial, read-write untracked audit, and enforce-mode
   sandbox unavailability. Real external ACP binaries remain environment- and
   installation-sensitive.
-- Dynamic `spawn_agent` is read-only by contract; child-write scenarios must use
-  configured delegates rather than dynamic spawn.
+- Dynamic `spawn_agent` workspace-write grants are deterministically covered;
+  real-model compliance with the new terminal result declaration and
+  write-grant selection remains prompt/model-sensitive and needs a fresh
+  canary before raising confidence beyond Partially Verified.
 - Real configured delegates can recover from repeated identical tool calls; keep
   prompt/model-sensitive assertions separate from trace invariants.
 - Real mini delegate runs may include harmless parent-side reads before/after

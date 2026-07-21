@@ -222,8 +222,7 @@ export function createAcpDelegateTool(
       });
       supervisor.requested();
       let executionWorkspace:
-        | Awaited<ReturnType<typeof resolveDelegateProcessWorkspace>>
-        | undefined;
+        Awaited<ReturnType<typeof resolveDelegateProcessWorkspace>> | undefined;
       let releaseWorkspaceLease: (() => void) | undefined;
       const leaseAbort = createWorkspaceLeaseAbortController(
         parent.abortSignal,

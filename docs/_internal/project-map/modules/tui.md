@@ -11,6 +11,56 @@ See also [../maps/trace/export-diagnostics.md](../maps/trace/export-diagnostics.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-21
+- Scope: terminal Agent lifecycle rows now render semantic blocked/partial
+  status and summary directly from structured payloads; blocked rows are red
+  and partial rows yellow. Profile-derivation diagnostics remain Activity/Trace
+  only.
+- Read: shared event formatter, EventStream lifecycle rows, strict Agent result
+  payloads, and render tests.
+- Tests: TUI 449/449 and TUI typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-20
+- Scope: committed conversation scrollback suppresses
+  `agent.profile.derived` run-preparation diagnostics while the EventStore,
+  Activity Events view, and persisted trace retain the raw event. The shared
+  Protocol product-transcript filter also keeps it out of `/export`. Actual
+  `subagent.requested` / `started` / `completed` / `failed` lifecycle rows
+  remain visible.
+- Read: EventStream, ActivityPanel, transcript exporter, shared Protocol event
+  filter, Agent profile event producer, and focused render regressions.
+- Tests: Protocol 6/6; focused EventStream, ActivityPanel, and transcript
+  suites 44/44; full TUI 449/449; TUI/Protocol typechecks; real Terra PTY and
+  trace/session checks passed.
+
+- Status: Verified
+- Date: 2026-07-20
+- Scope: approval coordination moved from `RunController` into an
+  execution-scoped `ApprovalCoordinator`; Ink receives a client-free
+  `ApprovalViewModel` and typed decision renderers. `NotificationStore` and a
+  pure presentation policy now separate run/connection diagnostics from
+  action/panel failures, drive blurred attention, and expose `/notifications`.
+  InputBox and `InteractionRouter` own composer/global routing, action cards own
+  their keys, and the layer stack uses typed payload routes without caller-
+  supplied numeric priorities. Review follow-up prevents a failed in-flight
+  session auto-approval from requeueing after its execution is cleaned up and
+  seeds replayed terminal tasks without raising fresh historical alerts. Native
+  scrollback and Host/Protocol runtime authority are unchanged.
+- Read: TUI app/controller/store/layers, approval/session policy, notification
+  producers, input/keybinding paths, Host/Protocol approval routes, and current
+  render/controller/SDK tests.
+- Tests: focused approval/notification/input and review regressions passed;
+  full TUI 447/447 and Host 594/594;
+  TUI typecheck, repository test typecheck, lint, schema/boundary/reserved
+  checks, all workspace tests, 16/16 regression matrix, and both install smokes
+  passed. Real 80/96/120-column PTY evidence passed, followed by a clean 96x32
+  Host-adapter PTY showing `1 of 2`, queue advancement to `1 of 1`, and idle
+  completion. After mechanically formatting the 59-file repository baseline,
+  the exact `npm run release:check` passed end to end before this review
+  follow-up; the final rerun is recorded with the change.
+
+- Status: Verified
 - Date: 2026-07-19
 - Scope: EventStream renders a sole canonical `run.cancelled` terminal and its
   run facts. RunController no longer creates an unpersisted Todo advisory row;
@@ -112,7 +162,13 @@ See also [../maps/trace/export-diagnostics.md](../maps/trace/export-diagnostics.
 - `packages/tui/src/components/help-panel.tsx`
 - `packages/tui/src/components/status-bar.tsx`
 - `packages/tui/src/state/run-controller.ts`
+- `packages/tui/src/state/approval-coordinator.ts`
+- `packages/tui/src/state/notification-store.ts`
 - `packages/tui/src/state/event-store.ts`
+- `packages/tui/src/state/layer-stack.ts`
+- `packages/tui/src/lib/approval-view-model.ts`
+- `packages/tui/src/lib/ui-signal.ts`
+- `packages/tui/src/lib/interaction-router.ts`
 - `packages/tui/src/lib/commands.ts`
 - `packages/tui/src/lib/task-activity.ts`
 - `packages/tui/src/lib/tool-display.ts`
@@ -177,6 +233,11 @@ Does not own:
   tool span, and appends `N internal mutations` to the terminal Skill proposal
   result. Raw events remain in the event store/Activity Events view for debug
   and audit; unrelated capability mutations keep their individual rows.
+- Default committed scrollback also suppresses `agent.profile.derived` because
+  it reports run preparation rather than child execution. The raw event remains
+  available in EventStore/Activity and persisted trace, while the shared
+  product-transcript filter also omits it from `/export`; real `subagent.*`
+  lifecycle events keep their conversation rows.
 - TUI presents one runtime permission axis (`read-only`, `ask`, `accept-edits`,
   `bypass`) but no longer owns a persisted `ui.tuiPermissionMode` config field.
   File config uses shared `run.accessMode`; project `run.accessMode` becomes an
@@ -192,6 +253,28 @@ Does not own:
   first resolution, inspectable/clearable with `/approvals [clear]`, and never
   offered for an unrecognized approval shape. Simultaneous requests queue
   instead of replacing the visible prompt.
+- `ApprovalCoordinator` owns immutable per-client execution origins, active and
+  queued approvals, resolving state, exact session rules, auto-resolution, and
+  execution cleanup. Its UI projection contains no SDK `Client`. Resolve
+  failures remain on the active card and do not advance the queue or set the
+  main run terminal state. Approval auto-policy remains Host-authored and is
+  evaluated through the Host client helper.
+- Approval cards use explicit workspace-write, shell, tool, Skill-apply, and
+  fail-closed unknown renderers. They show main/Workflow origin, run/session,
+  `1 of N`, risk, reason, exact scope, and pageable effect details. High-risk
+  and unknown effects default to Deny; unknown effects never offer a session
+  rule; Esc/Ctrl+C is an explicit denial.
+- `NotificationStore` owns TUI-only signal lifecycle (dedupe/update,
+  unread/seen/resolved, toast projection, and history). Host events, session
+  traces, and EventStream remain canonical facts. Run/connection failures use
+  persistent inline diagnostics and `/notifications`; ordinary RPC/action
+  failures stay local and cannot set the main run status. Background success
+  and cancellation remain quiet status/history updates, while failure or
+  waiting-for-action may alert only when the terminal is blurred.
+- Attention subscribes to notification policy and rate-limits by signal key;
+  App no longer rings BEL/OSC 9 from run-status branches. Queued prompts render
+  only in the composer queue, config errors use a compact badge plus `/config`,
+  and cancellation progress uses the status line rather than a toast.
 - TUI consumes the shared grouped `policy.confidentialDefaults` config field but
   does not own a separate UI surface for read-confidentiality defaults; Host
   config/runtime own validation and enforcement.
@@ -248,10 +331,13 @@ Does not own:
   default binding; `/events` and `events.open` both open the Activity Drawer on
   the Events tab. There is no separate standalone events layer. In common PTYs
   Ctrl+I arrives as the Tab control byte, so it is not used as a default.
-- App-level global hotkeys defer unmodified printable-character bindings to the
-  input editor while a prompt draft is non-empty. This keeps `?` available as
-  empty-prompt help while allowing normal questions ending in `?`; `/help`
-  remains the command path.
+- Input ownership is blocking approval, active typed layer, composer overlay,
+  composer editor, then global action. Only the mounted top layer owns Ink
+  input. InputBox gives overlays first refusal and then calls the pure handled/
+  bubble `InteractionRouter`; unmodified printable global bindings defer to a
+  non-empty draft. Skill proposal `a`/`r`/Esc handling and confirmation state
+  live in the action card rather than App. Dialog Esc/Ctrl+C consistently maps
+  to Back, while approval maps both to Deny.
 - Prompt drafts are mirrored in App memory while `InputBox` is mounted, so
   opening and closing layers preserves short and fast-typed drafts without
   relying on the persisted stash debounce. The persisted stash remains the
@@ -346,7 +432,8 @@ Does not own:
   flipping status to `error`.
 - Live `EventStream` renders `subagent.*` lifecycle rows from structured
   metadata/payload facts (`subagentDepth`, parent/child ids, `entrypoint`,
-  `delegateTool`, and terminal state fields). It indents by depth but keeps the
+  `delegateTool`, semantic status/summary, and terminal state fields). Blocked
+  and partial terminal states have distinct warning colors. It indents by depth but keeps the
   append-only `<Static>` row contract: each event renders once and is not
   mutated after later child events arrive. Display names prefer `agentName`,
   then `childAgentId` / `agentProfileId`, before falling back to parent

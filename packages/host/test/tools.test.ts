@@ -25,6 +25,7 @@ import {
 } from "@sparkwright/core";
 import { EventLog, LocalWorkspace } from "@sparkwright/core/internal";
 import {
+  AGENT_RESULT_MARKER,
   FileTaskStore,
   InMemoryTaskStore,
   TaskManager,
@@ -72,6 +73,16 @@ import {
   projectAgentLifecycle,
   terminalLifecycleCount,
 } from "./helpers/agent-lifecycle.js";
+
+function completedAgentMessage(message: string): string {
+  return `${message}\n${AGENT_RESULT_MARKER} ${JSON.stringify({
+    schemaVersion: "agent-outcome.v1",
+    status: "completed",
+    summary: message,
+    accomplishments: [],
+    blockers: [],
+  })}`;
+}
 
 describe("host tools", () => {
   it("classifies indexed delegate concurrency from the selected target", () => {
@@ -1302,7 +1313,7 @@ describe("host tools", () => {
     const childModel: ModelAdapter = {
       async complete() {
         childCalls += 1;
-        return { message: "reader done" };
+        return { message: completedAgentMessage("reader done") };
       },
     };
     const parent = createRun({
@@ -1475,7 +1486,7 @@ describe("host tools", () => {
       model: {
         async complete() {
           childCalls += 1;
-          return { message: "reader done" };
+          return { message: completedAgentMessage("reader done") };
         },
       },
       workflowHooksForProfile: createInProcessDelegateHooksResolver({
@@ -1509,7 +1520,7 @@ describe("host tools", () => {
         maxActive = Math.max(maxActive, active);
         await new Promise((resolve) => setTimeout(resolve, 40));
         active -= 1;
-        return { message: `${label} done` };
+        return { message: completedAgentMessage(`${label} done`) };
       },
     });
     const parent = createRun({
@@ -1731,7 +1742,7 @@ describe("host tools", () => {
             toolCalls: [{ toolName: "failing_probe", arguments: {} }],
           };
         }
-        return { message: `${profileId} done` };
+        return { message: completedAgentMessage(`${profileId} done`) };
       },
     });
     const parent = createRun({
@@ -1901,7 +1912,7 @@ describe("host tools", () => {
       derivedAgents,
       model: {
         async complete() {
-          return { message: "fallback done" };
+          return { message: completedAgentMessage("fallback done") };
         },
       },
       modelForProfile: (profileId) =>
@@ -1909,14 +1920,14 @@ describe("host tools", () => {
           ? {
               async complete() {
                 reviewerCalls += 1;
-                return { message: "reviewer done" };
+                return { message: completedAgentMessage("reviewer done") };
               },
             }
           : profileId === "auditor"
             ? {
                 async complete() {
                   auditorCalls += 1;
-                  return { message: "auditor done" };
+                  return { message: completedAgentMessage("auditor done") };
                 },
               }
             : undefined,
@@ -2042,7 +2053,7 @@ describe("host tools", () => {
       ],
       model: {
         async complete() {
-          return { message: "fallback done" };
+          return { message: completedAgentMessage("fallback done") };
         },
       },
       modelForProfile: async (profileId) => {
@@ -2051,7 +2062,7 @@ describe("host tools", () => {
         }
         return {
           async complete() {
-            return { message: "reviewer done" };
+            return { message: completedAgentMessage("reviewer done") };
           },
         };
       },
@@ -2091,13 +2102,13 @@ describe("host tools", () => {
     const reviewerModel: ModelAdapter = {
       async complete() {
         reviewerCalls += 1;
-        return { message: "reviewer done" };
+        return { message: completedAgentMessage("reviewer done") };
       },
     };
     const auditorModel: ModelAdapter = {
       async complete() {
         auditorCalls += 1;
-        return { message: "auditor done" };
+        return { message: completedAgentMessage("auditor done") };
       },
     };
     const parent = createRun({
@@ -2229,7 +2240,7 @@ describe("host tools", () => {
     const childModel: ModelAdapter = {
       async complete() {
         childCalls += 1;
-        return { message: "dynamic child done" };
+        return { message: completedAgentMessage("dynamic child done") };
       },
     };
     const parent = createRun({

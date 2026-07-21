@@ -20,7 +20,7 @@ import {
   setProjectSkillLearnMode,
 } from "../lib/skill-learn.js";
 import type { LayerStack } from "./layer-stack.js";
-import type { ToastStore } from "./toast-store.js";
+import type { NotificationStore } from "./notification-store.js";
 
 /**
  * Skill Evolution actions (create / update / review / learn) plus the
@@ -48,7 +48,7 @@ export interface SkillActions {
 
 export function useSkillActions(deps: {
   workspaceRoot: string;
-  toasts: ToastStore;
+  toasts: NotificationStore;
   layers: LayerStack;
   reloadConfig: (verbose: boolean) => void;
   onProposalClosed?: (proposalId: string) => void;
@@ -275,7 +275,7 @@ export function useSkillActions(deps: {
  */
 export function runSkillLearnAutoNotice(deps: {
   workspaceRoot: string;
-  toasts: ToastStore;
+  toasts: NotificationStore;
   goals: string[];
   sessionId: string | null;
   noticeCount: number;

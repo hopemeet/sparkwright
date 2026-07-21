@@ -16,8 +16,7 @@ import type { ForcedContinuationSource } from "./types.js";
 import { isRecord } from "./record-utils.js";
 
 export type FactLedgerCommandInitiator =
-  | "model-initiated"
-  | "verifier-launched";
+  "model-initiated" | "verifier-launched";
 
 export type FactLedgerCommandSource = "shell_tool" | "workflow_hook";
 

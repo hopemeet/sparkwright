@@ -7,7 +7,7 @@ import type { ActivityTab } from "../lib/task-activity.js";
 import type { EventStore } from "./event-store.js";
 import type { RunController } from "./run-controller.js";
 import type { LayerStack } from "./layer-stack.js";
-import type { ToastStore } from "./toast-store.js";
+import type { NotificationStore } from "./notification-store.js";
 import type { CapabilityActions } from "./use-capability-actions.js";
 import type { SessionActions } from "./use-session-actions.js";
 import type { SkillActions } from "./use-skill-actions.js";
@@ -108,7 +108,7 @@ interface BuildCommandRegistryDeps {
   layers: LayerStack;
   store: EventStore;
   controller: RunController;
-  toasts: ToastStore;
+  toasts: NotificationStore;
   exit: () => void;
   skillActions: SkillActions;
   capActions: CapabilityActions;
@@ -354,6 +354,17 @@ export function buildCommandRegistry(
     description: "Where each field came from.",
     category: "config",
     run: () => layers.toggle("config"),
+  });
+  reg.register({
+    name: "notifications",
+    title: "Show UI notifications",
+    description: "Review run, action, approval, and background UI signals.",
+    category: "view",
+    aliases: ["notices"],
+    run: () => {
+      toasts.markAllSeen();
+      layers.toggle("notifications");
+    },
   });
   for (const spec of CAPABILITY_VIEW_COMMANDS) {
     reg.register({

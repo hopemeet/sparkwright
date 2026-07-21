@@ -60,9 +60,7 @@ export interface WorkflowControlCommandEnvelope {
 }
 
 export type WorkflowControlOutcomeStatus =
-  | "applied"
-  | "rejected"
-  | "dead_letter";
+  "applied" | "rejected" | "dead_letter";
 
 export interface WorkflowControlOutcome {
   schemaVersion: "sparkwright-workflow-control-outcome.v1";

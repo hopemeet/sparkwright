@@ -37,6 +37,16 @@ export interface SessionTraceFacts {
   subagents?: Array<{
     childRunId: string;
     finality?: "complete" | "partial" | string;
+    status?: "completed" | "partial" | "blocked" | string;
+    summary?: string;
+    blockers?: Array<{
+      code: string;
+      kind?: string;
+      owner?: string;
+      message?: string;
+      retry?: string;
+      requirements?: Array<{ kind: string; name: string }>;
+    }>;
     role?: string;
     health?: "clean" | "degraded" | "failing" | string;
   }>;
@@ -98,10 +108,7 @@ export interface SessionSummarizer {
 }
 
 export type SessionCompactionRegime =
-  | "no_savings"
-  | "redundancy_bound"
-  | "density_bound"
-  | "mixed";
+  "no_savings" | "redundancy_bound" | "density_bound" | "mixed";
 
 export interface SessionCompactionSummarizerMeasurement {
   applied: boolean;
@@ -213,8 +220,7 @@ export interface SessionCompactionSkippedResult extends SessionCompactionResultB
 }
 
 export type SessionCompactionResult =
-  | SessionCompactionAppliedResult
-  | SessionCompactionSkippedResult;
+  SessionCompactionAppliedResult | SessionCompactionSkippedResult;
 
 export function sessionTurnToContextItems(
   turn: SessionCompactionTurn,
@@ -1705,10 +1711,25 @@ function signalsFromTraceFacts(
     }
   }
   for (const subagent of facts.subagents ?? []) {
+    const blockerCodes = (subagent.blockers ?? [])
+      .map((blocker) => blocker.code)
+      .filter(Boolean)
+      .slice(0, 5);
     entries.push(
       createSessionSignal(
         "subagent",
-        `subagent ${subagent.childRunId} finality=${subagent.finality ?? "unknown"} health=${subagent.health ?? "unknown"}`,
+        [
+          `subagent ${subagent.childRunId}`,
+          `status=${subagent.status ?? "unknown"}`,
+          `finality=${subagent.finality ?? "unknown"}`,
+          `health=${subagent.health ?? "unknown"}`,
+          subagent.summary ? `summary=${subagent.summary}` : undefined,
+          blockerCodes.length > 0
+            ? `blockers=${blockerCodes.join(",")}`
+            : undefined,
+        ]
+          .filter((value): value is string => typeof value === "string")
+          .join(" "),
         { metadata: subagent },
       ),
     );

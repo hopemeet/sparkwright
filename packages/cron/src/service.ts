@@ -56,17 +56,13 @@ export interface CronListResult {
 }
 
 export type CronCommandResult =
-  | CronCreateResult
-  | CronMutationResult
-  | CronStatusResult
-  | CronListResult;
+  CronCreateResult | CronMutationResult | CronStatusResult | CronListResult;
 
 export class CronCommandService {
   readonly rootDir: string;
   readonly store: CronStore;
   private readonly mutationReporter:
-    | Pick<RuntimeContext, "reportCapabilityMutationCompleted">
-    | undefined;
+    Pick<RuntimeContext, "reportCapabilityMutationCompleted"> | undefined;
 
   constructor(options: CronCommandServiceOptions) {
     this.rootDir = options.rootDir;

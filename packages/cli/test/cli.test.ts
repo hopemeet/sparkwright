@@ -9419,8 +9419,7 @@ describe.sequential("runCli", () => {
         (event) =>
           (
             event.payload?.error as
-              | { metadata?: { toolName?: string } }
-              | undefined
+              { metadata?: { toolName?: string } } | undefined
           )?.metadata?.toolName,
       ),
     ).toEqual(["read", "read", "edit"]);

@@ -41,12 +41,7 @@ export interface ActorRouteHint {
 }
 
 export type ActorNotificationType =
-  | "completed"
-  | "failed"
-  | "cancelled"
-  | "waiting"
-  | "progress"
-  | "output";
+  "completed" | "failed" | "cancelled" | "waiting" | "progress" | "output";
 
 export type ActorNotificationQos = "lossy" | "reliable";
 
@@ -296,12 +291,10 @@ export type WorkflowActorNotification =
   | WorkflowWaitingActorNotification;
 
 export type AnyActorNotificationInput =
-  | TaskActorNotificationInput
-  | WorkflowActorNotificationInput;
+  TaskActorNotificationInput | WorkflowActorNotificationInput;
 
 export type AnyActorNotification =
-  | TaskActorNotification
-  | WorkflowActorNotification;
+  TaskActorNotification | WorkflowActorNotification;
 
 export type DeliveryResult =
   | { status: "accepted"; acceptedCount: number; droppedCount?: number }

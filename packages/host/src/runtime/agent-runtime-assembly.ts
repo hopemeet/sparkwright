@@ -20,16 +20,18 @@ import {
 } from "@sparkwright/core";
 import { createSessionFileRunStoreFactory } from "@sparkwright/core/internal";
 import {
+  AGENT_RESULT_PROTOCOL_PROMPT,
   createAgentProfilePolicy,
   createAgentTool,
   deriveChildAgentProfile,
-  findSimilarSuccessfulDelegation,
+  findReusableDelegation,
   isCompleteAgentResult,
-  rememberSuccessfulDelegation,
+  rememberReusableDelegation,
   projectAgentInvocationResult,
   spawnSubAgent,
   summarizeDelegationResult,
   withAlreadyCompletedNote,
+  type AgentBlocker,
   type AgentProfile,
   type AgentProfileWorkflowHookConfig,
   type DelegationLedgerHit,
@@ -126,8 +128,10 @@ const DELEGATED_AGENT_CONTRACT = [
   "Delegated agent contract:",
   "- Do not ask the user directly. Your parent agent owns all user interaction.",
   "- If a safe read-only next step can make progress, take it instead of asking for confirmation.",
-  "- If you are blocked by ambiguity, required approval, or missing capability, return a concise final message with status: needs_clarification, needs_approval, or blocked; include the question or requested action, a reasonable default when one exists, and any safe alternative.",
+  "- If ambiguity, approval, user input, or a missing capability prevents completion, explain the required action, a reasonable default when one exists, and any safe alternative; report the machine-readable status as blocked.",
+  "- If useful progress exists but work remains, report partial. Report completed only when the delegated goal is finished.",
   "- For clear delegated goals, complete the task and return the result to the parent.",
+  AGENT_RESULT_PROTOCOL_PROMPT,
 ].join("\n");
 
 /**
@@ -718,6 +722,11 @@ interface DelegateParallelChildSummary {
   childRunId?: string;
   spanId?: string;
   signal: string;
+  status?: "completed" | "partial" | "blocked";
+  statusSource?: "child" | "runtime" | "adapter";
+  summary?: string;
+  accomplishments?: string[];
+  blockers?: AgentBlocker[];
   finality?: "complete" | "partial";
   assessment?: RunAssessment;
   stopReason?: string;
@@ -1083,7 +1092,7 @@ export function createDelegateParallelTool(input: {
           const spec = eligibleByAgentId.get(task.agentId);
           if (!spec) return false;
           return Boolean(
-            findSimilarSuccessfulDelegation(
+            findReusableDelegation(
               parent,
               configuredDelegateLedgerKey(spec.profile.id, spec.toolName),
               task.goal,
@@ -1130,11 +1139,7 @@ export function createDelegateParallelTool(input: {
           spec.profile.id,
           spec.toolName,
         );
-        const cached = findSimilarSuccessfulDelegation(
-          parent,
-          ledgerKey,
-          task.goal,
-        );
+        const cached = findReusableDelegation(parent, ledgerKey, task.goal);
         if (cached)
           return { mode: "cached" as const, task, index, spec, cached };
         const subagentDepth = assertSubagentDepthAllowed({
@@ -1252,7 +1257,7 @@ export function createDelegateParallelTool(input: {
               result,
               usage,
             });
-            rememberSuccessfulDelegation(
+            rememberReusableDelegation(
               parent,
               ledgerKey,
               task.goal,
@@ -1465,129 +1470,6 @@ function inProcessDelegateCanUseTool(
 }
 
 /**
- * @internal Detect when a spawned/agent-task goal asks the child to *run* a
- * process or *write* to the filesystem — capabilities a read-only child agent
- * (read/glob/grep/list_dir/task_create only) can never satisfy. Returns the
- * kind of unsatisfiable intent, or `null` when the goal is inspection/reasoning
- * that a read-only child can legitimately do.
- *
- * Phrase-based on purpose: bare tokens like `运行`/`run` collide with nouns
- * (`运行日志`, "run log"), so we only match multi-word execution/launch and
- * filesystem-write phrases. "Write code / a program / a script" is deliberately
- * NOT a write signal — that is code *production*, which a read-only child does
- * by returning text.
- */
-export function detectReadOnlyChildIntent(
-  text: string,
-): "execute" | "write" | null {
-  const haystack = text.toLowerCase();
-  // Execution intent needs an action *verb* (run/execute/launch/start) paired
-  // with something runnable or a background framing. Keying on "background"
-  // alone is wrong: "inspect the repo in the background" is a legitimate
-  // read-only job — the delivery mode is not the work. Likewise the Chinese
-  // verbs only count alongside a runnable object/mode, so "运行日志"/"runtime"
-  // (noun uses) do not trip.
-  const executeVerbs = [
-    "run ",
-    "runs ",
-    "running ",
-    "execute",
-    "launch",
-    "spawn ",
-    "start ",
-    "starts ",
-    "starting ",
-    "运行",
-    "执行",
-    "启动",
-    "跑",
-  ];
-  const runnableObjects = [
-    "script",
-    "program",
-    "command",
-    "process",
-    "server",
-    "daemon",
-    "binary",
-    "python",
-    "node ",
-    "脚本",
-    "程序",
-    "命令",
-    "进程",
-    "服务",
-    "任务",
-  ];
-  const modeWords = ["后台", "background", "detached", "nohup"];
-  const hasExecuteVerb = executeVerbs.some((verb) => haystack.includes(verb));
-  const hasRunnable = runnableObjects.some((obj) => haystack.includes(obj));
-  const hasMode = modeWords.some((mode) => haystack.includes(mode));
-  if (hasExecuteVerb && (hasRunnable || hasMode)) {
-    return "execute";
-  }
-  const writePhrases = [
-    "write to a file",
-    "write to file",
-    "write it to",
-    "save to disk",
-    "save it to",
-    "save the file",
-    "create the file",
-    "write the file",
-    "write to disk",
-    "写入文件",
-    "写到文件",
-    "写入磁盘",
-    "保存到",
-    "落盘",
-    "创建文件",
-    "写进文件",
-  ];
-  if (writePhrases.some((phrase) => haystack.includes(phrase))) {
-    return "write";
-  }
-  return null;
-}
-
-/**
- * @internal Fail loud when a read-only child agent is handed a goal it can
- * never fulfill. A read-only child that "completes" an execution/write goal
- * having done nothing produces a false success that the parent then rationalizes
- * (often by hallucinating an error). Throwing here forces the parent to route
- * the work through a grant-capable spawn or an execution-capable tool.
- */
-export function assertReadOnlyChildCanSatisfyGoal(input: {
-  goal: string;
-  prompt: string;
-  childTools: readonly Pick<ToolDefinition, "name">[];
-  entrypoint: "spawn_agent" | "agent_task";
-}): void {
-  const childTools = new Set(input.childTools.map((tool) => tool.name));
-  const hasExecutor = childTools.has("bash");
-  const hasWriter =
-    childTools.has("write") ||
-    childTools.has("edit") ||
-    childTools.has("edit_anchored_text");
-  const intent = detectReadOnlyChildIntent(`${input.goal}\n${input.prompt}`);
-  if (intent === null) return;
-  if (intent === "execute" && hasExecutor) return;
-  if (intent === "write" && hasWriter) return;
-  const remedy =
-    intent === "execute"
-      ? "route execution through the parent `bash` tool (pass background:true to launch it as a non-blocking background task) or a configured delegate with shell access"
-      : "re-spawn the child with `grant: { workspaceWrite: true }` or include a managed write tool such as `write` in `allowedTools` so the parent can approve the grant before the child starts";
-  throw Object.assign(
-    new Error(
-      `${input.entrypoint} child agents are read-only and cannot ` +
-        `${intent === "execute" ? "run processes or shell commands" : "write to the filesystem"}. ` +
-        `To satisfy this goal, ${remedy}; do not delegate it to a read-only child.`,
-    ),
-    { code: "READONLY_CHILD_INTENT_UNSATISFIABLE" },
-  );
-}
-
-/**
  * @internal Exported for host regression tests that assert the spawn path
  * threads `runStore` + `parentUsageTracker` into the child run. Not part of the
  * public host API.
@@ -1691,7 +1573,7 @@ export function createDynamicSpawnAgentTool(input: {
           entrypoint: input.entrypoint ?? "spawn_agent",
         });
         return Boolean(
-          findSimilarSuccessfulDelegation(
+          findReusableDelegation(
             parent,
             dynamicSpawnLedgerKey({
               role: prepared.parsed.role,
@@ -1703,6 +1585,25 @@ export function createDynamicSpawnAgentTool(input: {
         );
       } catch {
         return false;
+      }
+    },
+    validateInput(args: unknown) {
+      try {
+        prepareDynamicSpawnAgentRequest({
+          args,
+          childTools: input.childTools,
+          entrypoint: input.entrypoint ?? "spawn_agent",
+        });
+        return { ok: true };
+      } catch (cause) {
+        return {
+          ok: false,
+          code: "AGENT_SPAWN_CAPABILITY_INVALID",
+          message:
+            cause instanceof Error
+              ? cause.message
+              : "Invalid spawn_agent capability request.",
+        };
       }
     },
     policyForArgs(args: unknown) {
@@ -1759,13 +1660,6 @@ export function createDynamicSpawnAgentTool(input: {
           entrypoint: input.entrypoint ?? "spawn_agent",
         });
 
-      assertReadOnlyChildCanSatisfyGoal({
-        goal: parsed.goal,
-        prompt: parsed.prompt,
-        childTools,
-        entrypoint: input.entrypoint ?? "spawn_agent",
-      });
-
       // Strip any leading `dynamic_` the role already carries so a re-used
       // agent id (models sometimes pass a prior child's `dynamic_<role>` id
       // back in as the new role) does not compound into `dynamic_dynamic_*`.
@@ -1790,11 +1684,7 @@ export function createDynamicSpawnAgentTool(input: {
         prompt: parsed.prompt,
         allowedTools: childTools.map((tool) => tool.name),
       });
-      const cached = findSimilarSuccessfulDelegation(
-        parent,
-        ledgerKey,
-        parsed.goal,
-      );
+      const cached = findReusableDelegation(parent, ledgerKey, parsed.goal);
       if (cached) return cachedDynamicSpawnOutput(cached);
 
       const subagentDepth = assertSubagentDepthAllowed({
@@ -1944,8 +1834,6 @@ async function completeDynamicSpawnAgent(
   const childTruncated =
     (result.metadata as { truncated?: unknown } | undefined)?.truncated ===
       true || stepLimitReached;
-  const finality =
-    result.signal !== "completed" || childTruncated ? "partial" : "complete";
   const projected = projectAgentInvocationResult({
     childRunId: spawned.childRunId,
     spanId: spawned.spanId,
@@ -1983,7 +1871,7 @@ async function completeDynamicSpawnAgent(
       },
     },
   };
-  rememberSuccessfulDelegation(parent, ledgerKey, goal, {
+  rememberReusableDelegation(parent, ledgerKey, goal, {
     ...projected,
     output,
   });
@@ -2016,8 +1904,15 @@ async function completeDynamicSpawnAgent(
           stopReason: result.stopReason,
           stepLimitReached,
           truncated: childTruncated,
-          finality,
+          status: projected.status,
+          statusSource: projected.statusSource,
+          summary: projected.summary,
+          finality: projected.finality,
           assessment: projected.assessment,
+          ...(projected.accomplishments
+            ? { accomplishments: projected.accomplishments }
+            : {}),
+          blockers: projected.blockers,
           ...(childMessage ? { childMessage } : {}),
           ...(partialObservations && partialObservations.length > 0
             ? { partialObservations }
@@ -2267,6 +2162,13 @@ function summarizeCachedDelegateParallelChild(input: {
     childRunId: result.childRunId,
     spanId: result.spanId,
     signal: result.signal,
+    status: result.status,
+    statusSource: result.statusSource,
+    summary: result.summary,
+    ...(result.accomplishments
+      ? { accomplishments: result.accomplishments }
+      : {}),
+    blockers: result.blockers,
     finality: result.finality,
     assessment: result.assessment,
     stopReason: result.stopReason,
@@ -2346,6 +2248,15 @@ function summarizeAgentTaskOutput(output: unknown): Record<string, unknown> {
     ...(typeof output.agentId === "string" ? { agentId: output.agentId } : {}),
     ...(typeof output.role === "string" ? { role: output.role } : {}),
     ...(typeof output.signal === "string" ? { signal: output.signal } : {}),
+    ...(typeof output.status === "string" ? { status: output.status } : {}),
+    ...(typeof output.statusSource === "string"
+      ? { statusSource: output.statusSource }
+      : {}),
+    ...(typeof output.summary === "string" ? { summary: output.summary } : {}),
+    ...(Array.isArray(output.accomplishments)
+      ? { accomplishments: output.accomplishments }
+      : {}),
+    ...(Array.isArray(output.blockers) ? { blockers: output.blockers } : {}),
     ...(typeof output.stopReason === "string"
       ? { stopReason: output.stopReason }
       : {}),
@@ -2534,8 +2445,7 @@ function extractPartialObservations(
   for (const event of events) {
     if (event.type !== "tool.requested") continue;
     const payload = event.payload as
-      | { id?: unknown; toolName?: unknown }
-      | undefined;
+      { id?: unknown; toolName?: unknown } | undefined;
     if (
       typeof payload?.id === "string" &&
       typeof payload.toolName === "string"
@@ -2548,8 +2458,7 @@ function extractPartialObservations(
   for (const event of events) {
     if (event.type !== "tool.completed") continue;
     const payload = event.payload as
-      | { toolCallId?: unknown; output?: unknown }
-      | undefined;
+      { toolCallId?: unknown; output?: unknown } | undefined;
     if (payload?.output === undefined) continue;
     const toolName =
       (typeof payload.toolCallId === "string"

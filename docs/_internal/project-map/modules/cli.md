@@ -9,6 +9,15 @@ See also [../maps/trace/summary-timeline-verify.md](../maps/trace/summary-timeli
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-21
+- Scope: live CLI event output now formats `subagent.*` identity, semantic
+  status, summary, and bounded blocker codes instead of hiding recovery facts
+  inside raw JSON.
+- Read: CLI event formatter, Agent terminal payload contract, and focused/full
+  tests.
+- Tests: CLI 186/186 and CLI typecheck passed.
+
+- Status: Verified
 - Date: 2026-07-19
 - Scope: the internal Direct Core diagnostic entry uses Host's canonical
   runtime workflow-hook assembly. Required verification profiles, configured
@@ -265,6 +274,8 @@ Does not own:
   present, including warning severity, capability kind/code, profile id, and a
   bounded message/source. Agent profile collision warnings should therefore be
   visible in normal `sparkwright run` output, not only in trace inspection.
+- Live run output formats `subagent.*` lifecycle events as compact Agent rows
+  containing child identity, semantic status, summary, and blocker codes.
 - Live run output formats `agent.routing.evaluated` as a compact sort summary
   (`mode`, delegate count, relevant/low counts); raw trace inspection remains
   the source for per-delegate matched keyword details.

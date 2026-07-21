@@ -12,6 +12,45 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-21
+- Scope: Host dynamic Agent spawn no longer parses goal/prompt prose as an
+  admission gate. `validateInput` checks the structured enabled-tool/grant
+  contract before policy/approval. Strict `agent-outcome.v1` status,
+  accomplishments, and blockers are projected through dynamic, configured,
+  parallel, task, lifecycle, trace, and ledger paths. A one-shot Stop hook
+  gives the parent structured recovery/disclosure instructions for every
+  partial or blocked child without inspecting final-answer prose.
+- Read: Host Agent runtime assembly/grants, Core tool validation order, Agent
+  Runtime result/supervisor contracts, workflow hooks, session queries, and
+  focused/full tests.
+- Tests: dynamic spawn, Agent/delegate tool, and workflow-hook coverage passed;
+  full repository verification is recorded by the release gate.
+
+- Status: Verified
+- Date: 2026-07-20
+- Scope: added a test-only stdio Host adapter that installs two deferred
+  approval waiters before emitting either request. It exercises protocol-level
+  concurrent approval delivery and completion-after-all-resolutions without
+  changing production Host runtime, waiter, policy, or wire contracts.
+- Read: Host stdio/client-spawn protocol path, approval queue test adapter,
+  adapter regression, and TUI approval coordinator/PTY consumer.
+- Tests: Host 594/594 and Host/TUI typechecks passed; the adapter regression
+  proves both requests are live before either resolution, and a real 96x32 PTY
+  advanced from `1 of 2` to `1 of 1`.
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: checked TUI approval coordination and Workflow action consumers.
+  Host remains the runtime/security authority and still owns approval waiter
+  construction, policy, protocol resolution, execution cleanup, task state,
+  and durable Workflow state; the refactor changes only TUI client-local
+  queue/view/presentation ownership.
+- Read: Host approval interaction owner, protocol client routes, Task/Workflow
+  operations, and the changed TUI consumers.
+- Tests: TUI 445/445, TUI typecheck, and repository test typecheck passed; no
+  Host source or wire contract changed.
+
+- Status: Verified
 - Date: 2026-07-19
 - Scope: Workflow episode construction keeps step and resource budgets as
   independent limiters. Host derives Core `maxSteps` only from the explicit
@@ -992,10 +1031,17 @@ Does not own:
   tier, and records related or required tools such as the anchored verified-edit
   pair. The callable definitions use those exact names.
 - Dynamic `spawn_agent` output includes child identity/finality facts for the
-  parent (`childRunId`, `role`, `stepLimitReached`, `truncated`, and
-  `finality`). A child answer produced on the last allowed step remains a
+  parent (`childRunId`, `role`, `status`, `statusSource`, `summary`,
+  `accomplishments`, `blockers`, `stepLimitReached`, `truncated`, and
+  `finality`). A child-declared blocked or partial result remains a completed
+  tool transport but is not reusable. A
+  child answer produced on the last allowed step remains a
   completed tool transport result, but host marks the answer `partial` and
   prefixes the message with a warning.
+- Dynamic spawn uses `ToolDefinition.validateInput()` to validate requested
+  tools and workspace-write grant consistency against the enabled child
+  catalog before Core evaluates policy or requests approval. Prompt text is
+  forwarded to the child but never interpreted as a Host capability gate.
 - Dynamic `spawn_agent` starts foreground by default and may promote after the
   foreground budget when `backgroundTasks=enabled`. Promotion adopts the already
   running child through `TaskManager.adoptRunning()` and preserves
@@ -1156,11 +1202,14 @@ Does not own:
   projection tool clamp also runs in governance so it sees rewritten arguments.
 - Host runtime hook assembly also includes the built-in
   `runtime:partial_subagent_finality_disclosure` Stop hook after configured,
-  verification/documented-command, and workflow projection hooks. It advances at
-  most once per run when the pending final answer omits a caveat but raw events
-  show `subagent.*` or `spawn_agent` child finality was partial, step-limited,
-  truncated, or failed. It must not treat ordinary truncated read/tool output as
-  child-finality evidence.
+  verification/documented-command, and workflow projection hooks. It advances
+  exactly once per run whenever raw `subagent.*` or `spawn_agent` evidence is
+  partial, blocked, step-limited, truncated, or failed; it does not guess from
+  the pending final-answer prose. The injected context tells the parent to use
+  an already-authorized safe capability when possible, otherwise disclose the
+  completed work, blocker, owner, required next action, and alternative, with
+  one focused question only for user-owned input. It must not treat ordinary
+  truncated read/tool output as child-finality evidence.
 - Workflow action results are gated by `enforceWorkflowHookEffect`, which rejects
   lifecycle-illegal effects before they reach core: `rewrite` only at
   `PreToolUse`, `advance` only at `ModelOutput` / `Stop`, `block` at every

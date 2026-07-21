@@ -867,34 +867,6 @@ function EventCard(props: {
       );
     }
 
-    case "agent.profile.derived": {
-      const parent = str(p.parentAgentId);
-      const child = str(p.childAgentId) || str(p.agentId) || "agent";
-      const count =
-        typeof p.effectiveToolCount === "number"
-          ? p.effectiveToolCount
-          : undefined;
-      return (
-        <Box paddingX={1} marginTop={1}>
-          <Text color={theme.accent2}>agent </Text>
-          {parent ? (
-            <>
-              <Text>{parent}</Text>
-              <Text color={theme.muted}> → </Text>
-            </>
-          ) : null}
-          <Text bold>{child}</Text>
-          <Text color={theme.muted}> profile</Text>
-          {count !== undefined ? (
-            <Text color={theme.muted}>
-              {" "}
-              · {count} tool{count === 1 ? "" : "s"}
-            </Text>
-          ) : null}
-        </Box>
-      );
-    }
-
     case "subagent.requested":
     case "subagent.started":
     case "subagent.completed":

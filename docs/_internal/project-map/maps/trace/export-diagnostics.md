@@ -7,6 +7,30 @@ Clarify the difference between trace diagnostics and TUI human transcript export
 This is a high-risk confusion point: `/export` is useful, but it is not the
 canonical trace or a session consistency report.
 
+## Last Verified
+
+- Status: Verified
+- Date: 2026-07-20
+- Scope: the shared product-transcript filter now omits
+  `agent.profile.derived` preparation diagnostics from both live committed
+  conversation and `/export`; Activity and raw trace retain the event, while
+  real `subagent.*` lifecycle rows remain visible.
+- Read: Protocol internal-transcript filter, TUI EventStream, transcript
+  exporter, Activity event formatter, and focused regressions.
+- Tests: Protocol 6/6; focused TUI live/export/Activity suites 44/44; full TUI
+  449/449; Protocol/TUI typechecks; real Terra PTY and trace/session checks.
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: `/notifications` is explicitly TUI-local presentation history and does
+  not replace EventStream, `/events`, `trace.jsonl`, session diagnostics, or
+  `/export`. Export still commits its copy-friendly path to append-only
+  scrollback and reads the same current-session events.
+- Read: TUI notification projection, EventStream/run diagnostics, export
+  controller/renderer, and session/trace boundaries.
+- Tests: full TUI 445/445 and real 80/96/120-column PTY trace/session checks;
+  export and trace contracts are unchanged.
+
 ## Main Files
 
 - `packages/tui/src/state/run-controller.ts`

@@ -11,11 +11,7 @@ export { formatToolRequestPreview, oneLine };
 
 export type ToolDisplayMode = "live" | "export";
 export type ToolDisplayTone =
-  | "muted"
-  | "success"
-  | "warning"
-  | "error"
-  | "normal";
+  "muted" | "success" | "warning" | "error" | "normal";
 
 export type ToolResultDisplay =
   | { kind: "hidden"; reason: string }

@@ -6,11 +6,7 @@
 import { isRecord } from "./record-utils.js";
 export type PolicyDecisionKind = "allow" | "deny" | "requires_approval";
 export type PermissionMode =
-  | "plan"
-  | "default"
-  | "accept_edits"
-  | "dont_ask"
-  | "bypass_permissions";
+  "plan" | "default" | "accept_edits" | "dont_ask" | "bypass_permissions";
 
 export interface PolicyResource {
   kind: string;

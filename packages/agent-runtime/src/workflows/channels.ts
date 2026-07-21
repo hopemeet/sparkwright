@@ -22,12 +22,7 @@ export const WORKFLOW_CHANNEL_SCHEMA_VERSION =
   "sparkwright-workflow-channel.v1" as const;
 
 export type WorkflowChannelSourceKind =
-  | "tui"
-  | "cli"
-  | "agent"
-  | "im"
-  | "web"
-  | "api";
+  "tui" | "cli" | "agent" | "im" | "web" | "api";
 
 export interface WorkflowChannelBinding {
   schemaVersion: typeof WORKFLOW_CHANNEL_SCHEMA_VERSION;
@@ -55,10 +50,7 @@ export interface WorkflowChannelRevocation {
 }
 
 export type WorkflowChannelDeliveryStatus =
-  | "delivered"
-  | "failed"
-  | "expired"
-  | "revoked";
+  "delivered" | "failed" | "expired" | "revoked";
 
 export interface WorkflowChannelDeliveryReceipt {
   schemaVersion: "sparkwright-workflow-channel-delivery.v1";

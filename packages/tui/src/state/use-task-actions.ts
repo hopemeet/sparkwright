@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   TaskOutputChunkSnapshot,
   TaskRecordSnapshot,
@@ -12,7 +12,8 @@ import {
 } from "../lib/task-activity.js";
 import type { RunController } from "./run-controller.js";
 import type { LayerStack } from "./layer-stack.js";
-import type { ToastStore } from "./toast-store.js";
+import type { NotificationStore } from "./notification-store.js";
+import { presentationPolicy } from "../lib/ui-signal.js";
 
 type TaskActivitySummary = ReturnType<typeof summarizeTaskActivity>;
 
@@ -39,7 +40,7 @@ export interface TaskActions {
 
 export function useTaskActions(deps: {
   controller: RunController;
-  toasts: ToastStore;
+  toasts: NotificationStore;
   layers: LayerStack;
   events: RunEvent[];
 }): TaskActions {
@@ -51,6 +52,8 @@ export function useTaskActions(deps: {
   const [loadingTasks, setLoadingTasks] = useState(false);
   const [lastActivityTab, setLastActivityTab] = useState<ActivityTab>("tasks");
   const [lastSeenTaskSequence, setLastSeenTaskSequence] = useState(0);
+  const terminalSignalsInitialized = useRef(false);
+  const terminalStateByTask = useRef(new Map<string, string>());
 
   const taskActivity = useMemo(
     () => summarizeTaskActivity(events, taskRecords, taskOutputs),
@@ -60,6 +63,47 @@ export function useTaskActions(deps: {
     taskActivity.tasks,
     lastSeenTaskSequence,
   );
+
+  useEffect(() => {
+    const terminal = taskActivity.tasks.filter(
+      (task) =>
+        task.status === "completed" ||
+        task.status === "failed" ||
+        task.status === "cancelled",
+    );
+    if (!terminalSignalsInitialized.current) {
+      // The hook mounts before an existing session is replayed or its durable
+      // task records are loaded. Wait for the first non-empty snapshot so
+      // historical terminal tasks seed the baseline instead of looking new.
+      if (taskActivity.tasks.length === 0) return;
+      terminalSignalsInitialized.current = true;
+      for (const task of terminal) {
+        terminalStateByTask.current.set(task.id, task.status);
+      }
+      return;
+    }
+    for (const task of terminal) {
+      if (terminalStateByTask.current.get(task.id) === task.status) continue;
+      terminalStateByTask.current.set(task.id, task.status);
+      const kind =
+        task.status === "failed"
+          ? "error"
+          : task.status === "cancelled"
+            ? "warning"
+            : "success";
+      const scope = "BackgroundTask" as const;
+      toasts.publish({
+        kind,
+        scope,
+        source: "tui.task",
+        title: `task ${task.status}`,
+        message: task.error ? `${task.id}: ${task.error}` : task.id,
+        details: task,
+        dedupeKey: `task:${task.id}`,
+        ...presentationPolicy({ kind, scope }),
+      });
+    }
+  }, [taskActivity.tasks, toasts]);
 
   async function loadSessionTaskRecords(): Promise<TaskRecordSnapshot[]> {
     const runIds = runIdsFromEvents(events);
@@ -79,12 +123,10 @@ export function useTaskActions(deps: {
       const outputEntries = await Promise.all(
         records
           .slice(0, 12)
-          .map(
-            async (record): Promise<[string, TaskOutputChunkSnapshot[]]> => [
-              record.id,
-              await controller.readTaskOutput(record.id, 200),
-            ],
-          ),
+          .map(async (record): Promise<[string, TaskOutputChunkSnapshot[]]> => [
+            record.id,
+            await controller.readTaskOutput(record.id, 200),
+          ]),
       );
       const outputs: Record<string, TaskOutputChunkSnapshot[]> =
         Object.fromEntries(outputEntries);
@@ -102,6 +144,7 @@ export function useTaskActions(deps: {
 
   function stopActivityTask(taskId: string): void {
     void controller.stopTask(taskId).then((cancelled) => {
+      if (cancelled === null) return;
       toasts.push({
         variant: cancelled ? "success" : "warning",
         title: cancelled ? "task stopped" : "task not stopped",
@@ -113,6 +156,7 @@ export function useTaskActions(deps: {
 
   function joinActivityTask(taskId: string): void {
     void controller.joinTask(taskId).then((joined) => {
+      if (joined === null) return;
       toasts.push({
         variant: joined ? "success" : "warning",
         title: joined ? "task joined" : "task not joined",
@@ -124,6 +168,7 @@ export function useTaskActions(deps: {
 
   function promoteActivityTask(taskId: string): void {
     void controller.promoteTask(taskId).then((promoted) => {
+      if (promoted === null) return;
       toasts.push({
         variant: promoted ? "success" : "info",
         title: promoted ? "task promoted" : "task marked awaited",

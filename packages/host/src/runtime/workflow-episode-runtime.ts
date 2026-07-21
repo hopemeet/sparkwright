@@ -279,8 +279,7 @@ export class WorkflowEpisodeRuntime {
     let acquiredWorkflowLease = false;
     let workflowRollbackRecord: WorkflowRunRecord | undefined;
     let workflowProjection:
-      | ReturnType<typeof createWorkflowProjectionHooks>
-      | undefined;
+      ReturnType<typeof createWorkflowProjectionHooks> | undefined;
     try {
       if (
         workflowStore &&

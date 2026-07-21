@@ -115,6 +115,18 @@ describe("formatEvent", () => {
     expect(
       formatEvent(event("subagent.failed", { goal: "audit docs" })),
     ).toMatchObject({ color: "red", detail: "audit docs" });
+    expect(
+      formatEvent(
+        event("subagent.completed", {
+          goal: "run checks",
+          status: "blocked",
+          summary: "Execution requires approval",
+        }),
+      ),
+    ).toMatchObject({
+      color: "red",
+      detail: "run checks · blocked · Execution requires approval",
+    });
   });
 
   it("formats verification workflow hooks", () => {

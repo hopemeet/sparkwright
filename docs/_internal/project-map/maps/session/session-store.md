@@ -10,6 +10,28 @@ See [../trace/raw-trace.md](../trace/raw-trace.md) for raw event evidence.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-21
+- Scope: session trace facts now retain sub-agent semantic status, summary, and
+  bounded structured blockers (including typed requirements) for session
+  compaction and rehydration. Raw session files and event families are
+  unchanged.
+- Read: Host session queries, Core session compaction facts, Agent terminal
+  payloads, and focused tests.
+- Tests: Core trace/session compaction coverage passed; full repository
+  verification is recorded by the release gate.
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: TUI `NotificationStore`, approval queue/resolving state, and exact
+  remembered rules remain in-memory client state. Canonical session files,
+  traces, Workflow job/control session isolation, replay events, and export
+  inputs are unchanged.
+- Read: TUI controller/session mutation paths, approval cleanup, EventStore
+  replay, Host session queries, and canonical session storage contracts.
+- Tests: TUI 445/445, controller session/approval regressions, and real PTY
+  session checks passed.
+
+- Status: Verified
 - Date: 2026-07-19
 - Scope: session consistency now evaluates cancellation-owned tool aborts in
   their run-local terminal context. This changes findings only; session layout,
@@ -224,6 +246,10 @@ Manual compact
   3 summarization is requested, provider/scripted refs can write model-backed
   summaries with `summaryFingerprint`; deterministic refs record preview output
   plus a warning.
+- `SessionTraceFacts.subagents` preserves semantic `status`, summary, and
+  structured blockers with requirement kind/name pairs. The compact signal is
+  bounded and includes blocker codes so a resumed parent does not lose why a
+  child was partial or blocked.
 - `trace-session-consistency.ts` owns `validateSessionTraceConsistency` and
   checks agreement between session files, trace metadata, run files, and
   safety-relevant failures while reusing diagnostics parse/summary helpers;

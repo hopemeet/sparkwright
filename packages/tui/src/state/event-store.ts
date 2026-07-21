@@ -1,51 +1,17 @@
 import type { RunEvent } from "../lib/event-type.js";
-import type { ApprovalSubject } from "../lib/session-approval.js";
+import type { ApprovalViewModel } from "../lib/approval-view-model.js";
 
 export type Status =
-  | "idle"
-  | "running"
-  | "awaiting-approval"
-  | "done"
-  | "error";
+  "idle" | "running" | "awaiting-approval" | "done" | "error";
 
-/**
- * Approval kind helps the UI choose the right body. The host emits a free-form
- * `action` string today; we normalise to a small enum the renderer switches on
- * and keep the original action for display.
- */
-export type ApprovalKind =
-  | "workspace.write"
-  | "skill.apply"
-  | "tool.execute"
-  | "shell.execute"
-  | "other";
-
-export interface PendingApproval {
+export interface InlineDiagnosticState {
   id: string;
-  action: string;
-  kind: ApprovalKind;
-  summary: string;
-  /** Path for workspace.write; primary file for the diff. */
-  path?: string;
-  /** Free-form reason the tool/write was requested. */
-  reason?: string;
-  /** Unified diff body (workspace.write only). */
-  diff?: string;
-  /** Tool name (tool.execute / shell.execute). */
-  toolName?: string;
-  /** Captured tool args/metadata for display. Trimmed/serialised in renderer. */
-  toolArgs?: unknown;
-  /** Shell command, if shell.execute. */
-  command?: string;
-  /** Stable, fail-closed projection used to offer and match session rules. */
-  subject: ApprovalSubject;
-  /** Policy decision metadata (risk, reason). */
-  policy?: {
-    decision?: string;
-    reason?: string;
-    risk?: string;
-  };
+  scope: "RunFailure" | "ConnectionFailure";
+  title: string;
+  message: string;
 }
+
+export type PendingApproval = ApprovalViewModel;
 
 /**
  * Per-file modification accumulated from workspace.write events for the sidebar.
@@ -125,9 +91,12 @@ const PHASE_PRIORITY = {
 
 export interface StoreState {
   status: Status;
+  /** Short transient operation label projected into the status line. */
+  statusMessage: string | null;
   events: RunEvent[];
   pendingApproval: PendingApproval | null;
   lastError: string | null;
+  lastDiagnostic: InlineDiagnosticState | null;
   stopReason: string | null;
   /** Live-assembled assistant text from `model.stream.chunk` (text_delta). */
   streamingText: string;
@@ -186,9 +155,11 @@ type Listener = () => void;
 export class EventStore {
   private state: StoreState = {
     status: "idle",
+    statusMessage: null,
     events: [],
     pendingApproval: null,
     lastError: null,
+    lastDiagnostic: null,
     stopReason: null,
     streamingText: "",
     reasoningText: "",
@@ -222,6 +193,7 @@ export class EventStore {
   // negative sequences so they never collide with host sequences (which start
   // at 1) and sort ahead of them when appended just before a run begins.
   private syntheticSeq = -1;
+  private statusBeforeApproval: Status | null = null;
 
   getSnapshot = (): StoreState => this.state;
 
@@ -248,8 +220,13 @@ export class EventStore {
     this.state = {
       ...this.state,
       status,
+      statusMessage: status === "running" ? this.state.statusMessage : null,
       lastError:
         status === "running" || status === "done" ? null : this.state.lastError,
+      lastDiagnostic:
+        status === "running" || status === "done"
+          ? null
+          : this.state.lastDiagnostic,
       runStartedAt,
       runEndedAt,
       activePhase: this.deriveActivePhase(),
@@ -258,12 +235,40 @@ export class EventStore {
   }
 
   setError(message: string): void {
+    this.setRunFailure(message);
+  }
+
+  setRunFailure(message: string): void {
+    this.setTerminalDiagnostic("RunFailure", "run failed", message);
+  }
+
+  setConnectionFailure(message: string): void {
+    this.setTerminalDiagnostic(
+      "ConnectionFailure",
+      "connection failed",
+      message,
+    );
+  }
+
+  private setTerminalDiagnostic(
+    scope: InlineDiagnosticState["scope"],
+    title: string,
+    message: string,
+  ): void {
     this.openPhases.clear();
     this.modelRetries.clear();
+    const lastDiagnostic: InlineDiagnosticState = {
+      id: `${scope}:${Date.now().toString(36)}:${message}`,
+      scope,
+      title,
+      message,
+    };
     this.state = {
       ...this.state,
       status: "error",
+      statusMessage: null,
       lastError: message,
+      lastDiagnostic,
       activePhase: null,
     };
     this.schedule();
@@ -271,6 +276,11 @@ export class EventStore {
 
   setStopReason(reason: string | null): void {
     this.state = { ...this.state, stopReason: reason };
+    this.schedule();
+  }
+
+  setStatusMessage(message: string | null): void {
+    this.state = { ...this.state, statusMessage: message };
     this.schedule();
   }
 
@@ -490,10 +500,15 @@ export class EventStore {
   }
 
   setPendingApproval(pending: PendingApproval | null): void {
+    if (pending && !this.state.pendingApproval) {
+      this.statusBeforeApproval = this.state.status;
+    }
+    const restoredStatus = this.statusBeforeApproval ?? "running";
+    if (!pending) this.statusBeforeApproval = null;
     this.state = {
       ...this.state,
       pendingApproval: pending,
-      status: pending ? "awaiting-approval" : "running",
+      status: pending ? "awaiting-approval" : restoredStatus,
     };
     this.schedule();
   }
@@ -509,7 +524,9 @@ export class EventStore {
       streamingText: "",
       reasoningText: "",
       lastError: null,
+      lastDiagnostic: null,
       stopReason: null,
+      statusMessage: null,
       status: this.state.status === "running" ? "running" : "idle",
       modifiedFiles: [],
       todoItems: [],
@@ -527,11 +544,14 @@ export class EventStore {
     this.pendingTodoProposals.clear();
     this.openPhases.clear();
     this.modelRetries.clear();
+    this.statusBeforeApproval = null;
     this.state = {
       status: "idle",
+      statusMessage: null,
       events: [],
       pendingApproval: null,
       lastError: null,
+      lastDiagnostic: null,
       stopReason: null,
       streamingText: "",
       reasoningText: "",

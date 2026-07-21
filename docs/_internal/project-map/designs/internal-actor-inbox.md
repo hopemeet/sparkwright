@@ -272,11 +272,7 @@ MVP notifications are lifecycle or observation records only:
 
 ```ts
 type ActorNotificationType =
-  | "completed"
-  | "failed"
-  | "cancelled"
-  | "progress"
-  | "output";
+  "completed" | "failed" | "cancelled" | "progress" | "output";
 ```
 
 There is intentionally no `"message"` type. Adding arbitrary actor-to-actor

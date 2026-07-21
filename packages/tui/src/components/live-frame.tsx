@@ -11,6 +11,7 @@ import { StreamingMessage } from "./streaming-message.js";
 import { TodoBand } from "./todo-band.js";
 import { ToastView } from "./toast.js";
 import { SkillProposalCompletionCard } from "./skill-proposal-completion-card.js";
+import { InlineDiagnostic } from "./inline-diagnostic.js";
 
 export function LiveFrame(props: {
   state: StoreState;
@@ -29,8 +30,10 @@ export function LiveFrame(props: {
   errors: ValidationError[];
   queued: readonly string[];
   showQueued: boolean;
-  confirmingHumanAction: boolean;
-  applyingHumanAction: boolean;
+  humanActionActive: boolean;
+  onReviewHumanAction: (proposalId: string) => void;
+  onApplyHumanAction: (proposalId: string) => Promise<boolean>;
+  onDismissHumanAction: (proposalId: string) => void;
 }): React.ReactElement {
   const theme = useTheme();
   const showStatus =
@@ -89,10 +92,20 @@ export function LiveFrame(props: {
         <UsageSummaryLine usage={props.state.usage} />
       ) : null}
 
-      {props.state.lastError ? (
-        <Box paddingX={1}>
-          <Text color={theme.error}>error: {props.state.lastError}</Text>
-        </Box>
+      {props.state.lastDiagnostic ? (
+        <InlineDiagnostic
+          title={
+            props.state.lastDiagnostic.scope === "RunFailure"
+              ? "failure details"
+              : props.state.lastDiagnostic.title
+          }
+          message={
+            props.state.lastDiagnostic.scope === "ConnectionFailure"
+              ? props.state.lastDiagnostic.message
+              : undefined
+          }
+          hint="details /notifications · runtime evidence /events"
+        />
       ) : null}
 
       <ToastView toast={props.toast} queueDepth={props.toastQueueDepth} />
@@ -102,30 +115,20 @@ export function LiveFrame(props: {
       props.state.status !== "awaiting-approval" ? (
         <SkillProposalCompletionCard
           action={props.state.pendingHumanAction}
-          confirmingApply={props.confirmingHumanAction}
-          applying={props.applyingHumanAction}
+          active={props.humanActionActive}
+          onReview={props.onReviewHumanAction}
+          onApply={props.onApplyHumanAction}
+          onDismiss={props.onDismissHumanAction}
         />
       ) : null}
 
       {props.errors.length > 0 ? (
-        <Box
-          flexDirection="column"
-          borderStyle="single"
-          borderColor="red"
-          paddingX={1}
-        >
-          <Text color="red" bold>
-            config errors ({props.errors.length})
+        <Box paddingX={1}>
+          <Text color={theme.error} bold>
+            config: {props.errors.length} validation error
+            {props.errors.length === 1 ? "" : "s"}
           </Text>
-          {props.errors.map((error, i) => (
-            <Text key={`${error.file}:${error.field}:${i}`}>
-              <Text dimColor>{error.file}</Text>
-              <Text> </Text>
-              <Text color="red">{error.field}</Text>
-              <Text> </Text>
-              <Text>{error.message}</Text>
-            </Text>
-          ))}
+          <Text color={theme.muted}> · /config for details</Text>
         </Box>
       ) : null}
 

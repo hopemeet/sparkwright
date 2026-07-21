@@ -15,9 +15,7 @@ export type SubAgentEntrypoint =
 export type AgentInvocationProtocol = "in_process" | "acp" | "external_command";
 
 export type AgentInvocationWorkspaceAccess =
-  | "none"
-  | "read_only"
-  | "read_write";
+  "none" | "read_only" | "read_write";
 
 export interface AgentAssetIdentity {
   readonly artifactKind: "agent";

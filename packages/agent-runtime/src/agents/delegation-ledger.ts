@@ -19,11 +19,7 @@ const delegationLedgersByParent = new WeakMap<
   DelegationLedgerEntry[]
 >();
 
-/**
- * Compatibility name retained for callers. Reuse is exact after conservative
- * normalization; this function no longer performs fuzzy similarity matching.
- */
-export function findSimilarSuccessfulDelegation(
+export function findReusableDelegation(
   parent: RunHandle,
   key: DelegationLedgerKey,
   goal: string,
@@ -41,7 +37,7 @@ export function findSimilarSuccessfulDelegation(
   return undefined;
 }
 
-export function rememberSuccessfulDelegation(
+export function rememberReusableDelegation(
   parent: RunHandle,
   key: DelegationLedgerKey,
   goal: string,

@@ -13,6 +13,17 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md),
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-21
+- Scope: trace diagnostics now classify semantic partial/blocked Agent outcomes
+  as incomplete evidence and include summary/blocker codes; session compaction
+  facts retain structured blocker recovery data. Core's generic repeated-call
+  guard stops an unchanged blocked spawn without an Agent-specific retry cache.
+- Read: trace diagnostics, session compaction, repeated-tool handling, Host
+  projections, and focused/full tests.
+- Tests: Core 650/650 plus Host repeated-spawn coverage passed; full repository
+  verification is recorded by the release gate.
+
+- Status: Verified
 - Date: 2026-07-19
 - Scope: session consistency now classifies unresolved tool outcomes per
   `runId` and excludes only `TOOL_ABORTED` owned by one unambiguous cancelled
@@ -456,6 +467,9 @@ Does not own:
   `trace-diagnostics.ts`; there is no public/general `TraceFacts` model.
   `SessionTraceFacts` remains owned by session compaction and must not be
   generalized into report facts without a second shared consumer.
+- `SessionTraceFacts.subagents` carries semantic status, summary, and bounded
+  blockers/requirements. Trace report facts remain private, but independently
+  consume semantic partial/blocked status and blocker codes for evidence.
 - Trace timelines use semantic phase keys before span fallback; `subagent.*`
   lifecycle rows are grouped by child run id so a parent request and child
   terminal event do not split into pending and completed phases when spans

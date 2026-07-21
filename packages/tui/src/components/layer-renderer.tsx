@@ -5,17 +5,14 @@ import type {
   TaskRecordSnapshot,
   WorkflowRunSnapshot,
 } from "@sparkwright/protocol";
-import {
-  ActivityPanel,
-  activityTabFromPayload,
-  type ActivityTab,
-} from "./activity-panel.js";
+import { ActivityPanel, type ActivityTab } from "./activity-panel.js";
 import { ApprovalPrompt } from "./approval-prompt.js";
 import { CapabilitiesPanel } from "./capabilities-panel.js";
 import { ConfigPanel, type ConfigPanelResolved } from "./config-panel.js";
 import { CreateCapabilityDialog } from "./create-capability-dialog.js";
 import { HelpPanel } from "./help-panel.js";
 import { ModelDialog } from "./model-dialog.js";
+import { NotificationPanel } from "./notification-panel.js";
 import { SessionListDialog } from "./session-list-dialog.js";
 import { SessionRenameDialog } from "./session-rename-dialog.js";
 import { SkillProposalDialog } from "./skill-proposal-dialog.js";
@@ -27,17 +24,13 @@ import type { Bindings } from "../lib/keybindings.js";
 import type { CreateCapabilityDraft } from "../lib/create-capability.js";
 import type { RunEvent } from "../lib/event-type.js";
 import type { ApprovalChoice } from "../lib/session-approval.js";
-import {
-  capabilityViewFromPayload,
-  createKindFromPayload,
-  skillNameFromPayload,
-} from "../lib/layer-payload.js";
 import type { SessionDiagnostics, SessionSummary } from "../lib/sessions.js";
 import type {
   TuiSkillProposalInput,
   TuiSkillReviewDetail,
 } from "../lib/skill-evolution.js";
 import type { LayerEntry } from "../state/layer-stack.js";
+import type { UiSignal } from "../lib/ui-signal.js";
 
 export function LayerRenderer(props: {
   entry: LayerEntry;
@@ -65,6 +58,7 @@ export function LayerRenderer(props: {
   loadingCapabilities: boolean;
   skillReviewSnapshot: TuiSkillReviewDetail | null;
   loadingSkillReview: boolean;
+  notifications: readonly UiSignal[];
   onCloseTop: () => void;
   onActivityTabChange?: (tab: ActivityTab) => void;
   onRefreshTasks?: () => void;
@@ -89,15 +83,12 @@ export function LayerRenderer(props: {
   onApplySkillReviewProposal: (proposalId: string) => void;
   onRejectSkillReviewProposal: (proposalId: string) => void;
 }): React.ReactElement | null {
-  switch (props.entry.name) {
+  const entry = props.entry;
+  switch (entry.name) {
     case "approval":
       return (
         <ApprovalPrompt
-          pending={
-            props.entry.payload as React.ComponentProps<
-              typeof ApprovalPrompt
-            >["pending"]
-          }
+          pending={entry.payload}
           onDecision={props.onApprovalDecision}
         />
       );
@@ -132,7 +123,7 @@ export function LayerRenderer(props: {
           taskRecords={props.taskRecords}
           taskOutputs={props.taskOutputs}
           loadingTasks={props.loadingTasks}
-          initialTab={activityTabFromPayload(props.entry.payload)}
+          initialTab={entry.payload.tab}
           onClose={props.onCloseTop}
           onTabChange={props.onActivityTabChange}
           onRefreshTasks={props.onRefreshTasks}
@@ -183,12 +174,19 @@ export function LayerRenderer(props: {
       return (
         <ConfigPanel resolved={props.resolved} onClose={props.onCloseTop} />
       );
+    case "notifications":
+      return (
+        <NotificationPanel
+          signals={props.notifications}
+          onClose={props.onCloseTop}
+        />
+      );
     case "capabilities":
       return (
         <CapabilitiesPanel
           snapshot={props.capabilitySnapshot}
           loading={props.loadingCapabilities}
-          view={capabilityViewFromPayload(props.entry.payload)}
+          view={entry.payload.view}
           workspaceRoot={props.resolved.workspaceRoot}
           onClose={props.onCloseTop}
         />
@@ -196,7 +194,7 @@ export function LayerRenderer(props: {
     case "create":
       return (
         <CreateCapabilityDialog
-          initialKind={createKindFromPayload(props.entry.payload)}
+          initialKind={entry.payload.kind}
           onCancel={props.onCloseTop}
           onCommit={props.onCreateCapability}
         />
@@ -204,7 +202,7 @@ export function LayerRenderer(props: {
     case "skill-update":
       return (
         <SkillProposalDialog
-          initialName={skillNameFromPayload(props.entry.payload)}
+          initialName={entry.payload?.name}
           onCancel={props.onCloseTop}
           onCommit={props.onUpdateSkillProposal}
         />

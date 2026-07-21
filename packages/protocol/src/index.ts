@@ -103,6 +103,7 @@ export const INTERNAL_TRANSCRIPT_EVENT_TYPES = [
   "context.compaction.completed",
   "context.compaction.failed",
   "skill.indexed",
+  "agent.profile.derived",
   "prompt.built",
   "model.turn.started",
   "model.turn.completed",
@@ -605,11 +606,7 @@ export interface SessionCompactRequestPayload {
 }
 
 export type TaskStatus =
-  | "pending"
-  | "running"
-  | "completed"
-  | "failed"
-  | "cancelled";
+  "pending" | "running" | "completed" | "failed" | "cancelled";
 
 export const TASK_STATUSES = [
   "pending",
@@ -1084,15 +1081,10 @@ export interface CapabilityAutomationSummary {
 }
 
 export type CapabilityWorkflowRuleSource =
-  | "config"
-  | "verification"
-  | "builtin";
+  "config" | "verification" | "builtin";
 
 export type CapabilityWorkflowRuleStatus =
-  | "active"
-  | "available"
-  | "inactive"
-  | "disabled";
+  "active" | "available" | "inactive" | "disabled";
 
 export interface CapabilityWorkflowRuleSummary {
   name: string;

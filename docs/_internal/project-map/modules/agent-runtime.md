@@ -9,6 +9,20 @@ See also [../maps/capabilities/agents.md](../maps/capabilities/agents.md), [../m
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-21
+- Scope: delegated children now use only the strict `agent-outcome.v1`
+  declaration. Projection separates semantic `status` and `statusSource` from
+  transport/finality/health, carries bounded `accomplishments` and structured
+  `blockers`, and synthesizes protocol/runtime blockers when a declaration is
+  missing, malformed, truncated, or runtime-limited. The removed
+  `missingCapabilities` shape and old delegation-ledger export names have no
+  runtime compatibility path.
+- Read: Agent result protocol/projector/types, supervisor lifecycle projection,
+  delegation ledger, Host dynamic/configured delegate assembly, and tests.
+- Tests: Agent Runtime result/supervisor/ledger suites and Host dynamic spawn
+  coverage passed; full repository verification is recorded by the release gate.
+
+- Status: Verified
 - Date: 2026-07-19
 - Scope: `isCompleteAgentResult()` and `isReusableAgentResult()` are the shared
   finality/cache predicates. Agent tools bypass Core duplicate suppression only
@@ -370,6 +384,20 @@ Does not own:
   `truncated`, `stopReason`) are derived from the child run's real `run.*`
   outcome and payload flags; parent emit sites must not set a separate terminal
   state.
+- Agent result `status` is semantic and orthogonal to run transport and Core
+  health. A normally completed run may declare `partial` or `blocked`; the
+  parent-visible message removes the strict `SPARKWRIGHT_AGENT_RESULT` marker,
+  while lifecycle/tool/ledger projections preserve `status`, `statusSource`,
+  summary, accomplishments, and structured blockers. A missing or malformed
+  declaration projects `status:"partial"` with a runtime-owned protocol
+  blocker; it is never silently upgraded from the child transport terminal.
+- `AgentBlocker` is the cross-boundary recovery contract: stable `code`, broad
+  `kind`, responsible `owner`, human `message`, optional typed `requirements`,
+  and a `retry` condition. Blocker claims are evidence only and never grant a
+  tool, approval, input, dependency, or resource by themselves.
+- Exact reusable delegation lookup is exposed as `findReusableDelegation()` /
+  `rememberReusableDelegation()`. The former similarity-named exports were
+  removed rather than retained as aliases.
 - `spawnSubAgent` may receive an explicit approval-only interaction channel so
   configured child runs can share the parent Host/CLI/TUI approval path without
   gaining `ask` or `notify` capabilities.

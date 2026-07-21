@@ -1798,6 +1798,49 @@ describe("trace", () => {
     ).toBe(false);
   });
 
+  it("reports semantic blocked outcomes even when child transport completed", () => {
+    const log = new EventLog(createRunId());
+    const events = [
+      log.emit("run.created", { goal: "use a blocked child" }),
+      log.emit("subagent.completed", {
+        childRunId: createRunId(),
+        terminalState: "completed",
+        status: "blocked",
+        statusSource: "child",
+        summary: "Execution requires bash",
+        finality: "partial",
+        blockers: [
+          {
+            code: "SHELL_REQUIRED",
+            kind: "capability",
+            owner: "parent",
+            message: "A shell-capable path is required.",
+            requirements: [{ kind: "tool", name: "bash" }],
+            retry: "after_capability_change",
+          },
+        ],
+      }),
+      log.emit("run.completed", { state: "completed" }),
+    ];
+
+    const report = buildTraceReportJsonl(
+      events.map(serializeEventJsonl).join(""),
+    );
+
+    expect(report.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: "high",
+          code: "SUBAGENT_INCOMPLETE",
+          evidence: expect.arrayContaining([
+            expect.stringContaining("blocked"),
+            expect.stringContaining("SHELL_REQUIRED"),
+          ]),
+        }),
+      ]),
+    );
+  });
+
   it("reports completed but unhealthy sub-agents independently from finality", () => {
     const log = new EventLog(createRunId());
     const childRunId = createRunId();

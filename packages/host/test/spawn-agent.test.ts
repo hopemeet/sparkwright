@@ -21,16 +21,13 @@ import {
   LocalWorkspace,
 } from "@sparkwright/core/internal";
 import {
+  AGENT_RESULT_MARKER,
   InMemoryActorNotificationQueue,
   InMemoryTaskStore,
   TaskManager,
   type TaskId,
 } from "@sparkwright/agent-runtime";
-import {
-  assertReadOnlyChildCanSatisfyGoal,
-  createDynamicSpawnAgentTool,
-  detectReadOnlyChildIntent,
-} from "../src/runtime.js";
+import { createDynamicSpawnAgentTool } from "../src/runtime.js";
 import { createReadFileTool } from "../src/tools.js";
 import { createDynamicChildToolCatalog } from "../src/tool-catalog.js";
 import { WorkspaceLeaseCoordinator } from "../src/workspace-lease-coordinator.js";
@@ -39,6 +36,16 @@ import {
   projectAgentLifecycle,
   terminalLifecycleCount,
 } from "./helpers/agent-lifecycle.js";
+
+function completedAgentMessage(message: string): string {
+  return `${message}\n${AGENT_RESULT_MARKER} ${JSON.stringify({
+    schemaVersion: "agent-outcome.v1",
+    status: "completed",
+    summary: message,
+    accomplishments: [],
+    blockers: [],
+  })}`;
+}
 
 /**
  * The session run store flushes to disk asynchronously, so a trace/session file
@@ -246,7 +253,10 @@ describe("host spawn_agent wiring", () => {
         "Delegated agent contract:",
       );
       expect(childSystemPrefix).toContain("Do not ask the user directly");
-      expect(childSystemPrefix).toContain("needs_clarification");
+      expect(childSystemPrefix).toContain("SPARKWRIGHT_AGENT_RESULT");
+      expect(childSystemPrefix).toContain(
+        'Status must be exactly \\"completed\\"',
+      );
 
       // (2) The child agent is registered in session.json (not just "main").
       const sessionJson = JSON.parse(
@@ -355,7 +365,8 @@ describe("host spawn_agent wiring", () => {
                       arguments: {
                         goal: "write child.txt",
                         role: "writer",
-                        prompt: "Write child.txt.",
+                        prompt:
+                          "Write child.txt. Do not run shell commands or execute the script.",
                         grant: { workspaceWrite: true },
                         maxSteps: 3,
                       },
@@ -1086,7 +1097,7 @@ describe("host spawn_agent wiring", () => {
       async complete() {
         childCalls += 1;
         await new Promise((resolve) => setTimeout(resolve, 25));
-        return { message: "promoted child done" };
+        return { message: completedAgentMessage("promoted child done") };
       },
     };
     const globTool: ToolDefinition = defineTool({
@@ -1973,91 +1984,279 @@ describe("host spawn_agent wiring", () => {
   });
 });
 
-describe("read-only child goal guard (F2)", () => {
-  it("flags execution intent in English and Chinese", () => {
-    expect(detectReadOnlyChildIntent("Run this in the background")).toBe(
-      "execute",
-    );
-    expect(detectReadOnlyChildIntent("在后台执行这个 python 脚本")).toBe(
-      "execute",
-    );
-    expect(detectReadOnlyChildIntent("后台运行任务，每秒打印一个数字")).toBe(
-      "execute",
-    );
+describe("dynamic child capability contract", () => {
+  it("does not infer required capabilities from affirmative or negated prompt text", async () => {
+    const readTool = defineTool({
+      name: "read",
+      description: "Fake read tool.",
+      inputSchema: { type: "object" },
+      execute: () => ({ content: "unused" }),
+    });
+    const parent = createRun({
+      goal: "delegate",
+      model: {
+        async complete() {
+          return { message: "parent done" };
+        },
+      },
+      maxSteps: 3,
+    });
+    const spawnTool = createDynamicSpawnAgentTool({
+      getParent: () => parent,
+      model: {
+        async complete() {
+          return {
+            message:
+              "I cannot execute the script with this child toolset.\n" +
+              'SPARKWRIGHT_AGENT_RESULT: {"schemaVersion":"agent-outcome.v1","status":"blocked","summary":"Execution requires shell","accomplishments":[],"blockers":[{"code":"SHELL_REQUIRED","kind":"capability","owner":"parent","message":"Execution requires bash","requirements":[{"kind":"tool","name":"bash"}],"retry":"after_capability_change"}]}',
+          };
+        },
+      },
+      childTools: [readTool],
+      parentRunPolicy: createDefaultPolicy(),
+      childRunStoreFactory: () => undefined as never,
+    });
+
+    const output = (await spawnTool.execute(
+      {
+        goal: "在后台运行 Python 脚本",
+        role: "writer",
+        prompt:
+          "Do not run shell commands or execute the script; only explain the limitation.",
+        allowedTools: ["read"],
+      },
+      { run: parent.record } as never,
+    )) as Record<string, unknown>;
+
+    expect(output).toMatchObject({
+      signal: "completed",
+      status: "blocked",
+      statusSource: "child",
+      summary: "Execution requires shell",
+      finality: "partial",
+      message: "I cannot execute the script with this child toolset.",
+      blockers: [
+        {
+          code: "SHELL_REQUIRED",
+          kind: "capability",
+          owner: "parent",
+          requirements: [{ kind: "tool", name: "bash" }],
+        },
+      ],
+    });
     expect(
-      detectReadOnlyChildIntent("launch the server and keep running"),
-    ).toBe("execute");
+      parent.events.all().find((event) => event.type === "subagent.completed")
+        ?.payload,
+    ).toMatchObject({
+      terminalState: "completed",
+      status: "blocked",
+      statusSource: "child",
+      summary: "Execution requires shell",
+      finality: "partial",
+      blockers: [{ code: "SHELL_REQUIRED", kind: "capability" }],
+    });
   });
 
-  it("flags filesystem-write intent but not code production", () => {
-    expect(detectReadOnlyChildIntent("write it to a file on disk")).toBe(
-      "write",
-    );
-    expect(detectReadOnlyChildIntent("把脚本保存到 out.py")).toBe("write");
-    // Producing code as text is NOT a filesystem write.
-    expect(
-      detectReadOnlyChildIntent("Write a Python program that prints 1..20"),
-    ).toBeNull();
-    expect(
-      detectReadOnlyChildIntent("用 sub agent 去写一个 python 任务"),
-    ).toBeNull();
-  });
-
-  it("does not flag inspection/reasoning goals (no noun false positives)", () => {
-    expect(detectReadOnlyChildIntent("分析运行日志里的错误")).toBeNull();
-    expect(
-      detectReadOnlyChildIntent("Summarize the runtime and list every export"),
-    ).toBeNull();
-    expect(detectReadOnlyChildIntent("grep for TODO comments")).toBeNull();
-    // A background *delivery* mode is not execution intent: the work here is
-    // read-only inspection, which a read-only child can legitimately do.
-    expect(
-      detectReadOnlyChildIntent("Inspect the repository in the background."),
-    ).toBeNull();
-    expect(detectReadOnlyChildIntent("在后台分析这个仓库的结构")).toBeNull();
-  });
-
-  it("throws when a read-only child is asked to execute", () => {
-    expect(() =>
-      assertReadOnlyChildCanSatisfyGoal({
-        goal: "在后台启动一个 Python 脚本：每1秒打印一个数字",
-        prompt: "",
-        childTools: [{ name: "read" }, { name: "grep" }],
-        entrypoint: "agent_task",
+  it("returns a blocker to the parent so it can explain the required user action", async () => {
+    let parentCalls = 0;
+    let parentObserved = "";
+    const parent = createRun({
+      goal: "run the generated script",
+      model: {
+        async complete(input) {
+          parentCalls += 1;
+          if (parentCalls === 1) {
+            return {
+              toolCalls: [
+                {
+                  toolName: "spawn_agent",
+                  arguments: {
+                    goal: "run the script",
+                    role: "runner",
+                    prompt: "Run it if possible.",
+                    allowedTools: ["read"],
+                  },
+                },
+              ],
+            };
+          }
+          parentObserved = input.context.map((item) => item.content).join("\n");
+          return {
+            message:
+              "脚本内容已检查，但当前子 Agent 缺少 bash；需要改由具备执行能力的路径运行。",
+          };
+        },
+      },
+      maxSteps: 3,
+    });
+    const readTool = defineTool({
+      name: "read",
+      description: "Fake read tool.",
+      inputSchema: { type: "object" },
+      execute: () => ({ content: "unused" }),
+    });
+    parent.tools.register(
+      createDynamicSpawnAgentTool({
+        getParent: () => parent,
+        model: {
+          async complete() {
+            return {
+              message:
+                "The script is ready.\n" +
+                'SPARKWRIGHT_AGENT_RESULT: {"schemaVersion":"agent-outcome.v1","status":"blocked","summary":"Execution requires bash","accomplishments":["Checked the script"],"blockers":[{"code":"SHELL_REQUIRED","kind":"capability","owner":"parent","message":"A shell-capable path must execute the script.","requirements":[{"kind":"tool","name":"bash"}],"retry":"after_capability_change"}]}',
+            };
+          },
+        },
+        childTools: [readTool],
+        parentRunPolicy: createDefaultPolicy(),
+        childRunStoreFactory: () => undefined as never,
       }),
-    ).toThrowError(/read-only and cannot run processes/i);
+    );
+
+    const result = await parent.start();
+
+    expect(result.message).toContain("缺少 bash");
+    expect(parentObserved).toContain("SHELL_REQUIRED");
+    expect(parentObserved).toContain('"owner":"parent"');
+    expect(parentObserved).toContain('"name":"bash"');
   });
 
-  it("routes write-required read-only children toward a workspace write grant", () => {
-    expect(() =>
-      assertReadOnlyChildCanSatisfyGoal({
-        goal: "write the file child.txt",
-        prompt: "",
-        childTools: [{ name: "read" }, { name: "grep" }],
-        entrypoint: "spawn_agent",
+  it("does not re-run an identical blocked spawn without a changed recovery input", async () => {
+    let parentCalls = 0;
+    let childCalls = 0;
+    const args = {
+      goal: "run the script",
+      role: "runner",
+      prompt: "Run it if possible.",
+      allowedTools: ["read"],
+    };
+    const parent = createRun({
+      goal: "delegate",
+      model: {
+        async complete() {
+          parentCalls += 1;
+          if (parentCalls <= 2) {
+            return {
+              toolCalls: [{ toolName: "spawn_agent", arguments: args }],
+            };
+          }
+          return { message: "The blocker is unchanged; stopping delegation." };
+        },
+      },
+      maxSteps: 4,
+    });
+    const readTool = defineTool({
+      name: "read",
+      description: "Fake read tool.",
+      inputSchema: { type: "object" },
+      execute: () => ({ content: "unused" }),
+    });
+    parent.tools.register(
+      createDynamicSpawnAgentTool({
+        getParent: () => parent,
+        model: {
+          async complete() {
+            childCalls += 1;
+            return {
+              message:
+                'SPARKWRIGHT_AGENT_RESULT: {"schemaVersion":"agent-outcome.v1","status":"blocked","summary":"Execution requires bash","accomplishments":[],"blockers":[{"code":"SHELL_REQUIRED","kind":"capability","owner":"parent","message":"A shell-capable path is required.","requirements":[{"kind":"tool","name":"bash"}],"retry":"after_capability_change"}]}',
+            };
+          },
+        },
+        childTools: [readTool],
+        parentRunPolicy: createDefaultPolicy(),
+        childRunStoreFactory: () => undefined as never,
       }),
-    ).toThrowError(/grant: \{ workspaceWrite: true \}/i);
+    );
+
+    await parent.start();
+
+    expect(childCalls).toBe(1);
+    expect(
+      parent.events
+        .all()
+        .filter((event) => event.type === "subagent.requested"),
+    ).toHaveLength(1);
+    expect(
+      parent.events
+        .all()
+        .filter((event) => event.type === "tool.failed")
+        .some(
+          (event) =>
+            (event.payload as { error?: { code?: string } }).error?.code ===
+            "REPEATED_TOOL_CALL_SKIPPED",
+        ),
+    ).toBe(true);
   });
 
-  it("permits an execution goal when the child actually has bash", () => {
-    expect(() =>
-      assertReadOnlyChildCanSatisfyGoal({
-        goal: "run the script in the background",
-        prompt: "",
-        childTools: [{ name: "read" }, { name: "bash" }],
-        entrypoint: "spawn_agent",
+  it("rejects an unavailable structured capability before approval", async () => {
+    let approvalCalls = 0;
+    let modelCalls = 0;
+    const parent = createRun({
+      goal: "delegate",
+      interactionChannel: {
+        approve() {
+          approvalCalls += 1;
+          throw new Error("approval must not be requested");
+        },
+      },
+      model: {
+        async complete() {
+          modelCalls += 1;
+          return modelCalls === 1
+            ? {
+                toolCalls: [
+                  {
+                    toolName: "spawn_agent",
+                    arguments: {
+                      goal: "edit the file",
+                      role: "writer",
+                      prompt: "Edit only.",
+                      allowedTools: ["edit"],
+                      grant: { workspaceWrite: true },
+                    },
+                  },
+                ],
+              }
+            : { message: "capability request was rejected" };
+        },
+      },
+      maxSteps: 3,
+    });
+    const readTool = defineTool({
+      name: "read",
+      description: "Fake read tool.",
+      inputSchema: { type: "object" },
+      execute: () => ({ content: "unused" }),
+    });
+    parent.tools.register(
+      createDynamicSpawnAgentTool({
+        getParent: () => parent,
+        model: {
+          async complete() {
+            return { message: "unused" };
+          },
+        },
+        childTools: [readTool],
+        parentRunPolicy: createDefaultPolicy(),
+        childRunStoreFactory: () => undefined as never,
       }),
-    ).not.toThrow();
-  });
+    );
 
-  it("permits inspection goals for a read-only child", () => {
-    expect(() =>
-      assertReadOnlyChildCanSatisfyGoal({
-        goal: "Write a Python program that prints 1..20 and give the code",
-        prompt: "Provide only the code.",
-        childTools: [{ name: "read" }, { name: "glob" }, { name: "grep" }],
-        entrypoint: "spawn_agent",
-      }),
-    ).not.toThrow();
+    await parent.start();
+
+    expect(approvalCalls).toBe(0);
+    expect(parent.events.all().map((event) => event.type)).not.toContain(
+      "approval.requested",
+    );
+    expect(
+      parent.events.all().find((event) => event.type === "tool.failed")
+        ?.payload,
+    ).toMatchObject({
+      error: {
+        code: "AGENT_SPAWN_CAPABILITY_INVALID",
+        metadata: { phase: "validateInput" },
+      },
+    });
   });
 });

@@ -779,6 +779,43 @@ describe("EventStream committed rendering", () => {
     expect(text).not.toContain('"terminalState"');
   });
 
+  it("hides profile preparation while keeping real subagent lifecycle rows", async () => {
+    const events = [
+      ev("agent.profile.derived", 1, {
+        parentAgentId: "main",
+        childAgentId: "reviewer",
+        effectiveToolCount: 4,
+      }),
+      ev(
+        "subagent.requested",
+        2,
+        { goal: "review the patch" },
+        { agentName: "reviewer", subagentDepth: 0 },
+      ),
+      ev(
+        "subagent.started",
+        3,
+        {},
+        { agentName: "reviewer", subagentDepth: 0 },
+      ),
+      ev(
+        "subagent.completed",
+        4,
+        { terminalState: "completed" },
+        { agentName: "reviewer", subagentDepth: 0 },
+      ),
+    ];
+
+    const text = await renderToText(stream(events));
+
+    expect(text).not.toContain("main → reviewer");
+    expect(text).not.toContain("reviewer profile");
+    expect(text).not.toContain("4 tools");
+    expect(text).toContain("agent reviewer requested");
+    expect(text).toContain("agent reviewer started");
+    expect(text).toContain("agent reviewer completed · completed");
+  });
+
   it("renders a sole run.cancelled terminal without leaking state-machine events", async () => {
     const events = [
       ev("run.cancelled", 1, { reason: "user_cancelled" }),

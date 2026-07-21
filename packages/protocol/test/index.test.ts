@@ -5,6 +5,7 @@ import {
   TRACE_LEVELS,
   getRunFailure,
   isEvent,
+  isInternalTranscriptEventType,
   isPermissionMode,
   isProtocolErrorCode,
   isRequest,
@@ -38,6 +39,13 @@ describe("@sparkwright/protocol", () => {
   it("exports stable protocol error guards", () => {
     expect(isProtocolErrorCode("internal_error")).toBe(true);
     expect(isProtocolErrorCode("model_error")).toBe(false);
+  });
+
+  it("classifies agent profile derivation as product transcript noise", () => {
+    expect(isInternalTranscriptEventType("agent.profile.derived")).toBe(true);
+    expect(isInternalTranscriptEventType("subagent.requested")).toBe(false);
+    expect(isInternalTranscriptEventType("subagent.started")).toBe(false);
+    expect(isInternalTranscriptEventType("subagent.completed")).toBe(false);
   });
 
   it("narrows host message envelopes", () => {

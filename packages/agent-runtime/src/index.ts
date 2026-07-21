@@ -49,6 +49,8 @@ import {
   DefaultPromptBuilder,
 } from "@sparkwright/core/internal";
 import type {
+  AgentBlocker,
+  AgentResultStatusSource,
   AgentToolInvocationInput,
   AgentToolResult,
   AgentToolSummarizeInput,
@@ -56,12 +58,13 @@ import type {
   DelegationLedgerResult,
 } from "./agents/types.js";
 import {
-  findSimilarSuccessfulDelegation,
-  rememberSuccessfulDelegation,
+  findReusableDelegation,
+  rememberReusableDelegation,
   withAlreadyCompletedNote,
 } from "./agents/delegation-ledger.js";
 import {
   isAgentToolResult,
+  projectAgentOutcome,
   projectAgentInvocationResult,
   runResultStepLimitReached,
 } from "./agents/result.js";
@@ -78,6 +81,15 @@ import {
 } from "./agents/invocation.js";
 
 export type {
+  AgentBlocker,
+  AgentBlockerKind,
+  AgentBlockerOwner,
+  AgentBlockerRequirement,
+  AgentBlockerRequirementKind,
+  AgentBlockerRetry,
+  AgentResultDeclaration,
+  AgentResultStatus,
+  AgentResultStatusSource,
   AgentToolInvocationInput,
   AgentToolResult,
   AgentToolSummarizeInput,
@@ -86,19 +98,29 @@ export type {
   DelegationLedgerResult,
 } from "./agents/types.js";
 export {
-  findSimilarSuccessfulDelegation,
-  rememberSuccessfulDelegation,
+  findReusableDelegation,
+  rememberReusableDelegation,
   withAlreadyCompletedNote,
 } from "./agents/delegation-ledger.js";
 export {
+  AGENT_OUTCOME_SCHEMA_VERSION,
+  AGENT_RESULT_MARKER,
+  AGENT_RESULT_PROTOCOL_PROMPT,
   assessmentNote,
   childAssessment,
   isCompleteAgentResult,
   isAgentToolResult,
   isReusableAgentResult,
   projectAgentInvocationResult,
+  parseAgentResultDeclaration,
+  projectAgentOutcome,
   runResultStepLimitReached,
   runResultTruncated,
+} from "./agents/result.js";
+export type {
+  ParsedAgentResultDeclaration,
+  ProjectAgentOutcomeInput,
+  ProjectedAgentOutcome,
 } from "./agents/result.js";
 export type {
   AgentAssetIdentity,
@@ -155,9 +177,7 @@ export interface AgentProfileRoutingCondition {
 }
 
 export type AgentProfileWorkflowHookOutputInjection =
-  | "always"
-  | "onFailure"
-  | "never";
+  "always" | "onFailure" | "never";
 
 export type AgentProfileWorkflowHookAction =
   | {
@@ -857,12 +877,7 @@ export interface SpawnedSubAgent {
 }
 
 export type SubAgentTerminalState =
-  | "completed"
-  | "failed"
-  | "cancelled"
-  | "blocked"
-  | "step_limit"
-  | "truncated";
+  "completed" | "failed" | "cancelled" | "blocked" | "step_limit" | "truncated";
 
 /**
  * Spawn a child run under `parent`. Does NOT call `child.start()` — the
@@ -1118,6 +1133,11 @@ function subagentTerminalProjection(
   event: { payload?: unknown },
 ): {
   terminalState: SubAgentTerminalState;
+  status: "completed" | "partial" | "blocked";
+  statusSource: AgentResultStatusSource;
+  summary: string;
+  accomplishments?: string[];
+  blockers: AgentBlocker[];
   finality: "complete" | "partial";
   stepLimitReached?: boolean;
   truncated?: boolean;
@@ -1131,48 +1151,55 @@ function subagentTerminalProjection(
   const assessment = isRecord(payload.assessment)
     ? (payload.assessment as unknown as import("@sparkwright/core").RunAssessment)
     : undefined;
-  if (truncated) {
-    return {
-      terminalState: "truncated",
-      finality: "partial",
-      stepLimitReached,
-      truncated: true,
-      ...(assessment ? { assessment } : {}),
-    };
-  }
-  if (stepLimitReached) {
-    return {
-      terminalState: "step_limit",
-      finality: "partial",
-      stepLimitReached: true,
-      ...(assessment ? { assessment } : {}),
-    };
-  }
-  if (eventType === "run.cancelled")
-    return {
-      terminalState: "cancelled",
-      finality: "partial",
-      ...(assessment ? { assessment } : {}),
-    };
-  if (eventType === "run.failed") {
-    if (runFailureWasAbort(payload)) {
-      return { terminalState: "cancelled", finality: "partial" };
-    }
-    const stopReason =
-      typeof payload.reason === "string"
-        ? payload.reason
-        : typeof payload.stopReason === "string"
-          ? payload.stopReason
-          : undefined;
-    return {
-      terminalState: stopReason === "blocking_limit" ? "blocked" : "failed",
-      finality: "partial",
-      ...(assessment ? { assessment } : {}),
-    };
-  }
+  const aborted = eventType === "run.failed" && runFailureWasAbort(payload);
+  const stopReason =
+    typeof payload.reason === "string"
+      ? payload.reason
+      : typeof payload.stopReason === "string"
+        ? payload.stopReason
+        : undefined;
+  const signal =
+    eventType === "run.completed"
+      ? "completed"
+      : eventType === "run.cancelled" || aborted
+        ? "cancelled"
+        : "failed";
+  const outcome = projectAgentOutcome({
+    signal,
+    stopReason,
+    message: typeof payload.message === "string" ? payload.message : undefined,
+    stepLimitReached,
+    truncated,
+  });
+  const terminalState: SubAgentTerminalState = truncated
+    ? "truncated"
+    : stepLimitReached
+      ? "step_limit"
+      : signal === "cancelled"
+        ? "cancelled"
+        : signal === "failed"
+          ? stopReason === "blocking_limit"
+            ? "blocked"
+            : "failed"
+          : "completed";
   return {
-    terminalState: "completed",
-    finality: "complete",
+    terminalState,
+    status: outcome.status,
+    statusSource: outcome.statusSource,
+    summary: outcome.summary,
+    ...(outcome.accomplishments
+      ? { accomplishments: outcome.accomplishments }
+      : {}),
+    blockers: outcome.blockers,
+    finality:
+      signal === "completed" &&
+      !truncated &&
+      !stepLimitReached &&
+      outcome.status === "completed"
+        ? "complete"
+        : "partial",
+    ...(stepLimitReached ? { stepLimitReached: true } : {}),
+    ...(truncated ? { truncated: true } : {}),
     ...(assessment ? { assessment } : {}),
   };
 }
@@ -1362,11 +1389,7 @@ export function createAgentTool(
       try {
         const parsed = parseAgentToolArgs(args);
         return Boolean(
-          findSimilarSuccessfulDelegation(
-            parent,
-            delegationLedgerKey,
-            parsed.goal,
-          ),
+          findReusableDelegation(parent, delegationLedgerKey, parsed.goal),
         );
       } catch {
         return false;
@@ -1391,7 +1414,7 @@ export function createAgentTool(
         );
       }
       const parsed = parseAgentToolArgs(args);
-      const prior = findSimilarSuccessfulDelegation(
+      const prior = findReusableDelegation(
         parent,
         delegationLedgerKey,
         parsed.goal,
@@ -1430,7 +1453,7 @@ export function createAgentTool(
             result,
             usage,
           });
-      rememberSuccessfulDelegation(parent, delegationLedgerKey, parsed.goal, {
+      rememberReusableDelegation(parent, delegationLedgerKey, parsed.goal, {
         ...structured,
       });
       if (result.signal !== "completed") {

@@ -16,6 +16,7 @@ import {
   taskStatusLabel,
 } from "../lib/task-activity.js";
 import { oneLine } from "../lib/tool-display.js";
+import { isBackInput } from "../lib/input-key.js";
 import { useTheme } from "../lib/theme-context.js";
 import { DialogFrame } from "./dialog-frame.js";
 import {
@@ -153,7 +154,7 @@ export function ActivityPanel(props: {
 
   useInput((input, key) => {
     if (searchMode) {
-      if (key.escape) {
+      if (isBackInput(input, key)) {
         setSearchMode(false);
         if (searchQuery) {
           setSearchQuery("");
@@ -180,7 +181,7 @@ export function ActivityPanel(props: {
       }
       return;
     }
-    if (key.escape || (key.ctrl && input === "c")) {
+    if (isBackInput(input, key)) {
       props.onClose();
       return;
     }

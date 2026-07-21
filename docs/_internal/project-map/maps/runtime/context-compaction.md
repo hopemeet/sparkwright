@@ -135,6 +135,17 @@ completed prior turns
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-21
+- Scope: session compaction now preserves sub-agent semantic status, summary,
+  and blocker codes, while the underlying facts retain bounded blocker owner,
+  retry, message, and requirements. This keeps recovery evidence visible after
+  rehydration without copying full child transcripts.
+- Read: Core session compaction, Host session queries, Agent lifecycle payloads,
+  and focused tests.
+- Tests: Core session-compaction and Host session-query coverage passed; full
+  repository verification is recorded by the release gate.
+
+- Status: Verified
 - Date: 2026-07-19
 - Scope: reviewed session compaction after Agent health propagation. Compact
   Agent terminal signals now include health alongside finality so unhealthy

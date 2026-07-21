@@ -17,9 +17,26 @@
 
 ## Current Confidence
 
-- Status: `Partially Verified`
-- Last reviewed: 2026-07-19
-- Evidence source: 2026-06-22 TUI status-bar and event-stream render tests
+- Status: `Verified`
+- Last reviewed: 2026-07-20
+- Evidence source: 2026-07-20 full-diff review passed 447/447 TUI and 594/594
+  Host tests, including stale auto-approval cleanup and replayed terminal-task
+  notification regressions. A test-only Host stdio adapter proved two approval
+  waiters were installed before either request was resolved. Real 96x32 PTY
+  session `session_tui_approval_queue_1ofn_v3` showed the first shell card as
+  `1 of 2`, advanced to the workspace-write card as `1 of 1` after explicit
+  denial, and returned to idle after the second denial. The fixture is
+  `/tmp/sparkwright-tui-approval-queue.VOfIEt`.
+  Earlier 2026-07-19 approval/notification/interaction refactor tests passed
+  445/445 across the full TUI suite. Fresh PTY sessions at 80x24,
+  96x24, and 120x32 covered long shell/cwd, pageable long diffs, persistent run
+  failure, background failure, and clean read-only completion.
+  TUI typecheck, test typecheck, lint, schema/boundary/reserved gates, every
+  workspace test, 16/16 regression cases, and both install smokes also passed.
+  After mechanically formatting the 59-file repository baseline, the exact
+  `npm run release:check` passed end to end. Earlier evidence includes
+  2026-06-22 TUI status-bar and event-stream
+  render tests
   passed; PTY first-screen capture at 24x100 showed a single static
   `SparkWright` header and no duplicate brand text in live status/input areas.
   Real mini PTY runs covered `/capabilities`, read-only completion, and write
@@ -34,6 +51,37 @@
   indicator without repeating the static brand.
 
 ## Covered
+
+- 2026-07-20 focused committed-transcript coverage suppresses
+  `agent.profile.derived` preparation noise while preserving requested,
+  started, and completed subagent lifecycle rows. Activity Events coverage
+  confirms the hidden conversation event remains inspectable, while transcript
+  export coverage confirms it does not reappear in the raw-event tail. Protocol
+  6/6, focused TUI live/export/Activity suites 44/44, full TUI 449/449,
+  relevant typechecks, and a real Terra PTY/trace/session pass succeeded.
+
+- 2026-07-20 concurrent approval queue verification added
+  `packages/host/test/fixtures/approval-queue-host.mjs` and its Host regression.
+  The adapter holds two independent deferred waiters, does not complete after
+  resolving only the first, and completes after the second. A real Ink/SDK/PTY
+  run at 96x32 captured `1 of 2` -> `1 of 1` -> idle with no unrelated startup
+  diagnostic. Full-diff review also fixed cleanup of failed in-flight session
+  auto-approval and suppressed fresh alerts for replayed historical task
+  terminals.
+
+- 2026-07-19 approval/notification/interaction refactor extracted immutable
+  execution-scoped approval coordination, client-free decision view models,
+  unified typed presentation signals, and handled/bubble input routing. Full
+  TUI coverage passed 445/445. Real PTY evidence at 80/96/120 columns verified
+  long effects, safe default focus, explicit Esc denial, persistent but
+  non-duplicated run failure, quiet main-run completion around a failed
+  background task, and clean trace/session checks. Sessions:
+  `session_tui_refactor_smoke_120`,
+  `session_tui_refactor_long_approval_96`,
+  `session_tui_refactor_queued_diff_80`,
+  `session_tui_refactor_run_failure_80_v2`, and
+  `session_tui_refactor_background_failure_120` under the retained temporary
+  fixture `/tmp/sparkwright-tui-refactor-qa.n0nEdz`.
 
 - 2026-07-19 real Terra PTY fix verification passed fresh 80/100/120-column
   single-header frames, sole-terminal Esc cancellation live/replay, canonical
@@ -154,6 +202,10 @@
   awareness. Full TUI tests and typecheck passed.
 
 ## Weak Or Untested
+
+- BEL/OSC 9 blur/refocus and rate limiting are covered with a fake TTY. The
+  appearance of a platform terminal's desktop notification is not a portable
+  PTY invariant.
 
 - PTY width/height can expose wrapping bugs that component string snapshots miss.
 - Live rendering order can differ from static render tests when events arrive

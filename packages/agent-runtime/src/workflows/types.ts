@@ -7,11 +7,7 @@ export const WORKFLOW_RUN_RECORD_SCHEMA_VERSION =
   "sparkwright-workflow-run.v2" as const;
 
 export type WorkflowRunStatus =
-  | "running"
-  | "waiting"
-  | "completed"
-  | "failed"
-  | "cancelled";
+  "running" | "waiting" | "completed" | "failed" | "cancelled";
 
 export type WorkflowWaitKind = "input" | "task" | "approval";
 
@@ -48,10 +44,7 @@ export interface WorkflowEvidenceRef {
 }
 
 export type WorkflowRunFailureKind =
-  | "verdict"
-  | "runtime"
-  | "cancelled"
-  | "definition";
+  "verdict" | "runtime" | "cancelled" | "definition";
 
 export interface WorkflowRunFailure extends TaskError {
   kind: WorkflowRunFailureKind;
@@ -63,15 +56,10 @@ export interface WorkflowResumePolicy {
 }
 
 export type WorkflowRunAccessMode =
-  | "read-only"
-  | "ask"
-  | "accept-edits"
-  | "bypass";
+  "read-only" | "ask" | "accept-edits" | "bypass";
 
 export type WorkflowBackgroundTaskPolicy =
-  | "disabled"
-  | "foreground-only"
-  | "enabled";
+  "disabled" | "foreground-only" | "enabled";
 
 export interface WorkflowRunAuthorizationSnapshot {
   targetPath?: string;
@@ -160,13 +148,7 @@ export interface WorkflowHumanNodeDefinition {
 }
 
 export type WorkflowScriptNodeCapability =
-  | "read"
-  | "write"
-  | "shell"
-  | "network"
-  | "mcp"
-  | "agent"
-  | "task";
+  "read" | "write" | "shell" | "network" | "mcp" | "agent" | "task";
 
 export interface WorkflowScriptNodeDefinition {
   path: string;
@@ -217,8 +199,7 @@ export interface WorkflowDiffScopeVerifierDefinition {
 }
 
 export type WorkflowVerifierDefinition =
-  | WorkflowCommandVerifierDefinition
-  | WorkflowDiffScopeVerifierDefinition;
+  WorkflowCommandVerifierDefinition | WorkflowDiffScopeVerifierDefinition;
 
 export type WorkflowTransitionDefinition =
   | string
@@ -282,9 +263,7 @@ export interface WorkflowRuntimeFailure {
 }
 
 export type WorkflowParallelBranchStatus =
-  | "passed"
-  | "failed"
-  | "runtime_error";
+  "passed" | "failed" | "runtime_error";
 
 export interface WorkflowParallelBranchState {
   /** @reserved Public workflow branch provenance consumed by resume diagnostics and future workflow UIs. */

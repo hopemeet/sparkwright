@@ -1,5 +1,14 @@
 export type {
   AgentToolInvocationInput,
+  AgentBlocker,
+  AgentBlockerKind,
+  AgentBlockerOwner,
+  AgentBlockerRequirement,
+  AgentBlockerRequirementKind,
+  AgentBlockerRetry,
+  AgentResultDeclaration,
+  AgentResultStatus,
+  AgentResultStatusSource,
   AgentToolResult,
   AgentToolSummarizeInput,
   DelegationLedgerHit,
@@ -27,17 +36,27 @@ export {
 export type { AgentSupervisor, AgentSupervisorState } from "./supervisor.js";
 export { createAgentSupervisor } from "./supervisor.js";
 export {
+  AGENT_OUTCOME_SCHEMA_VERSION,
+  AGENT_RESULT_MARKER,
+  AGENT_RESULT_PROTOCOL_PROMPT,
   assessmentNote,
   childAssessment,
   isCompleteAgentResult,
   isAgentToolResult,
   isReusableAgentResult,
   projectAgentInvocationResult,
+  parseAgentResultDeclaration,
+  projectAgentOutcome,
   runResultStepLimitReached,
   runResultTruncated,
 } from "./result.js";
+export type {
+  ParsedAgentResultDeclaration,
+  ProjectAgentOutcomeInput,
+  ProjectedAgentOutcome,
+} from "./result.js";
 export {
-  findSimilarSuccessfulDelegation,
-  rememberSuccessfulDelegation,
+  findReusableDelegation,
+  rememberReusableDelegation,
   withAlreadyCompletedNote,
 } from "./delegation-ledger.js";

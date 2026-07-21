@@ -69,13 +69,7 @@ export type UserHookTrigger =
  * @stability experimental v0.1
  */
 export type UserHookSource =
-  | "user"
-  | "project"
-  | "local"
-  | "plugin"
-  | "session"
-  | "builtin"
-  | "managed";
+  "user" | "project" | "local" | "plugin" | "session" | "builtin" | "managed";
 
 export interface UserHookInvocation<TPayload = unknown> {
   /** Stable hook identifier supplied by the host (e.g. "post-tool-bash"). */

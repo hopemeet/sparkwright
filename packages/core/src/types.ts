@@ -62,11 +62,7 @@ export type RunStopReason =
   | "state_transition_invalid";
 
 export type RunResultSignal =
-  | "continue"
-  | "completed"
-  | "failed"
-  | "cancelled"
-  | "compact";
+  "continue" | "completed" | "failed" | "cancelled" | "compact";
 export type RunFailureCategory =
   | "model"
   | "tool"
@@ -289,12 +285,7 @@ export interface Artifact {
 }
 
 export type ContextItemType =
-  | "user"
-  | "assistant"
-  | "system"
-  | "file"
-  | "tool_result"
-  | "summary";
+  "user" | "assistant" | "system" | "file" | "tool_result" | "summary";
 
 export interface ContextSourceRef {
   kind: string;
@@ -455,9 +446,7 @@ export interface ModelOutput {
  * propagate the failure.
  */
 export type ModelRecoveryHint =
-  | "reduce_input"
-  | "extend_output"
-  | "fallback_model";
+  "reduce_input" | "extend_output" | "fallback_model";
 
 export type ModelErrorCategory =
   | "context_overflow"
@@ -473,11 +462,7 @@ export type ModelErrorCategory =
   | "unknown";
 
 export type ModelTimeoutKind =
-  | "connect"
-  | "request"
-  | "first_token"
-  | "stream"
-  | "unknown";
+  "connect" | "request" | "first_token" | "stream" | "unknown";
 
 /**
  * Provider-neutral model error description. Model adapters may throw native

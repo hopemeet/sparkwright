@@ -11,7 +11,7 @@ import {
 import { formatWorkspaceDisplayPath } from "../lib/path-display.js";
 import type { RunController } from "./run-controller.js";
 import type { LayerStack } from "./layer-stack.js";
-import type { ToastStore } from "./toast-store.js";
+import type { NotificationStore } from "./notification-store.js";
 
 /**
  * The capability browser + creation flow: the panel snapshot state and the
@@ -30,7 +30,7 @@ export interface CapabilityActions {
 export function useCapabilityActions(deps: {
   workspaceRoot: string;
   controller: RunController;
-  toasts: ToastStore;
+  toasts: NotificationStore;
   layers: LayerStack;
   onSkillProposalPrepared?: () => void;
 }): CapabilityActions {

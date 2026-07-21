@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  AGENT_RESULT_MARKER,
   compileAgentProfileRunOptions,
   createAgentProfilePolicy,
   createAgentTool,
@@ -29,6 +30,16 @@ const SAFE_AGENT_TOOL_POLICY = {
   risk: "safe",
   requiresApproval: false,
 } as const;
+
+function completedAgentMessage(message: string): string {
+  return `${message}\n${AGENT_RESULT_MARKER} ${JSON.stringify({
+    schemaVersion: "agent-outcome.v1",
+    status: "completed",
+    summary: message,
+    accomplishments: [],
+    blockers: [],
+  })}`;
+}
 
 afterEach(async () => {
   await Promise.all(
@@ -1193,7 +1204,7 @@ describe("createAgentTool / mountAgentTool", () => {
         goal: input.goal,
         model: {
           async complete() {
-            return { message: "child done" };
+            return { message: completedAgentMessage("child done") };
           },
         },
         maxSteps: 1,
@@ -1267,7 +1278,11 @@ describe("createAgentTool / mountAgentTool", () => {
         model: {
           async complete() {
             childCalls += 1;
-            return { message: "root entries: README.md, packages/" };
+            return {
+              message: completedAgentMessage(
+                "root entries: README.md, packages/",
+              ),
+            };
           },
         },
         maxSteps: 2,

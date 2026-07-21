@@ -10,6 +10,31 @@ See [workspace-writes.md](workspace-writes.md) and [shell.md](shell.md).
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-21
+- Scope: dynamic spawn validates its structured enabled-tool/grant contract in
+  Core's semantic input stage before approval. Goal/prompt text is not an
+  authorization input, so negated execution wording cannot create a doomed
+  workspace-write approval.
+- Read: Core tool validation/policy order, Host dynamic spawn/grant assembly,
+  Agent Runtime result status contract, and focused/full tests.
+- Tests: Agent Runtime 240/240, Host 589/589, and repository test typecheck.
+
+- Status: Verified
+- Date: 2026-07-20
+- Scope: TUI approval coordination now has one execution-scoped owner and a
+  client-free view model. Exact allow-once/session/deny behavior, Host policy,
+  main/Workflow isolation, queueing, and session-rule subjects are preserved;
+  the decision UI adds origin, risk, scope, progress, pageable effects, safe
+  default focus, and local resolve-error state.
+- Read: Host/Protocol approval boundaries, TUI controller/coordinator/view
+  model/renderers, session rules, layer routing, test-only concurrent Host
+  adapter, and focused/full tests. Cleanup now also invalidates an in-flight
+  failed session-rule auto-resolution so it cannot requeue a dead execution.
+- Tests: TUI 447/447 and Host 594/594; focused coordinator/adapter regressions;
+  real 80/96/120-column PTY approval scenarios plus a 96x32 concurrent waiter
+  capture that advanced from `1 of 2` to `1 of 1`.
+
+- Status: Verified
 - Date: 2026-07-19
 - Scope: reviewed approval consumers after assessment and target-scope changes.
   Explicit targets still narrow policy; absence of `--target` no longer
@@ -77,6 +102,9 @@ See [workspace-writes.md](workspace-writes.md) and [shell.md](shell.md).
 - `packages/cli/src/cli-approval.ts`
 - `packages/tui/src/app.tsx`
 - `packages/tui/src/state/run-controller.ts`
+- `packages/tui/src/state/approval-coordinator.ts`
+- `packages/tui/src/lib/approval-view-model.ts`
+- `packages/tui/src/components/approval-prompt.tsx`
 - `packages/tui/src/lib/permission.ts`
 
 ## Data Flow
@@ -130,6 +158,17 @@ policy requires approval
   emitting run id; workflow requests also retain their workflow id when known.
   Client terminal/disconnect/close cleanup removes its active and queued
   requests without deleting prompts owned by other clients.
+- TUI presentation coordination is isolated in `ApprovalCoordinator`.
+  `RunController` registers immutable main/Workflow execution origins and the
+  coordinator retains the originating SDK client privately; the Ink layer sees
+  only `ApprovalViewModel`. Resolving disables duplicate submission, a failed
+  resolve keeps the current request and queue position, and successful resolve
+  advances exactly one request.
+- TUI risk focus is presentation-only and never changes Host policy. High-risk
+  and unknown shapes focus Deny; ordinary recognized shapes may focus Allow
+  once. Allow-session is never the default, unknown shapes cannot install a
+  rule, and Esc/Ctrl+C sends an explicit denied resolution instead of merely
+  closing the surface.
 - Host run access resolution also clamps `backgroundTasks` against project
   ceilings. This is governance, not an approval prompt: cap/policy denials for
   background task surfaces are recoverable tool failures rather than
@@ -146,6 +185,10 @@ policy requires approval
   `workspace.write` requests. The child does not prompt the user again for the
   same grant, and grant consumption cannot approve unrelated tool execution or
   shell access.
+- Inline dynamic spawn checks requested tools and grant consistency against the
+  enabled child catalog during semantic input validation, before policy and any
+  approval request. Approval authorizes the structured workspace-write grant;
+  it never depends on inferred intent from the child goal or prompt.
 - Read-confidentiality denials are policy denials, not approval prompts.
   `workspace.read.denied` plus `tool.failed` `READ_SCOPE_DENIED` is the audit
   path; a model may continue and complete the run without a CLI failure if it

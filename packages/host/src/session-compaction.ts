@@ -45,8 +45,7 @@ export type SessionCompactSuccessResult = {
 };
 
 export type SessionCompactResult =
-  | SessionCompactSuccessResult
-  | { ok: false; error: ProtocolError };
+  SessionCompactSuccessResult | { ok: false; error: ProtocolError };
 
 export async function compactHostSession(input: {
   context: SessionCompactionContext;

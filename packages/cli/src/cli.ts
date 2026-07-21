@@ -3776,8 +3776,7 @@ function readFlagValue(args: string[], flag: string): string | undefined {
 
 function formatProvenance(
   provenance:
-    | { runId?: string; sessionId?: string; rationale?: string }
-    | undefined,
+    { runId?: string; sessionId?: string; rationale?: string } | undefined,
 ): string {
   if (!provenance) return "none";
   const parts: string[] = [];

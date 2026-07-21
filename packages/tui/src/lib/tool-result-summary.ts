@@ -144,8 +144,22 @@ export function isAgentToolResult(value: unknown): boolean {
   const r = value as Record<string, unknown>;
   return (
     typeof r.childRunId === "string" &&
+    typeof r.spanId === "string" &&
     typeof r.signal === "string" &&
-    "stopReason" in r
+    (r.status === "completed" ||
+      r.status === "partial" ||
+      r.status === "blocked") &&
+    (r.statusSource === "child" ||
+      r.statusSource === "runtime" ||
+      r.statusSource === "adapter") &&
+    typeof r.summary === "string" &&
+    r.summary.trim().length > 0 &&
+    Array.isArray(r.blockers) &&
+    (r.status !== "completed" || r.blockers.length === 0) &&
+    (r.status !== "blocked" || r.blockers.length > 0) &&
+    (r.finality === "complete" || r.finality === "partial") &&
+    typeof r.assessment === "object" &&
+    r.assessment !== null
   );
 }
 

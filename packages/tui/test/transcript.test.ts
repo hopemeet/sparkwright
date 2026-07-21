@@ -286,6 +286,15 @@ describe("renderTranscript", () => {
         payload: { hookName: "h" },
       },
       { type: "usage.updated", sequence: 4, payload: { tokens: 1 } },
+      {
+        type: "agent.profile.derived",
+        sequence: 5,
+        payload: {
+          parentAgentId: "main",
+          childAgentId: "code-reviewer",
+          effectiveToolCount: 4,
+        },
+      },
     ];
     const md = renderTranscript(
       { sessionId: "s", workspaceRoot: "/x" },
@@ -296,5 +305,6 @@ describe("renderTranscript", () => {
     expect(md).not.toContain("run.budget.exceeded");
     expect(md).not.toContain("workflow_hook.started");
     expect(md).not.toContain("usage.updated");
+    expect(md).not.toContain("agent.profile.derived");
   });
 });

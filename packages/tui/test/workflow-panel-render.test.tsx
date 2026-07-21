@@ -1,7 +1,7 @@
 import { PassThrough } from "node:stream";
 import React from "react";
 import { render } from "ink";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { WorkflowRunSnapshot } from "@sparkwright/protocol";
 import { WorkflowPanel } from "../src/components/workflow-panel.js";
 
@@ -62,6 +62,7 @@ async function renderPanel(element: React.ReactElement): Promise<{
     stdout: fakeStdout,
     stdin: fakeStdin,
     patchConsole: false,
+    exitOnCtrlC: false,
   });
   await new Promise((resolve) => setTimeout(resolve, 60));
   return {
@@ -103,5 +104,23 @@ describe("WorkflowPanel", () => {
 
     expect(selected).toEqual(["workflow_beta"]);
     expect(text).toContain("beta");
+  });
+
+  it("treats ctrl+c as Back inside the active layer", async () => {
+    const onClose = vi.fn();
+    const panel = await renderPanel(
+      <WorkflowPanel
+        workflows={[workflow("workflow_alpha", "alpha")]}
+        selectedWorkflowId="workflow_alpha"
+        loading={false}
+        onClose={onClose}
+        onSelect={() => {}}
+        onRefresh={() => {}}
+      />,
+    );
+
+    await panel.input("\x03");
+    panel.unmount();
+    expect(onClose).toHaveBeenCalledOnce();
   });
 });

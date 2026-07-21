@@ -177,7 +177,7 @@ describe("runtime workflow hook assembly", () => {
     }
   });
 
-  it("advances Stop once when a final answer omits partial sub-agent finality", async () => {
+  it("advances Stop once for partial sub-agent finality", async () => {
     const run = runRecord();
     const events = new EventLog(run.id);
     const partialEvent = events.emit(
@@ -223,7 +223,7 @@ describe("runtime workflow hook assembly", () => {
     expect(second.status).toBe("continued");
   });
 
-  it("does not advance Stop when the final answer already caveats partial sub-agent results", async () => {
+  it("advances Stop once without interpreting final-answer prose", async () => {
     const run = runRecord();
     const events = new EventLog(run.id);
     const partialEvent = events.emit("tool.completed", {
@@ -231,8 +231,19 @@ describe("runtime workflow hook assembly", () => {
       toolName: "spawn_agent",
       output: {
         childRunId: "run_child_truncated",
+        status: "blocked",
+        summary: "Execution requires approval",
         finality: "partial",
-        truncated: true,
+        blockers: [
+          {
+            code: "APPROVAL_REQUIRED",
+            kind: "permission",
+            owner: "user",
+            message: "Workspace write approval is required.",
+            requirements: [{ kind: "approval", name: "workspace.write" }],
+            retry: "after_approval",
+          },
+        ],
       },
     });
 
@@ -247,7 +258,12 @@ describe("runtime workflow hook assembly", () => {
       events,
     });
 
-    expect(result.status).toBe("continued");
+    expect(result.status).toBe("advanced");
+    expect(result.context[0]?.content).toContain("APPROVAL_REQUIRED");
+    expect(result.context[0]?.content).toContain("owner=user");
+    expect(result.context[0]?.content).toContain(
+      "requires=approval:workspace.write",
+    );
   });
 
   it("ignores ordinary truncated tool output in the Stop disclosure guard", async () => {

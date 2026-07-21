@@ -739,6 +739,9 @@ function collectSessionTraceFact(
     addSessionSubagentFact(facts, {
       childRunId,
       finality,
+      status: recordString(event.payload, "status"),
+      summary: recordString(event.payload, "summary"),
+      blockers: findNestedAgentBlockers(event.payload),
       role: recordString(event.payload, "role"),
       health: findNestedString(event.payload, "health"),
     });
@@ -758,6 +761,9 @@ function collectSessionTraceFact(
     addSessionSubagentFact(facts, {
       childRunId,
       finality: findNestedString(event.payload, "finality"),
+      status: findNestedString(event.payload, "status"),
+      summary: findNestedString(event.payload, "summary"),
+      blockers: findNestedAgentBlockers(event.payload),
       role: findNestedString(event.payload, "role"),
       health: findNestedString(event.payload, "health"),
     });
@@ -804,6 +810,64 @@ function findNestedString(value: unknown, key: string): string | undefined {
     if (found) return found;
   }
   return undefined;
+}
+
+function findNestedAgentBlockers(
+  value: unknown,
+):
+  | NonNullable<NonNullable<SessionTraceFacts["subagents"]>[number]["blockers"]>
+  | undefined {
+  if (!isPlainRecord(value)) return undefined;
+  if (Array.isArray(value.blockers)) {
+    const blockers = value.blockers
+      .map(sessionAgentBlocker)
+      .filter((blocker): blocker is NonNullable<typeof blocker> =>
+        Boolean(blocker),
+      )
+      .slice(0, 16);
+    return blockers.length > 0 ? blockers : undefined;
+  }
+  for (const nested of Object.values(value)) {
+    const found = findNestedAgentBlockers(nested);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+function sessionAgentBlocker(value: unknown) {
+  if (!isPlainRecord(value)) return undefined;
+  const code = recordString(value, "code");
+  if (!code) return undefined;
+  const requirements = Array.isArray(value.requirements)
+    ? value.requirements
+        .map((requirement) => {
+          if (!isPlainRecord(requirement)) return undefined;
+          const kind = recordString(requirement, "kind");
+          const name = recordString(requirement, "name");
+          return kind && name ? { kind, name } : undefined;
+        })
+        .filter(
+          (requirement): requirement is { kind: string; name: string } =>
+            requirement !== undefined,
+        )
+        .slice(0, 16)
+    : undefined;
+  return {
+    code,
+    ...(recordString(value, "kind")
+      ? { kind: recordString(value, "kind") }
+      : {}),
+    ...(recordString(value, "owner")
+      ? { owner: recordString(value, "owner") }
+      : {}),
+    ...(recordString(value, "message")
+      ? { message: recordString(value, "message") }
+      : {}),
+    ...(recordString(value, "retry")
+      ? { retry: recordString(value, "retry") }
+      : {}),
+    ...(requirements && requirements.length > 0 ? { requirements } : {}),
+  };
 }
 
 function isSafePathSegment(value: string): boolean {

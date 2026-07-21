@@ -6,11 +6,11 @@ import React, {
   useSyncExternalStore,
 } from "react";
 import { join } from "node:path";
-import { Box, Text, useApp, useInput, useStdin, useStdout } from "ink";
+import { Box, Text, useApp, useStdin, useStdout } from "ink";
 import type { Key } from "ink";
 import { EventStore } from "./state/event-store.js";
 import { RunController } from "./state/run-controller.js";
-import { ToastStore } from "./state/toast-store.js";
+import { NotificationStore } from "./state/notification-store.js";
 import { QueueStore } from "./state/queue-store.js";
 import { LayerStack } from "./state/layer-stack.js";
 import { EventStream } from "./components/event-stream.js";
@@ -23,6 +23,7 @@ import { LiveFrame } from "./components/live-frame.js";
 import { LayerRenderer } from "./components/layer-renderer.js";
 import { resolveDialogColumns } from "./components/dialog-frame.js";
 import { AttentionManager } from "./lib/attention.js";
+import { presentationPolicy } from "./lib/ui-signal.js";
 import {
   useSkillActions,
   runSkillLearnAutoNotice,
@@ -39,14 +40,14 @@ import {
   resolveProjectCommandIntent,
 } from "./lib/project-commands.js";
 import {
-  chordMatches,
-  ctrlCPressCount,
   DEFAULTS as DEFAULT_BINDINGS,
   isPlainEscapeChord,
-  isPlainPrintableChord,
-  shouldDeferPrintableChordToInput,
   type Bindings,
 } from "./lib/keybindings.js";
+import {
+  InteractionRouter,
+  type InteractionAction,
+} from "./lib/interaction-router.js";
 import type { PermissionMode, TraceLevel } from "@sparkwright/protocol";
 import {
   loadTuiConfig,
@@ -221,9 +222,10 @@ function AppReady(
 
   const store = useMemo(() => new EventStore(), []);
   const layers = useMemo(() => new LayerStack(), []);
-  const toasts = useMemo(() => new ToastStore(), []);
+  const toasts = useMemo(() => new NotificationStore(), []);
   const queue = useMemo(() => new QueueStore(), []);
   const attention = useMemo(() => new AttentionManager(), []);
+  const interactionRouter = useMemo(() => new InteractionRouter(), []);
   const controller = useMemo(
     () =>
       new RunController({
@@ -235,8 +237,9 @@ function AppReady(
         modelNameSource: resolved.modelNameSource,
         initialSessionId: props.cliOverrides.sessionId,
         store,
+        signals: toasts,
       }),
-    [resolved.workspaceRoot, resolved.sessionRootDir, store],
+    [resolved.workspaceRoot, resolved.sessionRootDir, store, toasts],
   );
   const initialSessionLoadedRef = useRef(false);
 
@@ -277,8 +280,6 @@ function AppReady(
   // Todo band: collapsed by default (active items only); ctrl+t expands to show
   // completed items too.
   const [todoExpanded, setTodoExpanded] = useState(false);
-  const [confirmingHumanAction, setConfirmingHumanAction] = useState(false);
-  const [applyingHumanAction, setApplyingHumanAction] = useState(false);
   // Prompt stash bridge — the InputBox reads/writes through this ref.
   const stashRef = useRef<StashFile>({ current: null, list: [] });
   const inputDraftRef = useRef("");
@@ -353,11 +354,20 @@ function AppReady(
   useEffect(() => {
     attention.enable();
     const unsub = attention.onChange(setFocused);
+    const unsubSignals = toasts.onSignal((signal) => {
+      if (signal.attention === "blurred") {
+        attention.notify(
+          signal.title ? `${signal.title}: ${signal.message}` : signal.message,
+          signal.dedupeKey ?? signal.id,
+        );
+      }
+    });
     return () => {
       unsub();
+      unsubSignals();
       attention.disable();
     };
-  }, [attention]);
+  }, [attention, toasts]);
 
   useEffect(() => {
     skillLearnGoalsRef.current = [];
@@ -385,19 +395,128 @@ function AppReady(
     writeToStdout("\x1b[2J\x1b[3J\x1b[H");
   }, [state.clearGeneration, writeToStdout]);
 
-  // Notify on approval requests and run failures.
+  // Project blocking approvals into the unified signal policy. The decision
+  // surface remains canonical for action; the signal owns attention/history.
   const lastApprovalId = useRef<string | null>(null);
   useEffect(() => {
     if (
       state.pendingApproval &&
-      state.pendingApproval.id !== lastApprovalId.current
+      state.pendingApproval.approvalId !== lastApprovalId.current
     ) {
-      lastApprovalId.current = state.pendingApproval.id;
-      attention.notify(`approval needed: ${state.pendingApproval.summary}`);
+      if (lastApprovalId.current) {
+        toasts.resolve(`approval:${lastApprovalId.current}`);
+      }
+      lastApprovalId.current = state.pendingApproval.approvalId;
+      const kind = "blocking" as const;
+      const scope = "Approval" as const;
+      toasts.publish({
+        kind,
+        scope,
+        source: "tui.approval",
+        title: "approval needed",
+        message: state.pendingApproval.summary,
+        dedupeKey: `approval:${state.pendingApproval.approvalId}`,
+        actions: [
+          { id: "allow-once", label: "Allow once", key: "y" },
+          { id: "deny", label: "Deny", key: "esc" },
+        ],
+        ...presentationPolicy({ kind, scope }),
+      });
     } else if (!state.pendingApproval) {
+      if (lastApprovalId.current) {
+        toasts.resolve(`approval:${lastApprovalId.current}`);
+      }
       lastApprovalId.current = null;
     }
-  }, [state.pendingApproval, attention]);
+  }, [state.pendingApproval, toasts]);
+
+  const lastDiagnosticId = useRef<string | null>(null);
+  useEffect(() => {
+    const diagnostic = state.lastDiagnostic;
+    if (!diagnostic) {
+      if (lastDiagnosticId.current) {
+        toasts.resolve(lastDiagnosticId.current);
+        lastDiagnosticId.current = null;
+      }
+      return;
+    }
+    if (diagnostic.id === lastDiagnosticId.current) return;
+    if (lastDiagnosticId.current) toasts.resolve(lastDiagnosticId.current);
+    lastDiagnosticId.current = diagnostic.id;
+    const kind = "error" as const;
+    const scope = diagnostic.scope;
+    toasts.publish({
+      id: diagnostic.id,
+      kind,
+      scope,
+      source: "tui.run",
+      title: diagnostic.title,
+      message: diagnostic.message,
+      dedupeKey: diagnostic.id,
+      ...presentationPolicy({ kind, scope }),
+    });
+  }, [state.lastDiagnostic, toasts]);
+
+  useEffect(() => {
+    const dedupeKey = "config:validation";
+    if (resolved.errors.length === 0) {
+      toasts.resolve(dedupeKey);
+      return;
+    }
+    const kind = "error" as const;
+    const scope = "Config" as const;
+    toasts.publish({
+      kind,
+      scope,
+      source: "tui.config",
+      title: "config errors",
+      message: `${resolved.errors.length} validation error(s) · /config for details`,
+      details: resolved.errors,
+      dedupeKey,
+      ...presentationPolicy({ kind, scope }),
+    });
+  }, [resolved.errors, toasts]);
+
+  // The live Skill card remains the canonical action surface; this projection
+  // gives the same unresolved item a typed inbox/history lifecycle without a
+  // second toast or attention request.
+  const lastHumanActionId = useRef<string | null>(null);
+  useEffect(() => {
+    const action = state.pendingHumanAction;
+    if (!action) {
+      if (lastHumanActionId.current) {
+        toasts.resolve(lastHumanActionId.current);
+        lastHumanActionId.current = null;
+      }
+      return;
+    }
+    const dedupeKey = `skill-proposal:${action.proposalId}`;
+    if (dedupeKey === lastHumanActionId.current) return;
+    if (lastHumanActionId.current) {
+      toasts.resolve(lastHumanActionId.current);
+    }
+    lastHumanActionId.current = dedupeKey;
+    const kind = "action-required" as const;
+    const scope = "ActionInbox" as const;
+    const actions = [
+      { id: "review", label: "Review", key: "r" },
+      ...(action.eligibility === "quick_apply"
+        ? [{ id: "apply", label: "Apply", key: "a" }]
+        : []),
+      { id: "dismiss", label: "Dismiss", key: "esc" },
+    ];
+    toasts.publish({
+      kind,
+      scope,
+      source: "tui.skill-proposal",
+      title: "skill proposal ready",
+      message: `${action.proposalId} · validation ${action.validationStatus} · ${action.guardSeverity} findings`,
+      details: action,
+      dedupeKey,
+      actions,
+      ...presentationPolicy({ kind, scope }),
+    });
+  }, [state.pendingHumanAction, toasts]);
 
   const lastStatus = useRef(state.status);
   useEffect(() => {
@@ -405,44 +524,30 @@ function AppReady(
       lastStatus.current === "running" &&
       (state.status === "done" || state.status === "error")
     ) {
-      if (state.status === "error") {
-        // Errors have a single, persistent surface: the pinned red line below
-        // the stream (kept until the next run clears state.lastError). We only
-        // ring the bell here — no error toast on top of that line, which was
-        // the redundant double-surface.
-        attention.notify("run failed");
-      } else {
+      if (state.status !== "error") {
         const cancelledRun =
           state.stopReason === "manual_cancelled" ||
           state.stopReason === "user_cancelled";
-        attention.notify(cancelledRun ? "run cancelled" : "run done");
-        toasts.push({
-          variant: cancelledRun ? "info" : "success",
-          title: cancelledRun ? "run cancelled" : "run done",
-          message: cancelledRun
-            ? "cancelled"
-            : (state.stopReason ?? "completed"),
-        });
-        runSkillLearnAutoNotice({
-          workspaceRoot: resolved.workspaceRoot,
-          toasts,
-          goals: skillLearnGoalsRef.current,
-          sessionId: state.sessionId,
-          noticeCount: skillLearnNoticeCountRef.current,
-          setNoticeCount: (n) => {
-            skillLearnNoticeCountRef.current = n;
-          },
-        });
+        if (!cancelledRun) {
+          runSkillLearnAutoNotice({
+            workspaceRoot: resolved.workspaceRoot,
+            toasts,
+            goals: skillLearnGoalsRef.current,
+            sessionId: state.sessionId,
+            noticeCount: skillLearnNoticeCountRef.current,
+            setNoticeCount: (n) => {
+              skillLearnNoticeCountRef.current = n;
+            },
+          });
+        }
       }
     }
     lastStatus.current = state.status;
   }, [
     state.status,
-    state.lastError,
     state.stopReason,
     state.sessionId,
     resolved.workspaceRoot,
-    attention,
     toasts,
   ]);
 
@@ -493,8 +598,6 @@ function AppReady(
     reloadConfig,
     onProposalClosed: (proposalId) => {
       store.clearPendingHumanAction(proposalId);
-      setConfirmingHumanAction(false);
-      setApplyingHumanAction(false);
     },
     onProposalPrepared: () => {
       void loadTuiSkillInboxAction(resolved.workspaceRoot)
@@ -518,11 +621,6 @@ function AppReady(
       cancelled = true;
     };
   }, [resolved.workspaceRoot, store]);
-
-  useEffect(() => {
-    setConfirmingHumanAction(false);
-    setApplyingHumanAction(false);
-  }, [state.pendingHumanAction?.proposalId]);
 
   // Capability browser + creation flow (panel snapshot state + handlers).
   const capActions = useCapabilityActions({
@@ -656,7 +754,6 @@ function AppReady(
 
   function startGoal(value: string): void {
     quitArmedUntilRef.current = 0;
-    if (toastSnapshot.current?.variant === "error") toasts.dismiss();
     skillLearnGoalsRef.current.push(value);
     void controller.start(value);
   }
@@ -667,17 +764,10 @@ function AppReady(
     // drain effect below starts it once the current run finishes.
     if (state.status === "running" || state.status === "awaiting-approval") {
       queue.enqueue(value);
-      toasts.push({
-        variant: "info",
-        message: `queued · ${queue.size} waiting`,
-      });
       return;
     }
     if (state.stopReason === "manual_cancelled" && queued.length > 0) {
-      toasts.push({
-        variant: "info",
-        message: `${queued.length} queued prompt${queued.length === 1 ? "" : "s"} paused after cancel`,
-      });
+      // Composer queue is rendered in-place; no duplicate toast.
     }
     startGoal(value);
   }
@@ -695,8 +785,7 @@ function AppReady(
     }
     if (state.status === "running") {
       quitArmedUntilRef.current = now + 1500;
-      if (controller.cancel())
-        toasts.push({ variant: "info", message: "cancelling…" });
+      controller.cancel();
       return;
     }
     if (topLayer?.name === "approval" && state.pendingApproval) {
@@ -749,151 +838,64 @@ function AppReady(
     if (next) startGoal(next);
   }, [state.status, state.stopReason, queued.length, controller, queue]);
 
-  // Layer-aware hotkeys: when a layer owns input, the App-level hotkeys
-  // step back so they don't double-handle keys. Each binding is resolved
-  // through `resolved.bindings`, so user config overrides take effect after
-  // the config watcher reloads.
-  //
-  // This is only the per-render closure; the `useInput` listener lives in the
-  // module-scope `HotkeysListener` below. Keeping the listener component's
-  // identity stable across renders is deliberate — a component defined inline
-  // in App is a fresh type each render, so Ink unmounts/remounts it every time
-  // and its `useInput` can drop a keystroke mid-stream.
   function requestCancelRun(): void {
-    if (controller.cancel())
-      toasts.push({ variant: "info", message: "cancelling…" });
+    controller.cancel();
   }
 
-  function handleHotkey(input: string, key: Key): void {
+  function routeGlobalInput(input: string, key: Key, draft: string): boolean {
     const b = resolved.bindings;
-    const top = layers.top();
-    const matchesChords = (chords: Bindings[keyof Bindings]): boolean => {
-      const draft = inputHandleRef.current?.getValue() ?? "";
-      if (shouldDeferPrintableChordToInput(chords, key, input, draft)) {
-        return false;
-      }
-      return chords.some((c) => chordMatches(c, key, input));
-    };
-    const matchesGlobal = (name: keyof Bindings): boolean =>
-      matchesChords(b[name]);
-    const humanAction = state.pendingHumanAction;
-    const draft = inputHandleRef.current?.getValue() ?? "";
-    if (
-      !top &&
-      humanAction &&
-      draft.length === 0 &&
-      state.status !== "running" &&
-      state.status !== "awaiting-approval"
-    ) {
-      if (applyingHumanAction) return;
-      if (confirmingHumanAction) {
-        if (key.return) {
-          setApplyingHumanAction(true);
-          void skillActions
-            .applySkillReviewProposal(humanAction.proposalId)
-            .then((applied) => {
-              if (!applied) setApplyingHumanAction(false);
-            });
-          return;
-        }
-        if (key.escape) {
-          setConfirmingHumanAction(false);
-          return;
-        }
-      } else {
-        if (input === "a" && humanAction.eligibility === "quick_apply") {
-          setConfirmingHumanAction(true);
-          return;
-        }
-        if (input === "r") {
-          skillActions.reviewSkillProposalsFromSlash(humanAction.proposalId);
-          return;
-        }
-        if (key.escape) {
-          store.clearPendingHumanAction(humanAction.proposalId);
-          return;
-        }
-      }
-    }
-    if (matchesGlobal("quit.app")) {
-      if (!top) return;
-      requestQuit(Math.max(1, ctrlCPressCount(input)));
-      return;
-    }
-    if (top?.name !== "approval" && matchesGlobal("activity.open")) {
-      taskActions.openActivity();
-      return;
-    }
-    if (!top && matchesGlobal("events.open")) {
-      taskActions.openActivity("events");
-      return;
-    }
-    if (!top && state.status !== "running" && matchesGlobal("help.open")) {
-      layers.toggle("help");
-      return;
-    }
-    if (!top && matchesGlobal("cycle-permission-mode")) {
-      cyclePermissionMode();
-      return;
-    }
-    if (!top && state.todoItems.length > 0 && matchesGlobal("todo.toggle")) {
-      setTodoExpanded((v) => !v);
-      return;
-    }
-    if (
-      !top &&
-      state.status === "running" &&
-      matchesChords(b["cancel.run"].filter((c) => !isPlainEscapeChord(c)))
-    ) {
-      requestCancelRun();
-    }
-  }
-
-  function shouldInputBoxIgnoreInput(
-    input: string,
-    key: Key,
-    draft: string,
-  ): boolean {
-    if (draft.length > 0) return false;
-    const humanAction = state.pendingHumanAction;
-    if (
-      humanAction &&
-      state.status !== "running" &&
-      state.status !== "awaiting-approval"
-    ) {
-      if (confirmingHumanAction && (key.return || key.escape)) return true;
-      if (applyingHumanAction) return true;
-      if (
-        !confirmingHumanAction &&
-        (input === "r" ||
-          key.escape ||
-          (input === "a" && humanAction.eligibility === "quick_apply"))
-      ) {
-        return true;
-      }
-    }
-    if (input.length !== 1) return false;
-    const b = resolved.bindings;
-    const matchesPlainPrintable = (chords: Bindings[keyof Bindings]): boolean =>
-      chords.some(
-        (chord) =>
-          isPlainPrintableChord(chord) && chordMatches(chord, key, input),
-      );
-    if (matchesPlainPrintable(b["activity.open"])) return true;
-    if (matchesPlainPrintable(b["events.open"])) return true;
-    if (state.status !== "running" && matchesPlainPrintable(b["help.open"])) {
-      return true;
-    }
-    if (matchesPlainPrintable(b["cycle-permission-mode"])) return true;
-    if (state.todoItems.length > 0 && matchesPlainPrintable(b["todo.toggle"])) {
-      return true;
-    }
-    return (
-      state.status === "running" &&
-      matchesPlainPrintable(
-        b["cancel.run"].filter((chord) => !isPlainEscapeChord(chord)),
-      )
-    );
+    const actions: InteractionAction[] = [
+      {
+        id: "quit.app",
+        scope: "global",
+        chords: b["quit.app"],
+        enabled: true,
+        run: () => requestQuit(),
+      },
+      {
+        id: "activity.open",
+        scope: "global",
+        chords: b["activity.open"],
+        enabled: true,
+        run: () => taskActions.openActivity(),
+      },
+      {
+        id: "events.open",
+        scope: "global",
+        chords: b["events.open"],
+        enabled: true,
+        run: () => taskActions.openActivity("events"),
+      },
+      {
+        id: "help.open",
+        scope: "global",
+        chords: b["help.open"],
+        enabled: state.status !== "running",
+        run: () => layers.toggle("help"),
+      },
+      {
+        id: "cycle-permission-mode",
+        scope: "global",
+        chords: b["cycle-permission-mode"],
+        enabled: true,
+        run: cyclePermissionMode,
+      },
+      {
+        id: "todo.toggle",
+        scope: "global",
+        chords: b["todo.toggle"],
+        enabled: state.todoItems.length > 0,
+        run: () => setTodoExpanded((value) => !value),
+      },
+      {
+        id: "cancel.run",
+        scope: "global",
+        chords: b["cancel.run"].filter((chord) => !isPlainEscapeChord(chord)),
+        enabled: state.status === "running",
+        run: requestCancelRun,
+      },
+    ];
+    return interactionRouter.route(input, key, draft, actions).handled;
   }
 
   const modelLabel = effModel ?? "deterministic";
@@ -933,6 +935,12 @@ function AppReady(
   // Cap the live stream panel so a long in-flight message can't push the input
   // off-screen. Committed lines are in scrollback, so nothing else is clamped.
   const streamingMax = Math.max(3, termRows - 16);
+  const humanActionOwnsInput = Boolean(
+    !topLayer &&
+    state.pendingHumanAction &&
+    state.status !== "running" &&
+    state.status !== "awaiting-approval",
+  );
 
   function closeTopLayer(): void {
     if (!topLayer) return;
@@ -967,6 +975,7 @@ function AppReady(
     loadingCapabilities: capActions.loadingCapabilities,
     skillReviewSnapshot: skillActions.skillReviewSnapshot,
     loadingSkillReview: skillActions.loadingSkillReview,
+    notifications: toastSnapshot.history,
     onActivityTabChange: taskActions.handleActivityTabChange,
     onRefreshTasks: () => void taskActions.refreshTaskSnapshots(),
     onStopTask: taskActions.stopActivityTask,
@@ -991,8 +1000,6 @@ function AppReady(
   return (
     <ThemeProvider theme={theme}>
       <Box flexDirection="column">
-        {isRawModeSupported ? <HotkeysListener onInput={handleHotkey} /> : null}
-
         {/* Committed transcript → terminal scrollback, led by a one-time session
           header at the top. Keyed on clearGeneration so /clear and /new remount
           it (paired with the screen wipe above), reprinting a fresh header. */}
@@ -1023,14 +1030,20 @@ function AppReady(
           errors={resolved.errors}
           queued={queued}
           showQueued={!topLayer}
-          confirmingHumanAction={confirmingHumanAction}
-          applyingHumanAction={applyingHumanAction}
+          humanActionActive={humanActionOwnsInput}
+          onReviewHumanAction={(proposalId) =>
+            skillActions.reviewSkillProposalsFromSlash(proposalId)
+          }
+          onApplyHumanAction={skillActions.applySkillReviewProposal}
+          onDismissHumanAction={(proposalId) =>
+            store.clearPendingHumanAction(proposalId)
+          }
         />
 
         {/* Layer rendering — only the topmost layer owns input. */}
         {topLayer ? (
           <LayerRenderer entry={topLayer} {...layerProps} />
-        ) : isRawModeSupported ? (
+        ) : humanActionOwnsInput ? null : isRawModeSupported ? (
           <InputBox
             // Stay editable while a run is in flight: submissions are queued
             // (see handleSubmit) rather than blocked, so the user can line up
@@ -1068,7 +1081,7 @@ function AppReady(
             onDraftChange={(next) => {
               inputDraftRef.current = next;
             }}
-            shouldIgnoreInput={shouldInputBoxIgnoreInput}
+            onGlobalInput={routeGlobalInput}
             handleRef={inputHandleRef}
           />
         ) : (
@@ -1081,18 +1094,4 @@ function AppReady(
       </Box>
     </ThemeProvider>
   );
-}
-
-/**
- * Stable listener for App-level hotkeys. Defined at module scope so its type
- * identity never changes across App renders — a component defined inline in App
- * is a fresh type each render, so Ink unmounts/remounts it every time and its
- * `useInput` can drop a keystroke mid-stream. Only the `onInput` closure changes
- * per render, which Ink handles fine (same pattern as InputBox).
- */
-function HotkeysListener(props: {
-  onInput: (input: string, key: Key) => void;
-}): null {
-  useInput((input, key) => props.onInput(input, key));
-  return null;
 }

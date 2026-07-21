@@ -1,10 +1,10 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import React from "react";
 import { render } from "ink";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { CommandRegistry } from "../src/lib/commands.js";
 import {
   InputBox,
@@ -26,6 +26,7 @@ function stripAnsi(text: string): string {
 
 async function renderInputBox(
   props: Partial<React.ComponentProps<typeof InputBox>> = {},
+  fixtureFiles: Record<string, string> = {},
 ): Promise<{
   text: () => string;
   input: (value: string) => Promise<void>;
@@ -53,6 +54,11 @@ async function renderInputBox(
   fakeStdin.unref = () => fakeStdin;
   const registry = new CommandRegistry();
   const workspaceRoot = await mkdtemp(join(tmpdir(), "sparkwright-input-"));
+  await Promise.all(
+    Object.entries(fixtureFiles).map(([name, content]) =>
+      writeFile(join(workspaceRoot, name), content, "utf8"),
+    ),
+  );
   const stashRef: { current: StashFile } = {
     current: { current: null, list: [] },
   };
@@ -69,7 +75,12 @@ async function renderInputBox(
       },
       ...props,
     }),
-    { stdout: fakeStdout, stdin: fakeStdin, patchConsole: false },
+    {
+      stdout: fakeStdout,
+      stdin: fakeStdin,
+      patchConsole: false,
+      exitOnCtrlC: false,
+    },
   );
   await new Promise((resolve) => setTimeout(resolve, 80));
   return {
@@ -240,13 +251,85 @@ describe("InputBox draft restore", () => {
       onDraftChange: (next) => {
         draft = next;
       },
-      shouldIgnoreInput: (input) => input === "?",
+      onGlobalInput: (input) => input === "?",
     });
 
     await rendered.input("?");
 
     expect(draft).toBe("");
     expect(rendered.text()).not.toContain("?");
+    rendered.unmount();
+  });
+
+  it("gives editor Escape and Ctrl+C explicit callbacks", async () => {
+    const onEscape = vi.fn();
+    const onQuit = vi.fn();
+    const rendered = await renderInputBox({ onEscape, onQuit });
+
+    await rendered.input("\u001b");
+    await rendered.input("\x03");
+
+    expect(onEscape).toHaveBeenCalledOnce();
+    expect(onQuit).toHaveBeenCalledWith(1);
+    rendered.unmount();
+  });
+
+  it("dispatches a resolved slash suggestion without submitting it as a goal", async () => {
+    const registry = new CommandRegistry();
+    registry.register({
+      name: "help",
+      title: "Help",
+      description: "Show help",
+      category: "view",
+      run: () => {},
+    });
+    const onCommand = vi.fn();
+    const onSubmit = vi.fn();
+    const rendered = await renderInputBox({
+      registry,
+      onCommand,
+      onSubmit,
+    });
+
+    await rendered.input("/help");
+    await rendered.input("\r");
+
+    expect(onCommand).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "help" }),
+      "",
+    );
+    expect(onSubmit).not.toHaveBeenCalled();
+    rendered.unmount();
+  });
+
+  it("keeps submitted prompt history reachable through reverse search", async () => {
+    const rendered = await renderInputBox();
+    await rendered.input("remember this prompt");
+    await rendered.input("\r");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    await rendered.input("\x12");
+
+    expect(rendered.text()).toContain("reverse-i-search");
+    expect(rendered.text()).toContain("remember this prompt");
+    rendered.unmount();
+  });
+
+  it("keeps file mention suggestions and Enter selection", async () => {
+    let draft = "";
+    const rendered = await renderInputBox(
+      {
+        onDraftChange: (value) => {
+          draft = value;
+        },
+      },
+      { "README.md": "fixture" },
+    );
+    await rendered.input("@READ");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    expect(rendered.text()).toContain("README.md");
+    await rendered.input("\r");
+    expect(draft).toContain("@README.md");
     rendered.unmount();
   });
 });

@@ -87,7 +87,8 @@ export function InputBox(props: {
   onStashChange: (next: StashFile) => void;
   initialDraft?: string;
   onDraftChange?: (value: string) => void;
-  shouldIgnoreInput?: (input: string, key: Key, value: string) => boolean;
+  /** Global action router, called only after active composer overlays bubble. */
+  onGlobalInput?: (input: string, key: Key, value: string) => boolean;
   /** Imperative handle for the parent (used to inject restored drafts). */
   handleRef?: React.MutableRefObject<InputBoxHandle | null>;
 }): React.ReactElement {
@@ -261,8 +262,6 @@ export function InputBox(props: {
     // macOS spaces/apps is what makes the terminal fire these.)
     if (input === "[I" || input === "[O") return;
 
-    if (props.shouldIgnoreInput?.(input, key, valueRef.current)) return;
-
     // Bracketed paste can arrive split across several Ink events. Handle this
     // before Enter/submission logic so pasted newlines stay in the draft.
     const paste = normalizeBracketedPasteChunk(
@@ -385,6 +384,11 @@ export function InputBox(props: {
         return;
       }
     }
+
+    // Composer overlays had first refusal above. A single InputBox listener
+    // now routes global actions before ordinary editor insertion; printable
+    // actions defer to non-empty drafts inside InteractionRouter.
+    if (props.onGlobalInput?.(input, key, valueRef.current)) return;
 
     // --- submission --------------------------------------------------------
     if (key.return) {

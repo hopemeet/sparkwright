@@ -164,10 +164,7 @@ export async function collectAssetStats(input: {
 }
 
 export type AssetIdentityChange =
-  | "content_changed"
-  | "policy_changed"
-  | "both_changed"
-  | "unchanged";
+  "content_changed" | "policy_changed" | "both_changed" | "unchanged";
 
 export function classifyAssetIdentityChange(
   before: AssetObservationIdentity,

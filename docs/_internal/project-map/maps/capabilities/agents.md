@@ -11,6 +11,19 @@ See [../../modules/agent-runtime.md](../../modules/agent-runtime.md) and [../../
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-21
+- Scope: dynamic spawn admission is capability-contract driven rather than
+  prompt-text driven. Enabled-tool/grant mismatches fail in semantic input
+  validation before policy/approval; child results use strict
+  `agent-outcome.v1` status plus accomplishments and generalized blockers.
+  Parent recovery/disclosure is driven by structured events, not prose scans.
+- Read: Core validation order, Host dynamic spawn/grants, Agent Runtime result
+  projector/lifecycle/ledger, Host Stop hook, trace/session projections, and
+  focused/full tests.
+- Tests: Agent Runtime and Host Agent suites passed; full repository
+  verification is recorded by the release gate.
+
+- Status: Verified
 - Date: 2026-07-19
 - Scope: Agent completion and reuse share canonical predicates. Parallel
   aggregation treats completed-signal partial children as incomplete, while
@@ -327,6 +340,11 @@ configured profiles/delegates
   `bash`, never bypasses `shouldWrite:false` or target/write budgets in the
   parent run policy, and cannot resurrect tools removed by `tools.allowed` /
   `tools.disabled` / `tools.use`.
+- Dynamic spawn feasibility is determined only from the structured tool/grant
+  request. Host validates requested tools against the enabled child catalog
+  before policy and approval; it does not infer required capabilities from
+  multilingual `goal`/`prompt` prose. Runtime tool exposure remains the hard
+  enforcement boundary.
 - Dynamic `spawn_agent` runs foreground by default and may promote to an
   awaited background task after the foreground budget when
   `backgroundTasks=enabled`. Promotion preserves the same spawned child run,
@@ -373,15 +391,21 @@ configured profiles/delegates
   16-step cap. Dynamic children cannot spawn again or receive `task_create` in
   v1; `capabilities.agents.maxDepth` remains the general child/delegate ceiling.
 - Dynamic `spawn_agent` output keeps parent-visible child identity and
-  finality separate from tool transport status. A child that reaches its step
-  budget after producing an answer can still return a completed tool result, but
-  the output must carry `stepLimitReached: true`, `truncated: true`,
+  semantic `status`/finality separate from tool transport status. Delegated
+  children declare `completed`, `partial`, or `blocked` plus a summary and
+  bounded accomplishments and blockers. Each blocker identifies a stable code,
+  broad kind, responsible owner, message, typed requirements, and retry
+  condition. Partial/blocked declarations are not reusable even when the child
+  run transport completed normally. Missing/malformed declarations become
+  runtime-owned protocol blockers. A child that reaches its step budget after
+  producing an answer can still return a completed tool result, but the output
+  must carry `stepLimitReached: true`, `truncated: true`,
   `finality: "partial"`, and a warning-prefixed message so the parent and
   context compaction do not treat the child answer as complete.
-- Host installs a built-in Stop hook that requires the parent final answer to
-  disclose partial/truncated/step-limited/failed child finality before
-  finishing. The hook is a final-answer guard, not a trace-only report, and
-  ignores ordinary truncated non-agent tool output.
+- Host installs a built-in one-shot Stop hook for every
+  partial/blocked/truncated/step-limited/failed child. It injects structured
+  recovery and disclosure instructions without deciding whether prior prose is
+  sufficient, and ignores ordinary truncated non-agent tool output.
 - Raw child finality is audit evidence and must not be overwritten because the
   parent later succeeded. Trace report can downgrade `SUBAGENT_INCOMPLETE`
   severity only as a derived finding when it records `verifiedAfterChildWrite`

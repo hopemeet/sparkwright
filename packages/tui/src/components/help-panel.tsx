@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { Box, Text, useInput, useStdout } from "ink";
 import type { CommandRegistry } from "../lib/commands.js";
 import { formatBinding, type Bindings } from "../lib/keybindings.js";
+import { isBackInput } from "../lib/input-key.js";
 import { DialogFrame } from "./dialog-frame.js";
 
 // Input editing affordances live inside InputBox (readline-style), so they have
@@ -131,7 +132,7 @@ export function HelpPanel(props: {
   const more = rows.length - (clamped + visible.length);
 
   useInput((input, key) => {
-    if (key.escape || key.return) return props.onClose();
+    if (isBackInput(input, key) || key.return) return props.onClose();
     if (key.downArrow || input === "j")
       setScroll((value) => Math.min(maxScroll, value + 1));
     else if (key.upArrow || input === "k")

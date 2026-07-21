@@ -528,8 +528,7 @@ export type CredentialResolver = (
 ) => Promise<CredentialRefreshResponse> | CredentialRefreshResponse;
 
 export type RunCommandAcceptance =
-  | { accepted: true }
-  | { accepted: false; reason: "terminal" | "closing" };
+  { accepted: true } | { accepted: false; reason: "terminal" | "closing" };
 
 export interface RunLoopServices {
   now?: () => Date;
@@ -3865,8 +3864,7 @@ export class SparkwrightRun implements RunHandle {
     if (!tool) return undefined;
 
     let argPolicy:
-      | ReturnType<NonNullable<typeof tool.policyForArgs>>
-      | undefined;
+      ReturnType<NonNullable<typeof tool.policyForArgs>> | undefined;
     const policyForArgsStartedAt = Date.now();
     try {
       argPolicy = tool.policyForArgs?.(args as never);

@@ -233,17 +233,10 @@ export interface PromptCacheBlocks {
 }
 
 export type PromptSectionCachePolicy =
-  | "stable"
-  | "session"
-  | "turn"
-  | "volatile";
+  "stable" | "session" | "turn" | "volatile";
 
 export type PromptSectionBuildResult =
-  | string
-  | PromptMessage
-  | PromptMessage[]
-  | null
-  | undefined;
+  string | PromptMessage | PromptMessage[] | null | undefined;
 
 export interface PromptSection {
   name: string;

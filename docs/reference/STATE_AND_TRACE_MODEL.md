@@ -79,7 +79,13 @@ Default implementation: `FileRunStore`.
 
 Embedders may aggregate multiple episode assessments for an execution, but they
 must not replace Core's per-run assessment with prose parsing or an independent
-tool-outcome verdict. Agent finality is a separate axis from assessment health.
+tool-outcome verdict. Agent finality is a separate axis from assessment health;
+the child-declared `completed`/`partial`/`blocked` status is a third semantic
+axis and does not rewrite either one. The strict `agent-outcome.v1` projection
+preserves blocker ownership, retry conditions, and requirements through raw
+trace and session compaction so a resumed parent can distinguish capability,
+permission, user-input, dependency, resource, conflict, protocol, and unknown
+blockers.
 
 ### 2. Session State
 

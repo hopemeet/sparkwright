@@ -6,6 +6,7 @@ import type {
   TuiSkillReviewItem,
 } from "../lib/skill-evolution.js";
 import { formatWorkspaceDisplayPath } from "../lib/path-display.js";
+import { isBackInput } from "../lib/input-key.js";
 import { DialogFrame } from "./dialog-frame.js";
 
 type ReviewTab = "proposal" | "patch" | "metadata";
@@ -39,7 +40,7 @@ export function SkillReviewDialog(props: {
 
   useInput((input, key) => {
     if (pendingAction) {
-      if (key.escape) {
+      if (isBackInput(input, key)) {
         setPendingAction(null);
         return;
       }
@@ -52,7 +53,7 @@ export function SkillReviewDialog(props: {
       return;
     }
 
-    if (key.escape || input === "q") {
+    if (isBackInput(input, key) || input === "q") {
       props.onCancel();
       return;
     }

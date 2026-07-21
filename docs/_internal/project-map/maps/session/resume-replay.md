@@ -11,6 +11,17 @@ See [session-store.md](session-store.md) and [../runtime/context-compaction.md](
 
 - Status: Verified
 - Date: 2026-07-19
+- Scope: TUI replay still rebuilds rendering from persisted session events;
+  notification unread/resolved state, approval queues/rules, and action-card
+  state remain process-local presentation state and are not written into replay
+  artifacts. Main and Workflow session/origin isolation is unchanged.
+- Read: TUI session switch/replay, EventStore reset, approval execution origins,
+  Host session queries, and Protocol session/Workflow identity.
+- Tests: TUI 445/445, session approval/controller regressions, and PTY
+  trace/session checks passed.
+
+- Status: Verified
+- Date: 2026-07-19
 - Scope: fresh and continued durable Workflow episodes preserve exact budget
   ownership. A model-call budget stop remains `max_model_calls_exceeded`, is
   eligible for bounded durable continuation, and is not rewritten as a step

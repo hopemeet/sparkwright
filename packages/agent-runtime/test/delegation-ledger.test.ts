@@ -1,8 +1,8 @@
 import type { RunHandle } from "@sparkwright/core";
 import { describe, expect, it } from "vitest";
 import {
-  findSimilarSuccessfulDelegation,
-  rememberSuccessfulDelegation,
+  findReusableDelegation,
+  rememberReusableDelegation,
   withAlreadyCompletedNote,
 } from "../src/agents/delegation-ledger.js";
 import type {
@@ -25,6 +25,10 @@ const completed: DelegationLedgerResult = {
   costUsd: 0,
   toolCalls: 1,
   modelCalls: 1,
+  status: "completed",
+  statusSource: "child",
+  summary: "Inspection complete",
+  blockers: [],
   finality: "complete",
   assessment: {
     schemaVersion: "run-assessment.v1",
@@ -38,7 +42,7 @@ describe("delegation ledger", () => {
   it("reuses only exact goals after conservative normalization", () => {
     const parent = {} as RunHandle;
     expect(
-      rememberSuccessfulDelegation(
+      rememberReusableDelegation(
         parent,
         key,
         "List packages/core files",
@@ -47,14 +51,14 @@ describe("delegation ledger", () => {
     ).toBe(true);
 
     expect(
-      findSimilarSuccessfulDelegation(
+      findReusableDelegation(
         parent,
         { ...key, allowedTools: ["read", "grep", "read"] },
         "  LIST   packages/core files  ",
       ),
     ).toEqual({ goal: "List packages/core files", result: completed });
     expect(
-      findSimilarSuccessfulDelegation(parent, key, "List packages/host files"),
+      findReusableDelegation(parent, key, "List packages/host files"),
     ).toBeUndefined();
   });
 
@@ -62,6 +66,8 @@ describe("delegation ledger", () => {
     { signal: "failed" as const },
     { stepLimitReached: true },
     { truncated: true },
+    { status: "blocked" as const },
+    { status: "partial" as const },
     { finality: "partial" as const },
     {
       assessment: {
@@ -82,13 +88,13 @@ describe("delegation ledger", () => {
   ])("does not remember non-reusable result %#", (override) => {
     const parent = {} as RunHandle;
     expect(
-      rememberSuccessfulDelegation(parent, key, "Inspect runtime", {
+      rememberReusableDelegation(parent, key, "Inspect runtime", {
         ...completed,
         ...override,
       }),
     ).toBe(false);
     expect(
-      findSimilarSuccessfulDelegation(parent, key, "Inspect runtime"),
+      findReusableDelegation(parent, key, "Inspect runtime"),
     ).toBeUndefined();
   });
 

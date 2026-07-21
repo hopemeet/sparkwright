@@ -26,11 +26,7 @@ export type TaskId = Brand<string, "TaskId">;
  * @stability experimental v0.1
  */
 export type TaskStatus =
-  | "pending"
-  | "running"
-  | "completed"
-  | "failed"
-  | "cancelled";
+  "pending" | "running" | "completed" | "failed" | "cancelled";
 
 /**
  * Error descriptor attached to a failed task.

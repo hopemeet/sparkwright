@@ -31,9 +31,11 @@ export function StatusBar(props: {
   const statusLabel =
     props.state.status === "awaiting-approval"
       ? "approval"
-      : props.state.status === "running" && props.state.activePhase
-        ? props.state.activePhase.message
-        : props.state.status;
+      : props.state.status === "running" && props.state.statusMessage
+        ? props.state.statusMessage
+        : props.state.status === "running" && props.state.activePhase
+          ? props.state.activePhase.message
+          : props.state.status;
   const modelLabel = compact
     ? compactModelLabel(props.modelLabel)
     : props.modelLabel;

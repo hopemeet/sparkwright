@@ -122,13 +122,11 @@ export function createPartialSubagentFinalityDisclosureHook(): WorkflowHook {
     handle(input) {
       if (advancedRuns.has(input.run.id)) return;
       const payload = isRecord(input.payload) ? input.payload : {};
-      const message = stringValue(payload.message) ?? "";
       const events = Array.isArray(payload.events)
         ? (payload.events as SparkwrightEvent[])
         : [];
       const partialSubagents = collectPartialSubagentFinality(events);
       if (partialSubagents.length === 0) return;
-      if (finalAnswerMentionsPartialSubagentFinality(message)) return;
 
       advancedRuns.add(input.run.id);
       return {
@@ -1288,6 +1286,15 @@ interface PartialSubagentFinality {
   label: string;
   reason: string;
   childRunId?: string;
+  summary?: string;
+  blockers: Array<{
+    code: string;
+    kind?: string;
+    owner?: string;
+    message?: string;
+    retry?: string;
+    requirements: Array<{ kind: string; name: string }>;
+  }>;
 }
 
 function collectPartialSubagentFinality(
@@ -1336,8 +1343,9 @@ function partialSubagentFinalityFromRecord(
 ): PartialSubagentFinality | undefined {
   const terminalState =
     stringValue(record.terminalState) ??
-    stringValue(record.status) ??
     findNestedString(record, "terminalState");
+  const status =
+    stringValue(record.status) ?? findNestedString(record, "status");
   const finality =
     stringValue(record.finality) ?? findNestedString(record, "finality");
   const stepLimitReached =
@@ -1350,6 +1358,8 @@ function partialSubagentFinalityFromRecord(
     false;
   const partial =
     defaultPartial ||
+    status === "partial" ||
+    status === "blocked" ||
     finality === "partial" ||
     stepLimitReached ||
     truncated ||
@@ -1374,16 +1384,25 @@ function partialSubagentFinalityFromRecord(
     label,
     reason: partialSubagentReason({
       finality,
+      status,
       terminalState,
       stepLimitReached,
       truncated,
     }),
+    ...((stringValue(record.summary) ?? findNestedString(record, "summary"))
+      ? {
+          summary:
+            stringValue(record.summary) ?? findNestedString(record, "summary"),
+        }
+      : {}),
+    blockers: findNestedAgentBlockers(record),
     ...(childRunId ? { childRunId } : {}),
   };
 }
 
 function partialSubagentReason(input: {
   finality?: string;
+  status?: string;
   terminalState?: string;
   stepLimitReached: boolean;
   truncated: boolean;
@@ -1393,6 +1412,9 @@ function partialSubagentReason(input: {
   }
   if (input.stepLimitReached || input.terminalState === "step_limit") {
     return "step limit reached";
+  }
+  if (input.status === "blocked" || input.status === "partial") {
+    return input.status;
   }
   if (input.terminalState && input.terminalState !== "completed") {
     return input.terminalState;
@@ -1406,15 +1428,33 @@ function partialSubagentFinalityContextItem(
 ): ContextItem {
   const lines = items.slice(0, 5).map((item) => {
     const child = item.childRunId ? ` (${item.childRunId})` : "";
-    return `- ${item.label}${child}: ${item.reason}`;
+    const details = [
+      item.summary,
+      ...item.blockers.map((blocker) => {
+        const owner = blocker.owner ? ` owner=${blocker.owner}` : "";
+        const retry = blocker.retry ? ` retry=${blocker.retry}` : "";
+        const requirements = blocker.requirements.length
+          ? ` requires=${blocker.requirements
+              .map((requirement) => `${requirement.kind}:${requirement.name}`)
+              .join(",")}`
+          : "";
+        return `${blocker.code}${owner}${retry}${requirements}${
+          blocker.message ? ` — ${blocker.message}` : ""
+        }`;
+      }),
+    ].filter((value): value is string => typeof value === "string");
+    return `- ${item.label}${child}: ${item.reason}${
+      details.length > 0 ? ` · ${details.join(" · ")}` : ""
+    }`;
   });
   return {
     id: createContextItemId(),
     type: "system",
     source: { kind: "runtime" },
     content: [
-      "A sub-agent result used in this run is partial.",
-      "Before finalizing, revise the final answer to explicitly disclose the affected child result as partial, truncated, or step-limited, and do not present conclusions based on it as exhaustive.",
+      "A sub-agent result used in this run is incomplete or blocked.",
+      "Before finalizing, first use any safe capability already available to the parent when that can complete the task. Never grant a capability or approval merely because a child requested it.",
+      "If the blocker remains unresolved, tell the user what was completed, the exact blocker, who can resolve it, the required next action, and a safe alternative when one exists. Ask only one focused question when user input is required.",
       "Partial sub-agent evidence:",
       ...lines,
     ].join("\n"),
@@ -1429,17 +1469,58 @@ function partialSubagentFinalityContextItem(
   };
 }
 
-function finalAnswerMentionsPartialSubagentFinality(message: string): boolean {
-  if (message.trim().length === 0) return false;
-  const lower = message.toLowerCase();
-  return (
-    /\b(partial|partially|incomplete|not complete|truncat(?:ed|ion)?|step[-\s]?limit|step budget|max steps?|not exhaustive|not definitive)\b/.test(
-      lower,
-    ) ||
-    /(不完整|未完成|部分|截断|步数|预算|限制|不全面|不穷尽|不能完全|并非完整)/.test(
-      message,
-    )
-  );
+function findNestedAgentBlockers(
+  value: unknown,
+): PartialSubagentFinality["blockers"] {
+  if (!isRecord(value)) return [];
+  if (Array.isArray(value.blockers)) {
+    return value.blockers
+      .map((blocker) => {
+        if (!isRecord(blocker)) return undefined;
+        const code = stringValue(blocker.code);
+        if (!code) return undefined;
+        const requirements = Array.isArray(blocker.requirements)
+          ? blocker.requirements
+              .map((requirement) => {
+                if (!isRecord(requirement)) return undefined;
+                const kind = stringValue(requirement.kind);
+                const name = stringValue(requirement.name);
+                return kind && name ? { kind, name } : undefined;
+              })
+              .filter(
+                (requirement): requirement is { kind: string; name: string } =>
+                  requirement !== undefined,
+              )
+              .slice(0, 16)
+          : [];
+        return {
+          code,
+          ...(stringValue(blocker.kind)
+            ? { kind: stringValue(blocker.kind) }
+            : {}),
+          ...(stringValue(blocker.owner)
+            ? { owner: stringValue(blocker.owner) }
+            : {}),
+          ...(stringValue(blocker.message)
+            ? { message: stringValue(blocker.message) }
+            : {}),
+          ...(stringValue(blocker.retry)
+            ? { retry: stringValue(blocker.retry) }
+            : {}),
+          requirements,
+        };
+      })
+      .filter(
+        (blocker): blocker is NonNullable<typeof blocker> =>
+          blocker !== undefined,
+      )
+      .slice(0, 16);
+  }
+  for (const nested of Object.values(value)) {
+    const blockers = findNestedAgentBlockers(nested);
+    if (blockers.length > 0) return blockers;
+  }
+  return [];
 }
 
 function stringValue(value: unknown): string | undefined {

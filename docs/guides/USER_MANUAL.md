@@ -114,6 +114,33 @@ In `/sessions`, select a session and press `i` to inspect diagnostics. When
 available, the inspect view includes the same compaction audit surfaced by
 `session inspect --compaction`, without printing compacted summary content.
 
+The TUI keeps the committed conversation in the terminal's native scrollback.
+The following slash commands remain independent direct entry points even when
+they share an internal panel:
+
+- `/tools`, `/skills`, `/agents`, `/mcp`, and `/cron` open the matching
+  capability view.
+- `/events` opens the canonical runtime event inspector; `/tasks` opens durable
+  background-task activity.
+- `/notifications` opens UI feedback history (run/connection diagnostics,
+  action feedback, approvals, and background alerts). It is presentation state,
+  not a replacement for trace or session evidence.
+
+Approval cards identify the originating main run or Workflow, session/run ids,
+queue position, risk, exact remembered scope, and effect details. High-risk and
+unknown effects focus **Deny** by default; unknown effects cannot be remembered
+for the session. `Esc`, `Ctrl+C`, or `n` explicitly deny the active approval.
+`y` allows once, while Enter confirms the highlighted choice. Session approval
+rules continue to match only the exact path, shell command plus cwd, or tool
+arguments shown by the card.
+
+Input is owned by one surface at a time: an approval first, then the active
+dialog, composer suggestions/search, the editor, and finally global shortcuts.
+Within a dialog `Esc` or `Ctrl+C` goes back. At the composer, `Esc` cancels a
+running goal when configured to do so; `Ctrl+C` clears a non-empty draft, then
+uses the usual cancel/back/quit confirmation flow. Printable global shortcuts
+do not steal characters from a non-empty prompt.
+
 ## ACP Agent Server
 
 Use ACP when an editor or local ACP client wants to launch SparkWright as a

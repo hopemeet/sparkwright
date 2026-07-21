@@ -11,10 +11,7 @@ import type { SkillManifest } from "./types.js";
 import { extractInlineShellCommands } from "./preprocess.js";
 
 export type SkillTrustLevel =
-  | "builtin"
-  | "trusted"
-  | "community"
-  | "agent-created";
+  "builtin" | "trusted" | "community" | "agent-created";
 
 export type SkillFindingSeverity = "info" | "caution" | "dangerous";
 

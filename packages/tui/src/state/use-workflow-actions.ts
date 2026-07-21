@@ -6,7 +6,8 @@ import type { RunController } from "./run-controller.js";
 import type { WorkflowJobHandle } from "./run-controller.js";
 import type { EventStore } from "./event-store.js";
 import type { LayerStack } from "./layer-stack.js";
-import type { ToastStore } from "./toast-store.js";
+import type { NotificationStore } from "./notification-store.js";
+import { presentationPolicy } from "../lib/ui-signal.js";
 import { formatWorkflowListNotice } from "../lib/workflow-display.js";
 
 export interface WorkflowActions {
@@ -28,7 +29,7 @@ export interface WorkflowActions {
 export function useWorkflowActions(deps: {
   controller: RunController;
   store: EventStore;
-  toasts: ToastStore;
+  toasts: NotificationStore;
   layers: LayerStack;
   layerOpen: boolean;
   enableBackgroundRefresh?: boolean;
@@ -240,6 +241,7 @@ export function useWorkflowActions(deps: {
     if (!workflow) return;
     try {
       const accepted = await controller.cancelWorkflow(workflow);
+      if (accepted === null) return;
       if (!accepted) throw new Error("durable cancel command was rejected");
       store.appendNotice(
         `workflow stop requested: ${workflow.id} (stopping is terminal and cannot be resumed)`,
@@ -427,7 +429,7 @@ function wireWorkflowJob(
   deps: {
     workflowName: string;
     store: EventStore;
-    toasts: ToastStore;
+    toasts: NotificationStore;
     setOwnedJobs: Dispatch<SetStateAction<Record<string, OwnedWorkflowJob>>>;
     refreshWorkflows: () => Promise<WorkflowRunSnapshot[]>;
     focus: boolean;
@@ -502,6 +504,24 @@ function wireWorkflowJob(
           ? `workflow ${deps.workflowName} waiting for resume`
           : `workflow ${deps.workflowName} ${status}${event.payload.stopReason ? `: ${event.payload.stopReason}` : ""}`,
       );
+      const kind =
+        status === "failed"
+          ? ("error" as const)
+          : status === "cancelled"
+            ? ("warning" as const)
+            : status === "waiting"
+              ? ("action-required" as const)
+              : ("success" as const);
+      const scope = "BackgroundTask" as const;
+      deps.toasts.publish({
+        kind,
+        scope,
+        source: "tui.workflow",
+        title: `workflow ${status}`,
+        message: `${deps.workflowName} · ${record?.id ?? handle.workflowRunId}`,
+        dedupeKey: `workflow:${record?.id ?? handle.workflowRunId}`,
+        ...presentationPolicy({ kind, scope }),
+      });
       closing = true;
       handle.close();
     });
@@ -511,6 +531,17 @@ function wireWorkflowJob(
     deps.store.appendNotice(
       `workflow ${deps.workflowName} failed: ${runFailureMessage(event.payload)}`,
     );
+    const kind = "error" as const;
+    const scope = "BackgroundTask" as const;
+    deps.toasts.publish({
+      kind,
+      scope,
+      source: "tui.workflow",
+      title: "workflow failed",
+      message: `${deps.workflowName}: ${runFailureMessage(event.payload)}`,
+      dedupeKey: `workflow:${handle.workflowRunId}`,
+      ...presentationPolicy({ kind, scope }),
+    });
     closing = true;
     handle.close();
     void deps.refreshWorkflows();
@@ -522,6 +553,17 @@ function wireWorkflowJob(
       deps.store.appendNotice(
         `workflow ${deps.workflowName} disconnected: ${reason}`,
       );
+      const kind = "error" as const;
+      const scope = "BackgroundTask" as const;
+      deps.toasts.publish({
+        kind,
+        scope,
+        source: "tui.workflow",
+        title: "workflow disconnected",
+        message: `${deps.workflowName}: ${reason}`,
+        dedupeKey: `workflow:${handle.workflowRunId}`,
+        ...presentationPolicy({ kind, scope }),
+      });
     }
   });
 }

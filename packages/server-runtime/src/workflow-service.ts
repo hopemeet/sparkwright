@@ -7,10 +7,7 @@ export const WORKFLOW_SERVICE_SCHEMA_VERSION =
   "sparkwright-workflow-service.v2" as const;
 
 export type WorkflowServiceState =
-  | "starting"
-  | "ready"
-  | "draining"
-  | "stopped";
+  "starting" | "ready" | "draining" | "stopped";
 
 export interface WorkflowServiceInstance {
   schemaVersion: typeof WORKFLOW_SERVICE_SCHEMA_VERSION;

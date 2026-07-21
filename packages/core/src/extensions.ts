@@ -30,8 +30,7 @@ export interface ContextExtensionLoadInput {
 export interface ContextExtension {
   name: string;
   describe():
-    | Promise<ContextExtensionDescriptor[]>
-    | ContextExtensionDescriptor[];
+    Promise<ContextExtensionDescriptor[]> | ContextExtensionDescriptor[];
   load(
     input: ContextExtensionLoadInput,
   ): Promise<ContextItem[]> | ContextItem[];

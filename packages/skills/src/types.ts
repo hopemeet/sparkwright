@@ -15,9 +15,7 @@
  * @stability experimental v0.1
  */
 export type SkillTriggerSignal =
-  | "user_message"
-  | "tool_result"
-  | "explicit_invoke";
+  "user_message" | "tool_result" | "explicit_invoke";
 
 /**
  * Declarative description of a skill the model may load on demand.

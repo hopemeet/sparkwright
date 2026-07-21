@@ -29,9 +29,7 @@ import {
 } from "./skill-evolution.js";
 
 export type SkillStatsQueryScope =
-  | "human_diagnostics"
-  | "evolution_evidence"
-  | "post_apply_verification";
+  "human_diagnostics" | "evolution_evidence" | "post_apply_verification";
 
 export interface SkillStatsQuery {
   /** @reserved Public skill-stats query field consumed by diagnostics UIs. */
