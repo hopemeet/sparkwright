@@ -626,6 +626,241 @@ describe("notification sources", () => {
   });
 });
 
+describe("awaited task revival", () => {
+  it("waits, injects one terminal notification, and resumes beyond maxSteps", async () => {
+    let pending = true;
+    let notificationReady = false;
+    let release!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let drainCount = 0;
+    let observedTaskNotifications = 0;
+    const run = createStreamingRun({
+      goal: "await a task",
+      maxSteps: 1,
+      notificationSources: [
+        {
+          drain() {
+            if (!notificationReady || drainCount > 0) return [];
+            drainCount += 1;
+            return [
+              {
+                content: "task completed",
+                source: { kind: "task", uri: "task:one" },
+                metadata: { taskId: "task_one", status: "completed" },
+              },
+            ];
+          },
+        },
+      ],
+      taskRevivalSource: {
+        hasAwaitedPending: () => pending,
+        waitUntilAvailable: () => ready,
+      },
+      model: {
+        async *stream(input: ModelInput) {
+          observedTaskNotifications = input.context.filter(
+            (item) => item.source?.kind === "task",
+          ).length;
+          yield {
+            type: "text_delta",
+            text: input.step === 1 ? "initial" : "resumed",
+          } as ModelOutputChunk;
+          yield { type: "stop", stopReason: "completed" } as ModelOutputChunk;
+        },
+        async complete() {
+          throw new Error("complete unused");
+        },
+      },
+    });
+
+    const started = run.start();
+    await waitForRunState(run, "waiting_tasks");
+    notificationReady = true;
+    pending = false;
+    release();
+    const result = await started;
+
+    expect(result).toMatchObject({
+      signal: "completed",
+      message: "resumed",
+      metadata: {
+        revivalTurnsUsed: 1,
+        forcedContinuationTurnsUsed: { revival: 1 },
+      },
+    });
+    expect(observedTaskNotifications).toBe(1);
+    expect(drainCount).toBe(1);
+    expect(
+      run.events
+        .all()
+        .filter((event) => event.type === "run.notification.injected"),
+    ).toHaveLength(1);
+  });
+
+  it("does not keep the run alive for detached work", async () => {
+    let waits = 0;
+    const run = createStreamingRun({
+      goal: "detached task",
+      taskRevivalSource: {
+        hasAwaitedPending: () => false,
+        waitUntilAvailable: async () => {
+          waits += 1;
+        },
+      },
+      model: streamingModel([
+        { type: "text_delta", text: "done" },
+        { type: "stop", stopReason: "completed" },
+      ]),
+    });
+
+    await expect(run.start()).resolves.toMatchObject({
+      signal: "completed",
+      message: "done",
+    });
+    expect(waits).toBe(0);
+  });
+
+  it("wakes waiting_tasks for an injected user command", async () => {
+    let pending = true;
+    let sawCommand = false;
+    const run = createStreamingRun({
+      goal: "wait for command",
+      taskRevivalSource: {
+        hasAwaitedPending: () => pending,
+        waitUntilAvailable: () => new Promise<void>(() => {}),
+      },
+      model: {
+        async *stream(input: ModelInput) {
+          if (input.step > 1) {
+            sawCommand = input.context.some(
+              (item) =>
+                item.source?.kind === "command" &&
+                item.content === "continue now",
+            );
+            pending = false;
+          }
+          yield {
+            type: "text_delta",
+            text: input.step === 1 ? "waiting" : "continued",
+          } as ModelOutputChunk;
+          yield { type: "stop", stopReason: "completed" } as ModelOutputChunk;
+        },
+        async complete() {
+          throw new Error("complete unused");
+        },
+      },
+    });
+
+    const started = run.start();
+    await waitForRunState(run, "waiting_tasks");
+    run.enqueueCommand({ type: "user_message", content: "continue now" });
+    await expect(started).resolves.toMatchObject({
+      signal: "completed",
+      message: "continued",
+    });
+    expect(sawCommand).toBe(true);
+  });
+
+  it("cancels while waiting for an awaited task", async () => {
+    const run = createStreamingRun({
+      goal: "cancel wait",
+      taskRevivalSource: {
+        hasAwaitedPending: () => true,
+        waitUntilAvailable: () => new Promise<void>(() => {}),
+      },
+      model: streamingModel([
+        { type: "text_delta", text: "waiting" },
+        { type: "stop", stopReason: "completed" },
+      ]),
+    });
+
+    const started = run.start();
+    await waitForRunState(run, "waiting_tasks");
+    run.cancel({ reason: "stop waiting" });
+    await expect(started).resolves.toMatchObject({
+      signal: "cancelled",
+      message: "stop waiting",
+    });
+  });
+
+  it("bounds revival turns and reports pending work at exhaustion", async () => {
+    let waits = 0;
+    let readyNotifications = 0;
+    let drainedNotifications = 0;
+    const run = createStreamingRun({
+      goal: "bounded revival",
+      maxSteps: 1,
+      maxTaskRevivalTurns: 1,
+      notificationSources: [
+        {
+          drain() {
+            if (drainedNotifications >= readyNotifications) return [];
+            drainedNotifications += 1;
+            return [{ content: `task update ${drainedNotifications}` }];
+          },
+        },
+      ],
+      taskRevivalSource: {
+        hasAwaitedPending: () => true,
+        waitUntilAvailable: async () => {
+          waits += 1;
+          readyNotifications += 1;
+        },
+      },
+      model: {
+        async *stream(input: ModelInput) {
+          yield {
+            type: "text_delta",
+            text: `turn ${input.step}`,
+          } as ModelOutputChunk;
+          yield { type: "stop", stopReason: "completed" } as ModelOutputChunk;
+        },
+        async complete() {
+          throw new Error("complete unused");
+        },
+      },
+    });
+
+    await expect(run.start()).resolves.toMatchObject({
+      signal: "completed",
+      message: "turn 2",
+      metadata: { revivalTurnsUsed: 1 },
+    });
+    expect(waits).toBe(1);
+    expect(
+      run.events.all().filter((event) => event.type === "run.budget.exceeded"),
+    ).toHaveLength(1);
+  });
+
+  it("isolates task readiness source failures", async () => {
+    const run = createStreamingRun({
+      goal: "source failure",
+      taskRevivalSource: {
+        hasAwaitedPending() {
+          throw new Error("readiness unavailable");
+        },
+        waitUntilAvailable: async () => {},
+      },
+      model: streamingModel([
+        { type: "text_delta", text: "done" },
+        { type: "stop", stopReason: "completed" },
+      ]),
+    });
+
+    await expect(run.start()).resolves.toMatchObject({
+      signal: "completed",
+      message: "done",
+    });
+    expect(
+      run.events
+        .all()
+        .filter((event) => event.type === "run.notification.source_failed"),
+    ).toHaveLength(1);
+  });
+});
+
 describe("streaming-runtime tool argument decoding", () => {
   it("treats empty streamed tool-call arguments as `{}`", async () => {
     const calls: unknown[] = [];
@@ -761,4 +996,19 @@ function streamingModel(chunks: ModelOutputChunk[]): ModelAdapter {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForRunState(
+  run: ReturnType<typeof createStreamingRun>,
+  state: string,
+): Promise<void> {
+  const deadline = Date.now() + 1_000;
+  while (run.record.state !== state) {
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `Timed out waiting for run state ${state}; current state is ${run.record.state}.`,
+      );
+    }
+    await sleep(1);
+  }
 }

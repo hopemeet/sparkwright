@@ -11,6 +11,17 @@ See [tool-orchestration.md](tool-orchestration.md) and [../trace/raw-trace.md](.
 
 - Status: Verified
 - Date: 2026-07-23
+- Scope: Streaming Runtime now implements the previously missing awaited-task
+  terminal gate: non-consuming readiness, `waiting_tasks`, command/abort races,
+  step-start notification injection, and bounded revival turns beyond
+  `maxSteps`. Host continues to use Core; this closes the public embedder
+  support-matrix gap without adding durable resume.
+- Read: Streaming Runtime loop/options/tests and Core TaskRevivalSource/waiting
+  implementation.
+- Tests: Streaming Runtime suite (20 tests) and package typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-23
 - Scope: parent task observation is now single-consumer aware: a synchronous
   foreground/manual-wait result consumes its matching actor notification,
   while awaited tasks still enter `waiting_tasks` and detached tasks remain
@@ -476,6 +487,11 @@ createRun/resumeRunFromCheckpoint
   Exhaustion emits `run.budget.exceeded` / FactLedger `budgetExceeded` and
   refuses revival without failing the run directly. All three race legs share
   one per-wait abort signal for cleanup.
+- Streaming Runtime follows the same split-port semantics for embedders. Its
+  `taskRevivalSource` never consumes completion context; configured
+  `notificationSources` drain that context at the next step start. Its
+  `maxTaskRevivalTurns` budget defaults to 5 and is independent of foreground
+  `maxSteps`. Like Core, this state is process-local and not checkpoint-resumed.
 - P3 Step 2 keeps the terminal ordering as Stop-before-await:
   `workflowHooks(Stop)` run before `waitForAwaitedTasksBeforeTerminal()`.
   A Stop-time `task_terminal` verifier observes pre-await run state and pays one

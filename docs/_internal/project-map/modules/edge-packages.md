@@ -46,6 +46,13 @@ contracts, and focused checklists that no longer fit here.
 - Server, streaming, memory-store, and trace-perfetto packages are reusable
   runtime/storage/diagnostic adapters around core contracts. Treat core events,
   run/session stores, and trace maps as the active contracts.
+- `@sparkwright/streaming-runtime` accepts the same split task revival ports as
+  Core: `notificationSources` are consuming step-start context injection, while
+  `taskRevivalSource` is a non-consuming readiness wait. Natural final answers
+  enter live `waiting_tasks` only for awaited work; readiness, command input, or
+  abort wakes the loop. A separate bounded revival-turn budget (default 5)
+  permits notification turns beyond ordinary `maxSteps`; detached work never
+  keeps the streaming run alive.
 - `server-runtime`'s `InFlightCommandDispatcher` only coalesces concurrent local
   dispatch of the same command id. Agent-runtime storage and the workflow
   journal remain command/outcome/apply truth; Host remains the adapter that
@@ -134,6 +141,16 @@ contracts, and focused checklists that no longer fit here.
   source exports. It should not be used as the sole authority for behavior.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-23
+- Scope: Streaming Runtime now supports awaited task revival with split
+  notification/readiness sources, live `waiting_tasks`, command/abort wakeup,
+  and a bounded continuation budget aligned with Core's default.
+- Read: Streaming run loop/options/tests, Core TaskRevivalSource and awaited
+  terminal gate, and run-loop map.
+- Tests: Streaming Runtime suite (20 tests), package typecheck, project-map
+  drift, and diff checks passed.
 
 - Status: Verified
 - Date: 2026-07-23

@@ -44,6 +44,7 @@ import {
   type RuntimeContext,
   type SpanFrame,
   type SparkwrightEvent,
+  type TaskRevivalSource,
   type ToolDefinition,
   type ToolDescriptor,
   type ToolResult,
@@ -99,6 +100,17 @@ export interface CreateStreamingRunOptions {
    * signals (`ActorNotificationSink`), inbound chat messages, etc.
    */
   notificationSources?: NotificationSource[];
+  /**
+   * Non-consuming readiness source for awaited tasks. When present, a natural
+   * final answer waits while awaited work is pending, then starts another
+   * streaming turn after notification sources inject the terminal result.
+   */
+  taskRevivalSource?: TaskRevivalSource;
+  /**
+   * Maximum turns entered after awaited-task wakeups. Defaults to 5, matching
+   * Core's default revival continuation budget.
+   */
+  maxTaskRevivalTurns?: number;
 }
 
 export interface StreamingRunHandle {
@@ -135,6 +147,7 @@ interface RequestedToolCall {
 
 const DEFAULT_MAX_STEPS = 8;
 const DEFAULT_MAX_TOOL_CONCURRENCY = 10;
+const DEFAULT_MAX_TASK_REVIVAL_TURNS = 5;
 
 export function createStreamingRun(
   options: CreateStreamingRunOptions,
@@ -174,6 +187,9 @@ class AfterTurnStreamingRun implements StreamingRunHandle {
   private readonly commandQueue: RunCommand[] = [];
   private readonly runStore?: RunStore;
   private readonly notificationSources: NotificationSource[];
+  private readonly taskRevivalSource?: TaskRevivalSource;
+  private readonly maxTaskRevivalTurns: number;
+  private taskRevivalTurnsUsed = 0;
   private storeAppendQueue: Promise<void> = Promise.resolve();
   private context: ContextItem[];
   private result?: RunResult;
@@ -213,6 +229,9 @@ class AfterTurnStreamingRun implements StreamingRunHandle {
       options.maxToolConcurrency ?? DEFAULT_MAX_TOOL_CONCURRENCY;
     this.eagerToolExecution = options.eagerToolExecution ?? false;
     this.notificationSources = [...(options.notificationSources ?? [])];
+    this.taskRevivalSource = options.taskRevivalSource;
+    this.maxTaskRevivalTurns =
+      options.maxTaskRevivalTurns ?? DEFAULT_MAX_TASK_REVIVAL_TURNS;
 
     validatePositiveInteger("maxSteps", this.maxSteps);
     validateOptionalPositiveInteger("streamTimeoutMs", this.streamTimeoutMs);
@@ -222,6 +241,7 @@ class AfterTurnStreamingRun implements StreamingRunHandle {
     );
     validateOptionalPositiveInteger("toolTimeoutMs", this.toolTimeoutMs);
     validatePositiveInteger("maxToolConcurrency", this.maxToolConcurrency);
+    validateNonNegativeInteger("maxTaskRevivalTurns", this.maxTaskRevivalTurns);
 
     for (const tool of options.tools ?? []) {
       this.tools.register(tool);
@@ -410,7 +430,9 @@ class AfterTurnStreamingRun implements StreamingRunHandle {
     this.setState("running");
     this.events.emit("run.started", { goal: this.record.goal });
 
-    for (let step = 1; step <= this.maxSteps; step += 1) {
+    let step = 1;
+    let revivalTurn = false;
+    while (step <= this.maxSteps || revivalTurn) {
       await this.drainNotificationSources(step);
       const commandResult = this.consumePendingCommands(step);
       if (commandResult) return commandResult;
@@ -459,9 +481,29 @@ class AfterTurnStreamingRun implements StreamingRunHandle {
               discardedReason: "eager_tool_executed_in_turn",
             });
           }
+          revivalTurn = false;
+          step += 1;
           continue;
         }
-        return this.complete("final_answer", { message: output.message });
+        const revived = await this.waitForAwaitedTasksBeforeTerminal(step);
+        if (this.result) return this.result;
+        if (revived) {
+          this.taskRevivalTurnsUsed += 1;
+          revivalTurn = true;
+          step += 1;
+          continue;
+        }
+        return this.complete("final_answer", {
+          message: output.message,
+          ...(this.taskRevivalTurnsUsed > 0
+            ? {
+                revivalTurnsUsed: this.taskRevivalTurnsUsed,
+                forcedContinuationTurnsUsed: {
+                  revival: this.taskRevivalTurnsUsed,
+                },
+              }
+            : {}),
+        });
       }
 
       if (
@@ -476,6 +518,8 @@ class AfterTurnStreamingRun implements StreamingRunHandle {
 
       const toolResult = await this.runToolsAfterTurn(step, toolCalls);
       if (toolResult) return toolResult;
+      revivalTurn = false;
+      step += 1;
     }
 
     return this.fail(
@@ -1266,6 +1310,122 @@ class AfterTurnStreamingRun implements StreamingRunHandle {
     }
   }
 
+  private async waitForAwaitedTasksBeforeTerminal(
+    step: number,
+  ): Promise<boolean> {
+    if (isTerminalState(this.record.state)) return false;
+    const source = this.taskRevivalSource;
+    if (!source) return false;
+    if (this.taskRevivalTurnsUsed >= this.maxTaskRevivalTurns) {
+      if (await this.hasAwaitedPending(source, step, "budget_exhausted")) {
+        this.events.emit("run.budget.exceeded", {
+          step,
+          family: "forced_continuation",
+          source: "revival",
+          reason: "waiting_tasks",
+          configured: this.maxTaskRevivalTurns,
+          used: this.taskRevivalTurnsUsed,
+        });
+      }
+      return false;
+    }
+    if (!(await this.hasAwaitedPending(source, step, "hasAwaitedPending"))) {
+      return false;
+    }
+    if (isTerminalState(this.record.state)) return false;
+
+    const previousState = this.record.state;
+    this.setState("waiting_tasks");
+    const waitStartedAfterSequence = this.events.all().at(-1)?.sequence ?? 0;
+    const waitAbortController = new AbortController();
+    const abortTaskWait = () => waitAbortController.abort();
+    this.abortSignal.addEventListener("abort", abortTaskWait, { once: true });
+    try {
+      await Promise.race([
+        source
+          .waitUntilAvailable({ signal: waitAbortController.signal })
+          .catch((cause) => {
+            if (waitAbortController.signal.aborted) return;
+            throw cause;
+          }),
+        this.waitForCommandEnqueuedAfter(
+          waitStartedAfterSequence,
+          waitAbortController.signal,
+        ),
+        this.waitForAbort(waitAbortController.signal),
+      ]);
+    } catch (cause) {
+      this.events.emit("run.notification.source_failed", {
+        step,
+        sourceIndex: -1,
+        message: errorMessage(cause),
+        phase: "waiting_tasks",
+      });
+      return false;
+    } finally {
+      this.abortSignal.removeEventListener("abort", abortTaskWait);
+      abortTaskWait();
+      if (this.record.state === "waiting_tasks") {
+        this.setState(previousState === "running" ? "running" : previousState);
+      }
+    }
+    return !isTerminalState(this.record.state);
+  }
+
+  private async hasAwaitedPending(
+    source: TaskRevivalSource,
+    step: number,
+    phase: "hasAwaitedPending" | "budget_exhausted",
+  ): Promise<boolean> {
+    try {
+      return await source.hasAwaitedPending();
+    } catch (cause) {
+      this.events.emit("run.notification.source_failed", {
+        step,
+        sourceIndex: -1,
+        message: errorMessage(cause),
+        phase,
+      });
+      return false;
+    }
+  }
+
+  private waitForCommandEnqueuedAfter(
+    sequence: number,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const alreadyQueued = this.events
+      .all()
+      .some(
+        (event) =>
+          event.sequence > sequence && event.type === "run.command.enqueued",
+      );
+    if (alreadyQueued || signal.aborted) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      let settled = false;
+      let unsubscribe: (() => void) | undefined;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        unsubscribe?.();
+        signal.removeEventListener("abort", finish);
+        resolve();
+      };
+      unsubscribe = this.events.subscribe((event) => {
+        if (event.sequence <= sequence) return;
+        if (event.type === "run.command.enqueued") finish();
+      });
+      signal.addEventListener("abort", finish, { once: true });
+    });
+  }
+
+  private waitForAbort(signal: AbortSignal): Promise<void> {
+    if (signal.aborted) return Promise.resolve();
+    return new Promise((resolve) => {
+      signal.addEventListener("abort", () => resolve(), { once: true });
+    });
+  }
+
   private consumePendingCommands(step: number): RunResult | undefined {
     while (this.commandQueue.length > 0) {
       const command = this.commandQueue.shift()!;
@@ -1298,7 +1458,11 @@ class AfterTurnStreamingRun implements StreamingRunHandle {
 
   private complete(
     reason: Extract<RunStopReason, "final_answer">,
-    payload: { message?: string },
+    payload: {
+      message?: string;
+      revivalTurnsUsed?: number;
+      forcedContinuationTurnsUsed?: { revival: number };
+    },
   ): RunResult {
     this.setState("completed", reason);
     const assessment = assessRun(this.events.all(), {
@@ -1532,6 +1696,12 @@ function validateOptionalPositiveInteger(
   value: number | undefined,
 ): void {
   if (value !== undefined) validatePositiveInteger(name, value);
+}
+
+function validateNonNegativeInteger(name: string, value: number): void {
+  if (!Number.isInteger(value) || value < 0) {
+    throw new Error(`${name} must be a non-negative integer.`);
+  }
 }
 
 function omitUndefined(

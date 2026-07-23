@@ -11,6 +11,15 @@ See [../trace/raw-trace.md](../trace/raw-trace.md) for raw event evidence.
 
 - Status: Verified
 - Date: 2026-07-23
+- Scope: route review for Streaming Runtime awaited-task revival; RunStore
+  append/finish, session layout, checkpoint, and task durability contracts did
+  not change. Streaming `waiting_tasks` remains process-local.
+- Read: Streaming run-store boundary and existing session/task durability
+  contracts.
+- Tests: Streaming Runtime suite (20) and package typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-23
 - Scope: route review for WorkspaceContext TaskManager/inbox pairing; session
   files, run lookup, compaction artifacts, and IM persistence limits did not
   change.

@@ -14,6 +14,15 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md),
 
 - Status: Verified
 - Date: 2026-07-23
+- Scope: route review for Streaming Runtime awaited-task parity. Core's
+  `TaskRevivalSource`, `NotificationSource`, `waiting_tasks`, and forced
+  continuation contracts did not change; the edge runtime now consumes them.
+- Read: Core task-revival types/run-loop and Streaming Runtime implementation.
+- Tests: Core run suite (129), Streaming Runtime suite (20), and both package
+  typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-23
 - Scope: the repeated-target guard now records whether a failure is
   argument-correctable or target-invariant. Changed arguments may retry the
   former; exact repeats, target failures, and expected denials remain guarded.
