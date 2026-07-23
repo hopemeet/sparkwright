@@ -10,6 +10,17 @@ See also [../maps/capabilities/agents.md](../maps/capabilities/agents.md), [../m
 
 - Status: Verified
 - Date: 2026-07-23
+- Scope: `TaskManager` now publishes post-store-write created, started, and
+  terminal snapshots through an independent lifecycle observer. Observer
+  failure cannot change task truth or consume the parent actor inbox; canonical
+  completion policy remains present on every new task.
+- Read: task manager/store transitions, lifecycle observer exports,
+  WorkspaceContext composition, Host event projection, and focused tests.
+- Tests: Agent Runtime task suite (76 tests), package typecheck, and downstream
+  Host lifecycle coverage passed.
+
+- Status: Verified
+- Date: 2026-07-23
 - Scope: task completion now separates canonical `completionPolicy`
   (`inline | awaited | detached`) from the mutable `awaited` keep-alive bit.
   Async task receipts expose actual mode, parent wait behavior, completion

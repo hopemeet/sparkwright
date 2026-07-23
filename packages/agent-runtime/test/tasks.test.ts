@@ -36,6 +36,7 @@ import {
   type TaskFailedNotificationInput,
   type TaskToolOptions,
   type TaskTerminalActorNotificationInput,
+  type TaskLifecycleUpdate,
   type TaskOutputChunk,
   type WorkflowProgressNotificationInput,
   type WorkflowWaitingNotificationInput,
@@ -250,6 +251,95 @@ describe("TaskManager", () => {
     const record = await handle.wait();
     expect(record.status).toBe("failed");
     expect(record.error?.message).toBe("nope");
+  });
+
+  it.each([
+    ["inline", false],
+    ["awaited", true],
+    ["detached", false],
+  ] as const)(
+    "publishes created, started, and terminal %s snapshots independently from the actor inbox",
+    async (completionPolicy, awaited) => {
+      const sink = new InMemoryActorNotificationQueue();
+      const updates: TaskLifecycleUpdate[] = [];
+      const manager = new TaskManager({
+        store: new InMemoryTaskStore(),
+        notificationSink: sink,
+        lifecycleObserver: {
+          onTaskUpdated(update) {
+            updates.push(update);
+          },
+        },
+      });
+
+      const handle = manager.spawn({
+        parentRunId: PARENT_RUN_ID,
+        kind: "agent",
+        completionPolicy,
+        awaited,
+        runner: async () => "done",
+      });
+      await handle.wait();
+
+      expect(
+        updates.map(({ transition, record }) => ({
+          transition,
+          status: record.status,
+          completionPolicy: record.completionPolicy,
+        })),
+      ).toEqual([
+        {
+          transition: "created",
+          status: "pending",
+          completionPolicy,
+        },
+        {
+          transition: "started",
+          status: "running",
+          completionPolicy,
+        },
+        {
+          transition: "terminal",
+          status: "completed",
+          completionPolicy,
+        },
+      ]);
+      expect(sink.peek()).toHaveLength(1);
+    },
+  );
+
+  it("keeps TaskStore authoritative when a lifecycle observer fails", async () => {
+    const lifecycleErrors: TaskLifecycleUpdate[] = [];
+    const manager = new TaskManager({
+      store: new InMemoryTaskStore(),
+      lifecycleObserver: {
+        onTaskUpdated() {
+          throw new Error("subscriber unavailable");
+        },
+      },
+      onLifecycleError(update) {
+        lifecycleErrors.push(update);
+        throw new Error("diagnostic callback also unavailable");
+      },
+    });
+
+    const handle = manager.spawn({
+      parentRunId: PARENT_RUN_ID,
+      kind: "observer-failure",
+      completionPolicy: "awaited",
+      awaited: true,
+      runner: async () => "persisted",
+    });
+
+    await expect(handle.wait()).resolves.toMatchObject({
+      status: "completed",
+      result: "persisted",
+    });
+    expect(lifecycleErrors.map((update) => update.transition)).toEqual([
+      "created",
+      "started",
+      "terminal",
+    ]);
   });
 
   it("lets external adapters fail a running task and notifies once", async () => {

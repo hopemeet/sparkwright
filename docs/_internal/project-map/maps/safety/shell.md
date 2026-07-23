@@ -11,6 +11,16 @@ See [workspace-writes.md](workspace-writes.md) and [../../modules/coding-tools.m
 
 - Status: Verified
 - Date: 2026-07-23
+- Scope: Shell tasks participate in the common Host-level lifecycle stream via
+  canonical task records. Event payloads omit stdout/stderr and arbitrary
+  metadata; output remains available through authorized `task.output`.
+- Read: Shell background adoption, TaskManager lifecycle observer, Host safe
+  projection, and protocol output reference.
+- Tests: Agent Runtime tasks, Host lifecycle/protocol coverage, affected
+  typechecks, and schema validation passed.
+
+- Status: Verified
+- Date: 2026-07-23
 - Scope: explicit and promoted Shell handoffs now return a structured task
   receipt. Explicit background reports detached/no-parent-wait/opportunity
   observation; timeout promotion reports awaited/parent-wait/automatic-once.

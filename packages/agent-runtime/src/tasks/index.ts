@@ -24,6 +24,9 @@ export { InMemoryTaskStore } from "./store.js";
 
 export type {
   AdoptRunningTaskInput,
+  TaskLifecycleObserver,
+  TaskLifecycleTransition,
+  TaskLifecycleUpdate,
   TaskManagerOptions,
   TaskRetentionOptions,
   TaskRunner,

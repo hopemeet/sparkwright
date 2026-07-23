@@ -11,6 +11,14 @@ See [approvals.md](approvals.md) and [../runtime/tool-orchestration.md](../runti
 
 - Status: Verified
 - Date: 2026-07-23
+- Scope: route review for Host task lifecycle projection. The bounded event
+  excludes arbitrary task metadata and output, and does not change leases,
+  write attribution, approval, rollback, or untracked-write markers.
+- Read: lifecycle projection/redaction and workspace-write ownership boundary.
+- Tests: Host projection/protocol coverage and affected typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-23
 - Scope: route review for Shell/Agent task completion policy and parent inbox
   consumption; workspace leases, managed-write attribution, rollback, and
   untracked background markers did not change.

@@ -105,6 +105,18 @@ export interface AdoptRunningTaskInput {
   controller?: AbortController;
 }
 
+export type TaskLifecycleTransition = "created" | "started" | "terminal";
+
+export interface TaskLifecycleUpdate {
+  transition: TaskLifecycleTransition;
+  /** Snapshot captured after the corresponding TaskStore write. */
+  record: TaskRecord;
+}
+
+export interface TaskLifecycleObserver {
+  onTaskUpdated(update: TaskLifecycleUpdate): void;
+}
+
 /**
  * Options for {@link TaskManager}.
  *
@@ -129,6 +141,14 @@ export interface TaskManagerOptions {
    * result inline, preventing a duplicate parent-context injection.
    */
   notificationInbox?: ActorInbox;
+  /**
+   * Independent lifecycle observer invoked after created, started, and terminal
+   * TaskStore writes. It is not the parent actor inbox and must never consume
+   * actor notifications.
+   */
+  lifecycleObserver?: TaskLifecycleObserver;
+  /** Called when `lifecycleObserver` throws. Task state remains authoritative. */
+  onLifecycleError?(update: TaskLifecycleUpdate, cause: unknown): void;
   /**
    * Called when {@link TaskManagerOptions.notificationSink}.deliver throws.
    * Defaults to a silent swallow — sinks are best-effort; task state in the
@@ -164,6 +184,11 @@ export class TaskManager {
   ) => void;
   private readonly notificationSink?: ActorNotificationSink;
   private readonly notificationInbox?: ActorInbox;
+  private readonly lifecycleObserver?: TaskLifecycleObserver;
+  private readonly onLifecycleError?: (
+    update: TaskLifecycleUpdate,
+    cause: unknown,
+  ) => void;
   private readonly onSinkError?: (taskId: TaskId, cause: unknown) => void;
   private readonly terminalResolvers = new Map<
     TaskId,
@@ -183,6 +208,8 @@ export class TaskManager {
     this.notificationSink = options.notificationSink;
     this.notificationInbox =
       options.notificationInbox ?? actorInboxFromSink(options.notificationSink);
+    this.lifecycleObserver = options.lifecycleObserver;
+    this.onLifecycleError = options.onLifecycleError;
     this.onSinkError = options.onSinkError;
   }
 
@@ -225,6 +252,7 @@ export class TaskManager {
       awaited: input.awaited,
       metadata: input.metadata,
     });
+    this.emitLifecycle("created", record);
     const controller = new AbortController();
     const promise = new Promise<TaskRecord>((resolve) => {
       this.terminalResolvers.set(id, resolve);
@@ -245,7 +273,7 @@ export class TaskManager {
    */
   adoptRunning(input: AdoptRunningTaskInput): TaskHandle {
     const id = createTaskId();
-    this.store.create({
+    const created = this.store.create({
       id,
       parentRunId: input.parentRunId,
       kind: input.kind,
@@ -254,6 +282,7 @@ export class TaskManager {
       awaited: input.awaited,
       metadata: input.metadata,
     });
+    this.emitLifecycle("created", created);
     const controller = input.controller ?? new AbortController();
     const promise = new Promise<TaskRecord>((resolve) => {
       this.terminalResolvers.set(id, resolve);
@@ -263,6 +292,7 @@ export class TaskManager {
       status: "running",
       startedAt: new Date().toISOString(),
     });
+    this.emitLifecycle("started", running);
     return this.makeHandle(id, running, controller, promise);
   }
 
@@ -534,7 +564,8 @@ export class TaskManager {
     payload: unknown,
   ): Promise<void> {
     const startedAt = new Date().toISOString();
-    this.store.update(id, { status: "running", startedAt });
+    const running = this.store.update(id, { status: "running", startedAt });
+    this.emitLifecycle("started", running);
 
     const runnerController: TaskRunnerController = {
       taskId: id,
@@ -588,6 +619,7 @@ export class TaskManager {
       ...patch,
       completedAt: new Date().toISOString(),
     });
+    this.emitLifecycle("terminal", terminal);
     this.runners.delete(id);
     this.promotionWaiters.delete(id);
     const notificationDelivery = this.notify(terminal);
@@ -616,6 +648,26 @@ export class TaskManager {
       this.onSinkError?.(record.id, cause);
     }
   }
+
+  private emitLifecycle(
+    transition: TaskLifecycleTransition,
+    record: TaskRecord,
+  ): void {
+    if (!this.lifecycleObserver) return;
+    const update: TaskLifecycleUpdate = {
+      transition,
+      record: cloneTaskRecord(record),
+    };
+    try {
+      this.lifecycleObserver.onTaskUpdated(update);
+    } catch (cause) {
+      try {
+        this.onLifecycleError?.(update, cause);
+      } catch {
+        // Diagnostics must not turn an observer failure into a task failure.
+      }
+    }
+  }
 }
 
 function actorInboxFromSink(
@@ -628,6 +680,23 @@ function actorInboxFromSink(
     typeof candidate.waitUntilAvailable === "function"
     ? (sink as ActorNotificationSink & ActorInbox)
     : undefined;
+}
+
+function cloneTaskRecord(record: TaskRecord): TaskRecord {
+  return {
+    ...record,
+    metadata: { ...record.metadata },
+    ...(record.error
+      ? {
+          error: {
+            ...record.error,
+            ...(record.error.metadata
+              ? { metadata: { ...record.error.metadata } }
+              : {}),
+          },
+        }
+      : {}),
+  };
 }
 
 function isTerminal(status: TaskRecord["status"]): boolean {

@@ -16,6 +16,7 @@ import {
   FileWorkflowControlInbox,
   FileWorkflowStore,
   createTaskId,
+  type TaskManager,
   type WorkflowRunId,
 } from "@sparkwright/agent-runtime";
 import { CronStore, defaultCronRoot } from "@sparkwright/cron";
@@ -815,6 +816,7 @@ describe("host protocol", () => {
             "task.stop",
             "task.join",
             "task.promote",
+            "task.events",
             "workflow.list",
             "workflow.resume",
           ]),
@@ -967,6 +969,124 @@ describe("host protocol", () => {
       });
     } finally {
       pair.close();
+      await rmWhenReady(workspace);
+    }
+  });
+
+  it("forwards bounded task.updated events over a host connection", async () => {
+    const workspace = await mkdtemp(
+      join(tmpdir(), "sparkwright-host-task-events-"),
+    );
+    const pair = createConnectionPair();
+    const service = createHostService();
+    try {
+      serveConnection(pair.hostSide, {
+        hostService: service,
+        workspaceRoot: workspace,
+        defaultModel: "deterministic",
+      });
+      pair.clientSend({
+        envelope: "request",
+        id: "h",
+        kind: "handshake",
+        timestamp: TIMESTAMP,
+        payload: {
+          protocolVersion: PROTOCOL_VERSION,
+          client: { name: "test", version: "0.0.0" },
+        },
+      });
+      await pair.waitFor((message) => message.envelope === "response");
+      pair.clientSend({
+        envelope: "request",
+        id: "task_event_parent",
+        kind: "run.start",
+        timestamp: TIMESTAMP,
+        payload: {
+          goal: "establish a parent route for lifecycle forwarding",
+          sessionId: "session_task_event_protocol",
+        },
+      });
+      const started = await pair.waitFor(
+        (message) =>
+          message.envelope === "response" && message.id === "task_event_parent",
+      );
+      expect(started).toMatchObject({ envelope: "response", ok: true });
+      if (started.envelope !== "response" || !started.ok) return;
+      const runId = String(started.result.runId);
+      await pair.waitFor(
+        (message) =>
+          message.envelope === "event" &&
+          (message.kind === "run.completed" || message.kind === "run.failed"),
+      );
+
+      const runtime = [
+        ...(
+          service as unknown as {
+            runtimes: Set<HostRuntime>;
+          }
+        ).runtimes,
+      ][0]!;
+      const manager = (
+        runtime as unknown as {
+          tasks: { manager: TaskManager };
+        }
+      ).tasks.manager;
+      const handle = manager.spawn({
+        parentRunId: runId as RunId,
+        kind: "protocol-lifecycle",
+        title: "connection forwarding",
+        completionPolicy: "detached",
+        awaited: false,
+        metadata: { stdout: "must not be forwarded" },
+        runner: async () => ({
+          message: "safe summary",
+          accessToken: "must-not-be-forwarded",
+        }),
+      });
+      await handle.wait();
+
+      const terminal = await pair.waitFor(
+        (message) =>
+          message.envelope === "event" &&
+          message.kind === "task.updated" &&
+          message.payload.taskId === handle.record.id &&
+          message.payload.transition === "terminal",
+      );
+      expect(terminal).toMatchObject({
+        envelope: "event",
+        kind: "task.updated",
+        payload: {
+          parentRunId: runId,
+          sessionId: "session_task_event_protocol",
+          status: "completed",
+          completionPolicy: "detached",
+        },
+      });
+      const serialized = JSON.stringify(terminal);
+      expect(serialized).not.toContain("must-not-be-forwarded");
+      expect(serialized).not.toContain("must not be forwarded");
+      expect(
+        pair
+          .clientMessages()
+          .filter(
+            (message) =>
+              message.envelope === "event" &&
+              message.kind === "task.updated" &&
+              message.payload.taskId === handle.record.id,
+          )
+          .map(
+            (message) =>
+              (
+                message as Extract<
+                  HostMessage,
+                  { envelope: "event"; kind: "task.updated" }
+                >
+              ).payload.transition,
+          ),
+      ).toEqual(["created", "started", "terminal"]);
+    } finally {
+      pair.close();
+      await service.shutdown();
       await rmWhenReady(workspace);
     }
   });

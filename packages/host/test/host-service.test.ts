@@ -2,6 +2,8 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import type { ActorInbox, TaskManager } from "@sparkwright/agent-runtime";
+import type { HostEvent } from "@sparkwright/protocol";
 import { createHostService } from "../src/host-service.js";
 import type { HostImPrincipal } from "../src/im-control.js";
 
@@ -208,6 +210,91 @@ describe("HostService", () => {
     await service.shutdown();
   });
 
+  it("publishes detached task lifecycle events after the parent run completes without consuming its actor inbox", async () => {
+    const workspace = await mkdtemp(
+      join(tmpdir(), "sparkwright-service-task-events-"),
+    );
+    tempDirs.push(workspace);
+    const events: HostEvent[] = [];
+    const terminalRun = deferred<void>();
+    const service = createHostService();
+    const runtime = service.createRuntime({
+      workspaceRoot: workspace,
+      defaultModel: "deterministic",
+      emit: (event) => {
+        events.push(event);
+        if (event.kind === "run.completed" || event.kind === "run.failed") {
+          terminalRun.resolve();
+        }
+      },
+    });
+
+    try {
+      const started = await runtime.startRun({
+        goal: "establish a completed parent run for task event routing",
+        sessionId: "service_task_events",
+      });
+      expect(started.ok).toBe(true);
+      if (!started.ok) return;
+      await terminalRun.promise;
+      await waitUntil(() => runtime.executionIdentity() === undefined);
+      expect(runtime.executionIdentity()).toBeUndefined();
+
+      const taskRuntime = (
+        runtime as unknown as {
+          tasks: { manager: TaskManager; notifications: ActorInbox };
+        }
+      ).tasks;
+      const handle = taskRuntime.manager.spawn({
+        parentRunId: started.runId as Parameters<
+          TaskManager["spawn"]
+        >[0]["parentRunId"],
+        kind: "agent",
+        title: "detached after parent completion",
+        completionPolicy: "detached",
+        awaited: false,
+        runner: async () => ({ summary: "safe result", secret: "hidden" }),
+      });
+      await handle.wait();
+
+      const updates = events.filter(
+        (event): event is HostEvent & { kind: "task.updated" } =>
+          event.kind === "task.updated" &&
+          event.payload.taskId === handle.record.id,
+      );
+      expect(
+        updates.map((event) => [
+          event.payload.transition,
+          event.payload.status,
+        ]),
+      ).toEqual([
+        ["created", "pending"],
+        ["started", "running"],
+        ["terminal", "completed"],
+      ]);
+      expect(updates.at(-1)?.payload).toMatchObject({
+        parentRunId: started.runId,
+        sessionId: "service_task_events",
+        completionPolicy: "detached",
+        awaited: false,
+        outputRef: { method: "task.output", taskId: handle.record.id },
+      });
+      expect(updates.at(-1)?.payload).not.toHaveProperty("result");
+      expect(updates.at(-1)?.payload).not.toHaveProperty("metadata");
+      expect(await taskRuntime.notifications.peek()).toHaveLength(1);
+      expect(runtime.getTask(handle.record.id)).toMatchObject({
+        ok: true,
+        task: {
+          status: "completed",
+          completionPolicy: "detached",
+          result: { summary: "safe result", secret: "hidden" },
+        },
+      });
+    } finally {
+      await service.shutdown();
+    }
+  });
+
   it("owns IM binding, subscription, dispatch, replay, and retention", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "sparkwright-service-im-"));
     tempDirs.push(workspace);
@@ -316,4 +403,14 @@ function deferred<T>() {
     resolve = resolvePromise;
   });
   return { promise, resolve };
+}
+
+async function waitUntil(predicate: () => boolean): Promise<void> {
+  const deadline = Date.now() + 1_000;
+  while (!predicate()) {
+    if (Date.now() >= deadline) {
+      throw new Error("condition did not become true before timeout");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
 }

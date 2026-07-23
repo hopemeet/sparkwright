@@ -11,6 +11,14 @@ See [../../modules/mcp-adapter.md](../../modules/mcp-adapter.md).
 
 - Status: Verified
 - Date: 2026-07-23
+- Scope: route review for Host task lifecycle events and SDK forwarding. MCP
+  discovery, transport, trust, approval, and tool projection are unchanged.
+- Read: Host lifecycle event composition and MCP capability boundary.
+- Tests: Host lifecycle/protocol coverage and affected typechecks passed; no
+  MCP source changed.
+
+- Status: Verified
+- Date: 2026-07-23
 - Scope: route review for Host task receipt/observation changes; MCP discovery,
   transport, approval, and tool projection contracts did not change.
 - Read: Host runtime task/Agent assembly boundary and MCP ownership notes.

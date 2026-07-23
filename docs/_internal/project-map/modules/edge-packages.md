@@ -29,6 +29,9 @@ contracts, and focused checklists that no longer fit here.
 
 ## Ownership Summary
 
+- `sdk-core` exposes `task.updated` as a typed client event. The SDK does not
+  treat live lifecycle push as durable truth; products reconcile task state
+  through `task.list` and retrieve output through `task.output`.
 - ACP packages bridge the host/runtime/protocol world to ACP sessions and
   external ACP workers. Route ACP server changes through host/protocol/session
   maps; route external worker tool changes through agents and tool orchestration.
@@ -141,6 +144,17 @@ contracts, and focused checklists that no longer fit here.
   source exports. It should not be used as the sole authority for behavior.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-23
+- Scope: SDK Core now exposes typed `task.updated` events while keeping
+  `task.list`/`task.output` as reconciliation/detail APIs. Other transports,
+  providers, ACP, server-runtime, Streaming Runtime, and IM Gateway behavior
+  are unchanged in this stage.
+- Read: SDK client event map/tests, protocol lifecycle event, Host forwarding,
+  and edge ownership boundaries.
+- Tests: SDK Core 11/11, Protocol 6/6, Host lifecycle/protocol coverage, and
+  affected typechecks passed.
 
 - Status: Verified
 - Date: 2026-07-23

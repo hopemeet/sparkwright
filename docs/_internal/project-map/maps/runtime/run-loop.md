@@ -11,6 +11,17 @@ See [tool-orchestration.md](tool-orchestration.md) and [../trace/raw-trace.md](.
 
 - Status: Verified
 - Date: 2026-07-23
+- Scope: Host task lifecycle push is independent from Core task revival.
+  `task.updated` observers never drain parent actor notifications or alter
+  `waiting_tasks`; detached lifecycle events can remain externally observable
+  after parent terminality without reviving that run.
+- Read: TaskManager transition ordering, Host lifecycle hub/routing/projection,
+  and existing Core notification/revival bridge.
+- Tests: Agent Runtime task suite (76), Host lifecycle/protocol suites (67),
+  affected typechecks, and schema validation passed.
+
+- Status: Verified
+- Date: 2026-07-23
 - Scope: Streaming Runtime now implements the previously missing awaited-task
   terminal gate: non-consuming readiness, `waiting_tasks`, command/abort races,
   step-start notification injection, and bounded revival turns beyond

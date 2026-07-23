@@ -11,6 +11,16 @@ See [../safety/workspace-writes.md](../safety/workspace-writes.md), [../safety/s
 
 - Status: Verified
 - Date: 2026-07-23
+- Scope: task orchestration now emits an independent post-store-write lifecycle
+  snapshot at created, started, and terminal transitions. This observer cannot
+  alter tool results or consume parent actor notifications.
+- Read: TaskManager execution/terminal ordering, Host lifecycle hub/projection,
+  and existing task tool observation paths.
+- Tests: Agent Runtime task suite (76), Host lifecycle/protocol coverage, and
+  affected typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-23
 - Scope: task/shell/Agent promotion outputs now share an explicit async receipt
   contract, and synchronous terminal observations consume the parent actor
   notice they supersede. Canonical completion policy is distinct from the

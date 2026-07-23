@@ -13,6 +13,18 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 
 - Status: Verified
 - Date: 2026-07-23
+- Scope: WorkspaceContext owns an independent task lifecycle hub and
+  HostService projects post-store-write transitions as bounded `task.updated`
+  events. Parent-run routes survive Core terminality while the runtime facade is
+  retained; actor notification delivery remains a separate consumer channel,
+  and live push is best-effort with `task.list` as reconciliation truth.
+- Read: TaskManager observer, WorkspaceContext, HostService routing, task
+  projections, server capability advertisement, protocol schema, and tests.
+- Tests: Host lifecycle/projection/protocol suites (67 tests), affected package
+  typechecks, and schema validation passed.
+
+- Status: Verified
+- Date: 2026-07-23
 - Scope: Host task composition now pairs the shared TaskManager sink with its
   parent actor inbox so foreground-inline/manual-wait results cannot be injected
   again. Shell handoff and dynamic `spawn_agent` promotion persist canonical

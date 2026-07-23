@@ -12,6 +12,16 @@ and [../session/session-store.md](../session/session-store.md) for session layou
 
 - Status: Verified
 - Date: 2026-07-23
+- Scope: Host `task.updated` is a bounded client lifecycle projection, not a
+  new Core raw-trace event. Existing `task.*`, `subagent.*`, correlation, and
+  append-only trace contracts are unchanged.
+- Read: Host lifecycle emitter/projection, protocol event union, and raw-trace
+  ownership boundary.
+- Tests: Host lifecycle/protocol coverage and affected typechecks passed; no
+  trace schema changed.
+
+- Status: Verified
+- Date: 2026-07-23
 - Scope: route review for Task/Shell/Agent async receipts and parent observation
   dedupe; existing `task.*`, `subagent.*`, and workspace marker event contracts
   did not change.

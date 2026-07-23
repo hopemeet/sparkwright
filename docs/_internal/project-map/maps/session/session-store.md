@@ -11,6 +11,17 @@ See [../trace/raw-trace.md](../trace/raw-trace.md) for raw event evidence.
 
 - Status: Verified
 - Date: 2026-07-23
+- Scope: `task.updated` adds only a process-live Host route and event
+  projection. TaskStore records remain durable truth; no session layout,
+  checkpoint, replay log, external delivery cursor, or cross-process task
+  execution contract changed.
+- Read: WorkspaceContext task ownership, HostService parent-run/session routing,
+  protocol snapshots, and task-list reconciliation.
+- Tests: Host lifecycle/protocol coverage, affected typechecks, and schema
+  validation passed.
+
+- Status: Verified
+- Date: 2026-07-23
 - Scope: route review for Streaming Runtime awaited-task revival; RunStore
   append/finish, session layout, checkpoint, and task durability contracts did
   not change. Streaming `waiting_tasks` remains process-local.

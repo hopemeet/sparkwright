@@ -1,6 +1,8 @@
 import { join, resolve } from "node:path";
-import { createSessionId } from "@sparkwright/core";
+import { createId, createSessionId } from "@sparkwright/core";
+import type { TaskLifecycleUpdate } from "@sparkwright/agent-runtime";
 import type {
+  HostEvent,
   ImApprovalResolveRequestPayload,
   ImBindRequestPayload,
   ImCancelRequestPayload,
@@ -25,6 +27,7 @@ import type {
   RuntimeOptions,
 } from "./runtime/contracts.js";
 import { WorkspaceContext, workspaceContextKey } from "./workspace-context.js";
+import { taskUpdatedEventPayload } from "./runtime/task-projections.js";
 import { WorkspaceLeaseCoordinator } from "./workspace-lease-coordinator.js";
 import {
   acknowledgeHostImDeliveries,
@@ -52,6 +55,12 @@ export class HostService {
     WorkspaceLeaseCoordinator
   >();
   private readonly runtimes = new Set<HostRuntime>();
+  private readonly runtimeEmits = new Map<
+    HostRuntime,
+    (event: HostEvent) => void
+  >();
+  private readonly runtimeContextKeys = new Map<HostRuntime, string>();
+  private readonly taskRunRoutes = new Map<string, HostTaskEventRoute>();
   private draining = false;
   private readonly startOutcomes = new Map<string, HostLaneOutcome>();
   private readonly coordinator: ExecutionLaneCoordinator<
@@ -124,10 +133,14 @@ export class HostService {
       new WorkspaceLeaseCoordinator();
     this.workspaceLeases.set(workspaceRoot, lease);
     const key = workspaceContextKey({ workspaceRoot, sessionRootDir });
-    const context =
-      this.workspaceContexts.get(key) ??
-      new WorkspaceContext({ workspaceRoot, sessionRootDir }, lease);
-    this.workspaceContexts.set(key, context);
+    let context = this.workspaceContexts.get(key);
+    if (!context) {
+      context = new WorkspaceContext({ workspaceRoot, sessionRootDir }, lease);
+      context.taskLifecycle.subscribe((update) =>
+        this.publishTaskLifecycleUpdate(key, update),
+      );
+      this.workspaceContexts.set(key, context);
+    }
     const downstreamEmit = options.emit;
     const runtime = new HostRuntime({
       ...options,
@@ -142,6 +155,8 @@ export class HostService {
       },
     });
     this.runtimes.add(runtime);
+    this.runtimeEmits.set(runtime, downstreamEmit);
+    this.runtimeContextKeys.set(runtime, key);
     return runtime;
   }
 
@@ -149,6 +164,11 @@ export class HostService {
     if (shouldRetainHostImRuntime(this.imControl, runtime)) return;
     runtime.cleanup();
     this.runtimes.delete(runtime);
+    this.runtimeEmits.delete(runtime);
+    this.runtimeContextKeys.delete(runtime);
+    for (const [runId, route] of this.taskRunRoutes) {
+      if (route.runtime === runtime) this.taskRunRoutes.delete(runId);
+    }
   }
 
   bindImSession(
@@ -326,6 +346,9 @@ export class HostService {
     this.draining = true;
     await Promise.all([...this.runtimes].map((runtime) => runtime.drain()));
     this.runtimes.clear();
+    this.runtimeEmits.clear();
+    this.runtimeContextKeys.clear();
+    this.taskRunRoutes.clear();
   }
 
   private async coordinateStart(
@@ -334,11 +357,15 @@ export class HostService {
   ): Promise<HostStartRunOutcome> {
     const sessionId = payload.sessionId ?? createSessionId();
     const normalized = { ...payload, sessionId };
-    return (await this.submit(runtime, sessionId, {
+    const outcome = (await this.submit(runtime, sessionId, {
       kind: "start",
       runtime,
       payload: normalized,
     })) as HostStartOutcome;
+    if (outcome.ok && runtime instanceof HostRuntime) {
+      this.rememberTaskRunRoute(runtime, outcome.runId, sessionId);
+    }
+    return outcome;
   }
 
   private async coordinateResume(
@@ -347,11 +374,63 @@ export class HostService {
   ): Promise<HostResumeRunOutcome> {
     const resolved = await runtime.resolveResumeSession(payload);
     if (!resolved.ok) return resolved;
-    return (await this.submit(runtime, resolved.sessionId, {
+    const outcome = (await this.submit(runtime, resolved.sessionId, {
       kind: "resume",
       runtime,
       payload,
     })) as HostResumeOutcome;
+    if (outcome.ok && runtime instanceof HostRuntime) {
+      this.rememberTaskRunRoute(runtime, outcome.runId, resolved.sessionId);
+    }
+    return outcome;
+  }
+
+  private publishTaskLifecycleUpdate(
+    contextKey: string,
+    update: TaskLifecycleUpdate,
+  ): void {
+    let route = this.taskRunRoutes.get(update.record.parentRunId);
+    if (!route) {
+      for (const runtime of this.runtimes) {
+        if (this.runtimeContextKeys.get(runtime) !== contextKey) continue;
+        const identity = runtime.executionIdentity();
+        if (!identity?.runIds.includes(update.record.parentRunId)) continue;
+        route = {
+          runtime,
+          contextKey,
+          ...(identity.sessionId ? { sessionId: identity.sessionId } : {}),
+        };
+        this.taskRunRoutes.set(update.record.parentRunId, route);
+        break;
+      }
+    }
+    if (!route || route.contextKey !== contextKey) return;
+    const emit = this.runtimeEmits.get(route.runtime);
+    if (!emit) return;
+    const event: HostEvent = {
+      envelope: "event",
+      id: createId("evt"),
+      kind: "task.updated",
+      timestamp: new Date().toISOString(),
+      payload: taskUpdatedEventPayload(update, route.sessionId),
+    };
+    try {
+      // Intentionally bypass recordHostImEvent. Stage 4 owns the separately
+      // authorized external-delivery projection.
+      emit(event);
+    } catch {
+      // Live push is best-effort; task.list remains the reconciliation source.
+    }
+  }
+
+  private rememberTaskRunRoute(
+    runtime: HostRuntime,
+    runId: string,
+    sessionId: string,
+  ): void {
+    const contextKey = this.runtimeContextKeys.get(runtime);
+    if (!contextKey) return;
+    this.taskRunRoutes.set(runId, { runtime, contextKey, sessionId });
   }
 
   private async submit(
@@ -406,6 +485,12 @@ type HostLaneInput =
 type HostStartOutcome = HostStartRunOutcome;
 type HostResumeOutcome = HostResumeRunOutcome;
 type HostLaneOutcome = HostStartOutcome | HostResumeOutcome;
+
+interface HostTaskEventRoute {
+  runtime: HostRuntime;
+  contextKey: string;
+  sessionId?: string;
+}
 
 function runNotFound(
   runId: string,

@@ -609,6 +609,9 @@ export interface SessionCompactRequestPayload {
 export type TaskStatus =
   "pending" | "running" | "completed" | "failed" | "cancelled";
 
+export type TaskCompletionPolicy =
+  "inline" | "awaited" | "detached" | "unknown";
+
 export const TASK_STATUSES = [
   "pending",
   "running",
@@ -628,6 +631,7 @@ export interface TaskRecordSnapshot {
   parentRunId: string;
   kind: string;
   title?: string;
+  completionPolicy: TaskCompletionPolicy;
   awaited: boolean;
   status: TaskStatus;
   createdAt: string;
@@ -1202,6 +1206,7 @@ export type EventKind =
   | "host.ready"
   | "host.log"
   | "run.event"
+  | "task.updated"
   | "approval.requested"
   | "run.continuation"
   | "run.completed"
@@ -1236,6 +1241,30 @@ export interface HostLogEventPayload {
 export interface RunEventPayload {
   runId: string;
   event: unknown;
+}
+
+export interface TaskUpdatedEventPayload {
+  taskId: string;
+  parentRunId: string;
+  sessionId?: string;
+  transition: "created" | "started" | "terminal";
+  kind: string;
+  title?: string;
+  completionPolicy: TaskCompletionPolicy;
+  awaited: boolean;
+  status: TaskStatus;
+  createdAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  resultSummary?: string;
+  error?: {
+    code: string;
+    message: string;
+  };
+  outputRef: {
+    method: "task.output";
+    taskId: string;
+  };
 }
 
 export type ApprovalSubjectPayload =
@@ -1362,6 +1391,7 @@ export type HostEvent =
   | HostEventBase<"host.ready", HostReadyEventPayload>
   | HostEventBase<"host.log", HostLogEventPayload>
   | HostEventBase<"run.event", RunEventPayload>
+  | HostEventBase<"task.updated", TaskUpdatedEventPayload>
   | HostEventBase<"approval.requested", ApprovalRequestedEventPayload>
   | HostEventBase<"run.continuation", RunContinuationEventPayload>
   | HostEventBase<"run.completed", RunCompletedEventPayload>

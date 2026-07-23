@@ -9,6 +9,16 @@ cron, shell/task tools, and capability inspection.
 
 - Status: Verified
 - Date: 2026-07-23
+- Scope: Host handshake now advertises `task.events` for the independent
+  bounded lifecycle stream. Capability admission, discovery, approval, and
+  execution authority are unchanged.
+- Read: Host ready capabilities, protocol task event contract, and capability
+  ownership boundaries.
+- Tests: Host protocol coverage, affected typechecks, and schema validation
+  passed.
+
+- Status: Verified
+- Date: 2026-07-23
 - Scope: route review for structured Task/Shell/Agent async receipts and parent
   inbox consumption; capability admission, discovery, and snapshot contracts
   did not change.

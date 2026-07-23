@@ -11,6 +11,15 @@ See [workspace-writes.md](workspace-writes.md) and [shell.md](shell.md).
 
 - Status: Verified
 - Date: 2026-07-23
+- Scope: route review for bounded `task.updated` events. Events contain
+  Host-resolved routing plus safe task summaries and do not add authority;
+  approval subjects, decisions, and reuse semantics are unchanged.
+- Read: task lifecycle projection, Host routing, and approval boundary.
+- Tests: Host projection/protocol coverage, typechecks, and schema validation
+  passed.
+
+- Status: Verified
+- Date: 2026-07-23
 - Scope: route review for Task/Shell/Agent completion receipts; approval
   subjects, resolution, policy ordering, and remembered-decision semantics did
   not change.

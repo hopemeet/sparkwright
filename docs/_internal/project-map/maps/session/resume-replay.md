@@ -11,6 +11,17 @@ See [session-store.md](session-store.md) and [../runtime/context-compaction.md](
 
 - Status: Verified
 - Date: 2026-07-23
+- Scope: `task.updated` is process-live best-effort push. It is not appended to
+  session replay and has no durable cursor; reconnect recovery reads TaskStore
+  through `task.list`. Awaited suspension and cross-process limits are
+  unchanged.
+- Read: HostService live route retention, TaskStore snapshots, session replay,
+  and task revival boundaries.
+- Tests: Host lifecycle/protocol coverage, affected typechecks, and schema
+  validation passed.
+
+- Status: Verified
+- Date: 2026-07-23
 - Scope: route review for live task terminal observation semantics; task
   `waiting_tasks` remains process-local and no checkpoint/resume or durable
   detach contract changed.

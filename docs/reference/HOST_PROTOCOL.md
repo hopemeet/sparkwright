@@ -646,6 +646,11 @@ pass `parentRunId`. It does not subscribe to live output.
 
 **Response result:** `{ "tasks": TaskRecordSnapshot[] }`.
 
+Each task snapshot includes canonical `completionPolicy`
+(`inline`, `awaited`, `detached`, or `unknown` for legacy records) separately
+from the mutable `awaited` keep-alive bit. The durable task store remains the
+source of truth for reconnect reconciliation.
+
 ### `task.get`
 
 Fetch one durable background task record.
@@ -961,6 +966,35 @@ High-frequency events (e.g. `model.stream.chunk`) **may** be coalesced
 by the host into bursts before sending, to bound bandwidth. Coalescing
 must preserve event order and may not drop events; only batching is
 allowed.
+
+### `task.updated`
+
+Best-effort lifecycle push emitted after the task store records a `created`,
+`started`, or `terminal` transition. Clients must reconcile with `task.list`
+after reconnect because this event is not the task store and V1 does not replay
+missed live pushes.
+
+| Field              | Type   | Notes                                                                   |
+| ------------------ | ------ | ----------------------------------------------------------------------- |
+| `taskId`           | string | Stable task identity.                                                   |
+| `parentRunId`      | string | Parent Core run.                                                        |
+| `sessionId`        | string | Optional Host-resolved route.                                           |
+| `transition`       | enum   | `created` \| `started` \| `terminal`.                                   |
+| `kind`             | string | Bounded task kind.                                                      |
+| `title`            | string | Optional bounded title.                                                 |
+| `completionPolicy` | enum   | `inline` \| `awaited` \| `detached` \| `unknown`.                       |
+| `awaited`          | bool   | Current keep-alive bit, not historical observation policy.              |
+| `status`           | enum   | `pending` \| `running` \| `completed` \| `failed` \| `cancelled`.       |
+| timestamps         | string | `createdAt`, optional `startedAt`, and optional `completedAt`.          |
+| `resultSummary`    | string | Optional bounded/redacted terminal summary; never the full task result. |
+| `error`            | object | Optional bounded `{ code, message }`; error metadata is excluded.       |
+| `outputRef`        | object | `{ "method": "task.output", "taskId": string }`.                        |
+
+The payload never includes full result, stdout/stderr chunks, or arbitrary task
+metadata. Parent-agent actor notifications use a separate sink/inbox and are
+not drained by Host event subscribers. A detached task may still emit its
+terminal event after the parent run is terminal while the owning Host runtime
+route remains live.
 
 ### `approval.requested`
 

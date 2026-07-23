@@ -11,6 +11,15 @@ See [../../modules/agent-runtime.md](../../modules/agent-runtime.md) for related
 
 - Status: Verified
 - Date: 2026-07-23
+- Scope: route review for the Host `task.updated` channel. Cron schedules,
+  durable job records, runner execution, and Cron notification contracts did
+  not change.
+- Read: TaskManager observer boundary and Cron task/schedule ownership.
+- Tests: Agent Runtime task and Host lifecycle suites passed; no Cron source
+  changed.
+
+- Status: Verified
+- Date: 2026-07-23
 - Scope: route review for TaskRecord completion policy and terminal observation
   consumption; Cron ownership, scheduling, and runner contracts did not change.
 - Read: shared TaskManager/store additions and Cron task boundary.

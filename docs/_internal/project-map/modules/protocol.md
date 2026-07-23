@@ -11,6 +11,18 @@ See also [../maps/safety/approvals.md](../maps/safety/approvals.md) and [../maps
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-23
+- Scope: Host protocol now has typed `task.updated` created/started/terminal
+  events with bounded summaries, safe output references, and canonical
+  completion policy. `TaskRecordSnapshot` also carries completion policy;
+  `task.list` remains durable reconciliation and event payloads exclude full
+  results, output chunks, and arbitrary metadata.
+- Read: protocol types, JSON schema, Host projection/forwarding, SDK typed
+  event map, reference docs, and focused tests.
+- Tests: Protocol 6/6, SDK Core 11/11, Host lifecycle/protocol coverage,
+  affected typechecks, and schema validation passed.
+
+- Status: Verified
 - Date: 2026-07-21
 - Scope: `approval.requested` requires the producer-authored typed effect
   subject used by clients for safe session rules. `model.completed` is now

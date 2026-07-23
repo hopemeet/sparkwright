@@ -196,6 +196,7 @@ async function handleRequest(
             "task.stop",
             "task.join",
             "task.promote",
+            "task.events",
             "workflow.list",
             "workflow.resume",
             "workflow.control",

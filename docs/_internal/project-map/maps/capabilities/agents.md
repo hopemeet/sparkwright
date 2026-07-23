@@ -12,6 +12,17 @@ See [../../modules/agent-runtime.md](../../modules/agent-runtime.md) and [../../
 
 - Status: Verified
 - Date: 2026-07-23
+- Scope: foreground, promoted/awaited, and detached Agent tasks now publish the
+  same Host-level created/started/terminal lifecycle shape. The event channel
+  does not consume parent notifications, grant capability, or keep detached
+  parent runs alive.
+- Read: Agent task manager transitions, Host Agent task adoption, lifecycle
+  projection/routing, and protocol contract.
+- Tests: Agent Runtime tasks (76), Host lifecycle/protocol coverage, and
+  affected typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-23
 - Scope: foreground-timeout `spawn_agent` promotion now returns the canonical
   structured async receipt and persists awaited completion policy while
   preserving child lifecycle, usage, run-store, cancellation, and ledger
