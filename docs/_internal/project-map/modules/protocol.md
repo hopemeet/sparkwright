@@ -12,6 +12,14 @@ See also [../maps/safety/approvals.md](../maps/safety/approvals.md) and [../maps
 
 - Status: Verified
 - Date: 2026-07-23
+- Scope: ACP Adapter explicitly narrows the existing `task.updated` HostEvent
+  as a control-only event so the expanded protocol union remains exhaustively
+  handled. No protocol or schema shape changed.
+- Read: Protocol HostEvent union and ACP event mapping/tests.
+- Tests: ACP event 7/7, package typecheck, and package build passed.
+
+- Status: Verified
+- Date: 2026-07-23
 - Scope: IM external task notification reuses the existing `task.updated`
   HostEvent inside `ImDelivery` plus the existing subscribe/ack requests.
   Stable Host delivery keys are opaque strings to clients; no protocol type,

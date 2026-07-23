@@ -11,6 +11,15 @@ See [../trace/raw-trace.md](../trace/raw-trace.md) for raw event evidence.
 
 - Status: Verified
 - Date: 2026-07-23
+- Scope: ACP exhaustively ignores live `task.updated` control events rather
+  than appending them as agent text. Session persistence, TaskStore records,
+  replay, compaction, and reconciliation formats are unchanged.
+- Read: ACP event mapping, Protocol task lifecycle event, and session ownership
+  boundary.
+- Tests: ACP event 7/7, package typecheck, and package build passed.
+
+- Status: Verified
+- Date: 2026-07-23
 - Scope: terminal TaskStore transitions can now enter the exact live IM
   binding's bounded Host outbox after the parent run ends. The outbox, binding,
   acknowledgements, and stable delivery keys remain process-memory projections;

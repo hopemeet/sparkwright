@@ -181,6 +181,29 @@ describe("ACP event mapping", () => {
         }),
       ),
     ).toEqual([]);
+    expect(
+      hostEventToSessionUpdates({
+        envelope: "event",
+        id: "evt_task",
+        kind: "task.updated",
+        timestamp: "2026-01-01T00:00:00.000Z",
+        payload: {
+          taskId: "task_1",
+          parentRunId: "run_1",
+          sessionId: "session_1",
+          transition: "terminal",
+          kind: "agent",
+          title: "Detached task",
+          completionPolicy: "detached",
+          awaited: false,
+          status: "completed",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          completedAt: "2026-01-01T00:00:01.000Z",
+          resultSummary: "completed safely",
+          outputRef: { method: "task.output", taskId: "task_1" },
+        },
+      }),
+    ).toEqual([]);
   });
 
   it("maps tool lifecycle events to ACP tool updates", () => {

@@ -12,6 +12,16 @@ See [../../modules/agent-runtime.md](../../modules/agent-runtime.md) and [../../
 
 - Status: Verified
 - Date: 2026-07-23
+- Scope: ACP Adapter treats Agent-backed `task.updated` lifecycle push as a
+  control-only event. It does not synthesize ACP child/tool completion, so the
+  parent run remains the sole ACP-visible semantic result for awaited work and
+  detached tasks gain no accidental capability or notification channel.
+- Read: ACP Host-event mapper/tests, Host Agent task lifecycle projection, and
+  Agent capability boundary.
+- Tests: ACP event 7/7, package typecheck, and package build passed.
+
+- Status: Verified
+- Date: 2026-07-23
 - Scope: foreground, promoted/awaited, and detached Agent tasks now publish the
   same Host-level created/started/terminal lifecycle shape. The event channel
   does not consume parent notifications, grant capability, or keep detached

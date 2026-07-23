@@ -65,6 +65,8 @@ export function hostEventToSessionUpdates(
       ];
     case "run.continuation":
       return [];
+    case "task.updated":
+      return [];
     case "host.log":
       return [];
     case "host.ready":

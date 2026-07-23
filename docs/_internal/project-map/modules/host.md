@@ -13,6 +13,16 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 
 - Status: Verified
 - Date: 2026-07-23
+- Scope: route review for ACP consumption of Host `task.updated`. ACP now
+  ignores this control-only projection explicitly; Host event routing,
+  TaskStore truth, parent notification delivery, and external IM projection are
+  unchanged.
+- Read: Host lifecycle event projection, Protocol event union, and ACP event
+  mapper/tests.
+- Tests: ACP event 7/7, package typecheck, and package build passed.
+
+- Status: Verified
+- Date: 2026-07-23
 - Scope: Host task lifecycle projection now also feeds the exact live IM
   runtime binding as an independent delivery consumer. Host-owned
   runtime/session routing ignores model metadata, rejects task events whose

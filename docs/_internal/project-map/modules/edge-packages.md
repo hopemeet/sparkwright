@@ -153,6 +153,16 @@ contracts, and focused checklists that no longer fit here.
 
 - Status: Verified
 - Date: 2026-07-23
+- Scope: ACP Adapter now handles the typed `task.updated` HostEvent
+  exhaustively as a control-only event. It emits no ACP agent text or tool
+  update for task lifecycle push; awaited results remain visible through the
+  parent run, while ACP gains no detached-task notification UX in this patch.
+- Read: ACP Host-event mapper/tests, Protocol event union, and ACP/session edge
+  ownership.
+- Tests: ACP event 7/7, package typecheck, and package build passed.
+
+- Status: Verified
+- Date: 2026-07-23
 - Scope: IM Gateway now projects terminal `task.updated` deliveries into safe
   external messages while preserving the Host delivery key. Non-terminal task
   events are consumed quietly, transport failures stay unacked for replay, and
