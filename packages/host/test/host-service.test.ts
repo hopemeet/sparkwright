@@ -295,6 +295,162 @@ describe("HostService", () => {
     }
   });
 
+  it("delivers detached task lifecycle updates to the exact IM binding after the parent run ends", async () => {
+    const workspace = await mkdtemp(
+      join(tmpdir(), "sparkwright-service-im-task-events-"),
+    );
+    tempDirs.push(workspace);
+    const parentTerminal = deferred<void>();
+    const service = createHostService({
+      imControl: { allowSelfBinding: true },
+    });
+    const runtime = service.createRuntime({
+      workspaceRoot: workspace,
+      defaultModel: "deterministic",
+      emit: (event) => {
+        if (event.kind === "run.completed" || event.kind === "run.failed") {
+          parentTerminal.resolve();
+        }
+      },
+    });
+    const principal: HostImPrincipal = {
+      id: "gateway:task-owner",
+      kind: "gateway",
+      authenticated: true,
+      authenticatedBy: "test-credential",
+      clientName: "sparkwright-im-gateway",
+    };
+    const subject = {
+      platform: "telegram",
+      chatId: "task_chat",
+      userId: "task_user",
+    };
+
+    try {
+      const bound = service.bindImSession(
+        principal,
+        {
+          subject,
+          permissions: ["message", "inspect"],
+        },
+        runtime,
+      );
+      expect(bound.ok).toBe(true);
+      if (!bound.ok) return;
+      expect(
+        service.subscribeImSession(principal, {
+          bindingId: bound.binding.bindingId,
+          subject,
+        }),
+      ).toMatchObject({ ok: true });
+
+      const started = await service.dispatchImMessage(principal, runtime, {
+        bindingId: bound.binding.bindingId,
+        subject,
+        text: "establish a completed IM parent run",
+        metadata: {
+          recipient: "model-supplied-recipient-must-not-route",
+        },
+      });
+      expect(started.ok).toBe(true);
+      if (!started.ok) return;
+      await parentTerminal.promise;
+      await waitUntil(() => runtime.executionIdentity() === undefined);
+
+      const prior = service.subscribeImSession(principal, {
+        bindingId: bound.binding.bindingId,
+        subject,
+      });
+      expect(prior.ok).toBe(true);
+      if (!prior.ok) return;
+      service.acknowledgeImDeliveries(principal, {
+        bindingId: bound.binding.bindingId,
+        subject,
+        deliveryKeys: prior.deliveries.map((delivery) => delivery.deliveryKey),
+      });
+
+      const taskRuntime = (
+        runtime as unknown as {
+          tasks: { manager: TaskManager; notifications: ActorInbox };
+        }
+      ).tasks;
+      const handle = taskRuntime.manager.spawn({
+        parentRunId: started.runId as Parameters<
+          TaskManager["spawn"]
+        >[0]["parentRunId"],
+        kind: "agent",
+        title: "detached IM completion",
+        completionPolicy: "detached",
+        awaited: false,
+        runner: async () => ({
+          summary: "safe external summary",
+          password: "must be redacted",
+        }),
+      });
+      await handle.wait();
+
+      const replay = service.subscribeImSession(principal, {
+        bindingId: bound.binding.bindingId,
+        subject,
+      });
+      expect(replay.ok).toBe(true);
+      if (!replay.ok) return;
+      const taskDeliveries = replay.deliveries.filter(
+        (delivery) =>
+          delivery.event.kind === "task.updated" &&
+          delivery.event.payload.taskId === handle.record.id,
+      );
+      expect(
+        taskDeliveries.map((delivery) => [
+          delivery.event.kind === "task.updated"
+            ? delivery.event.payload.transition
+            : undefined,
+          delivery.event.kind === "task.updated"
+            ? delivery.event.payload.status
+            : undefined,
+        ]),
+      ).toEqual([
+        ["created", "pending"],
+        ["started", "running"],
+        ["terminal", "completed"],
+      ]);
+      expect(taskDeliveries.at(-1)).toMatchObject({
+        deliveryKey: `${bound.binding.sessionId}:task:${handle.record.id}:terminal:completed`,
+        sessionId: bound.binding.sessionId,
+        event: {
+          kind: "task.updated",
+          payload: {
+            sessionId: bound.binding.sessionId,
+            parentRunId: started.runId,
+            completionPolicy: "detached",
+            resultSummary: expect.stringContaining("[REDACTED]"),
+          },
+        },
+      });
+      expect(JSON.stringify(taskDeliveries)).not.toContain("must be redacted");
+
+      const otherPrincipal: HostImPrincipal = {
+        ...principal,
+        id: "gateway:task-observer",
+      };
+      const otherSubject = { ...subject, userId: "other_user" };
+      const other = service.bindImSession(otherPrincipal, {
+        subject: otherSubject,
+        permissions: ["message", "inspect"],
+      });
+      expect(other.ok).toBe(true);
+      if (!other.ok) return;
+      expect(
+        service.subscribeImSession(otherPrincipal, {
+          bindingId: other.binding.bindingId,
+          subject: otherSubject,
+        }),
+      ).toMatchObject({ ok: true, deliveries: [] });
+    } finally {
+      await service.shutdown();
+    }
+  });
+
   it("owns IM binding, subscription, dispatch, replay, and retention", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "sparkwright-service-im-"));
     tempDirs.push(workspace);

@@ -414,9 +414,8 @@ export class HostService {
       timestamp: new Date().toISOString(),
       payload: taskUpdatedEventPayload(update, route.sessionId),
     };
+    recordHostImEvent(this.imControl, route.runtime, event);
     try {
-      // Intentionally bypass recordHostImEvent. Stage 4 owns the separately
-      // authorized external-delivery projection.
       emit(event);
     } catch {
       // Live push is best-effort; task.list remains the reconciliation source.

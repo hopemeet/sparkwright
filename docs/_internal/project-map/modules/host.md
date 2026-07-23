@@ -13,6 +13,21 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 
 - Status: Verified
 - Date: 2026-07-23
+- Scope: Host task lifecycle projection now also feeds the exact live IM
+  runtime binding as an independent delivery consumer. Host-owned
+  runtime/session routing ignores model metadata, rejects task events whose
+  session does not match the binding, and assigns stable
+  task/transition/status delivery keys for at-least-once replay and ack. This
+  remains a bounded process-memory outbox; TaskStore and the parent actor inbox
+  are not drained or repurposed.
+- Read: HostService task route, IM runtime association/binding authorization,
+  delivery outbox/subscription/ack, task projection, Gateway renderer, and
+  integration tests.
+- Tests: Host 604/604, IM Gateway 10/10, focused lifecycle/IM 25/25, and
+  affected package typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-23
 - Scope: WorkspaceContext owns an independent task lifecycle hub and
   HostService projects post-store-write transitions as bounded `task.updated`
   events. Parent-run routes survive Core terminality while the runtime facade is

@@ -80,6 +80,12 @@ contracts, and focused checklists that no longer fit here.
 - IM gateway is an application bridge over `sdk-node` and host events. Route
   protocol shape changes through protocol/host maps before updating gateway
   renderers or state.
+- IM Gateway consumes Host-routed `task.updated` deliveries without deriving a
+  recipient from model metadata. It acks created/started lifecycle projections
+  without external chatter and renders only terminal completed/failed/cancelled
+  messages from the bounded summary/error/output reference. The Host delivery
+  key is passed through to platform adapters as the idempotency key; network
+  transport remains at-least-once rather than exactly-once.
 - IM Gateway handshake name is client-type/display metadata only. Host WS
   bearer authentication supplies the stable ordinary-IM principal; Gateway
   platform claims remain exact bounded subject claims and cannot mint Host
@@ -144,6 +150,17 @@ contracts, and focused checklists that no longer fit here.
   source exports. It should not be used as the sole authority for behavior.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-23
+- Scope: IM Gateway now projects terminal `task.updated` deliveries into safe
+  external messages while preserving the Host delivery key. Non-terminal task
+  events are consumed quietly, transport failures stay unacked for replay, and
+  the gateway does not receive full Task result/output/metadata.
+- Read: Gateway Host-event renderer and delivery loop, Host IM binding/outbox
+  bridge, task lifecycle payload, and focused tests.
+- Tests: IM Gateway 10/10, Host IM/service lifecycle coverage, and affected
+  package typechecks passed.
 
 - Status: Verified
 - Date: 2026-07-23

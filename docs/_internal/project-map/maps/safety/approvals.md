@@ -11,6 +11,18 @@ See [workspace-writes.md](workspace-writes.md) and [shell.md](shell.md).
 
 - Status: Verified
 - Date: 2026-07-23
+- Scope: Host IM task delivery reuses exact runtime/binding/session
+  authorization and a task-specific idempotency key. It does not consult
+  model-authored recipient metadata or modify approval routing, permission
+  selection, resolution, or visibility; approval deliveries retain their
+  existing initiating-principal/approve-permission checks.
+- Read: Host IM association, task session guard, delivery visibility, approval
+  route, Gateway delivery renderer, and focused/full Host tests.
+- Tests: Host 604/604 including existing approval suites, IM Gateway 10/10,
+  focused lifecycle/IM 25/25, and affected package typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-23
 - Scope: route review for bounded `task.updated` events. Events contain
   Host-resolved routing plus safe task summaries and do not add authority;
   approval subjects, decisions, and reuse semantics are unchanged.

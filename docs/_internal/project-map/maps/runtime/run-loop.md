@@ -11,6 +11,17 @@ See [tool-orchestration.md](tool-orchestration.md) and [../trace/raw-trace.md](.
 
 - Status: Verified
 - Date: 2026-07-23
+- Scope: IM delivery is a post-TaskStore Host lifecycle projection. Routing a
+  terminal detached task after its parent run ends does not retain or revive
+  the Core run, consume the parent actor inbox, or alter awaited
+  `waiting_tasks`; only the live Host runtime facade/binding remains relevant
+  to the external outbox.
+- Read: HostService task/IM routing, TaskManager transition observer, Core
+  revival boundary, and detached-after-parent-terminal integration test.
+- Tests: Host 604/604, focused lifecycle/IM 25/25, and Host typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-23
 - Scope: Host task lifecycle push is independent from Core task revival.
   `task.updated` observers never drain parent actor notifications or alter
   `waiting_tasks`; detached lifecycle events can remain externally observable

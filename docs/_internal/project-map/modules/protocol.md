@@ -12,6 +12,17 @@ See also [../maps/safety/approvals.md](../maps/safety/approvals.md) and [../maps
 
 - Status: Verified
 - Date: 2026-07-23
+- Scope: IM external task notification reuses the existing `task.updated`
+  HostEvent inside `ImDelivery` plus the existing subscribe/ack requests.
+  Stable Host delivery keys are opaque strings to clients; no protocol type,
+  schema, narrowing, or capability shape changed in this stage.
+- Read: Protocol task lifecycle and IM delivery DTOs, Host IM projection,
+  SDK-node bridge polling/ack, and Gateway renderer.
+- Tests: Host 604/604, IM Gateway 10/10, focused lifecycle/IM 25/25, and
+  affected package typechecks passed; no schema regeneration was required.
+
+- Status: Verified
+- Date: 2026-07-23
 - Scope: route review for the first TUI `task.updated` consumer. TUI narrows the
   existing typed SDK event, uses canonical completion policy, and keeps
   `task.list`/`task.output` as reconciliation/detail APIs; no wire shape changed

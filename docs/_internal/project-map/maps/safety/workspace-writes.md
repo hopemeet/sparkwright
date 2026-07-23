@@ -11,6 +11,17 @@ See [approvals.md](approvals.md) and [../runtime/tool-orchestration.md](../runti
 
 - Status: Verified
 - Date: 2026-07-23
+- Scope: route review for external IM task lifecycle delivery. The Gateway sees
+  only the existing bounded/redacted `task.updated` projection and an
+  authorized output reference; it receives no result object, output chunks,
+  metadata, workspace authority, lease, or approval grant.
+- Read: Host task projection/redaction, IM session guard/outbox, Gateway
+  terminal renderer, and workspace-write ownership boundary.
+- Tests: Host 604/604, IM Gateway 10/10, focused lifecycle/IM 25/25, and
+  affected package typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-23
 - Scope: route review for Host task lifecycle projection. The bounded event
   excludes arbitrary task metadata and output, and does not change leases,
   write attribution, approval, rollback, or untracked-write markers.

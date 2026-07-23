@@ -3,6 +3,22 @@ import { runFailureMessage } from "@sparkwright/protocol";
 import type { ApprovalPrompt } from "./types.js";
 
 export function renderHostEvent(event: HostEvent): string | null {
+  if (event.kind === "task.updated") {
+    if (event.payload.transition !== "terminal") return null;
+    const label = event.payload.title ?? event.payload.kind;
+    const lines = [
+      taskTerminalHeading(event.payload.status, label),
+      event.payload.resultSummary
+        ? `Summary: ${event.payload.resultSummary}`
+        : undefined,
+      event.payload.error
+        ? `Error: ${event.payload.error.message} (${event.payload.error.code})`
+        : undefined,
+      `Task ID: ${event.payload.taskId}`,
+      `Details: ${event.payload.outputRef.method} ${event.payload.outputRef.taskId}`,
+    ];
+    return lines.filter((line): line is string => Boolean(line)).join("\n");
+  }
   if (event.kind === "run.completed") {
     const reason = event.payload.stopReason
       ? ` (${event.payload.stopReason})`
@@ -26,6 +42,15 @@ export function renderHostEvent(event: HostEvent): string | null {
     return text ? `Progress: ${text}` : null;
   }
   return null;
+}
+
+function taskTerminalHeading(
+  status: "pending" | "running" | "completed" | "failed" | "cancelled",
+  label: string,
+): string {
+  if (status === "failed") return `Task failed: ${label}`;
+  if (status === "cancelled") return `Task cancelled: ${label}`;
+  return `Task completed: ${label}`;
 }
 
 export function renderApprovalPrompt(prompt: ApprovalPrompt): string {

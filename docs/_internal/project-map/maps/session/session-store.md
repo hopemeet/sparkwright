@@ -11,6 +11,20 @@ See [../trace/raw-trace.md](../trace/raw-trace.md) for raw event evidence.
 
 - Status: Verified
 - Date: 2026-07-23
+- Scope: terminal TaskStore transitions can now enter the exact live IM
+  binding's bounded Host outbox after the parent run ends. The outbox, binding,
+  acknowledgements, and stable delivery keys remain process-memory projections;
+  no session layout, durable cursor, startup reconciliation, or cross-process
+  task execution contract changed. A Host crash between TaskStore terminal
+  persistence and IM projection can therefore still lose the external
+  notification.
+- Read: TaskStore lifecycle ordering, HostService task routing, Host IM outbox
+  and ack state, Gateway delivery attempts, and session durability boundaries.
+- Tests: Host 604/604, IM Gateway 10/10, focused lifecycle/IM 25/25, and
+  affected package typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-23
 - Scope: TUI now uses session run ids to reconcile live task lifecycle gaps
   through TaskStore-backed `task.list`. No session file, trace replay,
   checkpoint, compaction, or task storage format changed.
