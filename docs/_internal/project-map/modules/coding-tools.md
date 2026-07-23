@@ -13,6 +13,15 @@ See also [../maps/runtime/tool-orchestration.md](../maps/runtime/tool-orchestrat
 
 - Status: Verified
 - Date: 2026-07-23
+- Scope: route review for annotation-only Task/Shell async receipt maintenance.
+  Coding-tool assembly, command execution, safety, and model-visible payload
+  values are unchanged.
+- Read: Task/Shell receipt DTOs and coding-tool ownership boundary.
+- Tests: Agent Runtime tasks 76/76, Shell 43/43, SDK Core 11/11, affected
+  typechecks, and strict reserved-field check passed.
+
+- Status: Verified
+- Date: 2026-07-23
 - Scope: Shell background output gained a structured asynchronous task receipt;
   command execution, safety classification, and coding-tool ownership did not
   change.

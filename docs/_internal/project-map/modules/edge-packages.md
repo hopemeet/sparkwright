@@ -153,6 +153,16 @@ contracts, and focused checklists that no longer fit here.
 
 - Status: Verified
 - Date: 2026-07-23
+- Scope: SDK Core's `task.updated` listener key and Shell's model-visible async
+  receipt fields now declare their external consumers for strict public-surface
+  auditing. Runtime and wire behavior are unchanged.
+- Read: SDK typed event map, Shell output DTO, Task receipt DTO, and strict
+  reserved-field checker.
+- Tests: Agent Runtime tasks 76/76, Shell 43/43, SDK Core 11/11, affected
+  typechecks, and strict reserved-field check passed.
+
+- Status: Verified
+- Date: 2026-07-23
 - Scope: final lint follow-up replaced Streaming Runtime's mutable
   unsubscribe function slot with a const holder while preserving the exact
   command-ready/abort cleanup behavior. No revival, event, or storage semantics

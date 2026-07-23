@@ -12,6 +12,17 @@ See [../../modules/agent-runtime.md](../../modules/agent-runtime.md) and [../../
 
 - Status: Verified
 - Date: 2026-07-23
+- Scope: final strict-contract follow-up marks async receipt fields and the SDK
+  task event key as externally consumed public surfaces. This is annotation
+  only; Agent task modes, parent waiting, observation, and lifecycle behavior
+  are unchanged.
+- Read: Task async receipt, Shell handoff DTO, SDK event map, and reserved-field
+  checker.
+- Tests: Agent Runtime tasks 76/76, Shell 43/43, SDK Core 11/11, affected
+  typechecks, and strict reserved-field check passed.
+
+- Status: Verified
+- Date: 2026-07-23
 - Scope: ACP Adapter treats Agent-backed `task.updated` lifecycle push as a
   control-only event. It does not synthesize ACP child/tool completion, so the
   parent run remains the sole ACP-visible semantic result for awaited work and

@@ -12,6 +12,16 @@ See also [../maps/safety/approvals.md](../maps/safety/approvals.md) and [../maps
 
 - Status: Verified
 - Date: 2026-07-23
+- Scope: SDK Core's existing `task.updated` listener key now declares its
+  external typed-listener consumer for strict public-surface auditing. Protocol
+  DTOs, schema, narrowing, and wire behavior are unchanged.
+- Read: Protocol HostEvent union, SDK event map, and strict reserved-field
+  checker.
+- Tests: Agent Runtime tasks 76/76, Shell 43/43, SDK Core 11/11, affected
+  typechecks, and strict reserved-field check passed.
+
+- Status: Verified
+- Date: 2026-07-23
 - Scope: ACP Adapter explicitly narrows the existing `task.updated` HostEvent
   as a control-only event so the expanded protocol union remains exhaustively
   handled. No protocol or schema shape changed.

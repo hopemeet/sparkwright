@@ -11,6 +11,14 @@ See [../../modules/agent-runtime.md](../../modules/agent-runtime.md) for related
 
 - Status: Verified
 - Date: 2026-07-23
+- Scope: route review for public Task async-receipt annotations. Cron
+  scheduling, records, task execution, and notification behavior are unchanged.
+- Read: Task receipt DTO, reserved-field checker, and Cron ownership boundary.
+- Tests: Agent Runtime tasks 76/76, Shell 43/43, SDK Core 11/11, affected
+  typechecks, and strict reserved-field check passed.
+
+- Status: Verified
+- Date: 2026-07-23
 - Scope: route review for the Host `task.updated` channel. Cron schedules,
   durable job records, runner execution, and Cron notification contracts did
   not change.

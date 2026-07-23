@@ -10,6 +10,16 @@ See also [../maps/capabilities/agents.md](../maps/capabilities/agents.md), [../m
 
 - Status: Verified
 - Date: 2026-07-23
+- Scope: Task async receipt fields now declare their model-visible external
+  consumer for strict public-surface auditing. Types, serialized output, parent
+  keep-alive, completion observation, and duplicate avoidance are unchanged.
+- Read: Task receipt DTO, Shell receipt mirror, SDK task event key, and strict
+  reserved-field checker.
+- Tests: Agent Runtime tasks 76/76, Shell 43/43, SDK Core 11/11, affected
+  typechecks, and strict reserved-field check passed.
+
+- Status: Verified
+- Date: 2026-07-23
 - Scope: `TaskManager` now publishes post-store-write created, started, and
   terminal snapshots through an independent lifecycle observer. Observer
   failure cannot change task truth or consume the parent actor inbox; canonical

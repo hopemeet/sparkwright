@@ -286,9 +286,9 @@ export interface ShellToolOutput {
   taskId?: string;
   /** Canonical task mode after shell background handoff. */
   actualMode?: "awaited" | "detached";
-  /** Whether the parent run remains alive for this task. */
+  /** @reserved Model-visible async-receipt field describing parent keep-alive. */
   parentWillWait?: boolean;
-  /** How the parent agent can observe terminal completion. */
+  /** @reserved Model-visible async-receipt field describing terminal observation. */
   completionObservation?: "automatic_once" | "opportunistic_if_parent_active";
   /** Structured follow-up action for the adopted task. */
   nextAction?: {

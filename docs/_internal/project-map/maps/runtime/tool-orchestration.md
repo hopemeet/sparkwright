@@ -11,6 +11,16 @@ See [../safety/workspace-writes.md](../safety/workspace-writes.md), [../safety/s
 
 - Status: Verified
 - Date: 2026-07-23
+- Scope: async task/Shell receipt fields and the SDK task lifecycle listener
+  key now carry required external-consumer annotations. No validation,
+  scheduling, execution, receipt payload, or notification behavior changed.
+- Read: Task/Shell public DTOs, SDK event map, and strict reserved-field
+  checker.
+- Tests: Agent Runtime tasks 76/76, Shell 43/43, SDK Core 11/11, affected
+  typechecks, and strict reserved-field check passed.
+
+- Status: Verified
+- Date: 2026-07-23
 - Scope: TUI consumes the independent Host task lifecycle stream without
   changing tool execution or parent observation. Inline/awaited success remains
   quiet, detached terminal state is visible without opening Activity, and

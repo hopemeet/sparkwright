@@ -13,6 +13,16 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 
 - Status: Verified
 - Date: 2026-07-23
+- Scope: route review for annotation-only Task/Shell/SDK public contract
+  maintenance. Host task adoption, lifecycle projection, parent revival, and
+  external delivery behavior are unchanged.
+- Read: Task/Shell receipt DTOs, SDK event map, Host consumers, and strict
+  reserved-field checker.
+- Tests: Agent Runtime tasks 76/76, Shell 43/43, SDK Core 11/11, affected
+  typechecks, and strict reserved-field check passed.
+
+- Status: Verified
+- Date: 2026-07-23
 - Scope: route review for ACP consumption of Host `task.updated`. ACP now
   ignores this control-only projection explicitly; Host event routing,
   TaskStore truth, parent notification delivery, and external IM projection are

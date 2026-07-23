@@ -383,7 +383,9 @@ export type TaskCompletionObservation =
 
 export interface TaskAsyncReceipt {
   actualMode: Exclude<TaskActualMode, "inline">;
+  /** @reserved Public async-receipt field consumed by model-visible tool results. */
   parentWillWait: boolean;
+  /** @reserved Public async-receipt field consumed by model-visible tool results. */
   completionObservation: Exclude<TaskCompletionObservation, "returned_inline">;
   nextAction: TaskCreateNextAction;
   duplicateAvoidance: string;

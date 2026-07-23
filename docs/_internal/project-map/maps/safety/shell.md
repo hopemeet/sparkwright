@@ -11,6 +11,16 @@ See [workspace-writes.md](workspace-writes.md) and [../../modules/coding-tools.m
 
 - Status: Verified
 - Date: 2026-07-23
+- Scope: Shell `parentWillWait` and `completionObservation` now carry required
+  model-visible public-field annotations. The serialized receipt, background
+  adoption, approval, sandbox, process, and promotion behavior are unchanged.
+- Read: Shell output DTO, Task async receipt, and strict reserved-field
+  checker.
+- Tests: Agent Runtime tasks 76/76, Shell 43/43, SDK Core 11/11, affected
+  typechecks, and strict reserved-field check passed.
+
+- Status: Verified
+- Date: 2026-07-23
 - Scope: Shell tasks participate in the common Host-level lifecycle stream via
   canonical task records. Event payloads omit stdout/stderr and arbitrary
   metadata; output remains available through authorized `task.output`.
