@@ -10,6 +10,18 @@ See [approvals.md](approvals.md) and [../runtime/tool-orchestration.md](../runti
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-23
+- Scope: model identity/context wording no longer implies or manufactures
+  workspace write authority. Project instructions are directory-scoped but
+  cannot grant tools/permissions, and Direct Core states that the current
+  tool/access plan is authoritative. Workspace policy, grants, approval,
+  controlled writes, and trace evidence are unchanged.
+- Read: project/direct prompt assembly, Core safety contract, Host access plan,
+  and workspace-write enforcement boundaries.
+- Tests: focused Project Context/Core prompt suites and affected typechecks
+  passed; no write execution path changed.
+
+- Status: Verified
 - Date: 2026-07-21
 - Scope: dynamic Agent goal/context handoff is now explicit and shared by
   foreground/background entrypoints. Workspace-write authority still comes

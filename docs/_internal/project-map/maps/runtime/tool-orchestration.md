@@ -10,6 +10,19 @@ See [../safety/workspace-writes.md](../safety/workspace-writes.md), [../safety/s
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-23
+- Scope: repeated-call protection distinguishes argument-correctable failures
+  from target-invariant failures instead of treating every same-path retry as
+  impossible. Exact calls, expected denials, missing/invalid targets, and
+  failed same-command Shell attempts stay guarded. Streaming provider input
+  now hides deferred schemas until discovery, and free-text discovery supports
+  CJK queries with deterministic tie ordering.
+- Read: Core repeat target/failure analysis, tool-search ranking, Streaming
+  Runtime descriptor projection, and focused regression tests.
+- Tests: focused Core run/tool-search and Streaming Runtime suites passed with
+  affected package and repository test typechecks.
+
+- Status: Verified
 - Date: 2026-07-21
 - Scope: dynamic child orchestration now separates authority from content.
   Foreground/background Agent entrypoints share one input schema; model-authored

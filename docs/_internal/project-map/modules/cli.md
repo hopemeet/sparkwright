@@ -9,6 +9,17 @@ See also [../maps/trace/summary-timeline-verify.md](../maps/trace/summary-timeli
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-23
+- Scope: the internal Direct Core app identity no longer implies write access.
+  It tells the model to use only the tools and access allowed for the current
+  run; policy, approval, tool assembly, and verification hooks remain the
+  execution authority.
+- Read: Direct Core prompt assembly and its shared Host/Core policy and hook
+  seams.
+- Tests: CLI typecheck and repository test typecheck passed; no Direct Core
+  runtime behavior changed.
+
+- Status: Verified
 - Date: 2026-07-21
 - Scope: the Host runner reconstructs Core approval requests with the required
   typed subject. CLI final output continues to use terminal results rather than

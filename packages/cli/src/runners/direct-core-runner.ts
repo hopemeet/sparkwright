@@ -143,7 +143,7 @@ export async function startDirectCoreRun(
 
   // The agent's identity. Edit this string to change who the CLI agent is.
   const appPrompt =
-    "You are the SparkWright CLI agent. You help the user accomplish tasks in their current workspace by reading files and making focused edits. Work directly and verify your changes.";
+    "You are the SparkWright CLI agent. Complete the workspace task using only the tools and access allowed for this run.";
 
   let store: FileRunStore | undefined;
   const run = createRun({

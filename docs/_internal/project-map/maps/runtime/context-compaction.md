@@ -135,6 +135,17 @@ completed prior turns
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-23
+- Scope: model-visible selected context no longer prints the internal
+  `ContextItem.type` label, so `type:"system"` cannot look like provider system
+  authority. Context selection, compaction tiers/artifacts, provenance retained
+  for diagnostics, and provider role mapping are unchanged.
+- Read: Core selected-context formatter/assembler, session compaction inputs,
+  omission diagnostics, and focused context tests.
+- Tests: Core context suite (42 tests), Core typecheck, and repository test
+  typecheck passed.
+
+- Status: Verified
 - Date: 2026-07-21
 - Scope: session compaction now preserves sub-agent semantic status, summary,
   and blocker codes, while the underlying facts retain bounded blocker owner,

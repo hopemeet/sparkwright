@@ -10,6 +10,17 @@ See [workspace-writes.md](workspace-writes.md) and [shell.md](shell.md).
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-23
+- Scope: repeated-failure state now carries retry scope, but policy and approval
+  denials are always target-level and retain their existing expected-denial
+  recovery semantics. Project instructions and Direct Core identity explicitly
+  do not grant access; structured policy/approval remains authoritative.
+- Read: Core failure classification/repeat metadata, project/direct prompt
+  wording, approval gate, and existing denial regressions.
+- Tests: focused Core run/context and affected package/typecheck suites passed;
+  approval request/resolution behavior is unchanged.
+
+- Status: Verified
 - Date: 2026-07-21
 - Scope: dynamic Agent handoff now uses explicit goal/context fields, but
   authorization remains derived only from structured tools and grants. Approval

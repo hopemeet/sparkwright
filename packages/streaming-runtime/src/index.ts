@@ -45,6 +45,7 @@ import {
   type SpanFrame,
   type SparkwrightEvent,
   type ToolDefinition,
+  type ToolDescriptor,
   type ToolResult,
 } from "@sparkwright/core";
 import {
@@ -178,6 +179,7 @@ class AfterTurnStreamingRun implements StreamingRunHandle {
   private result?: RunResult;
   private started = false;
   private eagerToolExecutedInTurn = false;
+  private readonly loadedDeferredTools = new Set<string>();
 
   constructor(options: CreateStreamingRunOptions) {
     const now = new Date().toISOString();
@@ -485,13 +487,14 @@ class AfterTurnStreamingRun implements StreamingRunHandle {
   }
 
   private async buildModelInput(step: number): Promise<ModelInput> {
+    const toolDescriptors = this.tools.listDescriptors();
     const assembled = await this.contextAssembler.assemble({
       run: this.record,
       step,
       goal: this.record.goal,
       events: this.events.all(),
       priorContext: this.context,
-      tools: this.tools.listDescriptors(),
+      tools: toolDescriptors,
       model: this.model.contextHints,
       budget: this.contextBudget,
     });
@@ -506,7 +509,7 @@ class AfterTurnStreamingRun implements StreamingRunHandle {
     const prompt = await this.promptBuilder.build({
       run: this.record,
       step,
-      tools: this.tools.listDescriptors(),
+      tools: toolDescriptors,
       context: assembled.items,
     });
     const cacheBlocks = compilePromptCacheBlocks(prompt);
@@ -530,11 +533,20 @@ class AfterTurnStreamingRun implements StreamingRunHandle {
       run: this.record,
       context: assembled.items,
       prompt,
-      tools: this.tools.listDescriptors(),
+      tools: this.modelRequestTools(toolDescriptors),
       events: this.events.all(),
       step,
       abortSignal: this.abortSignal,
     };
+  }
+
+  private modelRequestTools(tools: ToolDescriptor[]): ToolDescriptor[] {
+    return tools.filter(
+      (tool) =>
+        !tool.loading?.defer ||
+        tool.loading.alwaysLoad === true ||
+        this.loadedDeferredTools.has(tool.name),
+    );
   }
 
   private async completeStreamingTurn(input: ModelInput): Promise<ModelOutput> {
@@ -1166,6 +1178,11 @@ class AfterTurnStreamingRun implements StreamingRunHandle {
     result: ToolResult,
     span?: ReturnType<typeof openSpan>,
   ): void {
+    if (toolName === "tool_search") {
+      this.loadDeferredToolsFromToolSearch(result);
+    } else if (toolName === "skill_load") {
+      this.loadDeferredToolsFromSkillLoad(result);
+    }
     const terminalType =
       result.status === "completed" ? "tool.completed" : "tool.failed";
     // Close the call span when one is open (so the terminal carries the span's
@@ -1180,6 +1197,33 @@ class AfterTurnStreamingRun implements StreamingRunHandle {
         run: this.record,
       }),
     );
+  }
+
+  private loadDeferredToolsFromToolSearch(result: ToolResult): void {
+    if (result.status !== "completed" || !isRecord(result.output)) return;
+    const matches = result.output.matches;
+    if (!Array.isArray(matches)) return;
+    for (const match of matches) {
+      if (!isRecord(match) || typeof match.name !== "string") continue;
+      const tool = this.tools.get(match.name);
+      if (!tool?.deferLoading || tool.alwaysLoad === true) continue;
+      this.loadedDeferredTools.add(match.name);
+    }
+  }
+
+  private loadDeferredToolsFromSkillLoad(result: ToolResult): void {
+    if (result.status !== "completed" || !isRecord(result.output)) return;
+    if (result.output.status !== "loaded") return;
+    const dependencies = result.output.toolDependencies;
+    if (!Array.isArray(dependencies)) return;
+    for (const dependency of dependencies) {
+      if (typeof dependency !== "string") continue;
+      const name = dependency.trim();
+      if (!name) continue;
+      const tool = this.tools.get(name);
+      if (!tool?.deferLoading || tool.alwaysLoad === true) continue;
+      this.loadedDeferredTools.add(name);
+    }
   }
 
   private async drainNotificationSources(step: number): Promise<void> {

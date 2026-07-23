@@ -11,6 +11,17 @@ See [raw-trace.md](raw-trace.md) for source data and [export-diagnostics.md](exp
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-23
+- Scope: reviewed new repeated-failure retry-scope metadata. Summary, timeline,
+  report, verify, and session consistency continue to classify failures from
+  canonical code/category/expected-denial facts; the additional scope field is
+  diagnostic and does not change outcome or health semantics.
+- Read: Core repeat metadata, run-outcome and trace diagnostic consumers, and
+  focused run/context tests.
+- Tests: focused Core run suite and repository test typecheck passed; derived
+  trace output shapes are unchanged.
+
+- Status: Verified
 - Date: 2026-07-21
 - Scope: semantic input failures carrying `metadata.phase:"validateInput"`
   classify as model argument errors regardless of domain-specific error code.

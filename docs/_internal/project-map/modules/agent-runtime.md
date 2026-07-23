@@ -9,6 +9,18 @@ See also [../maps/capabilities/agents.md](../maps/capabilities/agents.md), [../m
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-23
+- Scope: awaited `task_create` results now describe the actual two-path
+  lifecycle: Core waits automatically before terminal finalization, while the
+  model calls `task(action:"wait")` only when its next action immediately
+  depends on the result. Concrete task id, output retrieval, and duplicate
+  avoidance remain model-visible; background guidance is unchanged.
+- Read: Task result schema/guidance, Core awaited-terminal suspension, Shell
+  promotion handoff, and focused task tests.
+- Tests: Agent Runtime task suite (69 tests), package typecheck, and repository
+  test typecheck passed.
+
+- Status: Verified
 - Date: 2026-07-21
 - Scope: dynamic handoff context is now part of portable delegation identity.
   `spawnSubAgent()` continues to accept explicit `ContextItem[]`; Host supplies

@@ -2821,26 +2821,30 @@ export class SparkwrightRun implements RunHandle {
     if (toolBudgetFailure) return toolBudgetFailure;
 
     // A repeat is either the *same* call verbatim, or a fresh attempt at a
-    // target that just failed — the latter catches a model that varies cosmetic
-    // arguments (e.g. read `offset`/`limit`) while hammering the same broken
-    // path. `lastFailedToolTarget` is cleared on any success, so legitimate
-    // pagination never lands here.
+    // target whose failure is known to be target-invariant. Argument-correctable
+    // failures get another execution chance when the model changes arguments.
+    // `lastFailedToolTarget` is cleared on any success, so legitimate pagination
+    // never lands here.
     const targetKey = semanticToolTarget(
       requestedCall.toolName,
       requestedCall.arguments,
     );
-    const priorFailure =
+    const verbatimRepeat = isRepeatedToolCall(
+      state.previousToolCall,
+      requestedCall,
+    );
+    const matchingPriorFailure =
       state.lastFailedToolTarget?.key === targetKey
         ? state.lastFailedToolTarget
+        : undefined;
+    const priorFailure =
+      matchingPriorFailure?.retryScope === "target" || verbatimRepeat
+        ? matchingPriorFailure
         : undefined;
     const priorNoop =
       state.lastNoopToolTarget?.key === targetKey
         ? state.lastNoopToolTarget
         : undefined;
-    const verbatimRepeat = isRepeatedToolCall(
-      state.previousToolCall,
-      requestedCall,
-    );
     // An idempotent tool repeating verbatim is a harmless no-op, while a tool
     // with `managesRepeatedCalls` owns a conservative cache/retry protocol.
     // Neither is the start of a generic doom loop, so the repeat guard defers

@@ -8,6 +8,18 @@ cron, shell/task tools, and capability inspection.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-23
+- Scope: provider-native capability exposure now follows the same deferred
+  loaded-set in Core and Streaming Runtime; discovery via `tool_search` or a
+  loaded Skill dependency admits only registered surviving tools. Primary
+  profile prompt wiring changes model identity, not capability inventory or
+  authority.
+- Read: Core/Streaming tool projection, Host primary profile composition,
+  Skill dependency results, and focused regressions.
+- Tests: focused Core tool-search, Streaming Runtime, and Host episode suites
+  plus affected typechecks passed.
+
+- Status: Verified
 - Date: 2026-07-21
 - Scope: foreground/background dynamic Agent entrypoints share one explicit
   goal/context/capability schema. Other capability inventories and selectors are

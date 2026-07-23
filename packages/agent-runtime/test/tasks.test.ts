@@ -1222,6 +1222,8 @@ describe("task tools", () => {
       taskId: created.taskId,
     });
     expect(created.nextAction.instruction).toContain(created.taskId);
+    expect(created.nextAction.instruction).toContain("wait automatically");
+    expect(created.nextAction.instruction).toContain("only if");
     expect(created.nextAction.outputInstruction).toContain('action="output"');
     expect(created.nextAction.duplicateAvoidance).toContain("same goal");
     await manager.handle(created.taskId as TaskId)?.wait();

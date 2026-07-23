@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  createToolSearchTool,
   defineTool,
   type ModelAdapter,
   type ModelInput,
@@ -33,6 +34,155 @@ describe("streaming-runtime", () => {
         "run.completed",
       ]),
     );
+  });
+
+  it("exposes deferred schemas only after tool_search loads them", async () => {
+    let deferredExecutions = 0;
+    const seenToolNames: string[][] = [];
+    const deferredEcho = defineTool({
+      name: "deferred_echo",
+      description: "Echo text after deferred discovery.",
+      inputSchema: {
+        type: "object",
+        properties: { text: { type: "string" } },
+        required: ["text"],
+      },
+      deferLoading: true,
+      execute(args) {
+        deferredExecutions += 1;
+        return args;
+      },
+    });
+    const toolSearch = createToolSearchTool({
+      source: {
+        listDescriptors: () => [
+          {
+            name: deferredEcho.name,
+            description: deferredEcho.description,
+            inputSchema: deferredEcho.inputSchema,
+            loading: { defer: true },
+          },
+        ],
+      },
+    });
+    const run = createStreamingRun({
+      goal: "use a deferred tool",
+      tools: [deferredEcho, toolSearch],
+      maxSteps: 3,
+      model: {
+        async *stream(input: ModelInput) {
+          seenToolNames.push(input.tools.map((tool) => tool.name));
+          if (input.step === 1) {
+            yield {
+              type: "tool_call_start",
+              toolName: "tool_search",
+              toolCallIndex: 0,
+            } as ModelOutputChunk;
+            yield {
+              type: "tool_call_delta",
+              toolCallIndex: 0,
+              argumentsDelta: '{"query":"select:deferred_echo"}',
+            } as ModelOutputChunk;
+            yield {
+              type: "tool_call_end",
+              toolCallIndex: 0,
+            } as ModelOutputChunk;
+            return;
+          }
+          if (input.step === 2) {
+            yield {
+              type: "tool_call_start",
+              toolName: "deferred_echo",
+              toolCallIndex: 0,
+            } as ModelOutputChunk;
+            yield {
+              type: "tool_call_delta",
+              toolCallIndex: 0,
+              argumentsDelta: '{"text":"loaded"}',
+            } as ModelOutputChunk;
+            yield {
+              type: "tool_call_end",
+              toolCallIndex: 0,
+            } as ModelOutputChunk;
+            return;
+          }
+          yield { type: "text_delta", text: "done" } as ModelOutputChunk;
+        },
+        async complete() {
+          throw new Error("complete should not be called");
+        },
+      },
+    });
+
+    const result = await run.start();
+
+    expect(result).toMatchObject({ signal: "completed", message: "done" });
+    expect(seenToolNames).toEqual([
+      ["tool_search"],
+      ["deferred_echo", "tool_search"],
+      ["deferred_echo", "tool_search"],
+    ]);
+    expect(deferredExecutions).toBe(1);
+  });
+
+  it("exposes deferred schemas declared by a loaded skill", async () => {
+    const seenToolNames: string[][] = [];
+    const deferredEcho = defineTool({
+      name: "deferred_echo",
+      description: "Echo after its owning skill loads.",
+      inputSchema: { type: "object" },
+      deferLoading: true,
+      execute: () => ({ ok: true }),
+    });
+    const skillLoad = defineTool({
+      name: "skill_load",
+      description: "Load a skill.",
+      inputSchema: { type: "object" },
+      execute: () => ({
+        status: "loaded",
+        name: "echo-skill",
+        toolDependencies: ["deferred_echo"],
+      }),
+    });
+    const run = createStreamingRun({
+      goal: "load a skill",
+      tools: [deferredEcho, skillLoad],
+      maxSteps: 2,
+      model: {
+        async *stream(input: ModelInput) {
+          seenToolNames.push(input.tools.map((tool) => tool.name));
+          if (input.step === 1) {
+            yield {
+              type: "tool_call_start",
+              toolName: "skill_load",
+              toolCallIndex: 0,
+            } as ModelOutputChunk;
+            yield {
+              type: "tool_call_delta",
+              toolCallIndex: 0,
+              argumentsDelta: "{}",
+            } as ModelOutputChunk;
+            yield {
+              type: "tool_call_end",
+              toolCallIndex: 0,
+            } as ModelOutputChunk;
+            return;
+          }
+          yield { type: "text_delta", text: "done" } as ModelOutputChunk;
+        },
+        async complete() {
+          throw new Error("complete should not be called");
+        },
+      },
+    });
+
+    const result = await run.start();
+
+    expect(result).toMatchObject({ signal: "completed", message: "done" });
+    expect(seenToolNames).toEqual([
+      ["skill_load"],
+      ["deferred_echo", "skill_load"],
+    ]);
   });
 
   it("executes tools only after the streamed turn is complete", async () => {

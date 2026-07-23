@@ -2153,7 +2153,7 @@ describe("SparkwrightRun", () => {
     });
   });
 
-  it("stops a model retrying the same failing target with varied arguments", async () => {
+  it("stops a target-invariant failure retried with varied arguments", async () => {
     let executed = 0;
 
     // Fails for any call — like reading a path that is actually a directory.
@@ -2214,6 +2214,68 @@ describe("SparkwrightRun", () => {
       toolName: "read",
       status: "failed",
     });
+  });
+
+  it("allows corrected arguments to retry the same target", async () => {
+    let executed = 0;
+    let step = 0;
+    const read = defineTool({
+      name: "read",
+      description: "Read a page from a file.",
+      inputSchema: { type: "object" },
+      execute(args) {
+        executed += 1;
+        const input = args as { path: string; offset: number };
+        if (input.offset < 0) {
+          throw new Error("Offset must be non-negative.");
+        }
+        return { path: input.path, offset: input.offset, content: "ok" };
+      },
+    });
+    const run = createRun({
+      goal: "correct an invalid offset",
+      tools: [read],
+      maxSteps: 4,
+      model: {
+        async complete() {
+          step += 1;
+          if (step === 1) {
+            return {
+              toolCalls: [
+                {
+                  toolName: "read",
+                  arguments: { path: "notes.txt", offset: -1 },
+                },
+              ],
+            };
+          }
+          if (step === 2) {
+            return {
+              toolCalls: [
+                {
+                  toolName: "read",
+                  arguments: { path: "notes.txt", offset: 0 },
+                },
+              ],
+            };
+          }
+          return { message: "done" };
+        },
+      },
+    });
+
+    const result = await run.start();
+    const errorCodes = run.events
+      .all()
+      .filter((event) => event.type === "tool.failed")
+      .map(
+        (event) => (event.payload as { error?: { code?: string } }).error?.code,
+      );
+
+    expect(result).toMatchObject({ signal: "completed", message: "done" });
+    expect(executed).toBe(2);
+    expect(errorCodes).toEqual(["TOOL_EXECUTION_FAILED"]);
+    expect(errorCodes).not.toContain("REPEATED_TOOL_CALL_SKIPPED");
   });
 
   it("stops repeated shell commands even when timeoutMs varies", async () => {

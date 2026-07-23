@@ -130,6 +130,7 @@ export function safelyManagesRepeatedCalls(
 
 export function toolFailureContext(result: ToolResult): {
   category: ToolFailureCategory;
+  retryScope: "arguments" | "target";
   expectedDenial?: boolean;
 } {
   const metadata = isRecord(result.error?.metadata)
@@ -144,8 +145,13 @@ export function toolFailureContext(result: ToolResult): {
   const expectedDenial =
     metadata?.repeatedPriorFailureExpectedDenial === true ||
     isExpectedDenialCategory(category);
+  const retryScope =
+    parseRetryScope(metadata?.repeatedPriorFailureRetryScope) ??
+    parseRetryScope(metadata?.retryScope) ??
+    classifyFailureRetryScope(result, category, expectedDenial);
   return {
     category,
+    retryScope,
     ...(expectedDenial ? { expectedDenial: true } : {}),
   };
 }
@@ -177,22 +183,28 @@ export function repeatedToolCallNudgeMessage(
     );
   }
 
+  if (priorFailure.retryScope === "arguments") {
+    return (
+      `Skipped: \`${toolName}\` already failed with these same arguments ` +
+      `(${failureSummary}). Correct the reported argument error or choose a ` +
+      `different action before retrying. Repeating this exact call will end ` +
+      `the run.`
+    );
+  }
+
   if (isPathLikeSemanticTarget(priorFailure.key)) {
     return (
-      `Skipped: \`${toolName}\` already failed on this target ` +
-      `(${failureSummary}). Retrying it with different arguments (e.g. a new ` +
-      `offset/limit) cannot succeed - the target may be a directory or ` +
-      `otherwise invalid. Use a listing tool (e.g. glob) or choose a different ` +
-      `path. Repeating this will end the run.`
+      `Skipped: \`${toolName}\` already hit a target-level failure on this ` +
+      `path (${failureSummary}). Inspect the enclosing scope or choose a ` +
+      `different path before retrying. Repeating this target will end the run.`
     );
   }
 
   return (
-    `Skipped: \`${toolName}\` already failed on this target ` +
-    `(${failureSummary}). Retrying the same failing target with cosmetic ` +
-    `argument changes cannot succeed. Choose a different concrete action, fix ` +
-    `the cause of the failure, or answer the user directly if the failure is ` +
-    `the result. Repeating this will end the run.`
+    `Skipped: \`${toolName}\` already hit a target-level failure ` +
+    `(${failureSummary}). Choose a different concrete action, fix the cause, ` +
+    `or answer the user directly if the failure is the result. Repeating this ` +
+    `target will end the run.`
   );
 }
 
@@ -202,8 +214,39 @@ export function repeatedToolCallNudgeMetadata(
   return {
     repeatedPriorFailureCode: priorFailure.code,
     repeatedPriorFailureCategory: priorFailure.category ?? "tool_runtime_error",
+    repeatedPriorFailureRetryScope: priorFailure.retryScope,
     repeatedPriorFailureExpectedDenial: priorFailure.expectedDenial === true,
   };
+}
+
+function parseRetryScope(value: unknown): "arguments" | "target" | undefined {
+  return value === "arguments" || value === "target" ? value : undefined;
+}
+
+function classifyFailureRetryScope(
+  result: ToolResult,
+  category: ToolFailureCategory,
+  expectedDenial: boolean,
+): "arguments" | "target" {
+  if (expectedDenial) return "target";
+  if (category === "model_arg_error") return "arguments";
+  const code = result.error?.code ?? "TOOL_FAILED";
+  if (code === "TOOL_TIMEOUT") return "arguments";
+  const failureText = `${code} ${result.error?.message ?? ""}`;
+  if (
+    /(?:ARGUMENT|SCHEMA|VALIDATION|OFFSET|LIMIT|RANGE|ANCHOR|PATCH|CURSOR|POSITION)/i.test(
+      failureText,
+    )
+  ) {
+    return "arguments";
+  }
+  if (
+    /(?:^|\W)(?:EISDIR|ENOTDIR|ENOENT)(?:$|\W)/i.test(failureText) ||
+    /(?:NOT[_ -]?FOUND|NO SUCH FILE)/i.test(failureText)
+  ) {
+    return "target";
+  }
+  return "target";
 }
 
 function parseToolFailureCategory(

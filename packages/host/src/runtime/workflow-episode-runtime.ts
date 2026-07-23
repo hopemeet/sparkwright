@@ -490,10 +490,7 @@ export class WorkflowEpisodeRuntime {
           confidentialDefaults: env.confidentialDefaults,
           writeGuardrails: env.writeGuardrails,
         }),
-        promptBuilder: buildAgentPromptBuilder({
-          cwd: env.workspaceRoot,
-          sessionId,
-        }),
+        promptBuilder: buildMainAgentPromptBuilder(env, sessionId),
         tools: episode.toolSurface.tools,
         workflowHooks: env.workflowHooks,
         model: episode.model,
@@ -594,10 +591,7 @@ export class WorkflowEpisodeRuntime {
           confidentialDefaults: env.confidentialDefaults,
           writeGuardrails: env.writeGuardrails,
         }),
-        promptBuilder: buildAgentPromptBuilder({
-          cwd: env.workspaceRoot,
-          sessionId,
-        }),
+        promptBuilder: buildMainAgentPromptBuilder(env, sessionId),
         tools: episode.toolSurface.tools,
         workflowHooks: env.workflowHooks,
         model: episode.model,
@@ -646,10 +640,7 @@ export class WorkflowEpisodeRuntime {
                   confidentialDefaults: env.confidentialDefaults,
                   writeGuardrails: env.writeGuardrails,
                 }),
-                promptBuilder: buildAgentPromptBuilder({
-                  cwd: env.workspaceRoot,
-                  sessionId,
-                }),
+                promptBuilder: buildMainAgentPromptBuilder(env, sessionId),
                 tools: episode.toolSurface.tools,
                 model: episode.model,
                 maxSteps: resolveWorkflowEpisodeMaxSteps(env.mainAgent),
@@ -741,10 +732,7 @@ export class WorkflowEpisodeRuntime {
           confidentialDefaults: env.confidentialDefaults,
           writeGuardrails: env.writeGuardrails,
         }),
-        promptBuilder: buildAgentPromptBuilder({
-          cwd: env.workspaceRoot,
-          sessionId,
-        }),
+        promptBuilder: buildMainAgentPromptBuilder(env, sessionId),
         tools: episode.toolSurface.tools,
         workflowHooks: env.workflowHooks,
         model: episode.model,
@@ -1291,6 +1279,17 @@ function workflowContinuationGoal(
     return "Continue the active workflow from its durable runtime state.";
   }
   return `Continue workflow ${record.assetName} from durable state at node ${record.currentNodeId ?? "(runtime transition)"}.`;
+}
+
+export function buildMainAgentPromptBuilder(
+  env: Pick<WorkflowEpisodeEnvironment, "workspaceRoot" | "mainAgent">,
+  sessionId: string,
+) {
+  return buildAgentPromptBuilder({
+    cwd: env.workspaceRoot,
+    sessionId,
+    ...(env.mainAgent.prompt ? { appPrompt: env.mainAgent.prompt } : {}),
+  });
 }
 
 export function resolveWorkflowEpisodeMaxSteps(profile: AgentProfile): number {

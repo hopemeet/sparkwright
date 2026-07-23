@@ -10,6 +10,17 @@ See [../trace/raw-trace.md](../trace/raw-trace.md) for raw event evidence.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-23
+- Scope: new standard Host episode prompts include the primary profile system
+  section consistently across fresh/resume construction. Canonical prompt/event
+  persistence, transcript system blobs, session paths, compaction identity, and
+  replay formats are unchanged.
+- Read: Host episode prompt builder, Core run/session stores, transcript prompt
+  persistence, and focused Host prompt tests.
+- Tests: focused Host Workflow episode suite and affected typechecks passed; no
+  session storage schema changed.
+
+- Status: Verified
 - Date: 2026-07-21
 - Scope: reviewed final-answer and approval-subject propagation. Raw
   `model.completed`, typed approval requests, and terminal

@@ -10,6 +10,17 @@ See [workspace-writes.md](workspace-writes.md) and [../../modules/coding-tools.m
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-23
+- Scope: the repeated-target fix preserves failed same-command Shell calls as
+  target-level failures even when timeout arguments vary. Shell promotion keeps
+  its conditional wait and do-not-rerun guidance; execution, sandbox, approval,
+  task promotion, and output contracts are unchanged.
+- Read: Core semantic Shell target/retry classification, Shell promotion result
+  guidance, and focused repeat/task tests.
+- Tests: Core failed-Shell repeat regression and Agent Runtime task suites
+  passed; no Shell source changed.
+
+- Status: Verified
 - Date: 2026-07-21
 - Scope: Shell supplies the approval subject from normalized input: exact
   command, resolved cwd, background/lifetime, and foreground timeout. TUI may

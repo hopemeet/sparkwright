@@ -10,6 +10,18 @@ See [tool-orchestration.md](tool-orchestration.md) and [../trace/raw-trace.md](.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-23
+- Scope: the run loop carries structured `retryScope` with the last failed
+  semantic target. A changed argument set retries an argument-correctable
+  failure, while exact repetitions and target-level failures still feed the
+  nudge/doom-loop path. Awaited task terminal suspension remains automatic;
+  model-side wait is only needed for an immediate dependency before terminal.
+- Read: Core repeated-call state/transitions and awaited terminal gate, Agent
+  Runtime task guidance, and focused Core/Task tests.
+- Tests: focused Core run and Agent Runtime task suites plus affected
+  typechecks passed.
+
+- Status: Verified
 - Date: 2026-07-21
 - Scope: dynamic Agent task text now stays below the system authority layer:
   goal is child task input and optional context is required working context.

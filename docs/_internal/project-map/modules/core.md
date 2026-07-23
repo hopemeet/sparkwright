@@ -13,6 +13,19 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md),
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-23
+- Scope: the repeated-target guard now records whether a failure is
+  argument-correctable or target-invariant. Changed arguments may retry the
+  former; exact repeats, target failures, and expected denials remain guarded.
+  `tool_search` tokenizes CJK text with overlapping bigrams, and selected
+  context no longer exposes its internal `type` as an authority hint. The
+  unimplemented `<system-reminder>` authority declaration was removed.
+- Read: Core prompt construction, tool-search ranking, failure classification,
+  repeated-call bookkeeping, and model-visible observation projection.
+- Tests: focused Core context/tool-search/run suites (178 tests) and Core plus
+  repository test typechecks passed.
+
+- Status: Verified
 - Date: 2026-07-21
 - Scope: approval requests now carry a producer-authored `ApprovalSubject`;
   tool definitions may provide an argument-specific subject and unknown tools

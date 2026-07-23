@@ -12,6 +12,17 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-23
+- Scope: every standard Host main episode now consumes the selected primary
+  Agent profile body as one `app_identity` system section. Fresh runs,
+  checkpoint resume, Workflow resume, and Workflow continuation share the same
+  builder; current goals and selected context remain user/working inputs.
+- Read: Agent profile parsing/selection, WorkflowEpisodeRuntime construction,
+  project-context app prompt composition, and focused Host prompt tests.
+- Tests: focused Workflow episode suite (3 tests), Host typecheck, and
+  repository test typecheck passed.
+
+- Status: Verified
 - Date: 2026-07-21
 - Scope: foreground `spawn_agent` and background `task_create(kind:"agent")`
   now share one model-facing handoff schema. Dynamic children receive a

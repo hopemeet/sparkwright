@@ -411,7 +411,7 @@ function taskCreateNextAction(
     taskId,
     action: "wait",
     instruction: awaited
-      ? `Call task with action="wait" and taskId="${taskId}" to wait for this task before creating another task for the same goal.`
+      ? `This run will wait automatically before finalizing while task "${taskId}" is pending. Call task with action="wait" and taskId="${taskId}" only if the next action depends on its result now.`
       : `The background launch is complete. If you need terminal completion before answering, call task with action="wait" and taskId="${taskId}"; use action="get" only for a one-time status snapshot.`,
     outputInstruction:
       'After the task is terminal, call task with action="output" and the same taskId if you need buffered output that was not included in the task result.',

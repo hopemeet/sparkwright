@@ -12,6 +12,17 @@ See also [../maps/runtime/tool-orchestration.md](../maps/runtime/tool-orchestrat
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-23
+- Scope: project instruction sections retain provider system role but now state
+  their real bounded authority: directory-scoped workspace instructions cannot
+  grant tools, permissions, or authority beyond harness policy and the task.
+  The role, discovery, cache policy, and instruction content are unchanged.
+- Read: project-context instruction discovery/rendering, Core app/project
+  section roles, and focused project-context tests.
+- Tests: Project Context suite (19 tests), package typecheck, and repository
+  test typecheck passed.
+
+- Status: Verified
 - Date: 2026-07-21
 - Scope: tool definitions may author typed reusable approval subjects. Shell
   provides exact normalized command/cwd semantics; dynamic Agent grants provide

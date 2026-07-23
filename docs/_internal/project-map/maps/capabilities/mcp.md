@@ -10,6 +10,17 @@ See [../../modules/mcp-adapter.md](../../modules/mcp-adapter.md).
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-23
+- Scope: MCP tools continue to enter Host/Core through the same filtered,
+  deferred catalog. Runtime free-text `tool_search` now supports CJK names and
+  descriptions; MCP transport, trust, governance, approval, resource/prompt
+  projection, and sampling remain unchanged.
+- Read: Core tool-search tokenizer/ranking, Host deferred catalog boundary, and
+  MCP capability/adapter contracts.
+- Tests: focused Core tool-search plus affected typechecks passed; no MCP
+  execution behavior changed.
+
+- Status: Verified
 - Date: 2026-07-21
 - Scope: reviewed approval-subject and conversation-projection changes. MCP
   tools without a producer-specific stable subject remain one-shot; successful

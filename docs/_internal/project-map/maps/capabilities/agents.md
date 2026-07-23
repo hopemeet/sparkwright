@@ -11,6 +11,18 @@ See [../../modules/agent-runtime.md](../../modules/agent-runtime.md) and [../../
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-23
+- Scope: the standard Host primary Agent profile body is now present exactly
+  once as system identity across fresh, checkpoint-resume, Workflow-resume, and
+  continuation episodes. Dynamic child goal/context authority is unchanged.
+  Awaited Agent-task guidance now reflects automatic terminal suspension and
+  makes manual wait conditional on an immediate result dependency.
+- Read: main profile parsing/episode prompt assembly, Agent task result
+  guidance, Core awaited revival, and focused Host/Agent Runtime tests.
+- Tests: focused Workflow episode and Task suites plus affected typechecks
+  passed.
+
+- Status: Verified
 - Date: 2026-07-21
 - Scope: dynamic Agent handoff is explicit and transport-independent. Foreground
   and background entrypoints share one schema with required `goal`/`role` and

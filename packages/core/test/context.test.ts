@@ -332,6 +332,9 @@ describe("DefaultPromptBuilder", () => {
     });
     expect(messages[0]?.content).toBe("Stable rules.");
     expect(messages[1]?.content).toContain("Tool use contract:");
+    expect(
+      messages.some((message) => message.content.includes("<system-reminder>")),
+    ).toBe(false);
     expect(messages[6]?.content).toContain("Available tools:");
     expect(messages[6]?.content).toContain("- echo (text?:string): Echo text.");
     expect(messages[6]?.content).not.toContain("requiresApproval: false");
@@ -583,6 +586,7 @@ describe("DefaultPromptBuilder", () => {
     expect(selected?.content).toContain("source: skill:inline-skill");
     expect(selected?.content).toContain("source: file");
     expect(selected?.content).toContain("source: artifact");
+    expect(selected?.content).not.toContain("type: system");
     expect(selected?.content).not.toContain(skillPath);
     expect(selected?.content).not.toContain(filePath);
     expect(selected?.content).not.toContain(fileUri);

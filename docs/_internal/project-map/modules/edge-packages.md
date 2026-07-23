@@ -136,6 +136,17 @@ contracts, and focused checklists that no longer fit here.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-23
+- Scope: Streaming Runtime now mirrors Core's deferred provider-tool lifecycle.
+  Context assembly and the capability prompt receive the full descriptor
+  inventory, while `ModelInput.tools` excludes deferred schemas until a
+  successful `tool_search` match or loaded Skill dependency admits them.
+- Read: Streaming Runtime model-input assembly/result handling, Core deferred
+  loaded-set behavior, tool-search result shape, and focused streaming tests.
+- Tests: Streaming Runtime suite (14 tests), package typecheck, and repository
+  test typecheck passed.
+
+- Status: Verified
 - Date: 2026-07-21
 - Scope: ACP now forwards committed nonterminal `model.assistant_text` and the
   canonical `run.completed.message`, not raw `model.completed`. Streaming

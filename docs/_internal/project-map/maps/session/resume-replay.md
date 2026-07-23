@@ -10,6 +10,17 @@ See [session-store.md](session-store.md) and [../runtime/context-compaction.md](
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-23
+- Scope: checkpoint resume, Workflow resume, and Workflow continuation now use
+  the same primary-profile system section as fresh Host episodes. Durable
+  completed-turn replay, checkpoint loop state, awaited-task non-durability,
+  TUI replay separation, and session target resolution are unchanged.
+- Read: Host WorkflowEpisodeRuntime fresh/resume builders, profile selection,
+  Core checkpoint/session replay, and focused episode tests.
+- Tests: focused Host Workflow episode suite plus Host/Core and repository test
+  typechecks passed.
+
+- Status: Verified
 - Date: 2026-07-21
 - Scope: replayed conversation uses the same quiet-success projection and
   single-final-answer ownership as live rendering. Activity/Trace retain every

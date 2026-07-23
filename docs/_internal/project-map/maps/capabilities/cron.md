@@ -10,6 +10,17 @@ See [../../modules/agent-runtime.md](../../modules/agent-runtime.md) for related
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-23
+- Scope: reviewed after Core failure retry classification and Direct Core
+  identity wording changed. Cron `ref` targets, unattended approval denial,
+  scheduling persistence, runner prompt composition, and tool filtering remain
+  unchanged; target-level Cron failures stay under the repeat guard.
+- Read: Core semantic target/retry-scope logic, Direct Core runner boundary,
+  and Cron store/runner/tool contracts.
+- Tests: affected Core/CLI typechecks and repository test typecheck passed; no
+  Cron-specific behavior changed.
+
+- Status: Verified
 - Date: 2026-07-21
 - Scope: reviewed the Agent Runtime task-descriptor validation extension.
   Cron capability does not register through Host `task_create(kind:"agent")`;

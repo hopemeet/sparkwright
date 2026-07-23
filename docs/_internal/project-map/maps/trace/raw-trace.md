@@ -11,6 +11,18 @@ and [../session/session-store.md](../session/session-store.md) for session layou
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-23
+- Scope: synthetic repeated-failure tool results may now include bounded
+  `repeatedPriorFailureRetryScope` metadata (`arguments` or `target`) alongside
+  existing prior code/category/denial fields. Event families, correlation,
+  persistence, provider prompt trace structure, and tool terminal ordering are
+  unchanged.
+- Read: Core repeat nudge metadata/emission, raw tool terminal persistence, and
+  focused run/trace-facing tests.
+- Tests: focused Core run suite and affected typechecks passed; no trace schema
+  migration is required for optional error metadata.
+
+- Status: Verified
 - Date: 2026-07-21
 - Scope: dynamic Agent prompt authority changed without changing trace
   vocabulary. Tool requests still retain explicit goal/context arguments and
