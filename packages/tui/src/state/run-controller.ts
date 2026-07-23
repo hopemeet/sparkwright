@@ -84,6 +84,9 @@ export interface WorkflowJobHandle extends WorkflowJobExecutionContext {
   close: () => void;
 }
 
+export type HostTaskUpdatedEvent = Extract<HostEvent, { kind: "task.updated" }>;
+export type TaskHostConnectionState = "connected" | "disconnected";
+
 /**
  * Drives runs against a Sparkwright host. The host is launched lazily on
  * first run (spawned child by default, or attached to SPARKWRIGHT_HOST_URL
@@ -115,6 +118,12 @@ export class RunController {
   // start(), so no filtering is needed.
   private lastGoal: string | null = null;
   private pendingInputParts: RunInputPart[] = [];
+  private taskUpdateListeners = new Set<
+    (event: HostTaskUpdatedEvent) => void
+  >();
+  private taskConnectionListeners = new Set<
+    (state: TaskHostConnectionState) => void
+  >();
 
   constructor(opts: RunControllerOptions) {
     this.opts = opts;
@@ -139,6 +148,20 @@ export class RunController {
 
   getSessionRootDir(): string {
     return this.sessionRootDir();
+  }
+
+  subscribeTaskUpdates(
+    listener: (event: HostTaskUpdatedEvent) => void,
+  ): () => void {
+    this.taskUpdateListeners.add(listener);
+    return () => this.taskUpdateListeners.delete(listener);
+  }
+
+  subscribeTaskHostConnection(
+    listener: (state: TaskHostConnectionState) => void,
+  ): () => void {
+    this.taskConnectionListeners.add(listener);
+    return () => this.taskConnectionListeners.delete(listener);
   }
 
   newSession(): string | null {
@@ -844,6 +867,7 @@ export class RunController {
       .then((c) => {
         this.attachListeners(c);
         this.client = c;
+        this.notifyTaskHostConnection("connected");
         return c;
       })
       .catch((error) => {
@@ -963,6 +987,16 @@ export class RunController {
       );
     });
 
+    client.on("task.updated", (msg) => {
+      for (const listener of this.taskUpdateListeners) {
+        try {
+          listener(msg);
+        } catch {
+          // A presentation subscriber cannot break Host event dispatch.
+        }
+      }
+    });
+
     client.on("approval.requested", (msg) =>
       this.handleApprovalRequested(
         this.approvalCoordinator.contextFor(client, msg.payload.runId),
@@ -1012,6 +1046,7 @@ export class RunController {
       );
       this.client = null;
       this.clientPromise = null;
+      this.notifyTaskHostConnection("disconnected");
     });
 
     // host.log events go unhandled in the TUI today — a future log panel
@@ -1052,6 +1087,16 @@ export class RunController {
 
   private cleanupExecution(client: Client): void {
     this.approvalCoordinator.cleanupExecution(client);
+  }
+
+  private notifyTaskHostConnection(state: TaskHostConnectionState): void {
+    for (const listener of this.taskConnectionListeners) {
+      try {
+        listener(state);
+      } catch {
+        // Connection reconciliation is presentation-only and best-effort.
+      }
+    }
   }
 
   private reportFailure(

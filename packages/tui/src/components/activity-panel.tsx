@@ -12,6 +12,7 @@ import {
   type TaskActivityItem,
   shortTaskId,
   summarizeTaskActivity,
+  taskCompletionModeLabel,
   taskDurationLabel,
   taskStatusLabel,
 } from "../lib/task-activity.js";
@@ -425,7 +426,7 @@ function TasksTab(props: {
           active ? ">" : " ",
           shortTaskId(task.id),
           taskStatusLabel(task),
-          task.awaited ? "awaited" : "detached",
+          taskCompletionModeLabel(task),
           task.kind,
           task.error ? `error: ${task.error}` : last,
         ]
@@ -474,7 +475,7 @@ function TaskDetails(props: {
   const lines = [
     `id ${props.task.id}`,
     `status ${taskStatusLabel(props.task)}${duration ? ` · ${duration}` : ""}`,
-    `mode ${props.task.awaited ? "awaited" : "detached"}`,
+    `mode ${taskCompletionModeLabel(props.task)}`,
     props.task.kind ? `kind ${props.task.kind}` : "",
     props.task.cwd ? `cwd ${props.task.cwd}` : "",
     props.task.command || props.task.title

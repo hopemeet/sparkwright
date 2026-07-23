@@ -10,6 +10,17 @@ canonical trace or a session consistency report.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-23
+- Scope: TUI `task.updated` consumption feeds Activity and local
+  NotificationStore only. It is not appended to EventStore, Trace, or Markdown
+  export; `task.list` supplies reconnect truth and `task.output` supplies
+  details.
+- Read: RunController lifecycle listener, task action hook, EventStore/export
+  boundaries, and notification history.
+- Tests: controller isolation, task action/render regressions, full TUI
+  464/464, and TUI typecheck passed.
+
+- Status: Verified
 - Date: 2026-07-21
 - Scope: live conversation and `/export` share conditional quiet-success
   projection for batch wrappers, successful approvals, Skill body/resources,

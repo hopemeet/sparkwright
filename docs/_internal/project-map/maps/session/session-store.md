@@ -11,6 +11,16 @@ See [../trace/raw-trace.md](../trace/raw-trace.md) for raw event evidence.
 
 - Status: Verified
 - Date: 2026-07-23
+- Scope: TUI now uses session run ids to reconcile live task lifecycle gaps
+  through TaskStore-backed `task.list`. No session file, trace replay,
+  checkpoint, compaction, or task storage format changed.
+- Read: TUI session/task reconciliation, Host task snapshot API, and existing
+  session ownership boundaries.
+- Tests: focused TUI task/reconnect coverage, full TUI 464/464, and TUI
+  typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-23
 - Scope: `task.updated` adds only a process-live Host route and event
   projection. TaskStore records remain durable truth; no session layout,
   checkpoint, replay log, external delivery cursor, or cross-process task

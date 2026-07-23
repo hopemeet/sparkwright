@@ -12,6 +12,17 @@ See also [../maps/safety/approvals.md](../maps/safety/approvals.md) and [../maps
 
 - Status: Verified
 - Date: 2026-07-23
+- Scope: route review for the first TUI `task.updated` consumer. TUI narrows the
+  existing typed SDK event, uses canonical completion policy, and keeps
+  `task.list`/`task.output` as reconciliation/detail APIs; no wire shape changed
+  in this stage.
+- Read: Protocol task lifecycle/snapshot DTOs, SDK event map, TUI controller/
+  activity consumers, and focused tests.
+- Tests: focused TUI task/controller/render suites (67), full TUI 464/464, and
+  TUI typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-23
 - Scope: Host protocol now has typed `task.updated` created/started/terminal
   events with bounded summaries, safe output references, and canonical
   completion policy. `TaskRecordSnapshot` also carries completion policy;

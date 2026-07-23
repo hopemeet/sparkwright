@@ -1,4 +1,5 @@
 import type {
+  TaskCompletionPolicy,
   TaskOutputChunkSnapshot,
   TaskRecordSnapshot,
 } from "@sparkwright/protocol";
@@ -13,6 +14,7 @@ export interface TaskActivityItem {
   id: string;
   kind: string;
   title: string;
+  completionPolicy: TaskCompletionPolicy;
   awaited: boolean;
   command: string;
   cwd: string;
@@ -55,6 +57,7 @@ export function summarizeTaskActivity(
   events: readonly RunEvent[],
   records: readonly TaskRecordSnapshot[] = [],
   outputs: Readonly<Record<string, readonly TaskOutputChunkSnapshot[]>> = {},
+  recordSequences: Readonly<Record<string, number>> = {},
 ): TaskActivitySummary {
   const byId = new Map<string, TaskActivityItem>();
   for (const event of events) {
@@ -111,6 +114,10 @@ export function summarizeTaskActivity(
     const task = ensureTask(byId, record.id, 0);
     updateTaskFromPayload(task, record as unknown as Record<string, unknown>);
     task.status = record.status === "pending" ? "created" : record.status;
+    task.lastSequence = Math.max(
+      task.lastSequence,
+      recordSequences[record.id] ?? 0,
+    );
     if (task.head.length === 0 && task.tail.length === 0) {
       for (const chunk of outputs[record.id] ?? []) {
         appendOutput(task, chunk as unknown as Record<string, unknown>);
@@ -174,6 +181,14 @@ export function taskDurationLabel(task: TaskActivityItem): string {
   return "";
 }
 
+export function taskCompletionModeLabel(task: TaskActivityItem): string {
+  return task.completionPolicy === "unknown"
+    ? task.awaited
+      ? "awaited"
+      : "detached"
+    : task.completionPolicy;
+}
+
 function ensureTask(
   byId: Map<string, TaskActivityItem>,
   id: string,
@@ -185,6 +200,7 @@ function ensureTask(
     id,
     kind: "",
     title: "",
+    completionPolicy: "unknown",
     awaited: true,
     command: "",
     cwd: "",
@@ -210,6 +226,9 @@ function updateTaskFromPayload(
   const error = rec(payload.error);
   task.kind = str(payload.kind) || task.kind;
   task.title = str(payload.title) || task.title;
+  if (isTaskCompletionPolicy(payload.completionPolicy)) {
+    task.completionPolicy = payload.completionPolicy;
+  }
   if (typeof payload.awaited === "boolean") task.awaited = payload.awaited;
   task.command =
     str(payload.command) ||
@@ -324,6 +343,15 @@ function isTaskStatus(value: string): value is TaskActivityStatus {
     value === "completed" ||
     value === "failed" ||
     value === "cancelled"
+  );
+}
+
+function isTaskCompletionPolicy(value: unknown): value is TaskCompletionPolicy {
+  return (
+    value === "inline" ||
+    value === "awaited" ||
+    value === "detached" ||
+    value === "unknown"
   );
 }
 

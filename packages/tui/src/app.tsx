@@ -652,6 +652,7 @@ function AppReady(
     toasts,
     layers,
     events: state.events,
+    sessionId: state.sessionId ?? controller.getSessionId(),
   });
 
   const workflowActions = useWorkflowActions({

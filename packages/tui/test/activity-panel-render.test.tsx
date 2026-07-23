@@ -102,6 +102,7 @@ describe("ActivityPanel", () => {
         parentRunId: "run_1",
         kind: "shell.background",
         status: "completed",
+        completionPolicy: "detached",
         awaited: false,
         createdAt: "2026-06-30T00:00:00.000Z",
         outputChunks: 12,
@@ -137,6 +138,32 @@ describe("ActivityPanel", () => {
     expect(text).toContain("durable-row-12");
     expect(text).not.toContain("durable-row-01");
     expect(text).not.toContain('"chunks"');
+  });
+
+  it("uses canonical completion policy after the mutable awaited bit clears", async () => {
+    const text = await renderToText(
+      <ActivityPanel
+        events={[]}
+        taskRecords={[
+          {
+            id: "task_inline123456789",
+            parentRunId: "run_1",
+            kind: "agent",
+            status: "completed",
+            completionPolicy: "inline",
+            awaited: false,
+            createdAt: "2026-07-23T00:00:00.000Z",
+            completedAt: "2026-07-23T00:00:01.000Z",
+            metadata: {},
+          },
+        ]}
+        initialTab="tasks"
+        onClose={() => {}}
+      />,
+    );
+
+    expect(text).toContain("mode inline");
+    expect(text).not.toContain("mode detached");
   });
 
   it("bounds event browsing to the latest event window", async () => {

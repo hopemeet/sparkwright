@@ -11,6 +11,17 @@ See [../safety/workspace-writes.md](../safety/workspace-writes.md), [../safety/s
 
 - Status: Verified
 - Date: 2026-07-23
+- Scope: TUI consumes the independent Host task lifecycle stream without
+  changing tool execution or parent observation. Inline/awaited success remains
+  quiet, detached terminal state is visible without opening Activity, and
+  failed/cancelled tasks receive higher presentation priority.
+- Read: TUI RunController/task actions, Host lifecycle DTO, existing Core
+  run-event task projection, and notification policy.
+- Tests: focused TUI task/controller/render suites (67), full TUI 464/464, and
+  TUI typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-23
 - Scope: task orchestration now emits an independent post-store-write lifecycle
   snapshot at created, started, and terminal transitions. This observer cannot
   alter tool results or consume parent actor notifications.

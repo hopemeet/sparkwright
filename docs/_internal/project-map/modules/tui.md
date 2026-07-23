@@ -11,6 +11,20 @@ See also [../maps/trace/export-diagnostics.md](../maps/trace/export-diagnostics.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-23
+- Scope: RunController now forwards Host `task.updated` to the task activity
+  owner. Live records update without opening Activity, Host event ids plus
+  task/status/completedAt suppress duplicate terminals, and connection/session
+  changes reconcile through `task.list` without replaying historical terminals
+  as new notifications. Inline/awaited success stays quiet, detached success
+  enters task status/history, and failed/cancelled terminals receive higher
+  priority.
+- Read: RunController SDK listeners, task action/reconciliation hook, Activity
+  projection, NotificationStore policy, Host/Protocol lifecycle DTO, and tests.
+- Tests: focused task/controller/render/notification suites (67 tests), full
+  TUI 464/464, and TUI typecheck passed.
+
+- Status: Verified
 - Date: 2026-07-21
 - Scope: live conversation and Markdown export share a quiet-success
   projection: batch wrappers, successful approval rows, successful Skill
@@ -375,16 +389,20 @@ Does not own:
 - Plain Esc run cancellation is owned by the input editor when `cancel.run`
   includes an unmodified `esc`; App-level cancel handling covers non-Esc
   configured chords so the default Esc path does not double-dispatch.
-- The Activity Drawer derives background task state from live TUI events and
-  durable host snapshots via `RunController` `task.list` / `task.output`
-  requests. `lib/task-activity.ts` merges those presentation inputs; canonical
-  task storage remains host-owned. The Tasks tab defaults durable snapshot
-  reads to the current session's run ids (`parentRunId` filters); it does not
-  expose workspace-wide historical tasks in the session activity view.
+- The Activity Drawer derives background task state from Core `run.event`,
+  live Host `task.updated`, and durable snapshots via `RunController`
+  `task.list` / `task.output` requests. `lib/task-activity.ts` merges those
+  presentation inputs; canonical task storage remains host-owned. Live
+  lifecycle updates are consumed even when the drawer is closed. Session load,
+  Host reconnection, and explicit refresh reconcile current-session run ids
+  (`parentRunId` filters); historical terminal snapshots seed state quietly
+  instead of becoming new notifications.
 - Activity task presentation preserves `awaited` versus detached/background
-  state from live events and durable snapshots. The panel can render on-demand
-  join/promote actions for host-backed callers; these callbacks call
-  host-facing `task.join` / `task.promote` controls, while task state remains
+  state from legacy live events and uses canonical `completionPolicy` when
+  available so terminal inline/awaited tasks are not mislabeled after the
+  mutable awaited bit clears. The panel can render on-demand join/promote
+  actions for host-backed callers; these callbacks call host-facing
+  `task.join` / `task.promote` controls, while task state remains
   host/protocol-owned.
 - Todo event projection reads only canonical model/result item titles. It does
   not retain a `content` fallback; malformed title-less trace rows use the
@@ -402,7 +420,11 @@ Does not own:
   boundary marker is present.
 - Unread terminal task state crosses `useTaskActions` -> `LiveFrame` ->
   `StatusBar` as one `UnreadTaskActivitySummary`; consumers do not reconstruct
-  completed counts from parallel total/failed/cancelled props.
+  completed counts from parallel total/failed/cancelled props. Host lifecycle
+  ids and task/status/completedAt form the live dedupe identity. Successful
+  inline/awaited terminals update Activity without an extra completion signal;
+  detached success enters status/history, while failures and cancellations can
+  raise a toast.
 - Workflow job status in `StatusBar` is derived from durable workflow snapshots
   plus current TUI-owned waiting jobs. `/workflow stop` is limited to TUI-owned
   live job connections and matches durable workflow ids, active run ids,

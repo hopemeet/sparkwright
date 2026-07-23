@@ -11,6 +11,17 @@ See [session-store.md](session-store.md) and [../runtime/context-compaction.md](
 
 - Status: Verified
 - Date: 2026-07-23
+- Scope: TUI session load and Host reconnection now reconcile task state from
+  `task.list`; durable terminal snapshots seed the baseline quietly, while live
+  `task.updated` events remain process-local and are not written into session
+  replay.
+- Read: TUI RunController/session task hook, EventStore replay boundary,
+  TaskStore snapshot APIs, and lifecycle dedupe.
+- Tests: focused TUI task/reconnect coverage, full TUI 464/464, and TUI
+  typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-23
 - Scope: `task.updated` is process-live best-effort push. It is not appended to
   session replay and has no durable cursor; reconnect recovery reads TaskStore
   through `task.list`. Awaited suspension and cross-process limits are
