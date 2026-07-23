@@ -11,6 +11,17 @@ See [../trace/raw-trace.md](../trace/raw-trace.md) for raw event evidence.
 
 - Status: Verified
 - Date: 2026-07-23
+- Scope: final lint follow-up touched only Streaming Runtime's in-memory
+  command-wait cleanup holder and a TUI test mock parameter. Session files,
+  task records, replay, reconciliation, and persistence contracts are
+  unchanged.
+- Read: Streaming command wait, TUI task-action test harness, and session
+  ownership boundary.
+- Tests: Streaming Runtime 20/20, focused TUI task actions 5/5, affected
+  typechecks, and focused lint passed.
+
+- Status: Verified
+- Date: 2026-07-23
 - Scope: ACP exhaustively ignores live `task.updated` control events rather
   than appending them as agent text. Session persistence, TaskStore records,
   replay, compaction, and reconciliation formats are unchanged.

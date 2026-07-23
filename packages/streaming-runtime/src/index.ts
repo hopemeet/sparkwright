@@ -1403,15 +1403,15 @@ class AfterTurnStreamingRun implements StreamingRunHandle {
     if (alreadyQueued || signal.aborted) return Promise.resolve();
     return new Promise<void>((resolve) => {
       let settled = false;
-      let unsubscribe: (() => void) | undefined;
+      const unsubscribe: { current?: () => void } = {};
       const finish = () => {
         if (settled) return;
         settled = true;
-        unsubscribe?.();
+        unsubscribe.current?.();
         signal.removeEventListener("abort", finish);
         resolve();
       };
-      unsubscribe = this.events.subscribe((event) => {
+      unsubscribe.current = this.events.subscribe((event) => {
         if (event.sequence <= sequence) return;
         if (event.type === "run.command.enqueued") finish();
       });

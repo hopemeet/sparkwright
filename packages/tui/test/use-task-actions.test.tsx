@@ -288,7 +288,10 @@ class FakeTaskController {
     async (_input: {
       parentRunId?: string;
       limit?: number;
-    }): Promise<TaskRecordSnapshot[]> => this.records,
+    }): Promise<TaskRecordSnapshot[]> => {
+      void _input;
+      return this.records;
+    },
   );
 
   readTaskOutput = vi.fn(async () => []);

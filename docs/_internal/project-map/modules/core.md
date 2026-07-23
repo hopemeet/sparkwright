@@ -14,6 +14,17 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md),
 
 - Status: Verified
 - Date: 2026-07-23
+- Scope: final lint follow-up changed only Streaming Runtime's local
+  command-wait unsubscribe holder to the same const-ref cleanup pattern already
+  used by Core. Core event subscription, command readiness, abort, and
+  `waiting_tasks` contracts are unchanged.
+- Read: Core EventLog subscription/command-wait pattern and Streaming Runtime
+  parity implementation.
+- Tests: Streaming Runtime 20/20, focused TUI task actions 5/5, affected
+  typechecks, and focused lint passed.
+
+- Status: Verified
+- Date: 2026-07-23
 - Scope: route review for Streaming Runtime awaited-task parity. Core's
   `TaskRevivalSource`, `NotificationSource`, `waiting_tasks`, and forced
   continuation contracts did not change; the edge runtime now consumes them.

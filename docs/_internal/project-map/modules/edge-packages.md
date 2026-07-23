@@ -153,6 +153,17 @@ contracts, and focused checklists that no longer fit here.
 
 - Status: Verified
 - Date: 2026-07-23
+- Scope: final lint follow-up replaced Streaming Runtime's mutable
+  unsubscribe function slot with a const holder while preserving the exact
+  command-ready/abort cleanup behavior. No revival, event, or storage semantics
+  changed.
+- Read: Streaming Runtime command wait, Core equivalent cleanup pattern, and
+  focused tests.
+- Tests: Streaming Runtime 20/20, focused TUI task actions 5/5, affected
+  typechecks, and focused lint passed.
+
+- Status: Verified
+- Date: 2026-07-23
 - Scope: ACP Adapter now handles the typed `task.updated` HostEvent
   exhaustively as a control-only event. It emits no ACP agent text or tool
   update for task lifecycle push; awaited results remain visible through the

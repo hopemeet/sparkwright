@@ -11,6 +11,16 @@ See [tool-orchestration.md](tool-orchestration.md) and [../trace/raw-trace.md](.
 
 - Status: Verified
 - Date: 2026-07-23
+- Scope: final lint follow-up preserves Streaming Runtime's command-ready and
+  abort race exactly while expressing unsubscribe cleanup through a const
+  holder. Awaited task detection, `waiting_tasks`, notification injection, and
+  revival budgets are unchanged.
+- Read: Streaming Runtime command wait and Core equivalent cleanup pattern.
+- Tests: Streaming Runtime 20/20, focused TUI task actions 5/5, affected
+  typechecks, and focused lint passed.
+
+- Status: Verified
+- Date: 2026-07-23
 - Scope: IM delivery is a post-TaskStore Host lifecycle projection. Routing a
   terminal detached task after its parent run ends does not retain or revive
   the Core run, consume the parent actor inbox, or alter awaited
