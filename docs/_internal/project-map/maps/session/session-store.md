@@ -11,6 +11,14 @@ See [../trace/raw-trace.md](../trace/raw-trace.md) for raw event evidence.
 
 - Status: Verified
 - Date: 2026-07-23
+- Scope: route review for WorkspaceContext TaskManager/inbox pairing; session
+  files, run lookup, compaction artifacts, and IM persistence limits did not
+  change.
+- Read: WorkspaceContext task ownership and session-store boundaries.
+- Tests: focused Host task suites and Host typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-23
 - Scope: new standard Host episode prompts include the primary profile system
   section consistently across fresh/resume construction. Canonical prompt/event
   persistence, transcript system blobs, session paths, compaction identity, and

@@ -11,6 +11,17 @@ See [../safety/workspace-writes.md](../safety/workspace-writes.md), [../safety/s
 
 - Status: Verified
 - Date: 2026-07-23
+- Scope: task/shell/Agent promotion outputs now share an explicit async receipt
+  contract, and synchronous terminal observations consume the parent actor
+  notice they supersede. Canonical completion policy is distinct from the
+  mutable awaited keep-alive bit.
+- Read: Agent Runtime task tools/manager/stores, Host Shell/Agent bridges, Shell
+  output schema, Core awaited gate, and focused regressions.
+- Tests: Agent Runtime tasks (72), Shell (43), Host task/spawn/tools (120), Core
+  run (129), and affected typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-23
 - Scope: repeated-call protection distinguishes argument-correctable failures
   from target-invariant failures instead of treating every same-path retry as
   impossible. Exact calls, expected denials, missing/invalid targets, and
@@ -397,9 +408,11 @@ true` records a mutation index for its target (`mutatedByTarget`). A
   model-facing scheduling input; unknown fields reject as recoverable argument
   errors, while output/durable `awaited` reports current runtime state.
   Global/per-kind concurrency caps fail as recoverable tool errors. `task(action:"wait", ids,
-mode:"any"|"all")` is the join surface. Detached/promoted create results
-  include concrete `nextAction` guidance so the model has a task id and monitor
-  action to reuse instead of issuing an equivalent `task_create`.
+mode:"any"|"all")` is the join surface. Async create results expose
+  `actualMode`, `parentWillWait`, `completionObservation`, concrete
+  `nextAction`, and top-level duplicate avoidance. Foreground-inline and manual
+  wait results consume the matching parent actor notification instead of
+  reinjecting the same result on a later turn.
 - The model-facing `task` control schema stays a provider-compatible flat
   object. The wrapper canonicalizes optional fields per action before
   validation/execution, discards empty/action-irrelevant values, and rejects
@@ -523,8 +536,9 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
   `awaited` as its generic keep-alive contract; shell lifetime remains at this
   boundary and is not added to unrelated task kinds.
 - Main-host `task_create` is eager while `task` control remains advanced and
-  deferred. A shell result carries its concrete task id and concise management
-  guidance; models load `task` through `tool_search` when they need
+  deferred. A background shell result carries the same structured async
+  receipt plus compatibility guidance; models load `task` through `tool_search`
+  when they need
   get/output/wait/stop. Runtime truth remains the task action result and durable
   record, not model prose.
 - Explicit `background:true` shell calls pass validation/policy/approval before

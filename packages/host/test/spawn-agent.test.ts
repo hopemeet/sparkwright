@@ -1233,11 +1233,24 @@ describe("host spawn_agent wiring", () => {
       childRunId: string;
       spanId: string;
       awaited: boolean;
+      actualMode: string;
+      parentWillWait: boolean;
+      completionObservation: string;
+      nextAction: { taskId: string; action: string };
+      duplicateAvoidance: string;
     };
 
     expect(ticket).toMatchObject({
       promoted: true,
       awaited: true,
+      actualMode: "awaited",
+      parentWillWait: true,
+      completionObservation: "automatic_once",
+      nextAction: {
+        taskId: expect.any(String),
+        action: "wait",
+      },
+      duplicateAvoidance: expect.stringContaining("task_create"),
       childRunId: expect.any(String),
       spanId: expect.any(String),
     });

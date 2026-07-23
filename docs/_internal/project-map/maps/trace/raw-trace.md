@@ -12,6 +12,14 @@ and [../session/session-store.md](../session/session-store.md) for session layou
 
 - Status: Verified
 - Date: 2026-07-23
+- Scope: route review for Task/Shell/Agent async receipts and parent observation
+  dedupe; existing `task.*`, `subagent.*`, and workspace marker event contracts
+  did not change.
+- Read: Host Shell/Agent task paths and raw-trace event ownership.
+- Tests: focused Host tools/spawn/task suites and affected typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-23
 - Scope: synthetic repeated-failure tool results may now include bounded
   `repeatedPriorFailureRetryScope` metadata (`arguments` or `target`) alongside
   existing prior code/category/denial fields. Event families, correlation,

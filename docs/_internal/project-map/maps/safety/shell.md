@@ -11,6 +11,17 @@ See [workspace-writes.md](workspace-writes.md) and [../../modules/coding-tools.m
 
 - Status: Verified
 - Date: 2026-07-23
+- Scope: explicit and promoted Shell handoffs now return a structured task
+  receipt. Explicit background reports detached/no-parent-wait/opportunity
+  observation; timeout promotion reports awaited/parent-wait/automatic-once.
+  Existing prose guidance remains additive compatibility help.
+- Read: Shell output schema/handoff, Host TaskManager adoption, task completion
+  policy, and focused Shell/Host tests.
+- Tests: Shell suite (43), Host task/spawn/tools suites (120), Agent Runtime
+  tasks (72), and affected package typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-23
 - Scope: the repeated-target fix preserves failed same-command Shell calls as
   target-level failures even when timeout arguments vary. Shell promotion keeps
   its conditional wait and do-not-rerun guidance; execution, sandbox, approval,
@@ -196,9 +207,11 @@ args` without rewriting requests, while the latter parses Host command text
   tasks deduplicate before process spawn by normalized command + canonical cwd
   - lifetime within the parent run.
 - Background handoff observations return the concrete task id and early output
-  as launch confirmation. They explicitly discourage `task get` merely to
-  reconfirm launch; the advanced deferred `task` schema is loaded only when a
-  wait, incremental output read, or stop is actually needed.
+  as launch confirmation plus `actualMode`, `parentWillWait`,
+  `completionObservation`, `nextAction`, and `duplicateAvoidance`. They
+  explicitly discourage `task get` merely to reconfirm launch; the advanced
+  deferred `task` schema is loaded only when a wait, incremental output read, or
+  stop is actually needed.
 - Shell promotion is also governed by the resolved run `backgroundTasks`
   policy. `enabled` allows promotion, `foreground-only` keeps foreground shell
   behavior without promotion, and `disabled` reports promotion unavailable even

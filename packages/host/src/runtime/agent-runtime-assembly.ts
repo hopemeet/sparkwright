@@ -25,6 +25,7 @@ import {
   AGENT_RESULT_PROTOCOL_PROMPT,
   createAgentProfilePolicy,
   createAgentTool,
+  createTaskAsyncReceipt,
   deriveChildAgentProfile,
   findReusableDelegation,
   isCompleteAgentResult,
@@ -1906,6 +1907,7 @@ function promoteDynamicSpawnAgent(input: {
     parentRunId: input.parentRunId,
     kind: "agent",
     title: `spawn_agent: ${input.role}`,
+    completionPolicy: "awaited",
     awaited: true,
     controller: input.abortController,
     metadata: {
@@ -1939,13 +1941,14 @@ function promoteDynamicSpawnAgent(input: {
     mode: "foreground",
     promoted: true,
     awaited: true,
+    ...createTaskAsyncReceipt(handle.record.id, "awaited"),
     childRunId: input.spawned.childRunId,
     spanId: input.spawned.spanId,
     agentId: input.agentId,
     role: input.role,
     foregroundTimeoutMs: input.foregroundTimeoutMs,
     message:
-      "spawn_agent exceeded the foreground budget and is continuing as an awaited background task.",
+      "spawn_agent exceeded the foreground budget and is continuing as an awaited background task; this run will wait automatically before finalizing.",
   };
 }
 

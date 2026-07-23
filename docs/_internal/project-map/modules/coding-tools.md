@@ -13,6 +13,15 @@ See also [../maps/runtime/tool-orchestration.md](../maps/runtime/tool-orchestrat
 
 - Status: Verified
 - Date: 2026-07-23
+- Scope: Shell background output gained a structured asynchronous task receipt;
+  command execution, safety classification, and coding-tool ownership did not
+  change.
+- Read: Shell tool output schema/handoff and Host task adoption.
+- Tests: Shell suite (43), focused Host tools tests, and affected typechecks
+  passed.
+
+- Status: Verified
+- Date: 2026-07-23
 - Scope: project instruction sections retain provider system role but now state
   their real bounded authority: directory-scoped workspace instructions cannot
   grant tools, permissions, or authority beyond harness policy and the task.

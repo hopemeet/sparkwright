@@ -14,12 +14,14 @@ import type { RunId } from "@sparkwright/core";
 import {
   isNonRetryableActorNotificationError,
   taskNotificationInputFromRecord,
+  type ActorInbox,
   type ActorNotificationSink,
   type TaskTerminalActorNotificationInput,
 } from "./notifications.js";
 import { InMemoryTaskStore, type TaskStore } from "./store.js";
 import {
   createTaskId,
+  type TaskCompletionPolicy,
   type TaskError,
   type TaskHandle,
   type TaskId,
@@ -75,6 +77,7 @@ export interface SpawnTaskInput {
   parentRunId: RunId;
   kind: string;
   title?: string;
+  completionPolicy?: TaskCompletionPolicy;
   awaited?: boolean;
   metadata?: Record<string, unknown>;
   /** Inline runner. When omitted, a runner registered under `kind` is used. */
@@ -95,6 +98,7 @@ export interface AdoptRunningTaskInput {
   parentRunId: RunId;
   kind: string;
   title?: string;
+  completionPolicy?: TaskCompletionPolicy;
   awaited?: boolean;
   metadata?: Record<string, unknown>;
   /** Abort controller already wired into the adopted runtime, if any. */
@@ -118,6 +122,13 @@ export interface TaskManagerOptions {
    * tag, etc.).
    */
   notificationSink?: ActorNotificationSink;
+  /**
+   * Inbox paired with `notificationSink`. When the sink itself implements
+   * {@link ActorInbox}, the manager discovers it automatically. Canonical task
+   * tools use this to consume a terminal notification after returning the same
+   * result inline, preventing a duplicate parent-context injection.
+   */
+  notificationInbox?: ActorInbox;
   /**
    * Called when {@link TaskManagerOptions.notificationSink}.deliver throws.
    * Defaults to a silent swallow — sinks are best-effort; task state in the
@@ -152,12 +163,17 @@ export class TaskManager {
     progress: TaskProgressUpdate,
   ) => void;
   private readonly notificationSink?: ActorNotificationSink;
+  private readonly notificationInbox?: ActorInbox;
   private readonly onSinkError?: (taskId: TaskId, cause: unknown) => void;
   private readonly terminalResolvers = new Map<
     TaskId,
     (record: TaskRecord) => void
   >();
   private readonly promotionWaiters = new Map<TaskId, Set<() => void>>();
+  private readonly terminalNotificationDeliveries = new Map<
+    TaskId,
+    Promise<void>
+  >();
   private readonly notificationOutbox: TaskTerminalActorNotificationInput[] =
     [];
 
@@ -165,6 +181,8 @@ export class TaskManager {
     this.store = options.store ?? new InMemoryTaskStore();
     this.onProgress = options.onProgress;
     this.notificationSink = options.notificationSink;
+    this.notificationInbox =
+      options.notificationInbox ?? actorInboxFromSink(options.notificationSink);
     this.onSinkError = options.onSinkError;
   }
 
@@ -203,6 +221,7 @@ export class TaskManager {
       parentRunId: input.parentRunId,
       kind: input.kind,
       title: input.title,
+      completionPolicy: input.completionPolicy,
       awaited: input.awaited,
       metadata: input.metadata,
     });
@@ -231,6 +250,7 @@ export class TaskManager {
       parentRunId: input.parentRunId,
       kind: input.kind,
       title: input.title,
+      completionPolicy: input.completionPolicy,
       awaited: input.awaited,
       metadata: input.metadata,
     });
@@ -309,6 +329,52 @@ export class TaskManager {
     return { delivered, pending: this.notificationOutbox.length };
   }
 
+  /**
+   * Consume the parent-actor terminal observation for a task whose terminal
+   * result was returned directly by a foreground tool call or explicit wait.
+   *
+   * The manager registers the first sink-delivery promise before resolving the
+   * terminal waiter. This method joins that promise before draining, so callers
+   * cannot race a later first delivery. Retry entries are removed as part of
+   * the same operation.
+   */
+  async consumeTerminalObservation(id: TaskId): Promise<{
+    consumed: number;
+  }> {
+    const record = this.store.get(id);
+    if (!record) {
+      throw new Error(`Task not found: ${id}`);
+    }
+    if (!isTerminal(record.status)) {
+      return { consumed: 0 };
+    }
+    await this.terminalNotificationDeliveries.get(id);
+    let consumed = 0;
+    for (let index = this.notificationOutbox.length - 1; index >= 0; index--) {
+      const notification = this.notificationOutbox[index];
+      if (
+        notification?.payload.taskId !== id ||
+        notification.payload.parentRunId !== record.parentRunId
+      ) {
+        continue;
+      }
+      this.notificationOutbox.splice(index, 1);
+      consumed += 1;
+    }
+    if (this.notificationInbox) {
+      const drained = await this.notificationInbox.drain(
+        (notification) =>
+          notification.source.kind === "task" &&
+          "taskId" in notification.payload &&
+          "parentRunId" in notification.payload &&
+          notification.payload.taskId === id &&
+          notification.payload.parentRunId === record.parentRunId,
+      );
+      consumed += drained.length;
+    }
+    return { consumed };
+  }
+
   pruneTerminalTasks(options: TaskRetentionOptions = {}): {
     pruned: number;
     retained: number;
@@ -384,6 +450,7 @@ export class TaskManager {
     }
     const updated = this.store.update(id, {
       awaited: true,
+      completionPolicy: "awaited",
       metadata: { manualPromotionRequested: true },
     });
     const waiters = this.promotionWaiters.get(id);
@@ -523,12 +590,17 @@ export class TaskManager {
     });
     this.runners.delete(id);
     this.promotionWaiters.delete(id);
+    const notificationDelivery = this.notify(terminal);
+    this.terminalNotificationDeliveries.set(id, notificationDelivery);
     const resolve = this.terminalResolvers.get(id);
     if (resolve) {
       this.terminalResolvers.delete(id);
       resolve(terminal);
     }
-    await this.notify(terminal);
+    await notificationDelivery;
+    if (this.terminalNotificationDeliveries.get(id) === notificationDelivery) {
+      this.terminalNotificationDeliveries.delete(id);
+    }
     return terminal;
   }
 
@@ -544,6 +616,18 @@ export class TaskManager {
       this.onSinkError?.(record.id, cause);
     }
   }
+}
+
+function actorInboxFromSink(
+  sink: ActorNotificationSink | undefined,
+): ActorInbox | undefined {
+  if (!sink) return undefined;
+  const candidate = sink as Partial<ActorInbox>;
+  return typeof candidate.peek === "function" &&
+    typeof candidate.drain === "function" &&
+    typeof candidate.waitUntilAvailable === "function"
+    ? (sink as ActorNotificationSink & ActorInbox)
+    : undefined;
 }
 
 function isTerminal(status: TaskRecord["status"]): boolean {

@@ -11,6 +11,13 @@ See [../../modules/agent-runtime.md](../../modules/agent-runtime.md) for related
 
 - Status: Verified
 - Date: 2026-07-23
+- Scope: route review for TaskRecord completion policy and terminal observation
+  consumption; Cron ownership, scheduling, and runner contracts did not change.
+- Read: shared TaskManager/store additions and Cron task boundary.
+- Tests: Agent Runtime task suite and affected typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-23
 - Scope: reviewed after Core failure retry classification and Direct Core
   identity wording changed. Cron `ref` targets, unattended approval denial,
   scheduling persistence, runner prompt composition, and tool filtering remain

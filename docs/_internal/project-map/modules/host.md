@@ -13,6 +13,17 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 
 - Status: Verified
 - Date: 2026-07-23
+- Scope: Host task composition now pairs the shared TaskManager sink with its
+  parent actor inbox so foreground-inline/manual-wait results cannot be injected
+  again. Shell handoff and dynamic `spawn_agent` promotion persist canonical
+  completion policy and return the same structured asynchronous receipt shape.
+- Read: WorkspaceContext task ownership, task revival/control, Shell handoff,
+  dynamic Agent promotion, and focused Host/Agent Runtime/Shell tests.
+- Tests: Host task-revival/spawn/tools suites (120 tests), Agent Runtime tasks
+  (72), Shell (43), Core run (129), and affected package typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-23
 - Scope: every standard Host main episode now consumes the selected primary
   Agent profile body as one `app_identity` system section. Fresh runs,
   checkpoint resume, Workflow resume, and Workflow continuation share the same
@@ -841,8 +852,11 @@ Does not own:
   `tool_search select:task` gives the provider the same guidance the runtime
   validates.
 - Host wires the shared `TaskManager` actor sink into a durable
-  `FileTaskNotificationOutbox` whose direct actor inbox backs per-run core notification/revival
-  sources. All terminal task notifications for the run can be injected through
+  `FileTaskNotificationOutbox` whose direct actor inbox backs per-run core
+  notification/revival sources and TaskManager's explicit-result consumption.
+  Foreground-inline and manual-wait terminal results drain their matching parent
+  notification; awaited and detached observations remain available to revival.
+  All remaining terminal task notifications for the run can be injected through
   `run.notification.injected`; only awaited tasks wake core's internal
   `waiting_tasks` state. Injected terminal task notification body text includes
   a bounded `Result summary: ...` when a task result is present, because the
@@ -1062,8 +1076,9 @@ Does not own:
   compatibility re-export; it must not grow a second indexed-router copy.
 - Host-facing task controls `task.join` and `task.promote` are protocol/runtime
   controls for TUI and other clients. They do not reuse model-facing task tool
-  JSON: join marks a task awaited, while promote forwards a manual foreground
-  promotion signal into `TaskManager`.
+  JSON: join marks a task awaited with canonical awaited completion policy,
+  while promote forwards a manual foreground promotion signal into
+  `TaskManager`.
 - `tool-identities.ts` records the canonical public model-facing surface
   (`read`, `write`, `edit`, `bash`, `glob`, `grep`), classifies default exposure
   tier, and records related or required tools such as the anchored verified-edit
@@ -1087,7 +1102,9 @@ Does not own:
   running child through `TaskManager.adoptRunning()` and preserves
   parent-visible `subagent.*` events, usage rollup, run-store attribution,
   terminal projection, and the delegation ledger; it is not a simple wrapper
-  task around a child promise.
+  task around a child promise. Its promoted ticket uses the same structured
+  async receipt as `task_create`: actual awaited mode, parent keep-alive,
+  automatic-once observation, concrete next action, and duplicate avoidance.
 - Background task lifecycle remains flat in v1. Dynamic and configured child
   agents do not receive `task_create`; only a top-level run can create
   background agent tasks. `capabilities.agents.maxDepth` still bounds ordinary

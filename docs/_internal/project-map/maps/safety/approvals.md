@@ -11,6 +11,14 @@ See [workspace-writes.md](workspace-writes.md) and [shell.md](shell.md).
 
 - Status: Verified
 - Date: 2026-07-23
+- Scope: route review for Task/Shell/Agent completion receipts; approval
+  subjects, resolution, policy ordering, and remembered-decision semantics did
+  not change.
+- Read: task_create/Shell/spawn policy boundaries and approval map contracts.
+- Tests: focused Host tools/spawn suites, Shell suite, and typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-23
 - Scope: repeated-failure state now carries retry scope, but policy and approval
   denials are always target-level and retain their existing expected-denial
   recovery semantics. Project instructions and Direct Core identity explicitly

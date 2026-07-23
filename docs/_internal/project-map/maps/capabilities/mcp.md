@@ -11,6 +11,13 @@ See [../../modules/mcp-adapter.md](../../modules/mcp-adapter.md).
 
 - Status: Verified
 - Date: 2026-07-23
+- Scope: route review for Host task receipt/observation changes; MCP discovery,
+  transport, approval, and tool projection contracts did not change.
+- Read: Host runtime task/Agent assembly boundary and MCP ownership notes.
+- Tests: focused Host tools/spawn/task suites and Host typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-23
 - Scope: MCP tools continue to enter Host/Core through the same filtered,
   deferred catalog. Runtime free-text `tool_search` now supports CJK names and
   descriptions; MCP transport, trust, governance, approval, resource/prompt

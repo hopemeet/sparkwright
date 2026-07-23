@@ -9,6 +9,14 @@ cron, shell/task tools, and capability inspection.
 
 - Status: Verified
 - Date: 2026-07-23
+- Scope: route review for structured Task/Shell/Agent async receipts and parent
+  inbox consumption; capability admission, discovery, and snapshot contracts
+  did not change.
+- Read: task tool exposure, Host Agent/Shell assembly, and capability boundary.
+- Tests: focused Host tools/spawn/task suites and affected typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-23
 - Scope: provider-native capability exposure now follows the same deferred
   loaded-set in Core and Streaming Runtime; discovery via `tool_search` or a
   loaded Skill dependency admits only registered surviving tools. Primary

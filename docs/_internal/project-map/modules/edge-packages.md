@@ -137,6 +137,14 @@ contracts, and focused checklists that no longer fit here.
 
 - Status: Verified
 - Date: 2026-07-23
+- Scope: route review for WorkspaceContext task inbox pairing; SDK, server,
+  streaming, provider, gateway, and storage edge ownership did not change in
+  this stage.
+- Read: Host workspace task composition and edge-package ownership boundaries.
+- Tests: focused Host task suites and Host typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-23
 - Scope: Streaming Runtime now mirrors Core's deferred provider-tool lifecycle.
   Context assembly and the capability prompt receive the full descriptor
   inventory, while `ModelInput.tools` excludes deferred schemas until a

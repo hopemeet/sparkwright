@@ -11,6 +11,14 @@ See [session-store.md](session-store.md) and [../runtime/context-compaction.md](
 
 - Status: Verified
 - Date: 2026-07-23
+- Scope: route review for live task terminal observation semantics; task
+  `waiting_tasks` remains process-local and no checkpoint/resume or durable
+  detach contract changed.
+- Read: Host task revival/control and existing resume/replay task boundary.
+- Tests: Core run, Host task revival, and affected typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-23
 - Scope: checkpoint resume, Workflow resume, and Workflow continuation now use
   the same primary-profile system section as fresh Host episodes. Durable
   completed-turn replay, checkpoint loop state, awaited-task non-durability,

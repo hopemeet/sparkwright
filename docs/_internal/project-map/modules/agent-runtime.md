@@ -10,6 +10,20 @@ See also [../maps/capabilities/agents.md](../maps/capabilities/agents.md), [../m
 
 - Status: Verified
 - Date: 2026-07-23
+- Scope: task completion now separates canonical `completionPolicy`
+  (`inline | awaited | detached`) from the mutable `awaited` keep-alive bit.
+  Async task receipts expose actual mode, parent wait behavior, completion
+  observation, next action, and duplicate avoidance. Foreground-inline and
+  explicit `task wait` results consume the matching parent actor notification
+  after its first delivery attempt, including pending retry entries.
+- Read: Task records/stores, TaskManager terminal delivery/consumption, task
+  tool result schemas, Shell/Host consumers, and focused task tests.
+- Tests: Agent Runtime task suite (72 tests), Shell suite (43 tests), Host task/
+  spawn/tools suites (120 tests), Core run suite (129 tests), and affected
+  package typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-23
 - Scope: awaited `task_create` results now describe the actual two-path
   lifecycle: Core waits automatically before terminal finalization, while the
   model calls `task(action:"wait")` only when its next action immediately
@@ -446,7 +460,11 @@ Does not own:
 - `spawnSubAgent` does not forward task notification/revival sources into child
   runs. Background lifecycle stays flat in v1; child agents cannot create
   awaited/background tasks.
-- Task records carry first-class `awaited` state. `TaskStore`,
+- Task records carry first-class `awaited` state plus canonical
+  `completionPolicy:"inline"|"awaited"|"detached"`. `awaited` is the mutable
+  live keep-alive predicate; completion policy preserves the model-visible
+  observation mode after terminal state. Records written before the additive
+  field remain readable. `TaskStore`,
   `FileTaskStore`, `TaskManager`, protocol snapshots, and UI projections should
   preserve it so terminal awaited tasks can wake a run once and then be detached
   after an explicit wait/join consumes them.
@@ -495,6 +513,12 @@ Does not own:
   older reliable entries.
 - `TaskManager.hasLiveRunner(taskId)` distinguishes current-process task
   execution from reopened durable `pending`/`running` records.
+- TaskManager registers the first actor-sink delivery promise before resolving
+  terminal task waiters. `consumeTerminalObservation(taskId)` joins that
+  delivery, then drains the paired actor inbox and removes transient retry
+  entries when a foreground tool or explicit wait already returned the terminal
+  result. Awaited revival and detached opportunity notifications do not call
+  this consumption path.
 - `task_create` supports `foreground`, `awaited`, and `background` modes. The
   default is foreground; foreground timeout may promote to an awaited background
   task. `mode` is the only model-facing scheduling input; the durable/result
@@ -506,11 +530,11 @@ Does not own:
   deliberate model-tolerance mechanism. The Markdown ledger can retain richer
   host-owned fields, but the tool does not accept an unadvertised rich DTO or a
   `content` alias.
-- Detached or promoted `task_create` results include a model-visible
-  `nextAction` object with the concrete task id, recommended `task` monitor
-  action, output retrieval hint, and duplicate-avoidance guidance. Keep this
-  corrective enough that a parent can reuse the existing task id instead of
-  spawning equivalent work.
+- Detached or promoted `task_create` results include a structured async receipt:
+  `actualMode`, `parentWillWait`, `completionObservation`, `nextAction`, and
+  top-level `duplicateAvoidance`. The existing requested `mode`, `awaited`, and
+  promotion fields remain for compatibility. Foreground inline results identify
+  `actualMode:"inline"` and `completionObservation:"returned_inline"`.
 - Detached `task_create` next-action guidance recommends `task wait` when the
   caller needs terminal completion and reserves `task get` for a one-time
   snapshot. Repeated identical `task get` observations provide tool-owned

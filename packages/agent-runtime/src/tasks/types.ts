@@ -29,6 +29,18 @@ export type TaskStatus =
   "pending" | "running" | "completed" | "failed" | "cancelled";
 
 /**
+ * Canonical policy describing how the parent run observes task completion.
+ *
+ * `awaited` on {@link TaskRecord} remains the mutable keep-alive bit. This
+ * field preserves the semantic mode after a task reaches terminal state and
+ * `awaited` is cleared.
+ *
+ * @public
+ * @stability experimental v0.1
+ */
+export type TaskCompletionPolicy = "inline" | "awaited" | "detached";
+
+/**
  * Error descriptor attached to a failed task.
  *
  * @public
@@ -52,6 +64,11 @@ export interface TaskRecord {
   parentRunId: RunId;
   kind: string;
   title?: string;
+  /**
+   * Canonical parent-observation policy. Optional for records persisted before
+   * this field was introduced; every newly-created record sets it.
+   */
+  completionPolicy?: TaskCompletionPolicy;
   /** Whether this task should keep the parent run alive until its terminal notification is injected. */
   awaited: boolean;
   status: TaskStatus;

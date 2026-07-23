@@ -5,6 +5,7 @@
 // host-specific adapter, not here.
 
 import type {
+  TaskCompletionPolicy,
   TaskError,
   TaskId,
   TaskOutputChunk,
@@ -32,6 +33,7 @@ export interface TaskListFilter {
  * @stability experimental v0.1
  */
 export interface TaskUpdatePatch {
+  completionPolicy?: TaskCompletionPolicy;
   awaited?: boolean;
   status?: TaskStatus;
   startedAt?: string;
@@ -58,6 +60,7 @@ export interface CreateTaskInput {
   parentRunId: TaskRecord["parentRunId"];
   kind: string;
   title?: string;
+  completionPolicy?: TaskCompletionPolicy;
   awaited?: boolean;
   metadata?: Record<string, unknown>;
 }
@@ -112,6 +115,9 @@ export class InMemoryTaskStore implements TaskStore {
       parentRunId: input.parentRunId,
       kind: input.kind,
       title: input.title,
+      completionPolicy:
+        input.completionPolicy ??
+        (input.awaited === false ? "detached" : "awaited"),
       awaited: input.awaited ?? true,
       status: "pending",
       createdAt: new Date().toISOString(),
@@ -151,6 +157,9 @@ export class InMemoryTaskStore implements TaskStore {
         : {}),
       ...("awaited" in patch && patch.awaited !== undefined
         ? { awaited: patch.awaited }
+        : {}),
+      ...("completionPolicy" in patch && patch.completionPolicy !== undefined
+        ? { completionPolicy: patch.completionPolicy }
         : {}),
       ...("startedAt" in patch && patch.startedAt !== undefined
         ? { startedAt: patch.startedAt }

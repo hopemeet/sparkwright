@@ -559,6 +559,7 @@ function createTaskBackgroundHandoff(input: {
       parentRunId: input.parentRunId,
       kind: SHELL_BACKGROUND_KIND,
       title: `shell: ${rawCommand}`,
+      completionPolicy: policy.awaited ? "awaited" : "detached",
       awaited: policy.awaited,
       metadata: {
         command: rawCommand,

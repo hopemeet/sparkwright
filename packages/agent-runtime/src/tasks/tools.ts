@@ -222,12 +222,16 @@ export function createTaskCreate(options: TaskToolOptions): ToolDefinition {
               normalizeTaskTitle(task.title) === dedupeTitle,
           );
         if (existing) {
+          const receipt = createTaskAsyncReceipt(
+            existing.id,
+            existing.awaited ? "awaited" : "detached",
+          );
           return {
             taskId: existing.id,
             mode,
             awaited: existing.awaited,
             deduplicated: true,
-            nextAction: taskCreateNextAction(existing.id, existing.awaited),
+            ...receipt,
           };
         }
       }
@@ -236,16 +240,26 @@ export function createTaskCreate(options: TaskToolOptions): ToolDefinition {
         parentRunId,
         kind: parsed.kind,
         title: parsed.title,
+        completionPolicy:
+          mode === "foreground"
+            ? "inline"
+            : mode === "awaited"
+              ? "awaited"
+              : "detached",
         awaited: parsed.awaited,
         runner,
         payload: parsed.payload,
       });
       if (mode !== "foreground") {
+        const receipt = createTaskAsyncReceipt(
+          handle.record.id,
+          parsed.awaited ? "awaited" : "detached",
+        );
         return {
           taskId: handle.record.id,
           mode,
           awaited: parsed.awaited,
-          nextAction: taskCreateNextAction(handle.record.id, parsed.awaited),
+          ...receipt,
         };
       }
 
@@ -262,6 +276,7 @@ export function createTaskCreate(options: TaskToolOptions): ToolDefinition {
       if (foreground.kind === "timeout" || foreground.kind === "promote") {
         options.manager.store.update(handle.record.id, {
           awaited: true,
+          completionPolicy: "awaited",
           ...(foreground.kind === "promote"
             ? { metadata: { manualPromotionDelivered: true } }
             : {}),
@@ -271,10 +286,11 @@ export function createTaskCreate(options: TaskToolOptions): ToolDefinition {
           mode: "foreground",
           promoted: true,
           awaited: true,
-          nextAction: taskCreateNextAction(handle.record.id, true),
+          ...createTaskAsyncReceipt(handle.record.id, "awaited"),
         };
       }
 
+      await options.manager.consumeTerminalObservation(handle.record.id);
       options.manager.store.update(handle.record.id, {
         awaited: false,
         metadata: { foregroundInline: true },
@@ -360,15 +376,27 @@ function validationFailureFromCause(
 
 export type TaskCreateMode = "foreground" | "awaited" | "background";
 
+export type TaskActualMode = "inline" | "awaited" | "detached";
+
+export type TaskCompletionObservation =
+  "returned_inline" | "automatic_once" | "opportunistic_if_parent_active";
+
+export interface TaskAsyncReceipt {
+  actualMode: Exclude<TaskActualMode, "inline">;
+  parentWillWait: boolean;
+  completionObservation: Exclude<TaskCompletionObservation, "returned_inline">;
+  nextAction: TaskCreateNextAction;
+  duplicateAvoidance: string;
+}
+
 export type TaskCreateResult =
-  | {
+  | ({
       taskId: TaskId;
       mode: "foreground";
       promoted: true;
       awaited: true;
-      nextAction: TaskCreateNextAction;
-    }
-  | {
+    } & TaskAsyncReceipt)
+  | ({
       taskId: TaskId;
       mode: "awaited" | "background";
       awaited: boolean;
@@ -378,13 +406,16 @@ export type TaskCreateResult =
        * returned taskId is the pre-existing task.
        */
       deduplicated?: true;
-      nextAction: TaskCreateNextAction;
-    }
+    } & TaskAsyncReceipt)
   | {
       taskId: TaskId;
       mode: "foreground";
       promoted: false;
       awaited: false;
+      actualMode: "inline";
+      parentWillWait: false;
+      completionObservation: "returned_inline";
+      duplicateAvoidance: string;
       status: TaskRecord["status"];
       result?: unknown;
       error?: TaskRecord["error"];
@@ -417,6 +448,24 @@ function taskCreateNextAction(
       'After the task is terminal, call task with action="output" and the same taskId if you need buffered output that was not included in the task result.',
     duplicateAvoidance:
       "Do not call task_create again for the same goal; use this taskId to wait, inspect, or retrieve output.",
+  };
+}
+
+/** Build the canonical model-visible receipt for asynchronous task startup. */
+export function createTaskAsyncReceipt(
+  taskId: TaskId,
+  actualMode: TaskAsyncReceipt["actualMode"],
+): TaskAsyncReceipt {
+  const parentWillWait = actualMode === "awaited";
+  const nextAction = taskCreateNextAction(taskId, parentWillWait);
+  return {
+    actualMode,
+    parentWillWait,
+    completionObservation: parentWillWait
+      ? "automatic_once"
+      : "opportunistic_if_parent_active",
+    nextAction,
+    duplicateAvoidance: nextAction.duplicateAvoidance,
   };
 }
 
@@ -951,6 +1000,7 @@ async function executeTaskWait(
   const terminalIds = new Set(terminalRecords.map((record) => record.id));
   for (const record of terminalRecords) {
     options.manager.store.update(record.id, { awaited: false });
+    await options.manager.consumeTerminalObservation(record.id);
   }
 
   return {
@@ -1145,6 +1195,11 @@ function taskCreateInlineResult(record: TaskRecord): TaskCreateResult {
     mode: "foreground",
     promoted: false,
     awaited: false,
+    actualMode: "inline",
+    parentWillWait: false,
+    completionObservation: "returned_inline",
+    duplicateAvoidance:
+      "The terminal result is already returned here; do not wait for or recreate this task.",
     status: record.status,
     ...(record.result !== undefined ? { result: record.result } : {}),
     ...(record.error ? { error: record.error } : {}),

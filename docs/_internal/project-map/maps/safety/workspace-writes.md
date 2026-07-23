@@ -11,6 +11,14 @@ See [approvals.md](approvals.md) and [../runtime/tool-orchestration.md](../runti
 
 - Status: Verified
 - Date: 2026-07-23
+- Scope: route review for Shell/Agent task completion policy and parent inbox
+  consumption; workspace leases, managed-write attribution, rollback, and
+  untracked background markers did not change.
+- Read: Host Shell/Agent task handoff and workspace-write boundary.
+- Tests: focused Host tools/spawn/task suites and affected typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-23
 - Scope: model identity/context wording no longer implies or manufactures
   workspace write authority. Project instructions are directory-scoped but
   cannot grant tools/permissions, and Direct Core states that the current

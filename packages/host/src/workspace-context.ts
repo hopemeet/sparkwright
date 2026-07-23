@@ -53,6 +53,7 @@ export class WorkspaceContext {
     this.taskManager = new TaskManager({
       store: new FileTaskStore({ rootDir: taskRoot, createRoot: false }),
       notificationSink: this.taskNotifications,
+      notificationInbox: this.taskNotifications,
     });
   }
 }

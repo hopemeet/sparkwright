@@ -12,6 +12,17 @@ See [../../modules/agent-runtime.md](../../modules/agent-runtime.md) and [../../
 
 - Status: Verified
 - Date: 2026-07-23
+- Scope: foreground-timeout `spawn_agent` promotion now returns the canonical
+  structured async receipt and persists awaited completion policy while
+  preserving child lifecycle, usage, run-store, cancellation, and ledger
+  identity.
+- Read: dynamic Agent promotion/adoption, shared task receipt, parent revival,
+  and focused Host/Agent Runtime tests.
+- Tests: Host spawn/task/tools suites (120), Agent Runtime tasks (72), Core run
+  (129), and affected typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-23
 - Scope: the standard Host primary Agent profile body is now present exactly
   once as system identity across fresh, checkpoint-resume, Workflow-resume, and
   continuation episodes. Dynamic child goal/context authority is unchanged.
@@ -392,6 +403,8 @@ configured profiles/delegates
   `backgroundTasks=enabled`. Promotion preserves the same spawned child run,
   parent-visible `subagent.*` events, usage rollup, run-store attribution,
   terminal/finality projection, cancellation path, and delegation ledger.
+  The promoted result explicitly reports actual awaited mode, parent keep-alive,
+  automatic-once completion observation, next action, and duplicate avoidance.
 - Background `agent` tasks call the same dynamic-spawn path through
   `runHostAgentTask()`, with the task controller signal bound to the child run
   so `task(action:"stop")` cancels the background child instead of only

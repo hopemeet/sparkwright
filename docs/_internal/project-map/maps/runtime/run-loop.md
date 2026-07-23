@@ -11,6 +11,17 @@ See [tool-orchestration.md](tool-orchestration.md) and [../trace/raw-trace.md](.
 
 - Status: Verified
 - Date: 2026-07-23
+- Scope: parent task observation is now single-consumer aware: a synchronous
+  foreground/manual-wait result consumes its matching actor notification,
+  while awaited tasks still enter `waiting_tasks` and detached tasks remain
+  opportunity notifications without keep-alive.
+- Read: Core waiting/notification ordering, Host revival bridge, Agent Runtime
+  terminal delivery barrier/consumption, and focused integration tests.
+- Tests: Core run (129), Host task revival plus spawn/tools (120), Agent Runtime
+  tasks (72), and affected typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-23
 - Scope: the run loop carries structured `retryScope` with the last failed
   semantic target. A changed argument set retries an argument-correctable
   failure, while exact repetitions and target-level failures still feed the
@@ -448,6 +459,10 @@ createRun/resumeRunFromCheckpoint
   step start, the run loop drains sources and injects messages through the
   existing `run.notification.injected` path; do not add synthetic user turns or
   a separate notification event family for task revival.
+- Tool calls that synchronously return a terminal task result consume that
+  task's parent actor notice before the next Core step. This prevents duplicate
+  `run.notification.injected` context without changing awaited readiness or
+  detached no-keep-alive semantics.
 - `waiting_tasks` is an internal live run state only, not a `RunResult` state.
   It waits for awaited task readiness, command input, or abort. Task readiness
   must come from a non-consuming queue wait; command readiness must be derived

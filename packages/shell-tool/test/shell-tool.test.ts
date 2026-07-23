@@ -680,6 +680,17 @@ describe("foreground→background promotion", () => {
     expect(result.timedOut).toBe(false);
     expect(result.promotionGuidance).toContain("task_abc");
     expect(result.promotionGuidance).toMatch(/do not re-run/i);
+    expect(result).toMatchObject({
+      actualMode: "awaited",
+      parentWillWait: true,
+      completionObservation: "automatic_once",
+      nextAction: {
+        tool: "task",
+        taskId: "task_abc",
+        action: "wait",
+      },
+      duplicateAvoidance: expect.stringMatching(/do not launch/i),
+    });
     expect(promotions).toHaveLength(1);
     expect(promotions[0]!.foregroundTimeoutMs).toBe(20);
     expect(promotions[0]!.policy).toEqual({ awaited: true, lifetime: "job" });
@@ -872,6 +883,17 @@ describe("foreground→background promotion", () => {
     expect(result.backgroundGuidance).toContain("successful start");
     expect(result.backgroundGuidance).toContain('action="get" merely');
     expect(result.backgroundGuidance).toContain('action="wait"');
+    expect(result).toMatchObject({
+      actualMode: "detached",
+      parentWillWait: false,
+      completionObservation: "opportunistic_if_parent_active",
+      nextAction: {
+        tool: "task",
+        taskId: "task_bg",
+        action: "wait",
+      },
+      duplicateAvoidance: expect.stringMatching(/do not launch/i),
+    });
     const schema = tool.inputSchema as {
       properties: Record<string, unknown>;
     };
