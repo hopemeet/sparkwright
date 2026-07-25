@@ -4,6 +4,8 @@ import {
   summarizeGlobResult,
   summarizeListDir,
   summarizeShellResult,
+  displayArrayLength,
+  displayStringLength,
 } from "./tool-result-summary.js";
 import { sanitizeAnsiForRender } from "./text.js";
 
@@ -176,8 +178,8 @@ function summarizeSkillLoad(r: Record<string, unknown>): ToolResultDisplay {
     );
   }
 
-  const bodyChars = str(r.content).length;
-  const resources = Array.isArray(r.resourceFiles) ? r.resourceFiles.length : 0;
+  const bodyChars = displayStringLength(r.content) ?? 0;
+  const resources = displayArrayLength(r.resourceFiles) ?? 0;
   const version = str(r.version);
   return summary(
     `skill_load ${str(r.name)} -> loaded`,

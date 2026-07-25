@@ -12,14 +12,23 @@ import { isInternalTranscriptEventType } from "@sparkwright/protocol";
  * the host split was designed to eliminate.
  */
 export interface RunEvent {
+  /** Run that emitted the event. */
+  runId?: string;
   /** Event type, e.g. "tool.requested", "model.stream.chunk". */
   type: string;
   /** Per-run monotonically increasing sequence number. */
   sequence: number;
   /** Stable event id; used as React key. */
   id?: string;
-  /** ISO timestamp. */
+  /** ISO timestamp used by current event envelopes. */
+  timestamp?: string;
+  /** Legacy/local timestamp alias kept for replay compatibility. */
   occurredAt?: string;
+  /** Optional process-monotonic timestamp used for precise ordering. */
+  monotonicUs?: number;
+  /** Optional trace/span identity used to correlate structured work. */
+  spanId?: string;
+  parentSpanId?: string;
   /** Payload; shape is event-type-specific. */
   payload?: unknown;
   /** Event metadata; shape is event-type-specific and may be absent. */

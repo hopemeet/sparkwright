@@ -8,6 +8,15 @@ cron, shell/task tools, and capability inspection.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-25
+- Scope: route review for bounded Agent action receipts and zero-write
+  reporting guidance. Capability discovery, admission, parent/child catalog
+  boundaries, and mutation authority are unchanged.
+- Read: Host dynamic Agent assembly, Agent capability map, and adjacent
+  capability routes.
+- Tests: Host 583/583 and Agent Runtime 258/258.
+
+- Status: Verified
 - Date: 2026-07-24
 - Scope: capability routing now distinguishes explicit child delegation from
   parent-only tools. Dynamic children derive local read/CAS-write/child-safe

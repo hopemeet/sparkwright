@@ -10,6 +10,17 @@ See [../trace/raw-trace.md](../trace/raw-trace.md) for raw event evidence.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-25
+- Scope: the compact/detailed TUI change reads the existing append-only session
+  event stream and adds no persisted UI mode, event family, cursor, or storage
+  layout. Child/root filtering, wildcard stream suppression, and root-usage
+  selection are replay presentation concerns only.
+- Read: TUI session load/replay paths, EventStore projection, and canonical
+  session files.
+- Tests: focused SDK replay tests, full TUI 482/482, real replay of
+  `session_tui_ms0d86wg`, and a fresh session check with 0 findings.
+
+- Status: Verified
 - Date: 2026-07-24
 - Scope: session persistence remains append-only while new Agent completion
   notices, principal identity, ChangeSet roll-up, and verification receipts are

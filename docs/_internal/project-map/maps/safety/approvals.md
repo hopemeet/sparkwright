@@ -11,6 +11,16 @@ See [workspace-writes.md](workspace-writes.md) and [shell.md](shell.md).
 
 - Status: Verified
 - Date: 2026-07-25
+- Scope: route review for Agent action receipts and detailed TUI projection.
+  Approval admission, prompt priority, remembered decisions, principal
+  attribution, and denial visibility are unchanged; approvals remain visible
+  above the details layer.
+- Read: Agent Runtime receipt derivation, Host approval boundary, and TUI typed
+  layer order.
+- Tests: Host 583/583 and TUI 482/482.
+
+- Status: Verified
+- Date: 2026-07-25
 - Scope: Shell remembered approvals now key exact command, resolved cwd,
   background flag, and lifetime; `foregroundTimeoutMs` no longer fragments an
   otherwise identical authorization. The prompt displays that execution mode,

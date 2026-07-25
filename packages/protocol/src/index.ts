@@ -130,7 +130,10 @@ const INTERNAL_TRANSCRIPT_EVENT_TYPE_SET = new Set<string>(
 );
 
 export function isInternalTranscriptEventType(type: string): boolean {
-  return INTERNAL_TRANSCRIPT_EVENT_TYPE_SET.has(type);
+  return (
+    INTERNAL_TRANSCRIPT_EVENT_TYPE_SET.has(type) ||
+    type.startsWith("model.stream.")
+  );
 }
 
 export const LIVE_DEBUG_NOISE_EVENT_TYPES = [

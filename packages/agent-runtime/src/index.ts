@@ -82,6 +82,7 @@ import type {
   SubAgentEntrypoint,
 } from "./agents/invocation.js";
 import { createAgentSupervisor } from "./agents/supervisor.js";
+import { summarizeAgentActions } from "./agents/action-summary.js";
 import {
   agentInvocationEntrypointFromArgs,
   isSubAgentEntrypoint,
@@ -146,6 +147,11 @@ export type {
   PrepareAgentInvocationInput,
   SubAgentEntrypoint,
 } from "./agents/invocation.js";
+export type { AgentActionSummary } from "./agents/action-summary.js";
+export {
+  MAX_AGENT_ACTION_SUMMARIES,
+  summarizeAgentActions,
+} from "./agents/action-summary.js";
 export type {
   AgentSupervisor,
   AgentSupervisorState,
@@ -1085,9 +1091,8 @@ export function spawnSubAgent(input: SpawnSubAgentInput): SpawnedSubAgent {
       supervisor.completed({
         stopReason: childStopReason(event.payload),
         ...terminal,
-        ...(childWorkspaceWrites > 0
-          ? { workspaceWrites: childWorkspaceWrites }
-          : {}),
+        actions: summarizeAgentActions(child.events.all()),
+        workspaceWrites: childWorkspaceWrites,
         ...(childChangeSets.length > 0
           ? { changeSets: childChangeSets.map(cloneChangeSet) }
           : {}),
@@ -1101,9 +1106,8 @@ export function spawnSubAgent(input: SpawnSubAgentInput): SpawnedSubAgent {
         reason: terminal.terminalState === "cancelled" ? "cancelled" : "failed",
         error: (event.payload as { error?: unknown } | undefined)?.error,
         ...terminal,
-        ...(childWorkspaceWrites > 0
-          ? { workspaceWrites: childWorkspaceWrites }
-          : {}),
+        actions: summarizeAgentActions(child.events.all()),
+        workspaceWrites: childWorkspaceWrites,
         ...(childChangeSets.length > 0
           ? { changeSets: childChangeSets.map(cloneChangeSet) }
           : {}),
@@ -1139,6 +1143,8 @@ export function spawnSubAgent(input: SpawnSubAgentInput): SpawnedSubAgent {
               ? "cancelled"
               : "failed",
           error: error instanceof Error ? error.message : String(error),
+          actions: summarizeAgentActions(child.events.all()),
+          workspaceWrites: childWorkspaceWrites,
         });
         throw error;
       } finally {

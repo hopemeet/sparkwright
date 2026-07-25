@@ -11,6 +11,17 @@ See [approvals.md](approvals.md) and [../runtime/tool-orchestration.md](../runti
 
 - Status: Verified
 - Date: 2026-07-25
+- Scope: Agent terminal facts now include the observed child
+  `workspace.write.completed` count, including zero, and Host uses it to bound
+  parent reporting claims. This is presentation evidence only; write policy,
+  approval, ChangeSets, CAS, leases, rollback, and artifact authority are
+  unchanged.
+- Read: Agent Runtime write roll-up, Host reporting guidance, and workspace
+  write safety boundary.
+- Tests: Agent Runtime 258/258 and Host 583/583.
+
+- Status: Verified
+- Date: 2026-07-25
 - Scope: ChangeSets, revision/CAS, workspace epochs, leases, rollback, and write
   attribution remain hard safety controls. Ordinary Agent completion no longer
   requires a current receipt after every write; only explicit verifier

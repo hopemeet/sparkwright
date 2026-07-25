@@ -21,6 +21,7 @@ export interface LayerPayloads {
   /** @reserved Typed route key consumed through LayerName by Skill action hooks/renderers. */
   "skill-review": undefined;
   "session-rename": undefined;
+  details: undefined;
 }
 
 export type LayerName = keyof LayerPayloads;
@@ -50,6 +51,7 @@ const ROUTE_ORDER: readonly (readonly LayerName[])[] = [
   ["sessions", "fork"],
   ["activity"],
   ["session-rename"],
+  ["details"],
   ["approval"],
 ];
 

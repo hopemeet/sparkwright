@@ -551,17 +551,88 @@ describe("TUI ↔ host via sdk-node", () => {
           payload: { goal: "review existing proposal" },
         }),
         JSON.stringify({
-          id: "evt_2",
+          id: "evt_agent_requested",
           runId: "run_1",
-          type: "model.stream.chunk",
+          type: "subagent.requested",
           sequence: 2,
+          payload: {
+            childRunId: "run_child",
+            parentRunId: "run_1",
+            goal: "child-only goal",
+          },
+          metadata: {
+            childRunId: "run_child",
+            parentRunId: "run_1",
+            agentName: "reviewer",
+          },
+        }),
+        JSON.stringify({
+          id: "evt_child_started",
+          runId: "run_child",
+          type: "run.started",
+          sequence: 1,
+          payload: { goal: "child-only goal" },
+        }),
+        JSON.stringify({
+          id: "evt_child_completed",
+          runId: "run_child",
+          type: "run.completed",
+          sequence: 2,
+          payload: {
+            state: "completed",
+            message: "child-only answer",
+          },
+        }),
+        JSON.stringify({
+          id: "evt_child_usage",
+          runId: "run_child",
+          type: "usage.updated",
+          sequence: 3,
+          payload: {
+            runId: "run_child",
+            modelCalls: 5,
+            toolCalls: 5,
+            contextTokens: 400,
+            tokens: {
+              input: 500,
+              output: 50,
+              total: 550,
+              cached: 100,
+            },
+            costUsd: 0,
+          },
+        }),
+        JSON.stringify({
+          id: "evt_stream",
+          runId: "run_1",
+          type: "model.stream.text",
+          sequence: 3,
           payload: { text: "stream-only" },
+        }),
+        JSON.stringify({
+          id: "evt_root_usage",
+          runId: "run_1",
+          type: "usage.updated",
+          sequence: 4,
+          payload: {
+            runId: "run_1",
+            modelCalls: 9,
+            toolCalls: 10,
+            contextTokens: 700,
+            tokens: {
+              input: 900,
+              output: 90,
+              total: 990,
+              cached: 200,
+            },
+            costUsd: 0,
+          },
         }),
         JSON.stringify({
           id: "evt_3",
           runId: "run_1",
           type: "run.completed",
-          sequence: 3,
+          sequence: 5,
           payload: { stopReason: "final_answer" },
         }),
       ].join("\n") + "\n",
@@ -581,9 +652,26 @@ describe("TUI ↔ host via sdk-node", () => {
     expect(store.getSnapshot().events.map((event) => event.type)).toEqual([
       "tui.user",
       "run.started",
+      "subagent.requested",
+      "run.started",
+      "run.completed",
+      "usage.updated",
       "run.completed",
     ]);
+    expect(store.getSnapshot().usage).toMatchObject({
+      modelCalls: 9,
+      toolCalls: 10,
+      contextTokens: 700,
+    });
+    expect(
+      store
+        .getSnapshot()
+        .events.some((event) => event.type.startsWith("model.stream.")),
+    ).toBe(false);
     expect(controller.getLastGoal()).toBe("review existing proposal");
+    expect(
+      store.getSnapshot().events.filter((event) => event.type === "tui.user"),
+    ).toHaveLength(1);
 
     controller.shutdown();
   });

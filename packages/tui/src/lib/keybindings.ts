@@ -21,7 +21,7 @@ export type BindingName =
   | "quit.app"
   | "activity.open"
   | "events.open"
-  | "todo.toggle"
+  | "details.toggle"
   | "history.search"
   | "cycle-permission-mode";
 
@@ -58,8 +58,8 @@ export const DEFAULTS: Bindings = {
   "quit.app": [parseChord("ctrl+c")!],
   "activity.open": [parseChord("ctrl+o")!],
   "events.open": [],
-  // Expand/collapse the todo band's completed items. ctrl+t = "todo".
-  "todo.toggle": [parseChord("ctrl+t")!],
+  // Toggle all user-facing transcript details. ctrl+t = "transcript".
+  "details.toggle": [parseChord("ctrl+t")!],
   // history.search is handled inside InputBox (ctrl+r is bash-standard);
   // exposed here so /help and /config can show + override it.
   "history.search": [parseChord("ctrl+r")!],
@@ -242,7 +242,17 @@ export function mergeBindings(
   const errors: { name: string; message: string }[] = [];
   if (!user) return { bindings, errors };
   const known = new Set<string>(Object.keys(DEFAULTS));
-  for (const [name, value] of Object.entries(user)) {
+  const normalizedUser = { ...user };
+  // Compatibility bridge for configs written before Ctrl+T became a unified
+  // details mode. An explicit canonical binding always wins.
+  if (
+    !Object.prototype.hasOwnProperty.call(normalizedUser, "details.toggle") &&
+    Object.prototype.hasOwnProperty.call(normalizedUser, "todo.toggle")
+  ) {
+    normalizedUser["details.toggle"] = normalizedUser["todo.toggle"];
+  }
+  delete normalizedUser["todo.toggle"];
+  for (const [name, value] of Object.entries(normalizedUser)) {
     if (!known.has(name)) {
       errors.push({
         name,

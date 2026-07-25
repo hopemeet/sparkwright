@@ -10,6 +10,19 @@ See also [../maps/capabilities/agents.md](../maps/capabilities/agents.md), [../m
 
 - Status: Verified
 - Date: 2026-07-25
+- Scope: in-process child terminal events now carry a bounded, user-facing
+  action receipt plus the structured workspace-write count. Action receipts
+  retain stable tool-call identity, tool name, bounded argument preview,
+  terminal status, and exit/error metadata while excluding raw arguments,
+  outputs, and the terminal `submit_agent_result` call.
+- Read: child EventLog bridge, Agent result types/exports, supervisor terminal
+  payload, Host dynamic spawn consumption, and TUI detail projection.
+- Tests: full `npm run release:check` passed, including Agent Runtime 258/258,
+  Host 583/583, Protocol 6/6, TUI 482/482, the 16-case regression matrix, and
+  source/release install smoke.
+
+- Status: Verified
+- Date: 2026-07-25
 - Scope: the child terminal envelope now requires only
   `status + summary`; accomplishments and blockers are optional detail.
   Minimal blocked/partial declarations are canonicalized safely, natural

@@ -13,6 +13,19 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 
 - Status: Verified
 - Date: 2026-07-25
+- Scope: dynamic `spawn_agent` results now expose bounded child action receipts,
+  an explicit structured workspace-write count (including zero), and
+  evidence-bound reporting guidance. A parent may describe an existing file as
+  inspected or verified, but must not claim creation/modification from a
+  zero-write receipt unless an action itself provides explicit write evidence.
+- Read: dynamic child completion assembly, Agent Runtime action summarizer,
+  repeated-result handling, and parent-visible tool result tests.
+- Tests: full `npm run release:check` passed, including Host 583/583, Agent
+  Runtime 258/258, Protocol 6/6, TUI 482/482, the 16-case regression matrix,
+  and source/release install smoke.
+
+- Status: Verified
+- Date: 2026-07-25
 - Scope: Host no longer projects recovered/unresolved completion requirements.
   Approval events now forward independent policy/tool/safety explanations and
   the exact runtime principal; Workflow verifier hard gates, CAS/lease,

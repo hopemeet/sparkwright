@@ -34,6 +34,7 @@ import {
   rememberReusableDelegation,
   projectAgentInvocationResult,
   spawnSubAgent,
+  summarizeAgentActions,
   summarizeDelegationResult,
   withAlreadyCompletedNote,
   type AgentBlocker,
@@ -1813,10 +1814,23 @@ async function completeDynamicSpawnAgent(
     result.signal === "completed"
       ? undefined
       : extractPartialObservations(spawned.run.events.all(), 3);
+  const childEvents = spawned.run.events.all();
+  const actions = summarizeAgentActions(childEvents);
+  const workspaceWrites = childEvents.filter(
+    (event) => event.type === "workspace.write.completed",
+  ).length;
   const output = {
     ...projected,
     agentId,
     role,
+    actions,
+    workspaceWrites,
+    reportingGuidance:
+      workspaceWrites === 0
+        ? "No structured workspace write was recorded. Describe existing artifacts as inspected or verified; do not claim this run created or modified them unless an action contains explicit write evidence."
+        : `${workspaceWrites} structured workspace write${
+            workspaceWrites === 1 ? " was" : "s were"
+          } recorded. Limit creation or modification claims to those recorded writes.`,
     ...(partialObservations && partialObservations.length > 0
       ? { partialObservations }
       : {}),

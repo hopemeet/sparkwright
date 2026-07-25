@@ -11,6 +11,16 @@ See [tool-orchestration.md](tool-orchestration.md) and [../trace/raw-trace.md](.
 
 - Status: Verified
 - Date: 2026-07-25
+- Scope: route review for terminal Agent action receipts. Core model/tool
+  transitions, completion ownership, budgets, approvals, and stop conditions
+  are unchanged; the receipt is derived after the child loop emits terminal
+  state.
+- Read: Agent Runtime child bridge, Host dynamic completion assembly, and Core
+  run-loop ownership boundary.
+- Tests: Agent Runtime 258/258 and Host 583/583.
+
+- Status: Verified
+- Date: 2026-07-25
 - Scope: the retired `completion_evaluator` transition is absent from the loop
   vocabulary. A final answer goes directly to terminal runtime-state
   projection; only explicit Workflow hooks can advance/block for semantic

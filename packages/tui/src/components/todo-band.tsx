@@ -13,9 +13,10 @@ import { displayWidth, toGraphemes } from "../lib/graphemes.js";
  * Collapse strategy keeps it minimal-chrome:
  *  - `compact` (e.g. while the model is streaming a long answer) → a single
  *    line showing only progress + the current item.
- *  - expanded → completed items fold into one "done" count line; the active
- *    items (in_progress / pending / blocked / …) are listed, current first and
- *    highlighted, capped so a long ledger can't dominate the frame.
+ *  - normal → completed items fold into one "done" count line; active items
+ *    (in_progress / pending / blocked / …) are listed and capped so a long
+ *    ledger cannot dominate the frame. The unified details view owns the full
+ *    ledger, including completed item titles.
  */
 const TODO_GLYPH: Record<string, string> = {
   pending: "☐",
@@ -25,18 +26,11 @@ const TODO_GLYPH: Record<string, string> = {
 };
 
 const MAX_ACTIVE_ROWS = 8;
-const MAX_EXPANDED_ROWS = 16;
 
 export function TodoBand(props: {
   todos: TodoPanelItem[];
   width: number;
   compact: boolean;
-  /**
-   * When true, completed items are listed (with their titles) so the user can
-   * see *what* was done; when false, completed items collapse to a one-line
-   * count hint and only active items are listed. Toggled with ctrl+t.
-   */
-  expanded: boolean;
 }): React.ReactElement | null {
   const theme = useTheme();
   const { todos } = props;
@@ -74,14 +68,11 @@ export function TodoBand(props: {
     );
   }
 
-  // Expanded lists every item in ledger order (so completed work is visible);
-  // collapsed lists only the active items and folds completed ones into a
-  // one-line, actionable hint.
+  // The live frame lists only active items. Completed titles live in the
+  // unified details projection, avoiding a second expansion state.
   const active = todos.filter((t) => t.status !== "completed");
-  const shown = props.expanded ? todos : active;
-  const cap = props.expanded ? MAX_EXPANDED_ROWS : MAX_ACTIVE_ROWS;
-  const visible = shown.slice(0, cap);
-  const overflow = shown.length - visible.length;
+  const visible = active.slice(0, MAX_ACTIVE_ROWS);
+  const overflow = active.length - visible.length;
 
   const renderRow = (t: TodoPanelItem, i: number): React.ReactElement => {
     const glyph = TODO_GLYPH[t.status] ?? "☐";
@@ -108,12 +99,10 @@ export function TodoBand(props: {
           {"  "}… +{overflow} more
         </Text>
       ) : null}
-      {props.expanded ? (
-        <Text color={theme.muted}>{"  "}ctrl+t 收起已完成</Text>
-      ) : done > 0 ? (
+      {done > 0 ? (
         <Text color={theme.muted}>
           {"  "}
-          {TODO_GLYPH.completed} {done} done · ctrl+t 展开
+          {TODO_GLYPH.completed} {done} done · ctrl+t 查看详情
         </Text>
       ) : null}
     </Box>

@@ -28,7 +28,7 @@ const GLOBAL_KEYS: ReadonlyArray<{ binding: keyof Bindings; what: string }> = [
   },
   { binding: "activity.open", what: "background tasks / activity drawer" },
   { binding: "events.open", what: "activity events tab" },
-  { binding: "todo.toggle", what: "expand / collapse the todo band" },
+  { binding: "details.toggle", what: "show / hide transcript details" },
   { binding: "cancel.run", what: "cancel the running goal" },
   { binding: "quit.app", what: "back out · press twice to quit" },
 ];

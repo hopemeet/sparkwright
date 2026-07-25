@@ -34,6 +34,15 @@ describe("LayerStack", () => {
     expect(top.payload.approvalId).toBe("a1");
   });
 
+  it("keeps approval above the detailed transcript", () => {
+    const s = new LayerStack();
+    s.push("details");
+    s.push("approval", approval("a1"));
+    expect(s.top()?.name).toBe("approval");
+    s.pop("approval");
+    expect(s.top()?.name).toBe("details");
+  });
+
   it("pushing same name swaps payload instead of stacking", () => {
     const s = new LayerStack();
     s.push("approval", approval("a1"));

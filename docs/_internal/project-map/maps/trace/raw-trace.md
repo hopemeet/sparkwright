@@ -12,6 +12,17 @@ and [../session/session-store.md](../session/session-store.md) for session layou
 
 - Status: Verified
 - Date: 2026-07-25
+- Scope: new in-process `subagent.completed` / `subagent.failed` facts add
+  optional bounded action receipts and an explicit workspace-write count.
+  Event families and correlation identities are unchanged; older traces
+  without these fields remain readable and TUI replay falls back to child tool
+  events. Raw child events remain durable diagnostic evidence.
+- Read: Agent Runtime lifecycle bridge, Host dynamic result projection,
+  Protocol transcript classification, and TUI live/replay consumers.
+- Tests: Agent Runtime 258/258, Host 583/583, Protocol 6/6, and TUI 482/482.
+
+- Status: Verified
+- Date: 2026-07-25
 - Scope: new terminal events omit retired recovered/unresolved requirement
   fields and no loop event uses `completion_evaluator` as a transition source.
   Approval requests retain the typed principal/subject and add independent

@@ -12,6 +12,34 @@ See also [../maps/trace/export-diagnostics.md](../maps/trace/export-diagnostics.
 
 - Status: Verified
 - Date: 2026-07-25
+- Scope: Ctrl+T now opens one unified, normal-buffer detailed transcript for
+  the current or latest run. The append-only Static transcript stays compact:
+  successful Agent request/start/tool transport is omitted, one structured
+  terminal Agent summary is committed, and failures/blocked outcomes remain
+  visible with a details hint. Compact and detailed summaries share the
+  explicit `Agent · <name>` prefix, so a child run cannot be mistaken for a
+  generic task row. New terminal Agent facts supply bounded live action
+  receipts and a structured workspace-write evidence line; older replay falls
+  back to child tool events. The overlay rebuilds user-facing Agent, tool, Todo,
+  approval, and failure blocks, defaults to the bottom, stops following after
+  upward navigation, and remains below approval in the typed layer order.
+  Legacy `todo.toggle` maps to `details.toggle`. Replay also filters all
+  `model.stream.*` variants and child usage snapshots; `/export` remains
+  independent.
+- Read: EventStream/LiveFrame/Todo presentation, detailed transcript
+  projection/panel, keybindings, typed layers, event carrier, replay/export
+  projections, and focused render/projection tests.
+- Tests: full `npm run release:check` passed, including TUI 482/482, Agent
+  Runtime 258/258, Host 583/583, Protocol 6/6, the 16-case regression matrix,
+  and install smoke. Real 100-column PTY replay of `session_tui_ms0d86wg` showed
+  root usage 9 model / 10 tool, no stream-event leak, and five reconstructed
+  child actions. A fresh read-only Agent run (`session_tui_ms0enkyx`) showed
+  one live action receipt and zero-write evidence; session check had 0 findings.
+  An 80-column replay of `session_tui_ms0d86wg` verified the shared
+  `Agent · implement-timed-printer` label without wrapping.
+
+- Status: Verified
+- Date: 2026-07-25
 - Scope: approval prompts now render the runtime principal as origin, including
   dynamic-child scope, and show policy/tool/safety reasons independently.
   Shell session scope displays execution mode. Spawn promotion and Task async
@@ -218,6 +246,8 @@ See also [../maps/trace/export-diagnostics.md](../maps/trace/export-diagnostics.
 - `packages/tui/src/components/event-stream.tsx`
 - `packages/tui/src/components/help-panel.tsx`
 - `packages/tui/src/components/status-bar.tsx`
+- `packages/tui/src/components/detailed-transcript-panel.tsx`
+- `packages/tui/src/components/todo-band.tsx`
 - `packages/tui/src/state/run-controller.ts`
 - `packages/tui/src/state/approval-coordinator.ts`
 - `packages/tui/src/state/notification-store.ts`
@@ -229,6 +259,7 @@ See also [../maps/trace/export-diagnostics.md](../maps/trace/export-diagnostics.
 - `packages/tui/src/lib/commands.ts`
 - `packages/tui/src/lib/task-activity.ts`
 - `packages/tui/src/lib/tool-display.ts`
+- `packages/tui/src/lib/transcript-presentation.ts`
 - `packages/tui/src/lib/event-type.ts`
 - `packages/tui/src/lib/transcript.ts`
 - `packages/tui/src/lib/session-events.ts`
@@ -501,14 +532,30 @@ Does not own:
   use protocol `runFailureMessage()` for terminal failure text. A failed
   `run.completed` sets store error text from the same helper instead of only
   flipping status to `error`.
-- Live `EventStream` renders `subagent.*` lifecycle rows from structured
-  metadata/payload facts (`subagentDepth`, parent/child ids, `entrypoint`,
-  `delegateTool`, semantic status/summary, and terminal state fields). Blocked
-  and partial terminal states have distinct warning colors. It indents by depth but keeps the
-  append-only `<Static>` row contract: each event renders once and is not
-  mutated after later child events arrive. Display names prefer `agentName`,
-  then `childAgentId` / `agentProfileId`, before falling back to parent
-  `agentId`, so UI labels do not confuse the parent actor with the child.
+- Live `EventStream` keeps the append-only `<Static>` contract and commits one
+  compact `Agent · <name>` row for each terminal Agent outcome.
+  `subagent.requested` / `subagent.started` and successful Agent tool transport
+  stay out of permanent scrollback; blocked, partial, and failed outcomes
+  remain visible with a Ctrl+T detail hint. Display names and grouping use
+  structured child/span identity, with legacy name fallback only for older
+  incomplete events.
+- `details.toggle` (Ctrl+T by default) owns the unified detailed transcript;
+  the legacy `todo.toggle` config name is accepted only as an input alias.
+  `transcript-presentation.ts` projects current/latest-run EventStore events
+  into typed Agent/tool/Todo/approval/failure blocks, and
+  `DetailedTranscriptPanel` renders a bounded normal-buffer viewport. It does
+  not enter the terminal alternate screen or mutate committed Static rows.
+  Upward navigation disables tail follow until the user returns to the bottom.
+  Approval remains the highest typed layer and temporarily covers details.
+- Session replay derives child-run ids before synthesizing user cards, so only
+  root goals enter compact scrollback and `/retry` targets the latest root
+  goal. It skips every `model.stream.*` event and child usage snapshot so
+  preview machinery cannot leak and rolled-up root totals are not double
+  counted. Replayed child tool actions and full terminal Markdown remain
+  available under the matching Agent detail block.
+- Completed Todo titles appear in the unified details projection. The live Todo
+  band has no independent expansion state and shows active items plus a compact
+  completed-count hint.
 - Ctrl+C is guarded: one press cancels or backs out of the current surface, and
   an idle no-layer prompt requires a second press to exit. User/manual cancels
   (`manual_cancelled` / `user_cancelled`) are terminal non-error outcomes in

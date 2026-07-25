@@ -10,6 +10,14 @@ See [../../modules/agent-runtime.md](../../modules/agent-runtime.md) for related
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-25
+- Scope: route review for Host dynamic Agent result changes. Cron remains
+  parent-only; scheduling, persistence, execution, and TUI Cron behavior are
+  unchanged.
+- Read: Host dynamic child assembly and Cron capability boundary.
+- Tests: Host 583/583.
+
+- Status: Verified
 - Date: 2026-07-24
 - Scope: reviewed for the Agent execution control-plane refactor. Cron tools
   remain parent-only and are absent from every in-process child catalog;

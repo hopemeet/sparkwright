@@ -320,7 +320,7 @@ describe("EventStream committed rendering", () => {
   it("uses tool-owned request previews from events", async () => {
     const events = [
       ev("tool.requested", 1, {
-        toolName: "spawn_agent",
+        toolName: "review_auth",
         preview: "reviewer: inspect auth flow",
         arguments: {
           role: "reviewer",
@@ -330,7 +330,7 @@ describe("EventStream committed rendering", () => {
       }),
     ];
     const text = await renderToText(stream(events), 90);
-    expect(text).toContain("⚙ spawn_agent  reviewer: inspect auth flow");
+    expect(text).toContain("⚙ review_auth  reviewer: inspect auth flow");
     expect(text).not.toContain('"context"');
   });
 
@@ -456,7 +456,7 @@ describe("EventStream committed rendering", () => {
     expect(text).not.toContain("output-line-8");
   });
 
-  it("hides successful internal orchestration but keeps failures and agents", async () => {
+  it("hides successful internal orchestration and queued Agent lifecycle while keeping failures", async () => {
     const text = await renderToText(
       stream([
         ev("tool.requested", 1, {
@@ -517,7 +517,8 @@ describe("EventStream committed rendering", () => {
     expect(text).not.toContain("references/checks.md");
     expect(text).not.toContain("mcp local prepared");
     expect(text).toContain("tool_search failed");
-    expect(text).toContain("agent run_child requested");
+    expect(text).not.toContain("run_child");
+    expect(text).not.toContain("review the patch");
   });
 
   it("keeps an unsuccessful skill lookup visible", async () => {
@@ -558,7 +559,7 @@ describe("EventStream committed rendering", () => {
     expect(text).not.toContain("shell exit null");
   });
 
-  it("renders spawn promotion receipts without leaking orchestration JSON", async () => {
+  it("hides successful spawn receipts from the compact transcript", async () => {
     const events = [
       ev("tool.completed", 1, {
         toolName: "spawn_agent",
@@ -584,9 +585,9 @@ describe("EventStream committed rendering", () => {
       }),
     ];
     const text = await renderToText(stream(events));
-    expect(text).toContain("spawn_agent → awaited task");
-    expect(text).toContain("python worker · child");
-    expect(text).toContain("parent will wait automatically");
+    expect(text).not.toContain("spawn_agent");
+    expect(text).not.toContain("python worker");
+    expect(text).not.toContain("parent will wait");
     expect(text).not.toContain('"parentWillWait"');
     expect(text).not.toContain('"nextAction"');
   });
@@ -904,7 +905,7 @@ describe("EventStream committed rendering", () => {
     expect(text).toContain("run failed: host failed");
   });
 
-  it("renders subagent lifecycle as a depth-aware tree", async () => {
+  it("commits one terminal Agent summary and keeps abnormal outcomes visible", async () => {
     const events = [
       ev(
         "subagent.requested",
@@ -976,21 +977,48 @@ describe("EventStream committed rendering", () => {
 
     const text = await renderToText(stream(events), 220);
 
-    expect(text).toContain("└─ reviewer requested");
-    expect(text).toContain("depth 1");
-    expect(text).toContain("via delegate_review");
-    expect(text).toContain("audit docs");
-    expect(text).toContain("reviewer completed · step_limit");
-    expect(text).toContain("health failing");
-    expect(text).toContain("issues UNRESOLVED_TOOL_FAILURE");
-    expect(text).toContain("└─ nested requested");
-    expect(text).toContain("depth 2");
-    expect(text).toContain("spawn_agent");
+    expect(text).toContain("└─ Agent · reviewer partial");
+    expect(text).toContain("UNRESOLVED_TOOL_FAILURE");
+    expect(text).toContain("Ctrl+T 查看详情");
+    expect(text).not.toContain("reviewer requested");
+    expect(text).not.toContain("audit docs");
+    expect(text).not.toContain("nested check");
+    expect(text).not.toContain("delegate_review");
     expect(text).not.toContain("subagent");
     expect(text).not.toContain('"terminalState"');
   });
 
-  it("hides profile preparation while keeping real subagent lifecycle rows", async () => {
+  it("does not commit queued CJK Agent lifecycle rows", async () => {
+    const text = await renderToText(
+      stream([
+        ev(
+          "subagent.requested",
+          1,
+          {
+            goal: "在当前工作区创建脚本并依次执行编译和运行验证。",
+            childRunId: "run_ms04hbysag6t4s",
+            parentRunId: "run_ms04hbys1owv1e",
+          },
+          {
+            agentName: "创建并验证定时打印脚本",
+            entrypoint: "spawn_agent",
+            delegateTool: "spawn_agent",
+            subagentDepth: 1,
+            childRunId: "run_ms04hbysag6t4s",
+            parentRunId: "run_ms04hbys1owv1e",
+          },
+        ),
+      ]),
+      80,
+    );
+
+    expect(text).not.toContain("创建并验证定时打印脚本");
+    expect(text).not.toContain(
+      "在当前工作区创建脚本并依次执行编译和运行验证。",
+    );
+  });
+
+  it("hides profile preparation and intermediate Agent lifecycle rows", async () => {
     const events = [
       ev("agent.profile.derived", 1, {
         parentAgentId: "main",
@@ -1022,9 +1050,72 @@ describe("EventStream committed rendering", () => {
     expect(text).not.toContain("main → reviewer");
     expect(text).not.toContain("reviewer profile");
     expect(text).not.toContain("4 tools");
-    expect(text).toContain("agent reviewer requested");
-    expect(text).toContain("agent reviewer started");
-    expect(text).toContain("agent reviewer completed · completed");
+    expect(text).not.toContain("reviewer requested");
+    expect(text).not.toContain("reviewer started");
+    expect(text).toContain("└─ Agent · reviewer completed");
+    expect(text).not.toContain("completed · completed");
+  });
+
+  it("does not replay a child run final answer into compact scrollback", async () => {
+    const events: RunEvent[] = [
+      {
+        ...ev(
+          "subagent.requested",
+          1,
+          {
+            childRunId: "run_child",
+            parentRunId: "run_parent",
+            goal: "inspect the file",
+          },
+          {
+            childRunId: "run_child",
+            parentRunId: "run_parent",
+            agentName: "reviewer",
+            subagentDepth: 1,
+          },
+        ),
+        runId: "run_parent",
+      },
+      {
+        ...ev("run.completed", 2, {
+          state: "completed",
+          message: "Full child-only answer.",
+        }),
+        runId: "run_child",
+      },
+      {
+        ...ev(
+          "subagent.completed",
+          3,
+          {
+            childRunId: "run_child",
+            parentRunId: "run_parent",
+            status: "completed",
+            summary: "Child finished.",
+            blockers: [],
+          },
+          {
+            childRunId: "run_child",
+            parentRunId: "run_parent",
+            agentName: "reviewer",
+            subagentDepth: 1,
+          },
+        ),
+        runId: "run_parent",
+      },
+      {
+        ...ev("run.completed", 4, {
+          state: "completed",
+          message: "Main answer.",
+        }),
+        runId: "run_parent",
+      },
+    ];
+
+    const text = await renderToText(stream(events));
+    expect(text).toContain("└─ Agent · reviewer completed");
+    expect(text).toContain("Main answer.");
+    expect(text).not.toContain("Full child-only answer.");
   });
 
   it("renders a sole run.cancelled terminal without leaking state-machine events", async () => {

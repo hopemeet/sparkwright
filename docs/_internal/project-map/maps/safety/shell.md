@@ -11,6 +11,15 @@ See [workspace-writes.md](workspace-writes.md) and [../../modules/coding-tools.m
 
 - Status: Verified
 - Date: 2026-07-25
+- Scope: bounded Agent action receipts may summarize a child shell command and
+  exit status, but do not copy stdout/stderr or change classification, approval,
+  sandboxing, promotion, rollback, or task ownership.
+- Read: Agent action summarizer, Host child shell assembly, and shell safety
+  boundary.
+- Tests: Agent Runtime 258/258 and Host 583/583.
+
+- Status: Verified
+- Date: 2026-07-25
 - Scope: Shell approval identity includes command, resolved cwd, background
   mode, and task lifetime, while excluding foreground timeout. Per-call policy
   metadata exposes the classifier reason separately from the general policy

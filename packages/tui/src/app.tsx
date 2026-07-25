@@ -277,9 +277,7 @@ function AppReady(
   const queued = useSyncExternalStore(queue.subscribe, queue.getSnapshot);
   const [focused, setFocused] = useState(true);
   const theme = resolved.theme;
-  // Todo band: collapsed by default (active items only); ctrl+t expands to show
-  // completed items too.
-  const [todoExpanded, setTodoExpanded] = useState(false);
+  const detailsOpen = layerSnapshot.some((layer) => layer.name === "details");
   // Prompt stash bridge — the InputBox reads/writes through this ref.
   const stashRef = useRef<StashFile>({ current: null, list: [] });
   const inputDraftRef = useRef("");
@@ -882,11 +880,11 @@ function AppReady(
         run: cyclePermissionMode,
       },
       {
-        id: "todo.toggle",
+        id: "details.toggle",
         scope: "global",
-        chords: b["todo.toggle"],
-        enabled: state.todoItems.length > 0,
-        run: () => setTodoExpanded((value) => !value),
+        chords: b["details.toggle"],
+        enabled: state.events.length > 0 || state.todoItems.length > 0,
+        run: () => layers.toggle("details"),
       },
       {
         id: "cancel.run",
@@ -958,6 +956,7 @@ function AppReady(
     sessionList: sessionActions.sessionList,
     sessionRootLabel: resolved.sessionRootLabel,
     events: state.events,
+    todoItems: state.todoItems,
     taskRecords: taskActions.taskRecords,
     taskOutputs: taskActions.taskOutputs,
     loadingTasks: taskActions.loadingTasks,
@@ -1014,32 +1013,33 @@ function AppReady(
           }}
         />
 
-        <LiveFrame
-          state={state}
-          modelLabel={modelLabel}
-          permissionMode={effTuiPermissionMode}
-          focused={focused}
-          runningTaskCount={taskActions.taskActivity.running}
-          unreadTasks={taskActions.unreadTasks}
-          waitingWorkflowCount={workflowActions.waitingWorkflowCount}
-          streamingMax={streamingMax}
-          sidebarWidth={sidebarWidth}
-          columns={cols}
-          todoExpanded={todoExpanded}
-          toast={toastSnapshot.current}
-          toastQueueDepth={toastSnapshot.queueDepth}
-          errors={resolved.errors}
-          queued={queued}
-          showQueued={!topLayer}
-          humanActionActive={humanActionOwnsInput}
-          onReviewHumanAction={(proposalId) =>
-            skillActions.reviewSkillProposalsFromSlash(proposalId)
-          }
-          onApplyHumanAction={skillActions.applySkillReviewProposal}
-          onDismissHumanAction={(proposalId) =>
-            store.clearPendingHumanAction(proposalId)
-          }
-        />
+        {detailsOpen ? null : (
+          <LiveFrame
+            state={state}
+            modelLabel={modelLabel}
+            permissionMode={effTuiPermissionMode}
+            focused={focused}
+            runningTaskCount={taskActions.taskActivity.running}
+            unreadTasks={taskActions.unreadTasks}
+            waitingWorkflowCount={workflowActions.waitingWorkflowCount}
+            streamingMax={streamingMax}
+            sidebarWidth={sidebarWidth}
+            columns={cols}
+            toast={toastSnapshot.current}
+            toastQueueDepth={toastSnapshot.queueDepth}
+            errors={resolved.errors}
+            queued={queued}
+            showQueued={!topLayer}
+            humanActionActive={humanActionOwnsInput}
+            onReviewHumanAction={(proposalId) =>
+              skillActions.reviewSkillProposalsFromSlash(proposalId)
+            }
+            onApplyHumanAction={skillActions.applySkillReviewProposal}
+            onDismissHumanAction={(proposalId) =>
+              store.clearPendingHumanAction(proposalId)
+            }
+          />
+        )}
 
         {/* Layer rendering — only the topmost layer owns input. */}
         {topLayer ? (

@@ -1452,6 +1452,13 @@ describe("createAgentTool / mountAgentTool", () => {
       spanId: spawned.spanId,
       goal: "child task",
     });
+    expect(
+      parent.events.all().find((event) => event.type === "subagent.completed")
+        ?.payload,
+    ).toMatchObject({
+      actions: [],
+      workspaceWrites: 0,
+    });
   });
 
   it("keeps an explicitly completed child complete after a managed workspace write", async () => {
@@ -1538,6 +1545,12 @@ describe("createAgentTool / mountAgentTool", () => {
       statusSource: "child",
       finality: "complete",
       workspaceWrites: 1,
+      actions: [
+        expect.objectContaining({
+          toolName: "mutate",
+          status: "completed",
+        }),
+      ],
       blockers: [],
     });
     expect(

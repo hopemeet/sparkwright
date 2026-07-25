@@ -8,7 +8,10 @@ import { sanitizeAnsiForRender } from "../lib/text.js";
 import { Markdown } from "./markdown.js";
 import { useTheme } from "../lib/theme-context.js";
 import { resolveDialogColumns } from "./dialog-frame.js";
-import { isShellResult } from "../lib/tool-result-summary.js";
+import {
+  isAgentToolResult,
+  isShellResult,
+} from "../lib/tool-result-summary.js";
 import {
   formatToolRequestPreview,
   oneLine,
@@ -23,6 +26,17 @@ import {
   createConversationProjection,
   shouldShowInConversation,
 } from "../lib/conversation-projection.js";
+import {
+  agentCompactFailureDetail,
+  agentIdentity,
+  agentTone,
+  collectAgentPresentations,
+  collectAgentToolCallIds,
+  collectChildRunIds,
+  formatAgentSummary,
+  shouldShowInCompactTranscript,
+  type AgentPresentation,
+} from "../lib/transcript-presentation.js";
 
 export { oneLine } from "../lib/tool-display.js";
 
@@ -50,6 +64,7 @@ type Row =
       inBatch: boolean;
       facts?: RunFactsSnapshot;
       internalMutationCount?: number;
+      agent?: AgentPresentation;
     };
 
 interface RunFacts {
@@ -113,13 +128,18 @@ export function EventStream(props: {
   header: TranscriptHeaderInfo;
 }): React.ReactElement {
   const conversationProjection = createConversationProjection();
+  const agentToolCallIds = collectAgentToolCallIds(props.events);
+  const childRunIds = collectChildRunIds(props.events);
+  const agentPresentations = collectAgentPresentations(props.events);
   const proposalMutationCounts = new Map<string, number>();
   let facts = createRunFacts();
   const rows: Row[] = [
     { kind: "header", key: "__header", header: props.header },
     ...props.events.map((event): Row => {
       if (event.type === "run.started") facts = createRunFacts();
-      const visible = shouldShowInConversation(event, conversationProjection);
+      const visible =
+        shouldShowInConversation(event, conversationProjection) &&
+        shouldShowInCompactTranscript(event, agentToolCallIds, childRunIds);
       const row: Row = {
         kind: "event",
         key: event.id ?? `${event.sequence}`,
@@ -149,6 +169,12 @@ export function EventStream(props: {
       } else {
         recordRunFact(facts, event);
       }
+      if (
+        event.type === "subagent.completed" ||
+        event.type === "subagent.failed"
+      ) {
+        row.agent = agentPresentations.get(agentIdentity(event));
+      }
       return row;
     }),
   ];
@@ -164,6 +190,7 @@ export function EventStream(props: {
             inBatch={row.inBatch}
             facts={row.facts}
             internalMutationCount={row.internalMutationCount}
+            agent={row.agent}
           />
         ) : null
       }
@@ -184,6 +211,7 @@ class EventCardBoundary extends React.Component<
     inBatch: boolean;
     facts?: RunFactsSnapshot;
     internalMutationCount?: number;
+    agent?: AgentPresentation;
   },
   { error: Error | null }
 > {
@@ -192,6 +220,7 @@ class EventCardBoundary extends React.Component<
     inBatch: boolean;
     facts?: RunFactsSnapshot;
     internalMutationCount?: number;
+    agent?: AgentPresentation;
   }) {
     super(props);
     this.state = { error: null };
@@ -217,6 +246,7 @@ class EventCardBoundary extends React.Component<
         inBatch={this.props.inBatch}
         facts={this.props.facts}
         internalMutationCount={this.props.internalMutationCount}
+        agent={this.props.agent}
       />
     );
   }
@@ -257,12 +287,6 @@ function rec(value: unknown): Record<string, unknown> {
 function str(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
-function optionalNumber(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value)
-    ? value
-    : undefined;
-}
-
 function createRunFacts(): RunFacts {
   return {
     writePaths: new Set<string>(),
@@ -448,10 +472,6 @@ function commandStatus(fact: ShellFact): string {
   return `${command} completed`;
 }
 
-function shortRunId(value: string): string {
-  return value.length > 18 ? `${value.slice(0, 8)}…${value.slice(-6)}` : value;
-}
-
 function RunFactsLine(props: {
   facts: RunFactsSnapshot | undefined;
 }): React.ReactElement | null {
@@ -516,6 +536,7 @@ function EventCard(props: {
   inBatch: boolean;
   facts?: RunFactsSnapshot;
   internalMutationCount?: number;
+  agent?: AgentPresentation;
 }): React.ReactElement | null {
   const theme = useTheme();
   const { stdout } = useStdout();
@@ -641,6 +662,7 @@ function EventCard(props: {
     case "tool.completed": {
       const toolName = str(p.toolName) || undefined;
       const rawResult = p.result ?? p.output;
+      if (isAgentToolResult(rawResult)) return null;
       const result =
         props.internalMutationCount && rec(rawResult).action === "draft"
           ? {
@@ -861,65 +883,29 @@ function EventCard(props: {
     case "subagent.started":
     case "subagent.completed":
     case "subagent.failed": {
-      const phase = ev.type.slice("subagent.".length);
-      const meta = rec(ev.metadata);
-      const depth = optionalNumber(meta.subagentDepth) ?? 0;
-      const name =
-        str(meta.agentName) ||
-        str(p.agentName) ||
-        str(meta.childAgentId) ||
-        str(meta.agentProfileId) ||
-        str(meta.agentId) ||
-        str(p.childRunId) ||
-        "subagent";
-      const childRunId = str(meta.childRunId) || str(p.childRunId);
-      const parentRunId = str(meta.parentRunId) || str(p.parentRunId);
-      const entrypoint = str(meta.entrypoint);
-      const delegateTool = str(meta.delegateTool);
-      const terminalState = str(p.terminalState);
-      const lifecycle = terminalState || str(p.reason) || str(p.stopReason);
-      const assessment = rec(p.assessment);
-      const health = str(assessment.health);
-      const issueCodes = Array.isArray(assessment.issues)
-        ? assessment.issues
-            .map((issue) => str(rec(issue).code))
-            .filter((code): code is string => code.length > 0)
-            .slice(0, 4)
-        : [];
-      // The goal doesn't change across phases, so showing it on started AND
-      // completed just reprints the same sentence twice more. Introduce it once
-      // on `requested`; later phases carry only their own news (the stop reason).
-      const goal = phase === "requested" ? str(p.goal) : "";
-      const color =
-        phase === "failed" || health === "failing"
-          ? theme.error
-          : health === "degraded"
-            ? theme.warning
-            : theme.accent2;
-      const branch = depth > 0 ? "└─ " : "agent ";
-      const details = [
-        `depth ${depth}`,
-        entrypoint,
-        delegateTool ? `via ${delegateTool}` : undefined,
-        childRunId ? `child ${shortRunId(childRunId)}` : undefined,
-        parentRunId ? `parent ${shortRunId(parentRunId)}` : undefined,
-        health && health !== "clean" ? `health ${health}` : undefined,
-        issueCodes.length > 0 ? `issues ${issueCodes.join(", ")}` : undefined,
-      ].filter((value): value is string => typeof value === "string");
+      // requested/started are filtered before reaching this card. A terminal
+      // event commits exactly one durable Agent row; the overlay reconstructs
+      // task/result/actions from the retained lifecycle events.
+      const agent = props.agent;
+      if (!agent) return null;
+      const tone = agentTone(agent);
+      const color = toolToneColor(tone, theme);
+      const failureDetail = agentCompactFailureDetail(agent);
       return (
         <Box
-          paddingLeft={1 + depth * 2}
+          flexDirection="column"
+          paddingLeft={1 + Math.max(0, agent.depth - 1) * 2}
           paddingRight={1}
-          marginTop={phase === "requested" ? 1 : 0}
+          marginTop={1}
         >
-          <Text color={color}>{branch}</Text>
-          <Text bold>{name}</Text>
-          <Text color={theme.muted}> {phase}</Text>
-          {lifecycle ? <Text color={theme.muted}> · {lifecycle}</Text> : null}
-          {details.length > 0 ? (
-            <Text color={theme.muted}> · {details.join(" · ")}</Text>
+          <Text color={color}>{formatAgentSummary(agent)}</Text>
+          {failureDetail ? (
+            <Text color={theme.error}>
+              {"   "}
+              {failureDetail}
+              <Text color={theme.muted}> · Ctrl+T 查看详情</Text>
+            </Text>
           ) : null}
-          {goal ? <Text color={theme.muted}> · {goal}</Text> : null}
         </Box>
       );
     }

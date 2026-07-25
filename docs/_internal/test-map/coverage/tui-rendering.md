@@ -18,8 +18,21 @@
 ## Current Confidence
 
 - Status: `Verified`
-- Last reviewed: 2026-07-21
-- Evidence source: 2026-07-20 full-diff review passed 447/447 TUI and 594/594
+- Last reviewed: 2026-07-25
+- Evidence source: 2026-07-25 unified-details and first-batch action/replay
+  coverage passed 482/482 TUI, 258/258 Agent Runtime, 583/583 Host, and 6/6
+  Protocol tests. Full `npm run release:check` also passed the 16-case
+  regression matrix and source/release install smoke. Focused SDK replay proves wildcard `model.stream.*`
+  suppression, root-only usage totals (9 model / 10 tool), terminal Agent
+  action receipts, zero-write evidence, and persisted redacted tool-search
+  counts. Real 100-column replay of `session_tui_ms0d86wg` retained the same
+  9/10 totals, showed two tool-search matches and five child actions, and leaked
+  no stream event. An 80-column replay also verified the explicit
+  `Agent · implement-timed-printer` compact/detail label without wrapping.
+  Fresh read-only `session_tui_ms0enkyx` rendered one live
+  `read README.md:1 +1` action plus zero-write evidence; trace summary had 0
+  errors/failures/writes and session check had 0 findings.
+  Earlier evidence: 2026-07-20 full-diff review passed 447/447 TUI and 594/594
   Host tests, including stale auto-approval cleanup and replayed terminal-task
   notification regressions. A test-only Host stdio adapter proved two approval
   waiters were installed before either request was resolved. Real 96x32 PTY
@@ -51,6 +64,16 @@
   indicator without repeating the static brand.
 
 ## Covered
+
+- 2026-07-25 focused projection/render/replay coverage verifies the unified
+  Ctrl+T details mode: successful Agent transport and intermediate lifecycle
+  stay out of committed Static scrollback, one `Agent · <name>` terminal
+  summary remains, abnormal outcomes preserve a visible failure/hint, child run
+  goals/final answers do not replay as root turns, and detailed
+  Agent/tool/Todo/approval blocks remain user-facing rather than diagnostic
+  JSON. Approval has higher layer priority, legacy `todo.toggle` config maps to
+  `details.toggle`, and the bounded details viewport supports tail follow plus
+  navigation.
 
 - 2026-07-21 conversation-projection coverage keeps successful batch,
   approval, Skill body/resource, tool-search/Todo, and MCP preparation plumbing
@@ -257,7 +280,7 @@
 ## Focused Route
 
 ```bash
-npm --workspace @sparkwright/tui test -- test/activity-panel-render.test.tsx test/status-bar-render.test.tsx test/event-stream-render.test.ts
+npm --workspace @sparkwright/tui test -- test/activity-panel-render.test.tsx test/status-bar-render.test.tsx test/event-stream-render.test.ts test/transcript-presentation.test.ts test/detailed-transcript-panel-render.test.tsx
 npm --workspace @sparkwright/tui test -- test/capabilities-panel-render.test.tsx test/approval-prompt-render.test.tsx
 ```
 
@@ -277,7 +300,10 @@ Use a real PTY QA pass when changing the app shell or interactive layout.
 - `packages/tui/src/app.tsx`
 - `packages/tui/src/components/activity-panel.tsx`
 - `packages/tui/src/components/event-stream.tsx`
+- `packages/tui/src/components/detailed-transcript-panel.tsx`
+- `packages/tui/src/components/todo-band.tsx`
 - `packages/tui/src/components/status-bar.tsx`
+- `packages/tui/src/lib/transcript-presentation.ts`
 - `packages/tui/src/lib/task-activity.ts`
 - `packages/tui/src/components/capabilities-panel.tsx`
 - `packages/tui/src/components/approval-prompt.tsx`

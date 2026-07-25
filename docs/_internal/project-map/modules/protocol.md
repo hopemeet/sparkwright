@@ -12,6 +12,18 @@ See also [../maps/safety/approvals.md](../maps/safety/approvals.md) and [../maps
 
 - Status: Verified
 - Date: 2026-07-25
+- Scope: the compact/detailed TUI framework adds no Protocol request, response,
+  or event family. Transcript visibility now classifies every
+  `model.stream.*` variant as internal instead of maintaining an incomplete
+  fixed list, preventing new stream-preview events such as
+  `model.stream.text` from leaking into product transcript surfaces.
+- Read: Protocol HostEvent/transcript visibility contracts, TUI RunEvent
+  carrier, replay bridge, and compact/detail consumers.
+- Tests: full `npm run release:check` passed, including Protocol 6/6 and TUI
+  482/482 wildcard stream visibility/SDK replay regressions.
+
+- Status: Verified
+- Date: 2026-07-25
 - Scope: `run.completed` no longer exposes recovered/unresolved requirement
   DTOs. Approval subjects may describe background/lifetime execution mode, and
   approval events carry policy/tool/safety reason layers without replacing the

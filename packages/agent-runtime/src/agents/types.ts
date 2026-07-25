@@ -3,6 +3,7 @@ import type {
   RunResult,
   UsageSnapshot,
 } from "@sparkwright/core";
+import type { AgentActionSummary } from "./action-summary.js";
 
 export interface AgentHandoffPayload {
   /** Self-contained delegated task and expected deliverable. */
@@ -103,6 +104,16 @@ export interface AgentToolResult {
   finality: "complete" | "partial";
   /** Core-owned semantic assessment projected without reinterpretation. */
   assessment: RunAssessment;
+  /** Bounded child tool receipts consumed by parent agents and detail UIs. */
+  actions?: AgentActionSummary[];
+  /** Structured workspace writes observed on the child run. */
+  workspaceWrites?: number;
+  /**
+   * Evidence-bound reporting instruction for parent-facing summaries.
+   *
+   * @reserved Model-visible delegate output consumed by the parent model.
+   */
+  reportingGuidance?: string;
   /**
    * True when the child answered on its last allowed step (`stepLimitReached`
    * in the run result metadata). A `final_answer` produced under an exhausted

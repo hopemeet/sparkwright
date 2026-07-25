@@ -10,6 +10,21 @@ See [session-store.md](session-store.md) and [../runtime/context-compaction.md](
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-25
+- Scope: TUI session replay now derives structured child run identities before
+  synthesizing compact user cards. Child goals and child terminal Markdown no
+  longer appear as root conversation turns, all `model.stream.*` preview events
+  are skipped, and child `usage.updated` snapshots are not added on top of the
+  already rolled-up root usage. Child details remain beneath the matching Agent
+  and `/retry` selects the most recent root goal.
+- Read: TUI RunController replay/retry paths, transcript presentation
+  projection, EventStream filtering, and replay tests.
+- Tests: focused SDK replay tests and full TUI 482/482; real 100-column replay
+  of `session_tui_ms0d86wg` showed no stream-event leak, root totals of
+  9 model / 10 tool calls, two persisted tool-search matches, and five
+  reconstructed child actions.
+
+- Status: Verified
 - Date: 2026-07-24
 - Scope: reviewed for runtime completion facts. Resume/replay continues to use
   persisted Core events; completion status, immutable notices, recovered

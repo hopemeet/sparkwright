@@ -35,6 +35,11 @@ export {
 } from "./invocation.js";
 export type { AgentSupervisor, AgentSupervisorState } from "./supervisor.js";
 export { createAgentSupervisor } from "./supervisor.js";
+export type { AgentActionSummary } from "./action-summary.js";
+export {
+  MAX_AGENT_ACTION_SUMMARIES,
+  summarizeAgentActions,
+} from "./action-summary.js";
 export {
   AGENT_OUTCOME_SCHEMA_VERSION,
   AGENT_RESULT_MARKER,

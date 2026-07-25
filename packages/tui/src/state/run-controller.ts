@@ -39,6 +39,7 @@ import {
 import type { EventStore } from "./event-store.js";
 import type { SessionDiagnostics } from "../lib/sessions.js";
 import { loadSessionEvents } from "../lib/session-events.js";
+import { collectChildRunIds } from "../lib/transcript-presentation.js";
 import { renderTranscript, type TranscriptHeader } from "../lib/transcript.js";
 import type { RunEvent } from "../lib/event-type.js";
 import type { TuiPermissionMode } from "../lib/permission.js";
@@ -216,12 +217,8 @@ export class RunController {
    * `model.stream.*` events so the live-preview accumulator stays empty.
    */
   private replayEvents(events: RunEvent[]): void {
-    const STREAM_ONLY = new Set([
-      "model.stream.started",
-      "model.stream.chunk",
-      "model.stream.completed",
-    ]);
     const injectedForRun = new Set<string>();
+    const childRunIds = collectChildRunIds(events);
     for (const ev of events) {
       const payload = (ev.payload ?? {}) as { goal?: unknown };
       const runId = (ev as { runId?: unknown }).runId;
@@ -230,12 +227,22 @@ export class RunController {
         (ev.type === "run.created" || ev.type === "run.started") &&
         typeof payload.goal === "string" &&
         payload.goal.trim() &&
+        !childRunIds.has(runKey) &&
         !injectedForRun.has(runKey)
       ) {
         this.store.appendUserMessage(payload.goal);
         injectedForRun.add(runKey);
       }
-      if (STREAM_ONLY.has(ev.type)) continue;
+      // Streaming events are ephemeral preview machinery. Replaying any
+      // current or future model.stream.* variant would either rebuild stale
+      // preview state or leak its raw event name into committed scrollback.
+      if (ev.type.startsWith("model.stream.")) continue;
+      // In-process child usage is rolled into the parent UsageTracker live.
+      // The aggregate session trace also retains the child's own snapshots;
+      // folding both would double-count the child on replay.
+      if (ev.type === "usage.updated" && runKey && childRunIds.has(runKey)) {
+        continue;
+      }
       this.store.appendEvent(
         ev as unknown as Parameters<typeof this.store.appendEvent>[0],
       );
@@ -1140,8 +1147,18 @@ function validateSessionId(id: string): string {
 
 /** The most recent goal carried by a loaded event stream, or null. */
 function lastGoalFromEvents(events: RunEvent[]): string | null {
+  const childRunIds = collectChildRunIds(events);
   for (let i = events.length - 1; i >= 0; i--) {
-    const goal = (events[i].payload as { goal?: unknown } | undefined)?.goal;
+    const event = events[i];
+    if (!event || (event.runId && childRunIds.has(event.runId))) continue;
+    if (
+      event.type !== "run.created" &&
+      event.type !== "model.requested" &&
+      event.type !== "run.started"
+    ) {
+      continue;
+    }
+    const goal = (event.payload as { goal?: unknown } | undefined)?.goal;
     if (typeof goal === "string" && goal.trim()) return goal;
   }
   return null;

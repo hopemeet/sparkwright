@@ -181,9 +181,39 @@ export function isSkillLoadResult(value: unknown): boolean {
   }
   const r = value as Record<string, unknown>;
   if (r.status === "loaded") {
-    return typeof r.name === "string" && typeof r.content === "string";
+    return (
+      typeof r.name === "string" && displayStringLength(r.content) !== undefined
+    );
   }
   return r.status === "not_found" && typeof r.requestedName === "string";
+}
+
+/** Length of a live value or its bounded persisted-trace envelope. */
+export function displayStringLength(value: unknown): number | undefined {
+  if (typeof value === "string") return value.length;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  return record.type === "string" &&
+    typeof record.length === "number" &&
+    Number.isFinite(record.length)
+    ? record.length
+    : undefined;
+}
+
+/** Length of a live array or its bounded persisted-trace envelope. */
+export function displayArrayLength(value: unknown): number | undefined {
+  if (Array.isArray(value)) return value.length;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  return record.type === "array" &&
+    typeof record.length === "number" &&
+    Number.isFinite(record.length)
+    ? record.length
+    : undefined;
 }
 
 export function isListDirResult(value: unknown): boolean {

@@ -2310,6 +2310,11 @@ describe("host tools", () => {
     const childModel: ModelAdapter = {
       async complete() {
         childCalls += 1;
+        if (childCalls === 1) {
+          return {
+            toolCalls: [{ toolName: "read", arguments: { path: "README.md" } }],
+          };
+        }
         return { message: completedAgentMessage("dynamic child done") };
       },
     };
@@ -2349,10 +2354,21 @@ describe("host tools", () => {
       run: parent.record,
     } as never);
 
-    expect(childCalls).toBe(1);
+    expect(childCalls).toBe(2);
     expect(first).toMatchObject({
       signal: "completed",
       message: "dynamic child done",
+      actions: [
+        expect.objectContaining({
+          toolName: "read",
+          preview: "README.md",
+          status: "completed",
+        }),
+      ],
+      workspaceWrites: 0,
+      reportingGuidance: expect.stringContaining(
+        "do not claim this run created or modified",
+      ),
     });
     expect(second).toMatchObject({
       signal: "completed",

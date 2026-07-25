@@ -24,7 +24,6 @@ export function LiveFrame(props: {
   streamingMax: number;
   sidebarWidth: number;
   columns: number;
-  todoExpanded: boolean;
   toast: React.ComponentProps<typeof ToastView>["toast"];
   toastQueueDepth: number;
   errors: ValidationError[];
@@ -82,7 +81,6 @@ export function LiveFrame(props: {
           todos={props.state.todoItems}
           width={props.columns}
           compact={Boolean(props.state.streamingText)}
-          expanded={props.todoExpanded}
         />
       ) : null}
 

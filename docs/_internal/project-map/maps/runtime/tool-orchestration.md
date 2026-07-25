@@ -11,6 +11,17 @@ See [../safety/workspace-writes.md](../safety/workspace-writes.md), [../safety/s
 
 - Status: Verified
 - Date: 2026-07-25
+- Scope: child execution still uses the existing tool validation, policy,
+  approval, and lifecycle path. At terminal time Agent Runtime derives at most
+  24 user-facing action receipts from the child EventLog and attaches them to
+  the parent lifecycle fact; Host reuses that evidence for dynamic spawn output
+  and zero-write reporting guidance. Raw tool arguments/output are not copied.
+- Read: child tool lifecycle, Agent action summarizer/terminal bridge, Host
+  dynamic spawn result, and TUI live/replay consumers.
+- Tests: Agent Runtime 258/258, Host 583/583, Protocol 6/6, and TUI 482/482.
+
+- Status: Verified
+- Date: 2026-07-25
 - Scope: terminal child reporting now has a two-field minimum envelope and
   never inherits Core completion-status reinterpretation. Approval requests
   preserve separate run-policy, tool-gate, and tool safety explanations.

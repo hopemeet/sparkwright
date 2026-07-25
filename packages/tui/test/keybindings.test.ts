@@ -135,6 +135,7 @@ describe("mergeBindings", () => {
     expect(DEFAULTS["help.open"]).toEqual([parseChord("?")]);
     expect(DEFAULTS["activity.open"]).toEqual([parseChord("ctrl+o")]);
     expect(DEFAULTS["events.open"]).toEqual([]);
+    expect(DEFAULTS["details.toggle"]).toEqual([parseChord("ctrl+t")]);
     expect(DEFAULTS["cancel.run"]).toEqual([parseChord("esc")]);
     expect(DEFAULTS["cycle-permission-mode"]).toEqual([
       parseChord("shift+tab"),
@@ -166,6 +167,21 @@ describe("mergeBindings", () => {
       "help.open": ["ctrl+k", "ctrl+p"],
     });
     expect(bindings["help.open"]).toHaveLength(2);
+  });
+  it("maps the legacy todo.toggle binding to details.toggle", () => {
+    const { bindings, errors } = mergeBindings({
+      "todo.toggle": "ctrl+d",
+    });
+    expect(errors).toEqual([]);
+    expect(bindings["details.toggle"]).toEqual([parseChord("ctrl+d")]);
+  });
+  it("prefers an explicit details.toggle over the legacy alias", () => {
+    const { bindings, errors } = mergeBindings({
+      "todo.toggle": "ctrl+d",
+      "details.toggle": "ctrl+e",
+    });
+    expect(errors).toEqual([]);
+    expect(bindings["details.toggle"]).toEqual([parseChord("ctrl+e")]);
   });
   it("reports unknown binding name", () => {
     const { errors } = mergeBindings({ "nope.open": "k" });

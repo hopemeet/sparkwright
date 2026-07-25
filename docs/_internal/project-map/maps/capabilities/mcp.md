@@ -10,6 +10,13 @@ See [../../modules/mcp-adapter.md](../../modules/mcp-adapter.md).
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-25
+- Scope: route review for Host dynamic Agent result changes. MCP discovery,
+  transport, effects, and child exclusion are unchanged.
+- Read: Host dynamic child assembly and MCP capability boundary.
+- Tests: Host 583/583.
+
+- Status: Verified
 - Date: 2026-07-24
 - Scope: reviewed for child delegation and cache semantics. MCP tools remain
   excluded from first-version in-process child surfaces; a future external

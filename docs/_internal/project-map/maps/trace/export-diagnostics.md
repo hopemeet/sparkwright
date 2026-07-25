@@ -10,6 +10,19 @@ canonical trace or a session consistency report.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-25
+- Scope: the Ctrl+T detailed transcript is an EventStore-backed TUI
+  presentation only. Compact/detailed UI state is not passed to
+  `renderTranscript()`; `/export` continues to use `currentSessionEvents` and
+  the existing product-transcript projection regardless of the visible mode.
+  Protocol and replay paths now suppress every `model.stream.*` variant, while
+  Activity/Trace retain raw stream and child usage diagnostics.
+- Read: TUI EventStream/detail projection/layer integration, RunController
+  export path, and transcript renderer/tests.
+- Tests: Protocol 6/6, TUI 482/482, focused projection/SDK replay coverage,
+  real live/replay PTY checks, and session check with 0 findings.
+
+- Status: Verified
 - Date: 2026-07-24
 - Scope: diagnostics now receive structured child status, ChangeSets,
   verification receipts, ToolEffects, approval principals, and immutable
@@ -115,10 +128,11 @@ session trace.jsonl
   the shared TUI tool-display path, so live rendering and `/export` avoid raw
   task JSON for common task inspection output. Raw task lifecycle/output events
   remain trace facts; the Activity Drawer is the live browsing surface.
-- Live `EventStream` renders `subagent.*` rows as a depth-aware tree from
-  structured facts. `/export` remains a transcript/export surface, not a
-  replacement for `trace report`; auditability findings belong in trace
-  diagnostics.
+- Live compact `EventStream` commits one structured terminal Agent summary and
+  the Ctrl+T overlay reconstructs current/latest-run Agent details from
+  EventStore facts. `/export` does not read that UI mode and remains a
+  transcript/export surface, not a replacement for `trace report`;
+  auditability findings belong in trace diagnostics.
 - Unknown events are listed compactly so the export is not fully silent about unsupported events.
 - Internal/low-signal runtime machinery is filtered through
   `isInternalTranscriptEvent()` shared with live event rendering. The TUI

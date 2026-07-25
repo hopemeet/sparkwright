@@ -12,6 +12,20 @@ See [../../modules/agent-runtime.md](../../modules/agent-runtime.md) and [../../
 
 - Status: Verified
 - Date: 2026-07-25
+- Scope: terminal Agent facts now include a bounded action receipt and explicit
+  workspace-write count. This gives live compact/detail clients the same
+  user-facing action evidence that older session replay reconstructs from child
+  tool events, without forwarding the full child stream or raw output into the
+  parent conversation. Zero-write dynamic results also instruct the parent to
+  avoid unsupported creation/modification claims.
+- Read: Agent Runtime terminal bridge/types, Host dynamic spawn projection,
+  TUI live/replay presentation, and trace compatibility tests.
+- Tests: full `npm run release:check` passed, including Agent Runtime 258/258,
+  Host 583/583, Protocol 6/6, TUI 482/482, the 16-case regression matrix, and
+  source/release install smoke.
+
+- Status: Verified
+- Date: 2026-07-25
 - Scope: `submit_agent_result` now requires only status and summary; optional
   rich details remain compatible. Missing terminal calls are wrapped without
   reopening tools, and Core `completionStatus` no longer overrides an otherwise
