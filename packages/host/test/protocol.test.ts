@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { PROTOCOL_VERSION, type HostMessage } from "@sparkwright/protocol";
 import {
   asSessionId,
+  createWorkspaceRevision,
   FileSessionStore,
   SESSION_COMPACT_SCHEMA_VERSION,
   type SessionEvent,
@@ -343,6 +344,7 @@ describe("host protocol", () => {
             toolName: "edit",
             arguments: {
               path: "README.md",
+              expectedRevision: createWorkspaceRevision(true, "# Demo\n"),
               patch: [
                 "--- a/README.md",
                 "+++ b/README.md",
@@ -2161,17 +2163,13 @@ describe("host protocol", () => {
             enabled: true,
             active: true,
           }),
-          expect.objectContaining({
-            name: "documented-command-check",
-            source: "builtin",
-            lifecycle: "Stop",
-            blockingPotential: false,
-            enabled: true,
-            active: false,
-            status: "available",
-          }),
         ]),
       );
+      expect(
+        inspect.snapshot.rules?.workflow.some(
+          (rule) => rule.name === "documented-command-check",
+        ),
+      ).toBe(false);
       expect(inspect.snapshot.rules?.events).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
@@ -2192,7 +2190,7 @@ describe("host protocol", () => {
     }
   });
 
-  it("marks the documented-command built-in active for matching write runs", async () => {
+  it("does not activate a semantic documented-command gate from goal wording", async () => {
     const workspace = await mkdtemp(
       join(tmpdir(), "sparkwright-host-documented-command-rule-"),
     );
@@ -2222,17 +2220,11 @@ describe("host protocol", () => {
 
       expect(inspect).toMatchObject({ ok: true });
       if (!inspect.ok) throw new Error(inspect.error.message);
-      expect(inspect.snapshot.rules?.workflow).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            name: "documented-command-check",
-            source: "builtin",
-            lifecycle: "Stop",
-            active: true,
-            status: "active",
-          }),
-        ]),
-      );
+      expect(
+        inspect.snapshot.rules?.workflow.some(
+          (rule) => rule.name === "documented-command-check",
+        ),
+      ).toBe(false);
       await Promise.race([
         terminal,
         new Promise((_, reject) =>
@@ -2345,7 +2337,7 @@ describe("host protocol", () => {
     }
   });
 
-  it("forwards completed-with-tool-failures outcome on run.completed", async () => {
+  it("forwards a clean deterministic outcome on run.completed", async () => {
     const workspace = await mkdtemp(
       join(tmpdir(), "sparkwright-host-outcome-"),
     );
@@ -2397,22 +2389,11 @@ describe("host protocol", () => {
           state: "completed",
           stopReason: "final_answer",
           assessment: {
-            health: "failing",
-            issues: [{ code: "UNRESOLVED_TOOL_FAILURE", count: 1 }],
+            health: "clean",
+            issues: [],
           },
         },
       });
-      const codes = (
-        completed as {
-          payload?: {
-            assessment?: {
-              issues?: Array<{ details?: { codes?: unknown[] } }>;
-            };
-          };
-        }
-      ).payload?.assessment?.issues?.[0]?.details?.codes;
-      expect(codes).toHaveLength(1);
-      expect(["TOOL_NOT_FOUND", "ENOENT"]).toContain(codes?.[0]);
     } finally {
       pair.close();
       await rm(workspace, { recursive: true, force: true });
@@ -3695,6 +3676,7 @@ describe("host protocol", () => {
             toolName: "edit",
             arguments: {
               path: "README.md",
+              expectedRevision: createWorkspaceRevision(true, "# Demo\n"),
               reason: "exercise approval trace",
               patch: [
                 "--- a/README.md",
@@ -3820,6 +3802,7 @@ describe("host protocol", () => {
             toolName: "edit",
             arguments: {
               path: "README.md",
+              expectedRevision: createWorkspaceRevision(true, "# Demo\n"),
               reason: "delegate write regression",
               patch: [
                 "--- a/README.md",
@@ -3985,15 +3968,26 @@ describe("host protocol", () => {
             toolName: "spawn_agent",
             arguments: {
               goal: "Read README.md.",
-              role: "reader",
+              label: "reader",
               context: "Read only.",
-              allowedTools: ["read"],
-              maxSteps: 2,
             },
           },
         ],
       },
-      { message: "child done" },
+      {
+        message: "child done",
+        toolCalls: [
+          {
+            toolName: "submit_agent_result",
+            arguments: {
+              status: "completed",
+              summary: "README inspected",
+              accomplishments: ["Read README.md"],
+              blockers: [],
+            },
+          },
+        ],
+      },
       { message: "parent observed child" },
     ]);
 
@@ -4040,12 +4034,14 @@ describe("host protocol", () => {
       );
       expect(completed?.metadata).toMatchObject({
         agentId: "main",
-        childAgentId: "dynamic_reader",
-        agentProfileId: "dynamic_reader",
         delegateTool: "spawn_agent",
         entrypoint: "spawn_agent",
         subagentDepth: 1,
       });
+      expect(completed?.metadata?.childAgentId).toMatch(/^dynamic_agent_/);
+      expect(completed?.metadata?.agentProfileId).toBe(
+        completed?.metadata?.childAgentId,
+      );
       expect(completed?.payload).toMatchObject({
         terminalState: "completed",
       });
@@ -4337,10 +4333,8 @@ describe("host protocol", () => {
               title: "background repo inspection",
               payload: {
                 goal: "Inspect the repository in the background.",
-                role: "background-inspector",
+                label: "background-inspector",
                 context: "Return one concise sentence.",
-                allowedTools: ["glob"],
-                maxSteps: 1,
               },
             },
           },
@@ -4429,8 +4423,8 @@ describe("host protocol", () => {
       };
       expect(summary).toMatchObject({
         type: "agent.completed",
-        agentId: "dynamic_background-inspector",
       });
+      expect(summary.agentId).toMatch(/^dynamic_agent_/);
       expect(summary.childRunId).toMatch(/^run_/);
       expect(["complete", "partial"]).toContain(summary.finality);
 
@@ -4481,6 +4475,7 @@ describe("host protocol", () => {
             toolName: "edit",
             arguments: {
               path: "README.md",
+              expectedRevision: createWorkspaceRevision(true, "# Demo\n"),
               reason: "Add verified section",
               patch: [
                 "--- a/README.md",

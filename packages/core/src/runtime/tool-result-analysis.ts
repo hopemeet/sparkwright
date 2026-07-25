@@ -273,7 +273,9 @@ function isShellToolName(toolName: string): boolean {
 }
 
 export function isIdempotentNoopToolResult(result: ToolResult): boolean {
-  if (result.status !== "completed" || !isRecord(result.output)) return false;
+  if (result.status !== "completed") return false;
+  if (result.effect?.kind === "no_change") return true;
+  if (!isRecord(result.output)) return false;
   const output = result.output;
   const saved = output.saved;
   const changed = output.changed;

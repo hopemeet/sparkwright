@@ -41,6 +41,10 @@ export function summarizeToolResultForDisplay(input: {
     return summarizeTaskToolResult(input.toolName ?? "task", r);
   }
 
+  if (input.toolName === "spawn_agent" && isAsyncTaskReceipt(r)) {
+    return summarizeSpawnAgentReceipt(r);
+  }
+
   if (resultKind === "file_read") {
     if (input.mode === "live") return { kind: "hidden", reason: "file_read" };
     const path = str(r.path) || input.toolName || "read";
@@ -264,10 +268,62 @@ function summarizeTaskToolResult(
   }
 
   if (str(r.taskId)) {
-    return summary(`task ${shortId(str(r.taskId))}`, [], "muted");
+    const actualMode = str(r.actualMode);
+    const mode = actualMode || str(r.mode);
+    const parentWillWait =
+      r.parentWillWait === true
+        ? "parent will wait automatically"
+        : r.parentWillWait === false
+          ? "parent will not wait"
+          : "";
+    return summary(
+      `task ${str(r.taskId)}${mode ? ` · ${mode}` : ""}`,
+      [
+        r.promoted === true ? "promoted from foreground" : "",
+        r.deduplicated === true ? "reused an already-running task" : "",
+        parentWillWait,
+      ],
+      "muted",
+    );
   }
 
   return summary(`${toolName} completed`, [], "muted");
+}
+
+function isAsyncTaskReceipt(r: Record<string, unknown>): boolean {
+  return (
+    Boolean(str(r.taskId)) &&
+    (r.actualMode === "awaited" || r.actualMode === "detached") &&
+    typeof r.parentWillWait === "boolean"
+  );
+}
+
+function summarizeSpawnAgentReceipt(
+  r: Record<string, unknown>,
+): ToolResultDisplay {
+  const taskId = str(r.taskId);
+  const actualMode = str(r.actualMode);
+  const role = str(r.role);
+  const childRunId = shortId(str(r.childRunId));
+  const foregroundTimeoutMs =
+    typeof r.foregroundTimeoutMs === "number"
+      ? `${r.foregroundTimeoutMs}ms foreground budget`
+      : "";
+  return summary(
+    `spawn_agent → ${actualMode} task ${taskId}`,
+    [
+      [role, childRunId ? `child ${childRunId}` : ""]
+        .filter(Boolean)
+        .join(" · "),
+      r.promoted === true
+        ? `promoted${foregroundTimeoutMs ? ` after ${foregroundTimeoutMs}` : ""}`
+        : "",
+      r.parentWillWait === true
+        ? "parent will wait automatically"
+        : "detached; parent will not wait automatically",
+    ],
+    "muted",
+  );
 }
 
 function summary(

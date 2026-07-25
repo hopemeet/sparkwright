@@ -11,6 +11,40 @@ and [../session/session-store.md](../session/session-store.md) for session layou
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-25
+- Scope: new terminal events omit retired recovered/unresolved requirement
+  fields and no loop event uses `completion_evaluator` as a transition source.
+  Approval requests retain the typed principal/subject and add independent
+  policy/tool/safety explanation layers. Historical JSONL remains readable as
+  append-only unknown fields are ignored.
+- Read: Core event producer/transition, Host protocol projection, approval
+  trace path, and current TUI consumers.
+- Tests: full `npm run release:check` passed, including trace/session tests,
+  the 16-case regression matrix, and source/release install smoke.
+
+- Status: Verified
+- Date: 2026-07-25
+- Scope: terminal FactLedger snapshots still preserve commands, ChangeSets,
+  explicit-verifier receipts, notices, and budgets. Model-run commands remain
+  command facts but do not mint receipts, and completion notices no longer
+  imply a semantic forced continuation.
+- Read: Core FactLedger/terminal evaluator/event payload, Agent child roll-up,
+  Host Workflow verifier identity, and raw trace consumers.
+- Tests: Core 661/661, Agent Runtime 257/257, Host 583/583; affected package
+  typechecks, repository lint, and targeted format check passed.
+
+- Status: Verified
+- Date: 2026-07-24
+- Scope: raw trace keeps the existing event envelope and now records structured
+  ToolEffects, approval principals, ChangeSets/verification receipts, terminal
+  declarations, completion notices, and recovery facts. No second Agent trace
+  channel was introduced.
+- Read: Core events/run/tools/fact ledger, Agent lifecycle bridge, and Host
+  protocol projection.
+- Tests: focused Core/Agent Runtime/Host tests, repository build, and
+  repository test typecheck passed.
+
+- Status: Verified
 - Date: 2026-07-23
 - Scope: Host `task.updated` is a bounded client lifecycle projection, not a
   new Core raw-trace event. Existing `task.*`, `subagent.*`, correlation, and
@@ -329,6 +363,10 @@ EventLog emits full event
   workspace write epochs, and stale markers plus forced-continuation
   `budgetExceeded` facts. This is a terminal snapshot on the existing event,
   not a new raw event family.
+- Raw model-run command facts may retain diagnostic
+  `verificationRelevant` classification, but only commands with explicit
+  verifier identity/source sign `verificationReceipts`. A missing receipt after
+  an ordinary write is therefore not evidence that the run failed to complete.
 - `run.budget.exceeded` is the raw event for per-source forced-continuation
   budget exhaustion. Standard trace filtering keeps only the bounded
   `signal`/`family`/`source`/`used`/`limit`/`step`/`reason` payload fields.

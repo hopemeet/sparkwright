@@ -10,6 +10,30 @@ See [workspace-writes.md](workspace-writes.md) and [shell.md](shell.md).
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-25
+- Scope: Shell remembered approvals now key exact command, resolved cwd,
+  background flag, and lifetime; `foregroundTimeoutMs` no longer fragments an
+  otherwise identical authorization. The prompt displays that execution mode,
+  uses the runtime principal rather than execution kind as origin, and renders
+  policy/tool/safety explanations as three separate layers.
+- Read: Core approval/tool policy contracts, Shell subject/policy producer,
+  Protocol/Host projection, TUI coordinator/session/prompt, and tests.
+- Tests: full `npm run release:check` passed, including Shell 44/44, Host
+  583/583, TUI 468/468, the 16-case regression matrix, and install smoke.
+
+- Status: Verified
+- Date: 2026-07-24
+- Scope: every approval is now scoped by runtime-owned
+  `ApprovalPrincipal`; reusable TUI decisions key session + principal + effect
+  subject. Dynamic/configured children get distinct child-run principals and
+  never inherit a parent's concrete approval. Workspace subjects distinguish
+  create/replace/edit/remove and deprecated legacy writes.
+- Read: Core approval/workspace principals, Host interaction routing,
+  Protocol DTOs, TUI rule storage/projection, and focused tests.
+- Tests: focused Core/Host/TUI approval suites, repository build, and
+  repository test typecheck passed.
+
+- Status: Verified
 - Date: 2026-07-23
 - Scope: Host IM task delivery reuses exact runtime/binding/session
   authorization and a task-specific idempotency key. It does not consult
@@ -173,6 +197,7 @@ See [workspace-writes.md](workspace-writes.md) and [shell.md](shell.md).
 
 ```txt
 policy requires approval
+  -> runtime ApprovalPrincipal + producer effect subject
   -> approval.requested / interaction.requested
   -> InteractionChannel.approve (CLI/TUI/Host/Cron)
   -> approval.resolved / interaction.resolved
@@ -190,6 +215,13 @@ policy requires approval
 - `approval.requested` carries an id used by protocol `approval.resolve` plus a
   required typed producer-authored subject. Human-readable summary/details are
   audit and presentation facts, not reusable authorization identity.
+- Policy decision, tool approval-gate reason, and tool-specific safety
+  classification are separate structured explanation layers. A permissive
+  general policy can therefore coexist without contradiction with a shell
+  classifier that requires approval.
+- Every request also carries runtime-owned principal kind/scope. Remembered
+  decisions are reusable only for the same session, principal scope, and
+  subject key; child labels and model context cannot alter this identity.
 - `approval.resolved` preserves optional resolver `message` and structured
   `autoApproved` state. Trace summary/report diagnostics consume these root
   fields only and do not parse nested responses or message prose.
@@ -212,8 +244,10 @@ policy requires approval
   approval policy. There is no second approval-default input.
 - Ask-mode TUI users may remember an exact recognized approval subject for the
   current session. The effect producer, not the TUI, supplies the stable key
-  and typed canonical path, Shell command/cwd, Agent grant, or tool-call
-  identity. Rules are client-memory only, installed after a successful
+  and typed canonical path, Shell command/cwd/execution mode, Agent grant, or
+  tool-call identity. Shell foreground timeout is operational timing, not part
+  of the remembered authorization key. Rules are client-memory only, installed
+  after a successful
   `approval.resolve`, and surfaced as structured `autoApproved:true`
   resolutions. Missing/malformed/one-shot subjects remain allow-once/deny only,
   and concurrent requests are queued rather than overwritten. Workflow job
@@ -242,18 +276,17 @@ policy requires approval
   `InteractionChannel` from Host, so child workspace-write and shell gates
   still resolve through the same CLI/TUI approval and trace path without
   gaining `ask` or `notify` capabilities.
-- Dynamic `spawn_agent` and host `task_create(kind:"agent")` can request a
-  spawn-time workspace-write grant through `grant.workspaceWrite: true` or an
-  explicit managed write tool in `allowedTools`. The parent tool approval uses
-  a grant-aware summary and write side-effect governance; once approved, the
-  child gets a scoped approval-only channel that auto-approves only child
-  `workspace.write` requests. The child does not prompt the user again for the
-  same grant, and grant consumption cannot approve unrelated tool execution or
-  shell access.
-- Inline dynamic spawn checks requested tools and grant consistency against the
-  enabled child catalog during semantic input validation, before policy and any
-  approval request. Approval authorizes the structured workspace-write grant;
-  it never depends on inferred intent from the child goal or prompt.
+- Core attaches a runtime-owned `ApprovalPrincipal` to every request. Main,
+  dynamic-child, and configured-delegate principals have distinct scopes;
+  TUI reusable rules key `sessionId + principalScope + subject.key`, so a
+  parent's concrete approval never authorizes a child call.
+- Dynamic `spawn_agent` and `task_create(kind:"agent")` expose no grant or
+  allowed-tool fields. Their children request approval only when an actual
+  revisioned write or child-safe shell effect reaches its normal gate.
+  Persisted legacy authority fields are ignored by the handoff normalizer.
+- Workspace approval subjects distinguish create, replace, edit, remove, and
+  deprecated legacy write operations in addition to canonical path and effect
+  scope. Shell subjects remain exact command/cwd identities.
 - Read-confidentiality denials are policy denials, not approval prompts.
   `workspace.read.denied` plus `tool.failed` `READ_SCOPE_DENIED` is the audit
   path; a model may continue and complete the run without a CLI failure if it
@@ -430,7 +463,7 @@ policy requires approval
   before approval.
 - Read: `packages/core/src/run.ts`,
   `packages/host/src/runtime.ts`,
-  `packages/host/src/agent-spawn-grants.ts`,
+  `packages/host/src/runtime/agent-runtime-assembly.ts`,
   `packages/host/test/spawn-agent.test.ts`,
   `packages/host/test/tools.test.ts`.
 - Tests: `npm --workspace @sparkwright/host test --
@@ -444,7 +477,7 @@ test/spawn-agent.test.ts`;
   child-local scoped approval resolvers for `workspace.write` consumption.
 - Read: `packages/core/src/run.ts`, `packages/core/src/tools.ts`,
   `packages/host/src/runtime.ts`,
-  `packages/host/src/agent-spawn-grants.ts`,
+  `packages/host/src/runtime/agent-runtime-assembly.ts`,
   `packages/agent-runtime/src/tasks/tools.ts`.
 - Tests: `npm test -w @sparkwright/core -- run.test.ts`;
   `npm test -w @sparkwright/host -- tools.test.ts spawn-agent.test.ts`;

@@ -21,12 +21,11 @@ export const AGENT_RESULT_MARKER = "SPARKWRIGHT_AGENT_RESULT:";
 export const AGENT_OUTCOME_SCHEMA_VERSION = "agent-outcome.v1" as const;
 
 export const AGENT_RESULT_PROTOCOL_PROMPT = [
-  "End your final message with exactly one machine-readable result line.",
-  "The JSON is strict: use exactly the documented fields and do not add aliases.",
-  `${AGENT_RESULT_MARKER} {"schemaVersion":"agent-outcome.v1","status":"completed","summary":"concise outcome for the parent","accomplishments":[],"blockers":[]}`,
-  'Status must be exactly "completed", "partial", or "blocked". Completed requires an empty blockers array. Blocked requires at least one blocker. Partial may have blockers when useful work exists but completion still depends on something else.',
-  'Each blocker must contain code, kind, owner, message, retry, and optional requirements. kind: "capability" | "permission" | "user_input" | "dependency" | "resource_limit" | "conflict" | "protocol" | "unknown". owner: "parent" | "user" | "runtime" | "external". retry: "none" | "immediate" | "after_input" | "after_approval" | "after_capability_change" | "after_dependency_change" | "after_resource_change". Each requirement is {"kind":"tool"|"approval"|"input"|"dependency"|"resource","name":"exact identifier"}.',
-  "Report facts only. A blocker is advisory and never grants a capability or approval by itself. You may put the human-readable result before the final line.",
+  "Finish by calling submit_agent_result exactly once as the sole tool call in that response.",
+  "You may include the human-readable final answer as assistant text in the same response; the runtime binds both atomically. If you omit text, the runtime renders the structured summary deterministically.",
+  'The complete envelope is {"status":"completed|partial|blocked","summary":"..."}. accomplishments and structured blockers are optional supporting detail.',
+  "If you instead return a normal natural-language final, the runtime wraps it once as completed and ends the child; it never reopens task tools just to obtain this envelope.",
+  "Report facts only. The legacy SPARKWRIGHT_AGENT_RESULT text marker is accepted only for migration.",
 ].join("\n");
 
 const MAX_OUTCOME_ITEMS = 16;
@@ -100,6 +99,7 @@ export interface ProjectAgentOutcomeInput {
   message?: string;
   stepLimitReached?: boolean;
   truncated?: boolean;
+  terminalDeclaration?: unknown;
 }
 
 export interface ProjectAgentInvocationResultInput {
@@ -111,9 +111,10 @@ export interface ProjectAgentInvocationResultInput {
 }
 
 /**
- * Project one strict semantic outcome from either a valid child declaration or
- * runtime-owned terminal evidence. A normally completed child without a valid
- * declaration is partial, never silently upgraded to completed.
+ * Project one semantic outcome from either a valid child declaration or
+ * runtime-owned terminal evidence. A clean natural-language final is accepted
+ * as an implicit completed outcome; malformed structured declarations remain
+ * protocol failures instead of being silently accepted.
  */
 export function projectAgentOutcome(
   input: ProjectAgentOutcomeInput,
@@ -124,6 +125,21 @@ export function projectAgentOutcome(
     input.stepLimitReached !== true &&
     input.truncated !== true
   ) {
+    const terminalDeclaration = agentResultDeclarationFromUnknown(
+      input.terminalDeclaration,
+    );
+    if (terminalDeclaration) {
+      return {
+        status: terminalDeclaration.status,
+        statusSource: "child",
+        summary: terminalDeclaration.summary,
+        ...(terminalDeclaration.accomplishments
+          ? { accomplishments: terminalDeclaration.accomplishments }
+          : {}),
+        blockers: terminalDeclaration.blockers ?? [],
+        ...(message ? { message } : {}),
+      };
+    }
     const declared = parseAgentResultDeclaration(input.message);
     if (declared) {
       return {
@@ -133,23 +149,30 @@ export function projectAgentOutcome(
         ...(declared.declaration.accomplishments
           ? { accomplishments: declared.declaration.accomplishments }
           : {}),
-        blockers: declared.declaration.blockers,
+        blockers: declared.declaration.blockers ?? [],
         message: declared.message,
       };
     }
     const markerPresent = input.message?.includes(AGENT_RESULT_MARKER) === true;
-    const summary = markerPresent
-      ? "Child returned an invalid agent-outcome.v1 declaration."
-      : "Child completed without the required agent-outcome.v1 declaration.";
+    if (!markerPresent) {
+      const summary =
+        message ?? "Child completed with an implicit natural-language result.";
+      return {
+        status: "completed",
+        statusSource: "runtime",
+        summary,
+        blockers: [],
+        ...(message ? { message } : {}),
+      };
+    }
+    const summary = "Child returned an invalid agent-outcome.v1 declaration.";
     return {
       status: "partial",
       statusSource: "runtime",
       summary,
       blockers: [
         {
-          code: markerPresent
-            ? "AGENT_RESULT_PROTOCOL_INVALID"
-            : "AGENT_RESULT_PROTOCOL_MISSING",
+          code: "AGENT_RESULT_PROTOCOL_INVALID",
           kind: "protocol",
           owner: "runtime",
           message: summary,
@@ -189,6 +212,7 @@ export function projectAgentInvocationResult(
     message: input.result.message,
     stepLimitReached,
     truncated,
+    terminalDeclaration: terminalDeclarationFromRunResult(input.result),
   });
   const finality =
     input.result.signal === "completed" &&
@@ -237,6 +261,17 @@ export function parseAgentResultDeclaration(
   } catch {
     return undefined;
   }
+  const declaration = agentResultDeclarationFromUnknown(value);
+  if (!declaration) return undefined;
+  return {
+    declaration,
+    message: humanMessage(message) ?? declaration.summary,
+  };
+}
+
+export function agentResultDeclarationFromUnknown(
+  value: unknown,
+): AgentResultDeclaration | undefined {
   if (!isRecord(value) || !hasOnlyKeys(value, DECLARATION_KEYS)) {
     return undefined;
   }
@@ -248,27 +283,26 @@ export function parseAgentResultDeclaration(
   const accomplishments = normalizedStringArray(value.accomplishments, true);
   if (value.accomplishments !== undefined && !accomplishments) return undefined;
   if (
-    !Array.isArray(value.blockers) ||
-    value.blockers.length > MAX_OUTCOME_ITEMS
+    value.blockers !== undefined &&
+    (!Array.isArray(value.blockers) ||
+      value.blockers.length > MAX_OUTCOME_ITEMS)
   ) {
     return undefined;
   }
-  const blockers = value.blockers.map(parseAgentBlocker);
+  const blockers = Array.isArray(value.blockers)
+    ? value.blockers.map(parseAgentBlocker)
+    : [];
   if (blockers.some((blocker) => blocker === undefined)) return undefined;
   const normalizedBlockers = blockers as AgentBlocker[];
   if (status === "completed" && normalizedBlockers.length > 0) return undefined;
-  if (status === "blocked" && normalizedBlockers.length === 0) return undefined;
   return {
-    declaration: {
-      schemaVersion: AGENT_OUTCOME_SCHEMA_VERSION,
-      status,
-      summary,
-      ...(accomplishments && accomplishments.length > 0
-        ? { accomplishments }
-        : {}),
-      blockers: normalizedBlockers,
-    },
-    message: humanMessage(message) ?? summary,
+    schemaVersion: AGENT_OUTCOME_SCHEMA_VERSION,
+    status,
+    summary,
+    ...(accomplishments && accomplishments.length > 0
+      ? { accomplishments }
+      : {}),
+    ...(normalizedBlockers.length > 0 ? { blockers: normalizedBlockers } : {}),
   };
 }
 
@@ -298,6 +332,15 @@ export function runResultTruncated(result: RunResult): boolean {
   return (
     (result.metadata as { truncated?: unknown } | undefined)?.truncated === true
   );
+}
+
+export function terminalDeclarationFromRunResult(result: RunResult): unknown {
+  const terminalResult = isRecord(result.metadata?.terminalResult)
+    ? result.metadata.terminalResult
+    : undefined;
+  return terminalResult?.kind === "agent_result"
+    ? terminalResult.output
+    : undefined;
 }
 
 /** Canonical execution-finality check shared by aggregate and cache paths. */
@@ -360,7 +403,6 @@ export function isAgentToolResult(value: unknown): value is AgentToolResult {
     Array.isArray(result.blockers) &&
     blockers.length === result.blockers.length &&
     (result.status !== "completed" || blockers.length === 0) &&
-    (result.status !== "blocked" || blockers.length > 0) &&
     (result.finality === "complete" || result.finality === "partial") &&
     typeof result.assessment === "object" &&
     result.assessment !== null

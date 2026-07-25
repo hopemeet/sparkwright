@@ -1454,6 +1454,98 @@ describe("createAgentTool / mountAgentTool", () => {
     });
   });
 
+  it("keeps an explicitly completed child complete after a managed workspace write", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-child-partial-"));
+    tempDirs.push(root);
+    const workspace = new LocalWorkspace(root);
+    const parent = createRun({
+      goal: "parent",
+      model: {
+        async complete() {
+          return { message: "parent done" };
+        },
+      },
+      workspace,
+      maxSteps: 1,
+    });
+    const mutate = defineTool({
+      name: "mutate",
+      description: "Create one managed file.",
+      inputSchema: { type: "object", properties: {} },
+      policy: { risk: "safe" },
+      governance: {
+        sideEffects: ["write"],
+        idempotency: "conditional",
+        origin: {
+          kind: "local",
+          name: "agent-runtime-test",
+          metadata: { managedWorkspaceWrite: true },
+        },
+      },
+      async execute(_args, ctx) {
+        return ctx.workspace!.createText!("child.txt", "changed\n");
+      },
+    });
+    let childCalls = 0;
+    const spawned = spawnSubAgent({
+      parent,
+      goal: "change a file",
+      workspace,
+      tools: [mutate],
+      maxSteps: 3,
+      policy: {
+        decide(input) {
+          return {
+            action: input.action,
+            decision: "allow",
+            reason: "test",
+            metadata: {},
+          };
+        },
+      },
+      model: {
+        async complete() {
+          childCalls += 1;
+          if (childCalls === 1) {
+            return {
+              toolCalls: [{ toolName: "mutate", arguments: {} }],
+            };
+          }
+          return {
+            message: "I changed the file.",
+            toolCalls: [
+              {
+                toolName: "submit_agent_result",
+                arguments: {
+                  status: "completed",
+                  summary: "Changed the file.",
+                  blockers: [],
+                },
+              },
+            ],
+          };
+        },
+      },
+    });
+
+    await spawned.start();
+
+    const completed = parent.events
+      .all()
+      .find((event) => event.type === "subagent.completed");
+    expect(completed?.payload).toMatchObject({
+      status: "completed",
+      statusSource: "child",
+      finality: "complete",
+      workspaceWrites: 1,
+      blockers: [],
+    });
+    expect(
+      (completed?.payload as { changeSets?: unknown[] } | undefined)
+        ?.changeSets,
+    ).toHaveLength(1);
+  });
+
   it("waits for embedder admission before starting and releases afterwards", async () => {
     const parent = createRun({
       goal: "parent",

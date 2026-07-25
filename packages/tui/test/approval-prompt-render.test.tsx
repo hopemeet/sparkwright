@@ -16,6 +16,9 @@ function pending(
     risk: "medium",
     exactScope: "one exact request",
     executionKind: "main",
+    principalKind: "main",
+    principalScope: "session_1",
+    principalLabel: "Main agent",
     runId: "run_1",
     sessionId: "session_1",
     queuePosition: 1,
@@ -207,6 +210,8 @@ describe("ApprovalPrompt rendering", () => {
       },
       policyReason:
         "Tools with write side effects require approval for this run.",
+      toolReason: "The shell tool requires approval.",
+      safetyReason: 'Unrecognized program "npm" defaults to approval.',
       exactScope: "exact command + cwd /tmp/sparkwright-tui-coding.fixture",
     });
     const text = await renderToText(
@@ -215,7 +220,11 @@ describe("ApprovalPrompt rendering", () => {
     expect(text).toContain("$ npm test");
     expect(text).toContain("cwd: /tmp/sparkwright-tui-coding.fixture");
     expect(text).toContain(
-      "reason: Tools with write side effects require approval for this run.",
+      "policy: Tools with write side effects require approval for this run.",
+    );
+    expect(text).toContain("tool: The shell tool requires approval.");
+    expect(text).toContain(
+      'safety: Unrecognized program "npm" defaults to approval.',
     );
     expect(text).not.toContain('{"command"');
     expect(text).toContain("Allow once");
@@ -236,6 +245,9 @@ describe("ApprovalPrompt rendering", () => {
       cwd: "/workspace/sparkwright/packages/tui",
       executionKind: "workflow",
       workflowId: "workflow_release",
+      principalKind: "dynamic_child",
+      principalScope: "run_child_release",
+      principalLabel: "release verifier",
       runId: "run_release",
       sessionId: "session_release",
       queuePosition: 1,
@@ -255,8 +267,11 @@ describe("ApprovalPrompt rendering", () => {
       ["d", "d"],
     );
 
-    expect(text).toContain("origin: workflow workflow_release");
-    expect(text).toContain("run run_release · session session_release");
+    expect(text).toContain("origin: release verifier (dynamic_child)");
+    expect(text).toContain(
+      "run run_release · scope run_child_release · session session_release",
+    );
+    expect(text).toContain("workflow_release");
     expect(text).toContain("1 of 3");
     expect(text).toContain("node scripts/release-check.mjs");
     expect(text).toContain("--verify-protocol --verify-traces");

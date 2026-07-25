@@ -33,7 +33,6 @@ import type {
 } from "../config-zod-schema.js";
 import { loadHostConfig } from "../config/config-implementation.js";
 import type { CapabilityMcpConfig } from "../config/contracts.js";
-import { createDocumentedCommandWorkflowHooks } from "../documented-command-check.js";
 import { createExecutionResources } from "../execution-resources.js";
 import { resolveExecutionPlan } from "../execution-plan.js";
 import { createModel } from "../model-factory.js";
@@ -51,7 +50,6 @@ import { admitToolsForAgentProfile } from "../tool-surface.js";
 import { createVerificationWorkflowHooks } from "../verification.js";
 import {
   createConfiguredWorkflowHooks,
-  createPartialSubagentFinalityDisclosureHook,
   type CreateConfiguredWorkflowHooksOptions,
 } from "../workflow-hooks.js";
 import { createWorkflowProjectionHooks } from "../workflow-projection.js";
@@ -214,10 +212,6 @@ export interface RuntimeWorkflowHookAssemblyOptions extends Omit<
   workflowActive?: boolean;
   projectionHooks?: WorkflowHook[];
   verification?: CapabilityVerificationConfig;
-  documentedCommand: {
-    goal: string;
-    shouldWrite: boolean;
-  };
 }
 
 export function assembleRuntimeWorkflowHooks(
@@ -226,12 +220,6 @@ export function assembleRuntimeWorkflowHooks(
   const verificationHooks = createVerificationWorkflowHooks({
     ...options,
     verification: options.verification,
-  });
-  const documentedCommandHooks = createDocumentedCommandWorkflowHooks({
-    ...options,
-    workspaceRoot: options.workspaceRoot,
-    goal: options.documentedCommand.goal,
-    shouldWrite: options.documentedCommand.shouldWrite,
   });
   const projectionHooks = options.projectionHooks ?? [];
   const workflowActive =
@@ -243,9 +231,7 @@ export function assembleRuntimeWorkflowHooks(
       workflowActive,
     }),
     ...verificationHooks,
-    ...documentedCommandHooks,
     ...projectionHooks,
-    createPartialSubagentFinalityDisclosureHook(),
   ];
 }
 
@@ -550,18 +536,10 @@ export class RunPreparationOperations {
       configPaths: loadedConfig.attempted.map((entry) => entry.path),
       getRun: () => parentRunRef.current,
       agentTool: delegateAgentTool,
-      documentedCommand: {
-        goal: input.goal,
-        shouldWrite: runAccess.shouldWrite,
-      },
     });
     const workflowRules = describeActiveWorkflowRules({
       workflowHooks: hookConfig?.workflow,
       verification: loadedConfig.config.capabilities?.verification,
-      documentedCommand: {
-        goal: input.goal,
-        shouldWrite: runAccess.shouldWrite,
-      },
     });
     const eventRules = describeActiveEventRules({
       eventHooks: hookConfig?.events,

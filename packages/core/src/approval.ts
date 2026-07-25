@@ -1,6 +1,8 @@
 import { createApprovalId } from "./ids.js";
 import type { RunId } from "./ids.js";
 import type {
+  ApprovalPrincipal,
+  ApprovalReasonLayers,
   ApprovalRequest,
   ApprovalResponse,
   ApprovalSubject,
@@ -16,6 +18,8 @@ export function createApprovalRequest(input: {
   action: string;
   summary: string;
   subject: ApprovalSubject;
+  principal?: ApprovalPrincipal;
+  reasons?: ApprovalReasonLayers;
   details?: Record<string, unknown>;
 }): ApprovalRequest {
   return {
@@ -24,6 +28,14 @@ export function createApprovalRequest(input: {
     action: input.action,
     summary: input.summary,
     subject: input.subject,
+    principal:
+      input.principal ??
+      ({
+        kind: "main",
+        principalScope: String(input.runId),
+        displayLabel: "main",
+      } satisfies ApprovalPrincipal),
+    ...(input.reasons ? { reasons: { ...input.reasons } } : {}),
     details: input.details ?? {},
     createdAt: new Date().toISOString(),
     status: "pending",

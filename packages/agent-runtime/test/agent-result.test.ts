@@ -215,7 +215,7 @@ describe("projectAgentInvocationResult", () => {
     expect(parseAgentResultDeclaration(legacy)).toBeUndefined();
   });
 
-  it("does not silently complete when the required declaration is missing", () => {
+  it("accepts a clean natural-language final as an implicit completed result", () => {
     const result = projectAgentInvocationResult({
       childRunId: "child",
       spanId: "span",
@@ -234,11 +234,13 @@ describe("projectAgentInvocationResult", () => {
       },
     });
     expect(result).toMatchObject({
-      status: "partial",
+      status: "completed",
       statusSource: "runtime",
-      finality: "partial",
-      blockers: [{ code: "AGENT_RESULT_PROTOCOL_MISSING" }],
+      summary: "Plain final answer",
+      finality: "complete",
+      blockers: [],
     });
+    expect(isCompleteAgentResult(result)).toBe(true);
   });
 
   it("marks truncated completion partial", () => {

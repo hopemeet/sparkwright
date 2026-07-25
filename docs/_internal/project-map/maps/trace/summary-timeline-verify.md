@@ -11,6 +11,27 @@ See [raw-trace.md](raw-trace.md) for source data and [export-diagnostics.md](exp
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-25
+- Scope: verification summaries consume explicit verifier results/receipts as
+  evidence. Command classification remains diagnostic, but no derived trace
+  view upgrades it into ordinary Agent completion authority or current-write
+  coverage by itself.
+- Read: Core FactLedger/assessment/completion projection, Agent roll-up, and
+  summary/timeline/report verification consumers.
+- Tests: Core 661/661, Agent Runtime 257/257, Host 583/583; affected package
+  typechecks, repository lint, and targeted format check passed.
+
+- Status: Verified
+- Date: 2026-07-24
+- Scope: verification summaries now have ChangeSet-aware receipts and stale
+  epochs; child receipts roll into parent facts. Completion recovery requires
+  current passing coverage and never rewrites the original child timeline.
+- Read: Core FactLedger/assessment/completion, Agent roll-up, and trace
+  summary/timeline consumers.
+- Tests: focused Core execution-control and Agent Runtime tests, repository
+  build, and repository test typecheck passed.
+
+- Status: Verified
 - Date: 2026-07-23
 - Scope: reviewed new repeated-failure retry-scope metadata. Summary, timeline,
   report, verify, and session consistency continue to classify failures from
@@ -167,6 +188,10 @@ trace.jsonl
   verification-result snapshots. Profile/documented-command identity is read
   from explicit `verificationSource`, `profile`, and `verifierId` fields;
   `hookName` remains a label rather than an encoded identity channel.
+- Command-string classification remains a diagnostic aid for summary/report
+  views. It cannot mint a receipt, prove current ChangeSet coverage, or turn a
+  model-owned natural final into a semantic completion failure; hard coverage
+  belongs only to an explicitly configured Workflow verifier.
 - Report workspace-read volume findings derive tool attribution from existing
   span correlation (`spanId` / `parentSpanId`) when available. This keeps the
   public summary `workspaceReads` total intact while report evidence can split

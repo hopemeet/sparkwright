@@ -10,6 +10,16 @@ See [../../modules/mcp-adapter.md](../../modules/mcp-adapter.md).
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-24
+- Scope: reviewed for child delegation and cache semantics. MCP tools remain
+  excluded from first-version in-process child surfaces; a future external
+  child surface must normalize effects and resource versions or disable
+  delegation-result caching.
+- Read: Host tool catalog/resolver, Agent delegation ledger, and MCP adapters.
+- Tests: focused Host catalog tests, repository build, and repository test
+  typecheck passed.
+
+- Status: Verified
 - Date: 2026-07-23
 - Scope: route review for Host task lifecycle events and SDK forwarding. MCP
   discovery, transport, trust, approval, and tool projection are unchanged.

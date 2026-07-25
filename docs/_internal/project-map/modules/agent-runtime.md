@@ -9,6 +9,41 @@ See also [../maps/capabilities/agents.md](../maps/capabilities/agents.md), [../m
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-25
+- Scope: the child terminal envelope now requires only
+  `status + summary`; accomplishments and blockers are optional detail.
+  Minimal blocked/partial declarations are canonicalized safely, natural
+  finals still auto-wrap once, and the old `RUNTIME_COMPLETION_PARTIAL`
+  reinterpretation of Core terminal metadata is removed.
+- Read: Agent result types/parser/prompt, terminal tool schema, child outcome
+  projection, TUI result recognizer, and focused terminal tests.
+- Tests: full `npm run release:check` passed, including Agent Runtime 257/257,
+  the 16-case regression matrix, and source/release install smoke.
+
+- Status: Verified
+- Date: 2026-07-25
+- Scope: a clean child natural-language final is now wrapped as an implicit
+  completed result when `submit_agent_result` is omitted. Malformed structured
+  declarations remain protocol failures, while step limits, truncation,
+  cancellation, and transport failure remain runtime-owned partial outcomes.
+- Read: Agent terminal result projector, spawn roll-up, Core terminal payload,
+  Host dynamic spawn lifecycle, and focused result/spawn tests.
+- Tests: Core 661/661, Agent Runtime 257/257, Host 583/583; affected package
+  typechecks, repository lint, and targeted format check passed.
+
+- Status: Verified
+- Date: 2026-07-24
+- Scope: every in-process Agent handoff now exposes only goal/context/label;
+  runtime-owned profile/tool/budget metadata stays out of model payloads.
+  Agent Runtime injects the terminal `submit_agent_result` tool, fingerprints
+  reusable delegation results, and rolls complete child ChangeSets plus
+  verification receipts into parent lifecycle facts.
+- Read: handoff normalizer, spawn/tool/result/terminal paths, delegation
+  ledger, Host child assembly, and Core completion facts.
+- Tests: focused handoff/terminal/delegation-ledger suites, repository build,
+  and repository test typecheck passed.
+
+- Status: Verified
 - Date: 2026-07-23
 - Scope: Task async receipt fields now declare their model-visible external
   consumer for strict public-surface auditing. Types, serialized output, parent
@@ -259,6 +294,8 @@ See also [../maps/capabilities/agents.md](../maps/capabilities/agents.md), [../m
 
 - `packages/agent-runtime/src/index.ts`
 - `packages/agent-runtime/src/agents/*`
+- `packages/agent-runtime/src/agents/handoff.ts`
+- `packages/agent-runtime/src/agents/submit-result.ts`
 - `packages/agent-runtime/src/tasks/*`
 - `packages/agent-runtime/src/doc-store/*`
 - `packages/agent-runtime/src/todo/*`
@@ -288,6 +325,16 @@ Does not own:
 
 ## Contracts
 
+- `AgentHandoffPayload` is the shared model-visible shape for dynamic,
+  configured, parallel, and background-task in-process handoff:
+  required `goal`, optional bounded working `context`, and optional UI-only
+  `label`. The compatibility normalizer may read legacy role/tool/grant/budget/
+  metadata fields from persisted tasks, but those values never regain
+  authority.
+- `submit_agent_result` is injected by child runtime as a terminal tool, not
+  inherited from parent catalogs. A valid sole terminal call atomically binds
+  its structured declaration to assistant text from the same model response.
+  The legacy text marker remains parse-only migration fallback.
 - Task events are trace-visible through core when executed as tools.
 - `doc-store/` owns the public workflow-agnostic file-backed primitive surface
   for session-root stores: atomic text/JSON document writes with Windows
@@ -455,11 +502,13 @@ Does not own:
   state.
 - Agent result `status` is semantic and orthogonal to run transport and Core
   health. A normally completed run may declare `partial` or `blocked`; the
-  parent-visible message removes the strict `SPARKWRIGHT_AGENT_RESULT` marker,
+  parent-visible message removes any legacy `SPARKWRIGHT_AGENT_RESULT` marker,
   while lifecycle/tool/ledger projections preserve `status`, `statusSource`,
-  summary, accomplishments, and structured blockers. A missing or malformed
-  declaration projects `status:"partial"` with a runtime-owned protocol
-  blocker; it is never silently upgraded from the child transport terminal.
+  summary, accomplishments, and structured blockers. A clean natural-language
+  final without a declaration is compatibility-wrapped as
+  `status:"completed"` with `statusSource:"runtime"` and never reopens task
+  execution. A malformed structured declaration remains `partial` with a
+  runtime-owned protocol blocker.
 - `AgentBlocker` is the cross-boundary recovery contract: stable `code`, broad
   `kind`, responsible `owner`, human `message`, optional typed `requirements`,
   and a `retry` condition. Blocker claims are evidence only and never grant a
@@ -588,9 +637,9 @@ Does not own:
   for task-owned children and copies it onto parent-visible `subagent.*`
   payloads and metadata. Trace diagnostics rely on this to join
   `task_create` results to terminal `agent_task` child runs.
-- `RunHandle.maxSteps` is public read-only child-spawn context. Child agents
-  inherit the parent run's effective `maxSteps` when no child/profile override
-  is provided; explicit child `maxSteps` still wins, while `runBudget` remains
+- `RunHandle.maxSteps` remains runtime context for configured control-plane
+  allocation. Dynamic handoff cannot set it; configured profile overrides and
+  parent/runtime backstops remain host-owned choices, while `runBudget` is
   tightened through parent/child intersection.
 - `spawnSubAgent()` passes the parent's opaque child-budget accounts into every
   in-process child run. Siblings and deeper descendants therefore compete for
@@ -601,7 +650,10 @@ Does not own:
   ledger rather than a `createAgentTool` closure-local cache. Ledger keys include
   the delegation surface identity (`agent_tool`, configured delegate, or dynamic
   spawn) plus the stable child/profile/scope fields needed to avoid reusing a
-  different agent's answer; dynamic-spawn keys include explicit handoff context.
+  different agent's answer; dynamic-spawn keys include explicit handoff
+  context, model/profile, effective capability, project/prompt, and workspace
+  epoch fingerprints. UI label is excluded. Any external/network-observing
+  child surface is non-cacheable.
   Only complete, clean, non-`stepLimitReached`,
   non-truncated results with canonical assessment are reusable. AgentTool owns
   the sequential duplicate protocol so exact repeats can reach this ledger;

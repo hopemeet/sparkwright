@@ -12,9 +12,12 @@ import { fileURLToPath } from "node:url";
 import {
   defineTool,
   type AnchoredEditOperation,
+  type ChangeSet,
   type RuntimeContext,
   type ToolDefinition,
   type ToolInputValidationResult,
+  type WorkspaceRevision,
+  type WorkspaceWriteResult,
 } from "@sparkwright/core";
 import { applyUnifiedDiff } from "./unified-diff.js";
 
@@ -82,6 +85,8 @@ export interface CodingToolsOptions {
 export type CodingToolName =
   | "read_text"
   | "read_anchored_text"
+  | "create"
+  | "replace"
   | "write"
   | "edit_anchored_text"
   | "edit"
@@ -103,6 +108,8 @@ export interface ReadTextResult {
   endLine: number;
   lineCount: number;
   truncated: boolean;
+  revision?: WorkspaceRevision;
+  stateEpoch?: number;
 }
 
 export type ReadAnchoredTextInput = ReadTextInput;
@@ -119,11 +126,14 @@ export interface ReadAnchoredTextResult {
   }>;
   metadata: Record<string, unknown>;
   truncated: boolean;
+  revision?: WorkspaceRevision;
+  stateEpoch?: number;
 }
 
 export interface EditAnchoredTextInput {
   path: string;
   edits: AnchoredEditOperation[];
+  expectedRevision: WorkspaceRevision;
   reason?: string;
 }
 
@@ -137,12 +147,18 @@ export interface EditAnchoredTextResult {
     line: number;
     op: AnchoredEditOperation["op"];
   }>;
+  beforeRevision?: WorkspaceRevision;
+  afterRevision?: WorkspaceRevision;
+  /** @reserved Model-visible ChangeSet reference consumed by parent completion and trace projections. */
+  changeSetId?: string;
+  changeSet?: ChangeSet;
 }
 
 export interface ApplyPatchInput {
   path: string;
   /** A unified diff. File headers (`---`/`+++`) are optional; hunks required. */
   patch: string;
+  expectedRevision: WorkspaceRevision;
   reason?: string;
 }
 
@@ -153,6 +169,34 @@ export interface ApplyPatchResult {
   content: string;
   /** @reserved Public tool-output field consumed by coding UIs. */
   hunksApplied: number;
+  beforeRevision?: WorkspaceRevision;
+  afterRevision?: WorkspaceRevision;
+  /** @reserved Model-visible ChangeSet reference consumed by parent completion and trace projections. */
+  changeSetId?: string;
+  changeSet?: ChangeSet;
+}
+
+export interface CreateFileInput {
+  path: string;
+  content: string;
+  reason?: string;
+}
+
+export interface ReplaceFileInput extends CreateFileInput {
+  expectedRevision: WorkspaceRevision;
+}
+
+export interface RevisionedWriteResult {
+  path: string;
+  changed: boolean;
+  created: boolean;
+  bytes: number;
+  lineCount: number;
+  beforeRevision: WorkspaceRevision;
+  afterRevision: WorkspaceRevision;
+  /** @reserved Model-visible ChangeSet reference consumed by parent completion and trace projections. */
+  changeSetId?: string;
+  changeSet?: ChangeSet;
 }
 
 export interface WriteFileInput {
@@ -283,6 +327,8 @@ export function createCodingTools(
   return [
     createReadTextTool(options),
     createReadAnchoredTextTool(options),
+    createCreateFileTool(),
+    createReplaceFileTool(),
     createWriteFileTool(),
     createEditAnchoredTextTool(),
     createApplyPatchTool(),
@@ -299,6 +345,7 @@ export function createReadTextTool(
     name: "read_text",
     description: "Read a UTF-8 text file from the configured workspace.",
     inputSchema: readTextInputSchema,
+    delegation: "child",
     policy: { risk: "safe" },
     governance: readGovernance(),
     resultPresentation: {
@@ -324,7 +371,11 @@ export function createReadTextTool(
     async execute(args, ctx) {
       const workspace = requireWorkspace(ctx);
       const input = normalizeReadTextInput(args, options);
-      const content = await workspace.readText(input.path);
+      const observation = workspace.readTextWithRevision
+        ? await workspace.readTextWithRevision(input.path)
+        : undefined;
+      const content =
+        observation?.content ?? (await workspace.readText(input.path));
       const sliced = sliceText(content, input);
       return {
         path: await canonicalOutputPath(ctx, input.path),
@@ -333,6 +384,14 @@ export function createReadTextTool(
         endLine: sliced.endLine,
         lineCount: sliced.lineCount,
         truncated: sliced.truncated,
+        ...(observation
+          ? {
+              revision: observation.revision,
+              ...(observation.stateEpoch !== undefined
+                ? { stateEpoch: observation.stateEpoch }
+                : {}),
+            }
+          : {}),
       };
     },
   });
@@ -346,6 +405,7 @@ export function createReadAnchoredTextTool(
     description:
       "Read a UTF-8 text file with stable per-line anchors for verified edits.",
     inputSchema: readTextInputSchema,
+    delegation: "child",
     policy: { risk: "safe" },
     governance: readGovernance(),
     resultPresentation: {
@@ -398,7 +458,116 @@ export function createReadAnchoredTextTool(
         })),
         metadata: anchored.metadata,
         truncated: selected.truncated || bounded.truncated,
+        ...(typeof anchored.metadata.revision === "string"
+          ? { revision: anchored.metadata.revision }
+          : {}),
+        ...(typeof anchored.metadata.stateEpoch === "number"
+          ? { stateEpoch: anchored.metadata.stateEpoch }
+          : {}),
       };
+    },
+  });
+}
+
+export function createCreateFileTool(): ToolDefinition<
+  CreateFileInput,
+  RevisionedWriteResult
+> {
+  return defineTool({
+    name: "create",
+    description:
+      "Create a new UTF-8 workspace file. Fails if the path already exists and never overwrites. Parent directories are created automatically.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "Workspace-relative file path." },
+        content: { type: "string", description: "Complete UTF-8 content." },
+        reason: { type: "string", description: "Why this file is needed." },
+      },
+      required: ["path", "content"],
+      additionalProperties: false,
+    },
+    delegation: "child",
+    policy: { risk: "safe" },
+    governance: managedWriteGovernance(),
+    previewArgs(args) {
+      return previewString(previewRecord(args).path);
+    },
+    validateInput(args) {
+      const input = normalizeCreateFileInput(args);
+      return validateWritablePathInput("create", input.path);
+    },
+    isConcurrencySafe: () => false,
+    async execute(args, ctx) {
+      const workspace = requireWorkspace(ctx);
+      if (!workspace.createText) {
+        throw toolArgumentsInvalid(
+          "Workspace runtime does not support revisioned create.",
+        );
+      }
+      const input = normalizeCreateFileInput(args);
+      const write = await workspace.createText(input.path, input.content, {
+        reason: input.reason,
+      });
+      return revisionedWriteResult(ctx, input, write, true);
+    },
+  });
+}
+
+export function createReplaceFileTool(): ToolDefinition<
+  ReplaceFileInput,
+  RevisionedWriteResult
+> {
+  return defineTool({
+    name: "replace",
+    description:
+      "Replace a complete UTF-8 workspace file only if `expectedRevision` still matches the revision returned by read. Conflicts fail without overwriting.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "Workspace-relative file path." },
+        expectedRevision: {
+          type: "string",
+          description: "Opaque revision returned by the latest read.",
+        },
+        content: {
+          type: "string",
+          description: "Complete replacement content.",
+        },
+        reason: {
+          type: "string",
+          description: "Why this replacement is needed.",
+        },
+      },
+      required: ["path", "expectedRevision", "content"],
+      additionalProperties: false,
+    },
+    delegation: "child",
+    policy: { risk: "safe" },
+    governance: managedWriteGovernance(),
+    previewArgs(args) {
+      return previewString(previewRecord(args).path);
+    },
+    validateInput(args) {
+      const input = normalizeReplaceFileInput(args);
+      return validateWritablePathInput("replace", input.path);
+    },
+    isConcurrencySafe: () => false,
+    async execute(args, ctx) {
+      const workspace = requireWorkspace(ctx);
+      if (!workspace.replaceText) {
+        throw toolArgumentsInvalid(
+          "Workspace runtime does not support revisioned replace.",
+        );
+      }
+      const input = normalizeReplaceFileInput(args);
+      const write = await workspace.replaceText(
+        input.path,
+        input.expectedRevision,
+        input.content,
+        { reason: input.reason },
+      );
+      return revisionedWriteResult(ctx, input, write, false);
     },
   });
 }
@@ -410,8 +579,7 @@ export function createWriteFileTool(): ToolDefinition<
   return defineTool<WriteFileInput, WriteFileResult>({
     name: "write",
     description:
-      "Create or replace a UTF-8 text file through the workspace write path. " +
-      "Use this for new files or full-file replacement; parent directories are created automatically.",
+      "Deprecated compatibility tool for creating or replacing a UTF-8 text file. Prefer create for new files and replace with an expectedRevision for existing files.",
     inputSchema: {
       type: "object",
       properties: {
@@ -431,6 +599,7 @@ export function createWriteFileTool(): ToolDefinition<
       additionalProperties: false,
     },
     policy: { risk: "safe" },
+    delegation: "parent_only",
     governance: {
       sideEffects: ["write"],
       idempotency: "conditional",
@@ -517,12 +686,17 @@ export function createEditAnchoredTextTool(): ToolDefinition<
             additionalProperties: false,
           },
         },
+        expectedRevision: {
+          type: "string",
+          description: "Opaque revision returned by read_anchored_text.",
+        },
         reason: { type: "string", description: "Why this edit is needed." },
       },
-      required: ["path", "edits"],
+      required: ["path", "edits", "expectedRevision"],
       additionalProperties: false,
     },
     policy: { risk: "safe" },
+    delegation: "child",
     governance: {
       sideEffects: ["write"],
       idempotency: "conditional",
@@ -557,12 +731,25 @@ export function createEditAnchoredTextTool(): ToolDefinition<
       const before = await workspace.readText(input.path);
       const result = await workspace.editAnchoredText(input.path, input.edits, {
         reason: input.reason,
+        expectedRevision: input.expectedRevision,
       });
       return {
         path: await canonicalOutputPath(ctx, input.path),
         changed: before !== result.content,
         content: result.content,
         anchors: result.anchors,
+        ...(result.write
+          ? {
+              beforeRevision: result.write.beforeRevision,
+              afterRevision: result.write.afterRevision,
+              ...(result.write.changeSet
+                ? {
+                    changeSetId: result.write.changeSet.id,
+                    changeSet: result.write.changeSet,
+                  }
+                : {}),
+            }
+          : {}),
       };
     },
   });
@@ -583,12 +770,17 @@ export function createApplyPatchTool(): ToolDefinition<
       properties: {
         path: { type: "string" },
         patch: { type: "string" },
+        expectedRevision: {
+          type: "string",
+          description: "Opaque revision returned by the latest read.",
+        },
         reason: { type: "string" },
       },
-      required: ["path", "patch"],
+      required: ["path", "patch", "expectedRevision"],
       additionalProperties: false,
     },
     policy: { risk: "safe" },
+    delegation: "child",
     governance: {
       sideEffects: ["write"],
       idempotency: "conditional",
@@ -609,19 +801,57 @@ export function createApplyPatchTool(): ToolDefinition<
     isConcurrencySafe: () => false,
     async execute(args, ctx) {
       const workspace = requireWorkspace(ctx);
+      if (!workspace.readTextWithRevision || !workspace.replaceText) {
+        throw toolArgumentsInvalid(
+          "Workspace runtime does not support revisioned edit.",
+        );
+      }
       const input = normalizeApplyPatchInput(args);
-      const before = await workspace.readText(input.path);
+      const observation = await workspace.readTextWithRevision(input.path);
+      const before = observation.content;
+      if (input.expectedRevision !== observation.revision) {
+        throw Object.assign(
+          new Error(`Workspace revision changed before edit: ${input.path}`),
+          {
+            code: "WORKSPACE_REVISION_CONFLICT",
+            metadata: {
+              path: input.path,
+              expectedRevision: input.expectedRevision,
+              currentRevision: observation.revision,
+            },
+          },
+        );
+      }
       const { content, hunksApplied } = applyUnifiedDiff(before, input.patch);
+      let write: WorkspaceWriteResult | undefined;
       if (content !== before) {
-        await workspace.writeText(input.path, content, {
-          reason: input.reason,
-        });
+        write = await workspace.replaceText(
+          input.path,
+          input.expectedRevision,
+          content,
+          { reason: input.reason },
+        );
       }
       return {
         path: await canonicalOutputPath(ctx, input.path),
         changed: content !== before,
         content,
         hunksApplied,
+        ...(write
+          ? {
+              beforeRevision: write.beforeRevision,
+              afterRevision: write.afterRevision,
+              ...(write.changeSet
+                ? {
+                    changeSetId: write.changeSet.id,
+                    changeSet: write.changeSet,
+                  }
+                : {}),
+            }
+          : {
+              beforeRevision: observation.revision,
+              afterRevision: observation.revision,
+            }),
       };
     },
   });
@@ -635,7 +865,52 @@ function normalizeApplyPatchInput(args: ApplyPatchInput): ApplyPatchInput {
     throw toolArgumentsInvalid("patch must be a non-empty string.");
   }
   const reason = typeof args.reason === "string" ? args.reason : undefined;
-  return { path, patch, reason };
+  const expectedRevision = readString(args, "expectedRevision");
+  return {
+    path,
+    patch,
+    expectedRevision,
+    ...(reason ? { reason } : {}),
+  };
+}
+
+function normalizeCreateFileInput(args: CreateFileInput): CreateFileInput {
+  assertRecord(args, "create input");
+  const path = normalizeFileUrlPath(readString(args, "path"));
+  const content = readStringAllowEmpty(args, "content");
+  const reason =
+    typeof args.reason === "string" && args.reason.length > 0
+      ? args.reason
+      : undefined;
+  return { path, content, ...(reason ? { reason } : {}) };
+}
+
+function normalizeReplaceFileInput(args: ReplaceFileInput): ReplaceFileInput {
+  assertRecord(args, "replace input");
+  const input = normalizeCreateFileInput(args);
+  const expectedRevision = readString(args, "expectedRevision");
+  return { ...input, expectedRevision };
+}
+
+async function revisionedWriteResult(
+  ctx: RuntimeContext,
+  input: CreateFileInput,
+  write: WorkspaceWriteResult,
+  created: boolean,
+): Promise<RevisionedWriteResult> {
+  return {
+    path: await canonicalOutputPath(ctx, input.path),
+    changed: write.changed,
+    created,
+    bytes: input.content.length,
+    lineCount:
+      input.content.length === 0 ? 0 : splitLines(input.content).length,
+    beforeRevision: write.beforeRevision,
+    afterRevision: write.afterRevision,
+    ...(write.changeSet
+      ? { changeSetId: write.changeSet.id, changeSet: write.changeSet }
+      : {}),
+  };
 }
 
 function normalizeWriteFileInput(args: WriteFileInput): WriteFileInput {
@@ -658,6 +933,7 @@ export function createListDirTool(
 ): ToolDefinition<ListDirInput, ListDirResult> {
   return defineTool<ListDirInput, ListDirResult>({
     name: "list_dir",
+    delegation: "child",
     description: "List files and directories within the workspace.",
     inputSchema: {
       type: "object",
@@ -709,6 +985,7 @@ export function createGrepTextTool(
 ): ToolDefinition<GrepTextInput, GrepTextResult> {
   return defineTool<GrepTextInput, GrepTextResult>({
     name: "grep",
+    delegation: "child",
     description:
       "Search UTF-8 workspace text files for a string or regex. Skips .git, " +
       "node_modules, and build output (dist/build/coverage) by default; pass " +
@@ -855,6 +1132,7 @@ export function createGlobPathsTool(
 ): ToolDefinition<GlobPathsInput, GlobPathsResult> {
   return defineTool<GlobPathsInput, GlobPathsResult>({
     name: "glob",
+    delegation: "child",
     description:
       "Find workspace-relative paths matching glob patterns. Skips .git, " +
       "node_modules, and build output (dist/build/coverage) by default; pass " +
@@ -1001,6 +1279,19 @@ function readGovernance() {
     idempotency: "idempotent" as const,
     dataSensitivity: "internal" as const,
     origin: { kind: "local" as const, name: "@sparkwright/coding-tools" },
+  };
+}
+
+function managedWriteGovernance() {
+  return {
+    sideEffects: ["write" as const],
+    idempotency: "conditional" as const,
+    dataSensitivity: "internal" as const,
+    origin: {
+      kind: "local" as const,
+      name: "@sparkwright/coding-tools",
+      metadata: { managedWorkspaceWrite: true, revisioned: true },
+    },
   };
 }
 
@@ -1179,10 +1470,10 @@ function normalizeEditAnchoredTextInput(
   return {
     path,
     edits,
-    reason:
-      typeof args.reason === "string" && args.reason.length > 0
-        ? args.reason
-        : undefined,
+    expectedRevision: readString(args, "expectedRevision"),
+    ...(typeof args.reason === "string" && args.reason.length > 0
+      ? { reason: args.reason }
+      : {}),
   };
 }
 

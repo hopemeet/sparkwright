@@ -10,6 +10,15 @@ See [../../modules/agent-runtime.md](../../modules/agent-runtime.md) for related
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-24
+- Scope: reviewed for the Agent execution control-plane refactor. Cron tools
+  remain parent-only and are absent from every in-process child catalog;
+  scheduling, persistence, and execution behavior are unchanged.
+- Read: Host child resolver/tool catalog, Cron tool definitions, and Agent map.
+- Tests: focused Host catalog tests, repository build, and repository test
+  typecheck passed.
+
+- Status: Verified
 - Date: 2026-07-23
 - Scope: route review for public Task async-receipt annotations. Cron
   scheduling, records, task execution, and notification behavior are unchanged.

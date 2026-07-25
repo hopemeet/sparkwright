@@ -558,6 +558,60 @@ describe("EventStream committed rendering", () => {
     expect(text).not.toContain("shell exit null");
   });
 
+  it("renders spawn promotion receipts without leaking orchestration JSON", async () => {
+    const events = [
+      ev("tool.completed", 1, {
+        toolName: "spawn_agent",
+        output: {
+          taskId: "task_mqzd1c1b30yc24hj",
+          kind: "agent",
+          mode: "foreground",
+          promoted: true,
+          awaited: true,
+          actualMode: "awaited",
+          parentWillWait: true,
+          completionObservation: "automatic_once",
+          childRunId: "run_mqzd1c1b30yc24hj",
+          role: "python worker",
+          foregroundTimeoutMs: 30_000,
+          nextAction: {
+            tool: "task",
+            action: "wait",
+            taskId: "task_mqzd1c1b30yc24hj",
+          },
+          duplicateAvoidance: "Do not spawn it again.",
+        },
+      }),
+    ];
+    const text = await renderToText(stream(events));
+    expect(text).toContain("spawn_agent → awaited task");
+    expect(text).toContain("python worker · child");
+    expect(text).toContain("parent will wait automatically");
+    expect(text).not.toContain('"parentWillWait"');
+    expect(text).not.toContain('"nextAction"');
+  });
+
+  it("renders task receipts as lifecycle summaries", async () => {
+    const events = [
+      ev("tool.completed", 1, {
+        toolName: "task_create",
+        output: {
+          taskId: "task_mqzd1c1b30yc24hj",
+          mode: "awaited",
+          awaited: true,
+          actualMode: "awaited",
+          parentWillWait: true,
+          completionObservation: "automatic_once",
+          duplicateAvoidance: "Do not create it again.",
+        },
+      }),
+    ];
+    const text = await renderToText(stream(events));
+    expect(text).toContain("task task_mqzd1c1b30yc24hj · awaited");
+    expect(text).toContain("parent will wait automatically");
+    expect(text).not.toContain('"completionObservation"');
+  });
+
   it("summarizes background task lifecycle without printing every output event", async () => {
     const events = [
       ev("task.started", 1, {

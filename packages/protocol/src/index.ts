@@ -1270,7 +1270,8 @@ export interface TaskUpdatedEventPayload {
 export type ApprovalSubjectPayload =
   | {
       kind: "workspace_file";
-      operation: "write" | "remove";
+      operation:
+        "create" | "replace" | "edit" | "remove" | "legacy_write" | "write";
       path: string;
       key: string;
       label: string;
@@ -1279,13 +1280,8 @@ export type ApprovalSubjectPayload =
       kind: "shell_command";
       command: string;
       cwd: string;
-      key: string;
-      label: string;
-    }
-  | {
-      kind: "agent_workspace_write";
-      role?: string;
-      tools: string[];
+      background?: boolean;
+      lifetime?: "job" | "service";
       key: string;
       label: string;
     }
@@ -1306,7 +1302,23 @@ export interface ApprovalRequestedEventPayload {
   action: string;
   summary: string;
   subject: ApprovalSubjectPayload;
+  /** Identity whose effect is being authorized; session rules are scoped here. */
+  principal: ApprovalPrincipalPayload;
+  /** Independent explanations from policy, tool, and safety layers. */
+  reasons?: ApprovalReasonLayersPayload;
   details?: Record<string, unknown>;
+}
+
+export interface ApprovalReasonLayersPayload {
+  policy?: string;
+  tool?: string;
+  safety?: string;
+}
+
+export interface ApprovalPrincipalPayload {
+  kind: "main" | "dynamic_child" | "configured_delegate";
+  principalScope: string;
+  displayLabel?: string;
 }
 
 /** Emitted when a durable Workflow starts another Core episode. */
@@ -1337,13 +1349,16 @@ export interface AssessmentIssuePayload {
 
 export interface VerificationResultPayload {
   id: string;
-  source: "command" | "profile" | "documented_command";
+  source: "command" | "profile" | "documented_command" | "receipt";
   status: "passed" | "failed" | "timed_out" | "stale";
   sequence?: number;
   command?: string;
   profile?: string;
   verifierId?: string;
   exitCode?: number | null;
+  level?: "syntax" | "smoke" | "contract" | "project" | "release";
+  coveredChangeSets?: string[];
+  writeEpoch?: number;
 }
 
 export interface RunAssessmentPayload {
@@ -1378,6 +1393,30 @@ export interface RunCompletedEventPayload {
   failure?: RunFailureEnvelope;
   /** Advisory plan state; it never changes terminal ownership or scheduling. */
   todoAdvisory?: { unfinished: number; blocked: number; message: string };
+  /** Deterministic structured caveats emitted by the Core completion evaluator. */
+  notices?: RuntimeNoticePayload[];
+  /** Runtime-owned semantic completion status; independent of transport state. */
+  completionStatus?: "completed" | "partial";
+}
+
+export interface RuntimeNoticePayload {
+  id: string;
+  code:
+    | "child_partial"
+    | "child_blocked"
+    | "child_step_limit"
+    | "verification_failed"
+    | "verification_not_run"
+    | "verification_receipt_stale"
+    | "approval_denied"
+    | "budget_exhausted"
+    | "agent_result_protocol_failure";
+  severity: "info" | "warning" | "error";
+  message: string;
+  /** @reserved Runtime notice origin consumed by protocol clients and trace UIs. */
+  sourceRunId?: string;
+  childRunId?: string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface RunFailedEventPayload {

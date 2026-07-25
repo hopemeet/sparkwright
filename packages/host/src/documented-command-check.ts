@@ -31,7 +31,6 @@ export interface DocumentedCommandIssue {
 export interface DocumentedCommandRuleActivation {
   enabled: true;
   active: boolean;
-  hasRunContext: boolean;
   reason: string;
 }
 
@@ -87,13 +86,10 @@ export function evaluateDocumentedCommandRule(input: {
   goal?: string;
   shouldWrite?: boolean;
 }): DocumentedCommandRuleActivation {
-  const hasRunContext =
-    input.goal !== undefined && input.shouldWrite !== undefined;
   if (input.shouldWrite !== true) {
     return {
       enabled: true,
       active: false,
-      hasRunContext,
       reason: "workspace writes are disabled",
     };
   }
@@ -101,7 +97,6 @@ export function evaluateDocumentedCommandRule(input: {
     return {
       enabled: true,
       active: false,
-      hasRunContext,
       reason: "no goal context",
     };
   }
@@ -112,7 +107,6 @@ export function evaluateDocumentedCommandRule(input: {
   return {
     enabled: true,
     active,
-    hasRunContext,
     reason: active
       ? "write-enabled goal requests verification/handoff/documented-command validation"
       : "goal does not request documented-command validation",

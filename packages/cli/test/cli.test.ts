@@ -19,6 +19,7 @@ import {
   type WorkflowRunId,
 } from "@sparkwright/agent-runtime";
 import {
+  createWorkspaceRevision,
   FileSessionStore,
   SESSION_COMPACT_SCHEMA_VERSION,
   type RunId,
@@ -2247,6 +2248,8 @@ describe.sequential("runCli", () => {
       "grep",
       "list_dir",
       "read_anchored_text",
+      "create",
+      "replace",
       "write",
       "edit_anchored_text",
       "edit",
@@ -2631,16 +2634,14 @@ describe.sequential("runCli", () => {
     );
 
     expect(result.exitCode).toBe(0);
-    expect(output.stdoutText()).toContain("workflow rules: 3");
+    expect(output.stdoutText()).toContain("workflow rules: 2");
     expect(output.stdoutText()).toContain(
       "rule: guard-shell [config] PreToolUse active; canBlock=true; matcher=toolName=bash; action=block: No shell.",
     );
     expect(output.stdoutText()).toContain(
       "rule: verification:fast:test [verification] Stop active; canBlock=false",
     );
-    expect(output.stdoutText()).toContain(
-      "rule: documented-command-check [builtin] Stop available; canBlock=false",
-    );
+    expect(output.stdoutText()).not.toContain("documented-command-check");
     expect(output.stdoutText()).toContain("event rules: 1");
     expect(output.stdoutText()).toContain(
       "event rule: record-tool [config] tool.completed active; canBlock=false; matcher=toolName=bash; action=command: node; injectOutput=always",
@@ -8639,6 +8640,7 @@ describe.sequential("runCli", () => {
                   toolName: "edit",
                   arguments: {
                     path: "README.md",
+                    expectedRevision: createWorkspaceRevision(true, "# Demo\n"),
                     reason: "delegate summary regression",
                     patch: [
                       "--- a/README.md",
@@ -8750,6 +8752,7 @@ describe.sequential("runCli", () => {
                   toolName: "edit",
                   arguments: {
                     path: "README.md",
+                    expectedRevision: createWorkspaceRevision(true, "# Demo\n"),
                     patch:
                       "@@ -1,1 +1,2 @@\n # Demo\n+This should not be applied.\n",
                   },
@@ -9087,6 +9090,7 @@ describe.sequential("runCli", () => {
                   toolName: "edit",
                   arguments: {
                     path: "README.md",
+                    expectedRevision: createWorkspaceRevision(true, "# Demo\n"),
                     reason: "Add verified section",
                     patch: [
                       "--- a/README.md",
@@ -9304,6 +9308,7 @@ describe.sequential("runCli", () => {
                   toolName: "edit",
                   arguments: {
                     path: "README.md",
+                    expectedRevision: createWorkspaceRevision(true, "# Demo\n"),
                     patch: "@@ -1,1 +1,2 @@\n # Demo\n+No write flag.\n",
                   },
                 },
@@ -9787,6 +9792,10 @@ describe.sequential("runCli", () => {
                   toolName: "edit",
                   arguments: {
                     path: "package.json",
+                    expectedRevision: createWorkspaceRevision(
+                      true,
+                      '{"name":"demo"}\n',
+                    ),
                     patch: [
                       "--- a/package.json",
                       "+++ b/package.json",
@@ -9857,6 +9866,10 @@ describe.sequential("runCli", () => {
                   toolName: "edit",
                   arguments: {
                     path: "package.json",
+                    expectedRevision: createWorkspaceRevision(
+                      true,
+                      '{"name":"demo"}\n',
+                    ),
                     patch: [
                       "--- a/package.json",
                       "+++ b/package.json",
@@ -9924,6 +9937,7 @@ describe.sequential("runCli", () => {
                   toolName: "edit",
                   arguments: {
                     path: "README.md",
+                    expectedRevision: createWorkspaceRevision(true, "# Demo\n"),
                     patch: [
                       "--- a/README.md",
                       "+++ b/README.md",
@@ -9938,6 +9952,10 @@ describe.sequential("runCli", () => {
                   toolName: "edit",
                   arguments: {
                     path: "test.js",
+                    expectedRevision: createWorkspaceRevision(
+                      true,
+                      "console.log('test')\n",
+                    ),
                     patch: [
                       "--- a/test.js",
                       "+++ b/test.js",

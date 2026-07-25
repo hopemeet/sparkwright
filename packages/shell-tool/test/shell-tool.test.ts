@@ -263,8 +263,44 @@ describe("createShellTool", () => {
       kind: "shell_command",
       command: "npm test",
       cwd: "/workspace/project/packages/core",
-      label: "Allow this exact command here for this session",
+      background: false,
+      lifetime: "job",
+      label:
+        "Allow this exact command, cwd, and execution mode for this session",
     });
+  });
+
+  it("keys approval by command, cwd, and execution mode but not timeout", async () => {
+    const tool = createShellTool({
+      ...minimalOptions(),
+      workspaceRoot: "/workspace/project",
+    });
+    const short = await tool.approvalSubjectForArgs?.({
+      command: "python3 -m py_compile script.py",
+      foregroundTimeoutMs: 30_000,
+    });
+    const long = await tool.approvalSubjectForArgs?.({
+      command: "python3 -m py_compile script.py",
+      foregroundTimeoutMs: 120_000,
+    });
+    const background = await tool.approvalSubjectForArgs?.({
+      command: "python3 -m py_compile script.py",
+      foregroundTimeoutMs: 30_000,
+      background: true,
+    });
+
+    expect(short?.kind).toBe("shell_command");
+    expect(long?.kind).toBe("shell_command");
+    expect(background?.kind).toBe("shell_command");
+    if (
+      short?.kind !== "shell_command" ||
+      long?.kind !== "shell_command" ||
+      background?.kind !== "shell_command"
+    ) {
+      throw new Error("expected shell approval subjects");
+    }
+    expect(short.key).toBe(long.key);
+    expect(background.key).not.toBe(short.key);
   });
 
   it("throws ShellSafetyError when the command is denied", async () => {

@@ -9,7 +9,10 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SESSION_COMPACT_SCHEMA_VERSION } from "@sparkwright/core";
+import {
+  createWorkspaceRevision,
+  SESSION_COMPACT_SCHEMA_VERSION,
+} from "@sparkwright/core";
 import {
   FileWorkflowChannelStore,
   FileWorkflowStore,
@@ -1019,6 +1022,7 @@ describe("TUI ↔ host via sdk-node", () => {
             toolName: "edit",
             arguments: {
               path: "README.md",
+              expectedRevision: createWorkspaceRevision(true, "# Demo\n"),
               patch:
                 "--- README.md\n+++ README.md\n@@\n-# Demo\n+# Demo patched\n",
               reason: "test auto approval",

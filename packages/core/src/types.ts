@@ -178,6 +178,7 @@ export interface RunLoopState {
     key: string;
     code: string;
     message: string;
+    stateEpoch?: number;
   };
   repeatedToolCallCount: number;
   transition: RunLoopTransition;
@@ -326,12 +327,34 @@ export interface ToolCall {
   arguments: unknown;
 }
 
+export type ToolEffectKind = "changed" | "observed" | "no_change" | "blocked";
+
+export type ToolEffectRetry = "changed_args" | "after_state_change" | "never";
+
+/**
+ * Runtime-normalized semantic effect of a completed or failed tool call.
+ * `status` remains the execution/transport result; `effect` records whether
+ * the call changed durable state, produced new evidence, made no change, or
+ * was blocked.
+ */
+export interface ToolEffect {
+  kind: ToolEffectKind;
+  targetKey?: string;
+  stateEpoch?: number;
+  beforeRevision?: WorkspaceRevision;
+  afterRevision?: WorkspaceRevision;
+  retry: ToolEffectRetry;
+  reasonCode?: string;
+}
+
 export interface ToolResult {
   toolCallId: ToolCallId;
   status: "completed" | "failed" | "cancelled";
   output?: unknown;
   error?: SparkwrightError;
   artifacts: Artifact[];
+  /** @reserved Public structured effect consumed by loop guards and UIs. */
+  effect?: ToolEffect;
 }
 
 /**
@@ -651,6 +674,8 @@ export type RunStreamItem =
 export interface RuntimeContext {
   run: RunRecord;
   workspace?: WorkspaceRuntime;
+  /** Shared monotonic workspace facts for this run tree. */
+  workspaceState?: WorkspaceStateRuntime;
   /**
    * Request approval after a tool has prepared an inspectable final effect.
    * Unlike the tool policy gate, this hook is available during execution so
@@ -726,13 +751,29 @@ export interface CapabilityMutationEvent {
 
 export interface WorkspaceRuntime {
   readText(path: string): Promise<string>;
+  /**
+   * Revision-aware read. Implementations that support managed mutation should
+   * return an opaque token which changes when existence or content changes.
+   */
+  readTextWithRevision?(path: string): Promise<WorkspaceTextObservation>;
   canonicalPath?(path: string): Promise<string> | string;
   readAnchoredText(path: string): Promise<AnchoredText>;
   editAnchoredText(
     path: string,
     edits: AnchoredEditOperation[],
-    options?: { reason?: string },
+    options?: { reason?: string; expectedRevision?: WorkspaceRevision },
   ): Promise<ApplyAnchoredEditsResult & { write?: WorkspaceWriteResult }>;
+  createText?(
+    path: string,
+    content: string,
+    options?: { reason?: string },
+  ): Promise<WorkspaceWriteResult>;
+  replaceText?(
+    path: string,
+    expectedRevision: WorkspaceRevision,
+    content: string,
+    options?: { reason?: string },
+  ): Promise<WorkspaceWriteResult>;
   writeText(
     path: string,
     content: string,
@@ -745,6 +786,48 @@ export interface WorkspaceRuntime {
   diffText(path: string, nextContent: string): Promise<string>;
 }
 
+/** Opaque existence-and-content token. Callers must not parse it. */
+export type WorkspaceRevision = string;
+
+export interface WorkspaceTextObservation {
+  path: string;
+  exists: boolean;
+  content: string;
+  revision: WorkspaceRevision;
+  stateEpoch?: number;
+}
+
+export type WorkspaceChangeOperation =
+  "create" | "replace" | "edit" | "remove" | "legacy_write";
+
+export interface ChangeSetEntry {
+  path: string;
+  operation: WorkspaceChangeOperation;
+  beforeRevision: WorkspaceRevision;
+  afterRevision: WorkspaceRevision;
+}
+
+export interface ChangeSet {
+  id: string;
+  actor: ApprovalPrincipal;
+  writeEpoch: number;
+  entries: ChangeSetEntry[];
+}
+
+/**
+ * Shared workspace state carried by a run tree. It deliberately exposes only
+ * monotonic facts; filesystem mutation remains owned by WorkspaceRuntime.
+ */
+export interface WorkspaceStateRuntime {
+  currentEpoch(): number;
+  recordChangeSet(
+    input: Omit<ChangeSet, "writeEpoch"> & { writeEpoch?: number },
+  ): ChangeSet;
+  recordUntrackedMutation?(reason?: string): number;
+  /** @reserved Run-tree ChangeSet snapshot consumed by completion/diagnostic embedders. */
+  snapshotChangeSets?(): readonly ChangeSet[];
+}
+
 export interface WorkspaceWriteResult {
   /** @reserved Public write-result field consumed by tool outputs and traces. */
   proposalId: WorkspaceWriteId;
@@ -755,6 +838,10 @@ export interface WorkspaceWriteResult {
     lineCount: number;
     lastLines: string[];
   };
+  changed: boolean;
+  beforeRevision: WorkspaceRevision;
+  afterRevision: WorkspaceRevision;
+  changeSet?: ChangeSet;
 }
 
 export interface WorkspaceWriteProposal {
@@ -768,6 +855,61 @@ export interface WorkspaceWriteProposal {
   metadata: Record<string, unknown>;
 }
 
+export type VerificationLevel =
+  "syntax" | "smoke" | "contract" | "project" | "release";
+
+export interface VerificationPlan {
+  id: string;
+  /** @reserved Verification policy level consumed by profile/runtime plan executors. */
+  requiredLevel: VerificationLevel;
+  /** @reserved ChangeSet coverage target consumed by verification executors. */
+  targetChangeSets: string[];
+  commands: string[];
+  source: "project_profile" | "runtime" | "model_proposal";
+}
+
+export interface VerificationReceipt {
+  id: string;
+  planId?: string;
+  sequence?: number;
+  profile?: string;
+  verifierId?: string;
+  level: VerificationLevel;
+  coveredChangeSets: string[];
+  writeEpoch: number;
+  command?: string;
+  exitCode: number | null;
+  status: "passed" | "failed" | "timed_out" | "stale";
+  timestamp: string;
+  /** @reserved Baseline comparison fact consumed by verification diagnostics. */
+  baseline?: {
+    status: "passed" | "failed" | "not_run";
+    unchangedFailure?: boolean;
+  };
+}
+
+export type RuntimeNoticeCode =
+  | "child_partial"
+  | "child_blocked"
+  | "child_step_limit"
+  | "verification_failed"
+  | "verification_not_run"
+  | "verification_receipt_stale"
+  | "approval_denied"
+  | "budget_exhausted"
+  | "agent_result_protocol_failure";
+
+export interface RuntimeNotice {
+  id: string;
+  code: RuntimeNoticeCode;
+  severity: "info" | "warning" | "error";
+  message: string;
+  /** @reserved Originating run identity consumed by Host/Protocol/TUI projections. */
+  sourceRunId?: RunId;
+  childRunId?: string;
+  metadata?: Record<string, unknown>;
+}
+
 /**
  * Producer-authored identity of the effect an approval would authorize.
  * Presentation clients may remember only subjects carrying a stable `key`;
@@ -776,7 +918,7 @@ export interface WorkspaceWriteProposal {
 export type ApprovalSubject =
   | {
       kind: "workspace_file";
-      operation: "write" | "remove";
+      operation: WorkspaceChangeOperation | "write";
       path: string;
       key: string;
       label: string;
@@ -785,13 +927,10 @@ export type ApprovalSubject =
       kind: "shell_command";
       command: string;
       cwd: string;
-      key: string;
-      label: string;
-    }
-  | {
-      kind: "agent_workspace_write";
-      role?: string;
-      tools: string[];
+      /** Execution mode is part of the remembered authorization scope. */
+      background?: boolean;
+      /** Task lifetime is part of the remembered authorization scope. */
+      lifetime?: "job" | "service";
       key: string;
       label: string;
     }
@@ -806,12 +945,29 @@ export type ApprovalSubject =
       label: string;
     };
 
+export interface ApprovalPrincipal {
+  kind: "main" | "dynamic_child" | "configured_delegate";
+  principalScope: string;
+  displayLabel?: string;
+}
+
+export interface ApprovalReasonLayers {
+  /** Decision from the run's general permission/policy layer. */
+  policy?: string;
+  /** Why the selected tool requires an approval gate. */
+  tool?: string;
+  /** Tool-specific safety classifier result, when available. */
+  safety?: string;
+}
+
 export interface ApprovalRequest {
   id: ApprovalId;
   runId: RunId;
   action: string;
   summary: string;
   subject: ApprovalSubject;
+  principal: ApprovalPrincipal;
+  reasons?: ApprovalReasonLayers;
   details: Record<string, unknown>;
   createdAt: string;
   status: "pending" | "approved" | "denied" | "expired";

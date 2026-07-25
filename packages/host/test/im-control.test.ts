@@ -430,6 +430,7 @@ function approvalEvent(approvalId: string): HostEvent {
       action: "write",
       summary: "Write file",
       subject: { kind: "one_shot", label: "Write file once" },
+      principal: { kind: "main", principalScope: "session:test" },
     },
   };
 }

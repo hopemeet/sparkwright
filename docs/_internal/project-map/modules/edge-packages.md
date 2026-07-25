@@ -152,6 +152,17 @@ contracts, and focused checklists that no longer fit here.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-24
+- Scope: ACP/SDK/IM fixtures were updated for runtime approval principal and
+  completion payload compatibility. Edge packages remain projections over Host
+  protocol facts and do not gain child capability, approval inheritance, or
+  prose-based finality logic.
+- Read: ACP Adapter, SDK Core, IM Gateway fixtures/consumers, Protocol DTOs, and
+  Host projection.
+- Tests: affected package test typecheck, repository build, and focused Host
+  protocol tests passed.
+
+- Status: Verified
 - Date: 2026-07-23
 - Scope: SDK Core's `task.updated` listener key and Shell's model-visible async
   receipt fields now declare their external consumers for strict public-surface

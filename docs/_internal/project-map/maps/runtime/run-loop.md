@@ -10,6 +10,40 @@ See [tool-orchestration.md](tool-orchestration.md) and [../trace/raw-trace.md](.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-25
+- Scope: the retired `completion_evaluator` transition is absent from the loop
+  vocabulary. A final answer goes directly to terminal runtime-state
+  projection; only explicit Workflow hooks can advance/block for semantic
+  verification. Deprecated evaluator export names do not steer the loop.
+- Read: transition types, natural-final and terminal paths, runtime-state
+  evaluator, Workflow verifier hooks, and execution-control tests.
+- Tests: full `npm run release:check` passed, including Core 661/661, Workflow
+  verifier regressions, the 16-case matrix, and install smoke.
+
+- Status: Verified
+- Date: 2026-07-25
+- Scope: the ordinary ReAct loop now accepts the model's natural final without
+  a semantic completion continuation. Runtime terminal projection remains
+  responsible for factual notices and runtime continuation-budget exhaustion;
+  explicit Workflow Stop hooks retain opt-in hard verifier gates. Goal-wording
+  regexes no longer auto-install the documented-command Stop hook.
+- Read: Core natural-final branch, terminal evaluator, FactLedger verifier
+  evidence, Host Workflow Stop hooks, and child result projection.
+- Tests: Core 661/661, Agent Runtime 257/257, Host 583/583; affected package
+  typechecks, repository lint, and targeted format check passed.
+
+- Status: Verified
+- Date: 2026-07-24
+- Scope: the Core loop now consumes structured ToolEffects for no-progress,
+  reserves finalization capacity separately from action budgets, recognizes
+  terminal result tools, and runs CompletionEvaluator before terminal
+  projection. Generic Workflow Stop hooks remain; Agent partial finality no
+  longer depends on a dedicated Stop hook.
+- Read: Core run/tools/completion/budget paths and Agent terminal injection.
+- Tests: focused Core execution-control/run tests, repository build, and
+  repository test typecheck passed.
+
+- Status: Verified
 - Date: 2026-07-23
 - Scope: final lint follow-up preserves Streaming Runtime's command-ready and
   abort race exactly while expressing unsubscribe cleanup through a const
@@ -427,13 +461,10 @@ createRun/resumeRunFromCheckpoint
   failures are model-correctable tool failures before policy/approval, while
   `policyForArgs()` exceptions keep their existing `phase: "policyForArgs"`
   metadata.
-- Host assembles workflow hooks in configured hooks, built-in verification
-  invariant hooks, built-in documented-command invariant hooks, selected
-  workflow asset projection hooks, then the built-in partial sub-agent finality
-  disclosure Stop hook before passing them to core. This is an assembly
-  invariant, not a new run-loop execution path; P1.5/D25 removes the old
-  verification/documented-command gate producers and keeps run-level invariants
-  outside the linear workflow state machine.
+- Host assembles workflow hooks in configured hooks, explicit verification
+  profile hooks, then selected workflow asset projection hooks. Goal-wording
+  regexes do not auto-register the legacy documented-command Stop gate, and
+  child partial evidence does not register a semantic completion Stop hook.
 - Deferred tool calls are not hard-blocked solely because their schema was not
   model-loaded. When schema validation fails for an unloaded deferred tool, the
   run loop emits the normal requested -> failed span and adds recovery metadata
@@ -456,9 +487,10 @@ createRun/resumeRunFromCheckpoint
   provider request bodies, prompt input, and tool schemas must not be carried as
   failure metadata.
 - `complete("final_answer")` snapshots the live FactLedger onto
-  `run.completed.factLedger`. `outcome` remains the bounded public terminal
-  status projection when failures are present; command diagnostics derive from
-  the ledger instead of persisting a second compact command model.
+  `run.completed.factLedger` and accepts the model's natural final without a
+  semantic completion continuation. `outcome` remains the bounded public
+  terminal status projection when failures are present; command diagnostics
+  derive from the ledger instead of persisting a second compact command model.
 - Sinks should not break event emission.
 - Host pre-run preparation can buffer capability diagnostics before `createRun`
   exists. When flushed into the real run event log, warning-severity
@@ -473,12 +505,11 @@ createRun/resumeRunFromCheckpoint
   goal. This event is observability for tool ordering/labels only; it does not
   remove tools, change run outcome, or grant permissions.
 - Host pre-run capability snapshots can include `rules.workflow` descriptors for
-  configured workflow hooks, verification invariants, and built-in verifier
-  rules, plus `rules.events` descriptors for non-blocking event subscribers.
-  These are inspection metadata only; the run loop still executes the existing
-  `workflowHooks` array with canonical lifecycle values. Built-in
-  documented-command hooks remain absent for inactive runs; active results may
-  carry built-in rule metadata for trace explanation.
+  configured workflow hooks and explicit verification profiles, plus
+  `rules.events` descriptors for non-blocking event subscribers. These are
+  inspection metadata only; the run loop still executes the existing
+  `workflowHooks` array with canonical lifecycle values. The legacy
+  documented-command regex rule is not advertised as an active runtime rule.
 - Host event hook rules are outside the awaited `workflowHooks` array. They
   subscribe to run events through `bindUserHooks()`, so slow or failed event
   actions emit `user_hook.*` diagnostics without blocking the run loop.

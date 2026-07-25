@@ -10,6 +10,30 @@ See [approvals.md](approvals.md) and [../runtime/tool-orchestration.md](../runti
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-25
+- Scope: ChangeSets, revision/CAS, workspace epochs, leases, rollback, and write
+  attribution remain hard safety controls. Ordinary Agent completion no longer
+  requires a current receipt after every write; only explicit verifier
+  executions sign receipts, which remain passive evidence unless an opt-in
+  Workflow gate requires them.
+- Read: Core workspace/FactLedger/completion paths, Host verifier hooks and
+  lease assembly, Agent child roll-up, and focused tests.
+- Tests: Core 661/661, Agent Runtime 257/257, Host 583/583; affected package
+  typechecks, repository lint, and targeted format check passed.
+
+- Status: Verified
+- Date: 2026-07-24
+- Scope: managed writes now use opaque read revisions and distinct
+  create/replace/edit operations, record actor-scoped ChangeSets in a shared
+  workspace epoch, and reject stale CAS observations. Child execution upgrades
+  read admission to write admission only when the original observation epoch
+  is still current; child shell rolls back unmanaged mutations.
+- Read: Core workspace/FactLedger, Host lease/shell/tool wrapping, Agent
+  ChangeSet roll-up, and coding tools.
+- Tests: focused Core workspace, coding-tools, Host lease/shell/Agent suites,
+  repository build, and repository test typecheck passed.
+
+- Status: Verified
 - Date: 2026-07-23
 - Scope: route review for external IM task lifecycle delivery. The Gateway sees
   only the existing bounded/redacted `task.updated` projection and an
@@ -149,16 +173,24 @@ See [approvals.md](approvals.md) and [../runtime/tool-orchestration.md](../runti
 ## Data Flow
 
 ```txt
-tool proposes write
+read returns opaque revision + observation epoch
+  -> create or revisioned replace/edit
   -> policy
-  -> approval if required
+  -> principal-scoped approval if required
+  -> lease write transition and epoch/CAS revalidation
   -> artifact/diff
-  -> workspace.write.completed or workspace.write.denied/skipped
+  -> ChangeSet + workspace.write.completed, or denied/skipped/conflict
 ```
 
 ## Contracts
 
 - Accepted anchored edits still flow through normal workspace write events.
+- Missing, empty, and non-empty files have distinct opaque revisions. `create`
+  rejects existing targets; `replace` and both edit forms reject missing or
+  stale targets. Proposal-to-apply baseline validation remains a second check.
+- Successful managed writes return before/after revisions and record an
+  actor-scoped ChangeSet in the run-tree workspace epoch. Later writes make
+  older verification receipts stale.
 - Large diffs should be artifacts, not only inline payloads.
 - `workspace.write.denied` is a valid terminal write outcome.
 - Runs with `accessMode: read-only` hard-deny workspace writes before approval.
@@ -171,23 +203,21 @@ tool proposes write
   still leave trace evidence. In-process delegate child writes are surfaced to
   the parent summary by rolling up the child run's own
   `workspace.write.completed` events onto `subagent.*` payloads.
-- Dynamic `spawn_agent` and `task_create(kind:"agent")` children may receive
-  managed workspace write tools only through a spawn-time workspace-write grant.
-  That grant is approved at the parent tool boundary, then consumed by a
-  child-local resolver that approves only `workspace.write` requests. The
-  parent run policy is still layered into the child, so read-only access,
-  target-path restrictions, file budgets, and diff budgets deny before the
-  grant resolver can approve.
-- Same-turn Agent tool batching treats a requested dynamic workspace-write grant
-  or a configured child write/shell capability as serial. This prevents two
-  independently policy-checked and approved child writers from being admitted
-  to the same Core concurrent batch; this remains the early argument-level
-  classifier rather than the workspace lock itself.
+- Dynamic `spawn_agent` and `task_create(kind:"agent")` derive child-eligible
+  CAS-write tools from the parent effective surface. Model payloads contain no
+  write grant or tool allowlist. Child policy, targets, file/diff budgets, and
+  principal-scoped approval remain effective at each actual mutation.
+- Same-turn Agent dispatch may begin under shared read admission. The first
+  child mutation performs the read→write lease transition and rejects the
+  pending operation if the workspace epoch changed since the child's original
+  observation.
 - Host additionally uses one process-local fair workspace lease coordinator
   keyed by the realpath-canonical workspace root. It wraps actual mutation
   windows for parent and child managed coding tools, Shell, Skill/Agent
-  capability files, and holds write-capable in-process/ACP/external delegates
-  for their full execution across HostRuntime connections. Background Shell
+  capability files. In-process children begin with read admission and retain
+  write admission after a successful epoch-checked upgrade; ACP/external
+  delegates with direct write access hold write admission for their execution.
+  Background Shell
   transfers its lease to the returned Task until terminal state. Agent dispatch
   tools are not parent-locked; their admitted child owns the mutation window.
 - Same-run write leases reenter with reference counting, and descendant waits
@@ -198,11 +228,12 @@ tool proposes write
   acknowledgement. Managed writes still use normal Core policy/events;
   process delegates still emit the untracked write-capable marker after lease
   admission.
-- Trace report may lower the severity of an incomplete child only at the
-  report layer, and only when raw events prove the ordered chain: child
-  `workspace.write.completed`, parent-visible `subagent.*.workspaceWrites > 0`,
-  later successful verification, and no later workspace write. Raw write events
-  and raw child finality are not rewritten.
+- Child ChangeSets and verification receipts roll into parent facts.
+  Receipts are produced only by explicit verifier-launched commands and remain
+  passive audit evidence in ordinary Agent runs. A configured Workflow verifier
+  may require current passing coverage as an opt-in hard gate; the generic
+  terminal path does not infer coverage or reopen the model because a write
+  lacks a receipt. Raw child outcome and raw write events are never rewritten.
 - Untracked write-capable process boundaries are explicit audit boundaries:
   read/write ACP and external command delegates emit
   `workspace.write.untracked_access_granted` when direct access is granted, and
@@ -470,7 +501,7 @@ tool proposes write
   envelope so target-path, file-count, and diff-budget limits deny at child
   `workspace.write` consumption time before the grant resolver can approve.
 - Read: `packages/host/src/runtime.ts`,
-  `packages/host/src/agent-spawn-grants.ts`,
+  `packages/host/src/runtime/agent-runtime-assembly.ts`,
   `packages/core/src/policy.ts`,
   `packages/host/test/spawn-agent.test.ts`,
   `docs/_internal/proposals/spawn-time-capability-grant.md`.
@@ -485,7 +516,7 @@ test/spawn-agent.test.ts`;
   `subagent.*.workspaceWrites`, and still respect parent `shouldWrite:false`
   and workspace mutation guardrails before child grant approval.
 - Read: `packages/host/src/runtime.ts`,
-  `packages/host/src/agent-spawn-grants.ts`,
+  `packages/host/src/runtime/agent-runtime-assembly.ts`,
   `packages/host/src/tool-catalog.ts`,
   `packages/core/src/workspace.ts`,
   `packages/core/src/policy.ts`.

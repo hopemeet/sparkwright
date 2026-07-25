@@ -10,6 +10,43 @@ See [../safety/workspace-writes.md](../safety/workspace-writes.md), [../safety/s
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-25
+- Scope: terminal child reporting now has a two-field minimum envelope and
+  never inherits Core completion-status reinterpretation. Approval requests
+  preserve separate run-policy, tool-gate, and tool safety explanations.
+  Spawn/Task async receipts remain model-visible but use structured TUI
+  lifecycle renderers instead of fallback JSON.
+- Read: Agent terminal tool/result projection, Core tool approval gate,
+  Shell policy metadata, TUI tool display, and focused tests.
+- Tests: full `npm run release:check` passed, including all workspace tests,
+  the 16-case regression matrix, and source/release install smoke.
+
+- Status: Verified
+- Date: 2026-07-25
+- Scope: tool orchestration still enforces capability, policy, approval,
+  execution truth, structured effects, and no-progress protection, but no
+  longer turns command-string verification inference into an ordinary Agent
+  completion gate. A missing child terminal tool is compatibility-wrapped at
+  terminal projection and never reopens the task body; goal wording no longer
+  auto-installs the legacy documented-command Stop gate.
+- Read: Core tool/result/finalization paths, FactLedger receipt signing, Agent
+  terminal projection, Host dynamic spawn/promotion, and focused tests.
+- Tests: Core 661/661, Agent Runtime 257/257, Host 583/583; affected package
+  typechecks, repository lint, and targeted format check passed.
+
+- Status: Verified
+- Date: 2026-07-24
+- Scope: tool definitions now declare child delegation and terminal semantics;
+  terminal results carry a structured ToolEffect used by the no-progress guard.
+  Core atomically binds `submit_agent_result`, reserves finalization capacity,
+  and runs CompletionEvaluator over child outcomes, ChangeSets, verification
+  receipts, approvals, and budgets before emitting immutable notices.
+- Read: Core tool/run/completion paths, Agent Runtime terminal/result/ledger,
+  Host child tool resolver, coding tool effects, and Protocol/TUI consumers.
+- Tests: focused Core/Agent Runtime/Host/coding/TUI suites, repository build,
+  and repository test typecheck passed.
+
+- Status: Verified
 - Date: 2026-07-23
 - Scope: async task/Shell receipt fields and the SDK task lifecycle listener
   key now carry required external-consumer annotations. No validation,
@@ -303,12 +340,25 @@ model tool calls
   -> tool.batch/tool.requested events
   -> policy, then approval where needed
   -> tool execution
-  -> tool.completed/tool.failed
+  -> tool.completed/tool.failed + structured ToolEffect
+  -> no-progress guard + passive runtime-state terminal projection
   -> model observation + trace summaries
 ```
 
 ## Contracts
 
+- `ToolDefinition.delegation` defaults to `parent_only`; only explicit
+  `child` definitions can enter an in-process child resolver. Runtime-injected
+  terminal tools are separate from parent catalog derivation.
+- `ToolEffect` is the canonical terminal progress fact: changed, observed,
+  no-change, or blocked with target/epoch/revision/retry/reason metadata.
+  Repeated no-progress decisions compare structured effects and state epochs;
+  one no-change result is not itself terminal.
+- A valid `submit_agent_result` must be the sole tool call in its response and
+  atomically binds same-response text. Missing text uses Core's separate
+  finalization reserve. A clean natural-language child final without the tool is
+  compatibility-wrapped as completed and terminates immediately; malformed
+  structured terminal data remains a protocol failure.
 - Tool decisions are monotonic across separate concerns. Host catalog and
   shared Agent Profile admission decide the candidate set;
   `resolveRunToolSurface()` may only apply Workflow narrowing, scope an
@@ -480,15 +530,14 @@ mode:"any"|"all")` is the join surface. Async create results expose
   run registry; absent/disabled tools stay absent, and normal policy/approval
   still governs execution. Resource-only loads do not change tool loading.
 - Child-agent tool orchestration uses catalog selector paths before child tool
-  descriptors or delegate tools are created. Dynamic `spawn_agent` uses a
-  dynamic child catalog that defaults to read-only tools but can expose managed
-  workspace write tools at spawn time when the tool call requests a
-  workspace-write grant; it still never exposes `bash`. Configured in-process
-  delegates use the configured delegate child catalog so child-profile
-  `use`/`allowedTools` can expose workspace write tools and `bash` while still
-  layering parent run policy and approvals. The configured delegate child run
-  receives only the effective profile tool set, so prompt descriptors and
-  runtime callability stay aligned. Child-scope model overrides are resolved
+  descriptors or delegate tools are created. `delegation:"child"` is the
+  explicit eligibility boundary and missing metadata defaults parent-only.
+  Dynamic children derive local read/discovery, revisioned write, and rebuilt
+  foreground-only shell tools that survived the parent effective surface.
+  Configured delegates intersect the child-eligible Host catalog with
+  administrator profile `use`/`allowedTools`; parallel delegates additionally
+  remain read-only. All child paths layer parent run policy and use prompt
+  guidance generated from the same effective definitions. Child-scope model overrides are resolved
   lazily at tool invocation: dynamic spawn resolves `spawnModel` before
   `spawnSubAgent`, configured delegates resolve `profile.model` /
   `delegateModel` before the child run, and `delegate_parallel` resolves all
@@ -506,8 +555,8 @@ mode:"any"|"all")` is the join surface. Async create results expose
   foreground tool call that launches multiple eligible in-process/read-only
   delegate children before awaiting all results.
 - Dynamic `spawn_agent` separates tool transport completion from child-answer
-  semantic status/finality. Structured tool/grant feasibility is validated
-  before policy/approval without reading goal/context prose. The child receives
+  semantic status/finality. Runtime capability feasibility is resolved without
+  reading goal/context prose or accepting model-authored grants. The child receives
   a self-contained goal plus optional bounded working context, not an implicit
   copy of parent conversation state. A child may return
   completed, partial, or blocked plus generalized structured blockers; only a
@@ -517,10 +566,10 @@ mode:"any"|"all")` is the join surface. Async create results expose
   `tool.completed`, while the output metadata/message marks the child answer as
   partial through `stepLimitReached`, `truncated`, and `finality` for trace
   consumers and context compaction.
-- Child-agent step budgets inherit the parent run's effective `maxSteps` by
-  default. Dynamic spawn and configured in-process delegates pass explicit
-  child `maxSteps` only when requested/configured; otherwise `spawnSubAgent`
-  uses `parent.maxSteps`.
+- Child-agent action budgets come from user/config/profile/runtime limits, not
+  model handoff payloads. Core accounts a separate finalization reserve so a
+  terminal declaration without prose can still be rendered after action budget
+  exhaustion.
 - Workflow P3 Step 4b.1 filters the worker episode catalog at `createRun()`
   time when the actor is positioned on a model node with `node.tools`.
   This is a physical `ToolDefinition[]` narrowing for that worker entry, not a
@@ -547,10 +596,12 @@ mode:"any"|"all")` is the join surface. Async create results expose
   projection path; a future model-facing spawn tool must be born through the
   task lifecycle and explicit recursion/access constraints, not by appending an
   ordinary local tool.
-- In-process delegate child writes are parent-visible through a rollup of the
+- In-process child writes are parent-visible through a rollup of the
   child run's own `workspace.write.completed` events onto `subagent.completed`
-  (`workspaceWrites`), bridged in `spawnSubAgent` — not a parent-side filesystem
-  snapshot. Shell duplicate-loop detection keys on command plus cwd, ignoring
+  (`workspaceWrites`, complete ChangeSets, and explicit-verifier receipts),
+  bridged in `spawnSubAgent` — not a parent-side filesystem snapshot. Model-run
+  commands do not mint verification receipts merely because command
+  classification considers them verification-relevant. Shell duplicate-loop detection keys on command plus cwd, ignoring
   incidental execution fields such as `timeoutMs`.
 - Shell tool execution accepts only the canonical per-call
   `foregroundTimeoutMs`; legacy `timeoutMs` is rejected by the closed input
@@ -585,6 +636,9 @@ mode:"any"|"all")` is the join surface. Async create results expose
   promotion all honor the host-level `backgroundTasks` policy: disabled rejects
   new background work, foreground-only keeps foreground behavior without
   promotion, and enabled allows awaited background revival.
+- Foreground-timeout promotion does not change dynamic child lifecycle
+  ownership. Direct `spawn_agent` children remain linked to the parent abort
+  signal; `agent_task` children use their explicit task controller signal.
 - Tool argument policy/normalization errors raised by `policyForArgs()` are
   converted into structured `tool.failed` results with
   `TOOL_ARGUMENTS_INVALID` and `metadata.phase: "policyForArgs"`; they do not
@@ -1027,7 +1081,7 @@ test`; `npm --workspace @sparkwright/tui run typecheck`; final
   `spawn_agent` and `task_create(kind:"agent")`, including bypass
   auto-approval, before their execute paths create children or tasks.
 - Read: `packages/core/src/run.ts`,
-  `packages/host/src/agent-spawn-grants.ts`,
+  `packages/host/src/runtime/agent-runtime-assembly.ts`,
   `packages/host/src/runtime.ts`,
   `packages/host/test/spawn-agent.test.ts`,
   `packages/host/test/tools.test.ts`.
@@ -1043,7 +1097,7 @@ test/spawn-agent.test.ts`;
   delegate catalog behavior is unchanged.
 - Read: `packages/core/src/tools.ts`, `packages/core/src/run.ts`,
   `packages/host/src/tool-catalog.ts`,
-  `packages/host/src/agent-spawn-grants.ts`,
+  `packages/host/src/runtime/agent-runtime-assembly.ts`,
   `packages/host/src/runtime.ts`.
 - Tests: `npm test -w @sparkwright/core -- run.test.ts`;
   `npm test -w @sparkwright/host -- tools.test.ts spawn-agent.test.ts`;

@@ -204,6 +204,7 @@ async function runHostLifecycle(
           action: msg.payload.action,
           summary: msg.payload.summary,
           subject: msg.payload.subject,
+          principal: msg.payload.principal,
           details: msg.payload.details ?? {},
           createdAt: msg.timestamp,
           status: "pending",

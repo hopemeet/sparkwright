@@ -9,6 +9,26 @@ See also [../maps/trace/summary-timeline-verify.md](../maps/trace/summary-timeli
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-25
+- Scope: Direct Core continues to use Host's workflow-hook assembly, but no
+  longer passes goal/write context for an implicit documented-command Stop
+  gate. Configured hooks and explicit verification profiles retain parity with
+  Host runs.
+- Read: Direct Core run assembly, Host workflow-hook options, capability rule
+  projection, and affected typecheck paths.
+- Tests: CLI 186/186, repository test typecheck, Host focused/full suites,
+  repository lint, targeted format check, and project-map drift passed.
+
+- Status: Verified
+- Date: 2026-07-24
+- Scope: reviewed for principal-scoped approval and Agent completion payloads.
+  CLI remains a Host/Protocol consumer; it does not infer child finality or
+  verification from prose, and its access-mode behavior is unchanged.
+- Read: CLI Host runner/approval consumers, Protocol DTOs, and Host projections.
+- Tests: affected CLI test typecheck, repository build, and repository test
+  typecheck passed.
+
+- Status: Verified
 - Date: 2026-07-23
 - Scope: the internal Direct Core app identity no longer implies write access.
   It tells the model to use only the tools and access allowed for the current
@@ -434,7 +454,8 @@ Does not own:
 - `capabilities inspect` prints `workflow rules` from host
   `CapabilitySnapshot.rules.workflow`, including source, lifecycle, active
   status, blocking potential, matcher/action summaries, and hints. CLI does not
-  reconstruct workflow hooks or verification rules locally.
+  reconstruct workflow hooks or verification rules locally, and goal wording
+  does not add a documented-command rule.
 - When unresolved verification failures make a completed run exit non-zero, CLI
   summaries say `Run completed with verification failures; exiting 1` so the
   terminal line matches the exit code.

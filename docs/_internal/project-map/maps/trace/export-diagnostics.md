@@ -10,6 +10,17 @@ canonical trace or a session consistency report.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-24
+- Scope: diagnostics now receive structured child status, ChangeSets,
+  verification receipts, ToolEffects, approval principals, and immutable
+  completion notices. Product export remains a projection and does not infer
+  finality or verification from model prose.
+- Read: Core trace/fact/completion paths, Protocol visibility, CLI/TUI
+  projections.
+- Tests: focused Core trace-adjacent and TUI projection tests, repository build,
+  and repository test typecheck passed.
+
+- Status: Verified
 - Date: 2026-07-23
 - Scope: TUI `task.updated` consumption feeds Activity and local
   NotificationStore only. It is not appended to EventStore, Trace, or Markdown

@@ -502,14 +502,16 @@ export function createShellTool(
         cwd,
         background: input.background,
         lifetime: input.lifetime,
-        foregroundTimeoutMs: input.foregroundTimeoutMs,
       })}`;
       return {
         kind: "shell_command",
         command: input.command,
         cwd,
+        background: input.background,
+        lifetime: input.lifetime,
         key,
-        label: "Allow this exact command here for this session",
+        label:
+          "Allow this exact command, cwd, and execution mode for this session",
       };
     },
     resultSize: { maxChars: SHELL_INLINE_CHARS },
@@ -651,18 +653,34 @@ function shellPolicyForArgs(
   const verdict = evaluateShellSafety(input.command, safety);
   if (verdict.decision === "allow" && isSimpleReadOnlyShellCommand(input)) {
     return {
-      policy: { risk: "safe", requiresApproval: false },
+      policy: {
+        risk: "safe",
+        requiresApproval: false,
+        safetyReason: verdict.reason,
+      },
       governance: READ_ONLY_SHELL_GOVERNANCE,
     };
   }
   if (verdict.decision === "deny") {
     return {
-      policy: { risk: "risky", requiresApproval: true },
+      policy: {
+        risk: "risky",
+        requiresApproval: true,
+        approvalReason:
+          "The shell tool requires approval before a denied command can be evaluated at execution.",
+        safetyReason: verdict.reason,
+      },
       governance: SAFETY_DENIED_SHELL_GOVERNANCE,
     };
   }
   return {
-    policy: { risk: "risky", requiresApproval: true },
+    policy: {
+      risk: "risky",
+      requiresApproval: true,
+      approvalReason:
+        "The shell tool requires approval for commands outside its read-only safe set.",
+      safetyReason: verdict.reason,
+    },
     governance: RISKY_SHELL_GOVERNANCE,
   };
 }

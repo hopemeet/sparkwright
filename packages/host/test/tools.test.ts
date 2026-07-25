@@ -705,34 +705,23 @@ describe("host tools", () => {
       properties: {
         kind: { enum: ["agent"] },
         payload: {
-          required: ["goal", "role"],
-          description: expect.stringContaining("Omit maxSteps"),
+          required: ["goal"],
+          description: expect.stringContaining(
+            "Runtime configuration determines model, tools, permissions, and budgets",
+          ),
           properties: {
             context: {
               description: expect.stringContaining("working task context"),
               maxLength: 8000,
             },
-            maxSteps: {
-              description: expect.stringContaining(
-                "Defaults to the parent run's effective maxSteps",
-              ),
+            label: {
+              description: expect.stringContaining("UI/trace label"),
             },
           },
         },
       },
       required: ["kind", "payload"],
     });
-    expect(
-      (
-        byName.get("task_create")?.definition.inputSchema as {
-          properties?: {
-            payload?: {
-              properties?: { maxSteps?: { description?: string } };
-            };
-          };
-        }
-      ).properties?.payload?.properties?.maxSteps?.description,
-    ).toContain("read-and-answer task usually needs 4+");
     expect(byName.get("task")).toMatchObject({ source: "task" });
     expect(byName.get("task")?.definition.inputSchema).toMatchObject({
       properties: {
@@ -835,6 +824,8 @@ describe("host tools", () => {
     // resolveSelectorAllowlist returns only selector-matched tools; tool_search
     // is appended later as derived infrastructure, not by the resolver.
     expect(resolveSelectorAllowlist(entries, ["workspace.write"])).toEqual([
+      "create",
+      "replace",
       "write",
       "edit_anchored_text",
       "edit",
@@ -995,7 +986,7 @@ describe("host tools", () => {
     ]);
   });
 
-  it("builds dynamic child tools with managed writes but no shell", () => {
+  it("builds dynamic child tools with revisioned writes and child-safe shell", () => {
     const entries = createDynamicChildToolCatalog({
       workspaceRoot: "/tmp/ws",
     });
@@ -1005,26 +996,31 @@ describe("host tools", () => {
       "glob",
       "grep",
       "list_dir",
-      "write",
+      "create",
+      "replace",
       "edit_anchored_text",
       "edit",
+      "bash",
       "tool_search",
     ]);
-    expect(entries.map((entry) => entry.definition.name)).not.toContain("bash");
+    expect(entries.map((entry) => entry.definition.name)).not.toContain(
+      "write",
+    );
 
     const writeOnly = createDynamicChildToolCatalog({
       workspaceRoot: "/tmp/ws",
       toolConfig: { use: ["workspace.write"] },
     });
     expect(writeOnly.map((entry) => entry.definition.name)).toEqual([
-      "write",
+      "create",
+      "replace",
       "edit_anchored_text",
       "edit",
       "tool_search",
     ]);
   });
 
-  it("classifies agent task_create workspace write grants", async () => {
+  it("does not treat agent task payload fields as capability grants", async () => {
     const manager = new TaskManager({ store: new InMemoryTaskStore() });
     const taskCreate = createMainHostToolCatalog({
       workspaceRoot: "/tmp/ws",
@@ -1045,12 +1041,7 @@ describe("host tools", () => {
           allowedTools: ["write"],
         },
       }),
-    ).toMatchObject({
-      policy: { risk: "risky", requiresApproval: true },
-      governance: {
-        sideEffects: expect.arrayContaining(["write", "external"]),
-      },
-    });
+    ).toEqual({});
     expect(
       taskCreate?.approvalSummaryForArgs?.(
         {
@@ -1064,7 +1055,7 @@ describe("host tools", () => {
         },
         { maxChars: 200 },
       ),
-    ).toContain('Grant workspace write to child "writer"');
+    ).toBeUndefined();
     expect(
       await taskCreate?.approvalSubjectForArgs?.({
         kind: "agent",
@@ -1076,22 +1067,9 @@ describe("host tools", () => {
         },
       }),
     ).toMatchObject({
-      kind: "agent_workspace_write",
-      role: "writer",
-      tools: ["write"],
+      kind: "one_shot",
+      label: "Allow task_create(agent) once",
     });
-    expect(() =>
-      taskCreate?.policyForArgs?.({
-        kind: "agent",
-        payload: {
-          goal: "write a file",
-          role: "writer",
-          context: "Write a file.",
-          allowedTools: ["read"],
-          grant: { workspaceWrite: true },
-        },
-      }),
-    ).toThrow(/allowedTools does not include workspace write tools/);
   });
 
   it("shares the effective spawn schema and semantic validator with agent task_create", async () => {
@@ -1100,6 +1078,7 @@ describe("host tools", () => {
       name: "read",
       description: "Read only.",
       inputSchema: { type: "object" },
+      delegation: "child",
       execute: () => ({ content: "unused" }),
     });
     const dynamicSpawnTool = createDynamicSpawnAgentTool({
@@ -1124,14 +1103,20 @@ describe("host tools", () => {
     const schema = taskCreate!.inputSchema as {
       properties: {
         payload: {
-          properties: { allowedTools: { items: { enum: string[] } } };
+          properties: Record<string, unknown>;
+          additionalProperties: boolean;
         };
       };
     };
-    expect(
-      schema.properties.payload.properties.allowedTools.items.enum,
-    ).toEqual(["read"]);
-    expect(schema.properties.payload).toEqual(dynamicSpawnTool.inputSchema);
+    expect(Object.keys(schema.properties.payload.properties).sort()).toEqual([
+      "context",
+      "goal",
+      "label",
+    ]);
+    expect(schema.properties.payload.additionalProperties).toBe(true);
+    expect(dynamicSpawnTool.inputSchema).toMatchObject({
+      additionalProperties: false,
+    });
     expect(schema.properties.payload.properties).not.toHaveProperty("prompt");
     await expect(
       taskCreate!.validateInput?.(
@@ -1139,9 +1124,8 @@ describe("host tools", () => {
           kind: "agent",
           payload: {
             goal: "inspect a file",
-            role: "reader",
+            label: "reader",
             context: "x".repeat(8_001),
-            allowedTools: ["read"],
           },
         },
         {} as RuntimeContext,
@@ -1164,14 +1148,11 @@ describe("host tools", () => {
         },
         {} as RuntimeContext,
       ),
-    ).resolves.toMatchObject({
-      ok: false,
-      code: "AGENT_SPAWN_CAPABILITY_INVALID",
-    });
+    ).resolves.toMatchObject({ ok: true });
     expect(manager.store.list()).toEqual([]);
   });
 
-  it("gates agent task_create workspace write grants before creating a task", async () => {
+  it("creates agent tasks with only the generic task approval", async () => {
     const root = await mkdtemp(
       join(tmpdir(), "sparkwright-host-task-create-gate-"),
     );
@@ -1197,7 +1178,6 @@ describe("host tools", () => {
       ]);
       let modelCalls = 0;
       let approvalCalls = 0;
-      let approvedBeforeTaskCreated = false;
       const run = createRun({
         goal: "create a writer agent task",
         workspace: new LocalWorkspace(root),
@@ -1207,10 +1187,6 @@ describe("host tools", () => {
         interactionChannel: {
           approve(request) {
             approvalCalls += 1;
-            approvedBeforeTaskCreated = manager.store.list().length === 0;
-            expect(request.summary).toContain(
-              'Grant workspace write to child "writer"',
-            );
             return {
               approvalId: request.id,
               decision: "approved",
@@ -1232,10 +1208,8 @@ describe("host tools", () => {
                         title: "writer",
                         payload: {
                           goal: "write a file",
-                          role: "writer",
+                          label: "writer",
                           context: "Write a file.",
-                          allowedTools: ["write"],
-                          maxSteps: 3,
                         },
                       },
                     },
@@ -1249,7 +1223,6 @@ describe("host tools", () => {
       await run.start();
 
       expect(approvalCalls).toBe(1);
-      expect(approvedBeforeTaskCreated).toBe(true);
       expect(manager.store.list({ kind: "agent" })).toHaveLength(1);
       expect(
         run.events.all().filter((event) => event.type === "approval.requested"),
@@ -1267,7 +1240,8 @@ describe("host tools", () => {
     });
 
     expect(entries.map((entry) => entry.definition.name)).toEqual([
-      "write",
+      "create",
+      "replace",
       "edit_anchored_text",
       "edit",
       "tool_search",
@@ -1372,7 +1346,7 @@ describe("host tools", () => {
       } as never,
     )) as { childRunId: string };
 
-    expect(childToolNames).toEqual(["read"]);
+    expect(childToolNames).toEqual(["read", "submit_agent_result"]);
     expect(
       lifecycleTypes(parent.events.all(), delegateResult.childRunId),
     ).toEqual(["subagent.requested", "subagent.started", "subagent.completed"]);
@@ -2523,7 +2497,7 @@ describe("host tools", () => {
           name: "Writer",
           mode: "child" as const,
           prompt: "Write.",
-          allowedTools: ["write"],
+          allowedTools: ["replace"],
           maxSteps: 1,
         },
         inheritedPolicy: [],
@@ -3267,6 +3241,8 @@ describe("host tools", () => {
       "grep",
       "list_dir",
       "read_anchored_text",
+      "create",
+      "replace",
       "write",
       "edit_anchored_text",
       "edit",

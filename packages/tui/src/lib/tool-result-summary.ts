@@ -169,7 +169,6 @@ export function isAgentToolResult(value: unknown): boolean {
     r.summary.trim().length > 0 &&
     Array.isArray(r.blockers) &&
     (r.status !== "completed" || r.blockers.length === 0) &&
-    (r.status !== "blocked" || r.blockers.length > 0) &&
     (r.finality === "complete" || r.finality === "partial") &&
     typeof r.assessment === "object" &&
     r.assessment !== null

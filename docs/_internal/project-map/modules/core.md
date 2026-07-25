@@ -13,6 +13,44 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md),
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-25
+- Scope: the semantic `CompletionEvaluator` identity is compatibility-retired.
+  Core now calls `evaluateRuntimeState` only at terminal projection; the
+  `completion_evaluator` loop transition and recovered/unresolved requirement
+  payloads are removed. Deprecated root aliases remain source-compatible, but
+  no emitted event or result metadata uses the old requirement fields.
+- Read: runtime-state evaluator, run transition/terminal projection, public
+  barrel, Protocol/Host consumers, and execution-control tests.
+- Tests: full `npm run release:check` passed, including all workspace tests,
+  the 16-case regression matrix, and source/release install smoke.
+
+- Status: Verified
+- Date: 2026-07-25
+- Scope: ordinary Agent completion is now model-owned. Core no longer reopens a
+  natural final because a ChangeSet lacks inferred verification; the retained
+  completion evaluator passively projects notices and runtime continuation
+  budget exhaustion. Verification receipts are signed only for explicit
+  verifier-launched commands.
+- Read: run terminal path, completion evaluator, FactLedger receipt projection,
+  Agent result projection, Host child lifecycle wiring, and focused tests.
+- Tests: Core 661/661, Agent Runtime 257/257, Host 583/583; affected package
+  typechecks, repository lint, and targeted format check passed.
+
+- Status: Verified
+- Date: 2026-07-24
+- Scope: the Agent execution control plane now has runtime-owned tool effects,
+  revision/CAS workspace writes, shared workspace epochs and ChangeSets,
+  verification receipts, principal-scoped approvals, a separate finalization
+  reserve, terminal-tool binding, and deterministic CompletionEvaluator
+  notices/recovery. The legacy whole-file write remains only as
+  `legacy_write` compatibility.
+- Read: Core tool/run/workspace/approval/fact-ledger/assessment/completion
+  contracts and focused cross-package consumers.
+- Tests: focused Core execution-control/workspace suites, repository build, and
+  repository test typecheck passed; final release gates are recorded with this
+  change.
+
+- Status: Verified
 - Date: 2026-07-23
 - Scope: final lint follow-up changed only Streaming Runtime's local
   command-wait unsubscribe holder to the same const-ref cleanup pattern already
@@ -236,6 +274,7 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md),
 - `packages/core/src/workflow-hooks.ts`
 - `packages/core/src/fact-classifier.ts`
 - `packages/core/src/fact-ledger.ts`
+- `packages/core/src/runtime-state-evaluator.ts`
 - `packages/core/src/run-assessment.ts`
 - `packages/core/src/run-outcome.ts`
 - `packages/core/src/policy.ts`
@@ -243,6 +282,7 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md),
 - `packages/core/src/workspace.ts`
 - `packages/core/test/run.test.ts`
 - `packages/core/test/run-budget.test.ts`
+- `packages/core/test/execution-control-plane.test.ts`
 - `packages/core/test/user-hooks.test.ts`
 - `packages/core/test/trace.test.ts`
 - `packages/core/test/session.test.ts`
@@ -270,6 +310,23 @@ Does not own:
 
 ## Contracts
 
+- `ToolDefinition.delegation` is explicit child eligibility and defaults to
+  `parent_only`. `terminal:true` identifies a runtime-owned terminal tool;
+  terminal calls must be the sole tool call in their response and may bind
+  same-response assistant text.
+- Every terminal `ToolResult` may carry a structured `ToolEffect`
+  (`changed|observed|no_change|blocked`, target, epoch/revisions, retry, reason).
+  Core's no-progress guard compares effect, target, arguments/evidence, and
+  state epoch instead of inferring progress from arbitrary output strings.
+- Core reserves a separate finalization model/token account from action
+  budgets. When a valid terminal result omits prose, it spends only this
+  reserve to render final text and falls back deterministically if unavailable.
+- `evaluateRuntimeState` is a terminal runtime-fact projector, not a semantic
+  completion gate. It records immutable child/approval/verification notices
+  and may downgrade for runtime-owned budget exhaustion, but it never reopens
+  an ordinary natural final, infers an executable requirement, or requires a
+  receipt merely because a ChangeSet exists. The old exported evaluator names
+  are deprecated aliases only.
 - The package root exports stable types, factories, and extension interfaces.
   `EventLog`, file/in-memory trace stores, concrete workspace/checkpoint
   classes, default prompt/context implementations, and `SparkwrightRun` are
@@ -461,6 +518,17 @@ Does not own:
   run-outcome, run-health, the live ledger, and trace diagnostics. Raw command
   facts keep `exitCode`/`timedOut`; verifier interpretation lives on
   verification-result entries with `expect` and `satisfied`.
+- `InMemoryWorkspaceState` is shared by a parent/child run tree and owns the
+  monotonic workspace epoch plus ChangeSets. Managed writes record actor,
+  operation, path, and before/after revisions. Only explicit
+  verifier-launched commands sign verification receipts; receipts record
+  covered ChangeSets, become stale after a later write epoch, and remain
+  evidence unless an opt-in Workflow verifier consumes them as a hard gate.
+- `LocalWorkspace` and `ControlledWorkspace` expose revision-aware reads and
+  distinct create/replace/edit semantics. Revisions encode existence as well
+  as content; create never overwrites, replace/edit require an expected
+  revision, and ControlledWorkspace retains proposal-baseline revalidation,
+  policy, principal-scoped approval, artifacts, checkpointing, and trace.
 - `WorkflowHookInput.facts` is a read-only FactLedger view supplied by the run
   loop. Host governance hooks may read it, but core does not let hooks mutate
   the ledger.

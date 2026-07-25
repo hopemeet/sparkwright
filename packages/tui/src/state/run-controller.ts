@@ -1018,6 +1018,12 @@ export class RunController {
     client.on("run.completed", (msg) => {
       this.activeRunId = null;
       this.cleanupExecution(client);
+      for (const notice of msg.payload.notices ?? []) {
+        this.store.appendNotice(`${notice.severity}: ${notice.message}`);
+      }
+      if (msg.payload.completionStatus === "partial") {
+        this.store.appendNotice("runtime completion status: partial");
+      }
       this.store.setStopReason(msg.payload.stopReason ?? null);
       const terminalState = msg.payload.state;
       const userCancelled =

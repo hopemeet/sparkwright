@@ -4,12 +4,16 @@ import type {
   UsageSnapshot,
 } from "@sparkwright/core";
 
-export interface AgentToolInvocationInput {
-  /** The goal forwarded to the child run. */
+export interface AgentHandoffPayload {
+  /** Self-contained delegated task and expected deliverable. */
   goal: string;
-  /** Optional free-form metadata supplied by the LLM. */
-  metadata?: Record<string, unknown>;
+  /** Parent-established facts and constraints at working/user authority. */
+  context?: string;
+  /** UI/trace-only label; never a prompt or permission input. */
+  label?: string;
 }
+
+export type AgentToolInvocationInput = AgentHandoffPayload;
 
 export interface AgentToolSummarizeInput {
   childRunId: string;
@@ -71,8 +75,8 @@ export interface AgentResultDeclaration {
   summary: string;
   /** Bounded useful work already completed by the child. */
   accomplishments?: string[];
-  /** Structured reasons completion is impossible in the current child scope. */
-  blockers: AgentBlocker[];
+  /** Optional structured detail; status + summary form the complete envelope. */
+  blockers?: AgentBlocker[];
 }
 
 export interface AgentToolResult {
@@ -93,7 +97,7 @@ export interface AgentToolResult {
   summary: string;
   /** Bounded useful work already completed by the child. */
   accomplishments?: string[];
-  /** Structured blockers; non-empty whenever status is blocked. */
+  /** Canonical runtime projection; empty when the child supplied no detail. */
   blockers: AgentBlocker[];
   /** Whether the child reached a complete terminal answer, independent of health. */
   finality: "complete" | "partial";
@@ -121,6 +125,12 @@ export interface DelegationLedgerKey {
   /** Explicit task context whose changes must invalidate dynamic-spawn reuse. */
   context?: string;
   allowedTools?: readonly string[];
+  modelFingerprint?: string;
+  capabilityFingerprint?: string;
+  promptFingerprint?: string;
+  workspaceEpoch?: number;
+  /** External/network-observing child surfaces must not reuse cached results. */
+  cacheable?: boolean;
 }
 
 export interface DelegationLedgerResult extends AgentToolResult {

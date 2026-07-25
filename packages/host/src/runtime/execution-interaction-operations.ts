@@ -148,6 +148,8 @@ export class ExecutionInteractionOperations {
               action: request.action,
               summary: request.summary,
               subject: request.subject,
+              principal: request.principal,
+              ...(request.reasons ? { reasons: request.reasons } : {}),
               details: {
                 ...(typeof details?.path === "string"
                   ? { path: details.path }

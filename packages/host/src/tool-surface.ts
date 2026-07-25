@@ -133,9 +133,10 @@ export function createScopedToolSearch(
   const search = createToolSearchTool({
     source: { listDescriptors: () => tools.map(toolDescriptor) },
   });
-  if (!origin) return search;
+  if (!origin) return { ...search, delegation: "child" };
   return {
     ...search,
+    delegation: "child",
     governance: { ...search.governance, origin },
   };
 }

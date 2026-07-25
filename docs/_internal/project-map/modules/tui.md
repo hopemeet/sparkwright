@@ -11,6 +11,30 @@ See also [../maps/trace/export-diagnostics.md](../maps/trace/export-diagnostics.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-25
+- Scope: approval prompts now render the runtime principal as origin, including
+  dynamic-child scope, and show policy/tool/safety reasons independently.
+  Shell session scope displays execution mode. Spawn promotion and Task async
+  receipts render as lifecycle summaries instead of raw orchestration JSON;
+  obsolete recovered-requirement completion notices are removed.
+- Read: approval coordinator/view/prompt/session rules, run completion
+  projection, tool-result summary/display, and render/controller tests.
+- Tests: full `npm run release:check` passed, including TUI 468/468, the
+  16-case regression matrix, and source/release install smoke.
+
+- Status: Verified
+- Date: 2026-07-24
+- Scope: TUI approval reuse keys now include session, runtime principal, and
+  producer subject; approval projections distinguish actor and automatic
+  resolution. Terminal projection renders Host completion notices and derived
+  recovery directly, without parsing answer text or installing a local
+  finality policy.
+- Read: approval view/session/coordinator, run controller completion handling,
+  Protocol payloads, and focused render/controller tests.
+- Tests: focused TUI approval/controller/layer suites, repository build, and
+  repository test typecheck passed.
+
+- Status: Verified
 - Date: 2026-07-23
 - Scope: RunController now forwards Host `task.updated` to the task activity
   owner. Live records update without opening Activity, Host event ids plus
@@ -232,6 +256,12 @@ Does not own:
 
 ## Contracts
 
+- Approval rules are keyed by session, `principalScope`, and typed effect
+  subject. Approval rows retain actor/principal, operation, automatic vs
+  interactive resolution, denial, and reuse scope as Host facts.
+- `RunController` renders runtime `completionStatus`, notices, and
+  requirement-level recovery from `run.completed`; it does not parse assistant
+  prose to infer verified/completed/partial state.
 - `/create skill` is the sole Skill creation entrypoint. It prepares a proposal
   through host `SkillCommandService` and never writes the current Skill
   directly. Review apply also calls the service so later-session approval uses

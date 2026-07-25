@@ -143,11 +143,17 @@ export function ExecutionOrigin(props: {
     <Box flexDirection="column">
       <Text>
         <Text dimColor>origin: </Text>
-        <Text color={props.theme.accent}>{pending.executionKind}</Text>
-        {pending.workflowId ? ` ${pending.workflowId}` : ""}
+        <Text color={props.theme.accent}>
+          {pending.principalLabel ?? principalKindLabel(pending.principalKind)}
+        </Text>
+        <Text dimColor> ({pending.principalKind})</Text>
       </Text>
       <Text dimColor>
-        run {pending.runId} · session {pending.sessionId}
+        run {pending.runId} · scope {pending.principalScope} · session{" "}
+        {pending.sessionId}
+        {pending.executionKind === "workflow"
+          ? ` · workflow ${pending.workflowId ?? "execution"}`
+          : ""}
       </Text>
     </Box>
   );
@@ -163,14 +169,28 @@ export function PolicyExplanation(props: {
   pending: ApprovalViewModel;
   theme: Theme;
 }): React.ReactElement | null {
-  const reason = props.pending.reason ?? props.pending.policyReason;
-  if (!reason) return null;
+  const rows = [
+    ["policy", props.pending.policyReason ?? props.pending.reason],
+    ["tool", props.pending.toolReason],
+    ["safety", props.pending.safetyReason],
+  ].filter((row): row is [string, string] => typeof row[1] === "string");
+  if (rows.length === 0) return null;
   return (
-    <Text>
-      <Text dimColor>reason: </Text>
-      <Text color={props.theme.warning}>{reason}</Text>
-    </Text>
+    <Box flexDirection="column">
+      {rows.map(([layer, reason]) => (
+        <Text key={layer}>
+          <Text dimColor>{layer}: </Text>
+          <Text color={props.theme.warning}>{reason}</Text>
+        </Text>
+      ))}
+    </Box>
   );
+}
+
+function principalKindLabel(kind: ApprovalViewModel["principalKind"]): string {
+  if (kind === "dynamic_child") return "dynamic child";
+  if (kind === "configured_delegate") return "configured delegate";
+  return "main";
 }
 
 export function DecisionScope(props: {

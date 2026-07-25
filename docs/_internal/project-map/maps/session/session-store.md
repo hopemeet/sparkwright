@@ -10,6 +10,17 @@ See [../trace/raw-trace.md](../trace/raw-trace.md) for raw event evidence.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-24
+- Scope: session persistence remains append-only while new Agent completion
+  notices, principal identity, ChangeSet roll-up, and verification receipts are
+  stored as event/result facts. Store layout and run/session attribution are
+  unchanged.
+- Read: Core event/session/run-store contracts, Agent lifecycle roll-up, and
+  Host session projection.
+- Tests: focused Core/Agent Runtime/Host tests, repository build, and
+  repository test typecheck passed.
+
+- Status: Verified
 - Date: 2026-07-23
 - Scope: final lint follow-up touched only Streaming Runtime's in-memory
   command-wait cleanup holder and a TUI test mock parameter. Session files,

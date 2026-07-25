@@ -189,10 +189,13 @@ export interface BuildAgentPromptBuilderOptions {
  */
 const FILE_TOOL_GUIDANCE = [
   "Workspace file edits:",
-  "- To create or replace a file in the workspace, call the dedicated file",
-  "  tool (write or edit) directly. write creates the file and any missing",
-  "  parent directories for you — do NOT pre-check with `ls`, create dirs with",
-  "  `mkdir`, or write via bash redirection (`cat > file`, `tee`).",
+  "- Use create for a new path. To change an existing file, first read it and",
+  "  pass the returned opaque revision to replace or edit. A revision conflict",
+  "  means the observation is stale: read again before retrying. The deprecated",
+  "  write tool is compatibility-only and must not be used by child agents.",
+  "- create makes missing parent directories for you — do NOT pre-check with",
+  "  `ls`, create dirs with `mkdir`, or write via bash redirection (`cat > file`,",
+  "  `tee`).",
   "- Reserve bash for running commands, not for reading or writing",
   "  workspace files (use the read/write file tools for that).",
   "- After a successful workspace write, if the task asks for tests or a known",
@@ -336,7 +339,12 @@ export function buildAgentPromptBuilder(
     createToolGuidanceSection({
       name: "workspace_file_tools",
       guidance: FILE_TOOL_GUIDANCE,
-      whenTool: (tool) => tool.name === "write" || tool.name === "edit",
+      whenTool: (tool) =>
+        tool.name === "create" ||
+        tool.name === "replace" ||
+        tool.name === "write" ||
+        tool.name === "edit" ||
+        tool.name === "edit_anchored_text",
     }),
   );
 
@@ -346,7 +354,10 @@ export function buildAgentPromptBuilder(
       name: "workspace_path_resolution",
       guidance: WORKSPACE_PATH_GUIDANCE,
       whenTool: (tool) =>
-        tool.name === "read" || tool.name === "glob" || tool.name === "grep",
+        tool.name === "read" ||
+        tool.name === "read_anchored_text" ||
+        tool.name === "glob" ||
+        tool.name === "grep",
     }),
   );
 
@@ -355,7 +366,10 @@ export function buildAgentPromptBuilder(
       name: "repo_maintainer_evidence",
       guidance: REPO_EVIDENCE_GUIDANCE,
       whenTool: (tool) =>
-        tool.name === "read" || tool.name === "glob" || tool.name === "grep",
+        tool.name === "read" ||
+        tool.name === "read_anchored_text" ||
+        tool.name === "glob" ||
+        tool.name === "grep",
     }),
   );
 

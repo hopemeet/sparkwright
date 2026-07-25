@@ -10,6 +10,29 @@ See [workspace-writes.md](workspace-writes.md) and [../../modules/coding-tools.m
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-25
+- Scope: Shell approval identity includes command, resolved cwd, background
+  mode, and task lifetime, while excluding foreground timeout. Per-call policy
+  metadata exposes the classifier reason separately from the general policy
+  and generic tool gate, so traces and TUI explain why `python3` needs approval
+  without conflating it with an allow decision.
+- Read: Shell normalization/subject/policy, Core approval gate, Protocol/TUI
+  consumers, and Shell/TUI tests.
+- Tests: full `npm run release:check` passed, including Shell 44/44, Host
+  583/583, TUI 468/468, the 16-case regression matrix, and install smoke.
+
+- Status: Verified
+- Date: 2026-07-24
+- Scope: dynamic and configured in-process children receive a rebuilt
+  foreground-only shell wrapper. It keeps sandbox/classification/approval,
+  exposes no background promotion, and snapshots then rolls back unmanaged
+  workspace mutations; approvals are principal-scoped.
+- Read: Host shell wrapper/snapshot/lease assembly, Shell tool policy, and
+  Agent child catalog.
+- Tests: focused Host shell/tool/Agent tests, repository build, and repository
+  test typecheck passed.
+
+- Status: Verified
 - Date: 2026-07-23
 - Scope: Shell `parentWillWait` and `completionObservation` now carry required
   model-visible public-field annotations. The serialized receipt, background
@@ -54,7 +77,8 @@ See [workspace-writes.md](workspace-writes.md) and [../../modules/coding-tools.m
 - Status: Verified
 - Date: 2026-07-21
 - Scope: Shell supplies the approval subject from normalized input: exact
-  command, resolved cwd, background/lifetime, and foreground timeout. TUI may
+  command, resolved cwd, and background/lifetime. Foreground timeout is not
+  authorization identity. TUI may
   remember only that stable subject; classification, sandbox, execution,
   promotion, and rollback remain unchanged.
 - Read: Shell normalization/policy/tool definition, Core/Streaming gates,

@@ -329,6 +329,7 @@ describe("ImGateway", () => {
           action: "write",
           summary: "Write README",
           subject: { kind: "one_shot", label: "Write README once" },
+          principal: { kind: "main", principalScope: "session:test" },
         },
       });
 

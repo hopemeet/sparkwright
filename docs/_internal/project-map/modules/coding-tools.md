@@ -12,6 +12,18 @@ See also [../maps/runtime/tool-orchestration.md](../maps/runtime/tool-orchestrat
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-24
+- Scope: model-facing workspace mutation is split into `create`, `replace`,
+  revisioned patch `edit`, and revisioned anchored edit. Reads return opaque
+  revisions that distinguish missing and empty files; mutation results expose
+  before/after revisions and ChangeSet identity. `write` remains deprecated
+  and parent-only for compatibility.
+- Read: coding tool schemas/execution, Core workspace runtime, Host catalog and
+  child resolver, and project-context guidance.
+- Tests: coding-tools 37/37, focused Core workspace tests, repository build,
+  and repository test typecheck passed.
+
+- Status: Verified
 - Date: 2026-07-23
 - Scope: route review for annotation-only Task/Shell async receipt maintenance.
   Coding-tool assembly, command execution, safety, and model-visible payload
@@ -130,13 +142,15 @@ Does not own:
 ## Contracts
 
 - Workspace mutation must go through core policy, approval, event, and artifact paths.
-- Default public model-facing coding names are `read`, `write`, `edit`, `bash`,
-  `glob`, and `grep`; these are the registered callable names used by prompts,
-  configuration, policy, traces, and user docs.
-- `write` is the whole-file create/replace surface for new files and nested
-  paths; it uses the same workspace write path as anchored edits and patches
-  and belongs to the `workspace.write` selector.
-- `write`, `edit_anchored_text`, and `edit` mark their governance
+- Default public model-facing coding names include `read`, `create`, `replace`,
+  `edit`, `bash`, `glob`, and `grep`; these are the registered callable names
+  used by prompts, configuration, policy, traces, and user docs. `write`
+  remains a deprecated parent-only compatibility surface.
+- `create` never overwrites an existing path. `replace`, patch `edit`, and
+  `edit_anchored_text` require the opaque revision returned by a current read.
+  Missing and empty files have distinct revisions, and every successful
+  mutation returns `changed`, before/after revisions, and ChangeSet identity.
+- `create`, `replace`, `write`, `edit_anchored_text`, and `edit` mark their governance
   origin metadata with `managedWorkspaceWrite: true`; write-enabled runs use
   that marker to route mutations through the managed `workspace.write` diff
   approval path instead of treating the tool call itself as the write boundary.
@@ -197,9 +211,10 @@ Does not own:
 - Main, dynamic child, configured delegate child, and CLI diagnostic coding
   tool exposure should flow through the host tool catalog before reaching
   runtime, direct-core/cron runs, and capability snapshots. Dynamic children
-  default to read-only tools; managed write tools are present in the dynamic
-  child catalog only for explicit spawn-time workspace-write grants and still
-  flow through normal tool filtering.
+  derive child-eligible local read, CAS-write, and foreground-only shell tools
+  from the parent effective surface; model handoff fields cannot add tools.
+  Configured delegates additionally intersect administrator profile selectors
+  and concrete allowed tools with the child-eligible catalog.
 - Top-level `tools.use` filters the catalog by source/capability selectors
   before model-facing descriptors are built; `tools.allowed` and
   `tools.disabled` then filter concrete tool names, and `tools.defer` only
@@ -355,7 +370,7 @@ Does not own:
   spawn-time grants while default dynamic child requests remain read-only and
   still pass through host tool filtering.
 - Read: `packages/host/src/tool-catalog.ts`,
-  `packages/host/src/agent-spawn-grants.ts`,
+  `packages/host/src/runtime/agent-runtime-assembly.ts`,
   `packages/host/src/runtime.ts`,
   `packages/coding-tools/src/index.ts`.
 - Tests: `npm test -w @sparkwright/host -- tools.test.ts spawn-agent.test.ts`;

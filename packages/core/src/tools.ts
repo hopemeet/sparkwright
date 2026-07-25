@@ -8,6 +8,7 @@ import type {
   RuntimeContext,
   SparkwrightError,
   ToolCall,
+  ToolEffect,
   ToolResult,
 } from "./types.js";
 import { isRecord } from "./record-utils.js";
@@ -198,9 +199,22 @@ export interface ToolDescriptor {
    */
   resultSize?: ToolResultSizePolicy;
   resultPresentation?: ToolResultPresentation;
+  /**
+   * @reserved Runtime-owned delegation eligibility. Missing definitions are
+   * projected as `parent_only`.
+   */
+  delegation?: "child" | "parent_only";
+  /**
+   * @reserved Terminal tool descriptor consumed by the Core run loop.
+   */
+  terminal?: { kind: string };
   policy?: {
     risk?: ToolRisk;
     requiresApproval?: boolean;
+    /** Producer explanation for why this tool call needs an approval gate. */
+    approvalReason?: string;
+    /** Lower-level safety-classifier explanation, when the tool has one. */
+    safetyReason?: string;
   };
   governance?: ToolGovernance;
 }
@@ -226,6 +240,20 @@ export interface ToolDefinition<TArgs = unknown, TResult = unknown> {
    */
   resultSize?: ToolResultSizePolicy;
   resultPresentation?: ToolResultPresentation;
+  /**
+   * Eligibility for derivation into a child tool surface. Omission is
+   * deliberately fail-closed and means `parent_only`.
+   */
+  delegation?: "child" | "parent_only";
+  /**
+   * A successful terminal tool atomically binds its result to the current
+   * response and ends the run. `renderMessage` avoids an extra model turn when
+   * the response contains no assistant text.
+   */
+  terminal?: {
+    kind: string;
+    renderMessage?(output: TResult): string | undefined;
+  };
   /**
    * Tool-owned one-line request summary for live UIs and trace projections.
    * The run loop calls this before execution and stores the bounded text on
@@ -267,6 +295,15 @@ export interface ToolDefinition<TArgs = unknown, TResult = unknown> {
    */
   managesRepeatedCalls?(args: TArgs): boolean;
   /**
+   * Optional first-party semantic effect classifier. Core supplies a
+   * conservative default for tools that omit it.
+   */
+  effectForResult?(
+    args: TArgs,
+    output: TResult,
+    ctx: RuntimeContext,
+  ): ToolEffect | undefined;
+  /**
    * When true, a tool loader may hide this tool from the initial provider
    * request and expose it through a discovery/search surface.
    */
@@ -278,6 +315,10 @@ export interface ToolDefinition<TArgs = unknown, TResult = unknown> {
   policy?: {
     risk?: ToolRisk;
     requiresApproval?: boolean;
+    /** Producer explanation for why this tool call needs an approval gate. */
+    approvalReason?: string;
+    /** Lower-level safety-classifier explanation, when the tool has one. */
+    safetyReason?: string;
   };
   governance?: ToolGovernance;
   /**
@@ -505,6 +546,8 @@ function toToolDescriptor(tool: ToolDefinition): ToolDescriptor {
     },
     resultSize: tool.resultSize,
     resultPresentation: tool.resultPresentation,
+    delegation: tool.delegation ?? "parent_only",
+    terminal: tool.terminal ? { kind: tool.terminal.kind } : undefined,
     policy: tool.policy,
     governance: tool.governance,
   };
@@ -739,11 +782,15 @@ export async function executeTool(
       };
     }
 
+    const effect =
+      safelyClassifyToolEffect(tool, call.arguments, output, ctxWithSignal) ??
+      defaultCompletedToolEffect(tool, call.arguments, output, ctxWithSignal);
     return {
       toolCallId: call.id,
       status: "completed",
       output,
       artifacts,
+      effect,
     };
   } catch (cause) {
     if (cause instanceof ToolTimeoutError) {
@@ -757,6 +804,7 @@ export async function executeTool(
           metadata: cause.metadata,
         },
         artifacts: [],
+        effect: blockedToolEffect(call.arguments, "TOOL_TIMEOUT"),
       };
     }
 
@@ -770,16 +818,110 @@ export async function executeTool(
           metadata: { toolName: call.toolName },
         },
         artifacts: [],
+        effect: blockedToolEffect(call.arguments, "TOOL_ABORTED"),
       };
     }
 
+    const error = normalizeToolError(cause);
     return {
       toolCallId: call.id,
       status: "failed",
-      error: normalizeToolError(cause),
+      error,
       artifacts: [],
+      effect: blockedToolEffect(call.arguments, error.code),
     };
   }
+}
+
+function safelyClassifyToolEffect(
+  tool: ToolDefinition,
+  args: unknown,
+  output: unknown,
+  ctx: RuntimeContext,
+): ToolEffect | undefined {
+  if (!tool.effectForResult) return undefined;
+  try {
+    return tool.effectForResult(args, output, ctx);
+  } catch {
+    return undefined;
+  }
+}
+
+function defaultCompletedToolEffect(
+  tool: ToolDefinition,
+  args: unknown,
+  output: unknown,
+  ctx: RuntimeContext,
+): ToolEffect {
+  const targetKey = toolEffectTarget(args);
+  const stateEpoch = ctx.workspaceState?.currentEpoch();
+  if (isRecord(output)) {
+    const beforeRevision =
+      typeof output.beforeRevision === "string"
+        ? output.beforeRevision
+        : undefined;
+    const afterRevision =
+      typeof output.afterRevision === "string"
+        ? output.afterRevision
+        : undefined;
+    if (output.changed === true) {
+      return {
+        kind: "changed",
+        retry: "after_state_change",
+        ...(targetKey ? { targetKey } : {}),
+        ...(stateEpoch !== undefined ? { stateEpoch } : {}),
+        ...(beforeRevision ? { beforeRevision } : {}),
+        ...(afterRevision ? { afterRevision } : {}),
+      };
+    }
+    if (output.changed === false) {
+      return {
+        kind: "no_change",
+        retry: "after_state_change",
+        reasonCode: "already_satisfied",
+        ...(targetKey ? { targetKey } : {}),
+        ...(stateEpoch !== undefined ? { stateEpoch } : {}),
+        ...(beforeRevision ? { beforeRevision } : {}),
+        ...(afterRevision ? { afterRevision } : {}),
+      };
+    }
+  }
+  const sideEffects = tool.governance?.sideEffects ?? ["none"];
+  const readOnly = sideEffects.every(
+    (effect) => effect === "none" || effect === "read",
+  );
+  return {
+    kind: readOnly ? "observed" : "no_change",
+    retry: readOnly ? "changed_args" : "after_state_change",
+    ...(targetKey ? { targetKey } : {}),
+    ...(stateEpoch !== undefined ? { stateEpoch } : {}),
+  };
+}
+
+function blockedToolEffect(args: unknown, reasonCode: string): ToolEffect {
+  const targetKey = toolEffectTarget(args);
+  return {
+    kind: "blocked",
+    retry: /(?:ARGUMENT|SCHEMA|VALIDATION|PATCH|ANCHOR)/u.test(reasonCode)
+      ? "changed_args"
+      : /(?:CONFLICT|STALE|REVISION)/u.test(reasonCode)
+        ? "after_state_change"
+        : "never",
+    reasonCode,
+    ...(targetKey ? { targetKey } : {}),
+  };
+}
+
+function toolEffectTarget(args: unknown): string | undefined {
+  if (!isRecord(args)) return undefined;
+  if (typeof args.path === "string") return `path:${args.path}`;
+  if (typeof args.command === "string") {
+    const cwd = typeof args.cwd === "string" ? `@${args.cwd}` : "";
+    return `command:${args.command}${cwd}`;
+  }
+  if (typeof args.pattern === "string") return `pattern:${args.pattern}`;
+  if (typeof args.goal === "string") return `goal:${args.goal}`;
+  return undefined;
 }
 
 function isAbortError(cause: unknown): boolean {

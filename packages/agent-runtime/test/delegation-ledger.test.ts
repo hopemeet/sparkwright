@@ -95,6 +95,33 @@ describe("delegation ledger", () => {
     ).toBeUndefined();
   });
 
+  it("invalidates reuse on workspace epoch and disables external-state caches", () => {
+    let epoch = 0;
+    const parent = {
+      record: { metadata: {} },
+      getWorkspaceState: () => ({ currentEpoch: () => epoch }),
+    } as unknown as RunHandle;
+    expect(
+      rememberReusableDelegation(parent, key, "Inspect runtime", completed),
+    ).toBe(true);
+    expect(
+      findReusableDelegation(parent, key, "Inspect runtime"),
+    ).toBeDefined();
+
+    epoch = 1;
+    expect(
+      findReusableDelegation(parent, key, "Inspect runtime"),
+    ).toBeUndefined();
+    expect(
+      rememberReusableDelegation(
+        parent,
+        { ...key, cacheable: false },
+        "Observe external state",
+        completed,
+      ),
+    ).toBe(false);
+  });
+
   it.each([
     { signal: "failed" as const },
     { stepLimitReached: true },

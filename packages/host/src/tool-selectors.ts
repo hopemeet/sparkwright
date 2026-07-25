@@ -48,6 +48,8 @@ export const WORKSPACE_READ_TOOL_NAMES = [
 ] as const;
 
 export const WORKSPACE_WRITE_TOOL_NAMES = [
+  "create",
+  "replace",
   "write",
   "edit_anchored_text",
   "edit",

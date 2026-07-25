@@ -136,7 +136,6 @@ export async function startDirectCoreRun(
     skillRoots: skillRoots.map((root) => root.root),
     configPaths: loadedConfig.attempted.map((entry) => entry.path),
     getRun: () => runRef.current,
-    documentedCommand: { goal, shouldWrite },
   });
   const trace = new MemoryTrace();
   const sessionStore = new FileSessionStore({ rootDir: sessionRootDir });
@@ -412,6 +411,7 @@ function createDeterministicModel(input: {
                   toolName: "edit_anchored_text",
                   arguments: {
                     path: input.targetPath,
+                    expectedRevision: lastLine.revision,
                     edits: [
                       {
                         op: "append",
@@ -513,10 +513,14 @@ function hasDeterministicSection(
 
 function latestAnchoredLine(
   events: SparkwrightEvent[],
-): { anchor: string } | undefined {
+): { anchor: string; revision: string } | undefined {
   const anchored = latestToolOutput<{
     lines?: Array<{ anchor?: string }>;
+    revision?: string;
   }>(events, "read_anchored_text");
   const last = anchored?.lines?.at(-1);
-  return typeof last?.anchor === "string" ? { anchor: last.anchor } : undefined;
+  return typeof last?.anchor === "string" &&
+    typeof anchored?.revision === "string"
+    ? { anchor: last.anchor, revision: anchored.revision }
+    : undefined;
 }

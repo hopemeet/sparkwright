@@ -25,7 +25,10 @@ describe("session approval subjects", () => {
       "allow-session",
       "deny",
     ]);
-    expect(sessionApprovalRule(subject)?.key).toBe("shell:exact-npm-test");
+    expect(sessionApprovalRule(subject)).toMatchObject({
+      principalScope: "main",
+      subjectKey: "shell:exact-npm-test",
+    });
   });
 
   it("keeps workspace write and remove rules distinct", () => {
@@ -49,23 +52,40 @@ describe("session approval subjects", () => {
     );
   });
 
-  it("accepts a producer-authored child workspace grant", () => {
+  it("accepts revisioned workspace operations without a child grant subject", () => {
     const subject = approvalSubject({
-      kind: "agent_workspace_write",
-      role: "writer",
-      tools: ["edit", "write"],
-      key: "agent_workspace_write:writer",
-      label: "Allow writer for this session",
+      kind: "workspace_file",
+      operation: "replace",
+      path: "src/app.ts",
+      key: "workspace_file:replace:src/app.ts",
+      label: "Allow replacing src/app.ts for this session",
     });
 
     expect(subject).toMatchObject({
-      kind: "agent_workspace_write",
-      role: "writer",
-      tools: ["edit", "write"],
+      kind: "workspace_file",
+      operation: "replace",
+      path: "src/app.ts",
     });
     expect(sessionApprovalRule(subject)).toMatchObject({
-      key: "agent_workspace_write:writer",
+      subjectKey: "workspace_file:replace:src/app.ts",
     });
+  });
+
+  it("never reuses a remembered subject across approval principals", () => {
+    const subject = approvalSubject({
+      kind: "workspace_file",
+      operation: "write",
+      path: "src/app.ts",
+      key: "workspace_file:write:src/app.ts",
+      label: "Allow writing src/app.ts for this session",
+    });
+
+    const main = sessionApprovalRule(subject, "session:main");
+    const firstChild = sessionApprovalRule(subject, "run:child-1");
+    const secondChild = sessionApprovalRule(subject, "run:child-2");
+
+    expect(main?.key).not.toBe(firstChild?.key);
+    expect(firstChild?.key).not.toBe(secondChild?.key);
   });
 
   it("fails malformed subjects closed to one-shot approval", () => {

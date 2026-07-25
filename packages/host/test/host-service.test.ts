@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ActorInbox, TaskManager } from "@sparkwright/agent-runtime";
+import { createWorkspaceRevision } from "@sparkwright/core";
 import type { HostEvent } from "@sparkwright/protocol";
 import { createHostService } from "../src/host-service.js";
 import type { HostImPrincipal } from "../src/im-control.js";
@@ -538,6 +539,7 @@ function approvalScript(): string {
           toolName: "edit",
           arguments: {
             path: "README.md",
+            expectedRevision: createWorkspaceRevision(true, "# Demo\n"),
             patch: [
               "--- a/README.md",
               "+++ b/README.md",

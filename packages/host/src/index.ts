@@ -69,7 +69,6 @@ export type { ToolSelectorCatalogEntry } from "./tool-selectors.js";
 export {
   bindConfiguredEventHooks,
   createConfiguredWorkflowHooks,
-  createPartialSubagentFinalityDisclosureHook,
 } from "./workflow-hooks.js";
 export type {
   BindConfiguredEventHooksOptions,

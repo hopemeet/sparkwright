@@ -3,6 +3,7 @@ import { resolveHostClientApprovalByPolicy } from "@sparkwright/host";
 import type { HostEvent, RunAccessMode } from "@sparkwright/protocol";
 import {
   approvalSubject,
+  approvalRuleKey,
   sessionApprovalRule,
   type ApprovalChoice,
   type SessionApprovalRule,
@@ -96,6 +97,7 @@ export class ApprovalCoordinator {
         action: event.payload.action,
         summary: event.payload.summary,
         subject,
+        principal: event.payload.principal,
         details,
         createdAt: event.timestamp,
       },
@@ -124,7 +126,11 @@ export class ApprovalCoordinator {
       return;
     }
     if (subject.kind !== "one_shot") {
-      const rule = this.rules.get(exactExecution.sessionId)?.get(subject.key);
+      const rule = this.rules
+        .get(exactExecution.sessionId)
+        ?.get(
+          approvalRuleKey(event.payload.principal.principalScope, subject.key),
+        );
       if (rule) {
         void this.autoApproveByRule(
           exactExecution,
@@ -157,7 +163,7 @@ export class ApprovalCoordinator {
     if (!context || context.view.resolving) return;
     const rule =
       choice === "allow-session"
-        ? sessionApprovalRule(context.view.subject)
+        ? sessionApprovalRule(context.view.subject, context.view.principalScope)
         : undefined;
     context.view = {
       ...context.view,
@@ -255,7 +261,9 @@ export class ApprovalCoordinator {
     const rule =
       subject.kind === "one_shot"
         ? undefined
-        : this.rules.get(next.execution.sessionId)?.get(subject.key);
+        : this.rules
+            .get(next.execution.sessionId)
+            ?.get(approvalRuleKey(next.view.principalScope, subject.key));
     if (!rule) {
       this.projectActive();
       return;
@@ -338,6 +346,7 @@ function projectApprovalView(
   const command = stringValue(args?.command) ?? stringValue(details.command);
   const cwd = stringValue(args?.cwd) ?? stringValue(details.cwd);
   const policy = recordValue(details.policy);
+  const reasons = event.payload.reasons ?? recordValue(details.approvalReasons);
   const metadata = recordValue(policy.metadata);
   const riskValue =
     stringValue(metadata.risk) ?? stringValue(details.risk) ?? undefined;
@@ -350,9 +359,14 @@ function projectApprovalView(
     risk: approvalRisk(kind, riskValue, details, subject),
     summary: event.payload.summary,
     reason: stringValue(details.reason),
-    policyReason: stringValue(policy.reason),
+    policyReason: stringValue(reasons.policy) ?? stringValue(policy.reason),
+    toolReason: stringValue(reasons.tool),
+    safetyReason: stringValue(reasons.safety),
     exactScope: exactScopeLabel(subject),
     subject,
+    principalKind: event.payload.principal.kind,
+    principalScope: event.payload.principal.principalScope,
+    principalLabel: event.payload.principal.displayLabel,
     executionKind: execution.kind,
     runId: execution.runId,
     workflowId: execution.workflowRunId,
@@ -416,9 +430,11 @@ function exactScopeLabel(subject: ReturnType<typeof approvalSubject>): string {
   if (subject.kind === "workspace_file")
     return `${subject.operation} workspace path ${subject.path}`;
   if (subject.kind === "shell_command")
-    return `exact command + cwd ${subject.cwd}`;
-  if (subject.kind === "agent_workspace_write")
-    return `exact child grant (${subject.tools.join(", ")})`;
+    return subject.background !== undefined || subject.lifetime !== undefined
+      ? `exact command + cwd ${subject.cwd} + ${
+          subject.background ? "background" : "foreground"
+        } ${subject.lifetime ?? "job"}`
+      : `exact command + cwd ${subject.cwd}`;
   if (subject.kind === "tool_call") return `exact ${subject.toolName} call`;
   return "one-shot request";
 }

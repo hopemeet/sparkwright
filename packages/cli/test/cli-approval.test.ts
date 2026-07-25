@@ -98,6 +98,7 @@ function request(input: {
     action: input.action,
     summary: input.summary,
     subject: { kind: "one_shot", label: "Allow this test request once" },
+    principal: { kind: "main", principalScope: "session:test" },
     details: input.details ?? {},
     createdAt: "2026-01-01T00:00:00.000Z",
     status: "pending",

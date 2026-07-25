@@ -43,6 +43,8 @@ describe("coding tools", () => {
     expect(createCodingTools().map((tool) => tool.name)).toEqual([
       "read_text",
       "read_anchored_text",
+      "create",
+      "replace",
       "write",
       "edit_anchored_text",
       "edit",
@@ -141,7 +143,10 @@ describe("coding tools", () => {
       readText.execute({ path: "README.md", startLine: 3, endLine: 1 }, ctx),
     ).rejects.toMatchObject({ code: "TOOL_ARGUMENTS_INVALID" });
     await expect(
-      editAnchored.execute({ path: "README.md", edits: [] }, ctx),
+      editAnchored.execute(
+        { path: "README.md", edits: [], expectedRevision: "test-revision" },
+        ctx,
+      ),
     ).rejects.toMatchObject({ code: "TOOL_ARGUMENTS_INVALID" });
     await expect(
       globPaths.execute({ patterns: [] }, ctx),
@@ -238,6 +243,7 @@ describe("coding tools", () => {
     const result = await editAnchored.execute(
       {
         path: "README.md",
+        expectedRevision: anchored.revision!,
         reason: "replace beta",
         edits: [
           {
@@ -271,10 +277,12 @@ describe("coding tools", () => {
       createCodingTools({ workspaceRoot: root }),
       "edit",
     );
+    const observed = await ctx.workspace!.readTextWithRevision!("app.ts");
 
     const result = await tool.execute(
       {
         path: "app.ts",
+        expectedRevision: observed.revision,
         reason: "rename two",
         patch: [
           "--- a/app.ts",

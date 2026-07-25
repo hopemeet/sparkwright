@@ -24,8 +24,14 @@ export interface ApprovalViewModel {
   summary: string;
   reason?: string;
   policyReason?: string;
+  toolReason?: string;
+  safetyReason?: string;
   exactScope: string;
   subject: ApprovalSubject;
+  principalKind: "main" | "dynamic_child" | "configured_delegate";
+  principalScope: string;
+  /** @reserved Runtime principal display text consumed by approval renderers. */
+  principalLabel?: string;
   executionKind: "main" | "workflow";
   runId: string;
   workflowId?: string;

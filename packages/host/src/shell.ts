@@ -394,6 +394,56 @@ export function createHostShellTool(
   };
 }
 
+/**
+ * Child-safe shell surface: foreground-only and unable to persist unmanaged
+ * workspace mutations. createHostShellTool snapshots and rolls back any such
+ * mutation; this wrapper also removes background controls from the model schema.
+ */
+export function createChildSafeHostShellTool(
+  workspaceRoot: string,
+  options: Omit<
+    HostShellToolOptions,
+    "taskManager" | "getRunEvents" | "backgroundTasks"
+  > = {},
+): ToolDefinition<ShellToolInput, ShellToolOutput> {
+  const tool = createHostShellTool(workspaceRoot, {
+    ...options,
+    backgroundTasks: "disabled",
+  });
+  const inputSchema = {
+    ...(tool.inputSchema as Record<string, unknown>),
+    properties: childShellInputProperties(tool.inputSchema),
+  };
+  return {
+    ...tool,
+    description:
+      "Execute one foreground shell command after safety and approval checks. " +
+      "Background processes are unavailable. Workspace mutations are detected, " +
+      "rolled back, and reported as failures; use managed create/replace/edit tools.",
+    inputSchema,
+    delegation: "child",
+  };
+}
+
+function childShellInputProperties(
+  schema: ToolDefinition["inputSchema"],
+): Record<string, unknown> {
+  const properties =
+    schema &&
+    typeof schema === "object" &&
+    "properties" in schema &&
+    schema.properties &&
+    typeof schema.properties === "object"
+      ? (schema.properties as Record<string, unknown>)
+      : {};
+  const {
+    background: _background,
+    lifetime: _lifetime,
+    ...foreground
+  } = properties;
+  return foreground;
+}
+
 function isReadOnlyShellFastPath(args: unknown): boolean {
   if (typeof args !== "object" || args === null || Array.isArray(args)) {
     return false;

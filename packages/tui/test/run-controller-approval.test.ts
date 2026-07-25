@@ -20,6 +20,11 @@ function approvalEvent(id: string): HostEvent & { kind: "approval.requested" } {
         key: "shell_command:npm-test:/workspace/project",
         label: "Allow this exact command here for this session",
       },
+      principal: {
+        kind: "main",
+        principalScope: "main:run_1",
+        displayLabel: "Main agent",
+      },
       details: {
         toolName: "bash",
         arguments: { command: "npm test", cwd: "/workspace/project" },
@@ -402,5 +407,39 @@ describe("RunController session approvals", () => {
       runId: "run_episode_2",
     });
     expect(view).not.toHaveProperty("client");
+  });
+
+  it("projects child principal ownership and layered reasons independently", () => {
+    const store = new EventStore();
+    const controller = new RunController({
+      workspaceRoot: "/workspace/project",
+      initialSessionId: "session_main",
+      store,
+    });
+    const client = { resolveApproval: vi.fn() } as unknown as Client;
+    const event = approvalEvent("approval_child");
+    event.payload.runId = "run_child";
+    event.payload.principal = {
+      kind: "dynamic_child",
+      principalScope: "run_child",
+      displayLabel: "python worker",
+    };
+    event.payload.reasons = {
+      policy: "Allowed by default policy.",
+      tool: "The shell tool requires approval.",
+      safety: 'Unrecognized program "python3" defaults to approval.',
+    };
+
+    deliver(controller, client, "session_main", event);
+
+    expect(store.getSnapshot().pendingApproval).toMatchObject({
+      runId: "run_child",
+      principalKind: "dynamic_child",
+      principalScope: "run_child",
+      principalLabel: "python worker",
+      policyReason: "Allowed by default policy.",
+      toolReason: "The shell tool requires approval.",
+      safetyReason: 'Unrecognized program "python3" defaults to approval.',
+    });
   });
 });

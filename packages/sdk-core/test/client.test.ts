@@ -586,6 +586,7 @@ describe("@sparkwright/sdk-core Client", () => {
         action: "workspace.write",
         summary: "write README.md",
         subject: { kind: "one_shot", label: "Write README.md once" },
+        principal: { kind: "main", principalScope: "session:test" },
       },
     });
     transport.receive({

@@ -11,6 +11,28 @@ See also [../maps/safety/approvals.md](../maps/safety/approvals.md) and [../maps
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-25
+- Scope: `run.completed` no longer exposes recovered/unresolved requirement
+  DTOs. Approval subjects may describe background/lifetime execution mode, and
+  approval events carry policy/tool/safety reason layers without replacing the
+  typed principal or stable subject key.
+- Read: completion/approval DTOs, Core producer, Host event projection, TUI
+  validation/projection, and focused approval tests.
+- Tests: full `npm run release:check` passed, including Protocol 6/6, Host
+  583/583, TUI 468/468, the 16-case regression matrix, and install smoke.
+
+- Status: Verified
+- Date: 2026-07-24
+- Scope: approval events carry runtime principal identity, and
+  `run.completed` carries runtime-owned completion status, immutable notices,
+  recovered requirements, and unresolved requirements. These are structured
+  facts; clients do not infer them from assistant prose.
+- Read: Protocol approval/completion DTOs, Host projection, TUI consumers, and
+  downstream fixtures.
+- Tests: focused Host protocol and TUI approval/controller suites, repository
+  build, and repository test typecheck passed.
+
+- Status: Verified
 - Date: 2026-07-23
 - Scope: SDK Core's existing `task.updated` listener key now declares its
   external typed-listener consumer for strict public-surface auditing. Protocol
@@ -215,6 +237,16 @@ Does not own:
 
 ## Contracts
 
+- `ApprovalRequestedEventPayload.principal` is runtime-owned actor identity.
+  Clients may key reusable approvals by session, principal scope, and typed
+  subject; display labels never substitute for scope.
+- `ApprovalRequestedEventPayload.reasons` keeps policy, tool-gate, and
+  tool-specific safety explanations separate; none of those strings defines
+  reusable authorization identity.
+- `RunCompletedEventPayload` carries optional runtime completion status and
+  immutable notices in addition to the accepted final message and assessment.
+  Historical unknown recovered/unresolved fields are ignored by current
+  clients rather than reintroduced into the typed contract.
 - Request kinds include `run.start`, `run.resume`, `run.inject_message`,
   `run.cancel`, `approval.resolve`, `session.list`, `session.inspect`,
   `session.fork`, `session.compact`, `capability.inspect`, and durable

@@ -10,11 +10,13 @@ import {
 import type { AgentProfile } from "@sparkwright/agent-runtime";
 import {
   createApplyPatchTool as createApplyPatchToolBase,
+  createCreateFileTool as createCreateFileToolBase,
   createEditAnchoredTextTool as createEditAnchoredTextToolBase,
   createGlobPathsTool as createGlobPathsToolBase,
   createGrepTextTool as createGrepTextToolBase,
   createListDirTool as createListDirToolBase,
   createReadAnchoredTextTool as createReadAnchoredTextToolBase,
+  createReplaceFileTool as createReplaceFileToolBase,
   createWriteFileTool as createWriteFileToolBase,
 } from "@sparkwright/coding-tools";
 import {
@@ -103,6 +105,7 @@ export function createReadFileTool() {
       required: ["path"],
       additionalProperties: false,
     },
+    delegation: "child",
     policy: { risk: "safe" },
     governance: {
       origin: { kind: "local", name: "@sparkwright/coding-tools" },
@@ -139,7 +142,11 @@ export function createReadFileTool() {
       if (!ctx.workspace) throw new Error("Workspace is not configured.");
       const { path: rawPath, offset, limit } = readFileToolInput(args);
       const path = await normalizeWorkspacePathArg(rawPath, ctx.workspace);
-      const content = await ctx.workspace.readText(path).catch((error) => {
+      const observation = await (
+        ctx.workspace.readTextWithRevision
+          ? ctx.workspace.readTextWithRevision(path)
+          : ctx.workspace.readText(path).then((content) => ({ content }))
+      ).catch((error) => {
         if (isNodeErrorCode(error, "EISDIR")) {
           throw toolArgumentsInvalid(
             `read expected a file path but ${path} is a directory. Use glob to list files inside it, then call read with a concrete file path.`,
@@ -147,6 +154,7 @@ export function createReadFileTool() {
         }
         throw error;
       });
+      const content = observation.content;
       const lines = content.split("\n");
       const totalLines = lines.length;
       const startLine = Math.max(1, Math.floor(offset ?? 1));
@@ -218,6 +226,13 @@ export function createReadFileTool() {
         hasMore,
         ...(hasMore && !midLineCut ? { nextOffset: endLine + 1 } : {}),
         truncated: charCapped,
+        ...("revision" in observation &&
+        typeof observation.revision === "string"
+          ? { revision: observation.revision }
+          : {}),
+        ...(ctx.workspaceState
+          ? { stateEpoch: ctx.workspaceState.currentEpoch() }
+          : {}),
         ...(note ? { note } : {}),
       };
     },
@@ -373,6 +388,16 @@ export function createReadAnchoredTextTool() {
  */
 export function createWriteFileTool() {
   return createWriteFileToolBase();
+}
+
+/** Revision-aware create that refuses to overwrite an existing path. */
+export function createCreateFileTool() {
+  return createCreateFileToolBase();
+}
+
+/** Revision-aware whole-file replacement guarded by expectedRevision. */
+export function createReplaceFileTool() {
+  return createReplaceFileToolBase();
 }
 
 /**

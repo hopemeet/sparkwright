@@ -9,7 +9,11 @@ export type RememberableApprovalSubject = Exclude<
 >;
 
 export interface SessionApprovalRule {
+  /** Composite principal-scope + subject key used for lookup. */
   key: string;
+  /** @reserved Producer effect key consumed by approval rule inspection UI. */
+  subjectKey: string;
+  principalScope: string;
   kind: RememberableApprovalSubject["kind"];
   label: string;
 }
@@ -32,7 +36,15 @@ export function approvalSubject(value: unknown): ApprovalSubject {
   if (record.kind === "workspace_file") {
     const path = stringValue(record.path);
     const operation = record.operation;
-    if (path && (operation === "write" || operation === "remove")) {
+    if (
+      path &&
+      (operation === "create" ||
+        operation === "replace" ||
+        operation === "edit" ||
+        operation === "remove" ||
+        operation === "legacy_write" ||
+        operation === "write")
+    ) {
       return { kind: record.kind, operation, path, key, label };
     }
   }
@@ -40,17 +52,18 @@ export function approvalSubject(value: unknown): ApprovalSubject {
     const command = stringValue(record.command);
     const cwd = stringValue(record.cwd);
     if (command && cwd) {
-      return { kind: record.kind, command, cwd, key, label };
-    }
-  }
-  if (record.kind === "agent_workspace_write") {
-    const tools = stringArray(record.tools);
-    const role = stringValue(record.role);
-    if (tools) {
+      const background =
+        typeof record.background === "boolean" ? record.background : undefined;
+      const lifetime =
+        record.lifetime === "job" || record.lifetime === "service"
+          ? record.lifetime
+          : undefined;
       return {
         kind: record.kind,
-        ...(role ? { role } : {}),
-        tools,
+        command,
+        cwd,
+        ...(background !== undefined ? { background } : {}),
+        ...(lifetime ? { lifetime } : {}),
         key,
         label,
       };
@@ -82,9 +95,23 @@ export function approvalChoiceLabel(
 
 export function sessionApprovalRule(
   subject: ApprovalSubject,
+  principalScope = "main",
 ): SessionApprovalRule | undefined {
   if (subject.kind === "one_shot") return undefined;
-  return { key: subject.key, kind: subject.kind, label: subject.label };
+  return {
+    key: approvalRuleKey(principalScope, subject.key),
+    subjectKey: subject.key,
+    principalScope,
+    kind: subject.kind,
+    label: subject.label,
+  };
+}
+
+export function approvalRuleKey(
+  principalScope: string,
+  subjectKey: string,
+): string {
+  return `${principalScope}\0${subjectKey}`;
 }
 
 function recordValue(value: unknown): Record<string, unknown> | undefined {
@@ -95,11 +122,4 @@ function recordValue(value: unknown): Record<string, unknown> | undefined {
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
-}
-
-function stringArray(value: unknown): string[] | undefined {
-  return Array.isArray(value) &&
-    value.every((item) => typeof item === "string" && item.length > 0)
-    ? value
-    : undefined;
 }

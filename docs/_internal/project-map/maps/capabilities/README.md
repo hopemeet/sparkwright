@@ -8,6 +8,17 @@ cron, shell/task tools, and capability inspection.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-24
+- Scope: capability routing now distinguishes explicit child delegation from
+  parent-only tools. Dynamic children derive local read/CAS-write/child-safe
+  shell capability; MCP, cron, task/todo, external effects, and management
+  surfaces remain parent-only.
+- Read: Core tool metadata, Host catalog/resolver, Agent capability map, and
+  adjacent capability maps.
+- Tests: focused Host catalog/Agent tests, repository build, and repository test
+  typecheck passed.
+
+- Status: Verified
 - Date: 2026-07-23
 - Scope: Host handshake now advertises `task.events` for the independent
   bounded lifecycle stream. Capability admission, discovery, approval, and

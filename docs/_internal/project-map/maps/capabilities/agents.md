@@ -11,6 +11,41 @@ See [../../modules/agent-runtime.md](../../modules/agent-runtime.md) and [../../
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-25
+- Scope: `submit_agent_result` now requires only status and summary; optional
+  rich details remain compatible. Missing terminal calls are wrapped without
+  reopening tools, and Core `completionStatus` no longer overrides an otherwise
+  valid child outcome. Promoted spawn receipts have a user-facing TUI renderer.
+- Read: terminal prompt/schema/parser, dynamic spawn result/promotion,
+  runtime projection, TUI recognizers/renderers, and tests.
+- Tests: full `npm run release:check` passed, including Agent Runtime 257/257,
+  Host 583/583, TUI 468/468, the regression matrix, and install smoke.
+
+- Status: Verified
+- Date: 2026-07-25
+- Scope: Agent finality is model-owned for clean transport completion. The
+  terminal result tool remains the preferred structured path, but a clean
+  natural final is wrapped once and terminated without task re-execution.
+  Awaited direct-spawn promotion remains coupled to parent cancellation;
+  task-created children retain task-owned cancellation.
+- Read: Agent Runtime result/spawn projection, Core completion boundary, Host
+  dynamic spawn abort ownership/promotion, and focused tests.
+- Tests: Core 661/661, Agent Runtime 257/257, Host 583/583; affected package
+  typechecks, repository lint, and targeted format check passed.
+
+- Status: Verified
+- Date: 2026-07-24
+- Scope: in-process Agent execution authority is now runtime-owned. Handoffs
+  expose only goal/context/label; child tools derive from delegation metadata
+  and configured profiles; dynamic children receive local CAS writes plus
+  child-safe foreground shell; terminal results, ChangeSets, receipts, notices,
+  and recovery remain structured parent-visible facts.
+- Read: Core execution control, Agent Runtime handoff/result/ledger, Host child
+  assembly/prompt/lease/shell, Protocol/TUI projections, and focused tests.
+- Tests: focused Core/Agent Runtime/Host/TUI suites, repository build, and
+  repository test typecheck passed.
+
+- Status: Verified
 - Date: 2026-07-23
 - Scope: final strict-contract follow-up marks async receipt fields and the SDK
   task event key as externally consumed public surfaces. This is annotation
@@ -261,7 +296,6 @@ See [../../modules/agent-runtime.md](../../modules/agent-runtime.md) and [../../
 
 - `packages/host/src/runtime.ts`
 - `packages/host/src/runtime/agent-runtime-assembly.ts`
-- `packages/host/src/agent-spawn-grants.ts`
 - `packages/host/src/agent-profiles.ts`
 - `packages/host/src/delegate-runner.ts`
 - `packages/host/src/delegate-capability.ts`
@@ -279,14 +313,27 @@ See [../../modules/agent-runtime.md](../../modules/agent-runtime.md) and [../../
 
 ```txt
 configured profiles/delegates
-  -> AgentRuntimeAssembly resolves profiles, targets, and child catalogs
-  -> direct/indexed/parallel delegate and dynamic-spawn tools prepare one Agent invocation identity
+  -> AgentRuntimeAssembly resolves profiles, targets, and child-eligible catalogs
+  -> goal/context/label handoff (working authority only)
+  -> direct/indexed/parallel delegate and dynamic-spawn tools prepare one runtime-owned invocation identity
+  -> shared project/workspace/tool guidance prompt composition
+  -> read admission, optional epoch-checked write transition
+  -> preferred terminal submit_agent_result or clean natural final
+  -> ChangeSet/explicit-receipt/outcome roll-up and passive runtime projection
   -> child run store factory
   -> session/agent trace attribution
 ```
 
 ## Contracts
 
+- All in-process handoff surfaces expose only required `goal`, optional bounded
+  working `context`, and optional UI-only `label`. Config/profile model,
+  prompt, tool, and budget fields remain administrator/runtime control plane.
+- Dynamic, configured, and parallel in-process child prompts share Core
+  resident contracts, project instructions, workspace/env rules, delegated
+  contract, effective capability guidance, verification requirements, and
+  working handoff context. They never inherit parent identity, full transcript,
+  tool-result history, orchestration guidance, or concrete approvals.
 - Child/delegate runs must remain trace-visible.
 - Parent policy and approval rules shape child workspace/tool access.
 - Parent-visible `subagent.*` metadata separates trace ownership from child
@@ -409,21 +456,15 @@ configured profiles/delegates
 - TUI capability views exclude the built-in primary `main` profile from the
   configured-agent count/list; child/configured profiles and delegate tools
   remain visible.
-- Dynamic `spawn_agent` children default to read-only (`read`, `glob`, `grep`,
-  optional `list_dir`) and use the dynamic child catalog. A tool call can
-  request `grant.workspaceWrite: true`, or request one of the managed write
-  tools (`write`, `edit`, `edit_anchored_text`) as sugar for that grant. The
-  parent run approves this at spawn time through the normal tool approval path;
-  the child then receives a scoped approval-only interaction channel that
-  auto-approves only child `workspace.write` requests covered by the grant. The grant never exposes
-  `bash`, never bypasses `shouldWrite:false` or target/write budgets in the
-  parent run policy, and cannot resurrect tools removed by `tools.allowed` /
-  `tools.disabled` / `tools.use`.
-- Dynamic spawn feasibility is determined only from the structured tool/grant
-  request. Host validates requested tools against the enabled child catalog
-  before policy and approval; it does not infer required capabilities from
-  multilingual `goal`/`context` prose. Runtime tool exposure remains the hard
-  enforcement boundary.
+- Dynamic `spawn_agent` children receive the child-eligible subset of the
+  parent effective local surface: read/discovery, revisioned
+  create/replace/edit, and a rebuilt foreground-only child-safe shell. Missing
+  delegation metadata defaults to `parent_only`; MCP, external effects,
+  background tasks, Agent/Skill management, task/todo/cron, and nested spawn
+  stay absent. The model cannot request a grant or choose tool names.
+- Dynamic spawn feasibility is determined only by the runtime-resolved child
+  surface and parent policy. Host never infers capability from
+  `goal`/`context` prose, and goal/context/label cannot add authority.
 - Dynamic spawn handoff does not inherit the parent conversation or parent tool
   results. `goal` must be a self-contained task and remains child task/user
   input; optional `context` is a bounded handoff of established facts,
@@ -443,8 +484,8 @@ configured profiles/delegates
   stopping the foreground parent turn. Parent-visible `subagent.*` events for this
   `entrypoint:"agent_task"` path carry the owning `taskId` in payload and
   metadata so trace diagnostics can join child terminal evidence back to
-  `task_create`. `task_create(kind:"agent")` uses the same workspace-write
-  grant parsing and child grant consumption as inline `spawn_agent`.
+  `task_create`. Persisted legacy task payloads are normalized to the same
+  goal/context/label handoff and legacy authority fields are ignored.
 - `kind:"agent"` on a `TaskRecord`/task payload identifies the registered task
   runner, not an actor-notification source kind. Agent lifecycle and bounded
   results remain on `subagent.*`/tool results. The typed actor inbox accepts
@@ -452,15 +493,13 @@ configured profiles/delegates
   lane requires a concrete producer and receiver rather than widening a shared
   enum in advance.
 - Main-run `task_create` advertises the host-registered `agent` kind and its
-  required `goal`/`role` fields plus optional `context` so real models can create background
+  required `goal` plus optional `context`/UI-only `label` so real models can create background
   agent tasks without guessing runner kind names from roles. Detached/promoted
   create results carry concrete `nextAction` guidance, and host terminal task
   notifications surface bounded child result summaries in body text so the
   parent can monitor or retrieve output without creating equivalent work. Its
-  model-facing payload and `maxSteps` guidance intentionally match
-  `spawn_agent`, including optional workspace-write grants: omit the field to
-  inherit the parent run's effective budget, and use enough turns for
-  read/search plus final synthesis.
+  model-facing payload intentionally matches `spawn_agent`; runtime/config
+  choose tools, approvals, and budgets.
 - Main-run `task_create` is eager; existing-id `task` control remains an
   advanced deferred tool loaded through `tool_search`. Its action schema owns
   get/output/wait/stop, and trace plus the durable record are the authority for
@@ -473,26 +512,34 @@ configured profiles/delegates
   action-specific non-empty id requirements and is runtime-validated before
   policy/approval/execution. Empty same-turn placeholders can be recovered in
   diagnostics only after a later concrete same-action monitor call succeeds.
-- Dynamic `spawn_agent` inherits the parent run's effective `maxSteps` when the
-  tool call omits `maxSteps`; explicit child values are honored without the old
-  16-step cap. Dynamic children cannot spawn again or receive `task_create` in
-  v1; `capabilities.agents.maxDepth` remains the general child/delegate ceiling.
+- Dynamic `spawn_agent` receives a runtime-selected step/budget allocation; no
+  max-step field is model-visible. Dynamic children cannot spawn again or
+  receive `task_create` in v1; `capabilities.agents.maxDepth` remains the
+  general child/delegate ceiling.
 - Dynamic `spawn_agent` output keeps parent-visible child identity and
   semantic `status`/finality separate from tool transport status. Delegated
   children declare `completed`, `partial`, or `blocked` plus a summary and
   bounded accomplishments and blockers. Each blocker identifies a stable code,
   broad kind, responsible owner, message, typed requirements, and retry
   condition. Partial/blocked declarations are not reusable even when the child
-  run transport completed normally. Missing/malformed declarations become
-  runtime-owned protocol blockers. A child that reaches its step budget after
+  run transport completed normally. A missing declaration on an otherwise
+  clean natural final is wrapped once as runtime-sourced completed output;
+  malformed structured declarations become runtime-owned protocol blockers.
+  Neither case reopens ordinary tools or re-executes the delegated task. A
+  child that reaches its step budget after
   producing an answer can still return a completed tool result, but the output
   must carry `stepLimitReached: true`, `truncated: true`,
   `finality: "partial"`, and a warning-prefixed message so the parent and
   context compaction do not treat the child answer as complete.
-- Host installs a built-in one-shot Stop hook for every
-  partial/blocked/truncated/step-limited/failed child. It injects structured
-  recovery and disclosure instructions without deciding whether prior prose is
-  sufficient, and ignores ordinary truncated non-agent tool output.
+- Core's retained completion evaluator records
+  partial/blocked/truncated/step-limited/failed child evidence as immutable
+  notices. It does not infer an executable requirement or force a semantic
+  continuation; runtime-owned task readiness, cancellation, budgets, and
+  explicit Workflow gates remain hard controls.
+- A direct dynamic child inherits the parent abort signal when no explicit
+  lifecycle signal is supplied, including after awaited foreground-timeout
+  promotion. An `agent_task` child instead receives the Task runner's explicit
+  signal and is cancelled through Task ownership.
 - Raw child finality is audit evidence and must not be overwritten because the
   parent later succeeded. Trace report can downgrade `SUBAGENT_INCOMPLETE`
   severity only as a derived finding when it records `verifiedAfterChildWrite`
@@ -564,12 +611,13 @@ configured profiles/delegates
   `entrypoint:"delegate_agent"` without exposing a spoofable model JSON field.
 - Host Agent execution and actual Host parent/child mutation tools share one
   process-local fair workspace lease coordinator keyed by workspace realpath.
-  Read-only Agent children may share; write-capable in-process, ACP, and
-  external-command children serialize with parent coding/Shell/capability
-  mutations across HostRuntime connections. `subagent.requested` remains
-  visible while queued, while `started` cannot appear before lease acquisition.
-  Lifecycle metadata carries `workspaceAccess` and `agentConcurrency` so the
-  requested-to-started gap is interpretable.
+  Children begin with shared read admission. On the first managed write, Host
+  releases that admission, acquires write admission, and compares the current
+  workspace epoch with the child's original observation epoch. A mismatch
+  rejects the pending write and requires re-observation; a match upgrades the
+  child for the rest of its execution. ACP/external-command write access
+  remains serialized at admission. `subagent.requested` stays visible while
+  queued and `started` cannot precede initial lease acquisition.
 - Child execution leases and child write tools reenter under the same run id.
   Descendant requests blocked by an ancestor fail fast; opening nested
   delegation beyond current Host catalogs must preserve full run-chain
@@ -600,19 +648,18 @@ configured profiles/delegates
   and use the shared entropy-bearing Core id generator rather than a bare
   millisecond suffix, so same-profile concurrent invocations cannot collide
   merely because they start in the same millisecond.
-- In-process delegate and granted dynamic-spawn workspace writes are surfaced
+- In-process configured and dynamic child workspace writes are surfaced
   to the parent run-end summary by rolling up the child run's own
   `workspace.write.completed` events onto the parent-visible
-  `subagent.completed`/`subagent.failed` payload (`workspaceWrites` count),
+  `subagent.completed`/`subagent.failed` payload as the compatibility
+  `workspaceWrites` count plus full ChangeSets and final verification receipts,
   bridged in `spawnSubAgent`. This replaced an earlier parent-side
   full-workspace filesystem snapshot diff: rollup keeps a single source of
   truth (the child's write events), attributes writes to the actor that made
   them (no time-window misattribution under concurrency), and avoids
   representing one change as two event families. It is sound because child
-  catalogs with managed writes have no untracked writer — dynamic spawn never
-  receives shell, configured delegate shell rolls back unmanaged file
-  mutations, and child catalogs exclude MCP; if MCP is ever added to a child
-  catalog, wrap those MCP tools inside the child instead.
+  shell rolls back unmanaged file mutations and child catalogs exclude MCP; if
+  MCP is ever added, its effects must first be normalized inside the child.
   The CLI summary counts `workspaceWrites` via `summarizeWorkspaceMutations`
   (`subagentWrites`).
 - `capabilities.agents.maxDepth` is a global nested-spawn ceiling enforced
@@ -926,7 +973,7 @@ configured profiles/delegates
   approval-before-child-creation, bypass auto-approval, approval denial,
   read-only gate denial, and `task_create(kind:"agent")` gate parity.
 - Read: `packages/host/src/runtime.ts`,
-  `packages/host/src/agent-spawn-grants.ts`,
+  `packages/host/src/runtime/agent-runtime-assembly.ts`,
   `packages/host/test/spawn-agent.test.ts`,
   `packages/host/test/tools.test.ts`.
 - Tests: `npm --workspace @sparkwright/host test --
@@ -941,7 +988,7 @@ test/spawn-agent.test.ts`;
   up through `subagent.*.workspaceWrites`, and read-only parent write gates
   still deny.
 - Read: `packages/host/src/runtime.ts`,
-  `packages/host/src/agent-spawn-grants.ts`,
+  `packages/host/src/runtime/agent-runtime-assembly.ts`,
   `packages/host/src/tool-catalog.ts`,
   `packages/agent-runtime/src/tasks/tools.ts`,
   `packages/core/src/run.ts`.

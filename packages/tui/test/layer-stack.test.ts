@@ -11,6 +11,8 @@ function approval(approvalId: string): ApprovalViewModel {
     summary: "Run tool",
     exactScope: "exact arguments",
     subject: { kind: "one_shot", label: "Allow once" },
+    principalKind: "main",
+    principalScope: "session:test",
     executionKind: "main",
     runId: "run_1",
     sessionId: "session_1",

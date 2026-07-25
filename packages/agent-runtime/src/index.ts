@@ -63,11 +63,19 @@ import {
   withAlreadyCompletedNote,
 } from "./agents/delegation-ledger.js";
 import {
+  AGENT_HANDOFF_CONTEXT_MAX_CHARS,
+  normalizeAgentHandoffPayload,
+} from "./agents/handoff.js";
+import {
   isAgentToolResult,
   projectAgentOutcome,
   projectAgentInvocationResult,
   runResultStepLimitReached,
 } from "./agents/result.js";
+import {
+  createSubmitAgentResultTool,
+  SUBMIT_AGENT_RESULT_TOOL_NAME,
+} from "./agents/submit-result.js";
 import type {
   AgentAssetIdentity,
   PreparedAgentInvocation,
@@ -81,6 +89,7 @@ import {
 } from "./agents/invocation.js";
 
 export type {
+  AgentHandoffPayload,
   AgentBlocker,
   AgentBlockerKind,
   AgentBlockerOwner,
@@ -98,6 +107,10 @@ export type {
   DelegationLedgerResult,
 } from "./agents/types.js";
 export {
+  AGENT_HANDOFF_CONTEXT_MAX_CHARS,
+  normalizeAgentHandoffPayload,
+} from "./agents/handoff.js";
+export {
   findReusableDelegation,
   rememberReusableDelegation,
   withAlreadyCompletedNote,
@@ -113,9 +126,11 @@ export {
   isReusableAgentResult,
   projectAgentInvocationResult,
   parseAgentResultDeclaration,
+  agentResultDeclarationFromUnknown,
   projectAgentOutcome,
   runResultStepLimitReached,
   runResultTruncated,
+  terminalDeclarationFromRunResult,
 } from "./agents/result.js";
 export type {
   ParsedAgentResultDeclaration,
@@ -145,6 +160,10 @@ export {
   PREPARED_AGENT_INVOCATION_SCHEMA_VERSION,
   prepareAgentInvocation,
 } from "./agents/invocation.js";
+export {
+  createSubmitAgentResultTool,
+  SUBMIT_AGENT_RESULT_TOOL_NAME,
+} from "./agents/submit-result.js";
 
 export type PermissionEffect = "allow" | "deny" | "requires_approval";
 export type AgentMode = "primary" | "child" | "all";
@@ -492,6 +511,14 @@ function decideToolAccess(
   resource?: string,
 ): PolicyDecision | undefined {
   if (action !== "tool.execute" || !resource) return undefined;
+  if (resource === SUBMIT_AGENT_RESULT_TOOL_NAME) {
+    return {
+      action,
+      decision: "allow",
+      reason: "Canonical child terminal-result infrastructure is allowed.",
+      metadata: { resource, agentId: profile.id, infrastructure: true },
+    };
+  }
 
   if (matchesAny(resource, profile.deniedTools ?? [])) {
     return {
@@ -634,6 +661,28 @@ function removeUndefinedMetadata(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isChangeSet(
+  value: unknown,
+): value is import("@sparkwright/core").ChangeSet {
+  return (
+    isRecord(value) &&
+    typeof value.id === "string" &&
+    typeof value.writeEpoch === "number" &&
+    isRecord(value.actor) &&
+    Array.isArray(value.entries)
+  );
+}
+
+function cloneChangeSet(
+  changeSet: import("@sparkwright/core").ChangeSet,
+): import("@sparkwright/core").ChangeSet {
+  return {
+    ...changeSet,
+    actor: { ...changeSet.actor },
+    entries: changeSet.entries.map((entry) => ({ ...entry })),
+  };
 }
 
 function tagRules(
@@ -935,12 +984,19 @@ export function spawnSubAgent(input: SpawnSubAgentInput): SpawnedSubAgent {
     (input.childAgentProfile
       ? promptBuilderForAgentProfile(input.childAgentProfile)
       : undefined);
+  const configuredTools = input.tools ?? [];
+  const childTools = [
+    ...configuredTools.filter(
+      (tool) => tool.name !== SUBMIT_AGENT_RESULT_TOOL_NAME,
+    ),
+    createSubmitAgentResultTool(),
+  ];
 
   const createOptions: CreateRunOptions = {
     goal: input.goal,
     model: input.model,
     models: input.models,
-    tools: input.tools ?? [],
+    tools: childTools,
     context: input.context,
     // Inherit the parent's workspace unless the caller overrides it (or opts
     // out with `null`), so workspace-backed child tools resolve against the
@@ -949,6 +1005,7 @@ export function spawnSubAgent(input: SpawnSubAgentInput): SpawnedSubAgent {
       input.workspace === null
         ? undefined
         : (input.workspace ?? parent.getWorkspace?.()),
+    workspaceState: parent.getWorkspaceState(),
     policy: childPolicy,
     promptBuilder: childPromptBuilder,
     interactionChannel:
@@ -1011,9 +1068,14 @@ export function spawnSubAgent(input: SpawnSubAgentInput): SpawnedSubAgent {
   // snapshot) keeps a single source of truth, attributes writes to the actor
   // that made them, and avoids representing one change as two event families.
   let childWorkspaceWrites = 0;
+  const childChangeSets: import("@sparkwright/core").ChangeSet[] = [];
   const unsubscribeBridge = child.events.subscribe((event) => {
     if (event.type === "workspace.write.completed") {
       childWorkspaceWrites += 1;
+      const payload = isRecord(event.payload) ? event.payload : undefined;
+      if (isChangeSet(payload?.changeSet)) {
+        childChangeSets.push(payload.changeSet);
+      }
       return;
     }
     if (event.type === "run.started") {
@@ -1026,6 +1088,10 @@ export function spawnSubAgent(input: SpawnSubAgentInput): SpawnedSubAgent {
         ...(childWorkspaceWrites > 0
           ? { workspaceWrites: childWorkspaceWrites }
           : {}),
+        ...(childChangeSets.length > 0
+          ? { changeSets: childChangeSets.map(cloneChangeSet) }
+          : {}),
+        ...verificationReceiptRollup(event.payload),
       });
       detach();
       unsubscribeBridge();
@@ -1038,6 +1104,10 @@ export function spawnSubAgent(input: SpawnSubAgentInput): SpawnedSubAgent {
         ...(childWorkspaceWrites > 0
           ? { workspaceWrites: childWorkspaceWrites }
           : {}),
+        ...(childChangeSets.length > 0
+          ? { changeSets: childChangeSets.map(cloneChangeSet) }
+          : {}),
+        ...verificationReceiptRollup(event.payload),
       });
       detach();
       unsubscribeBridge();
@@ -1099,6 +1169,23 @@ function childStopReason(payload: unknown): string | undefined {
   if (typeof reason === "string") return reason;
   const stopReason = payload.stopReason;
   return typeof stopReason === "string" ? stopReason : undefined;
+}
+
+function verificationReceiptRollup(payload: unknown): {
+  verificationReceipts?: unknown[];
+} {
+  if (!isRecord(payload)) return {};
+  const ledger = isRecord(payload.factLedger) ? payload.factLedger : undefined;
+  const receipts = Array.isArray(ledger?.verificationReceipts)
+    ? ledger.verificationReceipts
+    : [];
+  return receipts.length > 0
+    ? { verificationReceipts: receipts.map(cloneJsonValue) }
+    : {};
+}
+
+function cloneJsonValue<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
 }
 
 function subagentEntrypointFromMetadata(
@@ -1170,6 +1257,9 @@ function subagentTerminalProjection(
     message: typeof payload.message === "string" ? payload.message : undefined,
     stepLimitReached,
     truncated,
+    terminalDeclaration: isRecord(payload.terminalResult)
+      ? payload.terminalResult.output
+      : undefined,
   });
   const terminalState: SubAgentTerminalState = truncated
     ? "truncated"
@@ -1370,12 +1460,20 @@ export function createAgentTool(
       type: "object",
       properties: {
         goal: { type: "string", description: "Sub-task to delegate." },
-        metadata: {
-          type: "object",
-          description: "Optional structured metadata for the child run.",
+        context: {
+          type: "string",
+          description:
+            "Optional parent-established facts, constraints, and decisions at working authority.",
+          maxLength: AGENT_HANDOFF_CONTEXT_MAX_CHARS,
+        },
+        label: {
+          type: "string",
+          description:
+            "Optional UI/trace label. It never changes prompt authority, tools, permissions, model, or budget.",
         },
       },
       required: ["goal"],
+      additionalProperties: false,
     },
     policy: options.policy,
     governance: {
@@ -1388,8 +1486,12 @@ export function createAgentTool(
       if (!parent) return false;
       try {
         const parsed = parseAgentToolArgs(args);
+        const invocationLedgerKey = {
+          ...delegationLedgerKey,
+          ...(parsed.context ? { context: parsed.context } : {}),
+        };
         return Boolean(
-          findReusableDelegation(parent, delegationLedgerKey, parsed.goal),
+          findReusableDelegation(parent, invocationLedgerKey, parsed.goal),
         );
       } catch {
         return false;
@@ -1414,9 +1516,13 @@ export function createAgentTool(
         );
       }
       const parsed = parseAgentToolArgs(args);
+      const invocationLedgerKey = {
+        ...delegationLedgerKey,
+        ...(parsed.context ? { context: parsed.context } : {}),
+      };
       const prior = findReusableDelegation(
         parent,
-        delegationLedgerKey,
+        invocationLedgerKey,
         parsed.goal,
       );
       if (prior) {
@@ -1453,7 +1559,7 @@ export function createAgentTool(
             result,
             usage,
           });
-      rememberReusableDelegation(parent, delegationLedgerKey, parsed.goal, {
+      rememberReusableDelegation(parent, invocationLedgerKey, parsed.goal, {
         ...structured,
       });
       if (result.signal !== "completed") {
@@ -1482,18 +1588,7 @@ export function mountAgentTool(
 }
 
 function parseAgentToolArgs(args: unknown): AgentToolInvocationInput {
-  if (typeof args !== "object" || args === null) {
-    throw new Error("AgentTool arguments must be an object.");
-  }
-  const record = args as Record<string, unknown>;
-  if (typeof record.goal !== "string" || record.goal.length === 0) {
-    throw new Error("AgentTool arguments.goal must be a non-empty string.");
-  }
-  const metadata =
-    typeof record.metadata === "object" && record.metadata !== null
-      ? (record.metadata as Record<string, unknown>)
-      : undefined;
-  return { goal: record.goal, metadata };
+  return normalizeAgentHandoffPayload(args);
 }
 
 export * from "./tasks/index.js";

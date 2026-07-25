@@ -818,9 +818,8 @@ async function spawnFinalityCase() {
                 toolName: "spawn_agent",
                 arguments: {
                   goal: "Read README.md.",
-                  role: "reader",
+                  label: "reader",
                   context: "README.md is the selected target; summarize it.",
-                  allowedTools: ["read"],
                 },
               },
             ],
@@ -829,8 +828,18 @@ async function spawnFinalityCase() {
             toolCalls: [{ toolName: "read", arguments: { path: "README.md" } }],
           },
           {
-            message:
-              'child read README.md\nSPARKWRIGHT_AGENT_RESULT: {"schemaVersion":"agent-outcome.v1","status":"completed","summary":"README.md was read and summarized.","accomplishments":["Read README.md"],"blockers":[]}',
+            message: "child read README.md",
+            toolCalls: [
+              {
+                toolName: "submit_agent_result",
+                arguments: {
+                  status: "completed",
+                  summary: "README.md was read and summarized.",
+                  accomplishments: ["Read README.md"],
+                  blockers: [],
+                },
+              },
+            ],
           },
           { message: "parent observed complete child" },
         ]),
@@ -838,11 +847,16 @@ async function spawnFinalityCase() {
     },
   );
   const trace = await traceFromOutput(result.stdout);
-  const childTrace = await readAgentTrace(
-    workspace,
-    trace.sessionId,
-    "dynamic_reader",
+  const spawnCompletion = trace.events.find(
+    (event) =>
+      event.type === "tool.completed" &&
+      event.payload?.toolName === "spawn_agent",
   );
+  const childAgentId = spawnCompletion?.payload?.output?.agentId;
+  const childTrace =
+    typeof childAgentId === "string"
+      ? await readAgentTrace(workspace, trace.sessionId, childAgentId)
+      : [];
   const traceText = JSON.stringify([...trace.events, ...childTrace]);
   record({
     id: "SPAWN_FINAL",
@@ -852,7 +866,7 @@ async function spawnFinalityCase() {
     workspace,
     write: "no",
     expectedTrace:
-      "tool_search -> spawn_agent output finality=complete with clean assessment, child run inherits maxSteps=20, child uses read only",
+      "tool_search -> spawn_agent -> submit_agent_result; output finality=complete with clean assessment, child run inherits maxSteps=20, child only calls read",
     failureRule:
       "Fails if dynamic spawn exposes bash/write tools, marks a complete child partial, or falls back to the old maxSteps default.",
     harness: true,

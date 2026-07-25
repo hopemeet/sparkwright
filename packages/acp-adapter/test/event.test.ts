@@ -341,6 +341,7 @@ function approvalEvent(): Extract<HostEvent, { kind: "approval.requested" }> {
       action: "workspace.write",
       summary: "Write README.md",
       subject: { kind: "one_shot", label: "Write README.md once" },
+      principal: { kind: "main", principalScope: "session:test" },
       details: { path: "README.md" },
     },
   };

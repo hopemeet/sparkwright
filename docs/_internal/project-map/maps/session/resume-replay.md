@@ -10,6 +10,17 @@ See [session-store.md](session-store.md) and [../runtime/context-compaction.md](
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-24
+- Scope: reviewed for runtime completion facts. Resume/replay continues to use
+  persisted Core events; completion status, immutable notices, recovered
+  requirements, and approval principal fields pass through structured payloads
+  without prose inference.
+- Read: Core completion event/result, Host resume projection, Protocol DTOs,
+  and TUI replay consumer.
+- Tests: focused Host protocol/TUI controller tests, repository build, and
+  repository test typecheck passed.
+
+- Status: Verified
 - Date: 2026-07-23
 - Scope: TUI session load and Host reconnection now reconcile task state from
   `task.list`; durable terminal snapshots seed the baseline quietly, while live

@@ -67,7 +67,7 @@ describe("background agent task runner", () => {
           return { message: "parent done" };
         },
       },
-      maxSteps: 1,
+      maxSteps: 4,
       runStore: createSessionRunStoreFactory({
         sessionStore,
         sessionId,
@@ -120,6 +120,7 @@ describe("background agent task runner", () => {
           type: "object",
           properties: { pattern: { type: "string" } },
         },
+        delegation: "child",
         async execute(_args, ctx) {
           started();
           const signal = (ctx as RuntimeContext).abortSignal;
@@ -145,10 +146,8 @@ describe("background agent task runner", () => {
         kind: "agent",
         payload: {
           goal: "watch the repo",
-          role: "watcher",
+          label: "watcher",
           context: "Keep grepping.",
-          allowedTools: ["grep"],
-          maxSteps: 20,
         },
       });
 
@@ -192,6 +191,7 @@ describe("background agent task runner", () => {
           type: "object",
           properties: { pattern: { type: "string" } },
         },
+        delegation: "child",
         async execute() {
           globCalls += 1;
           return { paths: ["README.md"] };
@@ -206,7 +206,20 @@ describe("background agent task runner", () => {
               item.type === "tool_result" && item.metadata.toolName === "glob",
           );
           return used
-            ? { message: "top-level: README.md" }
+            ? {
+                message: "top-level: README.md",
+                toolCalls: [
+                  {
+                    toolName: "submit_agent_result",
+                    arguments: {
+                      status: "completed",
+                      summary: "Listed top-level files",
+                      accomplishments: ["Found README.md"],
+                      blockers: [],
+                    },
+                  },
+                ],
+              }
             : {
                 toolCalls: [{ toolName: "glob", arguments: { pattern: "*" } }],
               };
@@ -219,10 +232,8 @@ describe("background agent task runner", () => {
         kind: "agent",
         payload: {
           goal: "list top-level files",
-          role: "inspector",
+          label: "inspector",
           context: "List files with glob.",
-          allowedTools: ["glob"],
-          maxSteps: 4,
         },
       });
 
