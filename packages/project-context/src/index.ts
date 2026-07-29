@@ -260,14 +260,15 @@ const REPO_EVIDENCE_GUIDANCE = [
 
 const DELEGATION_GUIDANCE = [
   "Reporting a sub-agent's result:",
-  "- A spawned/delegated child returns a `message` that is already its final,",
+  "- A spawned/delegated child returns a `report` that is already its final,",
   "  often-structured answer. When the user's request was essentially to obtain",
   "  that result, relay it faithfully — do NOT re-summarize it into a shorter",
   "  paraphrase that silently drops list items, rows, or paths. Reformat only;",
   "  preserve every concrete entry the child reported.",
-  "- If the child result carries `stepLimitReached: true`, it stopped on its",
-  "  last allowed step and may be truncated — say so plainly instead of",
-  "  presenting it as exhaustive, and offer to continue with a larger budget.",
+  "- `workspace` is runtime-owned evidence. If `workspace.writes` is 0, do not",
+  "  claim the child created, modified, or deleted files; describe existing",
+  "  artifacts as inspected or verified. Use `workspace.paths` for write claims.",
+  "- Preserve any runtime `warnings` or structured `blockers` in the response.",
   "- Do not spend an extra model turn rewriting a complete child answer when",
   "  forwarding it verbatim (lightly reframed) already satisfies the request.",
 ].join("\n");
@@ -289,10 +290,12 @@ const DELEGATION_GUIDANCE = [
  */
 const TODO_PLANNING_GUIDANCE = [
   "Using the todo list:",
-  "- For a genuinely multi-step or multi-session task, open by writing the plan",
-  "  with todo_write so the steps are tracked and visible. Skip it for a",
-  "  single-step, trivial, or purely explanatory request — just do the work and",
-  "  answer.",
+  "- Use todo_write only when durable plan state materially reduces the risk of",
+  "  losing track of unresolved work, such as independently meaningful outcomes,",
+  "  work spanning turns or sessions, or failure recovery. If the request is one",
+  "  bounded outcome and a checklist adds no coordination value, just do the work.",
+  "  File count, tool-call count, verification steps, elapsed time, and delegation",
+  "  alone do not justify a todo list.",
   "- The current list is already in your context, and each todo_write returns",
   "  the updated list and what remains, so you never need to read it back.",
   "- Touch the list only on a real status change, or to add, split, or remove",

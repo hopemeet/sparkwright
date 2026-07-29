@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type { WorkflowRunSnapshot } from "@sparkwright/protocol";
@@ -52,21 +53,32 @@ export function useWorkflowActions(deps: {
   );
   const ownedJobsRef = useRef(ownedJobs);
 
-  async function refreshWorkflows(): Promise<WorkflowRunSnapshot[]> {
-    setLoadingWorkflows(true);
+  async function fetchWorkflows(options: {
+    showLoading: boolean;
+  }): Promise<WorkflowRunSnapshot[]> {
+    if (options.showLoading) setLoadingWorkflows(true);
     try {
       const next = await controller.listWorkflowRuns({ limit: 100 });
-      setWorkflows(next);
-      if (
-        selectedWorkflowId &&
-        !next.some((workflow) => workflow.id === selectedWorkflowId)
-      ) {
-        setSelectedWorkflowId(undefined);
-      }
+      setWorkflows((current) =>
+        workflowSnapshotsEqual(current, next) ? current : next,
+      );
+      setSelectedWorkflowId((current) =>
+        current && !next.some((workflow) => workflow.id === current)
+          ? undefined
+          : current,
+      );
       return next;
     } finally {
-      setLoadingWorkflows(false);
+      if (options.showLoading) setLoadingWorkflows(false);
     }
+  }
+
+  function refreshWorkflows(): Promise<WorkflowRunSnapshot[]> {
+    return fetchWorkflows({ showLoading: true });
+  }
+
+  function refreshWorkflowsInBackground(): Promise<WorkflowRunSnapshot[]> {
+    return fetchWorkflows({ showLoading: false });
   }
 
   async function listWorkflows(): Promise<void> {
@@ -275,9 +287,9 @@ export function useWorkflowActions(deps: {
     if (!enableBackgroundRefresh) return;
     let cancelled = false;
     const interval = setInterval(() => {
-      if (!cancelled) void refreshWorkflows().then(() => undefined);
+      if (!cancelled) void refreshWorkflowsInBackground().then(() => undefined);
     }, 5000);
-    void refreshWorkflows().then(() => undefined);
+    void refreshWorkflowsInBackground().then(() => undefined);
     return () => {
       cancelled = true;
       clearInterval(interval);
@@ -289,7 +301,7 @@ export function useWorkflowActions(deps: {
     if (!layerOpen) return;
     let cancelled = false;
     const tick = (): void => {
-      void refreshWorkflows().then(() => undefined);
+      void refreshWorkflowsInBackground().then(() => undefined);
     };
     const interval = setInterval(() => {
       if (!cancelled) tick();
@@ -346,6 +358,15 @@ export function useWorkflowActions(deps: {
     resumeWorkflow,
     stopWorkflow,
   };
+}
+
+export function workflowSnapshotsEqual(
+  left: readonly WorkflowRunSnapshot[],
+  right: readonly WorkflowRunSnapshot[],
+): boolean {
+  if (left === right) return true;
+  if (left.length !== right.length) return false;
+  return isDeepStrictEqual(left, right);
 }
 
 export type OwnedWorkflowJobStatus =

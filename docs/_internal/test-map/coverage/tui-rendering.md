@@ -18,8 +18,35 @@
 ## Current Confidence
 
 - Status: `Verified`
-- Last reviewed: 2026-07-25
-- Evidence source: 2026-07-25 unified-details and first-batch action/replay
+- Last reviewed: 2026-07-28
+- Evidence source: 2026-07-26 owned-viewport coverage preserves all 39 compact
+  rendering characterization cases while routing both compact and detailed
+  output through `TranscriptDocument` and physical layout. Focused tests cover
+  strict concurrent/nested Agent identities, full-session replay, 10,000-row
+  projection caps, CJK widths at 80/100/120 columns, semantic anchor recovery,
+  unseen-row counting, mode-independent export, `/clear` export retention,
+  terminal restore idempotence, SIGTERM/SIGHUP/crash restore, and no SIGINT
+  restore.
+  The final TUI suite passed 77 files / 520 tests. Deterministic PTY runs at 80
+  and 100 columns verified Ctrl+T in-place details, PageUp during continued
+  events with `↓ 13 new lines`, raw-sequence Ctrl+End tail
+  recovery, resize after SIGWINCH, CJK wrapping, and `--no-alt-screen`. A Terra
+  PTY run cancelled active work on the first Ctrl+C while retaining the screen;
+  the second Ctrl+C exited. Supported Node 22 performance sampling at 80
+  columns measured one 10,000-row detailed section at 10.20ms P95 and 10,000
+  independent blocks at 14.22ms compact / 14.26ms detailed P95, with at most
+  5,000 physical rows materialized. See
+  [../runs/2026-07-26-tui-owned-viewport-pass.md](../runs/2026-07-26-tui-owned-viewport-pass.md).
+  A same-day raw-byte follow-up found that the original decision gate missed
+  Ink 5.2.1's exact-height full-clear branch. The fixed root reserves one row;
+  unchanged Workflow polling is state-silent; exact tool spans own duplicate
+  read/Skill effects; replayed no-progress actions render as skipped. Agent
+  Runtime passed 259/259 and TUI passed 531/531. On retained session
+  `session_tui_ms12fuf0`, 100x32 raw PTY capture recorded zero full-clear
+  sequences over 12.5 idle seconds and Ctrl+T, while `--no-alt-screen`
+  recorded zero scrollback clears. See
+  [../failures/tui-full-height-periodic-clear.md](../failures/tui-full-height-periodic-clear.md).
+  Earlier evidence: 2026-07-25 unified-details and first-batch action/replay
   coverage passed 482/482 TUI, 258/258 Agent Runtime, 583/583 Host, and 6/6
   Protocol tests. Full `npm run release:check` also passed the 16-case
   regression matrix and source/release install smoke. Focused SDK replay proves wildcard `model.stream.*`
@@ -64,6 +91,30 @@
   indicator without repeating the static brand.
 
 ## Covered
+
+- 2026-07-28 Agent action projection coverage verifies both bounded terminal
+  receipts and replayed child tool events render non-zero process exits as
+  `exit N ✗` even when the tool transport event is `completed`. The full TUI
+  suite passed 79 files / 532 tests and typecheck passed.
+
+- 2026-07-26 App-owned transcript viewport coverage removes `<Static>` and the
+  details layer without replacing Ink. The immutable semantic document,
+  compact/detailed projections, width layout, and visible-row renderer have
+  separate regressions. PageUp/PageDown/Ctrl+Home/Ctrl+End routing uses the
+  global key registry
+  without stealing a non-empty draft; approval remains the top layer. Terminal
+  lifecycle tests cover alternate-screen enter/leave, `--no-alt-screen`,
+  private-mode restore, idempotence, hard-signal/crash restoration, and the
+  intentional absence of a terminal-level SIGINT handler.
+
+- 2026-07-26 real/deterministic PTY and supported-Node performance QA passed
+  compact/detail anchoring, scroll/unseen/tail recovery, resize/CJK,
+  first/second Ctrl+C and terminal restoration. The layout-volume measurements
+  remain valid, but the original Ink decision gate did not inspect raw escape
+  sequences and therefore missed periodic full clears at exact terminal
+  height. The one-row renderer boundary now keeps Ink viable, with raw-byte
+  regressions required for future app-shell changes. See
+  [../runs/2026-07-26-tui-owned-viewport-pass.md](../runs/2026-07-26-tui-owned-viewport-pass.md).
 
 - 2026-07-25 focused projection/render/replay coverage verifies the unified
   Ctrl+T details mode: successful Agent transport and intermediate lifecycle
@@ -170,12 +221,14 @@
   and
   [../failures/tui-narrow-status-bar-wrap.md](../failures/tui-narrow-status-bar-wrap.md).
 
-- Event stream owns the committed first-screen header.
+- `TranscriptDocument` owns the epoch-frozen first-screen header; the runtime
+  viewport owns its visible rows.
 - Status bar owns changing run state and should not repeat the static brand
   header.
-- Runtime model switches surface as committed `tui.notice` rows, and the live
+- Runtime model switches surface as semantic `tui.notice` blocks, and the live
   status line exposes the active model while idle as well as while running.
-- Event stream renders tool, shell, and sub-agent event summaries.
+- The shared transcript document renders tool, shell, and Agent summaries;
+  `EventStream` remains only a compatibility consumer of that same projection.
 - Capability panels render configured delegate information.
 - Approval prompt rendering keeps shell command details readable.
 - Slash command panels render cleanly at 120x32 and 80x24 without raw JSON,
@@ -243,6 +296,10 @@
 - PTY width/height can expose wrapping bugs that component string snapshots miss.
 - Live rendering order can differ from static render tests when events arrive
   quickly.
+- True last-row ownership remains unsupported on Ink 5.2.1: removing the
+  reserved row re-enters Ink's full-terminal clear path. If product design
+  requires the last row, patch/fork the renderer or replace only the renderer
+  layer.
 - Real user workflows with long-running tasks should still be checked with a PTY
   capture when the layout contract changes.
 - Status and header ownership can regress when adding first-screen affordances.
@@ -263,14 +320,10 @@
   through, which is ambiguous with a one-token slash goal. Do not classify as a
   bug — see
   [../failures/tui-unknown-slash-command-to-model.md](../failures/tui-unknown-slash-command-to-model.md).
-- Copy-paste ergonomics are untested. Border *alignment* is verified, but no
-  test covers whether a path/value the user needs to copy lands inside a
-  `borderStyle` box (toast, `DialogFrame`, input box). Terminal mouse selection
-  is line-based, so any path inside a border is selected together with the `│`
-  glyphs and `paddingX` space. Worst offender: `/export` pushes the full export
-  path as a **toast message only** (`app.tsx` export command → `toast.tsx`
-  round border), un-shortened, so it can wrap across multiple bordered lines and
-  there is no plain/scrollback copy of that path anywhere. See run note
+- Fixed 2026-07-26: `/export` appends a border-free
+  `tui.export.completed` path row to the owned transcript document in addition
+  to transient feedback. Alternate-screen selection ergonomics still vary by
+  terminal, but the path is no longer toast-only. See the original run note
   [../runs/2026-06-24-tui-copy-paste-ergonomics.md](../runs/2026-06-24-tui-copy-paste-ergonomics.md).
 - Fixed 2026-06-29: `/export` no longer omits the submitted user goal when
   `run.started` lacks `goal` but `run.created` or `model.requested` carries
@@ -280,7 +333,8 @@
 ## Focused Route
 
 ```bash
-npm --workspace @sparkwright/tui test -- test/activity-panel-render.test.tsx test/status-bar-render.test.tsx test/event-stream-render.test.ts test/transcript-presentation.test.ts test/detailed-transcript-panel-render.test.tsx
+npm --workspace @sparkwright/tui test -- test/event-stream-render.test.ts test/transcript-presentation.test.ts test/transcript-document.test.ts test/transcript-layout.test.ts test/transcript-viewport-state.test.ts test/transcript-viewport-render.test.tsx
+npm --workspace @sparkwright/tui test -- test/transcript.test.ts test/export-after-clear.test.ts test/terminal-restore.test.ts test/keybindings.test.ts test/layer-stack.test.ts
 npm --workspace @sparkwright/tui test -- test/capabilities-panel-render.test.tsx test/approval-prompt-render.test.tsx
 ```
 
@@ -300,10 +354,14 @@ Use a real PTY QA pass when changing the app shell or interactive layout.
 - `packages/tui/src/app.tsx`
 - `packages/tui/src/components/activity-panel.tsx`
 - `packages/tui/src/components/event-stream.tsx`
-- `packages/tui/src/components/detailed-transcript-panel.tsx`
+- `packages/tui/src/components/transcript-viewport.tsx`
 - `packages/tui/src/components/todo-band.tsx`
 - `packages/tui/src/components/status-bar.tsx`
 - `packages/tui/src/lib/transcript-presentation.ts`
+- `packages/tui/src/lib/transcript-document.ts`
+- `packages/tui/src/lib/transcript-layout.ts`
+- `packages/tui/src/state/transcript-viewport-state.ts`
+- `packages/tui/src/lib/terminal-restore.ts`
 - `packages/tui/src/lib/task-activity.ts`
 - `packages/tui/src/components/capabilities-panel.tsx`
 - `packages/tui/src/components/approval-prompt.tsx`

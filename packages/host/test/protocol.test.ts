@@ -3420,6 +3420,9 @@ describe("host protocol", () => {
           false,
         );
         expect(tools.some((tool) => tool.name === "spawn_agent")).toBe(true);
+        expect(tools.some((tool) => tool.name === "read_agent_report")).toBe(
+          true,
+        );
         expect(tools.some((tool) => tool.name === "create_skill")).toBe(true);
         expect(tools.some((tool) => tool.name === "create_agent")).toBe(true);
         expect(tools.some((tool) => tool.name === "list_skills")).toBe(true);
@@ -4418,15 +4421,17 @@ describe("host protocol", () => {
       const summary = JSON.parse(output.chunks[0]?.data ?? "{}") as {
         type?: string;
         childRunId?: string;
-        agentId?: string;
-        finality?: string;
+        status?: string;
+        report?: string;
+        workspace?: { writes?: number };
       };
       expect(summary).toMatchObject({
         type: "agent.completed",
+        status: "completed",
+        report: "scripted background agent completed.",
+        workspace: { writes: 0 },
       });
-      expect(summary.agentId).toMatch(/^dynamic_agent_/);
       expect(summary.childRunId).toMatch(/^run_/);
-      expect(["complete", "partial"]).toContain(summary.finality);
 
       const runEvents = emitted
         .filter(

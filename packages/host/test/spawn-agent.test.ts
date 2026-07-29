@@ -8,10 +8,15 @@ import {
   createRun,
   createWorkspaceReadScopePolicy,
   defineTool,
+  type ModelInput,
   type RuntimeContext,
 } from "@sparkwright/core";
 import { LocalWorkspace } from "@sparkwright/core/internal";
-import { InMemoryTaskStore, TaskManager } from "@sparkwright/agent-runtime";
+import {
+  IN_PROCESS_CHILD_AGENT_CONTRACT_PROMPT,
+  InMemoryTaskStore,
+  TaskManager,
+} from "@sparkwright/agent-runtime";
 import { createDynamicSpawnAgentTool } from "../src/runtime.js";
 import {
   createAgentSpawnPayloadSchema,
@@ -40,10 +45,18 @@ function childReadTool() {
   });
 }
 
-function terminalChildModel(onCall?: (toolNames: string[]) => void) {
+function terminalChildModel(
+  onCall?: (
+    toolNames: string[],
+    prompt: Array<{ role?: string; content?: string }>,
+  ) => void,
+) {
   return {
-    async complete(input: { tools: Array<{ name: string }> }) {
-      onCall?.(input.tools.map((tool) => tool.name));
+    async complete(input: ModelInput) {
+      onCall?.(
+        input.tools.map((tool) => tool.name),
+        input.prompt ?? [],
+      );
       return {
         message: "Child completed the delegated task.",
         toolCalls: [
@@ -65,7 +78,10 @@ function terminalChildModel(onCall?: (toolNames: string[]) => void) {
 function dynamicTool(input: {
   parent: ReturnType<typeof createRun>;
   childTools?: ReturnType<typeof childReadTool>[];
-  onModelCall?: (toolNames: string[]) => void;
+  onModelCall?: (
+    toolNames: string[],
+    prompt: Array<{ role?: string; content?: string }>,
+  ) => void;
 }) {
   return createDynamicSpawnAgentTool({
     getParent: () => input.parent,
@@ -100,10 +116,15 @@ describe("host spawn_agent execution control plane", () => {
       maxSteps: 4,
     });
     let observedTools: string[] = [];
+    let observedSystemText = "";
     const tool = dynamicTool({
       parent,
-      onModelCall: (tools) => {
+      onModelCall: (tools, prompt) => {
         observedTools = tools;
+        observedSystemText = prompt
+          .filter((message) => message.role === "system")
+          .map((message) => message.content ?? "")
+          .join("\n");
       },
     });
 
@@ -119,11 +140,13 @@ describe("host spawn_agent execution control plane", () => {
     expect(observedTools).toEqual(
       expect.arrayContaining(["read", "submit_agent_result"]),
     );
+    expect(observedSystemText).toContain(
+      IN_PROCESS_CHILD_AGENT_CONTRACT_PROMPT,
+    );
     expect(output).toMatchObject({
       status: "completed",
-      statusSource: "child",
-      summary: "Delegated task complete",
-      role: "reviewer",
+      report: "Child completed the delegated task.",
+      workspace: { writes: 0 },
     });
   });
 
@@ -149,7 +172,8 @@ describe("host spawn_agent execution control plane", () => {
 
     expect(output).toMatchObject({
       status: "completed",
-      role: "legacy reviewer",
+      report: "Child completed the delegated task.",
+      workspace: { writes: 0 },
     });
   });
 
@@ -177,20 +201,22 @@ describe("host spawn_agent execution control plane", () => {
 
     const first = (await tool.execute(firstInput, {
       run: parent.record,
-    } as never)) as { agentId: string };
+    } as never)) as { childRunId: string };
     const cached = (await tool.execute(firstInput, {
       run: parent.record,
-    } as never)) as { agentId: string; alreadyCompleted?: boolean };
+    } as never)) as { childRunId: string; warnings?: string[] };
     const changed = (await tool.execute(
       { ...firstInput, context: "Revision B" },
       { run: parent.record } as never,
-    )) as { agentId: string };
+    )) as { childRunId: string };
 
     expect(cached).toMatchObject({
-      agentId: first.agentId,
-      alreadyCompleted: true,
+      childRunId: first.childRunId,
+      warnings: [
+        "The runtime reused this completed child result; no new child ran.",
+      ],
     });
-    expect(changed.agentId).not.toBe(first.agentId);
+    expect(changed.childRunId).not.toBe(first.childRunId);
     expect(childCalls).toBe(2);
   });
 
@@ -392,7 +418,8 @@ describe("host spawn_agent execution control plane", () => {
 
     expect(output).toMatchObject({
       status: "blocked",
-      summary: "Confidential read was denied",
+      report: "Confidential read was denied",
+      workspace: { writes: 0 },
       blockers: [{ code: "READ_SCOPE_DENIED" }],
     });
   });

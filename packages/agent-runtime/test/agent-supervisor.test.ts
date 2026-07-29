@@ -42,10 +42,8 @@ describe("AgentSupervisor", () => {
       parentRunId: "run_parent",
       terminalState: "completed",
       status: "completed",
-      statusSource: "adapter",
       summary: "Agent adapter completed successfully.",
       blockers: [],
-      finality: "complete",
     });
     expect(events.all().at(-1)?.metadata).toMatchObject({
       childAgentId: "reviewer",
@@ -68,9 +66,7 @@ describe("AgentSupervisor", () => {
     expect(events.all().at(-1)?.payload).toMatchObject({
       terminalState: "failed",
       status: "partial",
-      statusSource: "adapter",
       blockers: [{ code: "ACCESS_DENIED" }],
-      finality: "partial",
       errorCode: "ACCESS_DENIED",
     });
   });
@@ -82,9 +78,7 @@ describe("AgentSupervisor", () => {
     supervisor.started();
     supervisor.completed({
       terminalState: "blocked",
-      finality: "partial",
       status: "blocked",
-      statusSource: "child",
       summary: "Shell execution is required.",
       blockers: [
         {
@@ -101,9 +95,7 @@ describe("AgentSupervisor", () => {
     expect(events.all().at(-1)?.payload).toMatchObject({
       terminalState: "blocked",
       status: "blocked",
-      statusSource: "child",
       summary: "Shell execution is required.",
-      finality: "partial",
       blockers: [{ code: "SHELL_REQUIRED", kind: "capability" }],
     });
   });

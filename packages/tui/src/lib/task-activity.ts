@@ -146,7 +146,13 @@ export function summarizeUnreadTaskActivity(
 ): UnreadTaskActivitySummary {
   const unread = tasks.filter(
     (task) =>
-      task.lastSequence > lastSeenSequence && terminalStatus(task.status),
+      task.lastSequence > lastSeenSequence &&
+      terminalStatus(task.status) &&
+      !(
+        task.status === "completed" &&
+        (task.completionPolicy === "inline" ||
+          task.completionPolicy === "awaited")
+      ),
   );
   return {
     total: unread.length,
@@ -228,6 +234,8 @@ function updateTaskFromPayload(
   task.title = str(payload.title) || task.title;
   if (isTaskCompletionPolicy(payload.completionPolicy)) {
     task.completionPolicy = payload.completionPolicy;
+  } else if (isTaskCompletionPolicy(payload.actualMode)) {
+    task.completionPolicy = payload.actualMode;
   }
   if (typeof payload.awaited === "boolean") task.awaited = payload.awaited;
   task.command =

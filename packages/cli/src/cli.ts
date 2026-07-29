@@ -4951,7 +4951,7 @@ function helpForArgs(
     return "Usage: sparkwright trace <summary|events|timeline|report|verify> <trace.jsonl>";
   }
   if (command === "tui") {
-    return "Usage: sparkwright tui [--workspace path] [--session-root path] [--model provider/model] [--access-mode read-only|ask|accept-edits|bypass] [--trace-level standard|debug] [--session-id id]";
+    return "Usage: sparkwright tui [--workspace path] [--session-root path] [--model provider/model] [--access-mode read-only|ask|accept-edits|bypass] [--trace-level standard|debug] [--session-id id] [--no-alt-screen]";
   }
   if (command === "acp") {
     return "Usage: sparkwright acp [--workspace path] [--session-root path] [--model provider/model] [--access-mode read-only|ask|accept-edits|bypass] [--trace-level standard|debug]";
@@ -5251,7 +5251,7 @@ function usage(_env: Record<string, string | undefined>): string {
     "Usage: sparkwright init             # scaffold ~/.config/sparkwright/config.yaml",
     "       sparkwright init --project   # scaffold committable <workspace>/.sparkwright/config.yaml",
     "       sparkwright --version|-v      # print CLI package version",
-    "       sparkwright tui [--workspace path] [--session-root path] [--model provider/model] [--access-mode read-only|ask|accept-edits|bypass] [--trace-level standard|debug] [--session-id id]",
+    "       sparkwright tui [--workspace path] [--session-root path] [--model provider/model] [--access-mode read-only|ask|accept-edits|bypass] [--trace-level standard|debug] [--session-id id] [--no-alt-screen]",
     "       sparkwright acp [--workspace path] [--session-root path] [--model provider/model] [--access-mode read-only|ask|accept-edits|bypass] [--trace-level standard|debug]",
     "       sparkwright capabilities inspect [--workspace path] [--model provider/model] [--resolve-mcp] [--format json|text]",
     "       sparkwright doctor paths [--workspace path] [--session-root path] [--format json|text]",

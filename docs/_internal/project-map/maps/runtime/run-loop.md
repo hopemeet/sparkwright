@@ -10,6 +10,16 @@ See [tool-orchestration.md](tool-orchestration.md) and [../trace/raw-trace.md](.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-26
+- Scope: a natural final on the final allowed action is complete. Only the
+  forced tool-less budget wrap-up is step-limited/truncated, and a terminal
+  tool with deterministic rendered prose completes without an additional
+  finalization model turn.
+- Read: Core natural-final, terminal-tool, and budget-wrap paths plus Agent
+  Runtime outcome projection.
+- Tests: Core 661/661 and Agent Runtime 259/259 passed.
+
+- Status: Verified
 - Date: 2026-07-25
 - Scope: route review for terminal Agent action receipts. Core model/tool
   transitions, completion ownership, budgets, approvals, and stop conditions

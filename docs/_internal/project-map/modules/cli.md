@@ -9,6 +9,13 @@ See also [../maps/trace/summary-timeline-verify.md](../maps/trace/summary-timeli
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-26
+- Scope: CLI TUI usage now advertises and forwards `--no-alt-screen`; terminal
+  lifecycle and renderer selection remain owned by `@sparkwright/tui`.
+- Read: CLI TUI dispatch/usage and TUI argument parsing/startup validation.
+- Tests: CLI/TUI typechecks and TUI startup help regression passed.
+
+- Status: Verified
 - Date: 2026-07-25
 - Scope: Direct Core continues to use Host's workflow-hook assembly, but no
   longer passes goal/write context for an implicit documented-command Stop

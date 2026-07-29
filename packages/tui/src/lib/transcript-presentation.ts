@@ -7,7 +7,11 @@ import {
   summarizeToolResultForDisplay,
   type ToolDisplayTone,
 } from "./tool-display.js";
-import { isAgentToolResult } from "./tool-result-summary.js";
+import { isParentAgentResult } from "./tool-result-summary.js";
+import {
+  collectConversationApprovalStates,
+  conversationApprovalIdentity,
+} from "./conversation-projection.js";
 
 export type TranscriptMode = "compact" | "detailed";
 
@@ -38,6 +42,8 @@ export interface TranscriptBlock {
   summary: string;
   tone: ToolDisplayTone;
   sections: TranscriptDetailSection[];
+  runId?: string;
+  parentKey?: string;
 }
 
 export interface TranscriptLine {
@@ -48,14 +54,30 @@ export interface TranscriptLine {
 }
 
 export interface DetailedTranscriptProjection {
-  scope: "current run" | "latest run";
+  scope: "current run" | "latest run" | "session";
   blocks: TranscriptBlock[];
   lines: TranscriptLine[];
   truncated: boolean;
 }
 
+export interface TranscriptProjectionOptions {
+  /**
+   * The legacy details panel showed only the current/latest turn. The owned
+   * viewport needs the complete presentation history, so it opts into session
+   * scope while export remains independent of either projection.
+   */
+  scope?: "latest" | "session";
+  maxLines?: number;
+}
+
 export type AgentDisplayStatus =
-  "queued" | "running" | "completed" | "partial" | "blocked" | "failed";
+  | "queued"
+  | "running"
+  | "completed"
+  | "completed_with_issues"
+  | "partial"
+  | "blocked"
+  | "failed";
 
 export interface AgentPresentation {
   key: string;
@@ -68,7 +90,10 @@ export interface AgentPresentation {
   summary?: string;
   blockerCodes: string[];
   blockerLines: string[];
+  issueLines: string[];
+  diagnosticCodes: string[];
   errorCode?: string;
+  errorMessage?: string;
   actionCount?: number;
   actions: AgentActionSummary[];
   workspaceWrites?: number;
@@ -88,6 +113,8 @@ interface ToolPresentation {
   preview?: string;
   result?: unknown;
   failed?: boolean;
+  skipped?: boolean;
+  skipReason?: string;
   error?: string;
   errorCode?: string;
 }
@@ -118,23 +145,23 @@ export function collectAgentToolCallIds(
 ): Set<string> {
   const ids = new Set<string>();
   const requestNames = new Map<string, string>();
-  for (const event of events) {
+  for (const [ordinal, event] of events.entries()) {
     const payload = rec(event.payload);
     if (event.type === "tool.requested") {
-      const id = toolRequestId(payload);
+      const id = toolIdentity(event, ordinal);
       const name = str(payload.toolName);
       if (id) requestNames.set(id, name);
       if (id && isAgentOrchestrationToolName(name)) ids.add(id);
       continue;
     }
     if (event.type !== "tool.completed") continue;
-    const id = toolCompletionId(payload);
+    const id = toolIdentity(event, ordinal);
     const name = str(payload.toolName) || requestNames.get(id) || "";
     const result = payload.result ?? payload.output;
     if (
       id &&
       (isAgentOrchestrationToolName(name) ||
-        isAgentToolResult(result) ||
+        isParentAgentResult(result) ||
         Boolean(str(rec(result).childRunId)))
     ) {
       ids.add(id);
@@ -176,17 +203,17 @@ export function shouldShowInCompactTranscript(
   }
   if (event.type === "tool.requested") {
     const name = str(payload.toolName);
-    const id = toolRequestId(payload);
+    const id = scopedToolCallIdentity(event) ?? "";
     return !isAgentOrchestrationToolName(name) && !agentToolCallIds.has(id);
   }
   if (event.type === "tool.completed") {
     const name = str(payload.toolName);
-    const id = toolCompletionId(payload);
+    const id = scopedToolCallIdentity(event) ?? "";
     const result = payload.result ?? payload.output;
     return (
       !isAgentOrchestrationToolName(name) &&
       !agentToolCallIds.has(id) &&
-      !isAgentToolResult(result)
+      !isParentAgentResult(result)
     );
   }
   // Failures, approvals, safety signals, and all other conversation-worthy
@@ -198,11 +225,11 @@ export function collectAgentPresentations(
   events: readonly RunEvent[],
 ): Map<string, AgentPresentation> {
   const agents = new Map<string, AgentPresentation>();
-  for (const event of events) {
+  for (const [ordinal, event] of events.entries()) {
     if (!event.type.startsWith("subagent.")) continue;
     const payload = rec(event.payload);
     const metadata = rec(event.metadata);
-    const key = agentIdentity(event);
+    const key = agentIdentity(event, ordinal);
     const previous = agents.get(key);
     const timestamp = eventTimestamp(event);
     const phase = event.type.slice("subagent.".length);
@@ -210,11 +237,21 @@ export function collectAgentPresentations(
     const assessment = rec(payload.assessment);
     const assessmentHealth = str(assessment.health);
     const terminalState = str(payload.terminalState);
+    const assessmentIssues = Array.isArray(assessment.issues)
+      ? assessment.issues.map(rec)
+      : [];
+    const actions = parseAgentActions(payload.actions);
+    const hasAssessmentIssues =
+      assessmentHealth === "degraded" ||
+      assessmentHealth === "failing" ||
+      assessmentIssues.length > 0;
     const status: AgentDisplayStatus =
       semanticStatus === "blocked" || semanticStatus === "partial"
         ? semanticStatus
         : semanticStatus === "completed"
-          ? "completed"
+          ? hasAssessmentIssues
+            ? "completed_with_issues"
+            : "completed"
           : phase === "requested"
             ? "queued"
             : phase === "started"
@@ -229,11 +266,15 @@ export function collectAgentPresentations(
     const blockers = Array.isArray(payload.blockers)
       ? payload.blockers.map(rec)
       : [];
-    const assessmentIssues = Array.isArray(assessment.issues)
-      ? assessment.issues.map(rec)
-      : [];
     const error = rec(payload.error);
-    const actions = parseAgentActions(payload.actions);
+    const workspaceWrites =
+      number(payload.workspaceWrites) ?? previous?.workspaceWrites;
+    const issueLines =
+      assessmentIssues.length > 0
+        ? assessmentIssues.flatMap((issue) =>
+            formatAssessmentIssue(issue, actions, workspaceWrites),
+          )
+        : (previous?.issueLines ?? []);
     const durationMs =
       number(metadata.durationMs) ??
       number(payload.durationMs) ??
@@ -265,31 +306,28 @@ export function collectAgentPresentations(
       task: str(payload.goal) || previous?.task || undefined,
       status,
       summary: str(payload.summary) || previous?.summary || undefined,
-      blockerCodes: unique([
-        ...blockers.map((blocker) => str(blocker.code)),
-        ...assessmentIssues.map((issue) => str(issue.code)),
-      ]),
+      blockerCodes: unique(blockers.map((blocker) => str(blocker.code))),
       blockerLines: unique(
-        blockers
-          .map((blocker) =>
-            [str(blocker.code), str(blocker.message)]
-              .filter(Boolean)
-              .join(" · "),
-          )
-          .filter(Boolean),
+        blockers.map((blocker) => str(blocker.message)).filter(Boolean),
       ),
+      issueLines,
+      diagnosticCodes: unique([
+        ...assessmentIssues.flatMap(assessmentDiagnosticCodes),
+        ...actions.map((action) => action.errorCode ?? ""),
+        ...(previous?.diagnosticCodes ?? []),
+      ]),
       errorCode:
         str(error.code) ||
         str(payload.errorCode) ||
         previous?.errorCode ||
         undefined,
+      errorMessage: str(error.message) || previous?.errorMessage || undefined,
       actionCount:
         actions.length > 0
           ? actions.length
           : (number(payload.toolCalls) ?? previous?.actionCount ?? undefined),
       actions: actions.length > 0 ? actions : (previous?.actions ?? []),
-      workspaceWrites:
-        number(payload.workspaceWrites) ?? previous?.workspaceWrites,
+      workspaceWrites,
       requestedAt: phase === "requested" ? timestamp : previous?.requestedAt,
       startedAt: phase === "started" ? timestamp : previous?.startedAt,
       endedAt:
@@ -314,13 +352,18 @@ export function formatAgentSummary(agent: AgentPresentation): string {
   ]
     .filter(Boolean)
     .join(" · ");
-  return `└─ Agent · ${agent.name} ${agent.status}${suffix ? ` · ${suffix}` : ""}`;
+  const status =
+    agent.status === "completed_with_issues"
+      ? "completed with issues"
+      : agent.status;
+  return `└─ Agent · ${agent.name} ${status}${suffix ? ` · ${suffix}` : ""}`;
 }
 
 export function agentTone(agent: AgentPresentation): ToolDisplayTone {
   if (agent.status === "failed") return "error";
   if (agent.status === "blocked" || agent.status === "partial")
     return "warning";
+  if (agent.status === "completed_with_issues") return "warning";
   if (agent.status === "completed") return "success";
   return "normal";
 }
@@ -331,13 +374,15 @@ export function agentCompactFailureDetail(
   if (
     agent.status !== "failed" &&
     agent.status !== "blocked" &&
-    agent.status !== "partial"
+    agent.status !== "partial" &&
+    agent.status !== "completed_with_issues"
   ) {
     return undefined;
   }
   return (
-    agent.errorCode ||
-    agent.blockerCodes[0] ||
+    agent.errorMessage ||
+    agent.issueLines[0] ||
+    agent.blockerLines[0] ||
     agent.summary ||
     `${agent.status} before completion`
   );
@@ -346,8 +391,13 @@ export function agentCompactFailureDetail(
 export function buildDetailedTranscript(
   allEvents: readonly RunEvent[],
   todoItems: readonly TodoPanelItem[] = [],
+  options: TranscriptProjectionOptions = {},
 ): DetailedTranscriptProjection {
-  const events = currentOrLatestRunEvents(allEvents);
+  const events =
+    options.scope === "session"
+      ? [...allEvents]
+      : currentOrLatestRunEvents(allEvents);
+  const approvalStates = collectConversationApprovalStates(events);
   const agents = collectAgentPresentations(events);
   const agentByRunId = new Map<string, AgentPresentation>();
   for (const agent of agents.values()) {
@@ -358,7 +408,7 @@ export function buildDetailedTranscript(
   const actionsByAgent = new Map<string, string[]>();
   for (const tool of tools.values()) {
     const agent = tool.runId ? agentByRunId.get(tool.runId) : undefined;
-    if (!agent) continue;
+    if (!agent || tool.name === "submit_agent_result") continue;
     const list = actionsByAgent.get(agent.key) ?? [];
     list.push(formatToolAction(tool));
     actionsByAgent.set(agent.key, list);
@@ -369,10 +419,10 @@ export function buildDetailedTranscript(
   const emittedTools = new Set<string>();
   let emittedTodo = false;
 
-  for (const event of events) {
+  for (const [ordinal, event] of events.entries()) {
     const payload = rec(event.payload);
     if (event.type.startsWith("subagent.")) {
-      const key = agentIdentity(event);
+      const key = agentIdentity(event, ordinal);
       if (emittedAgents.has(key)) continue;
       emittedAgents.add(key);
       const agent = agents.get(key);
@@ -392,14 +442,15 @@ export function buildDetailedTranscript(
       event.type === "tool.completed" ||
       event.type === "tool.failed"
     ) {
-      const key =
-        event.type === "tool.requested"
-          ? toolRequestId(payload)
-          : toolCompletionId(payload);
-      const tool = tools.get(key || `event:${event.id ?? event.sequence}`);
+      const tool = tools.get(toolIdentity(event, ordinal));
       if (!tool || emittedTools.has(tool.key)) continue;
       emittedTools.add(tool.key);
-      if (tool.runId && agentByRunId.has(tool.runId)) continue;
+      const owningAgent = tool.runId ? agentByRunId.get(tool.runId) : undefined;
+      const terminalReceiptCoversTool =
+        owningAgent?.actions.some((action) =>
+          toolIdentityMatchesCall(tool.key, action.toolCallId),
+        ) === true;
+      if (owningAgent && (!tool.failed || terminalReceiptCoversTool)) continue;
       if (isAgentOrchestrationToolName(tool.name)) continue;
       if (tool.name === "todo_write") {
         if (!emittedTodo && todoItems.length > 0) {
@@ -412,7 +463,11 @@ export function buildDetailedTranscript(
       continue;
     }
 
-    if (event.runId && agentByRunId.has(event.runId)) {
+    if (
+      event.runId &&
+      agentByRunId.has(event.runId) &&
+      !isChildCompactException(event, payload)
+    ) {
       // Child-run success content is owned by the parent Agent block. Tool
       // lifecycles were already consumed above as Agent actions.
       continue;
@@ -422,7 +477,7 @@ export function buildDetailedTranscript(
       const goal = str(payload.goal).trim();
       if (goal) {
         blocks.push({
-          key: eventKey(event),
+          key: eventKey(event, ordinal),
           kind: "user",
           level: "primary",
           sequence: event.sequence,
@@ -437,7 +492,7 @@ export function buildDetailedTranscript(
 
     if (event.type === "model.assistant_text") {
       const message = str(payload.message).trim();
-      if (message) blocks.push(assistantBlock(event, message));
+      if (message) blocks.push(assistantBlock(event, message, ordinal));
       continue;
     }
 
@@ -445,25 +500,25 @@ export function buildDetailedTranscript(
       const state = str(payload.state);
       if (state === "failed") {
         blocks.push({
-          key: eventKey(event),
+          key: eventKey(event, ordinal),
           kind: "failure",
           level: "primary",
           sequence: event.sequence,
           indent: 0,
-          summary: `run failed · ${failureMessage(payload)}`,
+          summary: `── run failed: ${failureMessage(payload)}`,
           tone: "error",
           sections: [],
         });
       } else {
         const message = str(payload.message).trim();
-        if (message) blocks.push(assistantBlock(event, message));
+        if (message) blocks.push(assistantBlock(event, message, ordinal));
       }
       continue;
     }
 
     if (event.type === "run.cancelled") {
       blocks.push({
-        key: eventKey(event),
+        key: eventKey(event, ordinal),
         kind: "failure",
         level: "primary",
         sequence: event.sequence,
@@ -476,23 +531,33 @@ export function buildDetailedTranscript(
     }
 
     if (event.type === "approval.requested") {
+      const approvalIdentity = conversationApprovalIdentity(event);
+      const decision = approvalIdentity
+        ? approvalStates.get(approvalIdentity)?.decision
+        : undefined;
+      const status = decision || "requested";
       blocks.push({
-        key: eventKey(event),
+        key: approvalIdentity ?? eventKey(event, ordinal),
         kind: "approval",
         level: "primary",
         sequence: event.sequence,
         indent: 0,
-        summary: `approval requested · ${str(payload.summary) || str(payload.action) || "review required"}`,
-        tone: "warning",
+        summary: `approval ${status} · ${str(payload.summary) || str(payload.action) || "review required"}`,
+        tone: status === "approved" ? "success" : "warning",
         sections: [],
       });
       continue;
     }
 
     if (event.type === "approval.resolved") {
+      const approvalIdentity = conversationApprovalIdentity(event);
+      if (approvalIdentity && approvalStates.get(approvalIdentity)?.requested) {
+        continue;
+      }
       const decision = str(payload.decision) || "resolved";
+      if (decision === "approved") continue;
       blocks.push({
-        key: eventKey(event),
+        key: eventKey(event, ordinal),
         kind: "approval",
         level: "primary",
         sequence: event.sequence,
@@ -509,7 +574,7 @@ export function buildDetailedTranscript(
       event.type === "run.failed"
     ) {
       blocks.push({
-        key: eventKey(event),
+        key: eventKey(event, ordinal),
         kind: "failure",
         level: "primary",
         sequence: event.sequence,
@@ -517,7 +582,7 @@ export function buildDetailedTranscript(
         summary:
           event.type === "workspace.write.denied"
             ? `write denied · ${str(payload.path) || "workspace"}`
-            : `run failed · ${failureMessage(payload)}`,
+            : `── run failed: ${failureMessage(payload)}`,
         tone: "error",
         sections: [],
       });
@@ -530,19 +595,25 @@ export function buildDetailedTranscript(
   }
 
   const flattened = flattenTranscriptBlocks(blocks);
-  const truncated = flattened.length > MAX_DETAIL_LINES;
+  const maxLines = options.maxLines ?? MAX_DETAIL_LINES;
+  const truncated = flattened.length > maxLines;
   const lines = truncated
     ? [
         {
           key: "__truncated",
-          text: `… ${flattened.length - MAX_DETAIL_LINES} earlier detail lines omitted …`,
+          text: `… ${flattened.length - maxLines} earlier detail lines omitted …`,
           tone: "warning" as const,
         },
-        ...flattened.slice(-MAX_DETAIL_LINES),
+        ...flattened.slice(-maxLines),
       ]
     : flattened;
   return {
-    scope: hasOpenRun(events) ? "current run" : "latest run",
+    scope:
+      options.scope === "session"
+        ? "session"
+        : hasOpenRun(events)
+          ? "current run"
+          : "latest run",
     blocks,
     lines,
     truncated,
@@ -601,11 +672,10 @@ function collectToolPresentations(
   events: readonly RunEvent[],
 ): Map<string, ToolPresentation> {
   const tools = new Map<string, ToolPresentation>();
-  for (const event of events) {
+  for (const [ordinal, event] of events.entries()) {
     const payload = rec(event.payload);
     if (event.type === "tool.requested") {
-      const key =
-        toolRequestId(payload) || `event:${event.id ?? event.sequence}`;
+      const key = toolIdentity(event, ordinal);
       tools.set(key, {
         key,
         firstSequence: event.sequence,
@@ -619,10 +689,11 @@ function collectToolPresentations(
     if (event.type !== "tool.completed" && event.type !== "tool.failed") {
       continue;
     }
-    const key =
-      toolCompletionId(payload) || `event:${event.id ?? event.sequence}`;
+    const key = toolIdentity(event, ordinal);
     const previous = tools.get(key);
     const error = rec(payload.error);
+    const result = payload.result ?? payload.output ?? previous?.result;
+    const resultRecord = rec(result);
     tools.set(key, {
       key,
       firstSequence: previous?.firstSequence ?? event.sequence,
@@ -630,8 +701,10 @@ function collectToolPresentations(
       name: str(payload.toolName) || previous?.name || "tool",
       args: previous?.args,
       preview: previous?.preview,
-      result: payload.result ?? payload.output ?? previous?.result,
+      result,
       failed: event.type === "tool.failed",
+      skipped: resultRecord.skipped === true,
+      skipReason: str(resultRecord.reason) || undefined,
       error:
         str(error.message) ||
         (event.type === "tool.failed"
@@ -670,9 +743,9 @@ function agentBlock(
   const sections: TranscriptDetailSection[] = [];
   if (agent.task) sections.push({ label: "task", lines: [agent.task] });
   const actions =
-    agent.actions.length > 0
-      ? agent.actions.map(formatAgentActionSummary)
-      : fallbackActions;
+    fallbackActions.length > 0
+      ? fallbackActions
+      : agent.actions.map(formatAgentActionSummary);
   if (actions.length > 0) {
     sections.push({ label: "actions", lines: [...actions] });
   }
@@ -689,6 +762,14 @@ function agentBlock(
       tone: agent.workspaceWrites === 0 ? "warning" : "success",
     });
   }
+  const issues = unique([
+    ...agent.issueLines,
+    ...(agent.errorMessage ? [agent.errorMessage] : []),
+    ...agent.blockerLines,
+  ]);
+  if (issues.length > 0) {
+    sections.push({ label: "issue", lines: issues, tone: "warning" });
+  }
   const result = childResult || agent.summary;
   if (result) {
     sections.push({
@@ -697,13 +778,17 @@ function agentBlock(
       tone: agentTone(agent),
     });
   }
-  const errors = unique([
+  const diagnostics = unique([
     ...(agent.errorCode ? [agent.errorCode] : []),
-    ...agent.blockerLines,
     ...agent.blockerCodes,
+    ...agent.diagnosticCodes,
   ]);
-  if (errors.length > 0) {
-    sections.push({ label: "error", lines: errors, tone: "error" });
+  if (diagnostics.length > 0) {
+    sections.push({
+      label: "diagnostics",
+      lines: diagnostics,
+      tone: "muted",
+    });
   }
   return {
     key: `agent:${agent.key}`,
@@ -714,6 +799,8 @@ function agentBlock(
     summary: formatAgentSummary(agent),
     tone: agentTone(agent),
     sections,
+    runId: agent.childRunId,
+    parentKey: agent.parentRunId ? `run:${agent.parentRunId}` : undefined,
   };
 }
 
@@ -782,6 +869,8 @@ function toolBlock(tool: ToolPresentation): TranscriptBlock {
         ? "normal"
         : "success",
     sections,
+    runId: tool.runId,
+    parentKey: tool.runId ? `run:${tool.runId}` : undefined,
   };
 }
 
@@ -795,7 +884,7 @@ function todoBlock(
     level: "detail",
     sequence,
     indent: 0,
-    summary: `todo · ${items.filter((item) => item.status !== "completed").length} open · ${items.filter((item) => item.status === "completed").length} completed`,
+    summary: `todo (current snapshot) · ${items.filter((item) => item.status !== "completed").length} open · ${items.filter((item) => item.status === "completed").length} completed`,
     tone: "normal",
     sections: [
       {
@@ -809,9 +898,13 @@ function todoBlock(
   };
 }
 
-function assistantBlock(event: RunEvent, message: string): TranscriptBlock {
+function assistantBlock(
+  event: RunEvent,
+  message: string,
+  ordinal: number,
+): TranscriptBlock {
   return {
-    key: eventKey(event),
+    key: eventKey(event, ordinal),
     kind: "assistant",
     level: "primary",
     sequence: event.sequence,
@@ -822,7 +915,7 @@ function assistantBlock(event: RunEvent, message: string): TranscriptBlock {
   };
 }
 
-function isChildCompactException(
+export function isChildCompactException(
   event: RunEvent,
   payload: Record<string, unknown>,
 ): boolean {
@@ -847,7 +940,16 @@ function isChildCompactException(
 
 function formatToolAction(tool: ToolPresentation): string {
   const preview = detailedArgumentPreview(tool, 120);
-  const status = tool.failed ? "✗" : tool.result === undefined ? "…" : "✓";
+  const exitCode = number(rec(tool.result).exitCode);
+  const status = tool.failed
+    ? "✗"
+    : tool.result === undefined
+      ? "…"
+      : tool.skipped
+        ? [tool.skipReason, "skipped"].filter(Boolean).join(" · ")
+        : exitCode !== undefined && exitCode !== 0
+          ? `exit ${exitCode} ✗`
+          : "✓";
   return `${[tool.name, preview].filter(Boolean).join("  ")}  ${status}`;
 }
 
@@ -855,12 +957,116 @@ function formatAgentActionSummary(action: AgentActionSummary): string {
   const outcome =
     action.status === "failed"
       ? [action.errorCode, "✗"].filter(Boolean).join(" ")
-      : action.status === "completed"
-        ? [action.exitCode !== undefined ? `exit ${action.exitCode}` : "", "✓"]
-            .filter(Boolean)
-            .join(" ")
-        : "…";
+      : action.status === "skipped"
+        ? [action.skipReason, "skipped"].filter(Boolean).join(" · ")
+        : action.status === "completed"
+          ? completedActionOutcome(action.exitCode)
+          : "…";
   return [action.toolName, action.preview, outcome].filter(Boolean).join("  ");
+}
+
+function formatAssessmentIssue(
+  issue: Record<string, unknown>,
+  actions: readonly AgentActionSummary[],
+  workspaceWrites: number | undefined,
+): string[] {
+  const code = str(issue.code);
+  const count = Math.max(1, number(issue.count) ?? 1);
+  const details = rec(issue.details);
+  const tools = stringArray(details.toolNames).slice(0, 3);
+  const underlyingCodes = stringArray(details.codes).slice(0, 3);
+
+  if (code === "UNRESOLVED_TOOL_FAILURE") {
+    const failedActions = actions.filter(
+      (action) => action.status === "failed",
+    );
+    if (failedActions.length > 0) {
+      return failedActions
+        .slice(0, 3)
+        .map((action) => formatUnresolvedAction(action, workspaceWrites));
+    }
+    return [
+      `${count} tool failure${count === 1 ? "" : "s"} remained unresolved${
+        tools.length > 0 ? ` in ${tools.join(", ")}` : ""
+      }${underlyingCodes.length > 0 ? ` (${underlyingCodes.join(", ")})` : ""}`,
+    ];
+  }
+  if (code === "RECOVERED_TOOL_FAILURE") {
+    return [
+      `${count} tool failure${count === 1 ? " was" : "s were"} recovered${
+        tools.length > 0 ? ` in ${tools.join(", ")}` : ""
+      }`,
+    ];
+  }
+  if (code === "EXPECTED_DENIAL") {
+    return [
+      `${count} expected policy or approval denial${
+        count === 1 ? " occurred" : "s occurred"
+      }${tools.length > 0 ? ` in ${tools.join(", ")}` : ""}`,
+    ];
+  }
+  if (code === "VERIFICATION_FAILED") {
+    const command = str(details.lastCommand);
+    return [
+      `Verification failed${command ? ` for ${command}` : ""}; the affected result is not verified`,
+    ];
+  }
+  const label = code
+    ? code.toLowerCase().replaceAll("_", " ")
+    : "runtime assessment issue";
+  return [`${label}${count > 1 ? ` (${count})` : ""}`];
+}
+
+function formatUnresolvedAction(
+  action: AgentActionSummary,
+  workspaceWrites: number | undefined,
+): string {
+  const subject = [action.toolName, action.preview].filter(Boolean).join(" ");
+  let message: string;
+  if (action.errorCode === "WORKSPACE_CREATE_CONFLICT") {
+    message = `${subject} failed because the target already exists`;
+  } else if (action.errorCode === "WORKSPACE_REPLACE_CONFLICT") {
+    message = `${subject} failed because the target does not exist`;
+  } else if (action.errorMessage) {
+    message = `${subject} failed: ${action.errorMessage}`;
+  } else {
+    message = `${subject} failed and was not recovered`;
+  }
+  return isWorkspaceMutationAction(action) && workspaceWrites === 0
+    ? `${message}; no successful workspace write proved creation or modification`
+    : message;
+}
+
+function isWorkspaceMutationAction(action: AgentActionSummary): boolean {
+  return (
+    action.toolName === "create" ||
+    action.toolName === "write" ||
+    action.toolName === "edit" ||
+    action.toolName === "edit_anchored_text"
+  );
+}
+
+function assessmentDiagnosticCodes(issue: Record<string, unknown>): string[] {
+  return unique([str(issue.code), ...stringArray(rec(issue.details).codes)]);
+}
+
+function toolIdentityMatchesCall(
+  identity: string,
+  toolCallId: string,
+): boolean {
+  return (
+    identity === `call:${toolCallId}` ||
+    identity.endsWith(`:call:${toolCallId}`)
+  );
+}
+
+function completedActionOutcome(exitCode: number | null | undefined): string {
+  return [
+    typeof exitCode === "number" ? `exit ${exitCode}` : "",
+    typeof exitCode === "number" && exitCode !== 0 ? "✗" : "✓",
+  ]
+    .filter(Boolean)
+    .join(" ");
 }
 
 function detailedArgumentPreview(
@@ -985,25 +1191,37 @@ function hasOpenRun(events: readonly RunEvent[]): boolean {
   return false;
 }
 
-export function agentIdentity(event: RunEvent): string {
+export function agentIdentity(event: RunEvent, ordinal: number): string {
   const payload = rec(event.payload);
   const metadata = rec(event.metadata);
-  return (
-    str(payload.childRunId) ||
-    str(metadata.childRunId) ||
-    str(payload.spanId) ||
-    event.spanId ||
-    str(metadata.spanId) ||
-    `legacy:${str(metadata.agentName) || str(metadata.agentId) || event.id || event.sequence}`
-  );
+  const childRunId = str(payload.childRunId) || str(metadata.childRunId);
+  if (childRunId) return childRunId;
+  const callId =
+    str(payload.agentCallId) ||
+    str(metadata.agentCallId) ||
+    str(payload.invocationId) ||
+    str(metadata.invocationId) ||
+    str(payload.toolCallId) ||
+    str(metadata.toolCallId);
+  if (!callId) return eventIdentity(event, ordinal);
+  const parentRunId =
+    str(payload.parentRunId) ||
+    str(metadata.parentRunId) ||
+    event.runId ||
+    str(payload.runId);
+  return parentRunId ? `run:${parentRunId}:call:${callId}` : `call:${callId}`;
 }
 
-function toolRequestId(payload: Record<string, unknown>): string {
-  return str(payload.id) || str(payload.toolCallId);
+export function toolIdentity(event: RunEvent, ordinal: number): string {
+  return scopedToolCallIdentity(event) ?? eventIdentity(event, ordinal);
 }
 
-function toolCompletionId(payload: Record<string, unknown>): string {
-  return str(payload.toolCallId) || str(payload.id);
+function scopedToolCallIdentity(event: RunEvent): string | undefined {
+  const payload = rec(event.payload);
+  const callId = str(payload.toolCallId) || str(payload.id);
+  if (!callId) return undefined;
+  const runId = runIdForEvent(event);
+  return runId ? `run:${runId}:call:${callId}` : `call:${callId}`;
 }
 
 function runIdForEvent(event: RunEvent): string | undefined {
@@ -1043,8 +1261,12 @@ function failureMessage(payload: Record<string, unknown>): string {
   );
 }
 
-function eventKey(event: RunEvent): string {
-  return event.id ?? `${event.type}:${event.sequence}`;
+function eventIdentity(event: RunEvent, ordinal: number): string {
+  return event.id ? `event:${event.id}` : `ordinal:${ordinal}`;
+}
+
+function eventKey(event: RunEvent, ordinal: number): string {
+  return event.id ?? `${event.type}:ordinal:${ordinal}`;
 }
 
 function splitText(value: string): string[] {
@@ -1074,7 +1296,8 @@ function parseAgentActions(value: unknown): AgentActionSummary[] {
         str(action.toolName) &&
         (action.status === "running" ||
           action.status === "completed" ||
-          action.status === "failed"),
+          action.status === "failed" ||
+          action.status === "skipped"),
     )
     .slice(0, 24)
     .map((action) => ({
@@ -1086,6 +1309,10 @@ function parseAgentActions(value: unknown): AgentActionSummary[] {
         ? { exitCode: action.exitCode as number | null }
         : {}),
       ...(str(action.errorCode) ? { errorCode: str(action.errorCode) } : {}),
+      ...(str(action.errorMessage)
+        ? { errorMessage: str(action.errorMessage) }
+        : {}),
+      ...(str(action.skipReason) ? { skipReason: str(action.skipReason) } : {}),
     }));
 }
 
@@ -1097,4 +1324,10 @@ function number(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value)
     ? value
     : undefined;
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
 }

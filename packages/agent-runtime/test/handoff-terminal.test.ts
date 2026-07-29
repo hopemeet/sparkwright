@@ -59,6 +59,12 @@ describe("agent execution control handoff", () => {
       ),
     ).toMatchObject({ ok: false, code: "AGENT_RESULT_PROTOCOL_INVALID" });
     expect(tool.terminal).toMatchObject({ kind: "agent_result" });
+    expect(tool.description).toContain(
+      "structured partial or blocked child outcome",
+    );
+    expect(tool.description).toContain(
+      "status completed remains accepted for compatibility",
+    );
   });
 
   it("projects a terminal tool declaration before the legacy text marker", () => {
@@ -106,11 +112,9 @@ describe("agent execution control handoff", () => {
 
     expect(result).toMatchObject({
       status: "completed",
-      statusSource: "child",
       summary: "Structured completion",
       accomplishments: ["Verified the resolver"],
       message: "Bound child answer",
-      finality: "complete",
     });
   });
 });

@@ -1,8 +1,46 @@
 import { describe, expect, it } from "vitest";
 import { renderTranscript } from "../src/lib/transcript.js";
+import { assembleTranscriptDocument } from "../src/lib/transcript-document.js";
+import { layoutTranscriptDocument } from "../src/lib/transcript-layout.js";
 import type { RunEvent } from "../src/lib/event-type.js";
 
 describe("renderTranscript", () => {
+  it("is independent of the compact/detailed UI projection", () => {
+    const events: RunEvent[] = [
+      {
+        id: "user",
+        type: "tui.user",
+        sequence: 1,
+        payload: { goal: "export me" },
+      },
+      {
+        id: "answer",
+        type: "run.completed",
+        sequence: 2,
+        payload: { message: "exported answer", reason: "final_answer" },
+      },
+    ];
+    const document = assembleTranscriptDocument({
+      epoch: "e1",
+      events,
+      header: {
+        workspaceRoot: "/x",
+        modelLabel: "deterministic",
+        sessionId: "s",
+      },
+    });
+    layoutTranscriptDocument(document, "compact", 80);
+    const exportHeader = {
+      sessionId: "s",
+      workspaceRoot: "/x",
+      exportedAt: new Date("2026-07-26T00:00:00.000Z"),
+    };
+    const compactExport = renderTranscript(exportHeader, events);
+    layoutTranscriptDocument(document, "detailed", 80);
+    const detailedExport = renderTranscript(exportHeader, events);
+    expect(detailedExport).toBe(compactExport);
+  });
+
   it("emits a header and User/Assistant sections", () => {
     const events: RunEvent[] = [
       {
@@ -313,6 +351,50 @@ describe("renderTranscript", () => {
     expect(md).not.toContain("todo_write");
     expect(md).not.toContain("Approval approved");
     expect(md).toContain("Approval denied");
+  });
+
+  it("renders final approval outcomes on their request rows", () => {
+    const events: RunEvent[] = [
+      {
+        id: "request_1",
+        runId: "run_1",
+        type: "approval.requested",
+        sequence: 1,
+        payload: {
+          id: "approval_1",
+          summary: "Create count_numbers.py",
+        },
+      },
+      {
+        id: "resolved_1",
+        runId: "run_1",
+        type: "approval.resolved",
+        sequence: 2,
+        payload: { approvalId: "approval_1", decision: "approved" },
+      },
+      {
+        id: "request_2",
+        runId: "run_1",
+        type: "approval.requested",
+        sequence: 3,
+        payload: { id: "approval_2", summary: "Run tool bash" },
+      },
+      {
+        id: "resolved_2",
+        runId: "run_1",
+        type: "approval.resolved",
+        sequence: 4,
+        payload: { approvalId: "approval_2", decision: "denied" },
+      },
+    ];
+
+    const md = renderTranscript(
+      { sessionId: "s", workspaceRoot: "/x" },
+      events,
+    );
+    expect(md).toContain("Approval approved: Create count_numbers.py");
+    expect(md).toContain("Approval denied: Run tool bash");
+    expect(md).not.toContain("Approval requested");
   });
 
   it("collects unknown events into a raw list", () => {

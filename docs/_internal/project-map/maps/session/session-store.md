@@ -10,6 +10,18 @@ See [../trace/raw-trace.md](../trace/raw-trace.md) for raw event evidence.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-26
+- Scope: `TranscriptDocument` is an immutable, presentation-only snapshot
+  scoped by `sessionId:clearGeneration`. Session switch, resume, and `/clear`
+  rebuild that epoch without persisting viewport mode or anchors. `/export`
+  continues reading the RunController session export buffer, so clearing the
+  visible epoch does not erase canonical session output.
+- Read: TUI RunController replay/export paths, EventStore reset behavior,
+  document assembly, and viewport state.
+- Tests: full-session replay grouping, session/clear reset coverage, and
+  export-after-clear integration passed.
+
+- Status: Verified
 - Date: 2026-07-25
 - Scope: the compact/detailed TUI change reads the existing append-only session
   event stream and adds no persisted UI mode, event family, cursor, or storage

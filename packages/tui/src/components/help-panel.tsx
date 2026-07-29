@@ -29,6 +29,10 @@ const GLOBAL_KEYS: ReadonlyArray<{ binding: keyof Bindings; what: string }> = [
   { binding: "activity.open", what: "background tasks / activity drawer" },
   { binding: "events.open", what: "activity events tab" },
   { binding: "details.toggle", what: "show / hide transcript details" },
+  { binding: "transcript.page-up", what: "scroll transcript up" },
+  { binding: "transcript.page-down", what: "scroll transcript down" },
+  { binding: "transcript.top", what: "jump to transcript start" },
+  { binding: "transcript.bottom", what: "follow transcript tail" },
   { binding: "cancel.run", what: "cancel the running goal" },
   { binding: "quit.app", what: "back out · press twice to quit" },
 ];

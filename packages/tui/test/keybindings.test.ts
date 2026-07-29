@@ -4,6 +4,7 @@ import {
   parseChords,
   chordMatches,
   ctrlCPressCount,
+  ctrlTranscriptBoundaryKey,
   formatBinding,
   isPlainEscapeChord,
   shouldDeferPrintableChordToInput,
@@ -74,6 +75,22 @@ describe("chordMatches", () => {
     expect(chordMatches(chord, { tab: true, shift: true }, "")).toBe(true);
     expect(chordMatches(chord, { tab: true, shift: false }, "")).toBe(false);
   });
+  it("matches restored Home/End flags with modifier parity", () => {
+    expect(
+      chordMatches(parseChord("ctrl+home")!, { ctrl: true, home: true }, ""),
+    ).toBe(true);
+    expect(
+      chordMatches(parseChord("ctrl+end")!, { ctrl: true, end: true }, ""),
+    ).toBe(true);
+    expect(
+      chordMatches(parseChord("ctrl+end")!, { ctrl: false, end: true }, ""),
+    ).toBe(false);
+  });
+  it("distinguishes shifted printable transcript keys", () => {
+    const chord = parseChord("shift+g")!;
+    expect(chordMatches(chord, { shift: true }, "G")).toBe(true);
+    expect(chordMatches(chord, { shift: false }, "g")).toBe(false);
+  });
   it("requires modifier parity", () => {
     const k = parseChord("k")!;
     expect(chordMatches(k, { ctrl: true }, "k")).toBe(false);
@@ -86,6 +103,16 @@ describe("ctrlCPressCount", () => {
     expect(ctrlCPressCount("")).toBe(0);
     expect(ctrlCPressCount("\x03")).toBe(1);
     expect(ctrlCPressCount("\x03\x03")).toBe(2);
+  });
+});
+
+describe("ctrlTranscriptBoundaryKey", () => {
+  it("recognizes common xterm and rxvt Ctrl+Home/Ctrl+End sequences", () => {
+    expect(ctrlTranscriptBoundaryKey("\x1b[1;5H")).toBe("home");
+    expect(ctrlTranscriptBoundaryKey("\x1b[7^")).toBe("home");
+    expect(ctrlTranscriptBoundaryKey("\x1b[1;5F")).toBe("end");
+    expect(ctrlTranscriptBoundaryKey("\x1b[8^")).toBe("end");
+    expect(ctrlTranscriptBoundaryKey("\x1b[H")).toBeNull();
   });
 });
 
@@ -136,6 +163,10 @@ describe("mergeBindings", () => {
     expect(DEFAULTS["activity.open"]).toEqual([parseChord("ctrl+o")]);
     expect(DEFAULTS["events.open"]).toEqual([]);
     expect(DEFAULTS["details.toggle"]).toEqual([parseChord("ctrl+t")]);
+    expect(DEFAULTS["transcript.page-up"]).toEqual([parseChord("pageup")]);
+    expect(DEFAULTS["transcript.page-down"]).toEqual([parseChord("pagedown")]);
+    expect(DEFAULTS["transcript.top"]).toEqual([parseChord("ctrl+home")]);
+    expect(DEFAULTS["transcript.bottom"]).toEqual([parseChord("ctrl+end")]);
     expect(DEFAULTS["cancel.run"]).toEqual([parseChord("esc")]);
     expect(DEFAULTS["cycle-permission-mode"]).toEqual([
       parseChord("shift+tab"),

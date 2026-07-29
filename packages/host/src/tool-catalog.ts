@@ -243,6 +243,7 @@ export function createMainHostToolCatalog(input: {
   delegateAgentTool?: ToolDefinition;
   delegateParallelTool?: ToolDefinition;
   dynamicSpawnTool?: ToolDefinition;
+  agentReportTool?: ToolDefinition;
   shell?: ShellConfig;
   backgroundTasks?: BackgroundTaskPolicy;
   configPaths?: readonly string[];
@@ -333,6 +334,7 @@ function createMainHostToolCatalogList(input: {
   delegateAgentTool?: ToolDefinition;
   delegateParallelTool?: ToolDefinition;
   dynamicSpawnTool?: ToolDefinition;
+  agentReportTool?: ToolDefinition;
   shell?: ShellConfig;
   backgroundTasks?: BackgroundTaskPolicy;
   configPaths?: readonly string[];
@@ -426,6 +428,9 @@ function createMainHostToolCatalogList(input: {
       : []),
     ...(input.dynamicSpawnTool
       ? [catalogEntry(input.dynamicSpawnTool, "agent")]
+      : []),
+    ...(input.agentReportTool
+      ? [catalogEntry(input.agentReportTool, "agent")]
       : []),
   ];
 }

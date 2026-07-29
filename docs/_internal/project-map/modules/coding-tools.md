@@ -12,6 +12,28 @@ See also [../maps/runtime/tool-orchestration.md](../maps/runtime/tool-orchestrat
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-29
+- Scope: Todo selection guidance now uses one general coordination invariant:
+  call `todo_write` only when durable plan state materially reduces the risk of
+  losing unresolved work. File/tool/verification counts, elapsed time, and
+  delegation are explicitly non-decisive signals; the previous numeric and
+  one-file scenario thresholds are removed.
+- Read: project-context tool-gated planning guidance, Todo tool description,
+  and focused tests.
+- Tests: Project Context 19/19, Agent Runtime Todo 8/8, and both package
+  typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-26
+- Scope: project-context delegation guidance now consumes the compact Agent
+  result directly: relay `report`, treat `workspace` as runtime-owned mutation
+  evidence, and preserve warnings/blockers. Per-invocation
+  `reportingGuidance` is no longer generated.
+- Read: project-context prompt builder, Agent result contract, and Host child
+  output projection.
+- Tests: Project Context 19/19 and Host focused Agent/tool/task 101/101 passed.
+
+- Status: Verified
 - Date: 2026-07-24
 - Scope: model-facing workspace mutation is split into `create`, `replace`,
   revisioned patch `edit`, and revisioned anchored edit. Reads return opaque
@@ -205,9 +227,11 @@ Does not own:
 - Project-context file-tool guidance tells the model to run relevant known
   verification after successful writes instead of re-reading just-written or
   unchanged files.
-- Project-context `todo_planning` is the model-visible authority for when to
-  use `todo_write`: it appears only when `todo_write` is in the live inventory,
-  while the tool schema carries only structural/status/evidence rules.
+- Project-context `todo_planning` appears only when `todo_write` is in the live
+  inventory and owns cadence/anti-churn guidance. It and the tool description
+  share the same selection invariant: use durable plan state only when it adds
+  material coordination value; mechanical step/file/tool counts are not the
+  decision boundary.
 - Main, dynamic child, configured delegate child, and CLI diagnostic coding
   tool exposure should flow through the host tool catalog before reaching
   runtime, direct-core/cron runs, and capability snapshots. Dynamic children

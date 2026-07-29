@@ -13,6 +13,41 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md),
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-29
+- Scope: `tool_search.maxResults` remains a free-text keyword ranking limit and
+  is explicitly documented as inapplicable to exact `select:` queries. Exact
+  selection behavior and related-tool expansion are unchanged.
+- Read: tool-search input schema, select/keyword execution branches, and
+  focused tests.
+- Tests: Core tool-search suite (7 tests) and typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-27
+- Scope: tool observations now consume additive semantic
+  `resultPresentation` hints for single Agent results and Agent batches.
+  Model-visible receipts keep `report` string-shaped with explicit truncation
+  and recovery metadata, preserve all eight parallel child indices, and fit
+  the complete serialized observation envelope to at most 7,500 characters. Raw
+  `tool.completed` results and streaming events remain unchanged.
+- Read: tool descriptors, default observation formatter, Core and Streaming
+  run-loop descriptor plumbing, Agent tool descriptors, and focused tests.
+- Tests: full `npm run release:check` passed, including all workspace suites,
+  the 16-case regression matrix, source/release install smoke, and focused
+  Core/Streaming raw-result regressions.
+
+- Status: Verified
+- Date: 2026-07-26
+- Scope: a natural final on the last allowed action is now complete; only the
+  separate forced, tool-less budget wrap-up is marked step-limited/truncated.
+  Terminal tools use their deterministic `renderMessage` directly when
+  available, avoiding an extra finalization model turn. Parent observations
+  recognize compact Agent `status`/`childRunId` while retaining legacy
+  finality fields only for trace migration.
+- Read: run terminal and budget-wrap paths, Agent observation projection,
+  context deduplication, and execution-control tests.
+- Tests: full Core 661/661 and focused terminal/context suites passed.
+
+- Status: Verified
 - Date: 2026-07-25
 - Scope: the semantic `CompletionEvaluator` identity is compatibility-retired.
   Core now calls `evaluateRuntimeState` only at terminal projection; the
@@ -319,8 +354,10 @@ Does not own:
   Core's no-progress guard compares effect, target, arguments/evidence, and
   state epoch instead of inferring progress from arbitrary output strings.
 - Core reserves a separate finalization model/token account from action
-  budgets. When a valid terminal result omits prose, it spends only this
-  reserve to render final text and falls back deterministically if unavailable.
+  budgets. A terminal tool's non-empty deterministic `renderMessage` is used
+  directly. Only a terminal result with neither bound assistant text nor a
+  rendered message spends this reserve to generate final text, with a
+  deterministic fallback if unavailable.
 - `evaluateRuntimeState` is a terminal runtime-fact projector, not a semantic
   completion gate. It records immutable child/approval/verification notices
   and may downgrade for runtime-owned budget exhaustion, but it never reopens

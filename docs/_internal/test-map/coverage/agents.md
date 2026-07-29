@@ -3,7 +3,7 @@
 ## Current Confidence
 
 - Status: `Partially Verified`
-- Last reviewed: 2026-07-21
+- Last reviewed: 2026-07-28
 - Evidence source: 2026-06-22 focused host/agent tests passed and real
   `openai/gpt-5.4-mini` read-only dynamic `spawn_agent` canaries produced valid
   trace/session structure. A configured read/write delegate canary wrote through
@@ -62,6 +62,48 @@
   parent conversation/tool results, and invalidate reuse when context changes.
 
 ## Covered
+
+- 2026-07-28 result/prompt simplification coverage verifies generic
+  provenance and stopping rules, removal of health-warning duplication, the
+  smaller internal invocation result and parallel batch shape, unchanged
+  clean-only reuse, bounded task failure evidence, and removal of lifecycle/
+  context/session `statusSource` and `finality` projections.
+  A real `openai/gpt-5.6-terra` dynamic-spawn run against a pre-existing
+  `print_numbers.py` used four child tool actions (`glob`, two parallel reads,
+  one successful execution), made zero managed writes, reported that the file
+  pre-existed, and passed session check/trace verify with zero findings.
+
+- 2026-07-27 deterministic result-boundary coverage verifies semantic
+  `agent_result` / `agent_batch` observation projection, including long
+  reports, escape-heavy content, extreme blockers/paths, valid bounded JSON,
+  all eight parallel indices, unchanged raw `tool.completed`/streaming
+  results, and explicit recovery references. Background Task coverage proves
+  the formal result remains full while its event receipt is bounded and
+  marked.
+
+- 2026-07-27 report-recovery coverage verifies authorized pagination from a
+  real persisted Host child, tool reconstruction between pages, terminal and
+  failure fallbacks, argument bounds, traversal/cross-session rejection,
+  result/session symlink rejection, run identity/parent membership, and
+  escape-heavy pagination without skipped text.
+
+- 2026-07-27 in-process convergence coverage verifies configured direct,
+  indexed, parallel, dynamic foreground, foreground-to-background promotion,
+  and `task_create(kind:"agent")` use one terminal collector. Cross-entry
+  clean-result reuse, semantic partial/blocked, unhealthy completion,
+  step-limit, single-start/single-ledger parallel fan-out, Task failure
+  metadata, and the last-three/600-character partial observation bound are
+  covered. ACP/external-command suites confirm their transport boundaries are
+  unchanged.
+
+- 2026-07-26 deterministic Prompt coverage establishes one task-agnostic
+  in-process child contract owned by Agent Runtime. Composition tests prove
+  configured profile text precedes the shared contract and result protocol
+  exactly once. Host prompt captures cover configured direct, parallel,
+  dynamic foreground, and background paths; indexed delegation reuses the
+  configured tool definition. Goal/context remains outside system authority,
+  and the low-level `spawnSubAgent()` plus ACP/external-command adapters remain
+  explicit non-injection boundaries.
 
 - 2026-07-21 deterministic handoff coverage captures the first child prompt for
   both foreground `spawn_agent` and background `task_create(kind:"agent")`.
@@ -467,10 +509,11 @@
   reference path. The children completed useful read-only work. Post-fix,
   diagnose any recurrence by first checking whether `task_create.nextAction`
   and notification body result summaries reached the prompt.
-- Parent final prose can omit a `spawn_agent` partial/finality warning even
-  when `tool.completed spawn_agent` and `trace report` clearly flag child
+- Parent final prose can omit a `spawn_agent` runtime warning even when the
+  compact tool result and trace report clearly flag a forced child
   `step_limit`. Assertions for child write-boundary canaries should inspect
-  `subagent.completed.finality` and trace report, not prose alone.
+  compact `warnings/workspace` plus `subagent.completed.finality`, not prose
+  alone.
 - Real mini can still make prompt-sensitive choices around when to monitor a
   task, but empty-id `task wait` / `task output` placeholders are now guided by
   action-specific schema, rejected by semantic validation, and recovered in

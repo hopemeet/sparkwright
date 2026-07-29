@@ -730,7 +730,13 @@ function normalizeError(cause: unknown): TaskError {
       typeof record.message === "string"
         ? record.message
         : "Task runner threw a non-Error value.";
-    return { code, message };
+    const metadata =
+      record.metadata &&
+      typeof record.metadata === "object" &&
+      !Array.isArray(record.metadata)
+        ? { ...(record.metadata as Record<string, unknown>) }
+        : undefined;
+    return { code, message, ...(metadata ? { metadata } : {}) };
   }
   return {
     code: "TASK_RUNNER_FAILED",

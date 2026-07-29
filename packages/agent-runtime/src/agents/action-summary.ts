@@ -9,9 +9,12 @@ export interface AgentActionSummary {
   readonly toolName: string;
   /** Bounded, user-facing argument summary; never the raw argument object. */
   readonly preview?: string;
-  readonly status: "running" | "completed" | "failed";
+  readonly status: "running" | "completed" | "failed" | "skipped";
   readonly exitCode?: number | null;
   readonly errorCode?: string;
+  /** Bounded human-readable failure context; never raw tool output. */
+  readonly errorMessage?: string;
+  readonly skipReason?: string;
 }
 
 /**
@@ -58,15 +61,28 @@ export function summarizeAgentActions(
     if (!toolName || toolName === "submit_agent_result") continue;
     const result = record(payload.output ?? payload.result);
     const error = record(payload.error);
+    const errorMessage = bounded(
+      string(error.message) || string(payload.error),
+      180,
+    );
+    const skipped = result.skipped === true;
+    const skipReason = string(result.reason);
     actions.set(toolCallId, {
       toolCallId,
       toolName,
       ...(previous?.preview ? { preview: previous.preview } : {}),
-      status: event.type === "tool.failed" ? "failed" : "completed",
+      status:
+        event.type === "tool.failed"
+          ? "failed"
+          : skipped
+            ? "skipped"
+            : "completed",
       ...(typeof result.exitCode === "number" || result.exitCode === null
         ? { exitCode: result.exitCode as number | null }
         : {}),
       ...(string(error.code) ? { errorCode: string(error.code) } : {}),
+      ...(event.type === "tool.failed" && errorMessage ? { errorMessage } : {}),
+      ...(skipped && skipReason ? { skipReason } : {}),
     });
   }
   return [...actions.values()].slice(0, Math.max(0, Math.floor(limit)));

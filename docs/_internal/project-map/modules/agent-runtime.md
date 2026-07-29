@@ -2,11 +2,88 @@
 
 ## Purpose
 
-`@sparkwright/agent-runtime` contains reusable agent-side runtime helpers outside the core run loop: task management, advisory Todo plan state, concurrency/worktree coordination, durable Workflows, and Agent result protocols.
+`@sparkwright/agent-runtime` contains reusable agent-side runtime helpers outside the core run loop: task management, advisory Todo plan state, concurrency/worktree coordination, durable Workflows, and portable in-process child prompt/result protocols.
 
 See also [../maps/capabilities/agents.md](../maps/capabilities/agents.md), [../maps/capabilities/cron.md](../maps/capabilities/cron.md), and [../maps/runtime/tool-orchestration.md](../maps/runtime/tool-orchestration.md).
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-29
+- Scope: compact parent Agent results now translate actionable Core assessment
+  failures into bounded semantic warnings instead of forwarding the opaque
+  aggregate assessment code. Terminal action receipts retain a bounded failure
+  message alongside tool/error identity, allowing workspace conflicts to say
+  what failed and why without copying raw arguments or output. Semantic
+  completion and diagnostic health remain independent.
+- Read: action summarizer, terminal collector, parent result projection,
+  delegation reuse, Todo tool description, and TUI lifecycle consumer.
+- Tests: focused Agent action/result/Todo suites (19 tests), package build, and
+  typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-28
+- Scope: the shared in-process child contract now separates pre-existing state,
+  attempted actions, and observed effects, and stops actions that add neither a
+  material change nor new evidence. Parent results no longer duplicate Core
+  assessment health as warnings. The internal invocation result drops redundant
+  `statusSource`/`finality`, and the same redundant fields are removed from
+  lifecycle projections, context metadata, session facts, and diagnostics.
+- Read: child prompt/result projection, delegation ledger consumers, Host
+  failure/task adapters, lifecycle supervisor, and Core trace/session consumers.
+- Tests: Agent Runtime 263/263, Host 593/593, affected typechecks, and a real
+  Terra existing-file canary passed.
+
+- Status: Verified
+- Date: 2026-07-27
+- Scope: built-in in-process child adapters now share one terminal collector
+  for child start, usage/runtime projection, workspace evidence,
+  `ParentAgentResult`, clean-only ledger insertion, and bounded failure
+  observations. Configured and dynamic failures keep structured parent
+  evidence plus at most the latest three successful tool observations, each
+  no longer than 600 characters. Task errors preserve structured metadata.
+- Read: root Agent tool/spawn bridge, result/ledger contracts, TaskManager
+  error normalization, Host configured/dynamic/parallel/background consumers,
+  and focused tests.
+- Tests: full `npm run release:check` passed, including all workspace suites,
+  the 16-case regression matrix, source/release install smoke, and the focused
+  failure/reuse/promotion regressions.
+
+- Status: Verified
+- Date: 2026-07-26
+- Scope: Agent Runtime now owns a portable, task-agnostic in-process child
+  contract and a stable `profile -> child contract -> result protocol`
+  composition helper. Direct low-level `spawnSubAgent()` use remains opt-in,
+  and the terminal result tool continues to accept completed outcomes for
+  compatibility while guiding normal completion toward natural reports.
+- Read: child prompt/result contracts and exports, low-level spawn behavior,
+  Host composition, public extension guidance, and focused tests.
+- Tests: full `npm run release:check` passed; focused Agent Runtime 60/60 and
+  its build/typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-26
+- Scope: in-process Agent tools now return one compact `ParentAgentResult` to
+  the parent model: child-authored `report`, runtime-owned `workspace`
+  evidence, status, warnings, and blockers. Rich transport, usage, assessment,
+  action, and ChangeSet facts remain internal to `AgentRuntimeResult`, the
+  delegation ledger, and `subagent.*` lifecycle events. A normal natural final
+  is the completed path; `submit_agent_result` is reserved in guidance for
+  partial/blocked recovery detail.
+- Read: Agent result types/projection, delegation ledger, generic Agent tool,
+  Host consumers, Core terminal behavior, and TUI result recognition.
+- Tests: Agent Runtime focused result/ledger/tool suites, Core 661/661, Host
+  focused 101/101, Project Context 19/19, and TUI 531/531 passed.
+
+- Status: Verified
+- Date: 2026-07-26
+- Scope: terminal Agent action receipts distinguish an idempotent/no-progress
+  `tool.completed` result with `output.skipped === true` from successful
+  completion. The bounded receipt carries `status: skipped` plus the structured
+  reason, without copying raw tool output.
+- Read: Agent action summarizer/type export and TUI live/replay consumers.
+- Tests: Agent Runtime 259/259, TUI 531/531, affected builds/typechecks, and
+  repository test typecheck passed.
 
 - Status: Verified
 - Date: 2026-07-25
@@ -307,6 +384,7 @@ See also [../maps/capabilities/agents.md](../maps/capabilities/agents.md), [../m
 
 - `packages/agent-runtime/src/index.ts`
 - `packages/agent-runtime/src/agents/*`
+- `packages/agent-runtime/src/agents/prompt.ts`
 - `packages/agent-runtime/src/agents/handoff.ts`
 - `packages/agent-runtime/src/agents/submit-result.ts`
 - `packages/agent-runtime/src/tasks/*`
@@ -325,7 +403,10 @@ Owns:
 - todo ledger parsing and continuation supervision helpers
 - worktree/concurrency coordination utilities
 - child/delegate policy helpers used by host integrations
+- the task-agnostic in-process child contract and its prompt-composition helper
 - parent-run delegation result contracts and ledger ownership
+- the common terminal collector for already-prepared in-process child
+  invocations
 - portable workflow type declarations
 
 Does not own:
@@ -338,6 +419,14 @@ Does not own:
 
 ## Contracts
 
+- `IN_PROCESS_CHILD_AGENT_CONTRACT_PROMPT` is the task-agnostic role,
+  evidence, scope, stopping, and parent-report contract for Host-composed
+  in-process children. `composeInProcessChildAgentPrompt()` orders an optional
+  configured profile first, then that contract, then
+  `AGENT_RESULT_PROTOCOL_PROMPT`, while preserving one cache-stable application
+  prompt block. The low-level public `spawnSubAgent()` does not inject this
+  contract implicitly; embedders opt in so an explicit custom `PromptBuilder`
+  is never rewritten behind their back.
 - `AgentHandoffPayload` is the shared model-visible shape for dynamic,
   configured, parallel, and background-task in-process handoff:
   required `goal`, optional bounded working `context`, and optional UI-only
@@ -347,7 +436,23 @@ Does not own:
 - `submit_agent_result` is injected by child runtime as a terminal tool, not
   inherited from parent catalogs. A valid sole terminal call atomically binds
   its structured declaration to assistant text from the same model response.
-  The legacy text marker remains parse-only migration fallback.
+  Child guidance uses it only for partial/blocked outcomes; a natural-language
+  final is the ordinary completed report. The legacy text marker remains
+  parse-only migration compatibility; completed terminal declarations remain
+  accepted compatibility even though guidance prefers natural completion.
+- `ParentAgentResult` is the only model-visible in-process child-result shape:
+  `childRunId`, semantic `status`, child-authored `report`, runtime-owned
+  `workspace:{writes,paths?}`, and optional runtime `warnings` / structured
+  `blockers`. Warnings cover parent-actionable completeness and reuse facts,
+  not Core assessment health. `AgentRuntimeResult` retains transport, usage,
+  semantic status, and assessment facts for ledgers, aggregation, diagnostics,
+  and UI evidence; it is never copied wholesale into parent context.
+- `completeSpawnedAgentInvocation()` does not resolve profiles, choose a
+  transport, or create another dispatcher. Entrypoint adapters prepare one
+  `SpawnedSubAgent`; the collector starts it once, projects runtime and parent
+  results, derives workspace evidence, records only reusable clean results,
+  and collects bounded failure observations. ACP and external-command
+  adapters remain outside this in-process terminal path.
 - Task events are trace-visible through core when executed as tools.
 - `doc-store/` owns the public workflow-agnostic file-backed primitive surface
   for session-root stores: atomic text/JSON document writes with Windows

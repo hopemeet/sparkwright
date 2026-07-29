@@ -13,17 +13,16 @@ import {
   type Policy,
   type RunBudget,
   type RunId,
-  type RunAssessment,
-  type RunResult,
   type RuntimeContext,
-  type SparkwrightEvent,
   type ToolDefinition,
   type WorkflowHook,
 } from "@sparkwright/core";
 import { createSessionFileRunStoreFactory } from "@sparkwright/core/internal";
 import {
-  AGENT_RESULT_PROTOCOL_PROMPT,
   AGENT_HANDOFF_CONTEXT_MAX_CHARS,
+  composeInProcessChildAgentPrompt,
+  completeSpawnedAgentInvocation,
+  createAgentInvocationError,
   createAgentProfilePolicy,
   createAgentTool,
   createTaskAsyncReceipt,
@@ -31,18 +30,16 @@ import {
   findReusableDelegation,
   isCompleteAgentResult,
   normalizeAgentHandoffPayload,
-  rememberReusableDelegation,
-  projectAgentInvocationResult,
+  agentWorkspaceEvidence,
+  reusedDelegationResult,
   spawnSubAgent,
-  summarizeAgentActions,
-  summarizeDelegationResult,
-  withAlreadyCompletedNote,
-  type AgentBlocker,
   type AgentProfile,
   type AgentProfileWorkflowHookConfig,
   type DelegationLedgerHit,
   type DelegationLedgerKey,
+  type DelegationLedgerResult,
   type DerivedChildAgentProfile,
+  type ParentAgentResult,
   type SpawnedSubAgent,
   type TaskManager,
   type TaskRunnerController,
@@ -89,6 +86,7 @@ import {
 } from "../external-command-agent.js";
 import { createDelegateAgentTool } from "../indexed-delegate-tool.js";
 import { MAIN_AGENT_ID } from "../agent-constants.js";
+import { createReadAgentReportTool } from "../agent-report-tool.js";
 import { createModel } from "../model-factory.js";
 import {
   catalogToolDefinitions,
@@ -103,6 +101,7 @@ import {
   intersectToolUseSelectors,
   resolveSelectorAllowlist,
 } from "../tool-selectors.js";
+import { agentTaskCompletionOutput } from "./task-projections.js";
 import {
   admitToolsForAgentProfile,
   agentProfileAdmitsTool,
@@ -119,16 +118,6 @@ export interface AgentRuntimeAssemblyOptions {
   taskManager: TaskManager;
   workspaceLeaseCoordinator?: WorkspaceLeaseCoordinator;
 }
-
-const DELEGATED_AGENT_CONTRACT = [
-  "Delegated agent contract:",
-  "- Do not ask the user directly. Your parent agent owns all user interaction.",
-  "- If a safe read-only next step can make progress, take it instead of asking for confirmation.",
-  "- If ambiguity, approval, user input, or a missing capability prevents completion, explain the required action, a reasonable default when one exists, and any safe alternative; report the machine-readable status as blocked.",
-  "- If useful progress exists but work remains, report partial. Report completed only when the delegated goal is finished.",
-  "- For clear delegated goals, complete the task and return the result to the parent.",
-  AGENT_RESULT_PROTOCOL_PROMPT,
-].join("\n");
 
 /**
  * @internal Per-run spawn dependencies the registered `agent` task kind needs
@@ -216,7 +205,9 @@ export async function runHostAgentTask(
   });
   controller.emitOutput({
     channel: "event",
-    data: JSON.stringify(summarizeAgentTaskOutput(output)),
+    data: JSON.stringify(
+      agentTaskCompletionOutput(output, String(controller.taskId)),
+    ),
   });
   return output;
 }
@@ -689,15 +680,8 @@ const DELEGATE_PARALLEL_MAX_TASKS = 8;
 function withDelegatedAgentContract(profile: AgentProfile): AgentProfile {
   return {
     ...profile,
-    prompt: withDelegatedAgentPrompt(profile.prompt),
+    prompt: composeInProcessChildAgentPrompt(profile.prompt),
   };
-}
-
-function withDelegatedAgentPrompt(prompt?: string): string {
-  const trimmed = prompt?.trim();
-  return trimmed
-    ? [trimmed, DELEGATED_AGENT_CONTRACT].join("\n\n")
-    : DELEGATED_AGENT_CONTRACT;
 }
 
 interface DelegateParallelSpec {
@@ -719,26 +703,8 @@ interface DelegateParallelChildSummary {
   index: number;
   toolName: string;
   profileId: string;
-  childRunId?: string;
-  spanId?: string;
-  signal: string;
-  status?: "completed" | "partial" | "blocked";
-  statusSource?: "child" | "runtime" | "adapter";
-  summary?: string;
-  accomplishments?: string[];
-  blockers?: AgentBlocker[];
-  finality?: "complete" | "partial";
-  assessment?: RunAssessment;
-  stopReason?: string;
-  message?: string;
-  stepLimitReached?: boolean;
-  truncated?: boolean;
-  tokens?: number;
-  costUsd?: number;
-  toolCalls?: number;
-  modelCalls?: number;
-  alreadyCompleted?: boolean;
-  note?: string;
+  completion?: DelegationLedgerResult;
+  report: ParentAgentResult;
   error?: string;
 }
 
@@ -1074,6 +1040,7 @@ export function createDelegateParallelTool(input: {
   return defineTool({
     name: DELEGATE_PARALLEL_TOOL_NAME,
     description,
+    resultPresentation: { kind: "agent_batch" },
     inputSchema: {
       type: "object",
       properties: {
@@ -1309,54 +1276,55 @@ export function createDelegateParallelTool(input: {
           if (item.mode === "cached") return item.cached;
           const { task, index, spec, spawned: child, ledgerKey } = item;
           try {
-            const result = await child.start();
-            const usage = child.run.usage();
+            const completion = await completeSpawnedAgentInvocation({
+              spawned: child,
+              parent,
+              ledgerKey,
+              goal: task.goal,
+            });
             const summary = summarizeDelegateParallelChild({
               index,
               task,
               spec,
-              childRunId: child.childRunId,
-              spanId: child.spanId,
-              result,
-              usage,
+              completion,
             });
-            rememberReusableDelegation(
-              parent,
-              ledgerKey,
-              task.goal,
-              summarizeDelegationResult({
-                childRunId: child.childRunId,
-                spanId: child.spanId,
-                result,
-                usage,
-              }),
-            );
             return summary;
           } catch (error) {
+            const message =
+              error instanceof Error ? error.message : String(error);
             return {
               index,
               toolName: spec.toolName,
               profileId: spec.profile.id,
-              signal: "failed",
-              error: error instanceof Error ? error.message : String(error),
+              report: {
+                childRunId: child.childRunId,
+                status: "partial",
+                report: message,
+                workspace: agentWorkspaceEvidence(child.run.events.all()),
+                warnings: [
+                  "The child failed before producing a complete report.",
+                ],
+              },
+              error: message,
             };
           }
         }),
       );
-      const completed = results.filter(isCompleteAgentResult).length;
-      const incomplete = results.length - completed;
-      const unhealthy = results.filter(
+      const completed = results.filter(
         (result) =>
-          isCompleteAgentResult(result) &&
-          result.assessment?.health !== "clean",
+          result.completion !== undefined &&
+          isCompleteAgentResult(result.completion),
       ).length;
+      const incomplete = results.length - completed;
       const output = {
         mode: "parallel",
         completed,
         incomplete,
-        unhealthy,
-        results,
-        usage: aggregateDelegateParallelUsage(results),
+        results: results.map((result) => ({
+          index: result.index,
+          agentId: result.profileId,
+          ...result.report,
+        })),
       };
       if (incomplete > 0) {
         throw Object.assign(
@@ -1573,6 +1541,7 @@ export function createDynamicSpawnAgentTool(input: {
     name: "spawn_agent",
     description:
       "Spawn a bounded child agent for one focused sub-task. Supply only a self-contained goal, optional parent-established context, and an optional display label. The runtime—not this payload—derives the child's model, tools, permissions, approvals, and budget from the parent execution control plane.",
+    resultPresentation: { kind: "agent_result" },
     inputSchema: createAgentSpawnPayloadSchema(),
     policy: { risk: "safe" },
     governance: {
@@ -1658,8 +1627,9 @@ export function createDynamicSpawnAgentTool(input: {
         maxSteps: childMaxSteps,
         // Dynamic task text is model-authored tool input, so it must not be
         // elevated into the child application's system prompt. Only the fixed
-        // delegated-agent contract belongs at that authority layer.
-        prompt: DELEGATED_AGENT_CONTRACT,
+        // in-process child contract and result protocol belong at that
+        // authority layer.
+        prompt: composeInProcessChildAgentPrompt(),
         metadata: {
           dynamic: true,
         },
@@ -1787,60 +1757,19 @@ interface CompleteDynamicSpawnAgentInput {
 
 async function completeDynamicSpawnAgent(
   input: CompleteDynamicSpawnAgentInput,
-): Promise<Record<string, unknown>> {
+): Promise<ParentAgentResult> {
   const { spawned, parent, ledgerKey, goal, role, agentId } = input;
-  const result = await spawned.start();
-  const usage = spawned.run.usage();
-  // A child that answered on its last allowed step may have wrapped up early
-  // under the step budget; tell the parent so it can caveat rather than
-  // present a possibly-truncated child answer as exhaustive.
-  const stepLimitReached =
-    (result.metadata as { stepLimitReached?: unknown } | undefined)
-      ?.stepLimitReached === true;
-  const childTruncated =
-    (result.metadata as { truncated?: unknown } | undefined)?.truncated ===
-      true || stepLimitReached;
-  const projected = projectAgentInvocationResult({
-    childRunId: spawned.childRunId,
-    spanId: spawned.spanId,
-    result,
-    usage,
+  const completion = await completeSpawnedAgentInvocation({
+    spawned,
+    parent,
+    ledgerKey,
+    goal,
   });
   // A child that failed (doom-loop, step-limit, error) never emitted a final
   // answer, so salvage its most recent successful tool results — otherwise
   // the parent only sees an error string and must re-spawn to rediscover the
   // same data. Success carries the answer in `message`, so skip it there.
-  const partialObservations =
-    result.signal === "completed"
-      ? undefined
-      : extractPartialObservations(spawned.run.events.all(), 3);
-  const childEvents = spawned.run.events.all();
-  const actions = summarizeAgentActions(childEvents);
-  const workspaceWrites = childEvents.filter(
-    (event) => event.type === "workspace.write.completed",
-  ).length;
-  const output = {
-    ...projected,
-    agentId,
-    role,
-    actions,
-    workspaceWrites,
-    reportingGuidance:
-      workspaceWrites === 0
-        ? "No structured workspace write was recorded. Describe existing artifacts as inspected or verified; do not claim this run created or modified them unless an action contains explicit write evidence."
-        : `${workspaceWrites} structured workspace write${
-            workspaceWrites === 1 ? " was" : "s were"
-          } recorded. Limit creation or modification claims to those recorded writes.`,
-    ...(partialObservations && partialObservations.length > 0
-      ? { partialObservations }
-      : {}),
-    usage,
-  };
-  rememberReusableDelegation(parent, ledgerKey, goal, {
-    ...projected,
-    output,
-  });
-  if (result.signal !== "completed") {
+  if (completion.runResult.signal !== "completed") {
     // Surface the failure as a *structured* tool error. The observation
     // formatter truncates `error.message` to 500 chars but passes
     // `error.metadata` through untruncated, so the salvaged data
@@ -1848,46 +1777,34 @@ async function completeDynamicSpawnAgent(
     // JSON blob stuffed into the message would be cut off before the parent
     // ever saw it. `normalizeExecutionError` preserves an attached
     // `.code`/`.metadata` on the thrown error.
-    const childMessage =
-      typeof result.message === "string" ? result.message : undefined;
-    const failure = Object.assign(
-      new Error(
+    throw createAgentInvocationError({
+      code: "SPAWN_AGENT_CHILD_INCOMPLETE",
+      message:
         `spawn_agent child "${role}" did not complete (${
-          result.stopReason ?? result.signal
+          completion.runResult.stopReason ?? completion.runResult.signal
         }).` +
-          (partialObservations && partialObservations.length > 0
-            ? ` ${partialObservations.length} partial observation(s) salvaged in error.metadata.partialObservations.`
-            : ""),
-      ),
-      {
-        code: "SPAWN_AGENT_CHILD_INCOMPLETE",
-        metadata: {
-          childRunId: spawned.childRunId,
-          agentId,
-          role,
-          signal: result.signal,
-          stopReason: result.stopReason,
-          stepLimitReached,
-          truncated: childTruncated,
-          status: projected.status,
-          statusSource: projected.statusSource,
-          summary: projected.summary,
-          finality: projected.finality,
-          assessment: projected.assessment,
-          ...(projected.accomplishments
-            ? { accomplishments: projected.accomplishments }
-            : {}),
-          blockers: projected.blockers,
-          ...(childMessage ? { childMessage } : {}),
-          ...(partialObservations && partialObservations.length > 0
-            ? { partialObservations }
-            : {}),
-        },
+        (completion.partialObservations
+          ? ` ${completion.partialObservations.length} partial observation(s) salvaged in error.metadata.partialObservations.`
+          : ""),
+      completion,
+      metadata: {
+        agentId,
+        role,
+        summary: completion.runtimeResult.summary,
+        assessment: completion.runtimeResult.assessment,
+        stepLimitReached: completion.runtimeResult.stepLimitReached === true,
+        truncated: completion.runtimeResult.truncated === true,
+        ...(completion.runtimeResult.accomplishments
+          ? { accomplishments: completion.runtimeResult.accomplishments }
+          : {}),
+        blockers: completion.runtimeResult.blockers,
+        ...(completion.runResult.message
+          ? { childMessage: completion.runResult.message }
+          : {}),
       },
-    );
-    throw failure;
+    });
   }
-  return output;
+  return completion.output;
 }
 
 type SettledWithin<T> =
@@ -1918,7 +1835,7 @@ function promoteDynamicSpawnAgent(input: {
   taskManager: TaskManager;
   parentRunId: RunId;
   spawned: SpawnedSubAgent;
-  completion: Promise<Record<string, unknown>>;
+  completion: Promise<ParentAgentResult>;
   abortController: AbortController;
   foregroundTimeoutMs: number;
   role: string;
@@ -2076,22 +1993,14 @@ function summarizeDelegateParallelChild(input: {
   index: number;
   task: DelegateParallelTask;
   spec: DelegateParallelSpec;
-  childRunId: string;
-  spanId: string;
-  result: RunResult;
-  usage: ReturnType<ReturnType<typeof createRun>["usage"]>;
+  completion: Awaited<ReturnType<typeof completeSpawnedAgentInvocation>>;
 }): DelegateParallelChildSummary {
-  const projected = projectAgentInvocationResult({
-    childRunId: input.childRunId,
-    spanId: input.spanId,
-    result: input.result,
-    usage: input.usage,
-  });
   return {
-    ...projected,
     index: input.index,
     toolName: input.spec.toolName,
     profileId: input.spec.profile.id,
+    completion: input.completion.runtimeResult,
+    report: input.completion.output,
   };
 }
 
@@ -2101,57 +2010,13 @@ function summarizeCachedDelegateParallelChild(input: {
   spec: DelegateParallelSpec;
   cached: DelegationLedgerHit;
 }): DelegateParallelChildSummary {
-  const result = withAlreadyCompletedNote(input.cached.result);
   return {
     index: input.index,
     toolName: input.spec.toolName,
     profileId: input.spec.profile.id,
-    childRunId: result.childRunId,
-    spanId: result.spanId,
-    signal: result.signal,
-    status: result.status,
-    statusSource: result.statusSource,
-    summary: result.summary,
-    ...(result.accomplishments
-      ? { accomplishments: result.accomplishments }
-      : {}),
-    blockers: result.blockers,
-    finality: result.finality,
-    assessment: result.assessment,
-    stopReason: result.stopReason,
-    ...(typeof result.message === "string" ? { message: result.message } : {}),
-    ...(result.stepLimitReached ? { stepLimitReached: true } : {}),
-    ...(result.truncated ? { truncated: true } : {}),
-    tokens: result.tokens,
-    costUsd: result.costUsd,
-    toolCalls: result.toolCalls,
-    modelCalls: result.modelCalls,
-    alreadyCompleted: true,
-    note: result.note,
+    completion: input.cached.result,
+    report: reusedDelegationResult(input.cached.result),
   };
-}
-
-function aggregateDelegateParallelUsage(
-  results: readonly DelegateParallelChildSummary[],
-): {
-  tokens: number;
-  costUsd: number;
-  toolCalls: number;
-  modelCalls: number;
-} {
-  return {
-    tokens: sumNumberFields(results, "tokens"),
-    costUsd: sumNumberFields(results, "costUsd"),
-    toolCalls: sumNumberFields(results, "toolCalls"),
-    modelCalls: sumNumberFields(results, "modelCalls"),
-  };
-}
-
-function sumNumberFields(
-  results: readonly DelegateParallelChildSummary[],
-  field: "tokens" | "costUsd" | "toolCalls" | "modelCalls",
-): number {
-  return results.reduce((sum, result) => sum + (result[field] ?? 0), 0);
 }
 
 function dynamicSpawnLedgerKey(input: {
@@ -2167,56 +2032,7 @@ function dynamicSpawnLedgerKey(input: {
 }
 
 function cachedDynamicSpawnOutput(hit: DelegationLedgerHit): unknown {
-  const result = withAlreadyCompletedNote(hit.result);
-  if (isPlainRecord(result.output)) {
-    return {
-      ...result.output,
-      alreadyCompleted: true,
-      note: result.note,
-    };
-  }
-  return result;
-}
-
-function summarizeAgentTaskOutput(output: unknown): Record<string, unknown> {
-  if (!isPlainRecord(output)) {
-    return { type: "agent.completed" };
-  }
-  const message =
-    typeof output.message === "string"
-      ? output.message.slice(0, 4_000)
-      : undefined;
-  return {
-    type: "agent.completed",
-    ...(typeof output.childRunId === "string"
-      ? { childRunId: output.childRunId }
-      : {}),
-    ...(typeof output.agentId === "string" ? { agentId: output.agentId } : {}),
-    ...(typeof output.role === "string" ? { role: output.role } : {}),
-    ...(typeof output.signal === "string" ? { signal: output.signal } : {}),
-    ...(typeof output.status === "string" ? { status: output.status } : {}),
-    ...(typeof output.statusSource === "string"
-      ? { statusSource: output.statusSource }
-      : {}),
-    ...(typeof output.summary === "string" ? { summary: output.summary } : {}),
-    ...(Array.isArray(output.accomplishments)
-      ? { accomplishments: output.accomplishments }
-      : {}),
-    ...(Array.isArray(output.blockers) ? { blockers: output.blockers } : {}),
-    ...(typeof output.stopReason === "string"
-      ? { stopReason: output.stopReason }
-      : {}),
-    ...(typeof output.finality === "string"
-      ? { finality: output.finality }
-      : {}),
-    ...(isPlainRecord(output.assessment)
-      ? { assessment: output.assessment }
-      : {}),
-    ...(typeof output.truncated === "boolean"
-      ? { truncated: output.truncated }
-      : {}),
-    ...(message ? { message } : {}),
-  };
+  return reusedDelegationResult(hit.result);
 }
 
 function prepareDynamicSpawnAgentRequest(input: {
@@ -2305,76 +2121,6 @@ function delegationToolsCacheable(
   });
 }
 
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-/** A summarized successful tool result salvaged from a child run's events. */
-interface PartialObservation {
-  toolName: string;
-  output: string;
-}
-
-const PARTIAL_OBSERVATION_OUTPUT_CHAR_LIMIT = 600;
-
-/**
- * Salvage the child's most recent successful tool results from its event log so
- * a parent can still use the work even when the child run *failed* (doom-loop,
- * step-limit, error) without ever emitting a final answer. Without this, a child
- * that discovered everything it needed but tripped a guard on the last step
- * returns only an error string, forcing the parent to re-spawn and rediscover
- * the same data from scratch.
- *
- * Pairs `tool.requested` (carries `toolName`) with `tool.completed` (carries the
- * `output`, keyed by `toolCallId`) and returns the last `maxObservations`
- * successful results, each truncated so a large listing cannot blow up the
- * parent's context.
- */
-function extractPartialObservations(
-  events: readonly SparkwrightEvent[],
-  maxObservations: number,
-): PartialObservation[] {
-  const toolNameByCallId = new Map<string, string>();
-  for (const event of events) {
-    if (event.type !== "tool.requested") continue;
-    const payload = event.payload as
-      { id?: unknown; toolName?: unknown } | undefined;
-    if (
-      typeof payload?.id === "string" &&
-      typeof payload.toolName === "string"
-    ) {
-      toolNameByCallId.set(payload.id, payload.toolName);
-    }
-  }
-
-  const observations: PartialObservation[] = [];
-  for (const event of events) {
-    if (event.type !== "tool.completed") continue;
-    const payload = event.payload as
-      { toolCallId?: unknown; output?: unknown } | undefined;
-    if (payload?.output === undefined) continue;
-    const toolName =
-      (typeof payload.toolCallId === "string"
-        ? toolNameByCallId.get(payload.toolCallId)
-        : undefined) ?? "tool";
-    let serialized: string;
-    try {
-      serialized = JSON.stringify(payload.output);
-    } catch {
-      serialized = String(payload.output);
-    }
-    if (serialized.length > PARTIAL_OBSERVATION_OUTPUT_CHAR_LIMIT) {
-      serialized = `${serialized.slice(
-        0,
-        PARTIAL_OBSERVATION_OUTPUT_CHAR_LIMIT,
-      )}… (truncated)`;
-    }
-    observations.push({ toolName, output: serialized });
-  }
-
-  return observations.slice(-maxObservations);
-}
-
 export interface PrepareAgentRuntimeInput {
   goal: string;
   workspaceRoot: string;
@@ -2413,6 +2159,7 @@ export interface PreparedAgentRuntime {
   delegateParallelTool?: ToolDefinition;
   delegateDescriptors: DelegateCapabilityDescriptor[];
   dynamicSpawnTool: ToolDefinition;
+  agentReportTool: ToolDefinition;
   taskRunner(
     controller: TaskRunnerController,
     payload: unknown,
@@ -2617,6 +2364,10 @@ export class AgentRuntimeAssembly {
       interactionChannel: input.interactionChannel,
       sessionId: input.sessionId,
     });
+    const agentReportTool = createReadAgentReportTool({
+      sessionRootDir: input.sessionRootDir,
+      sessionId: input.sessionId,
+    });
     const taskDeps: HostAgentTaskRunnerDeps = {
       getParent: () => input.parentRunRef.current,
       model: input.parentModel,
@@ -2644,6 +2395,7 @@ export class AgentRuntimeAssembly {
       ...(delegateParallelTool ? { delegateParallelTool } : {}),
       delegateDescriptors,
       dynamicSpawnTool,
+      agentReportTool,
       taskRunner: (controller, payload) =>
         runHostAgentTask(controller, payload, taskDeps),
     };

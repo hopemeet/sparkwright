@@ -2,12 +2,14 @@ import { createRunId } from "@sparkwright/core";
 import { describe, expect, it } from "vitest";
 import {
   AGENT_RESULT_MARKER,
-  isAgentToolResult,
+  agentWorkspaceEvidence,
   isCompleteAgentResult,
   isReusableAgentResult,
   parseAgentResultDeclaration,
   projectAgentInvocationResult,
+  projectParentAgentResult,
 } from "../src/agents/result.js";
+import type { AgentRuntimeResult } from "../src/agents/types.js";
 
 const usage = {
   runId: createRunId(),
@@ -32,54 +34,53 @@ function outcome(value: Record<string, unknown>): string {
 }
 
 describe("projectAgentInvocationResult", () => {
-  it("rejects structurally invalid projected outcomes", () => {
+  it("projects one compact parent report with runtime workspace evidence", () => {
     const base = {
       childRunId: "child",
       spanId: "span",
-      signal: "completed",
-      stopReason: "final_answer",
+      signal: "completed" as const,
+      stopReason: "final_answer" as const,
       tokens: 3,
       costUsd: 0,
       toolCalls: 1,
       modelCalls: 1,
       status: "completed",
-      statusSource: "child",
       summary: "Complete",
       blockers: [],
-      finality: "complete",
       assessment: {
         schemaVersion: "run-assessment.v1",
         health: "clean",
         issues: [],
         verification: [],
       },
-    };
+    } satisfies AgentRuntimeResult;
 
-    expect(isAgentToolResult(base)).toBe(true);
     expect(
-      isAgentToolResult({
-        ...base,
-        status: "blocked",
-        blockers: [{ code: "MISSING_FIELDS" }],
+      projectParentAgentResult({
+        result: base,
+        workspace: { writes: 0 },
       }),
-    ).toBe(false);
+    ).toEqual({
+      childRunId: "child",
+      status: "completed",
+      report: "Complete",
+      workspace: { writes: 0 },
+    });
     expect(
-      isAgentToolResult({
-        ...base,
-        blockers: [
-          {
-            code: "IMPOSSIBLE_COMPLETION",
-            kind: "unknown",
-            owner: "runtime",
-            message: "Completed results cannot carry blockers.",
-            retry: "none",
-          },
-        ],
-      }),
-    ).toBe(false);
+      agentWorkspaceEvidence([
+        {
+          type: "workspace.write.completed",
+          payload: { path: "src/a.ts" },
+        },
+        {
+          type: "workspace.write.completed",
+          payload: { path: "src/a.ts" },
+        },
+      ]),
+    ).toEqual({ writes: 2, paths: ["src/a.ts"] });
   });
 
-  it("keeps complete finality orthogonal to failing health and preserves message", () => {
+  it("keeps completed outcome orthogonal to failing health and gives the parent an actionable warning", () => {
     const result = projectAgentInvocationResult({
       childRunId: "child",
       spanId: "span",
@@ -102,6 +103,10 @@ describe("projectAgentInvocationResult", () => {
               kind: "tool_failure",
               disposition: "failing",
               count: 1,
+              details: {
+                codes: ["WORKSPACE_CREATE_CONFLICT"],
+                toolNames: ["create"],
+              },
             },
           ],
           verification: [],
@@ -112,13 +117,35 @@ describe("projectAgentInvocationResult", () => {
     expect(result).toMatchObject({
       signal: "completed",
       status: "completed",
-      statusSource: "child",
       summary: "Analysis complete",
       blockers: [],
-      finality: "complete",
       message: "useful partial analysis",
       assessment: { health: "failing" },
-      note: expect.stringContaining("UNRESOLVED_TOOL_FAILURE"),
+    });
+    expect(
+      projectParentAgentResult({
+        result,
+        workspace: { writes: 0 },
+        actions: [
+          {
+            toolCallId: "call_create",
+            toolName: "create",
+            preview: "print_numbers.py",
+            status: "failed",
+            errorCode: "WORKSPACE_CREATE_CONFLICT",
+            errorMessage:
+              "Workspace create target already exists: print_numbers.py",
+          },
+        ],
+      }),
+    ).toEqual({
+      childRunId: "child",
+      status: "completed",
+      report: "useful partial analysis",
+      workspace: { writes: 0 },
+      warnings: [
+        "The child completed with unresolved tool work: create print_numbers.py failed because the target already exists (WORKSPACE_CREATE_CONFLICT). No structured workspace write succeeded, so creation or modification is not proven.",
+      ],
     });
   });
 
@@ -159,10 +186,8 @@ describe("projectAgentInvocationResult", () => {
     expect(result).toMatchObject({
       signal: "completed",
       status: "blocked",
-      statusSource: "child",
       summary: "Needs execution",
       accomplishments: ["Prepared the file"],
-      finality: "partial",
       message: "I prepared the file but cannot execute it.",
       blockers: [
         {
@@ -199,9 +224,7 @@ describe("projectAgentInvocationResult", () => {
     });
     expect(result).toMatchObject({
       status: "partial",
-      statusSource: "runtime",
       summary: "Child returned an invalid agent-outcome.v1 declaration.",
-      finality: "partial",
       message: "Useful work",
       blockers: [{ code: "AGENT_RESULT_PROTOCOL_INVALID", kind: "protocol" }],
     });
@@ -235,9 +258,7 @@ describe("projectAgentInvocationResult", () => {
     });
     expect(result).toMatchObject({
       status: "completed",
-      statusSource: "runtime",
       summary: "Plain final answer",
-      finality: "complete",
       blockers: [],
     });
     expect(isCompleteAgentResult(result)).toBe(true);
@@ -262,8 +283,6 @@ describe("projectAgentInvocationResult", () => {
     });
     expect(result).toMatchObject({
       status: "partial",
-      statusSource: "runtime",
-      finality: "partial",
       blockers: [{ code: "AGENT_RESULT_TRUNCATED" }],
       truncated: true,
     });

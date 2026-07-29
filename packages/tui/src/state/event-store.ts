@@ -131,10 +131,9 @@ export interface StoreState {
   /** Host-computed human-only follow-up action offered after a tool result. */
   pendingHumanAction: PendingHumanAction | null;
   /**
-   * Bumped by clearEvents()/reset(). The App keys <Static> off this and wipes
-   * the terminal scrollback when it changes — Static can't un-print committed
-   * lines on its own, so a visible /clear needs both a remount and a screen
-   * wipe.
+   * Bumped by clearEvents()/reset(). App combines this with sessionId to form
+   * the TranscriptDocument epoch, resetting semantic anchors without mutating
+   * RunController's independent export buffer.
    */
   clearGeneration: number;
 }
@@ -338,10 +337,9 @@ export class EventStore {
       this.state = { ...this.state, streamingText: "", reasoningText: "" };
     }
 
-    // Append-only: <Static> slices from the previous items.length, so trimming
-    // the front would silently drop newly-appended events. Per-session growth
-    // is bounded by reset()/clearEvents() (/new, /clear), and each event is a
-    // small object, so we keep the full session in memory.
+    // Preserve the complete presentation-event history for document rebuilds.
+    // Only projection/layout rows are bounded; reset()/clearEvents() establish a
+    // new visible document epoch without truncating durable host trace data.
     const events = this.state.events.concat(event);
 
     // Side-effect projections: keep specialised slices in sync so sidebar /
@@ -485,8 +483,8 @@ export class EventStore {
 
   /**
    * Append a copy-safe transcript export confirmation. The toast remains the
-   * short-lived status cue; this event gives the saved path a permanent,
-   * border-free line in native scrollback.
+   * short-lived status cue; this event gives the saved path a copy-safe,
+   * border-free row in the owned transcript viewport.
    */
   appendTranscriptExport(path: string): void {
     const event = {

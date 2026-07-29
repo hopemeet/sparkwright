@@ -449,6 +449,7 @@ export class RunPreparationOperations {
       delegateAgentTool,
       delegateParallelTool,
       dynamicSpawnTool,
+      agentReportTool,
     } = agentRuntime;
     const resolvedProfiles = agentRuntime.resolvedProfiles;
     const delegateDescriptors = agentRuntime.delegateDescriptors;
@@ -467,6 +468,7 @@ export class RunPreparationOperations {
       delegateAgentTool,
       delegateParallelTool,
       dynamicSpawnTool,
+      agentReportTool,
       shell: shellConfig,
       backgroundTasks: runAccess.backgroundTasks,
       configPaths: loadedConfig.attempted.map((entry) => entry.path),

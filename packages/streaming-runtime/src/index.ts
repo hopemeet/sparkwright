@@ -1239,6 +1239,7 @@ class AfterTurnStreamingRun implements StreamingRunHandle {
         toolName,
         result,
         run: this.record,
+        resultPresentation: this.tools.get(toolName)?.resultPresentation,
       }),
     );
   }

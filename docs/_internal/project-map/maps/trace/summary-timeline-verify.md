@@ -11,6 +11,17 @@ See [raw-trace.md](raw-trace.md) for source data and [export-diagnostics.md](exp
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-26
+- Scope: the compact/detailed viewport is a TUI presentation projection over
+  session events. It neither reads nor mutates summary, timeline, report, or
+  verify artifacts, and UI mode has no effect on transcript export or
+  diagnostic derivation.
+- Read: TUI transcript document/layout/export paths and trace diagnostic
+  ownership boundaries.
+- Tests: compact/detailed export parity and export-after-clear integration
+  passed; trace diagnostic contracts are unchanged.
+
+- Status: Verified
 - Date: 2026-07-25
 - Scope: verification summaries consume explicit verifier results/receipts as
   evidence. Command classification remains diagnostic, but no derived trace

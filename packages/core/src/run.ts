@@ -1665,11 +1665,9 @@ export class SparkwrightRun implements RunHandle {
           }
         }
 
-        // Surface step-budget context on a natural finish. A model can answer
-        // on its *last* allowed step, which is a `final_answer` indistinguishable
-        // from a roomy finish unless we say so — callers (e.g. a parent agent
-        // summarizing a sub-agent) otherwise can't tell "done" from "ran out of
-        // room and wrapped up", and may over-trust a possibly-truncated answer.
+        // A natural-language answer is a completed turn even when it uses the
+        // last allowed step. Only the separate forced wrap-up path below marks
+        // an answer as step-limited/truncated.
         const waitedState = await this.waitForAwaitedTasksBeforeTerminal(state);
         if (waitedState) {
           state = waitedState;
@@ -1680,9 +1678,6 @@ export class SparkwrightRun implements RunHandle {
           message: output.message,
           stepsUsed: state.step,
           maxSteps: this.maxSteps,
-          stepLimitReached:
-            state.step >= this.maxSteps &&
-            !isSourceBudgetedForcedContinuation(state),
           ...(this.forcedContinuationBudget.usedFor("revival") > 0
             ? {
                 revivalTurnsUsed:
@@ -1783,13 +1778,18 @@ export class SparkwrightRun implements RunHandle {
           typeof output.message === "string" && output.message.trim().length > 0
             ? output.message.trim()
             : undefined;
+        const deterministicText = terminalDefinition.terminal.renderMessage?.(
+          terminalResult.output as never,
+        );
         const rendered =
           boundText ??
-          (await this.finalizeTerminalMessage(
-            state,
-            terminalDefinition,
-            terminalResult.output,
-          ));
+          (typeof deterministicText === "string" && deterministicText.trim()
+            ? deterministicText.trim()
+            : await this.finalizeTerminalMessage(
+                state,
+                terminalDefinition,
+                terminalResult.output,
+              ));
         return this.complete("final_answer", {
           message: rendered,
           stepsUsed: state.step,
@@ -4290,6 +4290,7 @@ export class SparkwrightRun implements RunHandle {
         toolName,
         result,
         run: this.record,
+        resultPresentation: this.tools.get(toolName)?.resultPresentation,
       }),
     );
   }

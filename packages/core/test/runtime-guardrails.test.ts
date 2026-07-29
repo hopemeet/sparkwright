@@ -264,7 +264,7 @@ describe("createObservationOneLineStage", () => {
         status: "completed",
         role: "trace auditor",
         childRunId: "run_child_partial",
-        finality: "partial",
+        agentStatus: "partial",
         stepLimitReached: true,
         truncated: true,
       }),
@@ -273,7 +273,7 @@ describe("createObservationOneLineStage", () => {
         status: "completed",
         role: "roomy child",
         childRunId: "run_child_complete",
-        finality: "complete",
+        agentStatus: "completed",
         stepLimitReached: false,
         truncated: false,
       }),
@@ -288,12 +288,12 @@ describe("createObservationOneLineStage", () => {
 
     expect(result.items[0]!.content).toContain("role=trace_auditor");
     expect(result.items[0]!.content).toContain("child=run_child_partial");
-    expect(result.items[0]!.content).toContain("finality=partial");
+    expect(result.items[0]!.content).toContain("agentStatus=partial");
     expect(result.items[0]!.content).toContain(
       "partial=true(stepLimit+truncated)",
     );
     expect(result.items[1]!.content).toContain("role=roomy_child");
-    expect(result.items[1]!.content).toContain("finality=complete");
+    expect(result.items[1]!.content).toContain("agentStatus=completed");
     expect(result.items[1]!.content).not.toContain("partial=true");
   });
 });

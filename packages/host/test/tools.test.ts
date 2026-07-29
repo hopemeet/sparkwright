@@ -27,6 +27,7 @@ import { EventLog, LocalWorkspace } from "@sparkwright/core/internal";
 import {
   AGENT_RESULT_MARKER,
   FileTaskStore,
+  IN_PROCESS_CHILD_AGENT_CONTRACT_PROMPT,
   InMemoryTaskStore,
   TaskManager,
   type TaskId,
@@ -68,6 +69,7 @@ import {
   createInProcessDelegateModelResolver,
 } from "../src/runtime.js";
 import { createDelegateAgentTool } from "../src/indexed-delegate-tool.js";
+import { createReadAgentReportTool } from "../src/agent-report-tool.js";
 import {
   lifecycleTypes,
   projectAgentLifecycle,
@@ -125,6 +127,7 @@ describe("host tools", () => {
     expect(indexed.inputSchema).toMatchObject({
       required: ["agentId", "goal"],
     });
+    expect(indexed.resultPresentation).toEqual({ kind: "agent_result" });
     expect(
       (indexed.inputSchema as { properties: Record<string, unknown> })
         .properties,
@@ -684,6 +687,10 @@ describe("host tools", () => {
         inputSchema: { type: "object" },
         execute: () => ({}),
       }),
+      agentReportTool: createReadAgentReportTool({
+        sessionRootDir: "/tmp/sessions",
+        sessionId: "test",
+      }),
       shell: { sandbox: { mode: "off" } },
     });
     const byName = new Map(
@@ -748,6 +755,16 @@ describe("host tools", () => {
     ).not.toHaveProperty("allOf");
     expect(byName.get("todo_write")).toMatchObject({ source: "todo" });
     expect(byName.get("spawn_agent")).toMatchObject({ source: "agent" });
+    expect(byName.get("read_agent_report")).toMatchObject({
+      source: "agent",
+      definition: {
+        canonicalName: "read_agent_report",
+        defaultExposureTier: "advanced",
+        deferLoading: true,
+        delegation: "parent_only",
+        resultPresentation: { kind: "file_read" },
+      },
+    });
     expect(byName.get("create_skill")?.definition.deferLoading).toBe(true);
     expect(byName.get("tool_search")).toMatchObject({ source: "core" });
   });
@@ -1088,6 +1105,9 @@ describe("host tools", () => {
       parentRunPolicy: createDefaultPolicy(),
       childRunStoreFactory: () => undefined as never,
     });
+    expect(dynamicSpawnTool.resultPresentation).toEqual({
+      kind: "agent_result",
+    });
     const taskCreate = createMainHostToolCatalog({
       workspaceRoot: "/tmp/ws",
       skillRoots: [],
@@ -1288,9 +1308,14 @@ describe("host tools", () => {
       workspaceRoot: ctx.workspaceRoot,
     });
     let childToolNames: string[] = [];
+    let childSystemText = "";
     const childModel: ModelAdapter = {
       async complete(input) {
         childToolNames = input.tools.map((tool) => tool.name);
+        childSystemText = (input.prompt ?? [])
+          .filter((message) => message.role === "system")
+          .map((message) => message.content)
+          .join("\n");
         return { message: "child done" };
       },
     };
@@ -1347,6 +1372,11 @@ describe("host tools", () => {
     )) as { childRunId: string };
 
     expect(childToolNames).toEqual(["read", "submit_agent_result"]);
+    expect(childSystemText).toContain("Inspect files.");
+    expect(childSystemText).toContain(IN_PROCESS_CHILD_AGENT_CONTRACT_PROMPT);
+    expect(childSystemText.indexOf("Inspect files.")).toBeLessThan(
+      childSystemText.indexOf("Child agent contract:"),
+    );
     expect(
       lifecycleTypes(parent.events.all(), delegateResult.childRunId),
     ).toEqual(["subagent.requested", "subagent.started", "subagent.completed"]);
@@ -1471,10 +1501,11 @@ describe("host tools", () => {
       {
         run: parent.record,
       } as never,
-    )) as { childRunId: string; signal: string; message: string };
+    )) as { childRunId: string; status: string; report: string };
     expect(indexedResult).toMatchObject({
-      signal: "completed",
-      message: "reader done",
+      status: "completed",
+      report: "reader done",
+      workspace: { writes: 0 },
     });
     expect(
       lifecycleTypes(parent.events.all(), indexedResult.childRunId),
@@ -1499,10 +1530,12 @@ describe("host tools", () => {
     const reusedResult = (await delegateAgent.execute(
       { agentId: "reader", goal: "Inspect README.md." },
       { run: parent.record } as never,
-    )) as { alreadyCompleted?: boolean; childRunId: string };
+    )) as { childRunId: string; warnings?: string[] };
     expect(reusedResult).toMatchObject({
-      alreadyCompleted: true,
       childRunId: indexedResult.childRunId,
+      warnings: [
+        "The runtime reused this completed child result; no new child ran.",
+      ],
     });
     expect(childCalls).toBe(1);
   });
@@ -1584,10 +1617,18 @@ describe("host tools", () => {
     const ctx = await createWorkspace({ "README.md": "# Demo\n" });
     let active = 0;
     let maxActive = 0;
+    const childSystemPrompts = new Map<string, string>();
     const makeModel = (label: string): ModelAdapter => ({
-      async complete() {
+      async complete(input) {
         active += 1;
         maxActive = Math.max(maxActive, active);
+        childSystemPrompts.set(
+          label,
+          (input.prompt ?? [])
+            .filter((message) => message.role === "system")
+            .map((message) => message.content)
+            .join("\n"),
+        );
         await new Promise((resolve) => setTimeout(resolve, 40));
         active -= 1;
         return { message: completedAgentMessage(`${label} done`) };
@@ -1663,6 +1704,7 @@ describe("host tools", () => {
         },
       },
     });
+    expect(parallel.resultPresentation).toEqual({ kind: "agent_batch" });
     const delegateItemSchema = (
       parallel.inputSchema as {
         properties: {
@@ -1687,23 +1729,35 @@ describe("host tools", () => {
       mode: string;
       completed: number;
       incomplete: number;
-      unhealthy: number;
       results: Array<{
-        toolName: string;
-        message: string;
+        agentId: string;
+        status: string;
+        report: string;
         childRunId: string;
       }>;
     };
 
     expect(maxActive).toBe(2);
+    expect(childSystemPrompts.get("reviewer")).toContain(
+      IN_PROCESS_CHILD_AGENT_CONTRACT_PROMPT,
+    );
+    expect(childSystemPrompts.get("auditor")).toContain(
+      IN_PROCESS_CHILD_AGENT_CONTRACT_PROMPT,
+    );
+    expect(childSystemPrompts.get("reviewer")?.indexOf("Review.")).toBeLessThan(
+      childSystemPrompts.get("reviewer")?.indexOf("Child agent contract:") ??
+        -1,
+    );
+    expect(childSystemPrompts.get("auditor")?.indexOf("Audit.")).toBeLessThan(
+      childSystemPrompts.get("auditor")?.indexOf("Child agent contract:") ?? -1,
+    );
     expect(output).toMatchObject({
       mode: "parallel",
       completed: 2,
       incomplete: 0,
-      unhealthy: 0,
       results: [
-        { toolName: "delegate_reviewer", message: "reviewer done" },
-        { toolName: "delegate_auditor", message: "auditor done" },
+        { agentId: "reviewer", status: "completed", report: "reviewer done" },
+        { agentId: "auditor", status: "completed", report: "auditor done" },
       ],
     });
     for (const result of output.results) {
@@ -1725,7 +1779,7 @@ describe("host tools", () => {
     }
   });
 
-  it("counts completed-signal partial delegates as incomplete", async () => {
+  it("counts child-declared partial delegates as incomplete", async () => {
     const ctx = await createWorkspace({ "README.md": "# Demo\n" });
     const parent = createRun({
       goal: "parent",
@@ -1760,7 +1814,26 @@ describe("host tools", () => {
       ],
       model: {
         async complete() {
-          return { message: "partial answer" };
+          return {
+            toolCalls: [
+              {
+                toolName: "submit_agent_result",
+                arguments: {
+                  status: "partial",
+                  summary: "partial answer",
+                  blockers: [
+                    {
+                      code: "MORE_INSPECTION_REQUIRED",
+                      kind: "resource_limit",
+                      owner: "parent",
+                      message: "More inspection is required.",
+                      retry: "after_resource_change",
+                    },
+                  ],
+                },
+              },
+            ],
+          };
         },
       },
       childTools: [],
@@ -1779,19 +1852,21 @@ describe("host tools", () => {
       metadata: {
         completed: 0,
         incomplete: 1,
-        unhealthy: 0,
         results: [
           expect.objectContaining({
-            signal: "completed",
-            finality: "partial",
-            stepLimitReached: true,
+            status: "partial",
+            report: "partial answer",
+            workspace: { writes: 0 },
+            blockers: [
+              expect.objectContaining({ code: "MORE_INSPECTION_REQUIRED" }),
+            ],
           }),
         ],
       },
     });
   });
 
-  it("counts completed unhealthy delegates separately from incomplete delegates", async () => {
+  it("keeps raw child health in diagnostics and projects actionable parent warnings", async () => {
     const ctx = await createWorkspace({ "README.md": "# Demo\n" });
     const failingProbe = defineTool({
       name: "failing_probe",
@@ -1880,38 +1955,44 @@ describe("host tools", () => {
     )) as {
       completed: number;
       incomplete: number;
-      unhealthy: number;
       results: Array<{
-        profileId: string;
-        signal: string;
-        assessment: { health: string; issues: Array<{ code: string }> };
+        agentId: string;
+        status: string;
+        warnings?: string[];
       }>;
     };
 
     expect(output).toMatchObject({
       completed: 2,
       incomplete: 0,
-      unhealthy: 1,
     });
+    expect(output).not.toHaveProperty("unhealthy");
     expect(output.results).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          profileId: "reviewer",
-          signal: "completed",
-          assessment: expect.objectContaining({
-            health: "failing",
-            issues: [
-              expect.objectContaining({ code: "UNRESOLVED_TOOL_FAILURE" }),
-            ],
-          }),
+          agentId: "reviewer",
+          status: "completed",
         }),
         expect.objectContaining({
-          profileId: "auditor",
-          signal: "completed",
-          assessment: expect.objectContaining({ health: "clean" }),
+          agentId: "auditor",
+          status: "completed",
         }),
       ]),
     );
+    expect(
+      output.results.find((result) => result.agentId === "reviewer"),
+    ).toMatchObject({
+      warnings: [
+        expect.stringContaining(
+          "failing_probe failed: probe failed (TOOL_EXECUTION_FAILED)",
+        ),
+      ],
+    });
+    expect(
+      output.results
+        .find((result) => result.agentId === "reviewer")
+        ?.warnings?.join("\n"),
+    ).not.toContain("UNRESOLVED_TOOL_FAILURE");
   });
 
   it("applies profile workflow hooks to delegate_parallel child runs", async () => {
@@ -2035,12 +2116,11 @@ describe("host tools", () => {
         metadata?: {
           completed: number;
           incomplete: number;
-          unhealthy: number;
           results: Array<{
-            profileId: string;
-            signal: string;
-            stopReason?: string;
-            message?: string;
+            agentId: string;
+            status: string;
+            report: string;
+            blockers?: Array<{ code: string }>;
           }>;
         };
       }
@@ -2048,19 +2128,19 @@ describe("host tools", () => {
     expect(metadata).toMatchObject({
       completed: 1,
       incomplete: 1,
-      unhealthy: 0,
     });
+    expect(metadata).not.toHaveProperty("unhealthy");
     expect(metadata?.results).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          profileId: "reviewer",
-          signal: "failed",
-          stopReason: "hook_stopped",
+          agentId: "reviewer",
+          status: "partial",
+          blockers: [expect.objectContaining({ code: "AGENT_RUN_INCOMPLETE" })],
         }),
         expect.objectContaining({
-          profileId: "auditor",
-          signal: "completed",
-          message: "auditor done",
+          agentId: "auditor",
+          status: "completed",
+          report: "auditor done",
         }),
       ]),
     );
@@ -2278,9 +2358,9 @@ describe("host tools", () => {
       { run: parent.record } as never,
     )) as {
       results: Array<{
-        toolName: string;
-        message?: string;
-        alreadyCompleted?: boolean;
+        agentId: string;
+        report?: string;
+        warnings?: string[];
       }>;
     };
     const repeatedAuditor = await auditor!.execute(
@@ -2292,15 +2372,19 @@ describe("host tools", () => {
     expect(auditorCalls).toBe(1);
     expect(parallelOutput.results).toMatchObject([
       {
-        toolName: "delegate_reviewer",
-        message: "reviewer done",
-        alreadyCompleted: true,
+        agentId: "reviewer",
+        report: "reviewer done",
+        warnings: [
+          "The runtime reused this completed child result; no new child ran.",
+        ],
       },
-      { toolName: "delegate_auditor", message: "auditor done" },
+      { agentId: "auditor", report: "auditor done" },
     ]);
     expect(repeatedAuditor).toMatchObject({
-      message: "auditor done",
-      alreadyCompleted: true,
+      report: "auditor done",
+      warnings: [
+        "The runtime reused this completed child result; no new child ran.",
+      ],
     });
   });
 
@@ -2315,7 +2399,9 @@ describe("host tools", () => {
             toolCalls: [{ toolName: "read", arguments: { path: "README.md" } }],
           };
         }
-        return { message: completedAgentMessage("dynamic child done") };
+        // Deliberately make a false mutation claim: the runtime-owned
+        // workspace evidence returned beside it must remain authoritative.
+        return { message: completedAgentMessage("Created print_numbers.py.") };
       },
     };
     const parent = createRun({
@@ -2356,24 +2442,17 @@ describe("host tools", () => {
 
     expect(childCalls).toBe(2);
     expect(first).toMatchObject({
-      signal: "completed",
-      message: "dynamic child done",
-      actions: [
-        expect.objectContaining({
-          toolName: "read",
-          preview: "README.md",
-          status: "completed",
-        }),
-      ],
-      workspaceWrites: 0,
-      reportingGuidance: expect.stringContaining(
-        "do not claim this run created or modified",
-      ),
+      status: "completed",
+      report: "Created print_numbers.py.",
+      workspace: { writes: 0 },
     });
     expect(second).toMatchObject({
-      signal: "completed",
-      message: "dynamic child done",
-      alreadyCompleted: true,
+      status: "completed",
+      report: "Created print_numbers.py.",
+      workspace: { writes: 0 },
+      warnings: [
+        "The runtime reused this completed child result; no new child ran.",
+      ],
     });
   });
 
@@ -2427,8 +2506,9 @@ describe("host tools", () => {
         { run: parent.record } as never,
       ),
     ).resolves.toMatchObject({
-      signal: "completed",
-      message: "spawn-model child done",
+      status: "completed",
+      report: "spawn-model child done",
+      workspace: { writes: 0 },
     });
 
     expect(spawnModelUsed).toBe(true);
@@ -2807,7 +2887,11 @@ describe("host tools", () => {
       delegate!.execute({ goal: "Review README.md." }, {
         run: parent.record,
       } as never),
-    ).resolves.toMatchObject({ message: "delegate-default child done" });
+    ).resolves.toMatchObject({
+      status: "completed",
+      report: "delegate-default child done",
+      workspace: { writes: 0 },
+    });
 
     expect(resolverCalls).toBe(1);
     expect(delegateModelUsed).toBe(true);
@@ -3240,8 +3324,9 @@ describe("host tools", () => {
         run: parent.record,
       } as never),
     ).resolves.toMatchObject({
-      signal: "completed",
-      stepLimitReached: true,
+      status: "completed",
+      report: "child finished on inherited budget",
+      workspace: { writes: 0 },
     });
     expect(childCalls).toBe(9);
   });

@@ -3,9 +3,44 @@ import type {
   TaskLifecycleUpdate,
   TaskRecord,
 } from "@sparkwright/agent-runtime";
-import { taskUpdatedEventPayload } from "../src/runtime/task-projections.js";
+import {
+  agentTaskCompletionOutput,
+  taskUpdatedEventPayload,
+} from "../src/runtime/task-projections.js";
 
 describe("task lifecycle event projections", () => {
+  it("projects an explicit bounded agent completion receipt with a result ref", () => {
+    const report = "agent report ".repeat(500);
+    const output = agentTaskCompletionOutput(
+      {
+        childRunId: "run_agent_task",
+        status: "completed",
+        report,
+        workspace: { writes: 2, paths: ["a.ts", "b.ts"] },
+        warnings: [],
+        blockers: [],
+      },
+      "task_agent",
+    );
+
+    expect(output).toMatchObject({
+      type: "agent.completed",
+      taskId: "task_agent",
+      childRunId: "run_agent_task",
+      status: "completed",
+      report: report.slice(0, 4_000),
+      reportTruncated: true,
+      reportChars: report.length,
+      reportOmittedChars: report.length - 4_000,
+      workspace: { writes: 2, paths: ["a.ts", "b.ts"] },
+      resultRef: {
+        tool: "task",
+        action: "get",
+        taskId: "task_agent",
+      },
+    });
+  });
+
   it("projects a bounded terminal summary without result or metadata leakage", () => {
     const record = {
       id: "task_projection",

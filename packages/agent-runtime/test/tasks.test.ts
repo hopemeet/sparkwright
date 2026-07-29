@@ -253,6 +253,44 @@ describe("TaskManager", () => {
     expect(record.error?.message).toBe("nope");
   });
 
+  it("preserves structured runner failure metadata", async () => {
+    const manager = makeManager();
+    const handle = manager.spawn({
+      parentRunId: PARENT_RUN_ID,
+      kind: "agent",
+      runner: async () => {
+        throw Object.assign(new Error("child did not complete"), {
+          code: "SPAWN_AGENT_CHILD_INCOMPLETE",
+          metadata: {
+            childRunId: "run_failed_child",
+            status: "partial",
+            report: "Useful partial evidence.",
+            partialObservations: [
+              { toolName: "glob", output: '{"paths":["README.md"]}' },
+            ],
+          },
+        });
+      },
+    });
+
+    const record = await handle.wait();
+    expect(record).toMatchObject({
+      status: "failed",
+      error: {
+        code: "SPAWN_AGENT_CHILD_INCOMPLETE",
+        message: "child did not complete",
+        metadata: {
+          childRunId: "run_failed_child",
+          status: "partial",
+          report: "Useful partial evidence.",
+          partialObservations: [
+            { toolName: "glob", output: '{"paths":["README.md"]}' },
+          ],
+        },
+      },
+    });
+  });
+
   it.each([
     ["inline", false],
     ["awaited", true],

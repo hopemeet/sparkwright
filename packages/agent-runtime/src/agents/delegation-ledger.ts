@@ -4,8 +4,9 @@ import type {
   DelegationLedgerHit,
   DelegationLedgerKey,
   DelegationLedgerResult,
+  ParentAgentResult,
 } from "./types.js";
-import { isReusableAgentResult } from "./result.js";
+import { isReusableAgentResult, projectParentAgentResult } from "./result.js";
 
 interface DelegationLedgerEntry {
   key: string;
@@ -61,14 +62,14 @@ export function rememberReusableDelegation(
   return true;
 }
 
-export function withAlreadyCompletedNote(
+export function reusedDelegationResult(
   result: DelegationLedgerResult,
-): DelegationLedgerResult {
-  return {
-    ...result,
-    alreadyCompleted: true,
-    note: "A similar delegation already completed in this parent run; summarize the previous child result instead of spawning another child agent.",
-  };
+): ParentAgentResult {
+  return projectParentAgentResult({
+    result,
+    workspace: result.output?.workspace ?? { writes: 0 },
+    reused: true,
+  });
 }
 
 function delegationLedgerKeyString(

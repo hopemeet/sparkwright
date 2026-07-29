@@ -13,7 +13,6 @@ import { RunController } from "./state/run-controller.js";
 import { NotificationStore } from "./state/notification-store.js";
 import { QueueStore } from "./state/queue-store.js";
 import { LayerStack } from "./state/layer-stack.js";
-import { EventStream } from "./components/event-stream.js";
 import { InputBox } from "./components/input-box.js";
 import { ThemeProvider } from "./lib/theme-context.js";
 import { resolveTheme, type Theme } from "./lib/theme.js";
@@ -21,6 +20,8 @@ import { loadStash, type StashFile } from "./lib/stash.js";
 import type { InputBoxHandle } from "./components/input-box.js";
 import { LiveFrame } from "./components/live-frame.js";
 import { LayerRenderer } from "./components/layer-renderer.js";
+import { TranscriptViewport } from "./components/transcript-viewport.js";
+import { TranscriptBrowseFooter } from "./components/transcript-browse-footer.js";
 import { resolveDialogColumns } from "./components/dialog-frame.js";
 import { AttentionManager } from "./lib/attention.js";
 import { presentationPolicy } from "./lib/ui-signal.js";
@@ -63,6 +64,18 @@ import {
   toCoreRunFields,
   type TuiPermissionMode,
 } from "./lib/permission.js";
+import { assembleTranscriptDocument } from "./lib/transcript-document.js";
+import { layoutTranscriptDocument } from "./lib/transcript-layout.js";
+import { inkScreenRows } from "./lib/terminal-screen-layout.js";
+import {
+  initialTranscriptViewportState,
+  moveTranscriptViewportToEnd,
+  moveTranscriptViewportToStart,
+  resetTranscriptViewport,
+  scrollTranscriptViewport,
+  synchronizeTranscriptViewport,
+  toggleTranscriptViewportMode,
+} from "./state/transcript-viewport-state.js";
 
 export interface CliOverrides {
   workspaceRoot?: string;
@@ -217,7 +230,7 @@ function AppReady(
 ): React.ReactElement {
   const { exit } = useApp();
   const { isRawModeSupported } = useStdin();
-  const { stdout, write: writeToStdout } = useStdout();
+  const { stdout } = useStdout();
   const { resolved } = props;
 
   const store = useMemo(() => new EventStore(), []);
@@ -250,14 +263,17 @@ function AppReady(
     void controller.switchSession(initialSessionId);
   }, [controller, props.cliOverrides.sessionId]);
 
-  // Track the terminal height only to cap the live (in-flight) stream panel so
-  // a long streaming message can't push the input box off-screen. Committed
-  // transcript lines live in scrollback (<Static>), so the overall frame is no
-  // longer clamped to the viewport.
-  const [termRows, setTermRows] = useState<number>(stdout?.rows ?? 24);
+  // The app owns a fixed-height screen. Transcript layout uses physical rows;
+  // live state and the composer occupy the reserved lower frame.
+  const [termRows, setTermRows] = useState<number>(
+    Math.max(1, stdout?.rows ?? 24),
+  );
+  const screenRows = inkScreenRows(termRows);
+  const [liveFrameRows, setLiveFrameRows] = useState(0);
+  const [inputFrameRows, setInputFrameRows] = useState(3);
   useEffect(() => {
     if (!stdout) return;
-    const onResize = (): void => setTermRows(stdout.rows ?? 24);
+    const onResize = (): void => setTermRows(Math.max(1, stdout.rows ?? 24));
     stdout.on("resize", onResize);
     return () => {
       stdout.off("resize", onResize);
@@ -277,7 +293,9 @@ function AppReady(
   const queued = useSyncExternalStore(queue.subscribe, queue.getSnapshot);
   const [focused, setFocused] = useState(true);
   const theme = resolved.theme;
-  const detailsOpen = layerSnapshot.some((layer) => layer.name === "details");
+  const [transcriptViewport, setTranscriptViewport] = useState(
+    initialTranscriptViewportState,
+  );
   // Prompt stash bridge — the InputBox reads/writes through this ref.
   const stashRef = useRef<StashFile>({ current: null, list: [] });
   const inputDraftRef = useRef("");
@@ -372,26 +390,17 @@ function AppReady(
     skillLearnNoticeCountRef.current = 0;
   }, [state.sessionId]);
 
-  // Scroll is the terminal's job now: the transcript is committed to native
-  // scrollback via <Static>, so we deliberately do NOT enable mouse reporting
-  // (which would capture the wheel and break native scrollback). `resolved.mouse`
-  // is reserved for future click-based affordances.
-
-  // Wipe the screen + scrollback when /clear or /new bumps the generation, then
-  // let the remounted <Static> (keyed on the same counter) reprint from empty.
-  // <Static> can't un-print committed lines, so an explicit wipe is required.
-  //
-  // Route the wipe through Ink's writeToStdout (NOT a raw stdout.write): it
-  // clears Ink's live region, writes our escape, then re-logs the current live
-  // frame. A raw write leaves the frame blank until Ink next repaints — and Ink
-  // skips repaints when the live output is unchanged, so the screen would stay
-  // black until the user typed or the spinner ticked.
-  const lastClearGen = useRef(state.clearGeneration);
+  // /clear, /new, and session switches create a new document epoch. The export
+  // buffer remains owned by RunController; only the viewport anchor resets.
+  const lastDocumentEpoch = useRef(
+    `${state.sessionId ?? "no-session"}:${state.clearGeneration}`,
+  );
   useEffect(() => {
-    if (state.clearGeneration === lastClearGen.current) return;
-    lastClearGen.current = state.clearGeneration;
-    writeToStdout("\x1b[2J\x1b[3J\x1b[H");
-  }, [state.clearGeneration, writeToStdout]);
+    const epoch = `${state.sessionId ?? "no-session"}:${state.clearGeneration}`;
+    if (epoch === lastDocumentEpoch.current) return;
+    lastDocumentEpoch.current = epoch;
+    setTranscriptViewport((current) => resetTranscriptViewport(current));
+  }, [state.clearGeneration, state.sessionId]);
 
   // Project blocking approvals into the unified signal policy. The decision
   // surface remains canonical for action; the signal owns attention/history.
@@ -841,6 +850,104 @@ function AppReady(
     controller.cancel();
   }
 
+  const modelLabel = effModel ?? "deterministic";
+  const cols = resolveDialogColumns(stdout?.columns) ?? 100;
+  const documentEpoch = `${state.sessionId ?? "no-session"}:${state.clearGeneration}`;
+  const frozenHeaderRef = useRef<{
+    epoch: string;
+    value: {
+      workspaceRoot: string;
+      modelLabel: string;
+      sessionId: string | null;
+    };
+  } | null>(null);
+  if (frozenHeaderRef.current?.epoch !== documentEpoch) {
+    frozenHeaderRef.current = {
+      epoch: documentEpoch,
+      value: {
+        workspaceRoot: resolved.workspaceRoot,
+        modelLabel,
+        sessionId: state.sessionId,
+      },
+    };
+  }
+  const frozenHeader = frozenHeaderRef.current.value;
+  const transcriptDocument = useMemo(
+    () =>
+      assembleTranscriptDocument({
+        epoch: documentEpoch,
+        events: state.events,
+        todoItems: state.todoItems,
+        header: frozenHeader,
+      }),
+    [documentEpoch, frozenHeader, state.events, state.todoItems],
+  );
+  const inputSurfaceRows =
+    transcriptViewport.mode === "detailed" ? 1 : inputFrameRows;
+  const transcriptRows = Math.max(
+    1,
+    screenRows - liveFrameRows - inputSurfaceRows,
+  );
+  const transcriptLayout = useMemo(
+    () =>
+      layoutTranscriptDocument(
+        transcriptDocument,
+        transcriptViewport.mode,
+        Math.max(1, cols - 2),
+      ),
+    [transcriptDocument, transcriptViewport.mode, cols],
+  );
+  const previousLayoutRef = useRef<{
+    epoch: string;
+    mode: typeof transcriptViewport.mode;
+    columns: number;
+    totalRows: number;
+  } | null>(null);
+  useEffect(() => {
+    const previous = previousLayoutRef.current;
+    const comparable =
+      previous?.epoch === transcriptLayout.documentEpoch &&
+      previous.mode === transcriptLayout.mode &&
+      previous.columns === transcriptLayout.columns;
+    if (comparable) {
+      const appendedRows = Math.max(
+        0,
+        transcriptLayout.totalRows - previous.totalRows,
+      );
+      setTranscriptViewport((current) =>
+        synchronizeTranscriptViewport(
+          current,
+          transcriptLayout,
+          transcriptRows,
+          appendedRows,
+        ),
+      );
+    }
+    previousLayoutRef.current = {
+      epoch: transcriptLayout.documentEpoch,
+      mode: transcriptLayout.mode,
+      columns: transcriptLayout.columns,
+      totalRows: transcriptLayout.totalRows,
+    };
+  }, [transcriptLayout, transcriptRows]);
+
+  function toggleTranscriptDetails(): void {
+    setTranscriptViewport((current) =>
+      toggleTranscriptViewportMode(current, transcriptLayout, transcriptRows),
+    );
+  }
+
+  function scrollTranscriptBy(delta: number): void {
+    setTranscriptViewport((current) =>
+      scrollTranscriptViewport(
+        current,
+        transcriptLayout,
+        transcriptRows,
+        delta,
+      ),
+    );
+  }
+
   function routeGlobalInput(input: string, key: Key, draft: string): boolean {
     const b = resolved.bindings;
     const actions: InteractionAction[] = [
@@ -883,8 +990,65 @@ function AppReady(
         id: "details.toggle",
         scope: "global",
         chords: b["details.toggle"],
-        enabled: state.events.length > 0 || state.todoItems.length > 0,
-        run: () => layers.toggle("details"),
+        enabled:
+          transcriptViewport.mode === "detailed" ||
+          state.events.length > 0 ||
+          state.todoItems.length > 0,
+        run: toggleTranscriptDetails,
+      },
+      {
+        id: "transcript.page-up",
+        scope: "global",
+        chords: b["transcript.page-up"],
+        enabled: transcriptLayout.rows.length > transcriptRows,
+        run: () =>
+          setTranscriptViewport((current) =>
+            scrollTranscriptViewport(
+              current,
+              transcriptLayout,
+              transcriptRows,
+              -Math.max(1, transcriptRows - 1),
+            ),
+          ),
+      },
+      {
+        id: "transcript.page-down",
+        scope: "global",
+        chords: b["transcript.page-down"],
+        enabled: transcriptLayout.rows.length > transcriptRows,
+        run: () =>
+          setTranscriptViewport((current) =>
+            scrollTranscriptViewport(
+              current,
+              transcriptLayout,
+              transcriptRows,
+              Math.max(1, transcriptRows - 1),
+            ),
+          ),
+      },
+      {
+        id: "transcript.top",
+        scope: "global",
+        chords: b["transcript.top"],
+        enabled: transcriptLayout.rows.length > 0,
+        run: () =>
+          setTranscriptViewport((current) =>
+            moveTranscriptViewportToStart(current, transcriptLayout),
+          ),
+      },
+      {
+        id: "transcript.bottom",
+        scope: "global",
+        chords: b["transcript.bottom"],
+        enabled: transcriptLayout.rows.length > 0,
+        run: () =>
+          setTranscriptViewport((current) =>
+            moveTranscriptViewportToEnd(
+              current,
+              transcriptLayout,
+              transcriptRows,
+            ),
+          ),
       },
       {
         id: "cancel.run",
@@ -896,8 +1060,6 @@ function AppReady(
     ];
     return interactionRouter.route(input, key, draft, actions).handled;
   }
-
-  const modelLabel = effModel ?? "deterministic";
 
   function cyclePermissionMode(): void {
     const next = nextAllowedTuiPermissionMode(
@@ -918,22 +1080,21 @@ function AppReady(
     const changed = nextModelName !== modelLabel;
     setModelOverride({ modelName: nextModelName });
     controller.updateModel(nextModelName, "request");
-    // A committed switch leaves one permanent line in scrollback; no transient
-    // toast on top of it (an unchanged pick just closes the dialog silently).
+    // A committed switch leaves one durable transcript row; no transient toast
+    // on top of it (an unchanged pick just closes the dialog silently).
     if (changed) store.appendNotice(`model -> ${nextModelName} (next run)`);
     layers.pop("model");
   }
 
-  const cols = resolveDialogColumns(stdout?.columns) ?? 100;
   // Only reserve the sidebar rail when the terminal is wide AND there's
   // something to show — an empty "modified files (none yet)" box pinned at the
   // bottom is just clutter.
   const hasSidebarContent = state.modifiedFiles.length > 0;
   const sidebarWidth = cols >= 100 && hasSidebarContent ? 32 : 0;
 
-  // Cap the live stream panel so a long in-flight message can't push the input
-  // off-screen. Committed lines are in scrollback, so nothing else is clamped.
-  const streamingMax = Math.max(3, termRows - 16);
+  // The lower live frame gets a small fixed stream budget; the transcript owns
+  // the rest of the full-screen viewport and is the only scrollable region.
+  const streamingMax = 3;
   const humanActionOwnsInput = Boolean(
     !topLayer &&
     state.pendingHumanAction &&
@@ -956,7 +1117,6 @@ function AppReady(
     sessionList: sessionActions.sessionList,
     sessionRootLabel: resolved.sessionRootLabel,
     events: state.events,
-    todoItems: state.todoItems,
     taskRecords: taskActions.taskRecords,
     taskOutputs: taskActions.taskOutputs,
     loadingTasks: taskActions.loadingTasks,
@@ -999,98 +1159,116 @@ function AppReady(
 
   return (
     <ThemeProvider theme={theme}>
-      <Box flexDirection="column">
-        {/* Committed transcript → terminal scrollback, led by a one-time session
-          header at the top. Keyed on clearGeneration so /clear and /new remount
-          it (paired with the screen wipe above), reprinting a fresh header. */}
-        <EventStream
-          key={state.clearGeneration}
-          events={state.events}
-          header={{
-            workspaceRoot: resolved.workspaceRoot,
-            modelLabel,
-            sessionId: state.sessionId,
-          }}
-        />
-
-        {detailsOpen ? null : (
-          <LiveFrame
-            state={state}
-            modelLabel={modelLabel}
-            permissionMode={effTuiPermissionMode}
-            focused={focused}
-            runningTaskCount={taskActions.taskActivity.running}
-            unreadTasks={taskActions.unreadTasks}
-            waitingWorkflowCount={workflowActions.waitingWorkflowCount}
-            streamingMax={streamingMax}
-            sidebarWidth={sidebarWidth}
-            columns={cols}
-            toast={toastSnapshot.current}
-            toastQueueDepth={toastSnapshot.queueDepth}
-            errors={resolved.errors}
-            queued={queued}
-            showQueued={!topLayer}
-            humanActionActive={humanActionOwnsInput}
-            onReviewHumanAction={(proposalId) =>
-              skillActions.reviewSkillProposalsFromSlash(proposalId)
-            }
-            onApplyHumanAction={skillActions.applySkillReviewProposal}
-            onDismissHumanAction={(proposalId) =>
-              store.clearPendingHumanAction(proposalId)
-            }
-          />
-        )}
-
-        {/* Layer rendering — only the topmost layer owns input. */}
+      <Box flexDirection="column" height={screenRows} overflow="hidden">
+        {/* A blocking layer owns both input and the visible operation surface.
+          Transcript state remains mounted in App and resumes at its semantic
+          anchor when the layer closes. */}
         {topLayer ? (
           <LayerRenderer entry={topLayer} {...layerProps} />
-        ) : humanActionOwnsInput ? null : isRawModeSupported ? (
-          <InputBox
-            // Stay editable while a run is in flight: submissions are queued
-            // (see handleSubmit) rather than blocked, so the user can line up
-            // follow-ups without waiting.
-            disabled={false}
-            placeholder={
-              state.status === "running" || state.status === "awaiting-approval"
-                ? "running — type to queue the next goal (esc cancels run)"
-                : 'type a goal, /capabilities for available capabilities, or "/" for commands'
-            }
-            workspaceRoot={resolved.workspaceRoot}
-            registry={registry}
-            vim={resolved.vim}
-            onSubmit={handleSubmit}
-            onCommand={(cmd, rest) =>
-              void (cmd.runRaw ? cmd.runRaw(rest) : cmd.run())
-            }
-            onEscape={() => {
-              // Plain Esc is editor-owned; only treat it as run cancellation when
-              // the user has kept cancel.run bound to esc.
-              if (
-                state.status === "running" &&
-                resolved.bindings["cancel.run"].some(isPlainEscapeChord)
-              ) {
-                requestCancelRun();
-              }
-            }}
-            onQuit={requestQuit}
-            onQuitClear={noteInputClearedByQuit}
-            stashRef={stashRef}
-            onStashChange={(next) => {
-              stashRef.current = next;
-            }}
-            initialDraft={inputDraftRef.current}
-            onDraftChange={(next) => {
-              inputDraftRef.current = next;
-            }}
-            onGlobalInput={routeGlobalInput}
-            handleRef={inputHandleRef}
-          />
         ) : (
-          <Box paddingX={1}>
-            <Text dimColor>
-              (input disabled — stdin is not a TTY; run from a real terminal)
-            </Text>
-          </Box>
+          <>
+            <TranscriptViewport
+              layout={transcriptLayout}
+              state={transcriptViewport}
+              rows={transcriptRows}
+            />
+            <LiveFrame
+              state={state}
+              modelLabel={modelLabel}
+              permissionMode={effTuiPermissionMode}
+              focused={focused}
+              runningTaskCount={taskActions.taskActivity.running}
+              unreadTasks={taskActions.unreadTasks}
+              waitingWorkflowCount={workflowActions.waitingWorkflowCount}
+              streamingMax={streamingMax}
+              sidebarWidth={sidebarWidth}
+              columns={cols}
+              toast={toastSnapshot.current}
+              toastQueueDepth={toastSnapshot.queueDepth}
+              errors={resolved.errors}
+              queued={queued}
+              showQueued
+              humanActionActive={humanActionOwnsInput}
+              onReviewHumanAction={(proposalId) =>
+                skillActions.reviewSkillProposalsFromSlash(proposalId)
+              }
+              onApplyHumanAction={skillActions.applySkillReviewProposal}
+              onDismissHumanAction={(proposalId) =>
+                store.clearPendingHumanAction(proposalId)
+              }
+              onHeightChange={setLiveFrameRows}
+            />
+            {humanActionOwnsInput ? null : transcriptViewport.mode ===
+              "detailed" ? (
+              <TranscriptBrowseFooter
+                onClose={toggleTranscriptDetails}
+                onLineUp={() => scrollTranscriptBy(-1)}
+                onLineDown={() => scrollTranscriptBy(1)}
+                onTop={() =>
+                  setTranscriptViewport((current) =>
+                    moveTranscriptViewportToStart(current, transcriptLayout),
+                  )
+                }
+                onBottom={() =>
+                  setTranscriptViewport((current) =>
+                    moveTranscriptViewportToEnd(
+                      current,
+                      transcriptLayout,
+                      transcriptRows,
+                    ),
+                  )
+                }
+                onGlobalInput={(input, key) => routeGlobalInput(input, key, "")}
+              />
+            ) : isRawModeSupported ? (
+              <InputBox
+                // Stay editable while a run is in flight: submissions are
+                // queued rather than blocked.
+                disabled={false}
+                placeholder={
+                  state.status === "running" ||
+                  state.status === "awaiting-approval"
+                    ? "running — type to queue the next goal (esc cancels run)"
+                    : 'type a goal, /capabilities for available capabilities, or "/" for commands'
+                }
+                workspaceRoot={resolved.workspaceRoot}
+                registry={registry}
+                vim={resolved.vim}
+                onSubmit={handleSubmit}
+                onCommand={(cmd, rest) =>
+                  void (cmd.runRaw ? cmd.runRaw(rest) : cmd.run())
+                }
+                onEscape={() => {
+                  if (
+                    state.status === "running" &&
+                    resolved.bindings["cancel.run"].some(isPlainEscapeChord)
+                  ) {
+                    requestCancelRun();
+                  }
+                }}
+                onQuit={requestQuit}
+                onQuitClear={noteInputClearedByQuit}
+                stashRef={stashRef}
+                onStashChange={(next) => {
+                  stashRef.current = next;
+                }}
+                initialDraft={inputDraftRef.current}
+                onDraftChange={(next) => {
+                  inputDraftRef.current = next;
+                }}
+                onGlobalInput={routeGlobalInput}
+                handleRef={inputHandleRef}
+                onHeightChange={setInputFrameRows}
+              />
+            ) : (
+              <Box paddingX={1}>
+                <Text dimColor>
+                  (input disabled — stdin is not a TTY; run from a real
+                  terminal)
+                </Text>
+              </Box>
+            )}
+          </>
         )}
       </Box>
     </ThemeProvider>

@@ -609,7 +609,7 @@ describe("EventStream committed rendering", () => {
     ];
     const text = await renderToText(stream(events));
     expect(text).toContain("task task_mqzd1c1b30yc24hj · awaited");
-    expect(text).toContain("parent will wait automatically");
+    expect(text).not.toContain("parent will wait");
     expect(text).not.toContain('"completionObservation"');
   });
 
@@ -698,10 +698,13 @@ describe("EventStream committed rendering", () => {
       ev("run.started", 1, {}),
       ev("approval.requested", 2, {
         id: "approval_1",
+        runId: "run_fact",
         action: "tool.execute",
+        summary: "Run tool bash",
       }),
       ev("approval.resolved", 3, {
         approvalId: "approval_1",
+        runId: "run_fact",
         decision: "approved",
       }),
       ev("tool.requested", 4, {
@@ -729,9 +732,9 @@ describe("EventStream committed rendering", () => {
     const text = await renderToText(stream(events));
     expect(text).toContain("summary");
     expect(text).toContain("changed 1 file");
-    expect(text).toContain("approvals 1 approved");
+    expect(text).toContain("approval approved · Run tool bash");
+    expect(text).not.toContain("summary approvals");
     expect(text).toContain("last command: npm test passed");
-    expect(text).not.toContain("approval approved");
   });
 
   it("renders only the Stop-accepted final message", async () => {
@@ -978,7 +981,8 @@ describe("EventStream committed rendering", () => {
     const text = await renderToText(stream(events), 220);
 
     expect(text).toContain("└─ Agent · reviewer partial");
-    expect(text).toContain("UNRESOLVED_TOOL_FAILURE");
+    expect(text).toContain("1 tool failure remained unresolved");
+    expect(text).not.toContain("UNRESOLVED_TOOL_FAILURE");
     expect(text).toContain("Ctrl+T 查看详情");
     expect(text).not.toContain("reviewer requested");
     expect(text).not.toContain("audit docs");

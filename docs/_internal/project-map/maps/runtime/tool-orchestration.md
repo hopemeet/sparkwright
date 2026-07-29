@@ -10,6 +10,95 @@ See [../safety/workspace-writes.md](../safety/workspace-writes.md), [../safety/s
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-29
+- Scope: completed in-process Agent observations now preserve actionable
+  assessment-derived warnings as semantic recovery guidance while keeping raw
+  assessment health and lifecycle detail outside parent model context.
+  `tool_search` continues to ignore `maxResults` for exact selection, and the
+  schema/UI now make that boundary explicit. Todo selection is based on durable
+  coordination value rather than scenario-specific step counts.
+- Read: Agent result/action projection, Core tool search, project-context Todo
+  guidance, TUI request/Agent presentation, and focused tests.
+- Tests: focused Core (7), Agent Runtime (19), Project Context (19), and TUI
+  (66) suites plus affected typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-28
+- Scope: in-process child prompt orchestration now requires evidence-bound
+  effect attribution and a material-change/new-evidence stopping rule. Compact
+  parent observations no longer repeat Core assessment health as warnings or a
+  parallel `unhealthy` aggregate; assessment and raw tool lifecycle remain
+  authoritative diagnostics.
+- Read: Agent prompt/result composition, Host in-process collectors, Core
+  assessment boundary, and TUI tool-action projection.
+- Tests: Agent Runtime 263/263, Host 593/593, TUI 532/532, and a real dynamic
+  child canary passed.
+
+- Status: Verified
+- Date: 2026-07-27
+- Scope: tool-owned semantic presentation now distinguishes compact single
+  Agent receipts and eight-child batch indices from generic JSON
+  summarization. The main Host catalog includes the parent-only
+  `read_agent_report` recovery tool as advanced/deferred. Tool execution and
+  raw trace results remain authoritative; presentation changes only the
+  model-visible observation.
+- Read: Core tool descriptors/run/observation formatter, Streaming parity,
+  Host tool identity/catalog/preparation, Agent tool definitions, and tests.
+- Tests: Core/Streaming observation tests, Host catalog/protocol/report tests,
+  Agent Runtime/Host full suites, and affected typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-26
+- Scope: Host prompt composition is now explicitly separate from child tool
+  admission and runtime authority. A stable Agent Runtime helper composes the
+  optional profile, universal child contract, and result protocol exactly
+  once; low-level embedders and external child transports are not implicitly
+  rewritten.
+- Read: prompt builder assembly, child tool catalogs, Agent Runtime spawn and
+  result protocol, Host child paths, and public extension guidance.
+- Tests: full `npm run release:check` passed; focused Agent Runtime 60/60 and
+  Host 102/102 passed.
+
+- Status: Verified
+- Date: 2026-07-26
+- Scope: completed in-process children now finish with one natural report;
+  structured `submit_agent_result` is guidance for partial/blocked recovery.
+  Parent context receives compact `ParentAgentResult`, while runtime
+  transport/usage/assessment/action evidence stays in lifecycle and ledgers.
+  A deterministic terminal renderer completes directly without another model
+  turn.
+- Read: Core terminal path, Agent Runtime result protocol/projection, Host
+  delegation adapters, project-context relay guidance, and TUI result display.
+- Tests: Core 661/661, Host focused 101/101, Agent Runtime focused suites,
+  Project Context 19/19, and TUI 531/531 passed.
+
+- Status: Verified
+- Date: 2026-07-26
+- Scope: Agent terminal action summaries preserve Core's structured
+  idempotent/no-progress skip as `skipped` rather than flattening every
+  `tool.completed` event to success. TUI replay prefers exact child tool
+  lifecycle truth when correcting legacy receipts. Transcript effect
+  deduplication requires same-run span/call identity and never guesses from
+  names, paths, or adjacency.
+- Read: Agent action summary, TUI tool/Agent presentation, TranscriptDocument
+  effect ownership, and retained real trace `session_tui_ms12fuf0`.
+- Tests: Agent Runtime 259/259 and TUI 531/531 passed; detailed real-session
+  PTY replay showed the repeated bash as skipped and suppressed duplicate
+  child lifecycle/effect rows.
+
+- Status: Verified
+- Date: 2026-07-26
+- Scope: the app-owned transcript document groups Agent and tool presentation
+  only by structured run, child-run, tool-call/span, or event identifiers.
+  Missing identities remain independent display blocks. Tool validation,
+  approval, execution, and result authority are unchanged.
+- Read: TUI transcript assembler/layout, shared tool display, and existing
+  runtime tool lifecycle contracts.
+- Tests: TUI transcript grouping/compatibility coverage and real-PTY Agent/tool
+  rendering passed; full repository verification is recorded in the change
+  handoff.
+
+- Status: Verified
 - Date: 2026-07-25
 - Scope: child execution still uses the existing tool validation, policy,
   approval, and lifecycle path. At terminal time Agent Runtime derives at most
@@ -117,8 +206,9 @@ See [../safety/workspace-writes.md](../safety/workspace-writes.md), [../safety/s
 - Scope: dynamic child orchestration now separates authority from content.
   Foreground/background Agent entrypoints share one input schema; model-authored
   `goal` and optional bounded `context` remain task/working inputs while only the
-  fixed delegated-agent contract enters the child system prompt. No implicit
-  parent transcript or tool-result inheritance is introduced.
+  fixed in-process child contract/result protocol enters the child application
+  prompt. No implicit parent transcript or tool-result inheritance is
+  introduced.
 - Read: Host Agent runtime assembly and tool catalog, Agent Runtime child context
   composition, delegation ledger, and focused host/runtime tests.
 - Tests: affected typechecks and focused Agent Runtime/Host/TUI suites passed.
@@ -338,6 +428,7 @@ See [../safety/workspace-writes.md](../safety/workspace-writes.md), [../safety/s
 - `packages/host/src/runtime/host-runtime.ts`
 - `packages/host/src/runtime/run-preparation-operations.ts`
 - `packages/host/src/runtime/agent-runtime-assembly.ts`
+- `packages/host/src/agent-report-tool.ts`
 
 ## Data Flow
 
@@ -353,6 +444,7 @@ model tool calls
   -> tool execution
   -> tool.completed/tool.failed + structured ToolEffect
   -> no-progress guard + passive runtime-state terminal projection
+  -> tool-owned semantic observation projection
   -> model observation + trace summaries
 ```
 
@@ -366,10 +458,17 @@ model tool calls
   Repeated no-progress decisions compare structured effects and state epochs;
   one no-change result is not itself terminal.
 - A valid `submit_agent_result` must be the sole tool call in its response and
-  atomically binds same-response text. Missing text uses Core's separate
-  finalization reserve. A clean natural-language child final without the tool is
-  compatibility-wrapped as completed and terminates immediately; malformed
-  structured terminal data remains a protocol failure.
+  atomically binds same-response text. Child guidance reserves it for
+  partial/blocked recovery; a clean natural-language final is the ordinary
+  completed report and terminates immediately. A terminal tool's deterministic
+  renderer is used directly when text is absent, so the finalization reserve is
+  only needed when neither source provides prose. Malformed structured terminal
+  data remains a protocol failure.
+- In-process Agent tools return only compact `ParentAgentResult` to the parent
+  model. Runtime projections keep transport, usage, finality, assessment,
+  action, ChangeSet, and verification facts in the delegation ledger and
+  `subagent.*` lifecycle. Parent mutation claims must follow runtime-owned
+  `workspace`, not child-authored `report`.
 - Tool decisions are monotonic across separate concerns. Host catalog and
   shared Agent Profile admission decide the candidate set;
   `resolveRunToolSurface()` may only apply Workflow narrowing, scope an
@@ -553,6 +652,13 @@ mode:"any"|"all")` is the join surface. Async create results expose
   `spawnSubAgent`, configured delegates resolve `profile.model` /
   `delegateModel` before the child run, and `delegate_parallel` resolves all
   selected child models before launching any eligible children.
+- Child Prompt composition is separate from tool admission. Agent Runtime owns
+  the task-agnostic in-process child contract/result layers; Host composes them
+  after an optional configured profile and before project/tool guidance in the
+  existing cache-stable app-prompt block. Dynamic, configured, indexed,
+  parallel, and background Host children share that helper. The public
+  low-level `spawnSubAgent()` and external process adapters are not implicitly
+  rewritten.
 - Configured delegation uses one resolved target list but two model-facing
   surfaces: `delegate_agent` is catalogued as the default indexed single-target
   entry point, while direct `delegate_*` aliases are catalogued only for pinned,
@@ -676,6 +782,15 @@ mode:"any"|"all")` is the join surface. Async create results expose
   protocol. `ToolDefinition.resultPresentation` names the semantic kind and
   preserve/pagination fields; concrete read/discovery/search tools still return
   the factual fields that observation formatters and reports can preserve.
+- `agent_result` presentation projects one `ParentAgentResult` into a bounded
+  receipt without changing `report` into a generic preview object.
+  `agent_batch` keeps every bounded parallel index rather than the generic
+  five-element array preview. Both fit the complete serialized observation
+  envelope and preserve full raw `ToolResult` events.
+- `read_agent_report` is a recovery index over persisted child run results, not
+  a file-read escape hatch. It accepts no path, is parent-only and
+  advanced/deferred, and returns a serialized-budget-aware page whose
+  `returnedChars`/`nextOffset` reflect the actual visible substring.
 - Unloaded deferred tools are still soft-gated. If a deferred tool is
   registered but has not been loaded into the provider schema for this run, and
   its arguments fail JSON schema validation, core keeps the normal failed tool

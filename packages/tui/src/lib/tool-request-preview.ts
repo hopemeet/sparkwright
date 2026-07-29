@@ -35,6 +35,17 @@ export function formatToolRequestPreview(
     const path = str(r.path) || str(r.include);
     return truncatePlain([pattern, path].filter(Boolean).join(" in "), max);
   }
+  if (r && name === "tool_search") {
+    const query = str(r.query);
+    if (!query) return "";
+    // maxResults has no effect on exact select queries. Omitting it from the
+    // transcript avoids presenting an ignored argument as meaningful state.
+    const limit =
+      !query.trim().startsWith("select:") && typeof r.maxResults === "number"
+        ? ` · maxResults=${r.maxResults}`
+        : "";
+    return truncatePlain(`query=${query}${limit}`, max);
+  }
   if (r && (name === "create_skill" || name === "update_skill")) {
     const action = str(r.action);
     const skill = str(r.name);

@@ -321,7 +321,7 @@ describe("buildAgentPromptBuilder", () => {
     expect(await guidanceOf([])).toBeUndefined();
     expect(await guidanceOf([{ name: "read" }])).toBeUndefined();
     expect(await guidanceOf([{ name: "spawn_agent" }])).toContain(
-      "stepLimitReached",
+      "workspace.writes",
     );
     expect(await guidanceOf([{ name: "delegate_inspector" }])).toContain(
       "relay it faithfully",
@@ -345,6 +345,12 @@ describe("buildAgentPromptBuilder", () => {
     expect(await guidanceOf([{ name: "read" }])).toBeUndefined();
     const guidance = await guidanceOf([{ name: "todo_write" }]);
     expect(guidance).toContain("todo list");
+    expect(guidance).toContain(
+      "durable plan state materially reduces the risk",
+    );
+    expect(guidance).toContain(
+      "File count, tool-call count, verification steps, elapsed time, and delegation",
+    );
     // The anti-churn cadence must be stated: list already in context + the
     // write echoes state, so no need to read it back or rewrite unchanged.
     expect(guidance).toContain("never need to read it back");

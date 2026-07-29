@@ -733,12 +733,8 @@ function collectSessionTraceFact(
       recordString(event.payload, "childRunId") ??
       recordString(event.metadata, "childRunId");
     if (!childRunId) return;
-    const finality =
-      recordString(event.payload, "finality") ??
-      (event.type === "subagent.completed" ? "complete" : "partial");
     addSessionSubagentFact(facts, {
       childRunId,
-      finality,
       status: recordString(event.payload, "status"),
       summary: recordString(event.payload, "summary"),
       blockers: findNestedAgentBlockers(event.payload),
@@ -746,27 +742,6 @@ function collectSessionTraceFact(
       health: findNestedString(event.payload, "health"),
     });
     return;
-  }
-
-  if (event.type === "tool.completed" || event.type === "tool.failed") {
-    const payload = isPlainRecord(event.payload) ? event.payload : undefined;
-    const toolName = payload
-      ? (recordString(payload, "toolName") ?? recordString(payload, "name"))
-      : undefined;
-    if (toolName !== "spawn_agent") return;
-    const childRunId =
-      findNestedString(event.payload, "childRunId") ??
-      findNestedString(event.metadata, "childRunId");
-    if (!childRunId) return;
-    addSessionSubagentFact(facts, {
-      childRunId,
-      finality: findNestedString(event.payload, "finality"),
-      status: findNestedString(event.payload, "status"),
-      summary: findNestedString(event.payload, "summary"),
-      blockers: findNestedAgentBlockers(event.payload),
-      role: findNestedString(event.payload, "role"),
-      health: findNestedString(event.payload, "health"),
-    });
   }
 }
 

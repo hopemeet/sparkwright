@@ -11,8 +11,55 @@ export interface ConversationProjection {
   quietToolCalls: Map<string, string>;
 }
 
+interface ConversationApprovalState {
+  requested: boolean;
+  decision?: string;
+}
+
 export function createConversationProjection(): ConversationProjection {
   return { quietToolCalls: new Map<string, string>() };
+}
+
+export function collectConversationApprovalStates(
+  events: readonly RunEvent[],
+): ReadonlyMap<string, ConversationApprovalState> {
+  const states = new Map<string, ConversationApprovalState>();
+  for (const event of events) {
+    const identity = conversationApprovalIdentity(event);
+    if (!identity) continue;
+    const current = states.get(identity) ?? { requested: false };
+    if (event.type === "approval.requested") {
+      states.set(identity, { ...current, requested: true });
+      continue;
+    }
+    if (event.type === "approval.resolved") {
+      const decision = str(rec(event.payload).decision);
+      states.set(identity, {
+        ...current,
+        ...(decision ? { decision } : {}),
+      });
+    }
+  }
+  return states;
+}
+
+export function conversationApprovalIdentity(
+  event: RunEvent,
+): string | undefined {
+  if (
+    event.type !== "approval.requested" &&
+    event.type !== "approval.resolved"
+  ) {
+    return undefined;
+  }
+  const payload = rec(event.payload);
+  const runId = event.runId || str(payload.runId);
+  if (!runId) return undefined;
+  const approvalId =
+    event.type === "approval.requested"
+      ? str(payload.id) || str(payload.approvalId)
+      : str(payload.approvalId) || str(payload.id);
+  return approvalId ? `approval:${runId}:${approvalId}` : undefined;
 }
 
 /**

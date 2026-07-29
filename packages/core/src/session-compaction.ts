@@ -36,7 +36,6 @@ export interface SessionTraceFacts {
   };
   subagents?: Array<{
     childRunId: string;
-    finality?: "complete" | "partial" | string;
     status?: "completed" | "partial" | "blocked" | string;
     summary?: string;
     blockers?: Array<{
@@ -1721,7 +1720,6 @@ function signalsFromTraceFacts(
         [
           `subagent ${subagent.childRunId}`,
           `status=${subagent.status ?? "unknown"}`,
-          `finality=${subagent.finality ?? "unknown"}`,
           `health=${subagent.health ?? "unknown"}`,
           subagent.summary ? `summary=${subagent.summary}` : undefined,
           blockerCodes.length > 0

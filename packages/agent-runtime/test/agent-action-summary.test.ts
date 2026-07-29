@@ -65,4 +65,64 @@ describe("summarizeAgentActions", () => {
     expect(JSON.stringify(actions)).not.toContain("sensitive source");
     expect(JSON.stringify(actions)).not.toContain("summary");
   });
+
+  it("preserves idempotent skips as a non-success terminal action", () => {
+    const actions = summarizeAgentActions([
+      event("tool.requested", 1, {
+        id: "call_bash",
+        toolName: "bash",
+        arguments: { command: "python3 -m py_compile print_numbers.py" },
+      }),
+      event("tool.completed", 2, {
+        toolCallId: "call_bash",
+        toolName: "bash",
+        output: {
+          changed: false,
+          skipped: true,
+          reason: "repeated_idempotent_noop",
+        },
+      }),
+    ]);
+
+    expect(actions).toEqual([
+      {
+        toolCallId: "call_bash",
+        toolName: "bash",
+        preview: "$ python3 -m py_compile print_numbers.py",
+        status: "skipped",
+        skipReason: "repeated_idempotent_noop",
+      },
+    ]);
+  });
+
+  it("keeps bounded semantic failure context in terminal receipts", () => {
+    const actions = summarizeAgentActions([
+      event("tool.requested", 1, {
+        id: "call_create",
+        toolName: "create",
+        arguments: { path: "print_numbers.py", content: "sensitive content" },
+      }),
+      event("tool.failed", 2, {
+        toolCallId: "call_create",
+        toolName: "create",
+        error: {
+          code: "WORKSPACE_CREATE_CONFLICT",
+          message: "Workspace create target already exists: print_numbers.py",
+        },
+      }),
+    ]);
+
+    expect(actions).toEqual([
+      {
+        toolCallId: "call_create",
+        toolName: "create",
+        preview: "print_numbers.py",
+        status: "failed",
+        errorCode: "WORKSPACE_CREATE_CONFLICT",
+        errorMessage:
+          "Workspace create target already exists: print_numbers.py",
+      },
+    ]);
+    expect(JSON.stringify(actions)).not.toContain("sensitive content");
+  });
 });

@@ -861,11 +861,13 @@ before reporting started; an admission failure is requested -> failed.
 
 ```ts
 import {
+  composeInProcessChildAgentPrompt,
   prepareAgentInvocation,
   spawnSubAgent,
   createAgentTool,
   mountAgentTool,
 } from "@sparkwright/agent-runtime";
+import { buildAgentPromptBuilder } from "@sparkwright/project-context";
 
 // Low-level: build a child RunHandle under a parent.
 const spawned = spawnSubAgent({
@@ -876,8 +878,11 @@ const spawned = spawnSubAgent({
   childAgentProfile, // optional, derives child policy
   parentUsageTracker, // optional, opts into rollup
   interactionChannel: null, // optional, suppress child user-interaction
+  promptBuilder: buildAgentPromptBuilder({
+    appPrompt: composeInProcessChildAgentPrompt(childAgentProfile?.prompt),
+  }),
 });
-const result = await spawned.run.start();
+const result = await spawned.start();
 
 // High-level: register a ToolDefinition the parent's LLM can call.
 mountAgentTool(parent, {
@@ -893,16 +898,23 @@ mountAgentTool(parent, {
 
 What the helpers do for you, end-to-end:
 
-| Contract item      | Implementation                                                                                                         |
-| ------------------ | ---------------------------------------------------------------------------------------------------------------------- |
-| Parent linkage     | `metadata.parentRunId` + `metadata.spanId` on the child run record                                                     |
-| Policy inheritance | `createAgentProfilePolicy(childAgentProfile)` (compose with overrides)                                                 |
-| Approval channel   | `interactionChannel` passed through; pass `null` to suppress                                                           |
-| Usage rollup       | `attachUsageRollup` subscribes to child tool/model events                                                              |
-| Trace nesting      | Child events stay in child's `EventLog`; parent sees a summarized tool result                                          |
-| Cancellation       | `createRun({ abortSignal: parent.abortSignal })`                                                                       |
-| Recursion guard    | `createAgentTool({ forbidNesting: true })`                                                                             |
-| Semantic result    | Strict `agent-outcome.v1` `status`, `summary`, `accomplishments`, and `blockers` stay separate from transport/finality |
+| Contract item      | Implementation                                                                                                                     |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
+| Parent linkage     | `metadata.parentRunId` + `metadata.spanId` on the child run record                                                                 |
+| Policy inheritance | `createAgentProfilePolicy(childAgentProfile)` (compose with overrides)                                                             |
+| Approval channel   | `interactionChannel` passed through; pass `null` to suppress                                                                       |
+| Usage rollup       | `attachUsageRollup` subscribes to child tool/model events                                                                          |
+| Trace nesting      | Child events stay in child's `EventLog`; parent sees a summarized tool result                                                      |
+| Cancellation       | `createRun({ abortSignal: parent.abortSignal })`                                                                                   |
+| Recursion guard    | `createAgentTool({ forbidNesting: true })`                                                                                         |
+| Semantic result    | Parent receives compact `childRunId`, `status`, child-authored `report`, runtime-owned `workspace`, and optional warnings/blockers |
+
+Host-style in-process adapters that need the canonical result/ledger/failure
+collection path can pass an already-prepared `SpawnedSubAgent`, parent,
+delegation ledger key, and goal to `completeSpawnedAgentInvocation()`. Profile
+resolution, admission inputs, batching, promotion, and transport selection
+remain adapter responsibilities. ACP and external-command adapters do not use
+this Core-run terminal collector.
 
 External command delegates keep this same parent-facing shape: the parent sees
 `subagent.requested`, `subagent.started`, and a terminal `subagent.completed` /
@@ -911,18 +923,33 @@ for sandbox fallback, timeout, bounded stdout/stderr, and log artifacts, but it
 does not emit a second `extension.process.*` lifecycle by default; the terminal
 subagent result carries the shared `ProcessOutputSummary`.
 
-Host-composed in-process delegates receive an additional final-message
-contract. They end with a `SPARKWRIGHT_AGENT_RESULT:` JSON declaration whose
-schema version is `agent-outcome.v1` and whose status is `completed`, `partial`,
-or `blocked`. Blockers are structured by kind, owner, retry condition, and
-requirements; they are advisory and cannot authorize tools or approvals.
-Agent Runtime removes the marker from the human-readable message and projects
-the declaration onto the tool result and parent-visible lifecycle event. A
-normally completed child run may therefore report `partial` or `blocked`; only
-completed, complete, clean results are eligible for delegation-ledger reuse.
-The declaration is required: missing, malformed, aliased, or legacy shapes
-project as `partial` with a runtime-owned protocol blocker. Process adapters
-produce the same parent-facing fields with `statusSource:"adapter"`.
+Host-composed in-process delegates normally end with one natural-language
+report, which Agent Runtime treats as completed. A child uses the injected
+`submit_agent_result` terminal tool when it must return a structured partial or
+blocked outcome; blockers remain advisory and cannot authorize tools or
+approvals. The legacy `SPARKWRIGHT_AGENT_RESULT:` declaration is accepted for
+migration only.
+
+`composeInProcessChildAgentPrompt()` is the opt-in portable composition helper
+for Core-backed children. It orders optional profile specialization before the
+task-agnostic child behavior contract and result protocol while keeping one
+cache-stable application prompt. `spawnSubAgent()` deliberately does not call
+it implicitly, because low-level embedders may provide a custom
+`PromptBuilder`. ACP and external-command adapters retain their own transport
+input contracts.
+
+The parent model receives one compact `ParentAgentResult`:
+`childRunId`, semantic `status`, child-authored `report`, runtime-owned
+`workspace:{writes,paths?}`, and optional `warnings` / structured `blockers`.
+Transport, usage, assessment, action receipts, ChangeSets, and
+verification receipts stay in runtime lifecycle and delegation-ledger records.
+Warnings are reserved for parent-actionable completeness/reuse facts; Core
+assessment health remains diagnostic evidence and is not promoted into this
+model-visible contract.
+Only completed, complete, clean internal results are eligible for reuse; a
+reused parent result carries a runtime warning instead of an
+`alreadyCompleted` control field. External process adapters retain their
+transport-specific result contracts and lifecycle fields.
 
 Distilled to the minimum portable shape, with all provider-specific message
 plumbing left out (callers compose their own model + tools).

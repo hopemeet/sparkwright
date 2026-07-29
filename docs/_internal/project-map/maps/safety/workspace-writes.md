@@ -10,6 +10,18 @@ See [approvals.md](approvals.md) and [../runtime/tool-orchestration.md](../runti
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-26
+- Scope: parent Agent results now carry runtime-owned
+  `workspace:{writes,paths?}` beside child-authored `report`. Zero structured
+  writes therefore remains visible even when child prose makes a mutation
+  claim. Full ChangeSets, verification receipts, and compatibility
+  `subagent.*.workspaceWrites` remain lifecycle/diagnostic evidence.
+- Read: Agent workspace-evidence projector, Host child completion, Core
+  workspace events, project-context relay guidance, and TUI lifecycle view.
+- Tests: Core 661/661, Agent Runtime 259/259, Host 583/583, Project Context
+  19/19, and TUI 531/531 passed.
+
+- Status: Verified
 - Date: 2026-07-25
 - Scope: Agent terminal facts now include the observed child
   `workspace.write.completed` count, including zero, and Host uses it to bound

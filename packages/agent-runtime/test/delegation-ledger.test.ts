@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   findReusableDelegation,
   rememberReusableDelegation,
-  withAlreadyCompletedNote,
+  reusedDelegationResult,
 } from "../src/agents/delegation-ledger.js";
 import type {
   DelegationLedgerKey,
@@ -26,10 +26,8 @@ const completed: DelegationLedgerResult = {
   toolCalls: 1,
   modelCalls: 1,
   status: "completed",
-  statusSource: "child",
   summary: "Inspection complete",
   blockers: [],
-  finality: "complete",
   assessment: {
     schemaVersion: "run-assessment.v1",
     health: "clean",
@@ -128,7 +126,6 @@ describe("delegation ledger", () => {
     { truncated: true },
     { status: "blocked" as const },
     { status: "partial" as const },
-    { finality: "partial" as const },
     {
       assessment: {
         schemaVersion: "run-assessment.v1" as const,
@@ -158,12 +155,16 @@ describe("delegation ledger", () => {
     ).toBeUndefined();
   });
 
-  it("marks a reused result without mutating the stored result", () => {
-    expect(withAlreadyCompletedNote(completed)).toEqual({
-      ...completed,
-      alreadyCompleted: true,
-      note: "A similar delegation already completed in this parent run; summarize the previous child result instead of spawning another child agent.",
+  it("returns a compact reused report without mutating the stored result", () => {
+    expect(reusedDelegationResult(completed)).toEqual({
+      childRunId: completed.childRunId,
+      status: "completed",
+      report: completed.summary,
+      workspace: { writes: 0 },
+      warnings: [
+        "The runtime reused this completed child result; no new child ran.",
+      ],
     });
-    expect(completed).not.toHaveProperty("alreadyCompleted");
+    expect(completed).not.toHaveProperty("output");
   });
 });

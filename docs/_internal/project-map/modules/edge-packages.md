@@ -152,6 +152,17 @@ contracts, and focused checklists that no longer fit here.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-27
+- Scope: Streaming Runtime now forwards Core's additive
+  `resultPresentation` descriptor into the shared observation formatter.
+  Agent single/batch receipt semantics remain Core-owned; the edge package
+  does not project, persist, or reinterpret child results.
+- Read: Core public tool/result presentation exports and observation
+  formatter, Streaming Runtime descriptor plumbing, and focused parity tests.
+- Tests: full `npm run release:check` passed, including all workspace suites,
+  the 16-case regression matrix, and source/release install smoke.
+
+- Status: Verified
 - Date: 2026-07-24
 - Scope: ACP/SDK/IM fixtures were updated for runtime approval principal and
   completion payload compatibility. Edge packages remain projections over Host

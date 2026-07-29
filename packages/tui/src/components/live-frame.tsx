@@ -1,5 +1,5 @@
-import React from "react";
-import { Box, Text } from "ink";
+import React, { useLayoutEffect, useRef } from "react";
+import { Box, Text, measureElement, type DOMElement } from "ink";
 import type { StoreState } from "../state/event-store.js";
 import type { ValidationError } from "../lib/config.js";
 import type { UnreadTaskActivitySummary } from "../lib/task-activity.js";
@@ -33,8 +33,11 @@ export function LiveFrame(props: {
   onReviewHumanAction: (proposalId: string) => void;
   onApplyHumanAction: (proposalId: string) => Promise<boolean>;
   onDismissHumanAction: (proposalId: string) => void;
+  onHeightChange?: (rows: number) => void;
 }): React.ReactElement {
   const theme = useTheme();
+  const frameRef = useRef<DOMElement | null>(null);
+  const reportedHeightRef = useRef<number | null>(null);
   const showStatus =
     props.state.status === "running" ||
     props.state.status === "awaiting-approval" ||
@@ -42,8 +45,16 @@ export function LiveFrame(props: {
     props.unreadTasks.total > 0;
   const showWorkflowStatus = props.waitingWorkflowCount > 0;
 
+  useLayoutEffect(() => {
+    if (!frameRef.current) return;
+    const height = measureElement(frameRef.current).height;
+    if (reportedHeightRef.current === height) return;
+    reportedHeightRef.current = height;
+    props.onHeightChange?.(height);
+  });
+
   return (
-    <>
+    <Box ref={frameRef} flexDirection="column" flexShrink={0}>
       {showStatus || showWorkflowStatus ? (
         <StatusBar
           state={props.state}
@@ -131,6 +142,6 @@ export function LiveFrame(props: {
       ) : null}
 
       {props.showQueued ? <QueuedMessages items={props.queued} /> : null}
-    </>
+    </Box>
   );
 }

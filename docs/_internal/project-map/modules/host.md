@@ -12,6 +12,71 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-28
+- Scope: Host continues to expose compact runtime-owned workspace evidence but
+  no longer turns child assessment health into a parent warning. Dynamic/task
+  failure metadata consumes the smaller invocation result without redundant
+  `statusSource` or `finality`; parallel parent results likewise omit the
+  diagnostic-only `unhealthy` aggregate. Session fact extraction now uses
+  semantic status and terminal evidence directly.
+- Read: configured/dynamic/parallel collectors, task failure projection,
+  delegation reuse, and session lifecycle readers.
+- Tests: Host 593/593 and Host typecheck passed after rebuilding Agent Runtime;
+  a real Terra dynamic-spawn canary produced zero writes and a truthful
+  pre-existing-file report.
+
+- Status: Verified
+- Date: 2026-07-27
+- Scope: Host Agent result handling now has one in-process terminal collector
+  across configured direct/indexed delegates, `delegate_parallel`, dynamic
+  `spawn_agent`, promoted/background execution, and Agent tasks. Background
+  notifications are explicit bounded receipts while the formal Task result
+  remains full. The advanced/deferred, parent-only `read_agent_report` tool
+  pages a persisted child report by authorized current-session `childRunId`
+  without accepting filesystem paths.
+- Read: Agent runtime assembly, task projection, report reader, run
+  preparation/capability catalog wiring, tool identities, session run lookup,
+  and focused tests.
+- Tests: full `npm run release:check` passed, including all workspace suites,
+  the 16-case regression matrix, source/release install smoke, and focused
+  report authorization/pagination, task, and promotion regressions.
+
+- Status: Verified
+- Date: 2026-07-26
+- Scope: Host now composes one shared Agent Runtime child contract into every
+  built-in in-process child path: configured direct/indexed delegates,
+  `delegate_parallel`, dynamic `spawn_agent`, and background Agent tasks.
+  Profile prompts remain first; parent handoff stays in user context. ACP and
+  external-command delegates are unchanged.
+- Read: Agent runtime assembly, delegate tool factories, dynamic/background
+  runners, prompt tests, and Agent Runtime ownership boundaries.
+- Tests: full `npm run release:check` passed; focused Host 102/102 and Host
+  typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-26
+- Scope: dynamic spawn, configured/indexed delegates, parallel delegates, and
+  background Agent tasks now expose the same compact parent report. Host
+  projects child prose into `report`, derives `workspace` only from structured
+  child write events, and keeps reuse/health caveats in `warnings`; it no
+  longer appends action/usage/finality/reporting-guidance fields to parent
+  context. Session facts use canonical `subagent.*` lifecycle only.
+- Read: Agent runtime assembly, indexed/parallel/cache/task adapters, session
+  queries, Agent Runtime projection, and Host regression coverage.
+- Tests: full Host 583/583 passed.
+
+- Status: Verified
+- Date: 2026-07-26
+- Scope: route review for the bounded Agent action receipt extension. Host
+  continues to forward Agent Runtime's structured `actions` without
+  reconstructing tool outcomes; `skipped` is an additive terminal action
+  status and changes no Host execution, policy, or protocol event routing.
+- Read: Agent Runtime action summary/type export, Host dynamic child result
+  forwarding, and TUI consumer.
+- Tests: Host 583/583, Agent Runtime 259/259, TUI 531/531, and all workspace
+  tests passed.
+
+- Status: Verified
 - Date: 2026-07-25
 - Scope: dynamic `spawn_agent` results now expose bounded child action receipts,
   an explicit structured workspace-write count (including zero), and
@@ -567,6 +632,7 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 - `packages/host/src/runtime/capability-assembly.ts` — capability snapshot projection, summaries, automation reads, and merge
 - `packages/host/src/runtime/task-runtime-operations.ts` — Host Task protocol/control, output reads, actor revival, orphan recovery, and canonical workspace root
 - `packages/host/src/runtime/task-projections.ts` — stateless task snapshots, notifications, and terminal classification
+- `packages/host/src/agent-report-tool.ts` — session-authorized, paginated child Agent report retrieval
 - `packages/host/src/runtime/workflow-runtime-operations.ts` — Host Workflow canonical roots/store, snapshots, actor notifications, durable controls/resume claims, finalization, and record persistence helpers
 - `packages/host/src/runtime/workflow-episode-runtime.ts` — Host Workflow-aware projection preparation, Core episode construction, actor chain, live control pump, usage, and execution completion
 - `packages/host/src/runtime/contracts.ts` — runtime construction and execution coordination ports
@@ -652,6 +718,24 @@ Does not own:
 
 ## Contracts
 
+- `AgentRuntimeAssembly` applies Agent Runtime's
+  `composeInProcessChildAgentPrompt()` to every built-in in-process child:
+  configured direct delegates, their indexed `delegate_agent` router,
+  `delegate_parallel`, dynamic `spawn_agent`, and background Agent tasks.
+  Configured profile text precedes the shared contract/result protocol;
+  dynamic task goal/context remains user/working input. ACP and
+  external-command adapters keep their transport-owned prompt/input contracts.
+- Host in-process entrypoints prepare their distinct identity, model, tools,
+  policy, admission, scheduling, and aggregation inputs, then use Agent
+  Runtime's single terminal collector for start/result/workspace/ledger/failure
+  evidence. `delegate_parallel` is a bounded `Promise.all` aggregator and
+  foreground promotion adopts the same child/completion promise; neither
+  creates a second execution/result pipeline.
+- `read_agent_report` accepts only `childRunId` plus bounded pagination. It
+  requires current-session membership, a non-main child run, registered parent
+  ancestry, matching `run.json` identity, and canonical non-symlink
+  session/run/result paths. Pages fit a serialized 6,800-character result
+  budget and advance `nextOffset` by the actual returned report characters.
 - `createMainHostToolCatalog()` owns config/source admission.
   `tool-surface.ts` then owns canonical Profile allow/deny narrowing, Workflow
   narrowing, required-schema promotion, and scoped discovery for main,
@@ -1176,20 +1260,22 @@ Does not own:
   (`read`, `write`, `edit`, `bash`, `glob`, `grep`), classifies default exposure
   tier, and records related or required tools such as the anchored verified-edit
   pair. The callable definitions use those exact names.
-- Dynamic `spawn_agent` output includes child identity/finality facts for the
-  parent (`childRunId`, `role`, `status`, `statusSource`, `summary`,
-  `accomplishments`, `blockers`, `stepLimitReached`, `truncated`, and
-  `finality`). A child-declared blocked or partial result remains a completed
-  tool transport but is not reusable. A
-  child answer produced on the last allowed step remains a
-  completed tool transport result, but host marks the answer `partial` and
-  prefixes the message with a warning.
+- Dynamic `spawn_agent` returns the compact parent contract:
+  `childRunId`, `status`, child-authored `report`, runtime-owned
+  `workspace:{writes,paths?}`, and optional completeness/reuse warnings or
+  blockers. Assessment health, transport, usage, actions, ChangeSets, and
+  verification receipts remain diagnostic or `subagent.*` lifecycle facts.
+  A child-declared blocked/partial result is not reusable; exact complete/clean
+  reuse returns the same report with a runtime warning. A natural final on the
+  last allowed action is complete; only a forced budget wrap-up is
+  partial/truncated.
 - Dynamic spawn uses `ToolDefinition.validateInput()` to validate requested
   tools and workspace-write grant consistency against the enabled child
   catalog before Core evaluates policy or requests approval. The self-contained
   `goal` remains task/user input, optional bounded `context` is injected as
-  required working context, and only the fixed delegated-agent contract enters
-  the system prompt. Neither field is interpreted as a Host capability gate.
+  required working context, and only the fixed in-process child contract/result
+  protocol enters the application system prompt. Neither field is interpreted
+  as a Host capability gate.
 - Dynamic `spawn_agent` starts foreground by default and may promote after the
   foreground budget when `backgroundTasks=enabled`. Promotion adopts the already
   running child through `TaskManager.adoptRunning()` and preserves
@@ -1479,7 +1565,10 @@ Does not own:
   by complete ChangeSets and final explicit-verifier receipts. Parent
   aggregation can therefore preserve evidence without a filesystem snapshot;
   ordinary Agent finality does not depend on that evidence. Child shell rolls
-  back unmanaged mutations, and MCP is absent.
+  back unmanaged mutations, and MCP is absent. Separately, the model-visible
+  Agent result carries only `workspace:{writes,paths?}` from the same structured
+  events; lifecycle receipts remain available to diagnostics and TUI detail
+  views without bloating parent model context.
 - `TracedProcessRunner` is the host-owned process execution and observation
   boundary for external commands. It emits `extension.process.*` by default,
   exposes only constrained `SPARKWRIGHT_EVENT:` stderr token progress under

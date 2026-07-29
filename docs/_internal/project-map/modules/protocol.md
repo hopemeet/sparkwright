@@ -11,6 +11,17 @@ See also [../maps/safety/approvals.md](../maps/safety/approvals.md) and [../maps
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-26
+- Scope: semantic transcript grouping consumes existing structured `runId`,
+  `parentRunId`, `childRunId`, Agent/tool-call/span, and event identifiers. No
+  Protocol request, response, or event shape changed; absent identifiers are
+  deliberately not reconstructed from names or adjacency.
+- Read: Protocol event identities, TUI RunEvent carrier, transcript assembler,
+  replay, and export boundaries.
+- Tests: concurrent/nested Agent identity coverage, missing-ID independence,
+  and full-session replay projection passed.
+
+- Status: Verified
 - Date: 2026-07-25
 - Scope: the compact/detailed TUI framework adds no Protocol request, response,
   or event family. Transcript visibility now classifies every

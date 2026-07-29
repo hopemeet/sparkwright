@@ -10,6 +10,14 @@ See [../../modules/agent-runtime.md](../../modules/agent-runtime.md) for related
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-26
+- Scope: route review for the additive Agent action `skipped` status. Cron
+  remains parent-only and does not produce or consume Agent action receipts;
+  scheduling, persistence, execution, and TUI Cron behavior are unchanged.
+- Read: Agent Runtime action receipt boundary and Cron capability ownership.
+- Tests: all workspace tests passed; no Cron source changed.
+
+- Status: Verified
 - Date: 2026-07-25
 - Scope: route review for Host dynamic Agent result changes. Cron remains
   parent-only; scheduling, persistence, execution, and TUI Cron behavior are

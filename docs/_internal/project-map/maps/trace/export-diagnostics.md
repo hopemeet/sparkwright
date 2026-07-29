@@ -10,6 +10,36 @@ canonical trace or a session consistency report.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-30
+- Scope: live and exported product transcripts now correlate approval request
+  and resolution events by exact run-scoped approval id. Each request row owns
+  its final status and operation label; matched standalone resolution rows and
+  the redundant terminal approval count were removed. Raw Trace remains
+  append-only, the trace timeline keeps its existing approval phase
+  correlation, and diagnostic approval counts in Activity Run and trace
+  summary/report are unchanged.
+- Read: conversation approval projection, live TranscriptDocument,
+  `renderTranscript()`, Activity Events/Run/Trace views, and Core trace
+  timeline/summary correlation.
+- Tests: focused live/document/export regressions 79/79, full TUI 540/540,
+  TUI typecheck and build, plus retained-session PTY compact/detailed replay
+  passed.
+
+- Status: Verified
+- Date: 2026-07-26
+- Scope: compact/detailed rendering now shares an epoch-scoped
+  `TranscriptDocument`, but Markdown export deliberately remains outside that
+  UI pipeline. `/export` reads `RunController.currentSessionEvents` and calls
+  `renderTranscript()` without a viewport mode; `/clear` only resets the
+  EventStore document epoch and visible rows. The exported path returns as a
+  `tui.export.completed` semantic block in the owned viewport. Projection and
+  layout caps never delete controller events or canonical trace data.
+- Read: RunController export buffer, EventStore clear/reset, transcript
+  document/layout, viewport compatibility renderer, and export tests.
+- Tests: compact-vs-detailed export parity and export-after-`/clear`
+  integration passed; compact rendering characterization remains 39/39.
+
+- Status: Verified
 - Date: 2026-07-25
 - Scope: the Ctrl+T detailed transcript is an EventStore-backed TUI
   presentation only. Compact/detailed UI state is not passed to
@@ -96,7 +126,8 @@ TUI currentSessionEvents
 
 exported path returned to TUI
   -> app appends tui.export.completed
-  -> EventStream committed scrollback path line
+  -> TranscriptDocument notice block
+  -> owned viewport copy-safe path row
 
 session trace.jsonl
   -> summary/timeline/verify/consistency
@@ -107,8 +138,8 @@ session trace.jsonl
 
 - TUI `/export` writes Markdown under `.sparkwright/exports/`.
 - TUI `/export` uses `currentSessionEvents` in the controller, not `trace.jsonl` directly.
-- After a successful `/export`, the TUI commits the exported path as a
-  `tui.export.completed` scrollback row. This is a copy-safe UI confirmation;
+- After a successful `/export`, the TUI appends the exported path as a
+  `tui.export.completed` document row. This is a copy-safe UI confirmation;
   it is not part of the exported Markdown body and does not mutate
   `trace.jsonl`.
 - `/sessions` inspect can render compaction audit diagnostics; `/export` does
@@ -128,9 +159,9 @@ session trace.jsonl
   the shared TUI tool-display path, so live rendering and `/export` avoid raw
   task JSON for common task inspection output. Raw task lifecycle/output events
   remain trace facts; the Activity Drawer is the live browsing surface.
-- Live compact `EventStream` commits one structured terminal Agent summary and
-  the Ctrl+T overlay reconstructs current/latest-run Agent details from
-  EventStore facts. `/export` does not read that UI mode and remains a
+- Compact and detailed viewport modes project the same stable structured Agent
+  summary and bounded detail sections from `TranscriptDocument`. `/export`
+  reads neither that UI mode nor the bounded layout cache and remains a
   transcript/export surface, not a replacement for `trace report`;
   auditability findings belong in trace diagnostics.
 - Unknown events are listed compactly so the export is not fully silent about unsupported events.
@@ -150,6 +181,8 @@ session trace.jsonl
 
 - Do not add diagnostic claims to `/export` unless backed by trace/session inspection.
 - If `renderTranscript()` supports a new event family, check event-store replay and session switch behavior.
+- Verify both UI modes produce the same `/export`, and verify `/clear` does not
+  clear the controller export buffer.
 - If a tool payload needs a special display rule, add it to `lib/tool-display.ts` and cover both live event stream and transcript export expectations.
 - If export should include persisted history, confirm it loads from session trace first.
 - Keep this separate from `trace verify` and `session check` semantics.

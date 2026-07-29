@@ -10,6 +10,16 @@ See [workspace-writes.md](workspace-writes.md) and [../../modules/coding-tools.m
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-26
+- Scope: route review for compact Agent parent results. Child shell
+  classification, approval, sandboxing, rollback, and lifecycle action
+  receipts are unchanged; shell details no longer inflate the parent model's
+  Agent result.
+- Read: Host child shell assembly, Agent result projection, and lifecycle
+  evidence consumers.
+- Tests: Agent Runtime 259/259 and Host 583/583 passed.
+
+- Status: Verified
 - Date: 2026-07-25
 - Scope: bounded Agent action receipts may summarize a child shell command and
   exit status, but do not copy stdout/stderr or change classification, approval,

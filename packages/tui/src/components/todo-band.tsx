@@ -6,8 +6,7 @@ import { displayWidth, toGraphemes } from "../lib/graphemes.js";
 
 /**
  * The todo ledger as a full-width band in the live frame, pinned just above the
- * input. Unlike a right rail (which the Static-scrollback model can only render
- * as a cramped corner box), a full-width band gives CJK titles room and reads
+ * input. Unlike a right rail, a full-width band gives CJK titles room and reads
  * as a natural checklist.
  *
  * Collapse strategy keeps it minimal-chrome:
@@ -15,8 +14,8 @@ import { displayWidth, toGraphemes } from "../lib/graphemes.js";
  *    line showing only progress + the current item.
  *  - normal → completed items fold into one "done" count line; active items
  *    (in_progress / pending / blocked / …) are listed and capped so a long
- *    ledger cannot dominate the frame. The unified details view owns the full
- *    ledger, including completed item titles.
+ *    ledger cannot dominate the frame. The detailed transcript projection owns
+ *    the current full ledger snapshot, including completed item titles.
  */
 const TODO_GLYPH: Record<string, string> = {
   pending: "☐",
@@ -69,7 +68,7 @@ export function TodoBand(props: {
   }
 
   // The live frame lists only active items. Completed titles live in the
-  // unified details projection, avoiding a second expansion state.
+  // detailed transcript projection, avoiding a second expansion state.
   const active = todos.filter((t) => t.status !== "completed");
   const visible = active.slice(0, MAX_ACTIVE_ROWS);
   const overflow = active.length - visible.length;

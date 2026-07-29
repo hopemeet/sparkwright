@@ -250,6 +250,72 @@ describe("streaming-runtime", () => {
     expect(completedMessages).toEqual(["done"]);
   });
 
+  it("presents compact agent context while retaining the raw streamed tool result", async () => {
+    const report = "streamed-child-report-".repeat(180);
+    const delegate = defineTool({
+      name: "delegate",
+      description: "Return one child result.",
+      inputSchema: { type: "object" },
+      resultPresentation: { kind: "agent_result" },
+      execute: () => ({
+        childRunId: "run_streamed_child",
+        status: "completed",
+        report,
+        workspace: { writes: 0 },
+        warnings: [],
+        blockers: [],
+      }),
+    });
+    const run = createStreamingRun({
+      goal: "delegate once",
+      tools: [delegate],
+      maxSteps: 2,
+      model: {
+        async *stream(input: ModelInput) {
+          if (input.step === 1) {
+            yield {
+              type: "tool_call_start",
+              toolName: "delegate",
+              toolCallIndex: 0,
+            };
+            yield {
+              type: "tool_call_delta",
+              toolCallIndex: 0,
+              argumentsDelta: "{}",
+            };
+            yield { type: "tool_call_end", toolCallIndex: 0 };
+            return;
+          }
+          const observation = input.context.find(
+            (item) => item.type === "tool_result",
+          );
+          const output = JSON.parse(observation?.content ?? "{}").output;
+          expect(typeof output.report).toBe("string");
+          expect(output).toMatchObject({
+            childRunId: "run_streamed_child",
+            reportTruncated: true,
+            reportChars: report.length,
+          });
+          yield { type: "text_delta", text: "done" };
+        },
+        async complete() {
+          throw new Error("complete should not be called");
+        },
+      },
+    });
+
+    await run.start();
+
+    expect(
+      (
+        run.events.all().find((event) => event.type === "tool.completed")
+          ?.payload as {
+          output?: { report?: string };
+        }
+      ).output?.report,
+    ).toBe(report);
+  });
+
   it("nests tool-call spans under the batch span under the run span", async () => {
     const echo = defineTool({
       name: "echo",

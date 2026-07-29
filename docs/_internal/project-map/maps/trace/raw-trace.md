@@ -11,6 +11,29 @@ and [../session/session-store.md](../session/session-store.md) for session layou
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-28
+- Scope: parent-result simplification changes no event family or stored
+  assessment. `UNRESOLVED_TOOL_FAILURE` remains diagnostic trace evidence, but
+  `subagent.*` no longer stores redundant `statusSource`/`finality`; semantic
+  status, terminal state/event type, and limit flags are the current facts.
+- Read: child result projection, lifecycle terminal projection/supervisor,
+  trace/session readers, and TUI replay.
+- Tests: Agent Runtime, Host, and TUI full suites plus session check and trace
+  verify on a real two-run child session passed.
+
+- Status: Verified
+- Date: 2026-07-26
+- Scope: new terminal Agent receipts may use additive action status `skipped`
+  with a bounded `skipReason`. Event families, tool lifecycle truth, trace
+  envelope, and storage remain unchanged. Historical receipts that recorded
+  the same tool as completed remain readable because replay can consult the
+  durable child `tool.completed.output.skipped` fact.
+- Read: Agent action receipt producer, raw child tool/parent Agent terminal
+  events, Host forwarding, and TUI replay.
+- Tests: Agent Runtime 259/259, Host 583/583, TUI 531/531, and all workspace
+  tests passed.
+
+- Status: Verified
 - Date: 2026-07-25
 - Scope: new in-process `subagent.completed` / `subagent.failed` facts add
   optional bounded action receipts and an explicit workspace-write count.
@@ -400,10 +423,10 @@ EventLog emits full event
   fields (`subagentDepth`, `agentId`, `delegateTool`, `entrypoint`, consistent
   parent/child run ids, and `taskId` when the child is owned by an
   `agent_task`). SparkWright child-run terminal payloads carry
-  `terminalState`, semantic `status`, `statusSource`, summary,
+  `terminalState`, semantic `status`, summary,
   accomplishments, blockers, and `stepLimitReached`/`truncated` when derived
   from the child `run.*` outcome. Process adapters project their native result
-  through supervisor-owned `statusSource:"adapter"` outcome normalization.
+  through the same supervisor-owned status normalization.
 - Parent-visible Agent lifecycle identity is projected from the portable
   `PreparedAgentInvocation` data contract. Its `admission_pending` state is not
   a raw event phase; `AgentSupervisor` requires admission before `started` and

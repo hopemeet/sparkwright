@@ -10,6 +10,23 @@ See [session-store.md](session-store.md) and [../runtime/context-compaction.md](
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-26
+- Scope: replayed presentation events now rebuild a full-session
+  `TranscriptDocument` rather than a current/latest details overlay. Stable
+  event, tool-call, child-run, and explicit invocation identities preserve
+  concurrent/nested ownership; missing identities remain independent blocks
+  and are never grouped by name or adjacency. Replay still synthesizes only
+  root user goals, skips all `model.stream.*` previews and child usage
+  snapshots, and keeps the controller's `currentSessionEvents` as the export
+  buffer. A session switch/reset changes the document epoch and resets the
+  semantic viewport anchor without changing durable trace truth.
+- Read: RunController session switch/replay, EventStore epoch, transcript
+  assembler/layout/viewport, export buffer, and replay/document tests.
+- Tests: full-session two-turn document regression, concurrent/nested Agent
+  identity regression, export-after-visible-clear integration, focused SDK
+  replay coverage, and deterministic PTY session rendering passed.
+
+- Status: Verified
 - Date: 2026-07-25
 - Scope: TUI session replay now derives structured child run identities before
   synthesizing compact user cards. Child goals and child terminal Markdown no
@@ -251,6 +268,12 @@ Normal run
   -> session/agent trace.jsonl + per-run checkpoint/run/result files
   -> run resume uses checkpoint
 
+Persisted child report recovery
+  -> current session membership + childRunId
+  -> canonical session/agent/run result.json
+  -> bounded read_agent_report page
+  -> nextOffset continues after process restart
+
 Missing checkpoint
   -> loadCheckpointFromRunDir({ fallbackFromTrace: true })
   -> partial checkpoint
@@ -304,6 +327,11 @@ Future run in compacted session
 - From-trace resume is best-effort recovery; it restores counters/coarse step data, not full in-loop context.
 - Reconstructed checkpoints are marked not fully resumable and require explicit force.
 - Session replay projects persisted events into context; it is not live-process restoration.
+- `read_agent_report` is replay-safe data retrieval, not child execution
+  resume. A newly prepared Host run may page an already-persisted non-main
+  child report only when the requested child and its recorded parent both
+  belong to the current session. It rejects path input, cross-session aliases,
+  mismatched run identity, and session/run/result symlink aliases.
 - `sparkwright session resume` starts a new run in the existing session context.
   It does not infer the previous run's CLI/TUI model override from trace
   history; pass `--model provider/model` to choose an explicit resume model.
@@ -345,6 +373,10 @@ Future run in compacted session
 - Keep checkpoint schema changes backward aware.
 - Update both CLI and host resume paths.
 - Check TUI replay when new event families affect visible transcript.
+- Preserve structured ids through replay; do not add name/adjacency grouping
+  fallbacks to the TranscriptDocument assembler.
+- Treat session switch/reset as a new visible document epoch while keeping
+  controller export events and canonical trace ownership separate.
 - Do not silently treat from-trace reconstruction as full resume.
 
 ## Known Debts
@@ -359,6 +391,18 @@ Future run in compacted session
   run-loop integration.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-27
+- Scope: persisted in-process child reports can be paged after Host/tool
+  reconstruction with `read_agent_report(childRunId, offset, limit)`. The
+  lookup remains session-scoped and ancestry-checked; it does not revive a
+  child, restore process state, or broaden filesystem authority.
+- Read: Host report tool and canonical run lookup, Core/File session and run
+  storage, Host preparation/catalog, and end-to-end persisted child tests.
+- Tests: full `npm run release:check` passed, including all workspace suites,
+  the 16-case regression matrix, source/release install smoke, and focused
+  pagination/reconstruction/authorization regressions.
 
 - Status: Verified
 - Date: 2026-07-16T10:27:51+0800

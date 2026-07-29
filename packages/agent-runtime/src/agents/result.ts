@@ -12,19 +12,21 @@ import type {
   AgentBlockerRetry,
   AgentResultDeclaration,
   AgentResultStatus,
-  AgentResultStatusSource,
-  AgentToolResult,
+  AgentRuntimeResult,
   DelegationLedgerResult,
+  ParentAgentResult,
+  ParentAgentWorkspaceEvidence,
 } from "./types.js";
+import type { AgentActionSummary } from "./action-summary.js";
 
 export const AGENT_RESULT_MARKER = "SPARKWRIGHT_AGENT_RESULT:";
 export const AGENT_OUTCOME_SCHEMA_VERSION = "agent-outcome.v1" as const;
 
 export const AGENT_RESULT_PROTOCOL_PROMPT = [
-  "Finish by calling submit_agent_result exactly once as the sole tool call in that response.",
-  "You may include the human-readable final answer as assistant text in the same response; the runtime binds both atomically. If you omit text, the runtime renders the structured summary deterministically.",
-  'The complete envelope is {"status":"completed|partial|blocked","summary":"..."}. accomplishments and structured blockers are optional supporting detail.',
-  "If you instead return a normal natural-language final, the runtime wraps it once as completed and ends the child; it never reopens task tools just to obtain this envelope.",
+  "When the delegated goal is complete, finish with one natural-language report for the parent.",
+  "Use submit_agent_result only when the outcome is partial or blocked and the parent needs structured recovery facts. It must be the sole tool call in that response.",
+  'The exceptional envelope is {"status":"partial|blocked","summary":"..."}. accomplishments and structured blockers are optional supporting detail.',
+  "The runtime treats a normal natural-language final as completed and never reopens task tools just to obtain a structured envelope.",
   "Report facts only. The legacy SPARKWRIGHT_AGENT_RESULT text marker is accepted only for migration.",
 ].join("\n");
 
@@ -86,7 +88,6 @@ export interface ParsedAgentResultDeclaration {
 
 export interface ProjectedAgentOutcome {
   status: AgentResultStatus;
-  statusSource: AgentResultStatusSource;
   summary: string;
   accomplishments?: string[];
   blockers: AgentBlocker[];
@@ -107,7 +108,14 @@ export interface ProjectAgentInvocationResultInput {
   spanId: string;
   result: RunResult;
   usage: UsageSnapshot;
-  output?: Record<string, unknown>;
+  output?: ParentAgentResult;
+}
+
+export interface ProjectParentAgentResultInput {
+  result: AgentRuntimeResult;
+  workspace: ParentAgentWorkspaceEvidence;
+  actions?: readonly AgentActionSummary[];
+  reused?: boolean;
 }
 
 /**
@@ -131,7 +139,6 @@ export function projectAgentOutcome(
     if (terminalDeclaration) {
       return {
         status: terminalDeclaration.status,
-        statusSource: "child",
         summary: terminalDeclaration.summary,
         ...(terminalDeclaration.accomplishments
           ? { accomplishments: terminalDeclaration.accomplishments }
@@ -144,7 +151,6 @@ export function projectAgentOutcome(
     if (declared) {
       return {
         status: declared.declaration.status,
-        statusSource: "child",
         summary: declared.declaration.summary,
         ...(declared.declaration.accomplishments
           ? { accomplishments: declared.declaration.accomplishments }
@@ -159,7 +165,6 @@ export function projectAgentOutcome(
         message ?? "Child completed with an implicit natural-language result.";
       return {
         status: "completed",
-        statusSource: "runtime",
         summary,
         blockers: [],
         ...(message ? { message } : {}),
@@ -168,7 +173,6 @@ export function projectAgentOutcome(
     const summary = "Child returned an invalid agent-outcome.v1 declaration.";
     return {
       status: "partial",
-      statusSource: "runtime",
       summary,
       blockers: [
         {
@@ -189,7 +193,6 @@ export function projectAgentOutcome(
   const synthesized = runtimeTerminalBlocker(input);
   return {
     status: input.stopReason === "blocking_limit" ? "blocked" : "partial",
-    statusSource: "runtime",
     summary: message ?? synthesized.message,
     blockers: [synthesized],
     ...(message ? { message } : {}),
@@ -198,8 +201,8 @@ export function projectAgentOutcome(
 
 /**
  * Canonical child-result projection used by delegate, parallel, dynamic-spawn,
- * task, lifecycle, and cache paths. Completion/finality and semantic health are
- * deliberately orthogonal: a complete child answer may still be failing.
+ * task, lifecycle, and cache paths. Semantic outcome and diagnostic health are
+ * deliberately orthogonal: a completed child answer may still have issues.
  */
 export function projectAgentInvocationResult(
   input: ProjectAgentInvocationResultInput,
@@ -214,14 +217,7 @@ export function projectAgentInvocationResult(
     truncated,
     terminalDeclaration: terminalDeclarationFromRunResult(input.result),
   });
-  const finality =
-    input.result.signal === "completed" &&
-    !truncated &&
-    outcome.status === "completed"
-      ? "complete"
-      : "partial";
   const assessment = childAssessment(input.result);
-  const healthNote = assessmentNote(assessment);
   return {
     childRunId: input.childRunId,
     spanId: input.spanId,
@@ -233,18 +229,167 @@ export function projectAgentInvocationResult(
     toolCalls: input.usage.toolCalls,
     modelCalls: input.usage.modelCalls,
     status: outcome.status,
-    statusSource: outcome.statusSource,
     summary: outcome.summary,
     ...(outcome.accomplishments
       ? { accomplishments: outcome.accomplishments }
       : {}),
     blockers: outcome.blockers,
-    finality,
     assessment,
     ...(stepLimitReached ? { stepLimitReached: true } : {}),
     ...(truncated ? { truncated: true } : {}),
-    ...(healthNote ? { note: healthNote } : {}),
     ...(input.output ? { output: input.output } : {}),
+  };
+}
+
+/**
+ * Project the one compact report that is safe to place in the parent model's
+ * tool-result context. Child prose remains explicit in `report`; mutation and
+ * completeness facts are supplied by the runtime.
+ */
+export function projectParentAgentResult(
+  input: ProjectParentAgentResultInput,
+): ParentAgentResult {
+  const warnings = [
+    ...parentActionableAssessmentWarnings(
+      input.result.assessment,
+      input.workspace,
+      input.actions ?? [],
+    ),
+    ...(input.result.stepLimitReached || input.result.truncated
+      ? ["The child stopped at its action limit; its report may be incomplete."]
+      : []),
+    ...(input.reused
+      ? ["The runtime reused this completed child result; no new child ran."]
+      : []),
+  ];
+  return {
+    childRunId: input.result.childRunId,
+    status: input.result.status,
+    report:
+      nonEmptyString(input.result.message) ??
+      nonEmptyString(input.result.summary) ??
+      "Child returned no report.",
+    workspace: {
+      writes: input.workspace.writes,
+      ...(input.workspace.paths && input.workspace.paths.length > 0
+        ? { paths: [...input.workspace.paths] }
+        : {}),
+    },
+    ...(warnings.length > 0 ? { warnings } : {}),
+    ...(input.result.blockers.length > 0
+      ? { blockers: input.result.blockers.map(cloneAgentBlocker) }
+      : {}),
+  };
+}
+
+function parentActionableAssessmentWarnings(
+  assessment: RunAssessment,
+  workspace: ParentAgentWorkspaceEvidence,
+  actions: readonly AgentActionSummary[],
+): string[] {
+  const warnings: string[] = [];
+  for (const issue of assessment.issues) {
+    if (issue.code === "UNRESOLVED_TOOL_FAILURE") {
+      const failedActions = actions.filter(
+        (action) => action.status === "failed",
+      );
+      const failure =
+        failedActions.length > 0
+          ? failedActions.slice(0, 3).map(describeUnresolvedAction).join("; ")
+          : describeUnresolvedIssue(issue);
+      const failedMutation = failedActions.some((action) =>
+        isWorkspaceMutationTool(action.toolName),
+      );
+      warnings.push(
+        [
+          `The child completed with unresolved tool work: ${failure}.`,
+          failedMutation && workspace.writes === 0
+            ? "No structured workspace write succeeded, so creation or modification is not proven."
+            : "Resolve the failure before relying on the affected completion claims.",
+        ].join(" "),
+      );
+      continue;
+    }
+    if (issue.code === "VERIFICATION_FAILED") {
+      const command = issue.details?.lastCommand;
+      warnings.push(
+        `Child verification failed${command ? ` for ${command}` : ""}; do not present the affected result as verified.`,
+      );
+      continue;
+    }
+    if (
+      issue.kind === "workflow_failure" ||
+      issue.kind === "run_failure" ||
+      issue.kind === "run_cancelled" ||
+      issue.kind === "assessment_unavailable"
+    ) {
+      warnings.push(
+        `The child completed with a runtime assessment issue (${issue.code}); treat its report as incomplete until the issue is resolved.`,
+      );
+    }
+  }
+  return uniqueStrings(warnings);
+}
+
+function describeUnresolvedAction(action: AgentActionSummary): string {
+  const subject = [action.toolName, action.preview].filter(Boolean).join(" ");
+  if (action.errorCode === "WORKSPACE_CREATE_CONFLICT") {
+    return `${subject} failed because the target already exists (${action.errorCode})`;
+  }
+  if (action.errorCode === "WORKSPACE_REPLACE_CONFLICT") {
+    return `${subject} failed because the target does not exist (${action.errorCode})`;
+  }
+  if (action.errorMessage) {
+    return `${subject} failed: ${action.errorMessage}${
+      action.errorCode ? ` (${action.errorCode})` : ""
+    }`;
+  }
+  return `${subject} failed and was not recovered${
+    action.errorCode ? ` (${action.errorCode})` : ""
+  }`;
+}
+
+function describeUnresolvedIssue(
+  issue: RunAssessment["issues"][number],
+): string {
+  const count = Math.max(1, issue.count);
+  const tools = issue.details?.toolNames?.slice(0, 3).join(", ");
+  const codes = issue.details?.codes?.slice(0, 3).join(", ");
+  return `${count} tool failure${count === 1 ? "" : "s"} remained unresolved${
+    tools ? ` in ${tools}` : ""
+  }${codes ? ` (${codes})` : ""}`;
+}
+
+function isWorkspaceMutationTool(toolName: string): boolean {
+  return (
+    toolName === "create" ||
+    toolName === "write" ||
+    toolName === "edit" ||
+    toolName === "edit_anchored_text"
+  );
+}
+
+function uniqueStrings(values: readonly string[]): string[] {
+  return values.filter(
+    (value, index, all) => value.length > 0 && all.indexOf(value) === index,
+  );
+}
+
+export function agentWorkspaceEvidence(
+  events: readonly { type: string; payload?: unknown }[],
+): ParentAgentWorkspaceEvidence {
+  let writes = 0;
+  const paths: string[] = [];
+  for (const event of events) {
+    if (event.type !== "workspace.write.completed") continue;
+    writes += 1;
+    if (!isRecord(event.payload)) continue;
+    const path = nonEmptyString(event.payload.path);
+    if (path && !paths.includes(path)) paths.push(path);
+  }
+  return {
+    writes,
+    ...(paths.length > 0 ? { paths } : {}),
   };
 }
 
@@ -310,17 +455,6 @@ export function childAssessment(result: RunResult): RunAssessment {
   return result.assessment;
 }
 
-export function assessmentNote(assessment: RunAssessment): string | undefined {
-  if (assessment.health === "clean") return undefined;
-  const codes = assessment.issues
-    .map((issue) => issue.code)
-    .filter((code, index, all) => all.indexOf(code) === index)
-    .slice(0, 4);
-  return `Child run completed with ${assessment.health} health${
-    codes.length > 0 ? ` (${codes.join(", ")})` : ""
-  }; preserve this caveat when using its result.`;
-}
-
 export function runResultStepLimitReached(result: RunResult): boolean {
   return (
     (result.metadata as { stepLimitReached?: unknown } | undefined)
@@ -343,18 +477,16 @@ export function terminalDeclarationFromRunResult(result: RunResult): unknown {
     : undefined;
 }
 
-/** Canonical execution-finality check shared by aggregate and cache paths. */
+/** Canonical semantic-completion check shared by aggregate and cache paths. */
 export function isCompleteAgentResult(result: {
   signal: string;
   status?: string;
-  finality?: string;
   stepLimitReached?: boolean;
   truncated?: boolean;
 }): boolean {
   return (
     result.signal === "completed" &&
     result.status === "completed" &&
-    result.finality === "complete" &&
     result.stepLimitReached !== true &&
     result.truncated !== true
   );
@@ -364,53 +496,10 @@ export function isCompleteAgentResult(result: {
 export function isReusableAgentResult(
   result: Pick<
     DelegationLedgerResult,
-    | "signal"
-    | "status"
-    | "finality"
-    | "stepLimitReached"
-    | "truncated"
-    | "assessment"
+    "signal" | "status" | "stepLimitReached" | "truncated" | "assessment"
   >,
 ): boolean {
   return isCompleteAgentResult(result) && result.assessment.health === "clean";
-}
-
-export function isAgentToolResult(value: unknown): value is AgentToolResult {
-  if (typeof value !== "object" || value === null) return false;
-  const result = value as Partial<AgentToolResult>;
-  const blockers = Array.isArray(result.blockers)
-    ? result.blockers.filter(isAgentBlocker)
-    : [];
-  return (
-    typeof result.childRunId === "string" &&
-    typeof result.spanId === "string" &&
-    typeof result.signal === "string" &&
-    (result.stopReason === undefined ||
-      typeof result.stopReason === "string") &&
-    typeof result.tokens === "number" &&
-    typeof result.costUsd === "number" &&
-    typeof result.toolCalls === "number" &&
-    typeof result.modelCalls === "number" &&
-    (result.status === "completed" ||
-      result.status === "partial" ||
-      result.status === "blocked") &&
-    (result.statusSource === "child" ||
-      result.statusSource === "runtime" ||
-      result.statusSource === "adapter") &&
-    nonEmptyString(result.summary) !== undefined &&
-    (result.accomplishments === undefined ||
-      normalizedStringArray(result.accomplishments, false) !== undefined) &&
-    Array.isArray(result.blockers) &&
-    blockers.length === result.blockers.length &&
-    (result.status !== "completed" || blockers.length === 0) &&
-    (result.finality === "complete" || result.finality === "partial") &&
-    typeof result.assessment === "object" &&
-    result.assessment !== null
-  );
-}
-
-function isAgentBlocker(value: unknown): value is AgentBlocker {
-  return parseAgentBlocker(value) !== undefined;
 }
 
 function parseAgentBlocker(value: unknown): AgentBlocker | undefined {
@@ -441,6 +530,19 @@ function parseAgentBlocker(value: unknown): AgentBlocker | undefined {
     message,
     ...(requirements && requirements.length > 0 ? { requirements } : {}),
     retry: value.retry,
+  };
+}
+
+function cloneAgentBlocker(blocker: AgentBlocker): AgentBlocker {
+  return {
+    ...blocker,
+    ...(blocker.requirements
+      ? {
+          requirements: blocker.requirements.map((requirement) => ({
+            ...requirement,
+          })),
+        }
+      : {}),
   };
 }
 

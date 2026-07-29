@@ -1806,9 +1806,7 @@ describe("trace", () => {
         childRunId: createRunId(),
         terminalState: "completed",
         status: "blocked",
-        statusSource: "child",
         summary: "Execution requires bash",
-        finality: "partial",
         blockers: [
           {
             code: "SHELL_REQUIRED",
@@ -1841,7 +1839,7 @@ describe("trace", () => {
     );
   });
 
-  it("reports completed but unhealthy sub-agents independently from finality", () => {
+  it("reports completed but unhealthy sub-agents independently from status", () => {
     const log = new EventLog(createRunId());
     const childRunId = createRunId();
     const events: SparkwrightEvent[] = [
@@ -1851,7 +1849,6 @@ describe("trace", () => {
         {
           childRunId,
           terminalState: "completed",
-          finality: "complete",
           assessment: {
             schemaVersion: "run-assessment.v1",
             health: "failing",
@@ -2475,7 +2472,6 @@ describe("trace", () => {
           childRunId: child.id,
           parentRunId: parent.id,
           terminalState: "completed",
-          finality: "complete",
         },
         {
           sessionId: "s1",
@@ -2575,7 +2571,6 @@ describe("trace", () => {
           childRunId: child.id,
           parentRunId: parent.id,
           terminalState: "completed",
-          finality: "complete",
         },
         {
           sessionId: "s1",
@@ -2661,7 +2656,6 @@ describe("trace", () => {
           childRunId: child.id,
           parentRunId: parent.id,
           terminalState: "completed",
-          finality: "complete",
         },
         {
           sessionId: "s1",
@@ -2865,7 +2859,6 @@ describe("trace", () => {
           childRunId: "run_child_1",
           parentRunId: run.id,
           terminalState: "completed",
-          finality: "complete",
         },
         {
           taskId: "task_1",
@@ -3081,7 +3074,6 @@ describe("trace", () => {
           childRunId: child.id,
           parentRunId: parent.id,
           terminalState: "completed",
-          finality: "complete",
         },
         {
           sessionId: "s1",

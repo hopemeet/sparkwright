@@ -389,6 +389,68 @@ describe("SparkwrightRun", () => {
     expect(events.at(-1)?.type).toBe("run.completed");
   });
 
+  it("applies a tool's agent result presentation to model context", async () => {
+    const report = "full-child-report-".repeat(180);
+    let modelCalls = 0;
+    const delegate = defineTool({
+      name: "delegate",
+      description: "Return one child result.",
+      inputSchema: { type: "object" },
+      resultPresentation: { kind: "agent_result" },
+      policy: { risk: "safe" },
+      execute() {
+        return {
+          childRunId: "run_child_presented",
+          status: "completed",
+          report,
+          workspace: { writes: 0 },
+          warnings: [],
+          blockers: [],
+        };
+      },
+    });
+    const model: ModelAdapter = {
+      async complete(input) {
+        modelCalls += 1;
+        if (modelCalls === 1) {
+          return {
+            toolCalls: [{ toolName: "delegate", arguments: {} }],
+          };
+        }
+        const observation = input.context.find(
+          (item) => item.type === "tool_result",
+        );
+        const output = JSON.parse(observation?.content ?? "{}").output;
+        expect(typeof output.report).toBe("string");
+        expect(output).toMatchObject({
+          childRunId: "run_child_presented",
+          reportTruncated: true,
+          reportChars: report.length,
+        });
+        return { message: "done" };
+      },
+    };
+
+    const run = createRun({
+      goal: "delegate once",
+      model,
+      tools: [delegate],
+      maxSteps: 3,
+    });
+    const result = await run.start();
+
+    expect(result.signal).toBe("completed");
+    expect(modelCalls).toBe(2);
+    expect(
+      (
+        run.events.all().find((event) => event.type === "tool.completed")
+          ?.payload as {
+          output?: { report?: string };
+        }
+      ).output?.report,
+    ).toBe(report);
+  });
+
   it("records tool-owned request previews on tool.requested events", async () => {
     let modelCalls = 0;
     const previewed = defineTool({
@@ -5925,9 +5987,9 @@ describe("SparkwrightRun", () => {
     );
     expect(result.metadata).toMatchObject({
       maxSteps: 1,
-      stepLimitReached: false,
       revivalTurnsUsed: 1,
     });
+    expect(result.metadata).not.toHaveProperty("stepLimitReached");
   });
 
   it("uses per-source forced-continuation budget for revival without changing wake metadata", async () => {
@@ -6026,9 +6088,9 @@ describe("SparkwrightRun", () => {
     expect(modelCalls).toBe(2);
     expect(result.metadata).toMatchObject({
       maxSteps: 1,
-      stepLimitReached: false,
       forcedContinuationTurnsUsed: { workflow: 1 },
     });
+    expect(result.metadata).not.toHaveProperty("stepLimitReached");
     expect(turnTransitions[1]).toMatchObject({
       reason: "workflow_hook_advanced",
       metadata: {

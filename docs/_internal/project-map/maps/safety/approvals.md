@@ -10,6 +10,17 @@ See [workspace-writes.md](workspace-writes.md) and [shell.md](shell.md).
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-26
+- Scope: detailed transcript mode is no longer a LayerStack route. Approval
+  remains the highest typed route and replaces the visible operation/input
+  surface while App retains the transcript mode and semantic anchor; closing
+  the approval returns to the same transcript context.
+- Read: App owned viewport, LayerStack route order, LayerRenderer approval
+  branch, and layer/viewport tests.
+- Tests: layer priority, viewport anchor, approval render, and PTY interaction
+  coverage passed.
+
+- Status: Verified
 - Date: 2026-07-25
 - Scope: route review for Agent action receipts and detailed TUI projection.
   Approval admission, prompt priority, remembered decisions, principal

@@ -599,7 +599,7 @@ function analyzeMultiAgentAuditability({
         return `${item.label} · verifiedAfterChildWrite childWriteIndex=${evidence.childWriteIndex} subagentIndex=${evidence.subagentIndex} verificationIndex=${evidence.verificationIndex} command=${evidence.command}`;
       }),
       recommendation:
-        "Keep the raw child finality for audit, but treat the parent result as lower risk because a later verification covered the current workspace state.",
+        "Keep the raw child terminal evidence for audit, but treat the parent result as lower risk because a later verification covered the current workspace state.",
     });
   }
 
@@ -1097,7 +1097,6 @@ function taskTerminalIsPartial(record: Record<string, unknown>): boolean {
   return (
     record.status === "partial" ||
     record.status === "blocked" ||
-    record.finality === "partial" ||
     record.stepLimitReached === true ||
     record.truncated === true ||
     record.terminalState === "step_limit" ||
@@ -3075,7 +3074,6 @@ function collectIncompleteSubagentTerminals(
     if (!isRecord(event.payload)) continue;
     const state = stringValue(event.payload.terminalState);
     const status = stringValue(event.payload.status);
-    const finality = stringValue(event.payload.finality);
     const stepLimitReached = booleanValue(event.payload.stepLimitReached);
     const truncated = booleanValue(event.payload.truncated);
     if (
@@ -3083,7 +3081,6 @@ function collectIncompleteSubagentTerminals(
       state !== "truncated" &&
       status !== "partial" &&
       status !== "blocked" &&
-      finality !== "partial" &&
       event.type !== "subagent.failed" &&
       stepLimitReached !== true &&
       truncated !== true

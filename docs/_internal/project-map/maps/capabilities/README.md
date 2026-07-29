@@ -8,6 +8,14 @@ cron, shell/task tools, and capability inspection.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-26
+- Scope: route review for compact in-process Agent results. Capability
+  discovery, admission, child catalog derivation, and mutation authority are
+  unchanged; the change only narrows the result returned to the parent model.
+- Read: Agent/Host result projection and adjacent capability boundaries.
+- Tests: Agent Runtime 259/259 and Host 583/583 passed.
+
+- Status: Verified
 - Date: 2026-07-25
 - Scope: route review for bounded Agent action receipts and zero-write
   reporting guidance. Capability discovery, admission, parent/child catalog

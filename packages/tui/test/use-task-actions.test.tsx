@@ -206,6 +206,12 @@ describe("useTaskActions terminal notifications", () => {
         ["task_inline", "completed"],
       ]),
     );
+    expect(actions?.unreadTasks).toEqual({
+      total: 0,
+      completed: 0,
+      failed: 0,
+      cancelled: 0,
+    });
 
     controller.emit(
       lifecycleEvent("evt_cancelled", "terminal", "cancelled", "detached", {
@@ -216,6 +222,12 @@ describe("useTaskActions terminal notifications", () => {
     expect(toasts.getSnapshot().current).toMatchObject({
       kind: "warning",
       title: "task cancelled",
+    });
+    expect(actions?.unreadTasks).toEqual({
+      total: 1,
+      completed: 0,
+      failed: 0,
+      cancelled: 1,
     });
     instance.unmount();
   });

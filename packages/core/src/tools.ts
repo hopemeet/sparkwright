@@ -68,6 +68,8 @@ export type ToolResultPresentationKind =
   | "text_search"
   | "shell_output"
   | "diagnostic"
+  | "agent_result"
+  | "agent_batch"
   | "generic";
 
 export interface ToolResultPresentation {

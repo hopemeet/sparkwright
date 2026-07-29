@@ -8,12 +8,13 @@ export type {
   AgentBlockerRetry,
   AgentResultDeclaration,
   AgentResultStatus,
-  AgentResultStatusSource,
-  AgentToolResult,
+  AgentRuntimeResult,
   AgentToolSummarizeInput,
   DelegationLedgerHit,
   DelegationLedgerKey,
   DelegationLedgerResult,
+  ParentAgentResult,
+  ParentAgentWorkspaceEvidence,
 } from "./types.js";
 export type {
   AgentAssetIdentity,
@@ -44,24 +45,29 @@ export {
   AGENT_OUTCOME_SCHEMA_VERSION,
   AGENT_RESULT_MARKER,
   AGENT_RESULT_PROTOCOL_PROMPT,
-  assessmentNote,
+  agentWorkspaceEvidence,
   childAssessment,
   isCompleteAgentResult,
-  isAgentToolResult,
   isReusableAgentResult,
+  projectParentAgentResult,
   projectAgentInvocationResult,
   parseAgentResultDeclaration,
   projectAgentOutcome,
   runResultStepLimitReached,
   runResultTruncated,
 } from "./result.js";
+export {
+  composeInProcessChildAgentPrompt,
+  IN_PROCESS_CHILD_AGENT_CONTRACT_PROMPT,
+} from "./prompt.js";
 export type {
   ParsedAgentResultDeclaration,
   ProjectAgentOutcomeInput,
+  ProjectParentAgentResultInput,
   ProjectedAgentOutcome,
 } from "./result.js";
 export {
   findReusableDelegation,
   rememberReusableDelegation,
-  withAlreadyCompletedNote,
+  reusedDelegationResult,
 } from "./delegation-ledger.js";

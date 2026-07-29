@@ -197,6 +197,17 @@ list --run/--session`); failed drafts self-clean. See
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-26
+- Scope: confirmed `AssetPackageIdentity.fileCount` as a retained public
+  package-size diagnostic in both hash and snapshot results. The field is now
+  explicitly reserved and both producers have regression assertions; package
+  enumeration, hashing, and snapshot behavior are unchanged.
+- Read: Skills package-v2 source/tests and asset-package identity design
+  contracts.
+- Tests: focused Skills 27/27, Skills typecheck, strict reserved-field check,
+  project-map drift, and the full release gate passed.
+
+- Status: Verified
 - Date: 2026-07-19
 - Scope: reviewed skill statistics after terminal outcome migration. Skill
   success/failure accounting now reads persisted assessment where semantic run

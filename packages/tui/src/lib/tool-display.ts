@@ -102,9 +102,9 @@ export function summarizeToolResultForDisplay(input: {
   }
 
   if (resultKind === "agent") {
-    const message = str(r.message).trim();
-    if (!message) return { kind: "hidden", reason: "agent_empty" };
-    return { kind: "markdown", text: message, details: [], tone: "normal" };
+    const report = str(r.report).trim();
+    if (!report) return { kind: "hidden", reason: "agent_empty" };
+    return { kind: "markdown", text: report, details: [], tone: "normal" };
   }
 
   if (resultKind === "skill_load") {
@@ -272,18 +272,11 @@ function summarizeTaskToolResult(
   if (str(r.taskId)) {
     const actualMode = str(r.actualMode);
     const mode = actualMode || str(r.mode);
-    const parentWillWait =
-      r.parentWillWait === true
-        ? "parent will wait automatically"
-        : r.parentWillWait === false
-          ? "parent will not wait"
-          : "";
     return summary(
       `task ${str(r.taskId)}${mode ? ` · ${mode}` : ""}`,
       [
         r.promoted === true ? "promoted from foreground" : "",
         r.deduplicated === true ? "reused an already-running task" : "",
-        parentWillWait,
       ],
       "muted",
     );
@@ -320,9 +313,6 @@ function summarizeSpawnAgentReceipt(
       r.promoted === true
         ? `promoted${foregroundTimeoutMs ? ` after ${foregroundTimeoutMs}` : ""}`
         : "",
-      r.parentWillWait === true
-        ? "parent will wait automatically"
-        : "detached; parent will not wait automatically",
     ],
     "muted",
   );

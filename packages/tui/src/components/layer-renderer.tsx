@@ -19,7 +19,6 @@ import { SkillProposalDialog } from "./skill-proposal-dialog.js";
 import { SkillReviewDialog } from "./skill-review-dialog.js";
 import { WorkflowPanel } from "./workflow-panel.js";
 import { ForkDialog } from "./fork-dialog.js";
-import { DetailedTranscriptPanel } from "./detailed-transcript-panel.js";
 import type { CommandRegistry } from "../lib/commands.js";
 import type { Bindings } from "../lib/keybindings.js";
 import type { CreateCapabilityDraft } from "../lib/create-capability.js";
@@ -32,7 +31,6 @@ import type {
 } from "../lib/skill-evolution.js";
 import type { LayerEntry } from "../state/layer-stack.js";
 import type { UiSignal } from "../lib/ui-signal.js";
-import type { TodoPanelItem } from "../state/event-store.js";
 
 export function LayerRenderer(props: {
   entry: LayerEntry;
@@ -42,7 +40,6 @@ export function LayerRenderer(props: {
   sessionList: SessionSummary[];
   sessionRootLabel?: string;
   events: RunEvent[];
-  todoItems: readonly TodoPanelItem[];
   taskRecords?: readonly TaskRecordSnapshot[];
   taskOutputs?: Readonly<Record<string, readonly TaskOutputChunkSnapshot[]>>;
   loadingTasks?: boolean;
@@ -133,15 +130,6 @@ export function LayerRenderer(props: {
           onStopTask={props.onStopTask}
           onJoinTask={props.onJoinTask}
           onPromoteTask={props.onPromoteTask}
-        />
-      );
-    case "details":
-      return (
-        <DetailedTranscriptPanel
-          events={props.events}
-          todoItems={props.todoItems}
-          toggleChords={props.bindings["details.toggle"]}
-          onClose={props.onCloseTop}
         />
       );
     case "model":

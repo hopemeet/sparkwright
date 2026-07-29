@@ -1,5 +1,6 @@
 import type { PendingNotification } from "@sparkwright/core";
 import type {
+  ParentAgentResult,
   TaskOutputChunk,
   TaskRecord,
   TaskStatus,
@@ -13,6 +14,125 @@ import type {
   TaskRecordSnapshot,
   TaskUpdatedEventPayload,
 } from "@sparkwright/protocol";
+
+const AGENT_TASK_REPORT_MAX_CHARS = 4_000;
+const AGENT_TASK_PATHS_MAX_CHARS = 1_000;
+const AGENT_TASK_WARNINGS_MAX_CHARS = 600;
+
+export function agentTaskCompletionOutput(
+  output: unknown,
+  taskId: string,
+): Record<string, unknown> {
+  const resultRef = {
+    tool: "task",
+    action: "get",
+    taskId,
+  };
+  if (!isParentAgentResult(output)) {
+    return {
+      type: "agent.completed",
+      taskId,
+      resultRef,
+    };
+  }
+
+  const report = output.report.slice(0, AGENT_TASK_REPORT_MAX_CHARS);
+  const workspace = summarizeAgentTaskWorkspace(output.workspace);
+  const warnings = summarizeAgentTaskWarnings(output.warnings);
+  return {
+    type: "agent.completed",
+    taskId,
+    childRunId: output.childRunId,
+    status: output.status,
+    report,
+    ...(report.length < output.report.length
+      ? {
+          reportTruncated: true,
+          reportChars: output.report.length,
+          reportOmittedChars: output.report.length - report.length,
+        }
+      : {}),
+    workspace,
+    ...(warnings.items.length > 0 ? { warnings: warnings.items } : {}),
+    ...(warnings.truncated
+      ? {
+          warningCount: warnings.total,
+          warningsTruncated: true,
+        }
+      : {}),
+    ...(output.blockers && output.blockers.length > 0
+      ? { blockerCount: output.blockers.length }
+      : {}),
+    resultRef,
+  };
+}
+
+function isParentAgentResult(value: unknown): value is ParentAgentResult {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.childRunId === "string" &&
+    (record.status === "completed" ||
+      record.status === "partial" ||
+      record.status === "blocked") &&
+    typeof record.report === "string" &&
+    record.workspace !== null &&
+    typeof record.workspace === "object" &&
+    !Array.isArray(record.workspace)
+  );
+}
+
+function summarizeAgentTaskWorkspace(
+  workspace: ParentAgentResult["workspace"],
+): Record<string, unknown> {
+  const paths = boundedStringList(
+    workspace.paths,
+    AGENT_TASK_PATHS_MAX_CHARS,
+    250,
+  );
+  return {
+    writes: workspace.writes,
+    ...(paths.items.length > 0 ? { paths: paths.items } : {}),
+    ...(paths.truncated
+      ? {
+          pathCount: paths.total,
+          pathsTruncated: true,
+        }
+      : {}),
+  };
+}
+
+function summarizeAgentTaskWarnings(warnings: ParentAgentResult["warnings"]): {
+  items: string[];
+  total: number;
+  truncated: boolean;
+} {
+  return boundedStringList(warnings, AGENT_TASK_WARNINGS_MAX_CHARS, 300);
+}
+
+function boundedStringList(
+  value: readonly string[] | undefined,
+  maxChars: number,
+  maxItemChars: number,
+): { items: string[]; total: number; truncated: boolean } {
+  if (!value) return { items: [], total: 0, truncated: false };
+  const items: string[] = [];
+  let used = 0;
+  for (const item of value) {
+    const bounded = item.slice(0, maxItemChars);
+    const cost = bounded.length + 3;
+    if (items.length > 0 && used + cost > maxChars) break;
+    items.push(bounded);
+    used += cost;
+  }
+  return {
+    items,
+    total: value.length,
+    truncated:
+      items.length < value.length ||
+      items.some((item, index) => item.length < value[index]!.length),
+  };
+}
 
 export function taskRecordSnapshot(record: TaskRecord): TaskRecordSnapshot {
   return {

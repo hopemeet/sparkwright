@@ -29,9 +29,9 @@ The release gate layers:
 `npm run regression:matrix` is part of `release:check` and covers deterministic
 cross-layer regressions such as configured delegate shell `cwd`, shell
 foreground promotion, no-task-manager timeout kill behavior, dynamic
-`spawn_agent` finality/read-only boundaries, TUI hook output, ACP smoke, and
-session consistency. Real-model mini regression runs remain opt-in/nightly and
-are not a release-gate dependency when no API key is present.
+`spawn_agent` compact-result/read-only boundaries, TUI hook output, ACP smoke,
+and session consistency. Real-model mini regression runs remain opt-in/nightly
+and are not a release-gate dependency when no API key is present.
 
 ## When To Prefer Focused Gates First
 

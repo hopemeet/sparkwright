@@ -84,6 +84,8 @@ export type {
   ToolInterruptBehavior,
   ToolAvailableProbe,
   ToolResultSizePolicy,
+  ToolResultPresentationKind,
+  ToolResultPresentation,
   ToolProgressUpdate,
   ToolRequestPreviewFormatter,
   ToolRequestPreviewOptions,

@@ -17,7 +17,7 @@ export function classifyToolResult(value: unknown): ToolResultKind | null {
   if (isWorkspaceWriteToolResult(value)) return "workspace_write";
   if (isSkillMutationToolResult(value)) return "skill_mutation";
   if (isShellResult(value)) return "shell";
-  if (isAgentToolResult(value)) return "agent";
+  if (isParentAgentResult(value)) return "agent";
   if (isSkillLoadResult(value)) return "skill_load";
   if (isListDirResult(value)) return "list_dir";
   if (isGlobResult(value)) return "glob";
@@ -146,32 +146,27 @@ export function summarizeShellResult(
   return { head, lines, timedOut };
 }
 
-/**
- * Recognise a sub-agent tool result envelope by its shape. Delegate tools and
- * dynamic `spawn_agent` outputs share this core terminal envelope.
- */
-export function isAgentToolResult(value: unknown): boolean {
+/** Recognise the compact report returned to a parent by an Agent tool. */
+export function isParentAgentResult(value: unknown): boolean {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return false;
   }
   const r = value as Record<string, unknown>;
+  const workspace =
+    typeof r.workspace === "object" &&
+    r.workspace !== null &&
+    !Array.isArray(r.workspace)
+      ? (r.workspace as Record<string, unknown>)
+      : undefined;
   return (
     typeof r.childRunId === "string" &&
-    typeof r.spanId === "string" &&
-    typeof r.signal === "string" &&
     (r.status === "completed" ||
       r.status === "partial" ||
       r.status === "blocked") &&
-    (r.statusSource === "child" ||
-      r.statusSource === "runtime" ||
-      r.statusSource === "adapter") &&
-    typeof r.summary === "string" &&
-    r.summary.trim().length > 0 &&
-    Array.isArray(r.blockers) &&
-    (r.status !== "completed" || r.blockers.length === 0) &&
-    (r.finality === "complete" || r.finality === "partial") &&
-    typeof r.assessment === "object" &&
-    r.assessment !== null
+    typeof r.report === "string" &&
+    r.report.trim().length > 0 &&
+    workspace !== undefined &&
+    typeof workspace.writes === "number"
   );
 }
 

@@ -14,7 +14,7 @@ export function createSubmitAgentResultTool(): ToolDefinition<
   return defineTool({
     name: SUBMIT_AGENT_RESULT_TOOL_NAME,
     description:
-      "Submit the child agent's final structured outcome. This must be the sole tool call in the response and ends the child run atomically. You may include the human-readable final answer as assistant text in the same response.",
+      "Submit a structured partial or blocked child outcome when the parent needs recovery facts. A completed goal should normally finish with one natural-language report; status completed remains accepted for compatibility. This must be the sole tool call in the response and ends the child run atomically. You may include a human-readable report as assistant text in the same response.",
     inputSchema: {
       type: "object",
       properties: {

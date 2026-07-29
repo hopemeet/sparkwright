@@ -75,6 +75,7 @@ export function createDelegateAgentTool(input: {
       availableAgentIds.length > 0
         ? `Delegate one bounded sub-task to a configured agent by agentId. Use delegate_parallel instead when multiple read-only agents should run together. Available agents: ${availableHint}.`
         : "Delegate one bounded sub-task to a configured agent by agentId. No configured child agents are currently available.",
+    resultPresentation: { kind: "agent_result" },
     inputSchema: {
       type: "object",
       properties: {

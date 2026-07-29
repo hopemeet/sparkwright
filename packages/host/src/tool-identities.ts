@@ -95,6 +95,11 @@ const ADVANCED_BY_NAME: Record<string, BuiltinToolIdentity> = {
     canonicalName: "delegate_parallel",
     defaultExposureTier: "advanced",
   },
+  read_agent_report: {
+    canonicalName: "read_agent_report",
+    defaultExposureTier: "advanced",
+    relatedTools: ["spawn_agent", "delegate_agent", "delegate_parallel"],
+  },
   cron: {
     canonicalName: "cron",
     defaultExposureTier: "advanced",

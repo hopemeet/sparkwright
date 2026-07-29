@@ -85,16 +85,11 @@ class DefaultAgentSupervisor implements AgentSupervisor {
         ? payload.status
         : payload.terminalState === "blocked"
           ? "blocked"
-          : payload.finality === "partial"
-            ? "partial"
-            : "completed";
+          : "completed";
     return this.terminate("subagent.completed", {
       ...payload,
       terminalState: payload.terminalState ?? "completed",
-      finality:
-        payload.finality ?? (status === "completed" ? "complete" : "partial"),
       status,
-      statusSource: payload.statusSource ?? "adapter",
       summary: payload.summary ?? adapterSummary(payload, status),
       blockers:
         payload.blockers ??
@@ -110,9 +105,7 @@ class DefaultAgentSupervisor implements AgentSupervisor {
     return this.terminate("subagent.failed", {
       ...payload,
       terminalState: payload.terminalState ?? "failed",
-      finality: payload.finality ?? "partial",
       status: payload.status ?? status,
-      statusSource: payload.statusSource ?? "adapter",
       summary:
         payload.summary ??
         adapterSummary(payload, status, "Agent execution failed."),

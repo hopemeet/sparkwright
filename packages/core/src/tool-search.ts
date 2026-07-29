@@ -108,9 +108,13 @@ const INPUT_SCHEMA = {
   properties: {
     query: {
       type: "string" as const,
+      description:
+        'Use "select:name1,name2" for exact lookup, or free text for ranked keyword discovery.',
     },
     maxResults: {
       type: "integer" as const,
+      description:
+        "Maximum ranked matches for free-text keyword discovery only. Omit for select: queries.",
     },
   },
   required: ["query"],

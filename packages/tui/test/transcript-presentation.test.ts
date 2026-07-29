@@ -228,6 +228,160 @@ describe("transcript presentation", () => {
     );
   });
 
+  it("renders non-zero shell exits as failed actions without changing tool transport status", () => {
+    const terminalReceipt = buildDetailedTranscript([
+      event("subagent.completed", 1, {
+        childRunId: "run_receipt_child",
+        parentRunId: "run_parent",
+        status: "completed",
+        summary: "The child recovered after a failed command.",
+        actions: [
+          {
+            toolCallId: "call_bash",
+            toolName: "bash",
+            preview: "$ python3 broken_check.py",
+            status: "completed",
+            exitCode: 1,
+          },
+        ],
+      }),
+    ]);
+    expect(terminalReceipt.lines.map((line) => line.text).join("\n")).toContain(
+      "bash $ python3 broken_check.py exit 1 ✗",
+    );
+
+    const replayedChildTrace = buildDetailedTranscript([
+      event(
+        "subagent.started",
+        1,
+        {
+          childRunId: "run_trace_child",
+          parentRunId: "run_parent",
+          goal: "Run a diagnostic command",
+        },
+        { metadata: { agentName: "diagnostic child" } },
+      ),
+      event(
+        "tool.requested",
+        2,
+        {
+          id: "call_bash",
+          toolName: "bash",
+          arguments: { command: "python3 broken_check.py" },
+        },
+        { runId: "run_trace_child" },
+      ),
+      event(
+        "tool.completed",
+        3,
+        {
+          toolCallId: "call_bash",
+          toolName: "bash",
+          output: {
+            stdout: "",
+            stderr: "syntax error",
+            exitCode: 1,
+            timedOut: false,
+          },
+        },
+        { runId: "run_trace_child" },
+      ),
+      event(
+        "subagent.completed",
+        4,
+        {
+          childRunId: "run_trace_child",
+          parentRunId: "run_parent",
+          status: "completed",
+          summary: "The child recovered after a failed command.",
+        },
+        { metadata: { agentName: "diagnostic child" } },
+      ),
+    ]);
+    expect(
+      replayedChildTrace.lines.map((line) => line.text).join("\n"),
+    ).toContain("bash $ python3 broken_check.py exit 1 ✗");
+  });
+
+  it("renders a skipped Agent action without a success checkmark", () => {
+    const projection = buildDetailedTranscript([
+      event("subagent.completed", 1, {
+        childRunId: "run_child",
+        parentRunId: "run_parent",
+        status: "completed",
+        summary: "Verification complete.",
+        actions: [
+          {
+            toolCallId: "call_bash",
+            toolName: "bash",
+            preview: "$ python3 -m py_compile print_numbers.py",
+            status: "skipped",
+            skipReason: "repeated_idempotent_noop",
+          },
+        ],
+      }),
+    ]);
+    const action = projection.lines.find((line) =>
+      line.text.includes("repeated_idempotent_noop"),
+    )?.text;
+
+    expect(action).toContain("skipped");
+    expect(action).not.toContain("✓");
+  });
+
+  it("uses replayed child tool truth to correct a legacy completed action receipt", () => {
+    const projection = buildDetailedTranscript([
+      event(
+        "subagent.completed",
+        1,
+        {
+          childRunId: "run_child",
+          parentRunId: "run_parent",
+          status: "completed",
+          summary: "Verification complete.",
+          actions: [
+            {
+              toolCallId: "call_bash",
+              toolName: "bash",
+              preview: "$ python3 check.py",
+              status: "completed",
+            },
+          ],
+        },
+        { runId: "run_parent" },
+      ),
+      event(
+        "tool.requested",
+        2,
+        {
+          id: "call_bash",
+          toolName: "bash",
+          arguments: { command: "python3 check.py" },
+        },
+        { runId: "run_child" },
+      ),
+      event(
+        "tool.completed",
+        3,
+        {
+          toolCallId: "call_bash",
+          toolName: "bash",
+          output: {
+            skipped: true,
+            reason: "repeated_idempotent_noop",
+          },
+        },
+        { runId: "run_child" },
+      ),
+    ]);
+    const action = projection.lines.find((line) =>
+      line.text.includes("python3 check.py"),
+    )?.text;
+
+    expect(action).toContain("repeated_idempotent_noop · skipped");
+    expect(action).not.toContain("✓");
+  });
+
   it("suppresses successful Agent transport but never a tool failure", () => {
     const events = [
       event("tool.requested", 1, {
@@ -290,7 +444,8 @@ describe("transcript presentation", () => {
     ]);
     const text = projection.lines.map((line) => line.text).join("\n");
 
-    expect(text).toContain("query=select:spawn_agent · maxResults=1");
+    expect(text).toContain("query=select:spawn_agent");
+    expect(text).not.toContain("maxResults=1");
     expect(text).toContain("1 match");
     expect(text).toContain("spawn_agent");
     expect(text).not.toContain('{"query"');
@@ -322,6 +477,70 @@ describe("transcript presentation", () => {
     expect(text).toContain("1 match");
     expect(text).toContain("spawn_agent");
     expect(text).not.toContain("0 matches");
+  });
+
+  it("shows completed Agent runs with semantic issues before their report", () => {
+    const projection = buildDetailedTranscript([
+      event("tui.user", -1, { goal: "create and verify the script" }),
+      event(
+        "subagent.completed",
+        1,
+        {
+          childRunId: "run_child",
+          parentRunId: "run_parent",
+          status: "completed",
+          summary: "Created and verified print_numbers.py.",
+          workspaceWrites: 0,
+          actions: [
+            {
+              toolCallId: "call_create",
+              toolName: "create",
+              preview: "print_numbers.py",
+              status: "failed",
+              errorCode: "WORKSPACE_CREATE_CONFLICT",
+              errorMessage:
+                "Workspace create target already exists: print_numbers.py",
+            },
+          ],
+          assessment: {
+            schemaVersion: "run-assessment.v1",
+            health: "failing",
+            issues: [
+              {
+                code: "UNRESOLVED_TOOL_FAILURE",
+                kind: "tool_failure",
+                disposition: "failing",
+                count: 1,
+                details: {
+                  codes: ["WORKSPACE_CREATE_CONFLICT"],
+                  toolNames: ["create"],
+                },
+              },
+            ],
+            verification: [],
+          },
+        },
+        {
+          metadata: {
+            childRunId: "run_child",
+            parentRunId: "run_parent",
+            agentName: "script-writer",
+          },
+        },
+      ),
+    ]);
+    const text = projection.lines.map((line) => line.text).join("\n");
+
+    expect(text).toContain("Agent · script-writer completed with issues");
+    expect(text).toContain(
+      "create print_numbers.py failed because the target already exists; no successful workspace write proved creation or modification",
+    );
+    expect(text).toContain("WORKSPACE_CREATE_CONFLICT");
+    expect(text.indexOf("issue")).toBeLessThan(text.indexOf("result"));
+    expect(text).not.toContain("error\nUNRESOLVED_TOOL_FAILURE");
+    expect(
+      projection.blocks.filter((block) => block.kind === "tool"),
+    ).toHaveLength(0);
   });
 
   it("folds replayed child answers under the Agent and keeps them out of compact scrollback", () => {

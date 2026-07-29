@@ -261,6 +261,26 @@ describe("InputBox draft restore", () => {
     rendered.unmount();
   });
 
+  it("restores Ctrl+Home/Ctrl+End for the global transcript router", async () => {
+    const onGlobalInput = vi.fn(() => true);
+    const rendered = await renderInputBox({ onGlobalInput });
+
+    await rendered.input("\x1b[1;5H");
+    await rendered.input("\x1b[1;5F");
+
+    expect(onGlobalInput).toHaveBeenCalledWith(
+      "",
+      expect.objectContaining({ ctrl: true, home: true }),
+      "",
+    );
+    expect(onGlobalInput).toHaveBeenCalledWith(
+      "",
+      expect.objectContaining({ ctrl: true, end: true }),
+      "",
+    );
+    rendered.unmount();
+  });
+
   it("gives editor Escape and Ctrl+C explicit callbacks", async () => {
     const onEscape = vi.fn();
     const onQuit = vi.fn();

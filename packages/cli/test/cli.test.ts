@@ -2007,6 +2007,7 @@ describe.sequential("runCli", () => {
       "spawn_agent",
       "delegate_agent",
       "delegate_parallel",
+      "read_agent_report",
       "cron",
       "task",
       "todo_write",

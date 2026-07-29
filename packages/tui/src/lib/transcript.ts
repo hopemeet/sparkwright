@@ -22,6 +22,8 @@ import {
   summarizeToolResultForDisplay,
 } from "./tool-display.js";
 import {
+  collectConversationApprovalStates,
+  conversationApprovalIdentity,
   createConversationProjection,
   shouldShowInConversation,
 } from "./conversation-projection.js";
@@ -59,6 +61,7 @@ export function renderTranscript(
 
   const tail: RunEvent[] = []; // events we didn't render as a section
   const conversationProjection = createConversationProjection();
+  const approvalStates = collectConversationApprovalStates(events);
 
   for (const ev of events) {
     const p = (ev.payload ?? {}) as Record<string, unknown>;
@@ -194,12 +197,19 @@ export function renderTranscript(
         break;
       }
       case "approval.requested": {
+        const identity = conversationApprovalIdentity(ev);
+        const decision = identity
+          ? approvalStates.get(identity)?.decision
+          : undefined;
+        const status = decision || "requested";
         const summary = typeof p.summary === "string" ? p.summary : "?";
-        out.push(`> 🤝 Approval requested: ${summary}`);
+        out.push(`> 🤝 Approval ${status}: ${summary}`);
         out.push("");
         break;
       }
       case "approval.resolved": {
+        const identity = conversationApprovalIdentity(ev);
+        if (identity && approvalStates.get(identity)?.requested) break;
         const decision = typeof p.decision === "string" ? p.decision : "?";
         out.push(`> Approval ${decision}`);
         out.push("");

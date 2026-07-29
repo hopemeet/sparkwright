@@ -56,7 +56,7 @@ describe("execution control plane", () => {
     });
   });
 
-  it("uses the reserved finalization turn when terminal assistant text is absent", async () => {
+  it("uses deterministic terminal rendering without an extra model turn", async () => {
     let modelCalls = 0;
     const run = createRun({
       goal: "finish without prose",
@@ -91,12 +91,12 @@ describe("execution control plane", () => {
 
     await expect(run.start()).resolves.toMatchObject({
       signal: "completed",
-      message: "Finalized human-readable summary.",
+      message: "Rendered summary.",
       metadata: {
         terminalResult: { responseTextBound: false },
       },
     });
-    expect(modelCalls).toBe(2);
+    expect(modelCalls).toBe(1);
   });
 
   it("rejects mixed terminal responses before executing any tool call", async () => {
