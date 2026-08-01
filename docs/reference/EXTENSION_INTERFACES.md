@@ -907,7 +907,7 @@ What the helpers do for you, end-to-end:
 | Trace nesting      | Child events stay in child's `EventLog`; parent sees a summarized tool result                                                      |
 | Cancellation       | `createRun({ abortSignal: parent.abortSignal })`                                                                                   |
 | Recursion guard    | `createAgentTool({ forbidNesting: true })`                                                                                         |
-| Semantic result    | Parent receives compact `childRunId`, `status`, child-authored `report`, runtime-owned `workspace`, and optional warnings/blockers |
+| Report result      | Parent receives compact `childRunId`, `status`, child-authored `report`, runtime-owned `workspace`, and optional warnings/blockers |
 
 Host-style in-process adapters that need the canonical result/ledger/failure
 collection path can pass an already-prepared `SpawnedSubAgent`, parent,
@@ -924,22 +924,25 @@ does not emit a second `extension.process.*` lifecycle by default; the terminal
 subagent result carries the shared `ProcessOutputSummary`.
 
 Host-composed in-process delegates normally end with one natural-language
-report, which Agent Runtime treats as completed. A child uses the injected
-`submit_agent_result` terminal tool when it must return a structured partial or
-blocked outcome; blockers remain advisory and cannot authorize tools or
-approvals. The legacy `SPARKWRIGHT_AGENT_RESULT:` declaration is accepted for
-migration only.
+report. A non-empty report projects completed delivery even when the report says
+work remains; the parent decides whether the delegated goal was satisfied.
+Empty reports, runtime failures, cancellation, truncation, blocking limits, and
+step limits project partial/blocked with minimal blocker code/message evidence.
+No completion-only tool is injected, so tool-less and tool-capable children use
+the same final-report path. Retired declaration envelopes, terminal kinds, and
+text markers do not affect runtime status. Persisted report lookup may recover
+their summary text only for historical session readability.
 
 `composeInProcessChildAgentPrompt()` is the opt-in portable composition helper
 for Core-backed children. It orders optional profile specialization before the
-task-agnostic child behavior contract and result protocol while keeping one
-cache-stable application prompt. `spawnSubAgent()` deliberately does not call
-it implicitly, because low-level embedders may provide a custom
-`PromptBuilder`. ACP and external-command adapters retain their own transport
-input contracts.
+single task-agnostic child contract, which includes completion and incomplete
+reporting guidance, while keeping one cache-stable application prompt.
+`spawnSubAgent()` deliberately does not call it implicitly, because low-level
+embedders may provide a custom `PromptBuilder`. ACP and external-command
+adapters retain their own transport input contracts.
 
 The parent model receives one compact `ParentAgentResult`:
-`childRunId`, semantic `status`, child-authored `report`, runtime-owned
+`childRunId`, runtime-derived report `status`, child-authored `report`, runtime-owned
 `workspace:{writes,paths?}`, and optional `warnings` / structured `blockers`.
 Transport, usage, assessment, action receipts, ChangeSets, and
 verification receipts stay in runtime lifecycle and delegation-ledger records.
@@ -1065,37 +1068,6 @@ scheduler. Ordinary runs remain single-episode even when the ledger has open
 items. The host reads a non-empty ledger into the next real session turn and may
 attach a terminal `todoAdvisory`; only durable Workflow state may request a
 cross-episode continuation.
-
-### Sub-agent result protocol
-
-```ts
-import {
-  SUB_AGENT_RESULT_PROMPT,
-  parseSubAgentResult,
-  validateDeclaredWrites,
-} from "@sparkwright/agent-runtime";
-
-// Splice SUB_AGENT_RESULT_PROMPT into the child's system prompt so the model
-// learns to emit a JSON object as its final message.
-
-const outcome = parseSubAgentResult(childResult.message ?? "");
-if (outcome.kind === "ok") {
-  const { violations } = validateDeclaredWrites(
-    declaredWrites,
-    outcome.value.writes,
-  );
-  if (violations.length > 0) {
-    // Sub-agent wrote outside its declared partition → treat as failed.
-  }
-  // Update todo: ok→[x], partial→keep in_progress, fail+retryable→retry,
-  //              fail+!retryable→[ ] ❌.
-}
-```
-
-Parsing accepts a bare JSON object, a fenced ` ```json ` block, or an object
-embedded at the end of free-form prose. Invalid output returns a structured
-`{ kind: "invalid", reason }` so the Leader can record `[ ] ❌` and decide
-whether to retry — no LLM round-trip to re-parse natural language.
 
 ## Versioning Guidance
 

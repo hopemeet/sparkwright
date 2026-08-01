@@ -99,6 +99,35 @@ OPENAI_API_KEY=... npm exec sparkwright -- run "inspect this repo" \
 Provider adapters sit at the edge. The run still uses SparkWright tools,
 policy, approvals, artifacts, and trace.
 
+## Public Web Reads
+
+The main agent can use the built-in `web_fetch` tool to read one known public
+page. It is a URL reader, not a search engine: it does not discover URLs,
+execute JavaScript, or use browser cookies/login state. Supported
+HTML/text/JSON/XML responses become bounded plain text.
+
+The default `system` transport accepts HTTPS and follows the machine's normal
+DNS and routing path, including VPN/TUN software. It honors `HTTPS_PROXY`,
+`HTTP_PROXY`, `NO_PROXY`, their lowercase forms, and the optional
+`SPARKWRIGHT_WEB_PROXY` override. This avoids treating a VPN's synthetic DNS
+address as the destination itself. It rejects explicit private/reserved IPs,
+local hostnames, credential-bearing URLs, sensitive query names, and HTTPS to
+HTTP redirects, but intentionally does not pre-resolve domain names.
+
+For an SSRF-sensitive environment, set
+`capabilities.web.security: hardened`. Hardened mode accepts HTTP(S), requires
+every DNS answer and redirect destination to be global-unicast, and pins each
+connection to the validated address. This stronger check can conflict with
+VPN/TUN products that return synthetic IPs.
+
+Every exact normalized URL is approval-scoped. The tool conservatively removes
+active/interactive HTML, keeps readable page structure and links, then returns
+one bounded excerpt marked as untrusted external data. `truncated: true` means
+the remaining page is not available through `web_fetch`; fetching the same URL
+again is a new request and the page may have changed. Use `tools.use: [web]` to
+select only this family, or disable `web_fetch` when external network access is
+not wanted.
+
 ## Interactive TUI
 
 Launch the terminal UI with:

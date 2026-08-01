@@ -813,35 +813,10 @@ function sessionAgentBlocker(value: unknown) {
   if (!isPlainRecord(value)) return undefined;
   const code = recordString(value, "code");
   if (!code) return undefined;
-  const requirements = Array.isArray(value.requirements)
-    ? value.requirements
-        .map((requirement) => {
-          if (!isPlainRecord(requirement)) return undefined;
-          const kind = recordString(requirement, "kind");
-          const name = recordString(requirement, "name");
-          return kind && name ? { kind, name } : undefined;
-        })
-        .filter(
-          (requirement): requirement is { kind: string; name: string } =>
-            requirement !== undefined,
-        )
-        .slice(0, 16)
-    : undefined;
+  const message = recordString(value, "message");
   return {
     code,
-    ...(recordString(value, "kind")
-      ? { kind: recordString(value, "kind") }
-      : {}),
-    ...(recordString(value, "owner")
-      ? { owner: recordString(value, "owner") }
-      : {}),
-    ...(recordString(value, "message")
-      ? { message: recordString(value, "message") }
-      : {}),
-    ...(recordString(value, "retry")
-      ? { retry: recordString(value, "retry") }
-      : {}),
-    ...(requirements && requirements.length > 0 ? { requirements } : {}),
+    ...(message ? { message } : {}),
   };
 }
 

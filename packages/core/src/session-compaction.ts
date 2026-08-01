@@ -40,11 +40,7 @@ export interface SessionTraceFacts {
     summary?: string;
     blockers?: Array<{
       code: string;
-      kind?: string;
-      owner?: string;
       message?: string;
-      retry?: string;
-      requirements?: Array<{ kind: string; name: string }>;
     }>;
     role?: string;
     health?: "clean" | "degraded" | "failing" | string;

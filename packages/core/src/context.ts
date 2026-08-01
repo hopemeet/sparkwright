@@ -233,10 +233,17 @@ export interface PromptCacheBlocks {
 }
 
 export type PromptSectionCachePolicy =
-  "stable" | "session" | "turn" | "volatile";
+  | "stable"
+  | "session"
+  | "turn"
+  | "volatile";
 
 export type PromptSectionBuildResult =
-  string | PromptMessage | PromptMessage[] | null | undefined;
+  | string
+  | PromptMessage
+  | PromptMessage[]
+  | null
+  | undefined;
 
 export interface PromptSection {
   name: string;
@@ -306,7 +313,8 @@ export class DefaultObservationFormatter implements ObservationFormatter {
     );
     const outputMaxChars =
       isFileReadLikeTool(input.toolName) ||
-      input.resultPresentation?.kind === "file_read"
+      input.resultPresentation?.kind === "file_read" ||
+      input.resultPresentation?.kind === "web_content"
         ? this.maxFileReadContentChars
         : this.maxOutputChars;
     const output = summarizePresentedObservationValue(
@@ -2327,62 +2335,12 @@ function summarizeAgentBlocker(value: unknown, maxChars: number): unknown {
     typeof value.message === "string"
       ? boundObservationText(value.message, Math.min(maxChars, 300))
       : undefined;
-  const requirements = summarizeAgentRequirements(
-    value.requirements,
-    Math.min(maxChars, 400),
-  );
   return {
     ...(typeof value.code === "string"
       ? { code: boundObservationText(value.code, 128).text }
       : {}),
-    ...(typeof value.kind === "string"
-      ? { kind: boundObservationText(value.kind, 64).text }
-      : {}),
-    ...(typeof value.owner === "string"
-      ? { owner: boundObservationText(value.owner, 64).text }
-      : {}),
     ...(message ? { message: message.text } : {}),
     ...(message?.truncated ? { messageTruncated: true } : {}),
-    ...(requirements ? { requirements: requirements.items } : {}),
-    ...(requirements?.truncated
-      ? {
-          requirementCount: requirements.total,
-          requirementsTruncated: true,
-        }
-      : {}),
-    ...(typeof value.retry === "string"
-      ? { retry: boundObservationText(value.retry, 64).text }
-      : {}),
-  };
-}
-
-function summarizeAgentRequirements(
-  value: unknown,
-  maxChars: number,
-): { items: unknown[]; total: number; truncated: boolean } | undefined {
-  if (!Array.isArray(value)) return undefined;
-  const items: unknown[] = [];
-  let used = 0;
-  for (const requirement of value) {
-    const summarized = isRecord(requirement)
-      ? {
-          ...(typeof requirement.kind === "string"
-            ? { kind: boundObservationText(requirement.kind, 64).text }
-            : {}),
-          ...(typeof requirement.name === "string"
-            ? { name: boundObservationText(requirement.name, 160).text }
-            : {}),
-        }
-      : summarizeObservationValue(requirement, 160);
-    const cost = safeStringify(summarized).length;
-    if (items.length > 0 && used + cost > maxChars) break;
-    items.push(summarized);
-    used += cost;
-  }
-  return {
-    items,
-    total: value.length,
-    truncated: items.length < value.length,
   };
 }
 

@@ -7,6 +7,17 @@ context while keeping raw trace and session evidence intact.
 
 See [../session/resume-replay.md](../session/resume-replay.md).
 
+## Last Verified
+
+- Status: Verified
+- Date: 2026-07-30
+- Scope: Agent observation and session compaction retain only blocker
+  `code`/`message` evidence. Removed owner/kind/retry/requirement branches no
+  longer consume context budget or imply a recovery control plane.
+- Read: Core observation formatter, session trace facts, Host trace extraction,
+  and affected tests.
+- Tests: focused Core context/session suites and repository build passed.
+
 ## Main Files
 
 - `packages/core/src/run.ts`

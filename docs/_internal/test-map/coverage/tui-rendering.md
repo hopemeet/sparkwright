@@ -18,7 +18,43 @@
 ## Current Confidence
 
 - Status: `Verified`
-- Last reviewed: 2026-07-28
+- Last reviewed: 2026-08-01
+- Latest evidence: child Agent approval coverage verifies ask-mode `approved`
+  and bypass-mode `auto-approved` outcomes appear once under the Agent in both
+  compact and detailed projections, never inline with actions and never as a
+  second standalone child block. Raw replay events take precedence over the
+  terminal-receipt fallback. Agent Runtime passed 251/251, TUI passed 547/547,
+  the repository built, and retained real sessions `session_tui_ms7mmq7h` and
+  `session_tui_ms88t03l` replayed with the expected 3 ask / 2 bypass rows.
+- Additional recent evidence: usage information-hierarchy coverage verifies the idle line
+  `usage  context 6.7k · session 50.2k · calls 10 model / 8 tool`, the Activity
+  Run breakdown
+  `session 48.6k input (25.8k cached) · 1.6k output`, zero-cache omission,
+  fallback calculation when `totalTokens` is absent, and canonical
+  `state.usage` routing. TUI typecheck and the full 81-file / 547-test suite
+  passed.
+- Additional recent evidence: focused `/skills` coverage verifies the panel
+  omits generic model/tool/Cron/automation overview rows, renders current
+  inventory with recent loads and drafts, opens associated diagnostics with
+  Enter, and treats the first Esc as detail-back before close. Exact-identity
+  projection and rendering tests passed; the full TUI suite passed 83 files /
+  550 tests, and a real 80-column PTY showed the expected list and detail.
+- Additional recent evidence: focused live-stream coverage verifies the
+  terminal-height answer budget resolves to 6–12 physical rows (with bounded
+  tiny-screen degradation), reasoning shows only three one-row tails, long
+  Markdown blocks display a generic temporary-fold hint without treating soft
+  paragraph lines as hidden, and a character-cut code-fence tail renders as
+  inert text instead of creating a phantom Markdown block. Focused rendering
+  passed 11/11; the full TUI passed 84 files / 561 tests,
+  followed by typecheck and build.
+- Additional recent evidence: retained session `session_tui_msafgwsd` exposed a
+  1.17-second gap between `model.stream.completed` and `model.completed` during
+  which the live preview was previously cleared. EventStore coverage now keeps
+  reasoning/answer text through the stream-complete marker and clears it only
+  when the canonical assistant message is appended. Focused state/rendering
+  tests passed 33/33, the full TUI passed 84 files / 561 tests, session check
+  remained clean, and post-fix Terra PTY sampling emitted adjacent completion
+  markers; the deterministic state regression covers the longer handoff gap.
 - Evidence source: 2026-07-26 owned-viewport coverage preserves all 39 compact
   rendering characterization cases while routing both compact and detailed
   output through `TranscriptDocument` and physical layout. Focused tests cover

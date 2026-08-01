@@ -1060,15 +1060,15 @@ describe("createWorkflowProjectionHooks", () => {
               results: [
                 {
                   index: 0,
-                  signal: "completed",
+                  status: "completed",
                   childRunId: "run_reviewer",
-                  profileId: "reviewer",
+                  agentId: "reviewer",
                 },
                 {
                   index: 1,
-                  signal: "completed",
+                  status: "completed",
                   childRunId: "run_tester",
-                  profileId: "tester",
+                  agentId: "tester",
                 },
               ],
             };
@@ -1167,7 +1167,6 @@ describe("createWorkflowProjectionHooks", () => {
           execute(args) {
             const delegates = args.delegates as Array<{
               agentId: string;
-              metadata: { branchNodeId: string };
             }>;
             callSizes.push(delegates.length);
             return {
@@ -1178,7 +1177,7 @@ describe("createWorkflowProjectionHooks", () => {
               results: delegates.map((delegate, index) => ({
                 index,
                 signal: "completed",
-                childRunId: `run_${delegate.metadata.branchNodeId}`,
+                childRunId: `run_${delegate.agentId}`,
                 profileId: delegate.agentId,
               })),
             };

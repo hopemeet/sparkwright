@@ -8,6 +8,15 @@ cron, shell/task tools, and capability inspection.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-08-01
+- Scope: `web` still expands only to main-run `web_fetch`; Host now adds the
+  orthogonal `capabilities.web.security` transport knob with default `system`
+  and explicit `hardened`, without adding a search provider or child surface.
+- Read: Host selector/catalog/config, generated schema, web edge, and user docs.
+- Tests: Web 38/38, focused Host selector/config/catalog 152/152, CLI 186/186,
+  generated schema checks, and install smokes passed.
+
+- Status: Verified
 - Date: 2026-07-26
 - Scope: route review for compact in-process Agent results. Capability
   discovery, admission, child catalog derivation, and mutation authority are
@@ -386,6 +395,12 @@ config + workspace capability roots
   `allowed` keeps only listed concrete tool names, `disabled` removes concrete
   names even if otherwise selected, and `defer` only changes schema loading for
   tools that remain.
+- The `web` selector maps to the main-catalog `web_fetch` tool. Its stable
+  built-in identity is advanced/deferred and parent-only. It is a direct public
+  URL reader rather than a provider-backed search/browser capability.
+  `capabilities.web.security` configures only the connection boundary:
+  `system` (default) uses OS-routed HTTPS, while `hardened` validates/pins public
+  DNS addresses and permits HTTP(S). It does not add provider credentials.
 - `capabilities inspect` displays configured selectors and the final runtime
   inventory, so selector filtering must happen before snapshots and diagnostic
   inventories are built.

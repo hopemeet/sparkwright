@@ -1,14 +1,13 @@
 // End-to-end demo: a Leader fans out to multiple sub-agents in parallel,
-// using the four concurrency primitives shipped by @sparkwright/agent-runtime:
+// using the concurrency primitives shipped by @sparkwright/agent-runtime:
 //
 //   1. ConcurrencyCoordinator   — declarative writes partitioning (glob)
 //   2. acquireWorktree          — per-sub-agent git isolation + 3-way merge
 //   3. createTodoTools          — Leader single-writer todo file
-//   4. parseSubAgentResult      — structured JSON result protocol + audit
 //
 // Sub-agent execution is simulated in-process (no model adapter, no tools).
-// The shape of "what the sub-agent does" — write declared files, emit a
-// final JSON message — is what matters for this demo. For real sub-agent
+// The shape of "what the sub-agent does" — write files, then return a natural
+// report while the runtime records actual writes — is what matters. For real sub-agent
 // dispatch see examples/promote-shell-to-task and the Sub-agents section of
 // docs/EXTENSION_INTERFACES.md.
 
@@ -21,8 +20,7 @@ import {
   ConcurrencyCoordinator,
   acquireWorktree,
   createTodoTools,
-  parseSubAgentResult,
-  validateDeclaredWrites,
+  globsOverlap,
   type TodoStatus,
   type WorktreeHandle,
 } from "@sparkwright/agent-runtime";
@@ -43,9 +41,10 @@ interface ChildPlan {
    * via approved tools; here we touch it directly.
    */
   perform(workspace: string): Promise<{
+    /** Runtime-observed writes, not a model declaration. */
     actualWrites: string[];
-    /** Final JSON message the sub-agent would emit. */
-    finalMessage: string;
+    /** Natural child report. */
+    summary: string;
   }>;
 }
 
@@ -113,54 +112,34 @@ async function runLeader(
   // worktree — disjoint working directories, so no contention.
   const childResults = await Promise.all(
     slots.map(async ({ plan, wt }) => {
-      const { actualWrites, finalMessage } = await plan.perform(wt.path);
+      const { actualWrites, summary } = await plan.perform(wt.path);
       // Commit whatever the child wrote so the worktree's branch has a tip
       // distinct from the parent's HEAD.
       if (actualWrites.length > 0) {
         runGit(wt.path, ["add", "."]);
         runGit(wt.path, ["commit", "-q", "-m", `child(${plan.taskId})`]);
       }
-      return { plan, wt, actualWrites, finalMessage };
+      return { plan, wt, actualWrites, summary };
     }),
   );
 
   // Audit + merge + release SEQUENTIALLY. mergeBack uses a regular 3-way
   // merge — by construction (declarative partitioning) it is conflict-free.
   const outcomes: DispatchOutcome[] = [];
-  for (const { plan, wt, finalMessage } of childResults) {
-    const parsed = parseSubAgentResult(finalMessage);
-    if (parsed.kind === "invalid") {
+  for (const { plan, wt, actualWrites, summary } of childResults) {
+    const violations = actualWrites.filter(
+      (path) => !plan.writes.some((declared) => globsOverlap(declared, path)),
+    );
+    if (violations.length > 0) {
       coord.release(plan.taskId);
       await wt.release({ keep: true });
       outcomes.push({
         plan,
         finalStatus: "blocked",
-        note: `bad output: ${parsed.reason}`,
+        note: `wrote outside partition: ${violations.join(", ")}`,
       });
       continue;
     }
-    const audit = validateDeclaredWrites(plan.writes, parsed.value.writes);
-    if (audit.violations.length > 0) {
-      coord.release(plan.taskId);
-      await wt.release({ keep: true });
-      outcomes.push({
-        plan,
-        finalStatus: "blocked",
-        note: `wrote outside partition: ${audit.violations.join(", ")}`,
-      });
-      continue;
-    }
-    if (parsed.value.status === "fail") {
-      coord.release(plan.taskId);
-      await wt.release({ keep: parsed.value.retryable });
-      outcomes.push({
-        plan,
-        finalStatus: "blocked",
-        note: parsed.value.notes,
-      });
-      continue;
-    }
-    // ok or partial → merge back.
     const merge = await wt.mergeBack();
     coord.release(plan.taskId);
     if (merge.status === "conflict") {
@@ -175,8 +154,8 @@ async function runLeader(
     await wt.release();
     outcomes.push({
       plan,
-      finalStatus: parsed.value.status === "ok" ? "completed" : "in_progress",
-      note: parsed.value.notes,
+      finalStatus: "completed",
+      note: summary,
       mergeCommit: merge.status === "merged" ? merge.commit : undefined,
     });
   }
@@ -233,12 +212,7 @@ async function main(): Promise<void> {
         writes: ["src/auth/**"],
         perform: writeFilesPlan({
           files: { "src/auth/login.ts": "export const login = () => {};\n" },
-          message: {
-            status: "ok",
-            writes: ["src/auth/login.ts"],
-            notes: "auth scaffolded",
-            retryable: false,
-          },
+          summary: "auth scaffolded",
         }),
       },
       {
@@ -249,12 +223,7 @@ async function main(): Promise<void> {
           files: {
             "src/billing/invoice.ts": "export const invoice = () => {};\n",
           },
-          message: {
-            status: "ok",
-            writes: ["src/billing/invoice.ts"],
-            notes: "billing scaffolded",
-            retryable: false,
-          },
+          summary: "billing scaffolded",
         }),
       },
       {
@@ -266,12 +235,7 @@ async function main(): Promise<void> {
           files: {
             "src/auth/sneak.ts": "export const sneak = () => {};\n",
           },
-          message: {
-            status: "ok",
-            writes: ["src/auth/sneak.ts"],
-            notes: "I wrote whatever I wanted",
-            retryable: false,
-          },
+          summary: "I wrote whatever I wanted",
         }),
       },
     ];
@@ -339,12 +303,7 @@ async function main(): Promise<void> {
 
 interface WriteFilesPlanInput {
   files: Record<string, string>;
-  message: {
-    status: "ok" | "fail" | "partial";
-    writes: string[];
-    notes: string;
-    retryable: boolean;
-  };
+  summary: string;
 }
 
 function writeFilesPlan(input: WriteFilesPlanInput): ChildPlan["perform"] {
@@ -358,13 +317,7 @@ function writeFilesPlan(input: WriteFilesPlanInput): ChildPlan["perform"] {
     }
     return {
       actualWrites,
-      finalMessage: [
-        "Done. Here is my structured result:",
-        "",
-        "```json",
-        JSON.stringify(input.message, null, 2),
-        "```",
-      ].join("\n"),
+      summary: input.summary,
     };
   };
 }

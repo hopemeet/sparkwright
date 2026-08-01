@@ -1453,6 +1453,7 @@ describe("SparkwrightRun", () => {
       metadata: {
         stepLimitReached: true,
         truncated: true,
+        completionStatus: "partial",
         maxSteps: 2,
         stepsUsed: 2,
       },
@@ -1460,7 +1461,10 @@ describe("SparkwrightRun", () => {
     const completed = run.events
       .all()
       .find((event) => event.type === "run.completed");
-    expect(completed?.payload).toMatchObject({ truncated: true });
+    expect(completed?.payload).toMatchObject({
+      truncated: true,
+      completionStatus: "partial",
+    });
     expect(run.events.all().some((event) => event.type === "run.failed")).toBe(
       false,
     );

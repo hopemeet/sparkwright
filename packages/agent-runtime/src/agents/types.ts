@@ -25,56 +25,10 @@ export interface AgentToolSummarizeInput {
 
 export type AgentResultStatus = "completed" | "partial" | "blocked";
 
-export type AgentBlockerKind =
-  | "capability"
-  | "permission"
-  | "user_input"
-  | "dependency"
-  | "resource_limit"
-  | "conflict"
-  | "protocol"
-  | "unknown";
-
-export type AgentBlockerOwner = "parent" | "user" | "runtime" | "external";
-
-export type AgentBlockerRetry =
-  | "none"
-  | "immediate"
-  | "after_input"
-  | "after_approval"
-  | "after_capability_change"
-  | "after_dependency_change"
-  | "after_resource_change";
-
-export type AgentBlockerRequirementKind =
-  "tool" | "approval" | "input" | "dependency" | "resource";
-
-export interface AgentBlockerRequirement {
-  kind: AgentBlockerRequirementKind;
-  name: string;
-}
-
 export interface AgentBlocker {
-  /** Stable machine-readable reason within the blocker kind. */
+  /** Stable machine-readable runtime reason. */
   code: string;
-  kind: AgentBlockerKind;
-  /** Actor that can satisfy or adjudicate the blocker. */
-  owner: AgentBlockerOwner;
   message: string;
-  requirements?: AgentBlockerRequirement[];
-  retry: AgentBlockerRetry;
-}
-
-export interface AgentResultDeclaration {
-  schemaVersion: "agent-outcome.v1";
-  /** Child-declared semantic outcome, independent of process/run transport. */
-  status: AgentResultStatus;
-  /** Concise explanation suitable for the parent agent. */
-  summary: string;
-  /** Bounded useful work already completed by the child. */
-  accomplishments?: string[];
-  /** Optional structured detail; status + summary form the complete envelope. */
-  blockers?: AgentBlocker[];
 }
 
 /**
@@ -93,15 +47,16 @@ export interface AgentRuntimeResult {
   costUsd: number;
   toolCalls: number;
   modelCalls: number;
-  /** Semantic child outcome. A completed run may still report blocked/partial. */
+  /**
+   * Runtime-derived report status. `completed` means the child delivered a
+   * non-empty final report; the parent still decides whether the goal was met.
+   */
   status: AgentResultStatus;
   /** Structured child/runtime summary. */
   summary: string;
-  /** Bounded useful work already completed by the child. */
-  accomplishments?: string[];
-  /** Canonical runtime projection; empty when the child supplied no detail. */
+  /** Runtime-owned blocker evidence. */
   blockers: AgentBlocker[];
-  /** Core-owned semantic assessment projected without reinterpretation. */
+  /** Core-owned execution health projected without reinterpretation. */
   assessment: RunAssessment;
   /**
    * True only when the child exhausted its allowed actions and the runtime

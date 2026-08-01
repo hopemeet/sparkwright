@@ -59,17 +59,6 @@ function terminalChildModel(
       );
       return {
         message: "Child completed the delegated task.",
-        toolCalls: [
-          {
-            toolName: "submit_agent_result",
-            arguments: {
-              status: "completed",
-              summary: "Delegated task complete",
-              accomplishments: ["Inspected the requested scope"],
-              blockers: [],
-            },
-          },
-        ],
       };
     },
   };
@@ -109,7 +98,7 @@ describe("host spawn_agent execution control plane", () => {
     expect(schema.additionalProperties).toBe(false);
   });
 
-  it("derives child tools automatically and injects the terminal result tool", async () => {
+  it("derives child tools without adding a completion-only tool", async () => {
     const parent = createRun({
       goal: "parent",
       model: terminalChildModel(),
@@ -137,9 +126,7 @@ describe("host spawn_agent execution control plane", () => {
       { run: parent.record } as never,
     )) as Record<string, unknown>;
 
-    expect(observedTools).toEqual(
-      expect.arrayContaining(["read", "submit_agent_result"]),
-    );
+    expect(observedTools).toEqual(["read"]);
     expect(observedSystemText).toContain(
       IN_PROCESS_CHILD_AGENT_CONTRACT_PROMPT,
     );
@@ -150,7 +137,35 @@ describe("host spawn_agent execution control plane", () => {
     });
   });
 
-  it("accepts persisted legacy payloads without restoring their authority", async () => {
+  it("allows a tool-less child to complete with a natural report", async () => {
+    const parent = createRun({
+      goal: "parent",
+      model: terminalChildModel(),
+      maxSteps: 2,
+    });
+    let observedTools: string[] = ["unexpected"];
+    const tool = dynamicTool({
+      parent,
+      childTools: [],
+      onModelCall: (tools) => {
+        observedTools = tools;
+      },
+    });
+
+    await expect(
+      tool.execute(
+        { goal: "Answer from existing knowledge.", label: "advisor" },
+        { run: parent.record } as never,
+      ),
+    ).resolves.toMatchObject({
+      status: "completed",
+      report: "Child completed the delegated task.",
+      workspace: { writes: 0 },
+    });
+    expect(observedTools).toEqual([]);
+  });
+
+  it("rejects legacy authority fields at the live tool boundary", async () => {
     const parent = createRun({
       goal: "parent",
       model: terminalChildModel(),
@@ -158,23 +173,17 @@ describe("host spawn_agent execution control plane", () => {
     });
     const tool = dynamicTool({ parent });
 
-    const output = (await tool.execute(
-      {
-        goal: "Inspect a persisted task",
-        role: "legacy reviewer",
-        allowedTools: ["dangerous_parent_tool"],
-        grant: { workspaceWrite: true },
-        maxSteps: 999,
-        metadata: { elevated: true },
-      },
-      { run: parent.record } as never,
-    )) as Record<string, unknown>;
-
-    expect(output).toMatchObject({
-      status: "completed",
-      report: "Child completed the delegated task.",
-      workspace: { writes: 0 },
-    });
+    await expect(
+      tool.execute(
+        {
+          goal: "Inspect a persisted task",
+          role: "legacy reviewer",
+          allowedTools: ["bash"],
+          grant: "full",
+        },
+        { run: parent.record } as never,
+      ),
+    ).rejects.toThrow(/accepts only goal, context, and label/);
   });
 
   it("keeps dynamic identities unique while caching exact reusable work", async () => {
@@ -387,25 +396,7 @@ describe("host spawn_agent execution control plane", () => {
             };
           }
           return {
-            toolCalls: [
-              {
-                toolName: "submit_agent_result",
-                arguments: {
-                  status: "blocked",
-                  summary: "Confidential read was denied",
-                  accomplishments: [],
-                  blockers: [
-                    {
-                      code: "READ_SCOPE_DENIED",
-                      kind: "permission",
-                      owner: "parent",
-                      message: "The parent read scope denies secret.txt.",
-                      retry: "after_capability_change",
-                    },
-                  ],
-                },
-              },
-            ],
+            message: "Confidential read was denied",
           };
         },
       },
@@ -417,11 +408,11 @@ describe("host spawn_agent execution control plane", () => {
     )) as Record<string, unknown>;
 
     expect(output).toMatchObject({
-      status: "blocked",
+      status: "completed",
       report: "Confidential read was denied",
       workspace: { writes: 0 },
-      blockers: [{ code: "READ_SCOPE_DENIED" }],
     });
+    expect(output).not.toHaveProperty("blockers");
   });
 
   it("builds a child catalog from explicit delegation classifications", () => {

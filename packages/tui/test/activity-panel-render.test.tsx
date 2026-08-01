@@ -201,4 +201,47 @@ describe("ActivityPanel", () => {
     expect(text).toContain("agent.profile.derived");
     expect(text).toContain("main → code-reviewer");
   });
+
+  it("shows the canonical session token breakdown on the run tab", async () => {
+    const text = await renderToText(
+      <ActivityPanel
+        events={[]}
+        usage={{
+          contextTokens: 6746,
+          inputTokens: 48_589,
+          cachedTokens: 25_793,
+          outputTokens: 1575,
+          totalTokens: 50_164,
+          modelCalls: 10,
+          toolCalls: 8,
+          estimatedCostUsd: 0.1234,
+        }}
+        initialTab="run"
+        onClose={() => {}}
+      />,
+    );
+
+    expect(text).toContain("[run]");
+    expect(text).toContain("session 48.6k input (25.8k cached) · 1.6k output");
+    expect(text).toContain("estimated cost $0.1234");
+  });
+
+  it("omits the cached input parenthesis when no cache tokens were reported", async () => {
+    const text = await renderToText(
+      <ActivityPanel
+        events={[]}
+        usage={{
+          inputTokens: 900,
+          cachedTokens: 0,
+          outputTokens: 100,
+          totalTokens: 1000,
+        }}
+        initialTab="run"
+        onClose={() => {}}
+      />,
+    );
+
+    expect(text).toContain("session 900 input · 100 output");
+    expect(text).not.toContain("cached");
+  });
 });

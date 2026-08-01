@@ -11,6 +11,8 @@ import { isParentAgentResult } from "./tool-result-summary.js";
 import {
   collectConversationApprovalStates,
   conversationApprovalIdentity,
+  formatConversationApprovalStatus,
+  type ConversationApprovalState,
 } from "./conversation-projection.js";
 
 export type TranscriptMode = "compact" | "detailed";
@@ -190,9 +192,9 @@ export function shouldShowInCompactTranscript(
   const payload = rec(event.payload);
   if (event.runId && childRunIds.has(event.runId)) {
     // Replayed traces contain child-run events that are not streamed into the
-    // live parent transcript. Keep child failures/approvals visible, but fold
-    // successful child work and the child's full final answer under its Agent
-    // block in the detailed projection.
+    // live parent transcript. Keep child failures visible, but fold approvals,
+    // successful child work, and the child's full final answer under its Agent
+    // block.
     return isChildCompactException(event, payload);
   }
   if (
@@ -404,11 +406,16 @@ export function buildDetailedTranscript(
     if (agent.childRunId) agentByRunId.set(agent.childRunId, agent);
   }
   const childResults = collectChildResults(events, agentByRunId);
+  const rawApprovalsByRun = collectRawApprovalLinesByRun(
+    events,
+    approvalStates,
+    agentByRunId,
+  );
   const tools = collectToolPresentations(events);
   const actionsByAgent = new Map<string, string[]>();
   for (const tool of tools.values()) {
     const agent = tool.runId ? agentByRunId.get(tool.runId) : undefined;
-    if (!agent || tool.name === "submit_agent_result") continue;
+    if (!agent) continue;
     const list = actionsByAgent.get(agent.key) ?? [];
     list.push(formatToolAction(tool));
     actionsByAgent.set(agent.key, list);
@@ -431,6 +438,10 @@ export function buildDetailedTranscript(
         agentBlock(
           agent,
           actionsByAgent.get(key) ?? [],
+          agent.childRunId
+            ? (rawApprovalsByRun.get(agent.childRunId) ??
+                receiptApprovalLines(agent.actions))
+            : [],
           agent.childRunId ? childResults.get(agent.childRunId) : undefined,
         ),
       );
@@ -532,10 +543,9 @@ export function buildDetailedTranscript(
 
     if (event.type === "approval.requested") {
       const approvalIdentity = conversationApprovalIdentity(event);
-      const decision = approvalIdentity
-        ? approvalStates.get(approvalIdentity)?.decision
-        : undefined;
-      const status = decision || "requested";
+      const status = formatConversationApprovalStatus(
+        approvalIdentity ? approvalStates.get(approvalIdentity) : undefined,
+      );
       blocks.push({
         key: approvalIdentity ?? eventKey(event, ordinal),
         kind: "approval",
@@ -543,7 +553,10 @@ export function buildDetailedTranscript(
         sequence: event.sequence,
         indent: 0,
         summary: `approval ${status} · ${str(payload.summary) || str(payload.action) || "review required"}`,
-        tone: status === "approved" ? "success" : "warning",
+        tone:
+          status === "approved" || status === "auto-approved"
+            ? "success"
+            : "warning",
         sections: [],
       });
       continue;
@@ -738,6 +751,7 @@ function collectChildResults(
 function agentBlock(
   agent: AgentPresentation,
   fallbackActions: readonly string[],
+  approvals: readonly string[],
   childResult?: string,
 ): TranscriptBlock {
   const sections: TranscriptDetailSection[] = [];
@@ -748,6 +762,17 @@ function agentBlock(
       : agent.actions.map(formatAgentActionSummary);
   if (actions.length > 0) {
     sections.push({ label: "actions", lines: [...actions] });
+  }
+  if (approvals.length > 0) {
+    sections.push({
+      label: "approvals",
+      lines: [...approvals],
+      tone: approvals.some((line) =>
+        /approval (?:requested|denied)\b/u.test(line),
+      )
+        ? "warning"
+        : "success",
+    });
   }
   if (agent.workspaceWrites !== undefined) {
     sections.push({
@@ -920,10 +945,8 @@ export function isChildCompactException(
   payload: Record<string, unknown>,
 ): boolean {
   if (event.type === "tool.failed") return true;
-  if (event.type === "approval.requested") return true;
-  if (event.type === "approval.resolved") {
-    return str(payload.decision) !== "approved";
-  }
+  if (event.type === "approval.requested" || event.type === "approval.resolved")
+    return false;
   if (
     event.type === "workspace.write.denied" ||
     event.type === "run.failed" ||
@@ -963,6 +986,87 @@ function formatAgentActionSummary(action: AgentActionSummary): string {
           ? completedActionOutcome(action.exitCode)
           : "…";
   return [action.toolName, action.preview, outcome].filter(Boolean).join("  ");
+}
+
+function collectRawApprovalLinesByRun(
+  events: readonly RunEvent[],
+  states: ReadonlyMap<string, ConversationApprovalState>,
+  agentByRunId: ReadonlyMap<string, AgentPresentation>,
+): Map<string, string[]> {
+  const linesByRun = new Map<string, string[]>();
+  const requested = new Set<string>();
+  for (const event of events) {
+    if (
+      event.type !== "approval.requested" &&
+      event.type !== "approval.resolved"
+    ) {
+      continue;
+    }
+    const runId = runIdForEvent(event);
+    if (!runId || !agentByRunId.has(runId)) continue;
+    const identity = conversationApprovalIdentity(event);
+    if (!identity) continue;
+    if (event.type === "approval.requested") {
+      requested.add(identity);
+      const payload = rec(event.payload);
+      appendApprovalLine(
+        linesByRun,
+        runId,
+        formatApprovalLine(
+          formatConversationApprovalStatus(states.get(identity)),
+          str(payload.summary) || str(payload.action) || "review required",
+        ),
+      );
+      continue;
+    }
+    if (requested.has(identity) || states.get(identity)?.requested) continue;
+    const payload = rec(event.payload);
+    appendApprovalLine(
+      linesByRun,
+      runId,
+      formatApprovalLine(
+        formatConversationApprovalStatus(states.get(identity)),
+        str(payload.summary) || str(payload.action),
+      ),
+    );
+  }
+  return linesByRun;
+}
+
+function receiptApprovalLines(
+  actions: readonly AgentActionSummary[],
+): string[] {
+  return actions.flatMap((action) => {
+    if (!action.approval) return [];
+    const status = formatConversationApprovalStatus({
+      requested: action.approval === "requested",
+      ...(action.approval !== "requested" ? { decision: action.approval } : {}),
+      ...(action.approvalAutoApproved !== undefined
+        ? { autoApproved: action.approvalAutoApproved }
+        : {}),
+    });
+    return [
+      formatApprovalLine(
+        status,
+        action.approvalSummary ||
+          [action.toolName, action.preview].filter(Boolean).join(" "),
+      ),
+    ];
+  });
+}
+
+function appendApprovalLine(
+  linesByRun: Map<string, string[]>,
+  runId: string,
+  line: string,
+): void {
+  const lines = linesByRun.get(runId) ?? [];
+  lines.push(line);
+  linesByRun.set(runId, lines);
+}
+
+function formatApprovalLine(status: string, summary: string): string {
+  return `approval ${status}${summary ? ` · ${summary}` : ""}`;
 }
 
 function formatAssessmentIssue(
@@ -1305,6 +1409,17 @@ function parseAgentActions(value: unknown): AgentActionSummary[] {
       toolName: str(action.toolName),
       ...(str(action.preview) ? { preview: str(action.preview) } : {}),
       status: action.status as AgentActionSummary["status"],
+      ...(action.approval === "requested" ||
+      action.approval === "approved" ||
+      action.approval === "denied"
+        ? { approval: action.approval }
+        : {}),
+      ...(str(action.approvalSummary)
+        ? { approvalSummary: str(action.approvalSummary) }
+        : {}),
+      ...(typeof action.approvalAutoApproved === "boolean"
+        ? { approvalAutoApproved: action.approvalAutoApproved }
+        : {}),
       ...(typeof action.exitCode === "number" || action.exitCode === null
         ? { exitCode: action.exitCode as number | null }
         : {}),

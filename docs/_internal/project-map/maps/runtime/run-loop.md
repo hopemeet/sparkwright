@@ -10,6 +10,16 @@ See [tool-orchestration.md](tool-orchestration.md) and [../trace/raw-trace.md](.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-30
+- Scope: forced step-budget wrap-up records partial alongside
+  `stepLimitReached` and `truncated`. Ordinary natural finals and generic
+  terminal tools remain completed; Agent-specific status no longer travels
+  through `ToolDefinition.terminal`.
+- Read: terminal tool branch, terminal payload projection, budget wrap-up, and
+  execution-control/run-loop tests.
+- Tests: repository build/test typecheck and focused Core suites passed.
+
+- Status: Verified
 - Date: 2026-07-26
 - Scope: a natural final on the final allowed action is complete. Only the
   forced tool-less budget wrap-up is step-limited/truncated, and a terminal
@@ -425,6 +435,9 @@ createRun/resumeRunFromCheckpoint
 - Do not infer terminal run outcome from `model.completed` or `tool.completed`.
 - State transitions emit diagnostics when rejected.
 - Budget and max-step behavior are part of runtime semantics.
+- Forced tool-less max-step wrap-up emits a completed transport signal with
+  runtime-derived `completionStatus:"partial"`, `stepLimitReached:true`, and
+  `truncated:true`; callers must not reinterpret it as complete work.
 - Host must not derive `maxSteps` from `runBudget.maxModelCalls`; the former is
   an explicit foreground step limit (or Host backstop), while the latter is a
   Core resource-budget dimension with its own stop reason and failure code.

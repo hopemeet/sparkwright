@@ -1908,6 +1908,7 @@ export class SparkwrightRun implements RunHandle {
         maxSteps: this.maxSteps,
         stepLimitReached: true,
         truncated: true,
+        completionStatus: "partial",
       });
     } catch {
       // Span may already be closed on the success path; close is idempotent.
@@ -5007,13 +5008,17 @@ export class SparkwrightRun implements RunHandle {
       factLedger,
       assessment,
     });
+    const completionStatus =
+      completion.status === "partial" || payload.completionStatus === "partial"
+        ? "partial"
+        : "completed";
     const completedPayload = {
       reason,
       ...payload,
       factLedger,
       assessment,
       notices: completion.notices,
-      completionStatus: completion.status,
+      completionStatus,
     };
     this.setState("completed", reason);
     this.events.emit("run.completed", completedPayload);
@@ -5032,7 +5037,7 @@ export class SparkwrightRun implements RunHandle {
       metadata: omitUndefined({
         ...rest,
         notices: completion.notices,
-        completionStatus: completion.status,
+        completionStatus,
       }),
     };
     return this.result;

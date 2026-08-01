@@ -19,6 +19,7 @@ import { resolveTheme, type Theme } from "./lib/theme.js";
 import { loadStash, type StashFile } from "./lib/stash.js";
 import type { InputBoxHandle } from "./components/input-box.js";
 import { LiveFrame } from "./components/live-frame.js";
+import { resolveStreamingAnswerRows } from "./components/streaming-message.js";
 import { LayerRenderer } from "./components/layer-renderer.js";
 import { TranscriptViewport } from "./components/transcript-viewport.js";
 import { TranscriptBrowseFooter } from "./components/transcript-browse-footer.js";
@@ -1092,9 +1093,10 @@ function AppReady(
   const hasSidebarContent = state.modifiedFiles.length > 0;
   const sidebarWidth = cols >= 100 && hasSidebarContent ? 32 : 0;
 
-  // The lower live frame gets a small fixed stream budget; the transcript owns
-  // the rest of the full-screen viewport and is the only scrollable region.
-  const streamingMax = 3;
+  // Bound the live answer by physical terminal height. The transcript remains
+  // the only scrollable surface; very small screens degrade below the normal
+  // 6–12 row range so the input and at least one transcript row stay visible.
+  const streamingMax = resolveStreamingAnswerRows(screenRows);
   const humanActionOwnsInput = Boolean(
     !topLayer &&
     state.pendingHumanAction &&
@@ -1117,6 +1119,7 @@ function AppReady(
     sessionList: sessionActions.sessionList,
     sessionRootLabel: resolved.sessionRootLabel,
     events: state.events,
+    usage: state.usage,
     taskRecords: taskActions.taskRecords,
     taskOutputs: taskActions.taskOutputs,
     loadingTasks: taskActions.loadingTasks,
@@ -1133,6 +1136,8 @@ function AppReady(
     loadingDiagnosticsFor: sessionActions.loadingDiagnosticsFor,
     capabilitySnapshot: capActions.capabilitySnapshot,
     loadingCapabilities: capActions.loadingCapabilities,
+    skillsSnapshot: capActions.skillsSnapshot,
+    loadingSkills: capActions.loadingSkills,
     skillReviewSnapshot: skillActions.skillReviewSnapshot,
     loadingSkillReview: skillActions.loadingSkillReview,
     notifications: toastSnapshot.history,

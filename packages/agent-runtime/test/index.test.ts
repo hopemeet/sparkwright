@@ -3,7 +3,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  AGENT_RESULT_MARKER,
   compileAgentProfileRunOptions,
   createAgentProfilePolicy,
   createAgentTool,
@@ -31,16 +30,6 @@ const SAFE_AGENT_TOOL_POLICY = {
   risk: "safe",
   requiresApproval: false,
 } as const;
-
-function completedAgentMessage(message: string): string {
-  return `${message}\n${AGENT_RESULT_MARKER} ${JSON.stringify({
-    schemaVersion: "agent-outcome.v1",
-    status: "completed",
-    summary: message,
-    accomplishments: [],
-    blockers: [],
-  })}`;
-}
 
 afterEach(async () => {
   await Promise.all(
@@ -1205,7 +1194,7 @@ describe("createAgentTool / mountAgentTool", () => {
         goal: input.goal,
         model: {
           async complete() {
-            return { message: completedAgentMessage("child done") };
+            return { message: "child done" };
           },
         },
         maxSteps: 2,
@@ -1387,9 +1376,7 @@ describe("createAgentTool / mountAgentTool", () => {
           async complete() {
             childCalls += 1;
             return {
-              message: completedAgentMessage(
-                "root entries: README.md, packages/",
-              ),
+              message: "root entries: README.md, packages/",
             };
           },
         },
@@ -1474,6 +1461,13 @@ describe("createAgentTool / mountAgentTool", () => {
 
   it("does not cache delegate results completed on the child step limit", async () => {
     let childCalls = 0;
+    const inspectTool = defineTool({
+      name: "inspect",
+      description: "Perform one inspection step.",
+      inputSchema: { type: "object" },
+      policy: SAFE_AGENT_TOOL_POLICY,
+      execute: () => ({ inspected: true }),
+    });
     const parent = createRun({
       goal: "parent",
       model: {
@@ -1493,25 +1487,14 @@ describe("createAgentTool / mountAgentTool", () => {
             return {
               toolCalls: [
                 {
-                  toolName: "submit_agent_result",
-                  arguments: {
-                    status: "partial",
-                    summary: "partial child answer",
-                    blockers: [
-                      {
-                        code: "MORE_WORK_REQUIRED",
-                        kind: "resource_limit",
-                        owner: "parent",
-                        message: "More work is required.",
-                        retry: "after_resource_change",
-                      },
-                    ],
-                  },
+                  toolName: "inspect",
+                  arguments: {},
                 },
               ],
             };
           },
         },
+        tools: [inspectTool],
         maxSteps: 1,
       }),
     });
@@ -1527,17 +1510,21 @@ describe("createAgentTool / mountAgentTool", () => {
 
     expect(first).toMatchObject({
       status: "partial",
-      report: "partial child answer",
-      blockers: [expect.objectContaining({ code: "MORE_WORK_REQUIRED" })],
+      blockers: [expect.objectContaining({ code: "AGENT_STEP_LIMIT_REACHED" })],
     });
     expect(second).toMatchObject({
       status: "partial",
-      report: "partial child answer",
+      blockers: [expect.objectContaining({ code: "AGENT_STEP_LIMIT_REACHED" })],
     });
     expect(second).not.toHaveProperty("warnings", [
       "The runtime reused this completed child result; no new child ran.",
     ]);
-    expect(childCalls).toBe(2);
+    expect(childCalls).toBe(4);
+    expect(
+      parent.events
+        .all()
+        .filter((event) => event.type === "subagent.requested"),
+    ).toHaveLength(2);
   });
 
   it("emits subagent.requested → started → completed on the parent", async () => {
@@ -1656,16 +1643,6 @@ describe("createAgentTool / mountAgentTool", () => {
           }
           return {
             message: "I changed the file.",
-            toolCalls: [
-              {
-                toolName: "submit_agent_result",
-                arguments: {
-                  status: "completed",
-                  summary: "Changed the file.",
-                  blockers: [],
-                },
-              },
-            ],
           };
         },
       },

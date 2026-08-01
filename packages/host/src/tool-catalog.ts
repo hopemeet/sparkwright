@@ -17,8 +17,10 @@ import {
   type ToolOrigin,
 } from "@sparkwright/core";
 import type { SkillRoot } from "@sparkwright/skills";
+import { createWebFetchTool } from "@sparkwright/web-tools";
 import type {
   CapabilityToolsConfig,
+  CapabilityWebConfig,
   ShellConfig,
 } from "./config-zod-schema.js";
 import { createChildSafeHostShellTool, createHostShellTool } from "./shell.js";
@@ -92,9 +94,7 @@ export function createAgentSpawnPayloadSchema(
 
 export const AGENT_TASK_CREATE_PAYLOAD_SCHEMA = {
   ...createAgentSpawnPayloadSchema(),
-  // Persisted v0 task payloads may still contain role/grant/tool fields.
-  // The runner normalizer ignores their authority-bearing values.
-  additionalProperties: true,
+  additionalProperties: false,
 };
 
 export type HostToolCatalogSource =
@@ -103,6 +103,7 @@ export type HostToolCatalogSource =
   | "skill"
   | "agent"
   | "shell"
+  | "web"
   | "task"
   | "todo"
   | "mcp"
@@ -244,6 +245,7 @@ export function createMainHostToolCatalog(input: {
   delegateParallelTool?: ToolDefinition;
   dynamicSpawnTool?: ToolDefinition;
   agentReportTool?: ToolDefinition;
+  web?: CapabilityWebConfig;
   shell?: ShellConfig;
   backgroundTasks?: BackgroundTaskPolicy;
   configPaths?: readonly string[];
@@ -312,6 +314,8 @@ export function catalogEntryOrigin(
       return "local:@sparkwright/agent-runtime";
     case "shell":
       return "local:@sparkwright/shell-tool";
+    case "web":
+      return "local:@sparkwright/web-tools";
     case "core":
       return "local:@sparkwright/core";
     case "mcp":
@@ -335,6 +339,7 @@ function createMainHostToolCatalogList(input: {
   delegateParallelTool?: ToolDefinition;
   dynamicSpawnTool?: ToolDefinition;
   agentReportTool?: ToolDefinition;
+  web?: CapabilityWebConfig;
   shell?: ShellConfig;
   backgroundTasks?: BackgroundTaskPolicy;
   configPaths?: readonly string[];
@@ -358,6 +363,10 @@ function createMainHostToolCatalogList(input: {
     ),
     catalogEntry(createAgentInspectorTool(input.workspaceRoot), "agent"),
     catalogEntry(createMarkdownAgentManagerTool(input.workspaceRoot), "agent"),
+    catalogEntry(
+      createWebFetchTool({ security: input.web?.security ?? "system" }),
+      "web",
+    ),
     catalogEntry(
       createHostShellTool(input.workspaceRoot, {
         taskManager: input.taskManager,

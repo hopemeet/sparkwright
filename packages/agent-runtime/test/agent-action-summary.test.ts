@@ -6,6 +6,7 @@ function event(
   type: string,
   sequence: number,
   payload: unknown,
+  spanId?: string,
 ): SparkwrightEvent {
   return {
     id: `event_${sequence}`,
@@ -14,6 +15,7 @@ function event(
     sequence,
     timestamp: `2026-07-25T00:00:${String(sequence).padStart(2, "0")}.000Z`,
     payload,
+    ...(spanId ? { spanId } : {}),
   } as SparkwrightEvent;
 }
 
@@ -39,11 +41,6 @@ describe("summarizeAgentActions", () => {
         toolCallId: "call_bash",
         toolName: "bash",
         output: { stdout: "", stderr: "", exitCode: 0, timedOut: false },
-      }),
-      event("tool.requested", 5, {
-        id: "call_terminal",
-        toolName: "submit_agent_result",
-        arguments: { summary: "done" },
       }),
     ]);
 
@@ -124,5 +121,114 @@ describe("summarizeAgentActions", () => {
       },
     ]);
     expect(JSON.stringify(actions)).not.toContain("sensitive content");
+  });
+
+  it("attaches interleaved approval outcomes to their owning tool spans", () => {
+    const actions = summarizeAgentActions([
+      event(
+        "tool.requested",
+        1,
+        {
+          id: "call_create",
+          toolName: "create",
+          arguments: { path: "print_numbers.py" },
+        },
+        "span_create",
+      ),
+      event(
+        "tool.requested",
+        2,
+        {
+          id: "call_bash",
+          toolName: "bash",
+          arguments: { command: "python3 print_numbers.py" },
+        },
+        "span_bash",
+      ),
+      event(
+        "approval.requested",
+        3,
+        {
+          id: "approval_create",
+          action: "workspace.write",
+          summary: "Create print_numbers.py",
+        },
+        "span_create",
+      ),
+      event(
+        "approval.requested",
+        4,
+        {
+          id: "approval_bash",
+          action: "tool.execute",
+          summary: "Run print_numbers.py",
+        },
+        "span_bash",
+      ),
+      event(
+        "approval.resolved",
+        5,
+        {
+          approvalId: "approval_bash",
+          decision: "denied",
+        },
+        "span_bash",
+      ),
+      event(
+        "approval.resolved",
+        6,
+        {
+          approvalId: "approval_create",
+          decision: "approved",
+          autoApproved: true,
+        },
+        "span_create",
+      ),
+      event(
+        "tool.completed",
+        7,
+        {
+          toolCallId: "call_create",
+          toolName: "create",
+          output: { path: "print_numbers.py", changed: true },
+        },
+        "span_create",
+      ),
+      event(
+        "tool.failed",
+        8,
+        {
+          toolCallId: "call_bash",
+          toolName: "bash",
+          error: {
+            code: "TOOL_EXECUTION_DENIED",
+            message: "The command was denied.",
+          },
+        },
+        "span_bash",
+      ),
+    ]);
+
+    expect(actions).toEqual([
+      {
+        toolCallId: "call_create",
+        toolName: "create",
+        preview: "print_numbers.py",
+        status: "completed",
+        approval: "approved",
+        approvalSummary: "Create print_numbers.py",
+        approvalAutoApproved: true,
+      },
+      {
+        toolCallId: "call_bash",
+        toolName: "bash",
+        preview: "$ python3 print_numbers.py",
+        status: "failed",
+        approval: "denied",
+        approvalSummary: "Run print_numbers.py",
+        errorCode: "TOOL_EXECUTION_DENIED",
+        errorMessage: "The command was denied.",
+      },
+    ]);
   });
 });

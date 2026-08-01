@@ -11,6 +11,18 @@ and [../session/session-store.md](../session/session-store.md) for session layou
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-30
+- Scope: in-process child trace keeps runtime-derived
+  completed/partial/blocked report status, but model-authored accomplishment
+  and blocker payloads are gone. Children finish with natural reports; missing
+  reports and runtime-observed terminal conditions emit blocker code/message
+  evidence. Step-budget wrap-up records `completionStatus:"partial"`.
+- Read: Agent terminal lifecycle projection, Core terminal/budget payloads,
+  Host forwarding, session diagnostics, and focused tests.
+- Tests: repository build/test typecheck and focused Core, Agent Runtime, and
+  Host suites passed.
+
+- Status: Verified
 - Date: 2026-07-28
 - Scope: parent-result simplification changes no event family or stored
   assessment. `UNRESOLVED_TOOL_FAILURE` remains diagnostic trace evidence, but
@@ -423,9 +435,10 @@ EventLog emits full event
   fields (`subagentDepth`, `agentId`, `delegateTool`, `entrypoint`, consistent
   parent/child run ids, and `taskId` when the child is owned by an
   `agent_task`). SparkWright child-run terminal payloads carry
-  `terminalState`, semantic `status`, summary,
-  accomplishments, blockers, and `stepLimitReached`/`truncated` when derived
-  from the child `run.*` outcome. Process adapters project their native result
+  `terminalState`, report `status`, summary, runtime-derived blockers, and
+  `stepLimitReached`/`truncated` when derived from the child `run.*` outcome.
+  Status `completed` means a non-empty report was delivered, not that the
+  delegated goal was satisfied. Process adapters project their native result
   through the same supervisor-owned status normalization.
 - Parent-visible Agent lifecycle identity is projected from the portable
   `PreparedAgentInvocation` data contract. Its `admission_pending` state is not

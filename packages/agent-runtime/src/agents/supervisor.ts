@@ -161,10 +161,7 @@ function adapterBlockedOutcome(payload: Record<string, unknown>) {
       typeof payload.errorCode === "string"
         ? payload.errorCode
         : "AGENT_ADAPTER_BLOCKED",
-    kind: "unknown",
-    owner: "external",
     message: adapterSummary(payload, "blocked"),
-    retry: "none",
   };
 }
 
@@ -177,9 +174,6 @@ function adapterFailedOutcome(
       typeof payload.errorCode === "string"
         ? payload.errorCode
         : "AGENT_ADAPTER_FAILED",
-    kind: "unknown",
-    owner: status === "blocked" ? "external" : "runtime",
     message: adapterSummary(payload, status, "Agent execution failed."),
-    retry: status === "blocked" ? "none" : "immediate",
   };
 }

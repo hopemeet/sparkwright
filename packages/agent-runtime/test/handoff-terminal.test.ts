@@ -1,11 +1,13 @@
 import { createRunId } from "@sparkwright/core";
 import { describe, expect, it } from "vitest";
-import { normalizeAgentHandoffPayload } from "../src/agents/handoff.js";
+import {
+  normalizeAgentHandoffPayload,
+  parseAgentHandoffPayload,
+} from "../src/agents/handoff.js";
 import { projectAgentInvocationResult } from "../src/agents/result.js";
-import { createSubmitAgentResultTool } from "../src/agents/submit-result.js";
 
 describe("agent execution control handoff", () => {
-  it("keeps only goal/context/label and reduces legacy role to a label", () => {
+  it("extracts goal/context/label without restoring legacy authority", () => {
     expect(
       normalizeAgentHandoffPayload({
         goal: "Inspect the resolver",
@@ -23,51 +25,17 @@ describe("agent execution control handoff", () => {
     });
   });
 
-  it("accepts the minimal terminal envelope and validates optional detail", async () => {
-    const tool = createSubmitAgentResultTool();
-    expect(
-      await tool.validateInput?.(
-        { status: "completed", summary: "Done" },
-        {} as never,
-      ),
-    ).toEqual({ ok: true });
-    expect(
-      await tool.validateInput?.(
-        {
-          status: "blocked",
-          summary: "Cannot continue",
-        },
-        {} as never,
-      ),
-    ).toEqual({ ok: true });
-    expect(
-      await tool.validateInput?.(
-        {
-          status: "completed",
-          summary: "Done",
-          blockers: [
-            {
-              code: "CONTRADICTION",
-              kind: "unknown",
-              owner: "runtime",
-              message: "Completed cannot carry a blocker.",
-              retry: "none",
-            },
-          ],
-        },
-        {} as never,
-      ),
-    ).toMatchObject({ ok: false, code: "AGENT_RESULT_PROTOCOL_INVALID" });
-    expect(tool.terminal).toMatchObject({ kind: "agent_result" });
-    expect(tool.description).toContain(
-      "structured partial or blocked child outcome",
-    );
-    expect(tool.description).toContain(
-      "status completed remains accepted for compatibility",
-    );
+  it("rejects noncanonical fields at the live model boundary", () => {
+    expect(() =>
+      parseAgentHandoffPayload({
+        goal: "Inspect the workspace.",
+        role: "reviewer",
+        allowedTools: ["bash"],
+      }),
+    ).toThrow(/accepts only goal, context, and label/);
   });
 
-  it("projects a terminal tool declaration before the legacy text marker", () => {
+  it("uses the natural report and ignores retired terminal declarations", () => {
     const result = projectAgentInvocationResult({
       childRunId: "child",
       spanId: "span",
@@ -78,7 +46,7 @@ describe("agent execution control handoff", () => {
         tokens: { input: 1, cached: 0, output: 1, total: 2 },
         contextTokens: 1,
         costUsd: 0,
-        toolCalls: 1,
+        toolCalls: 0,
         modelCalls: 1,
         byTool: {},
         byModel: {},
@@ -92,13 +60,7 @@ describe("agent execution control handoff", () => {
           terminalResult: {
             kind: "agent_result",
             toolName: "submit_agent_result",
-            output: {
-              schemaVersion: "agent-outcome.v1",
-              status: "completed",
-              summary: "Structured completion",
-              accomplishments: ["Verified the resolver"],
-              blockers: [],
-            },
+            output: { status: "blocked", summary: "Retired declaration" },
           },
         },
         assessment: {
@@ -112,8 +74,8 @@ describe("agent execution control handoff", () => {
 
     expect(result).toMatchObject({
       status: "completed",
-      summary: "Structured completion",
-      accomplishments: ["Verified the resolver"],
+      summary: "Bound child answer",
+      blockers: [],
       message: "Bound child answer",
     });
   });

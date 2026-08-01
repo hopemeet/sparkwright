@@ -19,6 +19,8 @@ See [../../modules/skills.md](../../modules/skills.md). For mutating skills
 - `packages/host/src/tools.ts`
 - `packages/host/src/skill-evolution.ts`
 - `packages/tui/src/app.tsx`
+- `packages/tui/src/lib/skills-browser.ts`
+- `packages/tui/src/components/skills-panel.tsx`
 
 ## Data Flow
 
@@ -30,6 +32,12 @@ skill roots
   -> context and/or skill_load tool
   -> skill.loaded event
   -> host Skill usage sidecar (.sparkwright/skill-usage.json; advisory only)
+
+TUI /skills
+  -> layered current Skill report
+  -> recent trace-derived Skill stats (20-session bound)
+  -> exact layer/name/package-hash join + current draft count
+  -> compact inventory -> Enter diagnostics
 ```
 
 ## Contracts
@@ -105,6 +113,13 @@ skill roots
   Skill names, Skill keys, and package hashes to session projections for
   targeted `--skill`, `--skill-key`, and `--package-hash` queries. These are
   association signals, not causal claims.
+- TUI `/skills` is a focused current-inventory projection, not an alias for the
+  generic capability overview. It displays only effective layered Skills,
+  attaches recent load counts by exact `name + layer + packageHash`, and counts
+  open drafts whose base/after package identity matches the current package.
+  Detailed associated run/tool outcomes retain the stats contract's non-causal
+  wording. Current-run loaded status, last-used time, cache diagnostics, model,
+  tool-map, Cron, and automation rows are intentionally excluded.
 - Capability snapshots and CLI `capabilities inspect` expose a path-free
   `skills.inlineShell` policy summary (`enabled`, `writePolicy`,
   `sandboxMode`, `failClosed`, timeout/output caps).
@@ -133,7 +148,7 @@ skill roots
 
 - Host runtime.
 - CLI `skills` commands.
-- TUI `/skill-create`, `/skill-update`, `/skill-review`, `/skill-learn`.
+- TUI `/skills`, `/skill-create`, `/skill-update`, `/skill-review`, `/skill-learn`.
 - Capability inspection.
 
 ## Change Checklist
@@ -151,6 +166,16 @@ skill roots
 - Self-evolution design exists, but automatic learning should remain clearly opt-in/reviewed.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-08-01
+- Scope: added the focused TUI `/skills` inventory/usage projection over the
+  existing layered report, trace stats, and proposal sources without changing
+  Skill runtime, Host storage, or protocol contracts.
+- Read: Host Skill report/stats/evolution exports, TUI loader/component/action/
+  route wiring, and exact-identity projection tests.
+- Tests: TUI typecheck, focused 11/11, full TUI 83 files / 550 tests, build,
+  and real 80-column `/skills` PTY inspection passed.
 
 - Status: Verified
 - Date: 2026-07-26

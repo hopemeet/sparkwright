@@ -11,6 +11,16 @@ canonical trace or a session consistency report.
 
 - Status: Verified
 - Date: 2026-07-30
+- Scope: detailed transcripts no longer repeat a tool's compact result preview
+  beside its full result section, or repeat a one-line parameter/command
+  already present in the tool header. Child approval results appear through the
+  parent action receipt in live mode and the raw approval block in replay,
+  exactly once in either path.
+- Read: TUI transcript presentation/document/layout and Agent action receipts.
+- Tests: focused generic-tool, `skill_load`, and live/replay approval tests.
+
+- Status: Verified
+- Date: 2026-07-30
 - Scope: live and exported product transcripts now correlate approval request
   and resolution events by exact run-scoped approval id. Each request row owns
   its final status and operation label; matched standalone resolution rows and

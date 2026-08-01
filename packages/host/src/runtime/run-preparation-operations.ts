@@ -469,6 +469,7 @@ export class RunPreparationOperations {
       delegateParallelTool,
       dynamicSpawnTool,
       agentReportTool,
+      web: loadedConfig.config.capabilities?.web,
       shell: shellConfig,
       backgroundTasks: runAccess.backgroundTasks,
       configPaths: loadedConfig.attempted.map((entry) => entry.path),

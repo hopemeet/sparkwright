@@ -436,6 +436,7 @@ export class CapabilityRuntimeOperations {
         delegateParallelTool,
         dynamicSpawnTool,
         agentReportTool,
+        web: loadedConfig.config.capabilities?.web,
         shell: shellConfig,
         backgroundTasks: input.access.backgroundTasks,
         configPaths: loadedConfig.attempted.map((entry) => entry.path),

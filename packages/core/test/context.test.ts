@@ -1402,10 +1402,7 @@ describe("DefaultObservationFormatter", () => {
     const report = "agent-report-".repeat(240);
     const blockers = Array.from({ length: 8 }, (_, index) => ({
       code: `BLOCKER_${index}`,
-      kind: "dependency",
-      owner: "parent",
       message: `Resolve dependency ${index}.`,
-      retry: "after_dependency_change",
     }));
 
     const item = formatter.format({
@@ -1529,8 +1526,8 @@ describe("DefaultObservationFormatter", () => {
             ? { output: batch }
             : {
                 error: {
-                  code: "DELEGATE_PARALLEL_INCOMPLETE",
-                  message: "Parallel delegation was incomplete.",
+                  code: "AGENT_BATCH_ERROR",
+                  message: "Parallel delegation encountered an error.",
                   metadata: batch,
                 },
               }),
@@ -1566,14 +1563,7 @@ describe("DefaultObservationFormatter", () => {
     const repeated = "x".repeat(5_000);
     const blockers = Array.from({ length: 16 }, (_, blockerIndex) => ({
       code: `BLOCKER_${blockerIndex}_${repeated}`,
-      kind: "dependency",
-      owner: "parent",
       message: repeated,
-      requirements: Array.from({ length: 16 }, (_, requirementIndex) => ({
-        kind: "dependency",
-        name: `requirement_${requirementIndex}_${repeated}`,
-      })),
-      retry: "after_dependency_change",
     }));
     const item = formatter.format({
       toolName: "spawn_agent",
@@ -1672,6 +1662,33 @@ describe("DefaultObservationFormatter", () => {
     expect(JSON.parse(item.content).output.report).toBe(report);
   });
 
+  it("uses the read-like budget for web content presentation", () => {
+    const formatter = new DefaultObservationFormatter({
+      maxOutputChars: 20,
+      maxFileReadContentChars: 100,
+    });
+    const content = `${"w".repeat(40)}NEEDLE${"b".repeat(40)}`;
+    const item = formatter.format({
+      toolName: "web_fetch",
+      resultPresentation: { kind: "web_content" },
+      run: createRunRecord(),
+      result: {
+        toolCallId: "call_web_fetch" as never,
+        status: "completed",
+        output: {
+          content,
+          offset: 0,
+          totalChars: content.length,
+          truncated: false,
+          trust: "external_untrusted",
+        },
+        artifacts: [],
+      },
+    });
+
+    expect(JSON.parse(item.content).output.content).toBe(content);
+  });
+
   it("budgets the complete failed-agent observation envelope", () => {
     const formatter = new DefaultObservationFormatter({
       maxOutputChars: 4_000,
@@ -1761,17 +1778,7 @@ describe("DefaultObservationFormatter", () => {
             ),
             blockers: Array.from({ length: 16 }, (_, index) => ({
               code: `BLOCKER_${index}`,
-              kind: "dependency",
-              owner: "parent",
               message: escaped,
-              requirements: Array.from(
-                { length: 16 },
-                (_, requirementIndex) => ({
-                  kind: "dependency",
-                  name: `requirement-${requirementIndex}-${escaped}`,
-                }),
-              ),
-              retry: "after_dependency_change",
             })),
             partialObservations: Array.from({ length: 3 }, (_, index) => ({
               toolName: `tool_${index}`,

@@ -2,11 +2,38 @@
 
 ## Purpose
 
-`@sparkwright/agent-runtime` contains reusable agent-side runtime helpers outside the core run loop: task management, advisory Todo plan state, concurrency/worktree coordination, durable Workflows, and portable in-process child prompt/result protocols.
+`@sparkwright/agent-runtime` contains reusable agent-side runtime helpers outside the core run loop: task management, advisory Todo plan state, concurrency/worktree coordination, durable Workflows, and the portable in-process child prompt/outcome contract.
 
 See also [../maps/capabilities/agents.md](../maps/capabilities/agents.md), [../maps/capabilities/cron.md](../maps/capabilities/cron.md), and [../maps/runtime/tool-orchestration.md](../maps/runtime/tool-orchestration.md).
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-08-01
+- Scope: bounded terminal Agent action receipts retain the producer-authored
+  approval summary and structured `autoApproved` fact in addition to the final
+  requested/approved/denied decision. The receipt remains a live-display
+  fallback and excludes raw approval details, tool arguments, and outputs.
+- Read: Agent action summarizer/type export and TUI receipt consumer.
+- Tests: interleaved manual/automatic approval receipt coverage, Agent Runtime
+  251/251, TUI 547/547, and repository build.
+
+- Status: Verified
+- Date: 2026-07-30
+- Scope: in-process children now have one normal completion path: a natural
+  final report. No completion-only tool is injected, so zero-tool and
+  tool-capable children follow the same path. A non-empty report means
+  completed delivery, while empty output, failure, cancellation, truncation,
+  and runtime limits derive partial/blocked status and minimal blockers.
+  Parent callers decide whether the report satisfies the goal. The retired
+  declaration protocol and unused concurrency JSON parser were deleted.
+  Live handoffs accept only goal/context/label; persisted task envelopes are
+  normalized without restoring legacy authority fields.
+- Read: child prompt/result/handoff/action contracts, concurrency exports and
+  example, Host direct/dynamic/parallel/task consumers, TUI presentation,
+  public docs, and focused tests.
+- Tests: repository build/test typecheck and focused Core, Agent Runtime, and
+  Host suites passed.
 
 - Status: Verified
 - Date: 2026-07-29
@@ -386,7 +413,6 @@ See also [../maps/capabilities/agents.md](../maps/capabilities/agents.md), [../m
 - `packages/agent-runtime/src/agents/*`
 - `packages/agent-runtime/src/agents/prompt.ts`
 - `packages/agent-runtime/src/agents/handoff.ts`
-- `packages/agent-runtime/src/agents/submit-result.ts`
 - `packages/agent-runtime/src/tasks/*`
 - `packages/agent-runtime/src/doc-store/*`
 - `packages/agent-runtime/src/todo/*`
@@ -420,32 +446,30 @@ Does not own:
 ## Contracts
 
 - `IN_PROCESS_CHILD_AGENT_CONTRACT_PROMPT` is the task-agnostic role,
-  evidence, scope, stopping, and parent-report contract for Host-composed
+  evidence, scope, stopping, completion, and parent-report contract for Host-composed
   in-process children. `composeInProcessChildAgentPrompt()` orders an optional
-  configured profile first, then that contract, then
-  `AGENT_RESULT_PROTOCOL_PROMPT`, while preserving one cache-stable application
-  prompt block. The low-level public `spawnSubAgent()` does not inject this
-  contract implicitly; embedders opt in so an explicit custom `PromptBuilder`
-  is never rewritten behind their back.
+  configured profile first, then that single contract, while preserving one
+  cache-stable application prompt block. There is no separate outcome prompt
+  layer. The low-level public `spawnSubAgent()` does not inject this contract
+  implicitly; embedders opt in so an explicit custom `PromptBuilder` is never
+  rewritten behind their back.
 - `AgentHandoffPayload` is the shared model-visible shape for dynamic,
   configured, parallel, and background-task in-process handoff:
   required `goal`, optional bounded working `context`, and optional UI-only
-  `label`. The compatibility normalizer may read legacy role/tool/grant/budget/
-  metadata fields from persisted tasks, but those values never regain
-  authority.
-- `submit_agent_result` is injected by child runtime as a terminal tool, not
-  inherited from parent catalogs. A valid sole terminal call atomically binds
-  its structured declaration to assistant text from the same model response.
-  Child guidance uses it only for partial/blocked outcomes; a natural-language
-  final is the ordinary completed report. The legacy text marker remains
-  parse-only migration compatibility; completed terminal declarations remain
-  accepted compatibility even though guidance prefers natural completion.
+  `label`. `parseAgentHandoffPayload()` rejects every other live field;
+  `normalizeAgentHandoffPayload()` extracts the canonical fields from persisted
+  legacy task envelopes without elevating role/grant/tool metadata to authority.
+- An in-process child ends with one natural final report. No completion-only
+  tool is injected. A non-empty report projects completed delivery; missing
+  output and runtime-owned failure/cancellation/truncation/limit conditions
+  project partial/blocked. The parent decides whether the report satisfies the
+  delegated goal.
 - `ParentAgentResult` is the only model-visible in-process child-result shape:
-  `childRunId`, semantic `status`, child-authored `report`, runtime-owned
+  `childRunId`, runtime-derived report `status`, child-authored `report`, runtime-owned
   `workspace:{writes,paths?}`, and optional runtime `warnings` / structured
   `blockers`. Warnings cover parent-actionable completeness and reuse facts,
   not Core assessment health. `AgentRuntimeResult` retains transport, usage,
-  semantic status, and assessment facts for ledgers, aggregation, diagnostics,
+  report status, and assessment facts for ledgers, aggregation, diagnostics,
   and UI evidence; it is never copied wholesale into parent context.
 - `completeSpawnedAgentInvocation()` does not resolve profiles, choose a
   transport, or create another dispatcher. Entrypoint adapters prepare one
@@ -528,7 +552,7 @@ Does not own:
   one `subagent.completed` or `subagent.failed` projection from the child run.
   Host process adapters retain native execution but report the same
   requested/admitted/started/terminal sequence through `AgentSupervisor`, with
-  shared terminal state/finality fields.
+  shared terminal state/status fields.
 - Workflow types in agent-runtime are portable runtime/store declarations.
   `WorkflowRunRecord` is now a durable P2 state document with five-value
   status, required v2 executable package pin, attempts, evidence refs,
@@ -618,19 +642,15 @@ Does not own:
   `truncated`, `stopReason`) are derived from the child run's real `run.*`
   outcome and payload flags; parent emit sites must not set a separate terminal
   state.
-- Agent result `status` is semantic and orthogonal to run transport and Core
-  health. A normally completed run may declare `partial` or `blocked`; the
-  parent-visible message removes any legacy `SPARKWRIGHT_AGENT_RESULT` marker,
-  while lifecycle/tool/ledger projections preserve `status`, `statusSource`,
-  summary, accomplishments, and structured blockers. A clean natural-language
-  final without a declaration is compatibility-wrapped as
-  `status:"completed"` with `statusSource:"runtime"` and never reopens task
-  execution. A malformed structured declaration remains `partial` with a
-  runtime-owned protocol blocker.
-- `AgentBlocker` is the cross-boundary recovery contract: stable `code`, broad
-  `kind`, responsible `owner`, human `message`, optional typed `requirements`,
-  and a `retry` condition. Blocker claims are evidence only and never grant a
-  tool, approval, input, dependency, or resource by themselves.
+- Agent result `status` describes report delivery and is orthogonal to run
+  transport and Core health. A non-empty natural final projects `completed`;
+  missing output, runtime failure, cancellation, truncation, blocking limits,
+  and step limits derive partial/blocked status and minimal blockers. Models do
+  not choose status or author blocker metadata, and `completed` does not prove
+  the delegated goal was satisfied.
+- `AgentBlocker` carries only a stable runtime `code` and human `message`.
+  Recovery stays with the subsystem that owns the actual capability, approval,
+  task, or budget state; Agent results do not duplicate that control model.
 - Exact reusable delegation lookup is exposed as `findReusableDelegation()` /
   `rememberReusableDelegation()`. The former similarity-named exports were
   removed rather than retained as aliases.
@@ -791,7 +811,7 @@ Does not own:
   transitions while native adapters keep execution.
 - `src/agents/supervisor.ts` owns parent-visible Agent lifecycle transitions.
   It requires requested -> admitted before `started`, supplies terminal
-  state/finality parity, and makes repeated phases/terminal attempts
+  state/status parity, and makes repeated phases/terminal attempts
   idempotent. Execution adapters retain native run/process mechanics and report
   their phases through this one supervisor.
 - `spawnSubAgent` accepts an optional embedder-owned asynchronous `admission`

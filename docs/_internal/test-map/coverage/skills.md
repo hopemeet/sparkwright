@@ -3,9 +3,15 @@
 ## Current Confidence
 
 - Status: `Verified`
-- Last reviewed: 2026-07-18
-- Evidence source: 2026-07-18 focused Skill stats/cache/CLI rendering and full
-  CLI coverage passed, along with Host/CLI and repository test typechecks plus
+- Last reviewed: 2026-08-01
+- Evidence source: 2026-08-01 real `openai/gpt-5.6-terra` TUI coverage proved
+  both builtin Skills were indexed but unused across the prior trace window,
+  then recorded one explicit `skill.loaded` for each and drafted one authored,
+  unapplied manual update with clean trace/session checks. Focused Host, CLI,
+  and TUI Skill tests passed. See
+  [../runs/2026-08-01-tui-skill-evolution-stats-pass.md](../runs/2026-08-01-tui-skill-evolution-stats-pass.md).
+  Earlier 2026-07-18 focused Skill stats/cache/CLI rendering and full CLI
+  coverage passed, along with Host/CLI and repository test typechecks plus
   schema validation, project-map drift, and the full release gate. Earlier
   2026-06-23 focused host Skill evolution,
   capability-package mutation, inline-shell, TUI skill review, and
@@ -16,6 +22,24 @@
   duplicate recovered `create_skill` call.
 
 ## Covered
+
+- 2026-08-01 focused TUI `/skills` coverage joins the effective layered
+  inventory to recent trace stats only by exact name/layer/package hash, counts
+  current matching drafts independently, and keeps associated run/tool signals
+  in a non-causal detail view. Rendering tests prove generic capability
+  overview rows and absolute project paths stay out of the default list. TUI
+  typecheck, full 83-file / 550-test suite, build, and real 80-column PTY passed.
+
+- 2026-08-01 real `openai/gpt-5.6-terra` TUI evidence distinguishes indexed
+  availability from actual use. The prior 61-session / 123-trace window showed
+  both builtin Skills at `indexed=55`, `loaded=0`; the canary emitted one
+  on-demand `skill.loaded` for each, then `update_skill` created one authored
+  draft without applying a current Skill. Post-run stats reported
+  `indexed=56`, `loaded=1`, clean run association, and one evolution finding.
+  Trace verify/session check passed; focused Host 24/24, CLI 3/3, and TUI 14/14
+  passed. Visual `/skill-review` confirmation remains capture-limited in the
+  dirty checkout. See
+  [../runs/2026-08-01-tui-skill-evolution-stats-pass.md](../runs/2026-08-01-tui-skill-evolution-stats-pass.md).
 
 - 2026-07-18 Skill stats DTO coverage proves load failure aggregation, JSON,
   text rendering, findings, and rebuildable session projections use only

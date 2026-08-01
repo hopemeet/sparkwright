@@ -9,19 +9,25 @@ import {
   type CapabilityView,
 } from "../lib/layer-payload.js";
 import { formatWorkspaceDisplayPath } from "../lib/path-display.js";
+import {
+  loadTuiSkillsBrowser,
+  type TuiSkillsBrowserSnapshot,
+} from "../lib/skills-browser.js";
 import type { RunController } from "./run-controller.js";
 import type { LayerStack } from "./layer-stack.js";
 import type { NotificationStore } from "./notification-store.js";
 
 /**
- * The capability browser + creation flow: the panel snapshot state and the
- * handlers that open it, open the create dialog, and commit a new capability.
- * Lifted out of App so the component carries wiring, not the inspect/create
- * plumbing.
+ * Capability and Skill browsers plus the creation flow: panel snapshot state
+ * and the handlers that open them, open the create dialog, and commit a new
+ * capability. Lifted out of App so the component carries wiring, not the
+ * inspect/create plumbing.
  */
 export interface CapabilityActions {
   capabilitySnapshot: CapabilitySnapshot | null;
   loadingCapabilities: boolean;
+  skillsSnapshot: TuiSkillsBrowserSnapshot | null;
+  loadingSkills: boolean;
   openCapabilities: (view?: CapabilityView) => Promise<void>;
   openCreateCapability: (rest?: string) => void;
   handleCreateCapability: (draft: CreateCapabilityDraft) => void;
@@ -38,10 +44,35 @@ export function useCapabilityActions(deps: {
   const [capabilitySnapshot, setCapabilitySnapshot] =
     useState<CapabilitySnapshot | null>(null);
   const [loadingCapabilities, setLoadingCapabilities] = useState(false);
+  const [skillsSnapshot, setSkillsSnapshot] =
+    useState<TuiSkillsBrowserSnapshot | null>(null);
+  const [loadingSkills, setLoadingSkills] = useState(false);
 
   async function openCapabilities(view: CapabilityView = "all"): Promise<void> {
-    setLoadingCapabilities(true);
     layers.push("capabilities", { view });
+    if (view === "skills") {
+      setLoadingSkills(true);
+      setSkillsSnapshot(null);
+      try {
+        setSkillsSnapshot(
+          await loadTuiSkillsBrowser(
+            workspaceRoot,
+            controller.getSessionRootDir(),
+          ),
+        );
+      } catch (error) {
+        toasts.push({
+          variant: "error",
+          title: "/skills failed",
+          message: error instanceof Error ? error.message : String(error),
+        });
+      } finally {
+        setLoadingSkills(false);
+      }
+      return;
+    }
+
+    setLoadingCapabilities(true);
     const snapshot = await controller.inspectCapabilities();
     setLoadingCapabilities(false);
     if (snapshot) setCapabilitySnapshot(snapshot);
@@ -91,6 +122,8 @@ export function useCapabilityActions(deps: {
   return {
     capabilitySnapshot,
     loadingCapabilities,
+    skillsSnapshot,
+    loadingSkills,
     openCapabilities,
     openCreateCapability,
     handleCreateCapability,

@@ -340,7 +340,7 @@ describe("execution control plane", () => {
       childRunId: "run_child",
       status: "partial",
       summary: "Child stopped early",
-      blockers: [{ code: "CHILD_BLOCKED", kind: "dependency" }],
+      blockers: [{ code: "CHILD_BLOCKED", message: "Child is blocked." }],
     });
     const ledger: FactLedgerSnapshot = {
       schemaVersion: "fact-ledger.v1",

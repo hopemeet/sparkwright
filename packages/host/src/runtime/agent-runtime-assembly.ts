@@ -30,6 +30,7 @@ import {
   findReusableDelegation,
   isCompleteAgentResult,
   normalizeAgentHandoffPayload,
+  parseAgentHandoffPayload,
   agentWorkspaceEvidence,
   reusedDelegationResult,
   spawnSubAgent,
@@ -198,7 +199,7 @@ export async function runHostAgentTask(
     abortSignal: controller.signal,
     workspace: parent.getWorkspace?.(),
   };
-  const output = await tool.execute(payload, ctx);
+  const output = await tool.execute(normalizeAgentHandoffPayload(payload), ctx);
   controller.report({
     label: "agent_task",
     message: "Child agent completed.",
@@ -1326,17 +1327,6 @@ export function createDelegateParallelTool(input: {
           ...result.report,
         })),
       };
-      if (incomplete > 0) {
-        throw Object.assign(
-          new Error(
-            `delegate_parallel completed ${completed}/${results.length} delegate(s); ${incomplete} did not complete.`,
-          ),
-          {
-            code: "DELEGATE_PARALLEL_INCOMPLETE",
-            metadata: output,
-          },
-        );
-      }
       return output;
     },
   });
@@ -1627,8 +1617,7 @@ export function createDynamicSpawnAgentTool(input: {
         maxSteps: childMaxSteps,
         // Dynamic task text is model-authored tool input, so it must not be
         // elevated into the child application's system prompt. Only the fixed
-        // in-process child contract and result protocol belong at that
-        // authority layer.
+        // in-process child contract belongs at that authority layer.
         prompt: composeInProcessChildAgentPrompt(),
         metadata: {
           dynamic: true,
@@ -1794,9 +1783,6 @@ async function completeDynamicSpawnAgent(
         assessment: completion.runtimeResult.assessment,
         stepLimitReached: completion.runtimeResult.stepLimitReached === true,
         truncated: completion.runtimeResult.truncated === true,
-        ...(completion.runtimeResult.accomplishments
-          ? { accomplishments: completion.runtimeResult.accomplishments }
-          : {}),
         blockers: completion.runtimeResult.blockers,
         ...(completion.runResult.message
           ? { childMessage: completion.runResult.message }
@@ -1944,6 +1930,14 @@ function parseDelegateParallelArgs(args: unknown): DelegateParallelTask[] {
   if (!Array.isArray(record.delegates)) {
     throw new Error("delegate_parallel delegates must be an array.");
   }
+  const topLevelUnknown = Object.keys(record).filter(
+    (field) => field !== "delegates",
+  );
+  if (topLevelUnknown.length > 0) {
+    throw new Error(
+      `delegate_parallel accepts only delegates; received ${topLevelUnknown.join(", ")}.`,
+    );
+  }
   if (record.delegates.length < 1) {
     throw new Error("delegate_parallel delegates must not be empty.");
   }
@@ -1959,7 +1953,23 @@ function parseDelegateParallelArgs(args: unknown): DelegateParallelTask[] {
       );
     }
     const task = entry as Record<string, unknown>;
-    const handoff = normalizeAgentHandoffPayload(task);
+    const unknownFields = Object.keys(task).filter(
+      (field) =>
+        field !== "agentId" &&
+        field !== "goal" &&
+        field !== "context" &&
+        field !== "label",
+    );
+    if (unknownFields.length > 0) {
+      throw new Error(
+        `delegate_parallel delegates.${index} accepts only agentId, goal, context, and label; received ${unknownFields.join(", ")}.`,
+      );
+    }
+    const handoff = parseAgentHandoffPayload({
+      goal: task.goal,
+      ...(task.context !== undefined ? { context: task.context } : {}),
+      ...(task.label !== undefined ? { label: task.label } : {}),
+    });
     return {
       agentId: stringField(task, "agentId", DELEGATE_PARALLEL_TOOL_NAME),
       ...handoff,
@@ -2042,7 +2052,7 @@ function prepareDynamicSpawnAgentRequest(input: {
   parsed: ReturnType<typeof normalizeAgentHandoffPayload>;
   childTools: ToolDefinition[];
 } {
-  const parsed = normalizeAgentHandoffPayload(input.args);
+  const parsed = parseAgentHandoffPayload(input.args);
   const childTools = input.childTools.filter(
     (tool) => tool.delegation === "child",
   );
@@ -2063,9 +2073,6 @@ function prepareDynamicSpawnAgentRequest(input: {
         }),
       );
     }
-  }
-  if (childTools.length === 0) {
-    throw new Error("spawn_agent requires at least one enabled child tool.");
   }
   return { parsed, childTools };
 }

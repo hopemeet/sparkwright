@@ -15,7 +15,6 @@ interface ChildBlockerFact {
   status: "partial" | "blocked";
   summary?: string;
   blockerCode: string;
-  blockerKind?: string;
 }
 
 /**
@@ -52,16 +51,9 @@ export function evaluateRuntimeState(input: {
 
   const childFacts = collectChildBlockerFacts(input.events);
   for (const fact of childFacts) {
-    const protocolFailure =
-      fact.blockerKind === "protocol" ||
-      /PROTOCOL|RESULT_REQUIRED|RESULT_INVALID/u.test(fact.blockerCode);
     add({
-      code: protocolFailure
-        ? "agent_result_protocol_failure"
-        : fact.status === "blocked"
-          ? "child_blocked"
-          : "child_partial",
-      severity: protocolFailure ? "error" : "warning",
+      code: fact.status === "blocked" ? "child_blocked" : "child_partial",
+      severity: "warning",
       message:
         fact.summary ?? `A child agent ended with ${fact.status} status.`,
       childRunId: fact.childRunId,
@@ -219,9 +211,6 @@ function collectChildBlockerFacts(
           ? { summary: stringValue(payload.summary) }
           : {}),
         blockerCode: stringValue(blocker.code) ?? "CHILD_BLOCKER",
-        ...(stringValue(blocker.kind)
-          ? { blockerKind: stringValue(blocker.kind) }
-          : {}),
       });
     }
   }

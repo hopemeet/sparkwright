@@ -13,6 +13,26 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md),
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-08-01
+- Scope: Core recognizes `web_content` as a tool-result presentation kind and
+  gives fetched web text its own bounded prompt-context budget without learning
+  HTTP, URL, or provider behavior.
+- Read: tool result presentation types and context assembly projection.
+- Tests: focused Core context tests and repository typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-30
+- Scope: forced tool-less step-budget wrap-up records
+  `completionStatus:"partial"` in both `run.completed` and
+  `RunResult.metadata`. Terminal tools retain their generic atomic
+  same-response behavior but no longer carry an Agent-specific completion
+  status override. The unreachable legacy Agent-result protocol-failure notice
+  and blocker-kind heuristic were removed.
+- Read: Core terminal branch, completion projection, budget wrap-up,
+  runtime-state notices, and focused execution/run-loop tests.
+- Tests: repository build/test typecheck and focused Core suites passed.
+
+- Status: Verified
 - Date: 2026-07-29
 - Scope: `tool_search.maxResults` remains a free-text keyword ranking limit and
   is explicitly documented as inapplicable to exact `select:` queries. Exact
@@ -346,9 +366,8 @@ Does not own:
 ## Contracts
 
 - `ToolDefinition.delegation` is explicit child eligibility and defaults to
-  `parent_only`. `terminal:true` identifies a runtime-owned terminal tool;
-  terminal calls must be the sole tool call in their response and may bind
-  same-response assistant text.
+  `parent_only`. `terminal` identifies a runtime-owned terminal tool; calls
+  must be sole in their response and may bind same-response assistant text.
 - Every terminal `ToolResult` may carry a structured `ToolEffect`
   (`changed|observed|no_change|blocked`, target, epoch/revisions, retry, reason).
   Core's no-progress guard compares effect, target, arguments/evidence, and
@@ -538,7 +557,10 @@ Does not own:
 - `ToolResultPresentation.kind` is the thin semantic contract for result
   rendering and observation budgeting. Core owns the public kind vocabulary,
   including `file_read`, `file_discovery`, `text_search`, `shell_output`,
-  `diagnostic`, and `generic`; concrete tools own their factual result fields.
+  `diagnostic`, `web_content`, and `generic`; concrete tools own their factual
+  result fields. `web_content` uses the same larger read-like observation
+  budget as paginated file reads without pretending that a URL is a workspace
+  file.
 - Provider prompts must render context sources through the model-visible
   projection in `context.ts`; diagnostic provenance may keep host absolute
   paths in metadata, but prompt source labels must not expose them.

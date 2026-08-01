@@ -25,7 +25,6 @@ import {
 } from "@sparkwright/core";
 import { EventLog, LocalWorkspace } from "@sparkwright/core/internal";
 import {
-  AGENT_RESULT_MARKER,
   FileTaskStore,
   IN_PROCESS_CHILD_AGENT_CONTRACT_PROMPT,
   InMemoryTaskStore,
@@ -77,13 +76,7 @@ import {
 } from "./helpers/agent-lifecycle.js";
 
 function completedAgentMessage(message: string): string {
-  return `${message}\n${AGENT_RESULT_MARKER} ${JSON.stringify({
-    schemaVersion: "agent-outcome.v1",
-    status: "completed",
-    summary: message,
-    accomplishments: [],
-    blockers: [],
-  })}`;
+  return message;
 }
 
 describe("host tools", () => {
@@ -702,6 +695,22 @@ describe("host tools", () => {
       "local:@sparkwright/coding-tools",
     );
     expect(byName.get("bash")).toMatchObject({ source: "shell" });
+    expect(byName.get("web_fetch")).toMatchObject({
+      source: "web",
+      definition: {
+        canonicalName: "web_fetch",
+        defaultExposureTier: "advanced",
+        deferLoading: true,
+        delegation: "parent_only",
+        resultPresentation: { kind: "web_content" },
+      },
+    });
+    expect(byName.get("web_fetch")?.definition.description).toContain(
+      "public HTTPS URL",
+    );
+    expect(catalogEntryOrigin(byName.get("web_fetch")!)).toBe(
+      "local:@sparkwright/web-tools",
+    );
     expect(byName.get("cron")).toMatchObject({ source: "cron" });
     expect(byName.get("create_skill")).toMatchObject({ source: "skill" });
     expect(byName.get("task_create")).toMatchObject({ source: "task" });
@@ -767,6 +776,29 @@ describe("host tools", () => {
     });
     expect(byName.get("create_skill")?.definition.deferLoading).toBe(true);
     expect(byName.get("tool_search")).toMatchObject({ source: "core" });
+  });
+
+  it("builds web_fetch in hardened mode only when configured", async () => {
+    const manager = new TaskManager({ store: new InMemoryTaskStore() });
+    const entries = createMainHostToolCatalog({
+      workspaceRoot: "/tmp/ws",
+      skillRoots: [],
+      taskManager: manager,
+      getParentRunId: () => createRunId(),
+      todoPath: "/tmp/ws/.sparkwright/sessions/test/todo.md",
+      web: { security: "hardened" },
+      shell: { sandbox: { mode: "off" } },
+    });
+    const webFetch = entries.find(
+      (entry) => entry.definition.name === "web_fetch",
+    )?.definition;
+
+    expect(webFetch?.description).toContain("public HTTP(S) URL");
+    await expect(
+      Promise.resolve(
+        webFetch?.validateInput?.({ url: "http://example.com/" }, {} as never),
+      ),
+    ).resolves.toEqual({ ok: true });
   });
 
   it("keeps the main host tool catalog inside allowed tool names", () => {
@@ -850,6 +882,7 @@ describe("host tools", () => {
     expect(resolveSelectorAllowlist(entries, ["mcp:demo"])).toEqual([
       "mcp_demo_call_tool",
     ]);
+    expect(resolveSelectorAllowlist(entries, ["web"])).toEqual(["web_fetch"]);
   });
 
   it("keeps selector-filtered deferred tools discoverable through tool_search", () => {
@@ -896,6 +929,13 @@ describe("host tools", () => {
         toolConfig: { use: ["workspace.read"] },
       }),
     ).toEqual(["read", "glob", "grep", "list_dir", "read_anchored_text"]);
+
+    expect(
+      resolveConfiguredToolAllowlist({
+        workspaceRoot: "/tmp/ws",
+        toolConfig: { use: ["web"] },
+      }),
+    ).toEqual(["web_fetch"]);
 
     // mcp:<server> matches by origin server name across provided MCP tools.
     expect(
@@ -1037,7 +1077,7 @@ describe("host tools", () => {
     ]);
   });
 
-  it("does not treat agent task payload fields as capability grants", async () => {
+  it("rejects noncanonical agent task payload fields", async () => {
     const manager = new TaskManager({ store: new InMemoryTaskStore() });
     const taskCreate = createMainHostToolCatalog({
       workspaceRoot: "/tmp/ws",
@@ -1133,7 +1173,7 @@ describe("host tools", () => {
       "goal",
       "label",
     ]);
-    expect(schema.properties.payload.additionalProperties).toBe(true);
+    expect(schema.properties.payload.additionalProperties).toBe(false);
     expect(dynamicSpawnTool.inputSchema).toMatchObject({
       additionalProperties: false,
     });
@@ -1168,7 +1208,10 @@ describe("host tools", () => {
         },
         {} as RuntimeContext,
       ),
-    ).resolves.toMatchObject({ ok: true });
+    ).resolves.toMatchObject({
+      ok: false,
+      code: "AGENT_SPAWN_CAPABILITY_INVALID",
+    });
     expect(manager.store.list()).toEqual([]);
   });
 
@@ -1371,7 +1414,7 @@ describe("host tools", () => {
       } as never,
     )) as { childRunId: string };
 
-    expect(childToolNames).toEqual(["read", "submit_agent_result"]);
+    expect(childToolNames).toEqual(["read"]);
     expect(childSystemText).toContain("Inspect files.");
     expect(childSystemText).toContain(IN_PROCESS_CHILD_AGENT_CONTRACT_PROMPT);
     expect(childSystemText.indexOf("Inspect files.")).toBeLessThan(
@@ -1713,6 +1756,22 @@ describe("host tools", () => {
       }
     ).properties.delegates.items;
     expect(delegateItemSchema.properties).not.toHaveProperty("toolName");
+    await expect(
+      parallel.execute(
+        {
+          delegates: [
+            {
+              agentId: "reviewer",
+              goal: "Review the patch.",
+              metadata: { grant: "full" },
+            },
+          ],
+        },
+        { run: parent.record } as never,
+      ),
+    ).rejects.toThrow(
+      /accepts only agentId, goal, context, and label; received metadata/,
+    );
 
     const output = (await parallel.execute(
       {
@@ -1779,7 +1838,7 @@ describe("host tools", () => {
     }
   });
 
-  it("counts child-declared partial delegates as incomplete", async () => {
+  it("returns runtime-partial child reports without failing parallel orchestration", async () => {
     const ctx = await createWorkspace({ "README.md": "# Demo\n" });
     const parent = createRun({
       goal: "parent",
@@ -1814,26 +1873,7 @@ describe("host tools", () => {
       ],
       model: {
         async complete() {
-          return {
-            toolCalls: [
-              {
-                toolName: "submit_agent_result",
-                arguments: {
-                  status: "partial",
-                  summary: "partial answer",
-                  blockers: [
-                    {
-                      code: "MORE_INSPECTION_REQUIRED",
-                      kind: "resource_limit",
-                      owner: "parent",
-                      message: "More inspection is required.",
-                      retry: "after_resource_change",
-                    },
-                  ],
-                },
-              },
-            ],
-          };
+          return {};
         },
       },
       childTools: [],
@@ -1847,22 +1887,17 @@ describe("host tools", () => {
         { delegates: [{ agentId: "partial", goal: "Inspect both files." }] },
         { run: parent.record } as never,
       ),
-    ).rejects.toMatchObject({
-      code: "DELEGATE_PARALLEL_INCOMPLETE",
-      metadata: {
-        completed: 0,
-        incomplete: 1,
-        results: [
-          expect.objectContaining({
-            status: "partial",
-            report: "partial answer",
-            workspace: { writes: 0 },
-            blockers: [
-              expect.objectContaining({ code: "MORE_INSPECTION_REQUIRED" }),
-            ],
-          }),
-        ],
-      },
+    ).resolves.toMatchObject({
+      completed: 0,
+      incomplete: 1,
+      results: [
+        expect.objectContaining({
+          status: "partial",
+          report: "Child run completed without a report.",
+          blockers: [expect.objectContaining({ code: "AGENT_REPORT_MISSING" })],
+          workspace: { writes: 0 },
+        }),
+      ],
     });
   });
 
@@ -2093,44 +2128,31 @@ describe("host tools", () => {
       childRunStoreFactory: () => undefined as never,
     });
 
-    let caught: unknown;
-    try {
-      await parallel.execute(
-        {
-          delegates: [
-            { agentId: "reviewer", goal: "Review the patch." },
-            { agentId: "auditor", goal: "Audit the risks." },
-          ],
-        },
-        { run: parent.record } as never,
-      );
-    } catch (error) {
-      caught = error;
-    }
+    const output = (await parallel.execute(
+      {
+        delegates: [
+          { agentId: "reviewer", goal: "Review the patch." },
+          { agentId: "auditor", goal: "Audit the risks." },
+        ],
+      },
+      { run: parent.record } as never,
+    )) as {
+      completed: number;
+      incomplete: number;
+      results: Array<{
+        agentId: string;
+        status: string;
+        report: string;
+        blockers?: Array<{ code: string }>;
+      }>;
+    };
 
-    expect(caught).toMatchObject({
-      code: "DELEGATE_PARALLEL_INCOMPLETE",
-    });
-    const metadata = (
-      caught as {
-        metadata?: {
-          completed: number;
-          incomplete: number;
-          results: Array<{
-            agentId: string;
-            status: string;
-            report: string;
-            blockers?: Array<{ code: string }>;
-          }>;
-        };
-      }
-    ).metadata;
-    expect(metadata).toMatchObject({
+    expect(output).toMatchObject({
       completed: 1,
       incomplete: 1,
     });
-    expect(metadata).not.toHaveProperty("unhealthy");
-    expect(metadata?.results).toEqual(
+    expect(output).not.toHaveProperty("unhealthy");
+    expect(output.results).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           agentId: "reviewer",
@@ -2425,11 +2447,9 @@ describe("host tools", () => {
       childRunStoreFactory: () => undefined as never,
     });
     const args = {
-      role: "Risk Reader",
+      label: "Risk Reader",
       context: "Read project files and report one risk.",
       goal: "Inspect README.md for one risk.",
-      allowedTools: ["read"],
-      maxSteps: 2,
     };
 
     const first = await spawnAgent.execute(args, {
@@ -2497,11 +2517,9 @@ describe("host tools", () => {
     await expect(
       spawnAgent.execute(
         {
-          role: "Risk Reader",
+          label: "Risk Reader",
           context: "Read project files and report one risk.",
           goal: "Inspect README.md for one risk.",
-          allowedTools: ["read"],
-          maxSteps: 2,
         },
         { run: parent.record } as never,
       ),
@@ -2552,11 +2570,9 @@ describe("host tools", () => {
     await expect(
       spawnAgent.execute(
         {
-          role: "Risk Reader",
+          label: "Risk Reader",
           context: "Read project files and report one risk.",
           goal: "Inspect README.md for one risk.",
-          allowedTools: ["read"],
-          maxSteps: 2,
         },
         { run: parent.record } as never,
       ),

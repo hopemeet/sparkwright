@@ -10,6 +10,17 @@ See [session-store.md](session-store.md) and [../runtime/context-compaction.md](
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-30
+- Scope: runtime Agent outcome projection does not interpret retired terminal
+  declarations or text markers. The read-only persisted-report query may
+  recover an old terminal summary for historical session readability, but it
+  does not restore the old status protocol. Run/session identity and replay
+  ownership are unchanged.
+- Read: Agent outcome projection, persisted report lookup, run metadata, and
+  TUI projection.
+- Tests: focused Agent Runtime and Host protocol suites passed.
+
+- Status: Verified
 - Date: 2026-07-26
 - Scope: replayed presentation events now rebuild a full-session
   `TranscriptDocument` rather than a current/latest details overlay. Stable

@@ -1412,8 +1412,7 @@ export interface RuntimeNoticePayload {
     | "verification_not_run"
     | "verification_receipt_stale"
     | "approval_denied"
-    | "budget_exhausted"
-    | "agent_result_protocol_failure";
+    | "budget_exhausted";
   severity: "info" | "warning" | "error";
   message: string;
   /** @reserved Runtime notice origin consumed by protocol clients and trace UIs. */

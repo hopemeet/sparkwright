@@ -12,6 +12,16 @@ See also [../maps/runtime/tool-orchestration.md](../maps/runtime/tool-orchestrat
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-30
+- Scope: project-context delegation guidance now treats a child report as
+  evidence for one synthesized parent answer. It preserves concrete
+  paths/commands/status/blockers without instructing the parent to forward the
+  entire child report verbatim and then repeat it.
+- Read: project-context prompt builder, compact Agent result contract, and
+  focused prompt tests.
+- Tests: Project Context focused suite passed.
+
+- Status: Verified
 - Date: 2026-07-29
 - Scope: Todo selection guidance now uses one general coordination invariant:
   call `todo_write` only when durable plan state materially reduces the risk of

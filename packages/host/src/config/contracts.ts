@@ -14,6 +14,7 @@ import type {
   CapabilitySkillsConfig,
   CapabilityToolsConfig,
   CapabilityVerificationConfig,
+  CapabilityWebConfig,
   ModelCost,
   ProviderConfig,
   ShellConfig,
@@ -85,6 +86,7 @@ export interface CapabilityConfig {
   skills?: CapabilitySkillsConfig;
   mcp?: CapabilityMcpConfig;
   agents?: CapabilityAgentsConfig;
+  web?: CapabilityWebConfig;
 }
 
 export interface CapabilityAgentsConfig {

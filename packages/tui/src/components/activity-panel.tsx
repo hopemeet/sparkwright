@@ -5,6 +5,7 @@ import type {
   TaskRecordSnapshot,
 } from "@sparkwright/protocol";
 import type { RunEvent } from "../lib/event-type.js";
+import type { UsageSummary } from "../state/event-store.js";
 import { formatEvent } from "../lib/format-event.js";
 import { collapseText, prettyJson } from "../lib/collapse.js";
 import {
@@ -17,6 +18,7 @@ import {
   taskStatusLabel,
 } from "../lib/task-activity.js";
 import { oneLine } from "../lib/tool-display.js";
+import { formatUsageNumber } from "../lib/usage-display.js";
 import { isBackInput } from "../lib/input-key.js";
 import { useTheme } from "../lib/theme-context.js";
 import { DialogFrame } from "./dialog-frame.js";
@@ -55,6 +57,7 @@ interface EventActivityRow {
 
 export function ActivityPanel(props: {
   events: RunEvent[];
+  usage?: UsageSummary | null;
   taskRecords?: readonly TaskRecordSnapshot[];
   taskOutputs?: Readonly<Record<string, readonly TaskOutputChunkSnapshot[]>>;
   loadingTasks?: boolean;
@@ -357,7 +360,7 @@ export function ActivityPanel(props: {
         ) : tab === "trace" ? (
           <TraceTab events={props.events} />
         ) : (
-          <RunTab facts={facts} />
+          <RunTab facts={facts} usage={props.usage} />
         )}
       </Box>
     </DialogFrame>
@@ -658,7 +661,14 @@ function TraceTab(props: { events: RunEvent[] }): React.ReactElement {
 
 function RunTab(props: {
   facts: ReturnType<typeof summarizeRunInspectorFacts>;
+  usage?: UsageSummary | null;
 }): React.ReactElement {
+  const inputTokens = props.usage?.inputTokens ?? 0;
+  const cachedTokens = props.usage?.cachedTokens ?? 0;
+  const outputTokens = props.usage?.outputTokens ?? 0;
+  const hasTokenBreakdown =
+    inputTokens > 0 || cachedTokens > 0 || outputTokens > 0;
+  const estimatedCostUsd = props.usage?.estimatedCostUsd;
   return (
     <Box flexDirection="column">
       <Text>events {props.facts.eventCount}</Text>
@@ -668,6 +678,19 @@ function RunTab(props: {
       </Text>
       <Text>tools {props.facts.toolCalls}</Text>
       <Text>model calls {props.facts.modelCalls}</Text>
+      {hasTokenBreakdown ? (
+        <Text>
+          session {formatUsageNumber(inputTokens)} input
+          {cachedTokens > 0 ? (
+            <Text dimColor> ({formatUsageNumber(cachedTokens)} cached)</Text>
+          ) : null}
+          {" · "}
+          {formatUsageNumber(outputTokens)} output
+        </Text>
+      ) : null}
+      {typeof estimatedCostUsd === "number" && estimatedCostUsd > 0 ? (
+        <Text dimColor>estimated cost ${estimatedCostUsd.toFixed(4)}</Text>
+      ) : null}
       <Text>
         approvals {props.facts.approvalsApproved + props.facts.approvalsDenied}/
         {props.facts.approvalsRequested}

@@ -9,6 +9,17 @@ See also [../maps/trace/summary-timeline-verify.md](../maps/trace/summary-timeli
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-30
+- Scope: root workspace builds now remove each package's `dist/` immediately
+  before rebuilding it, so deleted source modules cannot survive as orphaned
+  publishable output. Dependency order is unchanged and each dependency remains
+  built before a dependent package is cleaned and compiled.
+- Read: workspace build orchestrator, dist freshness check, package files, and
+  release install-smoke output.
+- Tests: full `npm run release:check` exposed the stale artifact; the focused
+  rebuild/package-content regression passed after the fix.
+
+- Status: Verified
 - Date: 2026-07-26
 - Scope: CLI TUI usage now advertises and forwards `--no-alt-screen`; terminal
   lifecycle and renderer selection remain owned by `@sparkwright/tui`.
@@ -497,7 +508,9 @@ Does not own:
   script writing a root `.sparkwright-build-stamp.json` after successful
   builds. Stamps stay outside `dist/` so npm package files do not include them,
   while targeted `npm run build --workspace ...` still avoids false stale
-  reports when TypeScript emits no changed output.
+  reports when TypeScript emits no changed output. Root `npm run build` removes
+  each workspace `dist/` immediately before that workspace builds, preventing
+  deleted source modules from remaining in release packages.
 - Text output is a human diagnostic surface; JSON output should remain machine-parseable.
 - `sparkwright trace timeline --format text` prefixes phase rows with a short
   run id only for multi-run traces, keeping single-run output compact. JSON

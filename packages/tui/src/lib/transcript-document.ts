@@ -292,6 +292,18 @@ function fromPresentationBlock(
         row(`${block.key}:failure`, `   ${detail} · Ctrl+T 查看详情`, "error"),
       );
     }
+    const approvals = block.sections.find(
+      (section) => section.label === "approvals",
+    );
+    approvals?.lines.forEach((lineText, index) => {
+      summary.push(
+        row(
+          `${block.key}:approval:${index}`,
+          `   ${lineText}`,
+          approvals.tone ?? "warning",
+        ),
+      );
+    });
   } else if (block.kind === "tool") {
     const match = /^tool (.+?) (?:failed|running|completed)$/u.exec(
       block.summary,
@@ -325,32 +337,42 @@ function fromPresentationBlock(
   const details =
     block.kind === "assistant"
       ? []
-      : block.sections.map((section, sectionIndex) => {
-          const rows = section.lines
-            .slice(0, MAX_SECTION_SOURCE_ROWS)
-            .map((lineText, lineIndex) =>
-              row(
-                `${block.key}:section:${sectionIndex}:${lineIndex}`,
-                lineText,
-                section.tone ?? "normal",
+      : block.sections
+          .filter(
+            (section) =>
+              !(
+                block.kind === "tool" &&
+                (section.label === "parameters" ||
+                  section.label === "command") &&
+                section.lines.length === 1
               ),
-            );
-          if (section.lines.length > MAX_SECTION_SOURCE_ROWS) {
-            rows.push(
-              row(
-                `${block.key}:section:${sectionIndex}:omitted`,
-                `… ${section.lines.length - MAX_SECTION_SOURCE_ROWS} lines omitted …`,
-                "warning",
-              ),
-            );
-          }
-          return {
-            key: `${block.key}:section:${sectionIndex}`,
-            label: section.label,
-            tone: section.tone ?? "muted",
-            rows,
-          };
-        });
+          )
+          .map((section, sectionIndex) => {
+            const rows = section.lines
+              .slice(0, MAX_SECTION_SOURCE_ROWS)
+              .map((lineText, lineIndex) =>
+                row(
+                  `${block.key}:section:${sectionIndex}:${lineIndex}`,
+                  lineText,
+                  section.tone ?? "normal",
+                ),
+              );
+            if (section.lines.length > MAX_SECTION_SOURCE_ROWS) {
+              rows.push(
+                row(
+                  `${block.key}:section:${sectionIndex}:omitted`,
+                  `… ${section.lines.length - MAX_SECTION_SOURCE_ROWS} lines omitted …`,
+                  "warning",
+                ),
+              );
+            }
+            return {
+              key: `${block.key}:section:${sectionIndex}`,
+              label: section.label,
+              tone: section.tone ?? "muted",
+              rows,
+            };
+          });
   return {
     key: block.key,
     kind: block.kind,

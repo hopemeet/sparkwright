@@ -24,6 +24,7 @@ contracts, and focused checklists that no longer fit here.
 - `packages/memory-file-store/src/*`
 - `packages/project-commands/src/*`
 - `packages/shell-sandbox/src/*`
+- `packages/web-tools/src/*`
 - `packages/trace-perfetto/src/*`
 - `packages/im-gateway/src/*`
 
@@ -46,6 +47,14 @@ contracts, and focused checklists that no longer fit here.
 - Provider packages adapt external model ecosystems into core `ModelAdapter`
   and model registry shapes. Host model construction, config loading, pricing,
   and capability diagnostics still own product behavior.
+- `@sparkwright/web-tools` owns direct, provider-free retrieval of one known
+  public URL. System mode accepts HTTPS through normal OS DNS/routing and
+  standard proxy variables while rejecting explicit local/reserved targets;
+  hardened mode validates DNS as global-unicast, pins the connection, and also
+  permits HTTP. Both share URL/redirect/deadline/byte guards, text decoding,
+  conservative HTML cleaning, bounded one-shot output, and external-content
+  marking. It does not search, paginate, execute page JavaScript, carry page
+  credentials, or decide Host catalog/config exposure.
 - Server, streaming, memory-store, and trace-perfetto packages are reusable
   runtime/storage/diagnostic adapters around core contracts. Treat core events,
   run/session stores, and trace maps as the active contracts.
@@ -114,6 +123,10 @@ contracts, and focused checklists that no longer fit here.
 - If a shell, sandbox, command interpolation, or unmanaged process boundary
   changes, read [../maps/safety/shell.md](../maps/safety/shell.md) and
   [../maps/safety/workspace-writes.md](../maps/safety/workspace-writes.md).
+- If public web retrieval changes, read [core.md](core.md), [host.md](host.md),
+  [../maps/runtime/tool-orchestration.md](../maps/runtime/tool-orchestration.md),
+  [../maps/capabilities/README.md](../maps/capabilities/README.md), and
+  [../maps/safety/approvals.md](../maps/safety/approvals.md).
 - If storage, streaming, memory, or trace export behavior changes, read
   [core.md](core.md), [../maps/session/session-store.md](../maps/session/session-store.md),
   and [../maps/trace/raw-trace.md](../maps/trace/raw-trace.md).
@@ -150,6 +163,27 @@ contracts, and focused checklists that no longer fit here.
   source exports. It should not be used as the sole authority for behavior.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-08-01
+- Scope: `web_fetch` now accepts only `{url}` and returns one clean bounded
+  excerpt. HTML active/interactive elements and unsafe link targets are
+  removed before truncation; readable structure, image alt text, and safe
+  absolute HTTP(S) links remain. No cursor, offset, or content hash is exposed.
+- Read: Web package extraction/tool source, Core observation limit, Host
+  catalog wiring, user/config/manual documentation, and focused tests.
+- Tests: Web tools 41/41, web package typecheck/build, focused Host catalog
+  92/92, and a real system-routed Baidu retrieval passed.
+
+- Status: Verified
+- Date: 2026-08-01
+- Scope: the web edge now selects only its connection policy: system HTTPS for
+  VPN/TUN and proxy compatibility, or hardened DNS validation/address pinning
+  for SSRF-sensitive deployments. Shared redirects, limits, extraction,
+  output bounds, and tool governance stay package-local.
+- Read: Web package source/tests/manifest and Host config/catalog integration.
+- Tests: Web tools 38/38, workspace/release checks, both install smokes, and a
+  real system-routed HTTPS retrieval passed.
 
 - Status: Verified
 - Date: 2026-07-27

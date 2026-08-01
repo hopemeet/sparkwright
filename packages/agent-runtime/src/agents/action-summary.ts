@@ -10,6 +10,12 @@ export interface AgentActionSummary {
   /** Bounded, user-facing argument summary; never the raw argument object. */
   readonly preview?: string;
   readonly status: "running" | "completed" | "failed" | "skipped";
+  /** Final approval state observed inside this tool span, when approval ran. */
+  readonly approval?: "requested" | "approved" | "denied";
+  /** Bounded producer-authored label used by live clients when child events are unavailable. */
+  readonly approvalSummary?: string;
+  /** True when policy approved the action without a manual user decision. */
+  readonly approvalAutoApproved?: boolean;
   readonly exitCode?: number | null;
   readonly errorCode?: string;
   /** Bounded human-readable failure context; never raw tool output. */
@@ -29,17 +35,14 @@ export function summarizeAgentActions(
   limit = MAX_AGENT_ACTION_SUMMARIES,
 ): AgentActionSummary[] {
   const actions = new Map<string, AgentActionSummary>();
+  const toolCallIdsBySpan = new Map<string, string>();
+  const toolCallIdsByApproval = new Map<string, string>();
   for (const event of events) {
     const payload = record(event.payload);
     if (event.type === "tool.requested") {
       const toolCallId = string(payload.id);
       const toolName = string(payload.toolName);
-      if (
-        !toolCallId ||
-        !toolName ||
-        toolName === "submit_agent_result" ||
-        actions.size >= limit
-      ) {
+      if (!toolCallId || !toolName || actions.size >= limit) {
         continue;
       }
       const preview = summarizeArguments(payload.arguments);
@@ -48,6 +51,49 @@ export function summarizeAgentActions(
         toolName,
         ...(preview ? { preview } : {}),
         status: "running",
+      });
+      if (event.spanId) toolCallIdsBySpan.set(event.spanId, toolCallId);
+      continue;
+    }
+    if (event.type === "approval.requested") {
+      const approvalId = string(payload.id) || string(payload.approvalId);
+      const toolCallId =
+        string(payload.toolCallId) ||
+        string(record(event.metadata).toolCallId) ||
+        (event.spanId ? toolCallIdsBySpan.get(event.spanId) : undefined);
+      const previous = toolCallId ? actions.get(toolCallId) : undefined;
+      if (!toolCallId || !previous) continue;
+      if (approvalId) toolCallIdsByApproval.set(approvalId, toolCallId);
+      const approvalSummary = bounded(string(payload.summary), 180);
+      actions.set(toolCallId, {
+        ...previous,
+        approval: "requested",
+        ...(approvalSummary ? { approvalSummary } : {}),
+      });
+      continue;
+    }
+    if (event.type === "approval.resolved") {
+      const approvalId = string(payload.approvalId) || string(payload.id);
+      const toolCallId =
+        toolCallIdsByApproval.get(approvalId) ||
+        string(payload.toolCallId) ||
+        string(record(event.metadata).toolCallId) ||
+        (event.spanId ? toolCallIdsBySpan.get(event.spanId) : undefined);
+      const previous = toolCallId ? actions.get(toolCallId) : undefined;
+      const decision = payload.decision;
+      if (
+        !toolCallId ||
+        !previous ||
+        (decision !== "approved" && decision !== "denied")
+      ) {
+        continue;
+      }
+      actions.set(toolCallId, {
+        ...previous,
+        approval: decision,
+        ...(typeof payload.autoApproved === "boolean"
+          ? { approvalAutoApproved: payload.autoApproved }
+          : {}),
       });
       continue;
     }
@@ -58,7 +104,7 @@ export function summarizeAgentActions(
     if (!toolCallId) continue;
     const previous = actions.get(toolCallId);
     const toolName = string(payload.toolName) || previous?.toolName;
-    if (!toolName || toolName === "submit_agent_result") continue;
+    if (!toolName) continue;
     const result = record(payload.output ?? payload.result);
     const error = record(payload.error);
     const errorMessage = bounded(
@@ -71,6 +117,13 @@ export function summarizeAgentActions(
       toolCallId,
       toolName,
       ...(previous?.preview ? { preview: previous.preview } : {}),
+      ...(previous?.approval ? { approval: previous.approval } : {}),
+      ...(previous?.approvalSummary
+        ? { approvalSummary: previous.approvalSummary }
+        : {}),
+      ...(previous?.approvalAutoApproved !== undefined
+        ? { approvalAutoApproved: previous.approvalAutoApproved }
+        : {}),
       status:
         event.type === "tool.failed"
           ? "failed"

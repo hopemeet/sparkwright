@@ -3,19 +3,15 @@ import {
   composeInProcessChildAgentPrompt,
   IN_PROCESS_CHILD_AGENT_CONTRACT_PROMPT,
 } from "../src/agents/prompt.js";
-import { AGENT_RESULT_PROTOCOL_PROMPT } from "../src/agents/result.js";
 
 describe("in-process child agent prompt", () => {
-  it("composes the universal contract and result protocol without a profile", () => {
+  it("uses one universal contract without a profile", () => {
     expect(composeInProcessChildAgentPrompt()).toBe(
-      [
-        IN_PROCESS_CHILD_AGENT_CONTRACT_PROMPT,
-        AGENT_RESULT_PROTOCOL_PROMPT,
-      ].join("\n\n"),
+      IN_PROCESS_CHILD_AGENT_CONTRACT_PROMPT,
     );
   });
 
-  it("places a configured profile before the shared child layers exactly once", () => {
+  it("places a configured profile before the shared child contract exactly once", () => {
     const prompt = composeInProcessChildAgentPrompt(
       "  You are a domain specialist.  ",
     );
@@ -24,27 +20,27 @@ describe("in-process child agent prompt", () => {
       [
         "You are a domain specialist.",
         IN_PROCESS_CHILD_AGENT_CONTRACT_PROMPT,
-        AGENT_RESULT_PROTOCOL_PROMPT,
       ].join("\n\n"),
     );
     expect(prompt.match(/Child agent contract:/g)).toHaveLength(1);
-    expect(prompt.match(/When the delegated goal is complete/g)).toHaveLength(
-      1,
-    );
+    expect(prompt.match(/Finish with one self-contained/g)).toHaveLength(1);
   });
 
   it("keeps the shared contract task-agnostic and evidence-based", () => {
     expect(IN_PROCESS_CHILD_AGENT_CONTRACT_PROMPT).toContain(
-      "Attribute effects only to successful observable actions",
+      "Base claims on successful observed actions",
     );
     expect(IN_PROCESS_CHILD_AGENT_CONTRACT_PROMPT).toContain(
-      "A desired state that already existed",
+      "distinguish pre-existing state",
     );
     expect(IN_PROCESS_CHILD_AGENT_CONTRACT_PROMPT).toContain(
-      "do not repeat an unchanged read or successful check",
+      "do not repeat unchanged work",
     );
     expect(IN_PROCESS_CHILD_AGENT_CONTRACT_PROMPT).toContain(
-      "Do not ask the user directly",
+      "parent owns user interaction",
+    );
+    expect(IN_PROCESS_CHILD_AGENT_CONTRACT_PROMPT).toContain(
+      "If the goal remains incomplete",
     );
     expect(IN_PROCESS_CHILD_AGENT_CONTRACT_PROMPT).not.toMatch(
       /\b(file|test|lint|command)\b/i,

@@ -896,8 +896,7 @@ export type RuntimeNoticeCode =
   | "verification_not_run"
   | "verification_receipt_stale"
   | "approval_denied"
-  | "budget_exhausted"
-  | "agent_result_protocol_failure";
+  | "budget_exhausted";
 
 export interface RuntimeNotice {
   id: string;

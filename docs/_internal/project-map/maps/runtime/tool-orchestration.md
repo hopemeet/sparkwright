@@ -10,6 +10,40 @@ See [../safety/workspace-writes.md](../safety/workspace-writes.md), [../safety/s
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-08-01
+- Scope: `web_fetch` is a one-shot known-URL read. Its model contract is
+  `{url}`; conservative HTML cleaning precedes semantic-boundary truncation,
+  and an incomplete result reports only `truncated: true` rather than an
+  offset/cursor/hash continuation protocol.
+- Read: Web tool/extraction source and tests, Core observation formatter, Host
+  catalog integration, and public/manual documentation.
+- Tests: Web tools 41/41, web package typecheck/build, focused Host catalog
+  92/92, and a real system-routed Baidu retrieval passed.
+
+- Status: Verified
+- Date: 2026-08-01
+- Scope: `web_fetch` keeps one normal tool/approval/result lifecycle while its
+  package-local connection step selects system HTTPS or hardened pinned HTTP(S)
+  from Host config. No nested browser/search flow was introduced.
+- Read: Web tool/transport definition, Core observation projection, Host
+  config/catalog assembly, and focused tests.
+- Tests: Web tools 38/38, focused Host config/catalog 152/152, and CLI 186/186
+  passed.
+
+- Status: Verified
+- Date: 2026-07-30
+- Scope: in-process child completion no longer uses a terminal tool. Tool-less
+  and tool-capable children both return one natural final report. Model-authored
+  status/blocker classification and text-marker parsing were removed; missing
+  reports and runtime terminal conditions derive partial/blocked evidence.
+  Detailed TUI tool blocks show one header input and one full result section
+  instead of repeating compact previews.
+- Read: Core final/budget semantics, Agent Runtime report projection, Host
+  consumers, project-context relay guidance, TUI presentation, and tests.
+- Tests: repository build/test typecheck and focused Core, Agent Runtime, and
+  Host suites passed.
+
+- Status: Verified
 - Date: 2026-07-29
 - Scope: completed in-process Agent observations now preserve actionable
   assessment-derived warnings as semantic recovery guidance while keeping raw
@@ -51,9 +85,9 @@ See [../safety/workspace-writes.md](../safety/workspace-writes.md), [../safety/s
 - Date: 2026-07-26
 - Scope: Host prompt composition is now explicitly separate from child tool
   admission and runtime authority. A stable Agent Runtime helper composes the
-  optional profile, universal child contract, and result protocol exactly
-  once; low-level embedders and external child transports are not implicitly
-  rewritten.
+  optional profile and one universal child contract exactly once; completion
+  guidance is no longer a second prompt layer. Low-level embedders and external
+  child transports are not implicitly rewritten.
 - Read: prompt builder assembly, child tool catalogs, Agent Runtime spawn and
   result protocol, Host child paths, and public extension guidance.
 - Tests: full `npm run release:check` passed; focused Agent Runtime 60/60 and
@@ -206,8 +240,8 @@ See [../safety/workspace-writes.md](../safety/workspace-writes.md), [../safety/s
 - Scope: dynamic child orchestration now separates authority from content.
   Foreground/background Agent entrypoints share one input schema; model-authored
   `goal` and optional bounded `context` remain task/working inputs while only the
-  fixed in-process child contract/result protocol enters the child application
-  prompt. No implicit parent transcript or tool-result inheritance is
+  fixed in-process child contract enters the child application prompt. No
+  implicit parent transcript or tool-result inheritance is
   introduced.
 - Read: Host Agent runtime assembly and tool catalog, Agent Runtime child context
   composition, delegation ledger, and focused host/runtime tests.
@@ -451,21 +485,18 @@ model tool calls
 ## Contracts
 
 - `ToolDefinition.delegation` defaults to `parent_only`; only explicit
-  `child` definitions can enter an in-process child resolver. Runtime-injected
-  terminal tools are separate from parent catalog derivation.
+  `child` definitions can enter an in-process child resolver. Completion does
+  not change the child tool inventory.
 - `ToolEffect` is the canonical terminal progress fact: changed, observed,
   no-change, or blocked with target/epoch/revision/retry/reason metadata.
   Repeated no-progress decisions compare structured effects and state epochs;
   one no-change result is not itself terminal.
-- A valid `submit_agent_result` must be the sole tool call in its response and
-  atomically binds same-response text. Child guidance reserves it for
-  partial/blocked recovery; a clean natural-language final is the ordinary
-  completed report and terminates immediately. A terminal tool's deterministic
-  renderer is used directly when text is absent, so the finalization reserve is
-  only needed when neither source provides prose. Malformed structured terminal
-  data remains a protocol failure.
+- In-process children finish with a natural report, never a completion-only
+  tool. A non-empty report projects completed delivery; empty output and
+  runtime-owned failures/limits project partial or blocked. Parent callers
+  judge whether the report satisfies the delegated goal.
 - In-process Agent tools return only compact `ParentAgentResult` to the parent
-  model. Runtime projections keep transport, usage, finality, assessment,
+  model. Runtime projections keep transport, usage, report status, assessment,
   action, ChangeSet, and verification facts in the delegation ledger and
   `subagent.*` lifecycle. Parent mutation claims must follow runtime-owned
   `workspace`, not child-authored `report`.
@@ -635,6 +666,15 @@ mode:"any"|"all")` is the join surface. Async create results expose
   so they cannot escape a configured selector/allowlist/denylist; selector-kept
   deferred tools implicitly retain `tool_search`, and discovery results include
   required/related tool closures outside max-result truncation.
+- `web_fetch` is a conditional, network/external, parent-only read tool. Its
+  model input is `{url}` and explicitly describes a known-URL read, not search.
+  Shared validation rejects credentials and common secret-bearing query names.
+  System mode additionally requires HTTPS and rejects explicit local/reserved
+  destinations without DNS pre-resolution; hardened mode validates and pins
+  every DNS/redirect hop and permits HTTP(S). Both enforce redirect downgrade,
+  total deadline, byte/encoding caps, conservative HTML cleaning, and one
+  serialized-budget-aware excerpt. `truncated: true` has no continuation
+  protocol. Results remain `neverPersist` and do not use artifacts for overflow.
 - A successful body-level `skill_load` may load deferred schemas named by the
   Skill's `allowed-tools`. Core only marks matching tools already present in the
   run registry; absent/disabled tools stay absent, and normal policy/approval
@@ -671,22 +711,21 @@ mode:"any"|"all")` is the join surface. Async create results expose
   reports read-only side effects, and runs as one
   foreground tool call that launches multiple eligible in-process/read-only
   delegate children before awaiting all results.
-- Dynamic `spawn_agent` separates tool transport completion from child-answer
-  semantic status/finality. Runtime capability feasibility is resolved without
-  reading goal/context prose or accepting model-authored grants. The child receives
-  a self-contained goal plus optional bounded working context, not an implicit
-  copy of parent conversation state. A child may return
-  completed, partial, or blocked plus generalized structured blockers; only a
-  complete+clean completed result is reusable. Repeating an identical blocked
+- Dynamic `spawn_agent` separates tool transport completion from
+  runtime-derived child report status. Runtime capability feasibility is resolved without
+  reading goal/context prose or accepting model-authored grants. The child
+  receives a self-contained goal plus optional bounded working context, not an
+  implicit copy of parent conversation state. The runtime projects completed,
+  partial, or blocked plus minimal blocker evidence; only a completed/clean
+  result is reusable. Repeating an identical blocked
   spawn without changed recovery input is stopped by Core's ordinary exact-call
   guard rather than by an Agent-specific negative cache. A child answer that lands on the last allowed step can be
-  `tool.completed`, while the output metadata/message marks the child answer as
-  partial through `stepLimitReached`, `truncated`, and `finality` for trace
-  consumers and context compaction.
+  `tool.completed`, while a forced budget wrap-up is marked partial through
+  `stepLimitReached`, `truncated`, and `completionStatus` for trace consumers
+  and context compaction.
 - Child-agent action budgets come from user/config/profile/runtime limits, not
   model handoff payloads. Core accounts a separate finalization reserve so a
-  terminal declaration without prose can still be rendered after action budget
-  exhaustion.
+  final natural report can still be rendered after action budget exhaustion.
 - Workflow P3 Step 4b.1 filters the worker episode catalog at `createRun()`
   time when the actor is positioned on a model node with `node.tools`.
   This is a physical `ToolDefinition[]` narrowing for that worker entry, not a

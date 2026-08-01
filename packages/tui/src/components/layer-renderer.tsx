@@ -17,6 +17,7 @@ import { SessionListDialog } from "./session-list-dialog.js";
 import { SessionRenameDialog } from "./session-rename-dialog.js";
 import { SkillProposalDialog } from "./skill-proposal-dialog.js";
 import { SkillReviewDialog } from "./skill-review-dialog.js";
+import { SkillsPanel } from "./skills-panel.js";
 import { WorkflowPanel } from "./workflow-panel.js";
 import { ForkDialog } from "./fork-dialog.js";
 import type { CommandRegistry } from "../lib/commands.js";
@@ -31,6 +32,8 @@ import type {
 } from "../lib/skill-evolution.js";
 import type { LayerEntry } from "../state/layer-stack.js";
 import type { UiSignal } from "../lib/ui-signal.js";
+import type { UsageSummary } from "../state/event-store.js";
+import type { TuiSkillsBrowserSnapshot } from "../lib/skills-browser.js";
 
 export function LayerRenderer(props: {
   entry: LayerEntry;
@@ -40,6 +43,7 @@ export function LayerRenderer(props: {
   sessionList: SessionSummary[];
   sessionRootLabel?: string;
   events: RunEvent[];
+  usage?: UsageSummary | null;
   taskRecords?: readonly TaskRecordSnapshot[];
   taskOutputs?: Readonly<Record<string, readonly TaskOutputChunkSnapshot[]>>;
   loadingTasks?: boolean;
@@ -56,6 +60,8 @@ export function LayerRenderer(props: {
   loadingDiagnosticsFor: string | null;
   capabilitySnapshot: CapabilitySnapshot | null;
   loadingCapabilities: boolean;
+  skillsSnapshot: TuiSkillsBrowserSnapshot | null;
+  loadingSkills: boolean;
   skillReviewSnapshot: TuiSkillReviewDetail | null;
   loadingSkillReview: boolean;
   notifications: readonly UiSignal[];
@@ -120,6 +126,7 @@ export function LayerRenderer(props: {
       return (
         <ActivityPanel
           events={props.events}
+          usage={props.usage}
           taskRecords={props.taskRecords}
           taskOutputs={props.taskOutputs}
           loadingTasks={props.loadingTasks}
@@ -182,6 +189,16 @@ export function LayerRenderer(props: {
         />
       );
     case "capabilities":
+      if (entry.payload.view === "skills") {
+        return (
+          <SkillsPanel
+            snapshot={props.skillsSnapshot}
+            loading={props.loadingSkills}
+            workspaceRoot={props.resolved.workspaceRoot}
+            onClose={props.onCloseTop}
+          />
+        );
+      }
       return (
         <CapabilitiesPanel
           snapshot={props.capabilitySnapshot}

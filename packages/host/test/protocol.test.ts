@@ -3978,18 +3978,7 @@ describe("host protocol", () => {
         ],
       },
       {
-        message: "child done",
-        toolCalls: [
-          {
-            toolName: "submit_agent_result",
-            arguments: {
-              status: "completed",
-              summary: "README inspected",
-              accomplishments: ["Read README.md"],
-              blockers: [],
-            },
-          },
-        ],
+        message: "README inspected",
       },
       { message: "parent observed child" },
     ]);

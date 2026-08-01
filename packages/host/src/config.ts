@@ -58,6 +58,7 @@ export type {
   CapabilityVerificationConfig,
   CapabilityVerificationKind,
   CapabilityVerificationMode,
+  CapabilityWebConfig,
   CapabilityWorkflowHookConfig,
   CapabilityWorkflowHookFrequency,
   ModelCost,

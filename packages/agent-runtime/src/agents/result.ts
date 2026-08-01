@@ -5,12 +5,6 @@ import type {
 } from "@sparkwright/core";
 import type {
   AgentBlocker,
-  AgentBlockerKind,
-  AgentBlockerOwner,
-  AgentBlockerRequirement,
-  AgentBlockerRequirementKind,
-  AgentBlockerRetry,
-  AgentResultDeclaration,
   AgentResultStatus,
   AgentRuntimeResult,
   DelegationLedgerResult,
@@ -19,77 +13,9 @@ import type {
 } from "./types.js";
 import type { AgentActionSummary } from "./action-summary.js";
 
-export const AGENT_RESULT_MARKER = "SPARKWRIGHT_AGENT_RESULT:";
-export const AGENT_OUTCOME_SCHEMA_VERSION = "agent-outcome.v1" as const;
-
-export const AGENT_RESULT_PROTOCOL_PROMPT = [
-  "When the delegated goal is complete, finish with one natural-language report for the parent.",
-  "Use submit_agent_result only when the outcome is partial or blocked and the parent needs structured recovery facts. It must be the sole tool call in that response.",
-  'The exceptional envelope is {"status":"partial|blocked","summary":"..."}. accomplishments and structured blockers are optional supporting detail.',
-  "The runtime treats a normal natural-language final as completed and never reopens task tools just to obtain a structured envelope.",
-  "Report facts only. The legacy SPARKWRIGHT_AGENT_RESULT text marker is accepted only for migration.",
-].join("\n");
-
-const MAX_OUTCOME_ITEMS = 16;
-const DECLARATION_KEYS = new Set([
-  "schemaVersion",
-  "status",
-  "summary",
-  "accomplishments",
-  "blockers",
-]);
-const BLOCKER_KEYS = new Set([
-  "code",
-  "kind",
-  "owner",
-  "message",
-  "requirements",
-  "retry",
-]);
-const REQUIREMENT_KEYS = new Set(["kind", "name"]);
-const BLOCKER_KINDS = new Set<AgentBlockerKind>([
-  "capability",
-  "permission",
-  "user_input",
-  "dependency",
-  "resource_limit",
-  "conflict",
-  "protocol",
-  "unknown",
-]);
-const BLOCKER_OWNERS = new Set<AgentBlockerOwner>([
-  "parent",
-  "user",
-  "runtime",
-  "external",
-]);
-const BLOCKER_RETRIES = new Set<AgentBlockerRetry>([
-  "none",
-  "immediate",
-  "after_input",
-  "after_approval",
-  "after_capability_change",
-  "after_dependency_change",
-  "after_resource_change",
-]);
-const REQUIREMENT_KINDS = new Set<AgentBlockerRequirementKind>([
-  "tool",
-  "approval",
-  "input",
-  "dependency",
-  "resource",
-]);
-
-export interface ParsedAgentResultDeclaration {
-  declaration: AgentResultDeclaration;
-  /** Human-readable message with the protocol marker removed. */
-  message: string;
-}
-
 export interface ProjectedAgentOutcome {
   status: AgentResultStatus;
   summary: string;
-  accomplishments?: string[];
   blockers: AgentBlocker[];
   message?: string;
 }
@@ -100,7 +26,6 @@ export interface ProjectAgentOutcomeInput {
   message?: string;
   stepLimitReached?: boolean;
   truncated?: boolean;
-  terminalDeclaration?: unknown;
 }
 
 export interface ProjectAgentInvocationResultInput {
@@ -119,10 +44,9 @@ export interface ProjectParentAgentResultInput {
 }
 
 /**
- * Project one semantic outcome from either a valid child declaration or
- * runtime-owned terminal evidence. A clean natural-language final is accepted
- * as an implicit completed outcome; malformed structured declarations remain
- * protocol failures instead of being silently accepted.
+ * Project one report outcome from runtime-owned terminal evidence. A non-empty
+ * natural final is completed; the parent still decides whether it satisfies the
+ * delegated goal. Failure, cancellation, truncation, and limits are incomplete.
  */
 export function projectAgentOutcome(
   input: ProjectAgentOutcomeInput,
@@ -133,60 +57,24 @@ export function projectAgentOutcome(
     input.stepLimitReached !== true &&
     input.truncated !== true
   ) {
-    const terminalDeclaration = agentResultDeclarationFromUnknown(
-      input.terminalDeclaration,
-    );
-    if (terminalDeclaration) {
+    if (!message) {
+      const summary = "Child run completed without a report.";
       return {
-        status: terminalDeclaration.status,
-        summary: terminalDeclaration.summary,
-        ...(terminalDeclaration.accomplishments
-          ? { accomplishments: terminalDeclaration.accomplishments }
-          : {}),
-        blockers: terminalDeclaration.blockers ?? [],
-        ...(message ? { message } : {}),
-      };
-    }
-    const declared = parseAgentResultDeclaration(input.message);
-    if (declared) {
-      return {
-        status: declared.declaration.status,
-        summary: declared.declaration.summary,
-        ...(declared.declaration.accomplishments
-          ? { accomplishments: declared.declaration.accomplishments }
-          : {}),
-        blockers: declared.declaration.blockers ?? [],
-        message: declared.message,
-      };
-    }
-    const markerPresent = input.message?.includes(AGENT_RESULT_MARKER) === true;
-    if (!markerPresent) {
-      const summary =
-        message ?? "Child completed with an implicit natural-language result.";
-      return {
-        status: "completed",
+        status: "partial",
         summary,
-        blockers: [],
-        ...(message ? { message } : {}),
+        blockers: [
+          {
+            code: "AGENT_REPORT_MISSING",
+            message: summary,
+          },
+        ],
       };
     }
-    const summary = "Child returned an invalid agent-outcome.v1 declaration.";
     return {
-      status: "partial",
-      summary,
-      blockers: [
-        {
-          code: "AGENT_RESULT_PROTOCOL_INVALID",
-          kind: "protocol",
-          owner: "runtime",
-          message: summary,
-          requirements: [
-            { kind: "resource", name: AGENT_OUTCOME_SCHEMA_VERSION },
-          ],
-          retry: "immediate",
-        },
-      ],
-      ...(message ? { message } : {}),
+      status: "completed",
+      summary: message,
+      blockers: [],
+      message,
     };
   }
 
@@ -201,7 +89,7 @@ export function projectAgentOutcome(
 
 /**
  * Canonical child-result projection used by delegate, parallel, dynamic-spawn,
- * task, lifecycle, and cache paths. Semantic outcome and diagnostic health are
+ * task, lifecycle, and cache paths. Report status and diagnostic health are
  * deliberately orthogonal: a completed child answer may still have issues.
  */
 export function projectAgentInvocationResult(
@@ -215,7 +103,6 @@ export function projectAgentInvocationResult(
     message: input.result.message,
     stepLimitReached,
     truncated,
-    terminalDeclaration: terminalDeclarationFromRunResult(input.result),
   });
   const assessment = childAssessment(input.result);
   return {
@@ -230,9 +117,6 @@ export function projectAgentInvocationResult(
     modelCalls: input.usage.modelCalls,
     status: outcome.status,
     summary: outcome.summary,
-    ...(outcome.accomplishments
-      ? { accomplishments: outcome.accomplishments }
-      : {}),
     blockers: outcome.blockers,
     assessment,
     ...(stepLimitReached ? { stepLimitReached: true } : {}),
@@ -277,7 +161,7 @@ export function projectParentAgentResult(
     },
     ...(warnings.length > 0 ? { warnings } : {}),
     ...(input.result.blockers.length > 0
-      ? { blockers: input.result.blockers.map(cloneAgentBlocker) }
+      ? { blockers: input.result.blockers.map((blocker) => ({ ...blocker })) }
       : {}),
   };
 }
@@ -393,64 +277,6 @@ export function agentWorkspaceEvidence(
   };
 }
 
-export function parseAgentResultDeclaration(
-  message: string | undefined,
-): ParsedAgentResultDeclaration | undefined {
-  if (!message) return undefined;
-  const markerIndex = message.lastIndexOf(AGENT_RESULT_MARKER);
-  if (markerIndex < 0) return undefined;
-  const raw = message.slice(markerIndex + AGENT_RESULT_MARKER.length).trim();
-  let value: unknown;
-  try {
-    value = JSON.parse(raw);
-  } catch {
-    return undefined;
-  }
-  const declaration = agentResultDeclarationFromUnknown(value);
-  if (!declaration) return undefined;
-  return {
-    declaration,
-    message: humanMessage(message) ?? declaration.summary,
-  };
-}
-
-export function agentResultDeclarationFromUnknown(
-  value: unknown,
-): AgentResultDeclaration | undefined {
-  if (!isRecord(value) || !hasOnlyKeys(value, DECLARATION_KEYS)) {
-    return undefined;
-  }
-  if (value.schemaVersion !== AGENT_OUTCOME_SCHEMA_VERSION) return undefined;
-  const status = agentResultStatusFromUnknown(value.status);
-  if (!status) return undefined;
-  const summary = nonEmptyString(value.summary);
-  if (!summary) return undefined;
-  const accomplishments = normalizedStringArray(value.accomplishments, true);
-  if (value.accomplishments !== undefined && !accomplishments) return undefined;
-  if (
-    value.blockers !== undefined &&
-    (!Array.isArray(value.blockers) ||
-      value.blockers.length > MAX_OUTCOME_ITEMS)
-  ) {
-    return undefined;
-  }
-  const blockers = Array.isArray(value.blockers)
-    ? value.blockers.map(parseAgentBlocker)
-    : [];
-  if (blockers.some((blocker) => blocker === undefined)) return undefined;
-  const normalizedBlockers = blockers as AgentBlocker[];
-  if (status === "completed" && normalizedBlockers.length > 0) return undefined;
-  return {
-    schemaVersion: AGENT_OUTCOME_SCHEMA_VERSION,
-    status,
-    summary,
-    ...(accomplishments && accomplishments.length > 0
-      ? { accomplishments }
-      : {}),
-    ...(normalizedBlockers.length > 0 ? { blockers: normalizedBlockers } : {}),
-  };
-}
-
 export function childAssessment(result: RunResult): RunAssessment {
   return result.assessment;
 }
@@ -468,16 +294,7 @@ export function runResultTruncated(result: RunResult): boolean {
   );
 }
 
-export function terminalDeclarationFromRunResult(result: RunResult): unknown {
-  const terminalResult = isRecord(result.metadata?.terminalResult)
-    ? result.metadata.terminalResult
-    : undefined;
-  return terminalResult?.kind === "agent_result"
-    ? terminalResult.output
-    : undefined;
-}
-
-/** Canonical semantic-completion check shared by aggregate and cache paths. */
+/** Canonical completed-report check shared by aggregate and cache paths. */
 export function isCompleteAgentResult(result: {
   signal: string;
   status?: string;
@@ -502,155 +319,44 @@ export function isReusableAgentResult(
   return isCompleteAgentResult(result) && result.assessment.health === "clean";
 }
 
-function parseAgentBlocker(value: unknown): AgentBlocker | undefined {
-  if (!isRecord(value) || !hasOnlyKeys(value, BLOCKER_KEYS)) return undefined;
-  const code = nonEmptyString(value.code);
-  const message = nonEmptyString(value.message);
-  if (!code || !message) return undefined;
-  if (!isSetMember(BLOCKER_KINDS, value.kind)) return undefined;
-  if (!isSetMember(BLOCKER_OWNERS, value.owner)) return undefined;
-  if (!isSetMember(BLOCKER_RETRIES, value.retry)) return undefined;
-  let requirements: AgentBlockerRequirement[] | undefined;
-  if (value.requirements !== undefined) {
-    if (
-      !Array.isArray(value.requirements) ||
-      value.requirements.length > MAX_OUTCOME_ITEMS
-    ) {
-      return undefined;
-    }
-    const parsed = value.requirements.map(parseAgentBlockerRequirement);
-    if (parsed.some((requirement) => requirement === undefined))
-      return undefined;
-    requirements = parsed as AgentBlockerRequirement[];
-  }
-  return {
-    code,
-    kind: value.kind,
-    owner: value.owner,
-    message,
-    ...(requirements && requirements.length > 0 ? { requirements } : {}),
-    retry: value.retry,
-  };
-}
-
-function cloneAgentBlocker(blocker: AgentBlocker): AgentBlocker {
-  return {
-    ...blocker,
-    ...(blocker.requirements
-      ? {
-          requirements: blocker.requirements.map((requirement) => ({
-            ...requirement,
-          })),
-        }
-      : {}),
-  };
-}
-
-function parseAgentBlockerRequirement(
-  value: unknown,
-): AgentBlockerRequirement | undefined {
-  if (!isRecord(value) || !hasOnlyKeys(value, REQUIREMENT_KEYS)) {
-    return undefined;
-  }
-  const name = nonEmptyString(value.name);
-  if (!name || !isSetMember(REQUIREMENT_KINDS, value.kind)) return undefined;
-  return { kind: value.kind, name };
-}
-
 function runtimeTerminalBlocker(input: ProjectAgentOutcomeInput): AgentBlocker {
   if (input.stepLimitReached) {
     return {
       code: "AGENT_STEP_LIMIT_REACHED",
-      kind: "resource_limit",
-      owner: "parent",
       message: "Child reached its configured step limit.",
-      requirements: [{ kind: "resource", name: "maxSteps" }],
-      retry: "after_resource_change",
     };
   }
   if (input.truncated) {
     return {
       code: "AGENT_RESULT_TRUNCATED",
-      kind: "resource_limit",
-      owner: "runtime",
       message: "Child output was truncated.",
-      requirements: [{ kind: "resource", name: "output_limit" }],
-      retry: "after_resource_change",
     };
   }
   if (input.stopReason === "blocking_limit") {
     return {
       code: "AGENT_BLOCKING_LIMIT_REACHED",
-      kind: "resource_limit",
-      owner: "runtime",
       message: "Child stopped after reaching the runtime blocking limit.",
-      requirements: [{ kind: "resource", name: "blocking_limit" }],
-      retry: "after_resource_change",
     };
   }
   if (input.signal === "cancelled") {
     return {
       code: "AGENT_RUN_CANCELLED",
-      kind: "unknown",
-      owner: "parent",
       message: "Child run was cancelled.",
-      retry: "none",
     };
   }
   return {
     code: "AGENT_RUN_INCOMPLETE",
-    kind: "unknown",
-    owner: "runtime",
-    message: "Child run ended without a complete semantic result.",
-    retry: "immediate",
+    message: "Child run ended without a complete report.",
   };
 }
 
-function agentResultStatusFromUnknown(
-  value: unknown,
-): AgentResultStatus | undefined {
-  return value === "completed" || value === "partial" || value === "blocked"
-    ? value
-    : undefined;
-}
-
 function humanMessage(message: string | undefined): string | undefined {
-  if (!message) return undefined;
-  const markerIndex = message.lastIndexOf(AGENT_RESULT_MARKER);
-  const value = (
-    markerIndex < 0 ? message : message.slice(0, markerIndex)
-  ).trim();
+  const value = message?.trim();
   return value || undefined;
-}
-
-function normalizedStringArray(
-  value: unknown,
-  optional: boolean,
-): string[] | undefined {
-  if (value === undefined && optional) return [];
-  if (!Array.isArray(value) || value.length > MAX_OUTCOME_ITEMS)
-    return undefined;
-  const strings = value.map(nonEmptyString);
-  if (strings.some((item) => item === undefined)) return undefined;
-  return [...new Set(strings as string[])];
 }
 
 function nonEmptyString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
-
-function hasOnlyKeys(
-  value: Record<string, unknown>,
-  keys: ReadonlySet<string>,
-): boolean {
-  return Object.keys(value).every((key) => keys.has(key));
-}
-
-function isSetMember<T extends string>(
-  values: ReadonlySet<T>,
-  value: unknown,
-): value is T {
-  return typeof value === "string" && values.has(value as T);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -17,7 +17,10 @@ export type ToolRisk = "safe" | "risky" | "denied";
 export type ToolSideEffect = "none" | "read" | "write" | "network" | "external";
 export type ToolIdempotency = "idempotent" | "conditional" | "non_idempotent";
 export type ToolDataSensitivity =
-  "public" | "internal" | "confidential" | "secret";
+  | "public"
+  | "internal"
+  | "confidential"
+  | "secret";
 
 export interface ToolRateLimit {
   maxCalls: number;
@@ -68,6 +71,7 @@ export type ToolResultPresentationKind =
   | "text_search"
   | "shell_output"
   | "diagnostic"
+  | "web_content"
   | "agent_result"
   | "agent_batch"
   | "generic";
@@ -141,7 +145,10 @@ export interface ToolOrigin {
 }
 
 export type ToolExposureTier =
-  "public" | "advanced" | "infrastructure" | "internal";
+  | "public"
+  | "advanced"
+  | "infrastructure"
+  | "internal";
 
 export interface ToolGovernance {
   allowedAgents?: string[];
@@ -157,7 +164,13 @@ export interface ToolGovernance {
 
 export type ToolInputSchema = {
   type?:
-    "object" | "array" | "string" | "number" | "integer" | "boolean" | "null";
+    | "object"
+    | "array"
+    | "string"
+    | "number"
+    | "integer"
+    | "boolean"
+    | "null";
   properties?: Record<string, ToolInputSchema>;
   required?: string[];
   additionalProperties?: boolean;

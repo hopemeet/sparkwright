@@ -16,10 +16,7 @@ describe("CLI event formatting", () => {
         blockers: [
           {
             code: "SHELL_REQUIRED",
-            kind: "capability",
-            owner: "parent",
             message: "A shell-capable path is required.",
-            retry: "after_capability_change",
           },
         ],
       },

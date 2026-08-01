@@ -174,6 +174,8 @@ unsourced [QA convergence stub](../reviews/qa-convergence-plan.md).
 - `packages/tui/src/lib/config.ts` or `packages/tui/src/lib/create-capability.ts`: [modules/tui.md](modules/tui.md), [modules/host.md](modules/host.md), [maps/capabilities/README.md](maps/capabilities/README.md)
 - `packages/tui/src/state/run-controller.ts`: [modules/tui.md](modules/tui.md), [maps/trace/export-diagnostics.md](maps/trace/export-diagnostics.md), [maps/session/session-store.md](maps/session/session-store.md)
 - `packages/tui/src/components/activity-panel.tsx`, `packages/tui/src/components/event-stream.tsx`, `packages/tui/src/components/transcript-viewport.tsx`, `packages/tui/src/components/transcript-browse-footer.tsx`, `packages/tui/src/components/status-bar.tsx`, `packages/tui/src/components/config-panel.tsx`, `packages/tui/src/components/capabilities-panel.tsx`, `packages/tui/src/components/skill-review-dialog.tsx`, `packages/tui/src/components/workflow-panel.tsx`, `packages/tui/src/lib/conversation-projection.ts`, `packages/tui/src/lib/transcript-presentation.ts`, `packages/tui/src/lib/transcript-document.ts`, `packages/tui/src/lib/transcript-layout.ts`, `packages/tui/src/lib/terminal-screen-layout.ts`, `packages/tui/src/state/transcript-viewport-state.ts`, `packages/tui/src/lib/terminal-restore.ts`, `packages/tui/src/lib/path-display.ts`, `packages/tui/src/lib/task-activity.ts`, `packages/tui/src/lib/tool-result-summary.ts`, `packages/tui/src/lib/workflow-display.ts`, `packages/tui/src/lib/transcript.ts`, or `packages/tui/src/lib/tool-display.ts`: [modules/tui.md](modules/tui.md), [modules/protocol.md](modules/protocol.md), [maps/trace/export-diagnostics.md](maps/trace/export-diagnostics.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md)
+- `packages/tui/src/components/sidebar.tsx` or `packages/tui/src/lib/usage-display.ts`: [modules/tui.md](modules/tui.md)
+- `packages/tui/src/components/skills-panel.tsx` or `packages/tui/src/lib/skills-browser.ts`: [modules/tui.md](modules/tui.md), [modules/skills.md](modules/skills.md), [maps/capabilities/skills.md](maps/capabilities/skills.md)
 - `packages/tui/src/state/approval-coordinator.ts`, `packages/tui/src/lib/session-approval.ts`, `packages/tui/src/lib/approval-view-model.ts`, or `packages/tui/src/components/approval-prompt.tsx`: [modules/tui.md](modules/tui.md), [modules/protocol.md](modules/protocol.md), [maps/safety/approvals.md](maps/safety/approvals.md)
 - `packages/tui/src/state/use-workflow-actions.ts`: [modules/tui.md](modules/tui.md), [modules/host.md](modules/host.md), [modules/protocol.md](modules/protocol.md), [maps/session/resume-replay.md](maps/session/resume-replay.md)
 - `packages/tui/src/lib/event-type.ts`: [modules/tui.md](modules/tui.md), [modules/protocol.md](modules/protocol.md), [maps/trace/export-diagnostics.md](maps/trace/export-diagnostics.md)
@@ -184,6 +186,7 @@ unsourced [QA convergence stub](../reviews/qa-convergence-plan.md).
 - `packages/host/src/tool-selectors.ts`: [modules/host.md](modules/host.md), [modules/coding-tools.md](modules/coding-tools.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md), [maps/capabilities/README.md](maps/capabilities/README.md)
 - `packages/host/src/shell.ts`: [modules/host.md](modules/host.md), [maps/safety/shell.md](maps/safety/shell.md), [maps/safety/workspace-writes.md](maps/safety/workspace-writes.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md)
 - `packages/shell-tool/src/*`: [modules/coding-tools.md](modules/coding-tools.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md), [maps/safety/shell.md](maps/safety/shell.md)
+- `packages/web-tools/src/*`: [modules/edge-packages.md](modules/edge-packages.md), [modules/core.md](modules/core.md), [modules/host.md](modules/host.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/safety/approvals.md](maps/safety/approvals.md)
 - `packages/host/src/workspace-snapshot.ts`: [modules/host.md](modules/host.md), [maps/safety/shell.md](maps/safety/shell.md), [maps/safety/workspace-writes.md](maps/safety/workspace-writes.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md)
 - `packages/shell-sandbox/src/*`: [modules/edge-packages.md](modules/edge-packages.md), [modules/host.md](modules/host.md), [modules/mcp-adapter.md](modules/mcp-adapter.md), [maps/safety/shell.md](maps/safety/shell.md), [maps/safety/workspace-writes.md](maps/safety/workspace-writes.md)
 - `packages/project-context/src/index.ts`: [modules/coding-tools.md](modules/coding-tools.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md)
@@ -221,6 +224,19 @@ TUI events; it is not a trace diagnostic report and must not replace
 trace/session inspection.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-08-01
+- Scope: `web_fetch` now defaults to a system-routed HTTPS transport compatible
+  with VPN/TUN synthetic DNS and standard proxy environment variables, while
+  `capabilities.web.security: hardened` retains global-unicast DNS validation
+  and address pinning. No Fake-IP range exception or fixed proxy is embedded.
+- Read: Web transport/tool contracts, Host config precedence/catalog assembly,
+  generated schemas, guides/manual, approval flow, and package boundaries.
+- Tests: Web 38/38, focused Host 152/152, CLI 186/186, workspace build,
+  typecheck/lint/format, schema/import/package/lock checks, source/release
+  install smokes, dist freshness, and a real HTTPS Baidu fetch passed. The map
+  drift check only reports unrelated dirty-tree routes documented at handoff.
 
 - Status: Verified
 - Date: 2026-07-26

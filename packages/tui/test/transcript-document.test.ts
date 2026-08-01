@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { RunEvent } from "../src/lib/event-type.js";
 import { assembleTranscriptDocument } from "../src/lib/transcript-document.js";
+import { projectTranscriptRows } from "../src/lib/transcript-layout.js";
 
 function event(
   type: string,
@@ -73,6 +74,208 @@ describe("TranscriptDocument", () => {
       "task",
       "result",
     ]);
+  });
+
+  it("shows a successful skill load once instead of repeating its summary in details", () => {
+    const result = document([
+      event("tool.requested", 1, {
+        id: "call_skill",
+        toolName: "skill_load",
+        arguments: { name: "py-script-check", resource: "" },
+      }),
+      event("tool.completed", 2, {
+        toolCallId: "call_skill",
+        toolName: "skill_load",
+        output: {
+          status: "loaded",
+          name: "py-script-check",
+          content: "skill instructions",
+        },
+      }),
+    ]);
+
+    const skill = result.blocks.find(
+      (block) =>
+        block.kind === "tool" &&
+        block.summary[0]?.text.startsWith("⚙ skill_load"),
+    );
+    expect(skill?.details.map((section) => section.label)).toEqual(["result"]);
+    const detailText = projectTranscriptRows(result, "detailed")
+      .map((row) => row.text)
+      .join("\n");
+    expect(
+      detailText.match(/skill_load py-script-check -> loaded/gu),
+    ).toHaveLength(1);
+    expect(detailText).not.toContain("parameters");
+  });
+
+  it("shows single-line tool inputs and results once in detailed mode", () => {
+    const result = document([
+      event("tool.requested", 1, {
+        id: "call_bash",
+        toolName: "bash",
+        arguments: { command: "npm test" },
+      }),
+      event("tool.completed", 2, {
+        toolCallId: "call_bash",
+        toolName: "bash",
+        output: { exitCode: 0, stdout: "tests passed" },
+      }),
+      event("tool.requested", 3, {
+        id: "call_lookup",
+        toolName: "lookup",
+        arguments: { query: "status" },
+      }),
+      event("tool.completed", 4, {
+        toolCallId: "call_lookup",
+        toolName: "lookup",
+        output: "ready",
+      }),
+    ]);
+
+    const compact = projectTranscriptRows(result, "compact")
+      .map((row) => row.text)
+      .join("\n");
+    const detailed = projectTranscriptRows(result, "detailed")
+      .map((row) => row.text)
+      .join("\n");
+
+    expect(compact).toContain("$ npm test");
+    expect(compact).toContain("ready");
+    expect(detailed.match(/\$ npm test/gu)).toHaveLength(1);
+    expect(detailed.match(/query=status/gu)).toHaveLength(1);
+    expect(detailed.match(/ready/gu)).toHaveLength(1);
+  });
+
+  it("shows ask and bypass outcomes once in live receipts and replayed child events", () => {
+    const terminalReceipt = event("subagent.completed", 9, {
+      childRunId: "run_child",
+      parentRunId: "run_parent",
+      status: "completed",
+      summary: "done",
+      actions: [
+        {
+          toolCallId: "call_create",
+          toolName: "create",
+          preview: "count_numbers.py",
+          status: "completed",
+          approval: "approved",
+          approvalSummary: "Create count_numbers.py",
+        },
+        {
+          toolCallId: "call_bash",
+          toolName: "bash",
+          preview: "$ python3 count_numbers.py",
+          status: "completed",
+          approval: "approved",
+          approvalSummary: "Run tool bash",
+          approvalAutoApproved: true,
+          exitCode: 0,
+        },
+      ],
+    });
+    const live = document([terminalReceipt]);
+    const replay = document([
+      event(
+        "tool.requested",
+        1,
+        {
+          id: "call_create",
+          toolName: "create",
+          arguments: { path: "count_numbers.py" },
+        },
+        { runId: "run_child", spanId: "span_create" },
+      ),
+      event(
+        "approval.requested",
+        2,
+        { id: "approval_create", summary: "Create count_numbers.py" },
+        { runId: "run_child", spanId: "span_create" },
+      ),
+      event(
+        "approval.resolved",
+        3,
+        { approvalId: "approval_create", decision: "approved" },
+        { runId: "run_child", spanId: "span_create" },
+      ),
+      event(
+        "tool.completed",
+        4,
+        {
+          toolCallId: "call_create",
+          toolName: "create",
+          output: { changed: true },
+        },
+        { runId: "run_child", spanId: "span_create" },
+      ),
+      event(
+        "tool.requested",
+        5,
+        {
+          id: "call_bash",
+          toolName: "bash",
+          arguments: { command: "python3 count_numbers.py" },
+        },
+        { runId: "run_child", spanId: "span_bash" },
+      ),
+      event(
+        "approval.requested",
+        6,
+        { id: "approval_bash", summary: "Run tool bash" },
+        { runId: "run_child", spanId: "span_bash" },
+      ),
+      event(
+        "approval.resolved",
+        7,
+        {
+          approvalId: "approval_bash",
+          decision: "approved",
+          autoApproved: true,
+        },
+        { runId: "run_child", spanId: "span_bash" },
+      ),
+      event(
+        "tool.completed",
+        8,
+        {
+          toolCallId: "call_bash",
+          toolName: "bash",
+          output: { exitCode: 0 },
+        },
+        { runId: "run_child", spanId: "span_bash" },
+      ),
+      terminalReceipt,
+    ]);
+    for (const result of [live, replay]) {
+      const agent = result.blocks.find((block) => block.kind === "agent");
+      expect(agent?.details.map((section) => section.label)).toContain(
+        "approvals",
+      );
+      expect(
+        result.blocks.filter((block) => block.kind === "approval"),
+      ).toHaveLength(0);
+      for (const mode of ["compact", "detailed"] as const) {
+        expect(
+          projectTranscriptRows(result, mode)
+            .filter(
+              (row) =>
+                row.blockKey.startsWith("agent:") &&
+                row.text.includes("approval "),
+            )
+            .map((row) => row.text.trim()),
+        ).toEqual([
+          "approval approved · Create count_numbers.py",
+          "approval auto-approved · Run tool bash",
+        ]);
+      }
+      const actionRows = agent?.details.find(
+        (section) => section.label === "actions",
+      )?.rows;
+      expect(actionRows).toHaveLength(2);
+      expect(actionRows?.every((row) => !row.text.includes("approval"))).toBe(
+        true,
+      );
+    }
   });
 
   it("folds a terminal-receipt child failure into its Agent issue", () => {

@@ -63,7 +63,7 @@ import {
 } from "./agents/delegation-ledger.js";
 import {
   AGENT_HANDOFF_CONTEXT_MAX_CHARS,
-  normalizeAgentHandoffPayload,
+  parseAgentHandoffPayload,
 } from "./agents/handoff.js";
 import {
   agentWorkspaceEvidence,
@@ -71,10 +71,6 @@ import {
   projectAgentInvocationResult,
   projectParentAgentResult,
 } from "./agents/result.js";
-import {
-  createSubmitAgentResultTool,
-  SUBMIT_AGENT_RESULT_TOOL_NAME,
-} from "./agents/submit-result.js";
 import type {
   AgentAssetIdentity,
   PreparedAgentInvocation,
@@ -91,12 +87,6 @@ import {
 export type {
   AgentHandoffPayload,
   AgentBlocker,
-  AgentBlockerKind,
-  AgentBlockerOwner,
-  AgentBlockerRequirement,
-  AgentBlockerRequirementKind,
-  AgentBlockerRetry,
-  AgentResultDeclaration,
   AgentResultStatus,
   AgentRuntimeResult,
   AgentToolInvocationInput,
@@ -110,6 +100,7 @@ export type {
 export {
   AGENT_HANDOFF_CONTEXT_MAX_CHARS,
   normalizeAgentHandoffPayload,
+  parseAgentHandoffPayload,
 } from "./agents/handoff.js";
 export {
   findReusableDelegation,
@@ -117,28 +108,21 @@ export {
   reusedDelegationResult,
 } from "./agents/delegation-ledger.js";
 export {
-  AGENT_OUTCOME_SCHEMA_VERSION,
-  AGENT_RESULT_MARKER,
-  AGENT_RESULT_PROTOCOL_PROMPT,
   agentWorkspaceEvidence,
   childAssessment,
   isCompleteAgentResult,
   isReusableAgentResult,
   projectAgentInvocationResult,
   projectParentAgentResult,
-  parseAgentResultDeclaration,
-  agentResultDeclarationFromUnknown,
   projectAgentOutcome,
   runResultStepLimitReached,
   runResultTruncated,
-  terminalDeclarationFromRunResult,
 } from "./agents/result.js";
 export {
   composeInProcessChildAgentPrompt,
   IN_PROCESS_CHILD_AGENT_CONTRACT_PROMPT,
 } from "./agents/prompt.js";
 export type {
-  ParsedAgentResultDeclaration,
   ProjectAgentOutcomeInput,
   ProjectParentAgentResultInput,
   ProjectedAgentOutcome,
@@ -171,11 +155,6 @@ export {
   PREPARED_AGENT_INVOCATION_SCHEMA_VERSION,
   prepareAgentInvocation,
 } from "./agents/invocation.js";
-export {
-  createSubmitAgentResultTool,
-  SUBMIT_AGENT_RESULT_TOOL_NAME,
-} from "./agents/submit-result.js";
-
 export type PermissionEffect = "allow" | "deny" | "requires_approval";
 export type AgentMode = "primary" | "child" | "all";
 
@@ -522,15 +501,6 @@ function decideToolAccess(
   resource?: string,
 ): PolicyDecision | undefined {
   if (action !== "tool.execute" || !resource) return undefined;
-  if (resource === SUBMIT_AGENT_RESULT_TOOL_NAME) {
-    return {
-      action,
-      decision: "allow",
-      reason: "Canonical child terminal-result infrastructure is allowed.",
-      metadata: { resource, agentId: profile.id, infrastructure: true },
-    };
-  }
-
   if (matchesAny(resource, profile.deniedTools ?? [])) {
     return {
       action,
@@ -1134,13 +1104,7 @@ export function spawnSubAgent(input: SpawnSubAgentInput): SpawnedSubAgent {
     (input.childAgentProfile
       ? promptBuilderForAgentProfile(input.childAgentProfile)
       : undefined);
-  const configuredTools = input.tools ?? [];
-  const childTools = [
-    ...configuredTools.filter(
-      (tool) => tool.name !== SUBMIT_AGENT_RESULT_TOOL_NAME,
-    ),
-    createSubmitAgentResultTool(),
-  ];
+  const childTools = input.tools ?? [];
 
   const createOptions: CreateRunOptions = {
     goal: input.goal,
@@ -1372,7 +1336,6 @@ function subagentTerminalProjection(
   terminalState: SubAgentTerminalState;
   status: "completed" | "partial" | "blocked";
   summary: string;
-  accomplishments?: string[];
   blockers: AgentBlocker[];
   stepLimitReached?: boolean;
   truncated?: boolean;
@@ -1405,9 +1368,6 @@ function subagentTerminalProjection(
     message: typeof payload.message === "string" ? payload.message : undefined,
     stepLimitReached,
     truncated,
-    terminalDeclaration: isRecord(payload.terminalResult)
-      ? payload.terminalResult.output
-      : undefined,
   });
   const terminalState: SubAgentTerminalState = truncated
     ? "truncated"
@@ -1424,9 +1384,6 @@ function subagentTerminalProjection(
     terminalState,
     status: outcome.status,
     summary: outcome.summary,
-    ...(outcome.accomplishments
-      ? { accomplishments: outcome.accomplishments }
-      : {}),
     blockers: outcome.blockers,
     ...(stepLimitReached ? { stepLimitReached: true } : {}),
     ...(truncated ? { truncated: true } : {}),
@@ -1718,7 +1675,7 @@ export function mountAgentTool(
 }
 
 function parseAgentToolArgs(args: unknown): AgentToolInvocationInput {
-  return normalizeAgentHandoffPayload(args);
+  return parseAgentHandoffPayload(args);
 }
 
 export * from "./tasks/index.js";

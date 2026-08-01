@@ -210,17 +210,6 @@ describe("background agent task runner", () => {
           return used
             ? {
                 message: "top-level: README.md",
-                toolCalls: [
-                  {
-                    toolName: "submit_agent_result",
-                    arguments: {
-                      status: "completed",
-                      summary: "Listed top-level files",
-                      accomplishments: ["Found README.md"],
-                      blockers: [],
-                    },
-                  },
-                ],
               }
             : {
                 toolCalls: [{ toolName: "glob", arguments: { pattern: "*" } }],
@@ -292,6 +281,45 @@ describe("background agent task runner", () => {
       expect(
         terminalLifecycleCount(harness.parent.events.all(), result.childRunId),
       ).toBe(1);
+    } finally {
+      await rmWhenReady(harness.root);
+    }
+  });
+
+  it("normalizes persisted legacy task fields without restoring authority", async () => {
+    const harness = await makeHarness("session_agent_task_legacy_payload");
+    try {
+      const manager = new TaskManager({ store: new InMemoryTaskStore() });
+      let observedTools: string[] = [];
+      const childModel: ModelAdapter = {
+        async complete(input) {
+          observedTools = input.tools.map((tool) => tool.name);
+          return { message: "legacy task completed" };
+        },
+      };
+      registerAgentKind(manager, harness, childModel, []);
+
+      const handle = manager.spawn({
+        parentRunId: harness.parent.record.id,
+        kind: "agent",
+        payload: {
+          goal: "inspect persisted work",
+          role: "legacy reviewer",
+          allowedTools: ["bash"],
+          grant: { workspaceWrite: true },
+        },
+      });
+
+      const record = await handle.wait();
+      expect(record.error).toBeUndefined();
+      expect(record).toMatchObject({
+        status: "completed",
+        result: {
+          status: "completed",
+          report: "legacy task completed",
+        },
+      });
+      expect(observedTools).toEqual([]);
     } finally {
       await rmWhenReady(harness.root);
     }

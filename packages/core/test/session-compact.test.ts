@@ -377,11 +377,7 @@ describe("session compact artifacts", () => {
                 blockers: [
                   {
                     code: "SHELL_REQUIRED",
-                    kind: "capability",
-                    owner: "parent",
                     message: "A shell-capable path is required.",
-                    retry: "after_capability_change",
-                    requirements: [{ kind: "tool", name: "bash" }],
                   },
                 ],
                 role: "reviewer",

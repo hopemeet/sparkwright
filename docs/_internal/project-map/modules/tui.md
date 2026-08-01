@@ -11,6 +11,80 @@ See also [../maps/trace/export-diagnostics.md](../maps/trace/export-diagnostics.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-08-01
+- Scope: live model output now hands off atomically to the committed transcript.
+  `model.stream.completed` retains the reasoning/answer preview because it only
+  closes the provider token stream; `model.completed` clears that preview in
+  the same EventStore update that appends the canonical assistant message.
+- Read: retained real-session trace timing, TUI EventStore accumulation and
+  active-phase handling, LiveFrame visibility, and transcript projection.
+- Tests: focused EventStore/phase/streaming rendering 33/33, full TUI 84 files /
+  561 tests, and TUI typecheck/build passed. Post-fix Terra PTY/session timing
+  stayed clean; its provider emitted the two completion markers adjacently.
+
+- Status: Verified
+- Date: 2026-08-01
+- Scope: live reasoning keeps only its final three source lines and truncates
+  each to one physical terminal row. The in-flight answer uses a terminal-height
+  budget of 6–12 physical rows (1–5 on tiny screens), clips overflow at the
+  bottom, and shows a generic temporary-fold hint. Completed transcript output
+  remains unabridged.
+- Read: App row-budget derivation, LiveFrame width routing, StreamingMessage
+  rendering, transcript ownership, and focused Ink tests.
+- Tests: focused streaming-message rendering 11/11, full TUI 84 files / 561
+  tests, TUI typecheck, and TUI build passed.
+
+- Status: Verified
+- Date: 2026-08-01
+- Scope: `/skills` now renders a focused current-inventory and recent-usage
+  browser instead of the generic capability overview. It joins trace-derived
+  load statistics to the effective Skill by exact layer/name/package identity,
+  counts current draft proposals, and keeps associated run/tool signals in an
+  Enter detail view. Model, tool-map, Cron, automation, current-run-load, and
+  last-used claims are absent from the default surface.
+- Read: command registration, capability action loading, layered Skill report,
+  Skill stats/evolution projection, layer renderer, focused Skills panel, and
+  real test-workspace output.
+- Tests: TUI typecheck, focused Skills/capability rendering 11/11, full TUI
+  83 files / 550 tests, TUI build, and an 80-column real PTY `/skills` list /
+  detail / back flow passed.
+
+- Status: Verified
+- Date: 2026-08-01
+- Scope: child-run approvals are now presented once under the owning Agent in
+  a separate `approvals` section. Agent action rows no longer carry an inline
+  approval suffix, and child approvals no longer become standalone transcript
+  blocks. Raw child approval events win on replay; bounded terminal-receipt
+  facts are the live fallback. Structured `autoApproved:true` renders as
+  `auto-approved`, while top-level approvals retain standalone rows.
+- Read: approval state projection, Agent receipt parsing, transcript
+  presentation/document/layout, Markdown export, and retained ask/bypass
+  sessions.
+- Tests: Agent Runtime 251/251, TUI 547/547, repository build, and retained
+  ask/bypass session replay passed.
+
+- Status: Verified
+- Date: 2026-07-31
+- Scope: idle usage now separates the latest model-call context from
+  session-total tokens and call totals. Session input, cached input, output,
+  and estimated cost moved to Activity's Run tab, using the canonical
+  `EventStore` usage summary rather than recounting events.
+- Read: usage aggregation, idle LiveFrame/sidebar rendering, Activity layer
+  routing, shared number formatting, and focused render tests.
+- Tests: TUI typecheck and full TUI suite passed 81 files / 547 tests.
+
+- Status: Verified
+- Date: 2026-07-30
+- Scope: parent-visible Agent action receipts now include approval outcomes
+  derived from actual child approval events. Live receipts and replayed raw
+  approvals each render once. Detailed tool presentation also omits compact
+  result previews and one-line input sections already shown in the header,
+  removing the duplicated `skill_load` parameters/result seen in real TUI QA.
+- Read: Agent action projection, transcript presentation/document/layout, the
+  retained TUI session, and focused tests.
+- Tests: Agent/TUI focused suites and retained-session replay passed.
+
+- Status: Verified
 - Date: 2026-07-30
 - Scope: product transcripts now correlate `approval.requested` and
   `approval.resolved` by exact run-scoped approval id, retain the request
@@ -357,6 +431,7 @@ See also [../maps/trace/export-diagnostics.md](../maps/trace/export-diagnostics.
 - `packages/tui/src/components/transcript-browse-footer.tsx`
 - `packages/tui/src/components/help-panel.tsx`
 - `packages/tui/src/components/status-bar.tsx`
+- `packages/tui/src/components/skills-panel.tsx`
 - `packages/tui/src/components/todo-band.tsx`
 - `packages/tui/src/state/run-controller.ts`
 - `packages/tui/src/state/approval-coordinator.ts`
@@ -382,6 +457,7 @@ See also [../maps/trace/export-diagnostics.md](../maps/trace/export-diagnostics.
 - `packages/tui/src/lib/permission.ts`
 - `packages/tui/src/lib/keybindings.ts`
 - `packages/tui/src/lib/create-capability.ts`
+- `packages/tui/src/lib/skills-browser.ts`
 - `packages/tui/test/*`
 
 ## Owns / Does Not Own
@@ -399,6 +475,7 @@ Does not own:
 - session store file layout
 - trace diagnostic report generation
 - core approval semantics
+- Skill trace aggregation, package identity, or proposal persistence
 
 ## Contracts
 
@@ -412,6 +489,15 @@ Does not own:
   through host `SkillCommandService` and never writes the current Skill
   directly. Review apply also calls the service so later-session approval uses
   the same effect-bound receipt as the in-run fast path.
+- `/skills` keeps inventory and recent usage in one focused panel. TUI obtains
+  effective inventory from the layered Host Skill report, scans at most the
+  most recent 20 sessions through Host Skill stats, and joins counts only by
+  exact `name + layer + packageHash`. The list shows loads and current draft
+  count; Enter reveals explicit/resident loads, load failures, associated run
+  outcomes, associated tool failures, and the display-safe source path. Those
+  associations are labeled non-causal. TUI does not claim current-run loaded
+  state or last-use time because the existing snapshot/stat fields do not
+  support those meanings reliably.
 
 - Skill proposal files are the persistent inbox. On startup, TUI restores the
   newest `draft` as a completion-card affordance; `esc` only dismisses that
@@ -724,6 +810,11 @@ Does not own:
   model/tool/subagent/validation lifecycle events. Streamed assistant text takes
   precedence over the phase hint; the phase projection is TUI state only and
   does not change transcript filtering or raw trace semantics.
+- Live reasoning is a quiet three-physical-row tail. The live answer owns a
+  terminal-height-derived 6–12 physical-row budget (degrading to 1–5 only on
+  tiny screens), estimates overflow from the same Markdown block semantics used
+  to render it, clips older overflow with a generic fold hint, and never changes
+  the completed answer stored/rendered by the transcript.
 - `components/live-frame.tsx` owns the pinned live surface below the transcript
   viewport: status bar, streaming answer, modified-file sidebar, todo band,
   usage/error/toast/config-error rows, and queued prompt display. `app.tsx`

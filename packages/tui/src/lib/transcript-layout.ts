@@ -92,6 +92,15 @@ function visitProjectedTranscriptRows(
     }
     emittedBlocks += 1;
     for (const summaryRow of block.summary) {
+      if (
+        mode === "detailed" &&
+        ((block.kind === "tool" &&
+          summaryRow.key.startsWith(`${block.key}:result:`)) ||
+          (block.kind === "agent" &&
+            summaryRow.key.startsWith(`${block.key}:approval:`)))
+      ) {
+        continue;
+      }
       blockRows.push(...expandSourceRow(block.key, summaryRow));
     }
     if (mode === "detailed") {

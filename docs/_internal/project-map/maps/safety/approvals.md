@@ -10,6 +10,53 @@ See [workspace-writes.md](workspace-writes.md) and [shell.md](shell.md).
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-08-01
+- Scope: removing `web_fetch` pagination does not change approval identity.
+  Every call is still keyed to the complete normalized URL; repeating it may
+  reuse a remembered session decision but performs a new network request.
+- Read: Web approval subject/tool contract, Host catalog integration, and
+  approval-map contract.
+- Tests: Web tools 41/41 and focused Host catalog 92/92 passed.
+
+- Status: Verified
+- Date: 2026-08-01
+- Scope: `web_fetch` is a risky public network read with approval keyed to the
+  exact normalized URL rather than its origin. Shared guards block credentials,
+  sensitive query names, unsafe redirects, HTTPS downgrade, compression,
+  oversized bodies, and timeouts. System mode rejects explicit local/reserved
+  destinations; hardened mode additionally closes DNS-rebinding windows by
+  validating and pinning global-unicast addresses.
+- Read: Web tool policy/approval subject, both transport modes, and Host config
+  precedence.
+- Tests: Web safety/tool-policy suite 38/38 and focused Host config/catalog
+  passed.
+
+- Status: Verified
+- Date: 2026-08-01
+- Scope: TUI presentation now has one owner for child-run approval history:
+  the Agent block. It groups child approvals by structured run id, uses raw
+  request/resolution events when present, falls back to the bounded terminal
+  receipt for live streams without those events, and never appends approval
+  state to action text. `decision` plus structured `autoApproved` produces
+  requested/approved/auto-approved/denied without parsing policy messages.
+  Main-run approvals remain standalone and the interactive prompt is unchanged.
+- Read: Core approval event shape, Agent action receipt summarizer, TUI
+  conversation/transcript projections, and retained ask/bypass traces.
+- Tests: interleaved receipt correlation, live/replay presentation parity,
+  Agent Runtime 251/251, TUI 547/547, and real-session replay.
+
+- Status: Verified
+- Date: 2026-07-30
+- Scope: child action receipts now join `approval.requested` and
+  `approval.resolved` to their exact tool call by span/approval id and expose
+  requested/approved/denied to the parent-visible TUI. This is presentation of
+  recorded approval truth, not inference from tool policy. Replay prefers the
+  raw approval block, preventing duplicate approval outcomes.
+- Read: Core approval events, Agent action summarizer, TUI live/replay
+  projection, and the retained TUI session.
+- Tests: interleaved approved/denied receipt tests and TUI live/replay parity.
+
+- Status: Verified
 - Date: 2026-07-26
 - Scope: detailed transcript mode is no longer a LayerStack route. Approval
   remains the highest typed route and replaces the visible operation/input
@@ -236,6 +283,12 @@ policy requires approval
 - `approval.requested` carries an id used by protocol `approval.resolve` plus a
   required typed producer-authored subject. Human-readable summary/details are
   audit and presentation facts, not reusable authorization identity.
+- `web_fetch` supplies a stable `tool_call` subject keyed by the complete
+  normalized URL with its fragment removed. Re-fetching that URL may reuse the
+  same session decision but starts a new request; changing origin, path, or
+  query requires a new approval. URL secret-name checks are best-effort
+  validation, not a claim that invalid raw model arguments never entered
+  `tool.requested` trace data.
 - Policy decision, tool approval-gate reason, and tool-specific safety
   classification are separate structured explanation layers. A permissive
   general policy can therefore coexist without contradiction with a shell

@@ -45,6 +45,10 @@ const PUBLIC_IDENTITIES: Record<string, BuiltinToolIdentity> = {
 };
 
 const ADVANCED_BY_NAME: Record<string, BuiltinToolIdentity> = {
+  web_fetch: {
+    canonicalName: "web_fetch",
+    defaultExposureTier: "advanced",
+  },
   list_dir: {
     canonicalName: "list_dir",
     defaultExposureTier: "advanced",

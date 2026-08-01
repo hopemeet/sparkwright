@@ -15,10 +15,11 @@ import type { TaskActions } from "./use-task-actions.js";
 import type { WorkflowActions } from "./use-workflow-actions.js";
 
 /**
- * The capability browser is one panel (`openCapabilities`) reached through
- * several named entrypoints that differ only by which view they preselect.
- * Expressed as data so the registry loop registers them uniformly instead of
- * six near-identical `reg.register` blocks.
+ * Capability entrypoints share one typed route and loader action. Most render
+ * the generic capability panel with a preselected view; `/skills` renders its
+ * own inventory-and-usage panel so unrelated capability overview rows stay out
+ * of that focused surface. The registry remains data-driven to avoid six
+ * near-identical `reg.register` blocks.
  */
 const CAPABILITY_VIEW_COMMANDS: ReadonlyArray<{
   name: string;

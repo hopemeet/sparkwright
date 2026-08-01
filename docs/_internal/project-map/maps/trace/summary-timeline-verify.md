@@ -11,6 +11,15 @@ See [raw-trace.md](raw-trace.md) for source data and [export-diagnostics.md](exp
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-30
+- Scope: Agent diagnostic findings continue to use report status, summary,
+  and blocker codes. Removing unused blocker taxonomy and recovery metadata
+  changes no finding code, severity rule, or derived artifact family.
+- Read: Agent terminal projection, Core trace diagnostics, session compaction,
+  and CLI/TUI presentation consumers.
+- Tests: focused Core trace/session suites and repository build passed.
+
+- Status: Verified
 - Date: 2026-07-26
 - Scope: the compact/detailed viewport is a TUI presentation projection over
   session events. It neither reads nor mutates summary, timeline, report, or

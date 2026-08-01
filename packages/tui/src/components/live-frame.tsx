@@ -72,7 +72,8 @@ export function LiveFrame(props: {
             <StreamingMessage
               text={props.state.streamingText}
               reasoning={props.state.reasoningText}
-              maxLines={props.streamingMax}
+              maxRows={props.streamingMax}
+              columns={Math.max(1, props.columns - props.sidebarWidth - 2)}
             />
           ) : null}
         </Box>

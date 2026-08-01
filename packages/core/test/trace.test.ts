@@ -1810,11 +1810,7 @@ describe("trace", () => {
         blockers: [
           {
             code: "SHELL_REQUIRED",
-            kind: "capability",
-            owner: "parent",
             message: "A shell-capable path is required.",
-            requirements: [{ kind: "tool", name: "bash" }],
-            retry: "after_capability_change",
           },
         ],
       }),

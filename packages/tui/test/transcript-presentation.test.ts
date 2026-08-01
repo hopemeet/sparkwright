@@ -201,6 +201,9 @@ describe("transcript presentation", () => {
               toolName: "bash",
               preview: "$ python3 print_numbers.py",
               status: "completed",
+              approval: "approved",
+              approvalSummary: "Run print_numbers.py",
+              approvalAutoApproved: true,
               exitCode: 0,
             },
           ],
@@ -222,6 +225,9 @@ describe("transcript presentation", () => {
     );
     expect(text).toContain("read print_numbers.py:1 +200 ✓");
     expect(text).toContain("bash $ python3 print_numbers.py exit 0 ✓");
+    expect(text).toContain("approvals");
+    expect(text).toContain("approval auto-approved · Run print_numbers.py");
+    expect(text).not.toContain("bash $ python3 print_numbers.py approval");
     expect(text).toContain("0 structured workspace writes");
     expect(text).toContain(
       "creation or modification is not proven by structured evidence",

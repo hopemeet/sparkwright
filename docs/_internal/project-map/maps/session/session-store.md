@@ -10,6 +10,15 @@ See [../trace/raw-trace.md](../trace/raw-trace.md) for raw event evidence.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-30
+- Scope: stored event families and layout are unchanged. Session-derived child
+  blocker facts now preserve only runtime code/message evidence; the unused
+  kind/owner/retry/requirement projection was removed.
+- Read: Host session queries, Core session compaction types, Agent terminal
+  payloads, and focused tests.
+- Tests: focused Core session/trace suites and repository build passed.
+
+- Status: Verified
 - Date: 2026-07-26
 - Scope: `TranscriptDocument` is an immutable, presentation-only snapshot
   scoped by `sessionId:clearGeneration`. Session switch, resume, and `/clear`
@@ -373,10 +382,9 @@ Manual compact
   3 summarization is requested, provider/scripted refs can write model-backed
   summaries with `summaryFingerprint`; deterministic refs record preview output
   plus a warning.
-- `SessionTraceFacts.subagents` preserves semantic `status`, summary, and
-  structured blockers with requirement kind/name pairs. The compact signal is
-  bounded and includes blocker codes so a resumed parent does not lose why a
-  child was partial or blocked.
+- `SessionTraceFacts.subagents` preserves report `status`, summary, and
+  bounded blocker code/message evidence. The compact signal includes blocker
+  codes so a resumed parent does not lose why a child was partial or blocked.
 - `trace-session-consistency.ts` owns `validateSessionTraceConsistency` and
   checks agreement between session files, trace metadata, run files, and
   safety-relevant failures while reusing diagnostics parse/summary helpers;

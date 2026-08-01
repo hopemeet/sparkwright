@@ -11,9 +11,10 @@ export interface ConversationProjection {
   quietToolCalls: Map<string, string>;
 }
 
-interface ConversationApprovalState {
+export interface ConversationApprovalState {
   requested: boolean;
   decision?: string;
+  autoApproved?: boolean;
 }
 
 export function createConversationProjection(): ConversationProjection {
@@ -34,13 +35,24 @@ export function collectConversationApprovalStates(
     }
     if (event.type === "approval.resolved") {
       const decision = str(rec(event.payload).decision);
+      const autoApproved = rec(event.payload).autoApproved;
       states.set(identity, {
         ...current,
         ...(decision ? { decision } : {}),
+        ...(typeof autoApproved === "boolean" ? { autoApproved } : {}),
       });
     }
   }
   return states;
+}
+
+export function formatConversationApprovalStatus(
+  state: ConversationApprovalState | undefined,
+): string {
+  if (state?.decision === "approved" && state.autoApproved === true) {
+    return "auto-approved";
+  }
+  return state?.decision || "requested";
 }
 
 export function conversationApprovalIdentity(

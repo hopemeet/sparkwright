@@ -12,6 +12,31 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-08-01
+- Scope: Host now validates `capabilities.web.security`, defaults the main-only
+  `web_fetch` catalog entry to `system`, passes explicit `hardened` selection to
+  the web edge, and prevents project config from weakening a user hardened
+  choice. Child catalogs still do not inherit the tool.
+- Read: Host config schema/loader, catalog assembly, runtime preparation,
+  builtin manual, and focused tests.
+- Tests: focused Host config/catalog 152/152, CLI 186/186, workspace build,
+  schema/static/package checks, and install smokes passed.
+
+- Status: Verified
+- Date: 2026-07-30
+- Scope: all Host in-process Agent adapters consume one natural child report;
+  no adapter manufactures a completion tool. Dynamic children may have zero
+  tools. Live handoff schemas are strict while the background task runner
+  normalizes persisted legacy envelopes without restoring authority. Parallel
+  returns completed and partial branch reports without escalating a partial
+  child into a whole-tool failure, and Workflow consumes the real `status`
+  field.
+- Read: configured/dynamic/parallel/task Agent assembly, handoff validation,
+  Workflow projection, parent result projection, tests, and public guidance.
+- Tests: repository build/test typecheck and focused Host/Agent/Core suites
+  passed.
+
+- Status: Verified
 - Date: 2026-07-28
 - Scope: Host continues to expose compact runtime-owned workspace evidence but
   no longer turns child assessment health into a parent warning. Dynamic/task
@@ -644,6 +669,7 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 - `packages/host/src/server.ts`
 - `packages/host/src/connection.ts`
 - `packages/host/src/tool-catalog.ts`
+- `packages/host/src/tool-selectors.ts`
 - `packages/host/src/tool-surface.ts`
 - `packages/host/src/tool-identities.ts`
 - `packages/host/src/tools.ts`
@@ -722,7 +748,7 @@ Does not own:
   `composeInProcessChildAgentPrompt()` to every built-in in-process child:
   configured direct delegates, their indexed `delegate_agent` router,
   `delegate_parallel`, dynamic `spawn_agent`, and background Agent tasks.
-  Configured profile text precedes the shared contract/result protocol;
+  Configured profile text precedes the single shared child contract;
   dynamic task goal/context remains user/working input. ACP and
   external-command adapters keep their transport-owned prompt/input contracts.
 - Host in-process entrypoints prepare their distinct identity, model, tools,
@@ -743,6 +769,18 @@ Does not own:
   monotonic: it cannot restore a removed tool, and every retained
   `tool_search` is rebuilt over exactly the final definitions instead of
   reusing a broader captured index. Child policy remains defense in depth.
+- The main Host catalog registers `web_fetch` from
+  `@sparkwright/web-tools` with source/selector `web`. Built-in identity marks
+  it advanced, so normal default loading defers its schema and derives
+  `tool_search`; `delegation:"parent_only"` and the child catalog constructors
+  keep it out of dynamic/configured child surfaces. `tools.use`, `allowed`,
+  `disabled`, and `defer` continue to apply through the shared catalog path.
+- `capabilities.web.security` is the single web transport knob. Omitted or
+  `system` builds an HTTPS-only tool that follows normal OS DNS/routing;
+  `hardened` builds the DNS-validated, address-pinned HTTP(S) variant. Project
+  config may select `hardened`; project-owned `system` is removed alongside
+  other restricted network capability settings so a checkout cannot weaken a
+  user hardened boundary. `$SPARKWRIGHT_CONFIG` remains an explicit override.
 - A Todo continuation first proves `todo_write` survived admission and current
   Workflow narrowing. If absent, `runTodoSupervised()` hands off with
   `required_tool_unavailable` before emitting the directive that requires that
@@ -1024,9 +1062,11 @@ Does not own:
   than charging every model turn for its schema. Host owns the `agent` kind descriptor and
   its model-facing payload schema (`goal`, optional `context`, optional
   UI-only `label`); execution still dispatches through the `TaskManager` runner
-  registered by `HostRuntime`. Persisted v0 task payloads are normalized, but
-  legacy role/tool/grant/budget/metadata fields confer no authority. Model
-  payloads cannot choose child tools, approval scope, or max steps.
+  registered by `HostRuntime`. New model-authored payloads use that strict
+  shape; the background runner tolerantly extracts those canonical fields from
+  persisted legacy envelopes without restoring role/tool/grant/budget/metadata
+  as authority. Model payloads cannot choose child tools, approval scope, or
+  max steps.
 - The main host catalog preserves the shared deferred `task` action schema from
   agent-runtime, including action-specific non-empty id constraints, so
   `tool_search select:task` gives the provider the same guidance the runtime
@@ -1265,10 +1305,10 @@ Does not own:
   `workspace:{writes,paths?}`, and optional completeness/reuse warnings or
   blockers. Assessment health, transport, usage, actions, ChangeSets, and
   verification receipts remain diagnostic or `subagent.*` lifecycle facts.
-  A child-declared blocked/partial result is not reusable; exact complete/clean
-  reuse returns the same report with a runtime warning. A natural final on the
-  last allowed action is complete; only a forced budget wrap-up is
-  partial/truncated.
+  Runtime-derived blocked/partial results are not reusable; exact
+  completed/clean reuse returns the same report with a runtime warning. A
+  natural final on the last allowed action is complete; only a forced budget
+  wrap-up is partial/truncated.
 - Dynamic spawn uses `ToolDefinition.validateInput()` to validate requested
   tools and workspace-write grant consistency against the enabled child
   catalog before Core evaluates policy or requests approval. The self-contained
@@ -1440,7 +1480,7 @@ Does not own:
   Result-producing configured `PreToolUse` hooks are tagged for the rewrite
   pass, static block/context hooks for the governance pass, and the workflow
   projection tool clamp also runs in governance so it sees rewritten arguments.
-- Host does not install an Agent-specific finality Stop hook. Core terminal
+- Host does not install an Agent-specific completion Stop hook. Core terminal
   runtime-state projection emits factual notices and runtime budget status
   only; it never requests a semantic completion continuation or derives
   recovered/unresolved task requirements.
@@ -1464,8 +1504,9 @@ Does not own:
   (`blockedStopActions`) so a blocking agent cannot loop the run.
 - `http` action network access is host-owned policy under
   `capabilities.hooks.http` (allowlist + `allowPrivateNetwork`). It is accepted
-  only from user config or `SPARKWRIGHT_CONFIG`; `stripProjectHttpHooks` removes
-  the policy and any `http` hook/event action found in project config. Each
+  only from user config or `SPARKWRIGHT_CONFIG`;
+  `stripProjectRestrictedNetworkCapabilities` removes the policy and any
+  `http` hook/event action found in project config. Each
   request must match the allowlist, then the resolved address is checked
   (link-local always blocked; private networks blocked unless
   `allowPrivateNetwork`). The request pins the connection to the validated
@@ -1503,7 +1544,7 @@ Does not own:
   workspace, sandbox, and worker-launch preparation; external commands use the
   traced-process `onStarted` signal after sandbox/process admission. Admission
   failures therefore terminate as requested -> failed, and process successes
-  carry the same terminal state/finality fields as in-process children.
+  carry the same terminal state/status fields as in-process children.
 - The indexed router marks internal tool-to-tool arguments with a non-JSON
   invocation entrypoint so direct aliases remain `delegate` while
   `delegate_agent` lifecycle records the real indexed surface. Model-authored
@@ -1564,7 +1605,7 @@ Does not own:
   `subagent.failed`: the compatibility `workspaceWrites` count is accompanied
   by complete ChangeSets and final explicit-verifier receipts. Parent
   aggregation can therefore preserve evidence without a filesystem snapshot;
-  ordinary Agent finality does not depend on that evidence. Child shell rolls
+  ordinary Agent report status does not depend on that evidence. Child shell rolls
   back unmanaged mutations, and MCP is absent. Separately, the model-visible
   Agent result carries only `workspace:{writes,paths?}` from the same structured
   events; lifecycle receipts remain available to diagnostics and TUI detail

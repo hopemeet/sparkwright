@@ -11,6 +11,16 @@ See also [../maps/safety/approvals.md](../maps/safety/approvals.md) and [../maps
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-30
+- Scope: the unused `agent_result_protocol_failure` RuntimeNotice code was
+  removed with the old Agent declaration protocol. No request, response, or
+  event family changed; runtime-derived child report status uses the remaining
+  notice codes.
+- Read: Agent/Host lifecycle projection, Core notice production, and Protocol
+  payload boundaries.
+- Tests: focused Host protocol suite passed.
+
+- Status: Verified
 - Date: 2026-07-26
 - Scope: semantic transcript grouping consumes existing structured `runId`,
   `parentRunId`, `childRunId`, Agent/tool-call/span, and event identifiers. No

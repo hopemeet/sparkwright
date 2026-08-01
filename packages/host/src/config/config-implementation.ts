@@ -11,9 +11,10 @@
  * files, top-level tool config merges with allowed as a tightening
  * intersection, disabled as a tightening union, and defer as a later-layer
  * replacement, capabilities merge by sub-capability, and the security
- * boundaries — policy.sandbox, run.accessMode, and policy.confidentialPaths —
- * merge conservatively so later (lower-trust) layers cannot
- * weaken an earlier layer's policy. confidentialDefaults is the explicit
+ * boundaries — policy.sandbox, run.accessMode, policy.confidentialPaths, and
+ * project-owned web transport selection — merge conservatively so later
+ * (lower-trust) layers cannot weaken an earlier layer's policy.
+ * confidentialDefaults is the explicit
  * later-layer override for the built-in confidential path set.
  * Callers layer CLI flags / env on top.
  */
@@ -131,6 +132,8 @@ import {
   VERIFICATION_CONFIG_KEYS,
   VERIFICATION_KINDS,
   VERIFICATION_MODES,
+  WEB_CONFIG_KEYS,
+  WEB_SECURITY_MODES,
   WORKFLOW_HOOK_ACTION_CONFIG_KEYS_BY_TYPE,
   WORKFLOW_HOOK_ACTION_TYPES,
   WORKFLOW_HOOK_AGENT_RESULT_MODES,
@@ -170,6 +173,7 @@ import type {
   CapabilityVerificationKind,
   CapabilityVerificationAfterWritesConfig,
   CapabilityWorkflowHookConfig,
+  CapabilityWebConfig,
   ModelCost,
   ProviderConfig,
   ProviderModelConfig,
@@ -198,6 +202,7 @@ export type {
   CapabilityVerificationAfterWritesConfig,
   CapabilityWorkflowHookConfig,
   CapabilityWorkflowHookFrequency,
+  CapabilityWebConfig,
   ModelCost,
   ProviderConfig,
   ProviderModelConfig,
@@ -1928,14 +1933,65 @@ function validateCapabilities(
     const agents = validateCapabilityAgents(raw.agents, filePath, errors);
     if (agents) out.agents = agents;
   }
+  if (raw.web !== undefined) {
+    const web = validateCapabilityWeb(raw.web, filePath, errors);
+    if (web) out.web = web;
+  }
   return out;
 }
 
-function stripProjectHttpHooks(
+function validateCapabilityWeb(
+  raw: unknown,
+  filePath: string,
+  errors: SharedConfigError[],
+): CapabilityWebConfig | undefined {
+  if (!isRecord(raw)) {
+    errors.push({
+      file: filePath,
+      field: "capabilities.web",
+      message: "must be an object",
+    });
+    return undefined;
+  }
+  const out: CapabilityWebConfig = {};
+  const allowed = new Set<string>(WEB_CONFIG_KEYS);
+  for (const key of Object.keys(raw)) {
+    if (!allowed.has(key)) {
+      errors.push({
+        file: filePath,
+        field: `capabilities.web.${key}`,
+        message: `unknown field (allowed: ${[...allowed].join(", ")})`,
+      });
+    }
+  }
+  if (raw.security !== undefined) {
+    if (isStringOption(raw.security, WEB_SECURITY_MODES)) {
+      out.security = raw.security;
+    } else {
+      errors.push({
+        file: filePath,
+        field: "capabilities.web.security",
+        message: `must be one of: ${WEB_SECURITY_MODES.join(", ")}`,
+      });
+    }
+  }
+  return out;
+}
+
+function stripProjectRestrictedNetworkCapabilities(
   capabilities: CapabilityConfig,
   filePath: string,
   errors: SharedConfigError[],
 ): void {
+  if (capabilities.web?.security === "system") {
+    errors.push({
+      file: filePath,
+      field: "capabilities.web.security",
+      message:
+        'project config cannot select the less restrictive "system" web transport; move it to user config or SPARKWRIGHT_CONFIG',
+    });
+    delete capabilities.web;
+  }
   const hooks = capabilities.hooks;
   if (hooks) {
     if (hooks.http !== undefined) {
@@ -4066,7 +4122,11 @@ function validateShared(
     );
     if (capabilities) {
       if (layer === "project") {
-        stripProjectHttpHooks(capabilities, filePath, errors);
+        stripProjectRestrictedNetworkCapabilities(
+          capabilities,
+          filePath,
+          errors,
+        );
       }
       config.capabilities = capabilities;
     }
@@ -4160,7 +4220,7 @@ export async function loadHostConfig(
     }
     // Providers merge by key (a later file adds/overrides individual entries),
     // top-level tools merge by explicit set semantics, capabilities merge by
-    // sub-capability (skills/mcp/agents), and policy.sandbox merges
+    // sub-capability (skills/mcp/agents/web), and policy.sandbox merges
     // conservatively so a project cannot downgrade a user-defined sandbox
     // boundary. Within a sub-capability the later layer still
     // wholesale-overrides. Every other field is wholesale-overridden.

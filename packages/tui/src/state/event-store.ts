@@ -327,13 +327,12 @@ export class EventStore {
     }
     if (event.type === "model.stream.started") {
       this.state = { ...this.state, streamingText: "", reasoningText: "" };
-    } else if (
-      event.type === "model.stream.completed" ||
-      event.type === "model.completed"
-    ) {
-      // The live provider preview ends with the raw model turn. Committed
-      // commentary/final text arrives separately through model.assistant_text
-      // or run.completed; reasoning remains ephemeral by design.
+    } else if (event.type === "model.completed") {
+      // `model.stream.completed` only closes the provider token stream; the
+      // canonical `model.completed` event can arrive noticeably later. Keep
+      // the live preview across that gap, then clear it in the same state
+      // update that commits the complete assistant message to the transcript.
+      // Reasoning remains ephemeral by design.
       this.state = { ...this.state, streamingText: "", reasoningText: "" };
     }
 

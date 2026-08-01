@@ -443,6 +443,7 @@ export type {
   CapabilityHookActionConfig,
   CapabilityToolsConfig,
   CapabilitySkillsConfig,
+  CapabilityWebConfig,
   ShellConfig,
   ProviderConfig,
   ProviderModelConfig,

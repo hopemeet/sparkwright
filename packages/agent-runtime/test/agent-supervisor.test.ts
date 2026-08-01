@@ -83,11 +83,7 @@ describe("AgentSupervisor", () => {
       blockers: [
         {
           code: "SHELL_REQUIRED",
-          kind: "capability",
-          owner: "parent",
           message: "Shell execution is required.",
-          requirements: [{ kind: "tool", name: "bash" }],
-          retry: "after_capability_change",
         },
       ],
     });
@@ -96,7 +92,7 @@ describe("AgentSupervisor", () => {
       terminalState: "blocked",
       status: "blocked",
       summary: "Shell execution is required.",
-      blockers: [{ code: "SHELL_REQUIRED", kind: "capability" }],
+      blockers: [{ code: "SHELL_REQUIRED" }],
     });
   });
 

@@ -370,7 +370,11 @@ describe("renderTranscript", () => {
         runId: "run_1",
         type: "approval.resolved",
         sequence: 2,
-        payload: { approvalId: "approval_1", decision: "approved" },
+        payload: {
+          approvalId: "approval_1",
+          decision: "approved",
+          autoApproved: true,
+        },
       },
       {
         id: "request_2",
@@ -392,7 +396,7 @@ describe("renderTranscript", () => {
       { sessionId: "s", workspaceRoot: "/x" },
       events,
     );
-    expect(md).toContain("Approval approved: Create count_numbers.py");
+    expect(md).toContain("Approval auto-approved: Create count_numbers.py");
     expect(md).toContain("Approval denied: Run tool bash");
     expect(md).not.toContain("Approval requested");
   });

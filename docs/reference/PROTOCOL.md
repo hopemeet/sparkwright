@@ -333,9 +333,12 @@ Current event types:
   `agentId`, `subagentDepth`, `delegateTool`, `entrypoint`, and `protocol`
   (`in_process`, `acp`, or `external_command`). Process-backed invocations also
   include `workspaceAccess` when known. Terminal
-  payloads add `terminalState`, `finality`, and the child's `assessment`.
-  Finality and health are independent: a child can be complete but degraded or
-  failing, and callers must preserve both. SparkWright child runs also add
+  payloads add transport `terminalState`, runtime-derived report `status`, and
+  the child's `assessment`. Report delivery and health are independent: a
+  child can deliver a report while degraded or failing, and callers must
+  preserve both. Status `completed` does not prove the delegated goal was
+  satisfied.
+  SparkWright child runs also add
   `stepLimitReached` / `truncated` when the child outcome reports them. Agent
   admission failures may go directly from requested to failed and must not emit
   started. External-command delegate terminal

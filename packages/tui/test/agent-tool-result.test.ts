@@ -34,10 +34,7 @@ describe("isParentAgentResult", () => {
         blockers: [
           {
             code: "AGENT_RUN_INCOMPLETE",
-            kind: "unknown",
-            owner: "runtime",
             message: "Child failed",
-            retry: "immediate",
           },
         ],
       }),

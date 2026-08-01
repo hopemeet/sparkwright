@@ -1,12 +1,26 @@
 import type { AgentHandoffPayload } from "./types.js";
 
 export const AGENT_HANDOFF_CONTEXT_MAX_CHARS = 8_000;
+const LIVE_AGENT_HANDOFF_FIELDS = new Set(["goal", "context", "label"]);
+
+/** Parse model-facing handoffs, which expose only the canonical fields. */
+export function parseAgentHandoffPayload(value: unknown): AgentHandoffPayload {
+  if (!isRecord(value)) throw new Error("Agent handoff must be an object.");
+  const unknownFields = Object.keys(value).filter(
+    (field) => !LIVE_AGENT_HANDOFF_FIELDS.has(field),
+  );
+  if (unknownFields.length > 0) {
+    throw new Error(
+      `Agent handoff accepts only goal, context, and label; received ${unknownFields.join(", ")}.`,
+    );
+  }
+  return normalizeAgentHandoffPayload(value);
+}
 
 /**
- * Normalize the current handoff shape while accepting persisted v0 task
- * payloads. Legacy role/allowedTools/grant/maxSteps/metadata values never
- * regain authority: role is reduced to a display label and the rest are
- * ignored.
+ * Normalize the canonical handoff fields while accepting persisted task
+ * envelopes. Tool schemas reject unknown live model input; this parser only
+ * extracts data and never turns legacy fields into authority.
  */
 export function normalizeAgentHandoffPayload(
   value: unknown,

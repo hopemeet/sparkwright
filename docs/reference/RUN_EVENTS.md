@@ -83,16 +83,15 @@ Parallel delegate fan-out does not add a separate event family: the parent tool
 call is visible through `tool.*`, and each child is visible through
 `subagent.*` with metadata `entrypoint: "delegate_parallel"`.
 
-In-process Agent terminal payloads keep transport and semantic outcome
-separate. `terminalState` describes the child transport, `finality` records
-whether the delegated answer is complete enough to reuse, and `status` is the
-semantic `completed`, `partial`, or `blocked` outcome. The strict
-`agent-outcome.v1` declaration also carries `statusSource`, `summary`, bounded
-`accomplishments`, and structured `blockers` with owner, retry condition, and
-requirements. Consumers should render partial/blocked status even when the
-event is `subagent.completed`; event type completion means the child returned
-normally, not that its delegated goal was satisfied. A missing or malformed
-required declaration projects as `partial` with a protocol blocker.
+In-process Agent terminal payloads keep transport and report delivery separate.
+`terminalState` describes the child transport and `status` is the
+runtime-derived `completed`, `partial`, or `blocked` report status. A non-empty
+natural final projects completed; an empty report, runtime failure,
+cancellation, blocking limit, truncation, or step limit projects
+partial/blocked and derives blocker `code`/`message` evidence. Consumers should
+render partial/blocked status even when the event is `subagent.completed`;
+event-type completion means the child returned normally. Status `completed`
+means a report was delivered, not that the delegated goal was satisfied.
 
 ## Model Selection Evidence
 

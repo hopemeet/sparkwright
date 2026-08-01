@@ -324,7 +324,10 @@ describe("buildAgentPromptBuilder", () => {
       "workspace.writes",
     );
     expect(await guidanceOf([{ name: "delegate_inspector" }])).toContain(
-      "relay it faithfully",
+      "Synthesize it once",
+    );
+    expect(await guidanceOf([{ name: "delegate_inspector" }])).toContain(
+      "Preserve concrete paths, commands, statuses, blockers",
     );
   });
 

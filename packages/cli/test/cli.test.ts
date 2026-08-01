@@ -1996,6 +1996,7 @@ describe.sequential("runCli", () => {
     expect(loaded.config.tools?.allowed).toBeUndefined();
     expect(loaded.config.tools?.disabled).toBeUndefined();
     expect(loaded.config.tools?.defer).toEqual([
+      "web_fetch",
       "list_dir",
       "read_anchored_text",
       "edit_anchored_text",
@@ -9425,7 +9426,8 @@ describe.sequential("runCli", () => {
         (event) =>
           (
             event.payload?.error as
-              { metadata?: { toolName?: string } } | undefined
+              | { metadata?: { toolName?: string } }
+              | undefined
           )?.metadata?.toolName,
       ),
     ).toEqual(["read", "read", "edit"]);

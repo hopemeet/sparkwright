@@ -25,6 +25,7 @@ import {
   collectConversationApprovalStates,
   conversationApprovalIdentity,
   createConversationProjection,
+  formatConversationApprovalStatus,
   shouldShowInConversation,
 } from "./conversation-projection.js";
 
@@ -198,10 +199,9 @@ export function renderTranscript(
       }
       case "approval.requested": {
         const identity = conversationApprovalIdentity(ev);
-        const decision = identity
-          ? approvalStates.get(identity)?.decision
-          : undefined;
-        const status = decision || "requested";
+        const status = formatConversationApprovalStatus(
+          identity ? approvalStates.get(identity) : undefined,
+        );
         const summary = typeof p.summary === "string" ? p.summary : "?";
         out.push(`> 🤝 Approval ${status}: ${summary}`);
         out.push("");

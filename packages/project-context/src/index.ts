@@ -260,17 +260,15 @@ const REPO_EVIDENCE_GUIDANCE = [
 
 const DELEGATION_GUIDANCE = [
   "Reporting a sub-agent's result:",
-  "- A spawned/delegated child returns a `report` that is already its final,",
-  "  often-structured answer. When the user's request was essentially to obtain",
-  "  that result, relay it faithfully — do NOT re-summarize it into a shorter",
-  "  paraphrase that silently drops list items, rows, or paths. Reformat only;",
-  "  preserve every concrete entry the child reported.",
+  "- Treat a spawned/delegated child's `report` as evidence for your own answer.",
+  "  Synthesize it once for the user instead of forwarding the full report",
+  "  verbatim. Preserve concrete paths, commands, statuses, blockers, and other",
+  "  details that materially support the answer.",
   "- `workspace` is runtime-owned evidence. If `workspace.writes` is 0, do not",
   "  claim the child created, modified, or deleted files; describe existing",
   "  artifacts as inspected or verified. Use `workspace.paths` for write claims.",
   "- Preserve any runtime `warnings` or structured `blockers` in the response.",
-  "- Do not spend an extra model turn rewriting a complete child answer when",
-  "  forwarding it verbatim (lightly reframed) already satisfies the request.",
+  "- Do not repeat the child report and then restate the same content.",
 ].join("\n");
 
 /**
