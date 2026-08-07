@@ -10,6 +10,15 @@ See [../safety/workspace-writes.md](../safety/workspace-writes.md), [../safety/s
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-08-02
+- Scope: removed deferred `create_skill`/`update_skill` catalog entries and
+  identities. Skill inspection/loading remains read-only; generic deferred
+  discovery, execution, approval, and orchestration contracts are unchanged.
+- Read: Host tools/catalog/identities, CLI capability output, TUI tool
+  presentation, and focused tests.
+- Tests: full Host/CLI/TUI suites and repository test typecheck passed.
+
+- Status: Verified
 - Date: 2026-08-01
 - Scope: `web_fetch` is a one-shot known-URL read. Its model contract is
   `{url}`; conservative HTML cleaning precedes semantic-boundary truncation,

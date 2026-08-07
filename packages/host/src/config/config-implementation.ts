@@ -121,8 +121,6 @@ import {
   SHELL_SANDBOX_NETWORK_MODES,
   SHELL_SANDBOX_NETWORK_CONFIG_KEYS,
   SKILLS_CONFIG_KEYS,
-  SKILL_EVOLUTION_CONFIG_KEYS,
-  SKILL_EVOLUTION_MODES,
   SKILL_INLINE_SHELL_CONFIG_KEYS,
   SPARKWRIGHT_CONFIG_KEYS,
   TOOLS_CONFIG_KEYS,
@@ -164,7 +162,6 @@ import type {
   CapabilityHooksConfig,
   CapabilityMcpStartup,
   CapabilityMcpToolSchemaLoad,
-  CapabilitySkillEvolutionConfig,
   CapabilitySkillInlineShellConfig,
   CapabilitySkillsConfig,
   CapabilityToolsConfig,
@@ -190,8 +187,6 @@ export type {
   CapabilityHooksConfig,
   CapabilityMcpStartup,
   CapabilityMcpToolSchemaLoad,
-  CapabilitySkillEvolutionConfig,
-  CapabilitySkillEvolutionMode,
   CapabilitySkillInlineShellConfig,
   CapabilitySkillsConfig,
   CapabilityToolsConfig,
@@ -440,14 +435,6 @@ function validateCapabilitySkills(
       errors,
     );
   }
-  if (raw.evolution !== undefined) {
-    const evolution = validateCapabilitySkillEvolution(
-      raw.evolution,
-      filePath,
-      errors,
-    );
-    if (evolution) out.evolution = evolution;
-  }
   if (raw.inlineShell !== undefined) {
     const inlineShell = validateCapabilitySkillInlineShell(
       raw.inlineShell,
@@ -455,44 +442,6 @@ function validateCapabilitySkills(
       errors,
     );
     if (inlineShell) out.inlineShell = inlineShell;
-  }
-  return out;
-}
-
-function validateCapabilitySkillEvolution(
-  raw: unknown,
-  filePath: string,
-  errors: SharedConfigError[],
-): CapabilitySkillEvolutionConfig | undefined {
-  if (!isRecord(raw)) {
-    errors.push({
-      file: filePath,
-      field: "capabilities.skills.evolution",
-      message: "must be an object",
-    });
-    return undefined;
-  }
-  const out: CapabilitySkillEvolutionConfig = {};
-  const allowed = new Set<string>(SKILL_EVOLUTION_CONFIG_KEYS);
-  for (const key of Object.keys(raw)) {
-    if (!allowed.has(key)) {
-      errors.push({
-        file: filePath,
-        field: `capabilities.skills.evolution.${key}`,
-        message: `unknown field (allowed: ${[...allowed].join(", ")})`,
-      });
-    }
-  }
-  if (raw.mode !== undefined) {
-    if (isStringOption(raw.mode, SKILL_EVOLUTION_MODES)) {
-      out.mode = raw.mode;
-    } else {
-      errors.push({
-        file: filePath,
-        field: "capabilities.skills.evolution.mode",
-        message: `must be one of ${SKILL_EVOLUTION_MODES.join(" | ")}`,
-      });
-    }
   }
   return out;
 }

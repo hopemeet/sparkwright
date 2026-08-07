@@ -1,11 +1,9 @@
 import {
   collectSkillStats,
   existingSkillRoots,
-  listSkillProposals,
   loadHostConfig,
   loadLayeredSkillReport,
   resolveSkillRootsForRuntime,
-  type SkillProposalSummary,
   type SkillReport,
   type SkillReportEntry,
   type SkillStatsEntry,
@@ -31,7 +29,6 @@ export interface TuiSkillBrowserEntry {
     total: number;
     unresolved: number;
   };
-  draftCount: number;
 }
 
 export interface TuiSkillsBrowserSnapshot {
@@ -60,7 +57,7 @@ export async function loadTuiSkillsBrowser(
       ? resolvedRoots
       : await existingSkillRoots(resolvedRoots);
 
-  const [report, stats, proposals] = await Promise.all([
+  const [report, stats] = await Promise.all([
     loadLayeredSkillReport(roots, { includeMissingRoots: "configured" }),
     collectSkillStats({
       workspaceRoot,
@@ -68,16 +65,14 @@ export async function loadTuiSkillsBrowser(
       skillRoots: roots,
       limit: sessionLimit,
     }),
-    listSkillProposals(workspaceRoot),
   ]);
 
-  return buildTuiSkillsBrowserSnapshot({ report, stats, proposals });
+  return buildTuiSkillsBrowserSnapshot({ report, stats });
 }
 
 export function buildTuiSkillsBrowserSnapshot(input: {
   report: SkillReport;
   stats: SkillStatsReport;
-  proposals: readonly SkillProposalSummary[];
 }): TuiSkillsBrowserSnapshot {
   const statsByIdentity = new Map(
     input.stats.skills.map((entry) => [statsIdentity(entry), entry] as const),
@@ -91,7 +86,7 @@ export function buildTuiSkillsBrowserSnapshot(input: {
     traceIssueCount: input.stats.traceErrors.length,
     skills: input.report.skills.map((skill) => {
       const stats = statsByIdentity.get(reportIdentity(skill));
-      return toBrowserEntry(skill, stats, input.proposals);
+      return toBrowserEntry(skill, stats);
     }),
   };
 }
@@ -99,16 +94,7 @@ export function buildTuiSkillsBrowserSnapshot(input: {
 function toBrowserEntry(
   skill: SkillReportEntry,
   stats: SkillStatsEntry | undefined,
-  proposals: readonly SkillProposalSummary[],
 ): TuiSkillBrowserEntry {
-  const draftCount = proposals.filter(
-    (proposal) =>
-      proposal.state === "draft" &&
-      proposal.skillName === skill.name &&
-      (proposal.basePackageHash === skill.packageHash ||
-        proposal.afterPackageHash === skill.packageHash),
-  ).length;
-
   return {
     name: skill.name,
     description: skill.description,
@@ -128,7 +114,6 @@ function toBrowserEntry(
       total: stats?.associatedToolFailures.total ?? 0,
       unresolved: stats?.associatedToolFailures.unresolved ?? 0,
     },
-    draftCount,
   };
 }
 

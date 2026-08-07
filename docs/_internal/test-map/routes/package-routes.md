@@ -539,13 +539,13 @@ the root `workspaces` declarations rather than a package allowlist.
 Run:
 
 ```bash
-npm --workspace @sparkwright/tui test -- test/commands.test.ts test/create-capability.test.ts test/skill-evolution.test.ts
+npm --workspace @sparkwright/tui test -- test/commands.test.ts test/create-capability.test.ts test/skills-browser.test.ts test/skills-panel-render.test.tsx
 npm --workspace @sparkwright/tui run typecheck
 ```
 
-Keep generic `/create skill` on the managed proposal service. Removing a slash
-surface should also remove its dedicated action, layer, dialog branch, help,
-and reference documentation; do not leave a hidden second parser.
+Keep generic `/create skill` on the deterministic Host creator. Skill update,
+review, and learning slash surfaces are retired; do not reintroduce a hidden
+parser, action, layer, dialog branch, or help entry.
 
 ### `packages/tui/src/state/run-controller.ts`
 

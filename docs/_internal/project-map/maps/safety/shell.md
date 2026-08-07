@@ -10,6 +10,16 @@ See [workspace-writes.md](workspace-writes.md) and [../../modules/coding-tools.m
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-08-02
+- Scope: shell guidance now directs managed capability changes to controlled
+  workspace writes or CLI commands after Skill mutation tools were removed.
+  Snapshot auditing, rollback, sandboxing, and forced-deny behavior are
+  unchanged.
+- Read: Host shell descriptor/error guidance, workspace snapshot guard, and
+  focused Host tests.
+- Tests: focused Host tools 71/71 passed.
+
+- Status: Verified
 - Date: 2026-07-26
 - Scope: route review for compact Agent parent results. Child shell
   classification, approval, sandboxing, rollback, and lifecycle action

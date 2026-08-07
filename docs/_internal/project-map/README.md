@@ -75,15 +75,10 @@ follow the active maps below for the current contract.
   contract.
 
 - [designs/skill-managed-change-redesign.md](designs/skill-managed-change-redesign.md) —
-  Implemented master design history: preserves completed Skill Phase 1/2,
-  freezes package identity v2 and external-change safety, requires Workflow
-  executable package pinning, limits Agent authoring to validated Markdown,
-  defines trace-derived policy-aware stats, and defers Skill identity
-  continuity/reconciliation to Phase 7. Active contracts:
-  [modules/skills.md](modules/skills.md), [modules/host.md](modules/host.md),
-  [modules/tui.md](modules/tui.md),
-  [maps/capabilities/skill-evolution.md](maps/capabilities/skill-evolution.md),
-  and [maps/safety/approvals.md](maps/safety/approvals.md).
+  Retired implementation history for the removed Skill managed-change and
+  self-evolution path. Package identity v2 and trace-derived Stats remain active
+  independently. Current contract: [modules/skills.md](modules/skills.md) and
+  [maps/capabilities/skills.md](maps/capabilities/skills.md).
 
 - [designs/compaction-redesign.md](designs/compaction-redesign.md) —
   Historical/implemented design: shared compaction result/stage substrate,
@@ -192,9 +187,8 @@ unsourced [QA convergence stub](../reviews/qa-convergence-plan.md).
 - `packages/project-context/src/index.ts`: [modules/coding-tools.md](modules/coding-tools.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md)
 - `packages/project-commands/src/*`: [modules/edge-packages.md](modules/edge-packages.md), [modules/tui.md](modules/tui.md), [maps/safety/shell.md](maps/safety/shell.md)
 - `packages/skills/src/*` or `packages/host/src/skill-*`: [modules/skills.md](modules/skills.md), [maps/capabilities/skills.md](maps/capabilities/skills.md)
-- `packages/host/src/skill-command-service.ts`, `sparkwright skills create`, or TUI `/create skill`: [modules/skills.md](modules/skills.md), [modules/host.md](modules/host.md), [modules/cli.md](modules/cli.md), [modules/tui.md](modules/tui.md), [maps/capabilities/skill-evolution.md](maps/capabilities/skill-evolution.md)
+- `packages/host/src/project-skill-create.ts`, `sparkwright skills create`, or TUI `/create skill`: [modules/skills.md](modules/skills.md), [modules/host.md](modules/host.md), [modules/cli.md](modules/cli.md), [modules/tui.md](modules/tui.md), [maps/capabilities/skills.md](maps/capabilities/skills.md)
 - `packages/skills/src/markdown-folder-asset.ts`: [modules/skills.md](modules/skills.md), [modules/host.md](modules/host.md), [maps/capabilities/README.md](maps/capabilities/README.md)
-- `packages/host/src/skill-evolution.ts` or `sparkwright skills proposals|history|restore`: [modules/skills.md](modules/skills.md), [maps/capabilities/skill-evolution.md](maps/capabilities/skill-evolution.md)
 - `packages/mcp-adapter/src/index.ts`: [modules/mcp-adapter.md](modules/mcp-adapter.md), [maps/capabilities/mcp.md](maps/capabilities/mcp.md), [maps/safety/shell.md](maps/safety/shell.md)
 - `packages/mcp-adapter/src/*`: [modules/mcp-adapter.md](modules/mcp-adapter.md), [maps/capabilities/mcp.md](maps/capabilities/mcp.md), [maps/safety/shell.md](maps/safety/shell.md)
 - `packages/coding-tools/src/*`: [modules/coding-tools.md](modules/coding-tools.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md), [maps/safety/workspace-writes.md](maps/safety/workspace-writes.md)

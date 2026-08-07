@@ -48,8 +48,6 @@ export type {
   CapabilityHooksConfig,
   CapabilityMcpStartup,
   CapabilityMcpToolSchemaLoad,
-  CapabilitySkillEvolutionConfig,
-  CapabilitySkillEvolutionMode,
   CapabilitySkillInlineShellConfig,
   CapabilitySkillsConfig,
   CapabilityToolsConfig,

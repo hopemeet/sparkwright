@@ -9,6 +9,14 @@ canonical trace or a session consistency report.
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-08-02
+- Scope: removed Skill proposal/learning presentation and pending human-action
+  state from TUI. Canonical transcript export, Activity events, and raw trace
+  diagnostics are unchanged.
+- Read: TUI App/layer/EventStore/transcript cleanup and export ownership.
+- Tests: focused TUI event/transcript rendering and typecheck passed.
+
 - Status: Verified
 - Date: 2026-07-30
 - Scope: detailed transcripts no longer repeat a tool's compact result preview

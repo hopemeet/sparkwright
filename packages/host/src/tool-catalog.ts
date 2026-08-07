@@ -39,8 +39,6 @@ import {
   createReadFileTool,
   createReplaceFileTool,
   createSkillInspectorTool,
-  createSkillManagerTool,
-  createSkillUpdateTool,
   createWriteFileTool,
 } from "./tools.js";
 import {
@@ -351,14 +349,6 @@ function createMainHostToolCatalogList(input: {
     catalogEntry(createCronTool(), "cron"),
     catalogEntry(
       createSkillInspectorTool(input.workspaceRoot, input.skillRoots),
-      "skill",
-    ),
-    catalogEntry(
-      createSkillManagerTool(input.workspaceRoot, input.skillRoots),
-      "skill",
-    ),
-    catalogEntry(
-      createSkillUpdateTool(input.workspaceRoot, input.skillRoots),
       "skill",
     ),
     catalogEntry(createAgentInspectorTool(input.workspaceRoot), "agent"),

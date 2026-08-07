@@ -3423,7 +3423,7 @@ describe("host protocol", () => {
         expect(tools.some((tool) => tool.name === "read_agent_report")).toBe(
           true,
         );
-        expect(tools.some((tool) => tool.name === "create_skill")).toBe(true);
+        expect(tools.some((tool) => tool.name === "create_skill")).toBe(false);
         expect(tools.some((tool) => tool.name === "create_agent")).toBe(true);
         expect(tools.some((tool) => tool.name === "list_skills")).toBe(true);
         expect(tools.some((tool) => tool.name === "list_agents")).toBe(true);

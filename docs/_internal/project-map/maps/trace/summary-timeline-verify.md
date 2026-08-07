@@ -10,6 +10,14 @@ See [raw-trace.md](raw-trace.md) for source data and [export-diagnostics.md](exp
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-08-02
+- Scope: CLI Skill commands and Stats rendering changed, but trace summary,
+  timeline, verify, run assessment, and CLI exit semantics are unchanged.
+- Read: CLI Skill handlers/rendering, run-outcome fixtures, and Core trace
+  diagnostics.
+- Tests: CLI run-outcome 14/14 and Core trace 133/133 passed.
+
 - Status: Verified
 - Date: 2026-07-30
 - Scope: Agent diagnostic findings continue to use report status, summary,

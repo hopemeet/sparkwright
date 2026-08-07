@@ -10,6 +10,14 @@ and [../session/session-store.md](../session/session-store.md) for session layou
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-08-02
+- Scope: Skill Stats no longer reads proposal/history metadata; it remains a
+  consumer of canonical session and child-agent traces. Shell guidance changed
+  wording only. Raw trace event schemas and serialization are unchanged.
+- Read: Host Stats, shell diagnostics, and neutralized Core trace fixtures.
+- Tests: Core trace 133/133 and focused Host/CLI coverage passed.
+
 - Status: Verified
 - Date: 2026-07-30
 - Scope: in-process child trace keeps runtime-derived

@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { CronCommandService, defaultCronRoot } from "@sparkwright/cron";
 import {
-  SkillCommandService,
+  createProjectSkill,
   projectConfigPath,
   readConfigFileObject,
   resolveConfigWriteTarget,
@@ -11,7 +11,11 @@ import {
 } from "@sparkwright/host";
 
 export type CreateCapabilityKind =
-  "skill" | "agent" | "cron" | "command" | "mcp";
+  | "skill"
+  | "agent"
+  | "cron"
+  | "command"
+  | "mcp";
 
 export type CreateCapabilityDraft =
   | {
@@ -85,13 +89,15 @@ async function createSkill(
 ): Promise<CreateCapabilityResult> {
   const name = assertName(draft.name, "Skill name");
   const description = required(draft.description, "Description");
-  const { proposal } = await new SkillCommandService(
+  const result = await createProjectSkill({
     workspaceRoot,
-  ).prepareCreate({ name, description });
+    name,
+    description,
+  });
   return {
     kind: "skill",
-    message: `Prepared Skill ${name} for review (${proposal.id})`,
-    path: proposal.path,
+    message: `Created Skill ${name}`,
+    path: result.manifestPath,
   };
 }
 

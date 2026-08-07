@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import type {
-  SkillProposalSummary,
   SkillReport,
   SkillStatsEntry,
   SkillStatsReport,
@@ -8,7 +7,7 @@ import type {
 import { buildTuiSkillsBrowserSnapshot } from "../src/lib/skills-browser.js";
 
 describe("skills browser projection", () => {
-  it("joins recent usage to the current package identity and counts current drafts", () => {
+  it("joins recent usage to the current package identity", () => {
     const report: SkillReport = {
       roots: ["/work/.sparkwright/skills"],
       shadows: [],
@@ -29,15 +28,9 @@ describe("skills browser projection", () => {
       statsEntry("sha256:old", 99),
       statsEntry("sha256:current", 5),
     ]);
-    const proposals = [
-      proposal("proposal-current", "sha256:current"),
-      proposal("proposal-old", "sha256:old"),
-    ];
-
     const snapshot = buildTuiSkillsBrowserSnapshot({
       report,
       stats,
-      proposals,
     });
 
     expect(snapshot.sessionsScanned).toBe(12);
@@ -48,7 +41,6 @@ describe("skills browser projection", () => {
         loadedCount: 5,
         explicitLoadCount: 4,
         residentLoadCount: 1,
-        draftCount: 1,
       }),
     ]);
   });
@@ -74,7 +66,6 @@ function statsReport(skills: SkillStatsEntry[]): SkillStatsReport {
         terminalRunCount: 8,
         openRunCount: 0,
       },
-      evolution: { proposalsScanned: 2, historyScanned: 0 },
     },
     freshness: { computedAt: "2026-08-01T00:00:00.000Z" },
     projectionCache: {
@@ -129,44 +120,5 @@ function statsEntry(packageHash: string, loadedCount: number): SkillStatsEntry {
       beforeFirstLoad: 0,
       afterFirstLoad: 3,
     },
-    evolution: {
-      proposals: {
-        total: 0,
-        asBase: 0,
-        asAfter: 0,
-        byState: {},
-        byKind: {},
-        ids: [],
-      },
-      history: {
-        total: 0,
-        asBefore: 0,
-        asAfter: 0,
-        byKind: {},
-        ids: [],
-      },
-    },
-  };
-}
-
-function proposal(id: string, basePackageHash: string): SkillProposalSummary {
-  return {
-    id,
-    kind: "update",
-    state: "draft",
-    skillName: "demo-skill",
-    targetLayer: "project",
-    targetPath: "/work/.sparkwright/skills/demo-skill",
-    createdAt: "2026-08-01T00:00:00.000Z",
-    updatedAt: "2026-08-01T00:00:00.000Z",
-    basePackageHash,
-    afterPackageHash: `${basePackageHash}:after`,
-    packageHashPolicyVersion: 2,
-    artifactId: "skill_demo",
-    effectHash: "sha256:effect",
-    preparedState: "ready",
-    revision: 1,
-    summary: "Improve the Skill.",
-    path: `/work/.sparkwright/skill-evolution/proposals/${id}`,
   };
 }

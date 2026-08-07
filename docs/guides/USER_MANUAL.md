@@ -144,11 +144,20 @@ available, the inspect view includes the same compaction audit surfaced by
 `session inspect --compaction`, without printing compacted summary content.
 
 The TUI keeps the committed conversation in the terminal's native scrollback.
+While a model response is still streaming, visible reasoning is a quiet tail of
+the latest three source lines and the in-flight answer is temporarily folded to
+a terminal-height-dependent window, normally 6–12 physical rows. A fold hint
+means only the live preview is abbreviated. When the response completes, TUI
+atomically replaces that preview with the full committed assistant answer; no
+final answer content is discarded. Whether reasoning appears at all still
+depends on the selected model and provider gateway.
+
 The following slash commands remain independent direct entry points even when
 they share an internal panel:
 
-- `/tools`, `/skills`, `/agents`, `/mcp`, and `/cron` open the matching
-  capability view.
+- `/tools`, `/agents`, `/mcp`, and `/cron` open the matching capability view.
+- `/skills` opens the effective Skill inventory with recent exact-identity load
+  counts; press Enter for the non-causal run/tool detail view.
 - `/events` opens the canonical runtime event inspector; `/tasks` opens durable
   background-task activity.
 - `/notifications` opens UI feedback history (run/connection diagnostics,

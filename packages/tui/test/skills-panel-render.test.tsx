@@ -24,7 +24,6 @@ describe("SkillsPanel", () => {
     expect(text).toContain("Skills · 3 available · 12 sessions scanned");
     expect(text).toContain("py-script-check");
     expect(text).toContain("23 loads");
-    expect(text).toContain("2 drafts");
     expect(text).toContain("sparkwright-manual");
     expect(text).not.toContain("Available now:");
     expect(text).not.toContain("Model:");
@@ -75,7 +74,6 @@ function snapshot(): TuiSkillsBrowserSnapshot {
         loadedCount: 23,
         explicitLoadCount: 23,
         residentLoadCount: 0,
-        draftCount: 2,
         associatedRuns: { completed: 21, failed: 0, cancelled: 2 },
         relatedToolFailures: { total: 14, unresolved: 3 },
       }),
@@ -104,7 +102,6 @@ function skill(
     loadFailureCount: 0,
     associatedRuns: { completed: 0, failed: 0, cancelled: 0 },
     relatedToolFailures: { total: 0, unresolved: 0 },
-    draftCount: 0,
     ...overrides,
   };
 }

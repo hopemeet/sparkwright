@@ -165,6 +165,19 @@ contracts, and focused checklists that no longer fit here.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-08-02
+- Scope: the system web transport's resolved HTTP proxy, HTTPS proxy, and
+  no-proxy fields now explicitly declare their structural undici consumer for
+  strict public-surface auditing. Proxy precedence, validation, routing, and
+  request behavior are unchanged.
+- Read: Web proxy environment resolver, system transport construction, focused
+  tests, and public proxy documentation.
+- Tests: Web tools focused suite, strict reserved-field check, formatting, and
+  Markdown links passed. Project-map drift completed; routed Core, Host,
+  orchestration, capability, and approval pages were checked with no behavior
+  update required.
+
+- Status: Verified
 - Date: 2026-08-01
 - Scope: `web_fetch` now accepts only `{url}` and returns one clean bounded
   excerpt. HTML active/interactive elements and unsafe link targets are

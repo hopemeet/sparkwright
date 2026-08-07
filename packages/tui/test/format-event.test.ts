@@ -58,13 +58,12 @@ describe("formatEvent", () => {
       formatEvent(
         event("capability.mutation.completed", {
           action: "write_text",
-          path: "/tmp/project/.sparkwright/skill-evolution/proposals/p1/proposal.md",
+          path: "/tmp/project/.sparkwright/agents/reviewer.md",
         }),
       ),
     ).toMatchObject({
       color: "red",
-      detail:
-        "write_text .sparkwright/skill-evolution/proposals/p1/proposal.md",
+      detail: "write_text .sparkwright/agents/reviewer.md",
     });
   });
 

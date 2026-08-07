@@ -232,8 +232,9 @@ inspection never triggers an approval prompt:
   profiles remain human/CLI-owned governance and are not mutated by this model
   tool.
 
-Skills follow the same split: `list_skills` (`list` / `validate`, read-only)
-and `create_skill` (`create`, writes a SKILL.md, requires approval).
+Skills expose `list_skills` (`list` / `validate`, read-only) in-run. Create a
+project Skill with `sparkwright skills create`; update its files through the
+normal workspace-write path.
 
 Reference files:
 

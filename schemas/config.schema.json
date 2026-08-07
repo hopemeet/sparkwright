@@ -878,16 +878,6 @@
                 "type": "string"
               }
             },
-            "evolution": {
-              "type": "object",
-              "properties": {
-                "mode": {
-                  "type": "string",
-                  "enum": ["off", "notice", "draft", "apply"]
-                }
-              },
-              "additionalProperties": false
-            },
             "inlineShell": {
               "type": "object",
               "properties": {

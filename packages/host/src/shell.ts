@@ -339,8 +339,8 @@ export function createHostShellTool(
     description:
       `${descriptor.description} Do not use shell to create or update ` +
       "managed capability files under .sparkwright/skills, .sparkwright/agents, " +
-      "or .sparkwright/command; use the dedicated " +
-      "SparkWright capability tools or CLI subcommands instead.",
+      "or .sparkwright/command; use controlled workspace write tools or " +
+      "SparkWright CLI subcommands instead.",
     async execute(args, ctx) {
       const readOnlyFastPath = isReadOnlyShellFastPath(args);
       const before = readOnlyFastPath
@@ -813,7 +813,7 @@ class UntrackedWorkspaceMutationError extends Error {
     const capabilityGuidance = changes.some((change) =>
       isManagedCapabilityPath(change.path),
     )
-      ? " Use dedicated SparkWright capability tools or CLI subcommands for .sparkwright capability packages."
+      ? " Use controlled workspace write tools or CLI subcommands for .sparkwright capability packages."
       : "";
     super(
       `Shell command changed workspace files outside the controlled write path: ${changes

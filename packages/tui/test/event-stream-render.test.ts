@@ -208,24 +208,6 @@ describe("EventStream committed rendering", () => {
     expect(text).not.toContain("hunksApplied");
   });
 
-  it("renders skill mutation tool requests as short summaries", async () => {
-    const events = [
-      ev("tool.requested", 1, {
-        toolName: "update_skill",
-        arguments: {
-          action: "draft",
-          name: "repo-reviewer",
-          description:
-            "A long proposal description that should not leak raw JSON",
-        },
-      }),
-    ];
-    const text = await renderToText(stream(events));
-    expect(text).toContain("update_skill");
-    expect(text).toContain("draft repo-reviewer");
-    expect(text).not.toContain('"description"');
-  });
-
   it("keeps tool names readable while truncating long argument previews", async () => {
     const events = [
       ev("tool.batch.requested", 1, {
@@ -348,65 +330,6 @@ describe("EventStream committed rendering", () => {
     expect(text).toContain(".sparkwright/agents/reviewer/Agent.md");
     expect(text).toContain("Write agent profile reviewer");
     expect(text).not.toContain('"action"');
-  });
-
-  it("folds proposal package mutations into the terminal tool result", async () => {
-    const spanId = "span_skill_create";
-    const events = [
-      {
-        ...ev("capability.mutation.completed", 1, {
-          action: "ensure_directory",
-          path: "/tmp/project/.sparkwright/skill-evolution/proposals/skillprop_123/after/demo",
-          reason: "Create proposal package skillprop_123",
-        }),
-        spanId,
-      },
-      {
-        ...ev("capability.mutation.completed", 2, {
-          action: "write_text",
-          path: "/tmp/project/.sparkwright/skill-evolution/proposals/skillprop_123/after/demo/SKILL.md",
-          reason: "Write proposed Skill demo",
-        }),
-        spanId,
-      },
-      {
-        ...ev("tool.completed", 3, {
-          toolName: "create_skill",
-          output: {
-            action: "draft",
-            changed: true,
-            proposalId: "skillprop_123",
-            proposalPath:
-              "/tmp/project/.sparkwright/skill-evolution/proposals/skillprop_123",
-          },
-        }),
-        spanId,
-      },
-    ];
-    const text = await renderToText(stream(events));
-    expect(text).toContain("skill proposal skillprop_123");
-    expect(text).toContain("2 internal mutations");
-    expect(text).not.toContain("capability mutation");
-    expect(text).not.toContain("Write proposed Skill demo");
-  });
-
-  it("renders skill mutation tool results as compact summaries", async () => {
-    const events = [
-      ev("tool.completed", 1, {
-        result: {
-          action: "draft",
-          changed: true,
-          proposalId: "skillprop_123",
-          proposalPath:
-            "/tmp/project/.sparkwright/skill-evolution/proposals/skillprop_123",
-        },
-      }),
-    ];
-    const text = await renderToText(stream(events));
-    expect(text).toContain("skill proposal");
-    expect(text).toContain("skillprop_123");
-    expect(text).toContain("draft only; original Skill package unchanged");
-    expect(text).not.toContain('"proposalPath"');
   });
 
   it("renders shell results as compact output summaries", async () => {

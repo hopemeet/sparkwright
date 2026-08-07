@@ -26,11 +26,6 @@ import { TranscriptBrowseFooter } from "./components/transcript-browse-footer.js
 import { resolveDialogColumns } from "./components/dialog-frame.js";
 import { AttentionManager } from "./lib/attention.js";
 import { presentationPolicy } from "./lib/ui-signal.js";
-import {
-  useSkillActions,
-  runSkillLearnAutoNotice,
-} from "./state/use-skill-actions.js";
-import { loadTuiSkillInboxAction } from "./lib/skill-evolution.js";
 import { useCapabilityActions } from "./state/use-capability-actions.js";
 import { useSessionActions } from "./state/use-session-actions.js";
 import { useTaskActions } from "./state/use-task-actions.js";
@@ -340,8 +335,6 @@ function AppReady(
     effCorePermission.shouldWrite,
     permissionModeOverride,
   ]);
-  const skillLearnGoalsRef = useRef<string[]>([]);
-  const skillLearnNoticeCountRef = useRef(0);
   const quitArmedUntilRef = useRef(0);
   const lastQuitRequestAtRef = useRef(0);
   const suppressQuitUntilRef = useRef(0);
@@ -385,11 +378,6 @@ function AppReady(
       attention.disable();
     };
   }, [attention, toasts]);
-
-  useEffect(() => {
-    skillLearnGoalsRef.current = [];
-    skillLearnNoticeCountRef.current = 0;
-  }, [state.sessionId]);
 
   // /clear, /new, and session switches create a new document epoch. The export
   // buffer remains owned by RunController; only the viewport anchor resets.
@@ -485,80 +473,6 @@ function AppReady(
     });
   }, [resolved.errors, toasts]);
 
-  // The live Skill card remains the canonical action surface; this projection
-  // gives the same unresolved item a typed inbox/history lifecycle without a
-  // second toast or attention request.
-  const lastHumanActionId = useRef<string | null>(null);
-  useEffect(() => {
-    const action = state.pendingHumanAction;
-    if (!action) {
-      if (lastHumanActionId.current) {
-        toasts.resolve(lastHumanActionId.current);
-        lastHumanActionId.current = null;
-      }
-      return;
-    }
-    const dedupeKey = `skill-proposal:${action.proposalId}`;
-    if (dedupeKey === lastHumanActionId.current) return;
-    if (lastHumanActionId.current) {
-      toasts.resolve(lastHumanActionId.current);
-    }
-    lastHumanActionId.current = dedupeKey;
-    const kind = "action-required" as const;
-    const scope = "ActionInbox" as const;
-    const actions = [
-      { id: "review", label: "Review", key: "r" },
-      ...(action.eligibility === "quick_apply"
-        ? [{ id: "apply", label: "Apply", key: "a" }]
-        : []),
-      { id: "dismiss", label: "Dismiss", key: "esc" },
-    ];
-    toasts.publish({
-      kind,
-      scope,
-      source: "tui.skill-proposal",
-      title: "skill proposal ready",
-      message: `${action.proposalId} · validation ${action.validationStatus} · ${action.guardSeverity} findings`,
-      details: action,
-      dedupeKey,
-      actions,
-      ...presentationPolicy({ kind, scope }),
-    });
-  }, [state.pendingHumanAction, toasts]);
-
-  const lastStatus = useRef(state.status);
-  useEffect(() => {
-    if (
-      lastStatus.current === "running" &&
-      (state.status === "done" || state.status === "error")
-    ) {
-      if (state.status !== "error") {
-        const cancelledRun =
-          state.stopReason === "manual_cancelled" ||
-          state.stopReason === "user_cancelled";
-        if (!cancelledRun) {
-          runSkillLearnAutoNotice({
-            workspaceRoot: resolved.workspaceRoot,
-            toasts,
-            goals: skillLearnGoalsRef.current,
-            sessionId: state.sessionId,
-            noticeCount: skillLearnNoticeCountRef.current,
-            setNoticeCount: (n) => {
-              skillLearnNoticeCountRef.current = n;
-            },
-          });
-        }
-      }
-    }
-    lastStatus.current = state.status;
-  }, [
-    state.status,
-    state.stopReason,
-    state.sessionId,
-    resolved.workspaceRoot,
-    toasts,
-  ]);
-
   async function reloadConfig(verbose: boolean): Promise<void> {
     const loaded = await loadTuiConfig(props.initialCwd);
     const r = resolveConfig(loaded, props.cliOverrides, props.initialCwd);
@@ -596,51 +510,12 @@ function AppReady(
     }
   }
 
-  // Skill Evolution actions + the review-panel state they drive live in a
-  // dedicated hook so App carries the wiring, not the proposal/review/learn
-  // toast plumbing.
-  const skillActions = useSkillActions({
-    workspaceRoot: resolved.workspaceRoot,
-    toasts,
-    layers,
-    reloadConfig,
-    onProposalClosed: (proposalId) => {
-      store.clearPendingHumanAction(proposalId);
-    },
-    onProposalPrepared: () => {
-      void loadTuiSkillInboxAction(resolved.workspaceRoot)
-        .then((action) => store.setPendingHumanAction(action))
-        .catch(() => {});
-    },
-  });
-
-  // Proposal files are durable. Restore the most recent open proposal after a
-  // restart so the completion card is a convenience, never the only inbox.
-  useEffect(() => {
-    let cancelled = false;
-    void loadTuiSkillInboxAction(resolved.workspaceRoot)
-      .then((action) => {
-        if (!cancelled) store.setPendingHumanAction(action);
-      })
-      .catch(() => {
-        if (!cancelled) store.setPendingHumanAction(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [resolved.workspaceRoot, store]);
-
   // Capability browser + creation flow (panel snapshot state + handlers).
   const capActions = useCapabilityActions({
     workspaceRoot: resolved.workspaceRoot,
     controller,
     toasts,
     layers,
-    onSkillProposalPrepared: () => {
-      void loadTuiSkillInboxAction(resolved.workspaceRoot)
-        .then((action) => store.setPendingHumanAction(action))
-        .catch(() => {});
-    },
   });
 
   // Session browsing / diagnostics / labels / rename / fork / export.
@@ -741,7 +616,6 @@ function AppReady(
         controller,
         toasts,
         exit,
-        skillActions,
         capActions,
         sessionActions,
         taskActions,
@@ -763,7 +637,6 @@ function AppReady(
 
   function startGoal(value: string): void {
     quitArmedUntilRef.current = 0;
-    skillLearnGoalsRef.current.push(value);
     void controller.start(value);
   }
 
@@ -1097,13 +970,6 @@ function AppReady(
   // the only scrollable surface; very small screens degrade below the normal
   // 6–12 row range so the input and at least one transcript row stay visible.
   const streamingMax = resolveStreamingAnswerRows(screenRows);
-  const humanActionOwnsInput = Boolean(
-    !topLayer &&
-    state.pendingHumanAction &&
-    state.status !== "running" &&
-    state.status !== "awaiting-approval",
-  );
-
   function closeTopLayer(): void {
     if (!topLayer) return;
     layers.pop(topLayer.name);
@@ -1138,8 +1004,6 @@ function AppReady(
     loadingCapabilities: capActions.loadingCapabilities,
     skillsSnapshot: capActions.skillsSnapshot,
     loadingSkills: capActions.loadingSkills,
-    skillReviewSnapshot: skillActions.skillReviewSnapshot,
-    loadingSkillReview: skillActions.loadingSkillReview,
     notifications: toastSnapshot.history,
     onActivityTabChange: taskActions.handleActivityTabChange,
     onRefreshTasks: () => void taskActions.refreshTaskSnapshots(),
@@ -1157,9 +1021,6 @@ function AppReady(
     onCommitRename: sessionActions.commitRename,
     onApprovalDecision: (choice) => void controller.resolveApproval(choice),
     onCreateCapability: capActions.handleCreateCapability,
-    onUpdateSkillProposal: skillActions.handleUpdateSkillProposal,
-    onApplySkillReviewProposal: skillActions.applySkillReviewProposal,
-    onRejectSkillReviewProposal: skillActions.rejectSkillReviewProposal,
   } satisfies Omit<React.ComponentProps<typeof LayerRenderer>, "entry">;
 
   return (
@@ -1193,18 +1054,9 @@ function AppReady(
               errors={resolved.errors}
               queued={queued}
               showQueued
-              humanActionActive={humanActionOwnsInput}
-              onReviewHumanAction={(proposalId) =>
-                skillActions.reviewSkillProposalsFromSlash(proposalId)
-              }
-              onApplyHumanAction={skillActions.applySkillReviewProposal}
-              onDismissHumanAction={(proposalId) =>
-                store.clearPendingHumanAction(proposalId)
-              }
               onHeightChange={setLiveFrameRows}
             />
-            {humanActionOwnsInput ? null : transcriptViewport.mode ===
-              "detailed" ? (
+            {transcriptViewport.mode === "detailed" ? (
               <TranscriptBrowseFooter
                 onClose={toggleTranscriptDetails}
                 onLineUp={() => scrollTranscriptBy(-1)}

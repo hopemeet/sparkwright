@@ -10,6 +10,15 @@ See also [../maps/safety/approvals.md](../maps/safety/approvals.md) and [../maps
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-08-02
+- Scope: Host capability inspection no longer advertises Skill mutation tools,
+  and TUI removed proposal-specific presentation. Protocol schemas and generic
+  capability/tool/event envelopes are unchanged.
+- Read: Host capability snapshot test, TUI presentation cleanup, and Protocol
+  ownership boundary.
+- Tests: repository test typecheck and focused Host/TUI coverage passed.
+
 - Status: Verified
 - Date: 2026-07-30
 - Scope: the unused `agent_result_protocol_failure` RuntimeNotice code was

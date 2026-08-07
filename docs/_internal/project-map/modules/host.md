@@ -12,6 +12,17 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-08-02
+- Scope: removed Host-owned Skill proposal/history/registry/suggestion services,
+  model mutation tools, evolution config, and Stats rollups. Host retains
+  layered loading, read-only inspection, deterministic non-overwriting project
+  creation, doctor, usage loads, and trace-projection caches.
+- Read: Host exports, tools/catalog/identities, config/schema, runtime Skill
+  paths, creator, Stats, doctor, shell guidance, and focused tests.
+- Tests: Host build/typecheck, full Host suite, and the final four-case creator
+  regression passed; repository test typecheck and generated schema passed.
+
+- Status: Verified
 - Date: 2026-08-01
 - Scope: Host now validates `capabilities.web.security`, defaults the main-only
   `web_fetch` catalog entry to `system`, passes explicit `hardened` selection to

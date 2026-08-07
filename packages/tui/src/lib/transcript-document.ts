@@ -153,7 +153,6 @@ export function assembleTranscriptDocument(
     blocks.push(block);
   });
 
-  decorateProposalMutations(blocks, events);
   decorateRunTerminals(blocks, events);
   relinkStructuredParents(blocks);
   blocks.sort((left, right) => left.ordinal - right.ordinal);
@@ -536,10 +535,7 @@ function standaloneEventBlock(
       const action = str(payload.action) || "mutation";
       const path = compactMutationPath(str(payload.path));
       const reason = str(payload.reason);
-      const proposalMutation = path.includes(
-        ".sparkwright/skill-evolution/proposals/",
-      );
-      const block = base("notice", "detail", [
+      return base("notice", "detail", [
         row(
           `${key}:summary`,
           `◇ capability mutation ${action}${path ? ` ${path}` : ""}`,
@@ -548,8 +544,6 @@ function standaloneEventBlock(
         ),
         ...(reason ? [row(`${key}:reason`, `  ${reason}`, "muted")] : []),
       ]);
-      block.visibility = proposalMutation ? "detailed" : "always";
-      return block;
     }
     case "skill.loaded": {
       const name = str(payload.name) || "skill";
@@ -672,36 +666,6 @@ function formatTaskLifecycle(
     phase === "started" ? "ctrl+o activity" : undefined,
   ].filter(Boolean);
   return `${phase === "started" ? "background task" : "task"} ${phase}${details.length ? ` · ${details.join(" · ")}` : ""}`;
-}
-
-function decorateProposalMutations(
-  blocks: MutableTranscriptDocumentBlock[],
-  events: readonly RunEvent[],
-): void {
-  const counts = new Map<string, number>();
-  for (const event of events) {
-    if (event.type !== "capability.mutation.completed" || !event.spanId) {
-      continue;
-    }
-    const path = str(rec(event.payload).path).replace(/\\/gu, "/");
-    if (!path.includes(".sparkwright/skill-evolution/proposals/")) continue;
-    counts.set(event.spanId, (counts.get(event.spanId) ?? 0) + 1);
-  }
-  for (const [ordinal, event] of events.entries()) {
-    if (event.type !== "tool.completed" || !event.spanId) continue;
-    const count = counts.get(event.spanId);
-    if (!count) continue;
-    const key = correlationKey(event, ordinal);
-    const block = blocks.find((candidate) => candidate.key === key);
-    if (!block) continue;
-    block.summary.push(
-      row(
-        `${block.key}:internal-mutations`,
-        `  ${count} internal mutation${count === 1 ? "" : "s"}`,
-        "muted",
-      ),
-    );
-  }
 }
 
 interface RunFacts {

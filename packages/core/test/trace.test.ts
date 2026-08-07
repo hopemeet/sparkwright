@@ -3771,11 +3771,10 @@ describe("trace", () => {
   it("summarizes capability mutation events", () => {
     const log = new EventLog(createRunId());
     const jsonl = [
-      log.emit("run.created", { goal: "draft skill proposal" }),
+      log.emit("run.created", { goal: "create an agent profile" }),
       log.emit("capability.mutation.completed", {
-        action: "replace_skill_package",
-        path: ".sparkwright/skill-evolution/proposals/skillprop_1/after/demo",
-        sourcePath: ".sparkwright/skills/demo",
+        action: "write_text",
+        path: ".sparkwright/agents/reviewer.md",
         fileCount: 2,
       }),
       log.emit("run.completed", { state: "completed" }),

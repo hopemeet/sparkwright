@@ -4,7 +4,6 @@ export type ToolResultKind =
   | "file_read"
   | "anchored_read"
   | "workspace_write"
-  | "skill_mutation"
   | "shell"
   | "agent"
   | "skill_load"
@@ -15,7 +14,6 @@ export function classifyToolResult(value: unknown): ToolResultKind | null {
   if (isFileReadResult(value)) return "file_read";
   if (isAnchoredReadResult(value)) return "anchored_read";
   if (isWorkspaceWriteToolResult(value)) return "workspace_write";
-  if (isSkillMutationToolResult(value)) return "skill_mutation";
   if (isShellResult(value)) return "shell";
   if (isParentAgentResult(value)) return "agent";
   if (isSkillLoadResult(value)) return "skill_load";
@@ -62,33 +60,9 @@ export function isWorkspaceWriteToolResult(value: unknown): boolean {
   const r = value as Record<string, unknown>;
   return (
     typeof r.path === "string" &&
-    (typeof r.changed === "boolean" ||
-      typeof r.hunksApplied === "number" ||
-      typeof r.proposalId === "string") &&
+    (typeof r.changed === "boolean" || typeof r.hunksApplied === "number") &&
     ("content" in r || "diff" in r || "summary" in r)
   );
-}
-
-export function isSkillMutationToolResult(value: unknown): boolean {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return false;
-  }
-  const r = value as Record<string, unknown>;
-  if (typeof r.action !== "string" || typeof r.changed !== "boolean") {
-    return false;
-  }
-  if (r.action === "create") {
-    return typeof r.name === "string" && typeof r.path === "string";
-  }
-  if (r.action === "draft") {
-    return (
-      typeof r.proposalId === "string" && typeof r.proposalPath === "string"
-    );
-  }
-  if (r.action === "apply") {
-    return typeof r.proposalId === "string";
-  }
-  return false;
 }
 
 export function isShellResult(value: unknown): boolean {

@@ -10,7 +10,6 @@ import { StatusBar } from "./status-bar.js";
 import { StreamingMessage } from "./streaming-message.js";
 import { TodoBand } from "./todo-band.js";
 import { ToastView } from "./toast.js";
-import { SkillProposalCompletionCard } from "./skill-proposal-completion-card.js";
 import { InlineDiagnostic } from "./inline-diagnostic.js";
 
 export function LiveFrame(props: {
@@ -29,10 +28,6 @@ export function LiveFrame(props: {
   errors: ValidationError[];
   queued: readonly string[];
   showQueued: boolean;
-  humanActionActive: boolean;
-  onReviewHumanAction: (proposalId: string) => void;
-  onApplyHumanAction: (proposalId: string) => Promise<boolean>;
-  onDismissHumanAction: (proposalId: string) => void;
   onHeightChange?: (rows: number) => void;
 }): React.ReactElement {
   const theme = useTheme();
@@ -119,18 +114,6 @@ export function LiveFrame(props: {
       ) : null}
 
       <ToastView toast={props.toast} queueDepth={props.toastQueueDepth} />
-
-      {props.state.pendingHumanAction &&
-      props.state.status !== "running" &&
-      props.state.status !== "awaiting-approval" ? (
-        <SkillProposalCompletionCard
-          action={props.state.pendingHumanAction}
-          active={props.humanActionActive}
-          onReview={props.onReviewHumanAction}
-          onApply={props.onApplyHumanAction}
-          onDismiss={props.onDismissHumanAction}
-        />
-      ) : null}
 
       {props.errors.length > 0 ? (
         <Box paddingX={1}>

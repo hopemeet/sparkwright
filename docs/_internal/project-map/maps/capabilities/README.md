@@ -8,6 +8,17 @@ cron, shell/task tools, and capability inspection.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-08-02
+- Scope: Skill capability mutation is no longer a model authority surface.
+  `list_skills`/`skill_load`, deterministic project creation, ordinary
+  controlled file edits, and trace-derived Stats remain; proposal/history and
+  learning paths are retired.
+- Read: Host tool catalog/config, Skill capability and retired evolution maps,
+  CLI/TUI surfaces, schemas, and focused tests.
+- Tests: affected builds/typechecks and focused Host/CLI/TUI coverage passed
+  before final gates.
+
+- Status: Verified
 - Date: 2026-08-01
 - Scope: `web` still expands only to main-run `web_fetch`; Host now adds the
   orthogonal `capabilities.web.security` transport knob with default `system`

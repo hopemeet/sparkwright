@@ -10,7 +10,6 @@ import type { LayerStack } from "./layer-stack.js";
 import type { NotificationStore } from "./notification-store.js";
 import type { CapabilityActions } from "./use-capability-actions.js";
 import type { SessionActions } from "./use-session-actions.js";
-import type { SkillActions } from "./use-skill-actions.js";
 import type { TaskActions } from "./use-task-actions.js";
 import type { WorkflowActions } from "./use-workflow-actions.js";
 
@@ -111,7 +110,6 @@ interface BuildCommandRegistryDeps {
   controller: RunController;
   toasts: NotificationStore;
   exit: () => void;
-  skillActions: SkillActions;
   capActions: CapabilityActions;
   sessionActions: SessionActions;
   taskActions: Pick<TaskActions, "openActivity">;
@@ -146,7 +144,6 @@ export function buildCommandRegistry(
     controller,
     toasts,
     exit,
-    skillActions,
     capActions,
     sessionActions,
     taskActions,
@@ -387,35 +384,6 @@ export function buildCommandRegistry(
     hiddenByDefault: true,
     run: () => capActions.openCreateCapability(),
     runRaw: (rest) => capActions.openCreateCapability(rest),
-  });
-  reg.register({
-    name: "skill-update",
-    title: "Draft Skill update",
-    description:
-      "Create a hash-gated update/fork proposal interactively or from arguments.",
-    category: "capability",
-    hiddenByDefault: true,
-    run: () => skillActions.openSkillUpdateProposal(),
-    runRaw: skillActions.openSkillUpdateProposal,
-  });
-  reg.register({
-    name: "skill-review",
-    title: "Review Skill proposals",
-    description:
-      "Review Skill proposals; optionally pass a proposal id or state like draft.",
-    category: "capability",
-    hiddenByDefault: true,
-    run: () => skillActions.reviewSkillProposalsFromSlash(""),
-    runRaw: skillActions.reviewSkillProposalsFromSlash,
-  });
-  reg.register({
-    name: "skill-learn",
-    title: "Set Skill learning mode",
-    description: "Show or set Skill Evolution mode: off, notice, draft, apply.",
-    category: "capability",
-    hiddenByDefault: true,
-    run: () => skillActions.handleSkillLearn(""),
-    runRaw: skillActions.handleSkillLearn,
   });
   reg.register({
     name: "model",

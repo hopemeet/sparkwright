@@ -2,7 +2,11 @@ import type { RunEvent } from "../lib/event-type.js";
 import type { ApprovalViewModel } from "../lib/approval-view-model.js";
 
 export type Status =
-  "idle" | "running" | "awaiting-approval" | "done" | "error";
+  | "idle"
+  | "running"
+  | "awaiting-approval"
+  | "done"
+  | "error";
 
 export interface InlineDiagnosticState {
   id: string;
@@ -128,25 +132,12 @@ export interface StoreState {
    * @reserved Public TUI store field consumed by App live-frame rendering.
    */
   activePhase: ActivePhase | null;
-  /** Host-computed human-only follow-up action offered after a tool result. */
-  pendingHumanAction: PendingHumanAction | null;
   /**
    * Bumped by clearEvents()/reset(). App combines this with sessionId to form
    * the TranscriptDocument epoch, resetting semantic anchors without mutating
    * RunController's independent export buffer.
    */
   clearGeneration: number;
-}
-
-export interface PendingHumanAction {
-  kind: "skill_proposal_review";
-  proposalId: string;
-  reviewCommand: string;
-  eligibility: "quick_apply" | "review_required" | "force_required";
-  validationStatus: "passed";
-  contentMode?: string;
-  guardSeverity: "none" | "caution" | "dangerous";
-  recommendedAction: "apply" | "review";
 }
 
 type Listener = () => void;
@@ -169,7 +160,6 @@ export class EventStore {
     todoItems: [],
     usage: null,
     activePhase: null,
-    pendingHumanAction: null,
     clearGeneration: 0,
   };
   private listeners = new Set<Listener>();
@@ -346,7 +336,6 @@ export class EventStore {
     let modifiedFiles = this.state.modifiedFiles;
     let todoItems = this.state.todoItems;
     let usage = this.state.usage;
-    let pendingHumanAction = this.state.pendingHumanAction;
     this.updateActivePhases(event);
 
     if (event.type.startsWith("workspace.write")) {
@@ -391,10 +380,6 @@ export class EventStore {
       }
     } else if (event.type === "tool.completed") {
       const payload = rec(event.payload);
-      const offeredAction = parsePendingHumanAction(
-        rec(payload.output ?? payload.result).humanAction,
-      );
-      if (offeredAction) pendingHumanAction = offeredAction;
       const callId = todoToolCallId(payload);
       const proposed = callId
         ? this.pendingTodoProposals.get(callId)
@@ -427,22 +412,8 @@ export class EventStore {
       modifiedFiles,
       todoItems,
       usage,
-      pendingHumanAction,
       activePhase: this.deriveActivePhase(),
     };
-    this.schedule();
-  }
-
-  clearPendingHumanAction(proposalId?: string): void {
-    const current = this.state.pendingHumanAction;
-    if (!current || (proposalId && current.proposalId !== proposalId)) return;
-    this.state = { ...this.state, pendingHumanAction: null };
-    this.schedule();
-  }
-
-  /** Restore a durable Skill inbox item after TUI startup or capability create. */
-  setPendingHumanAction(action: PendingHumanAction | null): void {
-    this.state = { ...this.state, pendingHumanAction: action };
     this.schedule();
   }
 
@@ -528,7 +499,6 @@ export class EventStore {
       modifiedFiles: [],
       todoItems: [],
       activePhase: null,
-      pendingHumanAction: null,
       clearGeneration: this.state.clearGeneration + 1,
     };
     this.schedule();
@@ -559,7 +529,6 @@ export class EventStore {
       todoItems: [],
       usage: null,
       activePhase: null,
-      pendingHumanAction: null,
       clearGeneration: this.state.clearGeneration + 1,
     };
     this.schedule();
@@ -783,38 +752,6 @@ function rec(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
-}
-
-function parsePendingHumanAction(value: unknown): PendingHumanAction | null {
-  const action = rec(value);
-  if (
-    action.kind !== "skill_proposal_review" ||
-    typeof action.proposalId !== "string" ||
-    typeof action.reviewCommand !== "string" ||
-    (action.eligibility !== "quick_apply" &&
-      action.eligibility !== "review_required" &&
-      action.eligibility !== "force_required") ||
-    action.validationStatus !== "passed" ||
-    (action.guardSeverity !== "none" &&
-      action.guardSeverity !== "caution" &&
-      action.guardSeverity !== "dangerous") ||
-    (action.recommendedAction !== "apply" &&
-      action.recommendedAction !== "review")
-  ) {
-    return null;
-  }
-  return {
-    kind: "skill_proposal_review",
-    proposalId: action.proposalId,
-    reviewCommand: action.reviewCommand,
-    eligibility: action.eligibility,
-    validationStatus: "passed",
-    ...(typeof action.contentMode === "string"
-      ? { contentMode: action.contentMode }
-      : {}),
-    guardSeverity: action.guardSeverity,
-    recommendedAction: action.recommendedAction,
-  };
 }
 
 function firstString(...values: unknown[]): string | null {

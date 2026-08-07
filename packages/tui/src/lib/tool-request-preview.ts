@@ -46,11 +46,6 @@ export function formatToolRequestPreview(
         : "";
     return truncatePlain(`query=${query}${limit}`, max);
   }
-  if (r && (name === "create_skill" || name === "update_skill")) {
-    const action = str(r.action);
-    const skill = str(r.name);
-    return truncatePlain([action, skill].filter(Boolean).join(" "), max);
-  }
   if (r && (name === "task" || name === "task_create")) {
     const action = str(r.action) || (name === "task_create" ? "create" : "");
     const taskId = str(r.taskId);

@@ -660,10 +660,8 @@ export function createSkillLoaderTool(
           requestedName: args.name,
           availableSkills: [...byName.keys()].sort(),
           hint:
-            "This name is not a loadable skill. If you just drafted it with " +
-            "create_skill it exists only as a proposal and is NOT loadable " +
-            "until a human applies it — do not retry skill_load for it. " +
-            "Otherwise pick a name from availableSkills.",
+            "This name is not a loadable Skill. Pick a name from " +
+            "availableSkills, or create a project Skill before retrying.",
         };
       }
 
@@ -1112,15 +1110,6 @@ export {
   FileSkillUsageRecorder,
   type FileSkillUsageRecorderOptions,
 } from "./usage-file.js";
-export {
-  inspectSkill,
-  type InspectSkillOptions,
-  type SkillFindingSeverity,
-  type SkillGuardDecision,
-  type SkillGuardDecisionKind,
-  type SkillGuardFinding,
-  type SkillTrustLevel,
-} from "./guard.js";
 export {
   preprocessSkillContentAsync,
   preprocessSkillContent,

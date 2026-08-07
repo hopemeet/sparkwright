@@ -13,7 +13,11 @@ export { formatToolRequestPreview, oneLine };
 
 export type ToolDisplayMode = "live" | "export";
 export type ToolDisplayTone =
-  "muted" | "success" | "warning" | "error" | "normal";
+  | "muted"
+  | "success"
+  | "warning"
+  | "error"
+  | "normal";
 
 export type ToolResultDisplay =
   | { kind: "hidden"; reason: string }
@@ -87,10 +91,6 @@ export function summarizeToolResultForDisplay(input: {
     );
   }
 
-  if (resultKind === "skill_mutation") {
-    return summarizeSkillMutation(r);
-  }
-
   if (resultKind === "shell") {
     const { head, lines, timedOut } = summarizeShellResult(input.result);
     return {
@@ -134,36 +134,6 @@ export function summarizeToolResultForDisplay(input: {
     details: truncated ? [...lines, "…"] : lines,
     tone: "muted",
   };
-}
-
-function summarizeSkillMutation(r: Record<string, unknown>): ToolResultDisplay {
-  const action = str(r.action) || "skill";
-  const name = str(r.name);
-  const proposalId = str(r.proposalId);
-  const changed = r.changed === false ? "unchanged" : "changed";
-  const path = compactMutationPath(str(r.path) || str(r.proposalPath));
-  const internalMutationCount =
-    typeof r.internalMutationCount === "number"
-      ? r.internalMutationCount
-      : undefined;
-  const label =
-    action === "draft"
-      ? "skill proposal"
-      : action === "apply"
-        ? "skill proposal applied"
-        : "skill mutation";
-  return summary(
-    `${label} ${proposalId || name || action}`,
-    [
-      changed,
-      path,
-      internalMutationCount
-        ? `${internalMutationCount} internal mutations`
-        : "",
-      action === "draft" ? "draft only; original Skill package unchanged" : "",
-    ],
-    "success",
-  );
 }
 
 function summarizeSkillLoad(r: Record<string, unknown>): ToolResultDisplay {

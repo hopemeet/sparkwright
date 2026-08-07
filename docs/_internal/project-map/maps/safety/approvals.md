@@ -9,6 +9,15 @@ See [workspace-writes.md](workspace-writes.md) and [shell.md](shell.md).
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-08-02
+- Scope: retired Skill proposal apply approvals with the self-evolution
+  surface. Core workspace/tool approval semantics and remaining capability
+  approvals are unchanged.
+- Read: removed Skill service/tool paths, Host approval policy, CLI/TUI
+  consumers, and focused tests.
+- Tests: affected builds/typechecks and focused Host/TUI coverage passed.
+
 - Status: Verified
 - Date: 2026-08-01
 - Scope: removing `web_fetch` pagination does not change approval identity.

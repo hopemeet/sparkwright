@@ -15,8 +15,6 @@ import { ModelDialog } from "./model-dialog.js";
 import { NotificationPanel } from "./notification-panel.js";
 import { SessionListDialog } from "./session-list-dialog.js";
 import { SessionRenameDialog } from "./session-rename-dialog.js";
-import { SkillProposalDialog } from "./skill-proposal-dialog.js";
-import { SkillReviewDialog } from "./skill-review-dialog.js";
 import { SkillsPanel } from "./skills-panel.js";
 import { WorkflowPanel } from "./workflow-panel.js";
 import { ForkDialog } from "./fork-dialog.js";
@@ -26,10 +24,6 @@ import type { CreateCapabilityDraft } from "../lib/create-capability.js";
 import type { RunEvent } from "../lib/event-type.js";
 import type { ApprovalChoice } from "../lib/session-approval.js";
 import type { SessionDiagnostics, SessionSummary } from "../lib/sessions.js";
-import type {
-  TuiSkillProposalInput,
-  TuiSkillReviewDetail,
-} from "../lib/skill-evolution.js";
 import type { LayerEntry } from "../state/layer-stack.js";
 import type { UiSignal } from "../lib/ui-signal.js";
 import type { UsageSummary } from "../state/event-store.js";
@@ -62,8 +56,6 @@ export function LayerRenderer(props: {
   loadingCapabilities: boolean;
   skillsSnapshot: TuiSkillsBrowserSnapshot | null;
   loadingSkills: boolean;
-  skillReviewSnapshot: TuiSkillReviewDetail | null;
-  loadingSkillReview: boolean;
   notifications: readonly UiSignal[];
   onCloseTop: () => void;
   onActivityTabChange?: (tab: ActivityTab) => void;
@@ -85,9 +77,6 @@ export function LayerRenderer(props: {
   ) => void;
   onApprovalDecision: (choice: ApprovalChoice) => void;
   onCreateCapability: (draft: CreateCapabilityDraft) => void;
-  onUpdateSkillProposal: (draft: TuiSkillProposalInput) => void;
-  onApplySkillReviewProposal: (proposalId: string) => void;
-  onRejectSkillReviewProposal: (proposalId: string) => void;
 }): React.ReactElement | null {
   const entry = props.entry;
   switch (entry.name) {
@@ -214,25 +203,6 @@ export function LayerRenderer(props: {
           initialKind={entry.payload.kind}
           onCancel={props.onCloseTop}
           onCommit={props.onCreateCapability}
-        />
-      );
-    case "skill-update":
-      return (
-        <SkillProposalDialog
-          initialName={entry.payload?.name}
-          onCancel={props.onCloseTop}
-          onCommit={props.onUpdateSkillProposal}
-        />
-      );
-    case "skill-review":
-      return (
-        <SkillReviewDialog
-          review={props.skillReviewSnapshot}
-          loading={props.loadingSkillReview}
-          workspaceRoot={props.resolved.workspaceRoot}
-          onApply={props.onApplySkillReviewProposal}
-          onReject={props.onRejectSkillReviewProposal}
-          onCancel={props.onCloseTop}
         />
       );
     default:

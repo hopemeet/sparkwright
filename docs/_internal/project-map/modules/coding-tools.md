@@ -11,6 +11,14 @@ See also [../maps/runtime/tool-orchestration.md](../maps/runtime/tool-orchestrat
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-08-02
+- Scope: existing Skill changes now use ordinary controlled coding writes after
+  privileged Skill mutation tools were removed. Coding-tool CAS, validation,
+  target scope, and tool definitions are unchanged.
+- Read: Host tool inventory/shell guidance and unchanged coding-tool boundary.
+- Tests: focused Host catalog/tools and repository test typecheck passed.
+
 - Status: Verified
 - Date: 2026-07-30
 - Scope: project-context delegation guidance now treats a child report as

@@ -9,6 +9,14 @@ See [session-store.md](session-store.md) and [../runtime/context-compaction.md](
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-08-02
+- Scope: TUI automatic Skill learning and pending proposal human-action state
+  were removed. Session resume/replay identity and canonical event replay are
+  unchanged.
+- Read: TUI App/EventStore cleanup and existing session replay ownership.
+- Tests: focused TUI EventStore/render coverage and typecheck passed.
+
 - Status: Verified
 - Date: 2026-07-30
 - Scope: runtime Agent outcome projection does not interpret retired terminal

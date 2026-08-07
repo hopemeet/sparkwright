@@ -82,8 +82,11 @@ export type SystemWebRequest = (
 ) => Promise<SingleResponse>;
 
 export interface SystemProxyOptions {
+  /** @reserved Proxy option consumed structurally by undici's EnvHttpProxyAgent. */
   httpProxy: string;
+  /** @reserved Proxy option consumed structurally by undici's EnvHttpProxyAgent. */
   httpsProxy: string;
+  /** @reserved Proxy option consumed structurally by undici's EnvHttpProxyAgent. */
   noProxy: string;
 }
 

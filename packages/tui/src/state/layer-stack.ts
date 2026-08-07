@@ -16,10 +16,6 @@ export interface LayerPayloads {
   notifications: undefined;
   capabilities: { view: CapabilityView };
   create: { kind?: CreateCapabilityKind };
-  /** @reserved Typed route key consumed through LayerName by Skill action hooks/renderers. */
-  "skill-update": { name?: string } | undefined;
-  /** @reserved Typed route key consumed through LayerName by Skill action hooks/renderers. */
-  "skill-review": undefined;
   "session-rename": undefined;
 }
 
@@ -46,7 +42,7 @@ type PayloadArgs<K extends LayerName> = LayerPayloads[K] extends undefined
 const ROUTE_ORDER: readonly (readonly LayerName[])[] = [
   ["help", "config", "notifications"],
   ["workflow"],
-  ["capabilities", "create", "skill-update", "skill-review", "model"],
+  ["capabilities", "create", "model"],
   ["sessions", "fork"],
   ["activity"],
   ["session-rename"],

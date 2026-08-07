@@ -9,6 +9,17 @@ See also [../maps/trace/summary-timeline-verify.md](../maps/trace/summary-timeli
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-08-02
+- Scope: CLI Skill management is now `list|create|validate|stats|doctor` only.
+  `create` publishes one deterministic project scaffold without overwrite;
+  proposal/review/reconcile/history/restore routes were removed. Stats no
+  longer reads evolution data and preserves bounded trace-cache behavior.
+- Read: CLI Skill parser/handlers/help/rendering, run outcome fixtures, schemas,
+  regression script, public docs, and focused tests.
+- Tests: CLI typecheck, repository test typecheck, and focused CLI 18/18 passed
+  before final gates.
+
+- Status: Verified
 - Date: 2026-07-30
 - Scope: root workspace builds now remove each package's `dist/` immediately
   before rebuilding it, so deleted source modules cannot survive as orphaned

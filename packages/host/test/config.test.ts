@@ -466,9 +466,6 @@ describe("loadHostConfig", () => {
             resourceFileLimit: 5,
             allowedSkills: ["reviewer"],
             deniedSkills: ["dangerous"],
-            evolution: {
-              mode: "draft",
-            },
           },
         },
       });
@@ -482,9 +479,6 @@ describe("loadHostConfig", () => {
         resourceFileLimit: 5,
         allowedSkills: ["reviewer"],
         deniedSkills: ["dangerous"],
-        evolution: {
-          mode: "draft",
-        },
       });
     } finally {
       await rm(xdg, { recursive: true, force: true });
@@ -2035,9 +2029,7 @@ describe("loadHostConfig", () => {
         ),
       ).toBe(true);
       expect(
-        loaded.errors.some(
-          (e) => e.field === "capabilities.skills.evolution.mode",
-        ),
+        loaded.errors.some((e) => e.field === "capabilities.skills.evolution"),
       ).toBe(true);
       expect(
         loaded.errors.some(

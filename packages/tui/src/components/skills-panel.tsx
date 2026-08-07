@@ -131,12 +131,6 @@ function SkillRow(props: {
       </Text>
       <Text color={theme.muted}>{props.skill.layer.padEnd(11)}</Text>
       <Text>{countLabel(props.skill.loadedCount, "load")}</Text>
-      {props.skill.draftCount > 0 ? (
-        <Text color={theme.warning}>
-          {" · "}
-          {countLabel(props.skill.draftCount, "draft")}
-        </Text>
-      ) : null}
     </Box>
   );
 }
@@ -176,7 +170,6 @@ function SkillDetail(props: {
           label="Related tool failures"
           value={`${skill.relatedToolFailures.unresolved} unresolved · ${skill.relatedToolFailures.total} total`}
         />
-        <DetailRow label="Drafts" value={String(skill.draftCount)} />
         <DetailRow label="Source" value={source} />
       </Box>
       <Box marginTop={1} flexDirection="column">

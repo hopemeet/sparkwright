@@ -12,6 +12,14 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md),
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-08-02
+- Scope: neutralized self-evolution-specific capability mutation test fixtures.
+  Core event, trace summary, path display, policy, and run contracts are
+  unchanged.
+- Read: Core trace/path fixtures and downstream Host/CLI/TUI removals.
+- Tests: Core trace/path 139/139 after correcting the display fixture.
+
 - Status: Verified
 - Date: 2026-08-01
 - Scope: Core recognizes `web_content` as a tool-result presentation kind and

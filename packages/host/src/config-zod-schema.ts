@@ -604,21 +604,6 @@ export const verificationSchema = z
   );
 export const VERIFICATION_CONFIG_KEYS = verificationSchema.keyof().options;
 
-export const skillEvolutionModeSchema = z.enum([
-  "off",
-  "notice",
-  "draft",
-  "apply",
-]);
-export const SKILL_EVOLUTION_MODES = skillEvolutionModeSchema.options;
-
-export const skillEvolutionSchema = z
-  .object({
-    mode: skillEvolutionModeSchema.optional(),
-  })
-  .strict();
-export const SKILL_EVOLUTION_CONFIG_KEYS = skillEvolutionSchema.keyof().options;
-
 export const skillInlineShellSchema = z
   .object({
     enabled: z.boolean().optional(),
@@ -648,7 +633,6 @@ export const skillsSchema = z
     resourceFileLimit: nonNegativeInteger.optional(),
     allowedSkills: stringArray.optional(),
     deniedSkills: stringArray.optional(),
-    evolution: skillEvolutionSchema.optional(),
     inlineShell: skillInlineShellSchema.optional(),
   })
   .strict()
@@ -1072,12 +1056,6 @@ export type CapabilityVerificationAfterWritesConfig = NonNullable<
 >;
 export type CapabilityVerificationConfig = z.output<typeof verificationSchema>;
 export type CapabilitySkillsConfig = z.output<typeof skillsSchema>;
-export type CapabilitySkillEvolutionMode = z.output<
-  typeof skillEvolutionModeSchema
->;
-export type CapabilitySkillEvolutionConfig = NonNullable<
-  z.output<typeof skillsSchema>["evolution"]
->;
 export type CapabilitySkillInlineShellConfig = NonNullable<
   z.output<typeof skillsSchema>["inlineShell"]
 >;

@@ -9,6 +9,14 @@ See [../trace/raw-trace.md](../trace/raw-trace.md) for raw event evidence.
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-08-02
+- Scope: Skill Stats continues to read session and child-agent traces through
+  bounded selection and rebuildable projections. Session-store persistence,
+  repair, compaction, and resume contracts are unchanged.
+- Read: Host Skill Stats selectors/cache and CLI session-root routing.
+- Tests: focused CLI Stats/cache coverage and repository test typecheck passed.
+
 - Status: Verified
 - Date: 2026-07-30
 - Scope: stored event families and layout are unchanged. Session-derived child

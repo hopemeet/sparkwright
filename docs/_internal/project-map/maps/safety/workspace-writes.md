@@ -9,6 +9,15 @@ See [approvals.md](approvals.md) and [../runtime/tool-orchestration.md](../runti
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-08-02
+- Scope: existing Skill updates now use ordinary controlled workspace edits;
+  removing the proposal service did not change Core workspace revision,
+  approval, target-scope, or shell rollback contracts.
+- Read: Host deterministic creator, shell audit, controlled write tools, and
+  removed mutation service boundaries.
+- Tests: focused Host creator/tools and repository test typecheck passed.
+
 - Status: Verified
 - Date: 2026-07-26
 - Scope: parent Agent results now carry runtime-owned

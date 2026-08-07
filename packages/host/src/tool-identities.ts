@@ -71,14 +71,6 @@ const ADVANCED_BY_NAME: Record<string, BuiltinToolIdentity> = {
     canonicalName: "list_skills",
     defaultExposureTier: "advanced",
   },
-  create_skill: {
-    canonicalName: "create_skill",
-    defaultExposureTier: "advanced",
-  },
-  update_skill: {
-    canonicalName: "update_skill",
-    defaultExposureTier: "advanced",
-  },
   list_agents: {
     canonicalName: "list_agents",
     defaultExposureTier: "advanced",

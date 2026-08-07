@@ -450,10 +450,6 @@ function skillToolHint(name: string): string {
   switch (name) {
     case "list_skills":
       return "managed Skill inventory; shows built-in, user, and project packages";
-    case "create_skill":
-      return "managed Skill evolution; draft create proposal first, apply only when requested";
-    case "update_skill":
-      return "managed Skill evolution; draft proposal first, apply only when requested";
     default:
       return "";
   }

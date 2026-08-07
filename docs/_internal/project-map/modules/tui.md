@@ -11,6 +11,27 @@ See also [../maps/trace/export-diagnostics.md](../maps/trace/export-diagnostics.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-08-02
+- Scope: removed Skill proposal/review/learning commands, layers, dialogs,
+  completion handoffs, automatic learning, and draft counts. `/skills` remains
+  a read-only exact-identity Stats browser; `/create skill` now publishes the
+  deterministic non-overwriting project scaffold.
+- Read: App/layer/command/EventStore wiring, creation and Skills browser paths,
+  transcript/tool presentation, docs, and focused tests.
+- Tests: TUI typecheck and focused TUI 70/70 passed before final gates.
+
+- Status: Verified
+- Date: 2026-08-02
+- Scope: public and built-in TUI guidance now distinguishes bounded in-flight
+  reasoning/answer previews from the unabridged committed assistant answer, so
+  the temporary fold and atomic completion handoff are not mistaken for lost
+  output. Rendering behavior and transcript ownership are unchanged.
+- Read: TUI streaming renderer/EventStore contracts, public User Manual, and
+  built-in CLI/TUI reference.
+- Tests: focused streaming rendering, formatting, and Markdown links passed;
+  project-map drift completed.
+
+- Status: Verified
 - Date: 2026-08-01
 - Scope: live model output now hands off atomically to the committed transcript.
   `model.stream.completed` retains the reasoning/answer preview because it only
