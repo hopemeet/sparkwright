@@ -10,6 +10,16 @@ See [tool-orchestration.md](tool-orchestration.md) and [../trace/raw-trace.md](.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-08-07
+- Scope: corrected the low-level RunHook boundary to list only executable
+  model/tool/event callbacks; the never-invoked loop-wide `onError` field was
+  removed without adding error-routing behavior.
+- Read: Core RunHook definition/composition, public exports, run-loop dispatch,
+  and extension/protocol references.
+- Tests: full Core 674/674, all workspace builds/typechecks, repository lint,
+  schema checks, and import/package boundary checks passed.
+
+- Status: Verified
 - Date: 2026-07-30
 - Scope: forced step-budget wrap-up records partial alongside
   `stepLimitReached` and `truncated`. Ordinary natural finals and generic
@@ -546,6 +556,10 @@ createRun/resumeRunFromCheckpoint
 - Host event hook rules are outside the awaited `workflowHooks` array. They
   subscribe to run events through `bindUserHooks()`, so slow or failed event
   actions emit `user_hook.*` diagnostics without blocking the run loop.
+- Low-level `RunHook` callbacks observe model, tool, and event boundaries in
+  process. Each callback is fault-isolated and logged; there is no loop-wide
+  `RunHook.onError` phase. Embedders that need failure telemetry observe the
+  emitted failure events through `RunHook.onEvent`.
 - The `workflowHooks` array, by contrast, is awaited at each lifecycle gate
   because its results (`block`/`advance`/`rewrite`/`continue` context)
   deterministically steer the loop — you cannot block a `Stop`, advance a

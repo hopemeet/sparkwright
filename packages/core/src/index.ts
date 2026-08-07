@@ -667,7 +667,6 @@ export type {
   ModelCallHookInput,
   ModelOutputHookInput,
   EventHookInput,
-  ErrorHookInput,
 } from "./hooks.js";
 export { combineRunHooks, createDynamicHookSet } from "./hooks.js";
 

@@ -12,6 +12,16 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md),
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-08-07
+- Scope: removed the never-invoked `RunHook.onError` callback and its exported
+  input type. The remaining model/tool/event callbacks keep their existing
+  fault-isolated behavior; project policy remains on `WorkflowHook`.
+- Read: Core RunHook definition/composition, run-loop dispatch, public barrel,
+  focused tests, and extension/protocol references.
+- Tests: full Core 674/674, all workspace builds/typechecks, repository lint,
+  schema checks, and import/package boundary checks passed.
+
 - Status: Read-only
 - Date: 2026-08-02
 - Scope: neutralized self-evolution-specific capability mutation test fixtures.
@@ -333,6 +343,7 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md),
 - `packages/core/src/path-display.ts`
 - `packages/core/src/session.ts`
 - `packages/core/src/events.ts`
+- `packages/core/src/hooks.ts`
 - `packages/core/src/user-hooks.ts`
 - `packages/core/src/workflow-hooks.ts`
 - `packages/core/src/fact-classifier.ts`
@@ -703,8 +714,10 @@ Does not own:
   `capabilities.hooks.events` uses the user-hook event lane outside the awaited
   workflow hook executor. `RunHook.beforeToolCall.skip` remains a lower-level
   embedder/instrumentation seam, not the recommended surface for project
-  policy. The parallel `ValidationHook` stage executor has been removed;
-  deterministic policy belongs to `WorkflowHook`.
+  policy. Its executable callbacks cover only model, tool, and event boundaries;
+  there is no loop-wide `onError` callback. Individual callback failures are
+  caught and logged. The parallel `ValidationHook` stage executor has been
+  removed; deterministic policy belongs to `WorkflowHook`.
 - Trace safety summaries count `workspace.write.untracked_access_granted` as
   `untrackedWriteCapableProcesses` for compatibility, separate from managed
   `workspace.write.completed` counts.

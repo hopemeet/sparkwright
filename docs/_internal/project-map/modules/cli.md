@@ -9,6 +9,16 @@ See also [../maps/trace/summary-timeline-verify.md](../maps/trace/summary-timeli
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-08-07
+- Scope: clarified that internal Direct Core diagnostics do not promise Host
+  feature parity, specifically configured HTTP Event Hook transport. Normal
+  host-backed runs remain the user-facing HTTP Event Hook path.
+- Read: CLI direct-core gate/runner, Host event-hook binding, architecture and
+  configuration references.
+- Tests: focused Direct Core diagnostics-gate test, all workspace
+  builds/typechecks, and repository lint passed; no CLI runtime code changed.
+
+- Status: Verified
 - Date: 2026-08-02
 - Scope: CLI Skill management is now `list|create|validate|stats|doctor` only.
   `create` publishes one deterministic project scaffold without overwrite;
@@ -41,8 +51,8 @@ See also [../maps/trace/summary-timeline-verify.md](../maps/trace/summary-timeli
 - Date: 2026-07-25
 - Scope: Direct Core continues to use Host's workflow-hook assembly, but no
   longer passes goal/write context for an implicit documented-command Stop
-  gate. Configured hooks and explicit verification profiles retain parity with
-  Host runs.
+  gate. Configured workflow hooks and explicit verification profiles retain
+  parity with Host runs.
 - Read: Direct Core run assembly, Host workflow-hook options, capability rule
   projection, and affected typecheck paths.
 - Tests: CLI 186/186, repository test typecheck, Host focused/full suites,
@@ -339,6 +349,10 @@ Does not own:
   surface. P1.5 removes the experimental environment gate; the flag remains
   unsupported on `--direct-core`. Ordinary runs omit the field and keep existing
   behavior.
+- `--direct-core` is an environment-gated internal diagnostic path, not a
+  second production runtime. It does not promise Host feature parity;
+  configured HTTP Event Hook transport is user-facing only through normal
+  host-backed runs.
 - Run flags expose `--trace-level standard|debug`.
 - Live run output formats `capability.index.failed` payload details when
   present, including warning severity, capability kind/code, profile id, and a

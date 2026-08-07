@@ -274,7 +274,9 @@ Current event types:
   can include `protocol`, `childRunId`, `taskId`, and shell sandbox status.
 - `usage.updated`: a per-run usage aggregator emitted a fresh snapshot
   (tokens, cost, wall time, per-tool, per-model). Payload: `UsageSnapshot`.
-- `hook.failed`: a `RunHook.*` callback threw. Payload:
+- `hook.failed`: defensive signal that aggregate `RunHook` dispatch escaped its
+  fault-isolation boundary. Individual callback failures are normally caught
+  and logged before reaching this boundary. Payload:
   `{ phase: string, toolName?: string, message: string }`. Loop continues.
 - `workflow_hook.started` / `workflow_hook.completed` /
   `workflow_hook.blocked` / `workflow_hook.failed`: deterministic workflow

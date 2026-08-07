@@ -339,7 +339,9 @@ For guardrails that should apply only to one configured delegate profile, use
 `capabilities.agents.profiles[].hooks` instead of global workflow hooks.
 Project config cannot define HTTP hook actions or the HTTP hook transport
 policy; keep those in trusted user config or an explicit `SPARKWRIGHT_CONFIG`
-file.
+file. Run configured HTTP Event Hooks through the normal host-backed
+`sparkwright run` path; the internal `--direct-core` diagnostics path does not
+promise that transport.
 
 Block generated files before a write tool runs:
 

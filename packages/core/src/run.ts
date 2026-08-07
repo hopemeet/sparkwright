@@ -343,7 +343,7 @@ export interface CreateRunOptions {
    * Low-level lifecycle middleware for embedders and instrumentation. Hooks
    * observe model/tool/event boundaries and may skip a tool call via
    * `beforeToolCall` returning `{ skip: { reason } }`. Hook errors never break
-   * the run; they emit a `hook.failed` event. Project-facing rules should
+   * the run; each callback is caught and logged. Project-facing rules should
    * prefer `workflowHooks` / `capabilities.hooks.workflow`.
    * See {@link RunHook}.
    */
@@ -547,7 +547,8 @@ export type CredentialResolver = (
 ) => Promise<CredentialRefreshResponse> | CredentialRefreshResponse;
 
 export type RunCommandAcceptance =
-  { accepted: true } | { accepted: false; reason: "terminal" | "closing" };
+  | { accepted: true }
+  | { accepted: false; reason: "terminal" | "closing" };
 
 export interface RunLoopServices {
   now?: () => Date;
@@ -3417,7 +3418,8 @@ export class SparkwrightRun implements RunHandle {
       });
       hookDecision = result ?? undefined;
     } catch (err) {
-      // combineRunHooks already logs; emit a hook.failed event for traceability.
+      // Dynamic dispatch normally catches each callback. Keep a defensive
+      // event in case the aggregate dispatcher itself rejects unexpectedly.
       this.events.emit("hook.failed", {
         phase: "beforeToolCall",
         toolName: requestedCall.toolName,
@@ -3934,6 +3936,8 @@ export class SparkwrightRun implements RunHandle {
         result,
       });
     } catch (err) {
+      // Dynamic dispatch normally catches each callback. Keep a defensive
+      // event in case the aggregate dispatcher itself rejects unexpectedly.
       this.events.emit("hook.failed", {
         phase: "afterToolCall",
         toolName: requestedCall.toolName,
@@ -4128,7 +4132,8 @@ export class SparkwrightRun implements RunHandle {
     if (!tool) return undefined;
 
     let argPolicy:
-      ReturnType<NonNullable<typeof tool.policyForArgs>> | undefined;
+      | ReturnType<NonNullable<typeof tool.policyForArgs>>
+      | undefined;
     const policyForArgsStartedAt = Date.now();
     try {
       argPolicy = tool.policyForArgs?.(args as never);

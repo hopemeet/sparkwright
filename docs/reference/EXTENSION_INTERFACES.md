@@ -85,7 +85,8 @@ Recommended shape:
 interface ContextExtension {
   name: string;
   describe():
-    Promise<ContextExtensionDescriptor[]> | ContextExtensionDescriptor[];
+    | Promise<ContextExtensionDescriptor[]>
+    | ContextExtensionDescriptor[];
   load(
     input: ContextExtensionLoadInput,
   ): Promise<ContextItem[]> | ContextItem[];
@@ -519,10 +520,11 @@ Supported callbacks:
   `tool.failed` for this call.
 - `onEvent(input)` — synchronous event observer. Called for every event
   emitted by the run.
-- `onError(input)` — called when a loop phase throws. Best-effort.
 
-Errors thrown by a hook are caught, logged via `console.warn`, and surfaced
-as a `hook.failed` event. They never abort the run.
+Errors thrown by an individual hook callback are caught and logged via
+`console.warn`; they never abort the run. `RunHook` has no loop-wide error
+callback. Error telemetry should observe the relevant `*.failed` events through
+`onEvent`.
 
 Wire hooks via `createRun({ hooks: [...] })`. Hooks compose; use
 `combineRunHooks([...])` if you need to merge them outside core.
