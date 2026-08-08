@@ -221,6 +221,79 @@ describe("ImGateway", () => {
     }
   });
 
+  it("projects terminal task outcomes as bounded external messages", async () => {
+    const tmp = await mkdtemp(join(tmpdir(), "sparkwright-im-gateway-"));
+    try {
+      const adapter = new FakeAdapter();
+      const bridge = new FakeBridge();
+      const store = new GatewayStore(join(tmp, "state.json"));
+      const gateway = new ImGateway({
+        adapters: [adapter],
+        bridge,
+        store,
+      });
+      await gateway.start();
+      const subject = {
+        platform: "telegram",
+        chatId: "1",
+        userId: "user_1",
+      };
+
+      await bridge.deliver(
+        subject,
+        taskEvent("created", "pending", "not sent"),
+      );
+      await bridge.deliver(
+        subject,
+        taskEvent("terminal", "completed", "safe summary"),
+      );
+      await bridge.deliver(
+        subject,
+        taskEvent("terminal", "failed", "transport secret"),
+      );
+      await bridge.deliver(
+        subject,
+        taskEvent("terminal", "cancelled", "not rendered"),
+      );
+
+      expect(adapter.sent.map((entry) => entry.message.text)).toEqual([
+        expect.stringMatching(
+          /Task completed: External task[\s\S]*Summary: safe summary[\s\S]*Task ID: task_gateway[\s\S]*Details: task.output task_gateway/,
+        ),
+        expect.stringMatching(
+          /Task failed: External task[\s\S]*Error: worker unavailable \(worker_failed\)/,
+        ),
+        expect.stringMatching(/Task cancelled: External task/),
+      ]);
+      expect(adapter.sent).not.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            message: expect.objectContaining({
+              text: expect.stringContaining("transport secret"),
+            }),
+          }),
+        ]),
+      );
+      expect(
+        await Promise.all(
+          [
+            "delivery_event_task_created_pending",
+            "delivery_event_task_terminal_completed",
+            "delivery_event_task_terminal_failed",
+            "delivery_event_task_terminal_cancelled",
+          ].map((key) => store.deliveryAttempts(key)),
+        ),
+      ).toEqual([
+        [expect.objectContaining({ status: "delivered" })],
+        [expect.objectContaining({ status: "delivered" })],
+        [expect.objectContaining({ status: "delivered" })],
+        [expect.objectContaining({ status: "delivered" })],
+      ]);
+    } finally {
+      await rm(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("routes approval through exact Host-bound platform claims", async () => {
     const tmp = await mkdtemp(join(tmpdir(), "sparkwright-im-gateway-"));
     try {
@@ -255,6 +328,8 @@ describe("ImGateway", () => {
           approvalId: "approval_1",
           action: "write",
           summary: "Write README",
+          subject: { kind: "one_shot", label: "Write README once" },
+          principal: { kind: "main", principalScope: "session:test" },
         },
       });
 
@@ -408,3 +483,41 @@ describe("ImGateway", () => {
     }
   });
 });
+
+function taskEvent(
+  transition: "created" | "started" | "terminal",
+  status: "pending" | "running" | "completed" | "failed" | "cancelled",
+  summary: string,
+): HostEvent {
+  return {
+    envelope: "event",
+    id: `event_task_${transition}_${status}`,
+    kind: "task.updated",
+    timestamp: "2026-07-23T00:00:00.000Z",
+    payload: {
+      taskId: "task_gateway",
+      parentRunId: "run_gateway",
+      sessionId: "session_im",
+      transition,
+      kind: "agent",
+      title: "External task",
+      completionPolicy: "detached",
+      awaited: false,
+      status,
+      createdAt: "2026-07-23T00:00:00.000Z",
+      ...(transition === "terminal"
+        ? { completedAt: "2026-07-23T00:00:01.000Z" }
+        : {}),
+      ...(status === "completed" ? { resultSummary: summary } : {}),
+      ...(status === "failed"
+        ? {
+            error: {
+              code: "worker_failed",
+              message: "worker unavailable",
+            },
+          }
+        : {}),
+      outputRef: { method: "task.output", taskId: "task_gateway" },
+    },
+  };
+}

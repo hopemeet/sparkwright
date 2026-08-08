@@ -81,7 +81,8 @@ import {
 } from "./tool-orchestration.js";
 import { assessRun } from "./run-assessment.js";
 import { FactLedger } from "./fact-ledger.js";
-import { ControlledWorkspace } from "./workspace.js";
+import { evaluateRuntimeState } from "./runtime-state-evaluator.js";
+import { ControlledWorkspace, InMemoryWorkspaceState } from "./workspace.js";
 import type { WorkspaceCheckpointStore } from "./workspace-checkpoint.js";
 import {
   createToolCall,
@@ -95,6 +96,9 @@ import {
   type ToolDescriptor,
 } from "./tools.js";
 import type {
+  ApprovalPrincipal,
+  ApprovalReasonLayers,
+  ApprovalSubject,
   ContextItem,
   ModelAdapter,
   ModelInput,
@@ -121,6 +125,7 @@ import type {
   RuntimeContext,
   TaskRevivalSource,
   ToolResult,
+  WorkspaceStateRuntime,
   ModelErrorEnvelope,
 } from "./types.js";
 import { getStringProperty, isRecord, omitUndefined } from "./record-utils.js";
@@ -338,7 +343,7 @@ export interface CreateRunOptions {
    * Low-level lifecycle middleware for embedders and instrumentation. Hooks
    * observe model/tool/event boundaries and may skip a tool call via
    * `beforeToolCall` returning `{ skip: { reason } }`. Hook errors never break
-   * the run; they emit a `hook.failed` event. Project-facing rules should
+   * the run; each callback is caught and logged. Project-facing rules should
    * prefer `workflowHooks` / `capabilities.hooks.workflow`.
    * See {@link RunHook}.
    */
@@ -358,6 +363,14 @@ export interface CreateRunOptions {
    */
   usageTracker?: UsageTracker;
   workspace?: RuntimeContext["workspace"];
+  /**
+   * Shared monotonic workspace state for this run tree. Parent/child
+   * orchestrators should pass the parent's instance; a root run creates one
+   * automatically when a workspace is configured.
+   */
+  workspaceState?: WorkspaceStateRuntime;
+  /** Runtime-owned actor scope attached to every approval request. */
+  approvalPrincipal?: ApprovalPrincipal;
   /**
    * Optional transparent workspace checkpoint store. When provided, file writes
    * capture pre-images so a turn's edits can be rolled back. Invisible to the
@@ -392,6 +405,12 @@ export interface CreateRunOptions {
   observationFormatter?: ObservationFormatter;
   promptBuilder?: PromptBuilder<PromptMessage[]>;
   runBudget?: RunBudget;
+  /**
+   * Resource budget reserved exclusively for a final tool-less wrap-up. It is
+   * dimension-specific and does not let action turns exceed their configured
+   * model/tool ceilings.
+   */
+  finalizationReserve?: Pick<RunBudget, "maxModelCalls" | "maxTokens">;
   /**
    * Ancestor-owned work-budget accounts consumed by this run. Orchestrators
    * pass these from `RunHandle.getChildRunBudgetAccounts()` so siblings and
@@ -568,6 +587,8 @@ export interface RunHandle {
   requestApproval(input: {
     action: string;
     summary: string;
+    subject: ApprovalSubject;
+    reasons?: ApprovalReasonLayers;
     details?: Record<string, unknown>;
   }): Promise<boolean>;
   /** Current usage snapshot (tokens / cost / wall time / per-tool / per-model). */
@@ -591,6 +612,10 @@ export interface RunHandle {
    * @reserved Public sub-agent-protocol accessor consumed by spawn helpers.
    */
   getWorkspace(): RuntimeContext["workspace"] | undefined;
+  /** Shared workspace epoch/change-set state inherited by child runs. */
+  getWorkspaceState(): WorkspaceStateRuntime | undefined;
+  /** @reserved Runtime-owned actor identity consumed by Host child approval scoping. */
+  getApprovalPrincipal(): ApprovalPrincipal;
   /**
    * Opaque budget accounts descendants must inherit. The returned array
    * includes ancestor scopes plus this run's own descendant-tree scope when it
@@ -667,6 +692,8 @@ export class SparkwrightRun implements RunHandle {
   private readonly modelRetry: Required<ModelRetryPolicy>;
   private readonly workspace?: RuntimeContext["workspace"];
   private readonly runtimeWorkspace?: RuntimeContext["workspace"];
+  private readonly workspaceState?: WorkspaceStateRuntime;
+  private readonly approvalPrincipal: ApprovalPrincipal;
   private context: ContextItem[];
   private readonly contextAssembler: ContextAssembler;
   private readonly contextBudget?: ContextBudget;
@@ -681,6 +708,7 @@ export class SparkwrightRun implements RunHandle {
   private readonly prefetchers: ContextPrefetcher[];
   private readonly observationSummarizer?: ObservationSummarizer;
   private readonly runBudget?: RunBudget;
+  private readonly finalizationBudgetAccount: RunBudgetAccount;
   private readonly localRunBudgetAccount: RunBudgetAccount;
   private readonly ancestorRunBudgetAccounts: readonly RunBudgetAccount[];
   private readonly childTreeRunBudgetAccount?: RunBudgetAccount;
@@ -787,10 +815,24 @@ export class SparkwrightRun implements RunHandle {
         DEFAULT_MODEL_RETRY_RESPECT_RETRY_AFTER,
     };
     this.workspace = options.workspace;
+    this.workspaceState =
+      options.workspaceState ??
+      (options.workspace ? new InMemoryWorkspaceState() : undefined);
+    this.events.subscribe((event) => {
+      if (event.type === "workspace.write.untracked_access_granted") {
+        this.workspaceState?.recordUntrackedMutation?.(
+          "untracked_access_granted",
+        );
+      }
+    });
+    this.approvalPrincipal =
+      options.approvalPrincipal ?? defaultApprovalPrincipal(this.record);
     this.runtimeWorkspace = options.workspace
       ? new ControlledWorkspace({
           run: this.record,
           workspace: options.workspace,
+          workspaceState: this.workspaceState!,
+          approvalPrincipal: this.approvalPrincipal,
           events: this.events,
           policy: this.policy,
           interactionChannel: this.interactionChannel,
@@ -817,6 +859,12 @@ export class SparkwrightRun implements RunHandle {
     this.prefetchers = [...(options.prefetchers ?? [])];
     this.observationSummarizer = options.observationSummarizer;
     this.runBudget = options.runBudget;
+    this.finalizationBudgetAccount = createRunBudgetAccount({
+      budget: {
+        maxModelCalls: options.finalizationReserve?.maxModelCalls ?? 1,
+        maxTokens: options.finalizationReserve?.maxTokens ?? 1_024,
+      },
+    });
     this.localRunBudgetAccount = createRunBudgetAccount({
       budget: this.runBudget,
       initialUsage: checkpoint?.budget.usage,
@@ -1140,6 +1188,7 @@ export class SparkwrightRun implements RunHandle {
   private async runLoopBody(): Promise<RunResult> {
     this.setState("running");
     for (const { account } of this.workBudgetAccounts()) account.markStarted();
+    this.finalizationBudgetAccount.markStarted();
     this.usageTracker.markStarted();
     this.events.emit("run.started", runStartedPayload(this.record.metadata));
     if (this.resumedFromCheckpoint && this.seedLoopState) {
@@ -1501,6 +1550,44 @@ export class SparkwrightRun implements RunHandle {
       if (outputBudgetFailure) return outputBudgetFailure;
 
       const toolCalls = output.toolCalls ?? [];
+      const terminalCalls = toolCalls.filter(
+        (call) => this.tools.get(call.toolName)?.terminal !== undefined,
+      );
+      if (
+        terminalCalls.length > 0 &&
+        (terminalCalls.length !== 1 || toolCalls.length !== 1)
+      ) {
+        return this.fail(
+          "validation_failed",
+          "TERMINAL_TOOL_MIXED_CALLS",
+          "A terminal tool must be the sole tool call in its model response; no tool calls from the mixed response were executed.",
+          {
+            step: state.step,
+            terminalTools: terminalCalls.map((call) => call.toolName),
+            toolCallCount: toolCalls.length,
+          },
+        );
+      }
+      const terminalDefinition =
+        terminalCalls.length === 1
+          ? this.tools.get(terminalCalls[0]!.toolName)
+          : undefined;
+
+      // `model.completed` is the raw per-turn model record used by tracing and
+      // replay. Only commit model text to the user transcript when the turn is
+      // non-terminal and will proceed to tools. A tool-less answer remains
+      // provisional until Stop hooks accept it, then `run.completed.message`
+      // becomes the single canonical final response.
+      if (
+        toolCalls.length > 0 &&
+        typeof output.message === "string" &&
+        output.message.trim().length > 0
+      ) {
+        this.events.emit("model.assistant_text", {
+          step: state.step,
+          message: output.message,
+        });
+      }
 
       // --- Phase 6: terminal branch ---------------------------------------
       if (toolCalls.length === 0) {
@@ -1579,11 +1666,9 @@ export class SparkwrightRun implements RunHandle {
           }
         }
 
-        // Surface step-budget context on a natural finish. A model can answer
-        // on its *last* allowed step, which is a `final_answer` indistinguishable
-        // from a roomy finish unless we say so — callers (e.g. a parent agent
-        // summarizing a sub-agent) otherwise can't tell "done" from "ran out of
-        // room and wrapped up", and may over-trust a possibly-truncated answer.
+        // A natural-language answer is a completed turn even when it uses the
+        // last allowed step. Only the separate forced wrap-up path below marks
+        // an answer as step-limited/truncated.
         const waitedState = await this.waitForAwaitedTasksBeforeTerminal(state);
         if (waitedState) {
           state = waitedState;
@@ -1594,9 +1679,6 @@ export class SparkwrightRun implements RunHandle {
           message: output.message,
           stepsUsed: state.step,
           maxSteps: this.maxSteps,
-          stepLimitReached:
-            state.step >= this.maxSteps &&
-            !isSourceBudgetedForcedContinuation(state),
           ...(this.forcedContinuationBudget.usedFor("revival") > 0
             ? {
                 revivalTurnsUsed:
@@ -1676,6 +1758,53 @@ export class SparkwrightRun implements RunHandle {
         if (terminal) return terminal;
       }
 
+      if (terminalDefinition?.terminal) {
+        const terminalResult = batchResults[0];
+        if (!terminalResult || terminalResult.status !== "completed") {
+          return this.fail(
+            "validation_failed",
+            "TERMINAL_TOOL_FAILED",
+            terminalResult?.error?.message ??
+              "The terminal tool did not produce a valid completed result.",
+            {
+              step: state.step,
+              toolName: terminalDefinition.name,
+              ...(terminalResult?.error
+                ? { terminalToolError: terminalResult.error }
+                : {}),
+            },
+          );
+        }
+        const boundText =
+          typeof output.message === "string" && output.message.trim().length > 0
+            ? output.message.trim()
+            : undefined;
+        const deterministicText = terminalDefinition.terminal.renderMessage?.(
+          terminalResult.output as never,
+        );
+        const rendered =
+          boundText ??
+          (typeof deterministicText === "string" && deterministicText.trim()
+            ? deterministicText.trim()
+            : await this.finalizeTerminalMessage(
+                state,
+                terminalDefinition,
+                terminalResult.output,
+              ));
+        return this.complete("final_answer", {
+          message: rendered,
+          stepsUsed: state.step,
+          maxSteps: this.maxSteps,
+          terminalResult: {
+            kind: terminalDefinition.terminal.kind,
+            toolName: terminalDefinition.name,
+            output: terminalResult.output,
+            responseTextBound: boundText !== undefined,
+          },
+          ...forcedContinuationResultMetadata(this.forcedContinuationBudget),
+        });
+      }
+
       // Schedule an async summary of the tool batch; awaited at start of next
       // turn so it overlaps any in-between bookkeeping. The summary runs as
       // a pending future that the next turn awaits.
@@ -1741,25 +1870,32 @@ export class SparkwrightRun implements RunHandle {
       payload: { step: state.step, budgetWrapUp: true },
     });
     try {
-      const shaped = await this.shapeContext(wrapUpState, /* reactive */ false);
-      const prompt = await this.buildPromptPhase(wrapUpState, shaped);
+      const shaped = await this.shapeContext(
+        wrapUpState,
+        /* reactive */ false,
+        [],
+      );
+      const prompt = await this.buildPromptPhase(wrapUpState, shaped, []);
       const output = await runWithSpan(modelTurn.frame, () =>
-        this.completeModelWithRetries({
-          run: this.record,
-          context: shaped,
-          prompt,
-          // No tools on the wrap-up turn: the model must produce a text answer.
-          tools: [],
-          events: this.events.all(),
-          step: state.step,
-          abortSignal: this.abortController.signal,
-        }),
+        this.completeModelWithRetries(
+          {
+            run: this.record,
+            context: shaped,
+            prompt,
+            // No tools on the wrap-up turn: the model must produce a text answer.
+            tools: [],
+            events: this.events.all(),
+            step: state.step,
+            abortSignal: this.abortController.signal,
+          },
+          { finalization: true },
+        ),
       );
       runWithSpan(modelTurn.frame, () =>
         this.events.emit("model.completed", { step: state.step, ...output }),
       );
       modelTurn.close("model.turn.completed", { step: state.step });
-      this.recordModelUsage(output);
+      this.recordFinalizationModelUsage(output);
 
       const message =
         typeof output.message === "string" && output.message.trim().length > 0
@@ -1773,11 +1909,91 @@ export class SparkwrightRun implements RunHandle {
         maxSteps: this.maxSteps,
         stepLimitReached: true,
         truncated: true,
+        completionStatus: "partial",
       });
     } catch {
       // Span may already be closed on the success path; close is idempotent.
       modelTurn.close("model.turn.completed", { step: state.step });
       return hardFail();
+    }
+  }
+
+  private async finalizeTerminalMessage(
+    state: RunLoopState,
+    terminalDefinition: ToolDefinition,
+    terminalOutput: unknown,
+  ): Promise<string> {
+    const fallback =
+      terminalDefinition.terminal?.renderMessage?.(terminalOutput as never) ??
+      deterministicTerminalMessage(terminalOutput);
+    const finalizationState: RunLoopState = {
+      ...state,
+      context: [
+        ...state.context,
+        {
+          id: (this.loopServices.createContextItemId ?? createContextItemId)(),
+          type: "system",
+          source: { kind: "runtime" },
+          content: [
+            `The terminal tool ${terminalDefinition.name} has already committed the structured result below.`,
+            "Produce only the concise human-readable final response. Do not propose or call tools, and do not alter the structured status or blockers.",
+            boundedJson(terminalOutput, 12_000),
+          ].join("\n\n"),
+          metadata: {
+            layer: "runtime",
+            stability: "turn",
+            required: true,
+            terminalFinalization: true,
+          },
+        },
+      ],
+    };
+    const modelTurn = openSpan(this.events, {
+      startType: "model.turn.started",
+      payload: { step: state.step, terminalFinalization: true },
+    });
+    try {
+      const shaped = await this.shapeContext(
+        finalizationState,
+        /* reactive */ false,
+        [],
+      );
+      const prompt = await this.buildPromptPhase(finalizationState, shaped, []);
+      const output = await runWithSpan(modelTurn.frame, () =>
+        this.completeModelWithRetries(
+          {
+            run: this.record,
+            context: shaped,
+            prompt,
+            tools: [],
+            events: this.events.all(),
+            step: state.step,
+            abortSignal: this.abortController.signal,
+          },
+          { finalization: true },
+        ),
+      );
+      runWithSpan(modelTurn.frame, () =>
+        this.events.emit("model.completed", {
+          step: state.step,
+          terminalFinalization: true,
+          ...output,
+        }),
+      );
+      modelTurn.close("model.turn.completed", {
+        step: state.step,
+        terminalFinalization: true,
+      });
+      this.recordFinalizationModelUsage(output);
+      return typeof output.message === "string" && output.message.trim()
+        ? output.message.trim()
+        : fallback;
+    } catch {
+      modelTurn.close("model.turn.completed", {
+        step: state.step,
+        terminalFinalization: true,
+      });
+      return fallback;
     }
   }
 
@@ -1790,6 +2006,7 @@ export class SparkwrightRun implements RunHandle {
   private async shapeContext(
     state: RunLoopState,
     reactive: boolean,
+    toolDescriptors?: ToolDescriptor[],
   ): Promise<ContextItem[]> {
     // 1) Run compaction pipeline FIRST when configured. The reference
     //    layered model is:
@@ -1823,7 +2040,7 @@ export class SparkwrightRun implements RunHandle {
       goal: this.record.goal,
       events: this.events.all(),
       priorContext,
-      tools: await this.tools.listModelDescriptors(),
+      tools: toolDescriptors ?? (await this.tools.listModelDescriptors()),
       model: this.activeModel().contextHints,
       budget: this.contextBudget,
     });
@@ -1849,12 +2066,13 @@ export class SparkwrightRun implements RunHandle {
   private async buildPromptPhase(
     state: RunLoopState,
     items: ContextItem[],
+    toolDescriptors?: ToolDescriptor[],
   ): Promise<PromptMessage[]> {
     const prompt = await this.promptBuilder.build({
       run: this.record,
       step: state.step,
       maxSteps: this.maxSteps,
-      tools: await this.tools.listModelDescriptors(),
+      tools: toolDescriptors ?? (await this.tools.listModelDescriptors()),
       context: items,
     });
     const cacheBlocks = compilePromptCacheBlocks(prompt);
@@ -2328,6 +2546,8 @@ export class SparkwrightRun implements RunHandle {
   async requestApproval(input: {
     action: string;
     summary: string;
+    subject: ApprovalSubject;
+    reasons?: ApprovalReasonLayers;
     details?: Record<string, unknown>;
   }): Promise<boolean> {
     if (!this.interactionChannel?.approve) {
@@ -2340,6 +2560,9 @@ export class SparkwrightRun implements RunHandle {
       runId: this.record.id,
       action: input.action,
       summary: input.summary,
+      subject: input.subject,
+      principal: this.approvalPrincipal,
+      reasons: input.reasons,
       details: input.details,
     });
 
@@ -2366,6 +2589,14 @@ export class SparkwrightRun implements RunHandle {
 
   getWorkspace(): RuntimeContext["workspace"] | undefined {
     return this.workspace;
+  }
+
+  getWorkspaceState(): WorkspaceStateRuntime | undefined {
+    return this.workspaceState;
+  }
+
+  getApprovalPrincipal(): ApprovalPrincipal {
+    return { ...this.approvalPrincipal };
   }
 
   getChildRunBudgetAccounts(): readonly RunBudgetAccount[] {
@@ -2642,6 +2873,7 @@ export class SparkwrightRun implements RunHandle {
     return {
       run: this.record,
       workspace: this.runtimeWorkspace,
+      workspaceState: this.workspaceState,
       abortSignal: this.abortController.signal,
       requestApproval: (approval) => this.requestApproval(approval),
       reportToolProgress: input?.toolCallId
@@ -2683,11 +2915,14 @@ export class SparkwrightRun implements RunHandle {
     const workspace = this.runtimeWorkspace;
     return {
       run: this.record,
+      workspaceState: this.workspaceState,
       abortSignal: this.abortController.signal,
       ...(workspace
         ? {
             workspace: {
               readText: workspace.readText.bind(workspace),
+              readTextWithRevision:
+                workspace.readTextWithRevision?.bind(workspace),
               canonicalPath: workspace.canonicalPath?.bind(workspace),
               readAnchoredText: workspace.readAnchoredText.bind(workspace),
               editAnchoredText: async () => {
@@ -2696,6 +2931,16 @@ export class SparkwrightRun implements RunHandle {
                 );
               },
               writeText: async () => {
+                throw new Error(
+                  `validateInput for ${input?.toolName ?? "tool"} cannot write the workspace.`,
+                );
+              },
+              createText: async () => {
+                throw new Error(
+                  `validateInput for ${input?.toolName ?? "tool"} cannot write the workspace.`,
+                );
+              },
+              replaceText: async () => {
                 throw new Error(
                   `validateInput for ${input?.toolName ?? "tool"} cannot write the workspace.`,
                 );
@@ -2802,26 +3047,41 @@ export class SparkwrightRun implements RunHandle {
     if (toolBudgetFailure) return toolBudgetFailure;
 
     // A repeat is either the *same* call verbatim, or a fresh attempt at a
-    // target that just failed — the latter catches a model that varies cosmetic
-    // arguments (e.g. read `offset`/`limit`) while hammering the same broken
-    // path. `lastFailedToolTarget` is cleared on any success, so legitimate
-    // pagination never lands here.
+    // target whose failure is known to be target-invariant. Argument-correctable
+    // failures get another execution chance when the model changes arguments.
+    // `lastFailedToolTarget` is cleared on any success, so legitimate pagination
+    // never lands here.
     const targetKey = semanticToolTarget(
       requestedCall.toolName,
       requestedCall.arguments,
     );
-    const priorFailure =
-      state.lastFailedToolTarget?.key === targetKey
-        ? state.lastFailedToolTarget
-        : undefined;
-    const priorNoop =
-      state.lastNoopToolTarget?.key === targetKey
-        ? state.lastNoopToolTarget
-        : undefined;
-    const verbatimRepeat = isRepeatedToolCall(
+    const rawVerbatimRepeat = isRepeatedToolCall(
       state.previousToolCall,
       requestedCall,
     );
+    const matchingPriorFailure =
+      state.lastFailedToolTarget?.key === targetKey
+        ? state.lastFailedToolTarget
+        : undefined;
+    const priorFailure =
+      matchingPriorFailure?.retryScope === "target" || rawVerbatimRepeat
+        ? matchingPriorFailure
+        : undefined;
+    const matchingPriorNoop =
+      state.lastNoopToolTarget?.key === targetKey
+        ? state.lastNoopToolTarget
+        : undefined;
+    const currentStateEpoch = this.workspaceState?.currentEpoch();
+    const noopStateChanged =
+      matchingPriorNoop?.stateEpoch !== undefined &&
+      currentStateEpoch !== undefined &&
+      matchingPriorNoop.stateEpoch !== currentStateEpoch;
+    const priorNoop = noopStateChanged ? undefined : matchingPriorNoop;
+    const verbatimRepeat = rawVerbatimRepeat && !noopStateChanged;
+    if (noopStateChanged) {
+      state.lastNoopToolTarget = undefined;
+      state.previousToolCall = undefined;
+    }
     // An idempotent tool repeating verbatim is a harmless no-op, while a tool
     // with `managesRepeatedCalls` owns a conservative cache/retry protocol.
     // Neither is the start of a generic doom loop, so the repeat guard defers
@@ -3158,7 +3418,8 @@ export class SparkwrightRun implements RunHandle {
       });
       hookDecision = result ?? undefined;
     } catch (err) {
-      // combineRunHooks already logs; emit a hook.failed event for traceability.
+      // Dynamic dispatch normally catches each callback. Keep a defensive
+      // event in case the aggregate dispatcher itself rejects unexpectedly.
       this.events.emit("hook.failed", {
         phase: "beforeToolCall",
         toolName: requestedCall.toolName,
@@ -3642,9 +3903,10 @@ export class SparkwrightRun implements RunHandle {
       state.lastNoopToolTarget = undefined;
     } else if (
       result.status === "completed" &&
-      this.tools.get(requestedCall.toolName)?.governance?.idempotency ===
-        "idempotent" &&
-      isIdempotentNoopToolResult(result)
+      (result.effect?.kind === "no_change" ||
+        (this.tools.get(requestedCall.toolName)?.governance?.idempotency ===
+          "idempotent" &&
+          isIdempotentNoopToolResult(result)))
     ) {
       const output = isRecord(result.output) ? result.output : undefined;
       state.lastFailedToolTarget = undefined;
@@ -3653,10 +3915,13 @@ export class SparkwrightRun implements RunHandle {
           requestedCall.toolName,
           requestedCall.arguments,
         ),
-        code: "IDEMPOTENT_NOOP",
+        code: result.effect?.reasonCode ?? "IDEMPOTENT_NOOP",
         message:
           (output ? getStringProperty(output, "hint") : undefined) ??
           "Tool completed without making progress.",
+        ...(result.effect?.stateEpoch !== undefined
+          ? { stateEpoch: result.effect.stateEpoch }
+          : {}),
       };
     } else if (result.status === "completed") {
       state.lastFailedToolTarget = undefined;
@@ -3671,6 +3936,8 @@ export class SparkwrightRun implements RunHandle {
         result,
       });
     } catch (err) {
+      // Dynamic dispatch normally catches each callback. Keep a defensive
+      // event in case the aggregate dispatcher itself rejects unexpectedly.
       this.events.emit("hook.failed", {
         phase: "afterToolCall",
         toolName: requestedCall.toolName,
@@ -3951,14 +4218,38 @@ export class SparkwrightRun implements RunHandle {
 
       const approvalStartedAt = Date.now();
       try {
+        const approvalSummary =
+          formatToolApprovalSummary(tool, args) ?? `Run tool ${toolName}`;
+        const subject = tool.approvalSubjectForArgs
+          ? await tool.approvalSubjectForArgs(args as never)
+          : {
+              kind: "one_shot" as const,
+              label: `Allow ${approvalSummary} once`,
+            };
+        const approvalReasons = {
+          policy: decision.reason,
+          tool:
+            effectivePolicy?.approvalReason ??
+            toolApprovalGateReason({
+              toolName,
+              risk,
+              requiresApproval: effectivePolicy?.requiresApproval === true,
+              policyRequiresApproval: decision.decision === "requires_approval",
+            }),
+          ...(effectivePolicy?.safetyReason
+            ? { safety: effectivePolicy.safetyReason }
+            : {}),
+        };
         approved = await this.requestApproval({
           action: "tool.execute",
-          summary:
-            formatToolApprovalSummary(tool, args) ?? `Run tool ${toolName}`,
+          summary: approvalSummary,
+          subject,
+          reasons: approvalReasons,
           details: {
             ...metadata,
             arguments: args,
             policy: decision,
+            approvalReasons,
           },
         });
         if (timings) timings.approvalWaitMs = elapsedMs(approvalStartedAt);
@@ -4005,6 +4296,7 @@ export class SparkwrightRun implements RunHandle {
         toolName,
         result,
         run: this.record,
+        resultPresentation: this.tools.get(toolName)?.resultPresentation,
       }),
     );
   }
@@ -4239,6 +4531,20 @@ export class SparkwrightRun implements RunHandle {
     this.emitBudgetChecked("model_usage_recorded", { usage });
   }
 
+  private recordFinalizationModelUsage(output: ModelOutput): void {
+    this.usageTracker.recordModelUsage({
+      adapterId: getModelAdapterId(this.activeModel()),
+      usage: output.usage,
+    });
+    this.finalizationBudgetAccount.recordModelUsage(output.usage);
+    const violation = this.finalizationBudgetAccount.checkUsage();
+    if (violation) {
+      throw new Error(
+        `Finalization reserve exceeded ${violation.limit} (${violation.configured}).`,
+      );
+    }
+  }
+
   private checkRunBudget(
     stage: string,
     metadata: Record<string, unknown> = {},
@@ -4328,16 +4634,34 @@ export class SparkwrightRun implements RunHandle {
 
   private async completeModelWithRetries(
     input: ModelInput,
+    options: { finalization?: boolean } = {},
   ): Promise<ModelOutput> {
     for (
       let attempt = 1;
       attempt <= this.modelRetry.maxAttempts;
       attempt += 1
     ) {
-      this.reserveModelCallBudget({
-        step: input.step,
-        attempt,
-      });
+      if (options.finalization) {
+        const violation = this.finalizationBudgetAccount.checkModelCall();
+        if (violation) {
+          throw new Error(
+            `Finalization reserve exhausted ${violation.limit} (${violation.configured}).`,
+          );
+        }
+        this.finalizationBudgetAccount.commitModelCall();
+        this.events.emit("run.budget.checked", {
+          stage: "finalization_model_call_reserved",
+          budget: this.finalizationBudgetAccount.budget,
+          usage: this.finalizationBudgetAccount.snapshot(),
+          budgetScope: "finalization",
+          metadata: { step: input.step, attempt },
+        });
+      } else {
+        this.reserveModelCallBudget({
+          step: input.step,
+          attempt,
+        });
+      }
       const adapter = this.activeModel();
       const adapterId = getModelAdapterId(adapter);
       const streaming = Boolean(adapter.stream);
@@ -4683,11 +5007,23 @@ export class SparkwrightRun implements RunHandle {
       factLedger,
       terminal: { state: "completed", reason },
     });
+    const completion = evaluateRuntimeState({
+      run: this.record,
+      events: this.events.all(),
+      factLedger,
+      assessment,
+    });
+    const completionStatus =
+      completion.status === "partial" || payload.completionStatus === "partial"
+        ? "partial"
+        : "completed";
     const completedPayload = {
       reason,
       ...payload,
       factLedger,
       assessment,
+      notices: completion.notices,
+      completionStatus,
     };
     this.setState("completed", reason);
     this.events.emit("run.completed", completedPayload);
@@ -4703,7 +5039,11 @@ export class SparkwrightRun implements RunHandle {
       stopReason: reason,
       message: typeof payloadMessage === "string" ? payloadMessage : undefined,
       assessment,
-      metadata: omitUndefined({ ...rest }),
+      metadata: omitUndefined({
+        ...rest,
+        notices: completion.notices,
+        completionStatus,
+      }),
     };
     return this.result;
   }
@@ -4841,6 +5181,24 @@ function notificationErrorMessage(cause: unknown): string {
 
 function elapsedMs(startedAt: number): number {
   return Math.max(0, Date.now() - startedAt);
+}
+
+function toolApprovalGateReason(input: {
+  toolName: string;
+  risk: string;
+  requiresApproval: boolean;
+  policyRequiresApproval: boolean;
+}): string {
+  if (input.requiresApproval) {
+    return `Tool "${input.toolName}" declares that this call requires approval.`;
+  }
+  if (input.risk === "risky") {
+    return `Tool "${input.toolName}" is classified as risky.`;
+  }
+  if (input.policyRequiresApproval) {
+    return `The run policy requires approval for tool "${input.toolName}".`;
+  }
+  return `Tool "${input.toolName}" reached the approval gate.`;
 }
 
 function runStartedPayload(
@@ -4988,6 +5346,52 @@ class RunBudgetExceededError extends Error {
     super(message);
     this.name = "RunBudgetExceededError";
   }
+}
+
+function defaultApprovalPrincipal(record: RunRecord): ApprovalPrincipal {
+  const dynamic = record.metadata.dynamic === true;
+  const child = typeof record.metadata.parentRunId === "string";
+  const principalScope =
+    dynamic || child
+      ? String(record.id)
+      : typeof record.metadata.sessionId === "string"
+        ? record.metadata.sessionId
+        : String(record.id);
+  const displayLabel =
+    typeof record.metadata.agentName === "string"
+      ? record.metadata.agentName
+      : dynamic
+        ? "dynamic child"
+        : child
+          ? "configured delegate"
+          : "main";
+  return {
+    kind: dynamic ? "dynamic_child" : child ? "configured_delegate" : "main",
+    principalScope,
+    displayLabel,
+  };
+}
+
+function deterministicTerminalMessage(output: unknown): string {
+  if (isRecord(output)) {
+    for (const key of ["summary", "message"] as const) {
+      const value = output[key];
+      if (typeof value === "string" && value.trim()) return value.trim();
+    }
+  }
+  return "The run submitted a structured terminal result.";
+}
+
+function boundedJson(value: unknown, maxChars: number): string {
+  let serialized: string;
+  try {
+    serialized = JSON.stringify(value, null, 2);
+  } catch {
+    serialized = String(value);
+  }
+  return serialized.length <= maxChars
+    ? serialized
+    : `${serialized.slice(0, maxChars)}\n…[truncated]`;
 }
 
 function makeContinuationContextItem(

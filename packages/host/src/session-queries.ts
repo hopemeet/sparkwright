@@ -733,34 +733,15 @@ function collectSessionTraceFact(
       recordString(event.payload, "childRunId") ??
       recordString(event.metadata, "childRunId");
     if (!childRunId) return;
-    const finality =
-      recordString(event.payload, "finality") ??
-      (event.type === "subagent.completed" ? "complete" : "partial");
     addSessionSubagentFact(facts, {
       childRunId,
-      finality,
+      status: recordString(event.payload, "status"),
+      summary: recordString(event.payload, "summary"),
+      blockers: findNestedAgentBlockers(event.payload),
       role: recordString(event.payload, "role"),
       health: findNestedString(event.payload, "health"),
     });
     return;
-  }
-
-  if (event.type === "tool.completed" || event.type === "tool.failed") {
-    const payload = isPlainRecord(event.payload) ? event.payload : undefined;
-    const toolName = payload
-      ? (recordString(payload, "toolName") ?? recordString(payload, "name"))
-      : undefined;
-    if (toolName !== "spawn_agent") return;
-    const childRunId =
-      findNestedString(event.payload, "childRunId") ??
-      findNestedString(event.metadata, "childRunId");
-    if (!childRunId) return;
-    addSessionSubagentFact(facts, {
-      childRunId,
-      finality: findNestedString(event.payload, "finality"),
-      role: findNestedString(event.payload, "role"),
-      health: findNestedString(event.payload, "health"),
-    });
   }
 }
 
@@ -804,6 +785,39 @@ function findNestedString(value: unknown, key: string): string | undefined {
     if (found) return found;
   }
   return undefined;
+}
+
+function findNestedAgentBlockers(
+  value: unknown,
+):
+  | NonNullable<NonNullable<SessionTraceFacts["subagents"]>[number]["blockers"]>
+  | undefined {
+  if (!isPlainRecord(value)) return undefined;
+  if (Array.isArray(value.blockers)) {
+    const blockers = value.blockers
+      .map(sessionAgentBlocker)
+      .filter((blocker): blocker is NonNullable<typeof blocker> =>
+        Boolean(blocker),
+      )
+      .slice(0, 16);
+    return blockers.length > 0 ? blockers : undefined;
+  }
+  for (const nested of Object.values(value)) {
+    const found = findNestedAgentBlockers(nested);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+function sessionAgentBlocker(value: unknown) {
+  if (!isPlainRecord(value)) return undefined;
+  const code = recordString(value, "code");
+  if (!code) return undefined;
+  const message = recordString(value, "message");
+  return {
+    code,
+    ...(message ? { message } : {}),
+  };
 }
 
 function isSafePathSegment(value: string): boolean {

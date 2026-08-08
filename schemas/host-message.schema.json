@@ -358,6 +358,7 @@
             "host.ready",
             "host.log",
             "run.event",
+            "task.updated",
             "approval.requested",
             "run.continuation",
             "run.completed",
@@ -389,6 +390,14 @@
           "if": { "properties": { "kind": { "const": "run.event" } } },
           "then": {
             "properties": { "payload": { "$ref": "#/$defs/RunEventPayload" } }
+          }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "task.updated" } } },
+          "then": {
+            "properties": {
+              "payload": { "$ref": "#/$defs/TaskUpdatedEventPayload" }
+            }
           }
         },
         {
@@ -836,12 +845,17 @@
       },
       "additionalProperties": false
     },
+    "TaskCompletionPolicy": {
+      "type": "string",
+      "enum": ["inline", "awaited", "detached", "unknown"]
+    },
     "TaskRecordSnapshot": {
       "type": "object",
       "required": [
         "id",
         "parentRunId",
         "kind",
+        "completionPolicy",
         "awaited",
         "status",
         "createdAt",
@@ -852,6 +866,7 @@
         "parentRunId": { "type": "string", "minLength": 1 },
         "kind": { "type": "string", "minLength": 1 },
         "title": { "type": "string" },
+        "completionPolicy": { "$ref": "#/$defs/TaskCompletionPolicy" },
         "awaited": { "type": "boolean" },
         "status": { "$ref": "#/$defs/TaskStatus" },
         "createdAt": { "type": "string" },
@@ -1690,17 +1705,133 @@
       },
       "additionalProperties": false
     },
+    "TaskUpdatedEventPayload": {
+      "type": "object",
+      "required": [
+        "taskId",
+        "parentRunId",
+        "transition",
+        "kind",
+        "completionPolicy",
+        "awaited",
+        "status",
+        "createdAt",
+        "outputRef"
+      ],
+      "properties": {
+        "taskId": { "type": "string", "minLength": 1 },
+        "parentRunId": { "type": "string", "minLength": 1 },
+        "sessionId": { "type": "string", "minLength": 1 },
+        "transition": {
+          "type": "string",
+          "enum": ["created", "started", "terminal"]
+        },
+        "kind": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "title": { "type": "string", "maxLength": 200 },
+        "completionPolicy": { "$ref": "#/$defs/TaskCompletionPolicy" },
+        "awaited": { "type": "boolean" },
+        "status": { "$ref": "#/$defs/TaskStatus" },
+        "createdAt": { "$ref": "#/$defs/Timestamp" },
+        "startedAt": { "$ref": "#/$defs/Timestamp" },
+        "completedAt": { "$ref": "#/$defs/Timestamp" },
+        "resultSummary": { "type": "string", "maxLength": 1024 },
+        "error": {
+          "type": "object",
+          "required": ["code", "message"],
+          "properties": {
+            "code": { "type": "string", "maxLength": 128 },
+            "message": { "type": "string", "maxLength": 1024 }
+          },
+          "additionalProperties": false
+        },
+        "outputRef": {
+          "type": "object",
+          "required": ["method", "taskId"],
+          "properties": {
+            "method": { "const": "task.output" },
+            "taskId": { "type": "string", "minLength": 1 }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
     "ApprovalRequestedEventPayload": {
       "type": "object",
-      "required": ["runId", "approvalId", "action", "summary"],
+      "required": ["runId", "approvalId", "action", "summary", "subject"],
       "properties": {
         "runId": { "type": "string", "minLength": 1 },
         "approvalId": { "type": "string", "minLength": 1 },
         "action": { "type": "string", "minLength": 1 },
         "summary": { "type": "string" },
+        "subject": { "$ref": "#/$defs/ApprovalSubjectPayload" },
         "details": { "type": "object" }
       },
       "additionalProperties": false
+    },
+    "ApprovalSubjectPayload": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["kind", "operation", "path", "key", "label"],
+          "properties": {
+            "kind": { "const": "workspace_file" },
+            "operation": { "enum": ["write", "remove"] },
+            "path": { "type": "string", "minLength": 1 },
+            "key": { "type": "string", "minLength": 1 },
+            "label": { "type": "string", "minLength": 1 }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["kind", "command", "cwd", "key", "label"],
+          "properties": {
+            "kind": { "const": "shell_command" },
+            "command": { "type": "string", "minLength": 1 },
+            "cwd": { "type": "string", "minLength": 1 },
+            "key": { "type": "string", "minLength": 1 },
+            "label": { "type": "string", "minLength": 1 }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["kind", "tools", "key", "label"],
+          "properties": {
+            "kind": { "const": "agent_workspace_write" },
+            "role": { "type": "string", "minLength": 1 },
+            "tools": {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 },
+              "uniqueItems": true
+            },
+            "key": { "type": "string", "minLength": 1 },
+            "label": { "type": "string", "minLength": 1 }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["kind", "toolName", "key", "label"],
+          "properties": {
+            "kind": { "const": "tool_call" },
+            "toolName": { "type": "string", "minLength": 1 },
+            "key": { "type": "string", "minLength": 1 },
+            "label": { "type": "string", "minLength": 1 }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["kind", "label"],
+          "properties": {
+            "kind": { "const": "one_shot" },
+            "label": { "type": "string", "minLength": 1 }
+          },
+          "additionalProperties": false
+        }
+      ]
     },
     "RunContinuationEventPayload": {
       "type": "object",

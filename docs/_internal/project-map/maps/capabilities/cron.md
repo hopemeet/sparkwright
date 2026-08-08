@@ -10,6 +10,76 @@ See [../../modules/agent-runtime.md](../../modules/agent-runtime.md) for related
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-26
+- Scope: route review for the additive Agent action `skipped` status. Cron
+  remains parent-only and does not produce or consume Agent action receipts;
+  scheduling, persistence, execution, and TUI Cron behavior are unchanged.
+- Read: Agent Runtime action receipt boundary and Cron capability ownership.
+- Tests: all workspace tests passed; no Cron source changed.
+
+- Status: Verified
+- Date: 2026-07-25
+- Scope: route review for Host dynamic Agent result changes. Cron remains
+  parent-only; scheduling, persistence, execution, and TUI Cron behavior are
+  unchanged.
+- Read: Host dynamic child assembly and Cron capability boundary.
+- Tests: Host 583/583.
+
+- Status: Verified
+- Date: 2026-07-24
+- Scope: reviewed for the Agent execution control-plane refactor. Cron tools
+  remain parent-only and are absent from every in-process child catalog;
+  scheduling, persistence, and execution behavior are unchanged.
+- Read: Host child resolver/tool catalog, Cron tool definitions, and Agent map.
+- Tests: focused Host catalog tests, repository build, and repository test
+  typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-23
+- Scope: route review for public Task async-receipt annotations. Cron
+  scheduling, records, task execution, and notification behavior are unchanged.
+- Read: Task receipt DTO, reserved-field checker, and Cron ownership boundary.
+- Tests: Agent Runtime tasks 76/76, Shell 43/43, SDK Core 11/11, affected
+  typechecks, and strict reserved-field check passed.
+
+- Status: Verified
+- Date: 2026-07-23
+- Scope: route review for the Host `task.updated` channel. Cron schedules,
+  durable job records, runner execution, and Cron notification contracts did
+  not change.
+- Read: TaskManager observer boundary and Cron task/schedule ownership.
+- Tests: Agent Runtime task and Host lifecycle suites passed; no Cron source
+  changed.
+
+- Status: Verified
+- Date: 2026-07-23
+- Scope: route review for TaskRecord completion policy and terminal observation
+  consumption; Cron ownership, scheduling, and runner contracts did not change.
+- Read: shared TaskManager/store additions and Cron task boundary.
+- Tests: Agent Runtime task suite and affected typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-23
+- Scope: reviewed after Core failure retry classification and Direct Core
+  identity wording changed. Cron `ref` targets, unattended approval denial,
+  scheduling persistence, runner prompt composition, and tool filtering remain
+  unchanged; target-level Cron failures stay under the repeat guard.
+- Read: Core semantic target/retry-scope logic, Direct Core runner boundary,
+  and Cron store/runner/tool contracts.
+- Tests: affected Core/CLI typechecks and repository test typecheck passed; no
+  Cron-specific behavior changed.
+
+- Status: Verified
+- Date: 2026-07-21
+- Scope: reviewed the Agent Runtime task-descriptor validation extension.
+  Cron capability does not register through Host `task_create(kind:"agent")`;
+  Cron scheduling, approval, persistence, and terminal assessment are unchanged.
+- Read: Agent Runtime task kind construction, Host catalog, and Cron tool/runner
+  boundaries.
+- Tests: Agent Runtime and Host focused task tests passed; no Cron behavior
+  changed.
+
+- Status: Verified
 - Date: 2026-07-19
 - Scope: Cron semantic scheduling outcome consumes the terminal Core
   assessment rather than a Cron-owned reconstruction. Expected policy denial

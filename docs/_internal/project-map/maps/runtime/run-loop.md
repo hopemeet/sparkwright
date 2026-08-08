@@ -10,6 +10,167 @@ See [tool-orchestration.md](tool-orchestration.md) and [../trace/raw-trace.md](.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-08-07
+- Scope: corrected the low-level RunHook boundary to list only executable
+  model/tool/event callbacks; the never-invoked loop-wide `onError` field was
+  removed without adding error-routing behavior.
+- Read: Core RunHook definition/composition, public exports, run-loop dispatch,
+  and extension/protocol references.
+- Tests: full Core 674/674, all workspace builds/typechecks, repository lint,
+  schema checks, and import/package boundary checks passed.
+
+- Status: Verified
+- Date: 2026-07-30
+- Scope: forced step-budget wrap-up records partial alongside
+  `stepLimitReached` and `truncated`. Ordinary natural finals and generic
+  terminal tools remain completed; Agent-specific status no longer travels
+  through `ToolDefinition.terminal`.
+- Read: terminal tool branch, terminal payload projection, budget wrap-up, and
+  execution-control/run-loop tests.
+- Tests: repository build/test typecheck and focused Core suites passed.
+
+- Status: Verified
+- Date: 2026-07-26
+- Scope: a natural final on the final allowed action is complete. Only the
+  forced tool-less budget wrap-up is step-limited/truncated, and a terminal
+  tool with deterministic rendered prose completes without an additional
+  finalization model turn.
+- Read: Core natural-final, terminal-tool, and budget-wrap paths plus Agent
+  Runtime outcome projection.
+- Tests: Core 661/661 and Agent Runtime 259/259 passed.
+
+- Status: Verified
+- Date: 2026-07-25
+- Scope: route review for terminal Agent action receipts. Core model/tool
+  transitions, completion ownership, budgets, approvals, and stop conditions
+  are unchanged; the receipt is derived after the child loop emits terminal
+  state.
+- Read: Agent Runtime child bridge, Host dynamic completion assembly, and Core
+  run-loop ownership boundary.
+- Tests: Agent Runtime 258/258 and Host 583/583.
+
+- Status: Verified
+- Date: 2026-07-25
+- Scope: the retired `completion_evaluator` transition is absent from the loop
+  vocabulary. A final answer goes directly to terminal runtime-state
+  projection; only explicit Workflow hooks can advance/block for semantic
+  verification. Deprecated evaluator export names do not steer the loop.
+- Read: transition types, natural-final and terminal paths, runtime-state
+  evaluator, Workflow verifier hooks, and execution-control tests.
+- Tests: full `npm run release:check` passed, including Core 661/661, Workflow
+  verifier regressions, the 16-case matrix, and install smoke.
+
+- Status: Verified
+- Date: 2026-07-25
+- Scope: the ordinary ReAct loop now accepts the model's natural final without
+  a semantic completion continuation. Runtime terminal projection remains
+  responsible for factual notices and runtime continuation-budget exhaustion;
+  explicit Workflow Stop hooks retain opt-in hard verifier gates. Goal-wording
+  regexes no longer auto-install the documented-command Stop hook.
+- Read: Core natural-final branch, terminal evaluator, FactLedger verifier
+  evidence, Host Workflow Stop hooks, and child result projection.
+- Tests: Core 661/661, Agent Runtime 257/257, Host 583/583; affected package
+  typechecks, repository lint, and targeted format check passed.
+
+- Status: Verified
+- Date: 2026-07-24
+- Scope: the Core loop now consumes structured ToolEffects for no-progress,
+  reserves finalization capacity separately from action budgets, recognizes
+  terminal result tools, and runs CompletionEvaluator before terminal
+  projection. Generic Workflow Stop hooks remain; Agent partial finality no
+  longer depends on a dedicated Stop hook.
+- Read: Core run/tools/completion/budget paths and Agent terminal injection.
+- Tests: focused Core execution-control/run tests, repository build, and
+  repository test typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-23
+- Scope: final lint follow-up preserves Streaming Runtime's command-ready and
+  abort race exactly while expressing unsubscribe cleanup through a const
+  holder. Awaited task detection, `waiting_tasks`, notification injection, and
+  revival budgets are unchanged.
+- Read: Streaming Runtime command wait and Core equivalent cleanup pattern.
+- Tests: Streaming Runtime 20/20, focused TUI task actions 5/5, affected
+  typechecks, and focused lint passed.
+
+- Status: Verified
+- Date: 2026-07-23
+- Scope: IM delivery is a post-TaskStore Host lifecycle projection. Routing a
+  terminal detached task after its parent run ends does not retain or revive
+  the Core run, consume the parent actor inbox, or alter awaited
+  `waiting_tasks`; only the live Host runtime facade/binding remains relevant
+  to the external outbox.
+- Read: HostService task/IM routing, TaskManager transition observer, Core
+  revival boundary, and detached-after-parent-terminal integration test.
+- Tests: Host 604/604, focused lifecycle/IM 25/25, and Host typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-23
+- Scope: Host task lifecycle push is independent from Core task revival.
+  `task.updated` observers never drain parent actor notifications or alter
+  `waiting_tasks`; detached lifecycle events can remain externally observable
+  after parent terminality without reviving that run.
+- Read: TaskManager transition ordering, Host lifecycle hub/routing/projection,
+  and existing Core notification/revival bridge.
+- Tests: Agent Runtime task suite (76), Host lifecycle/protocol suites (67),
+  affected typechecks, and schema validation passed.
+
+- Status: Verified
+- Date: 2026-07-23
+- Scope: Streaming Runtime now implements the previously missing awaited-task
+  terminal gate: non-consuming readiness, `waiting_tasks`, command/abort races,
+  step-start notification injection, and bounded revival turns beyond
+  `maxSteps`. Host continues to use Core; this closes the public embedder
+  support-matrix gap without adding durable resume.
+- Read: Streaming Runtime loop/options/tests and Core TaskRevivalSource/waiting
+  implementation.
+- Tests: Streaming Runtime suite (20 tests) and package typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-23
+- Scope: parent task observation is now single-consumer aware: a synchronous
+  foreground/manual-wait result consumes its matching actor notification,
+  while awaited tasks still enter `waiting_tasks` and detached tasks remain
+  opportunity notifications without keep-alive.
+- Read: Core waiting/notification ordering, Host revival bridge, Agent Runtime
+  terminal delivery barrier/consumption, and focused integration tests.
+- Tests: Core run (129), Host task revival plus spawn/tools (120), Agent Runtime
+  tasks (72), and affected typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-23
+- Scope: the run loop carries structured `retryScope` with the last failed
+  semantic target. A changed argument set retries an argument-correctable
+  failure, while exact repetitions and target-level failures still feed the
+  nudge/doom-loop path. Awaited task terminal suspension remains automatic;
+  model-side wait is only needed for an immediate dependency before terminal.
+- Read: Core repeated-call state/transitions and awaited terminal gate, Agent
+  Runtime task guidance, and focused Core/Task tests.
+- Tests: focused Core run and Agent Runtime task suites plus affected
+  typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-21
+- Scope: dynamic Agent task text now stays below the system authority layer:
+  goal is child task input and optional context is required working context.
+  Core run-loop ordering, prompt assembly, and tool gates are unchanged.
+- Read: Host dynamic Agent assembly, Core child context/prompt composition, and
+  focused tests.
+- Tests: foreground/background prompt-capture regressions and affected
+  typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-21
+- Scope: raw `model.completed` remains per-turn trace/replay evidence but is not
+  a committed assistant answer. Nonterminal model text preceding tools may emit
+  `model.assistant_text`; a tool-less answer is provisional until Stop accepts
+  it, after which `run.completed.message` is the sole canonical final response.
+- Read: Core and Streaming Runtime model/tool/terminal branches, Protocol
+  transcript classification, and TUI/ACP/export consumers.
+- Tests: focused Core Stop-advance, Streaming Runtime tool-turn, Protocol, TUI
+  live/export, and ACP event suites plus affected typechecks passed.
+
+- Status: Verified
 - Date: 2026-07-19
 - Scope: Host Workflow episodes no longer translate `maxModelCalls` into a
   competing step ceiling. Explicit profile `maxSteps`, Core work-budget
@@ -284,6 +445,9 @@ createRun/resumeRunFromCheckpoint
 - Do not infer terminal run outcome from `model.completed` or `tool.completed`.
 - State transitions emit diagnostics when rejected.
 - Budget and max-step behavior are part of runtime semantics.
+- Forced tool-less max-step wrap-up emits a completed transport signal with
+  runtime-derived `completionStatus:"partial"`, `stepLimitReached:true`, and
+  `truncated:true`; callers must not reinterpret it as complete work.
 - Host must not derive `maxSteps` from `runBudget.maxModelCalls`; the former is
   an explicit foreground step limit (or Host backstop), while the latter is a
   Core resource-budget dimension with its own stop reason and failure code.
@@ -340,13 +504,10 @@ createRun/resumeRunFromCheckpoint
   failures are model-correctable tool failures before policy/approval, while
   `policyForArgs()` exceptions keep their existing `phase: "policyForArgs"`
   metadata.
-- Host assembles workflow hooks in configured hooks, built-in verification
-  invariant hooks, built-in documented-command invariant hooks, selected
-  workflow asset projection hooks, then the built-in partial sub-agent finality
-  disclosure Stop hook before passing them to core. This is an assembly
-  invariant, not a new run-loop execution path; P1.5/D25 removes the old
-  verification/documented-command gate producers and keeps run-level invariants
-  outside the linear workflow state machine.
+- Host assembles workflow hooks in configured hooks, explicit verification
+  profile hooks, then selected workflow asset projection hooks. Goal-wording
+  regexes do not auto-register the legacy documented-command Stop gate, and
+  child partial evidence does not register a semantic completion Stop hook.
 - Deferred tool calls are not hard-blocked solely because their schema was not
   model-loaded. When schema validation fails for an unloaded deferred tool, the
   run loop emits the normal requested -> failed span and adds recovery metadata
@@ -369,9 +530,10 @@ createRun/resumeRunFromCheckpoint
   provider request bodies, prompt input, and tool schemas must not be carried as
   failure metadata.
 - `complete("final_answer")` snapshots the live FactLedger onto
-  `run.completed.factLedger`. `outcome` remains the bounded public terminal
-  status projection when failures are present; command diagnostics derive from
-  the ledger instead of persisting a second compact command model.
+  `run.completed.factLedger` and accepts the model's natural final without a
+  semantic completion continuation. `outcome` remains the bounded public
+  terminal status projection when failures are present; command diagnostics
+  derive from the ledger instead of persisting a second compact command model.
 - Sinks should not break event emission.
 - Host pre-run preparation can buffer capability diagnostics before `createRun`
   exists. When flushed into the real run event log, warning-severity
@@ -386,15 +548,18 @@ createRun/resumeRunFromCheckpoint
   goal. This event is observability for tool ordering/labels only; it does not
   remove tools, change run outcome, or grant permissions.
 - Host pre-run capability snapshots can include `rules.workflow` descriptors for
-  configured workflow hooks, verification invariants, and built-in verifier
-  rules, plus `rules.events` descriptors for non-blocking event subscribers.
-  These are inspection metadata only; the run loop still executes the existing
-  `workflowHooks` array with canonical lifecycle values. Built-in
-  documented-command hooks remain absent for inactive runs; active results may
-  carry built-in rule metadata for trace explanation.
+  configured workflow hooks and explicit verification profiles, plus
+  `rules.events` descriptors for non-blocking event subscribers. These are
+  inspection metadata only; the run loop still executes the existing
+  `workflowHooks` array with canonical lifecycle values. The legacy
+  documented-command regex rule is not advertised as an active runtime rule.
 - Host event hook rules are outside the awaited `workflowHooks` array. They
   subscribe to run events through `bindUserHooks()`, so slow or failed event
   actions emit `user_hook.*` diagnostics without blocking the run loop.
+- Low-level `RunHook` callbacks observe model, tool, and event boundaries in
+  process. Each callback is fault-isolated and logged; there is no loop-wide
+  `RunHook.onError` phase. Embedders that need failure telemetry observe the
+  emitted failure events through `RunHook.onEvent`.
 - The `workflowHooks` array, by contrast, is awaited at each lifecycle gate
   because its results (`block`/`advance`/`rewrite`/`continue` context)
   deterministically steer the loop — you cannot block a `Stop`, advance a
@@ -415,6 +580,10 @@ createRun/resumeRunFromCheckpoint
   step start, the run loop drains sources and injects messages through the
   existing `run.notification.injected` path; do not add synthetic user turns or
   a separate notification event family for task revival.
+- Tool calls that synchronously return a terminal task result consume that
+  task's parent actor notice before the next Core step. This prevents duplicate
+  `run.notification.injected` context without changing awaited readiness or
+  detached no-keep-alive semantics.
 - `waiting_tasks` is an internal live run state only, not a `RunResult` state.
   It waits for awaited task readiness, command input, or abort. Task readiness
   must come from a non-consuming queue wait; command readiness must be derived
@@ -428,6 +597,11 @@ createRun/resumeRunFromCheckpoint
   Exhaustion emits `run.budget.exceeded` / FactLedger `budgetExceeded` and
   refuses revival without failing the run directly. All three race legs share
   one per-wait abort signal for cleanup.
+- Streaming Runtime follows the same split-port semantics for embedders. Its
+  `taskRevivalSource` never consumes completion context; configured
+  `notificationSources` drain that context at the next step start. Its
+  `maxTaskRevivalTurns` budget defaults to 5 and is independent of foreground
+  `maxSteps`. Like Core, this state is process-local and not checkpoint-resumed.
 - P3 Step 2 keeps the terminal ordering as Stop-before-await:
   `workflowHooks(Stop)` run before `waitForAwaitedTasksBeforeTerminal()`.
   A Stop-time `task_terminal` verifier observes pre-await run state and pays one

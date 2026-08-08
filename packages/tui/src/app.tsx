@@ -6,28 +6,26 @@ import React, {
   useSyncExternalStore,
 } from "react";
 import { join } from "node:path";
-import { Box, Text, useApp, useInput, useStdin, useStdout } from "ink";
+import { Box, Text, useApp, useStdin, useStdout } from "ink";
 import type { Key } from "ink";
 import { EventStore } from "./state/event-store.js";
 import { RunController } from "./state/run-controller.js";
-import { ToastStore } from "./state/toast-store.js";
+import { NotificationStore } from "./state/notification-store.js";
 import { QueueStore } from "./state/queue-store.js";
 import { LayerStack } from "./state/layer-stack.js";
-import { EventStream } from "./components/event-stream.js";
 import { InputBox } from "./components/input-box.js";
 import { ThemeProvider } from "./lib/theme-context.js";
 import { resolveTheme, type Theme } from "./lib/theme.js";
 import { loadStash, type StashFile } from "./lib/stash.js";
 import type { InputBoxHandle } from "./components/input-box.js";
 import { LiveFrame } from "./components/live-frame.js";
+import { resolveStreamingAnswerRows } from "./components/streaming-message.js";
 import { LayerRenderer } from "./components/layer-renderer.js";
+import { TranscriptViewport } from "./components/transcript-viewport.js";
+import { TranscriptBrowseFooter } from "./components/transcript-browse-footer.js";
 import { resolveDialogColumns } from "./components/dialog-frame.js";
 import { AttentionManager } from "./lib/attention.js";
-import {
-  useSkillActions,
-  runSkillLearnAutoNotice,
-} from "./state/use-skill-actions.js";
-import { loadTuiSkillInboxAction } from "./lib/skill-evolution.js";
+import { presentationPolicy } from "./lib/ui-signal.js";
 import { useCapabilityActions } from "./state/use-capability-actions.js";
 import { useSessionActions } from "./state/use-session-actions.js";
 import { useTaskActions } from "./state/use-task-actions.js";
@@ -39,14 +37,14 @@ import {
   resolveProjectCommandIntent,
 } from "./lib/project-commands.js";
 import {
-  chordMatches,
-  ctrlCPressCount,
   DEFAULTS as DEFAULT_BINDINGS,
   isPlainEscapeChord,
-  isPlainPrintableChord,
-  shouldDeferPrintableChordToInput,
   type Bindings,
 } from "./lib/keybindings.js";
+import {
+  InteractionRouter,
+  type InteractionAction,
+} from "./lib/interaction-router.js";
 import type { PermissionMode, TraceLevel } from "@sparkwright/protocol";
 import {
   loadTuiConfig,
@@ -62,6 +60,18 @@ import {
   toCoreRunFields,
   type TuiPermissionMode,
 } from "./lib/permission.js";
+import { assembleTranscriptDocument } from "./lib/transcript-document.js";
+import { layoutTranscriptDocument } from "./lib/transcript-layout.js";
+import { inkScreenRows } from "./lib/terminal-screen-layout.js";
+import {
+  initialTranscriptViewportState,
+  moveTranscriptViewportToEnd,
+  moveTranscriptViewportToStart,
+  resetTranscriptViewport,
+  scrollTranscriptViewport,
+  synchronizeTranscriptViewport,
+  toggleTranscriptViewportMode,
+} from "./state/transcript-viewport-state.js";
 
 export interface CliOverrides {
   workspaceRoot?: string;
@@ -216,14 +226,15 @@ function AppReady(
 ): React.ReactElement {
   const { exit } = useApp();
   const { isRawModeSupported } = useStdin();
-  const { stdout, write: writeToStdout } = useStdout();
+  const { stdout } = useStdout();
   const { resolved } = props;
 
   const store = useMemo(() => new EventStore(), []);
   const layers = useMemo(() => new LayerStack(), []);
-  const toasts = useMemo(() => new ToastStore(), []);
+  const toasts = useMemo(() => new NotificationStore(), []);
   const queue = useMemo(() => new QueueStore(), []);
   const attention = useMemo(() => new AttentionManager(), []);
+  const interactionRouter = useMemo(() => new InteractionRouter(), []);
   const controller = useMemo(
     () =>
       new RunController({
@@ -235,8 +246,9 @@ function AppReady(
         modelNameSource: resolved.modelNameSource,
         initialSessionId: props.cliOverrides.sessionId,
         store,
+        signals: toasts,
       }),
-    [resolved.workspaceRoot, resolved.sessionRootDir, store],
+    [resolved.workspaceRoot, resolved.sessionRootDir, store, toasts],
   );
   const initialSessionLoadedRef = useRef(false);
 
@@ -247,14 +259,17 @@ function AppReady(
     void controller.switchSession(initialSessionId);
   }, [controller, props.cliOverrides.sessionId]);
 
-  // Track the terminal height only to cap the live (in-flight) stream panel so
-  // a long streaming message can't push the input box off-screen. Committed
-  // transcript lines live in scrollback (<Static>), so the overall frame is no
-  // longer clamped to the viewport.
-  const [termRows, setTermRows] = useState<number>(stdout?.rows ?? 24);
+  // The app owns a fixed-height screen. Transcript layout uses physical rows;
+  // live state and the composer occupy the reserved lower frame.
+  const [termRows, setTermRows] = useState<number>(
+    Math.max(1, stdout?.rows ?? 24),
+  );
+  const screenRows = inkScreenRows(termRows);
+  const [liveFrameRows, setLiveFrameRows] = useState(0);
+  const [inputFrameRows, setInputFrameRows] = useState(3);
   useEffect(() => {
     if (!stdout) return;
-    const onResize = (): void => setTermRows(stdout.rows ?? 24);
+    const onResize = (): void => setTermRows(Math.max(1, stdout.rows ?? 24));
     stdout.on("resize", onResize);
     return () => {
       stdout.off("resize", onResize);
@@ -274,11 +289,9 @@ function AppReady(
   const queued = useSyncExternalStore(queue.subscribe, queue.getSnapshot);
   const [focused, setFocused] = useState(true);
   const theme = resolved.theme;
-  // Todo band: collapsed by default (active items only); ctrl+t expands to show
-  // completed items too.
-  const [todoExpanded, setTodoExpanded] = useState(false);
-  const [confirmingHumanAction, setConfirmingHumanAction] = useState(false);
-  const [applyingHumanAction, setApplyingHumanAction] = useState(false);
+  const [transcriptViewport, setTranscriptViewport] = useState(
+    initialTranscriptViewportState,
+  );
   // Prompt stash bridge — the InputBox reads/writes through this ref.
   const stashRef = useRef<StashFile>({ current: null, list: [] });
   const inputDraftRef = useRef("");
@@ -322,8 +335,6 @@ function AppReady(
     effCorePermission.shouldWrite,
     permissionModeOverride,
   ]);
-  const skillLearnGoalsRef = useRef<string[]>([]);
-  const skillLearnNoticeCountRef = useRef(0);
   const quitArmedUntilRef = useRef(0);
   const lastQuitRequestAtRef = useRef(0);
   const suppressQuitUntilRef = useRef(0);
@@ -353,98 +364,114 @@ function AppReady(
   useEffect(() => {
     attention.enable();
     const unsub = attention.onChange(setFocused);
+    const unsubSignals = toasts.onSignal((signal) => {
+      if (signal.attention === "blurred") {
+        attention.notify(
+          signal.title ? `${signal.title}: ${signal.message}` : signal.message,
+          signal.dedupeKey ?? signal.id,
+        );
+      }
+    });
     return () => {
       unsub();
+      unsubSignals();
       attention.disable();
     };
-  }, [attention]);
+  }, [attention, toasts]);
 
+  // /clear, /new, and session switches create a new document epoch. The export
+  // buffer remains owned by RunController; only the viewport anchor resets.
+  const lastDocumentEpoch = useRef(
+    `${state.sessionId ?? "no-session"}:${state.clearGeneration}`,
+  );
   useEffect(() => {
-    skillLearnGoalsRef.current = [];
-    skillLearnNoticeCountRef.current = 0;
-  }, [state.sessionId]);
+    const epoch = `${state.sessionId ?? "no-session"}:${state.clearGeneration}`;
+    if (epoch === lastDocumentEpoch.current) return;
+    lastDocumentEpoch.current = epoch;
+    setTranscriptViewport((current) => resetTranscriptViewport(current));
+  }, [state.clearGeneration, state.sessionId]);
 
-  // Scroll is the terminal's job now: the transcript is committed to native
-  // scrollback via <Static>, so we deliberately do NOT enable mouse reporting
-  // (which would capture the wheel and break native scrollback). `resolved.mouse`
-  // is reserved for future click-based affordances.
-
-  // Wipe the screen + scrollback when /clear or /new bumps the generation, then
-  // let the remounted <Static> (keyed on the same counter) reprint from empty.
-  // <Static> can't un-print committed lines, so an explicit wipe is required.
-  //
-  // Route the wipe through Ink's writeToStdout (NOT a raw stdout.write): it
-  // clears Ink's live region, writes our escape, then re-logs the current live
-  // frame. A raw write leaves the frame blank until Ink next repaints — and Ink
-  // skips repaints when the live output is unchanged, so the screen would stay
-  // black until the user typed or the spinner ticked.
-  const lastClearGen = useRef(state.clearGeneration);
-  useEffect(() => {
-    if (state.clearGeneration === lastClearGen.current) return;
-    lastClearGen.current = state.clearGeneration;
-    writeToStdout("\x1b[2J\x1b[3J\x1b[H");
-  }, [state.clearGeneration, writeToStdout]);
-
-  // Notify on approval requests and run failures.
+  // Project blocking approvals into the unified signal policy. The decision
+  // surface remains canonical for action; the signal owns attention/history.
   const lastApprovalId = useRef<string | null>(null);
   useEffect(() => {
     if (
       state.pendingApproval &&
-      state.pendingApproval.id !== lastApprovalId.current
+      state.pendingApproval.approvalId !== lastApprovalId.current
     ) {
-      lastApprovalId.current = state.pendingApproval.id;
-      attention.notify(`approval needed: ${state.pendingApproval.summary}`);
+      if (lastApprovalId.current) {
+        toasts.resolve(`approval:${lastApprovalId.current}`);
+      }
+      lastApprovalId.current = state.pendingApproval.approvalId;
+      const kind = "blocking" as const;
+      const scope = "Approval" as const;
+      toasts.publish({
+        kind,
+        scope,
+        source: "tui.approval",
+        title: "approval needed",
+        message: state.pendingApproval.summary,
+        dedupeKey: `approval:${state.pendingApproval.approvalId}`,
+        actions: [
+          { id: "allow-once", label: "Allow once", key: "y" },
+          { id: "deny", label: "Deny", key: "esc" },
+        ],
+        ...presentationPolicy({ kind, scope }),
+      });
     } else if (!state.pendingApproval) {
+      if (lastApprovalId.current) {
+        toasts.resolve(`approval:${lastApprovalId.current}`);
+      }
       lastApprovalId.current = null;
     }
-  }, [state.pendingApproval, attention]);
+  }, [state.pendingApproval, toasts]);
 
-  const lastStatus = useRef(state.status);
+  const lastDiagnosticId = useRef<string | null>(null);
   useEffect(() => {
-    if (
-      lastStatus.current === "running" &&
-      (state.status === "done" || state.status === "error")
-    ) {
-      if (state.status === "error") {
-        // Errors have a single, persistent surface: the pinned red line below
-        // the stream (kept until the next run clears state.lastError). We only
-        // ring the bell here — no error toast on top of that line, which was
-        // the redundant double-surface.
-        attention.notify("run failed");
-      } else {
-        const cancelledRun =
-          state.stopReason === "manual_cancelled" ||
-          state.stopReason === "user_cancelled";
-        attention.notify(cancelledRun ? "run cancelled" : "run done");
-        toasts.push({
-          variant: cancelledRun ? "info" : "success",
-          title: cancelledRun ? "run cancelled" : "run done",
-          message: cancelledRun
-            ? "cancelled"
-            : (state.stopReason ?? "completed"),
-        });
-        runSkillLearnAutoNotice({
-          workspaceRoot: resolved.workspaceRoot,
-          toasts,
-          goals: skillLearnGoalsRef.current,
-          sessionId: state.sessionId,
-          noticeCount: skillLearnNoticeCountRef.current,
-          setNoticeCount: (n) => {
-            skillLearnNoticeCountRef.current = n;
-          },
-        });
+    const diagnostic = state.lastDiagnostic;
+    if (!diagnostic) {
+      if (lastDiagnosticId.current) {
+        toasts.resolve(lastDiagnosticId.current);
+        lastDiagnosticId.current = null;
       }
+      return;
     }
-    lastStatus.current = state.status;
-  }, [
-    state.status,
-    state.lastError,
-    state.stopReason,
-    state.sessionId,
-    resolved.workspaceRoot,
-    attention,
-    toasts,
-  ]);
+    if (diagnostic.id === lastDiagnosticId.current) return;
+    if (lastDiagnosticId.current) toasts.resolve(lastDiagnosticId.current);
+    lastDiagnosticId.current = diagnostic.id;
+    const kind = "error" as const;
+    const scope = diagnostic.scope;
+    toasts.publish({
+      id: diagnostic.id,
+      kind,
+      scope,
+      source: "tui.run",
+      title: diagnostic.title,
+      message: diagnostic.message,
+      dedupeKey: diagnostic.id,
+      ...presentationPolicy({ kind, scope }),
+    });
+  }, [state.lastDiagnostic, toasts]);
+
+  useEffect(() => {
+    const dedupeKey = "config:validation";
+    if (resolved.errors.length === 0) {
+      toasts.resolve(dedupeKey);
+      return;
+    }
+    const kind = "error" as const;
+    const scope = "Config" as const;
+    toasts.publish({
+      kind,
+      scope,
+      source: "tui.config",
+      title: "config errors",
+      message: `${resolved.errors.length} validation error(s) · /config for details`,
+      details: resolved.errors,
+      dedupeKey,
+      ...presentationPolicy({ kind, scope }),
+    });
+  }, [resolved.errors, toasts]);
 
   async function reloadConfig(verbose: boolean): Promise<void> {
     const loaded = await loadTuiConfig(props.initialCwd);
@@ -483,58 +510,12 @@ function AppReady(
     }
   }
 
-  // Skill Evolution actions + the review-panel state they drive live in a
-  // dedicated hook so App carries the wiring, not the proposal/review/learn
-  // toast plumbing.
-  const skillActions = useSkillActions({
-    workspaceRoot: resolved.workspaceRoot,
-    toasts,
-    layers,
-    reloadConfig,
-    onProposalClosed: (proposalId) => {
-      store.clearPendingHumanAction(proposalId);
-      setConfirmingHumanAction(false);
-      setApplyingHumanAction(false);
-    },
-    onProposalPrepared: () => {
-      void loadTuiSkillInboxAction(resolved.workspaceRoot)
-        .then((action) => store.setPendingHumanAction(action))
-        .catch(() => {});
-    },
-  });
-
-  // Proposal files are durable. Restore the most recent open proposal after a
-  // restart so the completion card is a convenience, never the only inbox.
-  useEffect(() => {
-    let cancelled = false;
-    void loadTuiSkillInboxAction(resolved.workspaceRoot)
-      .then((action) => {
-        if (!cancelled) store.setPendingHumanAction(action);
-      })
-      .catch(() => {
-        if (!cancelled) store.setPendingHumanAction(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [resolved.workspaceRoot, store]);
-
-  useEffect(() => {
-    setConfirmingHumanAction(false);
-    setApplyingHumanAction(false);
-  }, [state.pendingHumanAction?.proposalId]);
-
   // Capability browser + creation flow (panel snapshot state + handlers).
   const capActions = useCapabilityActions({
     workspaceRoot: resolved.workspaceRoot,
     controller,
     toasts,
     layers,
-    onSkillProposalPrepared: () => {
-      void loadTuiSkillInboxAction(resolved.workspaceRoot)
-        .then((action) => store.setPendingHumanAction(action))
-        .catch(() => {});
-    },
   });
 
   // Session browsing / diagnostics / labels / rename / fork / export.
@@ -554,6 +535,7 @@ function AppReady(
     toasts,
     layers,
     events: state.events,
+    sessionId: state.sessionId ?? controller.getSessionId(),
   });
 
   const workflowActions = useWorkflowActions({
@@ -634,7 +616,6 @@ function AppReady(
         controller,
         toasts,
         exit,
-        skillActions,
         capActions,
         sessionActions,
         taskActions,
@@ -656,8 +637,6 @@ function AppReady(
 
   function startGoal(value: string): void {
     quitArmedUntilRef.current = 0;
-    if (toastSnapshot.current?.variant === "error") toasts.dismiss();
-    skillLearnGoalsRef.current.push(value);
     void controller.start(value);
   }
 
@@ -667,17 +646,10 @@ function AppReady(
     // drain effect below starts it once the current run finishes.
     if (state.status === "running" || state.status === "awaiting-approval") {
       queue.enqueue(value);
-      toasts.push({
-        variant: "info",
-        message: `queued · ${queue.size} waiting`,
-      });
       return;
     }
     if (state.stopReason === "manual_cancelled" && queued.length > 0) {
-      toasts.push({
-        variant: "info",
-        message: `${queued.length} queued prompt${queued.length === 1 ? "" : "s"} paused after cancel`,
-      });
+      // Composer queue is rendered in-place; no duplicate toast.
     }
     startGoal(value);
   }
@@ -695,8 +667,7 @@ function AppReady(
     }
     if (state.status === "running") {
       quitArmedUntilRef.current = now + 1500;
-      if (controller.cancel())
-        toasts.push({ variant: "info", message: "cancelling…" });
+      controller.cancel();
       return;
     }
     if (topLayer?.name === "approval" && state.pendingApproval) {
@@ -749,154 +720,220 @@ function AppReady(
     if (next) startGoal(next);
   }, [state.status, state.stopReason, queued.length, controller, queue]);
 
-  // Layer-aware hotkeys: when a layer owns input, the App-level hotkeys
-  // step back so they don't double-handle keys. Each binding is resolved
-  // through `resolved.bindings`, so user config overrides take effect after
-  // the config watcher reloads.
-  //
-  // This is only the per-render closure; the `useInput` listener lives in the
-  // module-scope `HotkeysListener` below. Keeping the listener component's
-  // identity stable across renders is deliberate — a component defined inline
-  // in App is a fresh type each render, so Ink unmounts/remounts it every time
-  // and its `useInput` can drop a keystroke mid-stream.
   function requestCancelRun(): void {
-    if (controller.cancel())
-      toasts.push({ variant: "info", message: "cancelling…" });
-  }
-
-  function handleHotkey(input: string, key: Key): void {
-    const b = resolved.bindings;
-    const top = layers.top();
-    const matchesChords = (chords: Bindings[keyof Bindings]): boolean => {
-      const draft = inputHandleRef.current?.getValue() ?? "";
-      if (shouldDeferPrintableChordToInput(chords, key, input, draft)) {
-        return false;
-      }
-      return chords.some((c) => chordMatches(c, key, input));
-    };
-    const matchesGlobal = (name: keyof Bindings): boolean =>
-      matchesChords(b[name]);
-    const humanAction = state.pendingHumanAction;
-    const draft = inputHandleRef.current?.getValue() ?? "";
-    if (
-      !top &&
-      humanAction &&
-      draft.length === 0 &&
-      state.status !== "running" &&
-      state.status !== "awaiting-approval"
-    ) {
-      if (applyingHumanAction) return;
-      if (confirmingHumanAction) {
-        if (key.return) {
-          setApplyingHumanAction(true);
-          void skillActions
-            .applySkillReviewProposal(humanAction.proposalId)
-            .then((applied) => {
-              if (!applied) setApplyingHumanAction(false);
-            });
-          return;
-        }
-        if (key.escape) {
-          setConfirmingHumanAction(false);
-          return;
-        }
-      } else {
-        if (input === "a" && humanAction.eligibility === "quick_apply") {
-          setConfirmingHumanAction(true);
-          return;
-        }
-        if (input === "r") {
-          skillActions.reviewSkillProposalsFromSlash(humanAction.proposalId);
-          return;
-        }
-        if (key.escape) {
-          store.clearPendingHumanAction(humanAction.proposalId);
-          return;
-        }
-      }
-    }
-    if (matchesGlobal("quit.app")) {
-      if (!top) return;
-      requestQuit(Math.max(1, ctrlCPressCount(input)));
-      return;
-    }
-    if (top?.name !== "approval" && matchesGlobal("activity.open")) {
-      taskActions.openActivity();
-      return;
-    }
-    if (!top && matchesGlobal("events.open")) {
-      taskActions.openActivity("events");
-      return;
-    }
-    if (!top && state.status !== "running" && matchesGlobal("help.open")) {
-      layers.toggle("help");
-      return;
-    }
-    if (!top && matchesGlobal("cycle-permission-mode")) {
-      cyclePermissionMode();
-      return;
-    }
-    if (!top && state.todoItems.length > 0 && matchesGlobal("todo.toggle")) {
-      setTodoExpanded((v) => !v);
-      return;
-    }
-    if (
-      !top &&
-      state.status === "running" &&
-      matchesChords(b["cancel.run"].filter((c) => !isPlainEscapeChord(c)))
-    ) {
-      requestCancelRun();
-    }
-  }
-
-  function shouldInputBoxIgnoreInput(
-    input: string,
-    key: Key,
-    draft: string,
-  ): boolean {
-    if (draft.length > 0) return false;
-    const humanAction = state.pendingHumanAction;
-    if (
-      humanAction &&
-      state.status !== "running" &&
-      state.status !== "awaiting-approval"
-    ) {
-      if (confirmingHumanAction && (key.return || key.escape)) return true;
-      if (applyingHumanAction) return true;
-      if (
-        !confirmingHumanAction &&
-        (input === "r" ||
-          key.escape ||
-          (input === "a" && humanAction.eligibility === "quick_apply"))
-      ) {
-        return true;
-      }
-    }
-    if (input.length !== 1) return false;
-    const b = resolved.bindings;
-    const matchesPlainPrintable = (chords: Bindings[keyof Bindings]): boolean =>
-      chords.some(
-        (chord) =>
-          isPlainPrintableChord(chord) && chordMatches(chord, key, input),
-      );
-    if (matchesPlainPrintable(b["activity.open"])) return true;
-    if (matchesPlainPrintable(b["events.open"])) return true;
-    if (state.status !== "running" && matchesPlainPrintable(b["help.open"])) {
-      return true;
-    }
-    if (matchesPlainPrintable(b["cycle-permission-mode"])) return true;
-    if (state.todoItems.length > 0 && matchesPlainPrintable(b["todo.toggle"])) {
-      return true;
-    }
-    return (
-      state.status === "running" &&
-      matchesPlainPrintable(
-        b["cancel.run"].filter((chord) => !isPlainEscapeChord(chord)),
-      )
-    );
+    controller.cancel();
   }
 
   const modelLabel = effModel ?? "deterministic";
+  const cols = resolveDialogColumns(stdout?.columns) ?? 100;
+  const documentEpoch = `${state.sessionId ?? "no-session"}:${state.clearGeneration}`;
+  const frozenHeaderRef = useRef<{
+    epoch: string;
+    value: {
+      workspaceRoot: string;
+      modelLabel: string;
+      sessionId: string | null;
+    };
+  } | null>(null);
+  if (frozenHeaderRef.current?.epoch !== documentEpoch) {
+    frozenHeaderRef.current = {
+      epoch: documentEpoch,
+      value: {
+        workspaceRoot: resolved.workspaceRoot,
+        modelLabel,
+        sessionId: state.sessionId,
+      },
+    };
+  }
+  const frozenHeader = frozenHeaderRef.current.value;
+  const transcriptDocument = useMemo(
+    () =>
+      assembleTranscriptDocument({
+        epoch: documentEpoch,
+        events: state.events,
+        todoItems: state.todoItems,
+        header: frozenHeader,
+      }),
+    [documentEpoch, frozenHeader, state.events, state.todoItems],
+  );
+  const inputSurfaceRows =
+    transcriptViewport.mode === "detailed" ? 1 : inputFrameRows;
+  const transcriptRows = Math.max(
+    1,
+    screenRows - liveFrameRows - inputSurfaceRows,
+  );
+  const transcriptLayout = useMemo(
+    () =>
+      layoutTranscriptDocument(
+        transcriptDocument,
+        transcriptViewport.mode,
+        Math.max(1, cols - 2),
+      ),
+    [transcriptDocument, transcriptViewport.mode, cols],
+  );
+  const previousLayoutRef = useRef<{
+    epoch: string;
+    mode: typeof transcriptViewport.mode;
+    columns: number;
+    totalRows: number;
+  } | null>(null);
+  useEffect(() => {
+    const previous = previousLayoutRef.current;
+    const comparable =
+      previous?.epoch === transcriptLayout.documentEpoch &&
+      previous.mode === transcriptLayout.mode &&
+      previous.columns === transcriptLayout.columns;
+    if (comparable) {
+      const appendedRows = Math.max(
+        0,
+        transcriptLayout.totalRows - previous.totalRows,
+      );
+      setTranscriptViewport((current) =>
+        synchronizeTranscriptViewport(
+          current,
+          transcriptLayout,
+          transcriptRows,
+          appendedRows,
+        ),
+      );
+    }
+    previousLayoutRef.current = {
+      epoch: transcriptLayout.documentEpoch,
+      mode: transcriptLayout.mode,
+      columns: transcriptLayout.columns,
+      totalRows: transcriptLayout.totalRows,
+    };
+  }, [transcriptLayout, transcriptRows]);
+
+  function toggleTranscriptDetails(): void {
+    setTranscriptViewport((current) =>
+      toggleTranscriptViewportMode(current, transcriptLayout, transcriptRows),
+    );
+  }
+
+  function scrollTranscriptBy(delta: number): void {
+    setTranscriptViewport((current) =>
+      scrollTranscriptViewport(
+        current,
+        transcriptLayout,
+        transcriptRows,
+        delta,
+      ),
+    );
+  }
+
+  function routeGlobalInput(input: string, key: Key, draft: string): boolean {
+    const b = resolved.bindings;
+    const actions: InteractionAction[] = [
+      {
+        id: "quit.app",
+        scope: "global",
+        chords: b["quit.app"],
+        enabled: true,
+        run: () => requestQuit(),
+      },
+      {
+        id: "activity.open",
+        scope: "global",
+        chords: b["activity.open"],
+        enabled: true,
+        run: () => taskActions.openActivity(),
+      },
+      {
+        id: "events.open",
+        scope: "global",
+        chords: b["events.open"],
+        enabled: true,
+        run: () => taskActions.openActivity("events"),
+      },
+      {
+        id: "help.open",
+        scope: "global",
+        chords: b["help.open"],
+        enabled: state.status !== "running",
+        run: () => layers.toggle("help"),
+      },
+      {
+        id: "cycle-permission-mode",
+        scope: "global",
+        chords: b["cycle-permission-mode"],
+        enabled: true,
+        run: cyclePermissionMode,
+      },
+      {
+        id: "details.toggle",
+        scope: "global",
+        chords: b["details.toggle"],
+        enabled:
+          transcriptViewport.mode === "detailed" ||
+          state.events.length > 0 ||
+          state.todoItems.length > 0,
+        run: toggleTranscriptDetails,
+      },
+      {
+        id: "transcript.page-up",
+        scope: "global",
+        chords: b["transcript.page-up"],
+        enabled: transcriptLayout.rows.length > transcriptRows,
+        run: () =>
+          setTranscriptViewport((current) =>
+            scrollTranscriptViewport(
+              current,
+              transcriptLayout,
+              transcriptRows,
+              -Math.max(1, transcriptRows - 1),
+            ),
+          ),
+      },
+      {
+        id: "transcript.page-down",
+        scope: "global",
+        chords: b["transcript.page-down"],
+        enabled: transcriptLayout.rows.length > transcriptRows,
+        run: () =>
+          setTranscriptViewport((current) =>
+            scrollTranscriptViewport(
+              current,
+              transcriptLayout,
+              transcriptRows,
+              Math.max(1, transcriptRows - 1),
+            ),
+          ),
+      },
+      {
+        id: "transcript.top",
+        scope: "global",
+        chords: b["transcript.top"],
+        enabled: transcriptLayout.rows.length > 0,
+        run: () =>
+          setTranscriptViewport((current) =>
+            moveTranscriptViewportToStart(current, transcriptLayout),
+          ),
+      },
+      {
+        id: "transcript.bottom",
+        scope: "global",
+        chords: b["transcript.bottom"],
+        enabled: transcriptLayout.rows.length > 0,
+        run: () =>
+          setTranscriptViewport((current) =>
+            moveTranscriptViewportToEnd(
+              current,
+              transcriptLayout,
+              transcriptRows,
+            ),
+          ),
+      },
+      {
+        id: "cancel.run",
+        scope: "global",
+        chords: b["cancel.run"].filter((chord) => !isPlainEscapeChord(chord)),
+        enabled: state.status === "running",
+        run: requestCancelRun,
+      },
+    ];
+    return interactionRouter.route(input, key, draft, actions).handled;
+  }
 
   function cyclePermissionMode(): void {
     const next = nextAllowedTuiPermissionMode(
@@ -917,23 +954,22 @@ function AppReady(
     const changed = nextModelName !== modelLabel;
     setModelOverride({ modelName: nextModelName });
     controller.updateModel(nextModelName, "request");
-    // A committed switch leaves one permanent line in scrollback; no transient
-    // toast on top of it (an unchanged pick just closes the dialog silently).
+    // A committed switch leaves one durable transcript row; no transient toast
+    // on top of it (an unchanged pick just closes the dialog silently).
     if (changed) store.appendNotice(`model -> ${nextModelName} (next run)`);
     layers.pop("model");
   }
 
-  const cols = resolveDialogColumns(stdout?.columns) ?? 100;
   // Only reserve the sidebar rail when the terminal is wide AND there's
   // something to show — an empty "modified files (none yet)" box pinned at the
   // bottom is just clutter.
   const hasSidebarContent = state.modifiedFiles.length > 0;
   const sidebarWidth = cols >= 100 && hasSidebarContent ? 32 : 0;
 
-  // Cap the live stream panel so a long in-flight message can't push the input
-  // off-screen. Committed lines are in scrollback, so nothing else is clamped.
-  const streamingMax = Math.max(3, termRows - 16);
-
+  // Bound the live answer by physical terminal height. The transcript remains
+  // the only scrollable surface; very small screens degrade below the normal
+  // 6–12 row range so the input and at least one transcript row stay visible.
+  const streamingMax = resolveStreamingAnswerRows(screenRows);
   function closeTopLayer(): void {
     if (!topLayer) return;
     layers.pop(topLayer.name);
@@ -949,6 +985,7 @@ function AppReady(
     sessionList: sessionActions.sessionList,
     sessionRootLabel: resolved.sessionRootLabel,
     events: state.events,
+    usage: state.usage,
     taskRecords: taskActions.taskRecords,
     taskOutputs: taskActions.taskOutputs,
     loadingTasks: taskActions.loadingTasks,
@@ -965,8 +1002,9 @@ function AppReady(
     loadingDiagnosticsFor: sessionActions.loadingDiagnosticsFor,
     capabilitySnapshot: capActions.capabilitySnapshot,
     loadingCapabilities: capActions.loadingCapabilities,
-    skillReviewSnapshot: skillActions.skillReviewSnapshot,
-    loadingSkillReview: skillActions.loadingSkillReview,
+    skillsSnapshot: capActions.skillsSnapshot,
+    loadingSkills: capActions.loadingSkills,
+    notifications: toastSnapshot.history,
     onActivityTabChange: taskActions.handleActivityTabChange,
     onRefreshTasks: () => void taskActions.refreshTaskSnapshots(),
     onStopTask: taskActions.stopActivityTask,
@@ -983,116 +1021,113 @@ function AppReady(
     onCommitRename: sessionActions.commitRename,
     onApprovalDecision: (choice) => void controller.resolveApproval(choice),
     onCreateCapability: capActions.handleCreateCapability,
-    onUpdateSkillProposal: skillActions.handleUpdateSkillProposal,
-    onApplySkillReviewProposal: skillActions.applySkillReviewProposal,
-    onRejectSkillReviewProposal: skillActions.rejectSkillReviewProposal,
   } satisfies Omit<React.ComponentProps<typeof LayerRenderer>, "entry">;
 
   return (
     <ThemeProvider theme={theme}>
-      <Box flexDirection="column">
-        {isRawModeSupported ? <HotkeysListener onInput={handleHotkey} /> : null}
-
-        {/* Committed transcript → terminal scrollback, led by a one-time session
-          header at the top. Keyed on clearGeneration so /clear and /new remount
-          it (paired with the screen wipe above), reprinting a fresh header. */}
-        <EventStream
-          key={state.clearGeneration}
-          events={state.events}
-          header={{
-            workspaceRoot: resolved.workspaceRoot,
-            modelLabel,
-            sessionId: state.sessionId,
-          }}
-        />
-
-        <LiveFrame
-          state={state}
-          modelLabel={modelLabel}
-          permissionMode={effTuiPermissionMode}
-          focused={focused}
-          runningTaskCount={taskActions.taskActivity.running}
-          unreadTasks={taskActions.unreadTasks}
-          waitingWorkflowCount={workflowActions.waitingWorkflowCount}
-          streamingMax={streamingMax}
-          sidebarWidth={sidebarWidth}
-          columns={cols}
-          todoExpanded={todoExpanded}
-          toast={toastSnapshot.current}
-          toastQueueDepth={toastSnapshot.queueDepth}
-          errors={resolved.errors}
-          queued={queued}
-          showQueued={!topLayer}
-          confirmingHumanAction={confirmingHumanAction}
-          applyingHumanAction={applyingHumanAction}
-        />
-
-        {/* Layer rendering — only the topmost layer owns input. */}
+      <Box flexDirection="column" height={screenRows} overflow="hidden">
+        {/* A blocking layer owns both input and the visible operation surface.
+          Transcript state remains mounted in App and resumes at its semantic
+          anchor when the layer closes. */}
         {topLayer ? (
           <LayerRenderer entry={topLayer} {...layerProps} />
-        ) : isRawModeSupported ? (
-          <InputBox
-            // Stay editable while a run is in flight: submissions are queued
-            // (see handleSubmit) rather than blocked, so the user can line up
-            // follow-ups without waiting.
-            disabled={false}
-            placeholder={
-              state.status === "running" || state.status === "awaiting-approval"
-                ? "running — type to queue the next goal (esc cancels run)"
-                : 'type a goal, /capabilities for available capabilities, or "/" for commands'
-            }
-            workspaceRoot={resolved.workspaceRoot}
-            registry={registry}
-            vim={resolved.vim}
-            onSubmit={handleSubmit}
-            onCommand={(cmd, rest) =>
-              void (cmd.runRaw ? cmd.runRaw(rest) : cmd.run())
-            }
-            onEscape={() => {
-              // Plain Esc is editor-owned; only treat it as run cancellation when
-              // the user has kept cancel.run bound to esc.
-              if (
-                state.status === "running" &&
-                resolved.bindings["cancel.run"].some(isPlainEscapeChord)
-              ) {
-                requestCancelRun();
-              }
-            }}
-            onQuit={requestQuit}
-            onQuitClear={noteInputClearedByQuit}
-            stashRef={stashRef}
-            onStashChange={(next) => {
-              stashRef.current = next;
-            }}
-            initialDraft={inputDraftRef.current}
-            onDraftChange={(next) => {
-              inputDraftRef.current = next;
-            }}
-            shouldIgnoreInput={shouldInputBoxIgnoreInput}
-            handleRef={inputHandleRef}
-          />
         ) : (
-          <Box paddingX={1}>
-            <Text dimColor>
-              (input disabled — stdin is not a TTY; run from a real terminal)
-            </Text>
-          </Box>
+          <>
+            <TranscriptViewport
+              layout={transcriptLayout}
+              state={transcriptViewport}
+              rows={transcriptRows}
+            />
+            <LiveFrame
+              state={state}
+              modelLabel={modelLabel}
+              permissionMode={effTuiPermissionMode}
+              focused={focused}
+              runningTaskCount={taskActions.taskActivity.running}
+              unreadTasks={taskActions.unreadTasks}
+              waitingWorkflowCount={workflowActions.waitingWorkflowCount}
+              streamingMax={streamingMax}
+              sidebarWidth={sidebarWidth}
+              columns={cols}
+              toast={toastSnapshot.current}
+              toastQueueDepth={toastSnapshot.queueDepth}
+              errors={resolved.errors}
+              queued={queued}
+              showQueued
+              onHeightChange={setLiveFrameRows}
+            />
+            {transcriptViewport.mode === "detailed" ? (
+              <TranscriptBrowseFooter
+                onClose={toggleTranscriptDetails}
+                onLineUp={() => scrollTranscriptBy(-1)}
+                onLineDown={() => scrollTranscriptBy(1)}
+                onTop={() =>
+                  setTranscriptViewport((current) =>
+                    moveTranscriptViewportToStart(current, transcriptLayout),
+                  )
+                }
+                onBottom={() =>
+                  setTranscriptViewport((current) =>
+                    moveTranscriptViewportToEnd(
+                      current,
+                      transcriptLayout,
+                      transcriptRows,
+                    ),
+                  )
+                }
+                onGlobalInput={(input, key) => routeGlobalInput(input, key, "")}
+              />
+            ) : isRawModeSupported ? (
+              <InputBox
+                // Stay editable while a run is in flight: submissions are
+                // queued rather than blocked.
+                disabled={false}
+                placeholder={
+                  state.status === "running" ||
+                  state.status === "awaiting-approval"
+                    ? "running — type to queue the next goal (esc cancels run)"
+                    : 'type a goal, /capabilities for available capabilities, or "/" for commands'
+                }
+                workspaceRoot={resolved.workspaceRoot}
+                registry={registry}
+                vim={resolved.vim}
+                onSubmit={handleSubmit}
+                onCommand={(cmd, rest) =>
+                  void (cmd.runRaw ? cmd.runRaw(rest) : cmd.run())
+                }
+                onEscape={() => {
+                  if (
+                    state.status === "running" &&
+                    resolved.bindings["cancel.run"].some(isPlainEscapeChord)
+                  ) {
+                    requestCancelRun();
+                  }
+                }}
+                onQuit={requestQuit}
+                onQuitClear={noteInputClearedByQuit}
+                stashRef={stashRef}
+                onStashChange={(next) => {
+                  stashRef.current = next;
+                }}
+                initialDraft={inputDraftRef.current}
+                onDraftChange={(next) => {
+                  inputDraftRef.current = next;
+                }}
+                onGlobalInput={routeGlobalInput}
+                handleRef={inputHandleRef}
+                onHeightChange={setInputFrameRows}
+              />
+            ) : (
+              <Box paddingX={1}>
+                <Text dimColor>
+                  (input disabled — stdin is not a TTY; run from a real
+                  terminal)
+                </Text>
+              </Box>
+            )}
+          </>
         )}
       </Box>
     </ThemeProvider>
   );
-}
-
-/**
- * Stable listener for App-level hotkeys. Defined at module scope so its type
- * identity never changes across App renders — a component defined inline in App
- * is a fresh type each render, so Ink unmounts/remounts it every time and its
- * `useInput` can drop a keystroke mid-stream. Only the `onInput` closure changes
- * per render, which Ink handles fine (same pattern as InputBox).
- */
-function HotkeysListener(props: {
-  onInput: (input: string, key: Key) => void;
-}): null {
-  useInput((input, key) => props.onInput(input, key));
-  return null;
 }

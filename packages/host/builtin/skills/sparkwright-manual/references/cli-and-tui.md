@@ -186,6 +186,16 @@ npm run tui
 The TUI uses the host/client path and the same config model. The root script
 rebuilds first to avoid stale compiled output.
 
+During generation, reasoning shows only its latest three source lines and the
+answer preview is temporarily folded to a terminal-height-dependent window,
+normally 6–12 physical rows. Completion atomically replaces the preview with
+the full committed assistant answer, so the fold hint does not indicate lost
+final output. Visible reasoning still depends on the model/provider gateway.
+
 Use `/sessions`, select a session, and press `i` to inspect diagnostics. When
 present, the inspect panel includes the compaction audit from
 `session.inspect` with `compaction: true`.
+
+Use `/skills` for the effective Skill inventory and recent exact-identity load
+counts. Press Enter for associated run/tool signals; those signals are
+diagnostic correlations, not proof that a Skill caused an outcome.

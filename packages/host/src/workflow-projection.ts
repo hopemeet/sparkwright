@@ -951,12 +951,6 @@ export function createWorkflowProjectionHooks(
           delegates: branches.map((branch) => ({
             agentId: branch.delegate?.agentId,
             goal: branch.delegate?.goal ?? branch.body,
-            metadata: {
-              ...(branch.delegate?.metadata ?? {}),
-              workflowRunId,
-              parallelNodeId: parallelNode.id,
-              branchNodeId: branch.id,
-            },
           })),
         },
         {
@@ -966,51 +960,49 @@ export function createWorkflowProjectionHooks(
         } satisfies RuntimeContext,
       );
     } catch (cause) {
-      if (isDelegateParallelIncomplete(cause)) {
-        output = cause.metadata;
-      } else {
-        const message = cause instanceof Error ? cause.message : String(cause);
-        const code = stringValue(isRecord(cause) ? cause.code : undefined);
-        return branches.map((branch) => {
-          const attempt =
-            (state.parallelBranches?.[branch.id]?.attempt ?? 0) + 1;
-          const metadata = {
-            execute: "delegate",
-            delegateParallel: true,
-            parallelNodeId: parallelNode.id,
-            error: message,
-            ...(code ? { code } : {}),
-          };
-          return {
-            node: branch,
-            state: parallelBranchState({
-              parallelNode,
-              branch,
-              attempt,
-              verdict: {
-                status: "runtime_error",
-                reason: "delegate_parallel_runtime_error",
-                metadata,
+      const message = cause instanceof Error ? cause.message : String(cause);
+      const code = stringValue(isRecord(cause) ? cause.code : undefined);
+      return branches.map((branch) => {
+        const attempt = (state.parallelBranches?.[branch.id]?.attempt ?? 0) + 1;
+        const metadata = {
+          execute: "delegate",
+          delegateParallel: true,
+          parallelNodeId: parallelNode.id,
+          error: message,
+          ...(code ? { code } : {}),
+        };
+        return {
+          node: branch,
+          state: parallelBranchState({
+            parallelNode,
+            branch,
+            attempt,
+            verdict: {
+              status: "runtime_error",
+              reason: "delegate_parallel_runtime_error",
+              metadata,
+            },
+            evidenceRefs: [
+              {
+                kind: "run",
+                ref: `${input.run.id}:${parallelNode.id}:${branch.id}`,
+                nodeId: branch.id,
+                metadata: { attempt, ...metadata },
               },
-              evidenceRefs: [
-                {
-                  kind: "run",
-                  ref: `${input.run.id}:${parallelNode.id}:${branch.id}`,
-                  nodeId: branch.id,
-                  metadata: { attempt, ...metadata },
-                },
-              ],
-              metadata: { delegateParallel: true },
-            }),
-          };
-        });
-      }
+            ],
+            metadata: { delegateParallel: true },
+          }),
+        };
+      });
     }
     const results = delegateParallelResults(output);
     return branches.map((branch, index) => {
       const result = results[index];
+      const resultRecord = isRecord(result) ? result : {};
+      const status = stringValue(resultRecord.status);
+      const signal = stringValue(resultRecord.signal);
       const verdict =
-        result?.signal === "completed"
+        status === "completed" || (!status && signal === "completed")
           ? ({
               status: "passed" as const,
               reason: "delegate_parallel_branch_completed",
@@ -2331,16 +2323,6 @@ function delegateParallelResults(
   if (!isRecord(output) || !Array.isArray(output.results)) return [];
   return output.results.map((result) =>
     isRecord(result) ? result : undefined,
-  );
-}
-
-function isDelegateParallelIncomplete(
-  cause: unknown,
-): cause is Record<string, unknown> & { metadata: Record<string, unknown> } {
-  return (
-    isRecord(cause) &&
-    stringValue(cause.code) === "DELEGATE_PARALLEL_INCOMPLETE" &&
-    isRecord(cause.metadata)
   );
 }
 

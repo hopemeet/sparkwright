@@ -3,12 +3,12 @@
  *
  * We walk events chronologically and group them into sections by intent:
  *   - run.created/model.requested/run.started payload.goal → user goal
- *   - model.stream.chunk(text)  → assembled into one "Assistant" block per
- *                                 stream lifecycle
+ *   - model.assistant_text      → committed non-terminal assistant commentary
  *   - tool.requested/completed  → ### Tool sections with args + result
  *   - workspace.write.applied   → fenced diff block
  *   - approval.requested/resolved → admin note
- *   - run.completed/failed      → footer
+ *   - run.completed             → canonical final Assistant block + footer
+ *   - run.failed                → footer
  *
  * Unknown events fall through to a compact "raw" list at the end so the
  * export is lossless without being overwhelming.
@@ -21,6 +21,13 @@ import {
   oneLine,
   summarizeToolResultForDisplay,
 } from "./tool-display.js";
+import {
+  collectConversationApprovalStates,
+  conversationApprovalIdentity,
+  createConversationProjection,
+  formatConversationApprovalStatus,
+  shouldShowInConversation,
+} from "./conversation-projection.js";
 
 export interface TranscriptHeader {
   sessionId: string;
@@ -46,10 +53,6 @@ export function renderTranscript(
   out.push("---");
   out.push("");
 
-  // Streaming text is assembled across model.stream.chunk events between
-  // model.stream.started and model.stream.completed. We keep buffers per
-  // run so concurrent streams don't cross-contaminate (rare today, future-proof).
-  const streamBuffers = new Map<string, string>();
   const toolRequests = new Map<
     string,
     { toolName?: string; arguments?: unknown }
@@ -58,9 +61,18 @@ export function renderTranscript(
   const goalsByRun = collectUserGoals(events);
 
   const tail: RunEvent[] = []; // events we didn't render as a section
+  const conversationProjection = createConversationProjection();
+  const approvalStates = collectConversationApprovalStates(events);
 
   for (const ev of events) {
     const p = (ev.payload ?? {}) as Record<string, unknown>;
+    if (ev.type === "tool.requested") {
+      const name = typeof p.toolName === "string" ? p.toolName : "?";
+      const id = typeof p.id === "string" ? p.id : undefined;
+      const args = p.input ?? p.args ?? p.arguments;
+      if (id) toolRequests.set(id, { toolName: name, arguments: args });
+    }
+    if (!shouldShowInConversation(ev, conversationProjection)) continue;
     const runId = runIdForEvent(ev);
 
     switch (ev.type) {
@@ -77,59 +89,26 @@ export function renderTranscript(
         out.push("");
         break;
       }
-      case "model.stream.started": {
-        streamBuffers.set(runId, "");
+      case "model.stream.started":
+      case "model.stream.chunk":
+      case "model.stream.completed":
+      case "model.completed":
+        // Streaming/model-turn events are provisional or diagnostic. They are
+        // deliberately excluded from a committed transcript.
         break;
-      }
-      case "model.stream.chunk": {
-        const chunk = p as { type?: string; text?: string };
-        if (chunk.type === "text_delta" && typeof chunk.text === "string") {
-          streamBuffers.set(
-            runId,
-            (streamBuffers.get(runId) ?? "") + chunk.text,
-          );
-        }
-        break;
-      }
-      case "model.stream.completed": {
-        const text = streamBuffers.get(runId) ?? "";
-        streamBuffers.delete(runId);
-        if (text) {
+      case "model.assistant_text": {
+        const message = typeof p.message === "string" ? p.message.trim() : "";
+        if (message) {
           out.push(`## Assistant`);
           out.push("");
-          out.push(text.trimEnd());
+          out.push(message);
           out.push("");
         }
-        break;
-      }
-      // A concurrent/sequential tool batch wraps the child tool sections below.
-      // We emit a heading so the export shows the grouping; the matching
-      // `tool.batch.completed` closes it with a delimiter. The child
-      // tool.requested/completed sections render normally between the two.
-      case "tool.batch.requested": {
-        const count =
-          typeof p.toolCallCount === "number"
-            ? p.toolCallCount
-            : Array.isArray(p.toolNames)
-              ? p.toolNames.length
-              : 0;
-        const mode = typeof p.mode === "string" ? p.mode : "concurrent";
-        out.push(
-          `### Batch · ${count} tool${count === 1 ? "" : "s"} (${mode})`,
-        );
-        out.push("");
-        break;
-      }
-      case "tool.batch.completed": {
-        out.push("_End of batch._");
-        out.push("");
         break;
       }
       case "tool.requested": {
         const name = typeof p.toolName === "string" ? p.toolName : "?";
-        const id = typeof p.id === "string" ? p.id : undefined;
         const args = p.input ?? p.args ?? p.arguments;
-        if (id) toolRequests.set(id, { toolName: name, arguments: args });
         out.push(`### Tool: \`${name}\``);
         if (args !== undefined) {
           out.push("");
@@ -219,12 +198,18 @@ export function renderTranscript(
         break;
       }
       case "approval.requested": {
+        const identity = conversationApprovalIdentity(ev);
+        const status = formatConversationApprovalStatus(
+          identity ? approvalStates.get(identity) : undefined,
+        );
         const summary = typeof p.summary === "string" ? p.summary : "?";
-        out.push(`> 🤝 Approval requested: ${summary}`);
+        out.push(`> 🤝 Approval ${status}: ${summary}`);
         out.push("");
         break;
       }
       case "approval.resolved": {
+        const identity = conversationApprovalIdentity(ev);
+        if (identity && approvalStates.get(identity)?.requested) break;
         const decision = typeof p.decision === "string" ? p.decision : "?";
         out.push(`> Approval ${decision}`);
         out.push("");
@@ -237,6 +222,13 @@ export function renderTranscript(
           out.push(`_Run failed: **${runFailureMessage(p)}**_`);
           out.push("");
           break;
+        }
+        const message = typeof p.message === "string" ? p.message.trim() : "";
+        if (message) {
+          out.push(`## Assistant`);
+          out.push("");
+          out.push(message);
+          out.push("");
         }
         const stopReason =
           typeof p.stopReason === "string"

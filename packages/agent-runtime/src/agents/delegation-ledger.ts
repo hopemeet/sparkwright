@@ -1,10 +1,12 @@
+import { createHash } from "node:crypto";
 import type { RunHandle } from "@sparkwright/core";
 import type {
   DelegationLedgerHit,
   DelegationLedgerKey,
   DelegationLedgerResult,
+  ParentAgentResult,
 } from "./types.js";
-import { isReusableAgentResult } from "./result.js";
+import { isReusableAgentResult, projectParentAgentResult } from "./result.js";
 
 interface DelegationLedgerEntry {
   key: string;
@@ -19,17 +21,14 @@ const delegationLedgersByParent = new WeakMap<
   DelegationLedgerEntry[]
 >();
 
-/**
- * Compatibility name retained for callers. Reuse is exact after conservative
- * normalization; this function no longer performs fuzzy similarity matching.
- */
-export function findSimilarSuccessfulDelegation(
+export function findReusableDelegation(
   parent: RunHandle,
   key: DelegationLedgerKey,
   goal: string,
 ): DelegationLedgerHit | undefined {
+  if (key.cacheable === false) return undefined;
   const entries = delegationLedgersByParent.get(parent) ?? [];
-  const normalizedKey = delegationLedgerKeyString(key);
+  const normalizedKey = delegationLedgerKeyString(parent, key);
   const goalFingerprint = delegationGoalFingerprint(goal);
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const candidate = entries[i];
@@ -41,16 +40,17 @@ export function findSimilarSuccessfulDelegation(
   return undefined;
 }
 
-export function rememberSuccessfulDelegation(
+export function rememberReusableDelegation(
   parent: RunHandle,
   key: DelegationLedgerKey,
   goal: string,
   result: DelegationLedgerResult,
 ): boolean {
+  if (key.cacheable === false) return false;
   if (!isReusableAgentResult(result)) return false;
   const entries = delegationLedgersByParent.get(parent) ?? [];
   entries.push({
-    key: delegationLedgerKeyString(key),
+    key: delegationLedgerKeyString(parent, key),
     goal,
     goalFingerprint: delegationGoalFingerprint(goal),
     result: { ...result },
@@ -62,31 +62,79 @@ export function rememberSuccessfulDelegation(
   return true;
 }
 
-export function withAlreadyCompletedNote(
+export function reusedDelegationResult(
   result: DelegationLedgerResult,
-): DelegationLedgerResult {
-  return {
-    ...result,
-    alreadyCompleted: true,
-    note: "A similar delegation already completed in this parent run; summarize the previous child result instead of spawning another child agent.",
-  };
+): ParentAgentResult {
+  return projectParentAgentResult({
+    result,
+    workspace: result.output?.workspace ?? { writes: 0 },
+    reused: true,
+  });
 }
 
-function delegationLedgerKeyString(key: DelegationLedgerKey): string {
+function delegationLedgerKeyString(
+  parent: RunHandle,
+  key: DelegationLedgerKey,
+): string {
   const allowedTools =
     key.allowedTools && key.allowedTools.length > 0
       ? [...new Set(key.allowedTools)].sort()
       : undefined;
+  const metadata = parent.record?.metadata ?? {};
   return JSON.stringify({
     kind: key.kind,
     ...(key.agentProfileId ? { agentProfileId: key.agentProfileId } : {}),
     ...(key.delegateTool ? { delegateTool: key.delegateTool } : {}),
     ...(key.role ? { role: key.role } : {}),
-    ...(key.prompt ? { prompt: key.prompt } : {}),
+    ...(key.context ? { context: key.context } : {}),
     ...(allowedTools ? { allowedTools } : {}),
+    modelFingerprint:
+      key.modelFingerprint ?? stableFingerprint(metadata.resolvedModel),
+    capabilityFingerprint:
+      key.capabilityFingerprint ?? parentCapabilityFingerprint(parent),
+    promptFingerprint:
+      key.promptFingerprint ??
+      stableFingerprint({
+        project: metadata.projectPromptFingerprint,
+        profile: metadata.agentAssetIdentity,
+      }),
+    workspaceEpoch:
+      key.workspaceEpoch ?? parent.getWorkspaceState?.()?.currentEpoch() ?? 0,
   });
 }
 
 function delegationGoalFingerprint(goal: string): string {
   return goal.normalize("NFKC").toLowerCase().trim().replace(/\s+/g, " ");
+}
+
+function parentCapabilityFingerprint(parent: RunHandle): string {
+  return stableFingerprint(
+    (parent.tools?.list?.() ?? [])
+      .filter((tool) => tool.delegation === "child")
+      .map((tool) => ({
+        name: tool.name,
+        governance: tool.governance,
+        terminal: tool.terminal?.kind,
+      }))
+      .sort((left, right) => left.name.localeCompare(right.name)),
+  );
+}
+
+function stableFingerprint(value: unknown): string {
+  return createHash("sha256")
+    .update(stableJson(value))
+    .digest("hex")
+    .slice(0, 24);
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .filter(([, item]) => item !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
 }

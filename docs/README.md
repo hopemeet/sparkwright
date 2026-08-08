@@ -53,8 +53,8 @@ then move into reference docs when you need contracts.
   sections, cache stability, and extension points.
 - [Provider Edge](./reference/PROVIDER_EDGE.md) - provider adapters, model
   routing, fallback, cancellation, and usage metadata.
-- [Skills](./reference/SKILLS.md) - skill shape, loading, Skill Evolution, and
-  trace reproducibility.
+- [Skills](./reference/SKILLS.md) - skill shape, loading, deterministic project
+  creation, statistics, and trace reproducibility.
 - [Streaming Loop Requirements](./reference/STREAMING_LOOP_REQUIREMENTS.md) -
   after-turn streaming and cancellation requirements.
 - [Trace Extension Events](./reference/TRACE_EXTENSION_EVENTS.md) - extension

@@ -9,6 +9,95 @@ See also [../maps/trace/summary-timeline-verify.md](../maps/trace/summary-timeli
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-08-07
+- Scope: clarified that internal Direct Core diagnostics do not promise Host
+  feature parity, specifically configured HTTP Event Hook transport. Normal
+  host-backed runs remain the user-facing HTTP Event Hook path.
+- Read: CLI direct-core gate/runner, Host event-hook binding, architecture and
+  configuration references.
+- Tests: focused Direct Core diagnostics-gate test, all workspace
+  builds/typechecks, and repository lint passed; no CLI runtime code changed.
+
+- Status: Verified
+- Date: 2026-08-02
+- Scope: CLI Skill management is now `list|create|validate|stats|doctor` only.
+  `create` publishes one deterministic project scaffold without overwrite;
+  proposal/review/reconcile/history/restore routes were removed. Stats no
+  longer reads evolution data and preserves bounded trace-cache behavior.
+- Read: CLI Skill parser/handlers/help/rendering, run outcome fixtures, schemas,
+  regression script, public docs, and focused tests.
+- Tests: CLI typecheck, repository test typecheck, and focused CLI 18/18 passed
+  before final gates.
+
+- Status: Verified
+- Date: 2026-07-30
+- Scope: root workspace builds now remove each package's `dist/` immediately
+  before rebuilding it, so deleted source modules cannot survive as orphaned
+  publishable output. Dependency order is unchanged and each dependency remains
+  built before a dependent package is cleaned and compiled.
+- Read: workspace build orchestrator, dist freshness check, package files, and
+  release install-smoke output.
+- Tests: full `npm run release:check` exposed the stale artifact; the focused
+  rebuild/package-content regression passed after the fix.
+
+- Status: Verified
+- Date: 2026-07-26
+- Scope: CLI TUI usage now advertises and forwards `--no-alt-screen`; terminal
+  lifecycle and renderer selection remain owned by `@sparkwright/tui`.
+- Read: CLI TUI dispatch/usage and TUI argument parsing/startup validation.
+- Tests: CLI/TUI typechecks and TUI startup help regression passed.
+
+- Status: Verified
+- Date: 2026-07-25
+- Scope: Direct Core continues to use Host's workflow-hook assembly, but no
+  longer passes goal/write context for an implicit documented-command Stop
+  gate. Configured workflow hooks and explicit verification profiles retain
+  parity with Host runs.
+- Read: Direct Core run assembly, Host workflow-hook options, capability rule
+  projection, and affected typecheck paths.
+- Tests: CLI 186/186, repository test typecheck, Host focused/full suites,
+  repository lint, targeted format check, and project-map drift passed.
+
+- Status: Verified
+- Date: 2026-07-24
+- Scope: reviewed for principal-scoped approval and Agent completion payloads.
+  CLI remains a Host/Protocol consumer; it does not infer child finality or
+  verification from prose, and its access-mode behavior is unchanged.
+- Read: CLI Host runner/approval consumers, Protocol DTOs, and Host projections.
+- Tests: affected CLI test typecheck, repository build, and repository test
+  typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-23
+- Scope: the internal Direct Core app identity no longer implies write access.
+  It tells the model to use only the tools and access allowed for the current
+  run; policy, approval, tool assembly, and verification hooks remain the
+  execution authority.
+- Read: Direct Core prompt assembly and its shared Host/Core policy and hook
+  seams.
+- Tests: CLI typecheck and repository test typecheck passed; no Direct Core
+  runtime behavior changed.
+
+- Status: Verified
+- Date: 2026-07-21
+- Scope: the Host runner reconstructs Core approval requests with the required
+  typed subject. CLI final output continues to use terminal results rather than
+  raw `model.completed`; no new CLI-owned approval scope inference exists.
+- Read: CLI Host runner/approval/outcome paths, Protocol/Core request contracts,
+  and focused downstream tests.
+- Tests: affected CLI approval/outcome typechecks and cross-package approval
+  fixtures passed.
+
+- Status: Verified
+- Date: 2026-07-21
+- Scope: live CLI event output now formats `subagent.*` identity, semantic
+  status, summary, and bounded blocker codes instead of hiding recovery facts
+  inside raw JSON.
+- Read: CLI event formatter, Agent terminal payload contract, and focused/full
+  tests.
+- Tests: CLI 186/186 and CLI typecheck passed.
+
+- Status: Verified
 - Date: 2026-07-19
 - Scope: the internal Direct Core diagnostic entry uses Host's canonical
   runtime workflow-hook assembly. Required verification profiles, configured
@@ -260,11 +349,17 @@ Does not own:
   surface. P1.5 removes the experimental environment gate; the flag remains
   unsupported on `--direct-core`. Ordinary runs omit the field and keep existing
   behavior.
+- `--direct-core` is an environment-gated internal diagnostic path, not a
+  second production runtime. It does not promise Host feature parity;
+  configured HTTP Event Hook transport is user-facing only through normal
+  host-backed runs.
 - Run flags expose `--trace-level standard|debug`.
 - Live run output formats `capability.index.failed` payload details when
   present, including warning severity, capability kind/code, profile id, and a
   bounded message/source. Agent profile collision warnings should therefore be
   visible in normal `sparkwright run` output, not only in trace inspection.
+- Live run output formats `subagent.*` lifecycle events as compact Agent rows
+  containing child identity, semantic status, summary, and blocker codes.
 - Live run output formats `agent.routing.evaluated` as a compact sort summary
   (`mode`, delegate count, relevant/low counts); raw trace inspection remains
   the source for per-delegate matched keyword details.
@@ -402,7 +497,8 @@ Does not own:
 - `capabilities inspect` prints `workflow rules` from host
   `CapabilitySnapshot.rules.workflow`, including source, lifecycle, active
   status, blocking potential, matcher/action summaries, and hints. CLI does not
-  reconstruct workflow hooks or verification rules locally.
+  reconstruct workflow hooks or verification rules locally, and goal wording
+  does not add a documented-command rule.
 - When unresolved verification failures make a completed run exit non-zero, CLI
   summaries say `Run completed with verification failures; exiting 1` so the
   terminal line matches the exit code.
@@ -437,7 +533,9 @@ Does not own:
   script writing a root `.sparkwright-build-stamp.json` after successful
   builds. Stamps stay outside `dist/` so npm package files do not include them,
   while targeted `npm run build --workspace ...` still avoids false stale
-  reports when TypeScript emits no changed output.
+  reports when TypeScript emits no changed output. Root `npm run build` removes
+  each workspace `dist/` immediately before that workspace builds, preventing
+  deleted source modules from remaining in release packages.
 - Text output is a human diagnostic surface; JSON output should remain machine-parseable.
 - `sparkwright trace timeline --format text` prefixes phase rows with a short
   run id only for multi-run traces, keeping single-run output compact. JSON

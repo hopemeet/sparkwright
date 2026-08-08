@@ -599,7 +599,7 @@ function analyzeMultiAgentAuditability({
         return `${item.label} · verifiedAfterChildWrite childWriteIndex=${evidence.childWriteIndex} subagentIndex=${evidence.subagentIndex} verificationIndex=${evidence.verificationIndex} command=${evidence.command}`;
       }),
       recommendation:
-        "Keep the raw child finality for audit, but treat the parent result as lower risk because a later verification covered the current workspace state.",
+        "Keep the raw child terminal evidence for audit, but treat the parent result as lower risk because a later verification covered the current workspace state.",
     });
   }
 
@@ -1095,7 +1095,8 @@ function taskStatusIsTerminal(status: string): boolean {
 
 function taskTerminalIsPartial(record: Record<string, unknown>): boolean {
   return (
-    record.finality === "partial" ||
+    record.status === "partial" ||
+    record.status === "blocked" ||
     record.stepLimitReached === true ||
     record.truncated === true ||
     record.terminalState === "step_limit" ||
@@ -3077,11 +3078,15 @@ function collectIncompleteSubagentTerminals(
     }
     if (!isRecord(event.payload)) continue;
     const state = stringValue(event.payload.terminalState);
+    const status = stringValue(event.payload.status);
     const stepLimitReached = booleanValue(event.payload.stepLimitReached);
     const truncated = booleanValue(event.payload.truncated);
     if (
       state !== "step_limit" &&
       state !== "truncated" &&
+      status !== "partial" &&
+      status !== "blocked" &&
+      event.type !== "subagent.failed" &&
       stepLimitReached !== true &&
       truncated !== true
     ) {
@@ -3101,16 +3106,28 @@ function collectIncompleteSubagentTerminals(
       event.payload.childRunId,
     );
     const terminal =
-      state === "truncated" || state === "step_limit"
-        ? state
-        : truncated
-          ? "truncated"
-          : "step_limit";
+      status === "blocked" || status === "partial"
+        ? status
+        : state === "truncated" || state === "step_limit"
+          ? state
+          : truncated
+            ? "truncated"
+            : stepLimitReached
+              ? "step_limit"
+              : event.type === "subagent.failed"
+                ? "failed"
+                : "partial";
+    const summary = stringValue(event.payload.summary);
+    const blockerCodes = agentBlockerCodes(event.payload.blockers);
     const depth = optionalNumberValue(event.metadata.subagentDepth);
     const pieces = [
       `${name} ${terminal}`,
       childRunId ? `child ${childRunId}` : undefined,
       depth !== undefined ? `depth ${depth}` : undefined,
+      summary ? `summary ${summary}` : undefined,
+      blockerCodes.length > 0
+        ? `blockers ${blockerCodes.join(", ")}`
+        : undefined,
     ].filter((value): value is string => typeof value === "string");
     const verifiedAfterChildWrite = collectVerifiedAfterChildWriteEvidence(
       events,
@@ -3125,6 +3142,15 @@ function collectIncompleteSubagentTerminals(
   }
 
   return out;
+}
+
+function agentBlockerCodes(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => (isRecord(item) ? stringValue(item.code) : undefined))
+    .filter((code): code is string => typeof code === "string")
+    .filter((code, index, all) => all.indexOf(code) === index)
+    .slice(0, 5);
 }
 
 function collectVerifiedAfterChildWriteEvidence(

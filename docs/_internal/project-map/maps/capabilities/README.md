@@ -8,6 +8,102 @@ cron, shell/task tools, and capability inspection.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-08-02
+- Scope: Skill capability mutation is no longer a model authority surface.
+  `list_skills`/`skill_load`, deterministic project creation, ordinary
+  controlled file edits, and trace-derived Stats remain; proposal/history and
+  learning paths are retired.
+- Read: Host tool catalog/config, Skill capability and retired evolution maps,
+  CLI/TUI surfaces, schemas, and focused tests.
+- Tests: affected builds/typechecks and focused Host/CLI/TUI coverage passed
+  before final gates.
+
+- Status: Verified
+- Date: 2026-08-01
+- Scope: `web` still expands only to main-run `web_fetch`; Host now adds the
+  orthogonal `capabilities.web.security` transport knob with default `system`
+  and explicit `hardened`, without adding a search provider or child surface.
+- Read: Host selector/catalog/config, generated schema, web edge, and user docs.
+- Tests: Web 38/38, focused Host selector/config/catalog 152/152, CLI 186/186,
+  generated schema checks, and install smokes passed.
+
+- Status: Verified
+- Date: 2026-07-26
+- Scope: route review for compact in-process Agent results. Capability
+  discovery, admission, child catalog derivation, and mutation authority are
+  unchanged; the change only narrows the result returned to the parent model.
+- Read: Agent/Host result projection and adjacent capability boundaries.
+- Tests: Agent Runtime 259/259 and Host 583/583 passed.
+
+- Status: Verified
+- Date: 2026-07-25
+- Scope: route review for bounded Agent action receipts and zero-write
+  reporting guidance. Capability discovery, admission, parent/child catalog
+  boundaries, and mutation authority are unchanged.
+- Read: Host dynamic Agent assembly, Agent capability map, and adjacent
+  capability routes.
+- Tests: Host 583/583 and Agent Runtime 258/258.
+
+- Status: Verified
+- Date: 2026-07-24
+- Scope: capability routing now distinguishes explicit child delegation from
+  parent-only tools. Dynamic children derive local read/CAS-write/child-safe
+  shell capability; MCP, cron, task/todo, external effects, and management
+  surfaces remain parent-only.
+- Read: Core tool metadata, Host catalog/resolver, Agent capability map, and
+  adjacent capability maps.
+- Tests: focused Host catalog/Agent tests, repository build, and repository test
+  typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-23
+- Scope: Host handshake now advertises `task.events` for the independent
+  bounded lifecycle stream. Capability admission, discovery, approval, and
+  execution authority are unchanged.
+- Read: Host ready capabilities, protocol task event contract, and capability
+  ownership boundaries.
+- Tests: Host protocol coverage, affected typechecks, and schema validation
+  passed.
+
+- Status: Verified
+- Date: 2026-07-23
+- Scope: route review for structured Task/Shell/Agent async receipts and parent
+  inbox consumption; capability admission, discovery, and snapshot contracts
+  did not change.
+- Read: task tool exposure, Host Agent/Shell assembly, and capability boundary.
+- Tests: focused Host tools/spawn/task suites and affected typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-23
+- Scope: provider-native capability exposure now follows the same deferred
+  loaded-set in Core and Streaming Runtime; discovery via `tool_search` or a
+  loaded Skill dependency admits only registered surviving tools. Primary
+  profile prompt wiring changes model identity, not capability inventory or
+  authority.
+- Read: Core/Streaming tool projection, Host primary profile composition,
+  Skill dependency results, and focused regressions.
+- Tests: focused Core tool-search, Streaming Runtime, and Host episode suites
+  plus affected typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-21
+- Scope: foreground/background dynamic Agent entrypoints share one explicit
+  goal/context/capability schema. Other capability inventories and selectors are
+  unchanged.
+- Read: Host tool catalog and Agent assembly plus Skill/MCP/Cron boundaries.
+- Tests: focused Host Agent/catalog and affected typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-21
+- Scope: dynamic foreground Agent spawn and Agent task creation share one
+  effective structured capability contract and pre-approval validator. Typed
+  approval subjects are producer-owned; successful Skill/MCP preparation is
+  quiet only in conversation projection, not capability inventory or Trace.
+- Read: Host catalog/Agent assembly, Agent Runtime task descriptor, Protocol
+  approval subject, and TUI projection.
+- Tests: affected Agent Runtime, Host, Protocol, and TUI focused suites passed.
+
+- Status: Verified
 - Date: 2026-07-19
 - Scope: reviewed capability assembly after Todo scheduler removal and Workflow
   continuation narrowing. The Todo surface is advisory plan state; durable
@@ -310,6 +406,12 @@ config + workspace capability roots
   `allowed` keeps only listed concrete tool names, `disabled` removes concrete
   names even if otherwise selected, and `defer` only changes schema loading for
   tools that remain.
+- The `web` selector maps to the main-catalog `web_fetch` tool. Its stable
+  built-in identity is advanced/deferred and parent-only. It is a direct public
+  URL reader rather than a provider-backed search/browser capability.
+  `capabilities.web.security` configures only the connection boundary:
+  `system` (default) uses OS-routed HTTPS, while `hardened` validates/pins public
+  DNS addresses and permits HTTP(S). It does not add provider credentials.
 - `capabilities inspect` displays configured selectors and the final runtime
   inventory, so selector filtering must happen before snapshots and diagnostic
   inventories are built.

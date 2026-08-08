@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { createHash } from "node:crypto";
-import { join, resolve, sep } from "node:path";
+import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   FileTaskStore,
@@ -47,29 +47,13 @@ import {
   type CreateJobInput,
   type UpdateJobPatch,
 } from "@sparkwright/cron";
-import { type SkillGuardFinding, type SkillRoot } from "@sparkwright/skills";
+import { type SkillRoot } from "@sparkwright/skills";
 import {
-  SkillCommandService,
+  createProjectSkill,
   loadLayeredSkillReport,
-  collectSkillReviewDigest,
   collectSkillStats,
   collectAssetStats,
-  dismissSkillSuggestion,
-  createSkillCreateProposal,
-  createSkillUpdateProposal,
-  listSkillHistory,
-  listSkillProposals,
-  pruneSkillProposals,
-  readSkillHistoryDetail,
-  readSkillProposal,
-  rejectSkillProposal,
-  restoreSkillFromHistory,
   runSkillDoctor,
-  importSkill,
-  readSkillRegistry,
-  reconcileSkill,
-  scanSkillReconciliation,
-  supersedeSkillProposal,
   loadLayeredAgentReport,
   loadLayeredWorkflowAssets,
   loadHostConfig,
@@ -97,17 +81,8 @@ import {
   validateRunInput,
   writeConfigFileObject,
   type AgentReport,
-  type ApplySkillProposalResult,
   type SkillDoctorReport,
-  type SkillHistoryEntry,
-  type SkillHistoryDetail,
-  type SkillProposalDetail,
-  type SkillProposalState,
-  type SkillProposalSummary,
-  type PruneSkillProposalsResult,
-  type RestoreSkillFromHistoryResult,
   type SkillReport,
-  type SkillReviewDigest,
   type SkillStatsReport,
   type WorkflowAssetDetail,
   type WorkflowAssetReport,
@@ -2569,13 +2544,8 @@ async function handleSkillsCommand(
     subcommand !== "list" &&
     subcommand !== "create" &&
     subcommand !== "validate" &&
-    subcommand !== "review" &&
     subcommand !== "stats" &&
-    subcommand !== "doctor" &&
-    subcommand !== "proposals" &&
-    subcommand !== "history" &&
-    subcommand !== "restore" &&
-    subcommand !== "reconcile"
+    subcommand !== "doctor"
   ) {
     writeLine(io.stderr, skillsUsage());
     return { exitCode: 1 };
@@ -2586,53 +2556,7 @@ async function handleSkillsCommand(
       return await handleSkillsCreate(parsed, io);
     }
 
-    if (subcommand === "proposals") {
-      return await handleSkillProposalsCommand(parsed, io, env);
-    }
-
-    if (subcommand === "history") {
-      return await handleSkillHistoryCommand(parsed, io);
-    }
-
-    if (subcommand === "restore") {
-      return await handleSkillRestoreCommand(parsed, io);
-    }
-
-    if (subcommand === "reconcile") {
-      return await handleSkillReconcileCommand(parsed, io);
-    }
-
     const roots = await resolveSkillRootsForCli(parsed.workspaceRoot, env);
-    if (subcommand === "review") {
-      const [reviewAction, suggestionId] = splitCliWords(parsed.goal);
-      if (reviewAction === "dismiss") {
-        if (!suggestionId) {
-          throw new Error("skills review dismiss requires a suggestion id.");
-        }
-        await dismissSkillSuggestion({
-          workspaceRoot: parsed.workspaceRoot,
-          suggestionId,
-        });
-        writeLine(io.stdout, `dismissed suggestion: ${suggestionId}`);
-        return { exitCode: 0 };
-      }
-      const digest = await collectSkillReviewDigest({
-        workspaceRoot: parsed.workspaceRoot,
-        sessionRootDir: parsed.sessionRootDir,
-        skillRoots: roots,
-        limit: parsed.limit,
-        skillName: parsed.skillName,
-        skillKey: parsed.skillKey,
-        packageHash: parsed.packageHash,
-      });
-      if (parsed.format === "json") {
-        writeLine(io.stdout, JSON.stringify(digest, null, 2));
-      } else {
-        writeLine(io.stdout, formatSkillReviewDigest(digest));
-      }
-      return { exitCode: 0 };
-    }
-
     if (subcommand === "stats") {
       const stats = await collectSkillStats({
         workspaceRoot: parsed.workspaceRoot,
@@ -2681,367 +2605,6 @@ async function handleSkillsCommand(
   }
 }
 
-async function handleSkillReconcileCommand(
-  parsed: ParsedArgs,
-  io: CliIO,
-): Promise<CliRunResult> {
-  const args = splitCliWords(parsed.goal);
-  const action = args.shift();
-  try {
-    if (action === "scan") {
-      const findings = await scanSkillReconciliation(parsed.workspaceRoot);
-      writeLine(
-        io.stdout,
-        parsed.format === "json"
-          ? JSON.stringify(findings, null, 2)
-          : findings.length === 0
-            ? "reconciliation findings: 0"
-            : findings
-                .map(
-                  (finding) =>
-                    `- ${finding.kind} ${finding.skillName ?? finding.artifactId ?? "unknown"}`,
-                )
-                .join("\n"),
-      );
-      return { exitCode: 0 };
-    }
-    if (action === "list") {
-      const registry = await readSkillRegistry(parsed.workspaceRoot);
-      writeLine(
-        io.stdout,
-        parsed.format === "json"
-          ? JSON.stringify(registry, null, 2)
-          : registry.artifacts.length === 0
-            ? "registry artifacts: 0"
-            : registry.artifacts
-                .map(
-                  (artifact) =>
-                    `- ${artifact.artifactId} ${artifact.status} ${artifact.activePath ?? "(none)"}`,
-                )
-                .join("\n"),
-      );
-      return { exitCode: 0 };
-    }
-    const kind = action;
-    if (
-      kind !== "adopt" &&
-      kind !== "move" &&
-      kind !== "copy" &&
-      kind !== "reidentify" &&
-      kind !== "orphan" &&
-      kind !== "import"
-    ) {
-      throw new Error(
-        "Usage: sparkwright skills reconcile <scan|list|adopt|move|copy|reidentify|orphan|import> ...",
-      );
-    }
-    const first = args.shift();
-    const second = args.shift();
-    if (kind === "import") {
-      if (!first || !second) {
-        throw new Error("import requires <skill-name> <source-path>.");
-      }
-      const imported = await importSkill({
-        workspaceRoot: parsed.workspaceRoot,
-        skillName: first,
-        sourcePath: second,
-      });
-      writeLine(
-        io.stdout,
-        parsed.format === "json"
-          ? JSON.stringify(imported, null, 2)
-          : `imported ${first}: ${imported.receipt.artifactId}`,
-      );
-      return { exitCode: 0 };
-    }
-    const receipt = await reconcileSkill({
-      workspaceRoot: parsed.workspaceRoot,
-      kind,
-      ...(kind === "adopt" ? { skillName: first } : {}),
-      ...(kind === "move" || kind === "reidentify"
-        ? { artifactId: first, skillName: second }
-        : {}),
-      ...(kind === "copy"
-        ? { sourceArtifactId: first, skillName: second }
-        : {}),
-      ...(kind === "orphan" ? { artifactId: first } : {}),
-    });
-    writeLine(
-      io.stdout,
-      parsed.format === "json"
-        ? JSON.stringify(receipt, null, 2)
-        : `reconciled ${receipt.kind}: ${receipt.artifactId}`,
-    );
-    return { exitCode: 0 };
-  } catch (error) {
-    writeLine(
-      io.stderr,
-      error instanceof Error ? error.message : String(error),
-    );
-    return { exitCode: 1 };
-  }
-}
-
-async function handleSkillProposalsCommand(
-  parsed: ParsedArgs,
-  io: CliIO,
-  env: Record<string, string | undefined>,
-): Promise<CliRunResult> {
-  const args = splitCliWords(parsed.goal);
-  const action = args.shift();
-  if (action === "list") {
-    const runFilter = readFlagValue(args, "--run");
-    // `--session` is parsed globally into parsed.sessionId, so read it there
-    // rather than from the subcommand args.
-    const sessionFilter = parsed.sessionId;
-    let proposals = await listSkillProposals(parsed.workspaceRoot);
-    if (runFilter) {
-      proposals = proposals.filter((p) => p.provenance?.runId === runFilter);
-    }
-    if (sessionFilter) {
-      proposals = proposals.filter(
-        (p) => p.provenance?.sessionId === sessionFilter,
-      );
-    }
-    writeLine(
-      io.stdout,
-      parsed.format === "json"
-        ? JSON.stringify(proposals, null, 2)
-        : formatSkillProposalList(proposals),
-    );
-    return { exitCode: 0 };
-  }
-
-  if (action === "show") {
-    const id = args.shift();
-    if (!id) {
-      writeLine(io.stderr, "Usage: sparkwright skills proposals show <id>");
-      return { exitCode: 1 };
-    }
-    const proposal = await readSkillProposal(parsed.workspaceRoot, id);
-    writeLine(
-      io.stdout,
-      parsed.format === "json"
-        ? JSON.stringify(proposal, null, 2)
-        : formatSkillProposalDetail(proposal),
-    );
-    return { exitCode: 0 };
-  }
-
-  if (action === "apply") {
-    const id = args.shift();
-    if (!id) {
-      writeLine(io.stderr, "Usage: sparkwright skills proposals apply <id>");
-      return { exitCode: 1 };
-    }
-    const { applied: result } = await new SkillCommandService(
-      parsed.workspaceRoot,
-    ).approveAndApply(id, { force: parsed.force });
-    writeLine(
-      io.stdout,
-      parsed.format === "json"
-        ? JSON.stringify(result, null, 2)
-        : formatSkillProposalApplyResult(result),
-    );
-    return { exitCode: 0 };
-  }
-
-  if (action === "reject") {
-    const input = parseSkillProposalRejectArgs(args);
-    if (!input.ok) {
-      writeLine(io.stderr, input.message);
-      return { exitCode: 1 };
-    }
-    const proposal = await rejectSkillProposal({
-      workspaceRoot: parsed.workspaceRoot,
-      proposalId: input.value.id,
-      reason: input.value.reason,
-    });
-    writeLine(
-      io.stdout,
-      parsed.format === "json"
-        ? JSON.stringify(proposal, null, 2)
-        : formatSkillProposalDetail(proposal),
-    );
-    return { exitCode: 0 };
-  }
-
-  if (action === "supersede") {
-    const input = parseSkillProposalSupersedeArgs(args);
-    if (!input.ok) {
-      writeLine(io.stderr, input.message);
-      return { exitCode: 1 };
-    }
-    const proposal = await supersedeSkillProposal({
-      workspaceRoot: parsed.workspaceRoot,
-      proposalId: input.value.id,
-      supersededBy: input.value.supersededBy,
-      reason: input.value.reason,
-    });
-    writeLine(
-      io.stdout,
-      parsed.format === "json"
-        ? JSON.stringify(proposal, null, 2)
-        : formatSkillProposalDetail(proposal),
-    );
-    return { exitCode: 0 };
-  }
-
-  if (action === "prune") {
-    const input = parseSkillProposalPruneArgs(args);
-    if (!input.ok) {
-      writeLine(io.stderr, input.message);
-      return { exitCode: 1 };
-    }
-    const result = await pruneSkillProposals({
-      workspaceRoot: parsed.workspaceRoot,
-      states: input.value.states,
-      olderThanMs: input.value.olderThanMs,
-      apply: parsed.apply,
-    });
-    writeLine(
-      io.stdout,
-      parsed.format === "json"
-        ? JSON.stringify(result, null, 2)
-        : formatSkillProposalPruneResult(result),
-    );
-    return { exitCode: 0 };
-  }
-
-  if (action === "create") {
-    const input = parseSkillProposalDescriptionArgs(args, "create");
-    if (!input.ok) {
-      writeLine(io.stderr, input.message);
-      return { exitCode: 1 };
-    }
-    const proposal = await createSkillCreateProposal({
-      workspaceRoot: parsed.workspaceRoot,
-      name: input.value.name,
-      description: input.value.description,
-    });
-    writeLine(
-      io.stdout,
-      parsed.format === "json"
-        ? JSON.stringify(proposal, null, 2)
-        : `Created proposal ${proposal.id} at ${proposal.path.split(sep).join("/")}`,
-    );
-    return { exitCode: 0 };
-  }
-
-  if (action === "update") {
-    const input = parseSkillProposalDescriptionArgs(args, "update");
-    if (!input.ok) {
-      writeLine(io.stderr, input.message);
-      return { exitCode: 1 };
-    }
-    const roots = await resolveSkillRootsForCli(parsed.workspaceRoot, env);
-    const proposal = await createSkillUpdateProposal({
-      workspaceRoot: parsed.workspaceRoot,
-      skillRoots: roots,
-      name: input.value.name,
-      description: input.value.description,
-    });
-    writeLine(
-      io.stdout,
-      parsed.format === "json"
-        ? JSON.stringify(proposal, null, 2)
-        : `Created proposal ${proposal.id} at ${proposal.path.split(sep).join("/")}`,
-    );
-    return { exitCode: 0 };
-  }
-
-  writeLine(io.stderr, skillProposalsUsage());
-  return { exitCode: 1 };
-}
-
-async function handleSkillHistoryCommand(
-  parsed: ParsedArgs,
-  io: CliIO,
-): Promise<CliRunResult> {
-  const args = splitCliWords(parsed.goal);
-  const action = args[0];
-  if (action === "show" || action === "diff") {
-    const name = args[1];
-    const historyId = args[2];
-    if (!name || !historyId) {
-      writeLine(
-        io.stderr,
-        `Usage: sparkwright skills history ${action} <skill-name> <history-id>`,
-      );
-      return { exitCode: 1 };
-    }
-    const detail = await readSkillHistoryDetail(
-      parsed.workspaceRoot,
-      name,
-      historyId,
-    );
-    if (action === "diff") {
-      writeLine(
-        io.stdout,
-        parsed.format === "json"
-          ? JSON.stringify(
-              {
-                id: detail.id,
-                skillName: detail.skillName,
-                proposalId: detail.proposalId,
-                patchDiff: detail.patchDiff,
-              },
-              null,
-              2,
-            )
-          : detail.patchDiff.trimEnd(),
-      );
-      return { exitCode: 0 };
-    }
-    writeLine(
-      io.stdout,
-      parsed.format === "json"
-        ? JSON.stringify(detail, null, 2)
-        : formatSkillHistoryDetail(detail),
-    );
-    return { exitCode: 0 };
-  }
-
-  const name = args[0];
-  if (!name) {
-    writeLine(io.stderr, "Usage: sparkwright skills history <skill-name>");
-    return { exitCode: 1 };
-  }
-  const history = await listSkillHistory(parsed.workspaceRoot, name);
-  writeLine(
-    io.stdout,
-    parsed.format === "json"
-      ? JSON.stringify(history, null, 2)
-      : formatSkillHistory(history),
-  );
-  return { exitCode: 0 };
-}
-
-async function handleSkillRestoreCommand(
-  parsed: ParsedArgs,
-  io: CliIO,
-): Promise<CliRunResult> {
-  const input = parseSkillRestoreArgs(splitCliWords(parsed.goal));
-  if (!input.ok) {
-    writeLine(io.stderr, input.message);
-    return { exitCode: 1 };
-  }
-  const result = await restoreSkillFromHistory({
-    workspaceRoot: parsed.workspaceRoot,
-    skillName: input.value.name,
-    historyId: input.value.version,
-    side: input.value.side,
-    apply: parsed.apply,
-  });
-  writeLine(
-    io.stdout,
-    parsed.format === "json"
-      ? JSON.stringify(result, null, 2)
-      : formatSkillRestoreResult(result),
-  );
-  return { exitCode: 0 };
-}
-
 async function handleSkillsCreate(
   parsed: ParsedArgs,
   io: CliIO,
@@ -3051,16 +2614,8 @@ async function handleSkillsCreate(
     writeLine(io.stderr, input.message);
     return { exitCode: 1 };
   }
-  if (parsed.force) {
-    writeLine(
-      io.stderr,
-      "skills create no longer accepts --force; prepare the proposal, review its final effect, then apply it.",
-    );
-    return { exitCode: 1 };
-  }
-  const { proposal } = await new SkillCommandService(
-    parsed.workspaceRoot,
-  ).prepareCreate({
+  const result = await createProjectSkill({
+    workspaceRoot: parsed.workspaceRoot,
     name: input.value.name,
     description: input.value.description,
     root: input.value.root,
@@ -3068,301 +2623,10 @@ async function handleSkillsCreate(
   writeLine(
     io.stdout,
     parsed.format === "json"
-      ? JSON.stringify(proposal, null, 2)
-      : `Prepared proposal ${proposal.id} at ${proposal.path
-          .split(sep)
-          .join(
-            "/",
-          )}. Review and apply it with: sparkwright skills proposals apply ${proposal.id}`,
+      ? JSON.stringify(result, null, 2)
+      : `created project skill: ${result.manifestPath}`,
   );
   return { exitCode: 0 };
-}
-
-function parseSkillProposalDescriptionArgs(
-  args: string[],
-  action: "create" | "update",
-):
-  | { ok: true; value: { name: string; description: string } }
-  | { ok: false; message: string } {
-  const rest = [...args];
-  const name = rest.shift();
-  if (!name || !isSkillName(name)) {
-    return {
-      ok: false,
-      message: `Usage: sparkwright skills proposals ${action} <name> --description <text>`,
-    };
-  }
-  let description: string | undefined;
-  for (let i = 0; i < rest.length; i += 1) {
-    const arg = rest[i];
-    if (arg === "--description") {
-      description = rest[i + 1];
-      i += 1;
-      continue;
-    }
-    return {
-      ok: false,
-      message: `Unknown skills proposals ${action} option: ${arg}`,
-    };
-  }
-  if (!description || description.trim().length === 0) {
-    return {
-      ok: false,
-      message: `Usage: skills proposals ${action} requires --description`,
-    };
-  }
-  return {
-    ok: true,
-    value: { name, description: description.trim() },
-  };
-}
-
-function parseSkillProposalRejectArgs(
-  args: string[],
-):
-  | { ok: true; value: { id: string; reason: string } }
-  | { ok: false; message: string } {
-  const rest = [...args];
-  const id = rest.shift();
-  if (!id) {
-    return {
-      ok: false,
-      message:
-        "Usage: sparkwright skills proposals reject <id> --reason <text>",
-    };
-  }
-  let reason: string | undefined;
-  for (let i = 0; i < rest.length; i += 1) {
-    const arg = rest[i];
-    if (arg === "--reason") {
-      reason = rest[i + 1];
-      i += 1;
-      continue;
-    }
-    return {
-      ok: false,
-      message: `Unknown skills proposals reject option: ${arg}`,
-    };
-  }
-  if (!reason || reason.trim().length === 0) {
-    return {
-      ok: false,
-      message: "Usage: skills proposals reject requires --reason",
-    };
-  }
-  return { ok: true, value: { id, reason: reason.trim() } };
-}
-
-function parseSkillProposalSupersedeArgs(
-  args: string[],
-):
-  | { ok: true; value: { id: string; supersededBy: string; reason?: string } }
-  | { ok: false; message: string } {
-  const rest = [...args];
-  const id = rest.shift();
-  if (!id) {
-    return {
-      ok: false,
-      message:
-        "Usage: sparkwright skills proposals supersede <id> --by <new-id>",
-    };
-  }
-  let supersededBy: string | undefined;
-  let reason: string | undefined;
-  for (let i = 0; i < rest.length; i += 1) {
-    const arg = rest[i];
-    if (arg === "--by") {
-      supersededBy = rest[i + 1];
-      i += 1;
-      continue;
-    }
-    if (arg === "--reason") {
-      reason = rest[i + 1];
-      i += 1;
-      continue;
-    }
-    return {
-      ok: false,
-      message: `Unknown skills proposals supersede option: ${arg}`,
-    };
-  }
-  if (!supersededBy || supersededBy.trim().length === 0) {
-    return {
-      ok: false,
-      message: "Usage: skills proposals supersede requires --by",
-    };
-  }
-  return {
-    ok: true,
-    value: {
-      id,
-      supersededBy: supersededBy.trim(),
-      reason: reason?.trim(),
-    },
-  };
-}
-
-function parseSkillProposalPruneArgs(args: string[]):
-  | {
-      ok: true;
-      value: {
-        states?: SkillProposalState[];
-        olderThanMs?: number;
-      };
-    }
-  | { ok: false; message: string } {
-  const states: SkillProposalState[] = [];
-  let olderThanMs: number | undefined;
-  for (let i = 0; i < args.length; i += 1) {
-    const arg = args[i];
-    if (arg === "--state") {
-      const parsed = parsePruneStateList(args[i + 1]);
-      if (!parsed.ok) return parsed;
-      states.push(...parsed.value);
-      i += 1;
-      continue;
-    }
-    if (arg === "--older-than") {
-      const parsed = parseDurationMs(args[i + 1]);
-      if (!parsed.ok) return parsed;
-      olderThanMs = parsed.value;
-      i += 1;
-      continue;
-    }
-    return {
-      ok: false,
-      message: `Unknown skills proposals prune option: ${arg}`,
-    };
-  }
-  return {
-    ok: true,
-    value: {
-      ...(states.length > 0 ? { states: [...new Set(states)] } : {}),
-      ...(olderThanMs !== undefined ? { olderThanMs } : {}),
-    },
-  };
-}
-
-function parsePruneStateList(
-  value: string | undefined,
-): { ok: true; value: SkillProposalState[] } | { ok: false; message: string } {
-  if (!value || value.startsWith("--")) {
-    return {
-      ok: false,
-      message: "Usage: skills proposals prune --state requires a value",
-    };
-  }
-  const states = value
-    .split(",")
-    .map((entry) => entry.trim())
-    .filter((entry) => entry.length > 0);
-  if (states.length === 0) {
-    return {
-      ok: false,
-      message: "Usage: skills proposals prune --state requires a value",
-    };
-  }
-  const allowed: SkillProposalState[] = [
-    "rejected",
-    "stale",
-    "superseded",
-    "failed",
-  ];
-  for (const state of states) {
-    if (!allowed.includes(state as SkillProposalState)) {
-      return {
-        ok: false,
-        message: `Usage: skills proposals prune --state must be one of: ${allowed.join(", ")}`,
-      };
-    }
-  }
-  return { ok: true, value: states as SkillProposalState[] };
-}
-
-function parseDurationMs(
-  value: string | undefined,
-): { ok: true; value: number } | { ok: false; message: string } {
-  if (!value || value.startsWith("--")) {
-    return {
-      ok: false,
-      message: "Usage: skills proposals prune --older-than requires a duration",
-    };
-  }
-  const match = /^(\d+)([smhd]?)$/u.exec(value.trim());
-  if (!match) {
-    return {
-      ok: false,
-      message:
-        "Usage: skills proposals prune --older-than must be a duration like 30d, 12h, 45m, or 60s",
-    };
-  }
-  const amount = Number.parseInt(match[1], 10);
-  if (!Number.isSafeInteger(amount) || amount <= 0) {
-    return {
-      ok: false,
-      message: "Usage: skills proposals prune --older-than must be positive",
-    };
-  }
-  const unit = match[2] || "d";
-  const factor =
-    unit === "s"
-      ? 1000
-      : unit === "m"
-        ? 60 * 1000
-        : unit === "h"
-          ? 60 * 60 * 1000
-          : 24 * 60 * 60 * 1000;
-  return { ok: true, value: amount * factor };
-}
-
-function parseSkillRestoreArgs(args: string[]):
-  | {
-      ok: true;
-      value: { name: string; version: string; side: "before" | "after" };
-    }
-  | { ok: false; message: string } {
-  const rest = [...args];
-  const name = rest.shift();
-  if (!name || !isSkillName(name)) {
-    return {
-      ok: false,
-      message:
-        "Usage: sparkwright skills restore <skill-name> --version <history-id> [--to before|after]",
-    };
-  }
-  let version: string | undefined;
-  let side: "before" | "after" = "after";
-  for (let i = 0; i < rest.length; i += 1) {
-    const arg = rest[i];
-    if (arg === "--version") {
-      version = rest[i + 1];
-      i += 1;
-      continue;
-    }
-    if (arg === "--to") {
-      const value = rest[i + 1];
-      if (value !== "before" && value !== "after") {
-        return {
-          ok: false,
-          message: "Usage: skills restore --to must be 'before' or 'after'",
-        };
-      }
-      side = value;
-      i += 1;
-      continue;
-    }
-    return {
-      ok: false,
-      message: `Unknown skills restore option: ${arg}`,
-    };
-  }
-  if (!version || version.trim().length === 0) {
-    return {
-      ok: false,
-      message: "Usage: skills restore requires --version",
-    };
-  }
-  return { ok: true, value: { name, version: version.trim(), side } };
 }
 
 async function resolveSkillRootsForCli(
@@ -3464,60 +2728,6 @@ function formatSkillReport(report: SkillReport): string {
   return lines.join("\n");
 }
 
-function formatSkillReviewDigest(digest: SkillReviewDigest): string {
-  const lines = [
-    `review items: ${digest.items.length}`,
-    `freshness: computed=${digest.generatedAt}, latest evidence=${digest.freshness.latestEvidenceAt ?? "none"}`,
-    `stats: sessions=${digest.stats.sessionsScanned}/${digest.sessionLimit}, traces=${digest.stats.tracesScanned}, findings=${digest.stats.findingsScanned}`,
-    `proposals: drafts=${digest.proposals.drafts}/${digest.proposals.scanned}, intent stubs=${digest.proposals.intentStubs}, templates=${digest.proposals.templates}`,
-  ];
-  if (digest.items.length === 0) {
-    lines.push("(none)");
-  }
-  for (const item of digest.items) {
-    lines.push(
-      `- ${item.severity} ${item.kind} ${item.skillName}: ${item.message}`,
-    );
-    if (item.proposalId && item.proposalKind) {
-      lines.push(
-        `  proposal: ${item.proposalId} (${item.proposalKind}, ${formatSkillProposalContentMode(
-          {
-            kind: item.proposalKind,
-            contentMode: item.contentMode,
-          },
-        )})`,
-      );
-    }
-    if (item.findingCode) {
-      lines.push(
-        `  finding: ${item.findingCode} (${item.relation ?? "observed"})`,
-      );
-    }
-    if (item.evidence) {
-      lines.push(
-        `  evidence: runs=${item.evidence.runIds.length}, sessions=${item.evidence.sessionIds.length}, metrics=${formatReviewMetricPairs(item.evidence.metrics)}`,
-      );
-    }
-    lines.push(`  action: ${item.action}`);
-  }
-  lines.push(
-    "note: review digest combines trace-based skill stats with draft proposals; usage sidecar data is not required.",
-  );
-  lines.push(
-    "note: associated tool failures are correlation, not causal claims.",
-  );
-  return lines.join("\n");
-}
-
-function formatReviewMetricPairs(
-  metrics: Record<string, number | string>,
-): string {
-  const entries = Object.entries(metrics);
-  return entries.length > 0
-    ? entries.map(([key, value]) => `${key}=${value}`).join(", ")
-    : "none";
-}
-
 function formatSkillStatsReport(report: SkillStatsReport): string {
   const lines = [
     `sessions scanned: ${report.sessionsScanned}/${report.sessionLimit}`,
@@ -3541,14 +2751,6 @@ function formatSkillStatsReport(report: SkillStatsReport): string {
   if (report.window.trace.firstEventAt || report.window.trace.lastEventAt) {
     lines.push(
       `trace event window: first=${report.window.trace.firstEventAt ?? "none"}, last=${report.window.trace.lastEventAt ?? "none"}`,
-    );
-  }
-  if (
-    report.window.evolution.proposalsScanned > 0 ||
-    report.window.evolution.historyScanned > 0
-  ) {
-    lines.push(
-      `evolution window: proposals=${report.window.evolution.proposalsScanned}, history=${report.window.evolution.historyScanned}, latest=${report.freshness.latestEvolutionAt ?? "none"}`,
     );
   }
   if (report.skills.length === 0) {
@@ -3594,18 +2796,6 @@ function formatSkillStatsReport(report: SkillStatsReport): string {
     const failureCodes = Object.entries(skill.associatedToolFailures.byCode);
     if (failureCodes.length > 0) {
       lines.push(`  failure codes: ${formatCountPairs(failureCodes)}`);
-    }
-    const proposalRollup = skill.evolution.proposals;
-    if (proposalRollup.total > 0) {
-      lines.push(
-        `  proposals: ${proposalRollup.total} total, base=${proposalRollup.asBase}, after=${proposalRollup.asAfter}, states=${formatCountPairs(Object.entries(proposalRollup.byState))}, kinds=${formatCountPairs(Object.entries(proposalRollup.byKind))}`,
-      );
-    }
-    const historyRollup = skill.evolution.history;
-    if (historyRollup.total > 0) {
-      lines.push(
-        `  history: ${historyRollup.total} total, before=${historyRollup.asBefore}, after=${historyRollup.asAfter}, kinds=${formatCountPairs(Object.entries(historyRollup.byKind))}`,
-      );
     }
   }
   if (report.findings.length > 0) {
@@ -3680,187 +2870,6 @@ function formatSkillDoctorReport(report: SkillDoctorReport): string {
       );
     }
   }
-  return lines.join("\n");
-}
-
-function formatSkillProposalList(proposals: SkillProposalSummary[]): string {
-  const lines = [`proposals: ${proposals.length}`];
-  if (proposals.length === 0) lines.push("(none)");
-  for (const proposal of proposals) {
-    lines.push(
-      `- ${proposal.id}: ${proposal.state} ${proposal.kind} ${proposal.skillName}`,
-    );
-    lines.push(`  created: ${proposal.createdAt}`);
-    if (proposal.sourceLayer || proposal.sourcePath) {
-      lines.push(
-        `  source: ${proposal.sourceLayer ?? "unknown"}:${proposal.sourcePath ?? "unknown"}`,
-      );
-    }
-    if (proposal.basePackageHash) {
-      lines.push(`  base package: ${proposal.basePackageHash}`);
-    }
-    lines.push(`  after package: ${proposal.afterPackageHash}`);
-    lines.push(`  content: ${formatSkillProposalContentMode(proposal)}`);
-    if (proposal.closedAt) lines.push(`  closed: ${proposal.closedAt}`);
-    if (proposal.supersededBy) {
-      lines.push(`  superseded by: ${proposal.supersededBy}`);
-    }
-    if (proposal.statusReason) lines.push(`  reason: ${proposal.statusReason}`);
-  }
-  return lines.join("\n");
-}
-
-function formatSkillProposalDetail(proposal: SkillProposalDetail): string {
-  return [
-    `id: ${proposal.id}`,
-    `state: ${proposal.state}`,
-    `kind: ${proposal.kind}`,
-    `skill: ${proposal.skillName}`,
-    `source: ${proposal.sourceLayer ?? "none"}:${proposal.sourcePath ?? "none"}`,
-    `target: ${proposal.targetPath}`,
-    `base package: ${proposal.basePackageHash ?? "none"}`,
-    `after package: ${proposal.afterPackageHash}`,
-    `content: ${formatSkillProposalContentMode(proposal)}`,
-    `closed: ${proposal.closedAt ?? "none"}`,
-    `superseded by: ${proposal.supersededBy ?? "none"}`,
-    `reason: ${proposal.statusReason ?? "none"}`,
-    `provenance: ${formatProvenance(proposal.provenance)}`,
-    formatGuardFindingsLine(proposal.guardFindings),
-    "",
-    proposal.proposalMarkdown.trimEnd(),
-    "",
-    "patch:",
-    proposal.patchDiff.trimEnd(),
-  ].join("\n");
-}
-
-function formatSkillProposalContentMode(
-  proposal: Pick<SkillProposalSummary, "kind" | "contentMode">,
-): string {
-  switch (proposal.contentMode) {
-    case "authored":
-      return "authored";
-    case "intent_stub":
-      return "intent-only update stub";
-    case "template":
-      return "generated create template";
-    default:
-      return proposal.kind === "update"
-        ? "unknown update content"
-        : "unknown create content";
-  }
-}
-
-function formatSkillProposalApplyResult(
-  result: ApplySkillProposalResult,
-): string {
-  return [
-    `applied: ${result.proposal.id}`,
-    `skill: ${result.proposal.skillName}`,
-    `target: ${result.proposal.targetPath}`,
-    `history: ${result.history.id}`,
-    `base package: ${result.history.beforePackageHash ?? "none"}`,
-    `after package: ${result.history.afterPackageHash}`,
-    `doctor: ${result.doctor.status}`,
-    formatGuardFindingsLine(result.guardFindings),
-  ].join("\n");
-}
-
-/** Read `--flag value` from a positional arg list; returns trimmed value or undefined. */
-function readFlagValue(args: string[], flag: string): string | undefined {
-  const i = args.indexOf(flag);
-  if (i === -1) return undefined;
-  const value = args[i + 1]?.trim();
-  return value && value.length > 0 ? value : undefined;
-}
-
-function formatProvenance(
-  provenance:
-    | { runId?: string; sessionId?: string; rationale?: string }
-    | undefined,
-): string {
-  if (!provenance) return "none";
-  const parts: string[] = [];
-  if (provenance.sessionId) parts.push(`session=${provenance.sessionId}`);
-  if (provenance.runId) parts.push(`run=${provenance.runId}`);
-  if (provenance.rationale) parts.push(`rationale=${provenance.rationale}`);
-  return parts.length > 0 ? parts.join(" ") : "none";
-}
-
-function formatGuardFindingsLine(
-  findings: readonly SkillGuardFinding[] | undefined,
-): string {
-  if (!findings || findings.length === 0) return "guard: ok (no findings)";
-  const dangerous = findings.filter((f) => f.severity === "dangerous").length;
-  const detail = findings.map((f) => `${f.severity}:${f.ruleId}`).join(", ");
-  return `guard: ${findings.length} finding${findings.length === 1 ? "" : "s"}${dangerous > 0 ? ` (${dangerous} dangerous — apply needs force)` : ""} [${detail}]`;
-}
-
-function formatSkillProposalPruneResult(
-  result: PruneSkillProposalsResult,
-): string {
-  const lines = [
-    `mode: ${result.applied ? "applied" : "dry-run"}`,
-    `states: ${result.states.join(", ")}`,
-    `candidates: ${result.candidates.length}`,
-    `deleted: ${result.deleted.length}`,
-  ];
-  if (result.cutoff) lines.push(`cutoff: ${result.cutoff}`);
-  for (const proposal of result.candidates) {
-    const action = result.applied ? "deleted" : "would delete";
-    lines.push(
-      `- ${action} ${proposal.id}: ${proposal.state} ${proposal.kind} ${proposal.skillName}`,
-    );
-  }
-  return lines.join("\n");
-}
-
-function formatSkillHistory(history: SkillHistoryEntry[]): string {
-  const lines = [`history: ${history.length}`];
-  if (history.length === 0) lines.push("(none)");
-  for (const entry of history) {
-    lines.push(`- ${entry.id}: ${entry.kind} ${entry.skillName}`);
-    lines.push(`  proposal: ${entry.proposalId}`);
-    lines.push(`  created: ${entry.createdAt}`);
-    lines.push(`  base package: ${entry.beforePackageHash ?? "none"}`);
-    lines.push(`  after package: ${entry.afterPackageHash}`);
-  }
-  return lines.join("\n");
-}
-
-function formatSkillHistoryDetail(detail: SkillHistoryDetail): string {
-  return [
-    `id: ${detail.id}`,
-    `skill: ${detail.skillName}`,
-    `kind: ${detail.kind}`,
-    `proposal: ${detail.proposalId}`,
-    `created: ${detail.createdAt}`,
-    `target: ${detail.targetPath}`,
-    `before package: ${detail.beforePackageHash ?? "none"}`,
-    `after package: ${detail.afterPackageHash}`,
-    `before: ${detail.beforePath}`,
-    `after: ${detail.afterPath}`,
-    "",
-    "patch:",
-    detail.patchDiff.trimEnd(),
-  ].join("\n");
-}
-
-function formatSkillRestoreResult(
-  result: RestoreSkillFromHistoryResult,
-): string {
-  const lines = [
-    `mode: ${result.applied ? "applied" : "dry-run"}`,
-    `skill: ${result.skillName}`,
-    `target: ${result.targetPath}`,
-    `source history: ${result.sourceHistory.id} (${result.side})`,
-    `current package: ${result.currentPackageHash ?? "none"}`,
-    `restore package: ${result.restorePackageHash}`,
-  ];
-  if (result.restoreHistory) {
-    lines.push(`restore history: ${result.restoreHistory.id}`);
-  }
-  if (result.doctor) lines.push(`doctor: ${result.doctor.status}`);
   return lines.join("\n");
 }
 
@@ -4952,7 +3961,7 @@ function helpForArgs(
     return "Usage: sparkwright trace <summary|events|timeline|report|verify> <trace.jsonl>";
   }
   if (command === "tui") {
-    return "Usage: sparkwright tui [--workspace path] [--session-root path] [--model provider/model] [--access-mode read-only|ask|accept-edits|bypass] [--trace-level standard|debug] [--session-id id]";
+    return "Usage: sparkwright tui [--workspace path] [--session-root path] [--model provider/model] [--access-mode read-only|ask|accept-edits|bypass] [--trace-level standard|debug] [--session-id id] [--no-alt-screen]";
   }
   if (command === "acp") {
     return "Usage: sparkwright acp [--workspace path] [--session-root path] [--model provider/model] [--access-mode read-only|ask|accept-edits|bypass] [--trace-level standard|debug]";
@@ -5252,7 +4261,7 @@ function usage(_env: Record<string, string | undefined>): string {
     "Usage: sparkwright init             # scaffold ~/.config/sparkwright/config.yaml",
     "       sparkwright init --project   # scaffold committable <workspace>/.sparkwright/config.yaml",
     "       sparkwright --version|-v      # print CLI package version",
-    "       sparkwright tui [--workspace path] [--session-root path] [--model provider/model] [--access-mode read-only|ask|accept-edits|bypass] [--trace-level standard|debug] [--session-id id]",
+    "       sparkwright tui [--workspace path] [--session-root path] [--model provider/model] [--access-mode read-only|ask|accept-edits|bypass] [--trace-level standard|debug] [--session-id id] [--no-alt-screen]",
     "       sparkwright acp [--workspace path] [--session-root path] [--model provider/model] [--access-mode read-only|ask|accept-edits|bypass] [--trace-level standard|debug]",
     "       sparkwright capabilities inspect [--workspace path] [--model provider/model] [--resolve-mcp] [--format json|text]",
     "       sparkwright doctor paths [--workspace path] [--session-root path] [--format json|text]",
@@ -5262,13 +4271,9 @@ function usage(_env: Record<string, string | undefined>): string {
     "       sparkwright workflow list|start|inspect|resume|distill [workflow-name-or-run-id] [--workspace path] [--format json|text]",
     '       sparkwright delegates run <external-delegate-tool> "goal" [--workspace path] [--access-mode read-only|ask|accept-edits|bypass] [--session-id id] [--trace-level standard|debug] [--format json|text]',
     "       sparkwright tools allow|disable|defer <tool-name...> [--workspace path]",
-    "       sparkwright skills list|validate|review|restore [--workspace path] [--format json|text]",
-    "       sparkwright skills review [--workspace path] [--session-root path] [--last n] [--skill name] [--skill-key key] [--package-hash hash] [--format json|text]",
+    "       sparkwright skills list|validate [--workspace path] [--format json|text]",
     "       sparkwright skills stats [--workspace path] [--session-root path] [--last n] [--skill name] [--skill-key key] [--package-hash hash] [--format json|text]",
     "       sparkwright skills doctor [--workspace path] [--format json|text]",
-    "       sparkwright skills reconcile scan|list|adopt|move|copy|reidentify|orphan [--workspace path] [--format json|text]",
-    "       sparkwright skills proposals list|show|create|update|apply|reject|supersede|prune [--workspace path] [--format json|text]",
-    "       sparkwright skills history <skill-name> [--workspace path] [--format json|text]",
     '       sparkwright skills create <name> --description "what it does" [--workspace path] [--root .sparkwright/skills]',
     "       sparkwright agents list|validate [--workspace path] [--format json|text]",
     '       sparkwright agents create <id> --prompt "what it should do" [--use selector] [--allow tool] [--delegate tool_name] [--workspace path] [--force]',
@@ -5318,36 +4323,9 @@ function skillsUsage(): string {
   return [
     "Usage: sparkwright skills list [--workspace path] [--format json|text]",
     "       sparkwright skills validate [--workspace path] [--format json|text]",
-    "       sparkwright skills review [--workspace path] [--session-root path] [--last n] [--skill name] [--skill-key key] [--package-hash hash] [--format json|text]",
-    "       sparkwright skills review dismiss <suggestion-id> [--workspace path]",
     "       sparkwright skills stats [--workspace path] [--session-root path] [--last n] [--skill name] [--skill-key key] [--package-hash hash] [--format json|text]",
     "       sparkwright skills doctor [--workspace path] [--format json|text]",
-    "       sparkwright skills proposals list [--run <run-id>] [--session <session-id>] [--workspace path] [--format json|text]",
-    "       sparkwright skills proposals show <id> [--workspace path] [--format json|text]",
-    "       sparkwright skills proposals apply <id> [--force] [--workspace path] [--format json|text]",
-    '       sparkwright skills proposals reject <id> --reason "why" [--workspace path] [--format json|text]',
-    '       sparkwright skills proposals supersede <id> --by <new-id> [--reason "why"] [--workspace path] [--format json|text]',
-    "       sparkwright skills proposals prune [--state rejected,stale,superseded,failed] [--older-than 30d] [--dry-run|--apply] [--workspace path] [--format json|text]",
-    "       sparkwright skills history <skill-name> [--workspace path] [--format json|text]",
-    "       sparkwright skills history show <skill-name> <history-id> [--workspace path] [--format json|text]",
-    "       sparkwright skills history diff <skill-name> <history-id> [--workspace path] [--format json|text]",
-    "       sparkwright skills restore <skill-name> --version <history-id> [--to before|after] [--dry-run|--apply] [--workspace path] [--format json|text]",
-    '       sparkwright skills proposals create <name> --description "what it does" [--workspace path] [--format json|text]',
-    '       sparkwright skills proposals update <name> --description "what should change" [--workspace path] [--format json|text]',
     '       sparkwright skills create <name> --description "what it does" [--workspace path] [--root .sparkwright/skills]',
-  ].join("\n");
-}
-
-function skillProposalsUsage(): string {
-  return [
-    "Usage: sparkwright skills proposals list [--run <run-id>] [--session <session-id>] [--workspace path] [--format json|text]",
-    "       sparkwright skills proposals show <id> [--workspace path] [--format json|text]",
-    "       sparkwright skills proposals apply <id> [--force] [--workspace path] [--format json|text]",
-    '       sparkwright skills proposals reject <id> --reason "why" [--workspace path] [--format json|text]',
-    '       sparkwright skills proposals supersede <id> --by <new-id> [--reason "why"] [--workspace path] [--format json|text]',
-    "       sparkwright skills proposals prune [--state rejected,stale,superseded,failed] [--older-than 30d] [--dry-run|--apply] [--workspace path] [--format json|text]",
-    '       sparkwright skills proposals create <name> --description "what it does" [--workspace path] [--format json|text]',
-    '       sparkwright skills proposals update <name> --description "what should change" [--workspace path] [--format json|text]',
   ].join("\n");
 }
 

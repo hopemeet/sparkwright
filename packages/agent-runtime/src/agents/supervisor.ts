@@ -83,18 +83,36 @@ class DefaultAgentSupervisor implements AgentSupervisor {
         "AgentSupervisor cannot emit completed before invocation started.",
       );
     }
+    const status =
+      payload.status === "blocked" || payload.status === "partial"
+        ? payload.status
+        : payload.terminalState === "blocked"
+          ? "blocked"
+          : "completed";
     return this.terminate("subagent.completed", {
       ...payload,
       terminalState: payload.terminalState ?? "completed",
-      finality: payload.finality ?? "complete",
+      status,
+      summary: payload.summary ?? adapterSummary(payload, status),
+      blockers:
+        payload.blockers ??
+        (status === "blocked" ? [adapterBlockedOutcome(payload)] : []),
     });
   }
 
   failed(payload: Record<string, unknown> = {}): boolean {
+    const status =
+      payload.status === "blocked" || payload.terminalState === "blocked"
+        ? "blocked"
+        : "partial";
     return this.terminate("subagent.failed", {
       ...payload,
       terminalState: payload.terminalState ?? "failed",
-      finality: payload.finality ?? "partial",
+      status: payload.status ?? status,
+      summary:
+        payload.summary ??
+        adapterSummary(payload, status, "Agent execution failed."),
+      blockers: payload.blockers ?? [adapterFailedOutcome(payload, status)],
     });
   }
 
@@ -124,4 +142,41 @@ class DefaultAgentSupervisor implements AgentSupervisor {
       );
     }
   }
+}
+
+function adapterSummary(
+  payload: Record<string, unknown>,
+  status: "completed" | "partial" | "blocked",
+  fallback?: string,
+): string {
+  if (typeof payload.message === "string" && payload.message.trim()) {
+    return payload.message.trim();
+  }
+  if (fallback) return fallback;
+  if (status === "blocked") return "Agent adapter reported a blocked outcome.";
+  if (status === "partial") return "Agent adapter returned a partial outcome.";
+  return "Agent adapter completed successfully.";
+}
+
+function adapterBlockedOutcome(payload: Record<string, unknown>) {
+  return {
+    code:
+      typeof payload.errorCode === "string"
+        ? payload.errorCode
+        : "AGENT_ADAPTER_BLOCKED",
+    message: adapterSummary(payload, "blocked"),
+  };
+}
+
+function adapterFailedOutcome(
+  payload: Record<string, unknown>,
+  status: "partial" | "blocked",
+) {
+  return {
+    code:
+      typeof payload.errorCode === "string"
+        ? payload.errorCode
+        : "AGENT_ADAPTER_FAILED",
+    message: adapterSummary(payload, status, "Agent execution failed."),
+  };
 }

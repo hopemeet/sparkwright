@@ -17,9 +17,107 @@
 
 ## Current Confidence
 
-- Status: `Partially Verified`
-- Last reviewed: 2026-07-19
-- Evidence source: 2026-06-22 TUI status-bar and event-stream render tests
+- Status: `Verified`
+- Last reviewed: 2026-08-01
+- Latest evidence: child Agent approval coverage verifies ask-mode `approved`
+  and bypass-mode `auto-approved` outcomes appear once under the Agent in both
+  compact and detailed projections, never inline with actions and never as a
+  second standalone child block. Raw replay events take precedence over the
+  terminal-receipt fallback. Agent Runtime passed 251/251, TUI passed 547/547,
+  the repository built, and retained real sessions `session_tui_ms7mmq7h` and
+  `session_tui_ms88t03l` replayed with the expected 3 ask / 2 bypass rows.
+- Additional recent evidence: usage information-hierarchy coverage verifies the idle line
+  `usage  context 6.7k · session 50.2k · calls 10 model / 8 tool`, the Activity
+  Run breakdown
+  `session 48.6k input (25.8k cached) · 1.6k output`, zero-cache omission,
+  fallback calculation when `totalTokens` is absent, and canonical
+  `state.usage` routing. TUI typecheck and the full 81-file / 547-test suite
+  passed.
+- Additional recent evidence: focused `/skills` coverage verifies the panel
+  omits generic model/tool/Cron/automation overview rows, renders current
+  inventory with recent loads and drafts, opens associated diagnostics with
+  Enter, and treats the first Esc as detail-back before close. Exact-identity
+  projection and rendering tests passed; the full TUI suite passed 83 files /
+  550 tests, and a real 80-column PTY showed the expected list and detail.
+- Additional recent evidence: the approval argument pager, InputBox reverse
+  search/file suggestions, and Skills detail/back render tests now assert
+  deterministic final Ink frames. The focused suite passes 29/29 with
+  `CI=true`; see
+  [tui-ink-ci-deferred-frames.md](../failures/tui-ink-ci-deferred-frames.md).
+- Additional recent evidence: focused live-stream coverage verifies the
+  terminal-height answer budget resolves to 6–12 physical rows (with bounded
+  tiny-screen degradation), reasoning shows only three one-row tails, long
+  Markdown blocks display a generic temporary-fold hint without treating soft
+  paragraph lines as hidden, and a character-cut code-fence tail renders as
+  inert text instead of creating a phantom Markdown block. Focused rendering
+  passed 11/11; the full TUI passed 84 files / 561 tests,
+  followed by typecheck and build.
+- Additional recent evidence: retained session `session_tui_msafgwsd` exposed a
+  1.17-second gap between `model.stream.completed` and `model.completed` during
+  which the live preview was previously cleared. EventStore coverage now keeps
+  reasoning/answer text through the stream-complete marker and clears it only
+  when the canonical assistant message is appended. Focused state/rendering
+  tests passed 33/33, the full TUI passed 84 files / 561 tests, session check
+  remained clean, and post-fix Terra PTY sampling emitted adjacent completion
+  markers; the deterministic state regression covers the longer handoff gap.
+- Evidence source: 2026-07-26 owned-viewport coverage preserves all 39 compact
+  rendering characterization cases while routing both compact and detailed
+  output through `TranscriptDocument` and physical layout. Focused tests cover
+  strict concurrent/nested Agent identities, full-session replay, 10,000-row
+  projection caps, CJK widths at 80/100/120 columns, semantic anchor recovery,
+  unseen-row counting, mode-independent export, `/clear` export retention,
+  terminal restore idempotence, SIGTERM/SIGHUP/crash restore, and no SIGINT
+  restore.
+  The final TUI suite passed 77 files / 520 tests. Deterministic PTY runs at 80
+  and 100 columns verified Ctrl+T in-place details, PageUp during continued
+  events with `↓ 13 new lines`, raw-sequence Ctrl+End tail
+  recovery, resize after SIGWINCH, CJK wrapping, and `--no-alt-screen`. A Terra
+  PTY run cancelled active work on the first Ctrl+C while retaining the screen;
+  the second Ctrl+C exited. Supported Node 22 performance sampling at 80
+  columns measured one 10,000-row detailed section at 10.20ms P95 and 10,000
+  independent blocks at 14.22ms compact / 14.26ms detailed P95, with at most
+  5,000 physical rows materialized. See
+  [../runs/2026-07-26-tui-owned-viewport-pass.md](../runs/2026-07-26-tui-owned-viewport-pass.md).
+  A same-day raw-byte follow-up found that the original decision gate missed
+  Ink 5.2.1's exact-height full-clear branch. The fixed root reserves one row;
+  unchanged Workflow polling is state-silent; exact tool spans own duplicate
+  read/Skill effects; replayed no-progress actions render as skipped. Agent
+  Runtime passed 259/259 and TUI passed 531/531. On retained session
+  `session_tui_ms12fuf0`, 100x32 raw PTY capture recorded zero full-clear
+  sequences over 12.5 idle seconds and Ctrl+T, while `--no-alt-screen`
+  recorded zero scrollback clears. See
+  [../failures/tui-full-height-periodic-clear.md](../failures/tui-full-height-periodic-clear.md).
+  Earlier evidence: 2026-07-25 unified-details and first-batch action/replay
+  coverage passed 482/482 TUI, 258/258 Agent Runtime, 583/583 Host, and 6/6
+  Protocol tests. Full `npm run release:check` also passed the 16-case
+  regression matrix and source/release install smoke. Focused SDK replay proves wildcard `model.stream.*`
+  suppression, root-only usage totals (9 model / 10 tool), terminal Agent
+  action receipts, zero-write evidence, and persisted redacted tool-search
+  counts. Real 100-column replay of `session_tui_ms0d86wg` retained the same
+  9/10 totals, showed two tool-search matches and five child actions, and leaked
+  no stream event. An 80-column replay also verified the explicit
+  `Agent · implement-timed-printer` compact/detail label without wrapping.
+  Fresh read-only `session_tui_ms0enkyx` rendered one live
+  `read README.md:1 +1` action plus zero-write evidence; trace summary had 0
+  errors/failures/writes and session check had 0 findings.
+  Earlier evidence: 2026-07-20 full-diff review passed 447/447 TUI and 594/594
+  Host tests, including stale auto-approval cleanup and replayed terminal-task
+  notification regressions. A test-only Host stdio adapter proved two approval
+  waiters were installed before either request was resolved. Real 96x32 PTY
+  session `session_tui_approval_queue_1ofn_v3` showed the first shell card as
+  `1 of 2`, advanced to the workspace-write card as `1 of 1` after explicit
+  denial, and returned to idle after the second denial. The fixture is
+  `/tmp/sparkwright-tui-approval-queue.VOfIEt`.
+  Earlier 2026-07-19 approval/notification/interaction refactor tests passed
+  445/445 across the full TUI suite. Fresh PTY sessions at 80x24,
+  96x24, and 120x32 covered long shell/cwd, pageable long diffs, persistent run
+  failure, background failure, and clean read-only completion.
+  TUI typecheck, test typecheck, lint, schema/boundary/reserved gates, every
+  workspace test, 16/16 regression cases, and both install smokes also passed.
+  After mechanically formatting the 59-file repository baseline, the exact
+  `npm run release:check` passed end to end. Earlier evidence includes
+  2026-06-22 TUI status-bar and event-stream
+  render tests
   passed; PTY first-screen capture at 24x100 showed a single static
   `SparkWright` header and no duplicate brand text in live status/input areas.
   Real mini PTY runs covered `/capabilities`, read-only completion, and write
@@ -34,6 +132,81 @@
   indicator without repeating the static brand.
 
 ## Covered
+
+- 2026-07-28 Agent action projection coverage verifies both bounded terminal
+  receipts and replayed child tool events render non-zero process exits as
+  `exit N ✗` even when the tool transport event is `completed`. The full TUI
+  suite passed 79 files / 532 tests and typecheck passed.
+
+- 2026-07-26 App-owned transcript viewport coverage removes `<Static>` and the
+  details layer without replacing Ink. The immutable semantic document,
+  compact/detailed projections, width layout, and visible-row renderer have
+  separate regressions. PageUp/PageDown/Ctrl+Home/Ctrl+End routing uses the
+  global key registry
+  without stealing a non-empty draft; approval remains the top layer. Terminal
+  lifecycle tests cover alternate-screen enter/leave, `--no-alt-screen`,
+  private-mode restore, idempotence, hard-signal/crash restoration, and the
+  intentional absence of a terminal-level SIGINT handler.
+
+- 2026-07-26 real/deterministic PTY and supported-Node performance QA passed
+  compact/detail anchoring, scroll/unseen/tail recovery, resize/CJK,
+  first/second Ctrl+C and terminal restoration. The layout-volume measurements
+  remain valid, but the original Ink decision gate did not inspect raw escape
+  sequences and therefore missed periodic full clears at exact terminal
+  height. The one-row renderer boundary now keeps Ink viable, with raw-byte
+  regressions required for future app-shell changes. See
+  [../runs/2026-07-26-tui-owned-viewport-pass.md](../runs/2026-07-26-tui-owned-viewport-pass.md).
+
+- 2026-07-25 focused projection/render/replay coverage verifies the unified
+  Ctrl+T details mode: successful Agent transport and intermediate lifecycle
+  stay out of committed Static scrollback, one `Agent · <name>` terminal
+  summary remains, abnormal outcomes preserve a visible failure/hint, child run
+  goals/final answers do not replay as root turns, and detailed
+  Agent/tool/Todo/approval blocks remain user-facing rather than diagnostic
+  JSON. Approval has higher layer priority, legacy `todo.toggle` config maps to
+  `details.toggle`, and the bounded details viewport supports tail follow plus
+  navigation.
+
+- 2026-07-21 conversation-projection coverage keeps successful batch,
+  approval, Skill body/resource, tool-search/Todo, and MCP preparation plumbing
+  out of live chat and export while preserving it in Activity/Trace. Failures,
+  denials, and real subagent lifecycle remain visible. Terminal rendering owns
+  one accepted final answer, unhealthy assessment codes, clear approval counts,
+  and head/tail shell truncation. Typed session approvals have explicit `s`
+  input, duplicate-delivery suppression, and manual fallback after automatic
+  resolve failure. Focused/full TUI tests and a real 120x32 Terra rerun passed;
+  trace verify and session check reported zero findings.
+
+- 2026-07-20 focused committed-transcript coverage suppresses
+  `agent.profile.derived` preparation noise while preserving requested,
+  started, and completed subagent lifecycle rows. Activity Events coverage
+  confirms the hidden conversation event remains inspectable, while transcript
+  export coverage confirms it does not reappear in the raw-event tail. Protocol
+  6/6, focused TUI live/export/Activity suites 44/44, full TUI 449/449,
+  relevant typechecks, and a real Terra PTY/trace/session pass succeeded.
+
+- 2026-07-20 concurrent approval queue verification added
+  `packages/host/test/fixtures/approval-queue-host.mjs` and its Host regression.
+  The adapter holds two independent deferred waiters, does not complete after
+  resolving only the first, and completes after the second. A real Ink/SDK/PTY
+  run at 96x32 captured `1 of 2` -> `1 of 1` -> idle with no unrelated startup
+  diagnostic. Full-diff review also fixed cleanup of failed in-flight session
+  auto-approval and suppressed fresh alerts for replayed historical task
+  terminals.
+
+- 2026-07-19 approval/notification/interaction refactor extracted immutable
+  execution-scoped approval coordination, client-free decision view models,
+  unified typed presentation signals, and handled/bubble input routing. Full
+  TUI coverage passed 445/445. Real PTY evidence at 80/96/120 columns verified
+  long effects, safe default focus, explicit Esc denial, persistent but
+  non-duplicated run failure, quiet main-run completion around a failed
+  background task, and clean trace/session checks. Sessions:
+  `session_tui_refactor_smoke_120`,
+  `session_tui_refactor_long_approval_96`,
+  `session_tui_refactor_queued_diff_80`,
+  `session_tui_refactor_run_failure_80_v2`, and
+  `session_tui_refactor_background_failure_120` under the retained temporary
+  fixture `/tmp/sparkwright-tui-refactor-qa.n0nEdz`.
 
 - 2026-07-19 real Terra PTY fix verification passed fresh 80/100/120-column
   single-header frames, sole-terminal Esc cancellation live/replay, canonical
@@ -89,12 +262,14 @@
   and
   [../failures/tui-narrow-status-bar-wrap.md](../failures/tui-narrow-status-bar-wrap.md).
 
-- Event stream owns the committed first-screen header.
+- `TranscriptDocument` owns the epoch-frozen first-screen header; the runtime
+  viewport owns its visible rows.
 - Status bar owns changing run state and should not repeat the static brand
   header.
-- Runtime model switches surface as committed `tui.notice` rows, and the live
+- Runtime model switches surface as semantic `tui.notice` blocks, and the live
   status line exposes the active model while idle as well as while running.
-- Event stream renders tool, shell, and sub-agent event summaries.
+- The shared transcript document renders tool, shell, and Agent summaries;
+  `EventStream` remains only a compatibility consumer of that same projection.
 - Capability panels render configured delegate information.
 - Approval prompt rendering keeps shell command details readable.
 - Slash command panels render cleanly at 120x32 and 80x24 without raw JSON,
@@ -155,9 +330,17 @@
 
 ## Weak Or Untested
 
+- BEL/OSC 9 blur/refocus and rate limiting are covered with a fake TTY. The
+  appearance of a platform terminal's desktop notification is not a portable
+  PTY invariant.
+
 - PTY width/height can expose wrapping bugs that component string snapshots miss.
 - Live rendering order can differ from static render tests when events arrive
   quickly.
+- True last-row ownership remains unsupported on Ink 5.2.1: removing the
+  reserved row re-enters Ink's full-terminal clear path. If product design
+  requires the last row, patch/fork the renderer or replace only the renderer
+  layer.
 - Real user workflows with long-running tasks should still be checked with a PTY
   capture when the layout contract changes.
 - Status and header ownership can regress when adding first-screen affordances.
@@ -178,14 +361,10 @@
   through, which is ambiguous with a one-token slash goal. Do not classify as a
   bug — see
   [../failures/tui-unknown-slash-command-to-model.md](../failures/tui-unknown-slash-command-to-model.md).
-- Copy-paste ergonomics are untested. Border *alignment* is verified, but no
-  test covers whether a path/value the user needs to copy lands inside a
-  `borderStyle` box (toast, `DialogFrame`, input box). Terminal mouse selection
-  is line-based, so any path inside a border is selected together with the `│`
-  glyphs and `paddingX` space. Worst offender: `/export` pushes the full export
-  path as a **toast message only** (`app.tsx` export command → `toast.tsx`
-  round border), un-shortened, so it can wrap across multiple bordered lines and
-  there is no plain/scrollback copy of that path anywhere. See run note
+- Fixed 2026-07-26: `/export` appends a border-free
+  `tui.export.completed` path row to the owned transcript document in addition
+  to transient feedback. Alternate-screen selection ergonomics still vary by
+  terminal, but the path is no longer toast-only. See the original run note
   [../runs/2026-06-24-tui-copy-paste-ergonomics.md](../runs/2026-06-24-tui-copy-paste-ergonomics.md).
 - Fixed 2026-06-29: `/export` no longer omits the submitted user goal when
   `run.started` lacks `goal` but `run.created` or `model.requested` carries
@@ -195,7 +374,8 @@
 ## Focused Route
 
 ```bash
-npm --workspace @sparkwright/tui test -- test/activity-panel-render.test.tsx test/status-bar-render.test.tsx test/event-stream-render.test.ts
+npm --workspace @sparkwright/tui test -- test/event-stream-render.test.ts test/transcript-presentation.test.ts test/transcript-document.test.ts test/transcript-layout.test.ts test/transcript-viewport-state.test.ts test/transcript-viewport-render.test.tsx
+npm --workspace @sparkwright/tui test -- test/transcript.test.ts test/export-after-clear.test.ts test/terminal-restore.test.ts test/keybindings.test.ts test/layer-stack.test.ts
 npm --workspace @sparkwright/tui test -- test/capabilities-panel-render.test.tsx test/approval-prompt-render.test.tsx
 ```
 
@@ -215,7 +395,14 @@ Use a real PTY QA pass when changing the app shell or interactive layout.
 - `packages/tui/src/app.tsx`
 - `packages/tui/src/components/activity-panel.tsx`
 - `packages/tui/src/components/event-stream.tsx`
+- `packages/tui/src/components/transcript-viewport.tsx`
+- `packages/tui/src/components/todo-band.tsx`
 - `packages/tui/src/components/status-bar.tsx`
+- `packages/tui/src/lib/transcript-presentation.ts`
+- `packages/tui/src/lib/transcript-document.ts`
+- `packages/tui/src/lib/transcript-layout.ts`
+- `packages/tui/src/state/transcript-viewport-state.ts`
+- `packages/tui/src/lib/terminal-restore.ts`
 - `packages/tui/src/lib/task-activity.ts`
 - `packages/tui/src/components/capabilities-panel.tsx`
 - `packages/tui/src/components/approval-prompt.tsx`

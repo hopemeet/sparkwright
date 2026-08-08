@@ -102,6 +102,7 @@ describe("ActivityPanel", () => {
         parentRunId: "run_1",
         kind: "shell.background",
         status: "completed",
+        completionPolicy: "detached",
         awaited: false,
         createdAt: "2026-06-30T00:00:00.000Z",
         outputChunks: 12,
@@ -139,6 +140,32 @@ describe("ActivityPanel", () => {
     expect(text).not.toContain('"chunks"');
   });
 
+  it("uses canonical completion policy after the mutable awaited bit clears", async () => {
+    const text = await renderToText(
+      <ActivityPanel
+        events={[]}
+        taskRecords={[
+          {
+            id: "task_inline123456789",
+            parentRunId: "run_1",
+            kind: "agent",
+            status: "completed",
+            completionPolicy: "inline",
+            awaited: false,
+            createdAt: "2026-07-23T00:00:00.000Z",
+            completedAt: "2026-07-23T00:00:01.000Z",
+            metadata: {},
+          },
+        ]}
+        initialTab="tasks"
+        onClose={() => {}}
+      />,
+    );
+
+    expect(text).toContain("mode inline");
+    expect(text).not.toContain("mode detached");
+  });
+
   it("bounds event browsing to the latest event window", async () => {
     const events = Array.from({ length: 505 }, (_, index) =>
       ev("tool.requested", index + 1, {
@@ -154,5 +181,67 @@ describe("ActivityPanel", () => {
     expect(text).toContain("latest 500");
     expect(text).toContain("[  6]");
     expect(text).not.toContain("[  1]");
+  });
+
+  it("keeps agent profile derivation available in the Activity events view", async () => {
+    const text = await renderToText(
+      <ActivityPanel
+        events={[
+          ev("agent.profile.derived", 1, {
+            parentAgentId: "main",
+            childAgentId: "code-reviewer",
+            effectiveToolCount: 4,
+          }),
+        ]}
+        initialTab="events"
+        onClose={() => {}}
+      />,
+    );
+
+    expect(text).toContain("agent.profile.derived");
+    expect(text).toContain("main → code-reviewer");
+  });
+
+  it("shows the canonical session token breakdown on the run tab", async () => {
+    const text = await renderToText(
+      <ActivityPanel
+        events={[]}
+        usage={{
+          contextTokens: 6746,
+          inputTokens: 48_589,
+          cachedTokens: 25_793,
+          outputTokens: 1575,
+          totalTokens: 50_164,
+          modelCalls: 10,
+          toolCalls: 8,
+          estimatedCostUsd: 0.1234,
+        }}
+        initialTab="run"
+        onClose={() => {}}
+      />,
+    );
+
+    expect(text).toContain("[run]");
+    expect(text).toContain("session 48.6k input (25.8k cached) · 1.6k output");
+    expect(text).toContain("estimated cost $0.1234");
+  });
+
+  it("omits the cached input parenthesis when no cache tokens were reported", async () => {
+    const text = await renderToText(
+      <ActivityPanel
+        events={[]}
+        usage={{
+          inputTokens: 900,
+          cachedTokens: 0,
+          outputTokens: 100,
+          totalTokens: 1000,
+        }}
+        initialTab="run"
+        onClose={() => {}}
+      />,
+    );
+
+    expect(text).toContain("session 900 input · 100 output");
+    expect(text).not.toContain("cached");
   });
 });

@@ -1,10 +1,14 @@
 export type {
   AgentToolInvocationInput,
-  AgentToolResult,
+  AgentBlocker,
+  AgentResultStatus,
+  AgentRuntimeResult,
   AgentToolSummarizeInput,
   DelegationLedgerHit,
   DelegationLedgerKey,
   DelegationLedgerResult,
+  ParentAgentResult,
+  ParentAgentWorkspaceEvidence,
 } from "./types.js";
 export type {
   AgentAssetIdentity,
@@ -26,18 +30,33 @@ export {
 } from "./invocation.js";
 export type { AgentSupervisor, AgentSupervisorState } from "./supervisor.js";
 export { createAgentSupervisor } from "./supervisor.js";
+export type { AgentActionSummary } from "./action-summary.js";
 export {
-  assessmentNote,
+  MAX_AGENT_ACTION_SUMMARIES,
+  summarizeAgentActions,
+} from "./action-summary.js";
+export {
+  agentWorkspaceEvidence,
   childAssessment,
   isCompleteAgentResult,
-  isAgentToolResult,
   isReusableAgentResult,
+  projectParentAgentResult,
   projectAgentInvocationResult,
+  projectAgentOutcome,
   runResultStepLimitReached,
   runResultTruncated,
 } from "./result.js";
 export {
-  findSimilarSuccessfulDelegation,
-  rememberSuccessfulDelegation,
-  withAlreadyCompletedNote,
+  composeInProcessChildAgentPrompt,
+  IN_PROCESS_CHILD_AGENT_CONTRACT_PROMPT,
+} from "./prompt.js";
+export type {
+  ProjectAgentOutcomeInput,
+  ProjectParentAgentResultInput,
+  ProjectedAgentOutcome,
+} from "./result.js";
+export {
+  findReusableDelegation,
+  rememberReusableDelegation,
+  reusedDelegationResult,
 } from "./delegation-ledger.js";

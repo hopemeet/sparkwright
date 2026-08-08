@@ -8,6 +8,7 @@ import {
   createAgentTool,
   decideByRules,
   deriveChildAgentProfile,
+  IN_PROCESS_CHILD_AGENT_CONTRACT_PROMPT,
   mountAgentTool,
   promptBuilderForAgentProfile,
   spawnSubAgent,
@@ -1196,7 +1197,7 @@ describe("createAgentTool / mountAgentTool", () => {
             return { message: "child done" };
           },
         },
-        maxSteps: 1,
+        maxSteps: 2,
       }),
     });
 
@@ -1205,12 +1206,11 @@ describe("createAgentTool / mountAgentTool", () => {
     } as never);
 
     expect(output).toMatchObject({
-      signal: "completed",
-      stopReason: "final_answer",
-      message: "child done",
-      toolCalls: 0,
-      modelCalls: 1,
+      status: "completed",
+      report: "child done",
+      workspace: { writes: 0 },
     });
+    expect(tool.resultPresentation).toEqual({ kind: "agent_result" });
     expect(tool.policy).toEqual(SAFE_AGENT_TOOL_POLICY);
     expect(typeof output).toBe("object");
   });
@@ -1225,28 +1225,136 @@ describe("createAgentTool / mountAgentTool", () => {
       },
       maxSteps: 1,
     });
+    const glob = defineTool({
+      name: "glob",
+      description: "Return one useful observation before failure.",
+      inputSchema: { type: "object" },
+      delegation: "child",
+      execute: () => ({ paths: ["README.md"] }),
+    });
     const tool = createAgentTool(() => parent, {
       policy: SAFE_AGENT_TOOL_POLICY,
       buildSpawnInput: (input) => ({
         goal: input.goal,
+        tools: [glob],
         model: {
-          async complete() {
+          async complete(modelInput) {
+            const inspected = modelInput.context.some(
+              (item) =>
+                item.type === "tool_result" &&
+                item.metadata.toolName === "glob",
+            );
+            if (!inspected) {
+              return {
+                toolCalls: [{ toolName: "glob", arguments: { pattern: "*" } }],
+              };
+            }
             throw new Error("child failed");
           },
         },
-        maxSteps: 1,
+        maxSteps: 3,
       }),
     });
 
     await expect(
       tool.execute({ goal: "doomed" }, { run: parent.record } as never),
     ).rejects.toMatchObject({
+      name: "AgentToolRunError",
       code: "SUBAGENT_RUN_FAILED",
       metadata: {
+        childRunId: expect.stringMatching(/^run_/),
+        status: "partial",
+        workspace: { writes: 0 },
         signal: "failed",
         stopReason: "model_completion_failed",
+        partialObservations: [
+          {
+            toolName: "glob",
+            output: '{"paths":["README.md"]}',
+          },
+        ],
+        output: {
+          childRunId: expect.stringMatching(/^run_/),
+          status: "partial",
+          workspace: { writes: 0 },
+        },
       },
     });
+  });
+
+  it("keeps only the last three partial observations within 600 characters", async () => {
+    const parent = createRun({
+      goal: "parent",
+      model: {
+        async complete() {
+          return { message: "parent done" };
+        },
+      },
+      maxSteps: 1,
+    });
+    const probe = defineTool({
+      name: "probe",
+      description: "Return long evidence.",
+      inputSchema: { type: "object" },
+      delegation: "child",
+      execute(args) {
+        const index = (args as { index: number }).index;
+        return { index, content: `${index}`.repeat(800) };
+      },
+    });
+    const tool = createAgentTool(() => parent, {
+      policy: SAFE_AGENT_TOOL_POLICY,
+      buildSpawnInput: (input) => ({
+        goal: input.goal,
+        tools: [probe],
+        model: {
+          async complete(modelInput) {
+            const completed = modelInput.context.filter(
+              (item) =>
+                item.type === "tool_result" &&
+                item.metadata.toolName === "probe",
+            ).length;
+            if (completed < 4) {
+              return {
+                toolCalls: [
+                  { toolName: "probe", arguments: { index: completed } },
+                ],
+              };
+            }
+            throw new Error("child failed after collecting evidence");
+          },
+        },
+        maxSteps: 6,
+      }),
+    });
+
+    let caught: unknown;
+    try {
+      await tool.execute({ goal: "collect four observations" }, {
+        run: parent.record,
+      } as never);
+    } catch (error) {
+      caught = error;
+    }
+    const observations = (
+      caught as {
+        metadata?: {
+          partialObservations?: Array<{ toolName: string; output: string }>;
+        };
+      }
+    ).metadata?.partialObservations;
+    expect(observations).toHaveLength(3);
+    expect(observations?.map((item) => item.toolName)).toEqual([
+      "probe",
+      "probe",
+      "probe",
+    ]);
+    expect(observations?.every((item) => item.output.length <= 600)).toBe(true);
+    expect(observations?.map((item) => item.output.slice(0, 10))).toEqual([
+      '{"index":1',
+      '{"index":2',
+      '{"index":3',
+    ]);
   });
 
   it("short-circuits exactly equivalent normalized delegate calls after success", async () => {
@@ -1267,7 +1375,9 @@ describe("createAgentTool / mountAgentTool", () => {
         model: {
           async complete() {
             childCalls += 1;
-            return { message: "root entries: README.md, packages/" };
+            return {
+              message: "root entries: README.md, packages/",
+            };
           },
         },
         maxSteps: 2,
@@ -1281,14 +1391,21 @@ describe("createAgentTool / mountAgentTool", () => {
       run: parent.record,
     } as never);
 
-    expect(first).toMatchObject({ signal: "completed" });
+    expect(first).toMatchObject({
+      status: "completed",
+      report: "root entries: README.md, packages/",
+      workspace: { writes: 0 },
+    });
     expect(tool.managesRepeatedCalls?.({ goal: "Inspect README.md" })).toBe(
       true,
     );
     expect(second).toMatchObject({
-      signal: "completed",
-      alreadyCompleted: true,
-      message: "root entries: README.md, packages/",
+      status: "completed",
+      report: "root entries: README.md, packages/",
+      workspace: { writes: 0 },
+      warnings: [
+        "The runtime reused this completed child result; no new child ran.",
+      ],
     });
     expect(childCalls).toBe(1);
   });
@@ -1328,22 +1445,29 @@ describe("createAgentTool / mountAgentTool", () => {
     );
 
     expect(first).toMatchObject({
-      signal: "completed",
-      message: "directory result 1",
+      status: "completed",
+      report: "directory result 1",
     });
     expect(
       tool.managesRepeatedCalls?.({ goal: "inspect the workspace carefully" }),
     ).toBe(false);
     expect(second).toMatchObject({
-      signal: "completed",
-      message: "directory result 2",
+      status: "completed",
+      report: "directory result 2",
     });
-    expect(second).not.toMatchObject({ alreadyCompleted: true });
+    expect(second).not.toHaveProperty("warnings");
     expect(childCalls).toBe(2);
   });
 
   it("does not cache delegate results completed on the child step limit", async () => {
     let childCalls = 0;
+    const inspectTool = defineTool({
+      name: "inspect",
+      description: "Perform one inspection step.",
+      inputSchema: { type: "object" },
+      policy: SAFE_AGENT_TOOL_POLICY,
+      execute: () => ({ inspected: true }),
+    });
     const parent = createRun({
       goal: "parent",
       model: {
@@ -1360,9 +1484,17 @@ describe("createAgentTool / mountAgentTool", () => {
         model: {
           async complete() {
             childCalls += 1;
-            return { message: "partial child answer" };
+            return {
+              toolCalls: [
+                {
+                  toolName: "inspect",
+                  arguments: {},
+                },
+              ],
+            };
           },
         },
+        tools: [inspectTool],
         maxSteps: 1,
       }),
     });
@@ -1377,16 +1509,22 @@ describe("createAgentTool / mountAgentTool", () => {
     );
 
     expect(first).toMatchObject({
-      signal: "completed",
-      stepLimitReached: true,
-      note: expect.stringContaining("possibly truncated"),
+      status: "partial",
+      blockers: [expect.objectContaining({ code: "AGENT_STEP_LIMIT_REACHED" })],
     });
     expect(second).toMatchObject({
-      signal: "completed",
-      stepLimitReached: true,
+      status: "partial",
+      blockers: [expect.objectContaining({ code: "AGENT_STEP_LIMIT_REACHED" })],
     });
-    expect(second).not.toMatchObject({ alreadyCompleted: true });
-    expect(childCalls).toBe(2);
+    expect(second).not.toHaveProperty("warnings", [
+      "The runtime reused this completed child result; no new child ran.",
+    ]);
+    expect(childCalls).toBe(4);
+    expect(
+      parent.events
+        .all()
+        .filter((event) => event.type === "subagent.requested"),
+    ).toHaveLength(2);
   });
 
   it("emits subagent.requested → started → completed on the parent", async () => {
@@ -1437,6 +1575,99 @@ describe("createAgentTool / mountAgentTool", () => {
       spanId: spawned.spanId,
       goal: "child task",
     });
+    expect(
+      parent.events.all().find((event) => event.type === "subagent.completed")
+        ?.payload,
+    ).toMatchObject({
+      actions: [],
+      workspaceWrites: 0,
+    });
+  });
+
+  it("keeps an explicitly completed child complete after a managed workspace write", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-child-partial-"));
+    tempDirs.push(root);
+    const workspace = new LocalWorkspace(root);
+    const parent = createRun({
+      goal: "parent",
+      model: {
+        async complete() {
+          return { message: "parent done" };
+        },
+      },
+      workspace,
+      maxSteps: 1,
+    });
+    const mutate = defineTool({
+      name: "mutate",
+      description: "Create one managed file.",
+      inputSchema: { type: "object", properties: {} },
+      policy: { risk: "safe" },
+      governance: {
+        sideEffects: ["write"],
+        idempotency: "conditional",
+        origin: {
+          kind: "local",
+          name: "agent-runtime-test",
+          metadata: { managedWorkspaceWrite: true },
+        },
+      },
+      async execute(_args, ctx) {
+        return ctx.workspace!.createText!("child.txt", "changed\n");
+      },
+    });
+    let childCalls = 0;
+    const spawned = spawnSubAgent({
+      parent,
+      goal: "change a file",
+      workspace,
+      tools: [mutate],
+      maxSteps: 3,
+      policy: {
+        decide(input) {
+          return {
+            action: input.action,
+            decision: "allow",
+            reason: "test",
+            metadata: {},
+          };
+        },
+      },
+      model: {
+        async complete() {
+          childCalls += 1;
+          if (childCalls === 1) {
+            return {
+              toolCalls: [{ toolName: "mutate", arguments: {} }],
+            };
+          }
+          return {
+            message: "I changed the file.",
+          };
+        },
+      },
+    });
+
+    await spawned.start();
+
+    const completed = parent.events
+      .all()
+      .find((event) => event.type === "subagent.completed");
+    expect(completed?.payload).toMatchObject({
+      status: "completed",
+      workspaceWrites: 1,
+      actions: [
+        expect.objectContaining({
+          toolName: "mutate",
+          status: "completed",
+        }),
+      ],
+      blockers: [],
+    });
+    expect(
+      (completed?.payload as { changeSets?: unknown[] } | undefined)
+        ?.changeSets,
+    ).toHaveLength(1);
   });
 
   it("waits for embedder admission before starting and releases afterwards", async () => {
@@ -1798,6 +2029,9 @@ describe("createAgentTool / mountAgentTool", () => {
     await spawned.run.start();
 
     expect(childPromptText).toContain("You are the specialist sub-agent.");
+    expect(childPromptText).not.toContain(
+      IN_PROCESS_CHILD_AGENT_CONTRACT_PROMPT,
+    );
     // harness resident contracts still apply alongside the app prompt.
     expect(childPromptText).toContain("Tool use contract:");
   });

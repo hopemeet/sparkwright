@@ -99,6 +99,35 @@ OPENAI_API_KEY=... npm exec sparkwright -- run "inspect this repo" \
 Provider adapters sit at the edge. The run still uses SparkWright tools,
 policy, approvals, artifacts, and trace.
 
+## Public Web Reads
+
+The main agent can use the built-in `web_fetch` tool to read one known public
+page. It is a URL reader, not a search engine: it does not discover URLs,
+execute JavaScript, or use browser cookies/login state. Supported
+HTML/text/JSON/XML responses become bounded plain text.
+
+The default `system` transport accepts HTTPS and follows the machine's normal
+DNS and routing path, including VPN/TUN software. It honors `HTTPS_PROXY`,
+`HTTP_PROXY`, `NO_PROXY`, their lowercase forms, and the optional
+`SPARKWRIGHT_WEB_PROXY` override. This avoids treating a VPN's synthetic DNS
+address as the destination itself. It rejects explicit private/reserved IPs,
+local hostnames, credential-bearing URLs, sensitive query names, and HTTPS to
+HTTP redirects, but intentionally does not pre-resolve domain names.
+
+For an SSRF-sensitive environment, set
+`capabilities.web.security: hardened`. Hardened mode accepts HTTP(S), requires
+every DNS answer and redirect destination to be global-unicast, and pins each
+connection to the validated address. This stronger check can conflict with
+VPN/TUN products that return synthetic IPs.
+
+Every exact normalized URL is approval-scoped. The tool conservatively removes
+active/interactive HTML, keeps readable page structure and links, then returns
+one bounded excerpt marked as untrusted external data. `truncated: true` means
+the remaining page is not available through `web_fetch`; fetching the same URL
+again is a new request and the page may have changed. Use `tools.use: [web]` to
+select only this family, or disable `web_fetch` when external network access is
+not wanted.
+
 ## Interactive TUI
 
 Launch the terminal UI with:
@@ -113,6 +142,42 @@ files directly after editing source, rebuild first with `npm run build`.
 In `/sessions`, select a session and press `i` to inspect diagnostics. When
 available, the inspect view includes the same compaction audit surfaced by
 `session inspect --compaction`, without printing compacted summary content.
+
+The TUI keeps the committed conversation in the terminal's native scrollback.
+While a model response is still streaming, visible reasoning is a quiet tail of
+the latest three source lines and the in-flight answer is temporarily folded to
+a terminal-height-dependent window, normally 6–12 physical rows. A fold hint
+means only the live preview is abbreviated. When the response completes, TUI
+atomically replaces that preview with the full committed assistant answer; no
+final answer content is discarded. Whether reasoning appears at all still
+depends on the selected model and provider gateway.
+
+The following slash commands remain independent direct entry points even when
+they share an internal panel:
+
+- `/tools`, `/agents`, `/mcp`, and `/cron` open the matching capability view.
+- `/skills` opens the effective Skill inventory with recent exact-identity load
+  counts; press Enter for the non-causal run/tool detail view.
+- `/events` opens the canonical runtime event inspector; `/tasks` opens durable
+  background-task activity.
+- `/notifications` opens UI feedback history (run/connection diagnostics,
+  action feedback, approvals, and background alerts). It is presentation state,
+  not a replacement for trace or session evidence.
+
+Approval cards identify the originating main run or Workflow, session/run ids,
+queue position, risk, exact remembered scope, and effect details. High-risk and
+unknown effects focus **Deny** by default; unknown effects cannot be remembered
+for the session. `Esc`, `Ctrl+C`, or `n` explicitly deny the active approval.
+`y` allows once, while Enter confirms the highlighted choice. Session approval
+rules continue to match only the exact path, shell command plus cwd, or tool
+arguments shown by the card.
+
+Input is owned by one surface at a time: an approval first, then the active
+dialog, composer suggestions/search, the editor, and finally global shortcuts.
+Within a dialog `Esc` or `Ctrl+C` goes back. At the composer, `Esc` cancels a
+running goal when configured to do so; `Ctrl+C` clears a non-empty draft, then
+uses the usual cancel/back/quit confirmation flow. Printable global shortcuts
+do not steal characters from a non-empty prompt.
 
 ## ACP Agent Server
 

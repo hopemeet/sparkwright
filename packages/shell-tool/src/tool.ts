@@ -284,6 +284,23 @@ export interface ShellToolOutput {
   deduplicated?: boolean;
   /** Host-assigned task id returned by the promotion callback. */
   taskId?: string;
+  /** Canonical task mode after shell background handoff. */
+  actualMode?: "awaited" | "detached";
+  /** @reserved Model-visible async-receipt field describing parent keep-alive. */
+  parentWillWait?: boolean;
+  /** @reserved Model-visible async-receipt field describing terminal observation. */
+  completionObservation?: "automatic_once" | "opportunistic_if_parent_active";
+  /** Structured follow-up action for the adopted task. */
+  nextAction?: {
+    tool: "task";
+    taskId: string;
+    action: "wait";
+    instruction: string;
+    outputInstruction: string;
+    duplicateAvoidance: string;
+  };
+  /** Top-level duplicate-avoidance instruction shared with other task receipts. */
+  duplicateAvoidance?: string;
   /**
    * @reserved Model-visible continuation guidance for a promoted shell task.
    *
@@ -406,6 +423,36 @@ export function createShellTool(
         lifetime: { type: "string", enum: ["job", "service"] },
         deduplicated: { type: "boolean" },
         taskId: { type: "string" },
+        actualMode: {
+          type: "string",
+          enum: ["awaited", "detached"],
+        },
+        parentWillWait: { type: "boolean" },
+        completionObservation: {
+          type: "string",
+          enum: ["automatic_once", "opportunistic_if_parent_active"],
+        },
+        nextAction: {
+          type: "object",
+          properties: {
+            tool: { type: "string", enum: ["task"] },
+            taskId: { type: "string" },
+            action: { type: "string", enum: ["wait"] },
+            instruction: { type: "string" },
+            outputInstruction: { type: "string" },
+            duplicateAvoidance: { type: "string" },
+          },
+          required: [
+            "tool",
+            "taskId",
+            "action",
+            "instruction",
+            "outputInstruction",
+            "duplicateAvoidance",
+          ],
+          additionalProperties: false,
+        },
+        duplicateAvoidance: { type: "string" },
         promotionGuidance: { type: "string" },
         backgroundGuidance: { type: "string" },
         sandbox: {
@@ -447,6 +494,26 @@ export function createShellTool(
     policyForArgs(args) {
       return shellPolicyForArgs(args, options.safety);
     },
+    approvalSubjectForArgs(args) {
+      const input = normalizeShellInput(args, options.foregroundTimeoutMs);
+      const cwd = resolve(options.workspaceRoot ?? ".", input.cwd ?? ".");
+      const key = `shell_command:${JSON.stringify({
+        command: input.command,
+        cwd,
+        background: input.background,
+        lifetime: input.lifetime,
+      })}`;
+      return {
+        kind: "shell_command",
+        command: input.command,
+        cwd,
+        background: input.background,
+        lifetime: input.lifetime,
+        key,
+        label:
+          "Allow this exact command, cwd, and execution mode for this session",
+      };
+    },
     resultSize: { maxChars: SHELL_INLINE_CHARS },
     resultPresentation: {
       kind: "shell_output",
@@ -465,6 +532,11 @@ export function createShellTool(
         "background",
         "backgroundOrigin",
         "taskId",
+        "actualMode",
+        "parentWillWait",
+        "completionObservation",
+        "nextAction",
+        "duplicateAvoidance",
         "promotionGuidance",
         "backgroundGuidance",
         "lifetime",
@@ -516,6 +588,7 @@ export function createShellTool(
           lifetime: input.lifetime,
         });
         if (existing) {
+          const receipt = shellTaskAsyncReceipt(existing.taskId, "explicit");
           return {
             stdout: "",
             stderr: "",
@@ -532,6 +605,7 @@ export function createShellTool(
             lifetime: input.lifetime,
             deduplicated: true,
             taskId: existing.taskId,
+            ...receipt,
             backgroundGuidance:
               `Equivalent background ${input.lifetime} is already running as ` +
               `task ${existing.taskId}. No new process was started. Do NOT ` +
@@ -579,18 +653,34 @@ function shellPolicyForArgs(
   const verdict = evaluateShellSafety(input.command, safety);
   if (verdict.decision === "allow" && isSimpleReadOnlyShellCommand(input)) {
     return {
-      policy: { risk: "safe", requiresApproval: false },
+      policy: {
+        risk: "safe",
+        requiresApproval: false,
+        safetyReason: verdict.reason,
+      },
       governance: READ_ONLY_SHELL_GOVERNANCE,
     };
   }
   if (verdict.decision === "deny") {
     return {
-      policy: { risk: "risky", requiresApproval: true },
+      policy: {
+        risk: "risky",
+        requiresApproval: true,
+        approvalReason:
+          "The shell tool requires approval before a denied command can be evaluated at execution.",
+        safetyReason: verdict.reason,
+      },
       governance: SAFETY_DENIED_SHELL_GOVERNANCE,
     };
   }
   return {
-    policy: { risk: "risky", requiresApproval: true },
+    policy: {
+      risk: "risky",
+      requiresApproval: true,
+      approvalReason:
+        "The shell tool requires approval for commands outside its read-only safe set.",
+      safetyReason: verdict.reason,
+    },
     governance: RISKY_SHELL_GOVERNANCE,
   };
 }
@@ -875,6 +965,7 @@ async function handOffShellToBackground(input: {
     // Detach from completion — the host now owns lifecycle.
     input.completed.catch(() => {});
     const explicitlyBackgrounded = input.origin === "explicit";
+    const receipt = shellTaskAsyncReceipt(handoff.taskId, input.origin);
     return {
       stdout: input.stdout(),
       stderr: input.stderr(),
@@ -891,6 +982,7 @@ async function handOffShellToBackground(input: {
       lifetime: ctx.lifetime,
       ...(explicitlyBackgrounded ? {} : { promoted: true }),
       taskId: handoff.taskId,
+      ...receipt,
       ...(explicitlyBackgrounded
         ? {
             backgroundGuidance:
@@ -942,6 +1034,41 @@ async function handOffShellToBackground(input: {
       sandbox: shellSandboxOutput(final.metadata),
     };
   }
+}
+
+function shellTaskAsyncReceipt(
+  taskId: string,
+  origin: "explicit" | "promoted",
+): Pick<
+  ShellToolOutput,
+  | "actualMode"
+  | "parentWillWait"
+  | "completionObservation"
+  | "nextAction"
+  | "duplicateAvoidance"
+> {
+  const parentWillWait = origin === "promoted";
+  const duplicateAvoidance =
+    "Do not launch an equivalent command again; use this taskId to wait, inspect, retrieve output, or stop it.";
+  return {
+    actualMode: parentWillWait ? "awaited" : "detached",
+    parentWillWait,
+    completionObservation: parentWillWait
+      ? "automatic_once"
+      : "opportunistic_if_parent_active",
+    nextAction: {
+      tool: "task",
+      taskId,
+      action: "wait",
+      instruction: parentWillWait
+        ? `This run will wait automatically before finalizing while task "${taskId}" is pending. Call task with action="wait" and taskId="${taskId}" only if the next action depends on its result now.`
+        : `The background launch is complete. If you need terminal completion before answering, call task with action="wait" and taskId="${taskId}"; use action="get" only for a one-time status snapshot.`,
+      outputInstruction:
+        'After the task is terminal, call task with action="output" and the same taskId if you need buffered output that was not included in the task result.',
+      duplicateAvoidance,
+    },
+    duplicateAvoidance,
+  };
 }
 
 function appendDiagnosticLine(value: string, line: string): string {

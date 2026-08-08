@@ -1,5 +1,5 @@
 import type { RunEvent } from "../lib/event-type.js";
-import type { ApprovalSubject } from "../lib/session-approval.js";
+import type { ApprovalViewModel } from "../lib/approval-view-model.js";
 
 export type Status =
   | "idle"
@@ -8,44 +8,14 @@ export type Status =
   | "done"
   | "error";
 
-/**
- * Approval kind helps the UI choose the right body. The host emits a free-form
- * `action` string today; we normalise to a small enum the renderer switches on
- * and keep the original action for display.
- */
-export type ApprovalKind =
-  | "workspace.write"
-  | "skill.apply"
-  | "tool.execute"
-  | "shell.execute"
-  | "other";
-
-export interface PendingApproval {
+export interface InlineDiagnosticState {
   id: string;
-  action: string;
-  kind: ApprovalKind;
-  summary: string;
-  /** Path for workspace.write; primary file for the diff. */
-  path?: string;
-  /** Free-form reason the tool/write was requested. */
-  reason?: string;
-  /** Unified diff body (workspace.write only). */
-  diff?: string;
-  /** Tool name (tool.execute / shell.execute). */
-  toolName?: string;
-  /** Captured tool args/metadata for display. Trimmed/serialised in renderer. */
-  toolArgs?: unknown;
-  /** Shell command, if shell.execute. */
-  command?: string;
-  /** Stable, fail-closed projection used to offer and match session rules. */
-  subject: ApprovalSubject;
-  /** Policy decision metadata (risk, reason). */
-  policy?: {
-    decision?: string;
-    reason?: string;
-    risk?: string;
-  };
+  scope: "RunFailure" | "ConnectionFailure";
+  title: string;
+  message: string;
 }
+
+export type PendingApproval = ApprovalViewModel;
 
 /**
  * Per-file modification accumulated from workspace.write events for the sidebar.
@@ -125,9 +95,12 @@ const PHASE_PRIORITY = {
 
 export interface StoreState {
   status: Status;
+  /** Short transient operation label projected into the status line. */
+  statusMessage: string | null;
   events: RunEvent[];
   pendingApproval: PendingApproval | null;
   lastError: string | null;
+  lastDiagnostic: InlineDiagnosticState | null;
   stopReason: string | null;
   /** Live-assembled assistant text from `model.stream.chunk` (text_delta). */
   streamingText: string;
@@ -159,26 +132,12 @@ export interface StoreState {
    * @reserved Public TUI store field consumed by App live-frame rendering.
    */
   activePhase: ActivePhase | null;
-  /** Host-computed human-only follow-up action offered after a tool result. */
-  pendingHumanAction: PendingHumanAction | null;
   /**
-   * Bumped by clearEvents()/reset(). The App keys <Static> off this and wipes
-   * the terminal scrollback when it changes — Static can't un-print committed
-   * lines on its own, so a visible /clear needs both a remount and a screen
-   * wipe.
+   * Bumped by clearEvents()/reset(). App combines this with sessionId to form
+   * the TranscriptDocument epoch, resetting semantic anchors without mutating
+   * RunController's independent export buffer.
    */
   clearGeneration: number;
-}
-
-export interface PendingHumanAction {
-  kind: "skill_proposal_review";
-  proposalId: string;
-  reviewCommand: string;
-  eligibility: "quick_apply" | "review_required" | "force_required";
-  validationStatus: "passed";
-  contentMode?: string;
-  guardSeverity: "none" | "caution" | "dangerous";
-  recommendedAction: "apply" | "review";
 }
 
 type Listener = () => void;
@@ -186,9 +145,11 @@ type Listener = () => void;
 export class EventStore {
   private state: StoreState = {
     status: "idle",
+    statusMessage: null,
     events: [],
     pendingApproval: null,
     lastError: null,
+    lastDiagnostic: null,
     stopReason: null,
     streamingText: "",
     reasoningText: "",
@@ -199,7 +160,6 @@ export class EventStore {
     todoItems: [],
     usage: null,
     activePhase: null,
-    pendingHumanAction: null,
     clearGeneration: 0,
   };
   private listeners = new Set<Listener>();
@@ -222,6 +182,7 @@ export class EventStore {
   // negative sequences so they never collide with host sequences (which start
   // at 1) and sort ahead of them when appended just before a run begins.
   private syntheticSeq = -1;
+  private statusBeforeApproval: Status | null = null;
 
   getSnapshot = (): StoreState => this.state;
 
@@ -248,8 +209,13 @@ export class EventStore {
     this.state = {
       ...this.state,
       status,
+      statusMessage: status === "running" ? this.state.statusMessage : null,
       lastError:
         status === "running" || status === "done" ? null : this.state.lastError,
+      lastDiagnostic:
+        status === "running" || status === "done"
+          ? null
+          : this.state.lastDiagnostic,
       runStartedAt,
       runEndedAt,
       activePhase: this.deriveActivePhase(),
@@ -258,12 +224,40 @@ export class EventStore {
   }
 
   setError(message: string): void {
+    this.setRunFailure(message);
+  }
+
+  setRunFailure(message: string): void {
+    this.setTerminalDiagnostic("RunFailure", "run failed", message);
+  }
+
+  setConnectionFailure(message: string): void {
+    this.setTerminalDiagnostic(
+      "ConnectionFailure",
+      "connection failed",
+      message,
+    );
+  }
+
+  private setTerminalDiagnostic(
+    scope: InlineDiagnosticState["scope"],
+    title: string,
+    message: string,
+  ): void {
     this.openPhases.clear();
     this.modelRetries.clear();
+    const lastDiagnostic: InlineDiagnosticState = {
+      id: `${scope}:${Date.now().toString(36)}:${message}`,
+      scope,
+      title,
+      message,
+    };
     this.state = {
       ...this.state,
       status: "error",
+      statusMessage: null,
       lastError: message,
+      lastDiagnostic,
       activePhase: null,
     };
     this.schedule();
@@ -271,6 +265,11 @@ export class EventStore {
 
   setStopReason(reason: string | null): void {
     this.state = { ...this.state, stopReason: reason };
+    this.schedule();
+  }
+
+  setStatusMessage(message: string | null): void {
+    this.state = { ...this.state, statusMessage: message };
     this.schedule();
   }
 
@@ -318,20 +317,18 @@ export class EventStore {
     }
     if (event.type === "model.stream.started") {
       this.state = { ...this.state, streamingText: "", reasoningText: "" };
-    } else if (
-      event.type === "model.stream.completed" ||
-      event.type === "model.completed"
-    ) {
-      // The assistant turn has finished. Drop the live previews — the committed
-      // `model.completed` card now carries the text in scrollback, so keeping
-      // streamingText would duplicate it. Reasoning is ephemeral by design.
+    } else if (event.type === "model.completed") {
+      // `model.stream.completed` only closes the provider token stream; the
+      // canonical `model.completed` event can arrive noticeably later. Keep
+      // the live preview across that gap, then clear it in the same state
+      // update that commits the complete assistant message to the transcript.
+      // Reasoning remains ephemeral by design.
       this.state = { ...this.state, streamingText: "", reasoningText: "" };
     }
 
-    // Append-only: <Static> slices from the previous items.length, so trimming
-    // the front would silently drop newly-appended events. Per-session growth
-    // is bounded by reset()/clearEvents() (/new, /clear), and each event is a
-    // small object, so we keep the full session in memory.
+    // Preserve the complete presentation-event history for document rebuilds.
+    // Only projection/layout rows are bounded; reset()/clearEvents() establish a
+    // new visible document epoch without truncating durable host trace data.
     const events = this.state.events.concat(event);
 
     // Side-effect projections: keep specialised slices in sync so sidebar /
@@ -339,7 +336,6 @@ export class EventStore {
     let modifiedFiles = this.state.modifiedFiles;
     let todoItems = this.state.todoItems;
     let usage = this.state.usage;
-    let pendingHumanAction = this.state.pendingHumanAction;
     this.updateActivePhases(event);
 
     if (event.type.startsWith("workspace.write")) {
@@ -384,10 +380,6 @@ export class EventStore {
       }
     } else if (event.type === "tool.completed") {
       const payload = rec(event.payload);
-      const offeredAction = parsePendingHumanAction(
-        rec(payload.output ?? payload.result).humanAction,
-      );
-      if (offeredAction) pendingHumanAction = offeredAction;
       const callId = todoToolCallId(payload);
       const proposed = callId
         ? this.pendingTodoProposals.get(callId)
@@ -420,22 +412,8 @@ export class EventStore {
       modifiedFiles,
       todoItems,
       usage,
-      pendingHumanAction,
       activePhase: this.deriveActivePhase(),
     };
-    this.schedule();
-  }
-
-  clearPendingHumanAction(proposalId?: string): void {
-    const current = this.state.pendingHumanAction;
-    if (!current || (proposalId && current.proposalId !== proposalId)) return;
-    this.state = { ...this.state, pendingHumanAction: null };
-    this.schedule();
-  }
-
-  /** Restore a durable Skill inbox item after TUI startup or capability create. */
-  setPendingHumanAction(action: PendingHumanAction | null): void {
-    this.state = { ...this.state, pendingHumanAction: action };
     this.schedule();
   }
 
@@ -475,8 +453,8 @@ export class EventStore {
 
   /**
    * Append a copy-safe transcript export confirmation. The toast remains the
-   * short-lived status cue; this event gives the saved path a permanent,
-   * border-free line in native scrollback.
+   * short-lived status cue; this event gives the saved path a copy-safe,
+   * border-free row in the owned transcript viewport.
    */
   appendTranscriptExport(path: string): void {
     const event = {
@@ -490,10 +468,15 @@ export class EventStore {
   }
 
   setPendingApproval(pending: PendingApproval | null): void {
+    if (pending && !this.state.pendingApproval) {
+      this.statusBeforeApproval = this.state.status;
+    }
+    const restoredStatus = this.statusBeforeApproval ?? "running";
+    if (!pending) this.statusBeforeApproval = null;
     this.state = {
       ...this.state,
       pendingApproval: pending,
-      status: pending ? "awaiting-approval" : "running",
+      status: pending ? "awaiting-approval" : restoredStatus,
     };
     this.schedule();
   }
@@ -509,12 +492,13 @@ export class EventStore {
       streamingText: "",
       reasoningText: "",
       lastError: null,
+      lastDiagnostic: null,
       stopReason: null,
+      statusMessage: null,
       status: this.state.status === "running" ? "running" : "idle",
       modifiedFiles: [],
       todoItems: [],
       activePhase: null,
-      pendingHumanAction: null,
       clearGeneration: this.state.clearGeneration + 1,
     };
     this.schedule();
@@ -527,11 +511,14 @@ export class EventStore {
     this.pendingTodoProposals.clear();
     this.openPhases.clear();
     this.modelRetries.clear();
+    this.statusBeforeApproval = null;
     this.state = {
       status: "idle",
+      statusMessage: null,
       events: [],
       pendingApproval: null,
       lastError: null,
+      lastDiagnostic: null,
       stopReason: null,
       streamingText: "",
       reasoningText: "",
@@ -542,7 +529,6 @@ export class EventStore {
       todoItems: [],
       usage: null,
       activePhase: null,
-      pendingHumanAction: null,
       clearGeneration: this.state.clearGeneration + 1,
     };
     this.schedule();
@@ -766,38 +752,6 @@ function rec(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
-}
-
-function parsePendingHumanAction(value: unknown): PendingHumanAction | null {
-  const action = rec(value);
-  if (
-    action.kind !== "skill_proposal_review" ||
-    typeof action.proposalId !== "string" ||
-    typeof action.reviewCommand !== "string" ||
-    (action.eligibility !== "quick_apply" &&
-      action.eligibility !== "review_required" &&
-      action.eligibility !== "force_required") ||
-    action.validationStatus !== "passed" ||
-    (action.guardSeverity !== "none" &&
-      action.guardSeverity !== "caution" &&
-      action.guardSeverity !== "dangerous") ||
-    (action.recommendedAction !== "apply" &&
-      action.recommendedAction !== "review")
-  ) {
-    return null;
-  }
-  return {
-    kind: "skill_proposal_review",
-    proposalId: action.proposalId,
-    reviewCommand: action.reviewCommand,
-    eligibility: action.eligibility,
-    validationStatus: "passed",
-    ...(typeof action.contentMode === "string"
-      ? { contentMode: action.contentMode }
-      : {}),
-    guardSeverity: action.guardSeverity,
-    recommendedAction: action.recommendedAction,
-  };
 }
 
 function firstString(...values: unknown[]): string | null {

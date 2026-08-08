@@ -41,7 +41,9 @@ describe("AgentSupervisor", () => {
       childRunId: "run_child",
       parentRunId: "run_parent",
       terminalState: "completed",
-      finality: "complete",
+      status: "completed",
+      summary: "Agent adapter completed successfully.",
+      blockers: [],
     });
     expect(events.all().at(-1)?.metadata).toMatchObject({
       childAgentId: "reviewer",
@@ -63,8 +65,34 @@ describe("AgentSupervisor", () => {
     ]);
     expect(events.all().at(-1)?.payload).toMatchObject({
       terminalState: "failed",
-      finality: "partial",
+      status: "partial",
+      blockers: [{ code: "ACCESS_DENIED" }],
       errorCode: "ACCESS_DENIED",
+    });
+  });
+
+  it("preserves a structured blocked terminal outcome", () => {
+    const { events, supervisor } = createHarness();
+    supervisor.requested();
+    supervisor.admit();
+    supervisor.started();
+    supervisor.completed({
+      terminalState: "blocked",
+      status: "blocked",
+      summary: "Shell execution is required.",
+      blockers: [
+        {
+          code: "SHELL_REQUIRED",
+          message: "Shell execution is required.",
+        },
+      ],
+    });
+
+    expect(events.all().at(-1)?.payload).toMatchObject({
+      terminalState: "blocked",
+      status: "blocked",
+      summary: "Shell execution is required.",
+      blockers: [{ code: "SHELL_REQUIRED" }],
     });
   });
 

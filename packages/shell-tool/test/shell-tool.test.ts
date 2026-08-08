@@ -248,6 +248,61 @@ describe("createShellTool", () => {
     });
   });
 
+  it("authors an exact reusable approval subject", async () => {
+    const tool = createShellTool({
+      ...minimalOptions(),
+      workspaceRoot: "/workspace/project",
+    });
+
+    expect(
+      await tool.approvalSubjectForArgs?.({
+        command: "npm test",
+        cwd: "packages/core",
+      }),
+    ).toMatchObject({
+      kind: "shell_command",
+      command: "npm test",
+      cwd: "/workspace/project/packages/core",
+      background: false,
+      lifetime: "job",
+      label:
+        "Allow this exact command, cwd, and execution mode for this session",
+    });
+  });
+
+  it("keys approval by command, cwd, and execution mode but not timeout", async () => {
+    const tool = createShellTool({
+      ...minimalOptions(),
+      workspaceRoot: "/workspace/project",
+    });
+    const short = await tool.approvalSubjectForArgs?.({
+      command: "python3 -m py_compile script.py",
+      foregroundTimeoutMs: 30_000,
+    });
+    const long = await tool.approvalSubjectForArgs?.({
+      command: "python3 -m py_compile script.py",
+      foregroundTimeoutMs: 120_000,
+    });
+    const background = await tool.approvalSubjectForArgs?.({
+      command: "python3 -m py_compile script.py",
+      foregroundTimeoutMs: 30_000,
+      background: true,
+    });
+
+    expect(short?.kind).toBe("shell_command");
+    expect(long?.kind).toBe("shell_command");
+    expect(background?.kind).toBe("shell_command");
+    if (
+      short?.kind !== "shell_command" ||
+      long?.kind !== "shell_command" ||
+      background?.kind !== "shell_command"
+    ) {
+      throw new Error("expected shell approval subjects");
+    }
+    expect(short.key).toBe(long.key);
+    expect(background.key).not.toBe(short.key);
+  });
+
   it("throws ShellSafetyError when the command is denied", async () => {
     const tool = createShellTool(minimalOptions());
     await expect(
@@ -661,6 +716,17 @@ describe("foreground→background promotion", () => {
     expect(result.timedOut).toBe(false);
     expect(result.promotionGuidance).toContain("task_abc");
     expect(result.promotionGuidance).toMatch(/do not re-run/i);
+    expect(result).toMatchObject({
+      actualMode: "awaited",
+      parentWillWait: true,
+      completionObservation: "automatic_once",
+      nextAction: {
+        tool: "task",
+        taskId: "task_abc",
+        action: "wait",
+      },
+      duplicateAvoidance: expect.stringMatching(/do not launch/i),
+    });
     expect(promotions).toHaveLength(1);
     expect(promotions[0]!.foregroundTimeoutMs).toBe(20);
     expect(promotions[0]!.policy).toEqual({ awaited: true, lifetime: "job" });
@@ -853,6 +919,17 @@ describe("foreground→background promotion", () => {
     expect(result.backgroundGuidance).toContain("successful start");
     expect(result.backgroundGuidance).toContain('action="get" merely');
     expect(result.backgroundGuidance).toContain('action="wait"');
+    expect(result).toMatchObject({
+      actualMode: "detached",
+      parentWillWait: false,
+      completionObservation: "opportunistic_if_parent_active",
+      nextAction: {
+        tool: "task",
+        taskId: "task_bg",
+        action: "wait",
+      },
+      duplicateAvoidance: expect.stringMatching(/do not launch/i),
+    });
     const schema = tool.inputSchema as {
       properties: Record<string, unknown>;
     };

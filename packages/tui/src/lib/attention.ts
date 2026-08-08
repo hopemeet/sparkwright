@@ -31,13 +31,17 @@ export class AttentionManager {
   private stdout: NodeJS.WriteStream;
   private dataListener: ((chunk: Buffer | string) => void) | null = null;
   private enabled = false;
+  private readonly lastNotifiedAt = new Map<string, number>();
+  private readonly rateLimitMs: number;
 
   constructor(opts?: {
     stdin?: NodeJS.ReadStream;
     stdout?: NodeJS.WriteStream;
+    rateLimitMs?: number;
   }) {
     this.stdin = opts?.stdin ?? process.stdin;
     this.stdout = opts?.stdout ?? process.stdout;
+    this.rateLimitMs = opts?.rateLimitMs ?? 5000;
   }
 
   /**
@@ -84,8 +88,12 @@ export class AttentionManager {
    * passes a short human-readable reason for the OSC 9 notification body.
    * Returns true if a signal was actually emitted.
    */
-  notify(reason: string): boolean {
+  notify(reason: string, key = reason): boolean {
     if (this.focused || !this.stdout.isTTY) return false;
+    const now = Date.now();
+    const previous = this.lastNotifiedAt.get(key) ?? 0;
+    if (now - previous < this.rateLimitMs) return false;
+    this.lastNotifiedAt.set(key, now);
     // BEL — terminals usually map this to a visible/audible cue per user config.
     this.stdout.write("\x07");
     // OSC 9 notification — iTerm2 and friends surface this as a native banner.
@@ -101,6 +109,7 @@ export class AttentionManager {
   private setFocused(next: boolean): void {
     if (this.focused === next) return;
     this.focused = next;
+    if (next) this.lastNotifiedAt.clear();
     for (const l of this.listeners) l(next);
   }
 }

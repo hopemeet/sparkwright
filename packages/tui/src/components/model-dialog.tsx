@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from "react";
 import { Box, Text, useInput } from "ink";
 import { useTheme } from "../lib/theme-context.js";
+import { isBackInput } from "../lib/input-key.js";
 import { DialogFrame } from "./dialog-frame.js";
 
 /**
@@ -50,7 +51,7 @@ export function ModelDialog(props: {
     filtered.length === 0 ? 0 : Math.min(highlight, filtered.length - 1);
 
   useInput((input, key) => {
-    if (key.escape) {
+    if (isBackInput(input, key)) {
       props.onCancel();
       return;
     }

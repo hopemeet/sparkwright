@@ -1,5 +1,5 @@
-import React from "react";
-import { Box, Text } from "ink";
+import React, { useLayoutEffect, useRef } from "react";
+import { Box, Text, measureElement, type DOMElement } from "ink";
 import type { StoreState } from "../state/event-store.js";
 import type { ValidationError } from "../lib/config.js";
 import type { UnreadTaskActivitySummary } from "../lib/task-activity.js";
@@ -10,7 +10,7 @@ import { StatusBar } from "./status-bar.js";
 import { StreamingMessage } from "./streaming-message.js";
 import { TodoBand } from "./todo-band.js";
 import { ToastView } from "./toast.js";
-import { SkillProposalCompletionCard } from "./skill-proposal-completion-card.js";
+import { InlineDiagnostic } from "./inline-diagnostic.js";
 
 export function LiveFrame(props: {
   state: StoreState;
@@ -23,16 +23,16 @@ export function LiveFrame(props: {
   streamingMax: number;
   sidebarWidth: number;
   columns: number;
-  todoExpanded: boolean;
   toast: React.ComponentProps<typeof ToastView>["toast"];
   toastQueueDepth: number;
   errors: ValidationError[];
   queued: readonly string[];
   showQueued: boolean;
-  confirmingHumanAction: boolean;
-  applyingHumanAction: boolean;
+  onHeightChange?: (rows: number) => void;
 }): React.ReactElement {
   const theme = useTheme();
+  const frameRef = useRef<DOMElement | null>(null);
+  const reportedHeightRef = useRef<number | null>(null);
   const showStatus =
     props.state.status === "running" ||
     props.state.status === "awaiting-approval" ||
@@ -40,8 +40,16 @@ export function LiveFrame(props: {
     props.unreadTasks.total > 0;
   const showWorkflowStatus = props.waitingWorkflowCount > 0;
 
+  useLayoutEffect(() => {
+    if (!frameRef.current) return;
+    const height = measureElement(frameRef.current).height;
+    if (reportedHeightRef.current === height) return;
+    reportedHeightRef.current = height;
+    props.onHeightChange?.(height);
+  });
+
   return (
-    <>
+    <Box ref={frameRef} flexDirection="column" flexShrink={0}>
       {showStatus || showWorkflowStatus ? (
         <StatusBar
           state={props.state}
@@ -59,7 +67,8 @@ export function LiveFrame(props: {
             <StreamingMessage
               text={props.state.streamingText}
               reasoning={props.state.reasoningText}
-              maxLines={props.streamingMax}
+              maxRows={props.streamingMax}
+              columns={Math.max(1, props.columns - props.sidebarWidth - 2)}
             />
           ) : null}
         </Box>
@@ -79,7 +88,6 @@ export function LiveFrame(props: {
           todos={props.state.todoItems}
           width={props.columns}
           compact={Boolean(props.state.streamingText)}
-          expanded={props.todoExpanded}
         />
       ) : null}
 
@@ -89,47 +97,35 @@ export function LiveFrame(props: {
         <UsageSummaryLine usage={props.state.usage} />
       ) : null}
 
-      {props.state.lastError ? (
-        <Box paddingX={1}>
-          <Text color={theme.error}>error: {props.state.lastError}</Text>
-        </Box>
+      {props.state.lastDiagnostic ? (
+        <InlineDiagnostic
+          title={
+            props.state.lastDiagnostic.scope === "RunFailure"
+              ? "failure details"
+              : props.state.lastDiagnostic.title
+          }
+          message={
+            props.state.lastDiagnostic.scope === "ConnectionFailure"
+              ? props.state.lastDiagnostic.message
+              : undefined
+          }
+          hint="details /notifications · runtime evidence /events"
+        />
       ) : null}
 
       <ToastView toast={props.toast} queueDepth={props.toastQueueDepth} />
 
-      {props.state.pendingHumanAction &&
-      props.state.status !== "running" &&
-      props.state.status !== "awaiting-approval" ? (
-        <SkillProposalCompletionCard
-          action={props.state.pendingHumanAction}
-          confirmingApply={props.confirmingHumanAction}
-          applying={props.applyingHumanAction}
-        />
-      ) : null}
-
       {props.errors.length > 0 ? (
-        <Box
-          flexDirection="column"
-          borderStyle="single"
-          borderColor="red"
-          paddingX={1}
-        >
-          <Text color="red" bold>
-            config errors ({props.errors.length})
+        <Box paddingX={1}>
+          <Text color={theme.error} bold>
+            config: {props.errors.length} validation error
+            {props.errors.length === 1 ? "" : "s"}
           </Text>
-          {props.errors.map((error, i) => (
-            <Text key={`${error.file}:${error.field}:${i}`}>
-              <Text dimColor>{error.file}</Text>
-              <Text> </Text>
-              <Text color="red">{error.field}</Text>
-              <Text> </Text>
-              <Text>{error.message}</Text>
-            </Text>
-          ))}
+          <Text color={theme.muted}> · /config for details</Text>
         </Box>
       ) : null}
 
       {props.showQueued ? <QueuedMessages items={props.queued} /> : null}
-    </>
+    </Box>
   );
 }

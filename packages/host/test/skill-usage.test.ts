@@ -7,7 +7,6 @@ import { describe, expect, it } from "vitest";
 import {
   createSkillUsageRecorder,
   observeSkillUsageEvent,
-  recordSkillPatch,
   skillUsagePath,
 } from "../src/index.js";
 
@@ -27,7 +26,7 @@ function skillLoadedEvent(
 }
 
 describe("skill usage sidecar", () => {
-  it("records load modes and patch observations in the host sidecar", async () => {
+  it("records load modes in the host sidecar", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "sparkwright-host-usage-"));
     try {
       const recorder = createSkillUsageRecorder(workspace);
@@ -39,8 +38,6 @@ describe("skill usage sidecar", () => {
         recorder,
         skillLoadedEvent("code-reviewer", "resident_context"),
       );
-      recordSkillPatch(workspace, "code-reviewer", "2026-06-13T00:00:02.000Z");
-
       const persisted = new FileSkillUsageRecorder({
         path: skillUsagePath(workspace),
       });
@@ -48,9 +45,7 @@ describe("skill usage sidecar", () => {
         useCount: 2,
         explicitLoadCount: 1,
         residentLoadCount: 1,
-        patchCount: 1,
         lastUsedAt: "2026-06-13T00:00:01.000Z",
-        lastPatchedAt: "2026-06-13T00:00:02.000Z",
       });
     } finally {
       await rm(workspace, { recursive: true, force: true });

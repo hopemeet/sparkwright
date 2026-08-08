@@ -332,6 +332,9 @@ describe("DefaultPromptBuilder", () => {
     });
     expect(messages[0]?.content).toBe("Stable rules.");
     expect(messages[1]?.content).toContain("Tool use contract:");
+    expect(
+      messages.some((message) => message.content.includes("<system-reminder>")),
+    ).toBe(false);
     expect(messages[6]?.content).toContain("Available tools:");
     expect(messages[6]?.content).toContain("- echo (text?:string): Echo text.");
     expect(messages[6]?.content).not.toContain("requiresApproval: false");
@@ -583,6 +586,7 @@ describe("DefaultPromptBuilder", () => {
     expect(selected?.content).toContain("source: skill:inline-skill");
     expect(selected?.content).toContain("source: file");
     expect(selected?.content).toContain("source: artifact");
+    expect(selected?.content).not.toContain("type: system");
     expect(selected?.content).not.toContain(skillPath);
     expect(selected?.content).not.toContain(filePath);
     expect(selected?.content).not.toContain(fileUri);
@@ -1320,6 +1324,492 @@ describe("DefaultObservationFormatter", () => {
     });
   });
 
+  it("characterizes generic truncation of a long agent report", () => {
+    const formatter = new DefaultObservationFormatter({
+      maxOutputChars: 64,
+    });
+    const report = "agent-report-".repeat(8);
+
+    const item = formatter.format({
+      toolName: "spawn_agent",
+      run: createRunRecord(),
+      result: {
+        toolCallId: "call_agent_report" as never,
+        status: "completed",
+        output: {
+          childRunId: "run_child_long_report",
+          status: "completed",
+          report,
+          workspace: { writes: 0 },
+          warnings: [],
+          blockers: [],
+        },
+        artifacts: [],
+      },
+    });
+
+    expect(JSON.parse(item.content)).toMatchObject({
+      output: {
+        childRunId: "run_child_long_report",
+        status: "completed",
+        report: {
+          type: "string",
+          length: report.length,
+          preview: report.slice(0, 64),
+        },
+      },
+    });
+  });
+
+  it("characterizes generic preview loss for eight parallel agent results", () => {
+    const formatter = new DefaultObservationFormatter({
+      maxOutputChars: 2_000,
+    });
+    const output = Array.from({ length: 8 }, (_, index) => ({
+      index,
+      childRunId: `run_child_${index}`,
+      status: "completed",
+      report: `result ${index}`,
+      workspace: { writes: 0 },
+      warnings: [],
+      blockers: [],
+    }));
+
+    const item = formatter.format({
+      toolName: "delegate_parallel",
+      run: createRunRecord(),
+      result: {
+        toolCallId: "call_parallel_agents" as never,
+        status: "completed",
+        output,
+        artifacts: [],
+      },
+    });
+
+    expect(JSON.parse(item.content)).toMatchObject({
+      output: {
+        type: "array",
+        length: 8,
+        preview: output.slice(0, 5),
+      },
+    });
+  });
+
+  it("keeps an agent report string-shaped with explicit truncation metadata", () => {
+    const formatter = new DefaultObservationFormatter({
+      maxOutputChars: 2_000,
+    });
+    const report = "agent-report-".repeat(240);
+    const blockers = Array.from({ length: 8 }, (_, index) => ({
+      code: `BLOCKER_${index}`,
+      message: `Resolve dependency ${index}.`,
+    }));
+
+    const item = formatter.format({
+      toolName: "spawn_agent",
+      resultPresentation: { kind: "agent_result" },
+      run: createRunRecord(),
+      result: {
+        toolCallId: "call_agent_receipt" as never,
+        status: "completed",
+        output: {
+          childRunId: "run_child_receipt",
+          status: "blocked",
+          report,
+          workspace: { writes: 0 },
+          warnings: [],
+          blockers,
+        },
+        artifacts: [],
+      },
+    });
+
+    const output = JSON.parse(item.content).output;
+    expect(output.report).toBe(report.slice(0, 2_000));
+    expect(typeof output.report).toBe("string");
+    expect(output).toMatchObject({
+      childRunId: "run_child_receipt",
+      status: "blocked",
+      reportTruncated: true,
+      reportChars: report.length,
+      reportOmittedChars: report.length - 2_000,
+      reportRef: {
+        tool: "read_agent_report",
+        childRunId: "run_child_receipt",
+      },
+    });
+    expect(output.blockers).toEqual(blockers);
+  });
+
+  it("renders all eight parallel children as a compact agent batch receipt", () => {
+    const formatter = new DefaultObservationFormatter({
+      maxOutputChars: 2_000,
+    });
+    const results = Array.from({ length: 8 }, (_, index) => ({
+      index,
+      agentId: `agent_${index}`,
+      childRunId: `run_child_${index}`,
+      status: "completed",
+      report: `result-${index}-`.repeat(80),
+      workspace: { writes: index, paths: [`file-${index}.ts`] },
+      warnings: index === 7 ? ["last child warning"] : [],
+      blockers: [],
+    }));
+
+    const item = formatter.format({
+      toolName: "delegate_parallel",
+      resultPresentation: { kind: "agent_batch" },
+      run: createRunRecord(),
+      result: {
+        toolCallId: "call_agent_batch" as never,
+        status: "completed",
+        output: {
+          mode: "parallel",
+          completed: 8,
+          incomplete: 0,
+          unhealthy: 0,
+          results,
+        },
+        artifacts: [],
+      },
+    });
+
+    const output = JSON.parse(item.content).output;
+    expect(output.results).toHaveLength(8);
+    expect(output.results[7]).toMatchObject({
+      index: 7,
+      agentId: "agent_7",
+      childRunId: "run_child_7",
+      status: "completed",
+      workspace: { writes: 7, pathCount: 1 },
+      warningCount: 1,
+      blockerCount: 0,
+      reportTruncated: true,
+      reportRef: {
+        tool: "read_agent_report",
+        childRunId: "run_child_7",
+      },
+    });
+    expect(typeof output.results[7].headline).toBe("string");
+    expect(output.results[7]).not.toHaveProperty("report");
+  });
+
+  it.each(["completed", "failed"] as const)(
+    "keeps all eight escaped batch headlines valid in a %s observation",
+    (toolStatus) => {
+      const formatter = new DefaultObservationFormatter();
+      const results = Array.from({ length: 8 }, (_, index) => ({
+        index,
+        agentId: `agent_${index}`,
+        childRunId: `run_escaped_child_${index}`,
+        status: "completed",
+        report: `result-${index}-${"\u0000".repeat(600)}`,
+        workspace: { writes: 0 },
+        warnings: [],
+        blockers: [],
+      }));
+      const batch = {
+        mode: "parallel",
+        completed: 8,
+        incomplete: 0,
+        unhealthy: 0,
+        results,
+      };
+      const item = formatter.format({
+        toolName: "delegate_parallel",
+        resultPresentation: { kind: "agent_batch" },
+        run: createRunRecord(),
+        result: {
+          toolCallId: `call_escaped_batch_${toolStatus}` as never,
+          status: toolStatus,
+          ...(toolStatus === "completed"
+            ? { output: batch }
+            : {
+                error: {
+                  code: "AGENT_BATCH_ERROR",
+                  message: "Parallel delegation encountered an error.",
+                  metadata: batch,
+                },
+              }),
+          artifacts: [],
+        },
+      });
+
+      expect(item.content.length).toBeLessThanOrEqual(7_500);
+      const parsed = JSON.parse(item.content);
+      const receipt =
+        toolStatus === "completed" ? parsed.output : parsed.error.metadata;
+      expect(receipt.results).toHaveLength(8);
+      expect(receipt.results[7]).toMatchObject({
+        index: 7,
+        agentId: "agent_7",
+        childRunId: "run_escaped_child_7",
+        status: "completed",
+        reportTruncated: true,
+      });
+      const assembled = new DefaultContextAssembler().assemble({
+        run: createRunRecord(),
+        step: 2,
+        goal: "aggregate",
+        events: [],
+        priorContext: [item],
+      });
+      expect(() => JSON.parse(assembled.items[0]!.content)).not.toThrow();
+    },
+  );
+
+  it("keeps an extreme agent receipt valid under the default item budget", () => {
+    const formatter = new DefaultObservationFormatter();
+    const repeated = "x".repeat(5_000);
+    const blockers = Array.from({ length: 16 }, (_, blockerIndex) => ({
+      code: `BLOCKER_${blockerIndex}_${repeated}`,
+      message: repeated,
+    }));
+    const item = formatter.format({
+      toolName: "spawn_agent",
+      resultPresentation: { kind: "agent_result" },
+      run: createRunRecord(),
+      result: {
+        toolCallId: "call_extreme_agent_receipt" as never,
+        status: "completed",
+        output: {
+          childRunId: "run_extreme_agent_receipt",
+          status: "blocked",
+          report: repeated,
+          workspace: {
+            writes: 16,
+            paths: Array.from(
+              { length: 16 },
+              (_, index) => `path_${index}_${repeated}`,
+            ),
+          },
+          warnings: Array.from(
+            { length: 16 },
+            (_, index) => `warning_${index}_${repeated}`,
+          ),
+          blockers,
+          partialObservations: Array.from({ length: 3 }, (_, index) => ({
+            toolName: `tool_${index}`,
+            output: repeated,
+          })),
+        },
+        artifacts: [],
+      },
+    });
+
+    expect(item.content.length).toBeLessThanOrEqual(7_000);
+    expect(() => JSON.parse(item.content)).not.toThrow();
+    const assembled = new DefaultContextAssembler().assemble({
+      run: createRunRecord(),
+      step: 2,
+      goal: "inspect",
+      events: [],
+      priorContext: [item],
+    });
+    expect(assembled.items).toHaveLength(1);
+    expect(() => JSON.parse(assembled.items[0]!.content)).not.toThrow();
+  });
+
+  it("does not infer in-process status for an indexed ACP-shaped result", () => {
+    const formatter = new DefaultObservationFormatter();
+    const item = formatter.format({
+      toolName: "delegate_agent",
+      resultPresentation: { kind: "agent_result" },
+      run: createRunRecord(),
+      result: {
+        toolCallId: "call_indexed_acp" as never,
+        status: "completed",
+        output: {
+          childRunId: "acp_child_1",
+          protocol: "acp",
+          stopReason: "end_turn",
+          message: "ACP report",
+          toolCalls: 0,
+          updates: [],
+        },
+        artifacts: [],
+      },
+    });
+
+    expect(item.metadata).toMatchObject({
+      childRunId: "acp_child_1",
+    });
+    expect(item.metadata).not.toHaveProperty("agentStatus");
+  });
+
+  it("uses the file-read budget for read_agent_report presentation", () => {
+    const formatter = new DefaultObservationFormatter();
+    const report = "r".repeat(5_000);
+    const item = formatter.format({
+      toolName: "read_agent_report",
+      resultPresentation: { kind: "file_read" },
+      run: createRunRecord(),
+      result: {
+        toolCallId: "call_read_agent_report" as never,
+        status: "completed",
+        output: {
+          childRunId: "run_child_report",
+          report,
+          offset: 0,
+          returnedChars: report.length,
+          totalChars: report.length,
+          hasMore: false,
+        },
+        artifacts: [],
+      },
+    });
+
+    expect(JSON.parse(item.content).output.report).toBe(report);
+  });
+
+  it("uses the read-like budget for web content presentation", () => {
+    const formatter = new DefaultObservationFormatter({
+      maxOutputChars: 20,
+      maxFileReadContentChars: 100,
+    });
+    const content = `${"w".repeat(40)}NEEDLE${"b".repeat(40)}`;
+    const item = formatter.format({
+      toolName: "web_fetch",
+      resultPresentation: { kind: "web_content" },
+      run: createRunRecord(),
+      result: {
+        toolCallId: "call_web_fetch" as never,
+        status: "completed",
+        output: {
+          content,
+          offset: 0,
+          totalChars: content.length,
+          truncated: false,
+          trust: "external_untrusted",
+        },
+        artifacts: [],
+      },
+    });
+
+    expect(JSON.parse(item.content).output.content).toBe(content);
+  });
+
+  it("budgets the complete failed-agent observation envelope", () => {
+    const formatter = new DefaultObservationFormatter({
+      maxOutputChars: 4_000,
+      maxErrorMessageChars: 500,
+    });
+    const item = formatter.format({
+      toolName: "spawn_agent",
+      resultPresentation: { kind: "agent_result" },
+      run: createRunRecord(),
+      result: {
+        toolCallId: "call_failed_agent_envelope" as never,
+        status: "failed",
+        error: {
+          code: "SPAWN_AGENT_CHILD_INCOMPLETE",
+          message: "\u0000".repeat(500),
+          metadata: {
+            childRunId: "run_failed_agent_envelope",
+            status: "partial",
+            report: "r".repeat(4_000),
+            workspace: {
+              writes: 0,
+              paths: Array.from(
+                { length: 20 },
+                (_, index) => `path-${index}-${"p".repeat(100)}`,
+              ),
+            },
+            warnings: Array.from(
+              { length: 20 },
+              (_, index) => `warning-${index}-${"w".repeat(100)}`,
+            ),
+            blockers: [],
+            partialObservations: Array.from({ length: 3 }, (_, index) => ({
+              toolName: `tool_${index}`,
+              output: "o".repeat(600),
+            })),
+          },
+        },
+        artifacts: [],
+      },
+    });
+
+    expect(item.content.length).toBeLessThanOrEqual(7_500);
+    const parsed = JSON.parse(item.content);
+    expect(typeof parsed.error.metadata.report).toBe("string");
+    expect(parsed.error.metadata).toMatchObject({
+      childRunId: "run_failed_agent_envelope",
+      reportTruncated: true,
+      reportChars: 4_000,
+    });
+    const assembled = new DefaultContextAssembler().assemble({
+      run: createRunRecord(),
+      step: 2,
+      goal: "recover",
+      events: [],
+      priorContext: [item],
+    });
+    expect(() => JSON.parse(assembled.items[0]!.content)).not.toThrow();
+  });
+
+  it("preserves original counts when an agent receipt uses its final fallback", () => {
+    const formatter = new DefaultObservationFormatter();
+    const escaped = "\u0000".repeat(5_000);
+    const item = formatter.format({
+      toolName: "spawn_agent",
+      resultPresentation: { kind: "agent_result" },
+      run: createRunRecord(),
+      result: {
+        toolCallId: "call_agent_fallback_counts" as never,
+        status: "failed",
+        error: {
+          code: "SPAWN_AGENT_CHILD_INCOMPLETE",
+          message: "failed",
+          metadata: {
+            childRunId: "run_agent_fallback_counts",
+            status: "partial",
+            report: "short report",
+            workspace: {
+              writes: 20,
+              paths: Array.from(
+                { length: 20 },
+                (_, index) => `path-${index}-${escaped}`,
+              ),
+            },
+            warnings: Array.from(
+              { length: 20 },
+              (_, index) => `warning-${index}-${escaped}`,
+            ),
+            blockers: Array.from({ length: 16 }, (_, index) => ({
+              code: `BLOCKER_${index}`,
+              message: escaped,
+            })),
+            partialObservations: Array.from({ length: 3 }, (_, index) => ({
+              toolName: `tool_${index}`,
+              output: escaped,
+            })),
+          },
+        },
+        artifacts: [],
+      },
+    });
+
+    const metadata = JSON.parse(item.content).error.metadata;
+    expect(metadata).toMatchObject({
+      report: "",
+      reportTruncated: true,
+      reportChars: "short report".length,
+      reportOmittedChars: "short report".length,
+      workspace: {
+        writes: 20,
+        pathCount: 20,
+        pathsTruncated: true,
+      },
+      warningCount: 20,
+      warningsTruncated: true,
+      blockerCount: 16,
+      blockersTruncated: true,
+      partialObservationCount: 3,
+      partialObservationsTruncated: true,
+    });
+  });
+
   it("extracts path metadata from file-read observations for compaction", () => {
     const formatter = new DefaultObservationFormatter();
 
@@ -1381,7 +1871,7 @@ describe("DefaultObservationFormatter", () => {
     expect(item.metadata).not.toHaveProperty("filePath");
   });
 
-  it("extracts spawn_agent child finality metadata for compaction", () => {
+  it("extracts compact spawn_agent child status for compaction", () => {
     const formatter = new DefaultObservationFormatter();
 
     const item = formatter.format({
@@ -1392,12 +1882,10 @@ describe("DefaultObservationFormatter", () => {
         status: "completed",
         output: {
           childRunId: "run_child_partial",
-          role: "trace auditor",
-          signal: "completed",
-          stopReason: "final_answer",
-          stepLimitReached: true,
-          truncated: true,
-          message: "partial result",
+          status: "partial",
+          report: "partial result",
+          workspace: { writes: 0 },
+          warnings: ["The report may be incomplete."],
         },
         artifacts: [],
       },
@@ -1407,18 +1895,16 @@ describe("DefaultObservationFormatter", () => {
       toolName: "spawn_agent",
       status: "completed",
       childRunId: "run_child_partial",
-      role: "trace auditor",
-      stepLimitReached: true,
-      truncated: true,
-      finality: "partial",
+      agentStatus: "partial",
     });
   });
 
-  it("extracts spawn_agent child finality metadata from failures", () => {
+  it("extracts compact spawn_agent child status from failures", () => {
     const formatter = new DefaultObservationFormatter();
 
     const item = formatter.format({
       toolName: "spawn_agent",
+      resultPresentation: { kind: "agent_result" },
       run: createRunRecord(),
       result: {
         toolCallId: "call_spawn_failed" as never,
@@ -1428,12 +1914,12 @@ describe("DefaultObservationFormatter", () => {
           message: "child failed",
           metadata: {
             childRunId: "run_child_failed",
-            role: "counter",
-            signal: "failed",
-            stopReason: "tool_doom_loop",
-            stepLimitReached: false,
-            truncated: false,
-            finality: "partial",
+            status: "partial",
+            report: "child failed",
+            workspace: { writes: 0 },
+            partialObservations: [
+              { toolName: "read", output: { path: "README.md" } },
+            ],
           },
         },
         artifacts: [],
@@ -1444,10 +1930,14 @@ describe("DefaultObservationFormatter", () => {
       toolName: "spawn_agent",
       status: "failed",
       childRunId: "run_child_failed",
-      role: "counter",
-      stepLimitReached: false,
-      truncated: false,
-      finality: "partial",
+      agentStatus: "partial",
+    });
+    expect(JSON.parse(item.content).error.metadata).toMatchObject({
+      childRunId: "run_child_failed",
+      report: "child failed",
+      partialObservations: [
+        { toolName: "read", output: { path: "README.md" } },
+      ],
     });
   });
 });

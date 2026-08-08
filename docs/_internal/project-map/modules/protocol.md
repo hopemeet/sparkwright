@@ -10,6 +10,154 @@ See also [../maps/safety/approvals.md](../maps/safety/approvals.md) and [../maps
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-08-02
+- Scope: Host capability inspection no longer advertises Skill mutation tools,
+  and TUI removed proposal-specific presentation. Protocol schemas and generic
+  capability/tool/event envelopes are unchanged.
+- Read: Host capability snapshot test, TUI presentation cleanup, and Protocol
+  ownership boundary.
+- Tests: repository test typecheck and focused Host/TUI coverage passed.
+
+- Status: Verified
+- Date: 2026-07-30
+- Scope: the unused `agent_result_protocol_failure` RuntimeNotice code was
+  removed with the old Agent declaration protocol. No request, response, or
+  event family changed; runtime-derived child report status uses the remaining
+  notice codes.
+- Read: Agent/Host lifecycle projection, Core notice production, and Protocol
+  payload boundaries.
+- Tests: focused Host protocol suite passed.
+
+- Status: Verified
+- Date: 2026-07-26
+- Scope: semantic transcript grouping consumes existing structured `runId`,
+  `parentRunId`, `childRunId`, Agent/tool-call/span, and event identifiers. No
+  Protocol request, response, or event shape changed; absent identifiers are
+  deliberately not reconstructed from names or adjacency.
+- Read: Protocol event identities, TUI RunEvent carrier, transcript assembler,
+  replay, and export boundaries.
+- Tests: concurrent/nested Agent identity coverage, missing-ID independence,
+  and full-session replay projection passed.
+
+- Status: Verified
+- Date: 2026-07-25
+- Scope: the compact/detailed TUI framework adds no Protocol request, response,
+  or event family. Transcript visibility now classifies every
+  `model.stream.*` variant as internal instead of maintaining an incomplete
+  fixed list, preventing new stream-preview events such as
+  `model.stream.text` from leaking into product transcript surfaces.
+- Read: Protocol HostEvent/transcript visibility contracts, TUI RunEvent
+  carrier, replay bridge, and compact/detail consumers.
+- Tests: full `npm run release:check` passed, including Protocol 6/6 and TUI
+  482/482 wildcard stream visibility/SDK replay regressions.
+
+- Status: Verified
+- Date: 2026-07-25
+- Scope: `run.completed` no longer exposes recovered/unresolved requirement
+  DTOs. Approval subjects may describe background/lifetime execution mode, and
+  approval events carry policy/tool/safety reason layers without replacing the
+  typed principal or stable subject key.
+- Read: completion/approval DTOs, Core producer, Host event projection, TUI
+  validation/projection, and focused approval tests.
+- Tests: full `npm run release:check` passed, including Protocol 6/6, Host
+  583/583, TUI 468/468, the 16-case regression matrix, and install smoke.
+
+- Status: Verified
+- Date: 2026-07-24
+- Scope: approval events carry runtime principal identity, and
+  `run.completed` carries runtime-owned completion status, immutable notices,
+  recovered requirements, and unresolved requirements. These are structured
+  facts; clients do not infer them from assistant prose.
+- Read: Protocol approval/completion DTOs, Host projection, TUI consumers, and
+  downstream fixtures.
+- Tests: focused Host protocol and TUI approval/controller suites, repository
+  build, and repository test typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-23
+- Scope: SDK Core's existing `task.updated` listener key now declares its
+  external typed-listener consumer for strict public-surface auditing. Protocol
+  DTOs, schema, narrowing, and wire behavior are unchanged.
+- Read: Protocol HostEvent union, SDK event map, and strict reserved-field
+  checker.
+- Tests: Agent Runtime tasks 76/76, Shell 43/43, SDK Core 11/11, affected
+  typechecks, and strict reserved-field check passed.
+
+- Status: Verified
+- Date: 2026-07-23
+- Scope: ACP Adapter explicitly narrows the existing `task.updated` HostEvent
+  as a control-only event so the expanded protocol union remains exhaustively
+  handled. No protocol or schema shape changed.
+- Read: Protocol HostEvent union and ACP event mapping/tests.
+- Tests: ACP event 7/7, package typecheck, and package build passed.
+
+- Status: Verified
+- Date: 2026-07-23
+- Scope: IM external task notification reuses the existing `task.updated`
+  HostEvent inside `ImDelivery` plus the existing subscribe/ack requests.
+  Stable Host delivery keys are opaque strings to clients; no protocol type,
+  schema, narrowing, or capability shape changed in this stage.
+- Read: Protocol task lifecycle and IM delivery DTOs, Host IM projection,
+  SDK-node bridge polling/ack, and Gateway renderer.
+- Tests: Host 604/604, IM Gateway 10/10, focused lifecycle/IM 25/25, and
+  affected package typechecks passed; no schema regeneration was required.
+
+- Status: Verified
+- Date: 2026-07-23
+- Scope: route review for the first TUI `task.updated` consumer. TUI narrows the
+  existing typed SDK event, uses canonical completion policy, and keeps
+  `task.list`/`task.output` as reconciliation/detail APIs; no wire shape changed
+  in this stage.
+- Read: Protocol task lifecycle/snapshot DTOs, SDK event map, TUI controller/
+  activity consumers, and focused tests.
+- Tests: focused TUI task/controller/render suites (67), full TUI 464/464, and
+  TUI typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-23
+- Scope: Host protocol now has typed `task.updated` created/started/terminal
+  events with bounded summaries, safe output references, and canonical
+  completion policy. `TaskRecordSnapshot` also carries completion policy;
+  `task.list` remains durable reconciliation and event payloads exclude full
+  results, output chunks, and arbitrary metadata.
+- Read: protocol types, JSON schema, Host projection/forwarding, SDK typed
+  event map, reference docs, and focused tests.
+- Tests: Protocol 6/6, SDK Core 11/11, Host lifecycle/protocol coverage,
+  affected typechecks, and schema validation passed.
+
+- Status: Verified
+- Date: 2026-07-21
+- Scope: `approval.requested` requires the producer-authored typed effect
+  subject used by clients for safe session rules. `model.completed` is now
+  classified as internal raw-turn transcript evidence; accepted final text is
+  carried by `run.completed.message`.
+- Read: approval subject/event DTOs, transcript visibility constants, Host
+  projection, SDK/CLI/IM/ACP fixtures, and TUI live/export consumers.
+- Tests: Protocol plus affected Host, SDK, CLI, IM, ACP, and TUI focused tests
+  and typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-20
+- Scope: the shared product-transcript visibility filter classifies
+  `agent.profile.derived` as run-preparation noise. TUI live scrollback and
+  `/export` suppress it, while Activity and raw trace retain it; `subagent.*`
+  lifecycle visibility is unchanged.
+- Read: Protocol visibility constants, TUI live/export consumers, Activity
+  formatter, and Agent lifecycle rendering.
+- Tests: Protocol 6/6; focused TUI live/export/Activity suites 44/44; full TUI
+  449/449; Protocol/TUI typechecks; real Terra PTY and trace/session checks.
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: TUI approval, notification, and input coordination changed only
+  client-local presentation. Approval request/resolve DTOs, execution/session/
+  Workflow attribution, event shapes, access modes, and error contracts are
+  unchanged; no presentation state was added to Protocol.
+- Read: protocol approval/run/Workflow/session contracts and the TUI client
+  consumers changed by this refactor.
+- Tests: TUI 445/445, TUI typecheck, and repository test typecheck passed.
+
 - Status: Verified
 - Date: 2026-07-19
 - Scope: terminal run DTOs require Core `RunAssessment`; Host run completion
@@ -131,6 +279,16 @@ Does not own:
 
 ## Contracts
 
+- `ApprovalRequestedEventPayload.principal` is runtime-owned actor identity.
+  Clients may key reusable approvals by session, principal scope, and typed
+  subject; display labels never substitute for scope.
+- `ApprovalRequestedEventPayload.reasons` keeps policy, tool-gate, and
+  tool-specific safety explanations separate; none of those strings defines
+  reusable authorization identity.
+- `RunCompletedEventPayload` carries optional runtime completion status and
+  immutable notices in addition to the accepted final message and assessment.
+  Historical unknown recovered/unresolved fields are ignored by current
+  clients rather than reintroduced into the typed contract.
 - Request kinds include `run.start`, `run.resume`, `run.inject_message`,
   `run.cancel`, `approval.resolve`, `session.list`, `session.inspect`,
   `session.fork`, `session.compact`, `capability.inspect`, and durable
@@ -219,8 +377,9 @@ Does not own:
 - `INTERNAL_TRANSCRIPT_EVENT_TYPES` / `isInternalTranscriptEventType()` are the
   shared low-signal event filter used by TUI live transcript rendering and
   `/export`; this is product transcript visibility, not raw trace semantics.
-  `run.budget.exceeded` is filtered here as runtime machinery even though it is
-  kept visible in live CLI output.
+  `run.budget.exceeded`, raw-turn `model.completed`, and
+  `agent.profile.derived` are filtered here as runtime machinery even though
+  they remain visible in Activity and raw trace.
 - `LIVE_DEBUG_NOISE_EVENT_TYPES` / `isLiveDebugNoiseEventType()` are the shared
   high-volume event filter for CLI live run output; raw trace diagnostics still
   expose those events. The list currently includes `model.stream.chunk` and
@@ -230,6 +389,9 @@ Does not own:
   `failure`. `getRunFailure()` and `runFailureMessage()` read only that envelope;
   they do not synthesize failures from root fields.
 - `approvalId` from `approval.requested` is resolved by `approval.resolve`.
+  The request also requires a typed producer-authored `subject`; keyed subjects
+  may support an exact client-local rule, while `one_shot` is deliberately not
+  reusable.
 - `CapabilityDelegateToolSummary.protocol` covers `acp`,
   `external_command`, and configured in-process delegates as `in_process`.
   `command`/`args` are optional because in-process delegates do not spawn a

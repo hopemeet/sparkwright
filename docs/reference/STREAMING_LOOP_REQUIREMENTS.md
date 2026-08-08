@@ -55,7 +55,11 @@ types:
 
 The event families stay separate from the synchronous `model.requested` and
 `model.completed` events so frontends can distinguish partial stream telemetry
-from completed normalized model output.
+from completed normalized turn output. A completed model turn is not by itself
+an accepted final answer; frontends use the terminal run message field for that
+purpose. When a completed streaming turn contains both assistant text and
+deferred tool calls, the runtime commits that nonterminal text through
+`model.assistant_text` before executing the tools.
 
 ## Cancellation Requirements
 

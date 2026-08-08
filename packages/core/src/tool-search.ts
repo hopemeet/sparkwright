@@ -108,9 +108,13 @@ const INPUT_SCHEMA = {
   properties: {
     query: {
       type: "string" as const,
+      description:
+        'Use "select:name1,name2" for exact lookup, or free text for ranked keyword discovery.',
     },
     maxResults: {
       type: "integer" as const,
+      description:
+        "Maximum ranked matches for free-text keyword discovery only. Omit for select: queries.",
     },
   },
   required: ["query"],
@@ -186,7 +190,11 @@ export function createToolSearchTool(
         const score = scoreDescriptor(descriptor, tokens);
         if (score > 0) ranked.push({ descriptor, score });
       }
-      ranked.sort((a, b) => b.score - a.score);
+      ranked.sort(
+        (a, b) =>
+          b.score - a.score ||
+          a.descriptor.name.localeCompare(b.descriptor.name),
+      );
       return {
         query: input.query,
         mode: "keyword",
@@ -226,10 +234,18 @@ function isDeferredDescriptor(descriptor: ToolDescriptor): boolean {
 }
 
 function tokenize(value: string): string[] {
-  return value
-    .toLowerCase()
-    .split(/[^a-z0-9_]+/u)
-    .filter((token) => token.length > 0);
+  const normalized = value.toLowerCase();
+  const tokens: string[] = [...(normalized.match(/[a-z0-9_]+/g) ?? [])];
+  for (const run of normalized.match(/[㐀-鿿豈-﫿]+/g) ?? []) {
+    if (run.length === 1) {
+      tokens.push(run);
+      continue;
+    }
+    for (let index = 0; index < run.length - 1; index += 1) {
+      tokens.push(run.slice(index, index + 2));
+    }
+  }
+  return [...new Set(tokens)];
 }
 
 function scoreDescriptor(descriptor: ToolDescriptor, tokens: string[]): number {

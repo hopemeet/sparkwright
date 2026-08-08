@@ -3,7 +3,7 @@
 ## Current Confidence
 
 - Status: `Partially Verified`
-- Last reviewed: 2026-07-19
+- Last reviewed: 2026-08-02
 - Evidence source: 2026-06-22 core trace tests and CLI trace fixture tests
   passed; a deterministic CLI debug trace was also checked with summary,
   timeline, report, verify, and session check. Live real-model subagent canaries
@@ -11,6 +11,8 @@
   reproducer was rerun after fixes and now records a structured
   `TOOL_ARGUMENTS_INVALID` tool failure, a single terminal event, passing
   `trace verify`, and a failing `trace report` for unresolved tool failures.
+  The 2026-08-02 documentation review also reconciled the retired final-answer
+  command-prose verdict with the current structured assessment contract.
 
 ## Covered
 
@@ -81,10 +83,11 @@
   call with no extra file, third run, or budget failure. See
   [../failures/todo-continuation-deferred-tool-mismatch.md](../failures/todo-continuation-deferred-tool-mismatch.md).
 - The same real trace exposed a false unsupported final claim for
-  ``npm test` → `node --test``. Core now recognizes only same-line arrow
-  expansions from successful npm/pnpm/yarn script commands and retains strict
-  detection for unrelated claims. See
-  [../failures/package-script-expansion-unsupported-claim.md](../failures/package-script-expansion-unsupported-claim.md).
+  ``npm test` → `node --test``. The later assessment consolidation removed
+  final-answer command-prose verdicts entirely: formal verification now relies
+  on structured command/profile facts rather than accepting or rejecting a
+  natural-language command expansion. See
+  [../failures/compound-command-subclaim-unsupported.md](../failures/compound-command-subclaim-unsupported.md).
 
 - Raw trace events are the canonical source for summary, timeline, report, and
   verify views.

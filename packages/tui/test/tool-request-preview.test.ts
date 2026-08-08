@@ -33,19 +33,13 @@ describe("formatToolRequestPreview", () => {
     ).toBe("TODO in src");
   });
 
-  it("keeps bash and skill mutations concise", () => {
+  it("keeps bash requests concise", () => {
     expect(
       formatToolRequestPreview("bash", {
         command: "npm test",
         timeoutMs: 120000,
       }),
     ).toBe("$ npm test");
-    expect(
-      formatToolRequestPreview("create_skill", {
-        action: "create",
-        name: "repo-reviewer",
-      }),
-    ).toBe("create repo-reviewer");
   });
 
   it("keeps background task operations concise", () => {

@@ -15,7 +15,7 @@ describe("createCapability", () => {
     tempDirs = [];
   });
 
-  it("routes generic Skill creation through the managed proposal service", async () => {
+  it("creates a deterministic project Skill without evolution state", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "sparkwright-tui-create-"));
     tempDirs.push(workspace);
 
@@ -30,15 +30,24 @@ describe("createCapability", () => {
 
     expect(result).toMatchObject({
       kind: "skill",
-      message: expect.stringContaining("Prepared Skill code-reviewer"),
-      path: expect.stringContaining("skill-evolution/proposals/skillprop_"),
+      message: "Created Skill code-reviewer",
+      path: join(
+        workspace,
+        ".sparkwright",
+        "skills",
+        "code-reviewer",
+        "SKILL.md",
+      ),
     });
     await expect(
       access(join(workspace, ".sparkwright", "skills", "code-reviewer")),
-    ).rejects.toMatchObject({ code: "ENOENT" });
+    ).resolves.toBeUndefined();
+    await expect(readFile(result.path!, "utf8")).resolves.toContain(
+      "name: code-reviewer",
+    );
     await expect(
-      readFile(join(result.path!, "metadata.json"), "utf8"),
-    ).resolves.toContain('"contentMode": "template"');
+      access(join(workspace, ".sparkwright", "skill-evolution")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("omits cwd when creating stdio MCP servers", async () => {

@@ -9,6 +9,129 @@ See [session-store.md](session-store.md) and [../runtime/context-compaction.md](
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-08-02
+- Scope: TUI automatic Skill learning and pending proposal human-action state
+  were removed. Session resume/replay identity and canonical event replay are
+  unchanged.
+- Read: TUI App/EventStore cleanup and existing session replay ownership.
+- Tests: focused TUI EventStore/render coverage and typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-30
+- Scope: runtime Agent outcome projection does not interpret retired terminal
+  declarations or text markers. The read-only persisted-report query may
+  recover an old terminal summary for historical session readability, but it
+  does not restore the old status protocol. Run/session identity and replay
+  ownership are unchanged.
+- Read: Agent outcome projection, persisted report lookup, run metadata, and
+  TUI projection.
+- Tests: focused Agent Runtime and Host protocol suites passed.
+
+- Status: Verified
+- Date: 2026-07-26
+- Scope: replayed presentation events now rebuild a full-session
+  `TranscriptDocument` rather than a current/latest details overlay. Stable
+  event, tool-call, child-run, and explicit invocation identities preserve
+  concurrent/nested ownership; missing identities remain independent blocks
+  and are never grouped by name or adjacency. Replay still synthesizes only
+  root user goals, skips all `model.stream.*` previews and child usage
+  snapshots, and keeps the controller's `currentSessionEvents` as the export
+  buffer. A session switch/reset changes the document epoch and resets the
+  semantic viewport anchor without changing durable trace truth.
+- Read: RunController session switch/replay, EventStore epoch, transcript
+  assembler/layout/viewport, export buffer, and replay/document tests.
+- Tests: full-session two-turn document regression, concurrent/nested Agent
+  identity regression, export-after-visible-clear integration, focused SDK
+  replay coverage, and deterministic PTY session rendering passed.
+
+- Status: Verified
+- Date: 2026-07-25
+- Scope: TUI session replay now derives structured child run identities before
+  synthesizing compact user cards. Child goals and child terminal Markdown no
+  longer appear as root conversation turns, all `model.stream.*` preview events
+  are skipped, and child `usage.updated` snapshots are not added on top of the
+  already rolled-up root usage. Child details remain beneath the matching Agent
+  and `/retry` selects the most recent root goal.
+- Read: TUI RunController replay/retry paths, transcript presentation
+  projection, EventStream filtering, and replay tests.
+- Tests: focused SDK replay tests and full TUI 482/482; real 100-column replay
+  of `session_tui_ms0d86wg` showed no stream-event leak, root totals of
+  9 model / 10 tool calls, two persisted tool-search matches, and five
+  reconstructed child actions.
+
+- Status: Verified
+- Date: 2026-07-24
+- Scope: reviewed for runtime completion facts. Resume/replay continues to use
+  persisted Core events; completion status, immutable notices, recovered
+  requirements, and approval principal fields pass through structured payloads
+  without prose inference.
+- Read: Core completion event/result, Host resume projection, Protocol DTOs,
+  and TUI replay consumer.
+- Tests: focused Host protocol/TUI controller tests, repository build, and
+  repository test typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-23
+- Scope: TUI session load and Host reconnection now reconcile task state from
+  `task.list`; durable terminal snapshots seed the baseline quietly, while live
+  `task.updated` events remain process-local and are not written into session
+  replay.
+- Read: TUI RunController/session task hook, EventStore replay boundary,
+  TaskStore snapshot APIs, and lifecycle dedupe.
+- Tests: focused TUI task/reconnect coverage, full TUI 464/464, and TUI
+  typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-23
+- Scope: `task.updated` is process-live best-effort push. It is not appended to
+  session replay and has no durable cursor; reconnect recovery reads TaskStore
+  through `task.list`. Awaited suspension and cross-process limits are
+  unchanged.
+- Read: HostService live route retention, TaskStore snapshots, session replay,
+  and task revival boundaries.
+- Tests: Host lifecycle/protocol coverage, affected typechecks, and schema
+  validation passed.
+
+- Status: Verified
+- Date: 2026-07-23
+- Scope: route review for live task terminal observation semantics; task
+  `waiting_tasks` remains process-local and no checkpoint/resume or durable
+  detach contract changed.
+- Read: Host task revival/control and existing resume/replay task boundary.
+- Tests: Core run, Host task revival, and affected typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-23
+- Scope: checkpoint resume, Workflow resume, and Workflow continuation now use
+  the same primary-profile system section as fresh Host episodes. Durable
+  completed-turn replay, checkpoint loop state, awaited-task non-durability,
+  TUI replay separation, and session target resolution are unchanged.
+- Read: Host WorkflowEpisodeRuntime fresh/resume builders, profile selection,
+  Core checkpoint/session replay, and focused episode tests.
+- Tests: focused Host Workflow episode suite plus Host/Core and repository test
+  typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-21
+- Scope: replayed conversation uses the same quiet-success projection and
+  single-final-answer ownership as live rendering. Activity/Trace retain every
+  raw event, while process-local approval rules still are not persisted.
+- Read: TUI EventStream/export/EventStore replay, Protocol visibility, Core
+  terminal message, and session tests.
+- Tests: focused TUI live/export/replay and real trace/session checks passed.
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: TUI replay still rebuilds rendering from persisted session events;
+  notification unread/resolved state, approval queues/rules, and action-card
+  state remain process-local presentation state and are not written into replay
+  artifacts. Main and Workflow session/origin isolation is unchanged.
+- Read: TUI session switch/replay, EventStore reset, approval execution origins,
+  Host session queries, and Protocol session/Workflow identity.
+- Tests: TUI 445/445, session approval/controller regressions, and PTY
+  trace/session checks passed.
+
 - Status: Verified
 - Date: 2026-07-19
 - Scope: fresh and continued durable Workflow episodes preserve exact budget
@@ -164,6 +287,12 @@ Normal run
   -> session/agent trace.jsonl + per-run checkpoint/run/result files
   -> run resume uses checkpoint
 
+Persisted child report recovery
+  -> current session membership + childRunId
+  -> canonical session/agent/run result.json
+  -> bounded read_agent_report page
+  -> nextOffset continues after process restart
+
 Missing checkpoint
   -> loadCheckpointFromRunDir({ fallbackFromTrace: true })
   -> partial checkpoint
@@ -217,6 +346,11 @@ Future run in compacted session
 - From-trace resume is best-effort recovery; it restores counters/coarse step data, not full in-loop context.
 - Reconstructed checkpoints are marked not fully resumable and require explicit force.
 - Session replay projects persisted events into context; it is not live-process restoration.
+- `read_agent_report` is replay-safe data retrieval, not child execution
+  resume. A newly prepared Host run may page an already-persisted non-main
+  child report only when the requested child and its recorded parent both
+  belong to the current session. It rejects path input, cross-session aliases,
+  mismatched run identity, and session/run/result symlink aliases.
 - `sparkwright session resume` starts a new run in the existing session context.
   It does not infer the previous run's CLI/TUI model override from trace
   history; pass `--model provider/model` to choose an explicit resume model.
@@ -258,6 +392,10 @@ Future run in compacted session
 - Keep checkpoint schema changes backward aware.
 - Update both CLI and host resume paths.
 - Check TUI replay when new event families affect visible transcript.
+- Preserve structured ids through replay; do not add name/adjacency grouping
+  fallbacks to the TranscriptDocument assembler.
+- Treat session switch/reset as a new visible document epoch while keeping
+  controller export events and canonical trace ownership separate.
 - Do not silently treat from-trace reconstruction as full resume.
 
 ## Known Debts
@@ -272,6 +410,18 @@ Future run in compacted session
   run-loop integration.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-27
+- Scope: persisted in-process child reports can be paged after Host/tool
+  reconstruction with `read_agent_report(childRunId, offset, limit)`. The
+  lookup remains session-scoped and ancestry-checked; it does not revive a
+  child, restore process state, or broaden filesystem authority.
+- Read: Host report tool and canonical run lookup, Core/File session and run
+  storage, Host preparation/catalog, and end-to-end persisted child tests.
+- Tests: full `npm run release:check` passed, including all workspace suites,
+  the 16-case regression matrix, source/release install smoke, and focused
+  pagination/reconstruction/authorization regressions.
 
 - Status: Verified
 - Date: 2026-07-16T10:27:51+0800

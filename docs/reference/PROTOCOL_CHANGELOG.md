@@ -14,10 +14,10 @@ Conventions:
 
 - Terminal assessment consolidation: breaking — every current terminal run
   event/result carries Core `RunAssessment`; Host completion carries aggregated
-  `ExecutionAssessment`; Agent terminal results carry independent `finality`
-  and `assessment`. The parallel completed-run outcome projection and prose
-  claim inference are removed. Missing assessment is invalid and consumers
-  should fail closed.
+  `ExecutionAssessment`; Agent terminal results carry independent report
+  `status` and `assessment`. The parallel completed-run outcome projection and
+  prose claim inference are removed. Missing assessment is invalid and
+  consumers should fail closed.
 
 - Workflow/Todo continuation: breaking — Todo is four-state advisory plan data
   and no longer owns episode continuation, tool forcing, write counters,
@@ -50,7 +50,7 @@ Conventions:
   config as authoring input, not capability output.
 
 - `subagent.*` lifecycle: additive/ordering correction — all built-in Agent
-  transports now include terminal `terminalState`/`finality`; admission failures
+  transports now include terminal `terminalState`/`status`; admission failures
   emit requested -> failed without a false started phase, and indexed calls use
   `entrypoint:"delegate_agent"`. Migration: consumers must allow requested to
   terminate without started and should continue enforcing one terminal event.
@@ -373,8 +373,10 @@ Conventions:
   RunHook / UsageTracker / InteractionChannel surfaces:
   - `usage.updated` — emitted by the in-loop UsageTracker after every
     model / tool record. Payload: `UsageSnapshot`.
-  - `hook.failed` — emitted when a `RunHook.*` callback throws. Payload
-    `{ hookName, phase, message }`.
+  - `hook.failed` — defensive signal if aggregate `RunHook` dispatch escapes
+    its callback fault-isolation boundary. Individual callback failures are
+    caught and logged before reaching it. Payload
+    `{ phase, toolName?, message }`.
   - `interaction.requested` / `interaction.resolved` — emitted by
     embedders that funnel approval / question / notification traffic
     through `InteractionChannel`. Payload is the corresponding request

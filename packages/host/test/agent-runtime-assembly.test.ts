@@ -91,6 +91,7 @@ describe("AgentRuntimeAssembly", () => {
     expect(prepared.delegateAgentTool.name).toBe("delegate_agent");
     expect(prepared.delegateParallelTool?.name).toBe("delegate_parallel");
     expect(prepared.dynamicSpawnTool.name).toBe("spawn_agent");
+    expect(prepared.agentReportTool.name).toBe("read_agent_report");
     expect(prepared.delegateDescriptors).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

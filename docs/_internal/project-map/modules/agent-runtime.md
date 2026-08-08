@@ -2,11 +2,246 @@
 
 ## Purpose
 
-`@sparkwright/agent-runtime` contains reusable agent-side runtime helpers outside the core run loop: task management, advisory Todo plan state, concurrency/worktree coordination, durable Workflows, and Agent result protocols.
+`@sparkwright/agent-runtime` contains reusable agent-side runtime helpers outside the core run loop: task management, advisory Todo plan state, concurrency/worktree coordination, durable Workflows, and the portable in-process child prompt/outcome contract.
 
 See also [../maps/capabilities/agents.md](../maps/capabilities/agents.md), [../maps/capabilities/cron.md](../maps/capabilities/cron.md), and [../maps/runtime/tool-orchestration.md](../maps/runtime/tool-orchestration.md).
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-08-01
+- Scope: bounded terminal Agent action receipts retain the producer-authored
+  approval summary and structured `autoApproved` fact in addition to the final
+  requested/approved/denied decision. The receipt remains a live-display
+  fallback and excludes raw approval details, tool arguments, and outputs.
+- Read: Agent action summarizer/type export and TUI receipt consumer.
+- Tests: interleaved manual/automatic approval receipt coverage, Agent Runtime
+  251/251, TUI 547/547, and repository build.
+
+- Status: Verified
+- Date: 2026-07-30
+- Scope: in-process children now have one normal completion path: a natural
+  final report. No completion-only tool is injected, so zero-tool and
+  tool-capable children follow the same path. A non-empty report means
+  completed delivery, while empty output, failure, cancellation, truncation,
+  and runtime limits derive partial/blocked status and minimal blockers.
+  Parent callers decide whether the report satisfies the goal. The retired
+  declaration protocol and unused concurrency JSON parser were deleted.
+  Live handoffs accept only goal/context/label; persisted task envelopes are
+  normalized without restoring legacy authority fields.
+- Read: child prompt/result/handoff/action contracts, concurrency exports and
+  example, Host direct/dynamic/parallel/task consumers, TUI presentation,
+  public docs, and focused tests.
+- Tests: repository build/test typecheck and focused Core, Agent Runtime, and
+  Host suites passed.
+
+- Status: Verified
+- Date: 2026-07-29
+- Scope: compact parent Agent results now translate actionable Core assessment
+  failures into bounded semantic warnings instead of forwarding the opaque
+  aggregate assessment code. Terminal action receipts retain a bounded failure
+  message alongside tool/error identity, allowing workspace conflicts to say
+  what failed and why without copying raw arguments or output. Semantic
+  completion and diagnostic health remain independent.
+- Read: action summarizer, terminal collector, parent result projection,
+  delegation reuse, Todo tool description, and TUI lifecycle consumer.
+- Tests: focused Agent action/result/Todo suites (19 tests), package build, and
+  typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-28
+- Scope: the shared in-process child contract now separates pre-existing state,
+  attempted actions, and observed effects, and stops actions that add neither a
+  material change nor new evidence. Parent results no longer duplicate Core
+  assessment health as warnings. The internal invocation result drops redundant
+  `statusSource`/`finality`, and the same redundant fields are removed from
+  lifecycle projections, context metadata, session facts, and diagnostics.
+- Read: child prompt/result projection, delegation ledger consumers, Host
+  failure/task adapters, lifecycle supervisor, and Core trace/session consumers.
+- Tests: Agent Runtime 263/263, Host 593/593, affected typechecks, and a real
+  Terra existing-file canary passed.
+
+- Status: Verified
+- Date: 2026-07-27
+- Scope: built-in in-process child adapters now share one terminal collector
+  for child start, usage/runtime projection, workspace evidence,
+  `ParentAgentResult`, clean-only ledger insertion, and bounded failure
+  observations. Configured and dynamic failures keep structured parent
+  evidence plus at most the latest three successful tool observations, each
+  no longer than 600 characters. Task errors preserve structured metadata.
+- Read: root Agent tool/spawn bridge, result/ledger contracts, TaskManager
+  error normalization, Host configured/dynamic/parallel/background consumers,
+  and focused tests.
+- Tests: full `npm run release:check` passed, including all workspace suites,
+  the 16-case regression matrix, source/release install smoke, and the focused
+  failure/reuse/promotion regressions.
+
+- Status: Verified
+- Date: 2026-07-26
+- Scope: Agent Runtime now owns a portable, task-agnostic in-process child
+  contract and a stable `profile -> child contract -> result protocol`
+  composition helper. Direct low-level `spawnSubAgent()` use remains opt-in,
+  and the terminal result tool continues to accept completed outcomes for
+  compatibility while guiding normal completion toward natural reports.
+- Read: child prompt/result contracts and exports, low-level spawn behavior,
+  Host composition, public extension guidance, and focused tests.
+- Tests: full `npm run release:check` passed; focused Agent Runtime 60/60 and
+  its build/typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-26
+- Scope: in-process Agent tools now return one compact `ParentAgentResult` to
+  the parent model: child-authored `report`, runtime-owned `workspace`
+  evidence, status, warnings, and blockers. Rich transport, usage, assessment,
+  action, and ChangeSet facts remain internal to `AgentRuntimeResult`, the
+  delegation ledger, and `subagent.*` lifecycle events. A normal natural final
+  is the completed path; `submit_agent_result` is reserved in guidance for
+  partial/blocked recovery detail.
+- Read: Agent result types/projection, delegation ledger, generic Agent tool,
+  Host consumers, Core terminal behavior, and TUI result recognition.
+- Tests: Agent Runtime focused result/ledger/tool suites, Core 661/661, Host
+  focused 101/101, Project Context 19/19, and TUI 531/531 passed.
+
+- Status: Verified
+- Date: 2026-07-26
+- Scope: terminal Agent action receipts distinguish an idempotent/no-progress
+  `tool.completed` result with `output.skipped === true` from successful
+  completion. The bounded receipt carries `status: skipped` plus the structured
+  reason, without copying raw tool output.
+- Read: Agent action summarizer/type export and TUI live/replay consumers.
+- Tests: Agent Runtime 259/259, TUI 531/531, affected builds/typechecks, and
+  repository test typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-25
+- Scope: in-process child terminal events now carry a bounded, user-facing
+  action receipt plus the structured workspace-write count. Action receipts
+  retain stable tool-call identity, tool name, bounded argument preview,
+  terminal status, and exit/error metadata while excluding raw arguments,
+  outputs, and the terminal `submit_agent_result` call.
+- Read: child EventLog bridge, Agent result types/exports, supervisor terminal
+  payload, Host dynamic spawn consumption, and TUI detail projection.
+- Tests: full `npm run release:check` passed, including Agent Runtime 258/258,
+  Host 583/583, Protocol 6/6, TUI 482/482, the 16-case regression matrix, and
+  source/release install smoke.
+
+- Status: Verified
+- Date: 2026-07-25
+- Scope: the child terminal envelope now requires only
+  `status + summary`; accomplishments and blockers are optional detail.
+  Minimal blocked/partial declarations are canonicalized safely, natural
+  finals still auto-wrap once, and the old `RUNTIME_COMPLETION_PARTIAL`
+  reinterpretation of Core terminal metadata is removed.
+- Read: Agent result types/parser/prompt, terminal tool schema, child outcome
+  projection, TUI result recognizer, and focused terminal tests.
+- Tests: full `npm run release:check` passed, including Agent Runtime 257/257,
+  the 16-case regression matrix, and source/release install smoke.
+
+- Status: Verified
+- Date: 2026-07-25
+- Scope: a clean child natural-language final is now wrapped as an implicit
+  completed result when `submit_agent_result` is omitted. Malformed structured
+  declarations remain protocol failures, while step limits, truncation,
+  cancellation, and transport failure remain runtime-owned partial outcomes.
+- Read: Agent terminal result projector, spawn roll-up, Core terminal payload,
+  Host dynamic spawn lifecycle, and focused result/spawn tests.
+- Tests: Core 661/661, Agent Runtime 257/257, Host 583/583; affected package
+  typechecks, repository lint, and targeted format check passed.
+
+- Status: Verified
+- Date: 2026-07-24
+- Scope: every in-process Agent handoff now exposes only goal/context/label;
+  runtime-owned profile/tool/budget metadata stays out of model payloads.
+  Agent Runtime injects the terminal `submit_agent_result` tool, fingerprints
+  reusable delegation results, and rolls complete child ChangeSets plus
+  verification receipts into parent lifecycle facts.
+- Read: handoff normalizer, spawn/tool/result/terminal paths, delegation
+  ledger, Host child assembly, and Core completion facts.
+- Tests: focused handoff/terminal/delegation-ledger suites, repository build,
+  and repository test typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-23
+- Scope: Task async receipt fields now declare their model-visible external
+  consumer for strict public-surface auditing. Types, serialized output, parent
+  keep-alive, completion observation, and duplicate avoidance are unchanged.
+- Read: Task receipt DTO, Shell receipt mirror, SDK task event key, and strict
+  reserved-field checker.
+- Tests: Agent Runtime tasks 76/76, Shell 43/43, SDK Core 11/11, affected
+  typechecks, and strict reserved-field check passed.
+
+- Status: Verified
+- Date: 2026-07-23
+- Scope: `TaskManager` now publishes post-store-write created, started, and
+  terminal snapshots through an independent lifecycle observer. Observer
+  failure cannot change task truth or consume the parent actor inbox; canonical
+  completion policy remains present on every new task.
+- Read: task manager/store transitions, lifecycle observer exports,
+  WorkspaceContext composition, Host event projection, and focused tests.
+- Tests: Agent Runtime task suite (76 tests), package typecheck, and downstream
+  Host lifecycle coverage passed.
+
+- Status: Verified
+- Date: 2026-07-23
+- Scope: task completion now separates canonical `completionPolicy`
+  (`inline | awaited | detached`) from the mutable `awaited` keep-alive bit.
+  Async task receipts expose actual mode, parent wait behavior, completion
+  observation, next action, and duplicate avoidance. Foreground-inline and
+  explicit `task wait` results consume the matching parent actor notification
+  after its first delivery attempt, including pending retry entries.
+- Read: Task records/stores, TaskManager terminal delivery/consumption, task
+  tool result schemas, Shell/Host consumers, and focused task tests.
+- Tests: Agent Runtime task suite (72 tests), Shell suite (43 tests), Host task/
+  spawn/tools suites (120 tests), Core run suite (129 tests), and affected
+  package typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-23
+- Scope: awaited `task_create` results now describe the actual two-path
+  lifecycle: Core waits automatically before terminal finalization, while the
+  model calls `task(action:"wait")` only when its next action immediately
+  depends on the result. Concrete task id, output retrieval, and duplicate
+  avoidance remain model-visible; background guidance is unchanged.
+- Read: Task result schema/guidance, Core awaited-terminal suspension, Shell
+  promotion handoff, and focused task tests.
+- Tests: Agent Runtime task suite (69 tests), package typecheck, and repository
+  test typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-21
+- Scope: dynamic handoff context is now part of portable delegation identity.
+  `spawnSubAgent()` continues to accept explicit `ContextItem[]`; Host supplies
+  bounded handoff context at the working layer, and ledger keys invalidate reuse
+  when that context changes.
+- Read: Agent Runtime spawn/context composition, delegation ledger types/
+  serialization/tests, and Host dynamic/background Agent consumers.
+- Tests: delegation-ledger 11/11, affected package typechecks, and focused Host
+  Agent suites passed.
+
+- Status: Verified
+- Date: 2026-07-21
+- Scope: task kind descriptors may provide side-effect-free payload validation
+  and typed approval subjects. `task_create` validates its full kind/payload,
+  background policy, live descriptor, and runner before policy/approval and
+  defensively repeats the check before spawning.
+- Read: task tool schema/parsing/validation/execution, Host Agent task
+  descriptor wiring, and task/Host regressions.
+- Tests: Agent Runtime task suite, focused Host Agent task/tool suites, and
+  package typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-21
+- Scope: delegated children now use only the strict `agent-outcome.v1`
+  declaration. Projection separates semantic `status` and `statusSource` from
+  transport/finality/health, carries bounded `accomplishments` and structured
+  `blockers`, and synthesizes protocol/runtime blockers when a declaration is
+  missing, malformed, truncated, or runtime-limited. The removed
+  `missingCapabilities` shape and old delegation-ledger export names have no
+  runtime compatibility path.
+- Read: Agent result protocol/projector/types, supervisor lifecycle projection,
+  delegation ledger, Host dynamic/configured delegate assembly, and tests.
+- Tests: Agent Runtime result/supervisor/ledger suites and Host dynamic spawn
+  coverage passed; full repository verification is recorded by the release gate.
 
 - Status: Verified
 - Date: 2026-07-19
@@ -176,6 +411,8 @@ See also [../maps/capabilities/agents.md](../maps/capabilities/agents.md), [../m
 
 - `packages/agent-runtime/src/index.ts`
 - `packages/agent-runtime/src/agents/*`
+- `packages/agent-runtime/src/agents/prompt.ts`
+- `packages/agent-runtime/src/agents/handoff.ts`
 - `packages/agent-runtime/src/tasks/*`
 - `packages/agent-runtime/src/doc-store/*`
 - `packages/agent-runtime/src/todo/*`
@@ -192,7 +429,10 @@ Owns:
 - todo ledger parsing and continuation supervision helpers
 - worktree/concurrency coordination utilities
 - child/delegate policy helpers used by host integrations
+- the task-agnostic in-process child contract and its prompt-composition helper
 - parent-run delegation result contracts and ledger ownership
+- the common terminal collector for already-prepared in-process child
+  invocations
 - portable workflow type declarations
 
 Does not own:
@@ -205,6 +445,38 @@ Does not own:
 
 ## Contracts
 
+- `IN_PROCESS_CHILD_AGENT_CONTRACT_PROMPT` is the task-agnostic role,
+  evidence, scope, stopping, completion, and parent-report contract for Host-composed
+  in-process children. `composeInProcessChildAgentPrompt()` orders an optional
+  configured profile first, then that single contract, while preserving one
+  cache-stable application prompt block. There is no separate outcome prompt
+  layer. The low-level public `spawnSubAgent()` does not inject this contract
+  implicitly; embedders opt in so an explicit custom `PromptBuilder` is never
+  rewritten behind their back.
+- `AgentHandoffPayload` is the shared model-visible shape for dynamic,
+  configured, parallel, and background-task in-process handoff:
+  required `goal`, optional bounded working `context`, and optional UI-only
+  `label`. `parseAgentHandoffPayload()` rejects every other live field;
+  `normalizeAgentHandoffPayload()` extracts the canonical fields from persisted
+  legacy task envelopes without elevating role/grant/tool metadata to authority.
+- An in-process child ends with one natural final report. No completion-only
+  tool is injected. A non-empty report projects completed delivery; missing
+  output and runtime-owned failure/cancellation/truncation/limit conditions
+  project partial/blocked. The parent decides whether the report satisfies the
+  delegated goal.
+- `ParentAgentResult` is the only model-visible in-process child-result shape:
+  `childRunId`, runtime-derived report `status`, child-authored `report`, runtime-owned
+  `workspace:{writes,paths?}`, and optional runtime `warnings` / structured
+  `blockers`. Warnings cover parent-actionable completeness and reuse facts,
+  not Core assessment health. `AgentRuntimeResult` retains transport, usage,
+  report status, and assessment facts for ledgers, aggregation, diagnostics,
+  and UI evidence; it is never copied wholesale into parent context.
+- `completeSpawnedAgentInvocation()` does not resolve profiles, choose a
+  transport, or create another dispatcher. Entrypoint adapters prepare one
+  `SpawnedSubAgent`; the collector starts it once, projects runtime and parent
+  results, derives workspace evidence, records only reusable clean results,
+  and collects bounded failure observations. ACP and external-command
+  adapters remain outside this in-process terminal path.
 - Task events are trace-visible through core when executed as tools.
 - `doc-store/` owns the public workflow-agnostic file-backed primitive surface
   for session-root stores: atomic text/JSON document writes with Windows
@@ -280,7 +552,7 @@ Does not own:
   one `subagent.completed` or `subagent.failed` projection from the child run.
   Host process adapters retain native execution but report the same
   requested/admitted/started/terminal sequence through `AgentSupervisor`, with
-  shared terminal state/finality fields.
+  shared terminal state/status fields.
 - Workflow types in agent-runtime are portable runtime/store declarations.
   `WorkflowRunRecord` is now a durable P2 state document with five-value
   status, required v2 executable package pin, attempts, evidence refs,
@@ -370,6 +642,18 @@ Does not own:
   `truncated`, `stopReason`) are derived from the child run's real `run.*`
   outcome and payload flags; parent emit sites must not set a separate terminal
   state.
+- Agent result `status` describes report delivery and is orthogonal to run
+  transport and Core health. A non-empty natural final projects `completed`;
+  missing output, runtime failure, cancellation, truncation, blocking limits,
+  and step limits derive partial/blocked status and minimal blockers. Models do
+  not choose status or author blocker metadata, and `completed` does not prove
+  the delegated goal was satisfied.
+- `AgentBlocker` carries only a stable runtime `code` and human `message`.
+  Recovery stays with the subsystem that owns the actual capability, approval,
+  task, or budget state; Agent results do not duplicate that control model.
+- Exact reusable delegation lookup is exposed as `findReusableDelegation()` /
+  `rememberReusableDelegation()`. The former similarity-named exports were
+  removed rather than retained as aliases.
 - `spawnSubAgent` may receive an explicit approval-only interaction channel so
   configured child runs can share the parent Host/CLI/TUI approval path without
   gaining `ask` or `notify` capabilities.
@@ -384,7 +668,11 @@ Does not own:
 - `spawnSubAgent` does not forward task notification/revival sources into child
   runs. Background lifecycle stays flat in v1; child agents cannot create
   awaited/background tasks.
-- Task records carry first-class `awaited` state. `TaskStore`,
+- Task records carry first-class `awaited` state plus canonical
+  `completionPolicy:"inline"|"awaited"|"detached"`. `awaited` is the mutable
+  live keep-alive predicate; completion policy preserves the model-visible
+  observation mode after terminal state. Records written before the additive
+  field remain readable. `TaskStore`,
   `FileTaskStore`, `TaskManager`, protocol snapshots, and UI projections should
   preserve it so terminal awaited tasks can wake a run once and then be detached
   after an explicit wait/join consumes them.
@@ -433,6 +721,12 @@ Does not own:
   older reliable entries.
 - `TaskManager.hasLiveRunner(taskId)` distinguishes current-process task
   execution from reopened durable `pending`/`running` records.
+- TaskManager registers the first actor-sink delivery promise before resolving
+  terminal task waiters. `consumeTerminalObservation(taskId)` joins that
+  delivery, then drains the paired actor inbox and removes transient retry
+  entries when a foreground tool or explicit wait already returned the terminal
+  result. Awaited revival and detached opportunity notifications do not call
+  this consumption path.
 - `task_create` supports `foreground`, `awaited`, and `background` modes. The
   default is foreground; foreground timeout may promote to an awaited background
   task. `mode` is the only model-facing scheduling input; the durable/result
@@ -444,11 +738,11 @@ Does not own:
   deliberate model-tolerance mechanism. The Markdown ledger can retain richer
   host-owned fields, but the tool does not accept an unadvertised rich DTO or a
   `content` alias.
-- Detached or promoted `task_create` results include a model-visible
-  `nextAction` object with the concrete task id, recommended `task` monitor
-  action, output retrieval hint, and duplicate-avoidance guidance. Keep this
-  corrective enough that a parent can reuse the existing task id instead of
-  spawning equivalent work.
+- Detached or promoted `task_create` results include a structured async receipt:
+  `actualMode`, `parentWillWait`, `completionObservation`, `nextAction`, and
+  top-level `duplicateAvoidance`. The existing requested `mode`, `awaited`, and
+  promotion fields remain for compatibility. Foreground inline results identify
+  `actualMode:"inline"` and `completionObservation:"returned_inline"`.
 - Detached `task_create` next-action guidance recommends `task wait` when the
   caller needs terminal completion and reserves `task get` for a one-time
   snapshot. Repeated identical `task get` observations provide tool-owned
@@ -481,9 +775,9 @@ Does not own:
   for task-owned children and copies it onto parent-visible `subagent.*`
   payloads and metadata. Trace diagnostics rely on this to join
   `task_create` results to terminal `agent_task` child runs.
-- `RunHandle.maxSteps` is public read-only child-spawn context. Child agents
-  inherit the parent run's effective `maxSteps` when no child/profile override
-  is provided; explicit child `maxSteps` still wins, while `runBudget` remains
+- `RunHandle.maxSteps` remains runtime context for configured control-plane
+  allocation. Dynamic handoff cannot set it; configured profile overrides and
+  parent/runtime backstops remain host-owned choices, while `runBudget` is
   tightened through parent/child intersection.
 - `spawnSubAgent()` passes the parent's opaque child-budget accounts into every
   in-process child run. Siblings and deeper descendants therefore compete for
@@ -494,7 +788,11 @@ Does not own:
   ledger rather than a `createAgentTool` closure-local cache. Ledger keys include
   the delegation surface identity (`agent_tool`, configured delegate, or dynamic
   spawn) plus the stable child/profile/scope fields needed to avoid reusing a
-  different agent's answer. Only complete, clean, non-`stepLimitReached`,
+  different agent's answer; dynamic-spawn keys include explicit handoff
+  context, model/profile, effective capability, project/prompt, and workspace
+  epoch fingerprints. UI label is excluded. Any external/network-observing
+  child surface is non-cacheable.
+  Only complete, clean, non-`stepLimitReached`,
   non-truncated results with canonical assessment are reusable. AgentTool owns
   the sequential duplicate protocol so exact repeats can reach this ledger;
   unhealthy results are not cached. Goal reuse requires equality of a narrow
@@ -513,7 +811,7 @@ Does not own:
   transitions while native adapters keep execution.
 - `src/agents/supervisor.ts` owns parent-visible Agent lifecycle transitions.
   It requires requested -> admitted before `started`, supplies terminal
-  state/finality parity, and makes repeated phases/terminal attempts
+  state/status parity, and makes repeated phases/terminal attempts
   idempotent. Execution adapters retain native run/process mechanics and report
   their phases through this one supervisor.
 - `spawnSubAgent` accepts an optional embedder-owned asynchronous `admission`

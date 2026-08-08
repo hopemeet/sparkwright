@@ -1,233 +1,53 @@
-# Skill Evolution
+# Skill Evolution Capability (Retired)
 
-## Purpose
+## Status
 
-Skill evolution is the governed change pipeline for project skills: the model
-_proposes_ a create/update, a human _applies_ it, and every applied change is
-snapshotted to history so it can be inspected and reverted. It is deliberately
-separate from skill loading ([skills.md](skills.md)): loading reads skills into
-a run; evolution mutates the skills themselves.
+Retired on 2026-08-02. This page is design and verification history, not an
+active routing map. Current Skill contracts live in
+[skills.md](skills.md) and [../../modules/skills.md](../../modules/skills.md).
 
-See [../../modules/skills.md](../../modules/skills.md).
+## Removed Runtime Surface
 
-## Main Files
+- Host proposal/history/registry/suggestion/command-service modules
+- model tools `create_skill` and `update_skill`
+- CLI `skills review|reconcile|proposals|history|restore`
+- TUI `/skill-update`, `/skill-review`, `/skill-learn`, proposal dialogs,
+  human-action completion cards, and automatic learning
+- `capabilities.skills.evolution` config and generated schema
+- Stats proposal/history windows, rollups, findings, and freshness inputs
+- patch counters tied to managed Skill changes
 
-- `packages/host/src/skill-evolution.ts` (proposal/history/restore lifecycle)
-- `packages/host/src/skill-command-service.ts` (ordinary create/approve/apply command boundary)
-- `packages/host/src/skill-review-digest.ts` (`skills review` host digest)
-- `packages/host/src/skill-usage.ts` (advisory patch observations)
-- `packages/host/src/tools.ts` (`create_skill`, `update_skill` model tools)
-- `packages/skills/src/index.ts` (package hashing, `applyEdit`/`content` seams)
-- `packages/skills/src/guard.ts` (`inspectSkill` trust × severity; wired at draft + apply)
-- `packages/host/src/skill-doctor.ts` (`runSkillDoctor` structural validation)
-- `packages/cli/src/cli.ts` (`skills proposals|history|restore`)
-- `packages/tui/src/app.tsx` (`/skill-learn` automatic notice/draft/apply trigger)
-- `packages/tui/src/lib/skill-evolution.ts`, `packages/tui/src/lib/skill-learn.ts`
-- `packages/host/test/skill-evolution.test.ts`, `packages/cli/test/cli.test.ts`
+## Retained Contracts
 
-## Storage Layout
+- `package-v2.ts` remains the canonical runtime Skill identity primitive; it is
+  not self-evolution state.
+- Project creation remains deterministic through
+  `packages/host/src/project-skill-create.ts` and never overwrites.
+- Existing Skill changes are ordinary controlled workspace edits.
+- Stats remains trace-derived and may reuse rebuildable historical session
+  projections and the targeted catalog.
+- Old `.sparkwright/skill-evolution/`, registry, suggestion, or cache data is
+  inert legacy user data. No read, creation, or Stats command deletes it.
 
-```txt
-.sparkwright/skill-evolution/
-  proposals/<proposal-id>/
-    before/<skill>/...   after/<skill>/...   patch.diff   metadata.json   proposal.md
-  history/<skill>/<version-id>/
-    before/<skill>/...   after/<skill>/...   patch.diff   metadata.json
-```
+## Migration Notes
 
-Both `before/` and `after/` are full immutable skill-package snapshots with
-`sha256` package hashes in metadata.
-
-Managed proposals, revisions, apply/recovery, history, restore, and mutation
-receipts use package identity v2 and require
-`packageHashPolicyVersion: 2`. Proposal and history readers reject missing or
-non-v2 policies. Proposal `artifactId`, `effectHash`, `preparedState`, and
-`revision` are required; history records carry the same artifact id. Project
-updates reuse an active registry id or prior canonical history id, otherwise
-allocate one new id. Evolution hashing has no v1 or artifact fallback path.
-
-## Lifecycle
-
-```txt
-ORIGIN                          GATE (human only)            EFFECT
- model: create_skill            CLI/TUI:                     mutate .sparkwright/skills
- model: update_skill          ─► apply [--force] / reject /   + history snapshot (before+after)
-   (draft, optional body)      │  supersede / prune /         + guard re-inspect (force on danger)
- human: TUI /create skill     └► restore (--to before|after) + runSkillDoctor re-validate
- human: TUI /skill-learn
-
-draft inspected by guard.inspectSkill (agent-created) -> metadata.guardFindings
-draft during a run records metadata.provenance { runId, sessionId, rationale }
-proposal states: draft -> applied | rejected | superseded | stale | failed
-history kinds:   create | update | restore
-```
-
-## Contracts
-
-- **Create entrypoint convergence:** model `create_skill`, CLI `skills create`,
-  and TUI `/create skill` all call `SkillCommandService.prepareCreate`.
-  CLI/TUI review apply calls
-  `approveAndApply`; the in-run model fast path uses `prepareApproval` plus
-  `approvePrepared` after the run approval resolves. Advanced proposal-create
-  commands remain low-level authoring surfaces, not a fifth ordinary UX.
-
-- **Configured roots are override sources, not mutation targets:** a Skill
-  selected from `capabilities.skills.roots` has layer `configured`, is strongest
-  during loading, and produces a project fork/shadow proposal during evolution.
-  Doctor reports that current boundary with configured-root findings; no
-  `legacy` layer or diagnostic code remains.
-
-- **TUI persistent inbox:** proposal files remain the source of truth. TUI
-  reads the newest draft after startup and after either creation surface, then
-  presents a dismissible completion card linked to `/skill-review`; dismissing
-  the card never closes or mutates the draft.
-- **Draft reconciliation and competing proposals:** successful apply closes all
-  other draft proposals for the same project target as `superseded`, linked by
-  `supersededBy`. Before TUI inbox/review recovery and ordinary create
-  preparation, host reconciliation repairs durable drafts: a create whose
-  current target matches managed applied history becomes `superseded`; an
-  externally occupied create target or an update whose base disappeared or
-  drifted becomes `stale`. Listing proposals remains read-only. Apply-time hash
-  and base checks remain the safety gate; reconciliation controls whether a
-  draft is presented as actionable. Secondary cleanup failure never rolls back
-  an already successful apply and is retried by the next reconciliation pass.
-
-- **Prepared create fast path:** a complete clean authored model create is
-  persisted as `ready`/`waiting` with `artifactId` and `effectHash` before the
-  run asks for `skill.apply`. Approval binds proposal id + revision + effect
-  hash, persists `approval.json`, applies in the same tool episode, and writes
-  `mutation-receipt.json` plus deterministic effect-keyed history. No resolver
-  or a denial leaves the proposal waiting for later review.
-- **Effect authorization:** the hash covers artifact kind/id, operation,
-  project target, base/after package hashes, origin digest, and capability
-  requirements; guard policy version/message text is excluded. Revision
-  recomputes the effect hash and makes an old receipt unusable. Apply reruns the
-  guard; dangerous fingerprints not present in the receipt return the proposal
-  to waiting.
-- **Crash reconciliation:** an approved/applying proposal whose target already
-  equals the after-package hash completes doctor, deterministic history,
-  mutation receipt, and applied state instead of becoming stale or duplicating
-  history.
-
-- **Actor boundary:** model-facing `create_skill` and `update_skill` draft
-  proposals. `applySkillProposal`, reject, supersede, prune, and restore are
-  **never exposed as model tools** — they run from CLI/TUI only. CLI
-  `sparkwright skills create` now prepares through the same proposal service;
-  it is no longer a direct-write exception.
-- **Human-action handoff:** model-facing draft results carry one canonical
-  `/skill-review <proposal-id>` command plus a host-computed `humanAction`
-  projection (eligibility, validation, content mode, guard severity, and
-  recommended action). TUI consumes that projection only after the run settles;
-  it never recomputes risk and apply still runs through the human-only
-  hash/guard/doctor/history gate. The model fallback explicitly directs later
-  apply requests to the review command instead of searching for an apply tool.
-- **Failed drafts self-clean:** `createSkillCreateProposal` /
-  `createSkillUpdateProposal` wrap their package writes; if a post-snapshot step
-  throws (unparseable body, name mismatch, guard parse), the partial proposal
-  directory is removed via `rollbackPartialProposal`.
-- **Proposal content:** `createSkillUpdateProposal` accepts an `applyEdit`
-  transform and `createSkillCreateProposal` accepts `content`. The
-  model-facing `create_skill` and `update_skill` tools both expose a `body`
-  param. `create_skill.body` may be full `SKILL.md` content or only authored
-  instructions; the host wraps instructions-only bodies with `name` and
-  `description`. For both `create_skill.body` and `update_skill.body`, a full
-  `SKILL.md` body with frontmatter missing `description` is normalized from the
-  tool `description`, while mismatched frontmatter names still fail closed. When
-  `create_skill.body` is omitted, the create proposal uses a generated template;
-  when `update_skill.body` is omitted, the after body is a
-  `## Proposed Evolution` intent stub derived from `description`. Proposal
-  metadata records `contentMode: "authored" | "template" | "intent_stub"` so
-  CLI/TUI review surfaces can label low-quality drafts.
-- **Guard at draft + apply:** proposed content is inspected by
-  `guard.inspectSkill` as `agent-created` (ignoring any trust the body
-  self-declares). Draft records findings in `metadata.guardFindings`; apply
-  re-inspects and refuses when a `dangerous` finding is present unless
-  `force` is set. Doctor (structural) and guard (trust/secret-exfil) are
-  distinct checks and both run. Guard also flags executable inline shell:
-  `inline_shell_present` (caution) plus `inline_shell_mutation` /
-  `inline_shell_network` (dangerous), sharing `extractInlineShellCommands`
-  with the executor so detection cannot drift from what actually runs.
-- **State transitions preserve review metadata:** applying, rejecting,
-  superseding, or marking stale/failed rewrites `metadata.json` but must carry
-  existing `guardFindings` and `provenance` forward so proposal filters and
-  review displays keep their draft-time evidence.
-- **Apply is hash-gated and doctor-gated:** apply recomputes the after-package
-  hash and marks the proposal `stale` if it drifted; after writing it runs
-  `runSkillDoctor` and rolls back + marks `failed` on `blocked`.
-- **History captures both sides:** each applied proposal writes a history entry
-  holding the `before` and `after` packages plus the patch.
-- **Restore direction:** `restoreSkillFromHistory` takes `side: "before" |
-"after"` (default `after`). `after` re-applies the package a version produced;
-  `before` is the revert/undo edge, restoring the package prior to that version.
-  Restore defaults to dry-run; `apply: true` commits and writes a `restore`
-  history entry. Restoring `before` of a version that created the skill from
-  nothing is refused (no prior package).
-- **Provenance:** when a proposal is drafted by `create_skill` or `update_skill`
-  during a run, the host captures `provenance: { runId, sessionId, rationale }`
-  into proposal metadata so a reviewer can pull the motivating trace.
-  `runMetadata.sessionId` (set in host `startRun`) is the source for the
-  session id; TUI `/skill-learn` also passes the active session as provenance.
-  Reverse-lookup: `skills proposals list --run <id>` / `--session <id>` filters
-  by provenance (`--session` is the global flag, read from `parsed.sessionId`).
-  CLI-authored proposals have none.
-- **TUI automatic learning target:** `/skill-learn` notice/draft/apply uses
-  only conservative reuse-signal evidence plus the active session id. It does
-  not infer a target Skill name from prompt text; named Skill updates are
-  explicit `/skill-update` or caller-supplied `targetSkillName` paths.
-- **Session-scoped draft idempotency and revision:** model-authored
-  `create_skill` / `update_skill` calls reuse a draft for the same session,
-  proposal kind, and skill target across todo-supervisor continuation runs;
-  callers without session provenance fall back to run-scoped matching. Equal
-  content returns the existing proposal unchanged, while changed content
-  revises the same proposal id, increments its `revision`, records the replaced
-  package hash, and refreshes the after package, patch, guard findings, and
-  review metadata. Closed proposals are never revised. Human CLI-authored
-  proposals have no run/session provenance and remain separate drafts.
-- **Mutations are trace-visible:** every atomic write emits
-  `capability.mutation.completed`; proposals/history themselves are file
-  artifacts, not a separate trace event family. Draft proposal writes are
-  capability mutations too, but they are not current Skill package changes until
-  a human apply path runs. Successful apply/restore and direct project
-  `skills create` also record advisory `patchCount` observations in
-  `.sparkwright/skill-usage.json`; this sidecar is not part of the immutable
-  proposal/history record.
-- **Display vs execution paths:** proposal metadata keeps absolute
-  `targetPath`/`sourcePath` for apply/restore, while generated `proposal.md`
-  renders Source/Target through the shared display-path projection so CLI/TUI
-  review text does not leak host absolute paths.
-- **Review digest:** `skills review` calls the host `collectSkillReviewDigest`
-  helper and combines draft proposals (with content-mode labels) plus actionable
-  stats findings (`SKILL_LOAD_FAILURES`, `ASSOCIATED_TOOL_FAILURES`) into one
-  human queue. It uses trace-based stats and proposal metadata; it does not
-  depend on the usage sidecar.
-
-## Consumers
-
-- CLI `skills review`, `skills proposals`, `skills history`, `skills restore`.
-- TUI `/create skill`, `/skill-update`, `/skill-review`, `/skill-learn`.
-- Capability inspection (skill roots/errors), not the proposal store.
-
-## Change Checklist
-
-- Keep apply/revert/reject off the model toolset; they are human gates.
-- Preserve immutable before/after snapshots and package-hash gating on apply.
-- If restore direction or history shape changes, update CLI flags, the result
-  type, and both host and CLI tests.
-- Inspect agent-authored content as `agent-created`; do not let a skill body's
-  self-declared trust weaken the guard.
-- Keep doctor (structural) and guard (trust/secret-exfil/inline-shell) as
-  distinct apply gates; surface guard findings on `proposals show` and apply
-  output.
-- If inline-shell guard detection changes, keep `extractInlineShellCommands`
-  the single source shared between `guard.ts` and the preprocessor.
-
-## Known Debts
-
-- **Provenance reverse-lookup is filter-based:** `skills proposals list --run
-<id>` / `--session <id>` filters the proposal store by `metadata.provenance`;
-  there is no persisted run→proposals index (a scan, not an index).
+- Replace proposal create/apply with `skills create` for a new project Skill.
+- Replace update/restore workflows with source control plus ordinary reviewed
+  file edits.
+- Remove `capabilities.skills.evolution` from config.
+- Do not build new consumers against old proposal/history file formats.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-08-02
+- Scope: removed the complete active Skill self-evolution path while retaining
+  loading, identity v2, deterministic non-overwriting project creation, doctor,
+  and trace-derived cached Stats. Legacy data is ignored and preserved.
+- Read: deleted Host/TUI modules and consumers, CLI routing, config/schema,
+  package exports, scripts, public docs, and current Skill maps.
+- Tests: builds, full affected workspace suites, final four-case creator
+  regression, and repository test typecheck passed.
 
 - Status: Verified
 - Date: 2026-07-18T08:08:47+0800

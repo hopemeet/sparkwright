@@ -10,6 +10,156 @@ and [../session/session-store.md](../session/session-store.md) for session layou
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-08-02
+- Scope: Skill Stats no longer reads proposal/history metadata; it remains a
+  consumer of canonical session and child-agent traces. Shell guidance changed
+  wording only. Raw trace event schemas and serialization are unchanged.
+- Read: Host Stats, shell diagnostics, and neutralized Core trace fixtures.
+- Tests: Core trace 133/133 and focused Host/CLI coverage passed.
+
+- Status: Verified
+- Date: 2026-07-30
+- Scope: in-process child trace keeps runtime-derived
+  completed/partial/blocked report status, but model-authored accomplishment
+  and blocker payloads are gone. Children finish with natural reports; missing
+  reports and runtime-observed terminal conditions emit blocker code/message
+  evidence. Step-budget wrap-up records `completionStatus:"partial"`.
+- Read: Agent terminal lifecycle projection, Core terminal/budget payloads,
+  Host forwarding, session diagnostics, and focused tests.
+- Tests: repository build/test typecheck and focused Core, Agent Runtime, and
+  Host suites passed.
+
+- Status: Verified
+- Date: 2026-07-28
+- Scope: parent-result simplification changes no event family or stored
+  assessment. `UNRESOLVED_TOOL_FAILURE` remains diagnostic trace evidence, but
+  `subagent.*` no longer stores redundant `statusSource`/`finality`; semantic
+  status, terminal state/event type, and limit flags are the current facts.
+- Read: child result projection, lifecycle terminal projection/supervisor,
+  trace/session readers, and TUI replay.
+- Tests: Agent Runtime, Host, and TUI full suites plus session check and trace
+  verify on a real two-run child session passed.
+
+- Status: Verified
+- Date: 2026-07-26
+- Scope: new terminal Agent receipts may use additive action status `skipped`
+  with a bounded `skipReason`. Event families, tool lifecycle truth, trace
+  envelope, and storage remain unchanged. Historical receipts that recorded
+  the same tool as completed remain readable because replay can consult the
+  durable child `tool.completed.output.skipped` fact.
+- Read: Agent action receipt producer, raw child tool/parent Agent terminal
+  events, Host forwarding, and TUI replay.
+- Tests: Agent Runtime 259/259, Host 583/583, TUI 531/531, and all workspace
+  tests passed.
+
+- Status: Verified
+- Date: 2026-07-25
+- Scope: new in-process `subagent.completed` / `subagent.failed` facts add
+  optional bounded action receipts and an explicit workspace-write count.
+  Event families and correlation identities are unchanged; older traces
+  without these fields remain readable and TUI replay falls back to child tool
+  events. Raw child events remain durable diagnostic evidence.
+- Read: Agent Runtime lifecycle bridge, Host dynamic result projection,
+  Protocol transcript classification, and TUI live/replay consumers.
+- Tests: Agent Runtime 258/258, Host 583/583, Protocol 6/6, and TUI 482/482.
+
+- Status: Verified
+- Date: 2026-07-25
+- Scope: new terminal events omit retired recovered/unresolved requirement
+  fields and no loop event uses `completion_evaluator` as a transition source.
+  Approval requests retain the typed principal/subject and add independent
+  policy/tool/safety explanation layers. Historical JSONL remains readable as
+  append-only unknown fields are ignored.
+- Read: Core event producer/transition, Host protocol projection, approval
+  trace path, and current TUI consumers.
+- Tests: full `npm run release:check` passed, including trace/session tests,
+  the 16-case regression matrix, and source/release install smoke.
+
+- Status: Verified
+- Date: 2026-07-25
+- Scope: terminal FactLedger snapshots still preserve commands, ChangeSets,
+  explicit-verifier receipts, notices, and budgets. Model-run commands remain
+  command facts but do not mint receipts, and completion notices no longer
+  imply a semantic forced continuation.
+- Read: Core FactLedger/terminal evaluator/event payload, Agent child roll-up,
+  Host Workflow verifier identity, and raw trace consumers.
+- Tests: Core 661/661, Agent Runtime 257/257, Host 583/583; affected package
+  typechecks, repository lint, and targeted format check passed.
+
+- Status: Verified
+- Date: 2026-07-24
+- Scope: raw trace keeps the existing event envelope and now records structured
+  ToolEffects, approval principals, ChangeSets/verification receipts, terminal
+  declarations, completion notices, and recovery facts. No second Agent trace
+  channel was introduced.
+- Read: Core events/run/tools/fact ledger, Agent lifecycle bridge, and Host
+  protocol projection.
+- Tests: focused Core/Agent Runtime/Host tests, repository build, and
+  repository test typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-23
+- Scope: Host `task.updated` is a bounded client lifecycle projection, not a
+  new Core raw-trace event. Existing `task.*`, `subagent.*`, correlation, and
+  append-only trace contracts are unchanged.
+- Read: Host lifecycle emitter/projection, protocol event union, and raw-trace
+  ownership boundary.
+- Tests: Host lifecycle/protocol coverage and affected typechecks passed; no
+  trace schema changed.
+
+- Status: Verified
+- Date: 2026-07-23
+- Scope: route review for Task/Shell/Agent async receipts and parent observation
+  dedupe; existing `task.*`, `subagent.*`, and workspace marker event contracts
+  did not change.
+- Read: Host Shell/Agent task paths and raw-trace event ownership.
+- Tests: focused Host tools/spawn/task suites and affected typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-23
+- Scope: synthetic repeated-failure tool results may now include bounded
+  `repeatedPriorFailureRetryScope` metadata (`arguments` or `target`) alongside
+  existing prior code/category/denial fields. Event families, correlation,
+  persistence, provider prompt trace structure, and tool terminal ordering are
+  unchanged.
+- Read: Core repeat nudge metadata/emission, raw tool terminal persistence, and
+  focused run/trace-facing tests.
+- Tests: focused Core run suite and affected typechecks passed; no trace schema
+  migration is required for optional error metadata.
+
+- Status: Verified
+- Date: 2026-07-21
+- Scope: dynamic Agent prompt authority changed without changing trace
+  vocabulary. Tool requests still retain explicit goal/context arguments and
+  child lifecycle/result evidence remains parent-correlated.
+- Read: Host dynamic/background Agent assembly, Agent lifecycle projection, and
+  raw trace fixtures.
+- Tests: focused Host spawn/protocol and TUI event-stream suites passed.
+
+- Status: Verified
+- Date: 2026-07-21
+- Scope: conversation noise reduction does not filter durable evidence. Raw
+  model turns, batch envelopes, successful approvals, Skill/MCP preparation,
+  and typed approval subjects remain in Trace; only live/export presentation
+  changes. Parent recovery now keys only real terminal `subagent.*` events.
+- Read: Core/Host event emission, Protocol visibility, TUI Activity/export,
+  workflow hooks, and real PTY trace evidence.
+- Tests: focused Core/Host/TUI suites plus real trace verify/session check passed.
+
+- Status: Verified
+- Date: 2026-07-21
+- Scope: in-process Agent terminal lifecycle payloads add semantic `status`,
+  `statusSource`, summary, accomplishments, and structured blockers while
+  retaining the existing terminal-state/finality/assessment axes and event
+  families. Trace diagnostics consume semantic partial/blocked state and retain
+  blocker codes as evidence.
+- Read: Agent Runtime result parser/projector/supervisor, Host dynamic and
+  configured Agent assembly, Core diagnostics/session facts, public references,
+  and tests.
+- Tests: Agent Runtime, Host, and Core trace/session coverage passed; full
+  repository verification is recorded by the release gate.
+
 - Status: Verified
 - Date: 2026-07-19
 - Scope: raw terminal events persist `RunAssessment` and fact-ledger evidence.
@@ -267,6 +417,10 @@ EventLog emits full event
   workspace write epochs, and stale markers plus forced-continuation
   `budgetExceeded` facts. This is a terminal snapshot on the existing event,
   not a new raw event family.
+- Raw model-run command facts may retain diagnostic
+  `verificationRelevant` classification, but only commands with explicit
+  verifier identity/source sign `verificationReceipts`. A missing receipt after
+  an ordinary write is therefore not evidence that the run failed to complete.
 - `run.budget.exceeded` is the raw event for per-source forced-continuation
   budget exhaustion. Standard trace filtering keeps only the bounded
   `signal`/`family`/`source`/`used`/`limit`/`step`/`reason` payload fields.
@@ -289,9 +443,11 @@ EventLog emits full event
   fields (`subagentDepth`, `agentId`, `delegateTool`, `entrypoint`, consistent
   parent/child run ids, and `taskId` when the child is owned by an
   `agent_task`). SparkWright child-run terminal payloads carry
-  `terminalState` and `stepLimitReached`/`truncated` when derived from the child
-  `run.*` outcome. Process adapters project `completed`/`failed` only from their
-  native worker/process result.
+  `terminalState`, report `status`, summary, runtime-derived blockers, and
+  `stepLimitReached`/`truncated` when derived from the child `run.*` outcome.
+  Status `completed` means a non-empty report was delivered, not that the
+  delegated goal was satisfied. Process adapters project their native result
+  through the same supervisor-owned status normalization.
 - Parent-visible Agent lifecycle identity is projected from the portable
   `PreparedAgentInvocation` data contract. Its `admission_pending` state is not
   a raw event phase; `AgentSupervisor` requires admission before `started` and

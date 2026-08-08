@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { Box, Text, useInput, useStdout } from "ink";
 import type { CommandRegistry } from "../lib/commands.js";
 import { formatBinding, type Bindings } from "../lib/keybindings.js";
+import { isBackInput } from "../lib/input-key.js";
 import { DialogFrame } from "./dialog-frame.js";
 
 // Input editing affordances live inside InputBox (readline-style), so they have
@@ -27,7 +28,11 @@ const GLOBAL_KEYS: ReadonlyArray<{ binding: keyof Bindings; what: string }> = [
   },
   { binding: "activity.open", what: "background tasks / activity drawer" },
   { binding: "events.open", what: "activity events tab" },
-  { binding: "todo.toggle", what: "expand / collapse the todo band" },
+  { binding: "details.toggle", what: "show / hide transcript details" },
+  { binding: "transcript.page-up", what: "scroll transcript up" },
+  { binding: "transcript.page-down", what: "scroll transcript down" },
+  { binding: "transcript.top", what: "jump to transcript start" },
+  { binding: "transcript.bottom", what: "follow transcript tail" },
   { binding: "cancel.run", what: "cancel the running goal" },
   { binding: "quit.app", what: "back out · press twice to quit" },
 ];
@@ -131,7 +136,7 @@ export function HelpPanel(props: {
   const more = rows.length - (clamped + visible.length);
 
   useInput((input, key) => {
-    if (key.escape || key.return) return props.onClose();
+    if (isBackInput(input, key) || key.return) return props.onClose();
     if (key.downArrow || input === "j")
       setScroll((value) => Math.min(maxScroll, value + 1));
     else if (key.upArrow || input === "k")

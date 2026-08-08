@@ -45,6 +45,10 @@ const PUBLIC_IDENTITIES: Record<string, BuiltinToolIdentity> = {
 };
 
 const ADVANCED_BY_NAME: Record<string, BuiltinToolIdentity> = {
+  web_fetch: {
+    canonicalName: "web_fetch",
+    defaultExposureTier: "advanced",
+  },
   list_dir: {
     canonicalName: "list_dir",
     defaultExposureTier: "advanced",
@@ -67,14 +71,6 @@ const ADVANCED_BY_NAME: Record<string, BuiltinToolIdentity> = {
     canonicalName: "list_skills",
     defaultExposureTier: "advanced",
   },
-  create_skill: {
-    canonicalName: "create_skill",
-    defaultExposureTier: "advanced",
-  },
-  update_skill: {
-    canonicalName: "update_skill",
-    defaultExposureTier: "advanced",
-  },
   list_agents: {
     canonicalName: "list_agents",
     defaultExposureTier: "advanced",
@@ -94,6 +90,11 @@ const ADVANCED_BY_NAME: Record<string, BuiltinToolIdentity> = {
   delegate_parallel: {
     canonicalName: "delegate_parallel",
     defaultExposureTier: "advanced",
+  },
+  read_agent_report: {
+    canonicalName: "read_agent_report",
+    defaultExposureTier: "advanced",
+    relatedTools: ["spawn_agent", "delegate_agent", "delegate_parallel"],
   },
   cron: {
     canonicalName: "cron",

@@ -1,11 +1,29 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Box, Text, useInput, useStdout, type Key } from "ink";
+import React, {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import {
+  Box,
+  Text,
+  measureElement,
+  useInput,
+  useStdin,
+  useStdout,
+  type DOMElement,
+  type Key,
+} from "ink";
 import {
   commandFrecencyKey,
   type CommandRegistry,
   type Command,
 } from "../lib/commands.js";
-import { ctrlCPressCount } from "../lib/keybindings.js";
+import {
+  ctrlCPressCount,
+  ctrlTranscriptBoundaryKey,
+} from "../lib/keybindings.js";
 import type { HistoryEntry } from "../lib/history.js";
 import { FileIndex, type IndexedFile } from "../lib/files.js";
 import { loadFrecency, type Frecency } from "../lib/frecency.js";
@@ -87,11 +105,17 @@ export function InputBox(props: {
   onStashChange: (next: StashFile) => void;
   initialDraft?: string;
   onDraftChange?: (value: string) => void;
-  shouldIgnoreInput?: (input: string, key: Key, value: string) => boolean;
+  /** Global action router, called only after active composer overlays bubble. */
+  onGlobalInput?: (input: string, key: Key, value: string) => boolean;
+  /** Reports the physically laid-out composer/overlay height to App. */
+  onHeightChange?: (rows: number) => void;
   /** Imperative handle for the parent (used to inject restored drafts). */
   handleRef?: React.MutableRefObject<InputBoxHandle | null>;
 }): React.ReactElement {
   const { stdout } = useStdout();
+  const { stdin } = useStdin();
+  const frameRef = useRef<DOMElement | null>(null);
+  const reportedHeightRef = useRef<number | null>(null);
   const inputWidth = inputBoxWidth(resolveDialogColumns(stdout?.columns));
   const inputTextWidth = Math.max(1, inputWidth - 7);
   const maxVisibleInputLines = inputMaxVisibleLines(stdout?.rows);
@@ -192,6 +216,53 @@ export function InputBox(props: {
     ? slashSuggestions
     : mentionSuggestions;
   const safeSugCursor = Math.min(sugCursor, Math.max(0, activeList.length - 1));
+  const composerOverlayActive =
+    inputHistory.searchQuery !== null || slash !== null || mention !== null;
+
+  useLayoutEffect(() => {
+    if (!frameRef.current) return;
+    const height = measureElement(frameRef.current).height;
+    if (reportedHeightRef.current === height) return;
+    reportedHeightRef.current = height;
+    props.onHeightChange?.(height);
+  });
+
+  useEffect(() => {
+    if (props.disabled || !stdin || composerOverlayActive) return;
+    const onData = (chunk: unknown): void => {
+      const boundary = ctrlTranscriptBoundaryKey(String(chunk));
+      if (!boundary) return;
+      const key: Key & { home?: boolean; end?: boolean } = {
+        upArrow: false,
+        downArrow: false,
+        leftArrow: false,
+        rightArrow: false,
+        pageDown: false,
+        pageUp: false,
+        return: false,
+        escape: false,
+        ctrl: true,
+        shift: false,
+        tab: false,
+        backspace: false,
+        delete: false,
+        meta: false,
+        home: boundary === "home",
+        end: boundary === "end",
+      };
+      props.onGlobalInput?.("", key, valueRef.current);
+    };
+    stdin.on("data", onData);
+    return () => {
+      stdin.off("data", onData);
+    };
+  }, [
+    composerOverlayActive,
+    props.disabled,
+    props.onGlobalInput,
+    stdin,
+    valueRef,
+  ]);
 
   // Inline "ghost" completion: the remainder of the highlighted slash command,
   // shown dimmed after the caret. Only when the caret is at the end and the
@@ -260,8 +331,6 @@ export function InputBox(props: {
     // — which would otherwise be typed into the goal. Swallow them. (Switching
     // macOS spaces/apps is what makes the terminal fire these.)
     if (input === "[I" || input === "[O") return;
-
-    if (props.shouldIgnoreInput?.(input, key, valueRef.current)) return;
 
     // Bracketed paste can arrive split across several Ink events. Handle this
     // before Enter/submission logic so pasted newlines stay in the draft.
@@ -385,6 +454,11 @@ export function InputBox(props: {
         return;
       }
     }
+
+    // Composer overlays had first refusal above. A single InputBox listener
+    // now routes global actions before ordinary editor insertion; printable
+    // actions defer to non-empty drafts inside InteractionRouter.
+    if (props.onGlobalInput?.(input, key, valueRef.current)) return;
 
     // --- submission --------------------------------------------------------
     if (key.return) {
@@ -523,7 +597,12 @@ export function InputBox(props: {
   });
 
   return (
-    <Box flexDirection="column" width={inputWidth} flexShrink={0}>
+    <Box
+      ref={frameRef}
+      flexDirection="column"
+      width={inputWidth}
+      flexShrink={0}
+    >
       <Box
         borderStyle="round"
         paddingX={1}

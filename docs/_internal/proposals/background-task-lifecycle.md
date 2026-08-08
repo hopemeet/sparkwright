@@ -38,6 +38,24 @@ cancellation propagation, or TUI tree projection. The opt-in, nested child
 sub-agents cannot create background tasks, while top-level
 `task_create(kind:"agent")`, ordinary `spawn_agent`, and `maxDepth` remain.
 
+## 2026-07-23 Observation And Host Event Clarification
+
+Task records now carry a canonical `completionPolicy`
+(`inline | awaited | detached`) separately from the mutable `awaited`
+keep-alive bit. This supersedes the older wording below that rejected a third
+result-policy field: there is still only one scheduler keep-alive bit, while
+`completionPolicy` preserves how the parent is meant to observe completion
+after `awaited` is cleared.
+
+Parent-agent completion delivery and external lifecycle observation are
+separate channels. `TaskManager` writes TaskStore state, then publishes
+created/started/terminal snapshots to an independent lifecycle observer; the
+Host projects those snapshots as bounded `task.updated` events without draining
+the actor inbox. Live Host push is best-effort and `task.list` remains the
+reconnect/reconciliation source. This does not add task execution across Host
+process restarts, a durable external-delivery cursor, CLI detach, or a suspended
+run outcome.
+
 ## Purpose
 
 At the proposal's 2026-07-01 baseline, three long-running surfaces each

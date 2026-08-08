@@ -39,7 +39,8 @@ show run state, but it should not repeat the committed brand header.
 
 ## Prevention
 
-- Keep static header assertions in EventStream tests.
+- Keep header assertions in shared transcript-document/EventStream
+  compatibility tests.
 - Keep StatusBar tests focused on changing state.
 - Add PTY capture when layout ownership changes across app shell, event stream,
   and status bar together.
@@ -53,6 +54,13 @@ initial same-session restore remounts that stream.
 
 Evidence root:
 `/Applications/xgw/projects/AI-native/project/test/qa_tui_agent_20260719_tui_evidence`.
+
+As of 2026-07-26, the app-owned `TranscriptViewport` supersedes the
+`EventStream`/Ink `<Static>` ownership model. The header is now frozen once per
+`sessionId:clearGeneration` document epoch, and deterministic plus real-PTY
+first-screen checks cover the replacement path. Keep this record as historical
+evidence; future duplication should be classified against document-epoch reset
+or viewport mounting, not `<Static>`.
 
 ## Fix
 

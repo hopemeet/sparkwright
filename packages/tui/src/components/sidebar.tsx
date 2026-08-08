@@ -2,6 +2,7 @@ import React from "react";
 import { Box, Text } from "ink";
 import type { ModifiedFile, UsageSummary } from "../state/event-store.js";
 import { useTheme } from "../lib/theme-context.js";
+import { formatUsageNumber, sessionUsageTotal } from "../lib/usage-display.js";
 
 /**
  * Right-rail sidebar. Shows the modified-files list and a usage summary; a
@@ -101,29 +102,20 @@ export function UsageSummaryLine(props: {
 }): React.ReactElement | null {
   const u = props.usage;
   if (!u) return null;
-  const total = u.totalTokens ?? (u.inputTokens ?? 0) + (u.outputTokens ?? 0);
+  const total = sessionUsageTotal(u);
   if (!total) return null;
   return (
     <Box paddingX={1}>
-      <Text dimColor>usage </Text>
+      <Text dimColor>usage{"  "}</Text>
       {u.contextTokens ? (
         <>
-          <Text dimColor>ctx </Text>
-          <Text>{formatNumber(u.contextTokens)}</Text>
+          <Text dimColor>context </Text>
+          <Text>{formatUsageNumber(u.contextTokens)}</Text>
         </>
       ) : null}
-      {u.inputTokens || u.outputTokens ? (
-        <>
-          {u.contextTokens ? <Text dimColor> · </Text> : null}
-          <Text dimColor>in </Text>
-          <Text>{formatNumber(u.inputTokens ?? 0)}</Text>
-          {u.cachedTokens ? (
-            <Text dimColor> ({formatNumber(u.cachedTokens)} cached)</Text>
-          ) : null}
-          <Text dimColor> / out </Text>
-          <Text>{formatNumber(u.outputTokens ?? 0)}</Text>
-        </>
-      ) : null}
+      {u.contextTokens ? <Text dimColor> · </Text> : null}
+      <Text dimColor>session </Text>
+      <Text>{formatUsageNumber(total)}</Text>
       {u.modelCalls || u.toolCalls ? (
         <>
           <Text dimColor> · calls </Text>
@@ -133,18 +125,6 @@ export function UsageSummaryLine(props: {
           <Text dimColor> tool</Text>
         </>
       ) : null}
-      {typeof u.estimatedCostUsd === "number" && u.estimatedCostUsd > 0 ? (
-        <>
-          <Text dimColor> · cost </Text>
-          <Text>${u.estimatedCostUsd.toFixed(4)}</Text>
-        </>
-      ) : null}
     </Box>
   );
-}
-
-function formatNumber(n: number): string {
-  if (n < 1000) return String(n);
-  if (n < 1_000_000) return (n / 1000).toFixed(1) + "k";
-  return (n / 1_000_000).toFixed(2) + "M";
 }

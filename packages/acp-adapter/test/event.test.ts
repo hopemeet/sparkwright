@@ -6,7 +6,7 @@ import {
 } from "../src/event.js";
 
 describe("ACP event mapping", () => {
-  it("maps final model output to an ACP agent message chunk", () => {
+  it("maps canonical run completion text to an ACP agent message chunk", () => {
     const event: HostEvent = {
       envelope: "event",
       id: "evt_1",
@@ -16,7 +16,7 @@ describe("ACP event mapping", () => {
         runId: "run_1",
         event: {
           id: "core_1",
-          type: "model.completed",
+          type: "run.completed",
           payload: { message: "done" },
         },
       },
@@ -31,7 +31,7 @@ describe("ACP event mapping", () => {
     ]);
   });
 
-  it("uses model.completed as a non-streaming fallback only once per routed run", async () => {
+  it("uses run.completed as a non-streaming fallback only once per routed run", async () => {
     const updates: unknown[] = [];
     const session = fakeSession([]);
     const connection = {
@@ -59,7 +59,7 @@ describe("ACP event mapping", () => {
       event: runEvent({
         id: "completed_1",
         runId: "run_1",
-        type: "model.completed",
+        type: "run.completed",
         payload: { message: "done" },
       }),
     });
@@ -104,7 +104,7 @@ describe("ACP event mapping", () => {
       event: runEvent({
         id: "completed_2",
         runId: "run_1",
-        type: "model.completed",
+        type: "run.completed",
         payload: { messageId: "msg_2", message: "second" },
       }),
     });
@@ -180,6 +180,29 @@ describe("ACP event mapping", () => {
           payload: { id: "artifact_1", type: "log" },
         }),
       ),
+    ).toEqual([]);
+    expect(
+      hostEventToSessionUpdates({
+        envelope: "event",
+        id: "evt_task",
+        kind: "task.updated",
+        timestamp: "2026-01-01T00:00:00.000Z",
+        payload: {
+          taskId: "task_1",
+          parentRunId: "run_1",
+          sessionId: "session_1",
+          transition: "terminal",
+          kind: "agent",
+          title: "Detached task",
+          completionPolicy: "detached",
+          awaited: false,
+          status: "completed",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          completedAt: "2026-01-01T00:00:01.000Z",
+          resultSummary: "completed safely",
+          outputRef: { method: "task.output", taskId: "task_1" },
+        },
+      }),
     ).toEqual([]);
   });
 
@@ -317,6 +340,8 @@ function approvalEvent(): Extract<HostEvent, { kind: "approval.requested" }> {
       approvalId: "approval_1",
       action: "workspace.write",
       summary: "Write README.md",
+      subject: { kind: "one_shot", label: "Write README.md once" },
+      principal: { kind: "main", principalScope: "session:test" },
       details: { path: "README.md" },
     },
   };
