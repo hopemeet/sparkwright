@@ -2,9 +2,17 @@ import { createPlanId, type PlanId, type PlanStepId } from "./ids.js";
 import type { ToolRisk } from "./tools.js";
 
 export type PlanStepStatus =
-  "pending" | "ready" | "blocked" | "skipped" | "completed" | "failed";
+  | "pending"
+  | "ready"
+  | "blocked"
+  | "skipped"
+  | "completed"
+  | "failed";
 export type PlanDecisionStatus =
-  "accepted" | "rejected" | "needs_approval" | "deferred";
+  | "accepted"
+  | "rejected"
+  | "needs_approval"
+  | "deferred";
 
 export interface Plan {
   id: PlanId;

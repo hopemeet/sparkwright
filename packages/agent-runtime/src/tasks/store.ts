@@ -248,7 +248,8 @@ export class InMemoryTaskStore implements TaskStore {
         let nextIndex = fromSequence;
         const pending: Array<TaskOutputChunk> = [];
         let resolveNext:
-          ((value: IteratorResult<TaskOutputChunk>) => void) | undefined;
+          | ((value: IteratorResult<TaskOutputChunk>) => void)
+          | undefined;
         let closed = false;
 
         const subscriber = (chunk: TaskOutputChunk) => {

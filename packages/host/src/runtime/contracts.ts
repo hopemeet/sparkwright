@@ -73,7 +73,8 @@ export type HostResumeRunOutcome =
   | { ok: false; error: ProtocolError };
 
 export type HostRunControlOutcome =
-  { ok: true } | { ok: false; error: ProtocolError };
+  | { ok: true }
+  | { ok: false; error: ProtocolError };
 
 export interface HostExecutionIdentity {
   executionId: string;

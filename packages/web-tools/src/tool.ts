@@ -39,6 +39,10 @@ export interface WebFetchOutput {
   totalChars: number;
   truncated: boolean;
   redirectCount: number;
+  /**
+   * @reserved Model-visible trust marker consumed from the serialized tool
+   * result rather than by an in-process TypeScript reader.
+   */
   trust: "external_untrusted";
 }
 

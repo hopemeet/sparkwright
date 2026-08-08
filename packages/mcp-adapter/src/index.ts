@@ -280,7 +280,8 @@ export interface McpSandboxSummary {
 }
 
 export type McpContextDescriptor =
-  McpResourceContextDescriptor | McpPromptContextDescriptor;
+  | McpResourceContextDescriptor
+  | McpPromptContextDescriptor;
 
 export interface McpResourceContextDescriptor {
   kind?: "resource";

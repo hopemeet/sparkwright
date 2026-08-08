@@ -4,7 +4,11 @@ export type Schedule =
   | { kind: "cron"; expr: string };
 
 export type JobState =
-  "scheduled" | "paused" | "running" | "completed" | "error";
+  | "scheduled"
+  | "paused"
+  | "running"
+  | "completed"
+  | "error";
 
 export type JobStatus = "ok" | "error";
 

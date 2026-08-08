@@ -610,10 +610,17 @@ export interface SessionCompactRequestPayload {
 }
 
 export type TaskStatus =
-  "pending" | "running" | "completed" | "failed" | "cancelled";
+  | "pending"
+  | "running"
+  | "completed"
+  | "failed"
+  | "cancelled";
 
 export type TaskCompletionPolicy =
-  "inline" | "awaited" | "detached" | "unknown";
+  | "inline"
+  | "awaited"
+  | "detached"
+  | "unknown";
 
 export const TASK_STATUSES = [
   "pending",
@@ -1089,10 +1096,15 @@ export interface CapabilityAutomationSummary {
 }
 
 export type CapabilityWorkflowRuleSource =
-  "config" | "verification" | "builtin";
+  | "config"
+  | "verification"
+  | "builtin";
 
 export type CapabilityWorkflowRuleStatus =
-  "active" | "available" | "inactive" | "disabled";
+  | "active"
+  | "available"
+  | "inactive"
+  | "disabled";
 
 export interface CapabilityWorkflowRuleSummary {
   name: string;
@@ -1274,7 +1286,12 @@ export type ApprovalSubjectPayload =
   | {
       kind: "workspace_file";
       operation:
-        "create" | "replace" | "edit" | "remove" | "legacy_write" | "write";
+        | "create"
+        | "replace"
+        | "edit"
+        | "remove"
+        | "legacy_write"
+        | "write";
       path: string;
       key: string;
       label: string;

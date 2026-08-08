@@ -1304,7 +1304,12 @@ export type TraceTimelinePhaseCategory =
   | "other";
 
 export type TraceTimelinePhaseStatus =
-  "pending" | "completed" | "failed" | "denied" | "cancelled" | "instant";
+  | "pending"
+  | "completed"
+  | "failed"
+  | "denied"
+  | "cancelled"
+  | "instant";
 
 export interface TraceTimelinePhase {
   /** @reserved Public timeline field consumed by trace viewers. */

@@ -9,7 +9,9 @@ import { LocalProcessEnvironment } from "@sparkwright/core";
 import { createShellTool } from "@sparkwright/shell-tool";
 
 const tool = createShellTool({
-  environment: new LocalProcessEnvironment({/* policy + executor */}),
+  environment: new LocalProcessEnvironment({
+    /* policy + executor */
+  }),
 });
 ```
 

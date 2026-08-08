@@ -17,7 +17,9 @@ is the translation layer — it never mutates the event stream, only subscribes.
 import { createRun } from "@sparkwright/core";
 import { attachPerfettoSink } from "@sparkwright/trace-perfetto";
 
-const run = createRun({/* … */});
+const run = createRun({
+  /* … */
+});
 
 const sink = attachPerfettoSink({
   source: run.events, // anything exposing subscribe((event) => void)

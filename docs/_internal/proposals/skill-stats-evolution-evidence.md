@@ -130,7 +130,9 @@ The relation should be explicit in findings:
 
 ```ts
 type SkillFindingRelation =
-  "associated" | "suspected_regression" | "confirmed_by_review";
+  | "associated"
+  | "suspected_regression"
+  | "confirmed_by_review";
 ```
 
 Most automatic findings start as `associated`. A finding may become
@@ -183,7 +185,9 @@ Suggested identity confidence:
 
 ```ts
 type SkillIdentityConfidence =
-  "package_hash" | "legacy_content_hash" | "name_only_unknown";
+  | "package_hash"
+  | "legacy_content_hash"
+  | "name_only_unknown";
 ```
 
 Rules:

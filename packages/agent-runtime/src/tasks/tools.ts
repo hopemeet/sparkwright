@@ -379,7 +379,9 @@ export type TaskCreateMode = "foreground" | "awaited" | "background";
 export type TaskActualMode = "inline" | "awaited" | "detached";
 
 export type TaskCompletionObservation =
-  "returned_inline" | "automatic_once" | "opportunistic_if_parent_active";
+  | "returned_inline"
+  | "automatic_once"
+  | "opportunistic_if_parent_active";
 
 export interface TaskAsyncReceipt {
   actualMode: Exclude<TaskActualMode, "inline">;

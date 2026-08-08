@@ -5,7 +5,12 @@ import type { FormattedEvent } from "./format-event.js";
 const MAX_SEARCH_PAYLOAD_CHARS = 2000;
 
 export type EventDetailFilter =
-  "all" | "errors" | "approvals" | "tools" | "writes" | "model";
+  | "all"
+  | "errors"
+  | "approvals"
+  | "tools"
+  | "writes"
+  | "model";
 
 export function eventMatchesFilter(
   event: RunEvent,

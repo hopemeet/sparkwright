@@ -82,7 +82,8 @@ describe("RunController session approvals", () => {
       store,
     });
     let listener:
-      ((event: ReturnType<typeof approvalEvent>) => void) | undefined;
+      | ((event: ReturnType<typeof approvalEvent>) => void)
+      | undefined;
     const resolveApproval = vi.fn().mockResolvedValue({});
     const client = {
       on: vi.fn(
@@ -201,7 +202,8 @@ describe("RunController session approvals", () => {
       store,
     });
     let listener:
-      ((event: ReturnType<typeof approvalEvent>) => void) | undefined;
+      | ((event: ReturnType<typeof approvalEvent>) => void)
+      | undefined;
     let rejectAutoApproval!: (error: Error) => void;
     const autoApproval = new Promise<never>((_resolve, reject) => {
       rejectAutoApproval = reject;

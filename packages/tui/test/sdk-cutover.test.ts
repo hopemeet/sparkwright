@@ -981,7 +981,8 @@ describe("TUI ↔ host via sdk-node", () => {
       expect(
         snap.events.some((event) => {
           const payload = event.payload as
-            { toolName?: string; error?: { code?: string } } | undefined;
+            | { toolName?: string; error?: { code?: string } }
+            | undefined;
           return (
             event.type === "tool.failed" &&
             payload?.toolName === "bash" &&
@@ -1080,7 +1081,8 @@ describe("TUI ↔ host via sdk-node", () => {
       expect(
         snap.events.some((event) => {
           const payload = event.payload as
-            { decision?: string; autoApproved?: boolean } | undefined;
+            | { decision?: string; autoApproved?: boolean }
+            | undefined;
           return (
             event.type === "approval.resolved" &&
             payload?.decision === "approved" &&

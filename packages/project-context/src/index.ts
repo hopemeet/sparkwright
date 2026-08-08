@@ -26,7 +26,10 @@ import {
 } from "@sparkwright/core/internal";
 
 export type ProjectInstructionFormat =
-  "sparkwright" | "agents" | "claude" | "cursor";
+  | "sparkwright"
+  | "agents"
+  | "claude"
+  | "cursor";
 
 export interface ProjectInstructionFile {
   path: string;
@@ -580,8 +583,9 @@ async function findCursorRules(dir: string): Promise<ProjectInstructionFile[]> {
     .sort((left, right) => left.localeCompare(right))
     .map((entry) => join(rulesDir, entry));
   const readable = await Promise.all(
-    files.map(async (path): Promise<ProjectInstructionFile | null> =>
-      (await isReadableFile(path)) ? { path, format: "cursor" } : null,
+    files.map(
+      async (path): Promise<ProjectInstructionFile | null> =>
+        (await isReadableFile(path)) ? { path, format: "cursor" } : null,
     ),
   );
   return readable.filter(

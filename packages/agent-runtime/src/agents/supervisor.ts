@@ -6,7 +6,10 @@ import {
 } from "./invocation.js";
 
 export type AgentSupervisorState =
-  "admission_pending" | "admitted" | "running" | "terminal";
+  | "admission_pending"
+  | "admitted"
+  | "running"
+  | "terminal";
 
 export interface AgentSupervisor {
   readonly invocation: PreparedAgentInvocation;

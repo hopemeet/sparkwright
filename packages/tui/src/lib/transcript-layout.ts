@@ -32,7 +32,13 @@ export interface PhysicalTranscriptRow extends LogicalTranscriptRow {
 }
 
 export type TranscriptSpanColor =
-  "accent" | "accent2" | "success" | "warning" | "error" | "info" | "muted";
+  | "accent"
+  | "accent2"
+  | "success"
+  | "warning"
+  | "error"
+  | "info"
+  | "muted";
 
 export interface StyledTranscriptSpan {
   text: string;
@@ -234,19 +240,21 @@ function expandSourceRow(
       ...parsed.lines
         .filter((line) => line.kind !== "header" && line.kind !== "meta")
         .slice(0, 120)
-        .map((line, index): LogicalTranscriptRow => ({
-          key: `${source.key}:diff:${index}`,
-          blockKey,
-          text: line.text,
-          tone:
-            line.kind === "add"
-              ? "success"
-              : line.kind === "del"
-                ? "error"
-                : line.kind === "hunk"
-                  ? "muted"
-                  : source.tone,
-        })),
+        .map(
+          (line, index): LogicalTranscriptRow => ({
+            key: `${source.key}:diff:${index}`,
+            blockKey,
+            text: line.text,
+            tone:
+              line.kind === "add"
+                ? "success"
+                : line.kind === "del"
+                  ? "error"
+                  : line.kind === "hunk"
+                    ? "muted"
+                    : source.tone,
+          }),
+        ),
     ];
   }
   return sanitizeAnsiForRender(source.text)

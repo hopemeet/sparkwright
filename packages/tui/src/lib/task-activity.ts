@@ -8,7 +8,11 @@ import { sanitizeAnsiForRender } from "./text.js";
 
 export type ActivityTab = "tasks" | "events" | "trace" | "run";
 export type TaskActivityStatus =
-  "created" | "running" | "completed" | "failed" | "cancelled";
+  | "created"
+  | "running"
+  | "completed"
+  | "failed"
+  | "cancelled";
 
 export interface TaskActivityItem {
   id: string;

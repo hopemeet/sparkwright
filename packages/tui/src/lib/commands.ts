@@ -20,7 +20,12 @@ export interface Command {
   description: string;
   /** Category label used by help and command suggestions. */
   category:
-    "session" | "workflow" | "config" | "view" | "system" | "capability";
+    | "session"
+    | "workflow"
+    | "config"
+    | "view"
+    | "system"
+    | "capability";
   /** Optional aliases for the slash input. */
   aliases?: string[];
   /** Keyboard hint shown alongside command help. */

@@ -936,7 +936,7 @@ function assistantBlock(
     indent: 0,
     summary: "assistant",
     tone: "success",
-    sections: [{ label: "message", lines: splitText(message) }],
+    sections: [{ label: "message", lines: splitMarkdownText(message) }],
   };
 }
 
@@ -1378,6 +1378,13 @@ function splitText(value: string): string[] {
     .split(/\r?\n/)
     .map((line) => line.trimEnd())
     .filter((line) => line.length > 0);
+}
+
+/** Assistant prose is Markdown, where blank lines delimit paragraphs, lists,
+ * and other block constructs. Keep those separators through presentation so
+ * TranscriptDocument can reconstruct the committed message losslessly. */
+function splitMarkdownText(value: string): string[] {
+  return value.split(/\r?\n/).map((line) => line.trimEnd());
 }
 
 function unique(values: readonly string[]): string[] {

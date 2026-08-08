@@ -1177,7 +1177,8 @@ describe("SparkwrightRun", () => {
       .all()
       .find((event) => event.type === "skill.failed");
     const toolPayload = toolFailed?.payload as
-      { toolCallId?: string } | undefined;
+      | { toolCallId?: string }
+      | undefined;
     expect(toolPayload?.toolCallId).toEqual(expect.any(String));
     expect(skillFailed?.payload).toMatchObject({
       toolCallId: toolPayload?.toolCallId,
@@ -3953,11 +3954,14 @@ describe("SparkwrightRun", () => {
       | undefined;
     const serializedFailureEvent = JSON.stringify(failed);
     const topCause = payload?.metadata?.cause as
-      Record<string, unknown> | undefined;
+      | Record<string, unknown>
+      | undefined;
     const failureCause = payload?.failure?.metadata?.cause as
-      Record<string, unknown> | undefined;
+      | Record<string, unknown>
+      | undefined;
     const resultCause = result.metadata?.cause as
-      Record<string, unknown> | undefined;
+      | Record<string, unknown>
+      | undefined;
 
     expect(topCause).toMatchObject({
       name: "Error",
@@ -5837,7 +5841,8 @@ describe("SparkwrightRun", () => {
       shouldRun(input: { hints: { usage?: unknown } }) {
         seenUsage.push(
           input.hints.usage as
-            import("../src/context.js").ContextUsageHint | undefined,
+            | import("../src/context.js").ContextUsageHint
+            | undefined,
         );
         return false; // observe only; never mutate context
       },

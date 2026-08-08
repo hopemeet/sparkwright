@@ -186,7 +186,9 @@ export interface AgentProfileRoutingCondition {
 }
 
 export type AgentProfileWorkflowHookOutputInjection =
-  "always" | "onFailure" | "never";
+  | "always"
+  | "onFailure"
+  | "never";
 
 export type AgentProfileWorkflowHookAction =
   | {
@@ -1005,7 +1007,8 @@ export function extractAgentPartialObservations(
   for (const event of events) {
     if (event.type !== "tool.requested") continue;
     const payload = event.payload as
-      { id?: unknown; toolName?: unknown } | undefined;
+      | { id?: unknown; toolName?: unknown }
+      | undefined;
     if (
       typeof payload?.id === "string" &&
       typeof payload.toolName === "string"
@@ -1018,7 +1021,8 @@ export function extractAgentPartialObservations(
   for (const event of events) {
     if (event.type !== "tool.completed") continue;
     const payload = event.payload as
-      { toolCallId?: unknown; output?: unknown } | undefined;
+      | { toolCallId?: unknown; output?: unknown }
+      | undefined;
     if (payload?.output === undefined) continue;
     const toolName =
       (typeof payload.toolCallId === "string"
@@ -1046,7 +1050,12 @@ export function extractAgentPartialObservations(
 }
 
 export type SubAgentTerminalState =
-  "completed" | "failed" | "cancelled" | "blocked" | "step_limit" | "truncated";
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "blocked"
+  | "step_limit"
+  | "truncated";
 
 /**
  * Spawn a child run under `parent`. Does NOT call `child.start()` — the

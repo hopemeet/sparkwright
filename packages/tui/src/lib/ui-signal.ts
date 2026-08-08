@@ -21,12 +21,20 @@ export type UiSignalScope =
   | "Config";
 
 export type UiSignalPersistence =
-  "transient" | "until-seen" | "until-resolved" | "timeline";
+  | "transient"
+  | "until-seen"
+  | "until-resolved"
+  | "timeline";
 
 export type UiSignalAttention = "none" | "blurred";
 
 export type UiSignalPresentation =
-  "toast" | "inline" | "status" | "action" | "timeline" | "history";
+  | "toast"
+  | "inline"
+  | "status"
+  | "action"
+  | "timeline"
+  | "history";
 
 export interface UiSignalAction {
   id: string;

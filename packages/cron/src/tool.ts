@@ -144,7 +144,13 @@ const updatePatchSchema = {
 };
 
 type CronToolAction =
-  "create" | "list" | "update" | "pause" | "resume" | "status" | "remove";
+  | "create"
+  | "list"
+  | "update"
+  | "pause"
+  | "resume"
+  | "status"
+  | "remove";
 
 function parseCronToolInput(args: unknown): {
   action: CronToolAction;

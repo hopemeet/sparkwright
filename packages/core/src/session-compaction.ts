@@ -103,7 +103,10 @@ export interface SessionSummarizer {
 }
 
 export type SessionCompactionRegime =
-  "no_savings" | "redundancy_bound" | "density_bound" | "mixed";
+  | "no_savings"
+  | "redundancy_bound"
+  | "density_bound"
+  | "mixed";
 
 export interface SessionCompactionSummarizerMeasurement {
   applied: boolean;
@@ -215,7 +218,8 @@ export interface SessionCompactionSkippedResult extends SessionCompactionResultB
 }
 
 export type SessionCompactionResult =
-  SessionCompactionAppliedResult | SessionCompactionSkippedResult;
+  | SessionCompactionAppliedResult
+  | SessionCompactionSkippedResult;
 
 export function sessionTurnToContextItems(
   turn: SessionCompactionTurn,

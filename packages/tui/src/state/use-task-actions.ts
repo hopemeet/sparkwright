@@ -221,10 +221,12 @@ export function useTaskActions(deps: {
       const outputEntries = await Promise.all(
         records
           .slice(0, 12)
-          .map(async (record): Promise<[string, TaskOutputChunkSnapshot[]]> => [
-            record.id,
-            await controller.readTaskOutput(record.id, 200),
-          ]),
+          .map(
+            async (record): Promise<[string, TaskOutputChunkSnapshot[]]> => [
+              record.id,
+              await controller.readTaskOutput(record.id, 200),
+            ],
+          ),
       );
       const outputs: Record<string, TaskOutputChunkSnapshot[]> =
         Object.fromEntries(outputEntries);

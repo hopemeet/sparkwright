@@ -44,6 +44,46 @@ describe("TranscriptDocument", () => {
     expect(Object.isFrozen(block.details)).toBe(true);
   });
 
+  it("preserves assistant Markdown blank lines between paragraphs and lists", () => {
+    const message = [
+      "以下是核心能力：",
+      "",
+      "**1. 文件系统**",
+      "* **读取：** 查看文件。",
+      "* **编辑：** 修改文件。",
+      "",
+      "**2. 代码执行**",
+      "* **运行：** 执行测试。",
+      "",
+      "最后一段。",
+    ].join("\n");
+    const result = document([event("run.completed", 1, { message })]);
+    const assistant = result.blocks.find((block) => block.kind === "assistant");
+
+    expect(assistant?.summary[1]?.text).toBe(message);
+    expect(
+      projectTranscriptRows(result, "compact").map((row) => row.text),
+    ).toEqual([
+      "SparkWright · type a goal · /capabilities · /help",
+      "cwd /repo",
+      "model deterministic · session session",
+      "",
+      "assistant",
+      "以下是核心能力：",
+      "",
+      "1. 文件系统",
+      "",
+      "• 读取： 查看文件。",
+      "• 编辑： 修改文件。",
+      "",
+      "2. 代码执行",
+      "",
+      "• 运行： 执行测试。",
+      "",
+      "最后一段。",
+    ]);
+  });
+
   it("uses one stable Agent block for compact summary and details", () => {
     const result = document([
       event("tui.user", 0, { goal: "实现打印脚本" }),

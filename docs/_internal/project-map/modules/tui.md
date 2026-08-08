@@ -11,6 +11,18 @@ See also [../maps/trace/export-diagnostics.md](../maps/trace/export-diagnostics.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-08-07
+- Scope: committed assistant Markdown now retains blank separator lines while
+  crossing the presentation-to-document boundary, so paragraphs, emphasized
+  section labels, and lists cannot merge after the live stream hands off to
+  transcript history. Tool/result section compaction remains unchanged.
+- Read: retained `session_tui_msj3dedp` trace/transcript, assistant presentation,
+  TranscriptDocument assembly, Markdown parsing/layout, and viewport rendering.
+- Tests: focused Markdown/document/layout 53/53, full TUI 540/540, TUI
+  typecheck/build, session check with 0 findings, and a 100x50 PTY replay of the
+  retained Chinese response passed.
+
+- Status: Verified
 - Date: 2026-08-02
 - Scope: removed Skill proposal/review/learning commands, layers, dialogs,
   completion handoffs, automatic learning, and draft counts. `/skills` remains
@@ -762,6 +774,10 @@ Does not own:
   bounded task/action/result sections. Grouping uses child run, explicit Agent
   call/invocation/tool-call, tool-call, and event ids only; absent ids produce
   independent blocks instead of name/adjacency guesses.
+- Committed assistant sections retain blank lines until the shared Markdown
+  layout parses them. Those lines delimit paragraphs, lists, and other block
+  constructs; tool/result sections continue to remove blank rows for compact
+  presentation.
 - `details.toggle` (Ctrl+T by default) changes `TranscriptViewportState.mode`;
   the legacy `todo.toggle` config name is accepted only as an input alias.
   The state stores a semantic logical-row/source-offset anchor, tail-follow
