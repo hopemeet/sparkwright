@@ -12,6 +12,7 @@ import {
   createRunInputPayloadFromParts,
   imageMediaTypeForPath,
   recordHostClientStartFailure,
+  resolveHostClientApprovalByPolicy,
   resolveHostStdioSpawn,
   runInputMetadataRecord,
 } from "@sparkwright/host";
@@ -36,24 +37,22 @@ import {
   FileWorkflowControlInbox,
   type WorkflowRunId,
 } from "@sparkwright/agent-runtime";
-import type { EventStore } from "./event-store.js";
+import type { EventStore, PendingApproval } from "./event-store.js";
 import type { SessionDiagnostics } from "../lib/sessions.js";
 import { loadSessionEvents } from "../lib/session-events.js";
-import { collectChildRunIds } from "../lib/transcript-presentation.js";
 import { renderTranscript, type TranscriptHeader } from "../lib/transcript.js";
 import type { RunEvent } from "../lib/event-type.js";
-import type { TuiPermissionMode } from "../lib/permission.js";
-import { type ApprovalChoice } from "../lib/session-approval.js";
 import {
-  ApprovalCoordinator,
-  type ApprovalExecutionContext,
-  type ApprovalExecutionOrigin,
-} from "./approval-coordinator.js";
+  toCoreRunFields,
+  type CoreRunPermissionFields,
+  type TuiPermissionMode,
+} from "../lib/permission.js";
 import {
-  presentationPolicy,
-  type UiSignalScope,
-  type UiSignalSink,
-} from "../lib/ui-signal.js";
+  approvalSubject,
+  sessionApprovalRule,
+  type ApprovalChoice,
+  type SessionApprovalRule,
+} from "../lib/session-approval.js";
 
 export interface RunControllerOptions {
   workspaceRoot: string;
@@ -67,8 +66,6 @@ export interface RunControllerOptions {
   store: EventStore;
   /** If provided, runs accumulate into this session id. */
   initialSessionId?: string;
-  /** Presentation-only signal sink; runtime/session truth remains Host-owned. */
-  signals?: UiSignalSink;
 }
 
 export interface WorkflowJobExecutionContext {
@@ -85,8 +82,25 @@ export interface WorkflowJobHandle extends WorkflowJobExecutionContext {
   close: () => void;
 }
 
-export type HostTaskUpdatedEvent = Extract<HostEvent, { kind: "task.updated" }>;
-export type TaskHostConnectionState = "connected" | "disconnected";
+type ExecutionKind = "main" | "workflow";
+
+interface ExecutionOrigin {
+  client: Client;
+  sessionId: string;
+  accessMode: RunAccessMode;
+  kind: ExecutionKind;
+  workflowRunId?: string;
+}
+
+interface ExecutionContext extends ExecutionOrigin {
+  /** The exact episode/run that emitted the event. */
+  runId: string;
+}
+
+interface PendingApprovalContext {
+  execution: ExecutionContext;
+  pending: PendingApproval;
+}
 
 /**
  * Drives runs against a Sparkwright host. The host is launched lazily on
@@ -108,23 +122,24 @@ export class RunController {
   private clientPromise: Promise<Client> | null = null;
   private activeRunId: string | null = null;
   private startingMainRun = false;
-  private approvalCoordinator: ApprovalCoordinator;
+  private executionOrigins = new Map<Client, ExecutionOrigin>();
   // Set once a cancel has been dispatched for the active run so a second Esc /
   // Ctrl+C (or both the InputBox and global-hotkey paths firing) doesn't send a
   // duplicate cancelRun. Reset when the next run starts.
   private cancelRequested = false;
+  private sessionApprovalRules = new Map<
+    string,
+    Map<string, SessionApprovalRule>
+  >();
+  private activeApproval: PendingApprovalContext | null = null;
+  private approvalQueue: PendingApprovalContext[] = [];
+  private resolvingApproval = false;
   private currentSessionEvents: unknown[] = [];
   // The most recent user goal submitted via start(), kept so /retry can re-run
   // it. Workflow continuation episodes are driven by the host/replay path, not
   // start(), so no filtering is needed.
   private lastGoal: string | null = null;
   private pendingInputParts: RunInputPart[] = [];
-  private taskUpdateListeners = new Set<
-    (event: HostTaskUpdatedEvent) => void
-  >();
-  private taskConnectionListeners = new Set<
-    (state: TaskHostConnectionState) => void
-  >();
 
   constructor(opts: RunControllerOptions) {
     this.opts = opts;
@@ -135,12 +150,6 @@ export class RunController {
       ? validateSessionId(opts.initialSessionId)
       : `session_tui_${Date.now().toString(36)}`;
     this.store.setSessionId(this.sessionId);
-    this.approvalCoordinator = new ApprovalCoordinator({
-      workspaceRoot: opts.workspaceRoot,
-      setView: (view) => this.store.setPendingApproval(view),
-      appendAudit: (message) => this.store.appendNotice(message),
-      signals: opts.signals,
-    });
   }
 
   getSessionId(): string {
@@ -149,20 +158,6 @@ export class RunController {
 
   getSessionRootDir(): string {
     return this.sessionRootDir();
-  }
-
-  subscribeTaskUpdates(
-    listener: (event: HostTaskUpdatedEvent) => void,
-  ): () => void {
-    this.taskUpdateListeners.add(listener);
-    return () => this.taskUpdateListeners.delete(listener);
-  }
-
-  subscribeTaskHostConnection(
-    listener: (state: TaskHostConnectionState) => void,
-  ): () => void {
-    this.taskConnectionListeners.add(listener);
-    return () => this.taskConnectionListeners.delete(listener);
   }
 
   newSession(): string | null {
@@ -190,8 +185,9 @@ export class RunController {
    * on-disk event log. `setSession` alone only swaps the id and wipes the
    * store, which left the screen blank — switching felt like a no-op because
    * the past session's history was never loaded. We read the persisted
-   * `trace.jsonl`, drop live-only streaming events, and replay committed
-   * assistant text from `model.assistant_text` / `run.completed.message`.
+   * `trace.jsonl`, drop the live-only streaming events (the committed
+   * `model.completed` card already carries the final text), and replay the
+   * rest so the conversation reappears.
    */
   async switchSession(id: string): Promise<boolean> {
     if (!this.allowSessionMutation("switch sessions")) return false;
@@ -217,8 +213,12 @@ export class RunController {
    * `model.stream.*` events so the live-preview accumulator stays empty.
    */
   private replayEvents(events: RunEvent[]): void {
+    const STREAM_ONLY = new Set([
+      "model.stream.started",
+      "model.stream.chunk",
+      "model.stream.completed",
+    ]);
     const injectedForRun = new Set<string>();
-    const childRunIds = collectChildRunIds(events);
     for (const ev of events) {
       const payload = (ev.payload ?? {}) as { goal?: unknown };
       const runId = (ev as { runId?: unknown }).runId;
@@ -227,22 +227,12 @@ export class RunController {
         (ev.type === "run.created" || ev.type === "run.started") &&
         typeof payload.goal === "string" &&
         payload.goal.trim() &&
-        !childRunIds.has(runKey) &&
         !injectedForRun.has(runKey)
       ) {
         this.store.appendUserMessage(payload.goal);
         injectedForRun.add(runKey);
       }
-      // Streaming events are ephemeral preview machinery. Replaying any
-      // current or future model.stream.* variant would either rebuild stale
-      // preview state or leak its raw event name into committed scrollback.
-      if (ev.type.startsWith("model.stream.")) continue;
-      // In-process child usage is rolled into the parent UsageTracker live.
-      // The aggregate session trace also retains the child's own snapshots;
-      // folding both would double-count the child on replay.
-      if (ev.type === "usage.updated" && runKey && childRunIds.has(runKey)) {
-        continue;
-      }
+      if (STREAM_ONLY.has(ev.type)) continue;
       this.store.appendEvent(
         ev as unknown as Parameters<typeof this.store.appendEvent>[0],
       );
@@ -353,7 +343,7 @@ export class RunController {
     } catch (err) {
       const message = formatError(err);
       await this.recordHostStartFailure(goal, message);
-      this.store.setConnectionFailure(message);
+      this.store.setError(message);
       this.startingMainRun = false;
       return;
     }
@@ -361,7 +351,7 @@ export class RunController {
     try {
       const traceLevel = this.opts.traceLevel ?? "standard";
       const input = this.pendingRunInput();
-      this.approvalCoordinator.registerExecution({
+      this.executionOrigins.set(client, {
         client,
         sessionId: this.sessionId,
         accessMode: this.tuiPermissionMode(),
@@ -384,11 +374,10 @@ export class RunController {
       if (input) this.clearPendingAttachments();
     } catch (err) {
       const message = formatError(err);
-      const hostTerminalAlreadyArrived = this.hasTerminalRunEvent();
-      if (!hostTerminalAlreadyArrived) {
+      if (!this.hasTerminalRunEvent()) {
         await this.recordHostStartFailure(goal, message);
-        this.store.setRunFailure(message);
       }
+      this.store.setError(message);
       this.activeRunId = null;
       this.cleanupExecution(client);
     } finally {
@@ -400,26 +389,52 @@ export class RunController {
     if (!this.activeRunId || !this.client) return false;
     if (this.cancelRequested) return false;
     this.cancelRequested = true;
-    this.store.setStatusMessage("cancelling");
     void this.client
       .cancelRun({ runId: this.activeRunId, reason: "tui esc" })
-      .catch((err) => {
-        this.store.setStatusMessage(null);
-        this.reportFailure("ActionFailure", "cancel failed", err);
-      });
+      .catch((err) => this.store.setError(formatError(err)));
     return true;
   }
 
   async resolveApproval(choice: ApprovalChoice): Promise<void> {
-    await this.approvalCoordinator.resolve(choice);
+    const context = this.activeApproval;
+    if (!context || this.resolvingApproval) return;
+    this.resolvingApproval = true;
+    const rule =
+      choice === "allow-session"
+        ? sessionApprovalRule(context.pending.subject)
+        : undefined;
+    try {
+      await context.execution.client.resolveApproval({
+        approvalId: context.pending.id,
+        decision: choice === "deny" ? "denied" : "approved",
+        ...(rule
+          ? { message: "Approved and remembered for this session." }
+          : {}),
+      });
+      if (rule) {
+        this.rulesForSession(context.execution.sessionId).set(rule.key, rule);
+        this.store.appendNotice(`approval remembered: ${rule.label}`);
+      }
+      if (this.activeApproval === context) {
+        this.activeApproval = null;
+        this.store.setPendingApproval(null);
+        this.showNextApproval();
+      }
+    } catch (err) {
+      this.store.setError(formatError(err));
+    } finally {
+      this.resolvingApproval = false;
+    }
   }
 
-  listSessionApprovalRules() {
-    return this.approvalCoordinator.listRules(this.sessionId);
+  listSessionApprovalRules(): readonly SessionApprovalRule[] {
+    return [...(this.sessionApprovalRules.get(this.sessionId)?.values() ?? [])];
   }
 
   clearSessionApprovalRules(): number {
-    return this.approvalCoordinator.clearRules(this.sessionId);
+    const count = this.sessionApprovalRules.get(this.sessionId)?.size ?? 0;
+    this.sessionApprovalRules.delete(this.sessionId);
+    return count;
   }
 
   async listSessions(): Promise<
@@ -430,7 +445,7 @@ export class RunController {
       const result = await client.listSessions({ limit: 200 });
       return result.sessions;
     } catch (err) {
-      this.reportFailure("PanelLoadFailure", "session list failed", err);
+      this.store.setError(formatError(err));
       return [];
     }
   }
@@ -453,7 +468,7 @@ export class RunController {
       const client = await this.ensureClient();
       return await client.forkSession({ sourceSessionId, forkAtSequence });
     } catch (err) {
-      this.reportFailure("ActionFailure", "session fork failed", err);
+      this.store.setError(formatError(err));
       return null;
     }
   }
@@ -482,7 +497,7 @@ export class RunController {
       );
       return result;
     } catch (err) {
-      this.reportFailure("ActionFailure", "session compact failed", err);
+      this.store.setError(formatError(err));
       return null;
     }
   }
@@ -496,7 +511,7 @@ export class RunController {
       });
       return result as SessionDiagnostics;
     } catch (err) {
-      this.reportFailure("PanelLoadFailure", "session inspect failed", err);
+      this.store.setError(formatError(err));
       return null;
     }
   }
@@ -513,7 +528,7 @@ export class RunController {
         }),
       );
     } catch (err) {
-      this.reportFailure("PanelLoadFailure", "capability inspect failed", err);
+      this.store.setError(formatError(err));
       return null;
     }
   }
@@ -526,7 +541,7 @@ export class RunController {
       const result = await client.listTasks(payload);
       return result.tasks;
     } catch (err) {
-      this.reportFailure("PanelLoadFailure", "task list failed", err);
+      this.store.setError(formatError(err));
       return [];
     }
   }
@@ -539,7 +554,7 @@ export class RunController {
       const result = await client.listWorkflowRuns(payload);
       return result.workflows;
     } catch (err) {
-      this.reportFailure("PanelLoadFailure", "workflow list failed", err);
+      this.store.setError(formatError(err));
       return [];
     }
   }
@@ -548,20 +563,14 @@ export class RunController {
     workflowName: string;
     goal: string;
   }): Promise<WorkflowJobHandle | null> {
-    let client: Client;
-    try {
-      client = await createClient({
-        spawn: resolveHostStdioSpawn({
-          workspaceRoot: this.opts.workspaceRoot,
-          sessionRootDir: this.sessionRootDir(),
-          accessMode: this.tuiPermissionMode(),
-        }),
-        client: { name: "sparkwright-tui-workflow", version: "0.1.0" },
-      });
-    } catch (err) {
-      this.reportFailure("ActionFailure", "workflow start failed", err);
-      return null;
-    }
+    const client = await createClient({
+      spawn: resolveHostStdioSpawn({
+        workspaceRoot: this.opts.workspaceRoot,
+        sessionRootDir: this.sessionRootDir(),
+        accessMode: this.tuiPermissionMode(),
+      }),
+      client: { name: "sparkwright-tui-workflow", version: "0.1.0" },
+    });
     const controlSessionId = this.sessionId;
     const workflowSessionId = createWorkflowJobSessionId();
     this.wireWorkflowClientApprovals(client, {
@@ -600,7 +609,8 @@ export class RunController {
         runId: started.runId,
         workflowRunId: started.workflowRunId,
       });
-      this.approvalCoordinator.registerExecution(
+      this.executionOrigins.set(
+        client,
         Object.freeze({ ...execution, client }),
       );
       return {
@@ -615,7 +625,7 @@ export class RunController {
     } catch (err) {
       this.cleanupExecution(client);
       client.close();
-      this.reportFailure("ActionFailure", "workflow start failed", err);
+      this.store.setError(formatError(err));
       return null;
     }
   }
@@ -625,34 +635,25 @@ export class RunController {
   }): Promise<WorkflowJobHandle | null> {
     const authorization = input.workflow.authorizationSnapshot;
     if (!authorization) {
-      this.reportFailure(
-        "ValidationFailure",
-        "workflow resume unavailable",
+      this.store.setError(
         "workflow resume requires an authorization snapshot; older records must be resumed from the CLI with explicit options",
       );
       return null;
     }
+    const client = await createClient({
+      spawn: resolveHostStdioSpawn({
+        workspaceRoot: this.opts.workspaceRoot,
+        sessionRootDir: this.sessionRootDir(),
+        accessMode: authorization.accessMode,
+      }),
+      client: { name: "sparkwright-tui-workflow", version: "0.1.0" },
+    });
     const workflowSessionId = input.workflow.sessionId;
     if (!workflowSessionId) {
-      this.reportFailure(
-        "ValidationFailure",
-        "workflow resume unavailable",
+      client.close();
+      this.store.setError(
         `workflow ${input.workflow.id} cannot resume without its persisted job sessionId`,
       );
-      return null;
-    }
-    let client: Client;
-    try {
-      client = await createClient({
-        spawn: resolveHostStdioSpawn({
-          workspaceRoot: this.opts.workspaceRoot,
-          sessionRootDir: this.sessionRootDir(),
-          accessMode: authorization.accessMode,
-        }),
-        client: { name: "sparkwright-tui-workflow", version: "0.1.0" },
-      });
-    } catch (err) {
-      this.reportFailure("ActionFailure", "workflow resume failed", err);
       return null;
     }
     this.wireWorkflowClientApprovals(client, {
@@ -698,7 +699,8 @@ export class RunController {
         runId: started.runId,
         workflowRunId: input.workflow.id,
       });
-      this.approvalCoordinator.registerExecution(
+      this.executionOrigins.set(
+        client,
         Object.freeze({ ...execution, client }),
       );
       return {
@@ -713,12 +715,12 @@ export class RunController {
     } catch (err) {
       this.cleanupExecution(client);
       client.close();
-      this.reportFailure("ActionFailure", "workflow resume failed", err);
+      this.store.setError(formatError(err));
       return null;
     }
   }
 
-  async cancelWorkflow(workflow: WorkflowRunSnapshot): Promise<boolean | null> {
+  async cancelWorkflow(workflow: WorkflowRunSnapshot): Promise<boolean> {
     try {
       const rootDir = join(
         this.opts.workspaceRoot,
@@ -771,8 +773,8 @@ export class RunController {
       });
       return result.status === "applied" || result.status === "accepted";
     } catch (err) {
-      this.reportFailure("ActionFailure", "workflow stop failed", err);
-      return null;
+      this.store.setError(formatError(err));
+      return false;
     }
   }
 
@@ -785,41 +787,41 @@ export class RunController {
       const result = await client.outputTask({ taskId, maxChunks });
       return result.chunks;
     } catch (err) {
-      this.reportFailure("PanelLoadFailure", "task output failed", err);
+      this.store.setError(formatError(err));
       return [];
     }
   }
 
-  async stopTask(taskId: string): Promise<boolean | null> {
+  async stopTask(taskId: string): Promise<boolean> {
     try {
       const client = await this.ensureClient();
       const result = await client.stopTask({ taskId });
       return result.cancelled;
     } catch (err) {
-      this.reportFailure("ActionFailure", "task stop failed", err);
-      return null;
+      this.store.setError(formatError(err));
+      return false;
     }
   }
 
-  async joinTask(taskId: string): Promise<boolean | null> {
+  async joinTask(taskId: string): Promise<boolean> {
     try {
       const client = await this.ensureClient();
       const result = await client.joinTask({ taskId });
       return result.awaited;
     } catch (err) {
-      this.reportFailure("ActionFailure", "task join failed", err);
-      return null;
+      this.store.setError(formatError(err));
+      return false;
     }
   }
 
-  async promoteTask(taskId: string): Promise<boolean | null> {
+  async promoteTask(taskId: string): Promise<boolean> {
     try {
       const client = await this.ensureClient();
       const result = await client.promoteTask({ taskId });
       return result.promoted;
     } catch (err) {
-      this.reportFailure("ActionFailure", "task promote failed", err);
-      return null;
+      this.store.setError(formatError(err));
+      return false;
     }
   }
 
@@ -870,17 +872,11 @@ export class RunController {
     this.clientPromise = createClient({
       spawn,
       client: { name: "sparkwright-tui", version: "0.1.0" },
-    })
-      .then((c) => {
-        this.attachListeners(c);
-        this.client = c;
-        this.notifyTaskHostConnection("connected");
-        return c;
-      })
-      .catch((error) => {
-        this.clientPromise = null;
-        throw error;
-      });
+    }).then((c) => {
+      this.attachListeners(c);
+      this.client = c;
+      return c;
+    });
     return this.clientPromise;
   }
 
@@ -961,6 +957,10 @@ export class RunController {
     return this.opts.tuiPermissionMode ?? "ask";
   }
 
+  private coreRunFields(): CoreRunPermissionFields {
+    return toCoreRunFields(this.tuiPermissionMode());
+  }
+
   private allowSessionMutation(action: string): boolean {
     if (!this.activeRunId && !this.startingMainRun) return true;
     this.store.appendNotice(
@@ -994,19 +994,9 @@ export class RunController {
       );
     });
 
-    client.on("task.updated", (msg) => {
-      for (const listener of this.taskUpdateListeners) {
-        try {
-          listener(msg);
-        } catch {
-          // A presentation subscriber cannot break Host event dispatch.
-        }
-      }
-    });
-
     client.on("approval.requested", (msg) =>
       this.handleApprovalRequested(
-        this.approvalCoordinator.contextFor(client, msg.payload.runId),
+        this.executionOrigin(client, msg.payload.runId),
         msg,
       ),
     );
@@ -1025,12 +1015,6 @@ export class RunController {
     client.on("run.completed", (msg) => {
       this.activeRunId = null;
       this.cleanupExecution(client);
-      for (const notice of msg.payload.notices ?? []) {
-        this.store.appendNotice(`${notice.severity}: ${notice.message}`);
-      }
-      if (msg.payload.completionStatus === "partial") {
-        this.store.appendNotice("runtime completion status: partial");
-      }
       this.store.setStopReason(msg.payload.stopReason ?? null);
       const terminalState = msg.payload.state;
       const userCancelled =
@@ -1039,7 +1023,7 @@ export class RunController {
       if (userCancelled) {
         this.store.setStatus("done");
       } else if (terminalState === "failed" || terminalState === "cancelled") {
-        this.store.setRunFailure(runFailureMessage(msg.payload));
+        this.store.setError(runFailureMessage(msg.payload));
       } else {
         this.store.setStatus("done");
       }
@@ -1048,18 +1032,15 @@ export class RunController {
     client.on("run.failed", (msg) => {
       this.activeRunId = null;
       this.cleanupExecution(client);
-      this.store.setRunFailure(runFailureMessage(msg.payload));
+      this.store.setError(runFailureMessage(msg.payload));
     });
 
     client.on("disconnect", (reason) => {
       this.activeRunId = null;
       this.cleanupExecution(client);
-      this.store.setConnectionFailure(
-        `host disconnected${reason ? `: ${reason}` : ""}`,
-      );
+      this.store.setError(`host disconnected${reason ? `: ${reason}` : ""}`);
       this.client = null;
       this.clientPromise = null;
-      this.notifyTaskHostConnection("disconnected");
     });
 
     // host.log events go unhandled in the TUI today — a future log panel
@@ -1073,16 +1054,12 @@ export class RunController {
    * prompt) — otherwise an "ask"-mode write inside a workflow episode would
    * hang with no UI.
    */
-  wireWorkflowClientApprovals(
-    client: Client,
-    origin: ApprovalExecutionOrigin,
-  ): void {
-    this.approvalCoordinator.registerExecution(
-      Object.freeze({ ...origin, client }),
-    );
+  wireWorkflowClientApprovals(client: Client, origin: ExecutionOrigin): void {
+    const immutableOrigin = Object.freeze({ ...origin, client });
+    this.executionOrigins.set(client, immutableOrigin);
     client.on("approval.requested", (msg) =>
       this.handleApprovalRequested(
-        this.approvalCoordinator.contextFor(client, msg.payload.runId),
+        this.executionOrigin(client, msg.payload.runId),
         msg,
       ),
     );
@@ -1092,46 +1069,168 @@ export class RunController {
   }
 
   private handleApprovalRequested(
-    execution: ApprovalExecutionContext,
+    execution: ExecutionContext,
     msg: HostEvent & { kind: "approval.requested" },
   ): void {
-    this.approvalCoordinator.handleRequested(execution, msg);
-  }
-
-  private cleanupExecution(client: Client): void {
-    this.approvalCoordinator.cleanupExecution(client);
-  }
-
-  private notifyTaskHostConnection(state: TaskHostConnectionState): void {
-    for (const listener of this.taskConnectionListeners) {
-      try {
-        listener(state);
-      } catch {
-        // Connection reconciliation is presentation-only and best-effort.
+    execution = this.executionContext(execution, msg.payload.runId);
+    const details = (msg.payload.details ?? {}) as Record<string, unknown>;
+    const action = msg.payload.action;
+    const policyDecision = resolveHostClientApprovalByPolicy(
+      { accessMode: execution.accessMode },
+      {
+        approvalId: msg.payload.approvalId,
+        runId: msg.payload.runId,
+        action,
+        summary: msg.payload.summary,
+        details,
+        createdAt: msg.timestamp,
+      },
+    );
+    if (policyDecision) {
+      void execution.client
+        .resolveApproval(policyDecision)
+        .catch((err) => this.store.setError(formatError(err)));
+      return;
+    }
+    const subject = approvalSubject(
+      { action, details },
+      this.opts.workspaceRoot,
+    );
+    if (subject.kind !== "unknown") {
+      const rule = this.sessionApprovalRules
+        .get(execution.sessionId)
+        ?.get(subject.key);
+      if (rule) {
+        void execution.client
+          .resolveApproval({
+            approvalId: msg.payload.approvalId,
+            decision: "approved",
+            message: "Auto-approved by a TUI session rule.",
+            autoApproved: true,
+          })
+          .then(() => this.store.appendNotice(`auto-approved: ${rule.label}`))
+          .catch((err) => this.store.setError(formatError(err)));
+        return;
       }
+    }
+    const kind:
+      | "workspace.write"
+      | "skill.apply"
+      | "tool.execute"
+      | "shell.execute"
+      | "other" =
+      action === "workspace.write"
+        ? "workspace.write"
+        : action === "skill.apply"
+          ? "skill.apply"
+          : action === "tool.execute"
+            ? "tool.execute"
+            : action === "shell.execute"
+              ? "shell.execute"
+              : "other";
+    const pickString = (k: string): string | undefined =>
+      typeof details[k] === "string" ? (details[k] as string) : undefined;
+    const policyRaw = details.policy as
+      | { decision?: string; reason?: string; metadata?: { risk?: string } }
+      | undefined;
+    const pending: PendingApproval = {
+      id: msg.payload.approvalId,
+      action,
+      kind,
+      summary: msg.payload.summary,
+      path: pickString("path"),
+      reason: pickString("reason"),
+      diff: pickString("diff"),
+      toolName: pickString("toolName") ?? pickString("name"),
+      toolArgs: details.arguments ?? details.args ?? details.toolArgs,
+      command: pickString("command"),
+      subject,
+      policy: policyRaw
+        ? {
+            decision: policyRaw.decision,
+            reason: policyRaw.reason,
+            risk: policyRaw.metadata?.risk,
+          }
+        : undefined,
+    };
+    const context = { execution, pending };
+    if (this.activeApproval) this.approvalQueue.push(context);
+    else {
+      this.activeApproval = context;
+      this.store.setPendingApproval(pending);
     }
   }
 
-  private reportFailure(
-    scope: Extract<
-      UiSignalScope,
-      "ActionFailure" | "PanelLoadFailure" | "ValidationFailure"
-    >,
-    title: string,
-    error: unknown,
-  ): void {
-    const kind = "error" as const;
-    const policy = presentationPolicy({ kind, scope });
-    const message = formatError(error);
-    this.opts.signals?.publish({
-      kind,
-      scope,
-      source: "tui.run-controller",
-      title,
-      message,
-      dedupeKey: `${scope}:${title}:${message}`,
-      ...policy,
-    });
+  private rulesForSession(sessionId: string): Map<string, SessionApprovalRule> {
+    let rules = this.sessionApprovalRules.get(sessionId);
+    if (!rules) {
+      rules = new Map();
+      this.sessionApprovalRules.set(sessionId, rules);
+    }
+    return rules;
+  }
+
+  private showNextApproval(): void {
+    const next = this.approvalQueue.shift() ?? null;
+    this.activeApproval = next;
+    if (!next) return;
+    const subject = next.pending.subject;
+    const rule =
+      subject.kind === "unknown"
+        ? undefined
+        : this.sessionApprovalRules
+            .get(next.execution.sessionId)
+            ?.get(subject.key);
+    if (!rule) {
+      this.store.setPendingApproval(next.pending);
+      return;
+    }
+    void next.execution.client
+      .resolveApproval({
+        approvalId: next.pending.id,
+        decision: "approved",
+        message: "Auto-approved by a TUI session rule.",
+        autoApproved: true,
+      })
+      .then(() => {
+        this.store.appendNotice(`auto-approved: ${rule.label}`);
+        this.activeApproval = null;
+        this.showNextApproval();
+      })
+      .catch((err) => {
+        this.store.setError(formatError(err));
+        this.store.setPendingApproval(next.pending);
+      });
+  }
+
+  private executionOrigin(client: Client, runId: string): ExecutionContext {
+    const origin = this.executionOrigins.get(client);
+    if (!origin) {
+      throw new Error(
+        `approval for ${runId} arrived without an immutable execution origin`,
+      );
+    }
+    return this.executionContext(origin, runId);
+  }
+
+  private executionContext(
+    origin: ExecutionOrigin,
+    runId: string,
+  ): ExecutionContext {
+    return Object.freeze({ ...origin, runId });
+  }
+
+  private cleanupExecution(client: Client): void {
+    this.executionOrigins.delete(client);
+    const removedActive = this.activeApproval?.execution.client === client;
+    if (removedActive) {
+      this.activeApproval = null;
+      this.store.setPendingApproval(null);
+    }
+    this.approvalQueue = this.approvalQueue.filter(
+      (context) => context.execution.client !== client,
+    );
+    if (removedActive) this.showNextApproval();
   }
 }
 
@@ -1147,18 +1246,8 @@ function validateSessionId(id: string): string {
 
 /** The most recent goal carried by a loaded event stream, or null. */
 function lastGoalFromEvents(events: RunEvent[]): string | null {
-  const childRunIds = collectChildRunIds(events);
   for (let i = events.length - 1; i >= 0; i--) {
-    const event = events[i];
-    if (!event || (event.runId && childRunIds.has(event.runId))) continue;
-    if (
-      event.type !== "run.created" &&
-      event.type !== "model.requested" &&
-      event.type !== "run.started"
-    ) {
-      continue;
-    }
-    const goal = (event.payload as { goal?: unknown } | undefined)?.goal;
+    const goal = (events[i].payload as { goal?: unknown } | undefined)?.goal;
     if (typeof goal === "string" && goal.trim()) return goal;
   }
   return null;

@@ -6,7 +6,6 @@ type SelectorCatalogSource =
   | "skill"
   | "agent"
   | "shell"
-  | "web"
   | "task"
   | "todo"
   | "mcp"
@@ -22,7 +21,6 @@ export const TOOL_USE_SELECTORS = [
   "workspace.read",
   "workspace.write",
   "bash",
-  "web",
   "planning",
   "skills",
   "agents",
@@ -50,8 +48,6 @@ export const WORKSPACE_READ_TOOL_NAMES = [
 ] as const;
 
 export const WORKSPACE_WRITE_TOOL_NAMES = [
-  "create",
-  "replace",
   "write",
   "edit_anchored_text",
   "edit",
@@ -163,8 +159,6 @@ function entryMatchesSelector(
       );
     case "bash":
       return entry.source === "shell";
-    case "web":
-      return entry.source === "web";
     case "planning":
       return entry.source === "todo";
     case "skills":

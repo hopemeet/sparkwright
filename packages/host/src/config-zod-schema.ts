@@ -6,7 +6,6 @@ import {
 import type { WorkflowHookMatcher, WorkflowHookName } from "@sparkwright/core";
 import { MAX_FOREGROUND_TIMEOUT_MS } from "@sparkwright/shell-tool";
 import type { ShellSandboxConfig } from "@sparkwright/shell-sandbox";
-import { WEB_FETCH_SECURITY_MODES } from "@sparkwright/web-tools";
 import { z } from "zod";
 import { TOOL_USE_SELECTORS } from "./tool-selectors.js";
 
@@ -15,7 +14,7 @@ export const CONFIG_SCHEMA_ID =
 export const CONFIG_SCHEMA_PROTOCOL_VERSION = "0.2";
 export const CONFIG_SCHEMA_TITLE = "Sparkwright Config";
 export const CONFIG_SCHEMA_DESCRIPTION =
-  "User-editable settings shared by the CLI and the interactive TUI. Loaded (in order, later overriding earlier) from ~/.config/sparkwright/config.{json,yaml,yml}, <workspace>/.sparkwright/config.{json,yaml,yml}, and $SPARKWRIGHT_CONFIG. Within a user/project layer, config.json wins over config.yaml, which wins over config.yml; multiple files in one layer are reported as a conflict. CLI args and env vars override files. Model/provider settings live under identity, security boundaries under policy, run defaults under run, and TUI preferences under ui; workspace, shell foreground timing, tools, tasks, and capabilities remain top-level. The providers map is merged by key, tools.use and tools.allowed intersect, tools.disabled unions, tools.defer is replaced by later layers, capabilities merges by sub-capability, and policy.sandbox, run.accessMode, policy.confidentialPaths, and policy.write merge conservatively so later layers cannot weaken an earlier layer's policy (project clamps user); project config may tighten capabilities.web.security to hardened but may not select system; policy.confidentialDefaults is an explicit later-layer override for the built-in confidential path set; other shared fields are wholesale-overridden.";
+  "User-editable settings shared by the CLI and the interactive TUI. Loaded (in order, later overriding earlier) from ~/.config/sparkwright/config.{json,yaml,yml}, <workspace>/.sparkwright/config.{json,yaml,yml}, and $SPARKWRIGHT_CONFIG. Within a user/project layer, config.json wins over config.yaml, which wins over config.yml; multiple files in one layer are reported as a conflict. CLI args and env vars override files. Model/provider settings live under identity, security boundaries under policy, run defaults under run, and TUI preferences under ui; workspace, shell foreground timing, tools, tasks, and capabilities remain top-level. The providers map is merged by key, tools.use and tools.allowed intersect, tools.disabled unions, tools.defer is replaced by later layers, capabilities merges by sub-capability, and policy.sandbox, run.accessMode, policy.confidentialPaths, and policy.write merge conservatively so later layers cannot weaken an earlier layer's policy (project clamps user); policy.confidentialDefaults is an explicit later-layer override for the built-in confidential path set; other shared fields are wholesale-overridden.";
 
 export const stringSchema = z.string();
 export const nonEmptyString = stringSchema.min(1);
@@ -604,6 +603,21 @@ export const verificationSchema = z
   );
 export const VERIFICATION_CONFIG_KEYS = verificationSchema.keyof().options;
 
+export const skillEvolutionModeSchema = z.enum([
+  "off",
+  "notice",
+  "draft",
+  "apply",
+]);
+export const SKILL_EVOLUTION_MODES = skillEvolutionModeSchema.options;
+
+export const skillEvolutionSchema = z
+  .object({
+    mode: skillEvolutionModeSchema.optional(),
+  })
+  .strict();
+export const SKILL_EVOLUTION_CONFIG_KEYS = skillEvolutionSchema.keyof().options;
+
 export const skillInlineShellSchema = z
   .object({
     enabled: z.boolean().optional(),
@@ -633,6 +647,7 @@ export const skillsSchema = z
     resourceFileLimit: nonNegativeInteger.optional(),
     allowedSkills: stringArray.optional(),
     deniedSkills: stringArray.optional(),
+    evolution: skillEvolutionSchema.optional(),
     inlineShell: skillInlineShellSchema.optional(),
   })
   .strict()
@@ -868,20 +883,6 @@ export const agentsConfigSchema = z
   .describe("Agent profile run templates for host-created runs.");
 export const AGENTS_CONFIG_KEYS = agentsConfigSchema.keyof().options;
 
-export const WEB_SECURITY_MODES = WEB_FETCH_SECURITY_MODES;
-export const webConfigSchema = z
-  .object({
-    security: z
-      .enum(WEB_SECURITY_MODES)
-      .describe(
-        'Web retrieval transport. "system" (default) uses normal OS DNS/routing and standard proxy environment variables for HTTPS URLs. "hardened" validates every DNS answer as public, pins the connection, and also permits HTTP.',
-      )
-      .optional(),
-  })
-  .strict()
-  .describe("Built-in public web retrieval settings.");
-export const WEB_CONFIG_KEYS = webConfigSchema.keyof().options;
-
 export const capabilitiesSchema = z
   .object({
     hooks: hooksSchema.optional(),
@@ -889,7 +890,6 @@ export const capabilitiesSchema = z
     skills: skillsSchema.optional(),
     mcp: mcpConfigSchema.optional(),
     agents: agentsConfigSchema.optional(),
-    web: webConfigSchema.optional(),
   })
   .strict()
   .describe("Host-owned capability runtime settings.");
@@ -1015,7 +1015,6 @@ export type ShellConfig = Omit<z.output<typeof shellSchema>, "sandbox"> & {
   sandbox?: ShellSandboxConfig;
 };
 export type CapabilityToolsConfig = z.output<typeof toolsSchema>;
-export type CapabilityWebConfig = z.output<typeof webConfigSchema>;
 export type CapabilityHookActionConfig = z.output<
   typeof workflowHookActionSchema
 >;
@@ -1056,6 +1055,12 @@ export type CapabilityVerificationAfterWritesConfig = NonNullable<
 >;
 export type CapabilityVerificationConfig = z.output<typeof verificationSchema>;
 export type CapabilitySkillsConfig = z.output<typeof skillsSchema>;
+export type CapabilitySkillEvolutionMode = z.output<
+  typeof skillEvolutionModeSchema
+>;
+export type CapabilitySkillEvolutionConfig = NonNullable<
+  z.output<typeof skillsSchema>["evolution"]
+>;
 export type CapabilitySkillInlineShellConfig = NonNullable<
   z.output<typeof skillsSchema>["inlineShell"]
 >;

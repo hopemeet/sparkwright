@@ -220,98 +220,6 @@ describe("Host IM control", () => {
     });
   });
 
-  it("routes task lifecycle deliveries to one live binding with stable dedupe and ack", () => {
-    const state = createHostImControlState({ allowSelfBinding: true });
-    const owner = bindHostImSession(state, principal, {
-      subject,
-      permissions: ["message", "inspect"],
-    });
-    const otherPrincipal: HostImPrincipal = {
-      ...principal,
-      id: "gateway:other-task-recipient",
-    };
-    const otherSubject = { ...subject, userId: "user_2" };
-    const other = bindHostImSession(state, otherPrincipal, {
-      subject: otherSubject,
-      permissions: ["message", "inspect"],
-    });
-    if (!owner.ok || !other.ok) throw new Error("expected bindings");
-    const runtime = fakeRuntime(
-      "execution_task_delivery",
-      owner.binding.sessionId,
-    );
-    associateHostImRuntime(state, runtime, owner.binding);
-    const terminal = taskEvent(
-      owner.binding.sessionId,
-      "terminal",
-      "completed",
-    );
-
-    recordHostImEvent(
-      state,
-      runtime,
-      taskEvent(owner.binding.sessionId, "created", "pending"),
-    );
-    recordHostImEvent(state, runtime, terminal);
-    recordHostImEvent(state, runtime, terminal);
-    recordHostImEvent(
-      state,
-      runtime,
-      taskEvent(other.binding.sessionId, "terminal", "completed"),
-    );
-
-    const replay = subscribeHostImSession(state, principal, {
-      bindingId: owner.binding.bindingId,
-      subject,
-    });
-    expect(replay.ok).toBe(true);
-    if (!replay.ok) return;
-    expect(replay.deliveries.map((delivery) => delivery.deliveryKey)).toEqual([
-      `${owner.binding.sessionId}:task:task_im:created:pending`,
-      `${owner.binding.sessionId}:task:task_im:terminal:completed`,
-    ]);
-    expect(
-      subscribeHostImSession(state, otherPrincipal, {
-        bindingId: other.binding.bindingId,
-        subject: otherSubject,
-      }),
-    ).toMatchObject({ ok: true, deliveries: [] });
-
-    expect(
-      acknowledgeHostImDeliveries(state, principal, {
-        bindingId: owner.binding.bindingId,
-        subject,
-        deliveryKeys: replay.deliveries.map((delivery) => delivery.deliveryKey),
-      }),
-    ).toMatchObject({ ok: true, acknowledged: 2 });
-    expect(
-      subscribeHostImSession(state, principal, {
-        bindingId: owner.binding.bindingId,
-        subject,
-      }),
-    ).toMatchObject({ ok: true, deliveries: [] });
-  });
-
-  it("does not enqueue task lifecycle events after the routed binding expires", () => {
-    const state = createHostImControlState({ allowSelfBinding: true });
-    const bound = bindHostImSession(state, principal, {
-      subject,
-      permissions: ["message", "inspect"],
-    });
-    if (!bound.ok) throw new Error("expected binding");
-    const runtime = fakeRuntime("execution_expired", bound.binding.sessionId);
-    associateHostImRuntime(state, runtime, bound.binding);
-    bound.binding.expiresAt = new Date(Date.now() - 1).toISOString();
-
-    recordHostImEvent(
-      state,
-      runtime,
-      taskEvent(bound.binding.sessionId, "terminal", "failed"),
-    );
-
-    expect(state.outboxes.get(bound.binding.sessionId)).toBeUndefined();
-  });
-
   it("gives an approval to the first valid bound principal only", () => {
     const state = createHostImControlState({ allowSelfBinding: true });
     const bound = bindHostImSession(state, principal, {
@@ -429,8 +337,6 @@ function approvalEvent(approvalId: string): HostEvent {
       approvalId,
       action: "write",
       summary: "Write file",
-      subject: { kind: "one_shot", label: "Write file once" },
-      principal: { kind: "main", principalScope: "session:test" },
     },
   };
 }
@@ -442,41 +348,5 @@ function logEvent(line: string): HostEvent {
     kind: "host.log",
     timestamp: new Date().toISOString(),
     payload: { level: "info", line },
-  };
-}
-
-function taskEvent(
-  sessionId: string,
-  transition: "created" | "started" | "terminal",
-  status: "pending" | "running" | "completed" | "failed" | "cancelled",
-): HostEvent {
-  return {
-    envelope: "event",
-    id: `event_task_${transition}_${status}`,
-    kind: "task.updated",
-    timestamp: "2026-07-23T00:00:00.000Z",
-    payload: {
-      taskId: "task_im",
-      parentRunId: "run_im",
-      sessionId,
-      transition,
-      kind: "agent",
-      title: "External task",
-      completionPolicy: "detached",
-      awaited: false,
-      status,
-      createdAt: "2026-07-23T00:00:00.000Z",
-      ...(transition !== "created"
-        ? { startedAt: "2026-07-23T00:00:01.000Z" }
-        : {}),
-      ...(transition === "terminal"
-        ? {
-            completedAt: "2026-07-23T00:00:02.000Z",
-            outputRef: { method: "task.output" as const, taskId: "task_im" },
-          }
-        : {
-            outputRef: { method: "task.output" as const, taskId: "task_im" },
-          }),
-    },
   };
 }

@@ -1,13 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TaskManager } from "@sparkwright/agent-runtime";
 import { createRun, defineTool } from "@sparkwright/core";
-import { InMemoryWorkspaceState } from "@sparkwright/core/internal";
 import {
-  createWorkspaceMutationAdmission,
   WorkspaceLeaseCoordinator,
   WorkspaceLeaseLostError,
-  WorkspaceLeaseObservationConflictError,
-  WorkspaceLeaseRevalidationRequiredError,
   WorkspaceLeaseRunChainConflictError,
   withWorkspaceMutationLease,
 } from "../src/workspace-lease-coordinator.js";
@@ -361,86 +357,6 @@ describe("WorkspaceLeaseCoordinator", () => {
     await vi.waitFor(() =>
       expect(arbiter.inspect("/tmp/workspace").writer).toBeUndefined(),
     );
-  });
-
-  it("transitions a child read lease to write and requires reread after epoch drift", async () => {
-    const arbiter = new WorkspaceLeaseCoordinator();
-    const state = new InMemoryWorkspaceState();
-    const child = testRun("lease-transition");
-    const abort = new AbortController();
-    const releaseAdmission = await createWorkspaceMutationAdmission({
-      coordinator: arbiter,
-      workspaceRoot: "/tmp/workspace-transition",
-      mode: "read",
-      workspaceState: state,
-    })({
-      invocation: { childRunId: String(child.record.id) },
-      abortSignal: abort.signal,
-    });
-    let writes = 0;
-    const write = withWorkspaceMutationLease(
-      defineTool({
-        name: "replace",
-        description: "managed write",
-        inputSchema: { type: "object" },
-        governance: { sideEffects: ["write"] },
-        execute() {
-          writes += 1;
-          state.recordUntrackedMutation();
-          return { changed: true };
-        },
-      }),
-      {
-        coordinator: arbiter,
-        workspaceRoot: "/tmp/workspace-transition",
-      },
-    );
-    const read = withWorkspaceMutationLease(
-      defineTool({
-        name: "read",
-        description: "reread",
-        inputSchema: { type: "object" },
-        governance: { sideEffects: ["read"] },
-        execute: () => ({ observed: true }),
-      }),
-      {
-        coordinator: arbiter,
-        workspaceRoot: "/tmp/workspace-transition",
-      },
-    );
-
-    const competingWriter = arbiter.acquire({
-      workspaceRoot: "/tmp/workspace-transition",
-      ownerId: "other-writer",
-      mode: "write",
-    });
-    const firstWrite = write.execute(
-      {},
-      {
-        run: child.record,
-        workspaceState: state,
-      },
-    );
-    const otherLease = await competingWriter;
-    state.recordUntrackedMutation();
-    otherLease.release();
-
-    await expect(firstWrite).rejects.toBeInstanceOf(
-      WorkspaceLeaseObservationConflictError,
-    );
-    await expect(
-      write.execute({}, { run: child.record, workspaceState: state }),
-    ).rejects.toBeInstanceOf(WorkspaceLeaseRevalidationRequiredError);
-    expect(writes).toBe(0);
-
-    await read.execute({}, { run: child.record, workspaceState: state });
-    await expect(
-      write.execute({}, { run: child.record, workspaceState: state }),
-    ).resolves.toMatchObject({ changed: true });
-    expect(writes).toBe(1);
-
-    releaseAdmission();
-    expect(arbiter.inspect("/tmp/workspace-transition").writer).toBeUndefined();
   });
 });
 import { mkdtemp, rm, symlink } from "node:fs/promises";

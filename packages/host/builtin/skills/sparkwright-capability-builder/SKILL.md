@@ -2,7 +2,7 @@
 name: sparkwright-capability-builder
 description: Build SparkWright project capabilities from user intent. Use when the user wants to create, add, scaffold, wire, or configure a Skill, agent profile, delegate tool, MCP server, cron job, slash command, tool policy, or project capability.
 triggers: create add scaffold build configure wire setup skill agent delegate MCP server cron schedule automation slash command project capability tool policy permission
-allowed-tools: read create write edit list_skills list_agents create_agent cron
+allowed-tools: bash list_skills create_skill update_skill list_agents create_agent cron
 metadata:
   version: 0.1.0
 ---
@@ -25,13 +25,12 @@ to this Skill package, not necessarily to the user's project.
 
 Before writing files:
 
-- For new project Skills, inspect with `list_skills`, then create one valid
-  `.sparkwright/skills/<name>/SKILL.md` through controlled workspace writes.
-  Never overwrite an existing package. When operating directly through the
-  CLI, prefer `sparkwright skills create` for its deterministic scaffold.
-- For an existing project Skill, read the current package and make an ordinary
-  reviewed workspace edit. SparkWright does not maintain a separate proposal,
-  history, or automatic-learning layer for Skill changes.
+- For new project Skills, prefer `list_skills` followed by `create_skill`.
+  Do not probe `.sparkwright/skills/<name>/SKILL.md` first; the file is
+  expected to be missing before creation.
+- For existing project Skill evolution, prefer `list_skills` followed by the
+  deferred `update_skill` tool when available. That creates a draft proposal
+  without applying it.
 - Inspect the current workspace capability state with
   `npm exec sparkwright -- capabilities inspect --workspace . --format text`
   only when you are operating through the CLI rather than runtime tools.

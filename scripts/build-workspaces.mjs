@@ -26,10 +26,6 @@ for (const workspace of workspaces) {
 }
 
 for (const workspace of ordered) {
-  rmSync(join(root, workspace.dir, "dist"), {
-    recursive: true,
-    force: true,
-  });
   const result = spawnSync(
     npmCommand(),
     ["run", "build", "--workspace", workspace.packageJson.name],

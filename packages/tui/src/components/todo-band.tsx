@@ -6,16 +6,16 @@ import { displayWidth, toGraphemes } from "../lib/graphemes.js";
 
 /**
  * The todo ledger as a full-width band in the live frame, pinned just above the
- * input. Unlike a right rail, a full-width band gives CJK titles room and reads
+ * input. Unlike a right rail (which the Static-scrollback model can only render
+ * as a cramped corner box), a full-width band gives CJK titles room and reads
  * as a natural checklist.
  *
  * Collapse strategy keeps it minimal-chrome:
  *  - `compact` (e.g. while the model is streaming a long answer) → a single
  *    line showing only progress + the current item.
- *  - normal → completed items fold into one "done" count line; active items
- *    (in_progress / pending / blocked / …) are listed and capped so a long
- *    ledger cannot dominate the frame. The detailed transcript projection owns
- *    the current full ledger snapshot, including completed item titles.
+ *  - expanded → completed items fold into one "done" count line; the active
+ *    items (in_progress / pending / blocked / …) are listed, current first and
+ *    highlighted, capped so a long ledger can't dominate the frame.
  */
 const TODO_GLYPH: Record<string, string> = {
   pending: "☐",
@@ -25,11 +25,18 @@ const TODO_GLYPH: Record<string, string> = {
 };
 
 const MAX_ACTIVE_ROWS = 8;
+const MAX_EXPANDED_ROWS = 16;
 
 export function TodoBand(props: {
   todos: TodoPanelItem[];
   width: number;
   compact: boolean;
+  /**
+   * When true, completed items are listed (with their titles) so the user can
+   * see *what* was done; when false, completed items collapse to a one-line
+   * count hint and only active items are listed. Toggled with ctrl+t.
+   */
+  expanded: boolean;
 }): React.ReactElement | null {
   const theme = useTheme();
   const { todos } = props;
@@ -67,11 +74,14 @@ export function TodoBand(props: {
     );
   }
 
-  // The live frame lists only active items. Completed titles live in the
-  // detailed transcript projection, avoiding a second expansion state.
+  // Expanded lists every item in ledger order (so completed work is visible);
+  // collapsed lists only the active items and folds completed ones into a
+  // one-line, actionable hint.
   const active = todos.filter((t) => t.status !== "completed");
-  const visible = active.slice(0, MAX_ACTIVE_ROWS);
-  const overflow = active.length - visible.length;
+  const shown = props.expanded ? todos : active;
+  const cap = props.expanded ? MAX_EXPANDED_ROWS : MAX_ACTIVE_ROWS;
+  const visible = shown.slice(0, cap);
+  const overflow = shown.length - visible.length;
 
   const renderRow = (t: TodoPanelItem, i: number): React.ReactElement => {
     const glyph = TODO_GLYPH[t.status] ?? "☐";
@@ -98,10 +108,12 @@ export function TodoBand(props: {
           {"  "}… +{overflow} more
         </Text>
       ) : null}
-      {done > 0 ? (
+      {props.expanded ? (
+        <Text color={theme.muted}>{"  "}ctrl+t 收起已完成</Text>
+      ) : done > 0 ? (
         <Text color={theme.muted}>
           {"  "}
-          {TODO_GLYPH.completed} {done} done · ctrl+t 查看详情
+          {TODO_GLYPH.completed} {done} done · ctrl+t 展开
         </Text>
       ) : null}
     </Box>

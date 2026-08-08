@@ -8,7 +8,7 @@ import type { SessionDiagnostics, SessionSummary } from "../lib/sessions.js";
 import type { EventStore } from "./event-store.js";
 import type { RunController } from "./run-controller.js";
 import type { LayerStack } from "./layer-stack.js";
-import type { NotificationStore } from "./notification-store.js";
+import type { ToastStore } from "./toast-store.js";
 
 /**
  * Session browsing, diagnostics, labels, rename, fork and export. Owns the
@@ -43,7 +43,7 @@ export function useSessionActions(deps: {
   sessionId: string | null;
   controller: RunController;
   store: EventStore;
-  toasts: NotificationStore;
+  toasts: ToastStore;
   layers: LayerStack;
   inputHandleRef: RefObject<InputBoxHandle | null>;
 }): SessionActions {

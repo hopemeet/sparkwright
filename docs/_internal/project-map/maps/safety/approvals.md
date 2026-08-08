@@ -9,194 +9,6 @@ See [workspace-writes.md](workspace-writes.md) and [shell.md](shell.md).
 
 ## Last Verified
 
-- Status: Read-only
-- Date: 2026-08-02
-- Scope: retired Skill proposal apply approvals with the self-evolution
-  surface. Core workspace/tool approval semantics and remaining capability
-  approvals are unchanged.
-- Read: removed Skill service/tool paths, Host approval policy, CLI/TUI
-  consumers, and focused tests.
-- Tests: affected builds/typechecks and focused Host/TUI coverage passed.
-
-- Status: Verified
-- Date: 2026-08-01
-- Scope: removing `web_fetch` pagination does not change approval identity.
-  Every call is still keyed to the complete normalized URL; repeating it may
-  reuse a remembered session decision but performs a new network request.
-- Read: Web approval subject/tool contract, Host catalog integration, and
-  approval-map contract.
-- Tests: Web tools 41/41 and focused Host catalog 92/92 passed.
-
-- Status: Verified
-- Date: 2026-08-01
-- Scope: `web_fetch` is a risky public network read with approval keyed to the
-  exact normalized URL rather than its origin. Shared guards block credentials,
-  sensitive query names, unsafe redirects, HTTPS downgrade, compression,
-  oversized bodies, and timeouts. System mode rejects explicit local/reserved
-  destinations; hardened mode additionally closes DNS-rebinding windows by
-  validating and pinning global-unicast addresses.
-- Read: Web tool policy/approval subject, both transport modes, and Host config
-  precedence.
-- Tests: Web safety/tool-policy suite 38/38 and focused Host config/catalog
-  passed.
-
-- Status: Verified
-- Date: 2026-08-01
-- Scope: TUI presentation now has one owner for child-run approval history:
-  the Agent block. It groups child approvals by structured run id, uses raw
-  request/resolution events when present, falls back to the bounded terminal
-  receipt for live streams without those events, and never appends approval
-  state to action text. `decision` plus structured `autoApproved` produces
-  requested/approved/auto-approved/denied without parsing policy messages.
-  Main-run approvals remain standalone and the interactive prompt is unchanged.
-- Read: Core approval event shape, Agent action receipt summarizer, TUI
-  conversation/transcript projections, and retained ask/bypass traces.
-- Tests: interleaved receipt correlation, live/replay presentation parity,
-  Agent Runtime 251/251, TUI 547/547, and real-session replay.
-
-- Status: Verified
-- Date: 2026-07-30
-- Scope: child action receipts now join `approval.requested` and
-  `approval.resolved` to their exact tool call by span/approval id and expose
-  requested/approved/denied to the parent-visible TUI. This is presentation of
-  recorded approval truth, not inference from tool policy. Replay prefers the
-  raw approval block, preventing duplicate approval outcomes.
-- Read: Core approval events, Agent action summarizer, TUI live/replay
-  projection, and the retained TUI session.
-- Tests: interleaved approved/denied receipt tests and TUI live/replay parity.
-
-- Status: Verified
-- Date: 2026-07-26
-- Scope: detailed transcript mode is no longer a LayerStack route. Approval
-  remains the highest typed route and replaces the visible operation/input
-  surface while App retains the transcript mode and semantic anchor; closing
-  the approval returns to the same transcript context.
-- Read: App owned viewport, LayerStack route order, LayerRenderer approval
-  branch, and layer/viewport tests.
-- Tests: layer priority, viewport anchor, approval render, and PTY interaction
-  coverage passed.
-
-- Status: Verified
-- Date: 2026-07-25
-- Scope: route review for Agent action receipts and detailed TUI projection.
-  Approval admission, prompt priority, remembered decisions, principal
-  attribution, and denial visibility are unchanged; approvals remain visible
-  above the details layer.
-- Read: Agent Runtime receipt derivation, Host approval boundary, and TUI typed
-  layer order.
-- Tests: Host 583/583 and TUI 482/482.
-
-- Status: Verified
-- Date: 2026-07-25
-- Scope: Shell remembered approvals now key exact command, resolved cwd,
-  background flag, and lifetime; `foregroundTimeoutMs` no longer fragments an
-  otherwise identical authorization. The prompt displays that execution mode,
-  uses the runtime principal rather than execution kind as origin, and renders
-  policy/tool/safety explanations as three separate layers.
-- Read: Core approval/tool policy contracts, Shell subject/policy producer,
-  Protocol/Host projection, TUI coordinator/session/prompt, and tests.
-- Tests: full `npm run release:check` passed, including Shell 44/44, Host
-  583/583, TUI 468/468, the 16-case regression matrix, and install smoke.
-
-- Status: Verified
-- Date: 2026-07-24
-- Scope: every approval is now scoped by runtime-owned
-  `ApprovalPrincipal`; reusable TUI decisions key session + principal + effect
-  subject. Dynamic/configured children get distinct child-run principals and
-  never inherit a parent's concrete approval. Workspace subjects distinguish
-  create/replace/edit/remove and deprecated legacy writes.
-- Read: Core approval/workspace principals, Host interaction routing,
-  Protocol DTOs, TUI rule storage/projection, and focused tests.
-- Tests: focused Core/Host/TUI approval suites, repository build, and
-  repository test typecheck passed.
-
-- Status: Verified
-- Date: 2026-07-23
-- Scope: Host IM task delivery reuses exact runtime/binding/session
-  authorization and a task-specific idempotency key. It does not consult
-  model-authored recipient metadata or modify approval routing, permission
-  selection, resolution, or visibility; approval deliveries retain their
-  existing initiating-principal/approve-permission checks.
-- Read: Host IM association, task session guard, delivery visibility, approval
-  route, Gateway delivery renderer, and focused/full Host tests.
-- Tests: Host 604/604 including existing approval suites, IM Gateway 10/10,
-  focused lifecycle/IM 25/25, and affected package typechecks passed.
-
-- Status: Verified
-- Date: 2026-07-23
-- Scope: route review for bounded `task.updated` events. Events contain
-  Host-resolved routing plus safe task summaries and do not add authority;
-  approval subjects, decisions, and reuse semantics are unchanged.
-- Read: task lifecycle projection, Host routing, and approval boundary.
-- Tests: Host projection/protocol coverage, typechecks, and schema validation
-  passed.
-
-- Status: Verified
-- Date: 2026-07-23
-- Scope: route review for Task/Shell/Agent completion receipts; approval
-  subjects, resolution, policy ordering, and remembered-decision semantics did
-  not change.
-- Read: task_create/Shell/spawn policy boundaries and approval map contracts.
-- Tests: focused Host tools/spawn suites, Shell suite, and typechecks passed.
-
-- Status: Verified
-- Date: 2026-07-23
-- Scope: repeated-failure state now carries retry scope, but policy and approval
-  denials are always target-level and retain their existing expected-denial
-  recovery semantics. Project instructions and Direct Core identity explicitly
-  do not grant access; structured policy/approval remains authoritative.
-- Read: Core failure classification/repeat metadata, project/direct prompt
-  wording, approval gate, and existing denial regressions.
-- Tests: focused Core run/context and affected package/typecheck suites passed;
-  approval request/resolution behavior is unchanged.
-
-- Status: Verified
-- Date: 2026-07-21
-- Scope: dynamic Agent handoff now uses explicit goal/context fields, but
-  authorization remains derived only from structured tools and grants. Approval
-  subjects, timing, reuse, denial, and cleanup are unchanged.
-- Read: Host shared Agent schema/validator, Agent grant producer, and Core
-  approval ordering.
-- Tests: focused Host spawn/task/tool and affected approval tests passed.
-
-- Status: Verified
-- Date: 2026-07-21
-- Scope: every approval request carries a producer-authored typed subject.
-  Workspace writes distinguish write/remove by canonical path, Shell keys the
-  exact command/cwd/execution settings, Agent grants key the exact structured
-  grant, and unrecognized effects are one-shot only. TUI no longer infers
-  reusable authority from display details; duplicate delivery is idempotent
-  and automatic resolution failure returns to a visible manual decision.
-- Read: Core approval/tool/workspace contracts, Shell and Agent producers,
-  Protocol/Host projection, TUI coordinator/session rules/prompt, and fixtures.
-- Tests: focused Core, Streaming Runtime, Shell, Agent Runtime, Host, Protocol,
-  SDK, CLI, IM, ACP, and TUI approval tests and typechecks passed.
-
-- Status: Verified
-- Date: 2026-07-21
-- Scope: dynamic spawn validates its structured enabled-tool/grant contract in
-  Core's semantic input stage before approval. Goal/context text is not an
-  authorization input, so negated execution wording cannot create a doomed
-  workspace-write approval.
-- Read: Core tool validation/policy order, Host dynamic spawn/grant assembly,
-  Agent Runtime result status contract, and focused/full tests.
-- Tests: Agent Runtime 240/240, Host 589/589, and repository test typecheck.
-
-- Status: Verified
-- Date: 2026-07-20
-- Scope: TUI approval coordination now has one execution-scoped owner and a
-  client-free view model. Exact allow-once/session/deny behavior, Host policy,
-  main/Workflow isolation, queueing, and session-rule subjects are preserved;
-  the decision UI adds origin, risk, scope, progress, pageable effects, safe
-  default focus, and local resolve-error state.
-- Read: Host/Protocol approval boundaries, TUI controller/coordinator/view
-  model/renderers, session rules, layer routing, test-only concurrent Host
-  adapter, and focused/full tests. Cleanup now also invalidates an in-flight
-  failed session-rule auto-resolution so it cannot requeue a dead execution.
-- Tests: TUI 447/447 and Host 594/594; focused coordinator/adapter regressions;
-  real 80/96/120-column PTY approval scenarios plus a 96x32 concurrent waiter
-  capture that advanced from `1 of 2` to `1 of 1`.
-
 - Status: Verified
 - Date: 2026-07-19
 - Scope: reviewed approval consumers after assessment and target-scope changes.
@@ -265,16 +77,12 @@ See [workspace-writes.md](workspace-writes.md) and [shell.md](shell.md).
 - `packages/cli/src/cli-approval.ts`
 - `packages/tui/src/app.tsx`
 - `packages/tui/src/state/run-controller.ts`
-- `packages/tui/src/state/approval-coordinator.ts`
-- `packages/tui/src/lib/approval-view-model.ts`
-- `packages/tui/src/components/approval-prompt.tsx`
 - `packages/tui/src/lib/permission.ts`
 
 ## Data Flow
 
 ```txt
 policy requires approval
-  -> runtime ApprovalPrincipal + producer effect subject
   -> approval.requested / interaction.requested
   -> InteractionChannel.approve (CLI/TUI/Host/Cron)
   -> approval.resolved / interaction.resolved
@@ -289,22 +97,7 @@ policy requires approval
   effect hash and final diff, and persists a receipt before mutation. TUI treats
   it as one-shot (no remembered session rule).
 
-- `approval.requested` carries an id used by protocol `approval.resolve` plus a
-  required typed producer-authored subject. Human-readable summary/details are
-  audit and presentation facts, not reusable authorization identity.
-- `web_fetch` supplies a stable `tool_call` subject keyed by the complete
-  normalized URL with its fragment removed. Re-fetching that URL may reuse the
-  same session decision but starts a new request; changing origin, path, or
-  query requires a new approval. URL secret-name checks are best-effort
-  validation, not a claim that invalid raw model arguments never entered
-  `tool.requested` trace data.
-- Policy decision, tool approval-gate reason, and tool-specific safety
-  classification are separate structured explanation layers. A permissive
-  general policy can therefore coexist without contradiction with a shell
-  classifier that requires approval.
-- Every request also carries runtime-owned principal kind/scope. Remembered
-  decisions are reusable only for the same session, principal scope, and
-  subject key; child labels and model context cannot alter this identity.
+- `approval.requested` carries an id used by protocol `approval.resolve`.
 - `approval.resolved` preserves optional resolver `message` and structured
   `autoApproved` state. Trace summary/report diagnostics consume these root
   fields only and do not parse nested responses or message prose.
@@ -326,31 +119,17 @@ policy requires approval
   Host clamps it to any project access ceiling and derives the run-local
   approval policy. There is no second approval-default input.
 - Ask-mode TUI users may remember an exact recognized approval subject for the
-  current session. The effect producer, not the TUI, supplies the stable key
-  and typed canonical path, Shell command/cwd/execution mode, Agent grant, or
-  tool-call identity. Shell foreground timeout is operational timing, not part
-  of the remembered authorization key. Rules are client-memory only, installed
-  after a successful
-  `approval.resolve`, and surfaced as structured `autoApproved:true`
-  resolutions. Missing/malformed/one-shot subjects remain allow-once/deny only,
-  and concurrent requests are queued rather than overwritten. Workflow job
-  connections route their approvals through the same controller.
+  current session. Rules are client-memory only, installed after a successful
+  `approval.resolve`, matched on canonical path or exact tool arguments plus
+  shell cwd, and surfaced as structured `autoApproved:true` resolutions.
+  Unknown approval shapes remain allow-once/deny only, and concurrent requests
+  are queued rather than overwritten. Workflow job connections route their
+  approvals through the same controller.
 - TUI approval auto-policy is execution-scoped rather than controller-global.
   Each request captures the birth client/session/permission mode and exact
   emitting run id; workflow requests also retain their workflow id when known.
   Client terminal/disconnect/close cleanup removes its active and queued
   requests without deleting prompts owned by other clients.
-- TUI presentation coordination is isolated in `ApprovalCoordinator`.
-  `RunController` registers immutable main/Workflow execution origins and the
-  coordinator retains the originating SDK client privately; the Ink layer sees
-  only `ApprovalViewModel`. Resolving disables duplicate submission, a failed
-  resolve keeps the current request and queue position, and successful resolve
-  advances exactly one request.
-- TUI risk focus is presentation-only and never changes Host policy. High-risk
-  and unknown shapes focus Deny; ordinary recognized shapes may focus Allow
-  once. Allow-session is never the default, unknown shapes cannot install a
-  rule, and Esc/Ctrl+C sends an explicit denied resolution instead of merely
-  closing the surface.
 - Host run access resolution also clamps `backgroundTasks` against project
   ceilings. This is governance, not an approval prompt: cap/policy denials for
   background task surfaces are recoverable tool failures rather than
@@ -359,17 +138,14 @@ policy requires approval
   `InteractionChannel` from Host, so child workspace-write and shell gates
   still resolve through the same CLI/TUI approval and trace path without
   gaining `ask` or `notify` capabilities.
-- Core attaches a runtime-owned `ApprovalPrincipal` to every request. Main,
-  dynamic-child, and configured-delegate principals have distinct scopes;
-  TUI reusable rules key `sessionId + principalScope + subject.key`, so a
-  parent's concrete approval never authorizes a child call.
-- Dynamic `spawn_agent` and `task_create(kind:"agent")` expose no grant or
-  allowed-tool fields. Their children request approval only when an actual
-  revisioned write or child-safe shell effect reaches its normal gate.
-  Persisted legacy authority fields are ignored by the handoff normalizer.
-- Workspace approval subjects distinguish create, replace, edit, remove, and
-  deprecated legacy write operations in addition to canonical path and effect
-  scope. Shell subjects remain exact command/cwd identities.
+- Dynamic `spawn_agent` and host `task_create(kind:"agent")` can request a
+  spawn-time workspace-write grant through `grant.workspaceWrite: true` or an
+  explicit managed write tool in `allowedTools`. The parent tool approval uses
+  a grant-aware summary and write side-effect governance; once approved, the
+  child gets a scoped approval-only channel that auto-approves only child
+  `workspace.write` requests. The child does not prompt the user again for the
+  same grant, and grant consumption cannot approve unrelated tool execution or
+  shell access.
 - Read-confidentiality denials are policy denials, not approval prompts.
   `workspace.read.denied` plus `tool.failed` `READ_SCOPE_DENIED` is the audit
   path; a model may continue and complete the run without a CLI failure if it
@@ -546,7 +322,7 @@ policy requires approval
   before approval.
 - Read: `packages/core/src/run.ts`,
   `packages/host/src/runtime.ts`,
-  `packages/host/src/runtime/agent-runtime-assembly.ts`,
+  `packages/host/src/agent-spawn-grants.ts`,
   `packages/host/test/spawn-agent.test.ts`,
   `packages/host/test/tools.test.ts`.
 - Tests: `npm --workspace @sparkwright/host test --
@@ -560,7 +336,7 @@ test/spawn-agent.test.ts`;
   child-local scoped approval resolvers for `workspace.write` consumption.
 - Read: `packages/core/src/run.ts`, `packages/core/src/tools.ts`,
   `packages/host/src/runtime.ts`,
-  `packages/host/src/runtime/agent-runtime-assembly.ts`,
+  `packages/host/src/agent-spawn-grants.ts`,
   `packages/agent-runtime/src/tasks/tools.ts`.
 - Tests: `npm test -w @sparkwright/core -- run.test.ts`;
   `npm test -w @sparkwright/host -- tools.test.ts spawn-agent.test.ts`;

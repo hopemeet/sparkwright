@@ -71,9 +71,6 @@ export class FileTaskStore implements TaskStore {
       parentRunId: input.parentRunId,
       kind: input.kind,
       title: input.title,
-      completionPolicy:
-        input.completionPolicy ??
-        (input.awaited === false ? "detached" : "awaited"),
       awaited: input.awaited ?? true,
       status: "pending",
       createdAt: new Date().toISOString(),
@@ -122,9 +119,6 @@ export class FileTaskStore implements TaskStore {
         : {}),
       ...("awaited" in patch && patch.awaited !== undefined
         ? { awaited: patch.awaited }
-        : {}),
-      ...("completionPolicy" in patch && patch.completionPolicy !== undefined
-        ? { completionPolicy: patch.completionPolicy }
         : {}),
       ...("startedAt" in patch && patch.startedAt !== undefined
         ? { startedAt: patch.startedAt }

@@ -50,12 +50,12 @@ describe("path display", () => {
         join(
           workspace,
           ".sparkwright",
-          "sessions",
-          "session_123",
-          "trace.jsonl",
+          "skill-evolution",
+          "proposals",
+          "skillprop_123",
         ),
         { workspaceRoot: workspace, maxCols: 24 },
       ),
-    ).toBe(".sparkwrigh…/trace.jsonl");
+    ).toBe(".sparkwri…/skillprop_123");
   });
 });

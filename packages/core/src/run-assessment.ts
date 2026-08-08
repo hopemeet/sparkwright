@@ -9,7 +9,6 @@ import {
 } from "./run-outcome.js";
 import { isRecord } from "./record-utils.js";
 import type { RunState, RunStopReason } from "./types.js";
-import type { VerificationLevel } from "./types.js";
 
 export type RunAssessmentHealth = "clean" | "degraded" | "failing";
 export type RunIssueDisposition = "degraded" | "failing";
@@ -43,16 +42,13 @@ export type VerificationStatus = "passed" | "failed" | "timed_out" | "stale";
 
 export interface VerificationResult {
   id: string;
-  source: "command" | "profile" | "documented_command" | "receipt";
+  source: "command" | "profile" | "documented_command";
   status: VerificationStatus;
   sequence?: number;
   command?: string;
   profile?: string;
   verifierId?: string;
   exitCode?: number | null;
-  level?: VerificationLevel;
-  coveredChangeSets?: string[];
-  writeEpoch?: number;
 }
 
 export interface RunAssessment {
@@ -236,23 +232,6 @@ export function runAssessmentFromUnknown(
 function verificationResults(
   snapshot: FactLedgerSnapshot,
 ): VerificationResult[] {
-  if (snapshot.verificationReceipts.length > 0) {
-    return snapshot.verificationReceipts.map((receipt) => ({
-      id: receipt.id,
-      source: verificationReceiptSource(snapshot, receipt),
-      status: receipt.status,
-      ...(receipt.sequence !== undefined ? { sequence: receipt.sequence } : {}),
-      ...(receipt.command ? { command: bounded(receipt.command) } : {}),
-      ...(receipt.profile ? { profile: bounded(receipt.profile) } : {}),
-      ...(receipt.verifierId
-        ? { verifierId: bounded(receipt.verifierId) }
-        : {}),
-      exitCode: receipt.exitCode,
-      level: receipt.level,
-      coveredChangeSets: receipt.coveredChangeSets.slice(0, 32),
-      writeEpoch: receipt.writeEpoch,
-    }));
-  }
   const commandResults: VerificationResult[] = snapshot.commands
     .filter(
       (fact) =>
@@ -294,20 +273,6 @@ function verificationResults(
   return [...commandResults, ...verifierResults].sort(
     (left, right) => (left.sequence ?? 0) - (right.sequence ?? 0),
   );
-}
-
-function verificationReceiptSource(
-  snapshot: FactLedgerSnapshot,
-  receipt: FactLedgerSnapshot["verificationReceipts"][number],
-): VerificationResult["source"] {
-  const matchingVerifier = snapshot.verificationResults.find(
-    (result) => `receipt:${result.commandFactId}` === receipt.id,
-  );
-  if (matchingVerifier?.verificationSource === "documented_command") {
-    return "documented_command";
-  }
-  if (matchingVerifier || receipt.profile) return "profile";
-  return receipt.verifierId ? "documented_command" : "receipt";
 }
 
 function toolIssue(
@@ -409,8 +374,7 @@ function verificationResultFromUnknown(
   const source =
     value.source === "command" ||
     value.source === "profile" ||
-    value.source === "documented_command" ||
-    value.source === "receipt"
+    value.source === "documented_command"
       ? value.source
       : undefined;
   const status =
@@ -441,26 +405,7 @@ function verificationResultFromUnknown(
     ...(typeof value.exitCode === "number" || value.exitCode === null
       ? { exitCode: value.exitCode as number | null }
       : {}),
-    ...(verificationLevelValue(value.level)
-      ? { level: verificationLevelValue(value.level) }
-      : {}),
-    ...(stringArrayValue(value.coveredChangeSets)
-      ? { coveredChangeSets: stringArrayValue(value.coveredChangeSets) }
-      : {}),
-    ...(numberValue(value.writeEpoch) !== undefined
-      ? { writeEpoch: numberValue(value.writeEpoch) }
-      : {}),
   };
-}
-
-function verificationLevelValue(value: unknown): VerificationLevel | undefined {
-  return value === "syntax" ||
-    value === "smoke" ||
-    value === "contract" ||
-    value === "project" ||
-    value === "release"
-    ? value
-    : undefined;
 }
 
 function compactDetails(

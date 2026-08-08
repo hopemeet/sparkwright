@@ -40,22 +40,6 @@ Execution path:
 schema validation -> policy -> approval -> execute -> validate -> trace
 ```
 
-The advanced, deferred `web_fetch` tool belongs to the main Host catalog under
-the `web` selector. It directly reads one known public URL; it does not search
-or run a JavaScript browser. Approval identity is the exact normalized URL,
-redirects are revalidated, and the result is one conservatively cleaned,
-bounded excerpt. `truncated: true` has no continuation cursor; another call is
-a fresh fetch that may observe changed content. Returned page text is external
-untrusted data.
-
-Its default `system` transport is HTTPS-only and follows normal OS DNS/routing,
-including VPN/TUN software and standard HTTP(S) proxy environment variables.
-It blocks explicit private/reserved IPs and local/metadata hostnames without
-pre-resolving domain names. `capabilities.web.security: hardened` enables
-global-unicast DNS validation plus address pinning and also permits HTTP. The
-surface intentionally omits cookies, login state, custom headers, PDF, and
-compressed responses.
-
 ## Skills
 
 Skills are prompt/context packages, not authority. Supported shape:
@@ -232,9 +216,8 @@ inspection never triggers an approval prompt:
   profiles remain human/CLI-owned governance and are not mutated by this model
   tool.
 
-Skills expose `list_skills` (`list` / `validate`, read-only) in-run. Create a
-project Skill with `sparkwright skills create`; update its files through the
-normal workspace-write path.
+Skills follow the same split: `list_skills` (`list` / `validate`, read-only)
+and `create_skill` (`create`, writes a SKILL.md, requires approval).
 
 Reference files:
 

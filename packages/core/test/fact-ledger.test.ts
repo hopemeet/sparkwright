@@ -57,7 +57,6 @@ describe("FactLedger", () => {
       stale: false,
       writeEpoch: 1,
     });
-    expect(snapshot.verificationReceipts).toEqual([]);
   });
 
   it("does not promote ordinary commands from verification-like goal prose", () => {
@@ -176,14 +175,6 @@ describe("FactLedger", () => {
       satisfied: true,
       exitCode: 1,
     });
-    expect(snapshot.verificationReceipts).toEqual([
-      expect.objectContaining({
-        verifierId: "repro",
-        profile: "fast",
-        command: "npm test",
-        status: "passed",
-      }),
-    ]);
     expect(verificationProfileResultsFromFactLedger(snapshot)).toEqual([
       {
         hookName: "workflow:verification_fast",

@@ -1,11 +1,13 @@
 # concurrent-sub-agents
 
-End-to-end demo of multi sub-agent fan-out using the concurrency
+End-to-end demo of multi sub-agent fan-out using the four concurrency
 primitives shipped by `@sparkwright/agent-runtime`:
 
 - **`ConcurrencyCoordinator`** — declarative writes partitioning (glob).
 - **`acquireWorktree`** — per-sub-agent git isolation + ff-only merge.
 - **`createTodoTools`** — Leader single-writer todo file with 5-state machine.
+- **`parseSubAgentResult` / `validateDeclaredWrites`** — structured JSON
+  result protocol + writes audit.
 
 ## What it shows
 
@@ -15,7 +17,8 @@ Leader (primary run)
   ├─ ConcurrencyCoordinator.acquire(taskId, writes)   ─── conflict? queue/reject
   ├─ acquireWorktree(...)                              ─── isolated working tree
   │     └─ child performs its work IN PARALLEL
-  ├─ compare runtime-observed writes to declared scope ─── audit the partition
+  ├─ parseSubAgentResult(child.message)                ─── JSON, not LLM re-parse
+  ├─ validateDeclaredWrites(declared, actual)          ─── audit the partition
   ├─ worktree.mergeBack()                              ─── ff-only (clean by design)
   └─ todoWrite([...])                                  ─── single-writer state file
 ```
@@ -54,7 +57,5 @@ sub-agent dispatch surface (`spawnSubAgent`, `mountAgentTool`,
 
 In a production setup, the Leader would call `spawnSubAgent` (or a
 `mountAgentTool` exposed to its own model) and pass the worktree path as
-the child's workspace. Child prose is a natural report; workspace lifecycle
-events, not model-authored JSON, are the authority for actual writes. The
-async completion path reuses `TaskManager` +
+the child's workspace. The async completion path reuses `TaskManager` +
 the canonical actor notification sink/inbox from that existing demo — no new transport.

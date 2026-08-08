@@ -9,7 +9,7 @@ import {
 } from "@sparkwright/host";
 import { isTraceLevel, type TraceLevel } from "@sparkwright/protocol";
 import { App, type AppProps } from "./app.js";
-import { enterTerminalSession } from "./lib/terminal-restore.js";
+import { installTerminalRestore } from "./lib/terminal-restore.js";
 import {
   isTuiPermissionMode,
   TUI_PERMISSION_MODES,
@@ -28,7 +28,6 @@ interface CliOverrides {
   traceLevel?: TraceLevel;
   modelName?: string;
   sessionId?: string;
-  noAltScreen?: boolean;
   help?: boolean;
 }
 
@@ -41,8 +40,6 @@ function parseArgs(
     const a = argv[i];
     if (a === "--help" || a === "-h") {
       out.help = true;
-    } else if (a === "--no-alt-screen") {
-      out.noAltScreen = true;
     } else if (a === "--workspace") {
       if (!argv[i + 1]) errors.push("Usage: --workspace requires a path");
       else out.workspaceRoot = argv[++i];
@@ -111,31 +108,32 @@ export async function runTui(
     return { exitCode: 1 };
   }
   await maybePrintFirstRunConfigHint(initialCwd);
-  const { noAltScreen, help: _help, ...appCli } = cli;
   const props: AppProps = {
     initialCwd,
     cliOverrides: {
-      ...appCli,
+      ...cli,
       sessionRootDir: cli.sessionRootDir ?? options.sessionRootDir,
     },
   };
 
+  // Render into the normal buffer (NOT the alternate screen). The transcript is
+  // committed to terminal scrollback via Ink's <Static>; only the live frame
+  // (status bar, in-flight stream, input) is redrawn in place. The alt buffer
+  // has no scrollback, so it fundamentally can't host a scrollable history —
+  // hence the normal buffer here.
   // exitOnCtrlC: false — Ink's built-in handler would quit on the first Ctrl+C,
   // pre-empting our cancel-then-confirm logic in app.tsx (first press cancels a
   // run / arms quit, second press exits). We own Ctrl+C entirely.
-  const terminal = enterTerminalSession({
-    stdout: process.stdout,
-    alternateScreen: !noAltScreen,
+  // Safety net: restore terminal modes (bracketed paste, focus reporting,
+  // mouse, cursor) on any hard exit path — SIGINT/SIGTERM/SIGHUP or an uncaught
+  // exception skip React effect cleanup and would otherwise leave the shell in
+  // a broken state. Installed before render so it covers a crash during mount.
+  installTerminalRestore(process.stdout);
+
+  const instance = render(React.createElement(App, props), {
+    exitOnCtrlC: false,
   });
-  try {
-    const instance = render(React.createElement(App, props), {
-      exitOnCtrlC: false,
-    });
-    await instance.waitUntilExit();
-  } finally {
-    terminal.restore();
-    terminal.dispose();
-  }
+  await instance.waitUntilExit();
   return { exitCode: 0 };
 }
 
@@ -161,7 +159,7 @@ async function maybePrintFirstRunConfigHint(initialCwd: string): Promise<void> {
 
 function tuiUsage(): string {
   return [
-    "Usage: sparkwright tui [--workspace path] [--session-root path] [--model provider/model] [--access-mode read-only|ask|accept-edits|bypass] [--trace-level standard|debug] [--session-id id] [--no-alt-screen]",
+    "Usage: sparkwright tui [--workspace path] [--session-root path] [--model provider/model] [--access-mode read-only|ask|accept-edits|bypass] [--trace-level standard|debug] [--session-id id]",
     "       node packages/tui/dist/index.js [same options]",
   ].join("\n");
 }

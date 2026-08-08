@@ -18,6 +18,36 @@ function ev(
 }
 
 describe("EventStore active phase projection", () => {
+  it("projects and clears a host-computed Skill proposal human action", () => {
+    const store = new EventStore();
+    store.appendEvent(
+      ev("tool.completed", 1, {
+        toolName: "create_skill",
+        output: {
+          humanAction: {
+            kind: "skill_proposal_review",
+            proposalId: "skillprop_abc123",
+            reviewCommand: "/skill-review skillprop_abc123",
+            eligibility: "quick_apply",
+            validationStatus: "passed",
+            contentMode: "authored",
+            guardSeverity: "none",
+            recommendedAction: "apply",
+          },
+        },
+      }),
+    );
+
+    expect(store.getSnapshot().pendingHumanAction).toMatchObject({
+      proposalId: "skillprop_abc123",
+      eligibility: "quick_apply",
+    });
+    store.clearPendingHumanAction("skillprop_other");
+    expect(store.getSnapshot().pendingHumanAction).not.toBeNull();
+    store.clearPendingHumanAction("skillprop_abc123");
+    expect(store.getSnapshot().pendingHumanAction).toBeNull();
+  });
+
   it("clears stale errors when a new run starts and completes", () => {
     const store = new EventStore();
 

@@ -339,8 +339,8 @@ export function createHostShellTool(
     description:
       `${descriptor.description} Do not use shell to create or update ` +
       "managed capability files under .sparkwright/skills, .sparkwright/agents, " +
-      "or .sparkwright/command; use controlled workspace write tools or " +
-      "SparkWright CLI subcommands instead.",
+      "or .sparkwright/command; use the dedicated " +
+      "SparkWright capability tools or CLI subcommands instead.",
     async execute(args, ctx) {
       const readOnlyFastPath = isReadOnlyShellFastPath(args);
       const before = readOnlyFastPath
@@ -392,56 +392,6 @@ export function createHostShellTool(
       return output;
     },
   };
-}
-
-/**
- * Child-safe shell surface: foreground-only and unable to persist unmanaged
- * workspace mutations. createHostShellTool snapshots and rolls back any such
- * mutation; this wrapper also removes background controls from the model schema.
- */
-export function createChildSafeHostShellTool(
-  workspaceRoot: string,
-  options: Omit<
-    HostShellToolOptions,
-    "taskManager" | "getRunEvents" | "backgroundTasks"
-  > = {},
-): ToolDefinition<ShellToolInput, ShellToolOutput> {
-  const tool = createHostShellTool(workspaceRoot, {
-    ...options,
-    backgroundTasks: "disabled",
-  });
-  const inputSchema = {
-    ...(tool.inputSchema as Record<string, unknown>),
-    properties: childShellInputProperties(tool.inputSchema),
-  };
-  return {
-    ...tool,
-    description:
-      "Execute one foreground shell command after safety and approval checks. " +
-      "Background processes are unavailable. Workspace mutations are detected, " +
-      "rolled back, and reported as failures; use managed create/replace/edit tools.",
-    inputSchema,
-    delegation: "child",
-  };
-}
-
-function childShellInputProperties(
-  schema: ToolDefinition["inputSchema"],
-): Record<string, unknown> {
-  const properties =
-    schema &&
-    typeof schema === "object" &&
-    "properties" in schema &&
-    schema.properties &&
-    typeof schema.properties === "object"
-      ? (schema.properties as Record<string, unknown>)
-      : {};
-  const {
-    background: _background,
-    lifetime: _lifetime,
-    ...foreground
-  } = properties;
-  return foreground;
 }
 
 function isReadOnlyShellFastPath(args: unknown): boolean {
@@ -609,7 +559,6 @@ function createTaskBackgroundHandoff(input: {
       parentRunId: input.parentRunId,
       kind: SHELL_BACKGROUND_KIND,
       title: `shell: ${rawCommand}`,
-      completionPolicy: policy.awaited ? "awaited" : "detached",
       awaited: policy.awaited,
       metadata: {
         command: rawCommand,
@@ -813,7 +762,7 @@ class UntrackedWorkspaceMutationError extends Error {
     const capabilityGuidance = changes.some((change) =>
       isManagedCapabilityPath(change.path),
     )
-      ? " Use controlled workspace write tools or CLI subcommands for .sparkwright capability packages."
+      ? " Use dedicated SparkWright capability tools or CLI subcommands for .sparkwright capability packages."
       : "";
     super(
       `Shell command changed workspace files outside the controlled write path: ${changes

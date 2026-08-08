@@ -105,9 +105,9 @@ describe("CLI run outcome", () => {
       summary,
       log.emit("tool.completed", {
         toolCallId: "call_1",
-        toolName: "create_agent",
+        toolName: "update_skill",
         status: "completed",
-        output: { changed: true, name: "reviewer" },
+        output: { changed: true, proposalId: "skillprop_1" },
       }),
     );
 
@@ -130,15 +130,15 @@ describe("CLI run outcome", () => {
     const log = new EventLog(createRunId());
     for (const event of [
       log.emit("capability.mutation.completed", {
-        action: "write_agent_profile",
-        path: ".sparkwright/agents/reviewer.md",
-        fileCount: 1,
+        action: "replace_skill_package",
+        path: ".sparkwright/skill-evolution/proposals/skillprop_1",
+        fileCount: 2,
       }),
       log.emit("tool.completed", {
         toolCallId: "call_1",
-        toolName: "create_agent",
+        toolName: "update_skill",
         status: "completed",
-        output: { changed: true, name: "reviewer" },
+        output: { changed: true, proposalId: "skillprop_1" },
       }),
     ]) {
       updateCliRunEventSummary(summary, event);

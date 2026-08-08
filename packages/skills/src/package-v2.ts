@@ -41,7 +41,6 @@ export interface AssetPackageFile {
 export interface AssetPackageIdentity {
   packageHashPolicyVersion: typeof PACKAGE_HASH_POLICY_VERSION;
   packageHash: string;
-  /** @reserved Public package-size diagnostic retained in serialized hash and snapshot identities. */
   fileCount: number;
   /** @reserved Public package-size diagnostic consumed by future inspection and retention tooling. */
   totalBytes: number;

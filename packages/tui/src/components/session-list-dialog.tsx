@@ -2,7 +2,6 @@ import React, { useMemo, useState } from "react";
 import { Box, Text, useInput, useStdout } from "ink";
 import type { SessionDiagnostics, SessionSummary } from "../lib/sessions.js";
 import { displayWidth, toGraphemes } from "../lib/graphemes.js";
-import { isBackInput } from "../lib/input-key.js";
 import {
   DialogFrame,
   dialogFrameWidth,
@@ -57,7 +56,7 @@ export function SessionListDialog(props: {
   useInput((input, key) => {
     // Filter-mode owns most keys when active.
     if (filter !== null) {
-      if (isBackInput(input, key)) {
+      if (key.escape) {
         setFilter(null);
         return;
       }
@@ -87,7 +86,7 @@ export function SessionListDialog(props: {
       return;
     }
 
-    if (isBackInput(input, key)) {
+    if (key.escape) {
       props.onCancel();
       return;
     }

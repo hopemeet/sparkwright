@@ -1,62 +1,63 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Box, Text, useInput, useStdout } from "ink";
-import type { ApprovalViewModel } from "../lib/approval-view-model.js";
-import { defaultApprovalChoice } from "../lib/approval-view-model.js";
+import type { PendingApproval } from "../state/event-store.js";
+import { DiffView } from "./diff-view.js";
+import { useTheme } from "../lib/theme-context.js";
+import type { Theme } from "../lib/theme.js";
 import {
   approvalChoiceLabel,
   approvalChoices,
   type ApprovalChoice,
 } from "../lib/session-approval.js";
-import { useTheme } from "../lib/theme-context.js";
-import type { Theme } from "../lib/theme.js";
-import { DiffView } from "./diff-view.js";
 import {
   DialogFrame,
   dialogFrameWidth,
   resolveDialogColumns,
 } from "./dialog-frame.js";
-import { KeyHints } from "./key-hints.js";
 
-/** Blocking decision surface. Esc and Ctrl+C are explicit Deny decisions. */
+/**
+ * Kind-aware approval panel. Shows a renderable body matching the action:
+ *  - workspace.write  → unified diff with scroll keys
+ *  - skill.apply      → final prepared Skill diff with scroll keys
+ *  - tool.execute     → tool name + truncated args
+ *  - shell.execute    → command (one-line) + reason
+ *  - other            → summary + raw details
+ *
+ * Keys: up/down or j/k choose · Enter confirm · y approve once · n/Esc deny.
+ * Long diffs use paging keys so vertical choice navigation stays intuitive.
+ * Esc-to-deny is risk-averse on purpose: cancelling the *prompt* without
+ * a decision would leave the run blocked forever, so we treat it as deny.
+ */
 export function ApprovalPrompt(props: {
-  pending: ApprovalViewModel;
+  pending: PendingApproval;
   onDecision: (choice: ApprovalChoice) => void;
 }): React.ReactElement {
   const { stdout } = useStdout();
   const theme = useTheme();
   const [scroll, setScroll] = useState(0);
+  const [selected, setSelected] = useState(0);
   const choices = approvalChoices(props.pending.subject);
-  const defaultChoice = defaultApprovalChoice(props.pending);
-  const defaultIndex = Math.max(0, choices.indexOf(defaultChoice));
-  const [selected, setSelected] = useState(defaultIndex);
-  const viewportRows = Math.max(5, (stdout?.rows ?? 30) - 21);
+  // Reset scroll when the approval target changes — we keep this component
+  // mounted across approvals when possible.
+  useEffect(() => {
+    setScroll(0);
+    setSelected(0);
+  }, [props.pending.id]);
+
+  // Reserve some rows for header / footer / surrounding chrome. The remainder
+  // is the diff viewport. Floor at 6 to stay useful on tiny terminals.
+  const viewportRows = Math.max(6, (stdout?.rows ?? 30) - 18);
   const viewportCols = Math.max(
     20,
     dialogFrameWidth(resolveDialogColumns(stdout?.columns)) - 4,
   );
 
-  useEffect(() => {
-    setScroll(0);
-    setSelected(defaultIndex);
-  }, [props.pending.approvalId, defaultIndex]);
-
   useInput((input, key) => {
-    if (props.pending.resolving) return;
     if (input === "y" || input === "Y") {
       props.onDecision("allow-once");
       return;
     }
-    if ((input === "s" || input === "S") && choices.includes("allow-session")) {
-      props.onDecision("allow-session");
-      return;
-    }
-    if (
-      input === "n" ||
-      input === "N" ||
-      key.escape ||
-      (key.ctrl && input === "c") ||
-      input.includes("\x03")
-    ) {
+    if (input === "n" || input === "N" || key.escape) {
       props.onDecision("deny");
       return;
     }
@@ -69,9 +70,10 @@ export function ApprovalPrompt(props: {
       return;
     }
     if (key.return) {
-      props.onDecision(choices[selected] ?? defaultChoice);
+      props.onDecision(choices[selected] ?? "allow-once");
       return;
     }
+    if (!props.pending.diff) return;
     if (key.pageDown || input === "d") setScroll((s) => s + viewportRows);
     else if (key.pageUp || input === "u")
       setScroll((s) => Math.max(0, s - viewportRows));
@@ -79,299 +81,133 @@ export function ApprovalPrompt(props: {
     else if (input === "G") setScroll(1_000_000);
   });
 
+  const borderColor = riskColor(props.pending.policy?.risk, theme);
+
   return (
-    <DecisionShell borderColor={riskColor(props.pending.risk, theme)}>
-      <DecisionHeader pending={props.pending} theme={theme} />
-      <ExecutionOrigin pending={props.pending} theme={theme} />
-      <EffectSummary pending={props.pending} />
-      <PolicyExplanation pending={props.pending} theme={theme} />
-      <DecisionScope pending={props.pending} theme={theme} />
-      <DecisionBody
+    <DialogFrame borderColor={borderColor}>
+      <Header pending={props.pending} theme={theme} />
+      <Body
         pending={props.pending}
         theme={theme}
         scroll={scroll}
         viewportRows={viewportRows}
         viewportCols={viewportCols}
       />
-      <DecisionActions
+      <Footer
         choices={choices}
         selected={selected}
         pending={props.pending}
+        hasDiff={!!props.pending.diff}
         theme={theme}
       />
-      <DecisionProgress pending={props.pending} theme={theme} />
-    </DecisionShell>
+    </DialogFrame>
   );
 }
 
-export function DecisionShell(props: {
-  borderColor: string;
-  children: React.ReactNode;
-}): React.ReactElement {
-  return (
-    <DialogFrame borderColor={props.borderColor}>{props.children}</DialogFrame>
-  );
-}
-
-export function DecisionHeader(props: {
-  pending: ApprovalViewModel;
+function Header(props: {
+  pending: PendingApproval;
   theme: Theme;
 }): React.ReactElement {
-  return (
-    <Box>
-      <Text color={props.theme.warning} bold>
-        ⚠ approval required
-      </Text>
-      <Text dimColor> · {props.pending.action}</Text>
-      <Text color={riskColor(props.pending.risk, props.theme)}>
-        {` · risk:${props.pending.risk}`}
-      </Text>
-      <Box flexGrow={1} />
-      <Text dimColor>
-        {props.pending.queuePosition} of {props.pending.queueDepth}
-      </Text>
-    </Box>
-  );
-}
-
-export function ExecutionOrigin(props: {
-  pending: ApprovalViewModel;
-  theme: Theme;
-}): React.ReactElement {
-  const pending = props.pending;
+  const { pending, theme } = props;
+  const risk = pending.policy?.risk;
+  const reason = pending.reason ?? pending.policy?.reason;
   return (
     <Box flexDirection="column">
-      <Text>
-        <Text dimColor>origin: </Text>
-        <Text color={props.theme.accent}>
-          {pending.principalLabel ?? principalKindLabel(pending.principalKind)}
+      <Box>
+        <Text color={theme.warning} bold>
+          ⚠ approval required
         </Text>
-        <Text dimColor> ({pending.principalKind})</Text>
-      </Text>
-      <Text dimColor>
-        run {pending.runId} · scope {pending.principalScope} · session{" "}
-        {pending.sessionId}
-        {pending.executionKind === "workflow"
-          ? ` · workflow ${pending.workflowId ?? "execution"}`
-          : ""}
-      </Text>
-    </Box>
-  );
-}
-
-export function EffectSummary(props: {
-  pending: ApprovalViewModel;
-}): React.ReactElement {
-  return <Text bold>{props.pending.summary}</Text>;
-}
-
-export function PolicyExplanation(props: {
-  pending: ApprovalViewModel;
-  theme: Theme;
-}): React.ReactElement | null {
-  const rows = [
-    ["policy", props.pending.policyReason ?? props.pending.reason],
-    ["tool", props.pending.toolReason],
-    ["safety", props.pending.safetyReason],
-  ].filter((row): row is [string, string] => typeof row[1] === "string");
-  if (rows.length === 0) return null;
-  return (
-    <Box flexDirection="column">
-      {rows.map(([layer, reason]) => (
-        <Text key={layer}>
-          <Text dimColor>{layer}: </Text>
-          <Text color={props.theme.warning}>{reason}</Text>
-        </Text>
-      ))}
-    </Box>
-  );
-}
-
-function principalKindLabel(kind: ApprovalViewModel["principalKind"]): string {
-  if (kind === "dynamic_child") return "dynamic child";
-  if (kind === "configured_delegate") return "configured delegate";
-  return "main";
-}
-
-export function DecisionScope(props: {
-  pending: ApprovalViewModel;
-  theme: Theme;
-}): React.ReactElement {
-  return (
-    <Text>
-      <Text dimColor>scope: </Text>
-      <Text color={props.theme.accent2}>{props.pending.exactScope}</Text>
-    </Text>
-  );
-}
-
-function DecisionBody(props: {
-  pending: ApprovalViewModel;
-  theme: Theme;
-  scroll: number;
-  viewportRows: number;
-  viewportCols: number;
-}): React.ReactElement {
-  switch (props.pending.kind) {
-    case "workspace.write":
-      return <WorkspaceWriteDecision {...props} />;
-    case "shell.execute":
-      return <ShellDecision {...props} />;
-    case "tool.execute":
-      return <ToolDecision {...props} />;
-    case "skill.apply":
-      return <SkillApplyDecision {...props} />;
-    default:
-      return <UnknownDecision {...props} />;
-  }
-}
-
-export function WorkspaceWriteDecision(
-  props: DecisionBodyProps,
-): React.ReactElement {
-  return <DiffDecision {...props} label="workspace write" />;
-}
-
-export function SkillApplyDecision(
-  props: DecisionBodyProps,
-): React.ReactElement {
-  return <DiffDecision {...props} label="final prepared Skill effect" />;
-}
-
-interface DecisionBodyProps {
-  pending: ApprovalViewModel;
-  theme: Theme;
-  scroll: number;
-  viewportRows: number;
-  viewportCols: number;
-}
-
-function DiffDecision(
-  props: DecisionBodyProps & { label: string },
-): React.ReactElement {
-  const summary = props.pending.diffSummary;
-  return (
-    <Box flexDirection="column" marginTop={1}>
-      <Text dimColor>{props.label}</Text>
-      <Text>
-        <Text dimColor>target: </Text>
-        <Text color={props.theme.accent2}>{props.pending.path ?? "?"}</Text>
-      </Text>
-      {summary ? (
-        <Text dimColor>
-          {summary.files.length} file{summary.files.length === 1 ? "" : "s"}
-          {` · +${summary.additions} -${summary.deletions}`}
-          {summary.files.length > 0 ? ` · ${summary.files.join(", ")}` : ""}
+        <Text dimColor> {pending.action}</Text>
+        {risk ? (
+          <Text color={riskColor(risk, theme)}> · risk:{risk}</Text>
+        ) : null}
+      </Box>
+      <Text>{pending.summary}</Text>
+      {reason ? (
+        <Text>
+          <Text dimColor>reason: </Text>
+          {reason}
         </Text>
       ) : null}
-      {props.pending.diff ? (
+    </Box>
+  );
+}
+
+function Body(props: {
+  pending: PendingApproval;
+  theme: Theme;
+  scroll: number;
+  viewportRows: number;
+  viewportCols: number;
+}): React.ReactElement | null {
+  const { pending, theme } = props;
+
+  if (
+    (pending.kind === "workspace.write" || pending.kind === "skill.apply") &&
+    pending.diff
+  ) {
+    return (
+      <Box flexDirection="column" marginTop={1}>
+        <Text>
+          <Text dimColor>file: </Text>
+          <Text color={theme.accent2}>{pending.path ?? "?"}</Text>
+        </Text>
+        {pending.kind === "skill.apply" ? (
+          <Text dimColor>
+            final prepared effect · approval is bound to this revision
+          </Text>
+        ) : null}
         <DiffView
-          diff={props.pending.diff}
+          diff={pending.diff}
           scrollOffset={props.scroll}
           viewportRows={props.viewportRows}
           width={props.viewportCols}
         />
-      ) : (
-        <Text color={props.theme.warning}>No diff was supplied.</Text>
-      )}
-    </Box>
-  );
-}
+      </Box>
+    );
+  }
 
-export function ShellDecision(props: DecisionBodyProps): React.ReactElement {
-  const command =
-    props.pending.command ??
-    stringValue(props.pending.toolArgs, "command") ??
-    "?";
-  const cwd =
-    props.pending.cwd ?? stringValue(props.pending.toolArgs, "cwd") ?? "?";
-  const lines = useMemo(
-    () => wrapDetailLines(`$ ${command}\ncwd: ${cwd}`, props.viewportCols),
-    [command, cwd, props.viewportCols],
-  );
-  return (
-    <DetailLines
-      title="shell command"
-      lines={lines}
-      scroll={props.scroll}
-      viewportRows={props.viewportRows}
-      theme={props.theme}
-    />
-  );
-}
-
-export function ToolDecision(props: DecisionBodyProps): React.ReactElement {
-  const json = safePrettyJson(props.pending.toolArgs);
-  const lines = useMemo(
-    () => wrapDetailLines(json, props.viewportCols),
-    [json, props.viewportCols],
-  );
-  return (
-    <DetailLines
-      title={`tool ${props.pending.toolName ?? "?"} arguments`}
-      lines={lines}
-      scroll={props.scroll}
-      viewportRows={props.viewportRows}
-      theme={props.theme}
-    />
-  );
-}
-
-export function UnknownDecision(props: DecisionBodyProps): React.ReactElement {
-  const json = safePrettyJson(props.pending.details);
-  const lines = useMemo(
-    () => wrapDetailLines(json, props.viewportCols),
-    [json, props.viewportCols],
-  );
-  return (
-    <Box flexDirection="column" marginTop={1}>
-      <Text color={props.theme.error} bold>
-        Unknown approval shape — fail closed; session approval is unavailable.
-      </Text>
-      <DetailLines
-        title="host details"
-        lines={lines}
-        scroll={props.scroll}
-        viewportRows={props.viewportRows}
-        theme={props.theme}
-      />
-    </Box>
-  );
-}
-
-function DetailLines(props: {
-  title: string;
-  lines: readonly string[];
-  scroll: number;
-  viewportRows: number;
-  theme: Theme;
-}): React.ReactElement {
-  const maxScroll = Math.max(0, props.lines.length - props.viewportRows);
-  const start = Math.min(props.scroll, maxScroll);
-  const visible = props.lines.slice(start, start + props.viewportRows);
-  return (
-    <Box flexDirection="column" marginTop={1}>
-      <Text dimColor>{props.title}</Text>
-      {visible.map((line, index) => (
-        <Text key={`${start + index}:${line}`} color={props.theme.accent2}>
-          {line || " "}
+  if (pending.kind === "tool.execute") {
+    return (
+      <Box flexDirection="column" marginTop={1}>
+        <Text>
+          <Text dimColor>tool: </Text>
+          <Text color={theme.accent}>{pending.toolName ?? "?"}</Text>
         </Text>
-      ))}
-      {props.lines.length > props.viewportRows ? (
-        <Text dimColor>
-          lines {start + 1}-
-          {Math.min(props.lines.length, start + visible.length)} of{" "}
-          {props.lines.length}
+        <ToolArgs
+          toolName={pending.toolName}
+          args={pending.toolArgs}
+          theme={theme}
+          viewportCols={props.viewportCols}
+        />
+      </Box>
+    );
+  }
+
+  if (pending.kind === "shell.execute" && pending.command) {
+    return (
+      <Box marginTop={1}>
+        <Text dimColor>$ </Text>
+        <Text color={theme.accent2}>
+          {truncateText(pending.command, props.viewportCols - 2)}
         </Text>
-      ) : null}
+      </Box>
+    );
+  }
+
+  return pending.path ? (
+    <Box marginTop={1}>
+      <Text dimColor>path: </Text>
+      <Text>{pending.path}</Text>
     </Box>
-  );
+  ) : null;
 }
 
-export function DecisionActions(props: {
+function Footer(props: {
   choices: readonly ApprovalChoice[];
   selected: number;
-  pending: ApprovalViewModel;
+  pending: PendingApproval;
+  hasDiff: boolean;
   theme: Theme;
 }): React.ReactElement {
   return (
@@ -386,75 +222,162 @@ export function DecisionActions(props: {
           {approvalChoiceLabel(choice, props.pending.subject)}
         </Text>
       ))}
-      <KeyHints
-        hints={[
-          { keys: "↑/↓", label: "choose" },
-          { keys: "enter", label: "confirm" },
-          { keys: "y", label: "once" },
-          ...(props.choices.includes("allow-session")
-            ? [{ keys: "s", label: "session" }]
-            : []),
-          { keys: "n/esc", label: "deny" },
-          { keys: "pgup/pgdn", label: "details" },
-        ]}
-      />
+      <Text dimColor>↑/↓ choose · enter confirm · y once · n/esc deny</Text>
+      {props.hasDiff ? (
+        <Text dimColor>pgup/pgdn or u/d review diff · g/G top/bottom</Text>
+      ) : null}
     </Box>
   );
 }
 
-export function DecisionProgress(props: {
-  pending: ApprovalViewModel;
+function ToolArgs(props: {
+  toolName?: string;
+  args: unknown;
   theme: Theme;
+  viewportCols: number;
 }): React.ReactElement | null {
-  if (props.pending.resolving) {
+  const args = rec(props.args);
+  if (
+    args &&
+    (props.toolName === "create_skill" || props.toolName === "update_skill")
+  ) {
     return (
-      <Text color={props.theme.warning}>
-        resolving {props.pending.submittedChoice ?? "decision"}… duplicate input
-        disabled
-      </Text>
+      <SkillToolArgs
+        toolName={props.toolName}
+        args={args}
+        theme={props.theme}
+      />
     );
   }
-  if (props.pending.error) {
+  if (args && isShellToolName(props.toolName)) {
     return (
-      <Text color={props.theme.error}>
-        resolve failed: {props.pending.error}
-      </Text>
+      <ShellToolArgs
+        args={args}
+        theme={props.theme}
+        viewportCols={props.viewportCols}
+      />
     );
   }
-  return null;
+  if (!props.args) return null;
+  return (
+    <Text>
+      <Text dimColor>args: </Text>
+      <Text>{truncateJson(props.args, props.viewportCols)}</Text>
+    </Text>
+  );
 }
 
-function riskColor(risk: ApprovalViewModel["risk"], theme: Theme): string {
-  return risk === "high" || risk === "unknown" ? theme.error : theme.warning;
+function isShellToolName(name: string | undefined): boolean {
+  return name === "bash";
 }
 
-function safePrettyJson(value: unknown): string {
+function ShellToolArgs(props: {
+  args: Record<string, unknown>;
+  theme: Theme;
+  viewportCols: number;
+}): React.ReactElement {
+  const command = str(props.args.command) || "?";
+  const cwd = str(props.args.cwd);
+  const timeoutMs =
+    typeof props.args.timeoutMs === "number" ? props.args.timeoutMs : undefined;
+  return (
+    <Box flexDirection="column">
+      <Text>
+        <Text dimColor>$ </Text>
+        <Text color={props.theme.accent2}>
+          {truncateText(command, props.viewportCols - 2)}
+        </Text>
+      </Text>
+      {cwd ? (
+        <Text>
+          <Text dimColor>cwd: </Text>
+          {truncateText(cwd, props.viewportCols - 5)}
+        </Text>
+      ) : null}
+      {timeoutMs !== undefined ? (
+        <Text>
+          <Text dimColor>timeout: </Text>
+          {timeoutMs}ms
+        </Text>
+      ) : null}
+    </Box>
+  );
+}
+
+function SkillToolArgs(props: {
+  toolName: "create_skill" | "update_skill";
+  args: Record<string, unknown>;
+  theme: Theme;
+}): React.ReactElement {
+  const action = str(props.args.action) || "?";
+  const name = str(props.args.name) || "?";
+  const root = str(props.args.root);
+  const force = props.args.force === true;
+  return (
+    <Box flexDirection="column">
+      <Text>
+        <Text dimColor>skill: </Text>
+        <Text color={props.theme.accent2}>{name}</Text>
+      </Text>
+      <Text>
+        <Text dimColor>action: </Text>
+        {action}
+        {force ? <Text color={props.theme.warning}> · force</Text> : null}
+      </Text>
+      {root ? (
+        <Text>
+          <Text dimColor>root: </Text>
+          {root}
+        </Text>
+      ) : null}
+      <Text dimColor>{skillEffect(props.toolName, action, name)}</Text>
+    </Box>
+  );
+}
+
+function skillEffect(
+  toolName: "create_skill" | "update_skill",
+  action: string,
+  name: string,
+): string {
+  if (toolName === "create_skill") {
+    return `effect: draft proposal for .sparkwright/skills/${name}; current Skill package is unchanged`;
+  }
+  if (action === "draft") {
+    return "effect: draft proposal only; original Skill package is unchanged";
+  }
+  if (action === "apply") {
+    return "effect: apply an existing proposal to the Skill package";
+  }
+  return "effect: update Skill package through the managed Skill tool";
+}
+
+function riskColor(risk: string | undefined, theme: Theme): string {
+  if (risk === "risky" || risk === "high") return theme.error;
+  return theme.warning;
+}
+
+function rec(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function str(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function truncateJson(value: unknown, maxCols: number): string {
+  let text: string;
   try {
-    return JSON.stringify(value ?? {}, null, 2);
+    text = typeof value === "string" ? value : JSON.stringify(value);
   } catch {
-    return String(value);
+    text = String(value);
   }
+  return truncateText(text, maxCols);
 }
 
-function stringValue(value: unknown, key: string): string | undefined {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    return undefined;
-  }
-  const found = (value as Record<string, unknown>)[key];
-  return typeof found === "string" ? found : undefined;
-}
-
-function wrapDetailLines(text: string, width: number): string[] {
-  const safeWidth = Math.max(12, width);
-  const lines: string[] = [];
-  for (const sourceLine of text.split("\n")) {
-    if (!sourceLine) {
-      lines.push("");
-      continue;
-    }
-    for (let offset = 0; offset < sourceLine.length; offset += safeWidth) {
-      lines.push(sourceLine.slice(offset, offset + safeWidth));
-    }
-  }
-  return lines;
+function truncateText(text: string, maxCols: number): string {
+  if (text.length <= maxCols) return text;
+  return text.slice(0, Math.max(0, maxCols - 1)) + "…";
 }

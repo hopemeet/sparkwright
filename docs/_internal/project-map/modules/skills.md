@@ -2,16 +2,13 @@
 
 ## Purpose
 
-`@sparkwright/skills` owns deterministic Skill discovery, manifest parsing,
-package identity, matching, loading, preprocessing hooks, and advisory usage
-records. Host, CLI, and TUI compose those primitives into runtime loading,
-project creation, diagnostics, and statistics. SparkWright no longer owns a
-Skill self-evolution/proposal/history subsystem.
+`@sparkwright/skills` indexes, validates, matches, loads, and packages Skill
+sources. Host and CLI layers turn those primitives into runtime context,
+loader tools, reports, proposals, and evolution workflows.
 
-See [../maps/capabilities/skills.md](../maps/capabilities/skills.md) for the
-current loading, creation, and statistics flow. The former change pipeline is
-recorded only as retired history in
-[../maps/capabilities/skill-evolution.md](../maps/capabilities/skill-evolution.md).
+See also [../maps/capabilities/skills.md](../maps/capabilities/skills.md) (loading)
+and [../maps/capabilities/skill-evolution.md](../maps/capabilities/skill-evolution.md)
+(the propose/apply/history/restore change pipeline).
 
 ## Main Files
 
@@ -25,124 +22,179 @@ recorded only as retired history in
 - `packages/skills/src/manifest.ts`
 - `packages/skills/src/markdown-folder-asset.ts`
 - `packages/skills/src/package-v2.ts`
-- `packages/host/src/project-skill-create.ts`
 - `packages/host/src/skill-report.ts`
-- `packages/host/src/skill-stats.ts`
-- `packages/host/src/skill-doctor.ts`
+- `packages/host/src/skill-evolution.ts`
+- `packages/host/src/skill-command-service.ts`
+- `packages/host/src/skill-review-digest.ts`
 - `packages/host/src/skill-usage.ts`
 - `packages/host/src/skill-roots.ts`
-- `packages/host/src/tools.ts`
-- `packages/cli/src/cli.ts`
-- `packages/tui/src/lib/create-capability.ts`
-- `packages/tui/src/lib/skills-browser.ts`
-- `packages/tui/src/components/skills-panel.tsx`
 - `docs/reference/SKILLS.md`
+- `docs/_internal/project-map/maps/capabilities/skills.md`
+- `docs/_internal/project-map/maps/capabilities/skill-evolution.md`
 
 ## Owns / Does Not Own
 
 Owns:
 
-- canonical `SKILL.md` parsing and layered discovery
-- package identity v2 and identical-set snapshot primitives
-- deterministic goal matching, resident loading, and `skill_load`
-- host-owned deterministic project scaffold creation
-- trace-derived, rebuildable per-package statistics
+- skill package/index/load primitives
+- skill metadata and validation
+- Skill body preprocessing hooks and the inline-shell runner interface
+- skill usage/reporting helpers in package scope
 
 Does not own:
 
-- automatic learning, proposal review, version history, or rollback
-- mutation authority for existing Skill packages
+- host capability layering policy by itself
+- TUI proposal UI
+- automatic long-term learning decisions
+- core event semantics
 - process execution, sandboxing, or trace emission for inline shell
-- core event semantics or TUI presentation state
 
 ## Contracts
 
-- Root precedence is `builtin -> user -> project -> configured`. Configured
-  roots remain strongest external read-only sources for SparkWright commands.
-- `parseSkillManifest` is the sole canonical manifest parser and requires
-  non-empty instructions. `package-v2.ts` owns complete canonical ordinary-file
-  enumeration and returns `packageHashPolicyVersion: 2`.
-- Runtime indexing, trace metadata, capability inspection, lockfiles, doctor,
-  and Stats share package identity v2. Model-visible Skill content excludes
-  host absolute paths and package hashes; diagnostics retain provenance.
-- The model-facing surface is read-only: `list_skills` and optional
-  `skill_load`. `create_skill` and `update_skill` are not registered tools.
-- `createProjectSkill` is the shared CLI/TUI creation boundary. It validates a
-  deterministic template before publishing, accepts only the project root,
-  reserves the target directory exclusively, and never overwrites an existing
-  Skill. It writes no proposal, registry, history, or learning state.
-- Existing Skill updates are ordinary controlled workspace changes. Shell
-  writes remain subject to the general untracked-mutation rollback guard.
-- Stats keys evidence by Skill + layer + package hash policy + package hash.
-  It scans the bounded requested recent-session window, reuses valid unchanged
-  projections for sessions still in that window, and uses a rebuildable catalog
-  to skip unrelated current candidates for targeted Skill/package queries. A
-  cached session outside `--last` is not included. Raw traces remain
-  authoritative.
-- Stats does not read self-evolution records. Existing
-  `.sparkwright/skill-evolution/`, registry, or suggestion data from older
-  releases is inert and must not be deleted as a side effect of reads or
-  creation.
-- Host writes the advisory `.sparkwright/skill-usage.json` load counters, but
-  the sidecar does not affect default ranking and no longer records patch
-  activity.
-- Inline shell preprocessing remains opt-in, host-executed, sandbox-enforced,
-  no-write, fail-closed, and traced as `extension.process.*` with
-  `kind: skill_script`.
-- TUI `/skills` is read-only and joins trace stats to the effective package by
-  exact name, layer, and package identity. `/create skill` uses the deterministic
-  creator; no proposal or learning layers are registered.
+- `SkillCommandService` is the host-owned create command boundary. Model
+  `create_skill`, CLI `skills create`, and TUI `/create skill` call
+  `prepareCreate`; proposal review apply calls `approveAndApply`. Adapters
+  parse/render only and may not directly write a current Skill.
+
+- Safe model-authored create proposals now use the first prepared-change fast
+  path: the complete package and `effectHash` are persisted before approval;
+  one `skill.apply` approval binds proposal id, revision, and effect hash; the
+  originating tool episode then writes an approval receipt, applies the Skill,
+  writes deterministic history plus a mutation receipt, and returns an applied
+  result. Missing approval leaves `preparedState: waiting`. Templates,
+  updates, caution/dangerous content, and direct CLI/TUI creation retain their
+  existing review/direct behavior until `SkillCommandService` convergence.
+
+- Skill events include `skill.indexed`, `skill.failed`, and `skill.loaded`.
+- Skill root layers are canonical and weak-to-strong:
+  `builtin -> user -> project -> configured`. Entries from
+  `capabilities.skills.roots` are current configured overrides, remain
+  strongest, and are read-only to managed evolution; there is no `legacy`
+  layer reader.
+- `skill.indexed.metadata.skills[]` carries emit-time identity provenance,
+  including required `packageHash`, `packageHashPolicyVersion: 2`, and layer;
+  Markdown `contentHash` is not an attributable identity. Skill stats accept
+  only that policy-bound package identity and key observations as
+  `skill + layer + name + policy + hash`; old content/name-only trace rows do
+  not create version buckets. Stats scan both session traces and
+  `agents/<agent-id>/trace.jsonl` files, dedupe repeated event ids, and roll up
+  proposal/history activity only when evolution metadata hashes match.
+- Runtime indexing, doctor, trace, capability inspection, lockfiles, statistics,
+  and managed evolution all consume the v2 primitive in `package-v2.ts`. It
+  recursively enumerates all canonical
+  ordinary files except the fixed exclusion table, rejects non-excluded
+  symlinks/special files and limit violations, hashes normalized relative paths
+  with NUL framing, snapshots the identical file set, and returns
+  `packageHashPolicyVersion: 2`. The separate v1 Skill package API is removed.
+- `skills stats` materializes rebuildable per-session projections under
+  `.sparkwright/skill-stats/sessions/`, keyed by trace fingerprints plus a
+  projection schema and algorithm version. Reports expose trace/evolution
+  windows, freshness timestamps, cache hit/miss/write/error counts, and
+  analyzer findings. Load failure statistics have one structured carrier,
+  `loadFailures.total/byMode/byStatus`; there is no parallel summary field.
+  Per-session Skill entries include event windows and bounded run samples for
+  later targeted evidence queries. A lightweight
+  `.sparkwright/skill-stats/catalog.json` routes `--skill`, `--skill-key`, and
+  `--package-hash` queries to relevant session projections; it is still a
+  rebuildable cache, not a full Skill rollup or source of truth.
+- Host writes an advisory Skill usage sidecar at
+  `.sparkwright/skill-usage.json`. Successful on-demand `skill_load` events
+  increment `useCount` + `explicitLoadCount`; configured resident loads
+  increment `useCount` + `residentLoadCount`; proposal apply/restore and direct
+  project `skills create` increment `patchCount`. The sidecar is best-effort
+  and does not affect default ranking.
+- Host defaults to on-demand loading via `skill_load` unless config opts into
+  selected skill residency.
+- The on-demand loader deduplicates successful body loads by name and reference
+  loads by name + canonical resource path + package identity within the
+  loader/run. Repeat references return a short `already_loaded` result without
+  content; unsuccessful loads remain retryable.
+- Markdown-folder asset helpers own only generic folder discovery,
+  frontmatter/body splitting, loose frontmatter parsing, and content hashing.
+  Domain schemas and diagnostics remain with the owner, such as host skills,
+  agent profiles, or workflow assets.
+- `SkillManifest` is the sole parser-normalized metadata shape.
+  `parseSkillManifest` requires non-empty `instructions`; runtime loading maps
+  that validated manifest into its indexed `SkillDefinition` privately. There
+  is no public empty-body parser or parallel parse surface. The parser owns
+  description length validation, list splitting, `license`, `compatibility`,
+  `allowedTools`, top-level `version`, and `metadata.version` normalization.
+- Skill index and resident Skill context must keep host absolute source paths
+  out of model-visible content/source labels; diagnostics retain provenance in
+  metadata and trace events.
+- Inline shell preprocessing is opt-in. `@sparkwright/skills` only exposes the
+  `preprocess.inlineShellRunner` injection point; host owns execution,
+  sandbox invocation, and trace events; `shell-sandbox` owns OS-specific
+  no-write/read-grant compilation. Failed inline shell expansion should insert a
+  short marker into Skill content rather than raw stderr; host trace summaries
+  carry the bounded diagnostic output.
+- Experimental Skill bundle helpers are retired. `@sparkwright/skills` no
+  longer exports bundle registries, slash-command bundle resolution, or
+  `.bundle.json` loading; any future grouped-skill product surface must use the
+  governed `skill_load`/trace/usage path rather than injecting untracked bodies.
+- Project skills live under `.sparkwright/skills/` by default.
+- Evolution is actor-split for proposal application: model-facing
+  `create_skill` and `update_skill` only draft proposals; model tools can
+  provide `body` content, with `create_skill` accepting either full `SKILL.md`
+  or instructions-only content that the host wraps with `name` and
+  `description`. For full `SKILL.md` bodies supplied to either `create_skill`
+  or `update_skill`, host fills a missing frontmatter `description` from the
+  tool description and still rejects mismatched frontmatter names. Proposal
+  metadata records whether content is authored, a generated create template, or
+  an intent-only update stub. Apply, reject,
+  supersede, prune, and restore are human-only CLI/TUI surfaces, never model
+  tools. Model-authored drafts dedupe at session scope across supervised
+  continuation runs (with run-scope fallback when session provenance is
+  absent). Changed content revises the existing draft id with monotonic
+  revision and prior-hash metadata instead of creating a duplicate proposal or
+  silently discarding the later content; closed proposals remain immutable.
+  Manual CLI `sparkwright skills create` remains a direct project Skill
+  management command. Applied proposal changes snapshot to history; `skills
+restore --to before` is the revert edge. See
+  [../maps/capabilities/skill-evolution.md](../maps/capabilities/skill-evolution.md).
+- Model draft results expose a host-computed human-action handoff and canonical
+  proposal-id review command. This is presentation/governance metadata, not a
+  model apply capability; TUI remains the actor that confirms and executes
+  proposal application.
+- `skills review` is a host-backed CLI digest that combines draft proposal
+  backlog with actionable trace-stats findings (`SKILL_LOAD_FAILURES` and
+  `ASSOCIATED_TOOL_FAILURES`) without relying on the usage sidecar.
+- Repeated model-authored `create_skill` / `update_skill` drafts for the same
+  skill and session reuse the existing draft across supervised continuation
+  runs; callers without session provenance retain run-scoped fallback.
+- Applying a proposal closes competing drafts for the same project target as
+  superseded. Explicit host reconciliation repairs durable create drafts against
+  managed history or marks externally occupied/drifted targets stale; TUI
+  inbox/review recovery and ordinary create preparation invoke it, while plain
+  proposal listing stays read-only.
 
 ## Consumers
 
-- Host runtime preparation and capability inspection
-- CLI `skills list|create|validate|stats|doctor`
-- TUI `/skills` and `/create skill`
-- trace/session diagnostics and lockfile producers
+- Host runtime preparation.
+- CLI `skills` commands.
+- TUI `/skill-*` flows.
+- Capability inspection.
 
 ## Change Checklist
 
-- Check root precedence, manifest validation, and package identity v2.
-- Check model tool inventory remains read-only for Skills.
-- Check creation never overwrites and leaves legacy state untouched.
-- Check Stats cache schema/algorithm invalidation and exact package identity.
-- Check CLI/TUI/public docs and the retired capability map together.
-- Keep trace events bounded; never require a full Skill body in event payloads.
+- Check skill roots and layer precedence.
+- Check host runtime context injection and loader-tool behavior.
+- Check inline-shell preprocessing defaults, runner injection, and host sandbox
+  routing when changing `preprocess.ts` or `loadSkill`.
+- Check skill evolution proposal/history flows.
+- Keep trace events small; do not require full skill body in event payloads.
+
+## Known Debts
+
+- Skill self-evolution machinery is solid: immutable snapshots,
+  hash/doctor-gated apply, model-authored create/update drafts,
+  `update_skill --body` for authored content, `guard.inspectSkill` at
+  draft+apply, and history with `restore --to before` revert. Proposals drafted
+  during a run record run/session provenance (reverse-lookup via `proposals
+list --run/--session`); failed drafts self-clean. See
+  [../maps/capabilities/skill-evolution.md](../maps/capabilities/skill-evolution.md#known-debts).
 
 ## Last Verified
-
-- Status: Verified
-- Date: 2026-08-02
-- Scope: removed Skill self-evolution across Host, CLI, TUI, config, and Stats;
-  retained deterministic non-overwriting project creation, package identity v2,
-  layered loading, doctor, and trace-derived cached statistics. Legacy state is
-  ignored and preserved.
-- Read: Skills package, Host creation/runtime/stats/tool/config paths, CLI/TUI
-  adapters, schemas, public reference, and focused tests.
-- Tests: Skills/Host builds, full affected workspace suites, final four-case
-  creator regression, repository test typecheck, and generated schema passed.
-
-- Status: Verified
-- Date: 2026-08-02
-- Scope: recorded the focused TUI `/skills` inventory as a read-only consumer
-  of current layered reports, exact-identity trace statistics, and proposal
-  summaries. Skill package, loading, ranking, mutation, and storage ownership
-  are unchanged.
-- Read: Skill report/stats/proposal sources, TUI browser projection and panel,
-  capability Skill map, and user-facing TUI documentation.
-- Tests: focused TUI Skills projection/rendering, formatting, and Markdown
-  links passed; project-map drift completed.
-
-- Status: Verified
-- Date: 2026-07-26
-- Scope: confirmed `AssetPackageIdentity.fileCount` as a retained public
-  package-size diagnostic in both hash and snapshot results. The field is now
-  explicitly reserved and both producers have regression assertions; package
-  enumeration, hashing, and snapshot behavior are unchanged.
-- Read: Skills package-v2 source/tests and asset-package identity design
-  contracts.
-- Tests: focused Skills 27/27, Skills typecheck, strict reserved-field check,
-  project-map drift, and the full release gate passed.
 
 - Status: Verified
 - Date: 2026-07-19

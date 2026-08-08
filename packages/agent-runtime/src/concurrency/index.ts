@@ -11,3 +11,15 @@ export type {
   WorktreeHandle,
 } from "./worktree.js";
 export { acquireWorktree } from "./worktree.js";
+
+export type {
+  ParseSubAgentResultOutcome,
+  SubAgentResult,
+  SubAgentStatus,
+  WritesAuditResult,
+} from "./result-protocol.js";
+export {
+  parseSubAgentResult,
+  SUB_AGENT_RESULT_PROMPT,
+  validateDeclaredWrites,
+} from "./result-protocol.js";

@@ -55,30 +55,6 @@ describe("tool_search", () => {
     expect(result.deferredCatalogSize).toBe(2);
   });
 
-  it("discovers deferred tools from Chinese free-text queries", async () => {
-    const registry = new ToolRegistry();
-    registry.register(
-      defineTool({
-        name: "workspace_lookup",
-        description: "搜索并读取工作区中的文件内容。",
-        inputSchema: { type: "object" },
-        deferLoading: true,
-        execute: () => ({ ok: true }),
-      }),
-    );
-    const tool = createToolSearchTool({
-      source: toolSearchSourceFromRegistry(registry),
-    });
-
-    const result = await tool.execute({ query: "搜索文件" }, stubContext);
-
-    expect(result.mode).toBe("keyword");
-    expect(result.matches.map((match) => match.name)).toEqual([
-      "workspace_lookup",
-    ]);
-    expect(result.matches[0]?.score).toBeGreaterThan(0);
-  });
-
   it("supports select:name1,name2 exact lookup", async () => {
     const registry = buildRegistry();
     const tool = createToolSearchTool({

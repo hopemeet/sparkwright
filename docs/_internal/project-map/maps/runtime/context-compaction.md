@@ -7,17 +7,6 @@ context while keeping raw trace and session evidence intact.
 
 See [../session/resume-replay.md](../session/resume-replay.md).
 
-## Last Verified
-
-- Status: Verified
-- Date: 2026-07-30
-- Scope: Agent observation and session compaction retain only blocker
-  `code`/`message` evidence. Removed owner/kind/retry/requirement branches no
-  longer consume context budget or imply a recovery control plane.
-- Read: Core observation formatter, session trace facts, Host trace extraction,
-  and affected tests.
-- Tests: focused Core context/session suites and repository build passed.
-
 ## Main Files
 
 - `packages/core/src/run.ts`
@@ -107,13 +96,6 @@ completed prior turns
   finality facts in collapsed rows (`role`, `childRunId`, `finality`, and
   step-limit/truncation markers), rather than reducing child results to only
   char/line counts.
-- Before ContextAssembler applies its generic 8,000-character item ceiling,
-  Agent-aware observation formatting fits the entire single/batch JSON
-  envelope to at most 7,500 serialized characters. Single reports remain strings
-  with explicit truncation/recovery fields; an eight-child batch retains all
-  eight indices. `read_agent_report` pages are bounded by actual serialized
-  result size so JSON escape expansion cannot trigger a broken mid-JSON
-  context slice or skip report text.
 - Workflow-runtime-v1 D10 verification: the existing compaction substrate can
   express node-boundary span-to-summary through a caller-selected source span
   set plus an explicit verdict/evidenceRefs summary artifact/context item.
@@ -151,52 +133,6 @@ completed prior turns
   summarizer seam.
 
 ## Last Verified
-
-- Status: Verified
-- Date: 2026-07-27
-- Scope: Agent tool observations now use semantic single/batch receipts before
-  generic context limits. Serialized envelopes stay structurally valid, all
-  eight parallel child indices remain visible, and truncated reports carry a
-  session-scoped recovery reference. Raw trace/session result evidence and
-  session compaction inputs remain unchanged.
-- Read: Core observation formatter/assembler, Agent tool descriptors, Host
-  report tool, Streaming runtime parity, and focused tests.
-- Tests: full `npm run release:check` passed, including all workspace suites,
-  the 16-case regression matrix, source/release install smoke, and focused
-  Core/Streaming/Host receipt regressions.
-
-- Status: Verified
-- Date: 2026-07-26
-- Scope: current parent observations recognize compact Agent
-  `childRunId/status/report/workspace`; semantic finality is derived from
-  status, with old finality/step-limit keys read only for migration. Session
-  compaction continues to use canonical `subagent.*` lifecycle facts, not
-  duplicated spawn-tool output.
-- Read: Core observation/dedup projection, Host session fact query, and Agent
-  result contract.
-- Tests: Core 661/661 and Host 583/583 passed.
-
-- Status: Verified
-- Date: 2026-07-23
-- Scope: model-visible selected context no longer prints the internal
-  `ContextItem.type` label, so `type:"system"` cannot look like provider system
-  authority. Context selection, compaction tiers/artifacts, provenance retained
-  for diagnostics, and provider role mapping are unchanged.
-- Read: Core selected-context formatter/assembler, session compaction inputs,
-  omission diagnostics, and focused context tests.
-- Tests: Core context suite (42 tests), Core typecheck, and repository test
-  typecheck passed.
-
-- Status: Verified
-- Date: 2026-07-21
-- Scope: session compaction now preserves sub-agent semantic status, summary,
-  and blocker codes, while the underlying facts retain bounded blocker owner,
-  retry, message, and requirements. This keeps recovery evidence visible after
-  rehydration without copying full child transcripts.
-- Read: Core session compaction, Host session queries, Agent lifecycle payloads,
-  and focused tests.
-- Tests: Core session-compaction and Host session-query coverage passed; full
-  repository verification is recorded by the release gate.
 
 - Status: Verified
 - Date: 2026-07-19

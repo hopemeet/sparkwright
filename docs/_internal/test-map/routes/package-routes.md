@@ -539,13 +539,13 @@ the root `workspaces` declarations rather than a package allowlist.
 Run:
 
 ```bash
-npm --workspace @sparkwright/tui test -- test/commands.test.ts test/create-capability.test.ts test/skills-browser.test.ts test/skills-panel-render.test.tsx
+npm --workspace @sparkwright/tui test -- test/commands.test.ts test/create-capability.test.ts test/skill-evolution.test.ts
 npm --workspace @sparkwright/tui run typecheck
 ```
 
-Keep generic `/create skill` on the deterministic Host creator. Skill update,
-review, and learning slash surfaces are retired; do not reintroduce a hidden
-parser, action, layer, dialog branch, or help entry.
+Keep generic `/create skill` on the managed proposal service. Removing a slash
+surface should also remove its dedicated action, layer, dialog branch, help,
+and reference documentation; do not leave a hidden second parser.
 
 ### `packages/tui/src/state/run-controller.ts`
 
@@ -580,12 +580,8 @@ npm --workspace @sparkwright/tui test -- test/status-bar-render.test.tsx
 For transcript changes:
 
 ```bash
-npm --workspace @sparkwright/tui test -- test/transcript.test.ts test/export-after-clear.test.ts
-npm --workspace @sparkwright/tui test -- test/event-stream-render.test.ts test/transcript-document.test.ts test/transcript-layout.test.ts test/transcript-viewport-state.test.ts test/transcript-viewport-render.test.tsx test/terminal-screen-layout.test.tsx
+npm --workspace @sparkwright/tui test -- test/transcript.test.ts
 ```
 
-Component rendering tests often use fake stdout and should assert visible
-invariants. The terminal screen allocation regression is the deliberate
-exception: it must assert that a changed Ink frame does not emit
-`ESC[2J ESC[3J ESC[H`. App-shell changes also require a real PTY byte capture
-because a correct final pyte screen can hide intermediate full clears.
+Rendering tests often use fake stdout. Assert visible invariants, not raw Ink
+escape sequences.

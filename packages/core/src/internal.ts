@@ -44,11 +44,7 @@ export type {
   TraceTimelinePhaseStatus,
   ValidateSessionTraceConsistencyOptions,
 } from "./trace.js";
-export {
-  LocalWorkspace,
-  ControlledWorkspace,
-  InMemoryWorkspaceState,
-} from "./workspace.js";
+export { LocalWorkspace, ControlledWorkspace } from "./workspace.js";
 export type { ControlledWorkspaceOptions } from "./workspace.js";
 export { WorkspaceCheckpointStore } from "./workspace-checkpoint.js";
 export type {

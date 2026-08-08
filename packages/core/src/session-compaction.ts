@@ -36,12 +36,7 @@ export interface SessionTraceFacts {
   };
   subagents?: Array<{
     childRunId: string;
-    status?: "completed" | "partial" | "blocked" | string;
-    summary?: string;
-    blockers?: Array<{
-      code: string;
-      message?: string;
-    }>;
+    finality?: "complete" | "partial" | string;
     role?: string;
     health?: "clean" | "degraded" | "failing" | string;
   }>;
@@ -1710,24 +1705,10 @@ function signalsFromTraceFacts(
     }
   }
   for (const subagent of facts.subagents ?? []) {
-    const blockerCodes = (subagent.blockers ?? [])
-      .map((blocker) => blocker.code)
-      .filter(Boolean)
-      .slice(0, 5);
     entries.push(
       createSessionSignal(
         "subagent",
-        [
-          `subagent ${subagent.childRunId}`,
-          `status=${subagent.status ?? "unknown"}`,
-          `health=${subagent.health ?? "unknown"}`,
-          subagent.summary ? `summary=${subagent.summary}` : undefined,
-          blockerCodes.length > 0
-            ? `blockers=${blockerCodes.join(",")}`
-            : undefined,
-        ]
-          .filter((value): value is string => typeof value === "string")
-          .join(" "),
+        `subagent ${subagent.childRunId} finality=${subagent.finality ?? "unknown"} health=${subagent.health ?? "unknown"}`,
         { metadata: subagent },
       ),
     );

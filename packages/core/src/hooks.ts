@@ -12,6 +12,7 @@
 //   - afterModelCall    — completeModelWithRetries(), after model.completed
 //   - beforeToolCall    — processToolCall(), before tool.requested
 //   - afterToolCall     — processToolCall(), after tool.completed/failed
+//   - onError           — top-level loop catch blocks (best-effort)
 //
 // Hooks MUST NOT mutate run state directly. The single supported mutation is
 // `beforeToolCall` returning `{ skip: { reason } }` to skip a tool call (which
@@ -63,6 +64,14 @@ export interface EventHookInput {
   event: SparkwrightEvent;
 }
 
+export interface ErrorHookInput extends RunHookContext {
+  /**
+   * @reserved Public hook-protocol field consumed by RunHook.onError handlers.
+   */
+  phase: "model" | "tool" | "context" | "validation" | "approval" | "runtime";
+  error: unknown;
+}
+
 export interface RunHook {
   name: string;
   /**
@@ -83,6 +92,7 @@ export interface RunHook {
    * Errors are caught and logged; they do not block the run.
    */
   onEvent?(input: EventHookInput): void;
+  onError?(input: ErrorHookInput): void | Promise<void>;
 }
 
 /**
@@ -142,6 +152,16 @@ export function combineRunHooks(hooks: readonly RunHook[]): RunHook {
           hook.onEvent(input);
         } catch (err) {
           logHookError(hook.name, "onEvent", err);
+        }
+      }
+    },
+    async onError(input) {
+      for (const hook of hooks) {
+        if (!hook.onError) continue;
+        try {
+          await hook.onError(input);
+        } catch (err) {
+          logHookError(hook.name, "onError", err);
         }
       }
     },
@@ -213,6 +233,16 @@ export function createDynamicHookSet(
           hook.onEvent(input);
         } catch (err) {
           logHookError(hook.name, "onEvent", err);
+        }
+      }
+    },
+    async onError(input) {
+      for (const hook of getHooks()) {
+        if (!hook.onError) continue;
+        try {
+          await hook.onError(input);
+        } catch (err) {
+          logHookError(hook.name, "onError", err);
         }
       }
     },

@@ -6,10 +6,6 @@ All notable changes to Sparkwright will be documented in this file.
 
 ### Fixed
 
-- Removed the never-invoked `RunHook.onError` callback and its exported
-  `ErrorHookInput` type. `RunHook` now advertises only the model, tool, and
-  event boundaries that the runtime actually dispatches; embedders can observe
-  failure events through `onEvent`.
 - Per-token `model.stream.chunk` events used to flood both the CLI
   terminal output and the persisted `trace.jsonl` at the default
   `standard` trace level — a short streamed answer produced 30+ chunk

@@ -20,6 +20,7 @@ import {
   bindConfiguredEventHooks,
   createConfiguredWorkflowHooks,
   createInvariantProjectionHooks,
+  createPartialSubagentFinalityDisclosureHook,
   createWorkflowProjectionHooks,
   createVerificationWorkflowHooks,
 } from "../src/index.js";
@@ -64,15 +65,20 @@ describe("runtime workflow hook assembly", () => {
           fast: [{ id: "test", command: "npm", args: ["test"] }],
         },
       },
+      documentedCommand: {
+        goal: "fix tests and verify documented commands pass",
+        shouldWrite: true,
+      },
     });
 
     expect(hooks[0]?.name).toBe("config-guard");
     expect(hooks.slice(1).map((hook) => hook.name)).toEqual(
-      expect.arrayContaining(["workflow:verification_fast"]),
+      expect.arrayContaining([
+        "runtime:partial_subagent_finality_disclosure",
+        "workflow:verification_fast",
+        "workflow:documented_command",
+      ]),
     );
-    expect(
-      hooks.some((hook) => hook.name === "workflow:documented_command"),
-    ).toBe(false);
     expect(hooks.some((hook) => hook.name.startsWith("verification:"))).toBe(
       false,
     );
@@ -95,11 +101,16 @@ describe("runtime workflow hook assembly", () => {
           handle: () => undefined,
         },
       ],
+      documentedCommand: {
+        goal: "just answer",
+        shouldWrite: false,
+      },
     });
 
     expect(hooks.map((hook) => hook.name)).toEqual([
       "config-guard",
       "workflow:wf_test",
+      "runtime:partial_subagent_finality_disclosure",
     ]);
   });
 
@@ -141,6 +152,10 @@ describe("runtime workflow hook assembly", () => {
             ],
           },
         },
+        documentedCommand: {
+          goal: "prepare handoff and verify documented commands",
+          shouldWrite: true,
+        },
       });
 
       const result = await runWorkflowHooks({
@@ -160,6 +175,105 @@ describe("runtime workflow hook assembly", () => {
     } finally {
       await rm(workspace, { recursive: true, force: true });
     }
+  });
+
+  it("advances Stop once when a final answer omits partial sub-agent finality", async () => {
+    const run = runRecord();
+    const events = new EventLog(run.id);
+    const partialEvent = events.emit(
+      "subagent.completed",
+      {
+        childRunId: "run_child_partial",
+        parentRunId: run.id,
+        terminalState: "step_limit",
+        finality: "partial",
+        stepLimitReached: true,
+      },
+      {
+        agentName: "reviewer",
+        childRunId: "run_child_partial",
+      },
+    );
+    const hook = createPartialSubagentFinalityDisclosureHook();
+
+    const first = await runWorkflowHooks({
+      hooks: [hook],
+      hook: "Stop",
+      run,
+      payload: {
+        message: "All review work is complete.",
+        events: [partialEvent],
+      },
+      events,
+    });
+    const second = await runWorkflowHooks({
+      hooks: [hook],
+      hook: "Stop",
+      run,
+      payload: {
+        message: "All review work is complete.",
+        events: [partialEvent],
+      },
+      events,
+    });
+
+    expect(first.status).toBe("advanced");
+    expect(first.context[0]?.content).toContain("run_child_partial");
+    expect(first.context[0]?.content).toContain("step limit reached");
+    expect(second.status).toBe("continued");
+  });
+
+  it("does not advance Stop when the final answer already caveats partial sub-agent results", async () => {
+    const run = runRecord();
+    const events = new EventLog(run.id);
+    const partialEvent = events.emit("tool.completed", {
+      toolCallId: "spawn_1",
+      toolName: "spawn_agent",
+      output: {
+        childRunId: "run_child_truncated",
+        finality: "partial",
+        truncated: true,
+      },
+    });
+
+    const result = await runWorkflowHooks({
+      hooks: [createPartialSubagentFinalityDisclosureHook()],
+      hook: "Stop",
+      run,
+      payload: {
+        message: "The sub-agent result is partial, so this is not exhaustive.",
+        events: [partialEvent],
+      },
+      events,
+    });
+
+    expect(result.status).toBe("continued");
+  });
+
+  it("ignores ordinary truncated tool output in the Stop disclosure guard", async () => {
+    const run = runRecord();
+    const events = new EventLog(run.id);
+    const readEvent = events.emit("tool.completed", {
+      toolCallId: "read_1",
+      toolName: "read",
+      output: {
+        path: "README.md",
+        truncated: true,
+      },
+    });
+
+    const result = await runWorkflowHooks({
+      hooks: [createPartialSubagentFinalityDisclosureHook()],
+      hook: "Stop",
+      run,
+      payload: {
+        message: "Done.",
+        events: [readEvent],
+      },
+      events,
+    });
+
+    expect(result.status).toBe("continued");
   });
 });
 
@@ -1060,15 +1174,15 @@ describe("createWorkflowProjectionHooks", () => {
               results: [
                 {
                   index: 0,
-                  status: "completed",
+                  signal: "completed",
                   childRunId: "run_reviewer",
-                  agentId: "reviewer",
+                  profileId: "reviewer",
                 },
                 {
                   index: 1,
-                  status: "completed",
+                  signal: "completed",
                   childRunId: "run_tester",
-                  agentId: "tester",
+                  profileId: "tester",
                 },
               ],
             };
@@ -1167,6 +1281,7 @@ describe("createWorkflowProjectionHooks", () => {
           execute(args) {
             const delegates = args.delegates as Array<{
               agentId: string;
+              metadata: { branchNodeId: string };
             }>;
             callSizes.push(delegates.length);
             return {
@@ -1177,7 +1292,7 @@ describe("createWorkflowProjectionHooks", () => {
               results: delegates.map((delegate, index) => ({
                 index,
                 signal: "completed",
-                childRunId: `run_${delegate.agentId}`,
+                childRunId: `run_${delegate.metadata.branchNodeId}`,
                 profileId: delegate.agentId,
               })),
             };

@@ -535,13 +535,6 @@ function classifyToolFailureFromPayload(
   ) {
     return priorFailure.category;
   }
-  // Semantic validation is part of the tool argument contract. Producers may
-  // use domain-specific codes (for example AGENT_SPAWN_CAPABILITY_INVALID), so
-  // classify by the canonical phase instead of requiring every code to adopt
-  // a naming suffix.
-  if (metadata?.phase === "validateInput") {
-    return "model_arg_error";
-  }
   return classifyToolFailure(code);
 }
 

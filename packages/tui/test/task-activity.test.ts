@@ -9,16 +9,8 @@ function terminal(
   type: "task.completed" | "task.failed" | "task.cancelled",
   sequence: number,
   taskId: string,
-  completionPolicy?: "inline" | "awaited" | "detached",
 ): RunEvent {
-  return {
-    type,
-    sequence,
-    payload: {
-      taskId,
-      ...(completionPolicy ? { completionPolicy } : {}),
-    },
-  } as RunEvent;
+  return { type, sequence, payload: { taskId } } as RunEvent;
 }
 
 describe("task activity", () => {
@@ -34,49 +26,6 @@ describe("task activity", () => {
       completed: 1,
       failed: 1,
       cancelled: 1,
-    });
-  });
-
-  it("keeps inline and awaited success quiet while surfacing detached terminals", () => {
-    const activity = summarizeTaskActivity([
-      terminal("task.completed", 1, "task_inline", "inline"),
-      terminal("task.completed", 2, "task_awaited", "awaited"),
-      terminal("task.completed", 3, "task_detached", "detached"),
-      terminal("task.failed", 4, "task_failed", "inline"),
-      terminal("task.cancelled", 5, "task_cancelled", "awaited"),
-    ]);
-
-    expect(summarizeUnreadTaskActivity(activity.tasks, 0)).toEqual({
-      total: 3,
-      completed: 1,
-      failed: 1,
-      cancelled: 1,
-    });
-  });
-
-  it("recovers inline completion policy from the task_create receipt", () => {
-    const activity = summarizeTaskActivity([
-      terminal("task.completed", 156, "task_inline"),
-      {
-        type: "tool.completed",
-        sequence: 157,
-        payload: {
-          toolName: "task_create",
-          output: {
-            taskId: "task_inline",
-            actualMode: "inline",
-            status: "completed",
-          },
-        },
-      } as RunEvent,
-    ]);
-
-    expect(activity.tasks[0]?.completionPolicy).toBe("inline");
-    expect(summarizeUnreadTaskActivity(activity.tasks, 0)).toEqual({
-      total: 0,
-      completed: 0,
-      failed: 0,
-      cancelled: 0,
     });
   });
 });

@@ -2,6 +2,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   defineTool,
+  formatWorkspaceDisplayPath,
   type RuntimeContext,
   type ToolDefinition,
   type WorkspaceRuntime,
@@ -9,13 +10,11 @@ import {
 import type { AgentProfile } from "@sparkwright/agent-runtime";
 import {
   createApplyPatchTool as createApplyPatchToolBase,
-  createCreateFileTool as createCreateFileToolBase,
   createEditAnchoredTextTool as createEditAnchoredTextToolBase,
   createGlobPathsTool as createGlobPathsToolBase,
   createGrepTextTool as createGrepTextToolBase,
   createListDirTool as createListDirToolBase,
   createReadAnchoredTextTool as createReadAnchoredTextToolBase,
-  createReplaceFileTool as createReplaceFileToolBase,
   createWriteFileTool as createWriteFileToolBase,
 } from "@sparkwright/coding-tools";
 import {
@@ -49,6 +48,15 @@ import {
   normalizeToolNameList,
   shouldDeferToolByDefault,
 } from "./tool-identities.js";
+import {
+  createSkillUpdateProposal,
+  listSkillProposals,
+  reviseSkillProposalDraft,
+  skillProposalReviewCommand,
+  type SkillProposalProvenance,
+  type SkillProposalSummary,
+} from "./skill-evolution.js";
+import { SkillCommandService } from "./skill-command-service.js";
 import { projectSkillRoot } from "./skill-roots.js";
 import { loadLayeredSkillReport } from "./skill-report.js";
 import {
@@ -95,7 +103,6 @@ export function createReadFileTool() {
       required: ["path"],
       additionalProperties: false,
     },
-    delegation: "child",
     policy: { risk: "safe" },
     governance: {
       origin: { kind: "local", name: "@sparkwright/coding-tools" },
@@ -132,11 +139,7 @@ export function createReadFileTool() {
       if (!ctx.workspace) throw new Error("Workspace is not configured.");
       const { path: rawPath, offset, limit } = readFileToolInput(args);
       const path = await normalizeWorkspacePathArg(rawPath, ctx.workspace);
-      const observation = await (
-        ctx.workspace.readTextWithRevision
-          ? ctx.workspace.readTextWithRevision(path)
-          : ctx.workspace.readText(path).then((content) => ({ content }))
-      ).catch((error) => {
+      const content = await ctx.workspace.readText(path).catch((error) => {
         if (isNodeErrorCode(error, "EISDIR")) {
           throw toolArgumentsInvalid(
             `read expected a file path but ${path} is a directory. Use glob to list files inside it, then call read with a concrete file path.`,
@@ -144,7 +147,6 @@ export function createReadFileTool() {
         }
         throw error;
       });
-      const content = observation.content;
       const lines = content.split("\n");
       const totalLines = lines.length;
       const startLine = Math.max(1, Math.floor(offset ?? 1));
@@ -216,13 +218,6 @@ export function createReadFileTool() {
         hasMore,
         ...(hasMore && !midLineCut ? { nextOffset: endLine + 1 } : {}),
         truncated: charCapped,
-        ...("revision" in observation &&
-        typeof observation.revision === "string"
-          ? { revision: observation.revision }
-          : {}),
-        ...(ctx.workspaceState
-          ? { stateEpoch: ctx.workspaceState.currentEpoch() }
-          : {}),
         ...(note ? { note } : {}),
       };
     },
@@ -380,16 +375,6 @@ export function createWriteFileTool() {
   return createWriteFileToolBase();
 }
 
-/** Revision-aware create that refuses to overwrite an existing path. */
-export function createCreateFileTool() {
-  return createCreateFileToolBase();
-}
-
-/** Revision-aware whole-file replacement guarded by expectedRevision. */
-export function createReplaceFileTool() {
-  return createReplaceFileToolBase();
-}
-
 /**
  * Built-in write tool: apply verified anchored edits (replace/delete/append/
  * prepend relative to a unique text anchor) through the workspace write path.
@@ -423,7 +408,7 @@ export function createSkillInspectorTool(
     name: "list_skills",
     description:
       "List or validate workspace skills. Read-only: never writes. Use this " +
-      "to discover current skills or check skill health.",
+      "to discover current skills or check skill health; use create_skill to draft a create proposal.",
     inputSchema: {
       type: "object",
       properties: {
@@ -444,6 +429,215 @@ export function createSkillInspectorTool(
       return loadLayeredSkillReport(roots, {
         includeMissingRoots: action === "validate",
       });
+    },
+  });
+}
+
+export function createSkillManagerTool(
+  workspaceRoot: string,
+  _configuredRoots: SkillRoot[] | undefined,
+) {
+  return defineTool({
+    name: "create_skill",
+    description:
+      "Prepare a proposal to create a project Skill. A complete safe authored " +
+      "Skill can be approved once for its final effect and applied in this " +
+      "run; templates or review-required content remain in the durable review " +
+      "flow. Use list_skills to list or validate current skills.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["create"] },
+        name: {
+          type: "string",
+          description:
+            "Skill name for create. Use lowercase letters, numbers, and hyphens.",
+        },
+        description: {
+          type: "string",
+          description: "Skill description for create.",
+        },
+        body: {
+          type: "string",
+          description:
+            "Authored content for the proposed Skill. Prefer full SKILL.md " +
+            "content with YAML frontmatter including `name` and `description`; " +
+            "if you provide only instructions, the host wraps them with " +
+            "`name` and `description`. Any frontmatter name must match `name`. " +
+            "When omitted, create_skill drafts a minimal template from " +
+            "`description`.",
+        },
+        root: {
+          type: "string",
+          description:
+            "Optional project skill root. Omit for the default .sparkwright/skills root.",
+        },
+      },
+      required: ["action"],
+      additionalProperties: false,
+    },
+    // Proposal staging is a recoverable prepared change. The final package is
+    // approved after it exists, inside execute, and that approval is bound to
+    // the host-computed effect hash.
+    policy: { risk: "safe" },
+    governance: {
+      origin: { kind: "local", name: "sparkwright" },
+      sideEffects: ["read", "write"],
+      idempotency: "conditional",
+    },
+    previewArgs(args) {
+      const r = previewRecord(args);
+      const action = previewString(r.action);
+      const name = previewString(r.name);
+      const preview = [action, name].filter(Boolean).join(" ");
+      return preview || undefined;
+    },
+    async execute(args: unknown, ctx) {
+      const input = parseSkillManagerArgs(args);
+      if (!input.name || !isSkillName(input.name)) {
+        throw new Error(
+          "create_skill create requires a valid lowercase skill name.",
+        );
+      }
+      if (!input.description || input.description.trim().length === 0) {
+        throw new Error("create_skill create requires description.");
+      }
+      const name = input.name;
+      const description = input.description;
+      const content = normalizeSkillBody({
+        toolName: "create_skill",
+        name,
+        description,
+        ...(input.body ? { body: input.body } : {}),
+      });
+      const root = resolveSkillCreateRoot(workspaceRoot, input.root);
+      const provenance = skillProposalProvenanceFromContext(ctx, description);
+      const service = new SkillCommandService(workspaceRoot);
+      const prepared = await service.prepareCreate({
+        name,
+        description,
+        ...(content ? { content } : {}),
+        root,
+        provenance,
+        mutationReporter: ctx,
+      });
+      return finishSafeAuthoredSkillCreate(
+        service,
+        workspaceRoot,
+        prepared.proposal,
+        ctx,
+        {
+          changed: prepared.changed,
+          existing: prepared.existing,
+          revised: prepared.revised,
+        },
+      );
+    },
+  });
+}
+
+export function createSkillUpdateTool(
+  workspaceRoot: string,
+  configuredRoots: SkillRoot[] | undefined,
+) {
+  return defineTool({
+    name: "update_skill",
+    description:
+      "Draft an evolution proposal for an existing skill. Creates a proposal only; " +
+      "it does not apply the update. Use list_skills first to find the skill. " +
+      "Pass `body` with the full revised SKILL.md to propose real authored " +
+      "content; if frontmatter omits `description`, the host fills it from " +
+      "`description`; omit `body` to record only the intent as a stub.",
+    deferLoading: true,
+    inputSchema: {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["draft"] },
+        name: {
+          type: "string",
+          description:
+            "Existing skill name. Use lowercase letters, numbers, and hyphens.",
+        },
+        description: {
+          type: "string",
+          description: "Short reason and intent for the proposed evolution.",
+        },
+        body: {
+          type: "string",
+          description:
+            "Full revised SKILL.md content (frontmatter + body). Its frontmatter " +
+            "name must match `name`; if frontmatter omits `description`, the " +
+            "host uses the tool `description`. When provided, this becomes the " +
+            "proposed content instead of an intent stub.",
+        },
+      },
+      required: ["action", "name", "description"],
+      additionalProperties: false,
+    },
+    policy: { risk: "risky" },
+    governance: {
+      origin: { kind: "local", name: "sparkwright" },
+      sideEffects: ["read", "write"],
+      idempotency: "conditional",
+    },
+    previewArgs(args) {
+      const r = previewRecord(args);
+      const action = previewString(r.action);
+      const name = previewString(r.name);
+      const preview = [action, name].filter(Boolean).join(" ");
+      return preview || undefined;
+    },
+    async execute(args: unknown, ctx) {
+      const input = parseSkillUpdateArgs(args);
+      const roots = resolveSkillRoots(workspaceRoot, configuredRoots);
+      const body = normalizeSkillBody({
+        toolName: "update_skill",
+        name: input.name,
+        description: input.description,
+        ...(input.body ? { body: input.body } : {}),
+      });
+      const provenance = skillProposalProvenanceFromContext(
+        ctx,
+        input.description,
+      );
+      // One draft per skill per run, by design: a model that loops on
+      // update_skill (re-phrasing the description each time) must not spawn N
+      // proposals. We dedupe on runId+skillName intentionally — not on content —
+      // so a second call in the same run returns the first draft instead of
+      // proliferating. The result carries `existing: true` so the caller can see
+      // no new proposal was created.
+      const existing = await findExistingRunSkillDraft(
+        workspaceRoot,
+        input.name,
+        provenance,
+      );
+      if (existing) {
+        const revised = await reviseSkillProposalDraft({
+          workspaceRoot,
+          proposalId: existing.id,
+          description: input.description,
+          ...(body ? { content: body } : {}),
+          provenance,
+          mutationReporter: ctx,
+        });
+        return skillDraftToolOutput(revised.proposal, {
+          changed: revised.changed,
+          existing: true,
+          revised: revised.changed,
+        });
+      }
+      const proposalInput = {
+        workspaceRoot,
+        skillRoots: roots,
+        name: input.name,
+        description: input.description,
+        ...(body ? { applyEdit: () => body } : {}),
+        provenance,
+        mutationReporter: ctx,
+      };
+      const proposal = await createSkillUpdateProposal(proposalInput);
+
+      return skillDraftToolOutput(proposal, { changed: true });
     },
   });
 }
@@ -624,6 +818,23 @@ function resolveWorkspacePath(workspaceRoot: string, path: string): string {
   return isAbsolute(path) ? path : resolve(workspaceRoot, path);
 }
 
+function resolveSkillCreateRoot(
+  workspaceRoot: string,
+  root: string | undefined,
+): string {
+  const projectRoot = projectSkillRoot(workspaceRoot);
+  const value = root?.trim();
+  if (!value || value === ".") return projectRoot;
+
+  const resolved = resolveWorkspacePath(workspaceRoot, value);
+  if (resolved !== projectRoot) {
+    throw toolArgumentsInvalid(
+      "create_skill root must be omitted or point to the project Skill root .sparkwright/skills.",
+    );
+  }
+  return projectRoot;
+}
+
 /**
  * Shared parser for the read-only inspector tools (`list_skills`,
  * `list_agents`). They only accept `list`/`validate`, which carry no write
@@ -641,6 +852,380 @@ function parseInspectAction(
     throw toolArgumentsInvalid(`${toolName} action must be list or validate.`);
   }
   return action;
+}
+
+function parseSkillManagerArgs(args: unknown): {
+  action: "create";
+  name?: string;
+  description?: string;
+  body?: string;
+  root?: string;
+} {
+  if (!args || typeof args !== "object" || Array.isArray(args)) {
+    throw toolArgumentsInvalid("create_skill expects an object argument.");
+  }
+  const record = args as Record<string, unknown>;
+  const action = record.action;
+  if (action !== "create") {
+    throw toolArgumentsInvalid("create_skill action must be create.");
+  }
+  if ("force" in record) {
+    throw toolArgumentsInvalid(
+      "create_skill no longer accepts force; review the proposal and apply with force if needed.",
+    );
+  }
+  return {
+    action,
+    ...(typeof record.name === "string" ? { name: record.name.trim() } : {}),
+    ...(typeof record.description === "string"
+      ? { description: record.description.trim() }
+      : {}),
+    ...(typeof record.body === "string" && record.body.trim().length > 0
+      ? { body: record.body }
+      : {}),
+    ...(typeof record.root === "string" ? { root: record.root } : {}),
+  };
+}
+
+function normalizeSkillBody(input: {
+  toolName: "create_skill" | "update_skill";
+  name: string;
+  description: string;
+  body?: string;
+}): string | undefined {
+  const body = input.body?.trim();
+  if (!body) return undefined;
+  const frontmatter = parseLeadingFrontmatter(body, input.toolName);
+  if (!frontmatter) {
+    return [
+      "---",
+      `name: ${input.name}`,
+      `description: ${frontmatterString(input.description)}`,
+      "---",
+      "",
+      body,
+      "",
+    ].join("\n");
+  }
+
+  const headerLines = frontmatter.header
+    .split(/\r?\n/u)
+    .filter((line) => line.trim().length > 0);
+  const nameIndex = headerLines.findIndex((line) => /^\s*name\s*:/u.test(line));
+  if (nameIndex >= 0) {
+    const parsedName = unquoteFrontmatterValue(
+      headerLines[nameIndex]!.replace(/^\s*name\s*:\s*/u, "").trim(),
+    );
+    if (parsedName !== input.name) {
+      throw new Error(
+        `${input.toolName} body frontmatter name must match requested name: ${input.name}`,
+      );
+    }
+  } else {
+    headerLines.unshift(`name: ${input.name}`);
+  }
+
+  const hasDescription = headerLines.some((line) =>
+    /^\s*description\s*:/u.test(line),
+  );
+  if (!hasDescription) {
+    const afterName = Math.max(
+      1,
+      headerLines.findIndex((line) => /^\s*name\s*:/u.test(line)) + 1,
+    );
+    headerLines.splice(
+      afterName,
+      0,
+      `description: ${frontmatterString(input.description)}`,
+    );
+  }
+
+  return ["---", ...headerLines, "---", "", frontmatter.rest.trim(), ""].join(
+    "\n",
+  );
+}
+
+function parseLeadingFrontmatter(
+  content: string,
+  toolName: "create_skill" | "update_skill",
+): { header: string; rest: string } | undefined {
+  if (!content.startsWith("---")) return undefined;
+  const match = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)([\s\S]*)$/u.exec(
+    content,
+  );
+  if (!match) {
+    throw new Error(
+      `${toolName} body frontmatter must be closed with a second --- line.`,
+    );
+  }
+  return { header: match[1] ?? "", rest: match[2] ?? "" };
+}
+
+function unquoteFrontmatterValue(value: string): string {
+  const trimmed = value.trim();
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1);
+  }
+  return trimmed;
+}
+
+function frontmatterString(value: string): string {
+  return /^[a-zA-Z0-9][a-zA-Z0-9 _.,:/+-]*$/u.test(value)
+    ? value
+    : JSON.stringify(value);
+}
+
+function skillProposalProvenanceFromContext(
+  ctx: { run?: { id?: string; metadata?: Record<string, unknown> } },
+  rationale: string,
+): SkillProposalProvenance {
+  const sessionId =
+    typeof ctx.run?.metadata?.sessionId === "string"
+      ? ctx.run.metadata.sessionId
+      : undefined;
+  return {
+    runId: ctx.run?.id,
+    sessionId,
+    rationale,
+  };
+}
+
+async function findExistingRunSkillDraft(
+  workspaceRoot: string,
+  skillName: string,
+  provenance: SkillProposalProvenance,
+  kind: "create" | "update" = "update",
+): Promise<SkillProposalSummary | undefined> {
+  const sessionId = provenance.sessionId?.trim();
+  const runId = provenance.runId?.trim();
+  if (!sessionId && !runId) return undefined;
+  const proposals = await listSkillProposals(workspaceRoot);
+  return proposals.find(
+    (proposal) =>
+      proposal.kind === kind &&
+      proposal.state === "draft" &&
+      proposal.skillName === skillName &&
+      (sessionId
+        ? proposal.provenance?.sessionId === sessionId
+        : proposal.provenance?.runId === runId),
+  );
+}
+
+function skillDraftToolOutput(
+  proposal: SkillProposalSummary,
+  options: { changed: boolean; existing?: boolean; revised?: boolean },
+) {
+  const existing = options.existing === true;
+  const reviewCommand = skillProposalReviewCommand(proposal.id);
+  const guardSeverity = proposal.guardFindings?.some(
+    (finding) => finding.severity === "dangerous",
+  )
+    ? "dangerous"
+    : proposal.guardFindings && proposal.guardFindings.length > 0
+      ? "caution"
+      : "none";
+  const eligibility =
+    guardSeverity === "dangerous"
+      ? "force_required"
+      : proposal.kind === "create" &&
+          proposal.contentMode === "authored" &&
+          guardSeverity === "none"
+        ? "quick_apply"
+        : "review_required";
+  return {
+    action: "draft",
+    changed: options.changed,
+    proposalId: proposal.id,
+    proposalPath: proposal.path,
+    state: proposal.state,
+    kind: proposal.kind,
+    skillName: proposal.skillName,
+    sourceLayer: proposal.sourceLayer,
+    sourcePath: proposal.sourcePath,
+    targetPath: proposal.targetPath,
+    basePackageHash: proposal.basePackageHash,
+    afterPackageHash: proposal.afterPackageHash,
+    packageHashPolicyVersion: proposal.packageHashPolicyVersion,
+    revision: proposal.revision,
+    previousAfterPackageHash: proposal.previousAfterPackageHash,
+    contentMode: proposal.contentMode,
+    ...(proposal.guardFindings
+      ? { guardFindings: proposal.guardFindings }
+      : {}),
+    validation: {
+      status: "passed",
+      guardFindingCount: proposal.guardFindings?.length ?? 0,
+    },
+    summary: options.revised
+      ? `${proposal.summary} The existing draft was revised with the latest content.`
+      : existing
+        ? `${proposal.summary} This draft already exists for the current session; the same proposal was returned unchanged.`
+        : proposal.summary,
+    existing,
+    revised: options.revised === true,
+    reviewCommand,
+    humanAction: {
+      kind: "skill_proposal_review",
+      proposalId: proposal.id,
+      reviewCommand,
+      eligibility,
+      validationStatus: "passed",
+      contentMode: proposal.contentMode,
+      guardSeverity,
+      recommendedAction: eligibility === "quick_apply" ? "apply" : "review",
+    },
+    // Lifecycle contract, stated so the model stops here instead of retrying or
+    // trying to load a skill that does not exist yet. A draft is a proposal,
+    // not a live skill: it is not indexed and cannot be skill_load'ed until a
+    // human applies it.
+    nextStep:
+      "Done — the draft proposal is recorded. Do NOT call create_skill again " +
+      "for this skill and do NOT skill_load it: a draft is not a live, " +
+      "loadable skill until a human reviews and applies the proposal. Report " +
+      `the proposalId to the user and stop. If the user later asks to apply it, ` +
+      `do NOT search for an apply tool: model tools cannot apply proposals. ` +
+      `Tell the user to run ${reviewCommand}; the TUI human review action owns ` +
+      "apply and reject.",
+  };
+}
+
+async function finishSafeAuthoredSkillCreate(
+  service: SkillCommandService,
+  workspaceRoot: string,
+  proposal: SkillProposalSummary,
+  ctx: Pick<RuntimeContext, "run"> & {
+    requestApproval?(input: {
+      action: string;
+      summary: string;
+      details?: Record<string, unknown>;
+    }): Promise<boolean>;
+  },
+  outputOptions: { changed: boolean; existing?: boolean; revised?: boolean },
+) {
+  const safeAuthoredCreate =
+    proposal.kind === "create" &&
+    proposal.contentMode === "authored" &&
+    (proposal.guardFindings?.length ?? 0) === 0;
+  if (!safeAuthoredCreate) {
+    return skillDraftToolOutput(proposal, outputOptions);
+  }
+
+  const prepared = await service.prepareApproval(proposal.id);
+  if (!ctx.requestApproval) {
+    return {
+      ...skillDraftToolOutput(prepared.proposal, outputOptions),
+      preparedState: "waiting",
+      nextStep:
+        `The final Skill effect is prepared and waiting for approval. ` +
+        `Review it with ${skillProposalReviewCommand(proposal.id)}; do not ` +
+        "create another proposal and do NOT search for an apply tool.",
+    };
+  }
+
+  let approved: boolean;
+  try {
+    approved = await ctx.requestApproval({
+      action: "skill.apply",
+      summary: `Create Skill ${proposal.skillName}`,
+      details: {
+        proposalId: proposal.id,
+        proposalRevision: proposal.revision ?? 1,
+        effectHash: prepared.effectHash,
+        path: formatWorkspaceDisplayPath(proposal.targetPath, {
+          workspaceRoot,
+        }),
+        diff: prepared.proposal.patchDiff,
+        riskFingerprints: prepared.riskFingerprints,
+      },
+    });
+  } catch (error) {
+    return {
+      ...skillDraftToolOutput(prepared.proposal, outputOptions),
+      preparedState: "waiting",
+      approvalUnavailable:
+        error instanceof Error ? error.message : String(error),
+      nextStep:
+        `The final Skill effect is prepared and waiting for approval. ` +
+        `Review it with ${skillProposalReviewCommand(proposal.id)}; do not ` +
+        "create another proposal and do NOT search for an apply tool.",
+    };
+  }
+
+  if (!approved) {
+    return {
+      ...skillDraftToolOutput(prepared.proposal, outputOptions),
+      preparedState: "waiting",
+      approvalDecision: "denied",
+      nextStep:
+        `The final Skill effect was not approved and remains in the review ` +
+        `inbox. Use ${skillProposalReviewCommand(proposal.id)} to review it ` +
+        "later; do not create another proposal.",
+    };
+  }
+
+  const { approval, applied } = await service.approvePrepared(prepared);
+  return {
+    action: "applied",
+    changed: true,
+    proposalId: applied.proposal.id,
+    proposalPath: applied.proposal.path,
+    state: applied.proposal.state,
+    preparedState: applied.proposal.preparedState,
+    skillName: applied.proposal.skillName,
+    targetPath: applied.proposal.targetPath,
+    artifactId: applied.proposal.artifactId,
+    effectHash: prepared.effectHash,
+    approvalReceiptId: approval.receiptId,
+    historyId: applied.history.id,
+    afterPackageHash: applied.proposal.afterPackageHash,
+    summary: `Skill ${applied.proposal.skillName} was created and is ready to use.`,
+    nextStep:
+      "Done — the final Skill was approved and applied in this run. Do not call create_skill again.",
+  };
+}
+
+function parseSkillUpdateArgs(args: unknown): {
+  action: "draft";
+  name: string;
+  description: string;
+  body?: string;
+} {
+  if (!args || typeof args !== "object" || Array.isArray(args)) {
+    throw toolArgumentsInvalid("update_skill expects an object argument.");
+  }
+  const record = args as Record<string, unknown>;
+  const action = record.action;
+  if (action !== "draft") {
+    throw toolArgumentsInvalid("update_skill action must be draft.");
+  }
+  const name = typeof record.name === "string" ? record.name.trim() : "";
+  if (!isSkillName(name)) {
+    throw toolArgumentsInvalid(
+      "update_skill draft requires a valid lowercase skill name.",
+    );
+  }
+  const description =
+    typeof record.description === "string" ? record.description.trim() : "";
+  if (description.length === 0) {
+    throw toolArgumentsInvalid("update_skill draft requires description.");
+  }
+  const body =
+    typeof record.body === "string" && record.body.trim().length > 0
+      ? record.body
+      : undefined;
+  return {
+    action,
+    name,
+    description,
+    body,
+  };
+}
+
+function isSkillName(value: string): boolean {
+  return /^[a-z0-9][a-z0-9-]{0,63}$/.test(value);
 }
 
 type AgentConfigShape = {

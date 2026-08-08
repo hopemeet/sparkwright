@@ -8,13 +8,6 @@
     "approvalId": "approval_001",
     "action": "workspace.write",
     "summary": "Append a section to README.md",
-    "subject": {
-      "kind": "workspace_file",
-      "operation": "write",
-      "path": "README.md",
-      "key": "workspace_file:write:README.md",
-      "label": "Allow writing README.md for this session"
-    },
     "details": { "path": "README.md" }
   }
 }

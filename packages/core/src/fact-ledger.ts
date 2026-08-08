@@ -12,14 +12,7 @@ import {
   type ForcedContinuationBudgetExceededFactInput,
   type ShellCommandRequestFact,
 } from "./fact-classifier.js";
-import type {
-  ApprovalPrincipal,
-  ChangeSet,
-  ChangeSetEntry,
-  ForcedContinuationSource,
-  VerificationLevel,
-  VerificationReceipt,
-} from "./types.js";
+import type { ForcedContinuationSource } from "./types.js";
 import { isRecord } from "./record-utils.js";
 
 export type FactLedgerCommandInitiator =
@@ -96,8 +89,6 @@ export interface FactLedgerSnapshot {
   commands: FactLedgerCommandFact[];
   verificationResults: FactLedgerVerificationResult[];
   writes: FactLedgerWriteFact[];
-  changeSets: ChangeSet[];
-  verificationReceipts: VerificationReceipt[];
   budgetExceeded: FactLedgerBudgetExceededFact[];
 }
 
@@ -109,10 +100,6 @@ export interface FactLedgerReader {
   snapshot(): FactLedgerSnapshot;
 }
 
-type StoredVerificationReceipt = Omit<VerificationReceipt, "status"> & {
-  rawStatus: Exclude<VerificationReceipt["status"], "stale">;
-};
-
 export class FactLedger implements FactLedgerReader {
   private writeEpoch = 0;
   private readonly shellRequests = new Map<string, ShellCommandRequestFact>();
@@ -122,44 +109,19 @@ export class FactLedger implements FactLedgerReader {
     "stale"
   >[] = [];
   private readonly writes: FactLedgerWriteFact[] = [];
-  private readonly changeSets: ChangeSet[] = [];
-  private readonly verificationReceipts: StoredVerificationReceipt[] = [];
   private readonly budgetExceeded: FactLedgerBudgetExceededFact[] = [];
 
   observeEvent(event: SparkwrightEvent): void {
     const write = workspaceWriteFactFromEvent(event);
     if (write) {
-      this.writeEpoch = Math.max(this.writeEpoch + 1, write.writeEpoch ?? 0);
+      this.writeEpoch += 1;
       this.writes.push({
         id: `write:${write.sequence}`,
         sequence: write.sequence,
         writeEpoch: this.writeEpoch,
         ...(write.path ? { path: write.path } : {}),
       });
-      const changeSet = changeSetFromRaw(write.changeSet);
-      if (changeSet) this.mergeChangeSet(changeSet);
       return;
-    }
-
-    if (
-      (event.type === "subagent.completed" ||
-        event.type === "subagent.failed") &&
-      isRecord(event.payload)
-    ) {
-      const changeSets = Array.isArray(event.payload.changeSets)
-        ? event.payload.changeSets
-            .map(changeSetFromRaw)
-            .filter((item): item is ChangeSet => Boolean(item))
-        : [];
-      for (const changeSet of changeSets) this.mergeChangeSet(changeSet);
-      const receipts = Array.isArray(event.payload.verificationReceipts)
-        ? event.payload.verificationReceipts
-            .map((item) => verificationReceiptFromRaw(item, this.writeEpoch))
-            .filter((item): item is VerificationReceipt => Boolean(item))
-        : [];
-      for (const receipt of receipts) {
-        this.mergeVerificationReceipt(receipt);
-      }
     }
 
     const budgetExceeded = forcedContinuationBudgetExceededFromEvent(event);
@@ -191,7 +153,6 @@ export class FactLedger implements FactLedgerReader {
         hookFact.expect,
       );
       if (verification) this.verificationResults.push(verification);
-      this.recordVerificationReceipt(command, verification?.satisfied);
     }
   }
 
@@ -217,14 +178,6 @@ export class FactLedger implements FactLedgerReader {
         stale: stale(fact.writeEpoch),
       })),
       writes: this.writes.map((fact) => ({ ...fact })),
-      changeSets: this.changeSets.map(cloneChangeSet),
-      verificationReceipts: this.verificationReceipts.map((receipt) => {
-        const { rawStatus, ...rest } = receipt;
-        return {
-          ...rest,
-          status: receipt.writeEpoch < this.writeEpoch ? "stale" : rawStatus,
-        };
-      }),
       budgetExceeded: this.budgetExceeded.map((fact) => ({ ...fact })),
     };
   }
@@ -275,62 +228,6 @@ export class FactLedger implements FactLedgerReader {
       limit: input.limit,
       ...(input.step !== undefined ? { step: input.step } : {}),
       ...(input.reason ? { reason: input.reason } : {}),
-    });
-  }
-
-  private mergeChangeSet(changeSet: ChangeSet): void {
-    if (this.changeSets.some((existing) => existing.id === changeSet.id)) {
-      return;
-    }
-    this.writeEpoch = Math.max(this.writeEpoch, changeSet.writeEpoch);
-    this.changeSets.push(cloneChangeSet(changeSet));
-  }
-
-  private recordVerificationReceipt(
-    command: Omit<FactLedgerCommandFact, "stale">,
-    satisfied?: boolean,
-  ): void {
-    if (
-      command.initiator !== "verifier-launched" ||
-      !command.verifierId ||
-      !command.verificationRelevant ||
-      satisfied === undefined
-    ) {
-      return;
-    }
-    const commandText = [command.command, ...(command.args ?? [])]
-      .filter((value): value is string => Boolean(value))
-      .join(" ");
-    const rawStatus = command.timedOut
-      ? "timed_out"
-      : satisfied === true
-        ? "passed"
-        : "failed";
-    this.verificationReceipts.push({
-      id: `receipt:${command.id}`,
-      sequence: command.sequence,
-      ...(command.profile ? { profile: command.profile } : {}),
-      ...(command.verifierId ? { verifierId: command.verifierId } : {}),
-      level: verificationLevelForCommand(commandText, command.profile),
-      coveredChangeSets: this.changeSets.map((changeSet) => changeSet.id),
-      writeEpoch: this.writeEpoch,
-      ...(commandText ? { command: commandText } : {}),
-      exitCode: command.exitCode,
-      timestamp: new Date().toISOString(),
-      rawStatus,
-    });
-  }
-
-  private mergeVerificationReceipt(receipt: VerificationReceipt): void {
-    if (
-      this.verificationReceipts.some((existing) => existing.id === receipt.id)
-    ) {
-      return;
-    }
-    this.verificationReceipts.push({
-      ...receipt,
-      coveredChangeSets: [...receipt.coveredChangeSets],
-      rawStatus: receipt.status === "stale" ? "passed" : receipt.status,
     });
   }
 
@@ -389,16 +286,6 @@ export function factLedgerSnapshotFromUnknown(
       ? value.writes
           .map(writeFactFromRaw)
           .filter((item): item is FactLedgerWriteFact => Boolean(item))
-      : [],
-    changeSets: Array.isArray(value.changeSets)
-      ? value.changeSets
-          .map(changeSetFromRaw)
-          .filter((item): item is ChangeSet => Boolean(item))
-      : [],
-    verificationReceipts: Array.isArray(value.verificationReceipts)
-      ? value.verificationReceipts
-          .map((item) => verificationReceiptFromRaw(item, writeEpoch))
-          .filter((item): item is VerificationReceipt => Boolean(item))
       : [],
     budgetExceeded: Array.isArray(value.budgetExceeded)
       ? value.budgetExceeded
@@ -609,146 +496,4 @@ function stringArrayValue(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) return undefined;
   const out = value.filter((item): item is string => typeof item === "string");
   return out.length > 0 ? out : undefined;
-}
-
-function changeSetFromRaw(value: unknown): ChangeSet | undefined {
-  if (!isRecord(value)) return undefined;
-  const id = stringValue(value.id);
-  const writeEpoch = numberValue(value.writeEpoch);
-  const actor = approvalPrincipalFromRaw(value.actor);
-  const entries = Array.isArray(value.entries)
-    ? value.entries
-        .map(changeSetEntryFromRaw)
-        .filter((item): item is ChangeSetEntry => Boolean(item))
-    : [];
-  if (!id || writeEpoch === undefined || !actor || entries.length === 0) {
-    return undefined;
-  }
-  return { id, actor, writeEpoch, entries };
-}
-
-function changeSetEntryFromRaw(value: unknown): ChangeSetEntry | undefined {
-  if (!isRecord(value)) return undefined;
-  const path = stringValue(value.path);
-  const beforeRevision = stringValue(value.beforeRevision);
-  const afterRevision = stringValue(value.afterRevision);
-  const operation =
-    value.operation === "create" ||
-    value.operation === "replace" ||
-    value.operation === "edit" ||
-    value.operation === "remove" ||
-    value.operation === "legacy_write"
-      ? value.operation
-      : undefined;
-  return path && beforeRevision && afterRevision && operation
-    ? { path, operation, beforeRevision, afterRevision }
-    : undefined;
-}
-
-function approvalPrincipalFromRaw(
-  value: unknown,
-): ApprovalPrincipal | undefined {
-  if (!isRecord(value)) return undefined;
-  const kind =
-    value.kind === "main" ||
-    value.kind === "dynamic_child" ||
-    value.kind === "configured_delegate"
-      ? value.kind
-      : undefined;
-  const principalScope = stringValue(value.principalScope);
-  if (!kind || !principalScope) return undefined;
-  const displayLabel = stringValue(value.displayLabel);
-  return {
-    kind,
-    principalScope,
-    ...(displayLabel ? { displayLabel } : {}),
-  };
-}
-
-function verificationReceiptFromRaw(
-  value: unknown,
-  currentWriteEpoch: number,
-): VerificationReceipt | undefined {
-  if (!isRecord(value)) return undefined;
-  const id = stringValue(value.id);
-  const level = verificationLevelFromRaw(value.level);
-  const writeEpoch = numberValue(value.writeEpoch) ?? 0;
-  const exitCode =
-    typeof value.exitCode === "number" && Number.isFinite(value.exitCode)
-      ? value.exitCode
-      : null;
-  const status =
-    writeEpoch < currentWriteEpoch
-      ? "stale"
-      : value.status === "passed" ||
-          value.status === "failed" ||
-          value.status === "timed_out" ||
-          value.status === "stale"
-        ? value.status
-        : undefined;
-  if (!id || !level || !status) return undefined;
-  return {
-    id,
-    ...(stringValue(value.planId) ? { planId: stringValue(value.planId) } : {}),
-    ...(numberValue(value.sequence) !== undefined
-      ? { sequence: numberValue(value.sequence) }
-      : {}),
-    ...(stringValue(value.profile)
-      ? { profile: stringValue(value.profile) }
-      : {}),
-    ...(stringValue(value.verifierId)
-      ? { verifierId: stringValue(value.verifierId) }
-      : {}),
-    level,
-    coveredChangeSets: stringArrayValue(value.coveredChangeSets) ?? [],
-    writeEpoch,
-    ...(stringValue(value.command)
-      ? { command: stringValue(value.command) }
-      : {}),
-    exitCode,
-    status,
-    timestamp: stringValue(value.timestamp) ?? new Date(0).toISOString(),
-  };
-}
-
-function verificationLevelForCommand(
-  command: string,
-  profile?: string,
-): VerificationLevel {
-  const normalized = `${profile ?? ""} ${command}`.toLowerCase();
-  if (/(?:release:check|release check|full release)/u.test(normalized)) {
-    return "release";
-  }
-  if (
-    /(?:test --workspaces|npm test|pytest|cargo test|go test|project)/u.test(
-      normalized,
-    )
-  ) {
-    return "project";
-  }
-  if (/(?:typecheck|lint|test|check|verify|tsc)/u.test(normalized)) {
-    return "contract";
-  }
-  if (/(?:py_compile|compileall|syntax)/u.test(normalized)) return "syntax";
-  return "smoke";
-}
-
-function verificationLevelFromRaw(
-  value: unknown,
-): VerificationLevel | undefined {
-  return value === "syntax" ||
-    value === "smoke" ||
-    value === "contract" ||
-    value === "project" ||
-    value === "release"
-    ? value
-    : undefined;
-}
-
-function cloneChangeSet(changeSet: ChangeSet): ChangeSet {
-  return {
-    ...changeSet,
-    actor: { ...changeSet.actor },
-    entries: changeSet.entries.map((entry) => ({ ...entry })),
-  };
 }

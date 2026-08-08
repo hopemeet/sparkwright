@@ -64,8 +64,6 @@ export type ClientEventMap = {
   "host.ready": [HostEvent & { kind: "host.ready" }];
   "host.log": [HostEvent & { kind: "host.log" }];
   "run.event": [HostEvent & { kind: "run.event" }];
-  /** @reserved Public SDK event key consumed through typed client listeners. */
-  "task.updated": [HostEvent & { kind: "task.updated" }];
   "approval.requested": [HostEvent & { kind: "approval.requested" }];
   "run.continuation": [HostEvent & { kind: "run.continuation" }];
   "run.completed": [HostEvent & { kind: "run.completed" }];

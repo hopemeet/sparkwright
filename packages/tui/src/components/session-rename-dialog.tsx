@@ -1,6 +1,5 @@
 import React, { useState } from "react";
 import { Box, Text, useInput } from "ink";
-import { isBackInput } from "../lib/input-key.js";
 import { DialogFrame } from "./dialog-frame.js";
 
 /**
@@ -20,7 +19,7 @@ export function SessionRenameDialog(props: {
   const [cursor, setCursor] = useState(props.initialLabel.length);
 
   useInput((input, key) => {
-    if (isBackInput(input, key)) {
+    if (key.escape) {
       props.onCancel();
       return;
     }

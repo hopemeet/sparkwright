@@ -146,6 +146,50 @@ describe("CapabilitiesPanel rendering", () => {
     expect(text).toContain("1 approval/high-risk");
   });
 
+  it("explains managed skill mutation tools", async () => {
+    const text = await renderToText(
+      <CapabilitiesPanel
+        snapshot={{
+          tools: [
+            { name: "list_skills", origin: "local:sparkwright", risk: "safe" },
+            {
+              name: "create_skill",
+              origin: "local:sparkwright",
+              risk: "risky",
+              deferred: true,
+            },
+            {
+              name: "update_skill",
+              origin: "local:sparkwright",
+              risk: "risky",
+              deferred: true,
+            },
+            {
+              name: "tool_search",
+              origin: "local:@sparkwright/core",
+              risk: "safe",
+            },
+          ],
+          skills: { indexed: [], loaded: [] },
+          mcp: { statuses: [] },
+          agents: { profiles: [], delegateTools: [] },
+        }}
+        loading={false}
+        view="tools"
+        onClose={() => {}}
+      />,
+      34,
+    );
+
+    expect(text).toContain("public tools");
+    expect(text).toContain("deferred via tool_search");
+    expect(text).toContain("approval / high risk");
+    expect(text).toContain("tool sources");
+    expect(text).toContain("draft create proposal first");
+    expect(text).toContain("draft proposal first");
+    expect(text).toContain("apply only when requested");
+  });
+
   it("displays indexed Skill source paths through workspace-relative projection", async () => {
     const text = await renderToText(
       <CapabilitiesPanel

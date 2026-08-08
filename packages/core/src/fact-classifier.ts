@@ -34,8 +34,6 @@ export interface ClassifiedCommandFactInput {
 export interface WorkspaceWriteFactInput {
   sequence: number;
   path?: string;
-  writeEpoch?: number;
-  changeSet?: unknown;
 }
 
 export interface ForcedContinuationBudgetExceededFactInput {
@@ -164,12 +162,6 @@ export function workspaceWriteFactFromEvent(
   return {
     sequence: event.sequence,
     path: stringValue(event.payload.path),
-    ...(nonNegativeIntegerValue(event.payload.writeEpoch) !== undefined
-      ? { writeEpoch: nonNegativeIntegerValue(event.payload.writeEpoch) }
-      : {}),
-    ...(event.payload.changeSet !== undefined
-      ? { changeSet: event.payload.changeSet }
-      : {}),
   };
 }
 

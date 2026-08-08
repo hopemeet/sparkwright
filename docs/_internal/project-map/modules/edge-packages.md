@@ -24,15 +24,11 @@ contracts, and focused checklists that no longer fit here.
 - `packages/memory-file-store/src/*`
 - `packages/project-commands/src/*`
 - `packages/shell-sandbox/src/*`
-- `packages/web-tools/src/*`
 - `packages/trace-perfetto/src/*`
 - `packages/im-gateway/src/*`
 
 ## Ownership Summary
 
-- `sdk-core` exposes `task.updated` as a typed client event. The SDK does not
-  treat live lifecycle push as durable truth; products reconcile task state
-  through `task.list` and retrieve output through `task.output`.
 - ACP packages bridge the host/runtime/protocol world to ACP sessions and
   external ACP workers. Route ACP server changes through host/protocol/session
   maps; route external worker tool changes through agents and tool orchestration.
@@ -47,24 +43,9 @@ contracts, and focused checklists that no longer fit here.
 - Provider packages adapt external model ecosystems into core `ModelAdapter`
   and model registry shapes. Host model construction, config loading, pricing,
   and capability diagnostics still own product behavior.
-- `@sparkwright/web-tools` owns direct, provider-free retrieval of one known
-  public URL. System mode accepts HTTPS through normal OS DNS/routing and
-  standard proxy variables while rejecting explicit local/reserved targets;
-  hardened mode validates DNS as global-unicast, pins the connection, and also
-  permits HTTP. Both share URL/redirect/deadline/byte guards, text decoding,
-  conservative HTML cleaning, bounded one-shot output, and external-content
-  marking. It does not search, paginate, execute page JavaScript, carry page
-  credentials, or decide Host catalog/config exposure.
 - Server, streaming, memory-store, and trace-perfetto packages are reusable
   runtime/storage/diagnostic adapters around core contracts. Treat core events,
   run/session stores, and trace maps as the active contracts.
-- `@sparkwright/streaming-runtime` accepts the same split task revival ports as
-  Core: `notificationSources` are consuming step-start context injection, while
-  `taskRevivalSource` is a non-consuming readiness wait. Natural final answers
-  enter live `waiting_tasks` only for awaited work; readiness, command input, or
-  abort wakes the loop. A separate bounded revival-turn budget (default 5)
-  permits notification turns beyond ordinary `maxSteps`; detached work never
-  keeps the streaming run alive.
 - `server-runtime`'s `InFlightCommandDispatcher` only coalesces concurrent local
   dispatch of the same command id. Agent-runtime storage and the workflow
   journal remain command/outcome/apply truth; Host remains the adapter that
@@ -89,12 +70,6 @@ contracts, and focused checklists that no longer fit here.
 - IM gateway is an application bridge over `sdk-node` and host events. Route
   protocol shape changes through protocol/host maps before updating gateway
   renderers or state.
-- IM Gateway consumes Host-routed `task.updated` deliveries without deriving a
-  recipient from model metadata. It acks created/started lifecycle projections
-  without external chatter and renders only terminal completed/failed/cancelled
-  messages from the bounded summary/error/output reference. The Host delivery
-  key is passed through to platform adapters as the idempotency key; network
-  transport remains at-least-once rather than exactly-once.
 - IM Gateway handshake name is client-type/display metadata only. Host WS
   bearer authentication supplies the stable ordinary-IM principal; Gateway
   platform claims remain exact bounded subject claims and cannot mint Host
@@ -123,10 +98,6 @@ contracts, and focused checklists that no longer fit here.
 - If a shell, sandbox, command interpolation, or unmanaged process boundary
   changes, read [../maps/safety/shell.md](../maps/safety/shell.md) and
   [../maps/safety/workspace-writes.md](../maps/safety/workspace-writes.md).
-- If public web retrieval changes, read [core.md](core.md), [host.md](host.md),
-  [../maps/runtime/tool-orchestration.md](../maps/runtime/tool-orchestration.md),
-  [../maps/capabilities/README.md](../maps/capabilities/README.md), and
-  [../maps/safety/approvals.md](../maps/safety/approvals.md).
 - If storage, streaming, memory, or trace export behavior changes, read
   [core.md](core.md), [../maps/session/session-store.md](../maps/session/session-store.md),
   and [../maps/trace/raw-trace.md](../maps/trace/raw-trace.md).
@@ -163,155 +134,6 @@ contracts, and focused checklists that no longer fit here.
   source exports. It should not be used as the sole authority for behavior.
 
 ## Last Verified
-
-- Status: Verified
-- Date: 2026-08-02
-- Scope: the system web transport's resolved HTTP proxy, HTTPS proxy, and
-  no-proxy fields now explicitly declare their structural undici consumer for
-  strict public-surface auditing. Proxy precedence, validation, routing, and
-  request behavior are unchanged.
-- Read: Web proxy environment resolver, system transport construction, focused
-  tests, and public proxy documentation.
-- Tests: Web tools focused suite, strict reserved-field check, formatting, and
-  Markdown links passed. Project-map drift completed; routed Core, Host,
-  orchestration, capability, and approval pages were checked with no behavior
-  update required.
-
-- Status: Verified
-- Date: 2026-08-01
-- Scope: `web_fetch` now accepts only `{url}` and returns one clean bounded
-  excerpt. HTML active/interactive elements and unsafe link targets are
-  removed before truncation; readable structure, image alt text, and safe
-  absolute HTTP(S) links remain. No cursor, offset, or content hash is exposed.
-- Read: Web package extraction/tool source, Core observation limit, Host
-  catalog wiring, user/config/manual documentation, and focused tests.
-- Tests: Web tools 41/41, web package typecheck/build, focused Host catalog
-  92/92, and a real system-routed Baidu retrieval passed.
-
-- Status: Verified
-- Date: 2026-08-01
-- Scope: the web edge now selects only its connection policy: system HTTPS for
-  VPN/TUN and proxy compatibility, or hardened DNS validation/address pinning
-  for SSRF-sensitive deployments. Shared redirects, limits, extraction,
-  output bounds, and tool governance stay package-local.
-- Read: Web package source/tests/manifest and Host config/catalog integration.
-- Tests: Web tools 38/38, workspace/release checks, both install smokes, and a
-  real system-routed HTTPS retrieval passed.
-
-- Status: Verified
-- Date: 2026-07-27
-- Scope: Streaming Runtime now forwards Core's additive
-  `resultPresentation` descriptor into the shared observation formatter.
-  Agent single/batch receipt semantics remain Core-owned; the edge package
-  does not project, persist, or reinterpret child results.
-- Read: Core public tool/result presentation exports and observation
-  formatter, Streaming Runtime descriptor plumbing, and focused parity tests.
-- Tests: full `npm run release:check` passed, including all workspace suites,
-  the 16-case regression matrix, and source/release install smoke.
-
-- Status: Verified
-- Date: 2026-07-24
-- Scope: ACP/SDK/IM fixtures were updated for runtime approval principal and
-  completion payload compatibility. Edge packages remain projections over Host
-  protocol facts and do not gain child capability, approval inheritance, or
-  prose-based finality logic.
-- Read: ACP Adapter, SDK Core, IM Gateway fixtures/consumers, Protocol DTOs, and
-  Host projection.
-- Tests: affected package test typecheck, repository build, and focused Host
-  protocol tests passed.
-
-- Status: Verified
-- Date: 2026-07-23
-- Scope: SDK Core's `task.updated` listener key and Shell's model-visible async
-  receipt fields now declare their external consumers for strict public-surface
-  auditing. Runtime and wire behavior are unchanged.
-- Read: SDK typed event map, Shell output DTO, Task receipt DTO, and strict
-  reserved-field checker.
-- Tests: Agent Runtime tasks 76/76, Shell 43/43, SDK Core 11/11, affected
-  typechecks, and strict reserved-field check passed.
-
-- Status: Verified
-- Date: 2026-07-23
-- Scope: final lint follow-up replaced Streaming Runtime's mutable
-  unsubscribe function slot with a const holder while preserving the exact
-  command-ready/abort cleanup behavior. No revival, event, or storage semantics
-  changed.
-- Read: Streaming Runtime command wait, Core equivalent cleanup pattern, and
-  focused tests.
-- Tests: Streaming Runtime 20/20, focused TUI task actions 5/5, affected
-  typechecks, and focused lint passed.
-
-- Status: Verified
-- Date: 2026-07-23
-- Scope: ACP Adapter now handles the typed `task.updated` HostEvent
-  exhaustively as a control-only event. It emits no ACP agent text or tool
-  update for task lifecycle push; awaited results remain visible through the
-  parent run, while ACP gains no detached-task notification UX in this patch.
-- Read: ACP Host-event mapper/tests, Protocol event union, and ACP/session edge
-  ownership.
-- Tests: ACP event 7/7, package typecheck, and package build passed.
-
-- Status: Verified
-- Date: 2026-07-23
-- Scope: IM Gateway now projects terminal `task.updated` deliveries into safe
-  external messages while preserving the Host delivery key. Non-terminal task
-  events are consumed quietly, transport failures stay unacked for replay, and
-  the gateway does not receive full Task result/output/metadata.
-- Read: Gateway Host-event renderer and delivery loop, Host IM binding/outbox
-  bridge, task lifecycle payload, and focused tests.
-- Tests: IM Gateway 10/10, Host IM/service lifecycle coverage, and affected
-  package typechecks passed.
-
-- Status: Verified
-- Date: 2026-07-23
-- Scope: SDK Core now exposes typed `task.updated` events while keeping
-  `task.list`/`task.output` as reconciliation/detail APIs. Other transports,
-  providers, ACP, server-runtime, Streaming Runtime, and IM Gateway behavior
-  are unchanged in this stage.
-- Read: SDK client event map/tests, protocol lifecycle event, Host forwarding,
-  and edge ownership boundaries.
-- Tests: SDK Core 11/11, Protocol 6/6, Host lifecycle/protocol coverage, and
-  affected typechecks passed.
-
-- Status: Verified
-- Date: 2026-07-23
-- Scope: Streaming Runtime now supports awaited task revival with split
-  notification/readiness sources, live `waiting_tasks`, command/abort wakeup,
-  and a bounded continuation budget aligned with Core's default.
-- Read: Streaming run loop/options/tests, Core TaskRevivalSource and awaited
-  terminal gate, and run-loop map.
-- Tests: Streaming Runtime suite (20 tests), package typecheck, project-map
-  drift, and diff checks passed.
-
-- Status: Verified
-- Date: 2026-07-23
-- Scope: route review for WorkspaceContext task inbox pairing; SDK, server,
-  streaming, provider, gateway, and storage edge ownership did not change in
-  this stage.
-- Read: Host workspace task composition and edge-package ownership boundaries.
-- Tests: focused Host task suites and Host typecheck passed.
-
-- Status: Verified
-- Date: 2026-07-23
-- Scope: Streaming Runtime now mirrors Core's deferred provider-tool lifecycle.
-  Context assembly and the capability prompt receive the full descriptor
-  inventory, while `ModelInput.tools` excludes deferred schemas until a
-  successful `tool_search` match or loaded Skill dependency admits them.
-- Read: Streaming Runtime model-input assembly/result handling, Core deferred
-  loaded-set behavior, tool-search result shape, and focused streaming tests.
-- Tests: Streaming Runtime suite (14 tests), package typecheck, and repository
-  test typecheck passed.
-
-- Status: Verified
-- Date: 2026-07-21
-- Scope: ACP now forwards committed nonterminal `model.assistant_text` and the
-  canonical `run.completed.message`, not raw `model.completed`. Streaming
-  Runtime commits tool-turn commentary consistently and propagates
-  producer-authored approval subjects with one-shot fallback; SDK/IM fixtures
-  consume the required Protocol subject without owning policy.
-- Read: ACP event adapter, Streaming Runtime tool gate, SDK/IM fixtures,
-  Protocol approval/finality contracts, and focused tests.
-- Tests: affected ACP, Streaming Runtime, SDK, IM, and typecheck suites passed.
 
 - Status: Verified
 - Date: 2026-07-19

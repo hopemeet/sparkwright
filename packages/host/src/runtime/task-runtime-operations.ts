@@ -255,10 +255,7 @@ export class TaskRuntimeOperations {
     const id = taskId as TaskId;
     const before = this.manager.store.get(id);
     if (!before) return { ok: false, error: taskNotFoundError(taskId) };
-    const joined = this.manager.store.update(id, {
-      awaited: true,
-      completionPolicy: "awaited",
-    });
+    const joined = this.manager.store.update(id, { awaited: true });
     if (
       isTerminalTaskStatus(joined.status) &&
       !(

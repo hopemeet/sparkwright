@@ -339,9 +339,7 @@ For guardrails that should apply only to one configured delegate profile, use
 `capabilities.agents.profiles[].hooks` instead of global workflow hooks.
 Project config cannot define HTTP hook actions or the HTTP hook transport
 policy; keep those in trusted user config or an explicit `SPARKWRIGHT_CONFIG`
-file. Run configured HTTP Event Hooks through the normal host-backed
-`sparkwright run` path; the internal `--direct-core` diagnostics path does not
-promise that transport.
+file.
 
 Block generated files before a write tool runs:
 
@@ -786,8 +784,6 @@ Put user arguments in prompt text instead.
   `delegate_*` tools are needed. Set `enableParallelDelegates: true` to expose
   the opt-in `delegate_parallel` fan-out tool for read-only configured
   delegates.
-- `capabilities.web.security`: built-in URL retrieval transport. `system` is
-  the default; `hardened` enables DNS validation and address pinning.
 - `ui.theme`, `ui.mouse`, `ui.keybindings`, `ui.vim`: TUI-only preferences. TUI run autonomy uses
   the shared `accessMode`; Shift+Tab changes the mode for the active TUI
   process without writing config.
@@ -894,7 +890,7 @@ Top-level `tools` is the preferred tool configuration surface.
 - `defer`: concrete built-in tool names kept available but omitted from the
   initial provider tool schema until discovered through `tool_search`.
 
-Selectors are: `workspace.read`, `workspace.write`, `bash`, `web`, `planning`,
+Selectors are: `workspace.read`, `workspace.write`, `bash`, `planning`,
 `skills`, `agents`, `tasks`, `cron`, `mcp`, and `mcp:<server>`. Multiple
 selectors in one file are a union; multiple config layers intersect, so a
 project can narrow a user setting. For example, user `use: ["mcp"]` plus project
@@ -921,40 +917,6 @@ listed in `use` or `allowed`. Selector-filtered deferred tools keep
 `tool_search` available automatically; if you use a concrete `allowed` list for
 deferred tools, either also allow `tool_search` or set `"defer": []` so the
 provider receives their schemas up front.
-
-The `web` selector contains the main-run-only `web_fetch` tool. It reads one
-known public URL without a search provider, browser JavaScript, cookies, or
-login state; it does not search for URLs. Each exact normalized URL is
-approval-scoped. It returns one cleaned, bounded excerpt; `truncated: true`
-means there is no continuation cursor, and another call is a fresh fetch that
-may observe a changed page. `web_fetch` is advanced and deferred by default, so
-it remains discoverable through `tool_search` unless explicitly disabled.
-
-The default `system` web transport accepts HTTPS and uses normal OS
-DNS/routing, so VPN/TUN synthetic addresses work without IP-range exceptions.
-It honors the standard `HTTPS_PROXY`, `HTTP_PROXY`, and `NO_PROXY` environment
-variables (plus lowercase forms); `SPARKWRIGHT_WEB_PROXY` can explicitly
-override both proxy variables for this tool. It still rejects explicit
-private/reserved IPs, local/metadata hostnames, credential-bearing or
-secret-bearing URLs, unsafe redirects, compression, oversized responses, and
-timeouts.
-
-Use hardened mode when DNS rebinding resistance is more important than local
-VPN/TUN compatibility:
-
-```json
-{
-  "capabilities": {
-    "web": { "security": "hardened" }
-  }
-}
-```
-
-`hardened` permits HTTP(S), validates every resolved address as
-global-unicast, and pins each connection. Project config may select
-`hardened`, but cannot downgrade a user-selected `hardened` mode to `system`;
-put an intentional `system` selection in user config or
-`$SPARKWRIGHT_CONFIG`.
 
 For a run surface that should only expose one MCP server, prefer a selector:
 

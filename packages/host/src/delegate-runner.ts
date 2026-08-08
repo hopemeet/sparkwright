@@ -281,10 +281,6 @@ export async function runConfiguredDelegate(
       runId: parent.record.id,
       action: "delegate.run",
       summary: `Run delegate tool ${input.toolName}`,
-      subject: {
-        kind: "one_shot",
-        label: `Allow delegate ${input.toolName} once`,
-      },
       details: {
         toolName: input.toolName,
         profileId: profile.id,

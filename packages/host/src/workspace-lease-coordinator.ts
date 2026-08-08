@@ -4,7 +4,6 @@ import {
   createId,
   type RuntimeContext,
   type ToolDefinition,
-  type WorkspaceStateRuntime,
 } from "@sparkwright/core";
 import type { TaskId, TaskManager } from "@sparkwright/agent-runtime";
 
@@ -119,31 +118,6 @@ export class WorkspaceLeaseLostError extends Error {
       `Workspace ${loss.mode} lease for ${loss.ownerId} was lost (${loss.reason}).`,
     );
     this.name = "WorkspaceLeaseLostError";
-  }
-}
-
-export class WorkspaceLeaseObservationConflictError extends Error {
-  readonly code = "WORKSPACE_LEASE_OBSERVATION_CONFLICT";
-
-  constructor(
-    readonly observedEpoch: number,
-    readonly currentEpoch: number,
-  ) {
-    super(
-      `Workspace changed while the child transitioned from read to write (${observedEpoch} -> ${currentEpoch}); reread affected state before retrying the mutation.`,
-    );
-    this.name = "WorkspaceLeaseObservationConflictError";
-  }
-}
-
-export class WorkspaceLeaseRevalidationRequiredError extends Error {
-  readonly code = "WORKSPACE_LEASE_REVALIDATION_REQUIRED";
-
-  constructor(readonly currentEpoch: number) {
-    super(
-      `Workspace write lease is held at epoch ${currentEpoch}, but a successful read is required before mutation can be retried.`,
-    );
-    this.name = "WorkspaceLeaseRevalidationRequiredError";
   }
 }
 
@@ -486,26 +460,21 @@ export class WorkspaceLeaseCoordinator {
 
 export const processWorkspaceLeaseCoordinator = new WorkspaceLeaseCoordinator();
 
-const leaseSessions = new WeakMap<
-  WorkspaceLeaseCoordinator,
-  Map<string, WorkspaceLeaseSession>
->();
-
 export function createWorkspaceMutationAdmission(input: {
   coordinator?: WorkspaceLeaseCoordinator;
   workspaceRoot: string;
   mode: WorkspaceLeaseMode;
   ttlMs?: number;
   heartbeatMs?: number;
-  workspaceState?: WorkspaceStateRuntime;
 }): (request: {
   invocation: { childRunId: string; parentRunId?: string };
   abortSignal: AbortSignal;
   cancel?: (reason: string, metadata?: Record<string, unknown>) => void;
 }) => Promise<() => void> {
   return async ({ invocation, abortSignal, cancel }) => {
-    const coordinator = input.coordinator ?? processWorkspaceLeaseCoordinator;
-    const acquisition = {
+    const lease = await (
+      input.coordinator ?? processWorkspaceLeaseCoordinator
+    ).acquire({
       workspaceRoot: input.workspaceRoot,
       ownerId: invocation.childRunId,
       ancestorOwnerIds: invocation.parentRunId ? [invocation.parentRunId] : [],
@@ -513,35 +482,13 @@ export function createWorkspaceMutationAdmission(input: {
       ttlMs: input.ttlMs,
       heartbeatMs: input.heartbeatMs,
       signal: abortSignal,
-      onLost: (loss: WorkspaceLeaseLoss) =>
+      onLost: (loss) =>
         cancel?.("Workspace lease lost.", {
           workspaceLeaseLoss: { ...loss },
         }),
-    } as const;
-    const lease = await coordinator.acquire(acquisition);
-    const session = input.workspaceState
-      ? new WorkspaceLeaseSession({
-          coordinator,
-          acquisition,
-          lease,
-          workspaceState: input.workspaceState,
-        })
-      : undefined;
-    if (session) {
-      sessionsFor(coordinator).set(
-        leaseSessionKey(input.workspaceRoot, invocation.childRunId),
-        session,
-      );
-    }
+    });
     return () => {
-      if (session) {
-        sessionsFor(coordinator).delete(
-          leaseSessionKey(input.workspaceRoot, invocation.childRunId),
-        );
-        session.release();
-      } else {
-        lease.release();
-      }
+      lease.release();
     };
   };
 }
@@ -575,26 +522,8 @@ export function withWorkspaceMutationLease<TArgs, TResult>(
   return {
     ...tool,
     async execute(args, ctx) {
-      const session = sessionsFor(coordinator).get(
-        leaseSessionKey(input.workspaceRoot, String(ctx.run.id)),
-      );
       if (!toolMutatesWorkspace(tool, args)) {
-        const output = await tool.execute(args, ctx);
-        if (toolObservesWorkspace(tool, args)) {
-          session?.recordSuccessfulRead();
-        }
-        return output;
-      }
-      if (session) {
-        await session.ensureWrite();
-        try {
-          const output = await tool.execute(args, ctx);
-          session.recordSuccessfulWrite();
-          return output;
-        } catch (cause) {
-          if (isWorkspaceConflict(cause)) session.requireRevalidation();
-          throw cause;
-        }
+        return tool.execute(args, ctx);
       }
       const localAbort = linkedAbortController(ctx.abortSignal);
       let backgroundTaskId: TaskId | undefined;
@@ -651,123 +580,12 @@ export function withWorkspaceMutationLease<TArgs, TResult>(
   };
 }
 
-interface WorkspaceLeaseAcquisition {
-  workspaceRoot: string;
-  ownerId: string;
-  ancestorOwnerIds: readonly string[];
-  mode: WorkspaceLeaseMode;
-  ttlMs?: number;
-  heartbeatMs?: number;
-  signal: AbortSignal;
-  onLost: (loss: WorkspaceLeaseLoss) => void;
-}
-
-class WorkspaceLeaseSession {
-  private lease: WorkspaceLease;
-  private observedEpoch: number;
-  private revalidationRequired = false;
-  private transition?: Promise<void>;
-
-  constructor(
-    private readonly input: {
-      coordinator: WorkspaceLeaseCoordinator;
-      acquisition: WorkspaceLeaseAcquisition;
-      lease: WorkspaceLease;
-      workspaceState: WorkspaceStateRuntime;
-    },
-  ) {
-    this.lease = input.lease;
-    this.observedEpoch = input.workspaceState.currentEpoch();
-  }
-
-  async ensureWrite(): Promise<void> {
-    if (this.lease.mode === "write") {
-      if (this.revalidationRequired) {
-        throw new WorkspaceLeaseRevalidationRequiredError(
-          this.input.workspaceState.currentEpoch(),
-        );
-      }
-      return;
-    }
-    if (!this.transition) {
-      this.transition = this.transitionToWrite().finally(() => {
-        this.transition = undefined;
-      });
-    }
-    await this.transition;
-  }
-
-  recordSuccessfulRead(): void {
-    this.observedEpoch = this.input.workspaceState.currentEpoch();
-    this.revalidationRequired = false;
-  }
-
-  recordSuccessfulWrite(): void {
-    this.observedEpoch = this.input.workspaceState.currentEpoch();
-  }
-
-  requireRevalidation(): void {
-    this.observedEpoch = this.input.workspaceState.currentEpoch();
-    this.revalidationRequired = true;
-  }
-
-  release(): void {
-    this.lease.release();
-  }
-
-  private async transitionToWrite(): Promise<void> {
-    const transitionEpoch = this.observedEpoch;
-    this.lease.release();
-    this.lease = await this.input.coordinator.acquire({
-      ...this.input.acquisition,
-      mode: "write",
-    });
-    const currentEpoch = this.input.workspaceState.currentEpoch();
-    this.observedEpoch = currentEpoch;
-    if (currentEpoch !== transitionEpoch) {
-      this.revalidationRequired = true;
-      throw new WorkspaceLeaseObservationConflictError(
-        transitionEpoch,
-        currentEpoch,
-      );
-    }
-  }
-}
-
-function sessionsFor(
-  coordinator: WorkspaceLeaseCoordinator,
-): Map<string, WorkspaceLeaseSession> {
-  const existing = leaseSessions.get(coordinator);
-  if (existing) return existing;
-  const created = new Map<string, WorkspaceLeaseSession>();
-  leaseSessions.set(coordinator, created);
-  return created;
-}
-
-function leaseSessionKey(workspaceRoot: string, ownerId: string): string {
-  return `${canonicalWorkspaceRoot(workspaceRoot)}\0${ownerId}`;
-}
-
 function toolMutatesWorkspace<TArgs, TResult>(
   tool: ToolDefinition<TArgs, TResult>,
   args: TArgs,
 ): boolean {
   const governance = tool.policyForArgs?.(args)?.governance ?? tool.governance;
   return governance?.sideEffects?.includes("write") === true;
-}
-
-function toolObservesWorkspace<TArgs, TResult>(
-  tool: ToolDefinition<TArgs, TResult>,
-  args: TArgs,
-): boolean {
-  const governance = tool.policyForArgs?.(args)?.governance ?? tool.governance;
-  return governance?.sideEffects?.includes("read") === true;
-}
-
-function isWorkspaceConflict(cause: unknown): boolean {
-  if (!cause || typeof cause !== "object") return false;
-  const code = (cause as { code?: unknown }).code;
-  return typeof code === "string" && /(?:CONFLICT|STALE|REVISION)/u.test(code);
 }
 
 function backgroundTaskIdFromOutput(output: unknown): TaskId | undefined {

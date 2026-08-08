@@ -84,8 +84,6 @@ export type {
   ToolInterruptBehavior,
   ToolAvailableProbe,
   ToolResultSizePolicy,
-  ToolResultPresentationKind,
-  ToolResultPresentation,
   ToolProgressUpdate,
   ToolRequestPreviewFormatter,
   ToolRequestPreviewOptions,
@@ -173,16 +171,6 @@ export type {
 } from "./fact-ledger.js";
 export { FactLedger, factLedgerSnapshotFromUnknown } from "./fact-ledger.js";
 export { projectFactLedgerSnapshot } from "./fact-ledger.js";
-export type {
-  RuntimeStateEvaluation,
-  /** @deprecated Use RuntimeStateEvaluation. */
-  CompletionEvaluation,
-} from "./runtime-state-evaluator.js";
-export {
-  evaluateRuntimeState,
-  /** @deprecated Use evaluateRuntimeState. */
-  evaluateCompletion,
-} from "./runtime-state-evaluator.js";
 
 export type {
   AssessRunOptions,
@@ -461,7 +449,7 @@ export {
 
 // Workspace primitive factory. Concrete LocalWorkspace / ControlledWorkspace
 // reference classes live at `@sparkwright/core/internal`.
-export { createSimpleTextDiff, createWorkspaceRevision } from "./workspace.js";
+export { createSimpleTextDiff } from "./workspace.js";
 
 // Extension protocols — Wave 1 + Wave 2 stubs
 export type {
@@ -667,6 +655,7 @@ export type {
   ModelCallHookInput,
   ModelOutputHookInput,
   EventHookInput,
+  ErrorHookInput,
 } from "./hooks.js";
 export { combineRunHooks, createDynamicHookSet } from "./hooks.js";
 

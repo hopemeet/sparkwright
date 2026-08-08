@@ -69,6 +69,7 @@ export type { ToolSelectorCatalogEntry } from "./tool-selectors.js";
 export {
   bindConfiguredEventHooks,
   createConfiguredWorkflowHooks,
+  createPartialSubagentFinalityDisclosureHook,
 } from "./workflow-hooks.js";
 export type {
   BindConfiguredEventHooksOptions,
@@ -147,6 +148,14 @@ export type {
   SkillStatsReport,
   SkillStatsWindow,
 } from "./skill-stats.js";
+export { collectSkillReviewDigest } from "./skill-review-digest.js";
+export type {
+  SkillReviewDigest,
+  SkillReviewDigestItem,
+  SkillReviewDigestItemKind,
+  SkillReviewDigestOptions,
+  SkillReviewDigestSeverity,
+} from "./skill-review-digest.js";
 export {
   aggregateAssetObservations,
   collectAssetStats,
@@ -163,15 +172,39 @@ export type {
   AssetStatsReport,
 } from "./asset-stats.js";
 export {
+  importSkill,
+  readSkillOrigin,
+  readSkillRegistry,
+  reconcileSkill,
+  scanSkillReconciliation,
+  skillRegistryPath,
+} from "./skill-registry.js";
+export type { SkillOrigin } from "./skill-registry.js";
+export {
+  activeDismissedSkillSuggestionIds,
+  collectSkillEvidenceSuggestions,
+  dismissSkillSuggestion,
+} from "./skill-suggestions.js";
+export type { SkillEvidenceSuggestion } from "./skill-suggestions.js";
+export type {
+  SkillArtifactRecord,
+  SkillReconciliationFinding,
+  SkillReconciliationKind,
+  SkillReconciliationReceipt,
+  SkillRegistry,
+} from "./skill-registry.js";
+export {
   createSkillUsageRecorder,
   observeSkillUsageEvent,
+  recordSkillPatch,
   skillUsagePath,
 } from "./skill-usage.js";
-export { createProjectSkill } from "./project-skill-create.js";
+export { createFileCapabilityPackageWriter } from "./capability-package-mutation.js";
 export type {
-  CreateProjectSkillInput,
-  CreateProjectSkillResult,
-} from "./project-skill-create.js";
+  CapabilityPackageMutationAction,
+  CapabilityPackageMutationResult,
+  CapabilityPackageMutationWriter,
+} from "./capability-package-mutation.js";
 export { runSkillDoctor } from "./skill-doctor.js";
 export type {
   RunSkillDoctorOptions,
@@ -188,6 +221,58 @@ export {
 } from "@sparkwright/core";
 /** @internal Fresh per-run policy factory shared with diagnostic runners. */
 export { createHostRunPolicy } from "./run-policy.js";
+export {
+  applyApprovedSkillProposal,
+  applySkillProposal,
+  createSkillCreateProposal,
+  createSkillUpdateProposal,
+  listSkillHistory,
+  listSkillProposals,
+  pruneSkillProposals,
+  readSkillHistoryDetail,
+  readSkillProposal,
+  reconcileSkillProposalDrafts,
+  prepareSkillProposalApproval,
+  recordSkillProposalApproval,
+  rejectSkillProposal,
+  reviseSkillProposalDraft,
+  skillEvolutionRoot,
+  skillProposalReviewCommand,
+  restoreSkillFromHistory,
+  supersedeSkillProposal,
+} from "./skill-evolution.js";
+export { SkillCommandService } from "./skill-command-service.js";
+export type {
+  ApprovePreparedSkillResult,
+  PrepareSkillCreateCommandInput,
+  PrepareSkillCreateCommandResult,
+  SkillCreateEligibility,
+} from "./skill-command-service.js";
+export type {
+  ApplySkillProposalResult,
+  CloseSkillProposalInput,
+  CreateSkillCreateProposalInput,
+  CreateSkillUpdateProposalInput,
+  PreparedChangeState,
+  PreparedSkillApproval,
+  PruneSkillProposalsInput,
+  PruneSkillProposalsResult,
+  ReconcileSkillProposalDraftsResult,
+  RestoreSkillFromHistoryInput,
+  RestoreSkillFromHistoryResult,
+  SkillHistoryEntry,
+  SkillHistoryDetail,
+  SkillHistoryKind,
+  SkillHistoryMetadata,
+  SkillApprovalReceipt,
+  SkillMutationReceipt,
+  SkillProposalDetail,
+  SkillProposalKind,
+  SkillProposalMetadata,
+  SkillProposalState,
+  SkillProposalSummary,
+  SupersedeSkillProposalInput,
+} from "./skill-evolution.js";
 export { loadLayeredAgentReport } from "./agent-report.js";
 export type {
   AgentReport,
@@ -352,12 +437,13 @@ export type {
   SharedConfigError,
   LoadedSharedConfig,
   CapabilityConfig,
+  CapabilitySkillEvolutionConfig,
+  CapabilitySkillEvolutionMode,
   CapabilityHooksConfig,
   CapabilityWorkflowHookConfig,
   CapabilityHookActionConfig,
   CapabilityToolsConfig,
   CapabilitySkillsConfig,
-  CapabilityWebConfig,
   ShellConfig,
   ProviderConfig,
   ProviderModelConfig,

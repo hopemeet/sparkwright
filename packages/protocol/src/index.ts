@@ -103,12 +103,10 @@ export const INTERNAL_TRANSCRIPT_EVENT_TYPES = [
   "context.compaction.completed",
   "context.compaction.failed",
   "skill.indexed",
-  "agent.profile.derived",
   "prompt.built",
   "model.turn.started",
   "model.turn.completed",
   "model.requested",
-  "model.completed",
   "model.retrying",
   "model.stream.failed",
   "model.stream.started",
@@ -130,10 +128,7 @@ const INTERNAL_TRANSCRIPT_EVENT_TYPE_SET = new Set<string>(
 );
 
 export function isInternalTranscriptEventType(type: string): boolean {
-  return (
-    INTERNAL_TRANSCRIPT_EVENT_TYPE_SET.has(type) ||
-    type.startsWith("model.stream.")
-  );
+  return INTERNAL_TRANSCRIPT_EVENT_TYPE_SET.has(type);
 }
 
 export const LIVE_DEBUG_NOISE_EVENT_TYPES = [
@@ -616,12 +611,6 @@ export type TaskStatus =
   | "failed"
   | "cancelled";
 
-export type TaskCompletionPolicy =
-  | "inline"
-  | "awaited"
-  | "detached"
-  | "unknown";
-
 export const TASK_STATUSES = [
   "pending",
   "running",
@@ -641,7 +630,6 @@ export interface TaskRecordSnapshot {
   parentRunId: string;
   kind: string;
   title?: string;
-  completionPolicy: TaskCompletionPolicy;
   awaited: boolean;
   status: TaskStatus;
   createdAt: string;
@@ -1221,7 +1209,6 @@ export type EventKind =
   | "host.ready"
   | "host.log"
   | "run.event"
-  | "task.updated"
   | "approval.requested"
   | "run.continuation"
   | "run.completed"
@@ -1258,87 +1245,12 @@ export interface RunEventPayload {
   event: unknown;
 }
 
-export interface TaskUpdatedEventPayload {
-  taskId: string;
-  parentRunId: string;
-  sessionId?: string;
-  transition: "created" | "started" | "terminal";
-  kind: string;
-  title?: string;
-  completionPolicy: TaskCompletionPolicy;
-  awaited: boolean;
-  status: TaskStatus;
-  createdAt: string;
-  startedAt?: string;
-  completedAt?: string;
-  resultSummary?: string;
-  error?: {
-    code: string;
-    message: string;
-  };
-  outputRef: {
-    method: "task.output";
-    taskId: string;
-  };
-}
-
-export type ApprovalSubjectPayload =
-  | {
-      kind: "workspace_file";
-      operation:
-        | "create"
-        | "replace"
-        | "edit"
-        | "remove"
-        | "legacy_write"
-        | "write";
-      path: string;
-      key: string;
-      label: string;
-    }
-  | {
-      kind: "shell_command";
-      command: string;
-      cwd: string;
-      background?: boolean;
-      lifetime?: "job" | "service";
-      key: string;
-      label: string;
-    }
-  | {
-      kind: "tool_call";
-      toolName: string;
-      key: string;
-      label: string;
-    }
-  | {
-      kind: "one_shot";
-      label: string;
-    };
-
 export interface ApprovalRequestedEventPayload {
   runId: string;
   approvalId: string;
   action: string;
   summary: string;
-  subject: ApprovalSubjectPayload;
-  /** Identity whose effect is being authorized; session rules are scoped here. */
-  principal: ApprovalPrincipalPayload;
-  /** Independent explanations from policy, tool, and safety layers. */
-  reasons?: ApprovalReasonLayersPayload;
   details?: Record<string, unknown>;
-}
-
-export interface ApprovalReasonLayersPayload {
-  policy?: string;
-  tool?: string;
-  safety?: string;
-}
-
-export interface ApprovalPrincipalPayload {
-  kind: "main" | "dynamic_child" | "configured_delegate";
-  principalScope: string;
-  displayLabel?: string;
 }
 
 /** Emitted when a durable Workflow starts another Core episode. */
@@ -1369,16 +1281,13 @@ export interface AssessmentIssuePayload {
 
 export interface VerificationResultPayload {
   id: string;
-  source: "command" | "profile" | "documented_command" | "receipt";
+  source: "command" | "profile" | "documented_command";
   status: "passed" | "failed" | "timed_out" | "stale";
   sequence?: number;
   command?: string;
   profile?: string;
   verifierId?: string;
   exitCode?: number | null;
-  level?: "syntax" | "smoke" | "contract" | "project" | "release";
-  coveredChangeSets?: string[];
-  writeEpoch?: number;
 }
 
 export interface RunAssessmentPayload {
@@ -1413,29 +1322,6 @@ export interface RunCompletedEventPayload {
   failure?: RunFailureEnvelope;
   /** Advisory plan state; it never changes terminal ownership or scheduling. */
   todoAdvisory?: { unfinished: number; blocked: number; message: string };
-  /** Deterministic structured caveats emitted by the Core completion evaluator. */
-  notices?: RuntimeNoticePayload[];
-  /** Runtime-owned semantic completion status; independent of transport state. */
-  completionStatus?: "completed" | "partial";
-}
-
-export interface RuntimeNoticePayload {
-  id: string;
-  code:
-    | "child_partial"
-    | "child_blocked"
-    | "child_step_limit"
-    | "verification_failed"
-    | "verification_not_run"
-    | "verification_receipt_stale"
-    | "approval_denied"
-    | "budget_exhausted";
-  severity: "info" | "warning" | "error";
-  message: string;
-  /** @reserved Runtime notice origin consumed by protocol clients and trace UIs. */
-  sourceRunId?: string;
-  childRunId?: string;
-  metadata?: Record<string, unknown>;
 }
 
 export interface RunFailedEventPayload {
@@ -1449,7 +1335,6 @@ export type HostEvent =
   | HostEventBase<"host.ready", HostReadyEventPayload>
   | HostEventBase<"host.log", HostLogEventPayload>
   | HostEventBase<"run.event", RunEventPayload>
-  | HostEventBase<"task.updated", TaskUpdatedEventPayload>
   | HostEventBase<"approval.requested", ApprovalRequestedEventPayload>
   | HostEventBase<"run.continuation", RunContinuationEventPayload>
   | HostEventBase<"run.completed", RunCompletedEventPayload>

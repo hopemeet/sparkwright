@@ -18,7 +18,20 @@ import {
   loadLayeredSkillReport,
   type SkillReportEntry,
 } from "./skill-report.js";
-export type SkillStatsQueryScope = "human_diagnostics";
+import {
+  listSkillHistory,
+  listSkillProposals,
+  type SkillHistoryEntry,
+  type SkillHistoryKind,
+  type SkillProposalKind,
+  type SkillProposalState,
+  type SkillProposalSummary,
+} from "./skill-evolution.js";
+
+export type SkillStatsQueryScope =
+  | "human_diagnostics"
+  | "evolution_evidence"
+  | "post_apply_verification";
 
 export interface SkillStatsQuery {
   /** @reserved Public skill-stats query field consumed by diagnostics UIs. */
@@ -74,12 +87,20 @@ export interface SkillStatsWindow {
     terminalRunCount: number;
     openRunCount: number;
   };
+  evolution: {
+    proposalsScanned: number;
+    historyScanned: number;
+    firstCreatedAt?: string;
+    lastCreatedAt?: string;
+    lastClosedAt?: string;
+  };
 }
 
 export interface SkillStatsFreshness {
   computedAt: string;
   /** @reserved Public skill-stats freshness field consumed by diagnostics UIs. */
   latestTraceEventAt?: string;
+  latestEvolutionAt?: string;
   latestEvidenceAt?: string;
 }
 
@@ -108,7 +129,8 @@ export type SkillStatsFindingSeverity = "info" | "warning";
 export type SkillStatsFindingRelation = "associated" | "observed";
 export type SkillStatsFindingCode =
   | "SKILL_LOAD_FAILURES"
-  | "ASSOCIATED_TOOL_FAILURES";
+  | "ASSOCIATED_TOOL_FAILURES"
+  | "SKILL_EVOLUTION_ACTIVITY";
 
 export interface SkillStatsFinding {
   code: SkillStatsFindingCode;
@@ -165,6 +187,27 @@ export interface SkillStatsEntry {
     byCode: Record<string, number>;
     beforeFirstLoad: number;
     afterFirstLoad: number;
+  };
+
+  evolution: {
+    proposals: {
+      total: number;
+      asBase: number;
+      asAfter: number;
+      byState: Partial<Record<SkillProposalState, number>>;
+      byKind: Partial<Record<SkillProposalKind, number>>;
+      ids: string[];
+      latestCreatedAt?: string;
+      latestClosedAt?: string;
+    };
+    history: {
+      total: number;
+      asBefore: number;
+      asAfter: number;
+      byKind: Partial<Record<SkillHistoryKind, number>>;
+      ids: string[];
+      latestCreatedAt?: string;
+    };
   };
 }
 
@@ -276,13 +319,21 @@ interface MutableTraceWindow {
   openRunCount: number;
 }
 
+interface EvolutionRollupResult {
+  proposalsScanned: number;
+  historyScanned: number;
+  firstCreatedAt?: string;
+  lastCreatedAt?: string;
+  lastClosedAt?: string;
+}
+
 const DEFAULT_SESSION_LIMIT = 20;
 const DEFAULT_SKILL_SAMPLE_LIMIT = 20;
 const UNKNOWN_LAYER = "unknown";
-const SESSION_PROJECTION_SCHEMA_VERSION = "skill-stats-session.v4";
-const SESSION_PROJECTION_ALGORITHM_VERSION = "skill-stats-trace-v5";
-const CATALOG_SCHEMA_VERSION = "skill-stats-catalog.v3";
-const CATALOG_ALGORITHM_VERSION = "skill-stats-catalog-v3";
+const SESSION_PROJECTION_SCHEMA_VERSION = "skill-stats-session.v3";
+const SESSION_PROJECTION_ALGORITHM_VERSION = "skill-stats-trace-v4";
+const CATALOG_SCHEMA_VERSION = "skill-stats-catalog.v2";
+const CATALOG_ALGORITHM_VERSION = "skill-stats-catalog-v2";
 const DEFAULT_USE_PROJECTION_CACHE = true;
 
 export async function collectSkillStats(
@@ -412,6 +463,10 @@ export async function collectSkillStats(
   }
 
   applyCurrentSkillReport(byKey, report.skills, report.shadows);
+  const evolutionWindow = await applyEvolutionRollup(
+    byKey,
+    options.workspaceRoot,
+  );
 
   const skills = [...byKey.values()]
     .map(finalizeEntry)
@@ -438,14 +493,25 @@ export async function collectSkillStats(
       terminalRunCount: traceWindow.terminalRunCount,
       openRunCount: traceWindow.openRunCount,
     },
+    evolution: evolutionWindow,
   };
+  const latestEvolutionAt = latestIso(
+    evolutionWindow.lastCreatedAt,
+    evolutionWindow.lastClosedAt,
+  );
   const freshness: SkillStatsFreshness = {
     computedAt,
     ...(window.trace.lastEventAt
       ? { latestTraceEventAt: window.trace.lastEventAt }
       : {}),
-    ...(window.trace.lastEventAt
-      ? { latestEvidenceAt: window.trace.lastEventAt }
+    ...(latestEvolutionAt ? { latestEvolutionAt } : {}),
+    ...(latestIso(window.trace.lastEventAt, latestEvolutionAt)
+      ? {
+          latestEvidenceAt: latestIso(
+            window.trace.lastEventAt,
+            latestEvolutionAt,
+          ),
+        }
       : {}),
   };
 
@@ -920,7 +986,10 @@ function isCachedSkillStatsEntry(value: unknown): value is SkillStatsEntry {
     isNumberRecord(value.associatedToolFailures.byTool) &&
     isNumberRecord(value.associatedToolFailures.byCode) &&
     typeof value.associatedToolFailures.beforeFirstLoad === "number" &&
-    typeof value.associatedToolFailures.afterFirstLoad === "number"
+    typeof value.associatedToolFailures.afterFirstLoad === "number" &&
+    isRecord(value.evolution) &&
+    isRecord(value.evolution.proposals) &&
+    isRecord(value.evolution.history)
   );
 }
 
@@ -1093,6 +1162,41 @@ function mergeSkillStatsEntry(
     source.associatedToolFailures.byCode,
   );
 
+  const targetProposals = target.evolution.proposals;
+  const sourceProposals = source.evolution.proposals;
+  targetProposals.total += sourceProposals.total;
+  targetProposals.asBase += sourceProposals.asBase;
+  targetProposals.asAfter += sourceProposals.asAfter;
+  mergeRecordCounts(targetProposals.byState, sourceProposals.byState);
+  mergeRecordCounts(targetProposals.byKind, sourceProposals.byKind);
+  targetProposals.ids = sortedUnique([
+    ...targetProposals.ids,
+    ...sourceProposals.ids,
+  ]);
+  targetProposals.latestCreatedAt = latestIso(
+    targetProposals.latestCreatedAt,
+    sourceProposals.latestCreatedAt,
+  );
+  targetProposals.latestClosedAt = latestIso(
+    targetProposals.latestClosedAt,
+    sourceProposals.latestClosedAt,
+  );
+
+  const targetHistory = target.evolution.history;
+  const sourceHistory = source.evolution.history;
+  targetHistory.total += sourceHistory.total;
+  targetHistory.asBefore += sourceHistory.asBefore;
+  targetHistory.asAfter += sourceHistory.asAfter;
+  mergeRecordCounts(targetHistory.byKind, sourceHistory.byKind);
+  targetHistory.ids = sortedUnique([
+    ...targetHistory.ids,
+    ...sourceHistory.ids,
+  ]);
+  targetHistory.latestCreatedAt = latestIso(
+    targetHistory.latestCreatedAt,
+    sourceHistory.latestCreatedAt,
+  );
+
   if (source.shadowedBy && !target.shadowedBy)
     target.shadowedBy = source.shadowedBy;
   if (source.shadows && source.shadows.length > 0) {
@@ -1119,6 +1223,105 @@ function mergeTraceWindow(
   window.runCount += projection.runCount;
   window.terminalRunCount += projection.terminalRunCount;
   window.openRunCount += projection.openRunCount;
+}
+
+async function applyEvolutionRollup(
+  byKey: Map<string, MutableSkillStatsEntry>,
+  workspaceRoot: string,
+): Promise<EvolutionRollupResult> {
+  const proposals = await listSkillProposals(workspaceRoot);
+  const result: EvolutionRollupResult = {
+    proposalsScanned: proposals.length,
+    historyScanned: 0,
+  };
+  for (const proposal of proposals) {
+    recordProposalRollup(byKey, proposal);
+    result.firstCreatedAt = earliestIso(
+      result.firstCreatedAt,
+      proposal.createdAt,
+    );
+    result.lastCreatedAt = latestIso(result.lastCreatedAt, proposal.createdAt);
+    if (proposal.closedAt) {
+      result.lastClosedAt = latestIso(result.lastClosedAt, proposal.closedAt);
+    }
+  }
+
+  const historyNames = sortedUnique([
+    ...[...byKey.values()].map((entry) => entry.name),
+    ...proposals.map((proposal) => proposal.skillName),
+  ]);
+  for (const skillName of historyNames) {
+    const history = await listSkillHistory(workspaceRoot, skillName).catch(
+      () => [],
+    );
+    result.historyScanned += history.length;
+    for (const entry of history) {
+      recordHistoryRollup(byKey, entry);
+      result.firstCreatedAt = earliestIso(
+        result.firstCreatedAt,
+        entry.createdAt,
+      );
+      result.lastCreatedAt = latestIso(result.lastCreatedAt, entry.createdAt);
+    }
+  }
+  return result;
+}
+
+function recordProposalRollup(
+  byKey: Map<string, MutableSkillStatsEntry>,
+  proposal: SkillProposalSummary,
+): void {
+  for (const entry of entriesByName(byKey, proposal.skillName)) {
+    if (!entry.packageHash) continue;
+    const asBase = proposal.basePackageHash === entry.packageHash;
+    const asAfter = proposal.afterPackageHash === entry.packageHash;
+    if (!asBase && !asAfter) continue;
+
+    const rollup = entry.evolution.proposals;
+    if (!rollup.ids.includes(proposal.id)) {
+      rollup.ids.push(proposal.id);
+      rollup.total += 1;
+      incrementRecord(rollup.byState, proposal.state);
+      incrementRecord(rollup.byKind, proposal.kind);
+      rollup.latestCreatedAt = latestIso(
+        rollup.latestCreatedAt,
+        proposal.createdAt,
+      );
+      if (proposal.closedAt) {
+        rollup.latestClosedAt = latestIso(
+          rollup.latestClosedAt,
+          proposal.closedAt,
+        );
+      }
+    }
+    if (asBase) rollup.asBase += 1;
+    if (asAfter) rollup.asAfter += 1;
+  }
+}
+
+function recordHistoryRollup(
+  byKey: Map<string, MutableSkillStatsEntry>,
+  history: SkillHistoryEntry,
+): void {
+  for (const entry of entriesByName(byKey, history.skillName)) {
+    if (!entry.packageHash) continue;
+    const asBefore = history.beforePackageHash === entry.packageHash;
+    const asAfter = history.afterPackageHash === entry.packageHash;
+    if (!asBefore && !asAfter) continue;
+
+    const rollup = entry.evolution.history;
+    if (!rollup.ids.includes(history.id)) {
+      rollup.ids.push(history.id);
+      rollup.total += 1;
+      incrementRecord(rollup.byKind, history.kind);
+      rollup.latestCreatedAt = latestIso(
+        rollup.latestCreatedAt,
+        history.createdAt,
+      );
+    }
+    if (asBefore) rollup.asBefore += 1;
+    if (asAfter) rollup.asAfter += 1;
+  }
 }
 
 function collectTraceStats(
@@ -1375,6 +1578,23 @@ function ensureEntry(
         beforeFirstLoad: 0,
         afterFirstLoad: 0,
       },
+      evolution: {
+        proposals: {
+          total: 0,
+          asBase: 0,
+          asAfter: 0,
+          byState: {},
+          byKind: {},
+          ids: [],
+        },
+        history: {
+          total: 0,
+          asBefore: 0,
+          asAfter: 0,
+          byKind: {},
+          ids: [],
+        },
+      },
       runIdSet: new Set(),
       sessionIdSet: new Set(),
       sampleRunIdSet: new Set(),
@@ -1456,6 +1676,32 @@ function finalizeEntry(entry: MutableSkillStatsEntry): SkillStatsEntry {
       beforeFirstLoad: entry.associatedToolFailures.beforeFirstLoad,
       afterFirstLoad: entry.associatedToolFailures.afterFirstLoad,
     },
+    evolution: {
+      proposals: {
+        total: entry.evolution.proposals.total,
+        asBase: entry.evolution.proposals.asBase,
+        asAfter: entry.evolution.proposals.asAfter,
+        byState: sortRecord(entry.evolution.proposals.byState),
+        byKind: sortRecord(entry.evolution.proposals.byKind),
+        ids: sortedUnique(entry.evolution.proposals.ids),
+        ...(entry.evolution.proposals.latestCreatedAt
+          ? { latestCreatedAt: entry.evolution.proposals.latestCreatedAt }
+          : {}),
+        ...(entry.evolution.proposals.latestClosedAt
+          ? { latestClosedAt: entry.evolution.proposals.latestClosedAt }
+          : {}),
+      },
+      history: {
+        total: entry.evolution.history.total,
+        asBefore: entry.evolution.history.asBefore,
+        asAfter: entry.evolution.history.asAfter,
+        byKind: sortRecord(entry.evolution.history.byKind),
+        ids: sortedUnique(entry.evolution.history.ids),
+        ...(entry.evolution.history.latestCreatedAt
+          ? { latestCreatedAt: entry.evolution.history.latestCreatedAt }
+          : {}),
+      },
+    },
   };
 }
 
@@ -1506,6 +1752,27 @@ function analyzeSkillStats(
             afterFirstLoad: skill.associatedToolFailures.afterFirstLoad,
             tools: formatMetricCounts(skill.associatedToolFailures.byTool),
             codes: formatMetricCounts(skill.associatedToolFailures.byCode),
+          },
+        },
+      });
+    }
+    const evolutionTotal =
+      skill.evolution.proposals.total + skill.evolution.history.total;
+    if (evolutionTotal > 0) {
+      findings.push({
+        code: "SKILL_EVOLUTION_ACTIVITY",
+        severity: "info",
+        relation: "observed",
+        skillKey: skill.skillKey,
+        skillName: skill.name,
+        packageHash: skill.packageHash,
+        message:
+          "Skill evolution proposals or history entries reference this package version.",
+        evidence: {
+          ...baseEvidence(),
+          metrics: {
+            proposals: skill.evolution.proposals.total,
+            history: skill.evolution.history.total,
           },
         },
       });

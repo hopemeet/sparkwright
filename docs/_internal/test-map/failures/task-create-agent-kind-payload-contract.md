@@ -41,7 +41,7 @@ contract bug.
 The model-facing `task_create` contract is too generic for host-registered
 background agent tasks. Its schema exposes `kind: string` and `payload: object`
 without naming the registered `agent` kind or the required payload fields
-accepted by the dynamic spawn path at the time (`goal`, `role`, `prompt`, optional
+accepted by the dynamic spawn path (`goal`, `role`, `prompt`, optional
 `allowedTools`, `maxSteps`). Because `task_create` is eager, `tool_search` does
 not return its schema when the model searches for recovery guidance; it only
 returns the deferred `task` control tool.
@@ -54,10 +54,9 @@ guidance to form a valid call.
 
 Current source exposes registered task-create kinds to the model-facing schema
 and description. Host now advertises the registered `agent` kind with an enum
-and a required payload object matching the dynamic `spawn_agent` input. The
-original fix used required `goal`, `role`, and `prompt`; the current handoff
-contract uses required `goal`/`role` plus optional bounded `context`,
-`allowedTools`, `grant`, `maxSteps`, and `metadata`. Unknown-kind failures now include the live registered kinds so the
+and a required payload object matching the dynamic `spawn_agent` input
+(`goal`, `role`, `prompt`, plus optional `allowedTools`, `maxSteps`, and
+`metadata`). Unknown-kind failures now include the live registered kinds so the
 model can correct `kind:"repo-inspector"` to `kind:"agent"`.
 
 Post-fix real mini evidence:
@@ -92,8 +91,7 @@ For background-task failures, inspect:
 
 - Keep focused tests asserting that host exposes `task_create.kind` as
   `["agent"]`, requires top-level `payload`, and requires
-  `payload.goal` / `payload.role`, exposes optional bounded `payload.context`,
-  and does not expose the removed dynamic `payload.prompt` field.
+  `payload.goal` / `payload.role` / `payload.prompt`.
 - Keep a deterministic protocol test that starts a real background agent through
   `task_create`.
 - Add a real mini regression that creates `task_create(kind:"agent")`, then

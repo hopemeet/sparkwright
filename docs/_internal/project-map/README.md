@@ -75,10 +75,15 @@ follow the active maps below for the current contract.
   contract.
 
 - [designs/skill-managed-change-redesign.md](designs/skill-managed-change-redesign.md) —
-  Retired implementation history for the removed Skill managed-change and
-  self-evolution path. Package identity v2 and trace-derived Stats remain active
-  independently. Current contract: [modules/skills.md](modules/skills.md) and
-  [maps/capabilities/skills.md](maps/capabilities/skills.md).
+  Implemented master design history: preserves completed Skill Phase 1/2,
+  freezes package identity v2 and external-change safety, requires Workflow
+  executable package pinning, limits Agent authoring to validated Markdown,
+  defines trace-derived policy-aware stats, and defers Skill identity
+  continuity/reconciliation to Phase 7. Active contracts:
+  [modules/skills.md](modules/skills.md), [modules/host.md](modules/host.md),
+  [modules/tui.md](modules/tui.md),
+  [maps/capabilities/skill-evolution.md](maps/capabilities/skill-evolution.md),
+  and [maps/safety/approvals.md](maps/safety/approvals.md).
 
 - [designs/compaction-redesign.md](designs/compaction-redesign.md) —
   Historical/implemented design: shared compaction result/stage substrate,
@@ -129,11 +134,9 @@ unsourced [QA convergence stub](../reviews/qa-convergence-plan.md).
 - `packages/core/src/index.ts`, `packages/core/src/internal.ts`, or `scripts/check-internal-imports.mjs`: [modules/core.md](modules/core.md), [modules/edge-packages.md](modules/edge-packages.md), [modules/host.md](modules/host.md), [modules/agent-runtime.md](modules/agent-runtime.md), [modules/cli.md](modules/cli.md)
 - `packages/core/src/trace.ts`, `packages/core/src/trace-codec.ts`, `packages/core/src/trace-diagnostics.ts`, `packages/core/src/run-health.ts`, `packages/core/src/trace-session-consistency.ts`, or `packages/core/src/trace-store.ts`: [modules/core.md](modules/core.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md), [maps/trace/summary-timeline-verify.md](maps/trace/summary-timeline-verify.md), [maps/session/session-store.md](maps/session/session-store.md)
 - `packages/core/src/context.ts` or `packages/core/src/path-display.ts`: [modules/core.md](modules/core.md), [maps/runtime/context-compaction.md](maps/runtime/context-compaction.md), [maps/trace/summary-timeline-verify.md](maps/trace/summary-timeline-verify.md)
-- `packages/core/src/hooks.ts`: [modules/core.md](modules/core.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md)
 - `packages/core/src/events.ts`, `packages/core/src/user-hooks.ts`, or `packages/core/src/workflow-hooks.ts`: [modules/core.md](modules/core.md), [modules/host.md](modules/host.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md), [maps/trace/summary-timeline-verify.md](maps/trace/summary-timeline-verify.md)
 - `packages/core/src/environment.ts`: [modules/core.md](modules/core.md), [maps/safety/shell.md](maps/safety/shell.md)
 - `packages/core/src/fact-ledger.ts`, `packages/core/src/fact-classifier.ts`, or `packages/core/src/run-outcome.ts`: [modules/core.md](modules/core.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md), [maps/trace/summary-timeline-verify.md](maps/trace/summary-timeline-verify.md)
-- `packages/core/src/runtime-state-evaluator.ts`: [modules/core.md](modules/core.md), [modules/protocol.md](modules/protocol.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md)
 - `packages/core/src/file-atomic.ts`: [modules/core.md](modules/core.md), [modules/agent-runtime.md](modules/agent-runtime.md), [maps/session/session-store.md](maps/session/session-store.md)
 - `packages/core/src/session.ts`: [modules/core.md](modules/core.md), [maps/session/session-store.md](maps/session/session-store.md), [maps/session/resume-replay.md](maps/session/resume-replay.md), [maps/runtime/context-compaction.md](maps/runtime/context-compaction.md)
 - `packages/core/src/run-budget.ts`: [modules/core.md](modules/core.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/session/resume-replay.md](maps/session/resume-replay.md), [maps/capabilities/agents.md](maps/capabilities/agents.md)
@@ -141,7 +144,6 @@ unsourced [QA convergence stub](../reviews/qa-convergence-plan.md).
 - `packages/core/src/policy.ts` or `packages/core/src/approval-policy.ts`: [modules/core.md](modules/core.md), [maps/safety/approvals.md](maps/safety/approvals.md), [maps/safety/workspace-writes.md](maps/safety/workspace-writes.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md)
 - `packages/core/src/workspace.ts` or `packages/core/src/workspace-checkpoint.ts`: [modules/core.md](modules/core.md), [maps/safety/workspace-writes.md](maps/safety/workspace-writes.md)
 - `packages/core/src/usage.ts`: [modules/core.md](modules/core.md), [maps/trace/summary-timeline-verify.md](maps/trace/summary-timeline-verify.md)
-- `packages/agent-runtime/src/agents/prompt.ts`, `packages/agent-runtime/src/agents/result.ts`, `packages/agent-runtime/src/agents/action-summary.ts`, `packages/agent-runtime/src/agents/types.ts`, or the Agent spawn bridge in `packages/agent-runtime/src/index.ts`: [modules/agent-runtime.md](modules/agent-runtime.md), [modules/host.md](modules/host.md), [maps/capabilities/agents.md](maps/capabilities/agents.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md)
 - `packages/host/src/config.ts` or `packages/host/src/config-zod-schema.ts`: [modules/host.md](modules/host.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md)
 - `packages/host/src/config/*`: [modules/host.md](modules/host.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md)
 - `packages/host/src/tool-identities.ts`, `packages/host/src/tool-catalog.ts`, `packages/host/src/tool-selectors.ts`, or `packages/host/src/tool-surface.ts`: [modules/host.md](modules/host.md), [modules/coding-tools.md](modules/coding-tools.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md), [maps/capabilities/README.md](maps/capabilities/README.md)
@@ -149,7 +151,6 @@ unsourced [QA convergence stub](../reviews/qa-convergence-plan.md).
 - `packages/host/src/runtime.ts`, `packages/host/src/run-access.ts`, `packages/host/src/run-security-plan.ts`, or `packages/host/src/run-policy.ts`: [modules/host.md](modules/host.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md), [maps/session/resume-replay.md](maps/session/resume-replay.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/capabilities/mcp.md](maps/capabilities/mcp.md), [maps/safety/workspace-writes.md](maps/safety/workspace-writes.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md)
 - `packages/host/src/runtime/*`, including interaction/control routing in `execution-interaction-operations.ts`, run preparation in `run-preparation-operations.ts`, Agent/Delegate assembly in `agent-runtime-assembly.ts`, Workflow durable ownership in `workflow-runtime-operations.ts`, and live episode ownership in `workflow-episode-runtime.ts`: [modules/host.md](modules/host.md), [modules/agent-runtime.md](modules/agent-runtime.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md), [maps/session/resume-replay.md](maps/session/resume-replay.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/capabilities/agents.md](maps/capabilities/agents.md), [maps/capabilities/mcp.md](maps/capabilities/mcp.md), [maps/safety/approvals.md](maps/safety/approvals.md), [maps/safety/workspace-writes.md](maps/safety/workspace-writes.md), [maps/safety/shell.md](maps/safety/shell.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md)
 - `packages/host/src/session-queries.ts` or `packages/host/src/session-compaction.ts`: [modules/host.md](modules/host.md), [maps/session/session-store.md](maps/session/session-store.md), [maps/session/resume-replay.md](maps/session/resume-replay.md), [maps/runtime/context-compaction.md](maps/runtime/context-compaction.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md)
-- `packages/host/src/agent-report-tool.ts`: [modules/host.md](modules/host.md), [maps/capabilities/agents.md](maps/capabilities/agents.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md), [maps/runtime/context-compaction.md](maps/runtime/context-compaction.md), [maps/session/resume-replay.md](maps/session/resume-replay.md)
 - `packages/host/src/host-execution.ts`, `packages/host/src/execution-plan.ts`, or `packages/host/src/execution-resources.ts`: [modules/host.md](modules/host.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/session/session-store.md](maps/session/session-store.md), [maps/safety/workspace-writes.md](maps/safety/workspace-writes.md)
 - `packages/host/src/host-service.ts` or `packages/host/src/workspace-context.ts`: [modules/host.md](modules/host.md), [modules/edge-packages.md](modules/edge-packages.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/session/session-store.md](maps/session/session-store.md), [maps/safety/workspace-writes.md](maps/safety/workspace-writes.md)
 - `packages/host/src/client-input.ts`: [modules/host.md](modules/host.md), [modules/cli.md](modules/cli.md), [modules/tui.md](modules/tui.md), [modules/protocol.md](modules/protocol.md)
@@ -164,32 +165,29 @@ unsourced [QA convergence stub](../reviews/qa-convergence-plan.md).
 - `scripts/build-workspaces.mjs`, `scripts/check-dist-fresh.mjs`, `scripts/stamp-workspace-build.mjs`, or workspace `package.json` build scripts: [modules/cli.md](modules/cli.md)
 - `scripts/copy-cli-schemas.mjs`, `scripts/generate-config-schema.ts`, or CLI-packaged/generated config schemas: [modules/cli.md](modules/cli.md), [modules/host.md](modules/host.md)
 - `scripts/regression-real-model.mjs`, `scripts/regression-real-skill-capabilities.mjs`, or `scripts/lib/real-model-config.mjs`: [modules/cli.md](modules/cli.md), [modules/host.md](modules/host.md)
-- `packages/tui/src/app.tsx` or `packages/tui/src/index.ts`: [modules/tui.md](modules/tui.md), [maps/trace/export-diagnostics.md](maps/trace/export-diagnostics.md), [maps/session/resume-replay.md](maps/session/resume-replay.md)
+- `packages/tui/src/app.tsx`: [modules/tui.md](modules/tui.md), [maps/trace/export-diagnostics.md](maps/trace/export-diagnostics.md), [maps/session/resume-replay.md](maps/session/resume-replay.md)
 - `packages/tui/src/lib/permission.ts`: [modules/tui.md](modules/tui.md), [modules/host.md](modules/host.md), [maps/safety/approvals.md](maps/safety/approvals.md), [maps/safety/workspace-writes.md](maps/safety/workspace-writes.md)
 - `packages/tui/src/lib/keybindings.ts`: [modules/tui.md](modules/tui.md)
 - `packages/tui/src/lib/config.ts` or `packages/tui/src/lib/create-capability.ts`: [modules/tui.md](modules/tui.md), [modules/host.md](modules/host.md), [maps/capabilities/README.md](maps/capabilities/README.md)
 - `packages/tui/src/state/run-controller.ts`: [modules/tui.md](modules/tui.md), [maps/trace/export-diagnostics.md](maps/trace/export-diagnostics.md), [maps/session/session-store.md](maps/session/session-store.md)
-- `packages/tui/src/components/activity-panel.tsx`, `packages/tui/src/components/event-stream.tsx`, `packages/tui/src/components/transcript-viewport.tsx`, `packages/tui/src/components/transcript-browse-footer.tsx`, `packages/tui/src/components/status-bar.tsx`, `packages/tui/src/components/config-panel.tsx`, `packages/tui/src/components/capabilities-panel.tsx`, `packages/tui/src/components/skill-review-dialog.tsx`, `packages/tui/src/components/workflow-panel.tsx`, `packages/tui/src/lib/conversation-projection.ts`, `packages/tui/src/lib/transcript-presentation.ts`, `packages/tui/src/lib/transcript-document.ts`, `packages/tui/src/lib/transcript-layout.ts`, `packages/tui/src/lib/terminal-screen-layout.ts`, `packages/tui/src/state/transcript-viewport-state.ts`, `packages/tui/src/lib/terminal-restore.ts`, `packages/tui/src/lib/path-display.ts`, `packages/tui/src/lib/task-activity.ts`, `packages/tui/src/lib/tool-result-summary.ts`, `packages/tui/src/lib/workflow-display.ts`, `packages/tui/src/lib/transcript.ts`, or `packages/tui/src/lib/tool-display.ts`: [modules/tui.md](modules/tui.md), [modules/protocol.md](modules/protocol.md), [maps/trace/export-diagnostics.md](maps/trace/export-diagnostics.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md)
-- `packages/tui/src/components/sidebar.tsx` or `packages/tui/src/lib/usage-display.ts`: [modules/tui.md](modules/tui.md)
-- `packages/tui/src/components/skills-panel.tsx` or `packages/tui/src/lib/skills-browser.ts`: [modules/tui.md](modules/tui.md), [modules/skills.md](modules/skills.md), [maps/capabilities/skills.md](maps/capabilities/skills.md)
-- `packages/tui/src/state/approval-coordinator.ts`, `packages/tui/src/lib/session-approval.ts`, `packages/tui/src/lib/approval-view-model.ts`, or `packages/tui/src/components/approval-prompt.tsx`: [modules/tui.md](modules/tui.md), [modules/protocol.md](modules/protocol.md), [maps/safety/approvals.md](maps/safety/approvals.md)
+- `packages/tui/src/components/activity-panel.tsx`, `packages/tui/src/components/event-stream.tsx`, `packages/tui/src/components/status-bar.tsx`, `packages/tui/src/components/config-panel.tsx`, `packages/tui/src/components/capabilities-panel.tsx`, `packages/tui/src/components/skill-review-dialog.tsx`, `packages/tui/src/components/workflow-panel.tsx`, `packages/tui/src/lib/path-display.ts`, `packages/tui/src/lib/task-activity.ts`, `packages/tui/src/lib/workflow-display.ts`, `packages/tui/src/lib/transcript.ts`, or `packages/tui/src/lib/tool-display.ts`: [modules/tui.md](modules/tui.md), [modules/protocol.md](modules/protocol.md), [maps/trace/export-diagnostics.md](maps/trace/export-diagnostics.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md)
 - `packages/tui/src/state/use-workflow-actions.ts`: [modules/tui.md](modules/tui.md), [modules/host.md](modules/host.md), [modules/protocol.md](modules/protocol.md), [maps/session/resume-replay.md](maps/session/resume-replay.md)
 - `packages/tui/src/lib/event-type.ts`: [modules/tui.md](modules/tui.md), [modules/protocol.md](modules/protocol.md), [maps/trace/export-diagnostics.md](maps/trace/export-diagnostics.md)
-- `packages/protocol/src/index.ts`: [modules/protocol.md](modules/protocol.md), [maps/session/session-store.md](maps/session/session-store.md), [maps/trace/export-diagnostics.md](maps/trace/export-diagnostics.md), [maps/safety/approvals.md](maps/safety/approvals.md)
+- `packages/protocol/src/index.ts`: [modules/protocol.md](modules/protocol.md), [maps/session/session-store.md](maps/session/session-store.md), [maps/safety/approvals.md](maps/safety/approvals.md)
 - `packages/acp-adapter/src/*` or `packages/acp-client-adapter/src/*`: [modules/edge-packages.md](modules/edge-packages.md), [modules/protocol.md](modules/protocol.md), [modules/host.md](modules/host.md), [maps/capabilities/agents.md](maps/capabilities/agents.md), [maps/session/session-store.md](maps/session/session-store.md)
 - `packages/sdk-core/src/*`, `packages/sdk-node/src/*`, or `packages/sdk-browser/src/*`: [modules/edge-packages.md](modules/edge-packages.md), [modules/protocol.md](modules/protocol.md), [modules/host.md](modules/host.md)
 - `packages/host/src/tool-catalog.ts` or `packages/host/src/tools.ts`: [modules/host.md](modules/host.md), [modules/coding-tools.md](modules/coding-tools.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md), [maps/capabilities/README.md](maps/capabilities/README.md)
 - `packages/host/src/tool-selectors.ts`: [modules/host.md](modules/host.md), [modules/coding-tools.md](modules/coding-tools.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md), [maps/capabilities/README.md](maps/capabilities/README.md)
 - `packages/host/src/shell.ts`: [modules/host.md](modules/host.md), [maps/safety/shell.md](maps/safety/shell.md), [maps/safety/workspace-writes.md](maps/safety/workspace-writes.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md)
 - `packages/shell-tool/src/*`: [modules/coding-tools.md](modules/coding-tools.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md), [maps/safety/shell.md](maps/safety/shell.md)
-- `packages/web-tools/src/*`: [modules/edge-packages.md](modules/edge-packages.md), [modules/core.md](modules/core.md), [modules/host.md](modules/host.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/safety/approvals.md](maps/safety/approvals.md)
 - `packages/host/src/workspace-snapshot.ts`: [modules/host.md](modules/host.md), [maps/safety/shell.md](maps/safety/shell.md), [maps/safety/workspace-writes.md](maps/safety/workspace-writes.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md)
 - `packages/shell-sandbox/src/*`: [modules/edge-packages.md](modules/edge-packages.md), [modules/host.md](modules/host.md), [modules/mcp-adapter.md](modules/mcp-adapter.md), [maps/safety/shell.md](maps/safety/shell.md), [maps/safety/workspace-writes.md](maps/safety/workspace-writes.md)
 - `packages/project-context/src/index.ts`: [modules/coding-tools.md](modules/coding-tools.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md)
 - `packages/project-commands/src/*`: [modules/edge-packages.md](modules/edge-packages.md), [modules/tui.md](modules/tui.md), [maps/safety/shell.md](maps/safety/shell.md)
 - `packages/skills/src/*` or `packages/host/src/skill-*`: [modules/skills.md](modules/skills.md), [maps/capabilities/skills.md](maps/capabilities/skills.md)
-- `packages/host/src/project-skill-create.ts`, `sparkwright skills create`, or TUI `/create skill`: [modules/skills.md](modules/skills.md), [modules/host.md](modules/host.md), [modules/cli.md](modules/cli.md), [modules/tui.md](modules/tui.md), [maps/capabilities/skills.md](maps/capabilities/skills.md)
+- `packages/host/src/skill-command-service.ts`, `sparkwright skills create`, or TUI `/create skill`: [modules/skills.md](modules/skills.md), [modules/host.md](modules/host.md), [modules/cli.md](modules/cli.md), [modules/tui.md](modules/tui.md), [maps/capabilities/skill-evolution.md](maps/capabilities/skill-evolution.md)
 - `packages/skills/src/markdown-folder-asset.ts`: [modules/skills.md](modules/skills.md), [modules/host.md](modules/host.md), [maps/capabilities/README.md](maps/capabilities/README.md)
+- `packages/host/src/skill-evolution.ts` or `sparkwright skills proposals|history|restore`: [modules/skills.md](modules/skills.md), [maps/capabilities/skill-evolution.md](maps/capabilities/skill-evolution.md)
 - `packages/mcp-adapter/src/index.ts`: [modules/mcp-adapter.md](modules/mcp-adapter.md), [maps/capabilities/mcp.md](maps/capabilities/mcp.md), [maps/safety/shell.md](maps/safety/shell.md)
 - `packages/mcp-adapter/src/*`: [modules/mcp-adapter.md](modules/mcp-adapter.md), [maps/capabilities/mcp.md](maps/capabilities/mcp.md), [maps/safety/shell.md](maps/safety/shell.md)
 - `packages/coding-tools/src/*`: [modules/coding-tools.md](modules/coding-tools.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md), [maps/safety/workspace-writes.md](maps/safety/workspace-writes.md)
@@ -219,34 +217,6 @@ TUI events; it is not a trace diagnostic report and must not replace
 trace/session inspection.
 
 ## Last Verified
-
-- Status: Verified
-- Date: 2026-08-01
-- Scope: `web_fetch` now defaults to a system-routed HTTPS transport compatible
-  with VPN/TUN synthetic DNS and standard proxy environment variables, while
-  `capabilities.web.security: hardened` retains global-unicast DNS validation
-  and address pinning. No Fake-IP range exception or fixed proxy is embedded.
-- Read: Web transport/tool contracts, Host config precedence/catalog assembly,
-  generated schemas, guides/manual, approval flow, and package boundaries.
-- Tests: Web 38/38, focused Host 152/152, CLI 186/186, workspace build,
-  typecheck/lint/format, schema/import/package/lock checks, source/release
-  install smokes, dist freshness, and a real HTTPS Baidu fetch passed. The map
-  drift check only reports unrelated dirty-tree routes documented at handoff.
-
-- Status: Verified
-- Date: 2026-07-26
-- Scope: added the Agent Runtime-owned, task-agnostic in-process child prompt
-  contract and routed Host-composed configured, indexed, parallel, dynamic,
-  and background children through its opt-in composition helper. Low-level
-  `spawnSubAgent()`, ACP children, and external-command children retain their
-  existing prompt ownership.
-- Read: Agent Runtime prompt/result/spawn boundaries, Host Agent runtime
-  assembly and all in-process child entrypoints, public extension guidance,
-  focused tests, and downstream project/test maps.
-- Tests: full `npm run release:check` passed, including all workspace builds,
-  typechecks, tests, regression matrix cases, and source/release install
-  smokes; focused Agent Runtime 60/60, Host 102/102, and Project Context 19/19
-  also passed.
 
 - Status: Verified
 - Date: 2026-07-19

@@ -34,7 +34,6 @@ import { loadHostConfig } from "../config/config-implementation.js";
 import type { CapabilityMcpConfig } from "../config/contracts.js";
 import { resolveAgentProfiles } from "../agent-profiles.js";
 import { MAIN_AGENT_ID } from "../agent-constants.js";
-import { createReadAgentReportTool } from "../agent-report-tool.js";
 import {
   delegateToolName,
   filterDirectDelegatesForExposure,
@@ -414,10 +413,6 @@ export class CapabilityRuntimeOperations {
         maxDepth: agentConfig?.maxDepth,
         workspaceRoot: this.options.workspaceRoot,
       });
-      const agentReportTool = createReadAgentReportTool({
-        sessionRootDir: this.options.sessionRootDir,
-        sessionId: "capability_snapshot",
-      });
       const baseMainToolCatalog = createMainHostToolCatalog({
         workspaceRoot: this.options.workspaceRoot,
         skillRoots: [...skillRoots],
@@ -435,8 +430,6 @@ export class CapabilityRuntimeOperations {
         delegateAgentTool,
         delegateParallelTool,
         dynamicSpawnTool,
-        agentReportTool,
-        web: loadedConfig.config.capabilities?.web,
         shell: shellConfig,
         backgroundTasks: input.access.backgroundTasks,
         configPaths: loadedConfig.attempted.map((entry) => entry.path),

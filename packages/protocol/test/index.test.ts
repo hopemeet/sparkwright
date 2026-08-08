@@ -5,7 +5,6 @@ import {
   TRACE_LEVELS,
   getRunFailure,
   isEvent,
-  isInternalTranscriptEventType,
   isPermissionMode,
   isProtocolErrorCode,
   isRequest,
@@ -41,18 +40,6 @@ describe("@sparkwright/protocol", () => {
     expect(isProtocolErrorCode("model_error")).toBe(false);
   });
 
-  it("classifies agent profile derivation as product transcript noise", () => {
-    expect(isInternalTranscriptEventType("agent.profile.derived")).toBe(true);
-    expect(isInternalTranscriptEventType("model.completed")).toBe(true);
-    expect(isInternalTranscriptEventType("model.stream.text")).toBe(true);
-    expect(isInternalTranscriptEventType("model.stream.future_variant")).toBe(
-      true,
-    );
-    expect(isInternalTranscriptEventType("subagent.requested")).toBe(false);
-    expect(isInternalTranscriptEventType("subagent.started")).toBe(false);
-    expect(isInternalTranscriptEventType("subagent.completed")).toBe(false);
-  });
-
   it("narrows host message envelopes", () => {
     const messages: HostMessage[] = [
       {
@@ -82,32 +69,11 @@ describe("@sparkwright/protocol", () => {
           host: { name: "sparkwright-host", version: "0.1.0" },
         },
       },
-      {
-        envelope: "event",
-        id: "evt_2",
-        kind: "task.updated",
-        timestamp: "2026-05-24T00:00:03.000Z",
-        payload: {
-          taskId: "task_1",
-          parentRunId: "run_1",
-          sessionId: "session_1",
-          transition: "terminal",
-          kind: "agent",
-          completionPolicy: "detached",
-          awaited: false,
-          status: "completed",
-          createdAt: "2026-05-24T00:00:00.000Z",
-          startedAt: "2026-05-24T00:00:01.000Z",
-          completedAt: "2026-05-24T00:00:02.000Z",
-          resultSummary: "done",
-          outputRef: { method: "task.output", taskId: "task_1" },
-        },
-      },
     ];
 
-    expect(messages.map(isRequest)).toEqual([true, false, false, false]);
-    expect(messages.map(isResponse)).toEqual([false, true, false, false]);
-    expect(messages.map(isEvent)).toEqual([false, false, true, true]);
+    expect(messages.map(isRequest)).toEqual([true, false, false]);
+    expect(messages.map(isResponse)).toEqual([false, true, false]);
+    expect(messages.map(isEvent)).toEqual([false, false, true]);
   });
 
   it("extracts canonical terminal run failures", () => {

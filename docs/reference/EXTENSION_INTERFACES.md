@@ -520,11 +520,10 @@ Supported callbacks:
   `tool.failed` for this call.
 - `onEvent(input)` — synchronous event observer. Called for every event
   emitted by the run.
+- `onError(input)` — called when a loop phase throws. Best-effort.
 
-Errors thrown by an individual hook callback are caught and logged via
-`console.warn`; they never abort the run. `RunHook` has no loop-wide error
-callback. Error telemetry should observe the relevant `*.failed` events through
-`onEvent`.
+Errors thrown by a hook are caught, logged via `console.warn`, and surfaced
+as a `hook.failed` event. They never abort the run.
 
 Wire hooks via `createRun({ hooks: [...] })`. Hooks compose; use
 `combineRunHooks([...])` if you need to merge them outside core.
@@ -863,13 +862,11 @@ before reporting started; an admission failure is requested -> failed.
 
 ```ts
 import {
-  composeInProcessChildAgentPrompt,
   prepareAgentInvocation,
   spawnSubAgent,
   createAgentTool,
   mountAgentTool,
 } from "@sparkwright/agent-runtime";
-import { buildAgentPromptBuilder } from "@sparkwright/project-context";
 
 // Low-level: build a child RunHandle under a parent.
 const spawned = spawnSubAgent({
@@ -880,11 +877,8 @@ const spawned = spawnSubAgent({
   childAgentProfile, // optional, derives child policy
   parentUsageTracker, // optional, opts into rollup
   interactionChannel: null, // optional, suppress child user-interaction
-  promptBuilder: buildAgentPromptBuilder({
-    appPrompt: composeInProcessChildAgentPrompt(childAgentProfile?.prompt),
-  }),
 });
-const result = await spawned.start();
+const result = await spawned.run.start();
 
 // High-level: register a ToolDefinition the parent's LLM can call.
 mountAgentTool(parent, {
@@ -900,23 +894,15 @@ mountAgentTool(parent, {
 
 What the helpers do for you, end-to-end:
 
-| Contract item      | Implementation                                                                                                                     |
-| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
-| Parent linkage     | `metadata.parentRunId` + `metadata.spanId` on the child run record                                                                 |
-| Policy inheritance | `createAgentProfilePolicy(childAgentProfile)` (compose with overrides)                                                             |
-| Approval channel   | `interactionChannel` passed through; pass `null` to suppress                                                                       |
-| Usage rollup       | `attachUsageRollup` subscribes to child tool/model events                                                                          |
-| Trace nesting      | Child events stay in child's `EventLog`; parent sees a summarized tool result                                                      |
-| Cancellation       | `createRun({ abortSignal: parent.abortSignal })`                                                                                   |
-| Recursion guard    | `createAgentTool({ forbidNesting: true })`                                                                                         |
-| Report result      | Parent receives compact `childRunId`, `status`, child-authored `report`, runtime-owned `workspace`, and optional warnings/blockers |
-
-Host-style in-process adapters that need the canonical result/ledger/failure
-collection path can pass an already-prepared `SpawnedSubAgent`, parent,
-delegation ledger key, and goal to `completeSpawnedAgentInvocation()`. Profile
-resolution, admission inputs, batching, promotion, and transport selection
-remain adapter responsibilities. ACP and external-command adapters do not use
-this Core-run terminal collector.
+| Contract item      | Implementation                                                                |
+| ------------------ | ----------------------------------------------------------------------------- |
+| Parent linkage     | `metadata.parentRunId` + `metadata.spanId` on the child run record            |
+| Policy inheritance | `createAgentProfilePolicy(childAgentProfile)` (compose with overrides)        |
+| Approval channel   | `interactionChannel` passed through; pass `null` to suppress                  |
+| Usage rollup       | `attachUsageRollup` subscribes to child tool/model events                     |
+| Trace nesting      | Child events stay in child's `EventLog`; parent sees a summarized tool result |
+| Cancellation       | `createRun({ abortSignal: parent.abortSignal })`                              |
+| Recursion guard    | `createAgentTool({ forbidNesting: true })`                                    |
 
 External command delegates keep this same parent-facing shape: the parent sees
 `subagent.requested`, `subagent.started`, and a terminal `subagent.completed` /
@@ -924,37 +910,6 @@ External command delegates keep this same parent-facing shape: the parent sees
 for sandbox fallback, timeout, bounded stdout/stderr, and log artifacts, but it
 does not emit a second `extension.process.*` lifecycle by default; the terminal
 subagent result carries the shared `ProcessOutputSummary`.
-
-Host-composed in-process delegates normally end with one natural-language
-report. A non-empty report projects completed delivery even when the report says
-work remains; the parent decides whether the delegated goal was satisfied.
-Empty reports, runtime failures, cancellation, truncation, blocking limits, and
-step limits project partial/blocked with minimal blocker code/message evidence.
-No completion-only tool is injected, so tool-less and tool-capable children use
-the same final-report path. Retired declaration envelopes, terminal kinds, and
-text markers do not affect runtime status. Persisted report lookup may recover
-their summary text only for historical session readability.
-
-`composeInProcessChildAgentPrompt()` is the opt-in portable composition helper
-for Core-backed children. It orders optional profile specialization before the
-single task-agnostic child contract, which includes completion and incomplete
-reporting guidance, while keeping one cache-stable application prompt.
-`spawnSubAgent()` deliberately does not call it implicitly, because low-level
-embedders may provide a custom `PromptBuilder`. ACP and external-command
-adapters retain their own transport input contracts.
-
-The parent model receives one compact `ParentAgentResult`:
-`childRunId`, runtime-derived report `status`, child-authored `report`, runtime-owned
-`workspace:{writes,paths?}`, and optional `warnings` / structured `blockers`.
-Transport, usage, assessment, action receipts, ChangeSets, and
-verification receipts stay in runtime lifecycle and delegation-ledger records.
-Warnings are reserved for parent-actionable completeness/reuse facts; Core
-assessment health remains diagnostic evidence and is not promoted into this
-model-visible contract.
-Only completed, complete, clean internal results are eligible for reuse; a
-reused parent result carries a runtime warning instead of an
-`alreadyCompleted` control field. External process adapters retain their
-transport-specific result contracts and lifecycle fields.
 
 Distilled to the minimum portable shape, with all provider-specific message
 plumbing left out (callers compose their own model + tools).
@@ -1070,6 +1025,37 @@ scheduler. Ordinary runs remain single-episode even when the ledger has open
 items. The host reads a non-empty ledger into the next real session turn and may
 attach a terminal `todoAdvisory`; only durable Workflow state may request a
 cross-episode continuation.
+
+### Sub-agent result protocol
+
+```ts
+import {
+  SUB_AGENT_RESULT_PROMPT,
+  parseSubAgentResult,
+  validateDeclaredWrites,
+} from "@sparkwright/agent-runtime";
+
+// Splice SUB_AGENT_RESULT_PROMPT into the child's system prompt so the model
+// learns to emit a JSON object as its final message.
+
+const outcome = parseSubAgentResult(childResult.message ?? "");
+if (outcome.kind === "ok") {
+  const { violations } = validateDeclaredWrites(
+    declaredWrites,
+    outcome.value.writes,
+  );
+  if (violations.length > 0) {
+    // Sub-agent wrote outside its declared partition → treat as failed.
+  }
+  // Update todo: ok→[x], partial→keep in_progress, fail+retryable→retry,
+  //              fail+!retryable→[ ] ❌.
+}
+```
+
+Parsing accepts a bare JSON object, a fenced ` ```json ` block, or an object
+embedded at the end of free-form prose. Invalid output returns a structured
+`{ kind: "invalid", reason }` so the Leader can record `[ ] ❌` and decide
+whether to retry — no LLM round-trip to re-parse natural language.
 
 ## Versioning Guidance
 

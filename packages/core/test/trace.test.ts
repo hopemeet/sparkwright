@@ -1798,44 +1798,7 @@ describe("trace", () => {
     ).toBe(false);
   });
 
-  it("reports semantic blocked outcomes even when child transport completed", () => {
-    const log = new EventLog(createRunId());
-    const events = [
-      log.emit("run.created", { goal: "use a blocked child" }),
-      log.emit("subagent.completed", {
-        childRunId: createRunId(),
-        terminalState: "completed",
-        status: "blocked",
-        summary: "Execution requires bash",
-        blockers: [
-          {
-            code: "SHELL_REQUIRED",
-            message: "A shell-capable path is required.",
-          },
-        ],
-      }),
-      log.emit("run.completed", { state: "completed" }),
-    ];
-
-    const report = buildTraceReportJsonl(
-      events.map(serializeEventJsonl).join(""),
-    );
-
-    expect(report.findings).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          severity: "high",
-          code: "SUBAGENT_INCOMPLETE",
-          evidence: expect.arrayContaining([
-            expect.stringContaining("blocked"),
-            expect.stringContaining("SHELL_REQUIRED"),
-          ]),
-        }),
-      ]),
-    );
-  });
-
-  it("reports completed but unhealthy sub-agents independently from status", () => {
+  it("reports completed but unhealthy sub-agents independently from finality", () => {
     const log = new EventLog(createRunId());
     const childRunId = createRunId();
     const events: SparkwrightEvent[] = [
@@ -1845,6 +1808,7 @@ describe("trace", () => {
         {
           childRunId,
           terminalState: "completed",
+          finality: "complete",
           assessment: {
             schemaVersion: "run-assessment.v1",
             health: "failing",
@@ -2468,6 +2432,7 @@ describe("trace", () => {
           childRunId: child.id,
           parentRunId: parent.id,
           terminalState: "completed",
+          finality: "complete",
         },
         {
           sessionId: "s1",
@@ -2567,6 +2532,7 @@ describe("trace", () => {
           childRunId: child.id,
           parentRunId: parent.id,
           terminalState: "completed",
+          finality: "complete",
         },
         {
           sessionId: "s1",
@@ -2652,6 +2618,7 @@ describe("trace", () => {
           childRunId: child.id,
           parentRunId: parent.id,
           terminalState: "completed",
+          finality: "complete",
         },
         {
           sessionId: "s1",
@@ -2855,6 +2822,7 @@ describe("trace", () => {
           childRunId: "run_child_1",
           parentRunId: run.id,
           terminalState: "completed",
+          finality: "complete",
         },
         {
           taskId: "task_1",
@@ -3070,6 +3038,7 @@ describe("trace", () => {
           childRunId: child.id,
           parentRunId: parent.id,
           terminalState: "completed",
+          finality: "complete",
         },
         {
           sessionId: "s1",
@@ -3771,10 +3740,11 @@ describe("trace", () => {
   it("summarizes capability mutation events", () => {
     const log = new EventLog(createRunId());
     const jsonl = [
-      log.emit("run.created", { goal: "create an agent profile" }),
+      log.emit("run.created", { goal: "draft skill proposal" }),
       log.emit("capability.mutation.completed", {
-        action: "write_text",
-        path: ".sparkwright/agents/reviewer.md",
+        action: "replace_skill_package",
+        path: ".sparkwright/skill-evolution/proposals/skillprop_1/after/demo",
+        sourcePath: ".sparkwright/skills/demo",
         fileCount: 2,
       }),
       log.emit("run.completed", { state: "completed" }),

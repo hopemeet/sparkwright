@@ -44,8 +44,6 @@ export function formatEvent(event: RunEvent): FormattedEvent {
   else if (t === "run.completed") color = "green";
   else if (t.startsWith("run.")) color = "white";
   if (t === "mcp.server.prepared" && p?.status === "failed") color = "red";
-  if (t.startsWith("subagent.") && p?.status === "blocked") color = "red";
-  if (t.startsWith("subagent.") && p?.status === "partial") color = "yellow";
 
   let detail = "";
   if (p) {
@@ -101,16 +99,13 @@ export function formatEvent(event: RunEvent): FormattedEvent {
         .join(" ");
     } else if (t.startsWith("subagent.")) {
       const meta = rec(event.metadata);
-      const identity =
+      detail =
         str(meta?.agentName) ||
         str(p.agentName) ||
         str(meta?.childAgentId) ||
         str(meta?.agentProfileId) ||
         str(p.goal) ||
         str(p.childRunId);
-      detail = [identity, str(p.status), str(p.summary)]
-        .filter(Boolean)
-        .join(" · ");
     }
   }
 

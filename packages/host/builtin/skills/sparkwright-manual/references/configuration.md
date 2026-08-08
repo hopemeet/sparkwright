@@ -13,7 +13,7 @@ Personal config: ~/.config/sparkwright/config.yaml
 
 Project config: <workspace>/.sparkwright/config.yaml
   Use for team-safe runtime defaults: run.accessMode, tools, workflow hooks,
-  skills, MCP, agents, hardened web transport, and project convention directories. Existing
+  skills, MCP, agents, and project convention directories. Existing
   config.json/config.yaml/config.yml files are loaded.
 
 Temporary overrides: SPARKWRIGHT_CONFIG, environment variables, CLI flags
@@ -40,9 +40,7 @@ wins over `config.yml`; multiple files in one layer are reported as a conflict.
 `identity.providers` is merged by provider key. Project `run.accessMode` is the workspace
 access ceiling; CLI/TUI/runtime requests above it are clamped. Most other fields
 are replaced by the later source. `capabilities` is not deep-merged across files;
-keep related project capability settings together when possible. Project config
-may tighten `capabilities.web.security` to `hardened`, but may not select the
-less restrictive `system` transport.
+keep related project capability settings together when possible.
 
 ## Scaffold
 
@@ -176,7 +174,7 @@ OpenAI-compatible proxies omit reasoning summary deltas.
 ```
 
 Standard tools are enabled by default. Use `tools.use` for broad selectors such
-as `workspace.read`, `workspace.write`, `bash`, `web`, `skills`, `agents`, `cron`,
+as `workspace.read`, `workspace.write`, `bash`, `skills`, `agents`, `cron`,
 `mcp`, or `mcp:<server>`; use `tools.allowed` only for concrete tool names.
 Use `tools.disabled` to close concrete tool names, and `tools.defer` only to
 delay built-in tool schemas. MCP tools use `capabilities.mcp.toolSchemaLoad`;
@@ -359,9 +357,6 @@ addresses remain blocked.
   schema loading.
 - `capabilities.agents`: agent profiles, profile-scoped child workflow hooks,
   and delegate tools.
-- `capabilities.web`: built-in known-URL retrieval. `security` is `system`
-  (default, HTTPS through normal OS DNS/routing) or `hardened` (validated and
-  pinned global-unicast DNS, with HTTP also allowed).
 - `ui.theme`, `ui.mouse`, `ui.keybindings`, `ui.vim`: TUI-only preferences.
   TUI run autonomy uses shared `run.accessMode`; Shift+Tab changes the runtime mode for the current TUI
   process without writing config.

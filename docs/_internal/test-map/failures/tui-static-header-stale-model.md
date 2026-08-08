@@ -45,15 +45,6 @@ exactly the window right after a `/model` switch and before the next run — the
 is no live model indicator on screen, leaving only the stale header. A
 `success` toast (`{model} (next run)`) confirms the switch transiently.
 
-## Superseded Rendering Path
-
-As of 2026-07-26, the app owns a fixed-height `TranscriptViewport`; the
-`EventStream` `<Static>` path described below is retained only as historical
-cause analysis. The session-start header remains intentionally frozen for one
-`sessionId:clearGeneration` document epoch, while model changes continue to
-append a durable `tui.notice`. Diagnose future stale live-state reports in the
-live frame/status path, not by remounting the transcript epoch.
-
 ## Fix
 
 Partially fixed 2026-06-24 in `packages/tui/src/app.tsx`

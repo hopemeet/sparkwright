@@ -46,8 +46,7 @@ The current runtime boundary is:
 `--direct-core` is retained only as an internal diagnostics/regression harness.
 It bypasses the host and is gated behind `SPARKWRIGHT_ENABLE_DIRECT_CORE=1`.
 New product behavior should be added to the host path first; the direct-core
-runner should not become a second production runtime. It does not promise Host
-feature parity, including configured HTTP Event Hook transport.
+runner should not become a second production runtime.
 
 Architecture checks enforce the most important parts of this boundary: TUI
 source cannot import `@sparkwright/core`, and `@sparkwright/core/internal`

@@ -1,9 +1,9 @@
 import type { RunHandle } from "@sparkwright/core";
 import { describe, expect, it } from "vitest";
 import {
-  findReusableDelegation,
-  rememberReusableDelegation,
-  reusedDelegationResult,
+  findSimilarSuccessfulDelegation,
+  rememberSuccessfulDelegation,
+  withAlreadyCompletedNote,
 } from "../src/agents/delegation-ledger.js";
 import type {
   DelegationLedgerKey,
@@ -25,9 +25,7 @@ const completed: DelegationLedgerResult = {
   costUsd: 0,
   toolCalls: 1,
   modelCalls: 1,
-  status: "completed",
-  summary: "Inspection complete",
-  blockers: [],
+  finality: "complete",
   assessment: {
     schemaVersion: "run-assessment.v1",
     health: "clean",
@@ -40,7 +38,7 @@ describe("delegation ledger", () => {
   it("reuses only exact goals after conservative normalization", () => {
     const parent = {} as RunHandle;
     expect(
-      rememberReusableDelegation(
+      rememberSuccessfulDelegation(
         parent,
         key,
         "List packages/core files",
@@ -49,83 +47,22 @@ describe("delegation ledger", () => {
     ).toBe(true);
 
     expect(
-      findReusableDelegation(
+      findSimilarSuccessfulDelegation(
         parent,
         { ...key, allowedTools: ["read", "grep", "read"] },
         "  LIST   packages/core files  ",
       ),
     ).toEqual({ goal: "List packages/core files", result: completed });
     expect(
-      findReusableDelegation(parent, key, "List packages/host files"),
+      findSimilarSuccessfulDelegation(parent, key, "List packages/host files"),
     ).toBeUndefined();
-  });
-
-  it("keeps dynamic handoff context in the reuse identity", () => {
-    const parent = {} as RunHandle;
-    const dynamicKey: DelegationLedgerKey = {
-      kind: "dynamic_spawn",
-      role: "reviewer",
-      context: "Inspect packages/a.ts.",
-      allowedTools: ["read"],
-    };
-    expect(
-      rememberReusableDelegation(
-        parent,
-        dynamicKey,
-        "Inspect the selected implementation",
-        completed,
-      ),
-    ).toBe(true);
-
-    expect(
-      findReusableDelegation(
-        parent,
-        dynamicKey,
-        "Inspect the selected implementation",
-      ),
-    ).toBeDefined();
-    expect(
-      findReusableDelegation(
-        parent,
-        { ...dynamicKey, context: "Inspect packages/b.ts." },
-        "Inspect the selected implementation",
-      ),
-    ).toBeUndefined();
-  });
-
-  it("invalidates reuse on workspace epoch and disables external-state caches", () => {
-    let epoch = 0;
-    const parent = {
-      record: { metadata: {} },
-      getWorkspaceState: () => ({ currentEpoch: () => epoch }),
-    } as unknown as RunHandle;
-    expect(
-      rememberReusableDelegation(parent, key, "Inspect runtime", completed),
-    ).toBe(true);
-    expect(
-      findReusableDelegation(parent, key, "Inspect runtime"),
-    ).toBeDefined();
-
-    epoch = 1;
-    expect(
-      findReusableDelegation(parent, key, "Inspect runtime"),
-    ).toBeUndefined();
-    expect(
-      rememberReusableDelegation(
-        parent,
-        { ...key, cacheable: false },
-        "Observe external state",
-        completed,
-      ),
-    ).toBe(false);
   });
 
   it.each([
     { signal: "failed" as const },
     { stepLimitReached: true },
     { truncated: true },
-    { status: "blocked" as const },
-    { status: "partial" as const },
+    { finality: "partial" as const },
     {
       assessment: {
         schemaVersion: "run-assessment.v1" as const,
@@ -145,26 +82,22 @@ describe("delegation ledger", () => {
   ])("does not remember non-reusable result %#", (override) => {
     const parent = {} as RunHandle;
     expect(
-      rememberReusableDelegation(parent, key, "Inspect runtime", {
+      rememberSuccessfulDelegation(parent, key, "Inspect runtime", {
         ...completed,
         ...override,
       }),
     ).toBe(false);
     expect(
-      findReusableDelegation(parent, key, "Inspect runtime"),
+      findSimilarSuccessfulDelegation(parent, key, "Inspect runtime"),
     ).toBeUndefined();
   });
 
-  it("returns a compact reused report without mutating the stored result", () => {
-    expect(reusedDelegationResult(completed)).toEqual({
-      childRunId: completed.childRunId,
-      status: "completed",
-      report: completed.summary,
-      workspace: { writes: 0 },
-      warnings: [
-        "The runtime reused this completed child result; no new child ran.",
-      ],
+  it("marks a reused result without mutating the stored result", () => {
+    expect(withAlreadyCompletedNote(completed)).toEqual({
+      ...completed,
+      alreadyCompleted: true,
+      note: "A similar delegation already completed in this parent run; summarize the previous child result instead of spawning another child agent.",
     });
-    expect(completed).not.toHaveProperty("output");
+    expect(completed).not.toHaveProperty("alreadyCompleted");
   });
 });

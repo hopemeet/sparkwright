@@ -1,57 +1,61 @@
 import {
-  createContextItemId,
-  createId,
   createRun,
   createLayeredPolicy,
   createSessionRunStoreFactory,
   defineTool,
   type BackgroundTaskPolicy,
-  type ContextItem,
   type EventEmitter,
   type InteractionChannel,
   type ModelAdapter,
   type Policy,
   type RunBudget,
   type RunId,
+  type RunAssessment,
+  type RunResult,
   type RuntimeContext,
+  type SparkwrightEvent,
   type ToolDefinition,
+  type ToolRequestPreviewOptions,
   type WorkflowHook,
 } from "@sparkwright/core";
 import { createSessionFileRunStoreFactory } from "@sparkwright/core/internal";
 import {
-  AGENT_HANDOFF_CONTEXT_MAX_CHARS,
-  composeInProcessChildAgentPrompt,
-  completeSpawnedAgentInvocation,
-  createAgentInvocationError,
   createAgentProfilePolicy,
   createAgentTool,
-  createTaskAsyncReceipt,
   deriveChildAgentProfile,
-  findReusableDelegation,
+  findSimilarSuccessfulDelegation,
   isCompleteAgentResult,
-  normalizeAgentHandoffPayload,
-  parseAgentHandoffPayload,
-  agentWorkspaceEvidence,
-  reusedDelegationResult,
+  rememberSuccessfulDelegation,
+  projectAgentInvocationResult,
   spawnSubAgent,
+  summarizeDelegationResult,
+  withAlreadyCompletedNote,
   type AgentProfile,
   type AgentProfileWorkflowHookConfig,
   type DelegationLedgerHit,
   type DelegationLedgerKey,
-  type DelegationLedgerResult,
   type DerivedChildAgentProfile,
-  type ParentAgentResult,
   type SpawnedSubAgent,
   type TaskManager,
   type TaskRunnerController,
 } from "@sparkwright/agent-runtime";
-import { buildAgentPromptBuilder } from "@sparkwright/project-context";
 import { RECOMMENDED_FOREGROUND_TIMEOUT_MS } from "@sparkwright/shell-tool";
 import type { TraceLevel } from "@sparkwright/protocol";
 import {
   resolveAgentProfiles,
   type AgentProfileCollision,
 } from "../agent-profiles.js";
+import {
+  AGENT_READ_ONLY_CHILD_TOOLS,
+  AGENT_WORKSPACE_WRITE_CHILD_TOOLS,
+  agentWorkspaceWriteGrantApprovalSummaryForPayload,
+  agentWorkspaceWriteGrantPolicyForPayload,
+  isAgentSpawnRequestConcurrencySafe,
+  parseAgentAllowedToolsFromRecord,
+  parseAgentWorkspaceWriteGrantFromRecord,
+  resolveAgentSpawnToolRequest,
+  type AgentWorkspaceWriteGrant,
+} from "../agent-spawn-grants.js";
 import {
   acpConfigFromAgentProfile,
   createAcpDelegateTool,
@@ -74,6 +78,7 @@ import {
   evaluateDelegateRouting,
   filterDirectDelegatesForExposure,
   resolveAgentDelegateTools,
+  sanitizeToolSegment,
   type DelegateCapabilityDescriptor,
   type DelegatePolicyProfile,
   type DelegateRoutingEvaluation,
@@ -87,11 +92,9 @@ import {
 } from "../external-command-agent.js";
 import { createDelegateAgentTool } from "../indexed-delegate-tool.js";
 import { MAIN_AGENT_ID } from "../agent-constants.js";
-import { createReadAgentReportTool } from "../agent-report-tool.js";
 import { createModel } from "../model-factory.js";
 import {
   catalogToolDefinitions,
-  createAgentSpawnPayloadSchema,
   createConfiguredDelegateChildToolCatalog,
   createDynamicChildToolCatalog,
   type HostToolCatalogEntry,
@@ -102,7 +105,6 @@ import {
   intersectToolUseSelectors,
   resolveSelectorAllowlist,
 } from "../tool-selectors.js";
-import { agentTaskCompletionOutput } from "./task-projections.js";
 import {
   admitToolsForAgentProfile,
   agentProfileAdmitsTool,
@@ -119,6 +121,14 @@ export interface AgentRuntimeAssemblyOptions {
   taskManager: TaskManager;
   workspaceLeaseCoordinator?: WorkspaceLeaseCoordinator;
 }
+
+const DELEGATED_AGENT_CONTRACT = [
+  "Delegated agent contract:",
+  "- Do not ask the user directly. Your parent agent owns all user interaction.",
+  "- If a safe read-only next step can make progress, take it instead of asking for confirmation.",
+  "- If you are blocked by ambiguity, required approval, or missing capability, return a concise final message with status: needs_clarification, needs_approval, or blocked; include the question or requested action, a reasonable default when one exists, and any safe alternative.",
+  "- For clear delegated goals, complete the task and return the result to the parent.",
+].join("\n");
 
 /**
  * @internal Per-run spawn dependencies the registered `agent` task kind needs
@@ -144,7 +154,6 @@ export interface HostAgentTaskRunnerDeps {
   sessionId?: string;
   workspaceRoot?: string;
   workspaceLeaseCoordinator?: WorkspaceLeaseCoordinator;
-  interactionChannel?: InteractionChannel;
 }
 
 /**
@@ -191,24 +200,20 @@ export async function runHostAgentTask(
     taskId: String(controller.taskId),
     workspaceRoot: deps.workspaceRoot,
     workspaceLeaseCoordinator: deps.workspaceLeaseCoordinator,
-    interactionChannel: deps.interactionChannel,
-    sessionId: deps.sessionId,
   });
   const ctx: RuntimeContext = {
     run: parent.record,
     abortSignal: controller.signal,
     workspace: parent.getWorkspace?.(),
   };
-  const output = await tool.execute(normalizeAgentHandoffPayload(payload), ctx);
+  const output = await tool.execute(payload, ctx);
   controller.report({
     label: "agent_task",
     message: "Child agent completed.",
   });
   controller.emitOutput({
     channel: "event",
-    data: JSON.stringify(
-      agentTaskCompletionOutput(output, String(controller.taskId)),
-    ),
+    data: JSON.stringify(summarizeAgentTaskOutput(output)),
   });
   return output;
 }
@@ -681,8 +686,15 @@ const DELEGATE_PARALLEL_MAX_TASKS = 8;
 function withDelegatedAgentContract(profile: AgentProfile): AgentProfile {
   return {
     ...profile,
-    prompt: composeInProcessChildAgentPrompt(profile.prompt),
+    prompt: withDelegatedAgentPrompt(profile.prompt),
   };
+}
+
+function withDelegatedAgentPrompt(prompt?: string): string {
+  const trimmed = prompt?.trim();
+  return trimmed
+    ? [trimmed, DELEGATED_AGENT_CONTRACT].join("\n\n")
+    : DELEGATED_AGENT_CONTRACT;
 }
 
 interface DelegateParallelSpec {
@@ -696,46 +708,39 @@ interface DelegateParallelSpec {
 interface DelegateParallelTask {
   agentId: string;
   goal: string;
-  context?: string;
-  label?: string;
+  metadata?: Record<string, unknown>;
 }
 
 interface DelegateParallelChildSummary {
   index: number;
   toolName: string;
   profileId: string;
-  completion?: DelegationLedgerResult;
-  report: ParentAgentResult;
+  childRunId?: string;
+  spanId?: string;
+  signal: string;
+  finality?: "complete" | "partial";
+  assessment?: RunAssessment;
+  stopReason?: string;
+  message?: string;
+  stepLimitReached?: boolean;
+  truncated?: boolean;
+  tokens?: number;
+  costUsd?: number;
+  toolCalls?: number;
+  modelCalls?: number;
+  alreadyCompleted?: boolean;
+  note?: string;
   error?: string;
 }
 
 function configuredDelegateLedgerKey(
-  profile: AgentProfile,
+  profileId: string,
   toolName: string,
-  childTools: readonly ToolDefinition[],
 ): DelegationLedgerKey {
   return {
     kind: "configured_delegate",
-    agentProfileId: profile.id,
+    agentProfileId: profileId,
     delegateTool: toolName,
-    modelFingerprint:
-      typeof profile.model === "string"
-        ? profile.model
-        : JSON.stringify(profile.model ?? null),
-    promptFingerprint: JSON.stringify({
-      prompt: profile.prompt ?? null,
-      assetIdentity: profile.assetIdentity ?? null,
-    }),
-    capabilityFingerprint: JSON.stringify(
-      childTools
-        .map((tool) => ({
-          name: tool.name,
-          governance: tool.governance,
-          terminal: tool.terminal?.kind,
-        }))
-        .sort((left, right) => left.name.localeCompare(right.name)),
-    ),
-    cacheable: delegationToolsCacheable(childTools),
   };
 }
 
@@ -786,7 +791,6 @@ export function createConfiguredDelegateTools(input: {
   allowReadWriteWorkspaceAccess: boolean;
   maxDepth?: number;
   workspaceLeaseCoordinator?: WorkspaceLeaseCoordinator;
-  sessionId?: string;
   /** Builds a session-scoped run store for the child, keyed by its agent id. */
   childRunStoreFactory: (
     childAgentId: string,
@@ -868,11 +872,7 @@ export function createConfiguredDelegateTools(input: {
         capabilityFacts.policyProfile.policy.risk === "safe" &&
         capabilityFacts.policyProfile.policy.requiresApproval === false,
       forbidNesting: delegate.forbidNesting ?? true,
-      delegationLedgerKey: configuredDelegateLedgerKey(
-        profile,
-        toolName,
-        profileChildTools,
-      ),
+      delegationLedgerKey: configuredDelegateLedgerKey(profile.id, toolName),
       buildSpawnInput: async (args, parent) => {
         const subagentDepth = assertSubagentDepthAllowed({
           parent,
@@ -881,10 +881,8 @@ export function createConfiguredDelegateTools(input: {
         });
         const childModel =
           (await input.modelForProfile?.(profile.id)) ?? input.model;
-        const handoffContext = dynamicAgentHandoffContext(args.context);
         return {
           goal: args.goal,
-          ...(handoffContext ? { context: handoffContext } : {}),
           model: childModel,
           // Configured in-process delegates are stable profile-backed child
           // agents: their tool catalog can include workspace writes selected
@@ -901,13 +899,10 @@ export function createConfiguredDelegateTools(input: {
           admission: createWorkspaceMutationAdmission({
             coordinator: input.workspaceLeaseCoordinator,
             workspaceRoot: input.workspaceRoot,
-            mode: "read",
-            workspaceState: parent.getWorkspaceState(),
-          }),
-          promptBuilder: buildAgentPromptBuilder({
-            cwd: input.workspaceRoot,
-            sessionId: input.sessionId,
-            appPrompt: childProfile.prompt,
+            mode:
+              capabilityFacts.workspaceAccess === "read_write"
+                ? "write"
+                : "read",
           }),
           ...childWorkflowHookSpawnOptions(
             profile.id,
@@ -923,11 +918,11 @@ export function createConfiguredDelegateTools(input: {
           runStore: input.childRunStoreFactory(profile.id),
           parentUsageTracker: parent.getUsageTracker(),
           metadata: {
+            ...(args.metadata ?? {}),
             subagentDepth,
             agentId: profile.id,
             agentProfileId: profile.id,
             agentName: profile.name,
-            ...(args.label ? { handoffLabel: args.label } : {}),
             delegateTool: toolName,
             entrypoint: "delegate",
             workspaceAccess:
@@ -970,7 +965,6 @@ export function createDelegateParallelTool(input: {
   maxDepth?: number;
   workspaceRoot?: string;
   workspaceLeaseCoordinator?: WorkspaceLeaseCoordinator;
-  sessionId?: string;
   childRunStoreFactory: (
     childAgentId: string,
   ) => ReturnType<typeof createSessionRunStoreFactory>;
@@ -1041,7 +1035,6 @@ export function createDelegateParallelTool(input: {
   return defineTool({
     name: DELEGATE_PARALLEL_TOOL_NAME,
     description,
-    resultPresentation: { kind: "agent_batch" },
     inputSchema: {
       type: "object",
       properties: {
@@ -1063,25 +1056,17 @@ export function createDelegateParallelTool(input: {
                 type: "string",
                 description: "Self-contained goal for that delegate.",
               },
-              context: {
-                type: "string",
+              metadata: {
+                type: "object",
                 description:
-                  "Optional parent-established facts, constraints, and decisions at working authority.",
-                maxLength: AGENT_HANDOFF_CONTEXT_MAX_CHARS,
-              },
-              label: {
-                type: "string",
-                description:
-                  "Optional UI/trace label. It never changes prompt authority, tools, permissions, model, or budget.",
+                  "Optional structured metadata to attach to that child run.",
               },
             },
             required: ["agentId", "goal"],
-            additionalProperties: false,
           },
         },
       },
       required: ["delegates"],
-      additionalProperties: false,
     },
     policy: { risk: "safe" },
     governance: {
@@ -1097,18 +1082,10 @@ export function createDelegateParallelTool(input: {
         return tasks.every((task) => {
           const spec = eligibleByAgentId.get(task.agentId);
           if (!spec) return false;
-          const ledgerKey = configuredDelegateLedgerKey(
-            spec.profile,
-            spec.toolName,
-            spec.profileChildTools,
-          );
           return Boolean(
-            findReusableDelegation(
+            findSimilarSuccessfulDelegation(
               parent,
-              {
-                ...ledgerKey,
-                ...(task.context ? { context: task.context } : {}),
-              },
+              configuredDelegateLedgerKey(spec.profile.id, spec.toolName),
               task.goal,
             ),
           );
@@ -1150,17 +1127,12 @@ export function createDelegateParallelTool(input: {
           );
         }
         const ledgerKey = configuredDelegateLedgerKey(
-          spec.profile,
+          spec.profile.id,
           spec.toolName,
-          spec.profileChildTools,
         );
-        const invocationLedgerKey = {
-          ...ledgerKey,
-          ...(task.context ? { context: task.context } : {}),
-        };
-        const cached = findReusableDelegation(
+        const cached = findSimilarSuccessfulDelegation(
           parent,
-          invocationLedgerKey,
+          ledgerKey,
           task.goal,
         );
         if (cached)
@@ -1176,7 +1148,7 @@ export function createDelegateParallelTool(input: {
           index,
           spec,
           subagentDepth,
-          ledgerKey: invocationLedgerKey,
+          ledgerKey,
         };
       });
 
@@ -1209,7 +1181,6 @@ export function createDelegateParallelTool(input: {
           };
         }
         const { subagentDepth, ledgerKey, childModel } = spawnInput;
-        const handoffContext = dynamicAgentHandoffContext(task.context);
         return {
           mode: "spawn" as const,
           task,
@@ -1219,7 +1190,6 @@ export function createDelegateParallelTool(input: {
           spawned: spawnSubAgent({
             parent,
             goal: task.goal,
-            ...(handoffContext ? { context: handoffContext } : {}),
             model: childModel,
             tools: spec.profileChildTools,
             childAgentProfile: spec.childProfile,
@@ -1235,7 +1205,6 @@ export function createDelegateParallelTool(input: {
                     coordinator: input.workspaceLeaseCoordinator,
                     workspaceRoot: input.workspaceRoot,
                     mode: "read",
-                    workspaceState: parent.getWorkspaceState(),
                   }),
                 }
               : {}),
@@ -1248,19 +1217,14 @@ export function createDelegateParallelTool(input: {
               },
             ),
             interactionChannel: input.interactionChannel,
-            promptBuilder: buildAgentPromptBuilder({
-              cwd: input.workspaceRoot,
-              sessionId: input.sessionId,
-              appPrompt: spec.childProfile.prompt,
-            }),
             runStore: input.childRunStoreFactory(spec.profile.id),
             parentUsageTracker: parent.getUsageTracker(),
             metadata: {
+              ...(task.metadata ?? {}),
               subagentDepth,
               agentId: spec.profile.id,
               agentProfileId: spec.profile.id,
               agentName: spec.profile.name,
-              ...(task.label ? { handoffLabel: task.label } : {}),
               delegateTool: spec.toolName,
               entrypoint: "delegate_parallel",
               parallelTool: DELEGATE_PARALLEL_TOOL_NAME,
@@ -1277,56 +1241,66 @@ export function createDelegateParallelTool(input: {
           if (item.mode === "cached") return item.cached;
           const { task, index, spec, spawned: child, ledgerKey } = item;
           try {
-            const completion = await completeSpawnedAgentInvocation({
-              spawned: child,
-              parent,
-              ledgerKey,
-              goal: task.goal,
-            });
+            const result = await child.start();
+            const usage = child.run.usage();
             const summary = summarizeDelegateParallelChild({
               index,
               task,
               spec,
-              completion,
+              childRunId: child.childRunId,
+              spanId: child.spanId,
+              result,
+              usage,
             });
+            rememberSuccessfulDelegation(
+              parent,
+              ledgerKey,
+              task.goal,
+              summarizeDelegationResult({
+                childRunId: child.childRunId,
+                spanId: child.spanId,
+                result,
+                usage,
+              }),
+            );
             return summary;
           } catch (error) {
-            const message =
-              error instanceof Error ? error.message : String(error);
             return {
               index,
               toolName: spec.toolName,
               profileId: spec.profile.id,
-              report: {
-                childRunId: child.childRunId,
-                status: "partial",
-                report: message,
-                workspace: agentWorkspaceEvidence(child.run.events.all()),
-                warnings: [
-                  "The child failed before producing a complete report.",
-                ],
-              },
-              error: message,
+              signal: "failed",
+              error: error instanceof Error ? error.message : String(error),
             };
           }
         }),
       );
-      const completed = results.filter(
-        (result) =>
-          result.completion !== undefined &&
-          isCompleteAgentResult(result.completion),
-      ).length;
+      const completed = results.filter(isCompleteAgentResult).length;
       const incomplete = results.length - completed;
+      const unhealthy = results.filter(
+        (result) =>
+          isCompleteAgentResult(result) &&
+          result.assessment?.health !== "clean",
+      ).length;
       const output = {
         mode: "parallel",
         completed,
         incomplete,
-        results: results.map((result) => ({
-          index: result.index,
-          agentId: result.profileId,
-          ...result.report,
-        })),
+        unhealthy,
+        results,
+        usage: aggregateDelegateParallelUsage(results),
       };
+      if (incomplete > 0) {
+        throw Object.assign(
+          new Error(
+            `delegate_parallel completed ${completed}/${results.length} delegate(s); ${incomplete} did not complete.`,
+          ),
+          {
+            code: "DELEGATE_PARALLEL_INCOMPLETE",
+            metadata: output,
+          },
+        );
+      }
       return output;
     },
   });
@@ -1491,6 +1465,129 @@ function inProcessDelegateCanUseTool(
 }
 
 /**
+ * @internal Detect when a spawned/agent-task goal asks the child to *run* a
+ * process or *write* to the filesystem — capabilities a read-only child agent
+ * (read/glob/grep/list_dir/task_create only) can never satisfy. Returns the
+ * kind of unsatisfiable intent, or `null` when the goal is inspection/reasoning
+ * that a read-only child can legitimately do.
+ *
+ * Phrase-based on purpose: bare tokens like `运行`/`run` collide with nouns
+ * (`运行日志`, "run log"), so we only match multi-word execution/launch and
+ * filesystem-write phrases. "Write code / a program / a script" is deliberately
+ * NOT a write signal — that is code *production*, which a read-only child does
+ * by returning text.
+ */
+export function detectReadOnlyChildIntent(
+  text: string,
+): "execute" | "write" | null {
+  const haystack = text.toLowerCase();
+  // Execution intent needs an action *verb* (run/execute/launch/start) paired
+  // with something runnable or a background framing. Keying on "background"
+  // alone is wrong: "inspect the repo in the background" is a legitimate
+  // read-only job — the delivery mode is not the work. Likewise the Chinese
+  // verbs only count alongside a runnable object/mode, so "运行日志"/"runtime"
+  // (noun uses) do not trip.
+  const executeVerbs = [
+    "run ",
+    "runs ",
+    "running ",
+    "execute",
+    "launch",
+    "spawn ",
+    "start ",
+    "starts ",
+    "starting ",
+    "运行",
+    "执行",
+    "启动",
+    "跑",
+  ];
+  const runnableObjects = [
+    "script",
+    "program",
+    "command",
+    "process",
+    "server",
+    "daemon",
+    "binary",
+    "python",
+    "node ",
+    "脚本",
+    "程序",
+    "命令",
+    "进程",
+    "服务",
+    "任务",
+  ];
+  const modeWords = ["后台", "background", "detached", "nohup"];
+  const hasExecuteVerb = executeVerbs.some((verb) => haystack.includes(verb));
+  const hasRunnable = runnableObjects.some((obj) => haystack.includes(obj));
+  const hasMode = modeWords.some((mode) => haystack.includes(mode));
+  if (hasExecuteVerb && (hasRunnable || hasMode)) {
+    return "execute";
+  }
+  const writePhrases = [
+    "write to a file",
+    "write to file",
+    "write it to",
+    "save to disk",
+    "save it to",
+    "save the file",
+    "create the file",
+    "write the file",
+    "write to disk",
+    "写入文件",
+    "写到文件",
+    "写入磁盘",
+    "保存到",
+    "落盘",
+    "创建文件",
+    "写进文件",
+  ];
+  if (writePhrases.some((phrase) => haystack.includes(phrase))) {
+    return "write";
+  }
+  return null;
+}
+
+/**
+ * @internal Fail loud when a read-only child agent is handed a goal it can
+ * never fulfill. A read-only child that "completes" an execution/write goal
+ * having done nothing produces a false success that the parent then rationalizes
+ * (often by hallucinating an error). Throwing here forces the parent to route
+ * the work through a grant-capable spawn or an execution-capable tool.
+ */
+export function assertReadOnlyChildCanSatisfyGoal(input: {
+  goal: string;
+  prompt: string;
+  childTools: readonly Pick<ToolDefinition, "name">[];
+  entrypoint: "spawn_agent" | "agent_task";
+}): void {
+  const childTools = new Set(input.childTools.map((tool) => tool.name));
+  const hasExecutor = childTools.has("bash");
+  const hasWriter =
+    childTools.has("write") ||
+    childTools.has("edit") ||
+    childTools.has("edit_anchored_text");
+  const intent = detectReadOnlyChildIntent(`${input.goal}\n${input.prompt}`);
+  if (intent === null) return;
+  if (intent === "execute" && hasExecutor) return;
+  if (intent === "write" && hasWriter) return;
+  const remedy =
+    intent === "execute"
+      ? "route execution through the parent `bash` tool (pass background:true to launch it as a non-blocking background task) or a configured delegate with shell access"
+      : "re-spawn the child with `grant: { workspaceWrite: true }` or include a managed write tool such as `write` in `allowedTools` so the parent can approve the grant before the child starts";
+  throw Object.assign(
+    new Error(
+      `${input.entrypoint} child agents are read-only and cannot ` +
+        `${intent === "execute" ? "run processes or shell commands" : "write to the filesystem"}. ` +
+        `To satisfy this goal, ${remedy}; do not delegate it to a read-only child.`,
+    ),
+    { code: "READONLY_CHILD_INTENT_UNSATISFIABLE" },
+  );
+}
+
+/**
  * @internal Exported for host regression tests that assert the spawn path
  * threads `runStore` + `parentUsageTracker` into the child run. Not part of the
  * public host API.
@@ -1502,19 +1599,12 @@ export function createDynamicSpawnAgentTool(input: {
   childTools: ToolDefinition[];
   parentRunPolicy: Policy;
   maxDepth?: number;
-  /**
-   * Explicit lifecycle owner for task-created children. Direct spawn_agent
-   * calls omit it and remain linked to the parent run, including after awaited
-   * foreground-timeout promotion.
-   */
   abortSignal?: AbortSignal;
   entrypoint?: "spawn_agent" | "agent_task";
   delegateToolName?: string;
   taskId?: string;
   workspaceRoot?: string;
   workspaceLeaseCoordinator?: WorkspaceLeaseCoordinator;
-  interactionChannel?: InteractionChannel;
-  sessionId?: string;
   /**
    * When set with `taskManager`, inline spawn_agent runs in foreground up to
    * this budget and then promotes the same child run into an awaited task.
@@ -1530,9 +1620,61 @@ export function createDynamicSpawnAgentTool(input: {
   return defineTool({
     name: "spawn_agent",
     description:
-      "Spawn a bounded child agent for one focused sub-task. Supply only a self-contained goal, optional parent-established context, and an optional display label. The runtime—not this payload—derives the child's model, tools, permissions, approvals, and budget from the parent execution control plane.",
-    resultPresentation: { kind: "agent_result" },
-    inputSchema: createAgentSpawnPayloadSchema(),
+      "Spawn a bounded child agent for one focused sub-task. By default the child may inspect files but cannot write, run shell commands, or spawn further agents. With grant.workspaceWrite=true, or by requesting a managed write tool, the child may use managed workspace write tools after parent approval; it still cannot run shell commands. Use this for temporary roles; if the same role becomes useful repeatedly, create a stable profile with create_agent and delegate to it through a delegate_* tool.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        goal: {
+          type: "string",
+          description: "The concrete sub-task the child agent should complete.",
+        },
+        role: {
+          type: "string",
+          description: "Short role name for the child agent.",
+        },
+        prompt: {
+          type: "string",
+          description:
+            "Focused instructions that define the child agent's scope and output.",
+        },
+        allowedTools: {
+          type: "array",
+          description:
+            "Optional subset of child tools to expose. Supported: read, glob, grep, list_dir, write, edit, edit_anchored_text. Defaults to read, glob, and grep; with grant.workspaceWrite=true and no allowedTools, also exposes write, edit, and edit_anchored_text. Use grep to find a symbol by name (glob only matches paths, not contents).",
+          items: {
+            type: "string",
+            enum: [
+              ...AGENT_READ_ONLY_CHILD_TOOLS,
+              ...AGENT_WORKSPACE_WRITE_CHILD_TOOLS,
+            ],
+          },
+        },
+        grant: {
+          type: "object",
+          description:
+            "Optional capability grant requested at spawn time. Set workspaceWrite=true to let the child use managed workspace write tools after parent approval.",
+          properties: {
+            workspaceWrite: {
+              type: "boolean",
+              description:
+                "Allow the child to perform managed workspace writes through write/edit tools.",
+            },
+          },
+          additionalProperties: false,
+        },
+        maxSteps: {
+          type: "integer",
+          minimum: 1,
+          description:
+            "Optional child step (model turn) limit; allocate by sub-task complexity. Defaults to the parent run's effective maxSteps when omitted. A multi-step search (glob, read, refine, conclude) typically needs 6+.",
+        },
+        metadata: {
+          type: "object",
+          description: "Optional structured metadata for the child run.",
+        },
+      },
+      required: ["goal", "role", "prompt"],
+    },
     policy: { risk: "safe" },
     governance: {
       origin: { kind: "local", name: "sparkwright" },
@@ -1546,15 +1688,15 @@ export function createDynamicSpawnAgentTool(input: {
         const prepared = prepareDynamicSpawnAgentRequest({
           args,
           childTools: input.childTools,
+          entrypoint: input.entrypoint ?? "spawn_agent",
         });
         return Boolean(
-          findReusableDelegation(
+          findSimilarSuccessfulDelegation(
             parent,
             dynamicSpawnLedgerKey({
-              ...(prepared.parsed.context
-                ? { context: prepared.parsed.context }
-                : {}),
-              childTools: prepared.childTools,
+              role: prepared.parsed.role,
+              prompt: prepared.parsed.prompt,
+              allowedTools: prepared.childTools.map((tool) => tool.name),
             }),
             prepared.parsed.goal,
           ),
@@ -1563,31 +1705,40 @@ export function createDynamicSpawnAgentTool(input: {
         return false;
       }
     },
-    validateInput(args: unknown) {
-      try {
-        prepareDynamicSpawnAgentRequest({
+    policyForArgs(args: unknown) {
+      return (
+        agentWorkspaceWriteGrantPolicyForPayload(
           args,
-          childTools: input.childTools,
-        });
-        return { ok: true };
-      } catch (cause) {
-        return {
-          ok: false,
-          code: "AGENT_SPAWN_CAPABILITY_INVALID",
-          message:
-            cause instanceof Error
-              ? cause.message
-              : "Invalid spawn_agent capability request.",
-        };
-      }
+          input.entrypoint ?? "spawn_agent",
+        ) ?? {}
+      );
     },
-    isConcurrencySafe: () => true,
+    isConcurrencySafe(args: unknown) {
+      return isAgentSpawnRequestConcurrencySafe(
+        args,
+        input.entrypoint ?? "spawn_agent",
+      );
+    },
+    approvalSummaryForArgs(args: unknown, options: ToolRequestPreviewOptions) {
+      return agentWorkspaceWriteGrantApprovalSummaryForPayload(
+        args,
+        input.entrypoint ?? "spawn_agent",
+        options,
+      );
+    },
     previewArgs(args) {
       const r = previewRecord(args);
-      const label = previewString(r.label) || previewString(r.role);
+      const role = previewString(r.role);
       const goal = previewString(r.goal);
-      if (label && goal) return `${label}: ${goal}`;
-      return label || goal || undefined;
+      const allowedTools = Array.isArray(r.allowedTools)
+        ? r.allowedTools.filter(
+            (tool): tool is string => typeof tool === "string",
+          )
+        : [];
+      const toolHint =
+        allowedTools.length > 0 ? ` · ${allowedTools.join(", ")}` : "";
+      if (role && goal) return `${role}: ${goal}${toolHint}`;
+      return role || goal || undefined;
     },
     async execute(args: unknown): Promise<unknown> {
       const parent = input.getParent();
@@ -1601,33 +1752,49 @@ export function createDynamicSpawnAgentTool(input: {
           'Tool "spawn_agent" refused to nest: parent run is itself a sub-agent.',
         );
       }
-      const { parsed, childTools } = prepareDynamicSpawnAgentRequest({
-        args,
-        childTools: input.childTools,
+      const { parsed, toolRequest, childTools } =
+        prepareDynamicSpawnAgentRequest({
+          args,
+          childTools: input.childTools,
+          entrypoint: input.entrypoint ?? "spawn_agent",
+        });
+
+      assertReadOnlyChildCanSatisfyGoal({
+        goal: parsed.goal,
+        prompt: parsed.prompt,
+        childTools,
+        entrypoint: input.entrypoint ?? "spawn_agent",
       });
 
-      const displayLabel = parsed.label ?? "dynamic child";
-      const agentId = createId("dynamic_agent");
-      const childMaxSteps = parent.maxSteps;
+      // Strip any leading `dynamic_` the role already carries so a re-used
+      // agent id (models sometimes pass a prior child's `dynamic_<role>` id
+      // back in as the new role) does not compound into `dynamic_dynamic_*`.
+      const roleSegment = sanitizeToolSegment(
+        parsed.role.toLowerCase(),
+      ).replace(/^(?:dynamic_)+/, "");
+      const agentId = `dynamic_${roleSegment || "agent"}`;
+      const childMaxSteps = parsed.maxSteps ?? parent.maxSteps;
       const profile: AgentProfile = {
         id: agentId,
-        name: displayLabel,
+        name: parsed.role,
         mode: "child",
         allowedTools: childTools.map((tool) => tool.name),
         maxSteps: childMaxSteps,
-        // Dynamic task text is model-authored tool input, so it must not be
-        // elevated into the child application's system prompt. Only the fixed
-        // in-process child contract belongs at that authority layer.
-        prompt: composeInProcessChildAgentPrompt(),
+        prompt: withDelegatedAgentPrompt(parsed.prompt),
         metadata: {
           dynamic: true,
         },
       };
       const ledgerKey = dynamicSpawnLedgerKey({
-        ...(parsed.context ? { context: parsed.context } : {}),
-        childTools,
+        role: parsed.role,
+        prompt: parsed.prompt,
+        allowedTools: childTools.map((tool) => tool.name),
       });
-      const cached = findReusableDelegation(parent, ledgerKey, parsed.goal);
+      const cached = findSimilarSuccessfulDelegation(
+        parent,
+        ledgerKey,
+        parsed.goal,
+      );
       if (cached) return cachedDynamicSpawnOutput(cached);
 
       const subagentDepth = assertSubagentDepthAllowed({
@@ -1639,14 +1806,10 @@ export function createDynamicSpawnAgentTool(input: {
         ? await input.modelForSpawn()
         : input.model;
 
-      const childAbort = createLinkedAbortController(
-        input.abortSignal ?? parent.abortSignal,
-      );
-      const handoffContext = dynamicAgentHandoffContext(parsed.context);
+      const childAbort = createLinkedAbortController(input.abortSignal);
       const spawned = spawnSubAgent({
         parent,
         goal: parsed.goal,
-        ...(handoffContext ? { context: handoffContext } : {}),
         model: childModel,
         tools: childTools,
         childAgentProfile: profile,
@@ -1654,11 +1817,10 @@ export function createDynamicSpawnAgentTool(input: {
           input.parentRunPolicy,
           createAgentProfilePolicy(profile),
         ]),
-        interactionChannel: input.interactionChannel,
-        promptBuilder: buildAgentPromptBuilder({
-          cwd: input.workspaceRoot,
-          sessionId: input.sessionId,
-          appPrompt: profile.prompt,
+        interactionChannel: createAgentWorkspaceWriteGrantChannel({
+          enabled: toolRequest.workspaceWriteGrant,
+          source: input.entrypoint ?? "spawn_agent",
+          role: parsed.role,
         }),
         maxSteps: childMaxSteps,
         abortSignal: childAbort.controller.signal,
@@ -1667,8 +1829,7 @@ export function createDynamicSpawnAgentTool(input: {
               admission: createWorkspaceMutationAdmission({
                 coordinator: input.workspaceLeaseCoordinator,
                 workspaceRoot: input.workspaceRoot,
-                mode: "read",
-                workspaceState: parent.getWorkspaceState(),
+                mode: toolRequest.workspaceWriteGrant ? "write" : "read",
               }),
             }
           : {}),
@@ -1681,17 +1842,25 @@ export function createDynamicSpawnAgentTool(input: {
         // sub-agent spend rather than under-reporting it.
         parentUsageTracker: parent.getUsageTracker(),
         metadata: {
+          ...(parsed.metadata ?? {}),
           dynamic: true,
           subagentDepth,
           agentId,
           agentProfileId: agentId,
-          agentName: displayLabel,
+          agentName: parsed.role,
           delegateTool: input.delegateToolName ?? "spawn_agent",
           entrypoint: input.entrypoint ?? "spawn_agent",
           ...(input.taskId ? { taskId: input.taskId } : {}),
           allowedTools: childTools.map((tool) => tool.name),
-          workspaceAccess: "read_then_write_lease",
-          agentConcurrency: "lease_coordinated",
+          capabilityGrants: {
+            workspaceWrite: toolRequest.workspaceWriteGrant,
+          },
+          workspaceAccess: toolRequest.workspaceWriteGrant
+            ? "read_write"
+            : "read_only",
+          agentConcurrency: toolRequest.workspaceWriteGrant
+            ? "serial"
+            : "concurrent",
         },
       });
       const completion = completeDynamicSpawnAgent({
@@ -1699,8 +1868,11 @@ export function createDynamicSpawnAgentTool(input: {
         parent,
         ledgerKey,
         goal: parsed.goal,
-        role: displayLabel,
+        role: parsed.role,
+        prompt: parsed.prompt,
         agentId,
+        childTools,
+        childMaxSteps,
       }).finally(() => {
         childAbort.dispose();
       });
@@ -1725,7 +1897,7 @@ export function createDynamicSpawnAgentTool(input: {
           completion,
           abortController: childAbort.controller,
           foregroundTimeoutMs: input.foregroundTimeoutMs,
-          role: displayLabel,
+          role: parsed.role,
           goal: parsed.goal,
           agentId,
         });
@@ -1741,24 +1913,81 @@ interface CompleteDynamicSpawnAgentInput {
   ledgerKey: DelegationLedgerKey;
   goal: string;
   role: string;
+  prompt: string;
   agentId: string;
+  childTools: ToolDefinition[];
+  childMaxSteps: number;
 }
 
 async function completeDynamicSpawnAgent(
   input: CompleteDynamicSpawnAgentInput,
-): Promise<ParentAgentResult> {
-  const { spawned, parent, ledgerKey, goal, role, agentId } = input;
-  const completion = await completeSpawnedAgentInvocation({
+): Promise<Record<string, unknown>> {
+  const {
     spawned,
     parent,
     ledgerKey,
     goal,
+    role,
+    prompt,
+    agentId,
+    childTools,
+    childMaxSteps,
+  } = input;
+  const result = await spawned.start();
+  const usage = spawned.run.usage();
+  // A child that answered on its last allowed step may have wrapped up early
+  // under the step budget; tell the parent so it can caveat rather than
+  // present a possibly-truncated child answer as exhaustive.
+  const stepLimitReached =
+    (result.metadata as { stepLimitReached?: unknown } | undefined)
+      ?.stepLimitReached === true;
+  const childTruncated =
+    (result.metadata as { truncated?: unknown } | undefined)?.truncated ===
+      true || stepLimitReached;
+  const finality =
+    result.signal !== "completed" || childTruncated ? "partial" : "complete";
+  const projected = projectAgentInvocationResult({
+    childRunId: spawned.childRunId,
+    spanId: spawned.spanId,
+    result,
+    usage,
   });
   // A child that failed (doom-loop, step-limit, error) never emitted a final
   // answer, so salvage its most recent successful tool results — otherwise
   // the parent only sees an error string and must re-spawn to rediscover the
   // same data. Success carries the answer in `message`, so skip it there.
-  if (completion.runResult.signal !== "completed") {
+  const partialObservations =
+    result.signal === "completed"
+      ? undefined
+      : extractPartialObservations(spawned.run.events.all(), 3);
+  const output = {
+    ...projected,
+    agentId,
+    role,
+    ...(partialObservations && partialObservations.length > 0
+      ? { partialObservations }
+      : {}),
+    usage,
+    promotionHint: {
+      action: "create_agent.create",
+      reason:
+        "If this temporary role is useful repeatedly, create a stable agent profile and delegate tool instead of continuing to spawn it ad hoc.",
+      suggestedProfile: {
+        id: sanitizeToolSegment(role.toLowerCase()),
+        name: role,
+        mode: "child",
+        prompt,
+        allowedTools: childTools.map((tool) => tool.name),
+        maxSteps: childMaxSteps,
+        delegateToolName: `delegate_${sanitizeToolSegment(role.toLowerCase())}`,
+      },
+    },
+  };
+  rememberSuccessfulDelegation(parent, ledgerKey, goal, {
+    ...projected,
+    output,
+  });
+  if (result.signal !== "completed") {
     // Surface the failure as a *structured* tool error. The observation
     // formatter truncates `error.message` to 500 chars but passes
     // `error.metadata` through untruncated, so the salvaged data
@@ -1766,31 +1995,39 @@ async function completeDynamicSpawnAgent(
     // JSON blob stuffed into the message would be cut off before the parent
     // ever saw it. `normalizeExecutionError` preserves an attached
     // `.code`/`.metadata` on the thrown error.
-    throw createAgentInvocationError({
-      code: "SPAWN_AGENT_CHILD_INCOMPLETE",
-      message:
+    const childMessage =
+      typeof result.message === "string" ? result.message : undefined;
+    const failure = Object.assign(
+      new Error(
         `spawn_agent child "${role}" did not complete (${
-          completion.runResult.stopReason ?? completion.runResult.signal
+          result.stopReason ?? result.signal
         }).` +
-        (completion.partialObservations
-          ? ` ${completion.partialObservations.length} partial observation(s) salvaged in error.metadata.partialObservations.`
-          : ""),
-      completion,
-      metadata: {
-        agentId,
-        role,
-        summary: completion.runtimeResult.summary,
-        assessment: completion.runtimeResult.assessment,
-        stepLimitReached: completion.runtimeResult.stepLimitReached === true,
-        truncated: completion.runtimeResult.truncated === true,
-        blockers: completion.runtimeResult.blockers,
-        ...(completion.runResult.message
-          ? { childMessage: completion.runResult.message }
-          : {}),
+          (partialObservations && partialObservations.length > 0
+            ? ` ${partialObservations.length} partial observation(s) salvaged in error.metadata.partialObservations.`
+            : ""),
+      ),
+      {
+        code: "SPAWN_AGENT_CHILD_INCOMPLETE",
+        metadata: {
+          childRunId: spawned.childRunId,
+          agentId,
+          role,
+          signal: result.signal,
+          stopReason: result.stopReason,
+          stepLimitReached,
+          truncated: childTruncated,
+          finality,
+          assessment: projected.assessment,
+          ...(childMessage ? { childMessage } : {}),
+          ...(partialObservations && partialObservations.length > 0
+            ? { partialObservations }
+            : {}),
+        },
       },
-    });
+    );
+    throw failure;
   }
-  return completion.output;
+  return output;
 }
 
 type SettledWithin<T> =
@@ -1821,7 +2058,7 @@ function promoteDynamicSpawnAgent(input: {
   taskManager: TaskManager;
   parentRunId: RunId;
   spawned: SpawnedSubAgent;
-  completion: Promise<ParentAgentResult>;
+  completion: Promise<Record<string, unknown>>;
   abortController: AbortController;
   foregroundTimeoutMs: number;
   role: string;
@@ -1832,7 +2069,6 @@ function promoteDynamicSpawnAgent(input: {
     parentRunId: input.parentRunId,
     kind: "agent",
     title: `spawn_agent: ${input.role}`,
-    completionPolicy: "awaited",
     awaited: true,
     controller: input.abortController,
     metadata: {
@@ -1866,14 +2102,13 @@ function promoteDynamicSpawnAgent(input: {
     mode: "foreground",
     promoted: true,
     awaited: true,
-    ...createTaskAsyncReceipt(handle.record.id, "awaited"),
     childRunId: input.spawned.childRunId,
     spanId: input.spawned.spanId,
     agentId: input.agentId,
     role: input.role,
     foregroundTimeoutMs: input.foregroundTimeoutMs,
     message:
-      "spawn_agent exceeded the foreground budget and is continuing as an awaited background task; this run will wait automatically before finalizing.",
+      "spawn_agent exceeded the foreground budget and is continuing as an awaited background task.",
   };
 }
 
@@ -1892,6 +2127,31 @@ function createLinkedAbortController(parentSignal?: AbortSignal): {
   return {
     controller,
     dispose: () => parentSignal.removeEventListener("abort", onAbort),
+  };
+}
+
+function createAgentWorkspaceWriteGrantChannel(input: {
+  enabled: boolean;
+  source: string;
+  role: string;
+}): InteractionChannel | undefined {
+  if (!input.enabled) return undefined;
+  return {
+    approve: (request) => {
+      if (request.action === "workspace.write") {
+        return {
+          approvalId: request.id,
+          decision: "approved",
+          message: `Auto-approved by ${input.source} workspaceWrite grant for ${input.role}.`,
+          autoApproved: true,
+        };
+      }
+      return {
+        approvalId: request.id,
+        decision: "denied",
+        message: `Approval request is outside the ${input.source} workspaceWrite grant.`,
+      };
+    },
   };
 }
 
@@ -1930,14 +2190,6 @@ function parseDelegateParallelArgs(args: unknown): DelegateParallelTask[] {
   if (!Array.isArray(record.delegates)) {
     throw new Error("delegate_parallel delegates must be an array.");
   }
-  const topLevelUnknown = Object.keys(record).filter(
-    (field) => field !== "delegates",
-  );
-  if (topLevelUnknown.length > 0) {
-    throw new Error(
-      `delegate_parallel accepts only delegates; received ${topLevelUnknown.join(", ")}.`,
-    );
-  }
   if (record.delegates.length < 1) {
     throw new Error("delegate_parallel delegates must not be empty.");
   }
@@ -1953,26 +2205,14 @@ function parseDelegateParallelArgs(args: unknown): DelegateParallelTask[] {
       );
     }
     const task = entry as Record<string, unknown>;
-    const unknownFields = Object.keys(task).filter(
-      (field) =>
-        field !== "agentId" &&
-        field !== "goal" &&
-        field !== "context" &&
-        field !== "label",
-    );
-    if (unknownFields.length > 0) {
-      throw new Error(
-        `delegate_parallel delegates.${index} accepts only agentId, goal, context, and label; received ${unknownFields.join(", ")}.`,
-      );
-    }
-    const handoff = parseAgentHandoffPayload({
-      goal: task.goal,
-      ...(task.context !== undefined ? { context: task.context } : {}),
-      ...(task.label !== undefined ? { label: task.label } : {}),
-    });
+    const metadata =
+      task.metadata === undefined
+        ? undefined
+        : objectField(task, "metadata", DELEGATE_PARALLEL_TOOL_NAME);
     return {
       agentId: stringField(task, "agentId", DELEGATE_PARALLEL_TOOL_NAME),
-      ...handoff,
+      goal: stringField(task, "goal", DELEGATE_PARALLEL_TOOL_NAME),
+      ...(metadata ? { metadata } : {}),
     };
   });
 }
@@ -1985,16 +2225,7 @@ function previewDelegateParallelArgs(args: unknown): DelegateParallelTask[] {
       const task = previewRecord(entry);
       const agentId = previewString(task.agentId).trim();
       const goal = previewString(task.goal).trim();
-      const context = previewString(task.context).trim();
-      const label = previewString(task.label).trim();
-      return goal && agentId
-        ? {
-            agentId,
-            goal,
-            ...(context ? { context } : {}),
-            ...(label ? { label } : {}),
-          }
-        : undefined;
+      return goal && agentId ? { agentId, goal } : undefined;
     })
     .filter((task): task is DelegateParallelTask => task !== undefined);
 }
@@ -2003,14 +2234,22 @@ function summarizeDelegateParallelChild(input: {
   index: number;
   task: DelegateParallelTask;
   spec: DelegateParallelSpec;
-  completion: Awaited<ReturnType<typeof completeSpawnedAgentInvocation>>;
+  childRunId: string;
+  spanId: string;
+  result: RunResult;
+  usage: ReturnType<ReturnType<typeof createRun>["usage"]>;
 }): DelegateParallelChildSummary {
+  const projected = projectAgentInvocationResult({
+    childRunId: input.childRunId,
+    spanId: input.spanId,
+    result: input.result,
+    usage: input.usage,
+  });
   return {
+    ...projected,
     index: input.index,
     toolName: input.spec.toolName,
     profileId: input.spec.profile.id,
-    completion: input.completion.runtimeResult,
-    report: input.completion.output,
   };
 }
 
@@ -2020,50 +2259,186 @@ function summarizeCachedDelegateParallelChild(input: {
   spec: DelegateParallelSpec;
   cached: DelegationLedgerHit;
 }): DelegateParallelChildSummary {
+  const result = withAlreadyCompletedNote(input.cached.result);
   return {
     index: input.index,
     toolName: input.spec.toolName,
     profileId: input.spec.profile.id,
-    completion: input.cached.result,
-    report: reusedDelegationResult(input.cached.result),
+    childRunId: result.childRunId,
+    spanId: result.spanId,
+    signal: result.signal,
+    finality: result.finality,
+    assessment: result.assessment,
+    stopReason: result.stopReason,
+    ...(typeof result.message === "string" ? { message: result.message } : {}),
+    ...(result.stepLimitReached ? { stepLimitReached: true } : {}),
+    ...(result.truncated ? { truncated: true } : {}),
+    tokens: result.tokens,
+    costUsd: result.costUsd,
+    toolCalls: result.toolCalls,
+    modelCalls: result.modelCalls,
+    alreadyCompleted: true,
+    note: result.note,
   };
 }
 
+function aggregateDelegateParallelUsage(
+  results: readonly DelegateParallelChildSummary[],
+): {
+  tokens: number;
+  costUsd: number;
+  toolCalls: number;
+  modelCalls: number;
+} {
+  return {
+    tokens: sumNumberFields(results, "tokens"),
+    costUsd: sumNumberFields(results, "costUsd"),
+    toolCalls: sumNumberFields(results, "toolCalls"),
+    modelCalls: sumNumberFields(results, "modelCalls"),
+  };
+}
+
+function sumNumberFields(
+  results: readonly DelegateParallelChildSummary[],
+  field: "tokens" | "costUsd" | "toolCalls" | "modelCalls",
+): number {
+  return results.reduce((sum, result) => sum + (result[field] ?? 0), 0);
+}
+
 function dynamicSpawnLedgerKey(input: {
-  context?: string;
-  childTools: readonly ToolDefinition[];
+  role: string;
+  prompt: string;
+  allowedTools: readonly string[];
 }): DelegationLedgerKey {
   return {
     kind: "dynamic_spawn",
-    ...(input.context ? { context: input.context } : {}),
-    allowedTools: input.childTools.map((tool) => tool.name),
-    cacheable: delegationToolsCacheable(input.childTools),
+    role: sanitizeToolSegment(input.role.toLowerCase()),
+    prompt: input.prompt,
+    allowedTools: input.allowedTools,
   };
 }
 
 function cachedDynamicSpawnOutput(hit: DelegationLedgerHit): unknown {
-  return reusedDelegationResult(hit.result);
+  const result = withAlreadyCompletedNote(hit.result);
+  if (isPlainRecord(result.output)) {
+    return {
+      ...result.output,
+      alreadyCompleted: true,
+      note: result.note,
+    };
+  }
+  return result;
+}
+
+function summarizeAgentTaskOutput(output: unknown): Record<string, unknown> {
+  if (!isPlainRecord(output)) {
+    return { type: "agent.completed" };
+  }
+  const message =
+    typeof output.message === "string"
+      ? output.message.slice(0, 4_000)
+      : undefined;
+  return {
+    type: "agent.completed",
+    ...(typeof output.childRunId === "string"
+      ? { childRunId: output.childRunId }
+      : {}),
+    ...(typeof output.agentId === "string" ? { agentId: output.agentId } : {}),
+    ...(typeof output.role === "string" ? { role: output.role } : {}),
+    ...(typeof output.signal === "string" ? { signal: output.signal } : {}),
+    ...(typeof output.stopReason === "string"
+      ? { stopReason: output.stopReason }
+      : {}),
+    ...(typeof output.finality === "string"
+      ? { finality: output.finality }
+      : {}),
+    ...(isPlainRecord(output.assessment)
+      ? { assessment: output.assessment }
+      : {}),
+    ...(typeof output.truncated === "boolean"
+      ? { truncated: output.truncated }
+      : {}),
+    ...(message ? { message } : {}),
+  };
+}
+
+function parseDynamicSpawnAgentArgs(args: unknown): {
+  goal: string;
+  role: string;
+  prompt: string;
+  allowedTools?: string[];
+  grant: AgentWorkspaceWriteGrant;
+  maxSteps?: number;
+  metadata?: Record<string, unknown>;
+} {
+  if (!args || typeof args !== "object") {
+    throw new Error("spawn_agent expects an object argument.");
+  }
+  const record = args as Record<string, unknown>;
+  const goal = stringField(record, "goal");
+  const role = stringField(record, "role");
+  const prompt = stringField(record, "prompt");
+  const allowedTools = parseAgentAllowedToolsFromRecord(record, "spawn_agent");
+  const grant = parseAgentWorkspaceWriteGrantFromRecord(record, "spawn_agent");
+  let maxSteps: number | undefined;
+  if (record.maxSteps !== undefined) {
+    maxSteps = integerField(record, "maxSteps");
+    if (maxSteps < 1) {
+      throw new Error("spawn_agent maxSteps must be at least 1.");
+    }
+  }
+  const metadata =
+    record.metadata === undefined ? undefined : objectField(record, "metadata");
+  return {
+    goal,
+    role,
+    prompt,
+    allowedTools,
+    grant,
+    maxSteps,
+    metadata,
+  };
 }
 
 function prepareDynamicSpawnAgentRequest(input: {
   args: unknown;
   childTools: readonly ToolDefinition[];
+  entrypoint: string;
 }): {
-  parsed: ReturnType<typeof normalizeAgentHandoffPayload>;
+  parsed: ReturnType<typeof parseDynamicSpawnAgentArgs>;
+  toolRequest: ReturnType<typeof resolveAgentSpawnToolRequest>;
   childTools: ToolDefinition[];
 } {
-  const parsed = parseAgentHandoffPayload(input.args);
-  const childTools = input.childTools.filter(
-    (tool) => tool.delegation === "child",
+  const parsed = parseDynamicSpawnAgentArgs(input.args);
+  const supportedTools = new Set<string>([
+    ...AGENT_READ_ONLY_CHILD_TOOLS,
+    ...AGENT_WORKSPACE_WRITE_CHILD_TOOLS,
+  ]);
+  const toolRequest = resolveAgentSpawnToolRequest({
+    allowedTools: parsed.allowedTools,
+    grant: parsed.grant,
+    toolName: input.entrypoint,
+  });
+  const availableTools = new Map(
+    input.childTools.map((tool) => [tool.name, tool]),
   );
+  const invalidTools = toolRequest.requestedTools.filter(
+    (name) => !supportedTools.has(name) || !availableTools.has(name),
+  );
+  if (invalidTools.length > 0) {
+    throw new Error(
+      `spawn_agent only supports enabled child tools: ${invalidTools.join(", ")}`,
+    );
+  }
+  const childTools = toolRequest.requestedTools
+    .map((name) => availableTools.get(name))
+    .filter((tool): tool is ToolDefinition => tool !== undefined);
   if (
     childTools.some(
       (tool) => tool.name !== DISCOVERY_TOOL_NAME && tool.deferLoading === true,
     )
   ) {
-    const discovery = input.childTools.find(
-      (tool) => tool.name === DISCOVERY_TOOL_NAME,
-    );
+    const discovery = availableTools.get(DISCOVERY_TOOL_NAME);
     if (discovery && !childTools.some((tool) => tool.name === discovery.name)) {
       childTools.push(
         createScopedToolSearch(childTools, {
@@ -2074,7 +2449,10 @@ function prepareDynamicSpawnAgentRequest(input: {
       );
     }
   }
-  return { parsed, childTools };
+  if (childTools.length === 0) {
+    throw new Error("spawn_agent requires at least one enabled child tool.");
+  }
+  return { parsed, toolRequest, childTools };
 }
 
 function previewRecord(value: unknown): Record<string, unknown> {
@@ -2099,33 +2477,100 @@ function stringField(
   return value.trim();
 }
 
-function dynamicAgentHandoffContext(
-  context: string | undefined,
-): ContextItem[] | undefined {
-  if (!context) return undefined;
-  return [
-    {
-      id: createContextItemId(),
-      type: "summary",
-      source: { kind: "agent_handoff" },
-      content: ["Parent handoff context:", context].join("\n"),
-      metadata: {
-        layer: "working",
-        stability: "turn",
-        required: true,
-        kind: "agent_handoff",
-      },
-    },
-  ];
+function integerField(
+  record: Record<string, unknown>,
+  field: string,
+  toolName = "spawn_agent",
+): number {
+  const value = record[field];
+  if (!Number.isInteger(value)) {
+    throw new Error(`${toolName} ${field} must be an integer.`);
+  }
+  return value as number;
 }
 
-function delegationToolsCacheable(
-  tools: readonly Pick<ToolDefinition, "governance">[],
-): boolean {
-  return tools.every((tool) => {
-    const effects = tool.governance?.sideEffects ?? ["none"];
-    return !effects.includes("network") && !effects.includes("external");
-  });
+function objectField(
+  record: Record<string, unknown>,
+  field: string,
+  toolName = "spawn_agent",
+): Record<string, unknown> {
+  const value = record[field];
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${toolName} ${field} must be an object.`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** A summarized successful tool result salvaged from a child run's events. */
+interface PartialObservation {
+  toolName: string;
+  output: string;
+}
+
+const PARTIAL_OBSERVATION_OUTPUT_CHAR_LIMIT = 600;
+
+/**
+ * Salvage the child's most recent successful tool results from its event log so
+ * a parent can still use the work even when the child run *failed* (doom-loop,
+ * step-limit, error) without ever emitting a final answer. Without this, a child
+ * that discovered everything it needed but tripped a guard on the last step
+ * returns only an error string, forcing the parent to re-spawn and rediscover
+ * the same data from scratch.
+ *
+ * Pairs `tool.requested` (carries `toolName`) with `tool.completed` (carries the
+ * `output`, keyed by `toolCallId`) and returns the last `maxObservations`
+ * successful results, each truncated so a large listing cannot blow up the
+ * parent's context.
+ */
+function extractPartialObservations(
+  events: readonly SparkwrightEvent[],
+  maxObservations: number,
+): PartialObservation[] {
+  const toolNameByCallId = new Map<string, string>();
+  for (const event of events) {
+    if (event.type !== "tool.requested") continue;
+    const payload = event.payload as
+      | { id?: unknown; toolName?: unknown }
+      | undefined;
+    if (
+      typeof payload?.id === "string" &&
+      typeof payload.toolName === "string"
+    ) {
+      toolNameByCallId.set(payload.id, payload.toolName);
+    }
+  }
+
+  const observations: PartialObservation[] = [];
+  for (const event of events) {
+    if (event.type !== "tool.completed") continue;
+    const payload = event.payload as
+      | { toolCallId?: unknown; output?: unknown }
+      | undefined;
+    if (payload?.output === undefined) continue;
+    const toolName =
+      (typeof payload.toolCallId === "string"
+        ? toolNameByCallId.get(payload.toolCallId)
+        : undefined) ?? "tool";
+    let serialized: string;
+    try {
+      serialized = JSON.stringify(payload.output);
+    } catch {
+      serialized = String(payload.output);
+    }
+    if (serialized.length > PARTIAL_OBSERVATION_OUTPUT_CHAR_LIMIT) {
+      serialized = `${serialized.slice(
+        0,
+        PARTIAL_OBSERVATION_OUTPUT_CHAR_LIMIT,
+      )}… (truncated)`;
+    }
+    observations.push({ toolName, output: serialized });
+  }
+
+  return observations.slice(-maxObservations);
 }
 
 export interface PrepareAgentRuntimeInput {
@@ -2166,7 +2611,6 @@ export interface PreparedAgentRuntime {
   delegateParallelTool?: ToolDefinition;
   delegateDescriptors: DelegateCapabilityDescriptor[];
   dynamicSpawnTool: ToolDefinition;
-  agentReportTool: ToolDefinition;
   taskRunner(
     controller: TaskRunnerController,
     payload: unknown,
@@ -2224,16 +2668,11 @@ export class AgentRuntimeAssembly {
     const dynamicChildToolCatalog = createDynamicChildToolCatalog({
       workspaceRoot: input.workspaceRoot,
       toolConfig,
-      shell: input.shell,
-      skillRoots: input.skillRoots,
-      configPaths: input.configPaths,
       workspaceLeaseCoordinator: this.workspaceLeaseCoordinator,
     });
     const delegateChildToolCatalog = createConfiguredDelegateChildToolCatalog({
       workspaceRoot: input.workspaceRoot,
-      // Stable configured profiles are governed by the run ceiling and their
-      // own selectors, not accidentally narrowed by the main agent profile.
-      toolConfig: input.baseToolConfig,
+      toolConfig,
       shell: input.shell,
       skillRoots: input.skillRoots,
       configPaths: input.configPaths,
@@ -2306,7 +2745,6 @@ export class AgentRuntimeAssembly {
       allowReadWriteWorkspaceAccess: input.allowReadWriteWorkspaceAccess,
       maxDepth: input.agentConfig?.maxDepth,
       workspaceLeaseCoordinator: this.workspaceLeaseCoordinator,
-      sessionId: input.sessionId,
     });
     const directDelegates = filterDirectDelegatesForExposure(
       delegateRouting.delegates,
@@ -2344,7 +2782,6 @@ export class AgentRuntimeAssembly {
           maxDepth: input.agentConfig?.maxDepth,
           workspaceRoot: input.workspaceRoot,
           workspaceLeaseCoordinator: this.workspaceLeaseCoordinator,
-          sessionId: input.sessionId,
         })
       : undefined;
     const delegateDescriptors = describeConfiguredDelegateTools({
@@ -2368,12 +2805,6 @@ export class AgentRuntimeAssembly {
       backgroundTasks: input.backgroundTasks,
       workspaceRoot: input.workspaceRoot,
       workspaceLeaseCoordinator: this.workspaceLeaseCoordinator,
-      interactionChannel: input.interactionChannel,
-      sessionId: input.sessionId,
-    });
-    const agentReportTool = createReadAgentReportTool({
-      sessionRootDir: input.sessionRootDir,
-      sessionId: input.sessionId,
     });
     const taskDeps: HostAgentTaskRunnerDeps = {
       getParent: () => input.parentRunRef.current,
@@ -2390,7 +2821,6 @@ export class AgentRuntimeAssembly {
       foregroundTimeoutMs:
         input.shell?.foregroundTimeoutMs ?? RECOMMENDED_FOREGROUND_TIMEOUT_MS,
       workspaceLeaseCoordinator: this.workspaceLeaseCoordinator,
-      interactionChannel: input.interactionChannel,
     };
     return {
       mainAgent,
@@ -2402,7 +2832,6 @@ export class AgentRuntimeAssembly {
       ...(delegateParallelTool ? { delegateParallelTool } : {}),
       delegateDescriptors,
       dynamicSpawnTool,
-      agentReportTool,
       taskRunner: (controller, payload) =>
         runHostAgentTask(controller, payload, taskDeps),
     };

@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { createRunId, defineTool, type ModelAdapter } from "@sparkwright/core";
+import { defineTool, type ModelAdapter } from "@sparkwright/core";
 import {
   FileTaskNotificationOutbox,
   FileTaskStore,
@@ -15,7 +15,6 @@ import { loadLayeredWorkflowAssets } from "../src/workflows.js";
 import { resolveRunAccessFields } from "../src/run-access.js";
 import { TaskRuntimeOperations } from "../src/runtime/task-runtime-operations.js";
 import {
-  buildMainAgentPromptBuilder,
   WorkflowEpisodeRuntime,
   resolveWorkflowActorEpisodePlan,
   resolveWorkflowEpisodeMaxSteps,
@@ -33,57 +32,6 @@ afterEach(async () => {
 });
 
 describe("WorkflowEpisodeRuntime", () => {
-  it("injects the primary profile body once as system while the goal stays user", async () => {
-    const workspace = await mkdtemp(
-      join(tmpdir(), "sparkwright-main-profile-prompt-"),
-    );
-    tempDirs.push(workspace);
-    const marker = "PRIMARY_PROFILE_PROMPT_MARKER";
-    const now = new Date().toISOString();
-    const builder = buildMainAgentPromptBuilder(
-      {
-        workspaceRoot: workspace,
-        mainAgent: {
-          id: "main",
-          name: "Main",
-          prompt: `Act as the primary workspace agent. ${marker}`,
-        },
-      },
-      "session_main_profile",
-    );
-
-    const messages = await builder.build({
-      run: {
-        id: createRunId(),
-        goal: "inspect the workspace",
-        state: "running",
-        createdAt: now,
-        updatedAt: now,
-        metadata: {},
-      },
-      step: 1,
-      tools: [],
-      context: [],
-    });
-    const markerMessages = messages.filter((message) =>
-      message.content.includes(marker),
-    );
-
-    expect(markerMessages).toHaveLength(1);
-    expect(markerMessages[0]).toMatchObject({
-      role: "system",
-      metadata: { sectionName: "app_identity" },
-    });
-    expect(
-      messages.find(
-        (message) => message.metadata?.sectionName === "current_request",
-      ),
-    ).toMatchObject({
-      role: "user",
-      content: "User request:\ninspect the workspace",
-    });
-  });
-
   it("keeps step and model-call budgets independent", () => {
     expect(
       resolveWorkflowEpisodeMaxSteps({

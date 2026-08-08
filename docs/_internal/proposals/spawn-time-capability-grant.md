@@ -58,7 +58,7 @@ Canonical long-term surface:
 spawn_agent({
   goal,
   role,
-  context,
+  prompt,
   grant: { workspaceWrite: true },
   allowedTools: ["read", "grep", "write"]
 })

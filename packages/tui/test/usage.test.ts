@@ -117,7 +117,7 @@ describe("EventStore usage parsing", () => {
 });
 
 describe("EventStore reasoning accumulation", () => {
-  it("keeps the live preview until the complete model message is committed", () => {
+  it("collects reasoning deltas and clears them when the stream completes", () => {
     const store = new EventStore();
     store.appendEvent(ev("model.stream.started", {}, 1));
     store.appendEvent(
@@ -132,12 +132,8 @@ describe("EventStore reasoning accumulation", () => {
     );
     expect(store.getSnapshot().streamingText).toBe("answer");
     store.appendEvent(ev("model.stream.completed", {}, 5));
-    expect(store.getSnapshot().reasoningText).toBe("let me think");
-    expect(store.getSnapshot().streamingText).toBe("answer");
-    store.appendEvent(ev("model.completed", { message: "answer" }, 6));
     expect(store.getSnapshot().reasoningText).toBe("");
     expect(store.getSnapshot().streamingText).toBe("");
-    expect(store.getSnapshot().events.at(-1)?.type).toBe("model.completed");
   });
 });
 

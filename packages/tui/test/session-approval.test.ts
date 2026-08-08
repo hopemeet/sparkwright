@@ -5,18 +5,24 @@ import {
   sessionApprovalRule,
 } from "../src/lib/session-approval.js";
 
+const workspaceRoot = "/workspace/project";
+
 describe("session approval subjects", () => {
-  it("uses a producer-authored exact shell scope", () => {
-    const subject = approvalSubject({
-      kind: "shell_command",
-      command: "npm test",
-      cwd: "/workspace/project",
-      key: "shell:exact-npm-test",
-      label: "Allow this exact command here for this session",
-    });
+  it("recognizes shell tools wrapped by tool.execute", () => {
+    const subject = approvalSubject(
+      {
+        action: "tool.execute",
+        details: {
+          toolName: "bash",
+          arguments: { command: "npm test", cwd: "/workspace/project" },
+          governance: { origin: { kind: "local", name: "sparkwright" } },
+        },
+      },
+      workspaceRoot,
+    );
 
     expect(subject).toMatchObject({
-      kind: "shell_command",
+      kind: "shell",
       command: "npm test",
       cwd: "/workspace/project",
     });
@@ -25,79 +31,58 @@ describe("session approval subjects", () => {
       "allow-session",
       "deny",
     ]);
-    expect(sessionApprovalRule(subject)).toMatchObject({
-      principalScope: "main",
-      subjectKey: "shell:exact-npm-test",
-    });
   });
 
-  it("keeps workspace write and remove rules distinct", () => {
-    const write = approvalSubject({
-      kind: "workspace_file",
-      operation: "write",
-      path: "src/app.ts",
-      key: "workspace_file:write:src/app.ts",
-      label: "Allow writing src/app.ts for this session",
-    });
-    const remove = approvalSubject({
-      kind: "workspace_file",
-      operation: "remove",
-      path: "src/app.ts",
-      key: "workspace_file:remove:src/app.ts",
-      label: "Allow removing src/app.ts for this session",
-    });
+  it("matches exact shell context, not command text alone", () => {
+    const make = (cwd: string, command = "npm test") =>
+      approvalSubject(
+        {
+          action: "tool.execute",
+          details: { toolName: "bash", arguments: { command, cwd } },
+        },
+        workspaceRoot,
+      );
 
-    expect(sessionApprovalRule(write)?.key).not.toBe(
-      sessionApprovalRule(remove)?.key,
+    const first = sessionApprovalRule(make("/workspace/project"));
+    const same = sessionApprovalRule(make("/workspace/project"));
+    const otherCwd = sessionApprovalRule(make("/workspace/other"));
+    const compound = sessionApprovalRule(
+      make("/workspace/project", "npm test && rm -rf tmp"),
+    );
+
+    expect(first?.key).toBe(same?.key);
+    expect(first?.key).not.toBe(otherCwd?.key);
+    expect(first?.key).not.toBe(compound?.key);
+  });
+
+  it("canonicalizes tool argument object ordering", () => {
+    const first = approvalSubject(
+      {
+        action: "tool.execute",
+        details: { toolName: "deploy", arguments: { b: 2, a: 1 } },
+      },
+      workspaceRoot,
+    );
+    const second = approvalSubject(
+      {
+        action: "tool.execute",
+        details: { toolName: "deploy", arguments: { a: 1, b: 2 } },
+      },
+      workspaceRoot,
+    );
+
+    expect(sessionApprovalRule(first)?.key).toBe(
+      sessionApprovalRule(second)?.key,
     );
   });
 
-  it("accepts revisioned workspace operations without a child grant subject", () => {
-    const subject = approvalSubject({
-      kind: "workspace_file",
-      operation: "replace",
-      path: "src/app.ts",
-      key: "workspace_file:replace:src/app.ts",
-      label: "Allow replacing src/app.ts for this session",
-    });
+  it("rejects workspace paths outside the workspace", () => {
+    const subject = approvalSubject(
+      { action: "workspace.write", details: { path: "../outside.txt" } },
+      workspaceRoot,
+    );
 
-    expect(subject).toMatchObject({
-      kind: "workspace_file",
-      operation: "replace",
-      path: "src/app.ts",
-    });
-    expect(sessionApprovalRule(subject)).toMatchObject({
-      subjectKey: "workspace_file:replace:src/app.ts",
-    });
-  });
-
-  it("never reuses a remembered subject across approval principals", () => {
-    const subject = approvalSubject({
-      kind: "workspace_file",
-      operation: "write",
-      path: "src/app.ts",
-      key: "workspace_file:write:src/app.ts",
-      label: "Allow writing src/app.ts for this session",
-    });
-
-    const main = sessionApprovalRule(subject, "session:main");
-    const firstChild = sessionApprovalRule(subject, "run:child-1");
-    const secondChild = sessionApprovalRule(subject, "run:child-2");
-
-    expect(main?.key).not.toBe(firstChild?.key);
-    expect(firstChild?.key).not.toBe(secondChild?.key);
-  });
-
-  it("fails malformed subjects closed to one-shot approval", () => {
-    const subject = approvalSubject({
-      kind: "workspace_file",
-      operation: "write",
-      path: "../outside.txt",
-      label: "unsafe missing key",
-    });
-
-    expect(subject).toEqual({ kind: "one_shot", label: "unsafe missing key" });
+    expect(subject).toEqual({ kind: "unknown" });
     expect(approvalChoices(subject)).toEqual(["allow-once", "deny"]);
-    expect(sessionApprovalRule(subject)).toBeUndefined();
   });
 });

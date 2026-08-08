@@ -32,7 +32,7 @@ A timeline should be built from event families rather than exact payload shapes.
 | Timeline row                      | Primary events                                                                                                                                                                | Stable rendering guidance                                                         |
 | --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
 | Run lifecycle                     | `run.created`, `run.started`, `run.completed`, `run.failed`, `run.cancelled`                                                                                                  | One run-level row with terminal state and `stopReason` when available             |
-| Model turn                        | `model.requested`, `model.completed`, `model.retrying`                                                                                                                        | Treat as diagnostic turn evidence; do not render it as an accepted final answer   |
+| Model turn                        | `model.requested`, `model.completed`, `model.retrying`                                                                                                                        | Show request, retry, and completed output summary                                 |
 | Streaming model turn              | `model.stream.*`                                                                                                                                                              | Attach chunks to the active model turn; collapse noisy chunks by UI               |
 | Context and prompt                | `context.assembled`, `prompt.built`, `context.cache_break.detected`                                                                                                           | Show counts, sections, cache blocks, and cache-break diagnostics                  |
 | Compaction                        | `context.compaction_requested`, `context.compaction.started`, `context.compaction.completed`, `context.compaction.failed`                                                     | Show budget pressure and summary lifecycle                                        |
@@ -83,16 +83,6 @@ Parallel delegate fan-out does not add a separate event family: the parent tool
 call is visible through `tool.*`, and each child is visible through
 `subagent.*` with metadata `entrypoint: "delegate_parallel"`.
 
-In-process Agent terminal payloads keep transport and report delivery separate.
-`terminalState` describes the child transport and `status` is the
-runtime-derived `completed`, `partial`, or `blocked` report status. A non-empty
-natural final projects completed; an empty report, runtime failure,
-cancellation, blocking limit, truncation, or step limit projects
-partial/blocked and derives blocker `code`/`message` evidence. Consumers should
-render partial/blocked status even when the event is `subagent.completed`;
-event-type completion means the child returned normally. Status `completed`
-means a report was delivered, not that the delegated goal was satisfied.
-
 ## Model Selection Evidence
 
 When present, `run.started.payload.resolvedModel` records the actual model
@@ -124,8 +114,7 @@ normalized model result.
 - Use `model.stream.started` to open a streaming assistant turn.
 - Append `model.stream.chunk` into a transient buffer for live display.
 - Use `model.stream.completed` to mark the stream complete, then reconcile with
-  the later normalized `model.completed` event when present. Both remain
-  provisional turn evidence until the run continues or reaches terminal.
+  the later normalized `model.completed` event when present.
 - Use `model.stream.failed` and `model.stream.timeout` to mark the partial turn
   as failed without inventing a terminal run state.
 - Do not execute frontend tool UI from streamed partial tool-call text. The
@@ -190,10 +179,6 @@ Frontend guidance:
 
 - When `approval.requested` appears, show a blocking approval affordance tied to
   the request id or proposal id in the payload.
-- Use the required producer-authored `subject` for any remembered session rule.
-  Only subjects with a stable `key` are reusable; `kind:"one_shot"` and
-  malformed subjects must remain allow-once/deny only. Do not reconstruct
-  reusable authority from human-readable `summary` or `details`.
 - When `approval.resolved` appears, close or mark the approval UI with the
   final decision.
 - `approval.resolved.autoApproved` is the structured signal for approvals made
@@ -217,10 +202,6 @@ Core-owned `RunAssessment`; events remain the replayable audit trail.
 Stable consumption rules:
 
 - Do not infer terminal state from `model.completed` or `tool.completed`.
-- For a successful final-answer run, render `run.completed.payload.message` as
-  the canonical accepted final response. `model.completed` remains the raw
-  per-turn model record; `model.assistant_text` is committed nonterminal
-  commentary emitted before further tool work.
 - Treat `run.cancel_requested` as intent only; wait for `run.cancelled` or the
   returned result before marking the run cancelled.
 - Use `run.failed.payload.failure` and `stopReason` when available for error

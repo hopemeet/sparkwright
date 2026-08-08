@@ -10,16 +10,30 @@ import type {
   CapabilityVerificationConfig,
   CapabilityWorkflowHookConfig,
 } from "./config-zod-schema.js";
+import {
+  DOCUMENTED_COMMAND_RULE_ACTION_SUMMARY,
+  DOCUMENTED_COMMAND_RULE_CONFIGURATION_HINT,
+  DOCUMENTED_COMMAND_RULE_DESCRIPTION,
+  DOCUMENTED_COMMAND_RULE_DISABLE_HINT,
+  DOCUMENTED_COMMAND_RULE_MATCHER_SUMMARY,
+  DOCUMENTED_COMMAND_RULE_NAME,
+  evaluateDocumentedCommandRule,
+} from "./documented-command-check.js";
 
 const DEFAULT_VERIFICATION_PROFILE = "fast";
 
 export function describeActiveWorkflowRules(input: {
   workflowHooks?: CapabilityWorkflowHookConfig[];
   verification?: CapabilityVerificationConfig;
+  documentedCommand?: {
+    goal?: string;
+    shouldWrite?: boolean;
+  };
 }): CapabilityWorkflowRuleSummary[] {
   return [
     ...describeConfiguredWorkflowRules(input.workflowHooks),
     ...describeVerificationWorkflowRules(input.verification),
+    describeDocumentedCommandWorkflowRule(input.documentedCommand),
   ];
 }
 
@@ -155,6 +169,38 @@ function describeVerificationCommandRule(
     disableHint:
       "Set capabilities.verification.mode=off or remove this command from the selected profile.",
     configurationHint: `Configure this command under capabilities.verification.profiles.${profileName}.`,
+  };
+}
+
+function describeDocumentedCommandWorkflowRule(
+  input:
+    | {
+        goal?: string;
+        shouldWrite?: boolean;
+      }
+    | undefined,
+): CapabilityWorkflowRuleSummary {
+  const activation = evaluateDocumentedCommandRule({
+    goal: input?.goal,
+    shouldWrite: input?.shouldWrite,
+  });
+  return {
+    name: DOCUMENTED_COMMAND_RULE_NAME,
+    source: "builtin",
+    lifecycle: "Stop",
+    matcher: DOCUMENTED_COMMAND_RULE_MATCHER_SUMMARY,
+    action: DOCUMENTED_COMMAND_RULE_ACTION_SUMMARY,
+    blockingPotential: false,
+    enabled: activation.enabled,
+    active: activation.active,
+    status: activation.active
+      ? "active"
+      : activation.hasRunContext
+        ? "inactive"
+        : "available",
+    description: DOCUMENTED_COMMAND_RULE_DESCRIPTION,
+    disableHint: DOCUMENTED_COMMAND_RULE_DISABLE_HINT,
+    configurationHint: DOCUMENTED_COMMAND_RULE_CONFIGURATION_HINT,
   };
 }
 

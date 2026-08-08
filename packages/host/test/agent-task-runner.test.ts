@@ -14,13 +14,11 @@ import {
 } from "@sparkwright/core";
 import { createSessionFileRunStoreFactory } from "@sparkwright/core/internal";
 import {
-  IN_PROCESS_CHILD_AGENT_CONTRACT_PROMPT,
   InMemoryTaskStore,
   TaskManager,
   type TaskRunner,
 } from "@sparkwright/agent-runtime";
 import { runHostAgentTask } from "../src/runtime.js";
-import { createReadAgentReportTool } from "../src/agent-report-tool.js";
 import {
   lifecycleTypes,
   projectAgentLifecycle,
@@ -69,7 +67,7 @@ describe("background agent task runner", () => {
           return { message: "parent done" };
         },
       },
-      maxSteps: 4,
+      maxSteps: 1,
       runStore: createSessionRunStoreFactory({
         sessionStore,
         sessionId,
@@ -122,7 +120,6 @@ describe("background agent task runner", () => {
           type: "object",
           properties: { pattern: { type: "string" } },
         },
-        delegation: "child",
         async execute(_args, ctx) {
           started();
           const signal = (ctx as RuntimeContext).abortSignal;
@@ -148,8 +145,10 @@ describe("background agent task runner", () => {
         kind: "agent",
         payload: {
           goal: "watch the repo",
-          label: "watcher",
-          context: "Keep grepping.",
+          role: "watcher",
+          prompt: "Keep grepping.",
+          allowedTools: ["grep"],
+          maxSteps: 20,
         },
       });
 
@@ -193,24 +192,18 @@ describe("background agent task runner", () => {
           type: "object",
           properties: { pattern: { type: "string" } },
         },
-        delegation: "child",
         async execute() {
           globCalls += 1;
           return { paths: ["README.md"] };
         },
       });
-      let firstChildPrompt: unknown;
       const childModel: ModelAdapter = {
         async complete(input) {
-          firstChildPrompt ??= input.prompt;
-          const used = input.context.some(
-            (item) =>
-              item.type === "tool_result" && item.metadata.toolName === "glob",
+          const used = input.context.some((item) =>
+            item.content.includes("glob"),
           );
           return used
-            ? {
-                message: "top-level: README.md",
-              }
+            ? { message: "top-level: README.md" }
             : {
                 toolCalls: [{ toolName: "glob", arguments: { pattern: "*" } }],
               };
@@ -223,8 +216,10 @@ describe("background agent task runner", () => {
         kind: "agent",
         payload: {
           goal: "list top-level files",
-          label: "inspector",
-          context: "List files with glob.",
+          role: "inspector",
+          prompt: "List files with glob.",
+          allowedTools: ["glob"],
+          maxSteps: 4,
         },
       });
 
@@ -232,34 +227,11 @@ describe("background agent task runner", () => {
       expect(record.status).toBe("completed");
       const result = record.result as {
         childRunId: string;
-        status: string;
-        report: string;
-        workspace: { writes: number };
+        signal: string;
       };
-      expect(result).toMatchObject({
-        status: "completed",
-        report: "top-level: README.md",
-        workspace: { writes: 0 },
-      });
+      expect(result.signal).toBe("completed");
       expect(result.childRunId).toMatch(/^run_/);
       expect(globCalls).toBe(1);
-      const promptMessages = firstChildPrompt as Array<{
-        role?: unknown;
-        content?: unknown;
-      }>;
-      const systemText = promptMessages
-        .filter((message) => message.role === "system")
-        .map((message) => String(message.content ?? ""))
-        .join("\n");
-      const userText = promptMessages
-        .filter((message) => message.role === "user")
-        .map((message) => String(message.content ?? ""))
-        .join("\n");
-      expect(systemText).toContain(IN_PROCESS_CHILD_AGENT_CONTRACT_PROMPT);
-      expect(systemText).not.toContain("List files with glob.");
-      expect(userText).toContain("list top-level files");
-      expect(userText).toContain("Parent handoff context:");
-      expect(userText).toContain("List files with glob.");
       expect(
         lifecycleTypes(harness.parent.events.all(), result.childRunId),
       ).toEqual([
@@ -281,211 +253,6 @@ describe("background agent task runner", () => {
       expect(
         terminalLifecycleCount(harness.parent.events.all(), result.childRunId),
       ).toBe(1);
-    } finally {
-      await rmWhenReady(harness.root);
-    }
-  });
-
-  it("normalizes persisted legacy task fields without restoring authority", async () => {
-    const harness = await makeHarness("session_agent_task_legacy_payload");
-    try {
-      const manager = new TaskManager({ store: new InMemoryTaskStore() });
-      let observedTools: string[] = [];
-      const childModel: ModelAdapter = {
-        async complete(input) {
-          observedTools = input.tools.map((tool) => tool.name);
-          return { message: "legacy task completed" };
-        },
-      };
-      registerAgentKind(manager, harness, childModel, []);
-
-      const handle = manager.spawn({
-        parentRunId: harness.parent.record.id,
-        kind: "agent",
-        payload: {
-          goal: "inspect persisted work",
-          role: "legacy reviewer",
-          allowedTools: ["bash"],
-          grant: { workspaceWrite: true },
-        },
-      });
-
-      const record = await handle.wait();
-      expect(record.error).toBeUndefined();
-      expect(record).toMatchObject({
-        status: "completed",
-        result: {
-          status: "completed",
-          report: "legacy task completed",
-        },
-      });
-      expect(observedTools).toEqual([]);
-    } finally {
-      await rmWhenReady(harness.root);
-    }
-  });
-
-  it("keeps the full task result while emitting an explicit bounded receipt", async () => {
-    const sessionId = "session_agent_task_long_report";
-    const harness = await makeHarness(sessionId);
-    try {
-      const manager = new TaskManager({ store: new InMemoryTaskStore() });
-      const report = "background child report ".repeat(300).trim();
-      registerAgentKind(
-        manager,
-        harness,
-        {
-          async complete() {
-            return { message: report };
-          },
-        },
-        [
-          defineTool({
-            name: "read",
-            description: "Unused read capability.",
-            inputSchema: { type: "object" },
-            delegation: "child",
-            execute: () => ({ content: "unused" }),
-          }),
-        ],
-      );
-
-      const handle = manager.spawn({
-        parentRunId: harness.parent.record.id,
-        kind: "agent",
-        payload: {
-          goal: "return a long report",
-          label: "long reporter",
-        },
-      });
-
-      const record = await handle.wait();
-      expect(record.status).toBe("completed");
-      expect((record.result as { report?: string } | undefined)?.report).toBe(
-        report,
-      );
-      const chunks = [];
-      for await (const chunk of handle.output()) chunks.push(chunk);
-      const receipt = JSON.parse(chunks[0]?.data ?? "{}");
-      expect(receipt).toMatchObject({
-        type: "agent.completed",
-        taskId: record.id,
-        report: report.slice(0, 4_000),
-        reportTruncated: true,
-        reportChars: report.length,
-        reportOmittedChars: report.length - 4_000,
-        resultRef: {
-          tool: "task",
-          action: "get",
-          taskId: record.id,
-        },
-      });
-
-      const childRunId = (record.result as { childRunId: string }).childRunId;
-      const sessionStore = new FileSessionStore({ rootDir: harness.root });
-      await sessionStore.append(sessionId, harness.parent.record.id as never);
-      const reportTool = createReadAgentReportTool({
-        sessionRootDir: harness.root,
-        sessionId,
-      });
-      const firstPage = (await reportTool.execute(
-        { childRunId, limit: 4_000 },
-        {} as never,
-      )) as {
-        report: string;
-        nextOffset: number;
-        totalChars: number;
-        hasMore: boolean;
-      };
-      expect(firstPage).toMatchObject({
-        report: report.slice(0, 4_000),
-        totalChars: report.length,
-        hasMore: true,
-        nextOffset: 4_000,
-      });
-      await expect(
-        reportTool.execute(
-          { childRunId, offset: firstPage.nextOffset, limit: 4_000 },
-          {} as never,
-        ),
-      ).resolves.toMatchObject({
-        report: report.slice(4_000),
-        totalChars: report.length,
-        hasMore: false,
-      });
-    } finally {
-      await rmWhenReady(harness.root);
-    }
-  });
-
-  it("retains child failure evidence on the failed task record", async () => {
-    const harness = await makeHarness("session_agent_task_failure_evidence");
-    try {
-      const manager = new TaskManager({ store: new InMemoryTaskStore() });
-      const globTool = defineTool({
-        name: "glob",
-        description: "Return one useful partial observation.",
-        inputSchema: { type: "object" },
-        delegation: "child",
-        execute: () => ({ paths: ["README.md"] }),
-      });
-      registerAgentKind(
-        manager,
-        harness,
-        {
-          async complete(input) {
-            const used = input.context.some(
-              (item) =>
-                item.type === "tool_result" &&
-                item.metadata.toolName === "glob",
-            );
-            if (used) {
-              const error = new Error("child model aborted unexpectedly");
-              error.name = "AbortError";
-              throw error;
-            }
-            return {
-              toolCalls: [{ toolName: "glob", arguments: { pattern: "*" } }],
-            };
-          },
-        },
-        [globTool],
-      );
-
-      const handle = manager.spawn({
-        parentRunId: harness.parent.record.id,
-        kind: "agent",
-        payload: {
-          goal: "collect evidence, then fail",
-          label: "partial reporter",
-        },
-      });
-
-      const record = await handle.wait();
-      expect(record).toMatchObject({
-        status: "failed",
-        error: {
-          code: "SPAWN_AGENT_CHILD_INCOMPLETE",
-          metadata: {
-            childRunId: expect.stringMatching(/^run_/),
-            agentId: expect.stringMatching(/^dynamic_agent_/),
-            role: "partial reporter",
-            status: "partial",
-            assessment: expect.objectContaining({
-              schemaVersion: "run-assessment.v1",
-            }),
-            stepLimitReached: false,
-            truncated: false,
-            workspace: { writes: 0 },
-            partialObservations: [
-              {
-                toolName: "glob",
-                output: '{"paths":["README.md"]}',
-              },
-            ],
-          },
-        },
-      });
     } finally {
       await rmWhenReady(harness.root);
     }

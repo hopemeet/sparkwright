@@ -4,7 +4,6 @@ import type { CapabilitySnapshot } from "@sparkwright/protocol";
 import { useTheme } from "../lib/theme-context.js";
 import type { CapabilityView } from "../lib/layer-payload.js";
 import { formatWorkspaceDisplayPath } from "../lib/path-display.js";
-import { isBackInput } from "../lib/input-key.js";
 import { DialogFrame } from "./dialog-frame.js";
 
 type CapabilityRules = NonNullable<CapabilitySnapshot["rules"]>;
@@ -68,7 +67,7 @@ export function CapabilitiesPanel(props: {
   }, [props.view, snapshot]);
 
   useInput((input, key) => {
-    if (isBackInput(input, key) || key.return) return props.onClose();
+    if (key.escape || key.return) return props.onClose();
     if (key.downArrow || input === "j")
       setScroll((value) => Math.min(maxScroll, value + 1));
     else if (key.upArrow || input === "k")
@@ -450,6 +449,10 @@ function skillToolHint(name: string): string {
   switch (name) {
     case "list_skills":
       return "managed Skill inventory; shows built-in, user, and project packages";
+    case "create_skill":
+      return "managed Skill evolution; draft create proposal first, apply only when requested";
+    case "update_skill":
+      return "managed Skill evolution; draft proposal first, apply only when requested";
     default:
       return "";
   }

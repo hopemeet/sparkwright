@@ -93,7 +93,7 @@ export async function runSkillDoctor(
       severity: "warning",
       code: "CONFIGURED_SKILL_EFFECTIVE",
       message:
-        "Effective Skill comes from a configured root; edit that source deliberately or create a project Skill with the same name to shadow it.",
+        "Effective Skill comes from a configured root; evolution updates should create a project shadow/fork proposal instead of editing the configured root.",
       skillName: skill.name,
       source: skill.source,
       layer: skill.layer,
@@ -106,7 +106,7 @@ export async function runSkillDoctor(
       severity: "info",
       code: "CONFIGURED_ROOT_READ_ONLY",
       message:
-        "Configured skill root is treated as an external read-only source by SparkWright commands.",
+        "Configured skill root is treated as a read-only override for managed Skill evolution.",
       source: root.root,
       layer: root.layer,
     });

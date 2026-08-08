@@ -12,295 +12,6 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 ## Last Verified
 
 - Status: Verified
-- Date: 2026-08-02
-- Scope: removed Host-owned Skill proposal/history/registry/suggestion services,
-  model mutation tools, evolution config, and Stats rollups. Host retains
-  layered loading, read-only inspection, deterministic non-overwriting project
-  creation, doctor, usage loads, and trace-projection caches.
-- Read: Host exports, tools/catalog/identities, config/schema, runtime Skill
-  paths, creator, Stats, doctor, shell guidance, and focused tests.
-- Tests: Host build/typecheck, full Host suite, and the final four-case creator
-  regression passed; repository test typecheck and generated schema passed.
-
-- Status: Verified
-- Date: 2026-08-01
-- Scope: Host now validates `capabilities.web.security`, defaults the main-only
-  `web_fetch` catalog entry to `system`, passes explicit `hardened` selection to
-  the web edge, and prevents project config from weakening a user hardened
-  choice. Child catalogs still do not inherit the tool.
-- Read: Host config schema/loader, catalog assembly, runtime preparation,
-  builtin manual, and focused tests.
-- Tests: focused Host config/catalog 152/152, CLI 186/186, workspace build,
-  schema/static/package checks, and install smokes passed.
-
-- Status: Verified
-- Date: 2026-07-30
-- Scope: all Host in-process Agent adapters consume one natural child report;
-  no adapter manufactures a completion tool. Dynamic children may have zero
-  tools. Live handoff schemas are strict while the background task runner
-  normalizes persisted legacy envelopes without restoring authority. Parallel
-  returns completed and partial branch reports without escalating a partial
-  child into a whole-tool failure, and Workflow consumes the real `status`
-  field.
-- Read: configured/dynamic/parallel/task Agent assembly, handoff validation,
-  Workflow projection, parent result projection, tests, and public guidance.
-- Tests: repository build/test typecheck and focused Host/Agent/Core suites
-  passed.
-
-- Status: Verified
-- Date: 2026-07-28
-- Scope: Host continues to expose compact runtime-owned workspace evidence but
-  no longer turns child assessment health into a parent warning. Dynamic/task
-  failure metadata consumes the smaller invocation result without redundant
-  `statusSource` or `finality`; parallel parent results likewise omit the
-  diagnostic-only `unhealthy` aggregate. Session fact extraction now uses
-  semantic status and terminal evidence directly.
-- Read: configured/dynamic/parallel collectors, task failure projection,
-  delegation reuse, and session lifecycle readers.
-- Tests: Host 593/593 and Host typecheck passed after rebuilding Agent Runtime;
-  a real Terra dynamic-spawn canary produced zero writes and a truthful
-  pre-existing-file report.
-
-- Status: Verified
-- Date: 2026-07-27
-- Scope: Host Agent result handling now has one in-process terminal collector
-  across configured direct/indexed delegates, `delegate_parallel`, dynamic
-  `spawn_agent`, promoted/background execution, and Agent tasks. Background
-  notifications are explicit bounded receipts while the formal Task result
-  remains full. The advanced/deferred, parent-only `read_agent_report` tool
-  pages a persisted child report by authorized current-session `childRunId`
-  without accepting filesystem paths.
-- Read: Agent runtime assembly, task projection, report reader, run
-  preparation/capability catalog wiring, tool identities, session run lookup,
-  and focused tests.
-- Tests: full `npm run release:check` passed, including all workspace suites,
-  the 16-case regression matrix, source/release install smoke, and focused
-  report authorization/pagination, task, and promotion regressions.
-
-- Status: Verified
-- Date: 2026-07-26
-- Scope: Host now composes one shared Agent Runtime child contract into every
-  built-in in-process child path: configured direct/indexed delegates,
-  `delegate_parallel`, dynamic `spawn_agent`, and background Agent tasks.
-  Profile prompts remain first; parent handoff stays in user context. ACP and
-  external-command delegates are unchanged.
-- Read: Agent runtime assembly, delegate tool factories, dynamic/background
-  runners, prompt tests, and Agent Runtime ownership boundaries.
-- Tests: full `npm run release:check` passed; focused Host 102/102 and Host
-  typecheck passed.
-
-- Status: Verified
-- Date: 2026-07-26
-- Scope: dynamic spawn, configured/indexed delegates, parallel delegates, and
-  background Agent tasks now expose the same compact parent report. Host
-  projects child prose into `report`, derives `workspace` only from structured
-  child write events, and keeps reuse/health caveats in `warnings`; it no
-  longer appends action/usage/finality/reporting-guidance fields to parent
-  context. Session facts use canonical `subagent.*` lifecycle only.
-- Read: Agent runtime assembly, indexed/parallel/cache/task adapters, session
-  queries, Agent Runtime projection, and Host regression coverage.
-- Tests: full Host 583/583 passed.
-
-- Status: Verified
-- Date: 2026-07-26
-- Scope: route review for the bounded Agent action receipt extension. Host
-  continues to forward Agent Runtime's structured `actions` without
-  reconstructing tool outcomes; `skipped` is an additive terminal action
-  status and changes no Host execution, policy, or protocol event routing.
-- Read: Agent Runtime action summary/type export, Host dynamic child result
-  forwarding, and TUI consumer.
-- Tests: Host 583/583, Agent Runtime 259/259, TUI 531/531, and all workspace
-  tests passed.
-
-- Status: Verified
-- Date: 2026-07-25
-- Scope: dynamic `spawn_agent` results now expose bounded child action receipts,
-  an explicit structured workspace-write count (including zero), and
-  evidence-bound reporting guidance. A parent may describe an existing file as
-  inspected or verified, but must not claim creation/modification from a
-  zero-write receipt unless an action itself provides explicit write evidence.
-- Read: dynamic child completion assembly, Agent Runtime action summarizer,
-  repeated-result handling, and parent-visible tool result tests.
-- Tests: full `npm run release:check` passed, including Host 583/583, Agent
-  Runtime 258/258, Protocol 6/6, TUI 482/482, the 16-case regression matrix,
-  and source/release install smoke.
-
-- Status: Verified
-- Date: 2026-07-25
-- Scope: Host no longer projects recovered/unresolved completion requirements.
-  Approval events now forward independent policy/tool/safety explanations and
-  the exact runtime principal; Workflow verifier hard gates, CAS/lease,
-  budgets, and cancellation ownership are unchanged. The dead
-  documented-command `hasRunContext` inspection field was removed.
-- Read: Workflow terminal event projection, execution interaction approval
-  projection, Core request contract, Protocol payload, and Host suites.
-- Tests: full `npm run release:check` passed, including Host 583/583, the
-  16-case regression matrix, and source/release install smoke.
-
-- Status: Verified
-- Date: 2026-07-25
-- Scope: direct dynamic children now derive their abort signal from the parent
-  run when no task-owned signal is supplied. Foreground-timeout promotion does
-  not detach an awaited `spawn_agent` child from parent cancellation;
-  `agent_task` continues to use its explicit task controller as lifecycle
-  owner. Goal wording no longer auto-registers the legacy documented-command
-  Stop gate or advertises it as active.
-- Read: dynamic spawn assembly, awaited promotion/adoption, task-owned child
-  runner, Agent Runtime spawn substrate, and focused Host cancellation tests.
-- Tests: Core 661/661, Agent Runtime 257/257, Host 583/583; affected package
-  typechecks, repository lint, and targeted format check passed.
-
-- Status: Verified
-- Date: 2026-07-24
-- Scope: Host now derives dynamic/configured/parallel child capability surfaces
-  from delegation eligibility and administrator configuration, gives dynamic
-  children local read/CAS-write/foreground-shell capability, scopes approvals
-  by runtime principal, upgrades read admission to write admission against the
-  original observation epoch, and rolls back unmanaged child-shell mutations.
-  Model-authored spawn grants and the dedicated partial-child Stop hook are
-  removed.
-- Read: Agent runtime assembly, tool catalog/surface, shell, lease coordinator,
-  interaction/approval routing, workflow episode projection, and focused Host
-  tests.
-- Tests: focused Host Agent/tool/lease/protocol/workflow suites, repository
-  build, and repository test typecheck passed.
-
-- Status: Verified
-- Date: 2026-07-23
-- Scope: route review for annotation-only Task/Shell/SDK public contract
-  maintenance. Host task adoption, lifecycle projection, parent revival, and
-  external delivery behavior are unchanged.
-- Read: Task/Shell receipt DTOs, SDK event map, Host consumers, and strict
-  reserved-field checker.
-- Tests: Agent Runtime tasks 76/76, Shell 43/43, SDK Core 11/11, affected
-  typechecks, and strict reserved-field check passed.
-
-- Status: Verified
-- Date: 2026-07-23
-- Scope: route review for ACP consumption of Host `task.updated`. ACP now
-  ignores this control-only projection explicitly; Host event routing,
-  TaskStore truth, parent notification delivery, and external IM projection are
-  unchanged.
-- Read: Host lifecycle event projection, Protocol event union, and ACP event
-  mapper/tests.
-- Tests: ACP event 7/7, package typecheck, and package build passed.
-
-- Status: Verified
-- Date: 2026-07-23
-- Scope: Host task lifecycle projection now also feeds the exact live IM
-  runtime binding as an independent delivery consumer. Host-owned
-  runtime/session routing ignores model metadata, rejects task events whose
-  session does not match the binding, and assigns stable
-  task/transition/status delivery keys for at-least-once replay and ack. This
-  remains a bounded process-memory outbox; TaskStore and the parent actor inbox
-  are not drained or repurposed.
-- Read: HostService task route, IM runtime association/binding authorization,
-  delivery outbox/subscription/ack, task projection, Gateway renderer, and
-  integration tests.
-- Tests: Host 604/604, IM Gateway 10/10, focused lifecycle/IM 25/25, and
-  affected package typechecks passed.
-
-- Status: Verified
-- Date: 2026-07-23
-- Scope: WorkspaceContext owns an independent task lifecycle hub and
-  HostService projects post-store-write transitions as bounded `task.updated`
-  events. Parent-run routes survive Core terminality while the runtime facade is
-  retained; actor notification delivery remains a separate consumer channel,
-  and live push is best-effort with `task.list` as reconciliation truth.
-- Read: TaskManager observer, WorkspaceContext, HostService routing, task
-  projections, server capability advertisement, protocol schema, and tests.
-- Tests: Host lifecycle/projection/protocol suites (67 tests), affected package
-  typechecks, and schema validation passed.
-
-- Status: Verified
-- Date: 2026-07-23
-- Scope: Host task composition now pairs the shared TaskManager sink with its
-  parent actor inbox so foreground-inline/manual-wait results cannot be injected
-  again. Shell handoff and dynamic `spawn_agent` promotion persist canonical
-  completion policy and return the same structured asynchronous receipt shape.
-- Read: WorkspaceContext task ownership, task revival/control, Shell handoff,
-  dynamic Agent promotion, and focused Host/Agent Runtime/Shell tests.
-- Tests: Host task-revival/spawn/tools suites (120 tests), Agent Runtime tasks
-  (72), Shell (43), Core run (129), and affected package typechecks passed.
-
-- Status: Verified
-- Date: 2026-07-23
-- Scope: every standard Host main episode now consumes the selected primary
-  Agent profile body as one `app_identity` system section. Fresh runs,
-  checkpoint resume, Workflow resume, and Workflow continuation share the same
-  builder; current goals and selected context remain user/working inputs.
-- Read: Agent profile parsing/selection, WorkflowEpisodeRuntime construction,
-  project-context app prompt composition, and focused Host prompt tests.
-- Tests: focused Workflow episode suite (3 tests), Host typecheck, and
-  repository test typecheck passed.
-
-- Status: Verified
-- Date: 2026-07-21
-- Scope: foreground `spawn_agent` and background `task_create(kind:"agent")`
-  now share one model-facing handoff schema. Dynamic children receive a
-  self-contained `goal` as task input and optional bounded `context` as required
-  working context; model-authored task text is never elevated into the child
-  system prompt, and parent conversation/tool results are not inherited
-  implicitly. Dynamic cache identity includes explicit context.
-- Read: Host Agent runtime assembly, shared tool catalog/schema, background
-  Agent task runner, Agent Runtime spawn/context and delegation ledger, protocol
-  fixtures, and focused tests.
-- Tests: focused Agent Runtime ledger, Host spawn/task/tool/protocol, and TUI
-  event/transcript suites passed; full repository verification is recorded by
-  the release gate.
-
-- Status: Verified
-- Date: 2026-07-21
-- Scope: `task_create(kind:"agent")` now reuses the live dynamic-spawn payload
-  schema and semantic validator, so unavailable tools/grants fail before task
-  creation or approval. Host forwards typed approval subjects and the partial-
-  child Stop hook consumes only parent-correlated `subagent.completed/failed`
-  lifecycle events, never a spawn tool failure without a child.
-- Read: Host tool catalog, Agent assembly/grants, interaction projection,
-  workflow hooks, Agent Runtime task descriptors, and focused tests.
-- Tests: focused Host tools/spawn/workflow-hook/interaction suites and affected
-  package typechecks passed.
-
-- Status: Verified
-- Date: 2026-07-21
-- Scope: Host dynamic Agent spawn no longer parses goal/prompt prose as an
-  admission gate. `validateInput` checks the structured enabled-tool/grant
-  contract before policy/approval. Strict `agent-outcome.v1` status,
-  accomplishments, and blockers are projected through dynamic, configured,
-  parallel, task, lifecycle, trace, and ledger paths. A one-shot Stop hook
-  gives the parent structured recovery/disclosure instructions for every
-  partial or blocked child without inspecting final-answer prose.
-- Read: Host Agent runtime assembly/grants, Core tool validation order, Agent
-  Runtime result/supervisor contracts, workflow hooks, session queries, and
-  focused/full tests.
-- Tests: dynamic spawn, Agent/delegate tool, and workflow-hook coverage passed;
-  full repository verification is recorded by the release gate.
-
-- Status: Verified
-- Date: 2026-07-20
-- Scope: added a test-only stdio Host adapter that installs two deferred
-  approval waiters before emitting either request. It exercises protocol-level
-  concurrent approval delivery and completion-after-all-resolutions without
-  changing production Host runtime, waiter, policy, or wire contracts.
-- Read: Host stdio/client-spawn protocol path, approval queue test adapter,
-  adapter regression, and TUI approval coordinator/PTY consumer.
-- Tests: Host 594/594 and Host/TUI typechecks passed; the adapter regression
-  proves both requests are live before either resolution, and a real 96x32 PTY
-  advanced from `1 of 2` to `1 of 1`.
-
-- Status: Verified
-- Date: 2026-07-19
-- Scope: checked TUI approval coordination and Workflow action consumers.
-  Host remains the runtime/security authority and still owns approval waiter
-  construction, policy, protocol resolution, execution cleanup, task state,
-  and durable Workflow state; the refactor changes only TUI client-local
-  queue/view/presentation ownership.
-- Read: Host approval interaction owner, protocol client routes, Task/Workflow
-  operations, and the changed TUI consumers.
-- Tests: TUI 445/445, TUI typecheck, and repository test typecheck passed; no
-  Host source or wire contract changed.
-
-- Status: Verified
 - Date: 2026-07-19
 - Scope: Workflow episode construction keeps step and resource budgets as
   independent limiters. Host derives Core `maxSteps` only from the explicit
@@ -668,7 +379,6 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 - `packages/host/src/runtime/capability-assembly.ts` — capability snapshot projection, summaries, automation reads, and merge
 - `packages/host/src/runtime/task-runtime-operations.ts` — Host Task protocol/control, output reads, actor revival, orphan recovery, and canonical workspace root
 - `packages/host/src/runtime/task-projections.ts` — stateless task snapshots, notifications, and terminal classification
-- `packages/host/src/agent-report-tool.ts` — session-authorized, paginated child Agent report retrieval
 - `packages/host/src/runtime/workflow-runtime-operations.ts` — Host Workflow canonical roots/store, snapshots, actor notifications, durable controls/resume claims, finalization, and record persistence helpers
 - `packages/host/src/runtime/workflow-episode-runtime.ts` — Host Workflow-aware projection preparation, Core episode construction, actor chain, live control pump, usage, and execution completion
 - `packages/host/src/runtime/contracts.ts` — runtime construction and execution coordination ports
@@ -679,8 +389,8 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 - `packages/host/src/run-policy.ts`
 - `packages/host/src/server.ts`
 - `packages/host/src/connection.ts`
+- `packages/host/src/agent-spawn-grants.ts`
 - `packages/host/src/tool-catalog.ts`
-- `packages/host/src/tool-selectors.ts`
 - `packages/host/src/tool-surface.ts`
 - `packages/host/src/tool-identities.ts`
 - `packages/host/src/tools.ts`
@@ -755,24 +465,6 @@ Does not own:
 
 ## Contracts
 
-- `AgentRuntimeAssembly` applies Agent Runtime's
-  `composeInProcessChildAgentPrompt()` to every built-in in-process child:
-  configured direct delegates, their indexed `delegate_agent` router,
-  `delegate_parallel`, dynamic `spawn_agent`, and background Agent tasks.
-  Configured profile text precedes the single shared child contract;
-  dynamic task goal/context remains user/working input. ACP and
-  external-command adapters keep their transport-owned prompt/input contracts.
-- Host in-process entrypoints prepare their distinct identity, model, tools,
-  policy, admission, scheduling, and aggregation inputs, then use Agent
-  Runtime's single terminal collector for start/result/workspace/ledger/failure
-  evidence. `delegate_parallel` is a bounded `Promise.all` aggregator and
-  foreground promotion adopts the same child/completion promise; neither
-  creates a second execution/result pipeline.
-- `read_agent_report` accepts only `childRunId` plus bounded pagination. It
-  requires current-session membership, a non-main child run, registered parent
-  ancestry, matching `run.json` identity, and canonical non-symlink
-  session/run/result paths. Pages fit a serialized 6,800-character result
-  budget and advance `nextOffset` by the actual returned report characters.
 - `createMainHostToolCatalog()` owns config/source admission.
   `tool-surface.ts` then owns canonical Profile allow/deny narrowing, Workflow
   narrowing, required-schema promotion, and scoped discovery for main,
@@ -780,18 +472,6 @@ Does not own:
   monotonic: it cannot restore a removed tool, and every retained
   `tool_search` is rebuilt over exactly the final definitions instead of
   reusing a broader captured index. Child policy remains defense in depth.
-- The main Host catalog registers `web_fetch` from
-  `@sparkwright/web-tools` with source/selector `web`. Built-in identity marks
-  it advanced, so normal default loading defers its schema and derives
-  `tool_search`; `delegation:"parent_only"` and the child catalog constructors
-  keep it out of dynamic/configured child surfaces. `tools.use`, `allowed`,
-  `disabled`, and `defer` continue to apply through the shared catalog path.
-- `capabilities.web.security` is the single web transport knob. Omitted or
-  `system` builds an HTTPS-only tool that follows normal OS DNS/routing;
-  `hardened` builds the DNS-validated, address-pinned HTTP(S) variant. Project
-  config may select `hardened`; project-owned `system` is removed alongside
-  other restricted network capability settings so a checkout cannot weaken a
-  user hardened boundary. `$SPARKWRIGHT_CONFIG` remains an explicit override.
 - A Todo continuation first proves `todo_write` survived admission and current
   Workflow narrowing. If absent, `runTodoSupervised()` hands off with
   `required_tool_unavailable` before emitting the directive that requires that
@@ -1056,14 +736,12 @@ Does not own:
   for tools that remain. Selectors and concrete tool names are exact; removed
   built-in names fail validation instead of being normalized.
 - Main, dynamic-spawn child, configured-delegate child, and diagnostic tool
-  lists are derived from `tool-catalog.ts`. `ToolDefinition.delegation`
-  defaults to `parent_only`; dynamic `spawn_agent` receives only child-eligible
-  local read/discovery, revisioned create/replace/edit, and child-safe
-  foreground shell definitions that survive the parent effective filters.
-  Configured in-process delegates intersect the same child-eligible catalog
-  with administrator profile selectors and concrete allowed tools. Neither
-  path exposes MCP, external-send/publish, task/todo/cron, background, or
-  Agent/Skill management tools.
+  lists are derived from `tool-catalog.ts`; dynamic `spawn_agent` uses a
+  dynamic child catalog that defaults to read-only tools but can expose managed
+  workspace write tools (`write`, `edit`, `edit_anchored_text`) only when the
+  tool call requests a spawn-time workspace-write grant. It never exposes
+  `bash`. Configured in-process delegates use a separate profile-aware child
+  catalog for workspace read/write coding tools plus `bash` when selected.
   Catalog entries keep tool definition, source, and stable identity metadata;
   callers that need bare `ToolDefinition[]` flatten catalog entries with
   `catalogToolDefinitions()`.
@@ -1071,23 +749,23 @@ Does not own:
   `task` control when the background task surface is enabled. Existing-task
   control is discoverable through the normal scoped `tool_search` path rather
   than charging every model turn for its schema. Host owns the `agent` kind descriptor and
-  its model-facing payload schema (`goal`, optional `context`, optional
-  UI-only `label`); execution still dispatches through the `TaskManager` runner
-  registered by `HostRuntime`. New model-authored payloads use that strict
-  shape; the background runner tolerantly extracts those canonical fields from
-  persisted legacy envelopes without restoring role/tool/grant/budget/metadata
-  as authority. Model payloads cannot choose child tools, approval scope, or
-  max steps.
+  its model-facing payload schema (`goal`, `role`, `prompt`, optional
+  `allowedTools`, `grant`, `maxSteps`, `metadata`); execution still dispatches
+  through the `TaskManager` runner registered by `HostRuntime`. For
+  `grant.workspaceWrite: true` or explicit write tools, the descriptor supplies
+  grant-aware policy/governance and approval summary metadata before the task
+  starts, while the background child consumes the same scoped grant as
+  `spawn_agent`. The `maxSteps` payload guidance mirrors dynamic `spawn_agent`:
+  omit it to inherit the parent run's effective step budget, and allocate
+  enough turns for read/search plus final synthesis instead of using very low
+  caps.
 - The main host catalog preserves the shared deferred `task` action schema from
   agent-runtime, including action-specific non-empty id constraints, so
   `tool_search select:task` gives the provider the same guidance the runtime
   validates.
 - Host wires the shared `TaskManager` actor sink into a durable
-  `FileTaskNotificationOutbox` whose direct actor inbox backs per-run core
-  notification/revival sources and TaskManager's explicit-result consumption.
-  Foreground-inline and manual-wait terminal results drain their matching parent
-  notification; awaited and detached observations remain available to revival.
-  All remaining terminal task notifications for the run can be injected through
+  `FileTaskNotificationOutbox` whose direct actor inbox backs per-run core notification/revival
+  sources. All terminal task notifications for the run can be injected through
   `run.notification.injected`; only awaited tasks wake core's internal
   `waiting_tasks` state. Injected terminal task notification body text includes
   a bounded `Result summary: ...` when a task result is present, because the
@@ -1107,8 +785,8 @@ Does not own:
   markdown-folder-asset plumbing, optional `config.yaml`, and per-node markdown
   sections, then surfaced through capability snapshots and CLI inspection.
   After P1.5, runtime instantiation no longer requires the experimental
-  workflow flag. Explicit workflow assets and configured verification profiles
-  remain the only Host-owned hard verifier producers.
+  workflow flag because the old verification/documented-command gate producers
+  are deleted.
 - `sparkwright run --workflow <name>` / `run.start.workflow` instantiate a
   host-owned single-family projection hook set named `workflow:<workflowRunId>`.
   The projection owns live in-memory node state, TurnStart node context,
@@ -1269,13 +947,16 @@ Does not own:
   `authorization: trusted`) before projection instantiation. Hook execution
   remains non-interactive, so unauthorized verifier commands reject the workflow
   instead of prompting at execution time.
-- Host verification profiles are explicit configured run-level invariant
-  projections, not workflow assets and not linear state-machine nodes. They use
-  the verifier execution pipeline and Core FactLedger result protocol,
-  `FactLedger.writeEpoch` freshness, and bounded `advance` retries only when
-  `capabilities.verification.mode=require`. `suggest` remains guidance-only.
-  The legacy documented-command checker remains an explicitly callable utility
-  but is not auto-assembled from goal wording.
+- Host verification profiles and documented-command checks are built-in
+  run-level invariant projections, not workflow assets and not linear
+  state-machine nodes. They share the verifier execution pipeline and core
+  FactLedger result protocol, use `FactLedger.writeEpoch` for freshness, skip
+  before the first workspace write, skip reruns within an already-clean epoch,
+  and return bounded `advance` retries with model-visible failure evidence when
+  require-mode invariants are dirty. `suggest` verification is guidance-only and
+  does not instantiate an invariant projection. `capabilities.verification.stopGate`
+  and `capabilities.verification.afterWrites.frequency` are no longer config
+  surfaces; `afterWrites.injectOutput` controls retry evidence injection.
 - `backgroundTasks` is the session-level foreground/background policy
   (`disabled`, `foreground-only`, `enabled`). It is accepted on
   `run.start`/`run.resume`, configurable through host config, clamped by
@@ -1304,40 +985,23 @@ Does not own:
   compatibility re-export; it must not grow a second indexed-router copy.
 - Host-facing task controls `task.join` and `task.promote` are protocol/runtime
   controls for TUI and other clients. They do not reuse model-facing task tool
-  JSON: join marks a task awaited with canonical awaited completion policy,
-  while promote forwards a manual foreground promotion signal into
-  `TaskManager`.
+  JSON: join marks a task awaited, while promote forwards a manual foreground
+  promotion signal into `TaskManager`.
 - `tool-identities.ts` records the canonical public model-facing surface
   (`read`, `write`, `edit`, `bash`, `glob`, `grep`), classifies default exposure
   tier, and records related or required tools such as the anchored verified-edit
   pair. The callable definitions use those exact names.
-- Dynamic `spawn_agent` returns the compact parent contract:
-  `childRunId`, `status`, child-authored `report`, runtime-owned
-  `workspace:{writes,paths?}`, and optional completeness/reuse warnings or
-  blockers. Assessment health, transport, usage, actions, ChangeSets, and
-  verification receipts remain diagnostic or `subagent.*` lifecycle facts.
-  Runtime-derived blocked/partial results are not reusable; exact
-  completed/clean reuse returns the same report with a runtime warning. A
-  natural final on the last allowed action is complete; only a forced budget
-  wrap-up is partial/truncated.
-- Dynamic spawn uses `ToolDefinition.validateInput()` to validate requested
-  tools and workspace-write grant consistency against the enabled child
-  catalog before Core evaluates policy or requests approval. The self-contained
-  `goal` remains task/user input, optional bounded `context` is injected as
-  required working context, and only the fixed in-process child contract/result
-  protocol enters the application system prompt. Neither field is interpreted
-  as a Host capability gate.
+- Dynamic `spawn_agent` output includes child identity/finality facts for the
+  parent (`childRunId`, `role`, `stepLimitReached`, `truncated`, and
+  `finality`). A child answer produced on the last allowed step remains a
+  completed tool transport result, but host marks the answer `partial` and
+  prefixes the message with a warning.
 - Dynamic `spawn_agent` starts foreground by default and may promote after the
   foreground budget when `backgroundTasks=enabled`. Promotion adopts the already
   running child through `TaskManager.adoptRunning()` and preserves
   parent-visible `subagent.*` events, usage rollup, run-store attribution,
   terminal projection, and the delegation ledger; it is not a simple wrapper
-  task around a child promise. Its promoted ticket uses the same structured
-  async receipt as `task_create`: actual awaited mode, parent keep-alive,
-  automatic-once observation, concrete next action, and duplicate avoidance.
-  Promotion does not detach direct spawn lifecycle ownership: an Esc/parent
-  cancel still aborts the promoted child and settles the adopted task as
-  cancelled.
+  task around a child promise.
 - Background task lifecycle remains flat in v1. Dynamic and configured child
   agents do not receive `task_create`; only a top-level run can create
   background agent tasks. `capabilities.agents.maxDepth` still bounds ordinary
@@ -1365,11 +1029,9 @@ Does not own:
   reflect the active core run: it reads `ModelInput.run.goal` for output text
   and keeps turn state per run id so shared child-scope adapters do not leak the
   parent construction goal or another child's turn count.
-- Core coding catalog exposes revisioned `create`/`replace`/`edit` workspace
-  tools; deprecated `write` stays parent-only for one compatibility cycle.
-  `read_anchored_text` and `edit_anchored_text` are an advanced deferred pair,
-  and dynamic/configured children may receive only definitions explicitly
-  marked child-eligible.
+- Core coding catalog exposes public `write`/`edit` workspace-write tools;
+  `read_anchored_text` and `edit_anchored_text` are an advanced deferred pair
+  and read-only child catalogs intentionally omit write tools.
 - `tool-selectors.ts` owns the selector vocabulary (`workspace.read`,
   `workspace.write`, `bash`, `planning`, `skills`, `agents`, `tasks`, `cron`,
   `mcp`, `mcp:<server>`) and the semantic intersection for layered selector
@@ -1471,14 +1133,15 @@ Does not own:
   even when only child/all profiles become `delegate_agent` targets or direct
   `delegate_*` aliases.
 - `capability.inspect` also exposes host-owned `rules.workflow` descriptors for
-  configured workflow hooks and explicit verification profiles, plus
-  `rules.events` descriptors for configured non-blocking event subscribers.
-  These descriptors are
+  configured workflow hooks, verification invariants, and the documented-command
+  built-in invariant, plus `rules.events` descriptors for configured
+  non-blocking event subscribers. These descriptors are
   inspection-only summaries: they report source, lifecycle/trigger,
   matcher/action summaries, blocking potential, enabled/active status, and hints
-  without changing hook arrays or executors. Goal wording does not add the
-  legacy documented-command checker to either the hook array or active-rules
-  snapshot.
+  without changing hook arrays or executors. The documented-command pack still
+  uses conditional construction, so inactive runs do not gain a new Stop hook or
+  extra `workflow_hook.*` events; active failures mark the completed run through
+  the verifier outcome rather than blocking final answer text.
 - Configured workflow hooks use canonical lifecycle values only:
   `RunStart`, `TurnStart`, `ModelOutput`, `PreToolUse`, `PostToolUse`, `Stop`,
   `RunEnd`, and `RuntimeSignal`. `capabilities.hooks.events` rules are bound per
@@ -1491,10 +1154,13 @@ Does not own:
   Result-producing configured `PreToolUse` hooks are tagged for the rewrite
   pass, static block/context hooks for the governance pass, and the workflow
   projection tool clamp also runs in governance so it sees rewritten arguments.
-- Host does not install an Agent-specific completion Stop hook. Core terminal
-  runtime-state projection emits factual notices and runtime budget status
-  only; it never requests a semantic completion continuation or derives
-  recovered/unresolved task requirements.
+- Host runtime hook assembly also includes the built-in
+  `runtime:partial_subagent_finality_disclosure` Stop hook after configured,
+  verification/documented-command, and workflow projection hooks. It advances at
+  most once per run when the pending final answer omits a caveat but raw events
+  show `subagent.*` or `spawn_agent` child finality was partial, step-limited,
+  truncated, or failed. It must not treat ordinary truncated read/tool output as
+  child-finality evidence.
 - Workflow action results are gated by `enforceWorkflowHookEffect`, which rejects
   lifecycle-illegal effects before they reach core: `rewrite` only at
   `PreToolUse`, `advance` only at `ModelOutput` / `Stop`, `block` at every
@@ -1515,9 +1181,8 @@ Does not own:
   (`blockedStopActions`) so a blocking agent cannot loop the run.
 - `http` action network access is host-owned policy under
   `capabilities.hooks.http` (allowlist + `allowPrivateNetwork`). It is accepted
-  only from user config or `SPARKWRIGHT_CONFIG`;
-  `stripProjectRestrictedNetworkCapabilities` removes the policy and any
-  `http` hook/event action found in project config. Each
+  only from user config or `SPARKWRIGHT_CONFIG`; `stripProjectHttpHooks` removes
+  the policy and any `http` hook/event action found in project config. Each
   request must match the allowlist, then the resolved address is checked
   (link-local always blocked; private networks blocked unless
   `allowPrivateNetwork`). The request pins the connection to the validated
@@ -1543,8 +1208,7 @@ Does not own:
   ledger: direct `delegate_*` tools and generic `delegate_agent` share the same
   hidden configured delegate tools, `delegate_parallel` reuses those results
   before spawning, and dynamic `spawn_agent` stores/reuses completed dynamic
-  scope results under a role/context/tools key plus the normalized goal. Failed,
-  step-limited, or
+  scope results under a prompt/role/tools key. Failed, step-limited, or
   truncated children remain non-reusable.
 - Host in-process, ACP, and external-command Agent adapters now construct the
   same agent-runtime `PreparedAgentInvocation` data before projecting parent
@@ -1555,7 +1219,7 @@ Does not own:
   workspace, sandbox, and worker-launch preparation; external commands use the
   traced-process `onStarted` signal after sandbox/process admission. Admission
   failures therefore terminate as requested -> failed, and process successes
-  carry the same terminal state/status fields as in-process children.
+  carry the same terminal state/finality fields as in-process children.
 - The indexed router marks internal tool-to-tool arguments with a non-JSON
   invocation entrypoint so direct aliases remain `delegate` while
   `delegate_agent` lifecycle records the real indexed surface. Model-authored
@@ -1611,16 +1275,13 @@ Does not own:
   `cwd` run from the adapter's neutral temporary cwd; host run metadata records
   configured MCP servers whose explicit `cwd` resolves inside the workspace so
   CLI summaries can disclose that static posture.
-- In-process child writes are surfaced to the parent by rolling the child run's
-  own `workspace.write.completed` facts onto `subagent.completed`/
-  `subagent.failed`: the compatibility `workspaceWrites` count is accompanied
-  by complete ChangeSets and final explicit-verifier receipts. Parent
-  aggregation can therefore preserve evidence without a filesystem snapshot;
-  ordinary Agent report status does not depend on that evidence. Child shell rolls
-  back unmanaged mutations, and MCP is absent. Separately, the model-visible
-  Agent result carries only `workspace:{writes,paths?}` from the same structured
-  events; lifecycle receipts remain available to diagnostics and TUI detail
-  views without bloating parent model context.
+- Configured in-process delegate child writes are surfaced to parent-scoped CLI
+  summaries by rolling up the child run's own `workspace.write.completed` events
+  onto `subagent.completed`/`subagent.failed` (`workspaceWrites`), bridged in
+  `spawnSubAgent` — not by a parent-side filesystem snapshot. This avoids
+  time-window misattribution and double event families; it is sound because the
+  delegate child catalog has no untracked writer (shell rolls back unmanaged
+  mutations, no MCP in the child catalog).
 - `TracedProcessRunner` is the host-owned process execution and observation
   boundary for external commands. It emits `extension.process.*` by default,
   exposes only constrained `SPARKWRIGHT_EVENT:` stderr token progress under
@@ -1684,9 +1345,7 @@ Does not own:
 - The registered `agent` task kind snapshots per-run dynamic-spawn
   dependencies from `HostRuntime.prepareRun` and runs the same read-only
   dynamic child-agent path as `spawn_agent`, but passes the task controller's
-  abort signal into `spawnSubAgent`. It therefore uses the same goal/context
-  authority boundary and does not inherit parent conversation state. The task
-  lifecycle owns cancellation and
+  abort signal into `spawnSubAgent`. The task lifecycle owns cancellation and
   emits a compact `agent.completed` event chunk while the full child result
   remains the task result.
 - Skill inline shell preprocessing is host-owned when enabled by
@@ -2333,7 +1992,7 @@ run typecheck`.
   auto-approval.
 - Read: `packages/host/src/run-access.ts`,
   `packages/host/src/runtime.ts`,
-  `packages/host/src/runtime/agent-runtime-assembly.ts`,
+  `packages/host/src/agent-spawn-grants.ts`,
   `packages/host/test/run-access.test.ts`,
   `packages/host/test/spawn-agent.test.ts`,
   `packages/host/test/tools.test.ts`.

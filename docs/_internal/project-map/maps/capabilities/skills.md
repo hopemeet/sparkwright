@@ -2,132 +2,155 @@
 
 ## Purpose
 
-Skills provide reusable instructions and resources that can be indexed, loaded
-into context, inspected, created deterministically at the project layer, and
-measured from runtime traces. See
-[../../modules/skills.md](../../modules/skills.md). Skill self-evolution is a
-retired capability; its former map is historical only.
+Skills provide reusable instructions and resources that can be indexed, matched,
+loaded into context, or exposed through a governed loader tool.
+
+See [../../modules/skills.md](../../modules/skills.md). For mutating skills
+(propose/apply/history/revert) rather than loading them, see
+[skill-evolution.md](skill-evolution.md).
 
 ## Main Files
 
 - `packages/skills/src/*`
 - `packages/host/src/runtime.ts`
 - `packages/host/src/runtime/capability-runtime-operations.ts`
-- `packages/host/src/project-skill-create.ts`
-- `packages/host/src/skill-stats.ts`
-- `packages/host/src/skill-inline-shell.ts`
 - `packages/host/src/skill-usage.ts`
+- `packages/host/src/skill-inline-shell.ts`
 - `packages/host/src/tools.ts`
-- `packages/cli/src/cli.ts`
-- `packages/tui/src/lib/create-capability.ts`
-- `packages/tui/src/lib/skills-browser.ts`
-- `packages/tui/src/components/skills-panel.tsx`
+- `packages/host/src/skill-evolution.ts`
+- `packages/tui/src/app.tsx`
 
 ## Data Flow
 
 ```txt
 skill roots
   -> prepareSkillsForRun()
-  -> optional host-owned inline-shell preprocessing
-  -> skill.indexed / skill.failed
-  -> resident context and/or skill_load
-  -> skill.loaded
-  -> session trace + advisory load counters
-
-session traces
-  -> fingerprinted per-session projection cache
-  -> rebuildable name/key/package catalog
-  -> bounded recent-window or targeted Stats report
-
-CLI skills create / TUI create Skill
-  -> deterministic manifest validation
-  -> exclusive project-directory reservation
-  -> publish SKILL.md once; never overwrite
-
-TUI /skills
-  -> effective layered Skill report
-  -> trace-derived Stats
-  -> exact identity join
-  -> compact inventory -> Enter diagnostics
+  -> optional inline shell preprocessing via host runner
+  -> skill.indexed/failed events
+  -> context and/or skill_load tool
+  -> skill.loaded event
+  -> host Skill usage sidecar (.sparkwright/skill-usage.json; advisory only)
 ```
 
 ## Contracts
 
-- Default host behavior exposes `skill_load` and does not resident-load selected
-  Skills unless explicitly configured.
-- Root precedence is `builtin -> user -> project -> configured`; project is the
-  only CLI/TUI creation target.
-- Manifest validation and all package-aware consumers use the required v2
-  package identity. `contentHash` and name-only evidence are not version keys.
-- `skill.indexed` metadata carries emit-time package identity. On-demand
-  `skill.loaded` joins to that run-local index by name; failed loads remain
-  structured failures and are retryable.
-- The model can inspect/load Skills but cannot create or update them through a
-  privileged Skill mutation tool.
-- Creation validates before publication and fails if the target exists. It does
-  not create registry, proposal, history, approval-receipt, or learning data.
-- Stats reports indexing/loading, explicit/resident loads, load failures,
-  associated run outcomes, and associated tool failures. Association is not a
-  causality claim.
-- The recent `--last` selection is bounded. Unchanged selected sessions reuse
-  projections, while targeted name/key/package queries use the catalog to avoid
-  unrelated sessions inside the same candidate window. Cached sessions outside
-  the current bound do not contribute to totals. Both cache layers are
-  disposable and rebuild after schema/algorithm/fingerprint mismatch.
-- Old self-evolution directories are outside the Stats input contract. Readers
-  and creators ignore them without deleting or migrating user data.
-- TUI `/skills` shows current exact-identity usage; it has no draft count.
-  `/create skill` shares the deterministic Host creator.
-- Inline shell is opt-in, host-owned, no-write, fail-closed, and sandboxed.
+- The first managed-change fast path applies only to a complete, clean,
+  model-authored create. Its package hash participates in a stable final-effect
+  hash; runtime/model fingerprints remain outside that identity. Managed
+  proposals carry required artifact identity and policy-2 package identity.
 
-## Public Surfaces
+- Default host behavior exposes loader tool and does not auto-reside all selected skills.
+- Capability inspection indexes configured Skill roots without resident
+  selection through `CapabilityRuntimeOperations`; live-run loading remains in
+  HostRuntime run preparation. Fatal index diagnostics preserve the canonical
+  `run.created -> capability.index.failed -> run.failed` trace order.
+- Project skill root defaults to `.sparkwright/skills`.
+- Root precedence is `builtin -> user -> project -> configured`.
+  `capabilities.skills.roots` supplies the canonical configured layer, which
+  remains strongest for deterministic workspace overrides. Runtime reports,
+  traces, stats, doctor, CLI, and TUI use that same label; `legacy` is not an
+  accepted layer.
+- Skill metadata parsing has one entry: `parseSkillManifest`. It rejects empty
+  `instructions`; disk loaders, runtime preparation, and Skill evolution use
+  that same strict parser. The parser preserves first-class `license` and
+  `compatibility`, splits list fields consistently, and promotes
+  `metadata.version` to canonical `version`.
+- `capabilities.skills.inlineShell.enabled` is required before `` !`cmd` ``
+  snippets in `SKILL.md` execute. Execution is host-owned, forces sandbox
+  enforcement, disables workspace writes, fails closed when the OS sandbox is
+  unavailable, and traces as `extension.process.*` with `kind: skill_script`.
+  The platform-specific no-write/read-grant profile is compiled by
+  `shell-sandbox`; Host retains process, timeout, output, and trace ownership.
+  `skill_script` command arguments are redacted in lifecycle previews; failed
+  stderr stays in trace summaries but is not inserted into model-facing Skill
+  content.
+- On-demand `skill_load` must turn missing/denied Skill loads and missing
+  resources into structured `tool.failed` results (`SKILL_LOAD_FAILED`) and a
+  `skill.failed` event carrying the original `toolCallId` so CLI summaries,
+  trace diagnostics, and skill stats do not treat degraded context as success or
+  double-count recovered companion failures. Missing resource failures include
+  the Skill's available reference files when known, so a model that guessed a
+  path like `README.md` can recover by loading the body and choosing an exact
+  `<skill_files>` entry.
+- A loader/run caches successful reference loads by Skill name, canonical
+  resource path, and package identity. Repeating the same resource for
+  the same Skill version returns a short `already_loaded` result without the
+  content or another file read; failed/denied loads are never cached. The cache
+  is loader-scoped and does not replace package-hash identity or trace stats.
+- Skill index and resident Skill context must not expose host absolute
+  source paths or package hashes to provider prompts. Keep source provenance
+  in metadata and trace events.
+- `skill.indexed` trace metadata includes required per-Skill emit-time package
+  identity (`packageHash`, `packageHashPolicyVersion: 2`, and layer). On-demand
+  `skill.loaded` remains path/hash-free and read-time stats join it back to the
+  same run's indexed Skill by name. Resident `skill.loaded` may carry package
+  identity because it is trace metadata, not model-visible content.
+- `packages/skills/src/package-v2.ts` is the canonical Skill package substrate:
+  complete ordinary-file
+  enumeration, fixed exclusions, normalized NUL-framed hashing, identical-set
+  snapshots, policy version 2, and fail-closed special-file/path/size checks.
+  Runtime loading and managed evolution share it; the v1 package surface is gone.
+- `skills stats` is read-time only. It aggregates by
+  `skill + layer + name + packageHashPolicyVersion + packageHash`,
+  ignores rows without canonical v2 identity,
+  separates explicit and resident loads, and exposes load failures only through
+  `loadFailures.total/byMode/byStatus`,
+  splits associated tool failures before vs after first load, scans agent trace
+  files with event-id dedupe, and rolls up proposal/history metadata only when
+  package hashes align. It also reports trace/evolution windows, freshness
+  timestamps, analyzer findings, and rebuildable session projection cache
+  hit/miss/write/error counts. Projection schema and algorithm versions
+  invalidate stale cache DTOs. Session projection Skill entries carry event
+  windows plus bounded sample/failure run ids. A lightweight catalog cache maps
+  Skill names, Skill keys, and package hashes to session projections for
+  targeted `--skill`, `--skill-key`, and `--package-hash` queries. These are
+  association signals, not causal claims.
+- Capability snapshots and CLI `capabilities inspect` expose a path-free
+  `skills.inlineShell` policy summary (`enabled`, `writePolicy`,
+  `sandboxMode`, `failClosed`, timeout/output caps).
+- Skill bundles are not a v1 runtime capability. The experimental package-level
+  bundle registry, `.bundle.json` loader, and slash-command resolver were
+  removed; grouped Skill behavior must not bypass the governed `skill_load`
+  events, usage sidecar, or trace surfaces.
+- Skill create/update tools are managed capability mutations, not raw shell
+  writes; successful managed mutations emit `capability.mutation.completed`.
+  Their model-authored `body` content is proposal-first: `create_skill` wraps
+  instructions-only content, and both `create_skill` and `update_skill`
+  normalize full `SKILL.md` bodies by filling a missing frontmatter
+  `description` from the tool description while rejecting mismatched names.
+- File-backed Skill usage recorders reload the current sidecar before reads and
+  mutations so multiple recorder instances in one process do not overwrite each
+  other's latest records. Host runtime now writes successful `skill.loaded`
+  observations to `.sparkwright/skill-usage.json`: `mode:
+"on_demand_tool"` increments `explicitLoadCount`, `mode:
+"resident_context"` increments `residentLoadCount`, and both increment
+  aggregate `useCount`. Proposal apply/restore and direct project
+  `skills create` record `patchCount`. This is still an advisory observation
+  store, not a routing authority; usage-based ranking remains outside the host
+  default path.
 
-- CLI: `skills list|create|validate|stats|doctor`
-- TUI: `/skills`, `/create skill`
-- Model tools: `list_skills`, optional `skill_load`
-- Config: loading roots, selection/loading limits, and inline-shell settings;
-  there is no `capabilities.skills.evolution` field
+## Consumers
+
+- Host runtime.
+- CLI `skills` commands.
+- TUI `/skill-create`, `/skill-update`, `/skill-review`, `/skill-learn`.
+- Capability inspection.
 
 ## Change Checklist
 
-- Preserve exact root/layer and v2 package identity across runtime and Stats.
-- Preserve no-overwrite project creation and legacy-data non-deletion.
-- Bump cache schema/algorithm versions when projection meaning changes.
-- Update Host, CLI, TUI, schemas, public docs, test routes, and the retired map
-  together when the public surface changes.
+- Check root layering and shadowing behavior.
+- Check event payloads for indexed/loaded/failed skills.
+- Check inline-shell opt-in config and trace/sandbox behavior if preprocessing changes.
+- Check `skill_load` tool failure normalization, CLI summaries, trace summary,
+  and `skills stats` if loader output statuses change.
+- Check TUI and CLI proposal flows if evolution behavior changes.
+- Keep untrusted session learning separate from stable runtime loading.
+
+## Known Debts
+
+- Self-evolution design exists, but automatic learning should remain clearly opt-in/reviewed.
 
 ## Last Verified
-
-- Status: Verified
-- Date: 2026-08-02
-- Scope: removed privileged Skill mutation, proposal/history/learning state,
-  config, UI, and Stats rollups; retained layered loading, deterministic
-  creation, exact package identity, and cached trace statistics.
-- Read: package loading/identity, Host runtime/creator/stats/tools/config,
-  CLI/TUI adapters, schemas, docs, and focused coverage.
-- Tests: full affected workspace suites, final four-case creator regression,
-  repository test typecheck, and generated schema passed.
-
-- Status: Verified
-- Date: 2026-08-01
-- Scope: added the focused TUI `/skills` inventory/usage projection over the
-  existing layered report, trace stats, and proposal sources without changing
-  Skill runtime, Host storage, or protocol contracts.
-- Read: Host Skill report/stats/evolution exports, TUI loader/component/action/
-  route wiring, and exact-identity projection tests.
-- Tests: TUI typecheck, focused 11/11, full TUI 83 files / 550 tests, build,
-  and real 80-column `/skills` PTY inspection passed.
-
-- Status: Verified
-- Date: 2026-07-26
-- Scope: confirmed `AssetPackageIdentity.fileCount` as a retained public
-  package-size diagnostic in both hash and snapshot results. The field is now
-  explicitly reserved and both producers have regression assertions; package
-  enumeration, hashing, and snapshot behavior are unchanged.
-- Read: Skills package-v2 source/tests and asset-package identity design
-  contracts.
-- Tests: focused Skills 27/27, Skills typecheck, strict reserved-field check,
-  project-map drift, and the full release gate passed.
 
 - Status: Verified
 - Date: 2026-07-19

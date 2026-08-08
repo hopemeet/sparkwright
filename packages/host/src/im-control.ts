@@ -272,12 +272,6 @@ export function recordHostImEvent(
   if (!association) return;
   const binding = state.bindings.get(association.bindingId);
   if (!binding || !bindingIsLive(binding)) return;
-  if (
-    event.kind === "task.updated" &&
-    event.payload.sessionId !== binding.sessionId
-  ) {
-    return;
-  }
   const identity = runtime.executionIdentity();
   if (event.kind === "approval.requested" && identity) {
     state.approvals.set(event.payload.approvalId, {
@@ -372,17 +366,10 @@ function appendDelivery(
   event: HostEvent,
 ): void {
   const outbox = state.outboxes.get(sessionId) ?? [];
-  const idempotencyKey = taskDeliveryKey(sessionId, event);
-  if (
-    idempotencyKey &&
-    outbox.some((delivery) => delivery.deliveryKey === idempotencyKey)
-  ) {
-    return;
-  }
   let sequence = (state.deliverySequence.get(sessionId) ?? 0) + 1;
   state.deliverySequence.set(sessionId, sequence);
   outbox.push({
-    deliveryKey: idempotencyKey ?? `${sessionId}:${sequence}`,
+    deliveryKey: `${sessionId}:${sequence}`,
     sessionId,
     event,
   });
@@ -407,21 +394,6 @@ function appendDelivery(
     });
   }
   state.outboxes.set(sessionId, outbox);
-}
-
-function taskDeliveryKey(
-  sessionId: string,
-  event: HostEvent,
-): string | undefined {
-  if (event.kind !== "task.updated") return undefined;
-  const { taskId, transition, status } = event.payload;
-  return [
-    sessionId,
-    "task",
-    encodeURIComponent(taskId),
-    transition,
-    status,
-  ].join(":");
 }
 
 function bindingIsLive(binding: HostImBinding): boolean {

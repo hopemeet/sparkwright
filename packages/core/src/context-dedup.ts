@@ -350,19 +350,12 @@ function renderSpawnAgentOneLineDetails(meta: Record<string, unknown>): string {
   const childRunId = metadataString(meta, "childRunId");
   if (childRunId) parts.push(`child=${compactOneLineValue(childRunId, 72)}`);
 
-  const agentStatus = metadataString(meta, "agentStatus");
-  if (agentStatus) {
-    parts.push(`agentStatus=${compactOneLineValue(agentStatus, 24)}`);
-  }
+  const finality = metadataString(meta, "finality");
+  if (finality) parts.push(`finality=${compactOneLineValue(finality, 24)}`);
 
   const stepLimitReached = meta["stepLimitReached"] === true;
   const truncated = meta["truncated"] === true;
-  if (
-    agentStatus === "partial" ||
-    agentStatus === "blocked" ||
-    stepLimitReached ||
-    truncated
-  ) {
+  if (stepLimitReached || truncated || finality === "partial") {
     const reasons = [
       stepLimitReached ? "stepLimit" : undefined,
       truncated ? "truncated" : undefined,

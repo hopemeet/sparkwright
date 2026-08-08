@@ -53,7 +53,6 @@ async function renderToText(
 function state(partial: Partial<StoreState>): StoreState {
   return {
     status: "idle",
-    statusMessage: null,
     events: [],
     pendingApproval: null,
     lastError: null,
@@ -115,23 +114,6 @@ describe("StatusBar", () => {
     expect(text).toContain("running shell");
     expect(text).toContain("openai/gpt-5.4-mini");
     expect(text).toContain("accept-edits");
-  });
-
-  it("shows cancelling as status instead of a duplicate toast", async () => {
-    const text = await renderToText(
-      <StatusBar
-        state={state({
-          status: "running",
-          statusMessage: "cancelling",
-          runStartedAt: Date.now(),
-        })}
-        modelLabel="openai/gpt-5.4-mini"
-        permissionMode="ask"
-        focused={true}
-      />,
-    );
-
-    expect(text).toContain("cancelling");
   });
 
   it("surfaces running background tasks with the activity shortcut", async () => {

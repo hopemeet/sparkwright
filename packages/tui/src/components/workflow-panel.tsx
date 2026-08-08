@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Box, Text, useInput, useStdout } from "ink";
 import type { WorkflowRunSnapshot } from "@sparkwright/protocol";
-import { isBackInput } from "../lib/input-key.js";
 import { DialogFrame } from "./dialog-frame.js";
 import {
   latestWorkflowVerdict,
@@ -50,7 +49,7 @@ export function WorkflowPanel(props: {
   }, [props.workflows.length]);
 
   useInput((input, key) => {
-    if (isBackInput(input, key) || input === "q") return props.onClose();
+    if (key.escape || input === "q") return props.onClose();
     if (input === "r") return props.onRefresh();
     if (key.downArrow || input === "j") {
       if (props.workflows.length === 0) return;

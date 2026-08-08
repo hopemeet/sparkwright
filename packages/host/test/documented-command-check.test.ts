@@ -42,6 +42,7 @@ describe("documented command check", () => {
       activation: {
         enabled: true,
         active: true,
+        hasRunContext: true,
         reason:
           "write-enabled goal requests verification/handoff/documented-command validation",
       },
@@ -65,6 +66,7 @@ describe("documented command check", () => {
       activation: {
         enabled: true,
         active: false,
+        hasRunContext: true,
         reason: "workspace writes are disabled",
       },
       hooks: [],
@@ -73,6 +75,7 @@ describe("documented command check", () => {
     expect(evaluateDocumentedCommandRule({})).toMatchObject({
       enabled: true,
       active: false,
+      hasRunContext: false,
       reason: "workspace writes are disabled",
     });
   });

@@ -1,30 +1,95 @@
-import { createRunId } from "@sparkwright/core";
-import { EventLog } from "@sparkwright/core/internal";
 import { describe, expect, it } from "vitest";
-import { formatEvent } from "../src/event-format.js";
+import type { SparkwrightEvent } from "@sparkwright/core";
+import {
+  createLiveEventFormatter,
+  shouldPrintLiveEvent,
+} from "../src/event-format.js";
 
-describe("CLI event formatting", () => {
-  it("prints semantic sub-agent status and blocker codes", () => {
-    const log = new EventLog(createRunId());
-    const event = log.emit(
-      "subagent.completed",
-      {
-        childRunId: "run_child",
-        terminalState: "completed",
-        status: "blocked",
-        summary: "Execution requires bash",
-        blockers: [
-          {
-            code: "SHELL_REQUIRED",
-            message: "A shell-capable path is required.",
-          },
-        ],
-      },
-      { agentName: "runner" },
-    );
+function event(type: string, payload: unknown = {}): SparkwrightEvent {
+  return {
+    id: `evt_${type}`,
+    runId: "run_test",
+    type,
+    timestamp: "2026-06-20T00:00:00.000Z",
+    monotonicUs: 1,
+    sequence: 1,
+    payload,
+  } as SparkwrightEvent;
+}
 
-    expect(formatEvent(event)).toBe(
-      `[${event.sequence}] subagent.completed runner status=blocked summary=Execution requires bash blockers=SHELL_REQUIRED`,
-    );
+describe("event-format live output filtering", () => {
+  it("suppresses high-volume stream chunks from live CLI output", () => {
+    expect(shouldPrintLiveEvent(event("model.stream.chunk"))).toBe(false);
+    expect(shouldPrintLiveEvent(event("run.budget.checked"))).toBe(false);
+    expect(shouldPrintLiveEvent(event("run.budget.exceeded"))).toBe(true);
+    expect(shouldPrintLiveEvent(event("model.stream.started"))).toBe(true);
+    expect(shouldPrintLiveEvent(event("model.stream.completed"))).toBe(true);
+    expect(shouldPrintLiveEvent(event("tool.requested"))).toBe(true);
+  });
+
+  it("prints debug-noise events in verbose live CLI output", () => {
+    expect(
+      shouldPrintLiveEvent(event("model.stream.chunk"), { verbose: true }),
+    ).toBe(true);
+    expect(
+      shouldPrintLiveEvent(event("run.budget.checked"), { verbose: true }),
+    ).toBe(true);
+  });
+
+  it("aggregates suppressed live debug events", () => {
+    const formatter = createLiveEventFormatter();
+    expect(formatter.format(event("run.budget.checked"))).toEqual([]);
+    expect(formatter.format(event("model.stream.chunk"))).toEqual([]);
+
+    expect(formatter.format(event("model.completed"))).toEqual([
+      "[1] live.debug.suppressed 2 event(s): run.budget.checked=1 model.stream.chunk=1",
+      "[1] model.completed step=? adapter= tokens= toolCalls=0",
+    ]);
+    expect(formatter.flush()).toEqual([]);
+  });
+
+  it("formats capability index diagnostics with payload detail", () => {
+    expect(
+      createLiveEventFormatter().format(
+        event("capability.index.failed", {
+          kind: "agent_profile",
+          code: "AGENT_PROFILE_ID_COLLISION",
+          severity: "warning",
+          profileId: "reviewer",
+          message:
+            'Agent profile id collision for "reviewer": kept /tmp/a.md, dropped /tmp/b.md (fail-closed).',
+        }),
+      ),
+    ).toEqual([
+      '[1] capability.index.failed severity=warning agent_profile AGENT_PROFILE_ID_COLLISION reviewer message=Agent profile id collision for "reviewer": kept /tmp/a.md, dropped /tmp/b.md (fail-closed).',
+    ]);
+  });
+
+  it("formats delegate routing evaluations", () => {
+    expect(
+      createLiveEventFormatter().format(
+        event("agent.routing.evaluated", {
+          mode: "sort",
+          delegateCount: 3,
+          relevantCount: 1,
+          lowCount: 2,
+        }),
+      ),
+    ).toEqual([
+      "[1] agent.routing.evaluated mode=sort delegates=3 relevant=1 low=2",
+    ]);
+  });
+
+  it("formats tool failure codes from the canonical error envelope", () => {
+    expect(
+      createLiveEventFormatter().format(
+        event("tool.failed", {
+          toolCallId: "call_1",
+          toolName: "read",
+          status: "failed",
+          error: { code: "ENOENT", message: "missing" },
+        }),
+      ),
+    ).toEqual(["[1] tool.failed read status=failed error=ENOENT artifacts=0"]);
   });
 });

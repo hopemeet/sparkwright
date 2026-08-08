@@ -79,13 +79,7 @@ Default implementation: `FileRunStore`.
 
 Embedders may aggregate multiple episode assessments for an execution, but they
 must not replace Core's per-run assessment with prose parsing or an independent
-tool-outcome verdict. Agent report status is a separate axis from assessment
-health: a non-empty natural child final projects completed, while an empty
-report, failure, cancellation, truncation, or limit derives partial/blocked
-status plus blocker code/message evidence. `completed` means a report was
-delivered, not that the delegated goal was satisfied; the parent decides that.
-Retired terminal declarations do not affect runtime status. Persisted report
-lookup may recover their summary text only for historical session readability.
+tool-outcome verdict. Agent finality is a separate axis from assessment health.
 
 ### 2. Session State
 

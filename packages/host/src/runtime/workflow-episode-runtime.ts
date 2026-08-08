@@ -11,7 +11,6 @@ import {
   type RunBudget,
   type RunId,
   type RunResult,
-  type RuntimeNotice,
   type SparkwrightEvent,
   type ToolDefinition,
   type WorkflowHook,
@@ -492,7 +491,10 @@ export class WorkflowEpisodeRuntime {
           confidentialDefaults: env.confidentialDefaults,
           writeGuardrails: env.writeGuardrails,
         }),
-        promptBuilder: buildMainAgentPromptBuilder(env, sessionId),
+        promptBuilder: buildAgentPromptBuilder({
+          cwd: env.workspaceRoot,
+          sessionId,
+        }),
         tools: episode.toolSurface.tools,
         workflowHooks: env.workflowHooks,
         model: episode.model,
@@ -593,7 +595,10 @@ export class WorkflowEpisodeRuntime {
           confidentialDefaults: env.confidentialDefaults,
           writeGuardrails: env.writeGuardrails,
         }),
-        promptBuilder: buildMainAgentPromptBuilder(env, sessionId),
+        promptBuilder: buildAgentPromptBuilder({
+          cwd: env.workspaceRoot,
+          sessionId,
+        }),
         tools: episode.toolSurface.tools,
         workflowHooks: env.workflowHooks,
         model: episode.model,
@@ -642,7 +647,10 @@ export class WorkflowEpisodeRuntime {
                   confidentialDefaults: env.confidentialDefaults,
                   writeGuardrails: env.writeGuardrails,
                 }),
-                promptBuilder: buildMainAgentPromptBuilder(env, sessionId),
+                promptBuilder: buildAgentPromptBuilder({
+                  cwd: env.workspaceRoot,
+                  sessionId,
+                }),
                 tools: episode.toolSurface.tools,
                 model: episode.model,
                 maxSteps: resolveWorkflowEpisodeMaxSteps(env.mainAgent),
@@ -734,7 +742,10 @@ export class WorkflowEpisodeRuntime {
           confidentialDefaults: env.confidentialDefaults,
           writeGuardrails: env.writeGuardrails,
         }),
-        promptBuilder: buildMainAgentPromptBuilder(env, sessionId),
+        promptBuilder: buildAgentPromptBuilder({
+          cwd: env.workspaceRoot,
+          sessionId,
+        }),
         tools: episode.toolSurface.tools,
         workflowHooks: env.workflowHooks,
         model: episode.model,
@@ -1039,10 +1050,6 @@ export class WorkflowEpisodeRuntime {
               message: `${todoSummary.unfinished} todo item(s) remain open; continue with a new session turn if desired.`,
             }
           : undefined;
-        const notices = runtimeNoticesFromResult(outcome.result);
-        const completionStatus = runtimeCompletionStatusFromResult(
-          outcome.result,
-        );
         this.emit({
           envelope: "event",
           id: nextMessageId("evt"),
@@ -1056,8 +1063,6 @@ export class WorkflowEpisodeRuntime {
               ? { message: outcome.result.message }
               : {}),
             assessment,
-            ...(notices.length > 0 ? { notices } : {}),
-            ...(completionStatus ? { completionStatus } : {}),
             ...(todoAdvisory ? { todoAdvisory } : {}),
             ...(outcome.result.failure
               ? { failure: outcome.result.failure }
@@ -1289,17 +1294,6 @@ function workflowContinuationGoal(
   return `Continue workflow ${record.assetName} from durable state at node ${record.currentNodeId ?? "(runtime transition)"}.`;
 }
 
-export function buildMainAgentPromptBuilder(
-  env: Pick<WorkflowEpisodeEnvironment, "workspaceRoot" | "mainAgent">,
-  sessionId: string,
-) {
-  return buildAgentPromptBuilder({
-    cwd: env.workspaceRoot,
-    sessionId,
-    ...(env.mainAgent.prompt ? { appPrompt: env.mainAgent.prompt } : {}),
-  });
-}
-
 export function resolveWorkflowEpisodeMaxSteps(profile: AgentProfile): number {
   return profile.maxSteps ?? MAIN_AGENT_MAX_STEPS_BACKSTOP;
 }
@@ -1414,31 +1408,6 @@ function workflowEpisodeAllowedTools(
 
 function cloneJsonLike<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
-}
-
-function runtimeNoticesFromResult(result: RunResult): RuntimeNotice[] {
-  const value = result.metadata?.notices;
-  if (!Array.isArray(value)) return [];
-  return value.filter(isRuntimeNotice).map((notice) => ({ ...notice }));
-}
-
-function runtimeCompletionStatusFromResult(
-  result: RunResult,
-): "completed" | "partial" | undefined {
-  const value = result.metadata?.completionStatus;
-  return value === "completed" || value === "partial" ? value : undefined;
-}
-
-function isRuntimeNotice(value: unknown): value is RuntimeNotice {
-  if (!isPlainRecord(value)) return false;
-  return (
-    typeof value.id === "string" &&
-    typeof value.code === "string" &&
-    (value.severity === "info" ||
-      value.severity === "warning" ||
-      value.severity === "error") &&
-    typeof value.message === "string"
-  );
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {

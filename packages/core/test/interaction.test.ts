@@ -17,7 +17,6 @@ describe("InteractionChannel", () => {
       runId,
       action: "fs.write",
       summary: "Write README.md",
-      subject: { kind: "one_shot", label: "Write README.md once" },
     });
     const response = await channel.approve!(request);
     expect(response.decision).toBe("approved");

@@ -10,87 +10,6 @@ See [raw-trace.md](raw-trace.md) for source data and [export-diagnostics.md](exp
 
 ## Last Verified
 
-- Status: Read-only
-- Date: 2026-08-02
-- Scope: CLI Skill commands and Stats rendering changed, but trace summary,
-  timeline, verify, run assessment, and CLI exit semantics are unchanged.
-- Read: CLI Skill handlers/rendering, run-outcome fixtures, and Core trace
-  diagnostics.
-- Tests: CLI run-outcome 14/14 and Core trace 133/133 passed.
-
-- Status: Verified
-- Date: 2026-07-30
-- Scope: Agent diagnostic findings continue to use report status, summary,
-  and blocker codes. Removing unused blocker taxonomy and recovery metadata
-  changes no finding code, severity rule, or derived artifact family.
-- Read: Agent terminal projection, Core trace diagnostics, session compaction,
-  and CLI/TUI presentation consumers.
-- Tests: focused Core trace/session suites and repository build passed.
-
-- Status: Verified
-- Date: 2026-07-26
-- Scope: the compact/detailed viewport is a TUI presentation projection over
-  session events. It neither reads nor mutates summary, timeline, report, or
-  verify artifacts, and UI mode has no effect on transcript export or
-  diagnostic derivation.
-- Read: TUI transcript document/layout/export paths and trace diagnostic
-  ownership boundaries.
-- Tests: compact/detailed export parity and export-after-clear integration
-  passed; trace diagnostic contracts are unchanged.
-
-- Status: Verified
-- Date: 2026-07-25
-- Scope: verification summaries consume explicit verifier results/receipts as
-  evidence. Command classification remains diagnostic, but no derived trace
-  view upgrades it into ordinary Agent completion authority or current-write
-  coverage by itself.
-- Read: Core FactLedger/assessment/completion projection, Agent roll-up, and
-  summary/timeline/report verification consumers.
-- Tests: Core 661/661, Agent Runtime 257/257, Host 583/583; affected package
-  typechecks, repository lint, and targeted format check passed.
-
-- Status: Verified
-- Date: 2026-07-24
-- Scope: verification summaries now have ChangeSet-aware receipts and stale
-  epochs; child receipts roll into parent facts. Completion recovery requires
-  current passing coverage and never rewrites the original child timeline.
-- Read: Core FactLedger/assessment/completion, Agent roll-up, and trace
-  summary/timeline consumers.
-- Tests: focused Core execution-control and Agent Runtime tests, repository
-  build, and repository test typecheck passed.
-
-- Status: Verified
-- Date: 2026-07-23
-- Scope: reviewed new repeated-failure retry-scope metadata. Summary, timeline,
-  report, verify, and session consistency continue to classify failures from
-  canonical code/category/expected-denial facts; the additional scope field is
-  diagnostic and does not change outcome or health semantics.
-- Read: Core repeat metadata, run-outcome and trace diagnostic consumers, and
-  focused run/context tests.
-- Tests: focused Core run suite and repository test typecheck passed; derived
-  trace output shapes are unchanged.
-
-- Status: Verified
-- Date: 2026-07-21
-- Scope: semantic input failures carrying `metadata.phase:"validateInput"`
-  classify as model argument errors regardless of domain-specific error code.
-  Raw `model.completed` remains timeline evidence and does not become a second
-  terminal assistant answer.
-- Read: Core run-outcome classifier, terminal assessment/trace projection, and
-  focused tests.
-- Tests: focused Core outcome/run/trace tests passed.
-
-- Status: Verified
-- Date: 2026-07-21
-- Scope: `SUBAGENT_INCOMPLETE` detection now includes semantic
-  `status:"partial"` / `status:"blocked"` and failed lifecycle terminals, with
-  child summary and blocker codes in evidence. Transport completion no longer
-  hides a semantically blocked child.
-- Read: Core trace diagnostics, Agent lifecycle projections, session facts, and
-  focused trace tests.
-- Tests: Core 650/650; full repository verification is recorded by the release
-  gate.
-
 - Status: Verified
 - Date: 2026-07-19
 - Scope: session check reconciles tool failures per run and treats
@@ -216,10 +135,6 @@ trace.jsonl
   verification-result snapshots. Profile/documented-command identity is read
   from explicit `verificationSource`, `profile`, and `verifierId` fields;
   `hookName` remains a label rather than an encoded identity channel.
-- Command-string classification remains a diagnostic aid for summary/report
-  views. It cannot mint a receipt, prove current ChangeSet coverage, or turn a
-  model-owned natural final into a semantic completion failure; hard coverage
-  belongs only to an explicitly configured Workflow verifier.
 - Report workspace-read volume findings derive tool attribution from existing
   span correlation (`spanId` / `parentSpanId`) when available. This keeps the
   public summary `workspaceReads` total intact while report evidence can split
@@ -269,9 +184,7 @@ trace.jsonl
   `unresolved`. When any failed call lacks request args, defer to the persisted
   snapshot.
 - Trace report scores multi-agent auditability facts:
-  `SUBAGENT_INCOMPLETE` for child semantic partial/blocked status,
-  `terminalState`, failed lifecycle, step-limit, or truncation (with summary and
-  blocker-code evidence),
+  `SUBAGENT_INCOMPLETE` for child `terminalState`/step-limit/truncation,
   `IN_FLIGHT_DUPLICATE_STORM` for repeated same-batch duplicate skips,
   `REPEATED_APPROVAL_DENIALS`, and
   `UNTRACKED_WRITE_CAPABLE_BOUNDARY`. These are report findings derived from

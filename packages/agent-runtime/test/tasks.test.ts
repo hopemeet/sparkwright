@@ -36,7 +36,6 @@ import {
   type TaskFailedNotificationInput,
   type TaskToolOptions,
   type TaskTerminalActorNotificationInput,
-  type TaskLifecycleUpdate,
   type TaskOutputChunk,
   type WorkflowProgressNotificationInput,
   type WorkflowWaitingNotificationInput,
@@ -253,133 +252,6 @@ describe("TaskManager", () => {
     expect(record.error?.message).toBe("nope");
   });
 
-  it("preserves structured runner failure metadata", async () => {
-    const manager = makeManager();
-    const handle = manager.spawn({
-      parentRunId: PARENT_RUN_ID,
-      kind: "agent",
-      runner: async () => {
-        throw Object.assign(new Error("child did not complete"), {
-          code: "SPAWN_AGENT_CHILD_INCOMPLETE",
-          metadata: {
-            childRunId: "run_failed_child",
-            status: "partial",
-            report: "Useful partial evidence.",
-            partialObservations: [
-              { toolName: "glob", output: '{"paths":["README.md"]}' },
-            ],
-          },
-        });
-      },
-    });
-
-    const record = await handle.wait();
-    expect(record).toMatchObject({
-      status: "failed",
-      error: {
-        code: "SPAWN_AGENT_CHILD_INCOMPLETE",
-        message: "child did not complete",
-        metadata: {
-          childRunId: "run_failed_child",
-          status: "partial",
-          report: "Useful partial evidence.",
-          partialObservations: [
-            { toolName: "glob", output: '{"paths":["README.md"]}' },
-          ],
-        },
-      },
-    });
-  });
-
-  it.each([
-    ["inline", false],
-    ["awaited", true],
-    ["detached", false],
-  ] as const)(
-    "publishes created, started, and terminal %s snapshots independently from the actor inbox",
-    async (completionPolicy, awaited) => {
-      const sink = new InMemoryActorNotificationQueue();
-      const updates: TaskLifecycleUpdate[] = [];
-      const manager = new TaskManager({
-        store: new InMemoryTaskStore(),
-        notificationSink: sink,
-        lifecycleObserver: {
-          onTaskUpdated(update) {
-            updates.push(update);
-          },
-        },
-      });
-
-      const handle = manager.spawn({
-        parentRunId: PARENT_RUN_ID,
-        kind: "agent",
-        completionPolicy,
-        awaited,
-        runner: async () => "done",
-      });
-      await handle.wait();
-
-      expect(
-        updates.map(({ transition, record }) => ({
-          transition,
-          status: record.status,
-          completionPolicy: record.completionPolicy,
-        })),
-      ).toEqual([
-        {
-          transition: "created",
-          status: "pending",
-          completionPolicy,
-        },
-        {
-          transition: "started",
-          status: "running",
-          completionPolicy,
-        },
-        {
-          transition: "terminal",
-          status: "completed",
-          completionPolicy,
-        },
-      ]);
-      expect(sink.peek()).toHaveLength(1);
-    },
-  );
-
-  it("keeps TaskStore authoritative when a lifecycle observer fails", async () => {
-    const lifecycleErrors: TaskLifecycleUpdate[] = [];
-    const manager = new TaskManager({
-      store: new InMemoryTaskStore(),
-      lifecycleObserver: {
-        onTaskUpdated() {
-          throw new Error("subscriber unavailable");
-        },
-      },
-      onLifecycleError(update) {
-        lifecycleErrors.push(update);
-        throw new Error("diagnostic callback also unavailable");
-      },
-    });
-
-    const handle = manager.spawn({
-      parentRunId: PARENT_RUN_ID,
-      kind: "observer-failure",
-      completionPolicy: "awaited",
-      awaited: true,
-      runner: async () => "persisted",
-    });
-
-    await expect(handle.wait()).resolves.toMatchObject({
-      status: "completed",
-      result: "persisted",
-    });
-    expect(lifecycleErrors.map((update) => update.transition)).toEqual([
-      "created",
-      "started",
-      "terminal",
-    ]);
-  });
-
   it("lets external adapters fail a running task and notifies once", async () => {
     const sink = new InMemoryActorNotificationQueue();
     const manager = new TaskManager({
@@ -530,7 +402,6 @@ describe("FileTaskStore", () => {
     const reopened = new FileTaskStore({ rootDir: root });
     const record = reopened.get(handle.record.id);
     expect(record?.status).toBe("completed");
-    expect(record?.completionPolicy).toBe("awaited");
     expect(record?.metadata.pid).toBe(123);
     expect(record?.outputChunks).toBe(2);
 
@@ -1198,51 +1069,6 @@ describe("task tools", () => {
     expect(schema.additionalProperties).toBe(false);
   });
 
-  it("task_create runs kind payload validation before spawning", async () => {
-    const manager = makeManager();
-    let runnerCalls = 0;
-    manager.registerKind("agent", async () => {
-      runnerCalls += 1;
-      return "unexpected";
-    });
-    const tools = makeTaskToolsFromOptions({
-      manager,
-      getParentRunId: () => PARENT_RUN_ID,
-      taskCreateKinds: [
-        {
-          kind: "agent",
-          requiresPayload: true,
-          validatePayload(payload) {
-            return payload?.allowedTools === "read"
-              ? { ok: true }
-              : {
-                  ok: false,
-                  code: "AGENT_CAPABILITY_INVALID",
-                  message: "allowedTools is not available",
-                };
-          },
-        },
-      ],
-    });
-    const args = {
-      kind: "agent",
-      payload: { allowedTools: ["write"] },
-    };
-
-    await expect(
-      tools.taskCreate.validateInput?.(args, fakeCtx),
-    ).resolves.toEqual({
-      ok: false,
-      code: "AGENT_CAPABILITY_INVALID",
-      message: "allowedTools is not available",
-    });
-    await expect(exec(tools.taskCreate, args)).rejects.toMatchObject({
-      code: "AGENT_CAPABILITY_INVALID",
-    });
-    expect(runnerCalls).toBe(0);
-    expect(manager.store.list()).toEqual([]);
-  });
-
   it("task_create defaults to foreground and returns inline results", async () => {
     const manager = makeManager();
     manager.registerKind("hello", async () => "hi");
@@ -1320,12 +1146,6 @@ describe("task tools", () => {
       action: "wait",
       taskId: created.taskId,
     });
-    expect(created).toMatchObject({
-      actualMode: "detached",
-      parentWillWait: false,
-      completionObservation: "opportunistic_if_parent_active",
-      duplicateAvoidance: expect.stringContaining("task_create"),
-    });
     expect(created.nextAction.instruction).toContain('action="get"');
     expect(created.nextAction.duplicateAvoidance).toContain("task_create");
     await manager.handle(created.taskId as TaskId)?.wait();
@@ -1351,20 +1171,12 @@ describe("task tools", () => {
       kind: "hello",
       mode: "awaited",
     });
-    expect(created).toMatchObject({
-      mode: "awaited",
-      awaited: true,
-      actualMode: "awaited",
-      parentWillWait: true,
-      completionObservation: "automatic_once",
-    });
+    expect(created).toMatchObject({ mode: "awaited", awaited: true });
     expect(created.nextAction).toMatchObject({
       action: "wait",
       taskId: created.taskId,
     });
     expect(created.nextAction.instruction).toContain(created.taskId);
-    expect(created.nextAction.instruction).toContain("wait automatically");
-    expect(created.nextAction.instruction).toContain("only if");
     expect(created.nextAction.outputInstruction).toContain('action="output"');
     expect(created.nextAction.duplicateAvoidance).toContain("same goal");
     await manager.handle(created.taskId as TaskId)?.wait();
@@ -1415,9 +1227,6 @@ describe("task tools", () => {
       mode: "foreground",
       promoted: true,
       awaited: true,
-      actualMode: "awaited",
-      parentWillWait: true,
-      completionObservation: "automatic_once",
     });
     expect(created.nextAction).toMatchObject({
       action: "wait",
@@ -1501,94 +1310,8 @@ describe("task tools", () => {
     expect(result).toMatchObject({
       promoted: false,
       awaited: false,
-      actualMode: "inline",
-      parentWillWait: false,
-      completionObservation: "returned_inline",
       result: "done",
     });
-  });
-
-  it("consumes the actor notification when foreground completion is returned inline", async () => {
-    const notifications = new InMemoryActorNotificationQueue();
-    const delayedNotifications: ActorInbox & {
-      deliver(
-        input: AnyActorNotificationInput,
-      ): Promise<{ status: "accepted"; acceptedCount: number }>;
-    } = {
-      deliver: async (input) => {
-        await new Promise((resolve) => setTimeout(resolve, 5));
-        return notifications.deliver(input) as {
-          status: "accepted";
-          acceptedCount: number;
-        };
-      },
-      peek: (predicate) => notifications.peek(predicate),
-      drain: (predicate) => notifications.drain(predicate),
-      waitUntilAvailable: (options) =>
-        notifications.waitUntilAvailable(options),
-    };
-    const manager = new TaskManager({
-      store: new InMemoryTaskStore(),
-      notificationSink: delayedNotifications,
-    });
-    manager.registerKind("quick", async () => ({ ok: true }));
-    const tools = makeTools(manager);
-
-    const result = await exec<{
-      taskId: string;
-      status: string;
-      result: { ok: boolean };
-    }>(tools.taskCreate, { kind: "quick", mode: "foreground" });
-
-    expect(result).toMatchObject({
-      status: "completed",
-      result: { ok: true },
-    });
-    expect(notifications.peek()).toHaveLength(0);
-    expect(manager.pendingNotifications()).toHaveLength(0);
-  });
-
-  it("consumes the actor notification when task wait returns a terminal result", async () => {
-    const notifications = new InMemoryActorNotificationQueue();
-    const manager = new TaskManager({
-      store: new InMemoryTaskStore(),
-      notificationSink: notifications,
-    });
-    manager.registerKind("quick", async () => "done");
-    const tools = makeTools(manager);
-    const created = await exec<{ taskId: string }>(tools.taskCreate, {
-      kind: "quick",
-      mode: "background",
-    });
-
-    await expect(
-      exec(tools.task, { action: "wait", taskId: created.taskId }),
-    ).resolves.toMatchObject({
-      complete: true,
-      terminalTaskIds: [created.taskId],
-    });
-    expect(notifications.peek()).toHaveLength(0);
-    expect(manager.pendingNotifications()).toHaveLength(0);
-  });
-
-  it("cancels a retry after foreground inline observation already returned the result", async () => {
-    const manager = new TaskManager({
-      store: new InMemoryTaskStore(),
-      notificationSink: {
-        deliver: () => {
-          throw new Error("sink unavailable");
-        },
-      },
-    });
-    manager.registerKind("quick", async () => "done");
-
-    await expect(
-      exec(makeTools(manager).taskCreate, {
-        kind: "quick",
-        mode: "foreground",
-      }),
-    ).resolves.toMatchObject({ status: "completed", result: "done" });
-    expect(manager.pendingNotifications()).toHaveLength(0);
   });
 
   it("rejects concurrent agent tasks over the default agent=1 cap", async () => {

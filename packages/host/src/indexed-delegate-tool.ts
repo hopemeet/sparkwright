@@ -16,8 +16,7 @@ export const DELEGATE_AGENT_TOOL_NAME = "delegate_agent";
 interface DelegateAgentTask {
   agentId: string;
   goal: string;
-  context?: string;
-  label?: string;
+  metadata?: Record<string, unknown>;
 }
 
 interface DelegateAgentTarget {
@@ -76,7 +75,6 @@ export function createDelegateAgentTool(input: {
       availableAgentIds.length > 0
         ? `Delegate one bounded sub-task to a configured agent by agentId. Use delegate_parallel instead when multiple read-only agents should run together. Available agents: ${availableHint}.`
         : "Delegate one bounded sub-task to a configured agent by agentId. No configured child agents are currently available.",
-    resultPresentation: { kind: "agent_result" },
     inputSchema: {
       type: "object",
       properties: {
@@ -89,17 +87,13 @@ export function createDelegateAgentTool(input: {
           type: "string",
           description: "Self-contained goal for that agent.",
         },
-        context: {
-          type: "string",
-          description: "Optional parent-established working context.",
-        },
-        label: {
-          type: "string",
-          description: "Optional display label for this invocation.",
+        metadata: {
+          type: "object",
+          description:
+            "Optional structured metadata to attach to the child run.",
         },
       },
       required: ["agentId", "goal"],
-      additionalProperties: false,
     },
     policy: { risk: "safe" },
     governance: {
@@ -156,13 +150,12 @@ function parseDelegateAgentArgs(args: unknown): DelegateAgentTask {
     throw new Error(`${DELEGATE_AGENT_TOOL_NAME} expects an object argument.`);
   }
   const record = args as Record<string, unknown>;
-  const context = optionalStringField(record, "context");
-  const label = optionalStringField(record, "label");
+  const metadata =
+    record.metadata === undefined ? undefined : objectField(record, "metadata");
   return {
     agentId: stringField(record, "agentId"),
     goal: stringField(record, "goal"),
-    ...(context ? { context } : {}),
-    ...(label ? { label } : {}),
+    ...(metadata ? { metadata } : {}),
   };
 }
 
@@ -177,14 +170,12 @@ function previewDelegateAgentArgs(
 
 function delegateAgentToolArgs(task: DelegateAgentTask): {
   goal: string;
-  context?: string;
-  label?: string;
+  metadata?: Record<string, unknown>;
 } {
   return markAgentInvocationEntrypoint(
     {
       goal: task.goal,
-      ...(task.context ? { context: task.context } : {}),
-      ...(task.label ? { label: task.label } : {}),
+      ...(task.metadata ? { metadata: task.metadata } : {}),
     },
     "delegate_agent",
   );
@@ -200,16 +191,15 @@ function stringField(record: Record<string, unknown>, field: string): string {
   return value.trim();
 }
 
-function optionalStringField(
+function objectField(
   record: Record<string, unknown>,
   field: string,
-): string | undefined {
+): Record<string, unknown> {
   const value = record[field];
-  if (value === undefined) return undefined;
-  if (typeof value !== "string") {
-    throw new Error(`${DELEGATE_AGENT_TOOL_NAME} ${field} must be a string.`);
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${DELEGATE_AGENT_TOOL_NAME} ${field} must be an object.`);
   }
-  return value.trim() || undefined;
+  return value as Record<string, unknown>;
 }
 
 function previewRecord(value: unknown): Record<string, unknown> {

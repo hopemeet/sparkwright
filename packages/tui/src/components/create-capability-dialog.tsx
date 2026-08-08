@@ -5,7 +5,6 @@ import type {
   CreateCapabilityDraft,
   CreateCapabilityKind,
 } from "../lib/create-capability.js";
-import { isBackInput } from "../lib/input-key.js";
 import { DialogFrame } from "./dialog-frame.js";
 
 const KINDS: CreateCapabilityKind[] = [
@@ -115,7 +114,7 @@ export function CreateCapabilityDialog(props: {
   const field = fields[fieldIndex];
 
   useInput((input, key) => {
-    if (isBackInput(input, key)) {
+    if (key.escape) {
       props.onCancel();
       return;
     }

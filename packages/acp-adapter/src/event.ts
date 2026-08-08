@@ -65,8 +65,6 @@ export function hostEventToSessionUpdates(
       ];
     case "run.continuation":
       return [];
-    case "task.updated":
-      return [];
     case "host.log":
       return [];
     case "host.ready":
@@ -98,7 +96,7 @@ function coreEventToSessionUpdates(
       return [agentText(text, messageId)];
     }
     case "model.assistant_text":
-    case "run.completed": {
+    case "model.completed": {
       const text = textFromAny(payload, ["message", "text", "content"]);
       if (hasStreamedText(state, { messageId, runId })) return [];
       return text ? [agentText(text, messageId)] : [];

@@ -15,7 +15,6 @@ while still using normal Sparkwright runs.
 
 ```ts
 import {
-  composeInProcessChildAgentPrompt,
   createAgentProfilePolicy,
   deriveChildAgentProfile,
 } from "@sparkwright/agent-runtime";
@@ -88,33 +87,11 @@ the core default policy unless a caller supplies a custom fallback.
 its own prompt, tools, budget, trace linkage, and cancellation path. Parent run
 restrictions remain constraining, so delegation cannot be used to bypass policy.
 
-Host-style Core-backed children can opt into the shared task-agnostic behavior
-and result contract with
-`composeInProcessChildAgentPrompt(childAgentProfile.prompt)`. The helper keeps
-profile specialization first and returns one application-prompt string.
-`spawnSubAgent` does not inject it automatically, so low-level embedders retain
-control of explicit custom prompt builders. ACP and external-command workers
-keep their transport-owned input contracts.
-
 `createAgentTool` and `mountAgentTool` expose a profile-backed child run through
 the normal tool path. The parent model receives the child result, not the
 child's entire intermediate context. Callers pass the complete spawn
 `ToolDefinition.policy`; agent-runtime does not synthesize a parallel approval
 option.
-
-Built-in in-process adapters use `completeSpawnedAgentInvocation()` after they
-have resolved and prepared one `SpawnedSubAgent`. The helper starts that child
-once, projects runtime/workspace evidence into `ParentAgentResult`, records only
-eligible clean results in the delegation ledger, and retains at most three
-bounded successful tool observations when the child fails. It does not resolve
-profiles, schedule batches, select a transport, or change the explicit
-`spawnSubAgent` prompt opt-in boundary.
-
-The shared child contract requires reports to distinguish pre-existing state,
-attempted actions, and effects actually produced by successful actions. It also
-stops repeated observations that neither change the deliverable nor resolve a
-specific uncertainty. Core assessment health remains runtime/trace evidence; it
-is not duplicated into the parent result as a warning.
 
 ## Boundary
 

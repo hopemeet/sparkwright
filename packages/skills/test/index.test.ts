@@ -119,7 +119,6 @@ Deep body.
     const spec = { rootPath: packageDir, entryPath: "workflow.md" };
     const before = await computeAssetPackageHash(spec);
     expect(before.packageHashPolicyVersion).toBe(2);
-    expect(before.fileCount).toBe(before.files.length);
     expect(before.files.map((file) => file.relativePath)).toEqual([
       "config.yaml",
       "nested/fixture.txt",
@@ -134,7 +133,6 @@ Deep body.
     const snapshotDir = join(root, "snapshot");
     const snapshot = await snapshotAssetPackage(spec, snapshotDir);
     expect(snapshot.packageHash).toBe(after.packageHash);
-    expect(snapshot.fileCount).toBe(snapshot.files.length);
     await expect(listAssetPackageFiles(spec)).resolves.toEqual(after.files);
     await expect(
       access(join(snapshotDir, "node_modules")),

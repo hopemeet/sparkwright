@@ -21,11 +21,7 @@ export type BindingName =
   | "quit.app"
   | "activity.open"
   | "events.open"
-  | "details.toggle"
-  | "transcript.page-up"
-  | "transcript.page-down"
-  | "transcript.top"
-  | "transcript.bottom"
+  | "todo.toggle"
   | "history.search"
   | "cycle-permission-mode";
 
@@ -62,15 +58,8 @@ export const DEFAULTS: Bindings = {
   "quit.app": [parseChord("ctrl+c")!],
   "activity.open": [parseChord("ctrl+o")!],
   "events.open": [],
-  // Toggle all user-facing transcript details. ctrl+t = "transcript".
-  "details.toggle": [parseChord("ctrl+t")!],
-  "transcript.page-up": [parseChord("pageup")!],
-  "transcript.page-down": [parseChord("pagedown")!],
-  // Ink 5 parses Home/End but drops their names from useInput's public Key.
-  // InputBox restores Ctrl+Home/Ctrl+End from the raw terminal sequence before
-  // routing them through this same binding table.
-  "transcript.top": [parseChord("ctrl+home")!],
-  "transcript.bottom": [parseChord("ctrl+end")!],
+  // Expand/collapse the todo band's completed items. ctrl+t = "todo".
+  "todo.toggle": [parseChord("ctrl+t")!],
   // history.search is handled inside InputBox (ctrl+r is bash-standard);
   // exposed here so /help and /config can show + override it.
   "history.search": [parseChord("ctrl+r")!],
@@ -139,8 +128,6 @@ export function chordMatches(
     rightArrow?: boolean;
     pageUp?: boolean;
     pageDown?: boolean;
-    home?: boolean;
-    end?: boolean;
   },
   inkInput: string,
 ): boolean {
@@ -163,7 +150,6 @@ export function chordMatches(
   // Ink's `shift` flag isn't always reliable for printable chars (user just
   // types uppercase) — we only enforce shift for special keys.
   if (chord.key.length === 1) {
-    if (chord.shift && !inkKey.shift) return false;
     return inkInput.toLowerCase() === chord.key;
   }
   switch (chord.key) {
@@ -189,10 +175,6 @@ export function chordMatches(
       return !!inkKey.pageUp;
     case "pagedown":
       return !!inkKey.pageDown;
-    case "home":
-      return !!inkKey.home;
-    case "end":
-      return !!inkKey.end;
     case "space":
       return inkInput === " ";
     default:
@@ -234,23 +216,6 @@ export function ctrlCPressCount(inkInput: string): number {
   return count;
 }
 
-const CTRL_HOME_SEQUENCES = new Set(["\x1b[1;5H", "\x1b[1;5~", "\x1b[7^"]);
-const CTRL_END_SEQUENCES = new Set(["\x1b[1;5F", "\x1b[4;5~", "\x1b[8^"]);
-
-/**
- * Ink 5's parser recognises Home/End but its public Key omits both flags.
- * Recover only the explicit Ctrl variants from raw terminal data; plain
- * Home/End remain available to the composer/terminal rather than becoming an
- * accidental transcript shortcut.
- */
-export function ctrlTranscriptBoundaryKey(
-  sequence: string,
-): "home" | "end" | null {
-  if (CTRL_HOME_SEQUENCES.has(sequence)) return "home";
-  if (CTRL_END_SEQUENCES.has(sequence)) return "end";
-  return null;
-}
-
 /** Pretty-print a chord for help panels. */
 export function formatChord(chord: Chord): string {
   const parts: string[] = [];
@@ -277,17 +242,7 @@ export function mergeBindings(
   const errors: { name: string; message: string }[] = [];
   if (!user) return { bindings, errors };
   const known = new Set<string>(Object.keys(DEFAULTS));
-  const normalizedUser = { ...user };
-  // Compatibility bridge for configs written before Ctrl+T became a unified
-  // details mode. An explicit canonical binding always wins.
-  if (
-    !Object.prototype.hasOwnProperty.call(normalizedUser, "details.toggle") &&
-    Object.prototype.hasOwnProperty.call(normalizedUser, "todo.toggle")
-  ) {
-    normalizedUser["details.toggle"] = normalizedUser["todo.toggle"];
-  }
-  delete normalizedUser["todo.toggle"];
-  for (const [name, value] of Object.entries(normalizedUser)) {
+  for (const [name, value] of Object.entries(user)) {
     if (!known.has(name)) {
       errors.push({
         name,

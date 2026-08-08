@@ -5,7 +5,6 @@ import { join } from "node:path";
 import { PROTOCOL_VERSION, type HostMessage } from "@sparkwright/protocol";
 import {
   asSessionId,
-  createWorkspaceRevision,
   FileSessionStore,
   SESSION_COMPACT_SCHEMA_VERSION,
   type SessionEvent,
@@ -17,7 +16,6 @@ import {
   FileWorkflowControlInbox,
   FileWorkflowStore,
   createTaskId,
-  type TaskManager,
   type WorkflowRunId,
 } from "@sparkwright/agent-runtime";
 import { CronStore, defaultCronRoot } from "@sparkwright/cron";
@@ -344,7 +342,6 @@ describe("host protocol", () => {
             toolName: "edit",
             arguments: {
               path: "README.md",
-              expectedRevision: createWorkspaceRevision(true, "# Demo\n"),
               patch: [
                 "--- a/README.md",
                 "+++ b/README.md",
@@ -818,7 +815,6 @@ describe("host protocol", () => {
             "task.stop",
             "task.join",
             "task.promote",
-            "task.events",
             "workflow.list",
             "workflow.resume",
           ]),
@@ -971,124 +967,6 @@ describe("host protocol", () => {
       });
     } finally {
       pair.close();
-      await rmWhenReady(workspace);
-    }
-  });
-
-  it("forwards bounded task.updated events over a host connection", async () => {
-    const workspace = await mkdtemp(
-      join(tmpdir(), "sparkwright-host-task-events-"),
-    );
-    const pair = createConnectionPair();
-    const service = createHostService();
-    try {
-      serveConnection(pair.hostSide, {
-        hostService: service,
-        workspaceRoot: workspace,
-        defaultModel: "deterministic",
-      });
-      pair.clientSend({
-        envelope: "request",
-        id: "h",
-        kind: "handshake",
-        timestamp: TIMESTAMP,
-        payload: {
-          protocolVersion: PROTOCOL_VERSION,
-          client: { name: "test", version: "0.0.0" },
-        },
-      });
-      await pair.waitFor((message) => message.envelope === "response");
-      pair.clientSend({
-        envelope: "request",
-        id: "task_event_parent",
-        kind: "run.start",
-        timestamp: TIMESTAMP,
-        payload: {
-          goal: "establish a parent route for lifecycle forwarding",
-          sessionId: "session_task_event_protocol",
-        },
-      });
-      const started = await pair.waitFor(
-        (message) =>
-          message.envelope === "response" && message.id === "task_event_parent",
-      );
-      expect(started).toMatchObject({ envelope: "response", ok: true });
-      if (started.envelope !== "response" || !started.ok) return;
-      const runId = String(started.result.runId);
-      await pair.waitFor(
-        (message) =>
-          message.envelope === "event" &&
-          (message.kind === "run.completed" || message.kind === "run.failed"),
-      );
-
-      const runtime = [
-        ...(
-          service as unknown as {
-            runtimes: Set<HostRuntime>;
-          }
-        ).runtimes,
-      ][0]!;
-      const manager = (
-        runtime as unknown as {
-          tasks: { manager: TaskManager };
-        }
-      ).tasks.manager;
-      const handle = manager.spawn({
-        parentRunId: runId as RunId,
-        kind: "protocol-lifecycle",
-        title: "connection forwarding",
-        completionPolicy: "detached",
-        awaited: false,
-        metadata: { stdout: "must not be forwarded" },
-        runner: async () => ({
-          message: "safe summary",
-          accessToken: "must-not-be-forwarded",
-        }),
-      });
-      await handle.wait();
-
-      const terminal = await pair.waitFor(
-        (message) =>
-          message.envelope === "event" &&
-          message.kind === "task.updated" &&
-          message.payload.taskId === handle.record.id &&
-          message.payload.transition === "terminal",
-      );
-      expect(terminal).toMatchObject({
-        envelope: "event",
-        kind: "task.updated",
-        payload: {
-          parentRunId: runId,
-          sessionId: "session_task_event_protocol",
-          status: "completed",
-          completionPolicy: "detached",
-        },
-      });
-      const serialized = JSON.stringify(terminal);
-      expect(serialized).not.toContain("must-not-be-forwarded");
-      expect(serialized).not.toContain("must not be forwarded");
-      expect(
-        pair
-          .clientMessages()
-          .filter(
-            (message) =>
-              message.envelope === "event" &&
-              message.kind === "task.updated" &&
-              message.payload.taskId === handle.record.id,
-          )
-          .map(
-            (message) =>
-              (
-                message as Extract<
-                  HostMessage,
-                  { envelope: "event"; kind: "task.updated" }
-                >
-              ).payload.transition,
-          ),
-      ).toEqual(["created", "started", "terminal"]);
-    } finally {
-      pair.close();
-      await service.shutdown();
       await rmWhenReady(workspace);
     }
   });
@@ -2163,13 +2041,17 @@ describe("host protocol", () => {
             enabled: true,
             active: true,
           }),
+          expect.objectContaining({
+            name: "documented-command-check",
+            source: "builtin",
+            lifecycle: "Stop",
+            blockingPotential: false,
+            enabled: true,
+            active: false,
+            status: "available",
+          }),
         ]),
       );
-      expect(
-        inspect.snapshot.rules?.workflow.some(
-          (rule) => rule.name === "documented-command-check",
-        ),
-      ).toBe(false);
       expect(inspect.snapshot.rules?.events).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
@@ -2190,7 +2072,7 @@ describe("host protocol", () => {
     }
   });
 
-  it("does not activate a semantic documented-command gate from goal wording", async () => {
+  it("marks the documented-command built-in active for matching write runs", async () => {
     const workspace = await mkdtemp(
       join(tmpdir(), "sparkwright-host-documented-command-rule-"),
     );
@@ -2220,11 +2102,17 @@ describe("host protocol", () => {
 
       expect(inspect).toMatchObject({ ok: true });
       if (!inspect.ok) throw new Error(inspect.error.message);
-      expect(
-        inspect.snapshot.rules?.workflow.some(
-          (rule) => rule.name === "documented-command-check",
-        ),
-      ).toBe(false);
+      expect(inspect.snapshot.rules?.workflow).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            name: "documented-command-check",
+            source: "builtin",
+            lifecycle: "Stop",
+            active: true,
+            status: "active",
+          }),
+        ]),
+      );
       await Promise.race([
         terminal,
         new Promise((_, reject) =>
@@ -2337,7 +2225,7 @@ describe("host protocol", () => {
     }
   });
 
-  it("forwards a clean deterministic outcome on run.completed", async () => {
+  it("forwards completed-with-tool-failures outcome on run.completed", async () => {
     const workspace = await mkdtemp(
       join(tmpdir(), "sparkwright-host-outcome-"),
     );
@@ -2389,11 +2277,22 @@ describe("host protocol", () => {
           state: "completed",
           stopReason: "final_answer",
           assessment: {
-            health: "clean",
-            issues: [],
+            health: "failing",
+            issues: [{ code: "UNRESOLVED_TOOL_FAILURE", count: 1 }],
           },
         },
       });
+      const codes = (
+        completed as {
+          payload?: {
+            assessment?: {
+              issues?: Array<{ details?: { codes?: unknown[] } }>;
+            };
+          };
+        }
+      ).payload?.assessment?.issues?.[0]?.details?.codes;
+      expect(codes).toHaveLength(1);
+      expect(["TOOL_NOT_FOUND", "ENOENT"]).toContain(codes?.[0]);
     } finally {
       pair.close();
       await rm(workspace, { recursive: true, force: true });
@@ -3420,10 +3319,7 @@ describe("host protocol", () => {
           false,
         );
         expect(tools.some((tool) => tool.name === "spawn_agent")).toBe(true);
-        expect(tools.some((tool) => tool.name === "read_agent_report")).toBe(
-          true,
-        );
-        expect(tools.some((tool) => tool.name === "create_skill")).toBe(false);
+        expect(tools.some((tool) => tool.name === "create_skill")).toBe(true);
         expect(tools.some((tool) => tool.name === "create_agent")).toBe(true);
         expect(tools.some((tool) => tool.name === "list_skills")).toBe(true);
         expect(tools.some((tool) => tool.name === "list_agents")).toBe(true);
@@ -3679,7 +3575,6 @@ describe("host protocol", () => {
             toolName: "edit",
             arguments: {
               path: "README.md",
-              expectedRevision: createWorkspaceRevision(true, "# Demo\n"),
               reason: "exercise approval trace",
               patch: [
                 "--- a/README.md",
@@ -3805,7 +3700,6 @@ describe("host protocol", () => {
             toolName: "edit",
             arguments: {
               path: "README.md",
-              expectedRevision: createWorkspaceRevision(true, "# Demo\n"),
               reason: "delegate write regression",
               patch: [
                 "--- a/README.md",
@@ -3971,15 +3865,15 @@ describe("host protocol", () => {
             toolName: "spawn_agent",
             arguments: {
               goal: "Read README.md.",
-              label: "reader",
-              context: "Read only.",
+              role: "reader",
+              prompt: "Read only.",
+              allowedTools: ["read"],
+              maxSteps: 2,
             },
           },
         ],
       },
-      {
-        message: "README inspected",
-      },
+      { message: "child done" },
       { message: "parent observed child" },
     ]);
 
@@ -4026,14 +3920,12 @@ describe("host protocol", () => {
       );
       expect(completed?.metadata).toMatchObject({
         agentId: "main",
+        childAgentId: "dynamic_reader",
+        agentProfileId: "dynamic_reader",
         delegateTool: "spawn_agent",
         entrypoint: "spawn_agent",
         subagentDepth: 1,
       });
-      expect(completed?.metadata?.childAgentId).toMatch(/^dynamic_agent_/);
-      expect(completed?.metadata?.agentProfileId).toBe(
-        completed?.metadata?.childAgentId,
-      );
       expect(completed?.payload).toMatchObject({
         terminalState: "completed",
       });
@@ -4325,8 +4217,10 @@ describe("host protocol", () => {
               title: "background repo inspection",
               payload: {
                 goal: "Inspect the repository in the background.",
-                label: "background-inspector",
-                context: "Return one concise sentence.",
+                role: "background-inspector",
+                prompt: "Return one concise sentence.",
+                allowedTools: ["glob"],
+                maxSteps: 1,
               },
             },
           },
@@ -4410,17 +4304,15 @@ describe("host protocol", () => {
       const summary = JSON.parse(output.chunks[0]?.data ?? "{}") as {
         type?: string;
         childRunId?: string;
-        status?: string;
-        report?: string;
-        workspace?: { writes?: number };
+        agentId?: string;
+        finality?: string;
       };
       expect(summary).toMatchObject({
         type: "agent.completed",
-        status: "completed",
-        report: "scripted background agent completed.",
-        workspace: { writes: 0 },
+        agentId: "dynamic_background-inspector",
       });
       expect(summary.childRunId).toMatch(/^run_/);
+      expect(["complete", "partial"]).toContain(summary.finality);
 
       const runEvents = emitted
         .filter(
@@ -4469,7 +4361,6 @@ describe("host protocol", () => {
             toolName: "edit",
             arguments: {
               path: "README.md",
-              expectedRevision: createWorkspaceRevision(true, "# Demo\n"),
               reason: "Add verified section",
               patch: [
                 "--- a/README.md",

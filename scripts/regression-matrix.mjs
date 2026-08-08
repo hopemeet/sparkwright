@@ -818,8 +818,9 @@ async function spawnFinalityCase() {
                 toolName: "spawn_agent",
                 arguments: {
                   goal: "Read README.md.",
-                  label: "reader",
-                  context: "README.md is the selected target; summarize it.",
+                  role: "reader",
+                  prompt: "Read README.md and summarize it.",
+                  allowedTools: ["read"],
                 },
               },
             ],
@@ -827,32 +828,14 @@ async function spawnFinalityCase() {
           {
             toolCalls: [{ toolName: "read", arguments: { path: "README.md" } }],
           },
-          {
-            message: "README.md was read and summarized.",
-          },
+          { message: "child read README.md" },
           { message: "parent observed complete child" },
         ]),
       },
     },
   );
   const trace = await traceFromOutput(result.stdout);
-  const spawnCompletion = trace.events.find(
-    (event) =>
-      event.type === "tool.completed" &&
-      event.payload?.toolName === "spawn_agent",
-  );
-  const childRunId = spawnCompletion?.payload?.output?.childRunId;
-  const childLifecycle = trace.events.find(
-    (event) =>
-      event.type === "subagent.completed" &&
-      event.payload?.childRunId === childRunId,
-  );
-  const childAgentId = childLifecycle?.metadata?.childAgentId;
-  const childTrace =
-    typeof childAgentId === "string"
-      ? await readAgentTrace(workspace, trace.sessionId, childAgentId)
-      : [];
-  const traceText = JSON.stringify([...trace.events, ...childTrace]);
+  const traceText = JSON.stringify(trace.events);
   record({
     id: "SPAWN_FINAL",
     name: "dynamic spawn read-only finality",
@@ -861,9 +844,9 @@ async function spawnFinalityCase() {
     workspace,
     write: "no",
     expectedTrace:
-      "tool_search -> spawn_agent -> child read -> natural report; compact output status=completed/workspace.writes=0, lifecycle terminalState=completed with clean assessment, child inherits maxSteps=20",
+      "tool_search -> spawn_agent output finality=complete with clean assessment, inherited maxSteps visible in promotionHint, child uses read only",
     failureRule:
-      "Fails if dynamic spawn exposes bash/write tools, omits the compact report/runtime workspace evidence, marks the child lifecycle partial, or falls back to the old maxSteps default.",
+      "Fails if dynamic spawn exposes bash/write tools, marks a complete child partial, or falls back to the old maxSteps default.",
     harness: true,
     ok:
       result.exitCode === 0 &&
@@ -872,25 +855,10 @@ async function spawnFinalityCase() {
         "tool.completed",
         (event) =>
           event.payload?.toolName === "spawn_agent" &&
-          event.payload?.output?.status === "completed" &&
-          event.payload?.output?.report ===
-            "README.md was read and summarized." &&
-          event.payload?.output?.workspace?.writes === 0 &&
-          event.payload?.output?.finality === undefined &&
-          event.payload?.output?.assessment === undefined,
-      ) &&
-      eventWith(
-        trace.events,
-        "subagent.completed",
-        (event) =>
-          event.payload?.childRunId === childRunId &&
-          event.payload?.terminalState === "completed" &&
-          event.payload?.assessment?.health === "clean",
-      ) &&
-      eventWith(
-        childTrace,
-        "run.completed",
-        (event) => event.payload?.maxSteps === 20,
+          event.payload?.output?.finality === "complete" &&
+          event.payload?.output?.assessment?.health === "clean" &&
+          event.payload?.output?.promotionHint?.suggestedProfile?.maxSteps ===
+            20,
       ) &&
       traceText.includes('"toolName":"read"') &&
       !traceText.includes('"toolName":"bash"') &&

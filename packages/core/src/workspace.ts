@@ -13,7 +13,7 @@ import {
 } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { dirname, basename, relative, resolve, sep } from "node:path";
-import { createArtifactId, createId, createWorkspaceWriteId } from "./ids.js";
+import { createArtifactId, createWorkspaceWriteId } from "./ids.js";
 import type { EventLog } from "./events.js";
 import { createApprovalRequest, resolveApproval } from "./approval.js";
 import type { InteractionChannel } from "./interaction.js";
@@ -28,68 +28,13 @@ import {
 import { createDefaultPolicy, type Policy } from "./policy.js";
 import type { WorkspaceCheckpointStore } from "./workspace-checkpoint.js";
 import type {
-  ApprovalPrincipal,
   Artifact,
-  ChangeSet,
   RunRecord,
   RunState,
-  WorkspaceChangeOperation,
-  WorkspaceRevision,
   WorkspaceRuntime,
-  WorkspaceStateRuntime,
-  WorkspaceTextObservation,
   WorkspaceWriteProposal,
   WorkspaceWriteResult,
 } from "./types.js";
-
-const WORKSPACE_REVISION_VERSION = "workspace-revision.v1";
-
-/** Opaque revision for an existence/content observation. */
-export function createWorkspaceRevision(
-  exists: boolean,
-  content: string,
-): WorkspaceRevision {
-  return `${WORKSPACE_REVISION_VERSION}:${exists ? "present" : "missing"}:${hashText(
-    content,
-  )}`;
-}
-
-/** @internal Shared monotonic state for one parent/child run tree. */
-export class InMemoryWorkspaceState implements WorkspaceStateRuntime {
-  private epoch = 0;
-  private readonly changeSets: ChangeSet[] = [];
-
-  currentEpoch(): number {
-    return this.epoch;
-  }
-
-  recordChangeSet(
-    input: Omit<ChangeSet, "writeEpoch"> & { writeEpoch?: number },
-  ): ChangeSet {
-    this.epoch = Math.max(this.epoch + 1, input.writeEpoch ?? 0);
-    const changeSet: ChangeSet = {
-      id: input.id,
-      actor: { ...input.actor },
-      writeEpoch: this.epoch,
-      entries: input.entries.map((entry) => ({ ...entry })),
-    };
-    this.changeSets.push(changeSet);
-    return changeSet;
-  }
-
-  recordUntrackedMutation(): number {
-    this.epoch += 1;
-    return this.epoch;
-  }
-
-  snapshotChangeSets(): readonly ChangeSet[] {
-    return this.changeSets.map((changeSet) => ({
-      ...changeSet,
-      actor: { ...changeSet.actor },
-      entries: changeSet.entries.map((entry) => ({ ...entry })),
-    }));
-  }
-}
 
 /** @internal Reference local filesystem workspace with realpath containment. */
 export class LocalWorkspace {
@@ -105,112 +50,21 @@ export class LocalWorkspace {
     return readFile(fullPath, "utf8");
   }
 
-  async readTextWithRevision(path: string): Promise<WorkspaceTextObservation> {
-    const canonical = await this.canonicalPath(path);
-    const content = await this.readText(canonical).catch((cause) => {
-      if (isNodeErrorCode(cause, "ENOENT")) return undefined;
-      throw cause;
-    });
-    return {
-      path: canonical,
-      exists: content !== undefined,
-      content: content ?? "",
-      revision: createWorkspaceRevision(content !== undefined, content ?? ""),
-    };
-  }
-
   async readAnchoredText(path: string): Promise<AnchoredText> {
-    const observed = await this.readTextWithRevision(path);
-    if (!observed.exists) {
-      throw Object.assign(
-        new Error(`ENOENT: no such file or directory, open '${observed.path}'`),
-        { code: "ENOENT", path: observed.path },
-      );
-    }
-    const anchored = createAnchoredText(observed.path, observed.content);
-    return {
-      ...anchored,
-      metadata: {
-        ...anchored.metadata,
-        revision: observed.revision,
-      },
-    };
+    return createAnchoredText(path, await this.readText(path));
   }
 
   async editAnchoredText(
     path: string,
     edits: AnchoredEditOperation[],
-    options: { expectedRevision?: WorkspaceRevision } = {},
-  ): Promise<ApplyAnchoredEditsResult & { write?: WorkspaceWriteResult }> {
-    const observed = await this.readTextWithRevision(path);
-    if (
-      options.expectedRevision &&
-      options.expectedRevision !== observed.revision
-    ) {
-      throw new WorkspaceRuntimeError(
-        "WORKSPACE_REVISION_CONFLICT",
-        `Workspace revision changed before edit: ${path}`,
-        {
-          path,
-          expectedRevision: options.expectedRevision,
-          currentRevision: observed.revision,
-        },
-      );
-    }
+  ): Promise<ApplyAnchoredEditsResult> {
     const result = applyAnchoredEdits({
       path,
-      content: observed.content,
+      content: await this.readText(path),
       edits,
     });
-    const write =
-      result.content === observed.content
-        ? undefined
-        : await this.replaceText(path, observed.revision, result.content);
-    return { ...result, ...(write ? { write } : {}) };
-  }
-
-  async createText(
-    path: string,
-    content: string,
-  ): Promise<WorkspaceWriteResult> {
-    const observed = await this.readTextWithRevision(path);
-    if (observed.exists) {
-      throw new WorkspaceRuntimeError(
-        "WORKSPACE_CREATE_CONFLICT",
-        `Workspace create target already exists: ${path}`,
-        {
-          path: observed.path,
-          expectedRevision: createWorkspaceRevision(false, ""),
-          currentRevision: observed.revision,
-        },
-      );
-    }
-    await this.writeText(observed.path, content);
-    return localWorkspaceWriteResult(observed, content);
-  }
-
-  async replaceText(
-    path: string,
-    expectedRevision: WorkspaceRevision,
-    content: string,
-  ): Promise<WorkspaceWriteResult> {
-    const observed = await this.readTextWithRevision(path);
-    if (!observed.exists) {
-      throw new WorkspaceRuntimeError(
-        "WORKSPACE_REPLACE_CONFLICT",
-        `Workspace replace target does not exist: ${path}`,
-        {
-          path: observed.path,
-          expectedRevision,
-          currentRevision: observed.revision,
-        },
-      );
-    }
-    assertExpectedRevision(observed.path, expectedRevision, observed.revision);
-    if (observed.content !== content) {
-      await this.writeText(observed.path, content);
-    }
-    return localWorkspaceWriteResult(observed, content);
+    await this.writeText(path, result.content);
+    return result;
   }
 
   async writeText(path: string, content: string): Promise<void> {
@@ -365,10 +219,6 @@ async function resolveRealPathAllowMissing(target: string): Promise<string> {
 export interface ControlledWorkspaceOptions {
   run: RunRecord;
   workspace: WorkspaceRuntime;
-  /** Shared run-tree state; omitted only by legacy/direct embedders. */
-  workspaceState?: WorkspaceStateRuntime;
-  /** Runtime-owned actor; omitted only by legacy/direct embedders. */
-  approvalPrincipal?: ApprovalPrincipal;
   events: EventLog;
   policy?: Policy;
   interactionChannel?: InteractionChannel;
@@ -385,18 +235,9 @@ export interface ControlledWorkspaceOptions {
 /** @internal Reference `WorkspaceRuntime` with policy and approval enforcement. */
 export class ControlledWorkspace implements WorkspaceRuntime {
   private readonly policy: Policy;
-  private readonly workspaceState: WorkspaceStateRuntime;
-  private readonly approvalPrincipal: ApprovalPrincipal;
 
   constructor(private readonly options: ControlledWorkspaceOptions) {
     this.policy = options.policy ?? createDefaultPolicy();
-    this.workspaceState =
-      options.workspaceState ?? new InMemoryWorkspaceState();
-    this.approvalPrincipal = options.approvalPrincipal ?? {
-      kind: "main",
-      principalScope: String(options.run.id),
-      displayLabel: "main",
-    };
   }
 
   async canonicalPath(path: string): Promise<string> {
@@ -404,35 +245,11 @@ export class ControlledWorkspace implements WorkspaceRuntime {
   }
 
   async readText(path: string): Promise<string> {
-    const observed = await this.readTextWithRevision(path);
-    if (!observed.exists) {
-      throw Object.assign(
-        new Error(`ENOENT: no such file or directory, open '${observed.path}'`),
-        { code: "ENOENT", path: observed.path },
-      );
-    }
-    return observed.content;
-  }
-
-  async readTextWithRevision(path: string): Promise<WorkspaceTextObservation> {
     const workspacePath = await this.canonicalizePath(path);
     await this.guardRead(workspacePath);
-    const observed = await observeWorkspaceText(
-      this.options.workspace,
-      workspacePath,
-    );
-    const result = {
-      ...observed,
-      path: workspacePath,
-      stateEpoch: this.workspaceState.currentEpoch(),
-    };
-    this.options.events.emit("workspace.read", {
-      path: workspacePath,
-      revision: result.revision,
-      exists: result.exists,
-      stateEpoch: result.stateEpoch,
-    });
-    return result;
+    const content = await this.options.workspace.readText(workspacePath);
+    this.options.events.emit("workspace.read", { path: workspacePath });
+    return content;
   }
 
   /**
@@ -464,38 +281,23 @@ export class ControlledWorkspace implements WorkspaceRuntime {
   async readAnchoredText(path: string): Promise<AnchoredText> {
     const workspacePath = await this.canonicalizePath(path);
     await this.guardRead(workspacePath);
-    const observation = await observeWorkspaceText(
-      this.options.workspace,
+    const anchored = createAnchoredText(
       workspacePath,
+      await this.options.workspace.readText(workspacePath),
     );
-    if (!observation.exists) {
-      throw Object.assign(
-        new Error(`ENOENT: no such file or directory, open '${workspacePath}'`),
-        { code: "ENOENT", path: workspacePath },
-      );
-    }
-    const anchored = createAnchoredText(workspacePath, observation.content);
-    const revised = {
-      ...anchored,
-      metadata: {
-        ...anchored.metadata,
-        revision: observation.revision,
-        stateEpoch: this.workspaceState.currentEpoch(),
-      },
-    };
     this.options.events.emit("workspace.anchored_read", {
       path: workspacePath,
-      anchorSetId: revised.anchorSetId,
-      lineCount: revised.lineCount,
-      metadata: revised.metadata,
+      anchorSetId: anchored.anchorSetId,
+      lineCount: anchored.lineCount,
+      metadata: anchored.metadata,
     });
-    return revised;
+    return anchored;
   }
 
   async editAnchoredText(
     path: string,
     edits: AnchoredEditOperation[],
-    options: { reason?: string; expectedRevision?: WorkspaceRevision } = {},
+    options: { reason?: string } = {},
   ): Promise<ApplyAnchoredEditsResult & { write?: WorkspaceWriteResult }> {
     const workspacePath = await this.canonicalizePath(path);
     this.options.events.emit("workspace.anchored_edit.requested", {
@@ -505,25 +307,10 @@ export class ControlledWorkspace implements WorkspaceRuntime {
     });
 
     let result: ApplyAnchoredEditsResult;
-    let observation: WorkspaceTextObservation;
     try {
-      observation = await observeWorkspaceText(
-        this.options.workspace,
-        workspacePath,
-      );
-      if (!observation.exists) {
-        throw Object.assign(new Error(`File not found: ${workspacePath}`), {
-          code: "ENOENT",
-        });
-      }
-      assertExpectedRevision(
-        workspacePath,
-        options.expectedRevision,
-        observation.revision,
-      );
       result = applyAnchoredEdits({
         path: workspacePath,
-        content: observation.content,
+        content: await this.options.workspace.readText(workspacePath),
         edits,
       });
     } catch (cause) {
@@ -550,13 +337,7 @@ export class ControlledWorkspace implements WorkspaceRuntime {
       anchors: result.anchors,
       editCount: edits.length,
     });
-    const write = await this.mutateFile(
-      workspacePath,
-      result.content,
-      options,
-      "edit",
-      observation.revision,
-    );
+    const write = await this.writeText(workspacePath, result.content, options);
     return { ...result, write };
   }
 
@@ -569,30 +350,7 @@ export class ControlledWorkspace implements WorkspaceRuntime {
     content: string,
     options: { reason?: string } = {},
   ): Promise<WorkspaceWriteResult> {
-    return this.mutateFile(path, content, options, "legacy_write");
-  }
-
-  async createText(
-    path: string,
-    content: string,
-    options: { reason?: string } = {},
-  ): Promise<WorkspaceWriteResult> {
-    return this.mutateFile(
-      path,
-      content,
-      options,
-      "create",
-      createWorkspaceRevision(false, ""),
-    );
-  }
-
-  async replaceText(
-    path: string,
-    expectedRevision: WorkspaceRevision,
-    content: string,
-    options: { reason?: string } = {},
-  ): Promise<WorkspaceWriteResult> {
-    return this.mutateFile(path, content, options, "replace", expectedRevision);
+    return this.mutateFile(path, content, options);
   }
 
   async removeFile(
@@ -606,15 +364,13 @@ export class ControlledWorkspace implements WorkspaceRuntime {
         { path },
       );
     }
-    return this.mutateFile(path, undefined, options, "remove");
+    return this.mutateFile(path, undefined, options);
   }
 
   private async mutateFile(
     path: string,
     content: string | undefined,
     options: { reason?: string },
-    changeOperation: WorkspaceChangeOperation,
-    expectedRevision?: WorkspaceRevision,
   ): Promise<WorkspaceWriteResult> {
     const workspacePath = await this.canonicalizePath(path);
     const operation = content === undefined ? "remove" : "write";
@@ -623,8 +379,6 @@ export class ControlledWorkspace implements WorkspaceRuntime {
       content ?? "",
       options,
       operation,
-      expectedRevision,
-      changeOperation,
     );
     this.options.events.emit("workspace.write.requested", proposal);
 
@@ -680,22 +434,13 @@ export class ControlledWorkspace implements WorkspaceRuntime {
       const request = createApprovalRequest({
         runId: this.options.run.id,
         action: "workspace.write",
-        summary: `${workspaceChangeOperationLabel(changeOperation)} ${workspacePath}`,
-        principal: this.approvalPrincipal,
-        subject: {
-          kind: "workspace_file",
-          operation: changeOperation,
-          path: workspacePath,
-          key: `workspace_file:${changeOperation}:${workspacePath}`,
-          label: `Allow ${workspaceChangeApprovalLabel(changeOperation)} ${workspacePath} for this session`,
-        },
+        summary: `${operation === "remove" ? "Remove" : "Write"} ${workspacePath}`,
         details: {
           path: workspacePath,
           reason: options.reason,
           proposalId: proposal.id,
           diff: proposal.diff,
           operation,
-          changeOperation,
           policy: decision,
         },
       });
@@ -750,38 +495,12 @@ export class ControlledWorkspace implements WorkspaceRuntime {
     } else {
       await this.options.workspace.writeText(workspacePath, content, options);
     }
-    const beforeRevision = proposal.metadata
-      .baselineRevision as WorkspaceRevision;
-    const afterRevision = createWorkspaceRevision(
-      content !== undefined,
-      content ?? "",
-    );
-    const changed = beforeRevision !== afterRevision;
-    const changeSet = changed
-      ? this.workspaceState.recordChangeSet({
-          id: createId("change_set"),
-          actor: this.approvalPrincipal,
-          entries: [
-            {
-              path: workspacePath,
-              operation: changeOperation,
-              beforeRevision,
-              afterRevision,
-            },
-          ],
-        })
-      : undefined;
     const summary = summarizeWrittenContent(content ?? "");
     this.options.events.emit("workspace.write.completed", {
       proposalId: proposal.id,
       path: workspacePath,
       diffArtifactId: artifact.id,
       summary,
-      changed,
-      beforeRevision,
-      afterRevision,
-      ...(changeSet ? { changeSet, writeEpoch: changeSet.writeEpoch } : {}),
-      actor: this.approvalPrincipal,
       ...(operation === "remove" ? { operation } : {}),
     });
     return {
@@ -790,10 +509,6 @@ export class ControlledWorkspace implements WorkspaceRuntime {
       diffArtifactId: artifact.id,
       diffArtifact: artifact,
       summary,
-      changed,
-      beforeRevision,
-      afterRevision,
-      ...(changeSet ? { changeSet } : {}),
     };
   }
 
@@ -802,37 +517,9 @@ export class ControlledWorkspace implements WorkspaceRuntime {
     content: string,
     options: { reason?: string } = {},
     operation: "write" | "remove" = "write",
-    expectedRevision?: WorkspaceRevision,
-    changeOperation: WorkspaceChangeOperation = "legacy_write",
   ): Promise<WorkspaceWriteProposal> {
-    const current = await observeWorkspaceText(this.options.workspace, path);
-    if (
-      changeOperation === "create" &&
-      current.revision !== createWorkspaceRevision(false, "")
-    ) {
-      throw new WorkspaceRuntimeError(
-        "WORKSPACE_CREATE_CONFLICT",
-        `Workspace create target already exists: ${path}`,
-        {
-          path,
-          expectedRevision: createWorkspaceRevision(false, ""),
-          currentRevision: current.revision,
-        },
-      );
-    }
-    if (changeOperation === "replace" && !current.exists) {
-      throw new WorkspaceRuntimeError(
-        "WORKSPACE_REPLACE_CONFLICT",
-        `Workspace replace target does not exist: ${path}`,
-        {
-          path,
-          expectedRevision,
-          currentRevision: current.revision,
-        },
-      );
-    }
-    assertExpectedRevision(path, expectedRevision, current.revision);
-    const diff = createSimpleTextDiff(path, current.content, content);
+    const current = await this.options.workspace.readText(path).catch(() => "");
+    const diff = createSimpleTextDiff(path, current, content);
 
     return {
       id: createWorkspaceWriteId(),
@@ -843,10 +530,7 @@ export class ControlledWorkspace implements WorkspaceRuntime {
       reason: options.reason,
       createdAt: new Date().toISOString(),
       metadata: {
-        baselineHash: hashText(current.content),
-        baselineRevision: current.revision,
-        baselineExists: current.exists,
-        changeOperation,
+        baselineHash: hashText(current),
         ...(operation === "remove" ? { operation } : {}),
       },
     };
@@ -855,14 +539,12 @@ export class ControlledWorkspace implements WorkspaceRuntime {
   private async assertWriteBaselineCurrent(
     proposal: WorkspaceWriteProposal,
   ): Promise<void> {
-    const current = await observeWorkspaceText(
-      this.options.workspace,
-      proposal.path,
-    );
-    const currentHash = hashText(current.content);
-    const currentRevision = current.revision;
+    const current = await this.options.workspace
+      .readText(proposal.path)
+      .catch(() => "");
+    const currentHash = hashText(current);
 
-    if (proposal.metadata.baselineRevision === currentRevision) return;
+    if (proposal.metadata.baselineHash === currentHash) return;
 
     this.options.events.emit("workspace.write.denied", {
       proposalId: proposal.id,
@@ -870,8 +552,6 @@ export class ControlledWorkspace implements WorkspaceRuntime {
       reason: "Workspace file changed after the write was proposed.",
       baselineHash: proposal.metadata.baselineHash,
       currentHash,
-      baselineRevision: proposal.metadata.baselineRevision,
-      currentRevision,
     });
     throw new WorkspaceRuntimeError(
       "WORKSPACE_WRITE_CONFLICT",
@@ -881,8 +561,6 @@ export class ControlledWorkspace implements WorkspaceRuntime {
         proposalId: proposal.id,
         baselineHash: proposal.metadata.baselineHash,
         currentHash,
-        baselineRevision: proposal.metadata.baselineRevision,
-        currentRevision,
       },
     );
   }
@@ -946,98 +624,6 @@ function normalizeAnchoredEditError(
 
 function hashText(content: string): string {
   return createHash("sha256").update(content).digest("hex");
-}
-
-async function observeWorkspaceText(
-  workspace: WorkspaceRuntime,
-  path: string,
-): Promise<WorkspaceTextObservation> {
-  if (workspace.readTextWithRevision) {
-    return workspace.readTextWithRevision(path);
-  }
-  const content = await workspace.readText(path).catch((cause) => {
-    if (isNodeErrorCode(cause, "ENOENT")) return undefined;
-    throw cause;
-  });
-  return {
-    path,
-    exists: content !== undefined,
-    content: content ?? "",
-    revision: createWorkspaceRevision(content !== undefined, content ?? ""),
-  };
-}
-
-function assertExpectedRevision(
-  path: string,
-  expectedRevision: WorkspaceRevision | undefined,
-  currentRevision: WorkspaceRevision,
-): void {
-  if (expectedRevision === undefined || expectedRevision === currentRevision) {
-    return;
-  }
-  throw new WorkspaceRuntimeError(
-    "WORKSPACE_REVISION_CONFLICT",
-    `Workspace revision changed before mutation: ${path}`,
-    { path, expectedRevision, currentRevision },
-  );
-}
-
-function localWorkspaceWriteResult(
-  before: WorkspaceTextObservation,
-  content: string,
-): WorkspaceWriteResult {
-  const afterRevision = createWorkspaceRevision(true, content);
-  return {
-    proposalId: createWorkspaceWriteId(),
-    path: before.path,
-    summary: summarizeWrittenContent(content),
-    changed: !before.exists || before.content !== content,
-    beforeRevision: before.revision,
-    afterRevision,
-  };
-}
-
-function isNodeErrorCode(cause: unknown, code: string): boolean {
-  return (
-    typeof cause === "object" &&
-    cause !== null &&
-    "code" in cause &&
-    (cause as { code?: unknown }).code === code
-  );
-}
-
-function workspaceChangeOperationLabel(
-  operation: WorkspaceChangeOperation,
-): string {
-  switch (operation) {
-    case "create":
-      return "Create";
-    case "replace":
-      return "Replace";
-    case "edit":
-      return "Edit";
-    case "remove":
-      return "Remove";
-    case "legacy_write":
-      return "Write";
-  }
-}
-
-function workspaceChangeApprovalLabel(
-  operation: WorkspaceChangeOperation,
-): string {
-  switch (operation) {
-    case "create":
-      return "creating";
-    case "replace":
-      return "replacing";
-    case "edit":
-      return "editing";
-    case "remove":
-      return "removing";
-    case "legacy_write":
-      return "writing";
-  }
 }
 
 function normalizeWorkspacePath(path: string): string {
