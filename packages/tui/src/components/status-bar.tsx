@@ -7,8 +7,8 @@ import { Spinner } from "./spinner.js";
 import { summarizeTaskActivity } from "../lib/task-activity.js";
 
 /**
- * Live status bar. Static identity (brand, cwd, session) belongs to the
- * committed EventStream header; this pinned line only shows changing run state.
+ * Live status bar. Document-epoch identity (brand, cwd, session) belongs to the
+ * TranscriptDocument header; this pinned line only shows changing run state.
  * The elapsed timer ticks once a second while running; we keep the interval
  * local so it doesn't pollute the store with redraws when nothing's happening.
  */
@@ -31,9 +31,11 @@ export function StatusBar(props: {
   const statusLabel =
     props.state.status === "awaiting-approval"
       ? "approval"
-      : props.state.status === "running" && props.state.activePhase
-        ? props.state.activePhase.message
-        : props.state.status;
+      : props.state.status === "running" && props.state.statusMessage
+        ? props.state.statusMessage
+        : props.state.status === "running" && props.state.activePhase
+          ? props.state.activePhase.message
+          : props.state.status;
   const modelLabel = compact
     ? compactModelLabel(props.modelLabel)
     : props.modelLabel;

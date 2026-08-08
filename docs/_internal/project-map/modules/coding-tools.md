@@ -11,6 +11,97 @@ See also [../maps/runtime/tool-orchestration.md](../maps/runtime/tool-orchestrat
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-08-02
+- Scope: existing Skill changes now use ordinary controlled coding writes after
+  privileged Skill mutation tools were removed. Coding-tool CAS, validation,
+  target scope, and tool definitions are unchanged.
+- Read: Host tool inventory/shell guidance and unchanged coding-tool boundary.
+- Tests: focused Host catalog/tools and repository test typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-30
+- Scope: project-context delegation guidance now treats a child report as
+  evidence for one synthesized parent answer. It preserves concrete
+  paths/commands/status/blockers without instructing the parent to forward the
+  entire child report verbatim and then repeat it.
+- Read: project-context prompt builder, compact Agent result contract, and
+  focused prompt tests.
+- Tests: Project Context focused suite passed.
+
+- Status: Verified
+- Date: 2026-07-29
+- Scope: Todo selection guidance now uses one general coordination invariant:
+  call `todo_write` only when durable plan state materially reduces the risk of
+  losing unresolved work. File/tool/verification counts, elapsed time, and
+  delegation are explicitly non-decisive signals; the previous numeric and
+  one-file scenario thresholds are removed.
+- Read: project-context tool-gated planning guidance, Todo tool description,
+  and focused tests.
+- Tests: Project Context 19/19, Agent Runtime Todo 8/8, and both package
+  typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-26
+- Scope: project-context delegation guidance now consumes the compact Agent
+  result directly: relay `report`, treat `workspace` as runtime-owned mutation
+  evidence, and preserve warnings/blockers. Per-invocation
+  `reportingGuidance` is no longer generated.
+- Read: project-context prompt builder, Agent result contract, and Host child
+  output projection.
+- Tests: Project Context 19/19 and Host focused Agent/tool/task 101/101 passed.
+
+- Status: Verified
+- Date: 2026-07-24
+- Scope: model-facing workspace mutation is split into `create`, `replace`,
+  revisioned patch `edit`, and revisioned anchored edit. Reads return opaque
+  revisions that distinguish missing and empty files; mutation results expose
+  before/after revisions and ChangeSet identity. `write` remains deprecated
+  and parent-only for compatibility.
+- Read: coding tool schemas/execution, Core workspace runtime, Host catalog and
+  child resolver, and project-context guidance.
+- Tests: coding-tools 37/37, focused Core workspace tests, repository build,
+  and repository test typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-23
+- Scope: route review for annotation-only Task/Shell async receipt maintenance.
+  Coding-tool assembly, command execution, safety, and model-visible payload
+  values are unchanged.
+- Read: Task/Shell receipt DTOs and coding-tool ownership boundary.
+- Tests: Agent Runtime tasks 76/76, Shell 43/43, SDK Core 11/11, affected
+  typechecks, and strict reserved-field check passed.
+
+- Status: Verified
+- Date: 2026-07-23
+- Scope: Shell background output gained a structured asynchronous task receipt;
+  command execution, safety classification, and coding-tool ownership did not
+  change.
+- Read: Shell tool output schema/handoff and Host task adoption.
+- Tests: Shell suite (43), focused Host tools tests, and affected typechecks
+  passed.
+
+- Status: Verified
+- Date: 2026-07-23
+- Scope: project instruction sections retain provider system role but now state
+  their real bounded authority: directory-scoped workspace instructions cannot
+  grant tools, permissions, or authority beyond harness policy and the task.
+  The role, discovery, cache policy, and instruction content are unchanged.
+- Read: project-context instruction discovery/rendering, Core app/project
+  section roles, and focused project-context tests.
+- Tests: Project Context suite (19 tests), package typecheck, and repository
+  test typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-21
+- Scope: tool definitions may author typed reusable approval subjects. Shell
+  provides exact normalized command/cwd semantics; dynamic Agent grants provide
+  exact structured child write semantics; ordinary unknown effects are
+  one-shot. Tool schemas/execution outputs are otherwise unchanged.
+- Read: Core ToolDefinition, Shell tool, Host Agent grant/catalog, Agent Runtime
+  task wrapper, and focused tests.
+- Tests: focused Core, Shell, Agent Runtime, and Host tool suites passed.
+
 - Status: Verified
 - Date: 2026-07-19
 - Scope: reviewed because Host tool catalog/surface changed while removing Todo
@@ -91,13 +182,15 @@ Does not own:
 ## Contracts
 
 - Workspace mutation must go through core policy, approval, event, and artifact paths.
-- Default public model-facing coding names are `read`, `write`, `edit`, `bash`,
-  `glob`, and `grep`; these are the registered callable names used by prompts,
-  configuration, policy, traces, and user docs.
-- `write` is the whole-file create/replace surface for new files and nested
-  paths; it uses the same workspace write path as anchored edits and patches
-  and belongs to the `workspace.write` selector.
-- `write`, `edit_anchored_text`, and `edit` mark their governance
+- Default public model-facing coding names include `read`, `create`, `replace`,
+  `edit`, `bash`, `glob`, and `grep`; these are the registered callable names
+  used by prompts, configuration, policy, traces, and user docs. `write`
+  remains a deprecated parent-only compatibility surface.
+- `create` never overwrites an existing path. `replace`, patch `edit`, and
+  `edit_anchored_text` require the opaque revision returned by a current read.
+  Missing and empty files have distinct revisions, and every successful
+  mutation returns `changed`, before/after revisions, and ChangeSet identity.
+- `create`, `replace`, `write`, `edit_anchored_text`, and `edit` mark their governance
   origin metadata with `managedWorkspaceWrite: true`; write-enabled runs use
   that marker to route mutations through the managed `workspace.write` diff
   approval path instead of treating the tool call itself as the write boundary.
@@ -152,15 +245,18 @@ Does not own:
 - Project-context file-tool guidance tells the model to run relevant known
   verification after successful writes instead of re-reading just-written or
   unchanged files.
-- Project-context `todo_planning` is the model-visible authority for when to
-  use `todo_write`: it appears only when `todo_write` is in the live inventory,
-  while the tool schema carries only structural/status/evidence rules.
+- Project-context `todo_planning` appears only when `todo_write` is in the live
+  inventory and owns cadence/anti-churn guidance. It and the tool description
+  share the same selection invariant: use durable plan state only when it adds
+  material coordination value; mechanical step/file/tool counts are not the
+  decision boundary.
 - Main, dynamic child, configured delegate child, and CLI diagnostic coding
   tool exposure should flow through the host tool catalog before reaching
   runtime, direct-core/cron runs, and capability snapshots. Dynamic children
-  default to read-only tools; managed write tools are present in the dynamic
-  child catalog only for explicit spawn-time workspace-write grants and still
-  flow through normal tool filtering.
+  derive child-eligible local read, CAS-write, and foreground-only shell tools
+  from the parent effective surface; model handoff fields cannot add tools.
+  Configured delegates additionally intersect administrator profile selectors
+  and concrete allowed tools with the child-eligible catalog.
 - Top-level `tools.use` filters the catalog by source/capability selectors
   before model-facing descriptors are built; `tools.allowed` and
   `tools.disabled` then filter concrete tool names, and `tools.defer` only
@@ -316,7 +412,7 @@ Does not own:
   spawn-time grants while default dynamic child requests remain read-only and
   still pass through host tool filtering.
 - Read: `packages/host/src/tool-catalog.ts`,
-  `packages/host/src/agent-spawn-grants.ts`,
+  `packages/host/src/runtime/agent-runtime-assembly.ts`,
   `packages/host/src/runtime.ts`,
   `packages/coding-tools/src/index.ts`.
 - Tests: `npm test -w @sparkwright/host -- tools.test.ts spawn-agent.test.ts`;

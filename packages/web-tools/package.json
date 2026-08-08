@@ -1,0 +1,56 @@
+{
+  "name": "@sparkwright/web-tools",
+  "version": "0.1.0",
+  "description": "Safe public web content tools for Sparkwright agents.",
+  "license": "Apache-2.0",
+  "author": "hopemeet <https://x.com/hopemeet_ai>",
+  "homepage": "https://github.com/hopemeet/sparkwright#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hopemeet/sparkwright.git",
+    "directory": "packages/web-tools"
+  },
+  "bugs": {
+    "url": "https://github.com/hopemeet/sparkwright/issues"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node ../../scripts/stamp-workspace-build.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@sparkwright/core": "0.1.0",
+    "html-to-text": "^9.0.5",
+    "ipaddr.js": "^2.2.0",
+    "undici": "^7.26.0"
+  },
+  "devDependencies": {
+    "@types/html-to-text": "^9.0.4",
+    "vitest": "^3.2.6"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "private": false,
+  "sideEffects": false,
+  "keywords": [
+    "agents",
+    "fetch",
+    "sparkwright",
+    "tools",
+    "web"
+  ]
+}

@@ -2,6 +2,7 @@ import React from "react";
 import { Text, useInput, useStdout } from "ink";
 import { DialogFrame } from "./dialog-frame.js";
 import { middleEllipsisPath } from "../lib/path-display.js";
+import { isBackInput } from "../lib/input-key.js";
 
 export interface ConfigPanelResolved {
   workspaceRoot: string;
@@ -14,6 +15,7 @@ export interface ConfigPanelResolved {
     tuiPermissionMode?: string;
   };
   attempted: Array<{ path: string; loaded: boolean }>;
+  errors?: Array<{ file: string; field: string; message: string }>;
 }
 
 export function ConfigPanel(props: {
@@ -21,8 +23,8 @@ export function ConfigPanel(props: {
   onClose: () => void;
 }): React.ReactElement {
   const { stdout } = useStdout();
-  useInput((_input, key) => {
-    if (key.escape || key.return) props.onClose();
+  useInput((input, key) => {
+    if (isBackInput(input, key) || key.return) props.onClose();
   });
 
   const resolved = props.resolved;
@@ -65,6 +67,21 @@ export function ConfigPanel(props: {
           <Text dimColor={!attempt.loaded}>{attempt.path}</Text>
         </Text>
       ))}
+      {(resolved.errors?.length ?? 0) > 0 ? (
+        <>
+          <Text> </Text>
+          <Text color="red" bold>
+            validation errors ({resolved.errors?.length})
+          </Text>
+          {resolved.errors?.map((error, index) => (
+            <Text key={`${error.file}:${error.field}:${index}`}>
+              <Text color="red">{error.field}</Text>
+              <Text> {error.message}</Text>
+              <Text dimColor> · {error.file}</Text>
+            </Text>
+          ))}
+        </>
+      ) : null}
     </DialogFrame>
   );
 }

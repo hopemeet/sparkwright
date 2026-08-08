@@ -4,12 +4,16 @@ import type {
   UsageSnapshot,
 } from "@sparkwright/core";
 
-export interface AgentToolInvocationInput {
-  /** The goal forwarded to the child run. */
+export interface AgentHandoffPayload {
+  /** Self-contained delegated task and expected deliverable. */
   goal: string;
-  /** Optional free-form metadata supplied by the LLM. */
-  metadata?: Record<string, unknown>;
+  /** Parent-established facts and constraints at working/user authority. */
+  context?: string;
+  /** UI/trace-only label; never a prompt or permission input. */
+  label?: string;
 }
+
+export type AgentToolInvocationInput = AgentHandoffPayload;
 
 export interface AgentToolSummarizeInput {
   childRunId: string;
@@ -19,7 +23,21 @@ export interface AgentToolSummarizeInput {
   usage: UsageSnapshot;
 }
 
-export interface AgentToolResult {
+export type AgentResultStatus = "completed" | "partial" | "blocked";
+
+export interface AgentBlocker {
+  /** Stable machine-readable runtime reason. */
+  code: string;
+  message: string;
+}
+
+/**
+ * Runtime-owned completion facts for one in-process child invocation.
+ *
+ * This shape is used by lifecycle, diagnostics, aggregation, and the
+ * delegation ledger. It is deliberately not the model-visible tool result.
+ */
+export interface AgentRuntimeResult {
   childRunId: string;
   spanId: string;
   signal: RunResult["signal"];
@@ -29,22 +47,46 @@ export interface AgentToolResult {
   costUsd: number;
   toolCalls: number;
   modelCalls: number;
-  /** Whether the child reached a complete terminal answer, independent of health. */
-  finality: "complete" | "partial";
-  /** Core-owned semantic assessment projected without reinterpretation. */
+  /**
+   * Runtime-derived report status. `completed` means the child delivered a
+   * non-empty final report; the parent still decides whether the goal was met.
+   */
+  status: AgentResultStatus;
+  /** Structured child/runtime summary. */
+  summary: string;
+  /** Runtime-owned blocker evidence. */
+  blockers: AgentBlocker[];
+  /** Core-owned execution health projected without reinterpretation. */
   assessment: RunAssessment;
   /**
-   * True when the child answered on its last allowed step (`stepLimitReached`
-   * in the run result metadata). A `final_answer` produced under an exhausted
-   * step budget may be truncated; the parent should caveat rather than treat it
-   * as exhaustive.
-   *
-   * @reserved Public delegate-tool output field consumed by parent agents and UIs.
+   * True only when the child exhausted its allowed actions and the runtime
+   * forced a tool-less best-effort wrap-up.
    */
   stepLimitReached?: boolean;
-  /** @reserved Public delegate-tool output field consumed by parent agents and UIs. */
-  alreadyCompleted?: boolean;
-  note?: string;
+  truncated?: boolean;
+}
+
+export interface ParentAgentWorkspaceEvidence {
+  /** Runtime-observed managed workspace writes performed by the child. */
+  writes: number;
+  /** Unique paths from the structured write lifecycle, when available. */
+  paths?: string[];
+}
+
+/**
+ * Compact child report returned to the parent model.
+ *
+ * `report` is child-authored. `workspace` and `warnings` are runtime-owned
+ * evidence that the parent must use when making mutation or completeness
+ * claims.
+ */
+export interface ParentAgentResult {
+  childRunId: string;
+  status: AgentResultStatus;
+  report: string;
+  workspace: ParentAgentWorkspaceEvidence;
+  warnings?: string[];
+  blockers?: AgentBlocker[];
 }
 
 export interface DelegationLedgerKey {
@@ -52,13 +94,19 @@ export interface DelegationLedgerKey {
   agentProfileId?: string;
   delegateTool?: string;
   role?: string;
-  prompt?: string;
+  /** Explicit task context whose changes must invalidate dynamic-spawn reuse. */
+  context?: string;
   allowedTools?: readonly string[];
+  modelFingerprint?: string;
+  capabilityFingerprint?: string;
+  promptFingerprint?: string;
+  workspaceEpoch?: number;
+  /** External/network-observing child surfaces must not reuse cached results. */
+  cacheable?: boolean;
 }
 
-export interface DelegationLedgerResult extends AgentToolResult {
-  truncated?: boolean;
-  output?: Record<string, unknown>;
+export interface DelegationLedgerResult extends AgentRuntimeResult {
+  output?: ParentAgentResult;
 }
 
 export interface DelegationLedgerHit {

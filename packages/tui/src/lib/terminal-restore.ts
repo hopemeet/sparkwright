@@ -1,28 +1,16 @@
 /**
- * Crash-safe terminal mode restoration.
+ * Explicit terminal lifecycle for the full-screen TUI.
  *
- * The TUI opts terminals into several private modes that the terminal keeps
- * set until explicitly cleared: bracketed paste (?2004h, input-box), focus
- * reporting (?1004h, attention), and mouse reporting (?1000h/?1006h, when a
- * future feature enables it). React effect cleanups restore these on a normal
- * unmount — but a hard exit (SIGINT/SIGTERM/SIGHUP from `kill`, or an uncaught
- * exception) skips effect cleanup, leaving the user's shell in a broken state:
- * pastes wrapped in `[200~…`, stray `[I`/`[O` on focus changes, a hidden
- * cursor.
- *
- * This installs process-level handlers that write the "restore everything"
- * sequence exactly once, on any exit path. It's a belt-and-suspenders safety
- * net: double-clearing a mode that an effect already cleared is a harmless
- * no-op, and clearing a mode that was never set is equally harmless.
+ * SIGINT is intentionally not handled here: App owns the first-Ctrl+C
+ * cancel/second-Ctrl+C exit contract. A real exit, hard signal, or crash still
+ * restores every private terminal mode exactly once.
  */
 
 const ESC = "\x1b";
 
-/**
- * Reset, in order: bracketed paste off, focus reporting off, mouse tracking
- * off (SGR + normal), show cursor. Writing a disable for a mode that isn't
- * active is ignored by the terminal, so we can unconditionally send the lot.
- */
+export const TERMINAL_ENTER_ALTERNATE_SCREEN_SEQUENCE =
+  `${ESC}[?1049h` + `${ESC}[H`;
+
 export const TERMINAL_RESTORE_SEQUENCE =
   `${ESC}[?2004l` + // bracketed paste off
   `${ESC}[?1004l` + // focus reporting off
@@ -30,70 +18,110 @@ export const TERMINAL_RESTORE_SEQUENCE =
   `${ESC}[?1000l` + // normal mouse off
   `${ESC}[?25h`; // show cursor
 
-/** Build the restore sequence (exposed for tests / explicit callers). */
-export function buildTerminalRestoreSequence(): string {
-  return TERMINAL_RESTORE_SEQUENCE;
+export function buildTerminalRestoreSequence(alternateScreen = false): string {
+  return (
+    TERMINAL_RESTORE_SEQUENCE +
+    (alternateScreen ? `${ESC}[?1049l${ESC}[?25h` : "")
+  );
 }
 
-let installed = false;
+interface ProcessLifecycle {
+  once(event: "exit", listener: (code?: number) => void): unknown;
+  once(event: "SIGTERM" | "SIGHUP", listener: () => void): unknown;
+  once(event: "uncaughtException", listener: (error: unknown) => void): unknown;
+  off(event: string, listener: (...args: unknown[]) => void): unknown;
+  exit(code?: number): never;
+}
+
+export interface TerminalSession {
+  readonly alternateScreen: boolean;
+  restore(): void;
+  dispose(): void;
+}
+
+export interface EnterTerminalSessionOptions {
+  stdout?: NodeJS.WriteStream;
+  alternateScreen: boolean;
+  process?: ProcessLifecycle;
+  reportError?: (error: unknown) => void;
+}
+
+let activeSession: TerminalSession | null = null;
+
+export function enterTerminalSession(
+  options: EnterTerminalSessionOptions,
+): TerminalSession {
+  if (activeSession) return activeSession;
+  const stdout = options.stdout ?? process.stdout;
+  const lifecycle = options.process ?? (process as unknown as ProcessLifecycle);
+  const alternateScreen = Boolean(options.alternateScreen && stdout.isTTY);
+  let restored = false;
+  let disposed = false;
+
+  const safeWrite = (value: string): void => {
+    try {
+      if (stdout.isTTY) stdout.write(value);
+    } catch {
+      // The stream may already be gone during process teardown.
+    }
+  };
+  if (alternateScreen) safeWrite(TERMINAL_ENTER_ALTERNATE_SCREEN_SEQUENCE);
+
+  const restore = (): void => {
+    if (restored) return;
+    restored = true;
+    safeWrite(buildTerminalRestoreSequence(alternateScreen));
+  };
+  const onExit = (): void => restore();
+  const onSignal = (code: number) => (): void => {
+    restore();
+    lifecycle.exit(code);
+  };
+  const onUncaught = (error: unknown): void => {
+    restore();
+    (options.reportError ?? console.error)(error);
+    lifecycle.exit(1);
+  };
+  const sigterm = onSignal(143);
+  const sighup = onSignal(129);
+
+  lifecycle.once("exit", onExit);
+  lifecycle.once("SIGTERM", sigterm);
+  lifecycle.once("SIGHUP", sighup);
+  lifecycle.once("uncaughtException", onUncaught);
+
+  const session: TerminalSession = {
+    alternateScreen,
+    restore,
+    dispose(): void {
+      if (disposed) return;
+      disposed = true;
+      lifecycle.off("exit", asLifecycleListener(onExit));
+      lifecycle.off("SIGTERM", asLifecycleListener(sigterm));
+      lifecycle.off("SIGHUP", asLifecycleListener(sighup));
+      lifecycle.off("uncaughtException", asLifecycleListener(onUncaught));
+      if (activeSession === session) activeSession = null;
+    },
+  };
+  activeSession = session;
+  return session;
+}
 
 /**
- * Register exit/signal handlers that restore terminal modes once. Returns a
- * disposer that removes the handlers (used by tests; the app keeps them for
- * its whole lifetime). Safe to call multiple times — only the first install
- * takes effect.
+ * Compatibility wrapper for callers that only need crash restoration without
+ * entering the alternate screen.
  */
 export function installTerminalRestore(
   stdout: NodeJS.WriteStream = process.stdout,
 ): () => void {
-  if (installed) return () => {};
-  installed = true;
+  return enterTerminalSession({
+    stdout,
+    alternateScreen: false,
+  }).dispose;
+}
 
-  let restored = false;
-  const restore = (): void => {
-    if (restored) return;
-    restored = true;
-    try {
-      if (stdout.isTTY) stdout.write(TERMINAL_RESTORE_SEQUENCE);
-    } catch {
-      // Nothing we can do if the stream is already gone; never throw from a
-      // signal/exit handler.
-    }
-  };
-
-  const onExit = (): void => restore();
-  // For hard termination signals, restore then re-exit with the conventional
-  // 128+signal code so the parent sees we died from that signal. SIGINT is
-  // intentionally softer: real terminals can deliver Ctrl+C either as raw ETX
-  // (handled by Ink/useInput) or as process SIGINT, so the App owns SIGINT and
-  // applies the same two-press quit guard in both cases.
-  const onSignal = (code: number) => (): void => {
-    restore();
-    process.exit(code);
-  };
-  const onSigint = (): void => restore();
-  const onUncaught = (err: unknown): void => {
-    restore();
-    // Surface the error after restoring so it isn't swallowed.
-    console.error(err);
-    process.exit(1);
-  };
-
-  const sigterm = onSignal(143);
-  const sighup = onSignal(129);
-
-  process.once("exit", onExit);
-  process.on("SIGINT", onSigint);
-  process.once("SIGTERM", sigterm);
-  process.once("SIGHUP", sighup);
-  process.once("uncaughtException", onUncaught);
-
-  return () => {
-    process.off("exit", onExit);
-    process.off("SIGINT", onSigint);
-    process.off("SIGTERM", sigterm);
-    process.off("SIGHUP", sighup);
-    process.off("uncaughtException", onUncaught);
-    installed = false;
-  };
+function asLifecycleListener(
+  listener: (...args: never[]) => void,
+): (...args: unknown[]) => void {
+  return listener as (...args: unknown[]) => void;
 }

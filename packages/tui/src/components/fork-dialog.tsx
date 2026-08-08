@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { Box, Text, useInput, useStdout } from "ink";
 import type { RunEvent } from "../lib/event-type.js";
 import { useTheme } from "../lib/theme-context.js";
+import { isBackInput } from "../lib/input-key.js";
 import { DialogFrame } from "./dialog-frame.js";
 
 /**
@@ -44,7 +45,7 @@ export function ForkDialog(props: {
   const { start, visible } = optionWindow(options, safeCursor, windowSize);
 
   useInput((input, key) => {
-    if (key.escape) {
+    if (isBackInput(input, key)) {
       props.onCancel();
       return;
     }

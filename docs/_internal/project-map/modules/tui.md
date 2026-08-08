@@ -11,6 +11,357 @@ See also [../maps/trace/export-diagnostics.md](../maps/trace/export-diagnostics.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-08-07
+- Scope: committed assistant Markdown now retains blank separator lines while
+  crossing the presentation-to-document boundary, so paragraphs, emphasized
+  section labels, and lists cannot merge after the live stream hands off to
+  transcript history. Tool/result section compaction remains unchanged.
+- Read: retained `session_tui_msj3dedp` trace/transcript, assistant presentation,
+  TranscriptDocument assembly, Markdown parsing/layout, and viewport rendering.
+- Tests: focused Markdown/document/layout 53/53, full TUI 540/540, TUI
+  typecheck/build, session check with 0 findings, and a 100x50 PTY replay of the
+  retained Chinese response passed.
+
+- Status: Verified
+- Date: 2026-08-02
+- Scope: removed Skill proposal/review/learning commands, layers, dialogs,
+  completion handoffs, automatic learning, and draft counts. `/skills` remains
+  a read-only exact-identity Stats browser; `/create skill` now publishes the
+  deterministic non-overwriting project scaffold.
+- Read: App/layer/command/EventStore wiring, creation and Skills browser paths,
+  transcript/tool presentation, docs, and focused tests.
+- Tests: TUI typecheck and focused TUI 70/70 passed before final gates.
+
+- Status: Verified
+- Date: 2026-08-02
+- Scope: public and built-in TUI guidance now distinguishes bounded in-flight
+  reasoning/answer previews from the unabridged committed assistant answer, so
+  the temporary fold and atomic completion handoff are not mistaken for lost
+  output. Rendering behavior and transcript ownership are unchanged.
+- Read: TUI streaming renderer/EventStore contracts, public User Manual, and
+  built-in CLI/TUI reference.
+- Tests: focused streaming rendering, formatting, and Markdown links passed;
+  project-map drift completed.
+
+- Status: Verified
+- Date: 2026-08-01
+- Scope: live model output now hands off atomically to the committed transcript.
+  `model.stream.completed` retains the reasoning/answer preview because it only
+  closes the provider token stream; `model.completed` clears that preview in
+  the same EventStore update that appends the canonical assistant message.
+- Read: retained real-session trace timing, TUI EventStore accumulation and
+  active-phase handling, LiveFrame visibility, and transcript projection.
+- Tests: focused EventStore/phase/streaming rendering 33/33, full TUI 84 files /
+  561 tests, and TUI typecheck/build passed. Post-fix Terra PTY/session timing
+  stayed clean; its provider emitted the two completion markers adjacently.
+
+- Status: Verified
+- Date: 2026-08-01
+- Scope: live reasoning keeps only its final three source lines and truncates
+  each to one physical terminal row. The in-flight answer uses a terminal-height
+  budget of 6–12 physical rows (1–5 on tiny screens), clips overflow at the
+  bottom, and shows a generic temporary-fold hint. Completed transcript output
+  remains unabridged.
+- Read: App row-budget derivation, LiveFrame width routing, StreamingMessage
+  rendering, transcript ownership, and focused Ink tests.
+- Tests: focused streaming-message rendering 11/11, full TUI 84 files / 561
+  tests, TUI typecheck, and TUI build passed.
+
+- Status: Verified
+- Date: 2026-08-01
+- Scope: `/skills` now renders a focused current-inventory and recent-usage
+  browser instead of the generic capability overview. It joins trace-derived
+  load statistics to the effective Skill by exact layer/name/package identity,
+  counts current draft proposals, and keeps associated run/tool signals in an
+  Enter detail view. Model, tool-map, Cron, automation, current-run-load, and
+  last-used claims are absent from the default surface.
+- Read: command registration, capability action loading, layered Skill report,
+  Skill stats/evolution projection, layer renderer, focused Skills panel, and
+  real test-workspace output.
+- Tests: TUI typecheck, focused Skills/capability rendering 11/11, full TUI
+  83 files / 550 tests, TUI build, and an 80-column real PTY `/skills` list /
+  detail / back flow passed.
+
+- Status: Verified
+- Date: 2026-08-01
+- Scope: child-run approvals are now presented once under the owning Agent in
+  a separate `approvals` section. Agent action rows no longer carry an inline
+  approval suffix, and child approvals no longer become standalone transcript
+  blocks. Raw child approval events win on replay; bounded terminal-receipt
+  facts are the live fallback. Structured `autoApproved:true` renders as
+  `auto-approved`, while top-level approvals retain standalone rows.
+- Read: approval state projection, Agent receipt parsing, transcript
+  presentation/document/layout, Markdown export, and retained ask/bypass
+  sessions.
+- Tests: Agent Runtime 251/251, TUI 547/547, repository build, and retained
+  ask/bypass session replay passed.
+
+- Status: Verified
+- Date: 2026-07-31
+- Scope: idle usage now separates the latest model-call context from
+  session-total tokens and call totals. Session input, cached input, output,
+  and estimated cost moved to Activity's Run tab, using the canonical
+  `EventStore` usage summary rather than recounting events.
+- Read: usage aggregation, idle LiveFrame/sidebar rendering, Activity layer
+  routing, shared number formatting, and focused render tests.
+- Tests: TUI typecheck and full TUI suite passed 81 files / 547 tests.
+
+- Status: Verified
+- Date: 2026-07-30
+- Scope: parent-visible Agent action receipts now include approval outcomes
+  derived from actual child approval events. Live receipts and replayed raw
+  approvals each render once. Detailed tool presentation also omits compact
+  result previews and one-line input sections already shown in the header,
+  removing the duplicated `skill_load` parameters/result seen in real TUI QA.
+- Read: Agent action projection, transcript presentation/document/layout, the
+  retained TUI session, and focused tests.
+- Tests: Agent/TUI focused suites and retained-session replay passed.
+
+- Status: Verified
+- Date: 2026-07-30
+- Scope: product transcripts now correlate `approval.requested` and
+  `approval.resolved` by exact run-scoped approval id, retain the request
+  block's position, and render its current `requested`, `approved`, or
+  `denied` state with the operation label. The retired run-terminal approval
+  count and standalone matched resolution rows were deleted. Markdown export
+  uses the same approval outcome projection; Activity Events/Run, raw Trace,
+  and Core trace diagnostics retain their independent diagnostic facts.
+- Read: conversation projection, detailed/live transcript projection,
+  immutable TranscriptDocument assembly, Markdown export, Activity inspector,
+  and Core trace correlation/summary consumers.
+- Tests: focused approval document/presentation/live/export regressions
+  79/79, full TUI 540/540, TUI typecheck and build, plus retained-session PTY
+  compact/detailed replay passed.
+
+- Status: Verified
+- Date: 2026-07-29
+- Scope: detailed transcript mode is now an explicit browse focus mode. It
+  unmounts the composer while preserving the App-owned draft, reserves a
+  one-row navigation footer, gives plain Up/Down and Escape to line
+  scrolling/close, retains Page and boundary shortcuts, and restores the
+  composer on exit. Agent transport completion with assessment issues renders
+  as `completed with issues`; semantic issue text precedes child prose while
+  stable diagnostic codes remain secondary. Exact `tool_search select:`
+  previews omit the ignored `maxResults` field.
+- Read: App input-surface allocation, browse footer, viewport routing, Agent
+  lifecycle presentation, tool request previews, and transcript render tests.
+- Tests: focused TUI browse/presentation/document/render suites (66 tests) and
+  TUI typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-28
+- Scope: Agent detail actions now distinguish tool transport completion from
+  command success: a completed shell receipt with a non-zero `exitCode` renders
+  `exit N ✗`, while exit zero and non-process tools retain their existing
+  success presentation.
+- Read: terminal Agent receipts, replayed child tool projection, and detailed
+  transcript formatting.
+- Tests: TUI 532/532 and TUI typecheck passed, including receipt and replay
+  coverage for non-zero exits.
+
+- Status: Verified
+- Date: 2026-07-26
+- Scope: Agent tool-result recognition now targets compact
+  `ParentAgentResult`; compact rendering displays its child `report`. Detailed
+  action, workspace-write, health, and lifecycle evidence continues to come
+  from canonical `subagent.*` events, so removing those fields from parent
+  model context does not reduce TUI trace detail.
+- Read: tool-result classification/display, transcript presentation, Agent
+  lifecycle grouping, and compact/full transcript tests.
+- Tests: full TUI 531/531 passed.
+
+- Status: Verified
+- Date: 2026-07-26
+- Scope: the Ink screen root reserves one physical terminal row because Ink
+  5.2.1 clears the terminal and scrollback whenever rendered output height is
+  greater than or equal to `stdout.rows`. Passive Workflow discovery no longer
+  toggles foreground loading and unchanged snapshots retain their state
+  identity; live/input frames report height only when the measurement changes.
+  Transcript effect ownership now suppresses `workspace.read`,
+  `workspace.anchored_read`, and `skill.loaded` only when an exact same-run
+  tool span/call owns them. Successful child tool lifecycles stay inside the
+  Agent block instead of leaking generic event rows; child failures and safety
+  events remain primary. Replayed child tool truth can correct legacy action
+  receipts, and idempotent no-progress completions render as `skipped`, never
+  with a success check.
+- Read: App screen allocation, Ink 5.2.1 renderer branch, Workflow refresh
+  state, live/input measurement, TranscriptDocument second-pass projection,
+  Agent action summaries, and the retained real session
+  `session_tui_ms12fuf0`.
+- Tests: Agent Runtime 259/259 and TUI 531/531 passed; Host and repository test
+  typechecks passed. Raw 100x32 PTY capture of the retained session had zero
+  `ESC[2J ESC[3J ESC[H` sequences during 12.5 idle seconds and during Ctrl+T;
+  `--no-alt-screen` emitted zero `ESC[3J`. The detailed frame showed the legacy
+  third bash action as `repeated_idempotent_noop · skipped` and no generic child
+  tool lifecycle rows.
+
+- Status: Verified
+- Date: 2026-07-26
+- Scope: the TUI now owns a full-screen transcript viewport while retaining
+  Ink. Presentation events assemble into an immutable, epoch-scoped
+  `TranscriptDocument`; compact and detailed modes project the same stable
+  block summaries, then width-aware layout materializes at most 5,000 physical
+  rows and Ink receives only the visible window. Ctrl+T is contextual state,
+  not a layer; semantic block/logical-row anchors survive mode changes and
+  resize. PageUp/PageDown stop tail follow, appended rows accumulate an unseen
+  count, and Ctrl+End restores tail follow. Markdown, diffs, inline code, and
+  syntax colors survive physical wrapping as immutable row spans. The
+  transcript height is derived from the measured live/input frames rather than
+  fixed reservations. Approval remains the highest layer and replaces the
+  visible operation surface without destroying the
+  transcript anchor. Agent/tool grouping accepts only structured run/call/
+  invocation/event identities; names, adjacency, and arbitrary span ids are
+  not grouping fallbacks. The default terminal lifecycle enters the alternate
+  screen and restores alternate screen, paste, focus, mouse, and cursor modes
+  idempotently on normal exit, hard signals, and crashes. SIGINT stays App-owned
+  so the first Ctrl+C cancels/backs out without leaving the alternate screen;
+  `--no-alt-screen` keeps the same owned viewport in the normal buffer.
+- Read: App shell, TranscriptDocument assembler/presentation projection,
+  physical layout, viewport state/rendering, key routing, terminal lifecycle,
+  replay/export ownership, and focused/PTY regressions.
+- Tests: compact characterization 39/39; document/layout/viewport/export/
+  terminal focused suites passed. Deterministic 80/100-column PTY runs verified
+  contextual Ctrl+T, `↓ 13 new lines`, Ctrl+End tail recovery, CJK wrapping,
+  `--no-alt-screen`, and resize after SIGWINCH. A real Terra cancellation run
+  verified first Ctrl+C retained the screen and emitted `manual_cancelled`;
+  the second Ctrl+C exited.
+
+- Status: Verified
+- Date: 2026-07-25
+- Scope: Ctrl+T now opens one unified, normal-buffer detailed transcript for
+  the current or latest run. The append-only Static transcript stays compact:
+  successful Agent request/start/tool transport is omitted, one structured
+  terminal Agent summary is committed, and failures/blocked outcomes remain
+  visible with a details hint. Compact and detailed summaries share the
+  explicit `Agent · <name>` prefix, so a child run cannot be mistaken for a
+  generic task row. New terminal Agent facts supply bounded live action
+  receipts and a structured workspace-write evidence line; older replay falls
+  back to child tool events. The overlay rebuilds user-facing Agent, tool, Todo,
+  approval, and failure blocks, defaults to the bottom, stops following after
+  upward navigation, and remains below approval in the typed layer order.
+  Legacy `todo.toggle` maps to `details.toggle`. Replay also filters all
+  `model.stream.*` variants and child usage snapshots; `/export` remains
+  independent.
+- Read: EventStream/LiveFrame/Todo presentation, detailed transcript
+  projection/panel, keybindings, typed layers, event carrier, replay/export
+  projections, and focused render/projection tests.
+- Tests: full `npm run release:check` passed, including TUI 482/482, Agent
+  Runtime 258/258, Host 583/583, Protocol 6/6, the 16-case regression matrix,
+  and install smoke. Real 100-column PTY replay of `session_tui_ms0d86wg` showed
+  root usage 9 model / 10 tool, no stream-event leak, and five reconstructed
+  child actions. A fresh read-only Agent run (`session_tui_ms0enkyx`) showed
+  one live action receipt and zero-write evidence; session check had 0 findings.
+  An 80-column replay of `session_tui_ms0d86wg` verified the shared
+  `Agent · implement-timed-printer` label without wrapping.
+
+- Status: Verified
+- Date: 2026-07-25
+- Scope: approval prompts now render the runtime principal as origin, including
+  dynamic-child scope, and show policy/tool/safety reasons independently.
+  Shell session scope displays execution mode. Spawn promotion and Task async
+  receipts render as lifecycle summaries instead of raw orchestration JSON;
+  obsolete recovered-requirement completion notices are removed.
+- Read: approval coordinator/view/prompt/session rules, run completion
+  projection, tool-result summary/display, and render/controller tests.
+- Tests: full `npm run release:check` passed, including TUI 468/468, the
+  16-case regression matrix, and source/release install smoke.
+
+- Status: Verified
+- Date: 2026-07-24
+- Scope: TUI approval reuse keys now include session, runtime principal, and
+  producer subject; approval projections distinguish actor and automatic
+  resolution. Terminal projection renders Host completion notices and derived
+  recovery directly, without parsing answer text or installing a local
+  finality policy.
+- Read: approval view/session/coordinator, run controller completion handling,
+  Protocol payloads, and focused render/controller tests.
+- Tests: focused TUI approval/controller/layer suites, repository build, and
+  repository test typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-23
+- Scope: RunController now forwards Host `task.updated` to the task activity
+  owner. Live records update without opening Activity, Host event ids plus
+  task/status/completedAt suppress duplicate terminals, and connection/session
+  changes reconcile through `task.list` without replaying historical terminals
+  as new notifications. Inline/awaited success stays quiet, detached success
+  enters task status/history, and failed/cancelled terminals receive higher
+  priority.
+- Read: RunController SDK listeners, task action/reconciliation hook, Activity
+  projection, NotificationStore policy, Host/Protocol lifecycle DTO, and tests.
+- Tests: focused task/controller/render/notification suites (67 tests), full
+  TUI 464/464, and TUI typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-21
+- Scope: live conversation and Markdown export share a quiet-success
+  projection: batch wrappers, successful approval rows, successful Skill
+  body/resource loads, tool discovery/Todo plumbing, and successful MCP prep
+  stay in Activity/Trace but not chat. Internal failures, denied approvals, and
+  real `subagent.*` rows remain visible. Shell summaries retain head and tail
+  with an omission marker; terminal summaries expose unhealthy assessment
+  codes and unambiguous approval counts without a duplicate tool-call count.
+  Typed producer subjects own remembered rules; duplicate approval delivery is
+  idempotent, failed automatic resolution falls back to the manual queue, and
+  `s` explicitly selects a safe session rule. Only `run.completed.message`
+  renders the accepted final answer.
+- Read: EventStream/export projection, tool summaries, approval coordinator/
+  prompt/session rules, Protocol events, Core finality, and Activity retention.
+- Tests: focused and full TUI suites, affected typechecks, and a real 120x32
+  Terra PTY/trace/session rerun passed; the raw Skill body/resource events
+  remained in Trace while no JSON leaked into conversation scrollback.
+
+- Status: Verified
+- Date: 2026-07-21
+- Scope: terminal Agent lifecycle rows now render semantic blocked/partial
+  status and summary directly from structured payloads; blocked rows are red
+  and partial rows yellow. Profile-derivation diagnostics remain Activity/Trace
+  only.
+- Read: shared event formatter, EventStream lifecycle rows, strict Agent result
+  payloads, and render tests.
+- Tests: TUI 449/449 and TUI typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-20
+- Scope: committed conversation scrollback suppresses
+  `agent.profile.derived` run-preparation diagnostics while the EventStore,
+  Activity Events view, and persisted trace retain the raw event. The shared
+  Protocol product-transcript filter also keeps it out of `/export`. Actual
+  `subagent.requested` / `started` / `completed` / `failed` lifecycle rows
+  remain visible.
+- Read: EventStream, ActivityPanel, transcript exporter, shared Protocol event
+  filter, Agent profile event producer, and focused render regressions.
+- Tests: Protocol 6/6; focused EventStream, ActivityPanel, and transcript
+  suites 44/44; full TUI 449/449; TUI/Protocol typechecks; real Terra PTY and
+  trace/session checks passed.
+
+- Status: Verified
+- Date: 2026-07-20
+- Scope: approval coordination moved from `RunController` into an
+  execution-scoped `ApprovalCoordinator`; Ink receives a client-free
+  `ApprovalViewModel` and typed decision renderers. `NotificationStore` and a
+  pure presentation policy now separate run/connection diagnostics from
+  action/panel failures, drive blurred attention, and expose `/notifications`.
+  InputBox and `InteractionRouter` own composer/global routing, action cards own
+  their keys, and the layer stack uses typed payload routes without caller-
+  supplied numeric priorities. Review follow-up prevents a failed in-flight
+  session auto-approval from requeueing after its execution is cleaned up and
+  seeds replayed terminal tasks without raising fresh historical alerts. Native
+  scrollback and Host/Protocol runtime authority are unchanged.
+- Read: TUI app/controller/store/layers, approval/session policy, notification
+  producers, input/keybinding paths, Host/Protocol approval routes, and current
+  render/controller/SDK tests.
+- Tests: focused approval/notification/input and review regressions passed;
+  full TUI 447/447 and Host 594/594;
+  TUI typecheck, repository test typecheck, lint, schema/boundary/reserved
+  checks, all workspace tests, 16/16 regression matrix, and both install smokes
+  passed. Real 80/96/120-column PTY evidence passed, followed by a clean 96x32
+  Host-adapter PTY showing `1 of 2`, queue advancement to `1 of 1`, and idle
+  completion. After mechanically formatting the 59-file repository baseline,
+  the exact `npm run release:check` passed end to end before this review
+  follow-up; the final rerun is recorded with the change.
+
+- Status: Verified
 - Date: 2026-07-19
 - Scope: EventStream renders a sole canonical `run.cancelled` terminal and its
   run facts. RunController no longer creates an unpersisted Todo advisory row;
@@ -109,13 +460,29 @@ See also [../maps/trace/export-diagnostics.md](../maps/trace/export-diagnostics.
 - `packages/tui/src/components/live-frame.tsx`
 - `packages/tui/src/components/activity-panel.tsx`
 - `packages/tui/src/components/event-stream.tsx`
+- `packages/tui/src/components/transcript-viewport.tsx`
+- `packages/tui/src/components/transcript-browse-footer.tsx`
 - `packages/tui/src/components/help-panel.tsx`
 - `packages/tui/src/components/status-bar.tsx`
+- `packages/tui/src/components/skills-panel.tsx`
+- `packages/tui/src/components/todo-band.tsx`
 - `packages/tui/src/state/run-controller.ts`
+- `packages/tui/src/state/approval-coordinator.ts`
+- `packages/tui/src/state/notification-store.ts`
 - `packages/tui/src/state/event-store.ts`
+- `packages/tui/src/state/layer-stack.ts`
+- `packages/tui/src/state/transcript-viewport-state.ts`
+- `packages/tui/src/lib/approval-view-model.ts`
+- `packages/tui/src/lib/ui-signal.ts`
+- `packages/tui/src/lib/interaction-router.ts`
 - `packages/tui/src/lib/commands.ts`
 - `packages/tui/src/lib/task-activity.ts`
 - `packages/tui/src/lib/tool-display.ts`
+- `packages/tui/src/lib/transcript-presentation.ts`
+- `packages/tui/src/lib/transcript-document.ts`
+- `packages/tui/src/lib/transcript-layout.ts`
+- `packages/tui/src/lib/terminal-screen-layout.ts`
+- `packages/tui/src/lib/terminal-restore.ts`
 - `packages/tui/src/lib/event-type.ts`
 - `packages/tui/src/lib/transcript.ts`
 - `packages/tui/src/lib/session-events.ts`
@@ -123,6 +490,7 @@ See also [../maps/trace/export-diagnostics.md](../maps/trace/export-diagnostics.
 - `packages/tui/src/lib/permission.ts`
 - `packages/tui/src/lib/keybindings.ts`
 - `packages/tui/src/lib/create-capability.ts`
+- `packages/tui/src/lib/skills-browser.ts`
 - `packages/tui/test/*`
 
 ## Owns / Does Not Own
@@ -131,7 +499,7 @@ Owns:
 
 - terminal UI state and input handling
 - live host client lifecycle through `RunController`
-- in-memory event store used for rendering and `/export`
+- in-memory presentation-event store used for the owned viewport
 - session list, inspect, switch, fork, compact, and rename flows
 
 Does not own:
@@ -140,13 +508,29 @@ Does not own:
 - session store file layout
 - trace diagnostic report generation
 - core approval semantics
+- Skill trace aggregation, package identity, or proposal persistence
 
 ## Contracts
 
+- Approval rules are keyed by session, `principalScope`, and typed effect
+  subject. Approval rows retain actor/principal, operation, automatic vs
+  interactive resolution, denial, and reuse scope as Host facts.
+- `RunController` renders runtime `completionStatus`, notices, and
+  requirement-level recovery from `run.completed`; it does not parse assistant
+  prose to infer verified/completed/partial state.
 - `/create skill` is the sole Skill creation entrypoint. It prepares a proposal
   through host `SkillCommandService` and never writes the current Skill
   directly. Review apply also calls the service so later-session approval uses
   the same effect-bound receipt as the in-run fast path.
+- `/skills` keeps inventory and recent usage in one focused panel. TUI obtains
+  effective inventory from the layered Host Skill report, scans at most the
+  most recent 20 sessions through Host Skill stats, and joins counts only by
+  exact `name + layer + packageHash`. The list shows loads and current draft
+  count; Enter reveals explicit/resident loads, load failures, associated run
+  outcomes, associated tool failures, and the display-safe source path. Those
+  associations are labeled non-causal. TUI does not claim current-run loaded
+  state or last-use time because the existing snapshot/stat fields do not
+  support those meanings reliably.
 
 - Skill proposal files are the persistent inbox. On startup, TUI restores the
   newest `draft` as a completion-card affordance; `esc` only dismisses that
@@ -157,26 +541,31 @@ Does not own:
 
 - The prepared-change fast path uses the normal queued approval controller with
   action `skill.apply`. `ApprovalPrompt` renders the persisted final patch and
-  target before the one-shot decision; it deliberately has an unknown session
+  target before the one-shot decision; it deliberately has a typed `one_shot`
   approval subject, so no remembered rule can authorize later effects. The
   post-run human-action band remains transitional for review-only/legacy drafts
   and is not canonical waiting state.
 
 - `RunController` sends `run.start` with the current `sessionId`.
-- Todo-supervisor continuation notices are scrollback-native and label the
+- Todo-supervisor continuation notices are transcript-native and label the
   preceding assistant answer as provisional before showing the continuation
-  count; committed assistant cards remain append-only and are not rewritten.
+  count; committed assistant blocks remain stable and are not rewritten.
 - Model-authored Skill draft tool results project host-owned `humanAction`
   metadata into a short-lived live-frame action band after the run settles.
   Safe authored create drafts offer `a` then Enter confirmation; `r` opens
   `/skill-review <proposal-id>` directly; Esc dismisses. Review-required or
-  dangerous drafts do not offer quick apply. Static scrollback rows remain
+  dangerous drafts do not offer quick apply. Transcript rows remain
   non-interactive and TUI does not recompute the host risk projection.
-- Default committed scrollback suppresses per-file capability mutation rows
+- Default compact transcript suppresses per-file capability mutation rows
   under `.sparkwright/skill-evolution/proposals/`, counts them by their shared
   tool span, and appends `N internal mutations` to the terminal Skill proposal
   result. Raw events remain in the event store/Activity Events view for debug
   and audit; unrelated capability mutations keep their individual rows.
+- Default compact transcript also suppresses `agent.profile.derived` because
+  it reports run preparation rather than child execution. The raw event remains
+  available in EventStore/Activity and persisted trace, while the shared
+  product-transcript filter also omits it from `/export`; real `subagent.*`
+  lifecycle events keep their conversation rows.
 - TUI presents one runtime permission axis (`read-only`, `ask`, `accept-edits`,
   `bypass`) but no longer owns a persisted `ui.tuiPermissionMode` config field.
   File config uses shared `run.accessMode`; project `run.accessMode` becomes an
@@ -192,13 +581,35 @@ Does not own:
   first resolution, inspectable/clearable with `/approvals [clear]`, and never
   offered for an unrecognized approval shape. Simultaneous requests queue
   instead of replacing the visible prompt.
+- `ApprovalCoordinator` owns immutable per-client execution origins, active and
+  queued approvals, resolving state, exact session rules, auto-resolution, and
+  execution cleanup. Its UI projection contains no SDK `Client`. Resolve
+  failures remain on the active card and do not advance the queue or set the
+  main run terminal state. Approval auto-policy remains Host-authored and is
+  evaluated through the Host client helper.
+- Approval cards use explicit workspace-write, shell, tool, Skill-apply, and
+  fail-closed unknown renderers. They show main/Workflow origin, run/session,
+  `1 of N`, risk, reason, exact scope, and pageable effect details. High-risk
+  and unknown effects default to Deny; unknown effects never offer a session
+  rule; Esc/Ctrl+C is an explicit denial.
+- `NotificationStore` owns TUI-only signal lifecycle (dedupe/update,
+  unread/seen/resolved, toast projection, and history). Host events, session
+  traces, and EventStream remain canonical facts. Run/connection failures use
+  persistent inline diagnostics and `/notifications`; ordinary RPC/action
+  failures stay local and cannot set the main run status. Background success
+  and cancellation remain quiet status/history updates, while failure or
+  waiting-for-action may alert only when the terminal is blurred.
+- Attention subscribes to notification policy and rate-limits by signal key;
+  App no longer rings BEL/OSC 9 from run-status branches. Queued prompts render
+  only in the composer queue, config errors use a compact badge plus `/config`,
+  and cancellation progress uses the status line rather than a toast.
 - TUI consumes the shared grouped `policy.confidentialDefaults` config field but
   does not own a separate UI surface for read-confidentiality defaults; Host
   config/runtime own validation and enforcement.
 - `shift+tab` (`cycle-permission-mode`) cycles the runtime permission mode in
   read-only -> ask -> accept-edits -> bypass order, skipping modes above the
   project access ceiling. The switch is runtime-local, updates the
-  `RunController` for the next run, appends a scrollback notice, and leaves
+  `RunController` for the next run, appends a transcript notice, and leaves
   config files untouched. `/config` shows the runtime source while the override
   is active.
 - `/image <path>` attaches a local image to the next submitted goal through
@@ -216,7 +627,7 @@ Does not own:
   view over session artifacts/events and does not affect `/export`.
 - `/export` writes Markdown under `.sparkwright/exports/`.
 - `/export` success also appends a TUI-local `tui.export.completed` row to
-  committed scrollback so the exported path has a permanent, border-free copy
+  the transcript so the exported path has a durable, border-free copy
   target; the success toast remains only a transient status cue.
 - `/export` does not mutate or replace `trace.jsonl`.
 - `/export` recovers the submitted user goal per run from `run.created`,
@@ -227,7 +638,7 @@ Does not own:
   summaries through `lib/tool-display.ts`. For tool requests they first consume
   `tool.requested.payload.preview` produced by the tool definition; the local
   name-based formatter is fallback for older traces.
-- Committed tool history hides one-tool batch headers and removes their batch
+- Compact tool history hides one-tool batch headers and removes their batch
   indentation/margin; multi-tool batches remain muted structural groups while
   ordinary tool markers are muted and names use normal foreground emphasis.
 - Explicit background shell handoff results and `task.created` queue rows stay
@@ -248,10 +659,13 @@ Does not own:
   default binding; `/events` and `events.open` both open the Activity Drawer on
   the Events tab. There is no separate standalone events layer. In common PTYs
   Ctrl+I arrives as the Tab control byte, so it is not used as a default.
-- App-level global hotkeys defer unmodified printable-character bindings to the
-  input editor while a prompt draft is non-empty. This keeps `?` available as
-  empty-prompt help while allowing normal questions ending in `?`; `/help`
-  remains the command path.
+- Input ownership is blocking approval, active typed layer, composer overlay,
+  composer editor, then global action. Only the mounted top layer owns Ink
+  input. InputBox gives overlays first refusal and then calls the pure handled/
+  bubble `InteractionRouter`; unmodified printable global bindings defer to a
+  non-empty draft. Skill proposal `a`/`r`/Esc handling and confirmation state
+  live in the action card rather than App. Dialog Esc/Ctrl+C consistently maps
+  to Back, while approval maps both to Deny.
 - Prompt drafts are mirrored in App memory while `InputBox` is mounted, so
   opening and closing layers preserves short and fast-typed drafts without
   relying on the persisted stash debounce. The persisted stash remains the
@@ -270,16 +684,20 @@ Does not own:
 - Plain Esc run cancellation is owned by the input editor when `cancel.run`
   includes an unmodified `esc`; App-level cancel handling covers non-Esc
   configured chords so the default Esc path does not double-dispatch.
-- The Activity Drawer derives background task state from live TUI events and
-  durable host snapshots via `RunController` `task.list` / `task.output`
-  requests. `lib/task-activity.ts` merges those presentation inputs; canonical
-  task storage remains host-owned. The Tasks tab defaults durable snapshot
-  reads to the current session's run ids (`parentRunId` filters); it does not
-  expose workspace-wide historical tasks in the session activity view.
+- The Activity Drawer derives background task state from Core `run.event`,
+  live Host `task.updated`, and durable snapshots via `RunController`
+  `task.list` / `task.output` requests. `lib/task-activity.ts` merges those
+  presentation inputs; canonical task storage remains host-owned. Live
+  lifecycle updates are consumed even when the drawer is closed. Session load,
+  Host reconnection, and explicit refresh reconcile current-session run ids
+  (`parentRunId` filters); historical terminal snapshots seed state quietly
+  instead of becoming new notifications.
 - Activity task presentation preserves `awaited` versus detached/background
-  state from live events and durable snapshots. The panel can render on-demand
-  join/promote actions for host-backed callers; these callbacks call
-  host-facing `task.join` / `task.promote` controls, while task state remains
+  state from legacy live events and uses canonical `completionPolicy` when
+  available so terminal inline/awaited tasks are not mislabeled after the
+  mutable awaited bit clears. The panel can render on-demand join/promote
+  actions for host-backed callers; these callbacks call host-facing
+  `task.join` / `task.promote` controls, while task state remains
   host/protocol-owned.
 - Todo event projection reads only canonical model/result item titles. It does
   not retain a `content` fallback; malformed title-less trace rows use the
@@ -297,7 +715,11 @@ Does not own:
   boundary marker is present.
 - Unread terminal task state crosses `useTaskActions` -> `LiveFrame` ->
   `StatusBar` as one `UnreadTaskActivitySummary`; consumers do not reconstruct
-  completed counts from parallel total/failed/cancelled props.
+  completed counts from parallel total/failed/cancelled props. Host lifecycle
+  ids and task/status/completedAt form the live dedupe identity. Successful
+  inline/awaited terminals update Activity without an extra completion signal;
+  detached success enters status/history, while failures and cancellations can
+  raise a toast.
 - Workflow job status in `StatusBar` is derived from durable workflow snapshots
   plus current TUI-owned waiting jobs. `/workflow stop` is limited to TUI-owned
   live job connections and matches durable workflow ids, active run ids,
@@ -340,17 +762,42 @@ Does not own:
   capabilities panel displays delegate routing summaries as `relevant`, `low`,
   or `triggers` labels from the host snapshot without inferring tool hiding or
   permission changes.
-- `RunController`, live `EventStream`, transcript export, and the run inspector
-  use protocol `runFailureMessage()` for terminal failure text. A failed
-  `run.completed` sets store error text from the same helper instead of only
-  flipping status to `error`.
-- Live `EventStream` renders `subagent.*` lifecycle rows from structured
-  metadata/payload facts (`subagentDepth`, parent/child ids, `entrypoint`,
-  `delegateTool`, and terminal state fields). It indents by depth but keeps the
-  append-only `<Static>` row contract: each event renders once and is not
-  mutated after later child events arrive. Display names prefer `agentName`,
-  then `childAgentId` / `agentProfileId`, before falling back to parent
-  `agentId`, so UI labels do not confuse the parent actor with the child.
+- `RunController`, `TranscriptDocument`/compatibility `EventStream`, transcript
+  export, and the run inspector use protocol `runFailureMessage()` for terminal
+  failure text. A failed `run.completed` sets store error text from the same
+  helper instead of only flipping status to `error`.
+- `TranscriptDocument` owns full-session semantic blocks. The compact
+  compatibility `EventStream` and runtime `TranscriptViewport` both consume
+  the same document/layout pipeline; neither contains append-only `<Static>`
+  presentation logic. `subagent.requested` / `subagent.started` and successful
+  Agent transport stay out of compact mode, while detailed mode exposes their
+  bounded task/action/result sections. Grouping uses child run, explicit Agent
+  call/invocation/tool-call, tool-call, and event ids only; absent ids produce
+  independent blocks instead of name/adjacency guesses.
+- Committed assistant sections retain blank lines until the shared Markdown
+  layout parses them. Those lines delimit paragraphs, lists, and other block
+  constructs; tool/result sections continue to remove blank rows for compact
+  presentation.
+- `details.toggle` (Ctrl+T by default) changes `TranscriptViewportState.mode`;
+  the legacy `todo.toggle` config name is accepted only as an input alias.
+  The state stores a semantic logical-row/source-offset anchor, tail-follow
+  state, and unseen-row count, not per-Agent/tool/Todo expansion flags.
+  Detailed mode unmounts the composer without clearing its App-owned draft,
+  and its navigation footer owns plain Up/Down line scrolling plus Escape.
+  PageUp/PageDown scroll the transcript, Ctrl+Home/Ctrl+End move to the
+  document boundaries, Ctrl+T/Escape restore the composer, and
+  resize/mode projection resolve the same semantic block. Approval remains the
+  highest typed layer and temporarily replaces the visible operation surface;
+  details is not a route in `LayerStack`.
+- Session replay derives child-run ids before synthesizing user cards, so only
+  root goals enter the compact transcript and `/retry` targets the latest root
+  goal. It skips every `model.stream.*` event and child usage snapshot so
+  preview machinery cannot leak and rolled-up root totals are not double
+  counted. Replayed child tool actions and full terminal Markdown remain
+  available under the matching Agent detail block.
+- Completed Todo titles appear in the unified details projection. The live Todo
+  band has no independent expansion state and shows active items plus a compact
+  completed-count hint.
 - Ctrl+C is guarded: one press cancels or backs out of the current surface, and
   an idle no-layer prompt requires a second press to exit. User/manual cancels
   (`manual_cancelled` / `user_cancelled`) are terminal non-error outcomes in
@@ -392,20 +839,27 @@ Does not own:
 - Header and config-panel workspace paths use middle ellipsis when terminal
   width is tight, preserving the basename so deep workspaces stay identifiable
   without wrapping the first screen.
-- The static SparkWright brand/cwd/session/model header belongs to committed
-  `EventStream` scrollback as one-time starting context. Runtime `/model`
-  switches and permission-mode switches append a TUI-local notice row and
-  update the pinned `StatusBar`; the status bar must not repeat the brand, cwd,
-  or session and only shows changing run state, active-run details, model, and
-  the TUI permission mode.
+- The SparkWright brand/cwd/session/model header is frozen once per
+  `sessionId:clearGeneration` document epoch. Runtime `/model` and permission
+  switches append TUI-local notice blocks and update the pinned `StatusBar`;
+  they do not rewrite the epoch header.
 - The live frame below `StatusBar` derives a single `activePhase` from open
   model/tool/subagent/validation lifecycle events. Streamed assistant text takes
   precedence over the phase hint; the phase projection is TUI state only and
   does not change transcript filtering or raw trace semantics.
-- `components/live-frame.tsx` owns the pinned live surface below committed
-  scrollback: status bar, streaming answer, modified-file sidebar, todo band,
+- Live reasoning is a quiet three-physical-row tail. The live answer owns a
+  terminal-height-derived 6–12 physical-row budget (degrading to 1–5 only on
+  tiny screens), estimates overflow from the same Markdown block semantics used
+  to render it, clips older overflow with a generic fold hint, and never changes
+  the completed answer stored/rendered by the transcript.
+- `components/live-frame.tsx` owns the pinned live surface below the transcript
+  viewport: status bar, streaming answer, modified-file sidebar, todo band,
   usage/error/toast/config-error rows, and queued prompt display. `app.tsx`
   keeps run/session/layer orchestration and input ownership.
+- `index.ts` enters a `TerminalSession` before Ink render and restores it in a
+  `finally` block. The session does not subscribe to SIGINT; App owns the
+  cancel/confirm contract. SIGTERM, SIGHUP, uncaught exceptions, and normal
+  exit restore private modes and leave the alternate screen once.
 - Capability panels, Skill review metadata, and Skill learn toasts render host
   paths through the shared display-path projection: workspace paths become
   relative and external absolute paths collapse to non-host locators.

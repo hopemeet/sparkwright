@@ -39,20 +39,6 @@ export function observeSkillUsageEvent(
   }
 }
 
-export function recordSkillPatch(
-  workspaceRoot: string,
-  skillName: string,
-  at: Date | string = new Date(),
-): void {
-  const recorder = createSkillUsageRecorder(workspaceRoot);
-  if (!recorder) return;
-  try {
-    recorder.recordPatch(skillName, typeof at === "string" ? new Date(at) : at);
-  } catch {
-    // Usage is advisory in v1; mutation success must not depend on telemetry.
-  }
-}
-
 function skillLoadMode(
   metadata: Record<string, unknown> | undefined,
 ): SkillUsageLoadMode | undefined {

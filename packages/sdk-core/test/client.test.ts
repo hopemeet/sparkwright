@@ -87,6 +87,44 @@ describe("@sparkwright/sdk-core Client", () => {
     });
   });
 
+  it("emits typed task lifecycle events from the transport", () => {
+    const transport = new FakeTransport();
+    const client = new Client({
+      transport,
+      client: { name: "test-client", version: "0.0.0" },
+    });
+    const updates: Array<{ taskId: string; status: string }> = [];
+
+    client.on("task.updated", (event) => {
+      updates.push({
+        taskId: event.payload.taskId,
+        status: event.payload.status,
+      });
+    });
+    transport.receive({
+      envelope: "event",
+      id: "evt_task_1",
+      kind: "task.updated",
+      timestamp: "2026-05-24T00:00:02.000Z",
+      payload: {
+        taskId: "task_1",
+        parentRunId: "run_1",
+        sessionId: "session_1",
+        transition: "terminal",
+        kind: "agent",
+        completionPolicy: "detached",
+        awaited: false,
+        status: "completed",
+        createdAt: "2026-05-24T00:00:00.000Z",
+        completedAt: "2026-05-24T00:00:01.000Z",
+        resultSummary: "done",
+        outputRef: { method: "task.output", taskId: "task_1" },
+      },
+    });
+
+    expect(updates).toEqual([{ taskId: "task_1", status: "completed" }]);
+  });
+
   it("sends run.inject_message requests", async () => {
     const transport = new FakeTransport();
     const client = new Client({
@@ -547,6 +585,8 @@ describe("@sparkwright/sdk-core Client", () => {
         approvalId: "approval_1",
         action: "workspace.write",
         summary: "write README.md",
+        subject: { kind: "one_shot", label: "Write README.md once" },
+        principal: { kind: "main", principalScope: "session:test" },
       },
     });
     transport.receive({

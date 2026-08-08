@@ -7,18 +7,18 @@ import type { ActivityTab } from "../lib/task-activity.js";
 import type { EventStore } from "./event-store.js";
 import type { RunController } from "./run-controller.js";
 import type { LayerStack } from "./layer-stack.js";
-import type { ToastStore } from "./toast-store.js";
+import type { NotificationStore } from "./notification-store.js";
 import type { CapabilityActions } from "./use-capability-actions.js";
 import type { SessionActions } from "./use-session-actions.js";
-import type { SkillActions } from "./use-skill-actions.js";
 import type { TaskActions } from "./use-task-actions.js";
 import type { WorkflowActions } from "./use-workflow-actions.js";
 
 /**
- * The capability browser is one panel (`openCapabilities`) reached through
- * several named entrypoints that differ only by which view they preselect.
- * Expressed as data so the registry loop registers them uniformly instead of
- * six near-identical `reg.register` blocks.
+ * Capability entrypoints share one typed route and loader action. Most render
+ * the generic capability panel with a preselected view; `/skills` renders its
+ * own inventory-and-usage panel so unrelated capability overview rows stay out
+ * of that focused surface. The registry remains data-driven to avoid six
+ * near-identical `reg.register` blocks.
  */
 const CAPABILITY_VIEW_COMMANDS: ReadonlyArray<{
   name: string;
@@ -108,9 +108,8 @@ interface BuildCommandRegistryDeps {
   layers: LayerStack;
   store: EventStore;
   controller: RunController;
-  toasts: ToastStore;
+  toasts: NotificationStore;
   exit: () => void;
-  skillActions: SkillActions;
   capActions: CapabilityActions;
   sessionActions: SessionActions;
   taskActions: Pick<TaskActions, "openActivity">;
@@ -145,7 +144,6 @@ export function buildCommandRegistry(
     controller,
     toasts,
     exit,
-    skillActions,
     capActions,
     sessionActions,
     taskActions,
@@ -355,6 +353,17 @@ export function buildCommandRegistry(
     category: "config",
     run: () => layers.toggle("config"),
   });
+  reg.register({
+    name: "notifications",
+    title: "Show UI notifications",
+    description: "Review run, action, approval, and background UI signals.",
+    category: "view",
+    aliases: ["notices"],
+    run: () => {
+      toasts.markAllSeen();
+      layers.toggle("notifications");
+    },
+  });
   for (const spec of CAPABILITY_VIEW_COMMANDS) {
     reg.register({
       name: spec.name,
@@ -375,35 +384,6 @@ export function buildCommandRegistry(
     hiddenByDefault: true,
     run: () => capActions.openCreateCapability(),
     runRaw: (rest) => capActions.openCreateCapability(rest),
-  });
-  reg.register({
-    name: "skill-update",
-    title: "Draft Skill update",
-    description:
-      "Create a hash-gated update/fork proposal interactively or from arguments.",
-    category: "capability",
-    hiddenByDefault: true,
-    run: () => skillActions.openSkillUpdateProposal(),
-    runRaw: skillActions.openSkillUpdateProposal,
-  });
-  reg.register({
-    name: "skill-review",
-    title: "Review Skill proposals",
-    description:
-      "Review Skill proposals; optionally pass a proposal id or state like draft.",
-    category: "capability",
-    hiddenByDefault: true,
-    run: () => skillActions.reviewSkillProposalsFromSlash(""),
-    runRaw: skillActions.reviewSkillProposalsFromSlash,
-  });
-  reg.register({
-    name: "skill-learn",
-    title: "Set Skill learning mode",
-    description: "Show or set Skill Evolution mode: off, notice, draft, apply.",
-    category: "capability",
-    hiddenByDefault: true,
-    run: () => skillActions.handleSkillLearn(""),
-    runRaw: skillActions.handleSkillLearn,
   });
   reg.register({
     name: "model",

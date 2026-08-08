@@ -1,53 +1,60 @@
 import { describe, expect, it } from "vitest";
 import {
   classifyToolResult,
-  isAgentToolResult,
+  isParentAgentResult,
 } from "../src/lib/tool-result-summary.js";
 
-describe("isAgentToolResult", () => {
-  it("recognises a spawn_agent / delegate result envelope", () => {
+describe("isParentAgentResult", () => {
+  it("recognises a compact spawn/delegate report", () => {
     expect(
-      isAgentToolResult({
+      isParentAgentResult({
         childRunId: "run_mpvwzgt2zxn3rubv",
-        spanId: "spn_mpvwzgt2z4t9osfc",
-        agentId: "dynamic_project_scanner",
-        role: "project-scanner",
-        signal: "completed",
-        stopReason: "final_answer",
-        message: "下面是在工作空间根目录…",
-        usage: { tokens: 1234 },
+        status: "completed",
+        report: "下面是在工作空间根目录…",
+        workspace: { writes: 0 },
       }),
     ).toBe(true);
     expect(
       classifyToolResult({
         childRunId: "run_mpvwzgt2zxn3rubv",
-        signal: "completed",
-        stopReason: "final_answer",
-        message: "done",
+        status: "completed",
+        report: "done",
+        workspace: { writes: 1, paths: ["result.txt"] },
       }),
     ).toBe("agent");
   });
 
-  it("recognises an envelope whose stopReason is undefined", () => {
-    // The field is present (the run terminated) even when its value is null/
-    // undefined, so the `in` check — not a truthiness check — is what matters.
+  it("recognises a partial compact report", () => {
     expect(
-      isAgentToolResult({
+      isParentAgentResult({
         childRunId: "run_x",
-        signal: "failed",
-        stopReason: undefined,
+        status: "partial",
+        report: "Child failed",
+        workspace: { writes: 0 },
+        blockers: [
+          {
+            code: "AGENT_RUN_INCOMPLETE",
+            message: "Child failed",
+          },
+        ],
       }),
     ).toBe(true);
   });
 
   it("returns false for non-subagent values", () => {
-    expect(isAgentToolResult(undefined)).toBe(false);
-    expect(isAgentToolResult(null)).toBe(false);
-    expect(isAgentToolResult("just a string")).toBe(false);
-    expect(isAgentToolResult(["a", "b"])).toBe(false);
+    expect(isParentAgentResult(undefined)).toBe(false);
+    expect(isParentAgentResult(null)).toBe(false);
+    expect(isParentAgentResult("just a string")).toBe(false);
+    expect(isParentAgentResult(["a", "b"])).toBe(false);
     // Shell-style result, not a sub-agent envelope.
-    expect(isAgentToolResult({ stdout: "ok", exitCode: 0 })).toBe(false);
-    // Has childRunId but no signal/stopReason → not a terminal envelope.
-    expect(isAgentToolResult({ childRunId: "run_x" })).toBe(false);
+    expect(isParentAgentResult({ stdout: "ok", exitCode: 0 })).toBe(false);
+    // Identity without the compact report/evidence contract is not enough.
+    expect(
+      isParentAgentResult({
+        childRunId: "run_x",
+        status: "completed",
+      }),
+    ).toBe(false);
+    expect(isParentAgentResult({ childRunId: "run_x" })).toBe(false);
   });
 });

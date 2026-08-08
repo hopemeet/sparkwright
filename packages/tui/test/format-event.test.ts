@@ -58,13 +58,12 @@ describe("formatEvent", () => {
       formatEvent(
         event("capability.mutation.completed", {
           action: "write_text",
-          path: "/tmp/project/.sparkwright/skill-evolution/proposals/p1/proposal.md",
+          path: "/tmp/project/.sparkwright/agents/reviewer.md",
         }),
       ),
     ).toMatchObject({
       color: "red",
-      detail:
-        "write_text .sparkwright/skill-evolution/proposals/p1/proposal.md",
+      detail: "write_text .sparkwright/agents/reviewer.md",
     });
   });
 
@@ -115,6 +114,18 @@ describe("formatEvent", () => {
     expect(
       formatEvent(event("subagent.failed", { goal: "audit docs" })),
     ).toMatchObject({ color: "red", detail: "audit docs" });
+    expect(
+      formatEvent(
+        event("subagent.completed", {
+          goal: "run checks",
+          status: "blocked",
+          summary: "Execution requires approval",
+        }),
+      ),
+    ).toMatchObject({
+      color: "red",
+      detail: "run checks · blocked · Execution requires approval",
+    });
   });
 
   it("formats verification workflow hooks", () => {

@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  analyzeToolOutcomes,
   createContextItemId,
   createClearToolUsesStage,
   createWorkspaceMutationPolicy,
@@ -220,6 +221,12 @@ describe("SparkwrightRun", () => {
       schemaValidationMs: expect.any(Number),
       inputValidationMs: expect.any(Number),
     });
+    expect(analyzeToolOutcomes(events).failures).toMatchObject([
+      {
+        code: "PATH_NOT_FILE",
+        category: "model_arg_error",
+      },
+    ]);
   });
 
   it("loops model-tool-observation until a final answer", async () => {
@@ -249,6 +256,7 @@ describe("SparkwrightRun", () => {
         if (modelCalls === 1) {
           expect(input.context).toHaveLength(0);
           return {
+            message: "using echo",
             toolCalls: [
               {
                 toolName: "echo",
@@ -283,6 +291,18 @@ describe("SparkwrightRun", () => {
     });
     expect(modelCalls).toBe(2);
     expect(events.map((event) => event.type)).toContain("tool.completed");
+    expect(
+      events
+        .filter((event) => event.type === "model.assistant_text")
+        .map((event) => (event.payload as { message?: string }).message),
+    ).toEqual(["using echo"]);
+    expect(
+      (
+        events.find((event) => event.type === "run.completed")?.payload as {
+          message?: string;
+        }
+      ).message,
+    ).toBe("done");
     expect(
       events.find((event) => event.type === "tool.completed")?.metadata,
     ).toMatchObject({
@@ -367,6 +387,68 @@ describe("SparkwrightRun", () => {
       ],
     });
     expect(events.at(-1)?.type).toBe("run.completed");
+  });
+
+  it("applies a tool's agent result presentation to model context", async () => {
+    const report = "full-child-report-".repeat(180);
+    let modelCalls = 0;
+    const delegate = defineTool({
+      name: "delegate",
+      description: "Return one child result.",
+      inputSchema: { type: "object" },
+      resultPresentation: { kind: "agent_result" },
+      policy: { risk: "safe" },
+      execute() {
+        return {
+          childRunId: "run_child_presented",
+          status: "completed",
+          report,
+          workspace: { writes: 0 },
+          warnings: [],
+          blockers: [],
+        };
+      },
+    });
+    const model: ModelAdapter = {
+      async complete(input) {
+        modelCalls += 1;
+        if (modelCalls === 1) {
+          return {
+            toolCalls: [{ toolName: "delegate", arguments: {} }],
+          };
+        }
+        const observation = input.context.find(
+          (item) => item.type === "tool_result",
+        );
+        const output = JSON.parse(observation?.content ?? "{}").output;
+        expect(typeof output.report).toBe("string");
+        expect(output).toMatchObject({
+          childRunId: "run_child_presented",
+          reportTruncated: true,
+          reportChars: report.length,
+        });
+        return { message: "done" };
+      },
+    };
+
+    const run = createRun({
+      goal: "delegate once",
+      model,
+      tools: [delegate],
+      maxSteps: 3,
+    });
+    const result = await run.start();
+
+    expect(result.signal).toBe("completed");
+    expect(modelCalls).toBe(2);
+    expect(
+      (
+        run.events.all().find((event) => event.type === "tool.completed")
+          ?.payload as {
+          output?: { report?: string };
+        }
+      ).output?.report,
+    ).toBe(report);
   });
 
   it("records tool-owned request previews on tool.requested events", async () => {
@@ -1372,6 +1454,7 @@ describe("SparkwrightRun", () => {
       metadata: {
         stepLimitReached: true,
         truncated: true,
+        completionStatus: "partial",
         maxSteps: 2,
         stepsUsed: 2,
       },
@@ -1379,7 +1462,10 @@ describe("SparkwrightRun", () => {
     const completed = run.events
       .all()
       .find((event) => event.type === "run.completed");
-    expect(completed?.payload).toMatchObject({ truncated: true });
+    expect(completed?.payload).toMatchObject({
+      truncated: true,
+      completionStatus: "partial",
+    });
     expect(run.events.all().some((event) => event.type === "run.failed")).toBe(
       false,
     );
@@ -2134,7 +2220,7 @@ describe("SparkwrightRun", () => {
     });
   });
 
-  it("stops a model retrying the same failing target with varied arguments", async () => {
+  it("stops a target-invariant failure retried with varied arguments", async () => {
     let executed = 0;
 
     // Fails for any call — like reading a path that is actually a directory.
@@ -2195,6 +2281,68 @@ describe("SparkwrightRun", () => {
       toolName: "read",
       status: "failed",
     });
+  });
+
+  it("allows corrected arguments to retry the same target", async () => {
+    let executed = 0;
+    let step = 0;
+    const read = defineTool({
+      name: "read",
+      description: "Read a page from a file.",
+      inputSchema: { type: "object" },
+      execute(args) {
+        executed += 1;
+        const input = args as { path: string; offset: number };
+        if (input.offset < 0) {
+          throw new Error("Offset must be non-negative.");
+        }
+        return { path: input.path, offset: input.offset, content: "ok" };
+      },
+    });
+    const run = createRun({
+      goal: "correct an invalid offset",
+      tools: [read],
+      maxSteps: 4,
+      model: {
+        async complete() {
+          step += 1;
+          if (step === 1) {
+            return {
+              toolCalls: [
+                {
+                  toolName: "read",
+                  arguments: { path: "notes.txt", offset: -1 },
+                },
+              ],
+            };
+          }
+          if (step === 2) {
+            return {
+              toolCalls: [
+                {
+                  toolName: "read",
+                  arguments: { path: "notes.txt", offset: 0 },
+                },
+              ],
+            };
+          }
+          return { message: "done" };
+        },
+      },
+    });
+
+    const result = await run.start();
+    const errorCodes = run.events
+      .all()
+      .filter((event) => event.type === "tool.failed")
+      .map(
+        (event) => (event.payload as { error?: { code?: string } }).error?.code,
+      );
+
+    expect(result).toMatchObject({ signal: "completed", message: "done" });
+    expect(executed).toBe(2);
+    expect(errorCodes).toEqual(["TOOL_EXECUTION_FAILED"]);
+    expect(errorCodes).not.toContain("REPEATED_TOOL_CALL_SKIPPED");
   });
 
   it("stops repeated shell commands even when timeoutMs varies", async () => {
@@ -5848,9 +5996,9 @@ describe("SparkwrightRun", () => {
     );
     expect(result.metadata).toMatchObject({
       maxSteps: 1,
-      stepLimitReached: false,
       revivalTurnsUsed: 1,
     });
+    expect(result.metadata).not.toHaveProperty("stepLimitReached");
   });
 
   it("uses per-source forced-continuation budget for revival without changing wake metadata", async () => {
@@ -5949,9 +6097,9 @@ describe("SparkwrightRun", () => {
     expect(modelCalls).toBe(2);
     expect(result.metadata).toMatchObject({
       maxSteps: 1,
-      stepLimitReached: false,
       forcedContinuationTurnsUsed: { workflow: 1 },
     });
+    expect(result.metadata).not.toHaveProperty("stepLimitReached");
     expect(turnTransitions[1]).toMatchObject({
       reason: "workflow_hook_advanced",
       metadata: {
@@ -5959,6 +6107,17 @@ describe("SparkwrightRun", () => {
         forcedContinuationSource: "workflow",
       },
     });
+    const events = run.events.all();
+    expect(
+      events.filter((event) => event.type === "model.assistant_text"),
+    ).toEqual([]);
+    expect(
+      (
+        events.find((event) => event.type === "run.completed")?.payload as {
+          message?: string;
+        }
+      ).message,
+    ).toBe("done");
   });
 
   it("refuses workflow projection continuations when the source budget is exhausted", async () => {

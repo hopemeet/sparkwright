@@ -126,6 +126,36 @@ export function formatEvent(event: SparkwrightEvent): string {
       .join(" ");
   }
 
+  if (event.type.startsWith("subagent.") && isRecord(payload)) {
+    const metadata = event.metadata ?? {};
+    const identity =
+      stringField(metadata, "agentName") ??
+      stringField(metadata, "childAgentId") ??
+      stringField(metadata, "agentProfileId") ??
+      stringField(payload, "childRunId");
+    const blockers = Array.isArray(payload.blockers)
+      ? payload.blockers
+          .map((blocker) =>
+            isRecord(blocker) ? stringField(blocker, "code") : undefined,
+          )
+          .filter((code): code is string => typeof code === "string")
+          .slice(0, 5)
+      : [];
+    return [
+      `[${event.sequence}] ${event.type}`,
+      identity,
+      stringField(payload, "status")
+        ? `status=${stringField(payload, "status")}`
+        : "",
+      stringField(payload, "summary")
+        ? `summary=${previewText(stringField(payload, "summary")!)}`
+        : "",
+      blockers.length > 0 ? `blockers=${blockers.join(",")}` : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+  }
+
   if (
     (event.type === "tool.requested" || event.type === "tool.started") &&
     isRecord(payload)

@@ -179,7 +179,11 @@ describe("RunAssessment", () => {
     expect(assessment.health).toBe("failing");
     expect(assessment.verification).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ verifierId: "unit", status: "timed_out" }),
+        expect.objectContaining({
+          source: "profile",
+          verifierId: "unit",
+          status: "timed_out",
+        }),
       ]),
     );
     expect(assessment.issues.map((issue) => issue.code)).toEqual(

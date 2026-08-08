@@ -5,6 +5,7 @@
 export type {
   TaskId,
   TaskStatus,
+  TaskCompletionPolicy,
   TaskError,
   TaskRecord,
   TaskOutputChunk,
@@ -23,6 +24,9 @@ export { InMemoryTaskStore } from "./store.js";
 
 export type {
   AdoptRunningTaskInput,
+  TaskLifecycleObserver,
+  TaskLifecycleTransition,
+  TaskLifecycleUpdate,
   TaskManagerOptions,
   TaskRetentionOptions,
   TaskRunner,
@@ -97,10 +101,17 @@ export type {
   TaskToolOptions,
   TaskCreateKindDescriptor,
   TaskCreateMode,
+  TaskActualMode,
+  TaskCompletionObservation,
+  TaskAsyncReceipt,
   TaskCreateResult,
   TaskConcurrencyLimits,
 } from "./tools.js";
-export { createTaskCreate, createTaskControl } from "./tools.js";
+export {
+  createTaskAsyncReceipt,
+  createTaskCreate,
+  createTaskControl,
+} from "./tools.js";
 
 export type {
   TaskHealthProbe,

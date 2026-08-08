@@ -4,6 +4,8 @@ import {
   summarizeGlobResult,
   summarizeListDir,
   summarizeShellResult,
+  displayArrayLength,
+  displayStringLength,
 } from "./tool-result-summary.js";
 import { sanitizeAnsiForRender } from "./text.js";
 
@@ -43,6 +45,10 @@ export function summarizeToolResultForDisplay(input: {
 
   if (isTaskToolName(input.toolName)) {
     return summarizeTaskToolResult(input.toolName ?? "task", r);
+  }
+
+  if (input.toolName === "spawn_agent" && isAsyncTaskReceipt(r)) {
+    return summarizeSpawnAgentReceipt(r);
   }
 
   if (resultKind === "file_read") {
@@ -85,10 +91,6 @@ export function summarizeToolResultForDisplay(input: {
     );
   }
 
-  if (resultKind === "skill_mutation") {
-    return summarizeSkillMutation(r);
-  }
-
   if (resultKind === "shell") {
     const { head, lines, timedOut } = summarizeShellResult(input.result);
     return {
@@ -100,9 +102,9 @@ export function summarizeToolResultForDisplay(input: {
   }
 
   if (resultKind === "agent") {
-    const message = str(r.message).trim();
-    if (!message) return { kind: "hidden", reason: "agent_empty" };
-    return { kind: "markdown", text: message, details: [], tone: "normal" };
+    const report = str(r.report).trim();
+    if (!report) return { kind: "hidden", reason: "agent_empty" };
+    return { kind: "markdown", text: report, details: [], tone: "normal" };
   }
 
   if (resultKind === "skill_load") {
@@ -134,36 +136,6 @@ export function summarizeToolResultForDisplay(input: {
   };
 }
 
-function summarizeSkillMutation(r: Record<string, unknown>): ToolResultDisplay {
-  const action = str(r.action) || "skill";
-  const name = str(r.name);
-  const proposalId = str(r.proposalId);
-  const changed = r.changed === false ? "unchanged" : "changed";
-  const path = compactMutationPath(str(r.path) || str(r.proposalPath));
-  const internalMutationCount =
-    typeof r.internalMutationCount === "number"
-      ? r.internalMutationCount
-      : undefined;
-  const label =
-    action === "draft"
-      ? "skill proposal"
-      : action === "apply"
-        ? "skill proposal applied"
-        : "skill mutation";
-  return summary(
-    `${label} ${proposalId || name || action}`,
-    [
-      changed,
-      path,
-      internalMutationCount
-        ? `${internalMutationCount} internal mutations`
-        : "",
-      action === "draft" ? "draft only; original Skill package unchanged" : "",
-    ],
-    "success",
-  );
-}
-
 function summarizeSkillLoad(r: Record<string, unknown>): ToolResultDisplay {
   if (r.status === "not_found") {
     const available = Array.isArray(r.availableSkills)
@@ -176,8 +148,8 @@ function summarizeSkillLoad(r: Record<string, unknown>): ToolResultDisplay {
     );
   }
 
-  const bodyChars = str(r.content).length;
-  const resources = Array.isArray(r.resourceFiles) ? r.resourceFiles.length : 0;
+  const bodyChars = displayStringLength(r.content) ?? 0;
+  const resources = displayArrayLength(r.resourceFiles) ?? 0;
   const version = str(r.version);
   return summary(
     `skill_load ${str(r.name)} -> loaded`,
@@ -268,10 +240,52 @@ function summarizeTaskToolResult(
   }
 
   if (str(r.taskId)) {
-    return summary(`task ${shortId(str(r.taskId))}`, [], "muted");
+    const actualMode = str(r.actualMode);
+    const mode = actualMode || str(r.mode);
+    return summary(
+      `task ${str(r.taskId)}${mode ? ` · ${mode}` : ""}`,
+      [
+        r.promoted === true ? "promoted from foreground" : "",
+        r.deduplicated === true ? "reused an already-running task" : "",
+      ],
+      "muted",
+    );
   }
 
   return summary(`${toolName} completed`, [], "muted");
+}
+
+function isAsyncTaskReceipt(r: Record<string, unknown>): boolean {
+  return (
+    Boolean(str(r.taskId)) &&
+    (r.actualMode === "awaited" || r.actualMode === "detached") &&
+    typeof r.parentWillWait === "boolean"
+  );
+}
+
+function summarizeSpawnAgentReceipt(
+  r: Record<string, unknown>,
+): ToolResultDisplay {
+  const taskId = str(r.taskId);
+  const actualMode = str(r.actualMode);
+  const role = str(r.role);
+  const childRunId = shortId(str(r.childRunId));
+  const foregroundTimeoutMs =
+    typeof r.foregroundTimeoutMs === "number"
+      ? `${r.foregroundTimeoutMs}ms foreground budget`
+      : "";
+  return summary(
+    `spawn_agent → ${actualMode} task ${taskId}`,
+    [
+      [role, childRunId ? `child ${childRunId}` : ""]
+        .filter(Boolean)
+        .join(" · "),
+      r.promoted === true
+        ? `promoted${foregroundTimeoutMs ? ` after ${foregroundTimeoutMs}` : ""}`
+        : "",
+    ],
+    "muted",
+  );
 }
 
 function summary(

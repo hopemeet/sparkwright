@@ -3,7 +3,7 @@
 ## Current Confidence
 
 - Status: `Partially Verified`
-- Last reviewed: 2026-07-19
+- Last reviewed: 2026-07-28
 - Evidence source: 2026-06-22 focused host/agent tests passed and real
   `openai/gpt-5.4-mini` read-only dynamic `spawn_agent` canaries produced valid
   trace/session structure. A configured read/write delegate canary wrote through
@@ -50,9 +50,88 @@
   The 2026-07-18 ownership pass added a direct `AgentRuntimeAssembly` test and
   reran 359 Host Agent/Delegate/tool/protocol tests plus 77 Agent Runtime
   invocation/supervisor/ledger/result tests without changing capability or
-  lifecycle behavior.
+  lifecycle behavior. The 2026-07-21 capability-contract fix removed
+  prompt-text admission heuristics, proved unavailable structured capabilities
+  fail before approval, and added completed/partial/blocked child declarations
+  with summaries, accomplishments, and generalized blockers. It also removed
+  the old result/ledger compatibility surface, propagated blocker facts through
+  trace/session/CLI/TUI, and made parent disclosure a deterministic one-shot
+  event-driven continuation. A later 2026-07-21 handoff-contract pass removed
+  model-authored dynamic system prompts: foreground/background Agent entrypoints
+  now share required `goal`/`role` plus optional bounded `context`, do not inherit
+  parent conversation/tool results, and invalidate reuse when context changes.
 
 ## Covered
+
+- 2026-07-28 result/prompt simplification coverage verifies generic
+  provenance and stopping rules, removal of health-warning duplication, the
+  smaller internal invocation result and parallel batch shape, unchanged
+  clean-only reuse, bounded task failure evidence, and removal of lifecycle/
+  context/session `statusSource` and `finality` projections.
+  A real `openai/gpt-5.6-terra` dynamic-spawn run against a pre-existing
+  `print_numbers.py` used four child tool actions (`glob`, two parallel reads,
+  one successful execution), made zero managed writes, reported that the file
+  pre-existed, and passed session check/trace verify with zero findings.
+
+- 2026-07-27 deterministic result-boundary coverage verifies semantic
+  `agent_result` / `agent_batch` observation projection, including long
+  reports, escape-heavy content, extreme blockers/paths, valid bounded JSON,
+  all eight parallel indices, unchanged raw `tool.completed`/streaming
+  results, and explicit recovery references. Background Task coverage proves
+  the formal result remains full while its event receipt is bounded and
+  marked.
+
+- 2026-07-27 report-recovery coverage verifies authorized pagination from a
+  real persisted Host child, tool reconstruction between pages, terminal and
+  failure fallbacks, argument bounds, traversal/cross-session rejection,
+  result/session symlink rejection, run identity/parent membership, and
+  escape-heavy pagination without skipped text.
+
+- 2026-07-27 in-process convergence coverage verifies configured direct,
+  indexed, parallel, dynamic foreground, foreground-to-background promotion,
+  and `task_create(kind:"agent")` use one terminal collector. Cross-entry
+  clean-result reuse, semantic partial/blocked, unhealthy completion,
+  step-limit, single-start/single-ledger parallel fan-out, Task failure
+  metadata, and the last-three/600-character partial observation bound are
+  covered. ACP/external-command suites confirm their transport boundaries are
+  unchanged.
+
+- 2026-07-26 deterministic Prompt coverage establishes one task-agnostic
+  in-process child contract owned by Agent Runtime. Composition tests prove
+  configured profile text precedes the shared contract and result protocol
+  exactly once. Host prompt captures cover configured direct, parallel,
+  dynamic foreground, and background paths; indexed delegation reuses the
+  configured tool definition. Goal/context remains outside system authority,
+  and the low-level `spawnSubAgent()` plus ACP/external-command adapters remain
+  explicit non-injection boundaries.
+
+- 2026-07-21 deterministic handoff coverage captures the first child prompt for
+  both foreground `spawn_agent` and background `task_create(kind:"agent")`.
+  It proves dynamic instructions are absent from system messages while goal and
+  bounded handoff context reach child user/working input. The two entrypoints
+  expose the same schema, context over 8,000 characters fails semantic
+  validation, exact context repeats reuse one clean child, and changed context
+  starts a new child. Agent Runtime separately verifies context in ledger key
+  identity.
+
+- 2026-07-21 follow-up deterministic coverage makes dynamic foreground Agent
+  spawn and `task_create(kind:"agent")` share the effective payload schema and
+  semantic validator before approval. The partial-child Stop hook now requires
+  a parent-correlated terminal `subagent.*` event, so ordinary spawn validation,
+  policy, or approval failures cannot be mistaken for an incomplete child.
+
+- 2026-07-21 deterministic coverage reproduces the original multilingual
+  negation shape (`Do not run shell commands or execute the script`) on a
+  workspace-write dynamic spawn and proves approval is followed by a real
+  child write rather than an immediate intent-heuristic failure. A separate
+  test proves an unavailable `allowedTools` request fails in `validateInput`
+  before any approval. Structured blocked child output remains a completed tool
+  transport while projecting `status:"blocked"`, `finality:"partial"`, summary,
+  accomplishments, and a `SHELL_REQUIRED` capability blocker with owner/tool/
+  retry facts to tool/lifecycle results while staying out of the delegation
+  cache. A parent end-to-end test receives those facts and tells the user the
+  required path; a repeated identical blocked spawn runs the child once and is
+  then stopped by Core's generic `REPEATED_TOOL_CALL_SKIPPED` guard.
 
 - 2026-07-19 real `openai/gpt-5.6-terra` fix verification proved the complete
   cache boundary end to end: complete+clean exact reuse returned the same child
@@ -272,10 +351,11 @@
   deterministic demo-adapter diagnostic defect was fixed separately: shared
   deterministic child-scope adapters now report the active child `run.goal` and
   keep turn state per run id.
-- 2026-07-01 focused background-agent task fix verification asserts that the
+- 2026-07-01 focused background-agent task fix verification asserted the
   host main catalog exposes eager `task_create` with `kind` enum `["agent"]`,
-  requires top-level `payload`, and requires `payload.goal`, `payload.role`, and
-  `payload.prompt`. Deterministic host protocol coverage starts a background
+  requires top-level `payload`, and at that time required `payload.goal`,
+  `payload.role`, and `payload.prompt`. The current contract requires only goal/
+  role and uses optional bounded `payload.context`. Deterministic host protocol coverage starts a background
   child agent through the real `task_create` tool, and a post-fix real
   `openai/gpt-5.4-mini` rerun produced a completed durable task
   (`task_mr1lz3bphpeg925k`) and `subagent.completed` for
@@ -351,12 +431,11 @@
   `task_create(mode:"awaited", kind:"agent")` returned the completed task
   record/result to the child. Trace report and trace verify passed with no
   findings.
-- 2026-07-07 fix verification added a host built-in Stop hook that advances
-  once when a final answer omits disclosure of partial/truncated/step-limited or
-  failed child finality. Focused host coverage asserts the hook triggers on
-  `subagent.completed` step-limit evidence, passes when the answer already
-  caveats partial child results, and ignores ordinary truncated non-agent tool
-  output.
+- 2026-07-21 strict-outcome verification changed the built-in Stop hook to
+  advance exactly once for structured partial/blocked/truncated/step-limited or
+  failed child evidence without scanning final prose. Focused Host coverage
+  verifies blocker details reach the parent context and ordinary truncated
+  non-agent tool output is ignored.
 - 2026-07-07 real `openai/gpt-5.4-mini` Agent + Skill multidirection QA
   covered current-source Skill-loaded dynamic `spawn_agent`, Skill-loaded
   configured indexed `delegate_agent(agentId:"static_reader")`, Skill-loaded
@@ -400,8 +479,10 @@
   inheritance, parent write denial, read-write untracked audit, and enforce-mode
   sandbox unavailability. Real external ACP binaries remain environment- and
   installation-sensitive.
-- Dynamic `spawn_agent` is read-only by contract; child-write scenarios must use
-  configured delegates rather than dynamic spawn.
+- Dynamic `spawn_agent` workspace-write grants are deterministically covered;
+  real-model compliance with the new terminal result declaration and
+  write-grant selection remains prompt/model-sensitive and needs a fresh
+  canary before raising confidence beyond Partially Verified.
 - Real configured delegates can recover from repeated identical tool calls; keep
   prompt/model-sensitive assertions separate from trace invariants.
 - Real mini delegate runs may include harmless parent-side reads before/after
@@ -428,10 +509,11 @@
   reference path. The children completed useful read-only work. Post-fix,
   diagnose any recurrence by first checking whether `task_create.nextAction`
   and notification body result summaries reached the prompt.
-- Parent final prose can omit a `spawn_agent` partial/finality warning even
-  when `tool.completed spawn_agent` and `trace report` clearly flag child
+- Parent final prose can omit a `spawn_agent` runtime warning even when the
+  compact tool result and trace report clearly flag a forced child
   `step_limit`. Assertions for child write-boundary canaries should inspect
-  `subagent.completed.finality` and trace report, not prose alone.
+  compact `warnings/workspace` plus `subagent.completed.finality`, not prose
+  alone.
 - Real mini can still make prompt-sensitive choices around when to monitor a
   task, but empty-id `task wait` / `task output` placeholders are now guided by
   action-specific schema, rejected by semantic validation, and recovered in

@@ -33,6 +33,7 @@
               "workspace.read",
               "workspace.write",
               "bash",
+              "web",
               "planning",
               "skills",
               "agents",

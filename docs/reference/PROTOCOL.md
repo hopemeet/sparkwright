@@ -206,7 +206,8 @@ Current event types:
   `model.requested` / `model.retrying` / `model.stream.*` events and the
   turn's `model.completed` event are nested beneath it.
 - `model.turn.completed`: the model turn span closed.
-- `model.completed`
+- `model.completed`: raw normalized output for one model turn; diagnostic and
+  replay evidence, not the accepted final answer
 - `model.retrying`
 - `model.stream.started`: a streaming model response began
 - `model.stream.chunk`: a streaming chunk was received (payload kept small)
@@ -216,7 +217,9 @@ Current event types:
 - `model.stream.completed`: a streaming model response finished normally
 - `model.stream.failed`: a streaming model response ended in failure
 - `model.stream.timeout`: a streaming model response timed out
-- `model.assistant_text`: normalized assistant-facing text was emitted for trace and replay consumers
+- `model.assistant_text`: committed nonterminal assistant commentary was
+  emitted before further tool work. A Stop-accepted final answer is carried by
+  terminal run message field.
 - `context.assembled`
 - `context.compaction_requested`
 - `context.compaction.started`
@@ -244,7 +247,9 @@ Current event types:
 - `tool.replay_risk`
 - `storage.degraded`
 - `storage.recovered`
-- `approval.requested`
+- `approval.requested`: carries a required producer-authored typed `subject`;
+  clients may remember only subjects with a stable key and must treat
+  `kind:"one_shot"` as non-reusable
 - `approval.resolved`
 - `artifact.created`
 - `workspace.read`
@@ -269,7 +274,9 @@ Current event types:
   can include `protocol`, `childRunId`, `taskId`, and shell sandbox status.
 - `usage.updated`: a per-run usage aggregator emitted a fresh snapshot
   (tokens, cost, wall time, per-tool, per-model). Payload: `UsageSnapshot`.
-- `hook.failed`: a `RunHook.*` callback threw. Payload:
+- `hook.failed`: defensive signal that aggregate `RunHook` dispatch escaped its
+  fault-isolation boundary. Individual callback failures are normally caught
+  and logged before reaching this boundary. Payload:
   `{ phase: string, toolName?: string, message: string }`. Loop continues.
 - `workflow_hook.started` / `workflow_hook.completed` /
   `workflow_hook.blocked` / `workflow_hook.failed`: deterministic workflow
@@ -328,9 +335,12 @@ Current event types:
   `agentId`, `subagentDepth`, `delegateTool`, `entrypoint`, and `protocol`
   (`in_process`, `acp`, or `external_command`). Process-backed invocations also
   include `workspaceAccess` when known. Terminal
-  payloads add `terminalState`, `finality`, and the child's `assessment`.
-  Finality and health are independent: a child can be complete but degraded or
-  failing, and callers must preserve both. SparkWright child runs also add
+  payloads add transport `terminalState`, runtime-derived report `status`, and
+  the child's `assessment`. Report delivery and health are independent: a
+  child can deliver a report while degraded or failing, and callers must
+  preserve both. Status `completed` does not prove the delegated goal was
+  satisfied.
+  SparkWright child runs also add
   `stepLimitReached` / `truncated` when the child outcome reports them. Agent
   admission failures may go directly from requested to failed and must not emit
   started. External-command delegate terminal

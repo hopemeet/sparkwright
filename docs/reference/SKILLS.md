@@ -97,7 +97,7 @@ The parser is deliberately small and dependency-free. Complex YAML features are 
 
 ## CLI Management
 
-Use the CLI for basic workspace Skill management:
+Use the CLI for project Skill management:
 
 ```bash
 sparkwright skills list --workspace .
@@ -105,234 +105,55 @@ sparkwright skills validate --workspace .
 sparkwright skills create code-reviewer \
   --description "Reviews code changes for risk and missing tests." \
   --workspace .
-```
-
-`list` and `validate` discover Skills across the builtin, user, and project
-layers. If `capabilities.skills.roots` is configured, those roots are loaded as
-configured workspace roots after the standard layers. `create` prepares a managed
-project-layer proposal and prints its review/apply command; it does not write the
-current Skill package or accept `--force`. Apply the proposal only after
-reviewing its final patch. CLI, TUI, and model creation adapters share the host
-`SkillCommandService`, so they no longer have different mutation semantics.
-
-Reports include each Skill's `layer`, `root`, and filesystem `source`. When two
-layers declare the same Skill name, the stronger layer wins and `validate`
-returns a `shadows` entry showing which source was replaced.
-
-## Skill Evolution Workflow
-
-Skill Evolution is the proposal-based path for changing project Skills without
-letting generated changes silently mutate the current Skill package.
-
-The writable surface is intentionally narrow: proposal apply writes only to the
-project Skill root under `.sparkwright/skills/`. Builtin, user, and configured
-roots are read-only sources for diagnostics, statistics, and project
-fork/shadow proposals.
-
-Start by inspecting the current Skill surface:
-
-```bash
-sparkwright skills stats --workspace . --last 20 --format text
-sparkwright skills stats --workspace . --skill code-reviewer --package-hash sha256:... --format text
 sparkwright skills doctor --workspace . --format text
 ```
 
-`stats` reads recent session traces, including agent traces under
-`agents/<agent-id>/trace.jsonl`, and reports Skill indexing/loading, failures,
-associated run status, associated tool failures, and package-hash-aligned
-proposal/history rollups. The report includes the trace/evolution window,
-freshness timestamps, analyzer findings, and a rebuildable session projection
-cache summary. Load failures have one structured JSON contract:
-`loadFailures.total`, `loadFailures.byMode`, and `loadFailures.byStatus`.
-Session projections are stored under
-`.sparkwright/skill-stats/sessions/` and are invalidated by trace file
-fingerprints plus the projection schema and algorithm versions. A lightweight
-`.sparkwright/skill-stats/catalog.json` maps Skill names, keys, and package
-hashes to session projections so targeted `--skill`, `--skill-key`, and
-`--package-hash` queries can skip unrelated sessions after the catalog is warm.
-Raw trace and evolution files remain the source of truth. Tool failures are
-reported as associated with loaded Skills, not caused by them. `doctor`
-performs deterministic checks such as load errors, shadowing, configured-root
-warnings, and package hash validity.
+`skills create` writes one deterministic
+`.sparkwright/skills/<name>/SKILL.md` scaffold. It accepts only the project
+Skill root, validates the manifest before publishing it, reserves the target
+directory atomically, and never overwrites an existing package. It does not
+create proposal, registry, history, or automatic-learning state. Update or
+remove an existing Skill as an ordinary reviewed workspace change.
 
-Create a new project Skill through a draft proposal:
+`list` and `validate` discover Skills across builtin, user, project, and
+configured layers. Reports include each Skill's `layer`, `root`, filesystem
+`source`, and package identity. When two layers declare the same name, the
+stronger layer wins and `validate` reports the shadowed source.
+
+## Skill Statistics
+
+Inspect recent runtime evidence with:
 
 ```bash
-sparkwright skills proposals create code-reviewer \
-  --description "Reviews code changes for risk and missing tests." \
-  --workspace . \
-  --format text
+sparkwright skills stats --workspace . --last 20 --format text
+sparkwright skills stats --workspace . --skill code-reviewer --format text
+sparkwright skills stats --workspace . --package-hash sha256:... --format json
 ```
 
-Update an existing effective Skill through a hash-gated proposal:
+Stats are keyed by Skill package identity: name, layer, package hash, and hash
+policy version. They report indexing and loading counts, explicit versus
+resident loads, load failures, associated run status, and associated tool
+failures. Association is diagnostic context, not a causal claim about a Skill.
 
-```bash
-sparkwright skills proposals update code-reviewer \
-  --description "Prefer concise findings with concrete verification steps." \
-  --workspace . \
-  --format text
-```
+The latest session window remains bounded by `--last`, but completed session
+projections are cached under `.sparkwright/skill-stats/sessions/`. A rebuildable
+catalog at `.sparkwright/skill-stats/catalog.json` maps Skill names, keys, and
+package hashes to those projections. Repeated or overlapping bounded-window
+queries reuse unchanged session projections, and targeted queries can skip
+unrelated sessions inside the current candidate window. Cache entries are
+invalidated by trace fingerprints plus schema and algorithm versions; raw
+traces remain the source of truth. Cached sessions outside the current
+`--last` window are not included in totals. Old self-evolution directories, if
+present from an earlier release, are inert legacy data: Stats does not read,
+migrate, or delete them.
 
-If the effective Skill comes from builtin, user, or configured layers, update
-creates a project-layer fork/shadow proposal instead of editing that source in
-place. If the effective Skill is already project-scoped, apply replaces that
-project Skill only after the proposal's `basePackageHash` still matches the
-current package.
+`skills doctor` performs deterministic checks such as load errors, shadowing,
+configured-root notices, and package hash validity.
 
-Review and apply proposals:
-
-```bash
-sparkwright skills proposals list --workspace . --format text
-sparkwright skills proposals show <proposal-id> --workspace . --format text
-sparkwright skills proposals apply <proposal-id> --workspace . --format text
-```
-
-The TUI exposes slash-command entry points for the same proposal flow:
-
-```txt
-/create skill
-/skill-update
-/skill-update code-reviewer
-/skill-update code-reviewer --description Prefer concise findings with concrete verification steps.
-/skill-review
-/skill-review draft
-/skill-learn
-/skill-learn notice
-```
-
-`/create skill` is the sole Skill creation entrypoint in the TUI. It opens the
-general capability-creation dialog on Skill and prepares through the managed
-proposal service; it does not directly write the current Skill.
-
-`/skill-update` without arguments opens a guided prompt for an effective Skill
-update proposal; with only a Skill name, it opens directly at the description
-step. `/skill-review` opens a proposal review panel with proposal, patch, and
-metadata views; it can apply or reject the selected proposal after an Enter
-confirmation. `/create skill` and `/skill-update` create proposals but do not
-apply them.
-
-`/skill-learn` shows the effective Skill Evolution mode. `/skill-learn
-off|notice|draft|apply` writes the project config field
-`capabilities.skills.evolution.mode`. `notice` is the default when unset.
-Automatic draft and apply behavior are gated separately and are not implied by
-setting the mode alone.
-
-In `notice` mode, the TUI may show a conservative notice after a successful run
-when the user's own prompt contains explicit reuse signals such as "remember
-this", "next time", or equivalent workflow corrections. The notice only
-suggests `/create skill` or `/skill-update`; it does not create proposals
-automatically.
-
-In `draft` mode, the same conservative signal creates a draft proposal for the
-project Skill `session-learnings`. The TUI does not infer a target Skill name
-from the prompt; use `/skill-update <skill-name>` or the CLI proposal commands
-for named Skill updates. This still does not write current Skills or apply the
-proposal automatically; review it with `sparkwright skills proposals show
-<proposal-id>` and apply it through the CLI when appropriate.
-Automatic learning proposals include deterministic evidence and safety notes;
-they do not use tool output, logs, webpages, or command output as learning
-evidence.
-
-In `apply` mode, only an auto-generated `session-learnings` proposal may be
-auto-applied. Auto-apply still goes through the proposal apply path with package
-hash checks, doctor checks, history capture, and rollback on failure. If any gate
-fails, the draft proposal is left for manual review. Manual edits are protected
-by the same hash gates: if a target Skill appears or changes after proposal
-creation, apply marks
-the proposal stale instead of overwriting the current Skill.
-
-A proposal contains:
-
-- `metadata.json` with state, target, source, and package hashes
-- `proposal.md` with review text
-- `patch.diff`
-- `before/` and `after/` package snapshots when applicable
-
-Proposal states are:
-
-```txt
-draft
-applied
-rejected
-stale
-superseded
-failed
-```
-
-Manage proposal lifecycle without changing current Skills:
-
-```bash
-sparkwright skills proposals reject <proposal-id> \
-  --reason "Too broad for this project." \
-  --workspace .
-
-sparkwright skills proposals supersede <old-id> \
-  --by <new-id> \
-  --reason "Replaced by a narrower update." \
-  --workspace .
-```
-
-Clean up closed proposals with an explicit dry run or apply:
-
-```bash
-sparkwright skills proposals prune \
-  --state rejected,stale,superseded,failed \
-  --older-than 30d \
-  --dry-run \
-  --workspace . \
-  --format text
-
-sparkwright skills proposals prune \
-  --state rejected,stale,superseded,failed \
-  --older-than 30d \
-  --apply \
-  --workspace .
-```
-
-Prune never deletes `draft` or `applied` proposals, never touches
-`.sparkwright/skills/`, and never deletes applied history.
-
-Inspect applied history:
-
-```bash
-sparkwright skills history code-reviewer --workspace . --format text
-sparkwright skills history show code-reviewer <history-id> --workspace .
-sparkwright skills history diff code-reviewer <history-id> --workspace .
-```
-
-History entries live under `.sparkwright/skill-evolution/history/` and include
-the applied `before/` and `after/` snapshots plus `patch.diff`.
-
-Restore a project Skill from an applied history entry:
-
-```bash
-sparkwright skills restore code-reviewer \
-  --version <history-id> \
-  --dry-run \
-  --workspace . \
-  --format text
-
-sparkwright skills restore code-reviewer \
-  --version <history-id> \
-  --apply \
-  --workspace .
-```
-
-Restore defaults to dry-run. With `--apply`, it replaces only the project Skill
-under `.sparkwright/skills/`, runs doctor checks, rolls back if doctor blocks
-the restored package, and writes a new `restore` history entry.
-
-Recommended loop:
-
-```txt
-stats / doctor
--> proposals create or update
--> proposals show
--> proposals apply
--> history show or diff
--> restore when needed
--> reject, supersede, or prune old proposals
-```
+The TUI `/skills` panel displays the same current-package inventory and recent
+usage projection. `/create skill` creates the same deterministic project
+scaffold. The retired `/skill-update`, `/skill-review`, and `/skill-learn`
+commands are no longer registered; use ordinary workspace edits for changes.
 
 ## Preparing Skills For A Run
 

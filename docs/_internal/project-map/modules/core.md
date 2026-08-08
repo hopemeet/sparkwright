@@ -13,6 +13,173 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md),
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-08-07
+- Scope: removed the never-invoked `RunHook.onError` callback and its exported
+  input type. The remaining model/tool/event callbacks keep their existing
+  fault-isolated behavior; project policy remains on `WorkflowHook`.
+- Read: Core RunHook definition/composition, run-loop dispatch, public barrel,
+  focused tests, and extension/protocol references.
+- Tests: full Core 674/674, all workspace builds/typechecks, repository lint,
+  schema checks, and import/package boundary checks passed.
+
+- Status: Read-only
+- Date: 2026-08-02
+- Scope: neutralized self-evolution-specific capability mutation test fixtures.
+  Core event, trace summary, path display, policy, and run contracts are
+  unchanged.
+- Read: Core trace/path fixtures and downstream Host/CLI/TUI removals.
+- Tests: Core trace/path 139/139 after correcting the display fixture.
+
+- Status: Verified
+- Date: 2026-08-01
+- Scope: Core recognizes `web_content` as a tool-result presentation kind and
+  gives fetched web text its own bounded prompt-context budget without learning
+  HTTP, URL, or provider behavior.
+- Read: tool result presentation types and context assembly projection.
+- Tests: focused Core context tests and repository typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-30
+- Scope: forced tool-less step-budget wrap-up records
+  `completionStatus:"partial"` in both `run.completed` and
+  `RunResult.metadata`. Terminal tools retain their generic atomic
+  same-response behavior but no longer carry an Agent-specific completion
+  status override. The unreachable legacy Agent-result protocol-failure notice
+  and blocker-kind heuristic were removed.
+- Read: Core terminal branch, completion projection, budget wrap-up,
+  runtime-state notices, and focused execution/run-loop tests.
+- Tests: repository build/test typecheck and focused Core suites passed.
+
+- Status: Verified
+- Date: 2026-07-29
+- Scope: `tool_search.maxResults` remains a free-text keyword ranking limit and
+  is explicitly documented as inapplicable to exact `select:` queries. Exact
+  selection behavior and related-tool expansion are unchanged.
+- Read: tool-search input schema, select/keyword execution branches, and
+  focused tests.
+- Tests: Core tool-search suite (7 tests) and typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-27
+- Scope: tool observations now consume additive semantic
+  `resultPresentation` hints for single Agent results and Agent batches.
+  Model-visible receipts keep `report` string-shaped with explicit truncation
+  and recovery metadata, preserve all eight parallel child indices, and fit
+  the complete serialized observation envelope to at most 7,500 characters. Raw
+  `tool.completed` results and streaming events remain unchanged.
+- Read: tool descriptors, default observation formatter, Core and Streaming
+  run-loop descriptor plumbing, Agent tool descriptors, and focused tests.
+- Tests: full `npm run release:check` passed, including all workspace suites,
+  the 16-case regression matrix, source/release install smoke, and focused
+  Core/Streaming raw-result regressions.
+
+- Status: Verified
+- Date: 2026-07-26
+- Scope: a natural final on the last allowed action is now complete; only the
+  separate forced, tool-less budget wrap-up is marked step-limited/truncated.
+  Terminal tools use their deterministic `renderMessage` directly when
+  available, avoiding an extra finalization model turn. Parent observations
+  recognize compact Agent `status`/`childRunId` while retaining legacy
+  finality fields only for trace migration.
+- Read: run terminal and budget-wrap paths, Agent observation projection,
+  context deduplication, and execution-control tests.
+- Tests: full Core 661/661 and focused terminal/context suites passed.
+
+- Status: Verified
+- Date: 2026-07-25
+- Scope: the semantic `CompletionEvaluator` identity is compatibility-retired.
+  Core now calls `evaluateRuntimeState` only at terminal projection; the
+  `completion_evaluator` loop transition and recovered/unresolved requirement
+  payloads are removed. Deprecated root aliases remain source-compatible, but
+  no emitted event or result metadata uses the old requirement fields.
+- Read: runtime-state evaluator, run transition/terminal projection, public
+  barrel, Protocol/Host consumers, and execution-control tests.
+- Tests: full `npm run release:check` passed, including all workspace tests,
+  the 16-case regression matrix, and source/release install smoke.
+
+- Status: Verified
+- Date: 2026-07-25
+- Scope: ordinary Agent completion is now model-owned. Core no longer reopens a
+  natural final because a ChangeSet lacks inferred verification; the retained
+  completion evaluator passively projects notices and runtime continuation
+  budget exhaustion. Verification receipts are signed only for explicit
+  verifier-launched commands.
+- Read: run terminal path, completion evaluator, FactLedger receipt projection,
+  Agent result projection, Host child lifecycle wiring, and focused tests.
+- Tests: Core 661/661, Agent Runtime 257/257, Host 583/583; affected package
+  typechecks, repository lint, and targeted format check passed.
+
+- Status: Verified
+- Date: 2026-07-24
+- Scope: the Agent execution control plane now has runtime-owned tool effects,
+  revision/CAS workspace writes, shared workspace epochs and ChangeSets,
+  verification receipts, principal-scoped approvals, a separate finalization
+  reserve, terminal-tool binding, and deterministic CompletionEvaluator
+  notices/recovery. The legacy whole-file write remains only as
+  `legacy_write` compatibility.
+- Read: Core tool/run/workspace/approval/fact-ledger/assessment/completion
+  contracts and focused cross-package consumers.
+- Tests: focused Core execution-control/workspace suites, repository build, and
+  repository test typecheck passed; final release gates are recorded with this
+  change.
+
+- Status: Verified
+- Date: 2026-07-23
+- Scope: final lint follow-up changed only Streaming Runtime's local
+  command-wait unsubscribe holder to the same const-ref cleanup pattern already
+  used by Core. Core event subscription, command readiness, abort, and
+  `waiting_tasks` contracts are unchanged.
+- Read: Core EventLog subscription/command-wait pattern and Streaming Runtime
+  parity implementation.
+- Tests: Streaming Runtime 20/20, focused TUI task actions 5/5, affected
+  typechecks, and focused lint passed.
+
+- Status: Verified
+- Date: 2026-07-23
+- Scope: route review for Streaming Runtime awaited-task parity. Core's
+  `TaskRevivalSource`, `NotificationSource`, `waiting_tasks`, and forced
+  continuation contracts did not change; the edge runtime now consumes them.
+- Read: Core task-revival types/run-loop and Streaming Runtime implementation.
+- Tests: Core run suite (129), Streaming Runtime suite (20), and both package
+  typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-23
+- Scope: the repeated-target guard now records whether a failure is
+  argument-correctable or target-invariant. Changed arguments may retry the
+  former; exact repeats, target failures, and expected denials remain guarded.
+  `tool_search` tokenizes CJK text with overlapping bigrams, and selected
+  context no longer exposes its internal `type` as an authority hint. The
+  unimplemented `<system-reminder>` authority declaration was removed.
+- Read: Core prompt construction, tool-search ranking, failure classification,
+  repeated-call bookkeeping, and model-visible observation projection.
+- Tests: focused Core context/tool-search/run suites (178 tests) and Core plus
+  repository test typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-21
+- Scope: approval requests now carry a producer-authored `ApprovalSubject`;
+  tool definitions may provide an argument-specific subject and unknown tools
+  fail closed to one-shot approval. `model.completed` remains raw turn evidence,
+  while only nonterminal commentary uses `model.assistant_text` and the
+  Stop-accepted `run.completed.message` is the canonical final answer.
+- Read: Core approval/types/tool/run/workspace/outcome paths and downstream
+  Protocol, Host, Streaming Runtime, Shell, TUI, CLI, and ACP consumers.
+- Tests: focused Core approval/workspace/run suites and affected downstream
+  approval/finality suites and typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-21
+- Scope: trace diagnostics now classify semantic partial/blocked Agent outcomes
+  as incomplete evidence and include summary/blocker codes; session compaction
+  facts retain structured blocker recovery data. Core's generic repeated-call
+  guard stops an unchanged blocked spawn without an Agent-specific retry cache.
+- Read: trace diagnostics, session compaction, repeated-tool handling, Host
+  projections, and focused/full tests.
+- Tests: Core 650/650 plus Host repeated-spawn coverage passed; full repository
+  verification is recorded by the release gate.
+
+- Status: Verified
 - Date: 2026-07-19
 - Scope: session consistency now classifies unresolved tool outcomes per
   `runId` and excludes only `TOOL_ABORTED` owned by one unambiguous cancelled
@@ -176,10 +343,12 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md),
 - `packages/core/src/path-display.ts`
 - `packages/core/src/session.ts`
 - `packages/core/src/events.ts`
+- `packages/core/src/hooks.ts`
 - `packages/core/src/user-hooks.ts`
 - `packages/core/src/workflow-hooks.ts`
 - `packages/core/src/fact-classifier.ts`
 - `packages/core/src/fact-ledger.ts`
+- `packages/core/src/runtime-state-evaluator.ts`
 - `packages/core/src/run-assessment.ts`
 - `packages/core/src/run-outcome.ts`
 - `packages/core/src/policy.ts`
@@ -187,6 +356,7 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md),
 - `packages/core/src/workspace.ts`
 - `packages/core/test/run.test.ts`
 - `packages/core/test/run-budget.test.ts`
+- `packages/core/test/execution-control-plane.test.ts`
 - `packages/core/test/user-hooks.test.ts`
 - `packages/core/test/trace.test.ts`
 - `packages/core/test/session.test.ts`
@@ -214,6 +384,24 @@ Does not own:
 
 ## Contracts
 
+- `ToolDefinition.delegation` is explicit child eligibility and defaults to
+  `parent_only`. `terminal` identifies a runtime-owned terminal tool; calls
+  must be sole in their response and may bind same-response assistant text.
+- Every terminal `ToolResult` may carry a structured `ToolEffect`
+  (`changed|observed|no_change|blocked`, target, epoch/revisions, retry, reason).
+  Core's no-progress guard compares effect, target, arguments/evidence, and
+  state epoch instead of inferring progress from arbitrary output strings.
+- Core reserves a separate finalization model/token account from action
+  budgets. A terminal tool's non-empty deterministic `renderMessage` is used
+  directly. Only a terminal result with neither bound assistant text nor a
+  rendered message spends this reserve to generate final text, with a
+  deterministic fallback if unavailable.
+- `evaluateRuntimeState` is a terminal runtime-fact projector, not a semantic
+  completion gate. It records immutable child/approval/verification notices
+  and may downgrade for runtime-owned budget exhaustion, but it never reopens
+  an ordinary natural final, infers an executable requirement, or requires a
+  receipt merely because a ChangeSet exists. The old exported evaluator names
+  are deprecated aliases only.
 - The package root exports stable types, factories, and extension interfaces.
   `EventLog`, file/in-memory trace stores, concrete workspace/checkpoint
   classes, default prompt/context implementations, and `SparkwrightRun` are
@@ -241,6 +429,11 @@ Does not own:
   approval, the run loop uses this bounded summary before falling back to
   `Run tool <name>`. The hook must be pure and must tolerate invalid model
   arguments by throwing or returning undefined.
+- `ToolDefinition.approvalSubjectForArgs()` is the tool-owned semantic identity
+  of the effect being authorized. Stable subjects carry a producer-defined key;
+  a missing hook falls back to `one_shot` and cannot create reusable client
+  authority. Core passes the subject through the same approval audit lifecycle
+  but does not interpret client session rules.
 - `ToolDefinition.governance.idempotency` is the only replay-safety semantic.
   Network-class failures on `conditional` / `non_idempotent` tools emit
   `tool.replay_risk`; `idempotent` or undeclared tools do not.
@@ -383,7 +576,10 @@ Does not own:
 - `ToolResultPresentation.kind` is the thin semantic contract for result
   rendering and observation budgeting. Core owns the public kind vocabulary,
   including `file_read`, `file_discovery`, `text_search`, `shell_output`,
-  `diagnostic`, and `generic`; concrete tools own their factual result fields.
+  `diagnostic`, `web_content`, and `generic`; concrete tools own their factual
+  result fields. `web_content` uses the same larger read-like observation
+  budget as paginated file reads without pretending that a URL is a workspace
+  file.
 - Provider prompts must render context sources through the model-visible
   projection in `context.ts`; diagnostic provenance may keep host absolute
   paths in metadata, but prompt source labels must not expose them.
@@ -400,6 +596,17 @@ Does not own:
   run-outcome, run-health, the live ledger, and trace diagnostics. Raw command
   facts keep `exitCode`/`timedOut`; verifier interpretation lives on
   verification-result entries with `expect` and `satisfied`.
+- `InMemoryWorkspaceState` is shared by a parent/child run tree and owns the
+  monotonic workspace epoch plus ChangeSets. Managed writes record actor,
+  operation, path, and before/after revisions. Only explicit
+  verifier-launched commands sign verification receipts; receipts record
+  covered ChangeSets, become stale after a later write epoch, and remain
+  evidence unless an opt-in Workflow verifier consumes them as a hard gate.
+- `LocalWorkspace` and `ControlledWorkspace` expose revision-aware reads and
+  distinct create/replace/edit semantics. Revisions encode existence as well
+  as content; create never overwrites, replace/edit require an expected
+  revision, and ControlledWorkspace retains proposal-baseline revalidation,
+  policy, principal-scoped approval, artifacts, checkpointing, and trace.
 - `WorkflowHookInput.facts` is a read-only FactLedger view supplied by the run
   loop. Host governance hooks may read it, but core does not let hooks mutate
   the ledger.
@@ -456,6 +663,9 @@ Does not own:
   `trace-diagnostics.ts`; there is no public/general `TraceFacts` model.
   `SessionTraceFacts` remains owned by session compaction and must not be
   generalized into report facts without a second shared consumer.
+- `SessionTraceFacts.subagents` carries semantic status, summary, and bounded
+  blockers/requirements. Trace report facts remain private, but independently
+  consume semantic partial/blocked status and blocker codes for evidence.
 - Trace timelines use semantic phase keys before span fallback; `subagent.*`
   lifecycle rows are grouped by child run id so a parent request and child
   terminal event do not split into pending and completed phases when spans
@@ -504,8 +714,10 @@ Does not own:
   `capabilities.hooks.events` uses the user-hook event lane outside the awaited
   workflow hook executor. `RunHook.beforeToolCall.skip` remains a lower-level
   embedder/instrumentation seam, not the recommended surface for project
-  policy. The parallel `ValidationHook` stage executor has been removed;
-  deterministic policy belongs to `WorkflowHook`.
+  policy. Its executable callbacks cover only model, tool, and event boundaries;
+  there is no loop-wide `onError` callback. Individual callback failures are
+  caught and logged. The parallel `ValidationHook` stage executor has been
+  removed; deterministic policy belongs to `WorkflowHook`.
 - Trace safety summaries count `workspace.write.untracked_access_granted` as
   `untrackedWriteCapableProcesses` for compatibility, separate from managed
   `workspace.write.completed` counts.

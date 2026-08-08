@@ -116,7 +116,7 @@ export function createTodoWriteTool(
     name: "todo_write",
     description: [
       "Create and maintain the run's todo list — a short checklist that tracks multi-step work and shows progress. Each call replaces the whole list, so pass every task, in order, every time.",
-      "Use this for work with at least three substantive dependent steps, multiple phases, or recovery that benefits from a durable checklist. Do not create a todo list for a simple one-file change, a single command, or merely because a background process runs for a long time.",
+      "Use this only when durable plan state materially reduces the risk of losing track of unresolved work, such as independently meaningful outcomes, work spanning turns or sessions, or failure recovery. If the request is one bounded outcome and a checklist adds no coordination value, skip it. File count, tool-call count, verification steps, elapsed time, and delegation alone do not justify a todo list.",
       "Each item has a `title` and a `status` (one of: pending, in_progress, completed, blocked; synonyms like 'todo'/'done' are accepted). Keep at most one item in_progress at a time.",
       "Use in_progress for the current active item, and completed only when its work is actually finished — based on real results, never on intent, and never by loosening what counts as done. Never mark an item completed before its result is in.",
       "Child agents may not call this tool.",

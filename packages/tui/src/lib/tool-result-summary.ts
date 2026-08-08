@@ -4,7 +4,6 @@ export type ToolResultKind =
   | "file_read"
   | "anchored_read"
   | "workspace_write"
-  | "skill_mutation"
   | "shell"
   | "agent"
   | "skill_load"
@@ -15,9 +14,8 @@ export function classifyToolResult(value: unknown): ToolResultKind | null {
   if (isFileReadResult(value)) return "file_read";
   if (isAnchoredReadResult(value)) return "anchored_read";
   if (isWorkspaceWriteToolResult(value)) return "workspace_write";
-  if (isSkillMutationToolResult(value)) return "skill_mutation";
   if (isShellResult(value)) return "shell";
-  if (isAgentToolResult(value)) return "agent";
+  if (isParentAgentResult(value)) return "agent";
   if (isSkillLoadResult(value)) return "skill_load";
   if (isListDirResult(value)) return "list_dir";
   if (isGlobResult(value)) return "glob";
@@ -62,33 +60,9 @@ export function isWorkspaceWriteToolResult(value: unknown): boolean {
   const r = value as Record<string, unknown>;
   return (
     typeof r.path === "string" &&
-    (typeof r.changed === "boolean" ||
-      typeof r.hunksApplied === "number" ||
-      typeof r.proposalId === "string") &&
+    (typeof r.changed === "boolean" || typeof r.hunksApplied === "number") &&
     ("content" in r || "diff" in r || "summary" in r)
   );
-}
-
-export function isSkillMutationToolResult(value: unknown): boolean {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return false;
-  }
-  const r = value as Record<string, unknown>;
-  if (typeof r.action !== "string" || typeof r.changed !== "boolean") {
-    return false;
-  }
-  if (r.action === "create") {
-    return typeof r.name === "string" && typeof r.path === "string";
-  }
-  if (r.action === "draft") {
-    return (
-      typeof r.proposalId === "string" && typeof r.proposalPath === "string"
-    );
-  }
-  if (r.action === "apply") {
-    return typeof r.proposalId === "string";
-  }
-  return false;
 }
 
 export function isShellResult(value: unknown): boolean {
@@ -125,27 +99,48 @@ export function summarizeShellResult(
   const combined = [stdout, stderr ? `stderr: ${stderr}` : ""]
     .filter(Boolean)
     .join("\n");
-  const lines = combined
+  const allLines = combined
     .split(/\r?\n/)
     .map((line) => line.trim())
-    .filter(Boolean)
-    .slice(0, maxLines);
+    .filter(Boolean);
+  const limit = Math.max(1, Math.floor(maxLines));
+  const lines =
+    allLines.length <= limit
+      ? allLines
+      : (() => {
+          const headCount = Math.ceil(limit / 2);
+          const tailCount = Math.floor(limit / 2);
+          const omitted = allLines.length - headCount - tailCount;
+          return [
+            ...allLines.slice(0, headCount),
+            `… ${omitted} line${omitted === 1 ? "" : "s"} omitted …`,
+            ...(tailCount > 0 ? allLines.slice(-tailCount) : []),
+          ];
+        })();
   return { head, lines, timedOut };
 }
 
-/**
- * Recognise a sub-agent tool result envelope by its shape. Delegate tools and
- * dynamic `spawn_agent` outputs share this core terminal envelope.
- */
-export function isAgentToolResult(value: unknown): boolean {
+/** Recognise the compact report returned to a parent by an Agent tool. */
+export function isParentAgentResult(value: unknown): boolean {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return false;
   }
   const r = value as Record<string, unknown>;
+  const workspace =
+    typeof r.workspace === "object" &&
+    r.workspace !== null &&
+    !Array.isArray(r.workspace)
+      ? (r.workspace as Record<string, unknown>)
+      : undefined;
   return (
     typeof r.childRunId === "string" &&
-    typeof r.signal === "string" &&
-    "stopReason" in r
+    (r.status === "completed" ||
+      r.status === "partial" ||
+      r.status === "blocked") &&
+    typeof r.report === "string" &&
+    r.report.trim().length > 0 &&
+    workspace !== undefined &&
+    typeof workspace.writes === "number"
   );
 }
 
@@ -155,9 +150,39 @@ export function isSkillLoadResult(value: unknown): boolean {
   }
   const r = value as Record<string, unknown>;
   if (r.status === "loaded") {
-    return typeof r.name === "string" && typeof r.content === "string";
+    return (
+      typeof r.name === "string" && displayStringLength(r.content) !== undefined
+    );
   }
   return r.status === "not_found" && typeof r.requestedName === "string";
+}
+
+/** Length of a live value or its bounded persisted-trace envelope. */
+export function displayStringLength(value: unknown): number | undefined {
+  if (typeof value === "string") return value.length;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  return record.type === "string" &&
+    typeof record.length === "number" &&
+    Number.isFinite(record.length)
+    ? record.length
+    : undefined;
+}
+
+/** Length of a live array or its bounded persisted-trace envelope. */
+export function displayArrayLength(value: unknown): number | undefined {
+  if (Array.isArray(value)) return value.length;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  return record.type === "array" &&
+    typeof record.length === "number" &&
+    Number.isFinite(record.length)
+    ? record.length
+    : undefined;
 }
 
 export function isListDirResult(value: unknown): boolean {

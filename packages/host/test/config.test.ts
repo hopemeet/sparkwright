@@ -363,6 +363,95 @@ describe("loadHostConfig", () => {
     }
   });
 
+  it("loads the explicit web transport security mode", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, {
+        capabilities: { web: { security: "system" } },
+      });
+
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+
+      expect(loaded.errors).toEqual([]);
+      expect(loaded.config.capabilities?.web).toEqual({ security: "system" });
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("lets project config tighten web transport but not weaken user hardened mode", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, {
+        capabilities: { web: { security: "hardened" } },
+      });
+      await writeProjectConfig(cwd, {
+        capabilities: { web: { security: "system" } },
+      });
+
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+
+      expect(loaded.config.capabilities?.web).toEqual({
+        security: "hardened",
+      });
+      expect(loaded.errors).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            field: "capabilities.web.security",
+            message: expect.stringContaining(
+              "project config cannot select the less restrictive",
+            ),
+          }),
+        ]),
+      );
+
+      await writeUserConfig(xdg, {
+        capabilities: { web: { security: "system" } },
+      });
+      await writeProjectConfig(cwd, {
+        capabilities: { web: { security: "hardened" } },
+      });
+      const tightened = await loadHostConfig(cwd, {
+        XDG_CONFIG_HOME: xdg,
+      });
+      expect(tightened.errors).toEqual([]);
+      expect(tightened.config.capabilities?.web).toEqual({
+        security: "hardened",
+      });
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("reports invalid web transport settings without accepting them", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, {
+        capabilities: {
+          web: { security: "relaxed", proxyUrl: "http://127.0.0.1:7890" },
+        },
+      });
+
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+
+      expect(loaded.config.capabilities?.web).toEqual({});
+      expect(loaded.errors).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ field: "capabilities.web.security" }),
+          expect.objectContaining({ field: "capabilities.web.proxyUrl" }),
+        ]),
+      );
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   it("loads capability skill config and resolves roots relative to the defining file", async () => {
     const xdg = await makeTempDir();
     const cwd = await makeTempDir();
@@ -377,9 +466,6 @@ describe("loadHostConfig", () => {
             resourceFileLimit: 5,
             allowedSkills: ["reviewer"],
             deniedSkills: ["dangerous"],
-            evolution: {
-              mode: "draft",
-            },
           },
         },
       });
@@ -393,9 +479,6 @@ describe("loadHostConfig", () => {
         resourceFileLimit: 5,
         allowedSkills: ["reviewer"],
         deniedSkills: ["dangerous"],
-        evolution: {
-          mode: "draft",
-        },
       });
     } finally {
       await rm(xdg, { recursive: true, force: true });
@@ -1946,9 +2029,7 @@ describe("loadHostConfig", () => {
         ),
       ).toBe(true);
       expect(
-        loaded.errors.some(
-          (e) => e.field === "capabilities.skills.evolution.mode",
-        ),
+        loaded.errors.some((e) => e.field === "capabilities.skills.evolution"),
       ).toBe(true);
       expect(
         loaded.errors.some(

@@ -10,6 +10,288 @@ See [../safety/workspace-writes.md](../safety/workspace-writes.md), [../safety/s
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-08-02
+- Scope: removed deferred `create_skill`/`update_skill` catalog entries and
+  identities. Skill inspection/loading remains read-only; generic deferred
+  discovery, execution, approval, and orchestration contracts are unchanged.
+- Read: Host tools/catalog/identities, CLI capability output, TUI tool
+  presentation, and focused tests.
+- Tests: full Host/CLI/TUI suites and repository test typecheck passed.
+
+- Status: Verified
+- Date: 2026-08-01
+- Scope: `web_fetch` is a one-shot known-URL read. Its model contract is
+  `{url}`; conservative HTML cleaning precedes semantic-boundary truncation,
+  and an incomplete result reports only `truncated: true` rather than an
+  offset/cursor/hash continuation protocol.
+- Read: Web tool/extraction source and tests, Core observation formatter, Host
+  catalog integration, and public/manual documentation.
+- Tests: Web tools 41/41, web package typecheck/build, focused Host catalog
+  92/92, and a real system-routed Baidu retrieval passed.
+
+- Status: Verified
+- Date: 2026-08-01
+- Scope: `web_fetch` keeps one normal tool/approval/result lifecycle while its
+  package-local connection step selects system HTTPS or hardened pinned HTTP(S)
+  from Host config. No nested browser/search flow was introduced.
+- Read: Web tool/transport definition, Core observation projection, Host
+  config/catalog assembly, and focused tests.
+- Tests: Web tools 38/38, focused Host config/catalog 152/152, and CLI 186/186
+  passed.
+
+- Status: Verified
+- Date: 2026-07-30
+- Scope: in-process child completion no longer uses a terminal tool. Tool-less
+  and tool-capable children both return one natural final report. Model-authored
+  status/blocker classification and text-marker parsing were removed; missing
+  reports and runtime terminal conditions derive partial/blocked evidence.
+  Detailed TUI tool blocks show one header input and one full result section
+  instead of repeating compact previews.
+- Read: Core final/budget semantics, Agent Runtime report projection, Host
+  consumers, project-context relay guidance, TUI presentation, and tests.
+- Tests: repository build/test typecheck and focused Core, Agent Runtime, and
+  Host suites passed.
+
+- Status: Verified
+- Date: 2026-07-29
+- Scope: completed in-process Agent observations now preserve actionable
+  assessment-derived warnings as semantic recovery guidance while keeping raw
+  assessment health and lifecycle detail outside parent model context.
+  `tool_search` continues to ignore `maxResults` for exact selection, and the
+  schema/UI now make that boundary explicit. Todo selection is based on durable
+  coordination value rather than scenario-specific step counts.
+- Read: Agent result/action projection, Core tool search, project-context Todo
+  guidance, TUI request/Agent presentation, and focused tests.
+- Tests: focused Core (7), Agent Runtime (19), Project Context (19), and TUI
+  (66) suites plus affected typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-28
+- Scope: in-process child prompt orchestration now requires evidence-bound
+  effect attribution and a material-change/new-evidence stopping rule. Compact
+  parent observations no longer repeat Core assessment health as warnings or a
+  parallel `unhealthy` aggregate; assessment and raw tool lifecycle remain
+  authoritative diagnostics.
+- Read: Agent prompt/result composition, Host in-process collectors, Core
+  assessment boundary, and TUI tool-action projection.
+- Tests: Agent Runtime 263/263, Host 593/593, TUI 532/532, and a real dynamic
+  child canary passed.
+
+- Status: Verified
+- Date: 2026-07-27
+- Scope: tool-owned semantic presentation now distinguishes compact single
+  Agent receipts and eight-child batch indices from generic JSON
+  summarization. The main Host catalog includes the parent-only
+  `read_agent_report` recovery tool as advanced/deferred. Tool execution and
+  raw trace results remain authoritative; presentation changes only the
+  model-visible observation.
+- Read: Core tool descriptors/run/observation formatter, Streaming parity,
+  Host tool identity/catalog/preparation, Agent tool definitions, and tests.
+- Tests: Core/Streaming observation tests, Host catalog/protocol/report tests,
+  Agent Runtime/Host full suites, and affected typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-26
+- Scope: Host prompt composition is now explicitly separate from child tool
+  admission and runtime authority. A stable Agent Runtime helper composes the
+  optional profile and one universal child contract exactly once; completion
+  guidance is no longer a second prompt layer. Low-level embedders and external
+  child transports are not implicitly rewritten.
+- Read: prompt builder assembly, child tool catalogs, Agent Runtime spawn and
+  result protocol, Host child paths, and public extension guidance.
+- Tests: full `npm run release:check` passed; focused Agent Runtime 60/60 and
+  Host 102/102 passed.
+
+- Status: Verified
+- Date: 2026-07-26
+- Scope: completed in-process children now finish with one natural report;
+  structured `submit_agent_result` is guidance for partial/blocked recovery.
+  Parent context receives compact `ParentAgentResult`, while runtime
+  transport/usage/assessment/action evidence stays in lifecycle and ledgers.
+  A deterministic terminal renderer completes directly without another model
+  turn.
+- Read: Core terminal path, Agent Runtime result protocol/projection, Host
+  delegation adapters, project-context relay guidance, and TUI result display.
+- Tests: Core 661/661, Host focused 101/101, Agent Runtime focused suites,
+  Project Context 19/19, and TUI 531/531 passed.
+
+- Status: Verified
+- Date: 2026-07-26
+- Scope: Agent terminal action summaries preserve Core's structured
+  idempotent/no-progress skip as `skipped` rather than flattening every
+  `tool.completed` event to success. TUI replay prefers exact child tool
+  lifecycle truth when correcting legacy receipts. Transcript effect
+  deduplication requires same-run span/call identity and never guesses from
+  names, paths, or adjacency.
+- Read: Agent action summary, TUI tool/Agent presentation, TranscriptDocument
+  effect ownership, and retained real trace `session_tui_ms12fuf0`.
+- Tests: Agent Runtime 259/259 and TUI 531/531 passed; detailed real-session
+  PTY replay showed the repeated bash as skipped and suppressed duplicate
+  child lifecycle/effect rows.
+
+- Status: Verified
+- Date: 2026-07-26
+- Scope: the app-owned transcript document groups Agent and tool presentation
+  only by structured run, child-run, tool-call/span, or event identifiers.
+  Missing identities remain independent display blocks. Tool validation,
+  approval, execution, and result authority are unchanged.
+- Read: TUI transcript assembler/layout, shared tool display, and existing
+  runtime tool lifecycle contracts.
+- Tests: TUI transcript grouping/compatibility coverage and real-PTY Agent/tool
+  rendering passed; full repository verification is recorded in the change
+  handoff.
+
+- Status: Verified
+- Date: 2026-07-25
+- Scope: child execution still uses the existing tool validation, policy,
+  approval, and lifecycle path. At terminal time Agent Runtime derives at most
+  24 user-facing action receipts from the child EventLog and attaches them to
+  the parent lifecycle fact; Host reuses that evidence for dynamic spawn output
+  and zero-write reporting guidance. Raw tool arguments/output are not copied.
+- Read: child tool lifecycle, Agent action summarizer/terminal bridge, Host
+  dynamic spawn result, and TUI live/replay consumers.
+- Tests: Agent Runtime 258/258, Host 583/583, Protocol 6/6, and TUI 482/482.
+
+- Status: Verified
+- Date: 2026-07-25
+- Scope: terminal child reporting now has a two-field minimum envelope and
+  never inherits Core completion-status reinterpretation. Approval requests
+  preserve separate run-policy, tool-gate, and tool safety explanations.
+  Spawn/Task async receipts remain model-visible but use structured TUI
+  lifecycle renderers instead of fallback JSON.
+- Read: Agent terminal tool/result projection, Core tool approval gate,
+  Shell policy metadata, TUI tool display, and focused tests.
+- Tests: full `npm run release:check` passed, including all workspace tests,
+  the 16-case regression matrix, and source/release install smoke.
+
+- Status: Verified
+- Date: 2026-07-25
+- Scope: tool orchestration still enforces capability, policy, approval,
+  execution truth, structured effects, and no-progress protection, but no
+  longer turns command-string verification inference into an ordinary Agent
+  completion gate. A missing child terminal tool is compatibility-wrapped at
+  terminal projection and never reopens the task body; goal wording no longer
+  auto-installs the legacy documented-command Stop gate.
+- Read: Core tool/result/finalization paths, FactLedger receipt signing, Agent
+  terminal projection, Host dynamic spawn/promotion, and focused tests.
+- Tests: Core 661/661, Agent Runtime 257/257, Host 583/583; affected package
+  typechecks, repository lint, and targeted format check passed.
+
+- Status: Verified
+- Date: 2026-07-24
+- Scope: tool definitions now declare child delegation and terminal semantics;
+  terminal results carry a structured ToolEffect used by the no-progress guard.
+  Core atomically binds `submit_agent_result`, reserves finalization capacity,
+  and runs CompletionEvaluator over child outcomes, ChangeSets, verification
+  receipts, approvals, and budgets before emitting immutable notices.
+- Read: Core tool/run/completion paths, Agent Runtime terminal/result/ledger,
+  Host child tool resolver, coding tool effects, and Protocol/TUI consumers.
+- Tests: focused Core/Agent Runtime/Host/coding/TUI suites, repository build,
+  and repository test typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-23
+- Scope: async task/Shell receipt fields and the SDK task lifecycle listener
+  key now carry required external-consumer annotations. No validation,
+  scheduling, execution, receipt payload, or notification behavior changed.
+- Read: Task/Shell public DTOs, SDK event map, and strict reserved-field
+  checker.
+- Tests: Agent Runtime tasks 76/76, Shell 43/43, SDK Core 11/11, affected
+  typechecks, and strict reserved-field check passed.
+
+- Status: Verified
+- Date: 2026-07-23
+- Scope: TUI consumes the independent Host task lifecycle stream without
+  changing tool execution or parent observation. Inline/awaited success remains
+  quiet, detached terminal state is visible without opening Activity, and
+  failed/cancelled tasks receive higher presentation priority.
+- Read: TUI RunController/task actions, Host lifecycle DTO, existing Core
+  run-event task projection, and notification policy.
+- Tests: focused TUI task/controller/render suites (67), full TUI 464/464, and
+  TUI typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-23
+- Scope: task orchestration now emits an independent post-store-write lifecycle
+  snapshot at created, started, and terminal transitions. This observer cannot
+  alter tool results or consume parent actor notifications.
+- Read: TaskManager execution/terminal ordering, Host lifecycle hub/projection,
+  and existing task tool observation paths.
+- Tests: Agent Runtime task suite (76), Host lifecycle/protocol coverage, and
+  affected typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-23
+- Scope: task/shell/Agent promotion outputs now share an explicit async receipt
+  contract, and synchronous terminal observations consume the parent actor
+  notice they supersede. Canonical completion policy is distinct from the
+  mutable awaited keep-alive bit.
+- Read: Agent Runtime task tools/manager/stores, Host Shell/Agent bridges, Shell
+  output schema, Core awaited gate, and focused regressions.
+- Tests: Agent Runtime tasks (72), Shell (43), Host task/spawn/tools (120), Core
+  run (129), and affected typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-23
+- Scope: repeated-call protection distinguishes argument-correctable failures
+  from target-invariant failures instead of treating every same-path retry as
+  impossible. Exact calls, expected denials, missing/invalid targets, and
+  failed same-command Shell attempts stay guarded. Streaming provider input
+  now hides deferred schemas until discovery, and free-text discovery supports
+  CJK queries with deterministic tie ordering.
+- Read: Core repeat target/failure analysis, tool-search ranking, Streaming
+  Runtime descriptor projection, and focused regression tests.
+- Tests: focused Core run/tool-search and Streaming Runtime suites passed with
+  affected package and repository test typechecks.
+
+- Status: Verified
+- Date: 2026-07-21
+- Scope: dynamic child orchestration now separates authority from content.
+  Foreground/background Agent entrypoints share one input schema; model-authored
+  `goal` and optional bounded `context` remain task/working inputs while only the
+  fixed in-process child contract enters the child application prompt. No
+  implicit parent transcript or tool-result inheritance is
+  introduced.
+- Read: Host Agent runtime assembly and tool catalog, Agent Runtime child context
+  composition, delegation ledger, and focused host/runtime tests.
+- Tests: affected typechecks and focused Agent Runtime/Host/TUI suites passed.
+
+- Status: Verified
+- Date: 2026-07-21
+- Scope: `task_create` performs kind/payload/runner/background semantic
+  validation before argument policy and approval; the Agent kind delegates to
+  the same effective dynamic-spawn schema and validator. Tool-owned approval
+  subjects flow through Core and Streaming Runtime gates, with one-shot as the
+  only fallback. Validation-stage failures classify as model argument errors.
+- Read: Core/Streaming Runtime tool gates and outcome classifier, Agent Runtime
+  task tool, Host catalog/dynamic spawn, Shell/Agent approval producers, and
+  focused tests.
+- Tests: focused Core, Streaming Runtime, Agent Runtime, Host, and Shell suites
+  plus affected typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-21
+- Scope: dynamic Agent spawn now uses Core's semantic `validateInput` stage for
+  deterministic tool/grant feasibility before policy and approval; natural
+  language intent heuristics are removed. Strict child semantic status and
+  blockers are retained separately from tool transport completion, and exact
+  incomplete repeats remain under Core's generic repeated-call guard.
+- Read: Core validation/policy ordering, Host dynamic spawn assembly, Agent
+  Runtime result/ledger/lifecycle consumers, and focused/full tests.
+- Tests: Agent Runtime 240/240, Host 589/589, and repository test typecheck.
+
+- Status: Verified
+- Date: 2026-07-19
+- Scope: approval risk/default focus and effect rendering are client
+  presentation only. Host/Core still own tool policy ordering, approval
+  requests, execution, and audit facts; exact TUI session rules can only
+  auto-resolve the same canonical path, command+cwd, or tool+args subject.
+- Read: Core/Host tool approval order, protocol approval payloads, TUI
+  coordinator/session-rule matching, and explicit decision renderers.
+- Tests: TUI 445/445, including exact-scope, unknown fail-closed, queue, and
+  main/Workflow origin regressions.
+
+- Status: Verified
 - Date: 2026-07-19
 - Scope: `managesRepeatedCalls(args)` is a narrow complete+clean cache-hit
   bypass for Agent tools, not a blanket retry exemption. Parallel delegation
@@ -189,6 +471,7 @@ See [../safety/workspace-writes.md](../safety/workspace-writes.md), [../safety/s
 - `packages/host/src/runtime/host-runtime.ts`
 - `packages/host/src/runtime/run-preparation-operations.ts`
 - `packages/host/src/runtime/agent-runtime-assembly.ts`
+- `packages/host/src/agent-report-tool.ts`
 
 ## Data Flow
 
@@ -202,12 +485,30 @@ model tool calls
   -> tool.batch/tool.requested events
   -> policy, then approval where needed
   -> tool execution
-  -> tool.completed/tool.failed
+  -> tool.completed/tool.failed + structured ToolEffect
+  -> no-progress guard + passive runtime-state terminal projection
+  -> tool-owned semantic observation projection
   -> model observation + trace summaries
 ```
 
 ## Contracts
 
+- `ToolDefinition.delegation` defaults to `parent_only`; only explicit
+  `child` definitions can enter an in-process child resolver. Completion does
+  not change the child tool inventory.
+- `ToolEffect` is the canonical terminal progress fact: changed, observed,
+  no-change, or blocked with target/epoch/revision/retry/reason metadata.
+  Repeated no-progress decisions compare structured effects and state epochs;
+  one no-change result is not itself terminal.
+- In-process children finish with a natural report, never a completion-only
+  tool. A non-empty report projects completed delivery; empty output and
+  runtime-owned failures/limits project partial or blocked. Parent callers
+  judge whether the report satisfies the delegated goal.
+- In-process Agent tools return only compact `ParentAgentResult` to the parent
+  model. Runtime projections keep transport, usage, report status, assessment,
+  action, ChangeSet, and verification facts in the delegation ledger and
+  `subagent.*` lifecycle. Parent mutation claims must follow runtime-owned
+  `workspace`, not child-authored `report`.
 - Tool decisions are monotonic across separate concerns. Host catalog and
   shared Agent Profile admission decide the candidate set;
   `resolveRunToolSurface()` may only apply Workflow narrowing, scope an
@@ -338,9 +639,11 @@ true` records a mutation index for its target (`mutatedByTarget`). A
   model-facing scheduling input; unknown fields reject as recoverable argument
   errors, while output/durable `awaited` reports current runtime state.
   Global/per-kind concurrency caps fail as recoverable tool errors. `task(action:"wait", ids,
-mode:"any"|"all")` is the join surface. Detached/promoted create results
-  include concrete `nextAction` guidance so the model has a task id and monitor
-  action to reuse instead of issuing an equivalent `task_create`.
+mode:"any"|"all")` is the join surface. Async create results expose
+  `actualMode`, `parentWillWait`, `completionObservation`, concrete
+  `nextAction`, and top-level duplicate avoidance. Foreground-inline and manual
+  wait results consume the matching parent actor notification instead of
+  reinjecting the same result on a later turn.
 - The model-facing `task` control schema stays a provider-compatible flat
   object. The wrapper canonicalizes optional fields per action before
   validation/execution, discards empty/action-irrelevant values, and rejects
@@ -372,24 +675,39 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
   so they cannot escape a configured selector/allowlist/denylist; selector-kept
   deferred tools implicitly retain `tool_search`, and discovery results include
   required/related tool closures outside max-result truncation.
+- `web_fetch` is a conditional, network/external, parent-only read tool. Its
+  model input is `{url}` and explicitly describes a known-URL read, not search.
+  Shared validation rejects credentials and common secret-bearing query names.
+  System mode additionally requires HTTPS and rejects explicit local/reserved
+  destinations without DNS pre-resolution; hardened mode validates and pins
+  every DNS/redirect hop and permits HTTP(S). Both enforce redirect downgrade,
+  total deadline, byte/encoding caps, conservative HTML cleaning, and one
+  serialized-budget-aware excerpt. `truncated: true` has no continuation
+  protocol. Results remain `neverPersist` and do not use artifacts for overflow.
 - A successful body-level `skill_load` may load deferred schemas named by the
   Skill's `allowed-tools`. Core only marks matching tools already present in the
   run registry; absent/disabled tools stay absent, and normal policy/approval
   still governs execution. Resource-only loads do not change tool loading.
 - Child-agent tool orchestration uses catalog selector paths before child tool
-  descriptors or delegate tools are created. Dynamic `spawn_agent` uses a
-  dynamic child catalog that defaults to read-only tools but can expose managed
-  workspace write tools at spawn time when the tool call requests a
-  workspace-write grant; it still never exposes `bash`. Configured in-process
-  delegates use the configured delegate child catalog so child-profile
-  `use`/`allowedTools` can expose workspace write tools and `bash` while still
-  layering parent run policy and approvals. The configured delegate child run
-  receives only the effective profile tool set, so prompt descriptors and
-  runtime callability stay aligned. Child-scope model overrides are resolved
+  descriptors or delegate tools are created. `delegation:"child"` is the
+  explicit eligibility boundary and missing metadata defaults parent-only.
+  Dynamic children derive local read/discovery, revisioned write, and rebuilt
+  foreground-only shell tools that survived the parent effective surface.
+  Configured delegates intersect the child-eligible Host catalog with
+  administrator profile `use`/`allowedTools`; parallel delegates additionally
+  remain read-only. All child paths layer parent run policy and use prompt
+  guidance generated from the same effective definitions. Child-scope model overrides are resolved
   lazily at tool invocation: dynamic spawn resolves `spawnModel` before
   `spawnSubAgent`, configured delegates resolve `profile.model` /
   `delegateModel` before the child run, and `delegate_parallel` resolves all
   selected child models before launching any eligible children.
+- Child Prompt composition is separate from tool admission. Agent Runtime owns
+  the task-agnostic in-process child contract/result layers; Host composes them
+  after an optional configured profile and before project/tool guidance in the
+  existing cache-stable app-prompt block. Dynamic, configured, indexed,
+  parallel, and background Host children share that helper. The public
+  low-level `spawnSubAgent()` and external process adapters are not implicitly
+  rewritten.
 - Configured delegation uses one resolved target list but two model-facing
   surfaces: `delegate_agent` is catalogued as the default indexed single-target
   entry point, while direct `delegate_*` aliases are catalogued only for pinned,
@@ -402,15 +720,21 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
   reports read-only side effects, and runs as one
   foreground tool call that launches multiple eligible in-process/read-only
   delegate children before awaiting all results.
-- Dynamic `spawn_agent` separates tool transport completion from child-answer
-  finality. A child answer that lands on the last allowed step can be
-  `tool.completed`, while the output metadata/message marks the child answer as
-  partial through `stepLimitReached`, `truncated`, and `finality` for trace
-  consumers and context compaction.
-- Child-agent step budgets inherit the parent run's effective `maxSteps` by
-  default. Dynamic spawn and configured in-process delegates pass explicit
-  child `maxSteps` only when requested/configured; otherwise `spawnSubAgent`
-  uses `parent.maxSteps`.
+- Dynamic `spawn_agent` separates tool transport completion from
+  runtime-derived child report status. Runtime capability feasibility is resolved without
+  reading goal/context prose or accepting model-authored grants. The child
+  receives a self-contained goal plus optional bounded working context, not an
+  implicit copy of parent conversation state. The runtime projects completed,
+  partial, or blocked plus minimal blocker evidence; only a completed/clean
+  result is reusable. Repeating an identical blocked
+  spawn without changed recovery input is stopped by Core's ordinary exact-call
+  guard rather than by an Agent-specific negative cache. A child answer that lands on the last allowed step can be
+  `tool.completed`, while a forced budget wrap-up is marked partial through
+  `stepLimitReached`, `truncated`, and `completionStatus` for trace consumers
+  and context compaction.
+- Child-agent action budgets come from user/config/profile/runtime limits, not
+  model handoff payloads. Core accounts a separate finalization reserve so a
+  final natural report can still be rendered after action budget exhaustion.
 - Workflow P3 Step 4b.1 filters the worker episode catalog at `createRun()`
   time when the actor is positioned on a model node with `node.tools`.
   This is a physical `ToolDefinition[]` narrowing for that worker entry, not a
@@ -437,10 +761,12 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
   projection path; a future model-facing spawn tool must be born through the
   task lifecycle and explicit recursion/access constraints, not by appending an
   ordinary local tool.
-- In-process delegate child writes are parent-visible through a rollup of the
+- In-process child writes are parent-visible through a rollup of the
   child run's own `workspace.write.completed` events onto `subagent.completed`
-  (`workspaceWrites`), bridged in `spawnSubAgent` — not a parent-side filesystem
-  snapshot. Shell duplicate-loop detection keys on command plus cwd, ignoring
+  (`workspaceWrites`, complete ChangeSets, and explicit-verifier receipts),
+  bridged in `spawnSubAgent` — not a parent-side filesystem snapshot. Model-run
+  commands do not mint verification receipts merely because command
+  classification considers them verification-relevant. Shell duplicate-loop detection keys on command plus cwd, ignoring
   incidental execution fields such as `timeoutMs`.
 - Shell tool execution accepts only the canonical per-call
   `foregroundTimeoutMs`; legacy `timeoutMs` is rejected by the closed input
@@ -457,8 +783,9 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
   `awaited` as its generic keep-alive contract; shell lifetime remains at this
   boundary and is not added to unrelated task kinds.
 - Main-host `task_create` is eager while `task` control remains advanced and
-  deferred. A shell result carries its concrete task id and concise management
-  guidance; models load `task` through `tool_search` when they need
+  deferred. A background shell result carries the same structured async
+  receipt plus compatibility guidance; models load `task` through `tool_search`
+  when they need
   get/output/wait/stop. Runtime truth remains the task action result and durable
   record, not model prose.
 - Explicit `background:true` shell calls pass validation/policy/approval before
@@ -474,6 +801,9 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
   promotion all honor the host-level `backgroundTasks` policy: disabled rejects
   new background work, foreground-only keeps foreground behavior without
   promotion, and enabled allows awaited background revival.
+- Foreground-timeout promotion does not change dynamic child lifecycle
+  ownership. Direct `spawn_agent` children remain linked to the parent abort
+  signal; `agent_task` children use their explicit task controller signal.
 - Tool argument policy/normalization errors raised by `policyForArgs()` are
   converted into structured `tool.failed` results with
   `TOOL_ARGUMENTS_INVALID` and `metadata.phase: "policyForArgs"`; they do not
@@ -492,10 +822,23 @@ mode:"any"|"all")` is the join surface. Detached/promoted create results
   but prevents workspace writes, artifacts, progress, and external side
   effects. Validation failures become structured `tool.failed` results with
   `metadata.phase: "validateInput"` and execute/approval are skipped.
+- An approval gate asks the tool for `approvalSubjectForArgs(args)` after
+  successful validation. Producers define any stable effect key; missing hooks
+  yield `one_shot`, so a presentation client cannot infer a reusable rule from
+  raw arguments or summary text.
 - Tool result presentation is a tool-definition hint, not a second observation
   protocol. `ToolDefinition.resultPresentation` names the semantic kind and
   preserve/pagination fields; concrete read/discovery/search tools still return
   the factual fields that observation formatters and reports can preserve.
+- `agent_result` presentation projects one `ParentAgentResult` into a bounded
+  receipt without changing `report` into a generic preview object.
+  `agent_batch` keeps every bounded parallel index rather than the generic
+  five-element array preview. Both fit the complete serialized observation
+  envelope and preserve full raw `ToolResult` events.
+- `read_agent_report` is a recovery index over persisted child run results, not
+  a file-read escape hatch. It accepts no path, is parent-only and
+  advanced/deferred, and returns a serialized-budget-aware page whose
+  `returnedChars`/`nextOffset` reflect the actual visible substring.
 - Unloaded deferred tools are still soft-gated. If a deferred tool is
   registered but has not been loaded into the provider schema for this run, and
   its arguments fail JSON schema validation, core keeps the normal failed tool
@@ -912,7 +1255,7 @@ test`; `npm --workspace @sparkwright/tui run typecheck`; final
   `spawn_agent` and `task_create(kind:"agent")`, including bypass
   auto-approval, before their execute paths create children or tasks.
 - Read: `packages/core/src/run.ts`,
-  `packages/host/src/agent-spawn-grants.ts`,
+  `packages/host/src/runtime/agent-runtime-assembly.ts`,
   `packages/host/src/runtime.ts`,
   `packages/host/test/spawn-agent.test.ts`,
   `packages/host/test/tools.test.ts`.
@@ -928,7 +1271,7 @@ test/spawn-agent.test.ts`;
   delegate catalog behavior is unchanged.
 - Read: `packages/core/src/tools.ts`, `packages/core/src/run.ts`,
   `packages/host/src/tool-catalog.ts`,
-  `packages/host/src/agent-spawn-grants.ts`,
+  `packages/host/src/runtime/agent-runtime-assembly.ts`,
   `packages/host/src/runtime.ts`.
 - Tests: `npm test -w @sparkwright/core -- run.test.ts`;
   `npm test -w @sparkwright/host -- tools.test.ts spawn-agent.test.ts`;

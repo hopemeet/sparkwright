@@ -17,16 +17,19 @@ import {
   type ToolOrigin,
 } from "@sparkwright/core";
 import type { SkillRoot } from "@sparkwright/skills";
+import { createWebFetchTool } from "@sparkwright/web-tools";
 import type {
   CapabilityToolsConfig,
+  CapabilityWebConfig,
   ShellConfig,
 } from "./config-zod-schema.js";
-import { createHostShellTool } from "./shell.js";
+import { createChildSafeHostShellTool, createHostShellTool } from "./shell.js";
 import {
   applyToolConfig,
   createAgentInspectorTool,
   createMarkdownAgentManagerTool,
   createApplyPatchTool,
+  createCreateFileTool,
   createCronTool,
   createEditAnchoredTextTool,
   createGlobPathsTool,
@@ -34,9 +37,8 @@ import {
   createListDirTool,
   createReadAnchoredTextTool,
   createReadFileTool,
+  createReplaceFileTool,
   createSkillInspectorTool,
-  createSkillManagerTool,
-  createSkillUpdateTool,
   createWriteFileTool,
 } from "./tools.js";
 import {
@@ -49,75 +51,47 @@ import {
   normalizeToolNameList,
 } from "./tool-identities.js";
 import {
-  AGENT_READ_ONLY_CHILD_TOOLS,
-  AGENT_WORKSPACE_WRITE_CHILD_TOOLS,
-  agentWorkspaceWriteGrantApprovalSummaryForPayload,
-  agentWorkspaceWriteGrantPolicyForPayload,
-} from "./agent-spawn-grants.js";
-import {
   withWorkspaceMutationLease,
   type WorkspaceLeaseCoordinator,
 } from "./workspace-lease-coordinator.js";
 import { createScopedToolSearch } from "./tool-surface.js";
 
 export const AGENT_TASK_CREATE_PAYLOAD_DESCRIPTION =
-  "required object with goal, role, and prompt; optional allowedTools, grant, metadata, and maxSteps. Omit maxSteps unless you need an explicit child turn cap; low values can make read-and-answer tasks partial.";
-export const AGENT_TASK_MAX_STEPS_DESCRIPTION =
-  "Optional child step (model turn) limit; allocate by sub-task complexity. Defaults to the parent run's effective maxSteps when omitted. A read-and-answer task usually needs 4+; a multi-step search (glob, read, refine, conclude) typically needs 6+.";
-export const AGENT_TASK_CREATE_PAYLOAD_SCHEMA = {
-  type: "object",
-  description:
-    "Payload for kind 'agent'. It matches spawn_agent input: provide a concrete goal, role, and focused prompt for the background child agent. Omit maxSteps unless you need an explicit child turn cap; low values can make read-and-answer tasks partial.",
-  properties: {
-    goal: {
-      type: "string",
-      description: "Concrete background child-agent goal.",
-    },
-    role: {
-      type: "string",
-      description: "Short role name for the background child agent.",
-    },
-    prompt: {
-      type: "string",
-      description:
-        "Focused child-agent instructions that define scope and output.",
-    },
-    allowedTools: {
-      type: "array",
-      description:
-        "Optional subset of child tools. Supported: read, glob, grep, list_dir, write, edit, edit_anchored_text. Requesting a write tool implies grant.workspaceWrite=true.",
-      items: {
+  "required object with a self-contained goal; optional context and UI-only label. The child does not inherit parent conversation or tool results, so put relevant established facts and constraints in context.";
+export const AGENT_HANDOFF_CONTEXT_MAX_CHARS = 8_000;
+
+export function createAgentSpawnPayloadSchema(
+  _enabledToolNames: readonly string[] = [],
+): Record<string, unknown> {
+  return {
+    type: "object",
+    description:
+      "Provide a self-contained goal plus optional context and display label. The child receives no parent conversation or tool results. Runtime configuration determines model, tools, permissions, and budgets.",
+    properties: {
+      goal: {
         type: "string",
-        enum: [
-          ...AGENT_READ_ONLY_CHILD_TOOLS,
-          ...AGENT_WORKSPACE_WRITE_CHILD_TOOLS,
-        ],
+        description:
+          "Self-contained child-agent assignment, including the concrete outcome and expected deliverable.",
+      },
+      label: {
+        type: "string",
+        description:
+          "Optional short UI/trace label. It never changes the child prompt, tools, permissions, model, or budget.",
+      },
+      context: {
+        type: "string",
+        description:
+          "Optional concise handoff of parent-established facts, constraints, decisions, and prior observations. This becomes working task context, not a system prompt.",
+        maxLength: AGENT_HANDOFF_CONTEXT_MAX_CHARS,
       },
     },
-    grant: {
-      type: "object",
-      description:
-        "Optional capability grant requested at spawn time. Set workspaceWrite=true to let the child use managed workspace write tools after parent approval.",
-      properties: {
-        workspaceWrite: {
-          type: "boolean",
-          description:
-            "Allow the child to perform managed workspace writes through write/edit tools.",
-        },
-      },
-      additionalProperties: false,
-    },
-    maxSteps: {
-      type: "integer",
-      minimum: 1,
-      description: AGENT_TASK_MAX_STEPS_DESCRIPTION,
-    },
-    metadata: {
-      type: "object",
-      description: "Optional structured metadata for the child run.",
-    },
-  },
-  required: ["goal", "role", "prompt"],
+    required: ["goal"],
+    additionalProperties: false,
+  };
+}
+
+export const AGENT_TASK_CREATE_PAYLOAD_SCHEMA = {
+  ...createAgentSpawnPayloadSchema(),
   additionalProperties: false,
 };
 
@@ -127,6 +101,7 @@ export type HostToolCatalogSource =
   | "skill"
   | "agent"
   | "shell"
+  | "web"
   | "task"
   | "todo"
   | "mcp"
@@ -163,21 +138,36 @@ export function createReadOnlyChildToolCatalog(input: {
 export function createDynamicChildToolCatalog(input: {
   workspaceRoot: string;
   toolConfig?: CapabilityToolsConfig;
+  shell?: ShellConfig;
+  skillRoots?: readonly string[];
+  configPaths?: readonly string[];
   workspaceLeaseCoordinator?: WorkspaceLeaseCoordinator;
 }): HostToolCatalogEntry[] {
   return withDeferredToolSearch(
     applyWorkspaceMutationLeases(
-      applyToolConfigToCatalog(
-        [
-          catalogEntry(createReadFileTool(), "coding"),
-          catalogEntry(createGlobPathsTool(input.workspaceRoot), "coding"),
-          catalogEntry(createGrepTextTool(input.workspaceRoot), "coding"),
-          catalogEntry(createListDirTool(input.workspaceRoot), "coding"),
-          catalogEntry(createWriteFileTool(), "coding"),
-          catalogEntry(createEditAnchoredTextTool(), "coding"),
-          catalogEntry(createApplyPatchTool(), "coding"),
-        ],
-        input.toolConfig,
+      childDelegatableCatalog(
+        applyToolConfigToCatalog(
+          [
+            catalogEntry(createReadFileTool(), "coding"),
+            catalogEntry(createGlobPathsTool(input.workspaceRoot), "coding"),
+            catalogEntry(createGrepTextTool(input.workspaceRoot), "coding"),
+            catalogEntry(createListDirTool(input.workspaceRoot), "coding"),
+            catalogEntry(createCreateFileTool(), "coding"),
+            catalogEntry(createReplaceFileTool(), "coding"),
+            catalogEntry(createEditAnchoredTextTool(), "coding"),
+            catalogEntry(createApplyPatchTool(), "coding"),
+            catalogEntry(
+              createChildSafeHostShellTool(input.workspaceRoot, {
+                foregroundTimeoutMs: input.shell?.foregroundTimeoutMs,
+                sandbox: input.shell?.sandbox,
+                skillRoots: input.skillRoots,
+                extraForcedDenyWrite: input.configPaths,
+              }),
+              "shell",
+            ),
+          ],
+          input.toolConfig,
+        ),
       ),
       input,
     ),
@@ -195,25 +185,33 @@ export function createConfiguredDelegateChildToolCatalog(input: {
 }): HostToolCatalogEntry[] {
   return withDeferredToolSearch(
     applyWorkspaceMutationLeases(
-      applyToolConfigToCatalog(
-        [
-          ...createCoreCodingToolCatalog(input.workspaceRoot),
-          catalogEntry(
-            createHostShellTool(input.workspaceRoot, {
-              foregroundTimeoutMs: input.shell?.foregroundTimeoutMs,
-              sandbox: input.shell?.sandbox,
-              skillRoots: input.skillRoots,
-              extraForcedDenyWrite: input.configPaths,
-            }),
-            "shell",
-          ),
-        ],
-        input.toolConfig,
+      childDelegatableCatalog(
+        applyToolConfigToCatalog(
+          [
+            ...createCoreCodingToolCatalog(input.workspaceRoot),
+            catalogEntry(
+              createChildSafeHostShellTool(input.workspaceRoot, {
+                foregroundTimeoutMs: input.shell?.foregroundTimeoutMs,
+                sandbox: input.shell?.sandbox,
+                skillRoots: input.skillRoots,
+                extraForcedDenyWrite: input.configPaths,
+              }),
+              "shell",
+            ),
+          ],
+          input.toolConfig,
+        ),
       ),
       input,
     ),
     input.toolConfig,
   );
+}
+
+function childDelegatableCatalog(
+  entries: HostToolCatalogEntry[],
+): HostToolCatalogEntry[] {
+  return entries.filter((entry) => entry.definition.delegation === "child");
 }
 
 export function createCliDiagnosticToolCatalog(input: {
@@ -244,6 +242,8 @@ export function createMainHostToolCatalog(input: {
   delegateAgentTool?: ToolDefinition;
   delegateParallelTool?: ToolDefinition;
   dynamicSpawnTool?: ToolDefinition;
+  agentReportTool?: ToolDefinition;
+  web?: CapabilityWebConfig;
   shell?: ShellConfig;
   backgroundTasks?: BackgroundTaskPolicy;
   configPaths?: readonly string[];
@@ -312,6 +312,8 @@ export function catalogEntryOrigin(
       return "local:@sparkwright/agent-runtime";
     case "shell":
       return "local:@sparkwright/shell-tool";
+    case "web":
+      return "local:@sparkwright/web-tools";
     case "core":
       return "local:@sparkwright/core";
     case "mcp":
@@ -334,10 +336,14 @@ function createMainHostToolCatalogList(input: {
   delegateAgentTool?: ToolDefinition;
   delegateParallelTool?: ToolDefinition;
   dynamicSpawnTool?: ToolDefinition;
+  agentReportTool?: ToolDefinition;
+  web?: CapabilityWebConfig;
   shell?: ShellConfig;
   backgroundTasks?: BackgroundTaskPolicy;
   configPaths?: readonly string[];
 }): HostToolCatalogEntry[] {
+  const agentSpawnValidator = input.dynamicSpawnTool?.validateInput;
+  const agentTaskPayloadSchema = AGENT_TASK_CREATE_PAYLOAD_SCHEMA;
   return [
     ...createCoreCodingToolCatalog(input.workspaceRoot),
     catalogEntry(createCronTool(), "cron"),
@@ -345,16 +351,12 @@ function createMainHostToolCatalogList(input: {
       createSkillInspectorTool(input.workspaceRoot, input.skillRoots),
       "skill",
     ),
-    catalogEntry(
-      createSkillManagerTool(input.workspaceRoot, input.skillRoots),
-      "skill",
-    ),
-    catalogEntry(
-      createSkillUpdateTool(input.workspaceRoot, input.skillRoots),
-      "skill",
-    ),
     catalogEntry(createAgentInspectorTool(input.workspaceRoot), "agent"),
     catalogEntry(createMarkdownAgentManagerTool(input.workspaceRoot), "agent"),
+    catalogEntry(
+      createWebFetchTool({ security: input.web?.security ?? "system" }),
+      "web",
+    ),
     catalogEntry(
       createHostShellTool(input.workspaceRoot, {
         taskManager: input.taskManager,
@@ -380,20 +382,17 @@ function createMainHostToolCatalogList(input: {
             description:
               "start a background child agent owned by the task lifecycle",
             payloadDescription: AGENT_TASK_CREATE_PAYLOAD_DESCRIPTION,
-            payloadSchema: AGENT_TASK_CREATE_PAYLOAD_SCHEMA,
+            payloadSchema: agentTaskPayloadSchema,
             requiresPayload: true,
-            policyForPayload: (payload) =>
-              agentWorkspaceWriteGrantPolicyForPayload(
-                payload,
-                "task_create(agent)",
-                ["external"],
-              ),
-            approvalSummaryForPayload: (payload, _call, options) =>
-              agentWorkspaceWriteGrantApprovalSummaryForPayload(
-                payload,
-                "task_create(agent)",
-                options,
-              ),
+            ...(agentSpawnValidator
+              ? {
+                  validatePayload: (
+                    payload: Record<string, unknown> | undefined,
+                    _call: unknown,
+                    ctx: RuntimeContext,
+                  ) => agentSpawnValidator(payload, ctx),
+                }
+              : {}),
           },
         ],
       }),
@@ -429,6 +428,9 @@ function createMainHostToolCatalogList(input: {
     ...(input.dynamicSpawnTool
       ? [catalogEntry(input.dynamicSpawnTool, "agent")]
       : []),
+    ...(input.agentReportTool
+      ? [catalogEntry(input.agentReportTool, "agent")]
+      : []),
   ];
 }
 
@@ -441,6 +443,8 @@ function createCoreCodingToolCatalog(
     catalogEntry(createGrepTextTool(workspaceRoot), "coding"),
     catalogEntry(createListDirTool(workspaceRoot), "coding"),
     catalogEntry(createReadAnchoredTextTool(), "coding"),
+    catalogEntry(createCreateFileTool(), "coding"),
+    catalogEntry(createReplaceFileTool(), "coding"),
     catalogEntry(createWriteFileTool(), "coding"),
     catalogEntry(createEditAnchoredTextTool(), "coding"),
     catalogEntry(createApplyPatchTool(), "coding"),

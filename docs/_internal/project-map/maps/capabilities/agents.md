@@ -11,6 +11,243 @@ See [../../modules/agent-runtime.md](../../modules/agent-runtime.md) and [../../
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-30
+- Scope: all built-in in-process children now finish with one natural report;
+  no completion-only tool is injected. Zero-tool and tool-capable children use
+  the same path. Models no longer declare completed/partial/blocked,
+  accomplishments, blocker ownership/retry metadata, schema versions, or text
+  markers. Runtime-derived evidence uses only stable blocker code/message.
+  Direct, dynamic, task, and parallel adapters return the same child report
+  envelope; parallel aggregates partial branches without turning the whole
+  tool call into a second failure.
+- Read: Agent Runtime result/tool contracts, Core terminal projection, Host
+  dynamic/configured/parallel/task adapters, TUI presentation, and tests.
+- Tests: repository build/test typecheck and focused Agent/Host/Core suites
+  passed.
+
+- Status: Verified
+- Date: 2026-07-29
+- Scope: Agent transport completion and diagnostic health remain orthogonal,
+  but actionable unresolved tool/verification facts are now translated into
+  bounded parent warnings. Stable raw assessment codes stay in lifecycle/trace;
+  TUI presents semantic issue text first and labels a completed unhealthy child
+  `completed with issues`. Bounded action receipts add failure messages without
+  exposing raw arguments or outputs.
+- Read: Agent action/result/collector contracts, parent relay guidance, TUI
+  lifecycle projection, and focused tests.
+- Tests: focused Agent Runtime 19/19, Project Context 19/19, and TUI 66/66 plus
+  affected typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-28
+- Scope: in-process children now have generic provenance and stopping rules:
+  they distinguish pre-existing state from effects they caused and avoid
+  unchanged repeat observations. Parent results retain workspace evidence and
+  actionable completeness/reuse warnings without promoting assessment health
+  or a parallel `unhealthy` aggregate. Internal invocation fields were reduced
+  and the unused `statusSource`/`finality` axes were removed from lifecycle,
+  context, session, and diagnostic projections.
+- Read: shared prompt/result contract, all Host in-process entrypoints,
+  delegation cache/failure paths, TUI action projection, and raw lifecycle.
+- Tests: Agent Runtime 263/263, Host 593/593, TUI 532/532, affected
+  typechecks, and a real Terra existing-state canary passed.
+
+- Status: Verified
+- Date: 2026-07-27
+- Scope: configured/dynamic/direct/indexed/parallel/background are Agent
+  definition, entrypoint, or lifecycle dimensions over the same in-process
+  execution/result boundary, not separate Agent backends. Host built-ins share
+  one terminal collector and one compact parent result protocol; parallel and
+  Task remain aggregation/lifecycle adapters. Complete persisted child reports
+  are recoverable through the session-scoped `read_agent_report` index tool.
+  ACP and external-command remain the two independent transport backends.
+- Read: Agent Runtime collector/result/ledger, Host Agent assembly/report/task
+  projections, Core semantic observation projection, persistence lookup, and
+  coverage tests.
+- Tests: Agent Runtime/Host full suites, Core/Streaming observation suites,
+  report security/pagination regressions, and affected typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-26
+- Scope: all Host-owned in-process Agent entrypoints share one task-agnostic
+  child behavior contract covering delegation boundaries, evidence discipline,
+  scoped execution, blockers, and reusable reporting. The contract does not
+  prescribe coding, tests, commands, or a fixed report template, and it does
+  not expand child tools, policy, permissions, model, or budget.
+- Read: Agent Runtime prompt/result contracts, Host configured/indexed/
+  parallel/dynamic/background routes, low-level spawn opt-in boundary, and
+  external child exclusions.
+- Tests: full `npm run release:check` passed; focused Agent Runtime 60/60,
+  Host 102/102, and Project Context 19/19 passed.
+
+- Status: Verified
+- Date: 2026-07-26
+- Scope: all in-process delegation entrypoints now return the same compact
+  `ParentAgentResult`. Child prose is isolated in `report`; mutation evidence
+  is runtime-derived in `workspace`; parent-actionable completeness and reuse
+  caveats are warnings. Health remains assessment/trace evidence. Rich action,
+  transport, usage, assessment, ChangeSet, and verification facts stay in
+  lifecycle/ledger storage rather than parent model context.
+- Read: Agent Runtime result/ledger, Host dynamic/configured/indexed/parallel/
+  task routes, Core context projection, TUI lifecycle consumption, and
+  project-context relay guidance.
+- Tests: Agent Runtime focused suites, Core 661/661, Host focused 101/101,
+  Project Context 19/19, and TUI 531/531 passed.
+
+- Status: Verified
+- Date: 2026-07-26
+- Scope: bounded terminal Agent action receipts now distinguish structured
+  idempotent/no-progress skips from successful completions. Live clients
+  receive `status: skipped` plus the bounded reason; full-session TUI replay
+  may use exact child tool lifecycle truth to correct older receipts that
+  flattened every `tool.completed` event to success.
+- Read: Agent Runtime action summarizer/types, Host forwarding boundary, TUI
+  live/replay projection, and retained real child trace.
+- Tests: Agent Runtime 259/259, Host 583/583, TUI 531/531, and all workspace
+  tests passed.
+
+- Status: Verified
+- Date: 2026-07-25
+- Scope: terminal Agent facts now include a bounded action receipt and explicit
+  workspace-write count. This gives live compact/detail clients the same
+  user-facing action evidence that older session replay reconstructs from child
+  tool events, without forwarding the full child stream or raw output into the
+  parent conversation. Zero-write dynamic results also instruct the parent to
+  avoid unsupported creation/modification claims.
+- Read: Agent Runtime terminal bridge/types, Host dynamic spawn projection,
+  TUI live/replay presentation, and trace compatibility tests.
+- Tests: full `npm run release:check` passed, including Agent Runtime 258/258,
+  Host 583/583, Protocol 6/6, TUI 482/482, the 16-case regression matrix, and
+  source/release install smoke.
+
+- Status: Verified
+- Date: 2026-07-25
+- Scope: `submit_agent_result` now requires only status and summary; optional
+  rich details remain compatible. Missing terminal calls are wrapped without
+  reopening tools, and Core `completionStatus` no longer overrides an otherwise
+  valid child outcome. Promoted spawn receipts have a user-facing TUI renderer.
+- Read: terminal prompt/schema/parser, dynamic spawn result/promotion,
+  runtime projection, TUI recognizers/renderers, and tests.
+- Tests: full `npm run release:check` passed, including Agent Runtime 257/257,
+  Host 583/583, TUI 468/468, the regression matrix, and install smoke.
+
+- Status: Verified
+- Date: 2026-07-25
+- Scope: Agent finality is model-owned for clean transport completion. The
+  terminal result tool remains the preferred structured path, but a clean
+  natural final is wrapped once and terminated without task re-execution.
+  Awaited direct-spawn promotion remains coupled to parent cancellation;
+  task-created children retain task-owned cancellation.
+- Read: Agent Runtime result/spawn projection, Core completion boundary, Host
+  dynamic spawn abort ownership/promotion, and focused tests.
+- Tests: Core 661/661, Agent Runtime 257/257, Host 583/583; affected package
+  typechecks, repository lint, and targeted format check passed.
+
+- Status: Verified
+- Date: 2026-07-24
+- Scope: in-process Agent execution authority is now runtime-owned. Handoffs
+  expose only goal/context/label; child tools derive from delegation metadata
+  and configured profiles; dynamic children receive local CAS writes plus
+  child-safe foreground shell; terminal results, ChangeSets, receipts, notices,
+  and recovery remain structured parent-visible facts.
+- Read: Core execution control, Agent Runtime handoff/result/ledger, Host child
+  assembly/prompt/lease/shell, Protocol/TUI projections, and focused tests.
+- Tests: focused Core/Agent Runtime/Host/TUI suites, repository build, and
+  repository test typecheck passed.
+
+- Status: Verified
+- Date: 2026-07-23
+- Scope: final strict-contract follow-up marks async receipt fields and the SDK
+  task event key as externally consumed public surfaces. This is annotation
+  only; Agent task modes, parent waiting, observation, and lifecycle behavior
+  are unchanged.
+- Read: Task async receipt, Shell handoff DTO, SDK event map, and reserved-field
+  checker.
+- Tests: Agent Runtime tasks 76/76, Shell 43/43, SDK Core 11/11, affected
+  typechecks, and strict reserved-field check passed.
+
+- Status: Verified
+- Date: 2026-07-23
+- Scope: ACP Adapter treats Agent-backed `task.updated` lifecycle push as a
+  control-only event. It does not synthesize ACP child/tool completion, so the
+  parent run remains the sole ACP-visible semantic result for awaited work and
+  detached tasks gain no accidental capability or notification channel.
+- Read: ACP Host-event mapper/tests, Host Agent task lifecycle projection, and
+  Agent capability boundary.
+- Tests: ACP event 7/7, package typecheck, and package build passed.
+
+- Status: Verified
+- Date: 2026-07-23
+- Scope: foreground, promoted/awaited, and detached Agent tasks now publish the
+  same Host-level created/started/terminal lifecycle shape. The event channel
+  does not consume parent notifications, grant capability, or keep detached
+  parent runs alive.
+- Read: Agent task manager transitions, Host Agent task adoption, lifecycle
+  projection/routing, and protocol contract.
+- Tests: Agent Runtime tasks (76), Host lifecycle/protocol coverage, and
+  affected typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-23
+- Scope: foreground-timeout `spawn_agent` promotion now returns the canonical
+  structured async receipt and persists awaited completion policy while
+  preserving child lifecycle, usage, run-store, cancellation, and ledger
+  identity.
+- Read: dynamic Agent promotion/adoption, shared task receipt, parent revival,
+  and focused Host/Agent Runtime tests.
+- Tests: Host spawn/task/tools suites (120), Agent Runtime tasks (72), Core run
+  (129), and affected typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-23
+- Scope: the standard Host primary Agent profile body is now present exactly
+  once as system identity across fresh, checkpoint-resume, Workflow-resume, and
+  continuation episodes. Dynamic child goal/context authority is unchanged.
+  Awaited Agent-task guidance now reflects automatic terminal suspension and
+  makes manual wait conditional on an immediate result dependency.
+- Read: main profile parsing/episode prompt assembly, Agent task result
+  guidance, Core awaited revival, and focused Host/Agent Runtime tests.
+- Tests: focused Workflow episode and Task suites plus affected typechecks
+  passed.
+
+- Status: Verified
+- Date: 2026-07-21
+- Scope: dynamic Agent handoff is explicit and transport-independent. Foreground
+  and background entrypoints share one schema with required `goal`/`role` and
+  optional bounded `context`; the goal remains task input, context remains
+  required working context, and only a fixed delegated-agent contract occupies
+  the system layer. Explicit context changes invalidate completed-result reuse.
+- Read: Host dynamic/task Agent assembly and tool catalog, Agent Runtime context
+  composition and delegation ledger, protocol/TUI fixtures, and focused tests.
+- Tests: Agent Runtime ledger, Host spawn/task/tool/protocol, TUI transcript/
+  event-stream suites, and affected typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-21
+- Scope: foreground dynamic spawn and `task_create(kind:"agent")` share the
+  effective payload schema, enabled-tool enum, and semantic capability
+  validator before approval. Partial-child recovery triggers only from a real,
+  parent-correlated terminal `subagent.*` lifecycle event; a validation/policy/
+  approval failure with no child cannot manufacture child finality.
+- Read: Host dynamic/task Agent assembly, Agent Runtime task descriptor,
+  workflow Stop hook, Core outcome classification, and focused tests.
+- Tests: Agent Runtime task plus Host tools/spawn/workflow-hook suites and
+  affected typechecks passed.
+
+- Status: Verified
+- Date: 2026-07-21
+- Scope: dynamic spawn admission is capability-contract driven rather than
+  prompt-text driven. Enabled-tool/grant mismatches fail in semantic input
+  validation before policy/approval; child results use strict
+  `agent-outcome.v1` status plus accomplishments and generalized blockers.
+  Parent recovery/disclosure is driven by structured events, not prose scans.
+- Read: Core validation order, Host dynamic spawn/grants, Agent Runtime result
+  projector/lifecycle/ledger, Host Stop hook, trace/session projections, and
+  focused/full tests.
+- Tests: Agent Runtime and Host Agent suites passed; full repository
+  verification is recorded by the release gate.
+
+- Status: Verified
 - Date: 2026-07-19
 - Scope: Agent completion and reuse share canonical predicates. Parallel
   aggregation treats completed-signal partial children as incomplete, while
@@ -169,7 +406,7 @@ See [../../modules/agent-runtime.md](../../modules/agent-runtime.md) and [../../
 
 - `packages/host/src/runtime.ts`
 - `packages/host/src/runtime/agent-runtime-assembly.ts`
-- `packages/host/src/agent-spawn-grants.ts`
+- `packages/host/src/agent-report-tool.ts`
 - `packages/host/src/agent-profiles.ts`
 - `packages/host/src/delegate-runner.ts`
 - `packages/host/src/delegate-capability.ts`
@@ -187,14 +424,56 @@ See [../../modules/agent-runtime.md](../../modules/agent-runtime.md) and [../../
 
 ```txt
 configured profiles/delegates
-  -> AgentRuntimeAssembly resolves profiles, targets, and child catalogs
-  -> direct/indexed/parallel delegate and dynamic-spawn tools prepare one Agent invocation identity
+  -> AgentRuntimeAssembly resolves profiles, targets, and child-eligible catalogs
+  -> goal/context/label handoff (working authority only)
+  -> direct/indexed/parallel delegate and dynamic-spawn tools prepare one runtime-owned invocation identity
+  -> shared project/workspace/tool guidance prompt composition
+  -> read admission, optional epoch-checked write transition
+  -> one natural-language report plus runtime-derived report status
+  -> shared in-process terminal collector
+  -> compact ParentAgentResult plus internal runtime/ChangeSet/lifecycle roll-up
+  -> semantic single/batch/task receipt for parent context
+  -> optional read_agent_report(childRunId, offset, limit) recovery
   -> child run store factory
   -> session/agent trace attribution
 ```
 
 ## Contracts
 
+- All in-process handoff surfaces expose only required `goal`, optional bounded
+  working `context`, and optional UI-only `label`. Config/profile model,
+  prompt, tool, and budget fields remain administrator/runtime control plane.
+- All in-process result surfaces expose one compact model-facing contract:
+  `childRunId`, `status`, child-authored `report`, runtime-owned
+  `workspace:{writes,paths?}`, and optional completeness/reuse warnings or
+  runtime-derived blockers. Transport, usage, assessment, action receipts,
+  ChangeSets, and verification receipts remain internal lifecycle/diagnostic
+  facts.
+- Configured versus dynamic selects the definition source; direct/indexed/
+  `spawn_agent` selects the entrypoint; foreground/background/Task selects the
+  lifecycle owner; `delegate_parallel` selects batch scheduling. These are not
+  separate in-process result or execution backends. The independent backend
+  boundaries remain Core-backed in-process runs, ACP transport, and external
+  command/process.
+- Single Agent observations retain a string `report` and add explicit
+  `reportTruncated`, original/omitted character counts, and a
+  `{tool:"read_agent_report",childRunId}` reference when shortened. Parallel
+  observations retain all child indices and counts with compact headlines and
+  the same per-child reference. Formal Tool/Task/run results remain full.
+- `read_agent_report` resolves only current-session persisted descendant child
+  runs and never accepts a path. Session membership, non-main identity,
+  registered parent ancestry, canonical real paths, and run-record identity
+  are authorization inputs. Reconstructing the tool after session replay reads
+  the same persisted report; it does not restore live child execution.
+- Dynamic, configured, and parallel in-process child prompts share Core
+  resident contracts, project instructions, workspace/env rules, Agent
+  Runtime's single task-agnostic in-process child contract, effective
+  capability guidance, and working handoff context. Host composes configured
+  profile text before the shared layers and uses the same helper for direct,
+  indexed, parallel, dynamic, and background Agent paths. They never inherit
+  parent identity, full transcript, tool-result history, orchestration
+  guidance, or concrete approvals. ACP and external-command adapters remain
+  transport-owned and do not receive this Core-backed prompt.
 - Child/delegate runs must remain trace-visible.
 - Parent policy and approval rules shape child workspace/tool access.
 - Parent-visible `subagent.*` metadata separates trace ownership from child
@@ -317,29 +596,37 @@ configured profiles/delegates
 - TUI capability views exclude the built-in primary `main` profile from the
   configured-agent count/list; child/configured profiles and delegate tools
   remain visible.
-- Dynamic `spawn_agent` children default to read-only (`read`, `glob`, `grep`,
-  optional `list_dir`) and use the dynamic child catalog. A tool call can
-  request `grant.workspaceWrite: true`, or request one of the managed write
-  tools (`write`, `edit`, `edit_anchored_text`) as sugar for that grant. The
-  parent run approves this at spawn time through the normal tool approval path;
-  the child then receives a scoped approval-only interaction channel that
-  auto-approves only child `workspace.write` requests covered by the grant. The grant never exposes
-  `bash`, never bypasses `shouldWrite:false` or target/write budgets in the
-  parent run policy, and cannot resurrect tools removed by `tools.allowed` /
-  `tools.disabled` / `tools.use`.
+- Dynamic `spawn_agent` children receive the child-eligible subset of the
+  parent effective local surface: read/discovery, revisioned
+  create/replace/edit, and a rebuilt foreground-only child-safe shell. Missing
+  delegation metadata defaults to `parent_only`; MCP, external effects,
+  background tasks, Agent/Skill management, task/todo/cron, and nested spawn
+  stay absent. The model cannot request a grant or choose tool names.
+- Dynamic spawn feasibility is determined only by the runtime-resolved child
+  surface and parent policy. Host never infers capability from
+  `goal`/`context` prose, and goal/context/label cannot add authority.
+- Dynamic spawn handoff does not inherit the parent conversation or parent tool
+  results. `goal` must be a self-contained task and remains child task/user
+  input; optional `context` is a bounded handoff of established facts,
+  constraints, decisions, and observations at the working-context layer. Only
+  the fixed in-process child contract is installed as the dynamic profile's
+  application system prompt; completion guidance is part of that contract.
 - Dynamic `spawn_agent` runs foreground by default and may promote to an
   awaited background task after the foreground budget when
   `backgroundTasks=enabled`. Promotion preserves the same spawned child run,
   parent-visible `subagent.*` events, usage rollup, run-store attribution,
-  terminal/finality projection, cancellation path, and delegation ledger.
+  terminal report projection, cancellation path, and delegation ledger.
+  The promoted result explicitly reports actual awaited mode, parent keep-alive,
+  automatic-once completion observation, next action, and duplicate avoidance.
 - Background `agent` tasks call the same dynamic-spawn path through
   `runHostAgentTask()`, with the task controller signal bound to the child run
   so `task(action:"stop")` cancels the background child instead of only
   stopping the foreground parent turn. Parent-visible `subagent.*` events for this
   `entrypoint:"agent_task"` path carry the owning `taskId` in payload and
   metadata so trace diagnostics can join child terminal evidence back to
-  `task_create`. `task_create(kind:"agent")` uses the same workspace-write
-  grant parsing and child grant consumption as inline `spawn_agent`.
+  `task_create`. Live task payloads strictly expose goal/context/label;
+  persisted legacy envelopes are normalized to those fields without restoring
+  authority-bearing role/grant/tool values.
 - `kind:"agent"` on a `TaskRecord`/task payload identifies the registered task
   runner, not an actor-notification source kind. Agent lifecycle and bounded
   results remain on `subagent.*`/tool results. The typed actor inbox accepts
@@ -347,15 +634,13 @@ configured profiles/delegates
   lane requires a concrete producer and receiver rather than widening a shared
   enum in advance.
 - Main-run `task_create` advertises the host-registered `agent` kind and its
-  required child-agent payload fields so real models can create background
+  required `goal` plus optional `context`/UI-only `label` so real models can create background
   agent tasks without guessing runner kind names from roles. Detached/promoted
   create results carry concrete `nextAction` guidance, and host terminal task
   notifications surface bounded child result summaries in body text so the
   parent can monitor or retrieve output without creating equivalent work. Its
-  model-facing payload and `maxSteps` guidance intentionally match
-  `spawn_agent`, including optional workspace-write grants: omit the field to
-  inherit the parent run's effective budget, and use enough turns for
-  read/search plus final synthesis.
+  model-facing payload intentionally matches `spawn_agent`; runtime/config
+  choose tools, approvals, and budgets.
 - Main-run `task_create` is eager; existing-id `task` control remains an
   advanced deferred tool loaded through `tool_search`. Its action schema owns
   get/output/wait/stop, and trace plus the durable record are the authority for
@@ -368,22 +653,30 @@ configured profiles/delegates
   action-specific non-empty id requirements and is runtime-validated before
   policy/approval/execution. Empty same-turn placeholders can be recovered in
   diagnostics only after a later concrete same-action monitor call succeeds.
-- Dynamic `spawn_agent` inherits the parent run's effective `maxSteps` when the
-  tool call omits `maxSteps`; explicit child values are honored without the old
-  16-step cap. Dynamic children cannot spawn again or receive `task_create` in
-  v1; `capabilities.agents.maxDepth` remains the general child/delegate ceiling.
+- Dynamic `spawn_agent` receives a runtime-selected step/budget allocation; no
+  max-step field is model-visible. Dynamic children cannot spawn again or
+  receive `task_create` in v1; `capabilities.agents.maxDepth` remains the
+  general child/delegate ceiling. A child may legitimately have zero tools.
 - Dynamic `spawn_agent` output keeps parent-visible child identity and
-  finality separate from tool transport status. A child that reaches its step
-  budget after producing an answer can still return a completed tool result, but
-  the output must carry `stepLimitReached: true`, `truncated: true`,
-  `finality: "partial"`, and a warning-prefixed message so the parent and
-  context compaction do not treat the child answer as complete.
-- Host installs a built-in Stop hook that requires the parent final answer to
-  disclose partial/truncated/step-limited/failed child finality before
-  finishing. The hook is a final-answer guard, not a trace-only report, and
-  ignores ordinary truncated non-agent tool output.
-- Raw child finality is audit evidence and must not be overwritten because the
-  parent later succeeded. Trace report can downgrade `SUBAGENT_INCOMPLETE`
+  report `status` separate from tool transport status. A non-empty natural
+  final projects completed delivery; the parent still judges task
+  satisfaction. Missing output and runtime-observed cancellation, failure,
+  blocking limits, truncation, and step exhaustion derive minimal blocker
+  evidence (`code` plus `message`) and are not reusable. Step-budget wrap-up carries
+  `stepLimitReached:true`, `truncated:true`, and
+  `completionStatus:"partial"` so parent and context compaction do not treat
+  the answer as complete.
+- Core's retained completion evaluator records
+  partial/blocked/truncated/step-limited/failed child evidence as immutable
+  notices. It does not infer an executable requirement or force a semantic
+  continuation; runtime-owned task readiness, cancellation, budgets, and
+  explicit Workflow gates remain hard controls.
+- A direct dynamic child inherits the parent abort signal when no explicit
+  lifecycle signal is supplied, including after awaited foreground-timeout
+  promotion. An `agent_task` child instead receives the Task runner's explicit
+  signal and is cancelled through Task ownership.
+- Raw child report status is audit evidence and must not be overwritten because
+  the parent later succeeded. Trace report can downgrade `SUBAGENT_INCOMPLETE`
   severity only as a derived finding when it records `verifiedAfterChildWrite`
   evidence from ordered raw events; the underlying `subagent.*` payload remains
   partial/truncated.
@@ -427,12 +720,13 @@ configured profiles/delegates
   parent-run delegation ledger owned by `@sparkwright/agent-runtime`. Direct
   `delegate_*` aliases, generic `delegate_agent`, `delegate_parallel`, and
   dynamic `spawn_agent` all read and write this ledger so a later equivalent
-  delegation can return the previous child result with `alreadyCompleted: true`
-  instead of spawning a duplicate child. The ledger does not reuse failed,
+  delegation can return the previous compact report with a runtime reuse
+  warning instead of spawning a duplicate child. The ledger does not reuse failed,
   unhealthy, step-limited, or truncated children. Agent tools declare their
   tool-owned duplicate protocol so a sequential exact repeat reaches this
   ledger instead of being intercepted by Core's generic repeat nudge.
-  Equivalence is exact after conservative
+  Dynamic-spawn identity includes explicit handoff context, so changed facts or
+  constraints cannot reuse a stale result. Goal equivalence is exact after conservative
   Unicode/case/whitespace normalization; fuzzy directory-listing or text
   similarity must not cross target paths.
 - The indexed `delegate_agent` router is a Host-owned adapter in
@@ -448,16 +742,17 @@ configured profiles/delegates
   dedupe; adapters keep only native execution.
 - Agent lifecycle requires requested -> admitted before `started`. ACP and
   external-command access/sandbox admission failures emit requested -> failed,
-  process completions carry `terminalState`/`finality`, and indexed calls record
+  process completions carry `terminalState`/`status`, and indexed calls record
   `entrypoint:"delegate_agent"` without exposing a spoofable model JSON field.
 - Host Agent execution and actual Host parent/child mutation tools share one
   process-local fair workspace lease coordinator keyed by workspace realpath.
-  Read-only Agent children may share; write-capable in-process, ACP, and
-  external-command children serialize with parent coding/Shell/capability
-  mutations across HostRuntime connections. `subagent.requested` remains
-  visible while queued, while `started` cannot appear before lease acquisition.
-  Lifecycle metadata carries `workspaceAccess` and `agentConcurrency` so the
-  requested-to-started gap is interpretable.
+  Children begin with shared read admission. On the first managed write, Host
+  releases that admission, acquires write admission, and compares the current
+  workspace epoch with the child's original observation epoch. A mismatch
+  rejects the pending write and requires re-observation; a match upgrades the
+  child for the rest of its execution. ACP/external-command write access
+  remains serialized at admission. `subagent.requested` stays visible while
+  queued and `started` cannot precede initial lease acquisition.
 - Child execution leases and child write tools reenter under the same run id.
   Descendant requests blocked by an ancestor fail fast; opening nested
   delegation beyond current Host catalogs must preserve full run-chain
@@ -488,19 +783,18 @@ configured profiles/delegates
   and use the shared entropy-bearing Core id generator rather than a bare
   millisecond suffix, so same-profile concurrent invocations cannot collide
   merely because they start in the same millisecond.
-- In-process delegate and granted dynamic-spawn workspace writes are surfaced
+- In-process configured and dynamic child workspace writes are surfaced
   to the parent run-end summary by rolling up the child run's own
   `workspace.write.completed` events onto the parent-visible
-  `subagent.completed`/`subagent.failed` payload (`workspaceWrites` count),
+  `subagent.completed`/`subagent.failed` payload as the compatibility
+  `workspaceWrites` count plus full ChangeSets and final verification receipts,
   bridged in `spawnSubAgent`. This replaced an earlier parent-side
   full-workspace filesystem snapshot diff: rollup keeps a single source of
   truth (the child's write events), attributes writes to the actor that made
   them (no time-window misattribution under concurrency), and avoids
   representing one change as two event families. It is sound because child
-  catalogs with managed writes have no untracked writer — dynamic spawn never
-  receives shell, configured delegate shell rolls back unmanaged file
-  mutations, and child catalogs exclude MCP; if MCP is ever added to a child
-  catalog, wrap those MCP tools inside the child instead.
+  shell rolls back unmanaged file mutations and child catalogs exclude MCP; if
+  MCP is ever added, its effects must first be normalized inside the child.
   The CLI summary counts `workspaceWrites` via `summarizeWorkspaceMutations`
   (`subagentWrites`).
 - `capabilities.agents.maxDepth` is a global nested-spawn ceiling enforced
@@ -814,7 +1108,7 @@ configured profiles/delegates
   approval-before-child-creation, bypass auto-approval, approval denial,
   read-only gate denial, and `task_create(kind:"agent")` gate parity.
 - Read: `packages/host/src/runtime.ts`,
-  `packages/host/src/agent-spawn-grants.ts`,
+  `packages/host/src/runtime/agent-runtime-assembly.ts`,
   `packages/host/test/spawn-agent.test.ts`,
   `packages/host/test/tools.test.ts`.
 - Tests: `npm --workspace @sparkwright/host test --
@@ -829,7 +1123,7 @@ test/spawn-agent.test.ts`;
   up through `subagent.*.workspaceWrites`, and read-only parent write gates
   still deny.
 - Read: `packages/host/src/runtime.ts`,
-  `packages/host/src/agent-spawn-grants.ts`,
+  `packages/host/src/runtime/agent-runtime-assembly.ts`,
   `packages/host/src/tool-catalog.ts`,
   `packages/agent-runtime/src/tasks/tools.ts`,
   `packages/core/src/run.ts`.

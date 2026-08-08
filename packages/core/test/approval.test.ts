@@ -9,6 +9,7 @@ describe("approval", () => {
       runId,
       action: "workspace.write",
       summary: "Write README.md",
+      subject: { kind: "one_shot", label: "Write README.md once" },
     });
 
     expect(request.id).toMatch(/^approval_/);
@@ -25,6 +26,7 @@ describe("approval", () => {
       runId: createRunId(),
       action: "tool.execute",
       summary: "Run risky tool",
+      subject: { kind: "one_shot", label: "Run risky tool once" },
     });
 
     const response = await resolveApproval(request, (received) => {
@@ -48,6 +50,7 @@ describe("approval", () => {
       runId: createRunId(),
       action: "workspace.write",
       summary: "Write README.md",
+      subject: { kind: "one_shot", label: "Write README.md once" },
     });
 
     const response = await resolveApproval(request, () => ({
@@ -68,6 +71,7 @@ describe("approval", () => {
       runId: createRunId(),
       action: "tool.execute",
       summary: "Run risky tool",
+      subject: { kind: "one_shot", label: "Run risky tool once" },
     });
 
     const response = await resolveApproval(
@@ -92,6 +96,7 @@ describe("approval", () => {
       runId: createRunId(),
       action: "tool.execute",
       summary: "Run slow approval",
+      subject: { kind: "one_shot", label: "Run slow approval once" },
     });
 
     const response = await resolveApproval(
@@ -122,6 +127,7 @@ describe("approval", () => {
       runId: createRunId(),
       action: "workspace.write",
       summary: "Write README.md",
+      subject: { kind: "one_shot", label: "Write README.md once" },
     });
 
     const response = await resolveApproval(

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  createToolSearchTool,
   defineTool,
   type ModelAdapter,
   type ModelInput,
@@ -35,6 +36,155 @@ describe("streaming-runtime", () => {
     );
   });
 
+  it("exposes deferred schemas only after tool_search loads them", async () => {
+    let deferredExecutions = 0;
+    const seenToolNames: string[][] = [];
+    const deferredEcho = defineTool({
+      name: "deferred_echo",
+      description: "Echo text after deferred discovery.",
+      inputSchema: {
+        type: "object",
+        properties: { text: { type: "string" } },
+        required: ["text"],
+      },
+      deferLoading: true,
+      execute(args) {
+        deferredExecutions += 1;
+        return args;
+      },
+    });
+    const toolSearch = createToolSearchTool({
+      source: {
+        listDescriptors: () => [
+          {
+            name: deferredEcho.name,
+            description: deferredEcho.description,
+            inputSchema: deferredEcho.inputSchema,
+            loading: { defer: true },
+          },
+        ],
+      },
+    });
+    const run = createStreamingRun({
+      goal: "use a deferred tool",
+      tools: [deferredEcho, toolSearch],
+      maxSteps: 3,
+      model: {
+        async *stream(input: ModelInput) {
+          seenToolNames.push(input.tools.map((tool) => tool.name));
+          if (input.step === 1) {
+            yield {
+              type: "tool_call_start",
+              toolName: "tool_search",
+              toolCallIndex: 0,
+            } as ModelOutputChunk;
+            yield {
+              type: "tool_call_delta",
+              toolCallIndex: 0,
+              argumentsDelta: '{"query":"select:deferred_echo"}',
+            } as ModelOutputChunk;
+            yield {
+              type: "tool_call_end",
+              toolCallIndex: 0,
+            } as ModelOutputChunk;
+            return;
+          }
+          if (input.step === 2) {
+            yield {
+              type: "tool_call_start",
+              toolName: "deferred_echo",
+              toolCallIndex: 0,
+            } as ModelOutputChunk;
+            yield {
+              type: "tool_call_delta",
+              toolCallIndex: 0,
+              argumentsDelta: '{"text":"loaded"}',
+            } as ModelOutputChunk;
+            yield {
+              type: "tool_call_end",
+              toolCallIndex: 0,
+            } as ModelOutputChunk;
+            return;
+          }
+          yield { type: "text_delta", text: "done" } as ModelOutputChunk;
+        },
+        async complete() {
+          throw new Error("complete should not be called");
+        },
+      },
+    });
+
+    const result = await run.start();
+
+    expect(result).toMatchObject({ signal: "completed", message: "done" });
+    expect(seenToolNames).toEqual([
+      ["tool_search"],
+      ["deferred_echo", "tool_search"],
+      ["deferred_echo", "tool_search"],
+    ]);
+    expect(deferredExecutions).toBe(1);
+  });
+
+  it("exposes deferred schemas declared by a loaded skill", async () => {
+    const seenToolNames: string[][] = [];
+    const deferredEcho = defineTool({
+      name: "deferred_echo",
+      description: "Echo after its owning skill loads.",
+      inputSchema: { type: "object" },
+      deferLoading: true,
+      execute: () => ({ ok: true }),
+    });
+    const skillLoad = defineTool({
+      name: "skill_load",
+      description: "Load a skill.",
+      inputSchema: { type: "object" },
+      execute: () => ({
+        status: "loaded",
+        name: "echo-skill",
+        toolDependencies: ["deferred_echo"],
+      }),
+    });
+    const run = createStreamingRun({
+      goal: "load a skill",
+      tools: [deferredEcho, skillLoad],
+      maxSteps: 2,
+      model: {
+        async *stream(input: ModelInput) {
+          seenToolNames.push(input.tools.map((tool) => tool.name));
+          if (input.step === 1) {
+            yield {
+              type: "tool_call_start",
+              toolName: "skill_load",
+              toolCallIndex: 0,
+            } as ModelOutputChunk;
+            yield {
+              type: "tool_call_delta",
+              toolCallIndex: 0,
+              argumentsDelta: "{}",
+            } as ModelOutputChunk;
+            yield {
+              type: "tool_call_end",
+              toolCallIndex: 0,
+            } as ModelOutputChunk;
+            return;
+          }
+          yield { type: "text_delta", text: "done" } as ModelOutputChunk;
+        },
+        async complete() {
+          throw new Error("complete should not be called");
+        },
+      },
+    });
+
+    const result = await run.start();
+
+    expect(result).toMatchObject({ signal: "completed", message: "done" });
+    expect(seenToolNames).toEqual([
+      ["skill_load"],
+      ["deferred_echo", "skill_load"],
+    ]);
+  });
+
   it("executes tools only after the streamed turn is complete", async () => {
     const order: string[] = [];
     const echo = defineTool({
@@ -55,6 +205,7 @@ describe("streaming-runtime", () => {
         async *stream(input: ModelInput) {
           if (input.step === 1) {
             order.push("stream-start");
+            yield { type: "text_delta", text: "working" };
             yield {
               type: "tool_call_start",
               toolName: "echo",
@@ -84,6 +235,85 @@ describe("streaming-runtime", () => {
     expect(run.events.all().map((event) => event.type)).toEqual(
       expect.arrayContaining(["tool.started", "tool.completed"]),
     );
+    const assistantText = run.events
+      .all()
+      .filter((event) => event.type === "model.assistant_text");
+    expect(assistantText).toHaveLength(1);
+    expect(assistantText[0]?.payload).toMatchObject({
+      step: 1,
+      message: "working",
+    });
+    const completedMessages = run.events
+      .all()
+      .filter((event) => event.type === "run.completed")
+      .map((event) => (event.payload as { message?: string }).message);
+    expect(completedMessages).toEqual(["done"]);
+  });
+
+  it("presents compact agent context while retaining the raw streamed tool result", async () => {
+    const report = "streamed-child-report-".repeat(180);
+    const delegate = defineTool({
+      name: "delegate",
+      description: "Return one child result.",
+      inputSchema: { type: "object" },
+      resultPresentation: { kind: "agent_result" },
+      execute: () => ({
+        childRunId: "run_streamed_child",
+        status: "completed",
+        report,
+        workspace: { writes: 0 },
+        warnings: [],
+        blockers: [],
+      }),
+    });
+    const run = createStreamingRun({
+      goal: "delegate once",
+      tools: [delegate],
+      maxSteps: 2,
+      model: {
+        async *stream(input: ModelInput) {
+          if (input.step === 1) {
+            yield {
+              type: "tool_call_start",
+              toolName: "delegate",
+              toolCallIndex: 0,
+            };
+            yield {
+              type: "tool_call_delta",
+              toolCallIndex: 0,
+              argumentsDelta: "{}",
+            };
+            yield { type: "tool_call_end", toolCallIndex: 0 };
+            return;
+          }
+          const observation = input.context.find(
+            (item) => item.type === "tool_result",
+          );
+          const output = JSON.parse(observation?.content ?? "{}").output;
+          expect(typeof output.report).toBe("string");
+          expect(output).toMatchObject({
+            childRunId: "run_streamed_child",
+            reportTruncated: true,
+            reportChars: report.length,
+          });
+          yield { type: "text_delta", text: "done" };
+        },
+        async complete() {
+          throw new Error("complete should not be called");
+        },
+      },
+    });
+
+    await run.start();
+
+    expect(
+      (
+        run.events.all().find((event) => event.type === "tool.completed")
+          ?.payload as {
+          output?: { report?: string };
+        }
+      ).output?.report,
+    ).toBe(report);
   });
 
   it("nests tool-call spans under the batch span under the run span", async () => {
@@ -462,6 +692,241 @@ describe("notification sources", () => {
   });
 });
 
+describe("awaited task revival", () => {
+  it("waits, injects one terminal notification, and resumes beyond maxSteps", async () => {
+    let pending = true;
+    let notificationReady = false;
+    let release!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let drainCount = 0;
+    let observedTaskNotifications = 0;
+    const run = createStreamingRun({
+      goal: "await a task",
+      maxSteps: 1,
+      notificationSources: [
+        {
+          drain() {
+            if (!notificationReady || drainCount > 0) return [];
+            drainCount += 1;
+            return [
+              {
+                content: "task completed",
+                source: { kind: "task", uri: "task:one" },
+                metadata: { taskId: "task_one", status: "completed" },
+              },
+            ];
+          },
+        },
+      ],
+      taskRevivalSource: {
+        hasAwaitedPending: () => pending,
+        waitUntilAvailable: () => ready,
+      },
+      model: {
+        async *stream(input: ModelInput) {
+          observedTaskNotifications = input.context.filter(
+            (item) => item.source?.kind === "task",
+          ).length;
+          yield {
+            type: "text_delta",
+            text: input.step === 1 ? "initial" : "resumed",
+          } as ModelOutputChunk;
+          yield { type: "stop", stopReason: "completed" } as ModelOutputChunk;
+        },
+        async complete() {
+          throw new Error("complete unused");
+        },
+      },
+    });
+
+    const started = run.start();
+    await waitForRunState(run, "waiting_tasks");
+    notificationReady = true;
+    pending = false;
+    release();
+    const result = await started;
+
+    expect(result).toMatchObject({
+      signal: "completed",
+      message: "resumed",
+      metadata: {
+        revivalTurnsUsed: 1,
+        forcedContinuationTurnsUsed: { revival: 1 },
+      },
+    });
+    expect(observedTaskNotifications).toBe(1);
+    expect(drainCount).toBe(1);
+    expect(
+      run.events
+        .all()
+        .filter((event) => event.type === "run.notification.injected"),
+    ).toHaveLength(1);
+  });
+
+  it("does not keep the run alive for detached work", async () => {
+    let waits = 0;
+    const run = createStreamingRun({
+      goal: "detached task",
+      taskRevivalSource: {
+        hasAwaitedPending: () => false,
+        waitUntilAvailable: async () => {
+          waits += 1;
+        },
+      },
+      model: streamingModel([
+        { type: "text_delta", text: "done" },
+        { type: "stop", stopReason: "completed" },
+      ]),
+    });
+
+    await expect(run.start()).resolves.toMatchObject({
+      signal: "completed",
+      message: "done",
+    });
+    expect(waits).toBe(0);
+  });
+
+  it("wakes waiting_tasks for an injected user command", async () => {
+    let pending = true;
+    let sawCommand = false;
+    const run = createStreamingRun({
+      goal: "wait for command",
+      taskRevivalSource: {
+        hasAwaitedPending: () => pending,
+        waitUntilAvailable: () => new Promise<void>(() => {}),
+      },
+      model: {
+        async *stream(input: ModelInput) {
+          if (input.step > 1) {
+            sawCommand = input.context.some(
+              (item) =>
+                item.source?.kind === "command" &&
+                item.content === "continue now",
+            );
+            pending = false;
+          }
+          yield {
+            type: "text_delta",
+            text: input.step === 1 ? "waiting" : "continued",
+          } as ModelOutputChunk;
+          yield { type: "stop", stopReason: "completed" } as ModelOutputChunk;
+        },
+        async complete() {
+          throw new Error("complete unused");
+        },
+      },
+    });
+
+    const started = run.start();
+    await waitForRunState(run, "waiting_tasks");
+    run.enqueueCommand({ type: "user_message", content: "continue now" });
+    await expect(started).resolves.toMatchObject({
+      signal: "completed",
+      message: "continued",
+    });
+    expect(sawCommand).toBe(true);
+  });
+
+  it("cancels while waiting for an awaited task", async () => {
+    const run = createStreamingRun({
+      goal: "cancel wait",
+      taskRevivalSource: {
+        hasAwaitedPending: () => true,
+        waitUntilAvailable: () => new Promise<void>(() => {}),
+      },
+      model: streamingModel([
+        { type: "text_delta", text: "waiting" },
+        { type: "stop", stopReason: "completed" },
+      ]),
+    });
+
+    const started = run.start();
+    await waitForRunState(run, "waiting_tasks");
+    run.cancel({ reason: "stop waiting" });
+    await expect(started).resolves.toMatchObject({
+      signal: "cancelled",
+      message: "stop waiting",
+    });
+  });
+
+  it("bounds revival turns and reports pending work at exhaustion", async () => {
+    let waits = 0;
+    let readyNotifications = 0;
+    let drainedNotifications = 0;
+    const run = createStreamingRun({
+      goal: "bounded revival",
+      maxSteps: 1,
+      maxTaskRevivalTurns: 1,
+      notificationSources: [
+        {
+          drain() {
+            if (drainedNotifications >= readyNotifications) return [];
+            drainedNotifications += 1;
+            return [{ content: `task update ${drainedNotifications}` }];
+          },
+        },
+      ],
+      taskRevivalSource: {
+        hasAwaitedPending: () => true,
+        waitUntilAvailable: async () => {
+          waits += 1;
+          readyNotifications += 1;
+        },
+      },
+      model: {
+        async *stream(input: ModelInput) {
+          yield {
+            type: "text_delta",
+            text: `turn ${input.step}`,
+          } as ModelOutputChunk;
+          yield { type: "stop", stopReason: "completed" } as ModelOutputChunk;
+        },
+        async complete() {
+          throw new Error("complete unused");
+        },
+      },
+    });
+
+    await expect(run.start()).resolves.toMatchObject({
+      signal: "completed",
+      message: "turn 2",
+      metadata: { revivalTurnsUsed: 1 },
+    });
+    expect(waits).toBe(1);
+    expect(
+      run.events.all().filter((event) => event.type === "run.budget.exceeded"),
+    ).toHaveLength(1);
+  });
+
+  it("isolates task readiness source failures", async () => {
+    const run = createStreamingRun({
+      goal: "source failure",
+      taskRevivalSource: {
+        hasAwaitedPending() {
+          throw new Error("readiness unavailable");
+        },
+        waitUntilAvailable: async () => {},
+      },
+      model: streamingModel([
+        { type: "text_delta", text: "done" },
+        { type: "stop", stopReason: "completed" },
+      ]),
+    });
+
+    await expect(run.start()).resolves.toMatchObject({
+      signal: "completed",
+      message: "done",
+    });
+    expect(
+      run.events
+        .all()
+        .filter((event) => event.type === "run.notification.source_failed"),
+    ).toHaveLength(1);
+  });
+});
+
 describe("streaming-runtime tool argument decoding", () => {
   it("treats empty streamed tool-call arguments as `{}`", async () => {
     const calls: unknown[] = [];
@@ -597,4 +1062,19 @@ function streamingModel(chunks: ModelOutputChunk[]): ModelAdapter {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForRunState(
+  run: ReturnType<typeof createStreamingRun>,
+  state: string,
+): Promise<void> {
+  const deadline = Date.now() + 1_000;
+  while (run.record.state !== state) {
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `Timed out waiting for run state ${state}; current state is ${run.record.state}.`,
+      );
+    }
+    await sleep(1);
+  }
 }

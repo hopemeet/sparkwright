@@ -13,7 +13,11 @@ import { EventLog } from "../src/events.js";
 import { createRunId } from "../src/ids.js";
 import { createWorkspaceReadScopePolicy } from "../src/policy.js";
 import type { RunRecord, RunState } from "../src/types.js";
-import { ControlledWorkspace, LocalWorkspace } from "../src/workspace.js";
+import {
+  ControlledWorkspace,
+  InMemoryWorkspaceState,
+  LocalWorkspace,
+} from "../src/workspace.js";
 import type { ControlledWorkspaceOptions } from "../src/workspace.js";
 import { WorkspaceCheckpointStore } from "../src/workspace-checkpoint.js";
 
@@ -186,6 +190,13 @@ describe("LocalWorkspace", () => {
         approve(request) {
           expect(run.state).toBe("waiting_approval");
           expect(request.action).toBe("workspace.write");
+          expect(request.subject).toEqual({
+            kind: "workspace_file",
+            operation: "legacy_write",
+            path: "README.md",
+            key: "workspace_file:legacy_write:README.md",
+            label: "Allow writing README.md for this session",
+          });
           expect(request.details.path).toBe("README.md");
           expect(String(request.details.diff)).toContain("-before");
           return {
@@ -234,6 +245,13 @@ describe("LocalWorkspace", () => {
         approve(request) {
           expect(request.action).toBe("workspace.write");
           expect(request.summary).toBe("Remove obsolete.md");
+          expect(request.subject).toEqual({
+            kind: "workspace_file",
+            operation: "remove",
+            path: "obsolete.md",
+            key: "workspace_file:remove:obsolete.md",
+            label: "Allow removing obsolete.md for this session",
+          });
           expect(request.details).toMatchObject({
             path: "obsolete.md",
             operation: "remove",
@@ -658,6 +676,64 @@ describe("LocalWorkspace", () => {
       "before\n",
     );
     await expect(readFile(join(root, "created.md"), "utf8")).rejects.toThrow();
+  });
+
+  it("distinguishes a missing path from an existing empty file by revision", async () => {
+    const run = createRunRecord();
+    const workspace = createTestControlledWorkspace({
+      run,
+      events: new EventLog(run.id),
+      workspace: new LocalWorkspace(root),
+    });
+
+    const missing = await workspace.readTextWithRevision("empty.txt");
+    await writeFile(join(root, "empty.txt"), "", "utf8");
+    const empty = await workspace.readTextWithRevision("empty.txt");
+
+    expect(missing).toMatchObject({ exists: false, content: "" });
+    expect(empty).toMatchObject({ exists: true, content: "" });
+    expect(empty.revision).not.toBe(missing.revision);
+  });
+
+  it("uses create/replace revisions as compare-and-swap guards", async () => {
+    const run = createRunRecord();
+    const state = new InMemoryWorkspaceState();
+    const local = new LocalWorkspace(root);
+    const workspace = createTestControlledWorkspace({
+      run,
+      events: new EventLog(run.id),
+      workspace: local,
+      workspaceState: state,
+      interactionChannel: {
+        approve: (request) => ({
+          approvalId: request.id,
+          decision: "approved",
+        }),
+      },
+    });
+
+    const created = await workspace.createText("note.txt", "v1\n");
+    expect(created.changed).toBe(true);
+    expect(created.changeSet?.writeEpoch).toBe(1);
+    await expect(
+      workspace.createText("note.txt", "overwrite\n"),
+    ).rejects.toMatchObject({ code: "WORKSPACE_CREATE_CONFLICT" });
+
+    const observed = await workspace.readTextWithRevision("note.txt");
+    await local.writeText("note.txt", "external\n");
+    await expect(
+      workspace.replaceText("note.txt", observed.revision, "v2\n"),
+    ).rejects.toMatchObject({ code: "WORKSPACE_REVISION_CONFLICT" });
+    await expect(local.readText("note.txt")).resolves.toBe("external\n");
+
+    const current = await workspace.readTextWithRevision("note.txt");
+    const replaced = await workspace.replaceText(
+      "note.txt",
+      current.revision,
+      "v2\n",
+    );
+    expect(replaced.changeSet?.writeEpoch).toBe(2);
+    expect(state.currentEpoch()).toBe(2);
   });
 });
 

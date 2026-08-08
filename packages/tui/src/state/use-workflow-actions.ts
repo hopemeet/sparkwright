@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type { WorkflowRunSnapshot } from "@sparkwright/protocol";
@@ -6,7 +7,8 @@ import type { RunController } from "./run-controller.js";
 import type { WorkflowJobHandle } from "./run-controller.js";
 import type { EventStore } from "./event-store.js";
 import type { LayerStack } from "./layer-stack.js";
-import type { ToastStore } from "./toast-store.js";
+import type { NotificationStore } from "./notification-store.js";
+import { presentationPolicy } from "../lib/ui-signal.js";
 import { formatWorkflowListNotice } from "../lib/workflow-display.js";
 
 export interface WorkflowActions {
@@ -28,7 +30,7 @@ export interface WorkflowActions {
 export function useWorkflowActions(deps: {
   controller: RunController;
   store: EventStore;
-  toasts: ToastStore;
+  toasts: NotificationStore;
   layers: LayerStack;
   layerOpen: boolean;
   enableBackgroundRefresh?: boolean;
@@ -51,21 +53,32 @@ export function useWorkflowActions(deps: {
   );
   const ownedJobsRef = useRef(ownedJobs);
 
-  async function refreshWorkflows(): Promise<WorkflowRunSnapshot[]> {
-    setLoadingWorkflows(true);
+  async function fetchWorkflows(options: {
+    showLoading: boolean;
+  }): Promise<WorkflowRunSnapshot[]> {
+    if (options.showLoading) setLoadingWorkflows(true);
     try {
       const next = await controller.listWorkflowRuns({ limit: 100 });
-      setWorkflows(next);
-      if (
-        selectedWorkflowId &&
-        !next.some((workflow) => workflow.id === selectedWorkflowId)
-      ) {
-        setSelectedWorkflowId(undefined);
-      }
+      setWorkflows((current) =>
+        workflowSnapshotsEqual(current, next) ? current : next,
+      );
+      setSelectedWorkflowId((current) =>
+        current && !next.some((workflow) => workflow.id === current)
+          ? undefined
+          : current,
+      );
       return next;
     } finally {
-      setLoadingWorkflows(false);
+      if (options.showLoading) setLoadingWorkflows(false);
     }
+  }
+
+  function refreshWorkflows(): Promise<WorkflowRunSnapshot[]> {
+    return fetchWorkflows({ showLoading: true });
+  }
+
+  function refreshWorkflowsInBackground(): Promise<WorkflowRunSnapshot[]> {
+    return fetchWorkflows({ showLoading: false });
   }
 
   async function listWorkflows(): Promise<void> {
@@ -240,6 +253,7 @@ export function useWorkflowActions(deps: {
     if (!workflow) return;
     try {
       const accepted = await controller.cancelWorkflow(workflow);
+      if (accepted === null) return;
       if (!accepted) throw new Error("durable cancel command was rejected");
       store.appendNotice(
         `workflow stop requested: ${workflow.id} (stopping is terminal and cannot be resumed)`,
@@ -273,9 +287,9 @@ export function useWorkflowActions(deps: {
     if (!enableBackgroundRefresh) return;
     let cancelled = false;
     const interval = setInterval(() => {
-      if (!cancelled) void refreshWorkflows().then(() => undefined);
+      if (!cancelled) void refreshWorkflowsInBackground().then(() => undefined);
     }, 5000);
-    void refreshWorkflows().then(() => undefined);
+    void refreshWorkflowsInBackground().then(() => undefined);
     return () => {
       cancelled = true;
       clearInterval(interval);
@@ -287,7 +301,7 @@ export function useWorkflowActions(deps: {
     if (!layerOpen) return;
     let cancelled = false;
     const tick = (): void => {
-      void refreshWorkflows().then(() => undefined);
+      void refreshWorkflowsInBackground().then(() => undefined);
     };
     const interval = setInterval(() => {
       if (!cancelled) tick();
@@ -344,6 +358,15 @@ export function useWorkflowActions(deps: {
     resumeWorkflow,
     stopWorkflow,
   };
+}
+
+export function workflowSnapshotsEqual(
+  left: readonly WorkflowRunSnapshot[],
+  right: readonly WorkflowRunSnapshot[],
+): boolean {
+  if (left === right) return true;
+  if (left.length !== right.length) return false;
+  return isDeepStrictEqual(left, right);
 }
 
 export type OwnedWorkflowJobStatus =
@@ -427,7 +450,7 @@ function wireWorkflowJob(
   deps: {
     workflowName: string;
     store: EventStore;
-    toasts: ToastStore;
+    toasts: NotificationStore;
     setOwnedJobs: Dispatch<SetStateAction<Record<string, OwnedWorkflowJob>>>;
     refreshWorkflows: () => Promise<WorkflowRunSnapshot[]>;
     focus: boolean;
@@ -502,6 +525,24 @@ function wireWorkflowJob(
           ? `workflow ${deps.workflowName} waiting for resume`
           : `workflow ${deps.workflowName} ${status}${event.payload.stopReason ? `: ${event.payload.stopReason}` : ""}`,
       );
+      const kind =
+        status === "failed"
+          ? ("error" as const)
+          : status === "cancelled"
+            ? ("warning" as const)
+            : status === "waiting"
+              ? ("action-required" as const)
+              : ("success" as const);
+      const scope = "BackgroundTask" as const;
+      deps.toasts.publish({
+        kind,
+        scope,
+        source: "tui.workflow",
+        title: `workflow ${status}`,
+        message: `${deps.workflowName} · ${record?.id ?? handle.workflowRunId}`,
+        dedupeKey: `workflow:${record?.id ?? handle.workflowRunId}`,
+        ...presentationPolicy({ kind, scope }),
+      });
       closing = true;
       handle.close();
     });
@@ -511,6 +552,17 @@ function wireWorkflowJob(
     deps.store.appendNotice(
       `workflow ${deps.workflowName} failed: ${runFailureMessage(event.payload)}`,
     );
+    const kind = "error" as const;
+    const scope = "BackgroundTask" as const;
+    deps.toasts.publish({
+      kind,
+      scope,
+      source: "tui.workflow",
+      title: "workflow failed",
+      message: `${deps.workflowName}: ${runFailureMessage(event.payload)}`,
+      dedupeKey: `workflow:${handle.workflowRunId}`,
+      ...presentationPolicy({ kind, scope }),
+    });
     closing = true;
     handle.close();
     void deps.refreshWorkflows();
@@ -522,6 +574,17 @@ function wireWorkflowJob(
       deps.store.appendNotice(
         `workflow ${deps.workflowName} disconnected: ${reason}`,
       );
+      const kind = "error" as const;
+      const scope = "BackgroundTask" as const;
+      deps.toasts.publish({
+        kind,
+        scope,
+        source: "tui.workflow",
+        title: "workflow disconnected",
+        message: `${deps.workflowName}: ${reason}`,
+        dedupeKey: `workflow:${handle.workflowRunId}`,
+        ...presentationPolicy({ kind, scope }),
+      });
     }
   });
 }
