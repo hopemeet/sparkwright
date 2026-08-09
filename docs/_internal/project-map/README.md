@@ -116,6 +116,12 @@ follow the active maps below for the current contract.
   allowlists/budgets, and per-logical model usage keying are deferred out of the
   MVP. Active model construction contract: [modules/host.md](modules/host.md).
 
+- [designs/provider-connections.md](designs/provider-connections.md) — P6.0
+  design baseline for catalog-driven provider connections, credential and
+  endpoint binding, OAuth attempts, config compatibility, model-selection
+  determinism, migration, and the P6.1-P6.4 acceptance gates. No runtime
+  behavior from this design is implemented yet.
+
 ## Archived Reviews
 
 Selected closed planning records live in [../reviews/](../reviews/README.md).
@@ -145,7 +151,7 @@ unsourced [QA convergence stub](../reviews/qa-convergence-plan.md).
 - `packages/host/src/config.ts` or `packages/host/src/config-zod-schema.ts`: [modules/host.md](modules/host.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md)
 - `packages/host/src/config/*`: [modules/host.md](modules/host.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md)
 - `packages/host/src/tool-identities.ts`, `packages/host/src/tool-catalog.ts`, `packages/host/src/tool-selectors.ts`, or `packages/host/src/tool-surface.ts`: [modules/host.md](modules/host.md), [modules/coding-tools.md](modules/coding-tools.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md), [maps/capabilities/README.md](maps/capabilities/README.md)
-- `packages/host/src/model-builder.ts` or `packages/host/src/model-factory.ts`: [modules/host.md](modules/host.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/trace/summary-timeline-verify.md](maps/trace/summary-timeline-verify.md), [maps/runtime/context-compaction.md](maps/runtime/context-compaction.md)
+- `packages/host/src/provider-auth.ts`, `packages/host/src/model-builder.ts`, or `packages/host/src/model-factory.ts`: [modules/host.md](modules/host.md), [modules/protocol.md](modules/protocol.md), [modules/edge-packages.md](modules/edge-packages.md), [designs/provider-connections.md](designs/provider-connections.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/trace/summary-timeline-verify.md](maps/trace/summary-timeline-verify.md), [maps/runtime/context-compaction.md](maps/runtime/context-compaction.md)
 - `packages/host/src/runtime.ts`, `packages/host/src/run-access.ts`, `packages/host/src/run-security-plan.ts`, or `packages/host/src/run-policy.ts`: [modules/host.md](modules/host.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md), [maps/session/resume-replay.md](maps/session/resume-replay.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/capabilities/mcp.md](maps/capabilities/mcp.md), [maps/safety/workspace-writes.md](maps/safety/workspace-writes.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md)
 - `packages/host/src/runtime/*`, including interaction/control routing in `execution-interaction-operations.ts`, run preparation in `run-preparation-operations.ts`, Agent/Delegate assembly in `agent-runtime-assembly.ts`, Workflow durable ownership in `workflow-runtime-operations.ts`, and live episode ownership in `workflow-episode-runtime.ts`: [modules/host.md](modules/host.md), [modules/agent-runtime.md](modules/agent-runtime.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md), [maps/session/resume-replay.md](maps/session/resume-replay.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/capabilities/agents.md](maps/capabilities/agents.md), [maps/capabilities/mcp.md](maps/capabilities/mcp.md), [maps/safety/approvals.md](maps/safety/approvals.md), [maps/safety/workspace-writes.md](maps/safety/workspace-writes.md), [maps/safety/shell.md](maps/safety/shell.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md)
 - `packages/host/src/session-queries.ts` or `packages/host/src/session-compaction.ts`: [modules/host.md](modules/host.md), [maps/session/session-store.md](maps/session/session-store.md), [maps/session/resume-replay.md](maps/session/resume-replay.md), [maps/runtime/context-compaction.md](maps/runtime/context-compaction.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md)
@@ -203,12 +209,12 @@ unsourced [QA convergence stub](../reviews/qa-convergence-plan.md).
 - `packages/agent-runtime/src/workflows/workers.ts`, `packages/server-runtime/src/workflow-supervisor.ts`, or durable workflow worker ownership: [modules/agent-runtime.md](modules/agent-runtime.md), [modules/host.md](modules/host.md), [modules/edge-packages.md](modules/edge-packages.md), [maps/session/resume-replay.md](maps/session/resume-replay.md)
 - `packages/server-runtime/src/workflow-service.ts`, `sparkwright workflow service *`, or `workflow start --detach`: [modules/edge-packages.md](modules/edge-packages.md), [modules/cli.md](modules/cli.md), [modules/host.md](modules/host.md), [maps/session/resume-replay.md](maps/session/resume-replay.md), [maps/session/session-store.md](maps/session/session-store.md)
 - `packages/agent-runtime/src/workflows/channels.ts`, `packages/server-runtime/src/workflow-channel-coordinator.ts`, `workflow.control.process`, or durable workflow channel delivery: [modules/agent-runtime.md](modules/agent-runtime.md), [modules/edge-packages.md](modules/edge-packages.md), [modules/host.md](modules/host.md), [modules/protocol.md](modules/protocol.md), [modules/tui.md](modules/tui.md), [modules/cli.md](modules/cli.md), [maps/session/resume-replay.md](maps/session/resume-replay.md)
-- `packages/provider-ai-sdk/src/*` or `packages/provider-registry/src/*`: [modules/edge-packages.md](modules/edge-packages.md), [modules/host.md](modules/host.md), [designs/multi-model.md](designs/multi-model.md)
+- `packages/provider-ai-sdk/src/*` or `packages/provider-registry/src/*`: [modules/edge-packages.md](modules/edge-packages.md), [modules/host.md](modules/host.md), [designs/multi-model.md](designs/multi-model.md), [designs/provider-connections.md](designs/provider-connections.md)
 - `packages/server-runtime/src/execution-lanes.ts` or Host interactive lane scheduling: [modules/edge-packages.md](modules/edge-packages.md), [modules/host.md](modules/host.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [designs/host-execution-lane-p0-baseline.md](designs/host-execution-lane-p0-baseline.md)
 - Other `packages/server-runtime/src/*`, `packages/streaming-runtime/src/*`, or `packages/memory-file-store/src/*`: [modules/edge-packages.md](modules/edge-packages.md), [modules/core.md](modules/core.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/session/session-store.md](maps/session/session-store.md)
 - `packages/trace-perfetto/src/*`: [modules/edge-packages.md](modules/edge-packages.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md)
 - `packages/host/src/im-control.ts`, `packages/im-gateway/src/*`, or ordinary IM session control: [modules/edge-packages.md](modules/edge-packages.md), [modules/protocol.md](modules/protocol.md), [modules/host.md](modules/host.md), [maps/safety/approvals.md](maps/safety/approvals.md), [maps/session/session-store.md](maps/session/session-store.md)
-- `packages/host/src/connection.ts`, `packages/host/src/transport-ws.ts`, `packages/host/src/transport-stdio.ts`, `packages/host/src/server.ts`, or Host connection authentication/principal derivation: [modules/host.md](modules/host.md), [modules/protocol.md](modules/protocol.md), [modules/edge-packages.md](modules/edge-packages.md), [maps/safety/approvals.md](maps/safety/approvals.md), [maps/session/resume-replay.md](maps/session/resume-replay.md)
+- `packages/host/src/connection.ts`, `packages/host/src/transport-ws.ts`, `packages/host/src/transport-stdio.ts`, `packages/host/src/server.ts`, or Host connection authentication/principal derivation: [modules/host.md](modules/host.md), [modules/protocol.md](modules/protocol.md), [modules/edge-packages.md](modules/edge-packages.md), [designs/provider-connections.md](designs/provider-connections.md), [maps/safety/approvals.md](maps/safety/approvals.md), [maps/session/resume-replay.md](maps/session/resume-replay.md)
 
 ## Trace / Session / Export Rule
 
@@ -219,6 +225,17 @@ TUI events; it is not a trace diagnostic report and must not replace
 trace/session inspection.
 
 ## Last Verified
+
+- Status: Read-only
+- Date: 2026-08-09
+- Scope: cataloged the P6.0 provider-connection design baseline and routed
+  provider registry, Host model/auth, and connection-authority changes through
+  it. Runtime behavior is unchanged and remains governed by the active module
+  maps.
+- Read: current ProviderRegistry, Host provider auth/model/config/connection
+  boundaries, Protocol provider DTOs, CLI provider commands, TUI model picker,
+  and the new design baseline.
+- Tests: documentation validation only; runtime tests were not run.
 
 - Status: Verified
 - Date: 2026-08-01
